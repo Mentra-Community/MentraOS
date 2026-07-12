@@ -6,7 +6,7 @@ import {Badge} from "@/components/ui"
 import {Group} from "@/components/ui/Group"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
-import {useBackgroundApps, useStop, type ClientApp} from "@mentra/island"
+import {useBackgroundApps, useStop, type ClientApp} from "@mentra/engine"
 import {ThemedStyle} from "@/theme"
 import {showAlert} from "@/utils/AlertUtils"
 

@@ -1,22 +1,13 @@
-# Network Load Balancer for the audio service's UDP port.
+# LEGACY: do not apply. This manifest predates the per-environment app split
+# and selects `porter.run/app-name: cloud-v2`, an app name that no longer
+# deploys (envs are now cloud-dev / cloud-debug / cloud-staging / cloud-prod).
+# Use audio-udp-nlb-debug.yaml as the per-env template instead, swapping the
+# app name. Kept only as annotated reference for the NLB annotations and the
+# externalTrafficPolicy rationale below.
 #
-# Porter's `additionalPorts:` in porter.yaml only exposes the port on the
-# container — it does NOT create a separate k8s Service or AWS NLB. UDP
-# traffic from the public internet needs an NLB; AWS ELBv2's NLB supports
-# UDP listeners (ALB does not).
-#
-# Apply via:
-#   porter kubectl apply -f deploy/audio-udp-nlb.yaml
-#
-# After applying, get the NLB hostname:
-#   porter kubectl get svc cloud-v2-audio-udp -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'
-#
-# Then update Doppler with that hostname:
-#   doppler secrets set "AUDIO_UDP_ADVERTISED_HOST=<nlb-hostname>" --config dev_aws
-# And redeploy: porter apply -f porter.yaml
-#
-# Selector matches the Porter-managed audio pods (labels set by their
-# Helm chart — see `porter kubectl describe svc cloud-v2-audio`).
+# See docs/runbooks/deploy/udp-nlb-aws.md for current provisioning steps.
+# Note: applying requires direct kubectl (aws eks update-kubeconfig);
+# `porter kubectl` is read-only and cannot create Services.
 
 apiVersion: v1
 kind: Service

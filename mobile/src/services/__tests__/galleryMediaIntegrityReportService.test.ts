@@ -1,10 +1,10 @@
 import {
   galleryMediaIntegrityThrottleKey,
   submitInvalidGalleryMediaReport,
-} from "../../../modules/island/src/services/asg/GalleryMediaIntegrityReportService"
-import {submitAutomaticReport} from "../../../modules/island/src/facades/reports"
+} from "../../../modules/engine/src/services/asg/GalleryMediaIntegrityReportService"
+import {submitAutomaticReport} from "../../../modules/engine/src/facades/reports"
 
-jest.mock("../../../modules/island/src/facades/reports", () => ({
+jest.mock("../../../modules/engine/src/facades/reports", () => ({
   submitAutomaticReport: jest.fn(),
 }))
 

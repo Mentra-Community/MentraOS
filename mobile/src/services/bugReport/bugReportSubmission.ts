@@ -1,6 +1,6 @@
 import type * as ImagePicker from "expo-image-picker"
 
-import {toolkit, type ReportDetails, type ReportTrigger} from "@mentra/island"
+import {engine, type ReportDetails, type ReportTrigger} from "@mentra/engine"
 
 export interface SubmitBugReportInput {
   trigger: ReportTrigger
@@ -32,14 +32,14 @@ export function buildReportDetails(input: {
 }
 
 /**
- * UI/trigger-specific code passes what happened; toolkit owns context
+ * UI/trigger-specific code passes what happened; engine owns context
  * collection, logs, Cloud V2 calls, screenshots, and glasses notification.
  */
 export async function submitBugReport(
   input: SubmitBugReportInput,
   options?: SubmitBugReportOptions,
 ): Promise<{ok: true; reportId: string} | {ok: false; error: Error}> {
-  const res = await toolkit.reports.submit({
+  const res = await engine.reports.submit({
     kind: "bug",
     trigger: input.trigger,
     report: input.report,

@@ -25,6 +25,7 @@ import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.os.Build
 import android.os.Handler
+import android.os.HandlerThread
 import android.os.Looper
 import android.util.Log
 import androidx.core.app.ActivityCompat
@@ -99,6 +100,7 @@ class MentraLive : SGCManager() {
         // PSM. When the phone opens the channel, the glasses send file packets over it instead
         // of GATT FILE_READ notifications. Phone→glasses traffic stays on GATT.
         private const val L2CAP_FILE_PSM = 0x00C9
+        private const val FILE_PACKET_LOG_INTERVAL = 32
 
         // BLE UUIDs - updated to match K900 BES2800 MCU UUIDs for compatibility with both glass
         // types
@@ -216,6 +218,7 @@ class MentraLive : SGCManager() {
     // (or a v2 binary handshake succeeds, which implies wire-v2 LE).
     private var peerK900Le = false
     private var peerWireCapsBinary = false
+    private var peerFilePayloadV2 = false
     // Note: appVersion, buildNumber, deviceModel, androidVersion
     // are inherited from SGCManager parent class
 
@@ -242,6 +245,9 @@ class MentraLive : SGCManager() {
     private var lc3ReadCharacteristic: BluetoothGattCharacteristic? = null
     private var lc3WriteCharacteristic: BluetoothGattCharacteristic? = null
     private var handler = Handler(Looper.getMainLooper())
+    private val fileProcessingThread =
+            HandlerThread("MentraLive-FileProcessing").apply { start() }
+    private val fileProcessingHandler = Handler(fileProcessingThread.looper)
     private var scheduler: ScheduledExecutorService? = null
     private var isScanning = false
     private var isConnecting = false
@@ -321,7 +327,7 @@ class MentraLive : SGCManager() {
     private var activeFileTransfers = ConcurrentHashMap<String, FileTransferSession>()
 
     // BLE photo transfer tracking
-    private var blePhotoTransfers: MutableMap<String, BlePhotoTransfer> = HashMap()
+    private var blePhotoTransfers: MutableMap<String, BlePhotoTransfer> = ConcurrentHashMap()
 
     /** Expected incident log relay files from glasses (B… firmware, L… logcat). */
     private val bleIncidentLogRelays = ConcurrentHashMap<String, BleIncidentLogRelay>()
@@ -780,6 +786,7 @@ class MentraLive : SGCManager() {
                 wireHandshakeQueued = false
                 peerK900Le = false
                 peerWireCapsBinary = false
+                peerFilePayloadV2 = false
                 BleJsonCompact.resetSession()
             }
             return
@@ -814,6 +821,7 @@ class MentraLive : SGCManager() {
             wireHandshakeQueued = false
             peerK900Le = false
             peerWireCapsBinary = false
+            peerFilePayloadV2 = false
             BleJsonCompact.resetSession()
             // Drop OTA caches when fully disconnected — avoids leaking session/step state
             // from a previous pairing into the next one.
@@ -1440,6 +1448,15 @@ class MentraLive : SGCManager() {
         )
     }
 
+    private fun phyLabel(phy: Int): String {
+        return when (phy) {
+            BluetoothDevice.PHY_LE_1M -> "1M"
+            BluetoothDevice.PHY_LE_2M -> "2M"
+            BluetoothDevice.PHY_LE_CODED -> "coded"
+            else -> "unknown($phy)"
+        }
+    }
+
     /** GATT callback for BLE operations */
     private val gattCallback: BluetoothGattCallback =
             object : BluetoothGattCallback() {
@@ -1462,25 +1479,6 @@ class MentraLive : SGCManager() {
                             isConnecting = false
                             isConnected = true
                             connectedDevice = gatt.device
-
-                            // High-priority connection interval (~11-15ms vs 30-50ms
-                            // default) and 2M PHY, as MentraNex and G2 already do. The
-                            // BES firmware only *prefers* 2M PHY; the central has to
-                            // request the switch or the link stays on 1M.
-                            try {
-                                gatt.requestConnectionPriority(
-                                        BluetoothGatt.CONNECTION_PRIORITY_HIGH
-                                )
-                                gatt.setPreferredPhy(
-                                        BluetoothDevice.PHY_LE_2M_MASK,
-                                        BluetoothDevice.PHY_LE_2M_MASK,
-                                        BluetoothDevice.PHY_OPTION_NO_PREFERRED
-                                )
-                            } catch (e: SecurityException) {
-                                Bridge.log(
-                                        "LIVE: requestConnectionPriority/setPreferredPhy denied: ${e.message}"
-                                )
-                            }
 
                             DeviceStore.apply("glasses", "bluetoothName", connectedDevice!!.name)
                             // Persist MAC so reconnection can use direct GATT instead of scanning
@@ -1580,6 +1578,8 @@ class MentraLive : SGCManager() {
 
                             // Close the L2CAP file channel (if the fast path was open)
                             closeL2capFileChannel()
+                            fileProcessingHandler.removeCallbacksAndMessages(null)
+                            clearFilePacketBuffer()
 
                             // Clean up GATT resources
                             closeGattQuietly(false)
@@ -1635,6 +1635,8 @@ class MentraLive : SGCManager() {
 
                         // Close the L2CAP file channel (if the fast path was open)
                         closeL2capFileChannel()
+                        fileProcessingHandler.removeCallbacksAndMessages(null)
+                        clearFilePacketBuffer()
 
                         // Clean up resources
                         closeGattQuietly(false)
@@ -1645,6 +1647,38 @@ class MentraLive : SGCManager() {
                             handleReconnection()
                         }
                     }
+                }
+
+                override fun onPhyUpdate(
+                        gatt: BluetoothGatt,
+                        txPhy: Int,
+                        rxPhy: Int,
+                        status: Int
+                ) {
+                    Bridge.log(
+                            "LIVE: PHY update tx=" +
+                                    phyLabel(txPhy) +
+                                    ", rx=" +
+                                    phyLabel(rxPhy) +
+                                    ", status=" +
+                                    status
+                    )
+                }
+
+                override fun onPhyRead(
+                        gatt: BluetoothGatt,
+                        txPhy: Int,
+                        rxPhy: Int,
+                        status: Int
+                ) {
+                    Bridge.log(
+                            "LIVE: PHY read tx=" +
+                                    phyLabel(txPhy) +
+                                    ", rx=" +
+                                    phyLabel(rxPhy) +
+                                    ", status=" +
+                                    status
+                    )
                 }
 
                 override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
@@ -2631,18 +2665,6 @@ class MentraLive : SGCManager() {
         var iterations = 0
         val MAX_ITERATIONS = 100
 
-        // Debug: Log hex dump of first 40 bytes
-        val hexFirst = StringBuilder()
-        for (i in 0 until Math.min(40, filePacketBufferSize)) {
-            hexFirst.append(String.format("%02X ", filePacketBuffer[i]))
-        }
-        Bridge.log(
-                "LIVE: 📦 extractCompleteFilePackets: buffer has " +
-                        filePacketBufferSize +
-                        " bytes, first 40: " +
-                        hexFirst.toString()
-        )
-
         while (pos < filePacketBufferSize && iterations++ < MAX_ITERATIONS) {
             // Find start marker ## (0x23 0x23)
             var startPos = -1
@@ -2677,11 +2699,6 @@ class MentraLive : SGCManager() {
 
             // Need at least 5 bytes to read type and packSize: ## (2) + type (1) + packSize (2)
             if (filePacketBufferSize - pos < 5) {
-                Bridge.log(
-                        "LIVE: 📦 Not enough data for header, have " +
-                                (filePacketBufferSize - pos) +
-                                " bytes, need 5"
-                )
                 break
             }
 
@@ -2691,33 +2708,9 @@ class MentraLive : SGCManager() {
                     ((filePacketBuffer[packSizeOffset].toInt() and 0xFF) shl 8) or
                             (filePacketBuffer[packSizeOffset + 1].toInt() and 0xFF)
 
-            // Also try little-endian for comparison
-            val packSizeLE =
-                    (filePacketBuffer[packSizeOffset].toInt() and 0xFF) or
-                            ((filePacketBuffer[packSizeOffset + 1].toInt() and 0xFF) shl 8)
-            Bridge.log(
-                    "LIVE: 📦 Header bytes 3-4: 0x" +
-                            String.format(
-                                    "%02X%02X",
-                                    filePacketBuffer[packSizeOffset],
-                                    filePacketBuffer[packSizeOffset + 1]
-                            ) +
-                            " -> packSize BE=" +
-                            packSize +
-                            ", LE=" +
-                            packSizeLE
-            )
-
             // Validate packSize
             if (packSize < 0 || packSize > K900ProtocolUtils.FILE_PACK_SIZE) {
-                Log.w(
-                        TAG,
-                        "Invalid packSize " +
-                                packSize +
-                                " (LE would be " +
-                                packSizeLE +
-                                "), skipping start marker"
-                )
+                Log.w(TAG, "Invalid packSize $packSize, skipping start marker")
                 pos = startPos + 1
                 continue
             }
@@ -2730,42 +2723,13 @@ class MentraLive : SGCManager() {
             // Check if we have the complete packet
             val availableBytes = filePacketBufferSize - pos
             if (availableBytes < expectedPacketSize) {
-                // Not enough data yet, wait for more fragments
-                Bridge.log(
-                        "LIVE: 📦 Waiting for more data: have " +
-                                availableBytes +
-                                " of " +
-                                expectedPacketSize +
-                                " bytes (packSize=" +
-                                packSize +
-                                ")"
-                )
-                break // IMPORTANT: break here, don't continue looking for end marker
+                break
             }
 
             // Verify end marker $$ at expected position
             val endMarkerPos = pos + expectedPacketSize - 2
             val endByte1 = filePacketBuffer[endMarkerPos]
             val endByte2 = filePacketBuffer[endMarkerPos + 1]
-
-            // Debug: Show bytes around expected end marker position
-            val endContext = StringBuilder()
-            for (i in
-                    Math.max(0, endMarkerPos - 5)..Math.min(
-                                    filePacketBufferSize - 1,
-                                    endMarkerPos + 5
-                            )) {
-                if (i == endMarkerPos) endContext.append("[")
-                endContext.append(String.format("%02X", filePacketBuffer[i]))
-                if (i == endMarkerPos + 1) endContext.append("]")
-                endContext.append(" ")
-            }
-            Bridge.log(
-                    "LIVE: 📦 End marker check at pos " +
-                            endMarkerPos +
-                            ": " +
-                            endContext.toString()
-            )
 
             if (endByte1 != 0x24.toByte() || endByte2 != 0x24.toByte()) {
                 // End marker not found - could be corrupted packet or wrong packSize interpretation
@@ -2791,22 +2755,10 @@ class MentraLive : SGCManager() {
             val completePacket = ByteArray(expectedPacketSize)
             System.arraycopy(filePacketBuffer, pos, completePacket, 0, expectedPacketSize)
 
-            Bridge.log(
-                    "LIVE: 📦 ✅ Complete file packet reassembled: " + expectedPacketSize + " bytes"
-            )
-
             // Process the complete packet
             val packetInfo = K900ProtocolUtils.extractFilePacket(completePacket)
             if (packetInfo != null && packetInfo.isValid) {
-                Bridge.log(
-                        "LIVE: 📦 ✅ Packet validated: index=" +
-                                packetInfo.packIndex +
-                                ", fileName=" +
-                                packetInfo.fileName
-                )
-                // Post to handler to process outside the lock
-                val finalPacketInfo = packetInfo
-                handler.post { processFilePacket(finalPacketInfo) }
+                enqueueFilePacket(packetInfo)
             } else {
                 Log.e(TAG, "Failed to extract/validate reassembled file packet")
             }
@@ -2819,13 +2771,6 @@ class MentraLive : SGCManager() {
             val remaining = filePacketBufferSize - pos
             System.arraycopy(filePacketBuffer, pos, filePacketBuffer, 0, remaining)
             filePacketBufferSize = remaining
-            Bridge.log(
-                    "LIVE: 📦 Removed " +
-                            pos +
-                            " bytes, " +
-                            remaining +
-                            " bytes remaining in buffer"
-            )
         } else if (pos >= filePacketBufferSize) {
             filePacketBufferSize = 0
         }
@@ -2942,7 +2887,7 @@ class MentraLive : SGCManager() {
                 // structure
                 val packetInfo = K900ProtocolUtils.extractFilePacket(data)
                 if (packetInfo != null && packetInfo.isValid) {
-                    processFilePacket(packetInfo)
+                    enqueueFilePacket(packetInfo)
                 } else {
                     Log.e(TAG, "Thread-" + threadId + ": Failed to extract or validate file packet")
                     // BES chip handles ACKs automatically
@@ -3155,10 +3100,12 @@ class MentraLive : SGCManager() {
                     )
             "speaking_status" -> handleSpeakingStatus(json.optBoolean("speaking", false))
             "battery_status" -> {
-                // Process battery status
+                // Percent only. battery_status derives from hm_batv, which carries no charge
+                // bit — older glasses fabricate `charging` from a voltage threshold (>3.9V)
+                // that reads "charging" for most of a discharging pack's range. Charging
+                // state comes exclusively from the PMU charg bit in the sr_hrt heartbeat.
                 val percent = json.optInt("percent", batteryLevel)
-                val charging = json.optBoolean("charging", isCharging)
-                updateBatteryStatus(percent, charging)
+                updateBatteryStatus(percent, isCharging)
             }
             "pong" ->
                     // Process heartbeat pong response
@@ -3176,6 +3123,18 @@ class MentraLive : SGCManager() {
                 val wifiConnectedStatus = json.optBoolean("connected", false)
                 val ssid = json.optString("ssid", "")
                 val localIp = json.optString("local_ip", "")
+
+                // Provisioning failure reason (e.g. connect_timeout). Sticky: routine
+                // error-less status updates (link-state debounce, request_wifi_status)
+                // must not clear a failure nothing recovered from — only a newer error
+                // or a successful connection overwrites it.
+                val wifiError = json.optString("error", "")
+                if (wifiError.isNotEmpty()) {
+                    Bridge.log("LIVE: 🌐 WiFi provisioning error from glasses: $wifiError")
+                    DeviceStore.apply("glasses", "wifiError", wifiError)
+                } else if (wifiConnectedStatus) {
+                    DeviceStore.apply("glasses", "wifiError", "")
+                }
 
                 updateWifiStatus(wifiConnectedStatus, ssid, localIp)
             }
@@ -3545,6 +3504,7 @@ class MentraLive : SGCManager() {
 
                 // Stop the readiness check loop since we got confirmation
                 stopReadinessCheckLoop()
+                advertiseFilePayloadCapabilityToBes()
 
                 // Try to open the L2CAP CoC fast path for file transfers. No-op when the
                 // firmware doesn't support it — GATT notifications remain the default path.
@@ -4387,11 +4347,10 @@ class MentraLive : SGCManager() {
                                         "%"
                         )
 
-                        // Determine charging status based on voltage (K900 typical charging voltage
-                        // is >4.0V)
-                        val isCharging = voltageMillivolts > 4000
-
-                        // Update battery status using the existing method
+                        // Percent only. sr_batv carries just voltage+percent; inferring
+                        // charging from voltage (>4.0V) reads "not charging" for most of a
+                        // genuinely-charging pack's range. Charging state comes exclusively
+                        // from the PMU charg bit in the sr_hrt heartbeat.
                         updateBatteryStatus(batteryPercentage, isCharging)
                     }
                 } catch (e: Exception) {
@@ -4695,6 +4654,11 @@ class MentraLive : SGCManager() {
      * pattern
      */
     private fun updateBatteryStatus(level: Int, isCharging: Boolean) {
+        // Keep the field in sync: percent-only messages (battery_status/sr_batv) re-pass
+        // it as the last-known charging state, so a stale field would clobber the value
+        // the sr_hrt PMU charg bit established.
+        this.isCharging = isCharging
+
         // Update parent SGCManager fields
         DeviceStore.apply("glasses", "batteryLevel", level)
         DeviceStore.apply("glasses", "charging", isCharging)
@@ -6160,6 +6124,7 @@ class MentraLive : SGCManager() {
 
         // Cancel any pending handlers
         handler.removeCallbacksAndMessages(null)
+        fileProcessingHandler.removeCallbacksAndMessages(null)
         heartbeatHandler.removeCallbacksAndMessages(null)
         rssiReadHandler.removeCallbacksAndMessages(null)
         micBeatHandler.removeCallbacksAndMessages(null)
@@ -6191,6 +6156,7 @@ class MentraLive : SGCManager() {
 
         // Clear file packet reassembly buffer
         clearFilePacketBuffer()
+        fileProcessingThread.quitSafely()
 
         // Reset state variables
         reconnectAttempts = 0
@@ -7201,6 +7167,32 @@ class MentraLive : SGCManager() {
         if (caps.has("binary")) {
             peerWireCapsBinary = caps.optBoolean("binary", false)
         }
+        if (caps.has("file_payload_v2")) {
+            peerFilePayloadV2 = caps.optBoolean("file_payload_v2", false)
+        }
+    }
+
+    private fun advertiseFilePayloadCapabilityToBes() {
+        if (!peerFilePayloadV2) return
+        try {
+            val command = JSONObject()
+            command.put("C", "cs_file_payload")
+            command.put("B", "{\"max\":" + K900ProtocolUtils.FILE_PACK_SIZE + "}")
+            val packed =
+                    K900ProtocolUtils.packDataToK900(
+                            command.toString().toByteArray(StandardCharsets.UTF_8),
+                            K900ProtocolUtils.CMD_TYPE_STRING,
+                            k900LengthEndian()
+                    )
+            queueData(packed)
+            Bridge.log(
+                    "LIVE: 📦 Advertised file payload ceiling " +
+                            K900ProtocolUtils.FILE_PACK_SIZE +
+                            " to BES"
+            )
+        } catch (e: JSONException) {
+            Log.e(TAG, "Failed to advertise file payload capability", e)
+        }
     }
 
     private fun maybeSendWireHandshake() {
@@ -8108,6 +8100,11 @@ class MentraLive : SGCManager() {
     // File Transfer Methods
     // ---------------------------------------
 
+    /** Keep file assembly ordered without blocking BLE callbacks or the Android main looper. */
+    private fun enqueueFilePacket(packetInfo: K900ProtocolUtils.FilePacketInfo) {
+        fileProcessingHandler.post { processFilePacket(packetInfo) }
+    }
+
     /** Process a received file packet */
     private fun processFilePacket(packetInfo: K900ProtocolUtils.FilePacketInfo) {
         // Calculate total packets based on actual pack size (not hardcoded FILE_PACK_SIZE)
@@ -8115,18 +8112,15 @@ class MentraLive : SGCManager() {
                 if (packetInfo.packSize > 0)
                         (packetInfo.fileSize + packetInfo.packSize - 1) / packetInfo.packSize
                 else 1
-        Bridge.log(
-                "LIVE: 📦 Processing file packet: " +
-                        packetInfo.fileName +
-                        " [" +
-                        packetInfo.packIndex +
-                        "/" +
-                        (totalPackets - 1) +
-                        "]" +
-                        " (" +
-                        packetInfo.packSize +
-                        " bytes)"
-        )
+        if (packetInfo.packIndex % FILE_PACKET_LOG_INTERVAL == 0 ||
+                        packetInfo.packIndex == totalPackets - 1
+        ) {
+            Log.d(
+                    TAG,
+                    "File transfer ${packetInfo.fileName}: " +
+                            "${packetInfo.packIndex + 1}/$totalPackets packets"
+            )
+        }
 
         // Check if this is a BLE photo transfer we're tracking
         // The filename might have an extension (.avif or .jpg), but we track by ID only
@@ -8135,8 +8129,6 @@ class MentraLive : SGCManager() {
         if (dotIndex > 0) {
             bleImgId = bleImgId.substring(0, dotIndex)
         }
-
-        Bridge.log("LIVE: 📦 BLE photo transfer packet for requestId: " + bleImgId)
 
         val incidentRelay = bleIncidentLogRelays[bleImgId]
         if (incidentRelay != null) {
@@ -8191,18 +8183,8 @@ class MentraLive : SGCManager() {
         }
 
         val photoTransfer = blePhotoTransfers[bleImgId]
-        Bridge.log(
-                "LIVE: 📦 BLE photo transfer for requestId: " +
-                        bleImgId +
-                        " found: " +
-                        (photoTransfer != null)
-        )
         if (photoTransfer != null) {
             // This is a BLE photo transfer
-            Bridge.log(
-                    "LIVE: 📦 BLE photo transfer packet for requestId: " + photoTransfer.requestId
-            )
-
             // Get or create session for this transfer
             if (photoTransfer.session == null) {
                 photoTransfer.session =
@@ -8314,13 +8296,6 @@ class MentraLive : SGCManager() {
         val added = session.addPacket(packetInfo.packIndex, packetInfo.data)
 
         if (added) {
-            // BES chip handles ACKs automatically
-            Bridge.log(
-                    "LIVE: 📦 Packet " +
-                            packetInfo.packIndex +
-                            " received successfully (BES will auto-ACK)"
-            )
-
             // Check completion when final packet arrives or transfer is complete
             if (session.shouldCheckCompletion(packetInfo.packIndex)) {
                 if (session.isComplete) {

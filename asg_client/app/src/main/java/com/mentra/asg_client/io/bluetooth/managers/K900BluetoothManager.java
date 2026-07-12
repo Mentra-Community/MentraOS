@@ -50,7 +50,12 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     private boolean wireV2HandshakeSent = false;
     private volatile boolean besWireCapsK900Le = false;
     private volatile boolean besWireCapsBinary = false;
+    private volatile boolean besWireCapsFilePayloadV2 = false;
     private volatile int besWireCapsProto = BesWireFormat.PROTOCOL_VERSION_V1;
+    private volatile int gattFilePackSize = BesWireFormat.FILE_PACK_SIZE_DEFAULT;
+    private volatile int lastNegotiatedMtu = 0;
+    private volatile boolean phoneSupportsFilePayloadV2 = false;
+    private volatile boolean fileTransportCoc = false;
 
     // Negotiated K900 STRING length endianness for the ASG<->BES UART link. Defaults to legacy
     // big-endian so unmodified BES firmware keeps working; upgraded to little-endian only when the
@@ -81,16 +86,15 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     // 32 window). Firmware >= 17.26.7.6 has an 8KB RX buffer and acks every 8th pack
     // (batched), which needs a window comfortably above the batch interval.
     private static final int FILE_PUSH_WINDOW = 3;
-    // 17.26.7.7 firmware: 3.4KB UART RX ring (the HAL rejects single-descriptor
-    // DMA arms over 4095B and 7.7 armed the whole ring at once), acks every 4th
-    // pack - window 8 fits the ring and stays above the batch interval.
+    // Firmware >=17.26.7.14 keeps its 12KB circular DMA receiver armed across
+    // timeout boundaries. A 16-pack window keeps two complete eight-pack ACK
+    // batches in flight while remaining well inside the BES receive ring.
     private static final int FILE_PUSH_WINDOW_BATCHED = 8;
     private static final String MIN_BES_VERSION_FOR_BATCHED_ACKS = "17.26.7.7";
-    // 17.26.7.8 firmware: 12KB UART RX ring (arms are margin-sized so the ring is
-    // free to grow), accepts 800B UART packs (split to 400B BLE frames on the BES),
-    // acks every 8th UART pack - window 12 x 832B = ~10KB in flight fits the ring.
-    private static final int FILE_PUSH_WINDOW_BIG_PACKS = 12;
-    private static final String MIN_BES_VERSION_FOR_BIG_PACKS = "17.26.7.8";
+    // Negotiated 800-byte CoC payloads use 832-byte UART frames. Keep exactly one complete
+    // eight-packet cumulative-ACK batch in flight. Sending a partial second batch before the
+    // first ACK repeatedly overran the BES parser on hardware and triggered 150 ms retries.
+    private static final int FILE_PUSH_WINDOW_BIG_PACKS = 8;
     private volatile boolean besSupportsBatchedAcks = false;
     private volatile boolean besSupportsBigPacks = false;
 
@@ -102,40 +106,20 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     }
 
     /**
-     * Data bytes per UART file pack for a new transfer. 800B packs (halved framing +
-     * ack overhead on the UART leg) need firmware that splits them back into 400B BLE
-     * frames, and only apply when the phone negotiated full-size BLE packs - a phone
-     * that asked for smaller packs (small MTU) must keep bounding the BLE frame size.
+     * Firmware 17.26.7.14 keeps circular UART DMA armed across receive timeouts, removing the
+     * re-arm gap that dropped early packets during push bursts.
      */
-    /**
-     * 800B packs are DISABLED pending a firmware fix: fw 17.26.7.9 deterministically loses
-     * pack 0 of an 800B transfer in its UART frame reassembly (packs 1+ arrive intact; BES
-     * trace shows 'unexpected pack index: expect=0, got=1/2/3'), which needs DUMP8-level
-     * instrumentation on the BES to localize. Batched acks + window 12 still apply at 400B.
-     */
-    private static final boolean BIG_PACKS_ENABLED = false;
-
-    /**
-     * Batched acks are DISABLED pending the same firmware burst-loss fix: with the
-     * window-12 blast the BES deterministically loses one early pack (pack 1 at 400B,
-     * pack 0 at 800B) and the reject/rewind interplay collapses throughput (~11KB/s,
-     * frequent packet_timeout aborts). Per-pack acks at window 3 are the
-     * hardware-validated 45-50KB/s configuration.
-     */
-    private static final boolean BATCHED_ACKS_ENABLED = false;
+    private static final boolean BATCHED_ACKS_ENABLED = true;
 
     private int effectiveUartPackSize() {
-        if (BIG_PACKS_ENABLED
-                && besSupportsBigPacks
-                && BesWireFormat.getFilePackSize() == BesWireFormat.FILE_PACK_SIZE_MAX) {
-            return BesWireFormat.FILE_UART_PACK_SIZE_MAX;
-        }
         return BesWireFormat.getFilePackSize();
     }
     private static final long SIGNIFICANT_CHUNK_TRACE_DURATION_MS = 250;
     private static final long SIGNIFICANT_CHUNK_SEND_DURATION_MS = 250;
     private static final long SIGNIFICANT_CHUNK_SPACING_MS = PACING_DELAY_MS + 150;
     private int consecutiveFailures = 0;
+    private volatile int pendingFailureRetryIndex = -1;
+    private volatile boolean failureRetryScheduled = false;
     private final AtomicLong bleChunkTraceSequence = new AtomicLong(1);
 
     // ---- Runtime UART baud switch (cs_baud / sr_baud negotiation with the BES2700) ----
@@ -210,18 +194,20 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         // This allows us to send smaller packets (221 bytes) that fit within BLE MTU.
         private static final int BES_HARDCODED_PACK_SIZE = 400;
 
-        FileTransferSession(String filePath, String fileName, byte[] fileData, int packSize) {
+        FileTransferSession(
+                String filePath,
+                String fileName,
+                byte[] fileData,
+                int packSize,
+                boolean dynamicPayloadSupported) {
             this.filePath = filePath;
             this.fileName = fileName;
             this.fileData = fileData;
             this.fileSize = fileData.length;
             this.packSize = packSize;
             this.totalPackets = (fileSize + packSize - 1) / packSize;
-            if (packSize > BES_HARDCODED_PACK_SIZE) {
-                // Big-pack firmware (>= 17.26.7.8) derives BOTH index spaces (UART acks
-                // and the 400B BLE frames it splits into) from the header fileSize, so
-                // it must be the REAL size - the inflate trick would make it expect a
-                // phantom trailing BLE frame whenever the last pack is <= 400B.
+            if (dynamicPayloadSupported || packSize > BES_HARDCODED_PACK_SIZE) {
+                // Negotiated firmware derives packet counts from the transfer's packSize.
                 this.fakeFileSize = fileSize;
             } else {
                 // Legacy path: BES hardcodes totalPack = ceil(fileSize / 400); inflate
@@ -457,6 +443,8 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         resetPhoneWireProtocolState();
         besWireCapsK900Le = false;
         besWireCapsBinary = false;
+        besWireCapsFilePayloadV2 = false;
+        besSupportsBigPacks = false;
         besWireCapsProto = BesWireFormat.PROTOCOL_VERSION_V1;
         uartToBesEndian = K900LengthCodec.Endian.BE;
     }
@@ -610,7 +598,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                 0,
                 BesWireFormat.getActiveProtocolVersion());
 
-        if (!handleSrSyvrResponse(reassembled)) {
+        if (!handleSrSyvrResponse(reassembled) && !handleFileTransportResponse(reassembled)) {
             notifyDataReceived(reassembled);
         }
         return true;
@@ -622,7 +610,8 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
      * reachable.
      */
     public void addPhoneWireCapsIfSupported(JSONObject response) {
-        if (response == null || (!besWireCapsK900Le && !besWireCapsBinary)) {
+        if (response == null
+                || (!besWireCapsK900Le && !besWireCapsBinary && !besWireCapsFilePayloadV2)) {
             return;
         }
         try {
@@ -633,6 +622,11 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             if (besWireCapsBinary) {
                 caps.put("binary", true);
                 caps.put("proto", Math.max(besWireCapsProto, BesWireFormat.PROTOCOL_VERSION_V2));
+            }
+            if (besWireCapsFilePayloadV2) {
+                caps.put("file_payload_v2", true);
+                caps.put("file_payload_gatt_max", BesWireFormat.FILE_PACK_SIZE_GATT_MAX);
+                caps.put("file_payload_coc_max", BesWireFormat.FILE_PACK_SIZE_COC_MAX);
             }
             response.put("wire_caps", caps);
         } catch (Exception e) {
@@ -1143,6 +1137,85 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             besWireCapsProto = caps.optInt("proto", BesWireFormat.PROTOCOL_VERSION_V2);
             Log.i(TAG, "📡 BES wire_caps advertised binary relay proto=" + besWireCapsProto);
         }
+        if (caps != null && caps.optBoolean("file_payload_v2", false)) {
+            besWireCapsFilePayloadV2 = true;
+            besSupportsBigPacks = true;
+            Log.i(TAG, "📦 BES wire_caps advertised negotiated file payloads");
+        }
+    }
+
+    /** Apply the transport-specific payload selected by BES from the actual CoC peer MTU. */
+    private boolean handleFileTransportResponse(byte[] payload) {
+        try {
+            JSONObject json =
+                    new JSONObject(new String(payload, java.nio.charset.StandardCharsets.UTF_8));
+            if (!"sr_file_transport".equals(json.optString("C", ""))) {
+                return false;
+            }
+            JSONObject body = json.optJSONObject("B");
+            if (body == null) {
+                String bodyString = json.optString("B", "");
+                body = bodyString.isEmpty() ? new JSONObject() : new JSONObject(bodyString);
+            }
+            String transport = body.optString("transport", "gatt");
+            int payloadSize = body.optInt("payload_size", BesWireFormat.FILE_PACK_SIZE_LEGACY);
+            if (payloadSize > BesWireFormat.FILE_PACK_SIZE_LEGACY) {
+                phoneSupportsFilePayloadV2 = true;
+            }
+            if ("coc".equals(transport)
+                    && besWireCapsFilePayloadV2
+                    && phoneSupportsFilePayloadV2) {
+                if (fileTransportCoc
+                        && currentFileTransfer != null
+                        && currentFileTransfer.packSize > payloadSize) {
+                    Log.w(TAG, "CoC MTU shrank during a large-payload transfer; aborting safely");
+                    notifyTransferFailedToPhone("coc_mtu_changed");
+                    comManager.setFastMode(false);
+                    currentFileTransfer = null;
+                    pendingPackets.clear();
+                }
+                BesWireFormat.setFilePackSize(payloadSize);
+                fileTransportCoc = true;
+            } else {
+                int previousGATTSize = gattFilePackSize;
+                if (lastNegotiatedMtu > 0) {
+                    BesWireFormat.setFilePackSizeFromMtu(
+                            lastNegotiatedMtu,
+                            besWireCapsFilePayloadV2 && phoneSupportsFilePayloadV2);
+                    gattFilePackSize = BesWireFormat.getFilePackSize();
+                } else {
+                    BesWireFormat.setFilePackSize(gattFilePackSize);
+                }
+                if (fileTransportCoc
+                        && currentFileTransfer != null
+                        && currentFileTransfer.packSize > gattFilePackSize) {
+                    Log.w(TAG, "CoC closed during a large-payload transfer; aborting safely");
+                    notifyTransferFailedToPhone("coc_closed");
+                    comManager.setFastMode(false);
+                    currentFileTransfer = null;
+                    pendingPackets.clear();
+                }
+                fileTransportCoc = false;
+                if (previousGATTSize != gattFilePackSize) {
+                    Log.i(
+                            TAG,
+                            "📦 GATT file payload updated "
+                                    + previousGATTSize
+                                    + " -> "
+                                    + gattFilePackSize);
+                }
+            }
+            Log.i(
+                    TAG,
+                    "📦 File transport="
+                            + transport
+                            + " payload="
+                            + BesWireFormat.getFilePackSize());
+            return true;
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to parse sr_file_transport", e);
+            return false;
+        }
     }
 
     /**
@@ -1503,9 +1576,6 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                     BATCHED_ACKS_ENABLED
                             && compareDottedVersions(version, MIN_BES_VERSION_FOR_BATCHED_ACKS)
                                     >= 0;
-            besSupportsBigPacks =
-                    BIG_PACKS_ENABLED
-                            && compareDottedVersions(version, MIN_BES_VERSION_FOR_BIG_PACKS) >= 0;
             Log.i(
                     TAG,
                     "📦 Batched-ack push mode "
@@ -1516,7 +1586,6 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                             + ", packSize " + effectiveUartPackSize() + ")");
         } catch (Exception e) {
             besSupportsBatchedAcks = false;
-            besSupportsBigPacks = false;
         }
 
         try {
@@ -1644,7 +1713,8 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                                 // Handle them directly here to avoid timing issues with
                                 // CommandProcessor initialization
                                 if (!handleSrSyvrResponse(payload)
-                                        && !handleSrBaudResponse(payload)) {
+                                        && !handleSrBaudResponse(payload)
+                                        && !handleFileTransportResponse(payload)) {
                                     // Not a sr_syvr/sr_baud response, forward to listeners
                                     notifyDataReceived(payload);
                                 }
@@ -1794,9 +1864,17 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             fileName = fileName.substring(0, 16); // Truncate to 16 chars max
         }
 
-        currentFileTransfer = new FileTransferSession(filePath, fileName, fileData, effectiveUartPackSize());
+        currentFileTransfer =
+                new FileTransferSession(
+                        filePath,
+                        fileName,
+                        fileData,
+                        effectiveUartPackSize(),
+                        besWireCapsFilePayloadV2);
         pendingPackets.clear();
         consecutiveFailures = 0; // Reset failure counter for new transfer
+        pendingFailureRetryIndex = -1;
+        failureRetryScheduled = false;
 
         Log.d(
                 TAG,
@@ -1903,6 +1981,9 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         // Advertise push-mode/batched-ack support to firmware that understands it
         // (bit 0 of the flags field; older firmware never reads flags).
         int flags = besSupportsBatchedAcks ? BesWireFormat.FILE_FLAG_PUSH_BATCH_ACK : 0;
+        if (besWireCapsFilePayloadV2) {
+            flags |= BesWireFormat.FILE_FLAG_DYNAMIC_PAYLOAD;
+        }
         byte[] packet =
                 BesWireFormat.packFilePacket(
                         packetData,
@@ -2032,7 +2113,15 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
     @Override
     public void onMtuNegotiated(int mtu) {
-        BesWireFormat.setFilePackSizeFromMtu(mtu);
+        lastNegotiatedMtu = mtu;
+        int cocFilePackSize = fileTransportCoc ? BesWireFormat.getFilePackSize() : 0;
+        BesWireFormat.setFilePackSizeFromMtu(
+                mtu, besWireCapsFilePayloadV2 && phoneSupportsFilePayloadV2);
+        gattFilePackSize = BesWireFormat.getFilePackSize();
+        if (fileTransportCoc) {
+            BesWireFormat.setFilePackSize(cocFilePackSize);
+            return;
+        }
         Log.i(
                 TAG,
                 "📦 MTU negotiated ("
@@ -2044,6 +2133,10 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     @Override
     public void onTransportReset() {
         BesWireFormat.resetFilePackSize();
+        gattFilePackSize = BesWireFormat.FILE_PACK_SIZE_DEFAULT;
+        lastNegotiatedMtu = 0;
+        phoneSupportsFilePayloadV2 = false;
+        fileTransportCoc = false;
         resetPhoneWireProtocolState();
         Log.i(TAG, "📦 Transport reset - file pack size and wire protocol state restored to defaults");
     }
@@ -2067,15 +2160,11 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             return;
         }
 
-        // BES uses 1-based ACK indexing for BOTH success and failure: it sends
-        // index = packet_index + 1 (see agents/ble_file_transfer_implementation.md, "BES ACK
-        // Index Behavior"). Convert to our 0-based packet index. On success this is the accepted
-        // packet; on failure it is the packet to resend.
-        // NOTE: a prior revision treated the failure index as already 0-based (retry = index),
-        // which skipped the failed packet and resent the next one, corrupting flow-control
-        // retries and truncating BLE photos.
-        int ackedPacketIndex = index - 1;
-        int retryPacketIndex = index - 1;
+        // BES response indices are intentionally asymmetric. A success is a cumulative
+        // "next expected" index, so index=16 acknowledges packets 0..15. A failure is the exact
+        // zero-based packet BES still expects, so state=0/index=16 must resend packet 16.
+        int ackedPacketIndex = BesWireFormat.fileAckPacketIndex(1, index);
+        int retryPacketIndex = BesWireFormat.fileAckPacketIndex(0, index);
         int trackedPacketIndex = state == 1 ? ackedPacketIndex : retryPacketIndex;
 
         // Calculate time since packet was sent
@@ -2114,6 +2203,11 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
             // Reset consecutive failure counter on success
             consecutiveFailures = 0;
+            if (pendingFailureRetryIndex >= 0
+                    && ackedPacketIndex >= pendingFailureRetryIndex) {
+                pendingFailureRetryIndex = -1;
+                failureRetryScheduled = false;
+            }
 
             // Advance the ack high-water mark and prune everything at or below it
             // (BES acks are sequential, so a higher ack implies the earlier packets landed)
@@ -2140,6 +2234,16 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                 return;
             }
 
+            // One missing packet can make every later packet in the pushed window receive the
+            // same NAK. Coalesce that burst into one recovery so we do not hit the failure limit
+            // before the first retry has even run.
+            if (retryPacketIndex == pendingFailureRetryIndex && failureRetryScheduled) {
+                Log.d(TAG, "Coalescing duplicate failure ACK for packet " + retryPacketIndex);
+                return;
+            }
+
+            pendingFailureRetryIndex = retryPacketIndex;
+            failureRetryScheduled = true;
             consecutiveFailures++;
 
             // Check if we've hit the failure limit - BLE TX may be permanently stuck
@@ -2173,6 +2277,8 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                 currentFileTransfer = null;
                 pendingPackets.clear();
                 consecutiveFailures = 0;
+                pendingFailureRetryIndex = -1;
+                failureRetryScheduled = false;
                 return;
             }
 
@@ -2194,11 +2300,19 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                             + "ms");
 
             currentFileTransfer.currentPacketIndex = retryPacketIndex;
+            for (Integer pendingIndex : pendingPackets.keySet()) {
+                if (pendingIndex >= retryPacketIndex) {
+                    pendingPackets.remove(pendingIndex);
+                }
+            }
 
             // Add exponential backoff delay to let BES2700 drain its buffers
             fileTransferExecutor.schedule(
                     () -> {
-                        if (currentFileTransfer != null && currentFileTransfer.isActive) {
+                        if (currentFileTransfer != null
+                                && currentFileTransfer.isActive
+                                && pendingFailureRetryIndex == retryPacketIndex) {
+                            failureRetryScheduled = false;
                             Log.d(
                                     TAG,
                                     "📦 Retrying packet "

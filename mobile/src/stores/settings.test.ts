@@ -3,7 +3,7 @@
 import {describe, expect, test} from "bun:test"
 import {DeviceTypes} from "@/../../cloud/packages/types/src"
 
-import {getBluetoothSettingKeysForDevice, MENTRA_LIVE_SETTING_KEYS} from "../../modules/island/src/stores/bluetoothSettingKeys"
+import {getBluetoothSettingKeysForDevice, MENTRA_LIVE_SETTING_KEYS} from "../../modules/engine/src/stores/bluetoothSettingKeys"
 
 const FULL_BLE_KEYS = [
   "brightness",

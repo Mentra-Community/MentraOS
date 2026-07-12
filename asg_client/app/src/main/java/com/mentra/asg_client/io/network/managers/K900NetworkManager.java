@@ -10,6 +10,7 @@ import android.os.Looper;
 import android.provider.Settings;
 import android.util.Log;
 import com.mentra.asg_client.io.network.core.BaseNetworkManager;
+import com.mentra.asg_client.io.network.utils.WifiSecurityChooser;
 import com.mentra.asg_client.io.network.interfaces.IWifiScanCallback;
 import com.mentra.asg_client.io.network.utils.DebugNotificationManager;
 import com.mentra.asg_client.service.system.core.SystemControllerFactory;
@@ -36,9 +37,23 @@ public class K900NetworkManager extends BaseNetworkManager {
     private BroadcastReceiver wifiStateReceiver;
     private final boolean isSystemApp;
 
-    // Hotspot SSID retry tracking
-    private final Handler ssidRetryHandler = new Handler(Looper.getMainLooper());
-    private Runnable pendingSsidRetryRunnable = null;
+    // Hotspot readiness watch. The ap_start intent returns immediately and the SSID in
+    // Settings.Global persists across sessions, so neither proves the AP is up. The watch
+    // polls the real signals (framework AP state + gateway IP on the AP interface + SSID)
+    // and only then reports the hotspot as enabled — the phone treats that message as
+    // "safe to join", so sending it early causes iOS "Unable to Join" failures.
+    private static final int HOTSPOT_READINESS_POLL_MS = 200;
+    private static final int HOTSPOT_READINESS_TIMEOUT_MS = 12000;
+    private final Handler hotspotReadinessHandler = new Handler(Looper.getMainLooper());
+    private Runnable pendingHotspotReadinessRunnable = null;
+    private long hotspotReadinessStartMs = 0;
+    private long hotspotReadinessDeadlineMs = 0;
+
+    // Watch ticks run on the main looper but stopHotspot can run on a command-processing
+    // thread. The lock + stop flag prevent a mid-flight tick from reporting "enabled"
+    // after the user disabled the AP (removeCallbacks alone can't cancel a running tick).
+    private final Object hotspotWatchLock = new Object();
+    private boolean hotspotStopRequested = false;
 
     /**
      * Create a new K900NetworkManager
@@ -210,12 +225,12 @@ public class K900NetworkManager extends BaseNetworkManager {
             context.sendBroadcast(intent);
             Log.d(TAG, "🔥 ✅ K900 hotspot enable intent sent");
 
-            // Try to read SSID from Settings.Global
-            // Note: There may be a race condition where the SSID isn't immediately available
-            // after sending the enable intent. We'll retry with delays if needed.
-            tryReadHotspotSSID(0);
+            // Do NOT report the hotspot as enabled yet — wait until the AP is actually
+            // accepting clients. The watch notifies listeners (and thus the phone) only
+            // once AP state, gateway IP, and SSID are all confirmed.
+            beginHotspotReadinessWatch();
 
-            Log.i(TAG, "🔥 ✅ K900 hotspot start initiated");
+            Log.i(TAG, "🔥 ✅ K900 hotspot start initiated (awaiting readiness)");
         } catch (Exception e) {
             Log.e(TAG, "🔥 💥 Error starting K900 hotspot", e);
             clearHotspotState();
@@ -225,200 +240,183 @@ public class K900NetworkManager extends BaseNetworkManager {
     }
 
     /**
-     * Attempts to read the K900 hotspot SSID from Settings.Global with retries This handles the
-     * race condition where the SSID may not be immediately available after sending the hotspot
-     * enable intent
-     *
-     * @param attemptNumber Current attempt number (0-based)
+     * Starts (or restarts nothing if already running) the hotspot readiness watch. The watch
+     * polls until the framework reports the AP enabled, the AP interface holds the gateway IP,
+     * and the SSID is readable — only then are listeners told the hotspot is enabled. Measured
+     * on-device, readiness lands ~0.4-1.0s after the ap_start intent; the timeout is a
+     * generous multiple of that.
      */
-    private void tryReadHotspotSSID(int attemptNumber) {
-        final int MAX_ATTEMPTS = 5;
-        final int[] RETRY_DELAYS_MS = {0, 200, 500, 1000, 2000}; // Progressive backoff
+    private void beginHotspotReadinessWatch() {
+        synchronized (hotspotWatchLock) {
+            hotspotStopRequested = false;
+            if (pendingHotspotReadinessRunnable != null) {
+                Log.d(TAG, "🔥 ⏳ Hotspot readiness watch already running");
+                return;
+            }
+            hotspotReadinessStartMs = System.currentTimeMillis();
+            hotspotReadinessDeadlineMs = hotspotReadinessStartMs + HOTSPOT_READINESS_TIMEOUT_MS;
+        }
+        Log.d(TAG, "🔥 ⏳ Watching for hotspot readiness (AP state + gateway IP + SSID)...");
+        checkHotspotReadiness();
+    }
 
+    /** One tick of the readiness watch; reschedules itself until ready, timeout, or cancel. */
+    private void checkHotspotReadiness() {
+        synchronized (hotspotWatchLock) {
+            pendingHotspotReadinessRunnable = null;
+            if (hotspotStopRequested) {
+                Log.d(TAG, "🔥 ⛔ Hotspot stopped - abandoning readiness check");
+                return;
+            }
+            checkHotspotReadinessLocked();
+        }
+    }
+
+    private void checkHotspotReadinessLocked() {
+        // Gate on the direct signal: the tethering state machine assigns the gateway IP to
+        // the AP interface only after hostapd reports AP-ENABLED, so gatewayUp implies the
+        // AP accepts clients. The framework AP state (reflection, hidden API) is logged as
+        // corroboration but not required — it is unavailable to non-system dev builds.
+        boolean apEnabled = isWifiTetheringActive();
+        boolean gatewayUp = hasHotspotGatewayIp();
+        String ssid = null;
         try {
-            String ssid = Settings.Global.getString(context.getContentResolver(), "xy_ssid");
+            ssid = Settings.Global.getString(context.getContentResolver(), "xy_ssid");
+        } catch (Exception e) {
+            Log.w(TAG, "🔥 ⚠️ Error reading xy_ssid during readiness check", e);
+        }
+        boolean ssidReady = ssid != null && !ssid.isEmpty();
 
-            if (ssid != null && !ssid.isEmpty()) {
-                // Success! Update state and notify
-                Log.d(
-                        TAG,
-                        "🔥 ✅ Got K900 hotspot SSID from Settings.Global: "
-                                + ssid
-                                + " (attempt "
-                                + (attemptNumber + 1)
-                                + "/"
-                                + MAX_ATTEMPTS
-                                + ")");
+        if (gatewayUp && ssidReady) {
+            long elapsedMs = System.currentTimeMillis() - hotspotReadinessStartMs;
+            Log.i(
+                    TAG,
+                    "🔥 ✅ K900 hotspot READY after "
+                            + elapsedMs
+                            + "ms (apEnabled="
+                            + apEnabled
+                            + "): "
+                            + ssid);
 
-                // Clear pending retry since we succeeded
-                pendingSsidRetryRunnable = null;
+            updateHotspotState(true, ssid, K900_HOTSPOT_PASSWORD);
+            notifyHotspotStateChanged(true);
 
-                updateHotspotState(true, ssid, K900_HOTSPOT_PASSWORD);
-                notifyHotspotStateChanged(true);
+            notificationManager.showHotspotStateNotification(true);
+            notificationManager.showDebugNotification(
+                    "K900 Hotspot Active", ssid + " | " + K900_HOTSPOT_PASSWORD);
+            return;
+        }
 
-                notificationManager.showHotspotStateNotification(true);
-                notificationManager.showDebugNotification(
-                        "K900 Hotspot Active", ssid + " | " + K900_HOTSPOT_PASSWORD);
+        if (System.currentTimeMillis() >= hotspotReadinessDeadlineMs) {
+            failHotspotStartup(
+                    "Hotspot did not become ready within "
+                            + HOTSPOT_READINESS_TIMEOUT_MS
+                            + "ms (apEnabled="
+                            + apEnabled
+                            + ", gatewayUp="
+                            + gatewayUp
+                            + ", ssidReady="
+                            + ssidReady
+                            + ")");
+            return;
+        }
 
-                Log.i(TAG, "🔥 ✅ K900 hotspot active: " + ssid);
-            } else {
-                // SSID not available yet
-                if (attemptNumber < MAX_ATTEMPTS - 1) {
-                    // Retry with delay
-                    int nextAttempt = attemptNumber + 1;
-                    int delayMs = RETRY_DELAYS_MS[nextAttempt];
+        Log.d(
+                TAG,
+                "🔥 ⏳ Hotspot not ready yet (apEnabled="
+                        + apEnabled
+                        + ", gatewayUp="
+                        + gatewayUp
+                        + ", ssidReady="
+                        + ssidReady
+                        + "), rechecking in "
+                        + HOTSPOT_READINESS_POLL_MS
+                        + "ms");
+        pendingHotspotReadinessRunnable = this::checkHotspotReadiness;
+        hotspotReadinessHandler.postDelayed(
+                pendingHotspotReadinessRunnable, HOTSPOT_READINESS_POLL_MS);
+    }
 
-                    Log.w(
-                            TAG,
-                            "🔥 ⚠️ SSID not available yet (attempt "
-                                    + (attemptNumber + 1)
-                                    + "/"
-                                    + MAX_ATTEMPTS
-                                    + "), retrying in "
-                                    + delayMs
-                                    + "ms...");
-
-                    // Cancel any previous pending retry
-                    cancelPendingSsidRetries();
-
-                    // Schedule new retry and track it
-                    pendingSsidRetryRunnable = () -> tryReadHotspotSSID(nextAttempt);
-                    ssidRetryHandler.postDelayed(pendingSsidRetryRunnable, delayMs);
-                } else {
-                    // Max attempts reached - disable hotspot and notify phone of failure
-                    Log.e(
-                            TAG,
-                            "🔥 ❌ Failed to read K900 SSID after "
-                                    + MAX_ATTEMPTS
-                                    + " attempts - disabling hotspot");
-
-                    // Clear pending retry
-                    pendingSsidRetryRunnable = null;
-
-                    // Send disable intent to K900 to clean up
-                    try {
-                        Intent disableIntent = new Intent();
-                        disableIntent.setAction("com.xy.xsetting.action");
-                        disableIntent.setPackage("com.android.systemui");
-                        disableIntent.putExtra("cmd", "ap_start");
-                        disableIntent.putExtra("enable", false);
-                        context.sendBroadcast(disableIntent);
-                        Log.d(TAG, "🔥 📡 Sent disable intent to clean up failed hotspot");
-                    } catch (Exception ex) {
-                        Log.e(TAG, "🔥 💥 Error sending disable intent", ex);
+    /** True when any up interface holds the hotspot gateway IP (192.168.43.1). */
+    private boolean hasHotspotGatewayIp() {
+        try {
+            String gatewayIp = getHotspotGatewayIp();
+            java.util.Enumeration<java.net.NetworkInterface> ifaces =
+                    java.net.NetworkInterface.getNetworkInterfaces();
+            while (ifaces != null && ifaces.hasMoreElements()) {
+                java.net.NetworkInterface iface = ifaces.nextElement();
+                if (!iface.isUp()) {
+                    continue;
+                }
+                java.util.Enumeration<java.net.InetAddress> addrs = iface.getInetAddresses();
+                while (addrs.hasMoreElements()) {
+                    if (gatewayIp.equals(addrs.nextElement().getHostAddress())) {
+                        return true;
                     }
-
-                    // Clear local hotspot state
-                    clearHotspotState();
-
-                    // Notify listeners that hotspot is disabled
-                    notifyHotspotStateChanged(false);
-
-                    // Also send specific error message
-                    String errorMessage =
-                            "Failed to read hotspot SSID after " + MAX_ATTEMPTS + " attempts";
-                    notifyHotspotError(errorMessage);
-
-                    notificationManager.showDebugNotification("Hotspot Failed", errorMessage);
                 }
             }
         } catch (Exception e) {
-            Log.e(
-                    TAG,
-                    "🔥 💥 Error reading K900 SSID from Settings.Global (attempt "
-                            + (attemptNumber + 1)
-                            + "): "
-                            + e.getMessage(),
-                    e);
-
-            // On exception, retry if attempts remaining
-            if (attemptNumber < MAX_ATTEMPTS - 1) {
-                int nextAttempt = attemptNumber + 1;
-                int delayMs = RETRY_DELAYS_MS[nextAttempt];
-
-                Log.w(TAG, "🔥 ⚠️ Retrying in " + delayMs + "ms...");
-
-                // Cancel any previous pending retry
-                cancelPendingSsidRetries();
-
-                // Schedule new retry and track it
-                pendingSsidRetryRunnable = () -> tryReadHotspotSSID(nextAttempt);
-                ssidRetryHandler.postDelayed(pendingSsidRetryRunnable, delayMs);
-            } else {
-                // Max attempts reached due to exceptions - disable hotspot and notify phone of
-                // failure
-                Log.e(
-                        TAG,
-                        "🔥 ❌ Failed to read SSID after "
-                                + MAX_ATTEMPTS
-                                + " attempts due to errors - disabling hotspot");
-
-                // Clear pending retry
-                pendingSsidRetryRunnable = null;
-
-                // Send disable intent to K900 to clean up
-                try {
-                    Intent disableIntent = new Intent();
-                    disableIntent.setAction("com.xy.xsetting.action");
-                    disableIntent.setPackage("com.android.systemui");
-                    disableIntent.putExtra("cmd", "ap_start");
-                    disableIntent.putExtra("enable", false);
-                    context.sendBroadcast(disableIntent);
-                    Log.d(TAG, "🔥 📡 Sent disable intent to clean up failed hotspot");
-                } catch (Exception ex) {
-                    Log.e(TAG, "🔥 💥 Error sending disable intent", ex);
-                }
-
-                // Clear local hotspot state
-                clearHotspotState();
-
-                // Notify listeners that hotspot is disabled
-                notifyHotspotStateChanged(false);
-
-                // Also send specific error message
-                String errorMessage = "Failed to read hotspot SSID: " + e.getMessage();
-                notifyHotspotError(errorMessage);
-
-                notificationManager.showDebugNotification("Hotspot Error", errorMessage);
-            }
+            Log.w(TAG, "🔥 ⚠️ Error checking hotspot gateway interface", e);
         }
+        return false;
+    }
+
+    /** Cleans up a hotspot start that never became ready: disable AP, clear state, notify. */
+    private void failHotspotStartup(String errorMessage) {
+        Log.e(TAG, "🔥 ❌ " + errorMessage + " - disabling hotspot");
+
+        // This is a stop: the disable intent below produces its own teardown echo on the
+        // tethering broadcast, which must not restart the watch off lingering ssid/gateway.
+        // Runs under hotspotWatchLock (called from the watch tick).
+        hotspotStopRequested = true;
+
+        try {
+            Intent disableIntent = new Intent();
+            disableIntent.setAction("com.xy.xsetting.action");
+            disableIntent.setPackage("com.android.systemui");
+            disableIntent.putExtra("cmd", "ap_start");
+            disableIntent.putExtra("enable", false);
+            context.sendBroadcast(disableIntent);
+            Log.d(TAG, "🔥 📡 Sent disable intent to clean up failed hotspot");
+        } catch (Exception ex) {
+            Log.e(TAG, "🔥 💥 Error sending disable intent", ex);
+        }
+
+        clearHotspotState();
+        notifyHotspotStateChanged(false);
+        notifyHotspotError(errorMessage);
+        notificationManager.showDebugNotification("Hotspot Failed", errorMessage);
     }
 
     @Override
     protected void refreshHotspotCredentials() {
-        // K900 specific: Read SSID from Settings.Global
-        try {
-            String ssid = Settings.Global.getString(context.getContentResolver(), "xy_ssid");
-
-            if (ssid != null && !ssid.isEmpty()) {
-                Log.d(TAG, "🔥 ✅ Refreshed K900 hotspot SSID from Settings.Global: " + ssid);
-                updateHotspotState(true, ssid, K900_HOTSPOT_PASSWORD);
-                notifyHotspotStateChanged(true);
-
-                notificationManager.showHotspotStateNotification(true);
-                notificationManager.showDebugNotification(
-                        "K900 Hotspot Active", ssid + " | " + K900_HOTSPOT_PASSWORD);
-            } else {
-                Log.e(TAG, "🔥 ❌ Failed to refresh K900 SSID from Settings.Global");
-                clearHotspotState();
-                notifyHotspotStateChanged(false);
+        // Called from the tethering-state broadcast when the framework starts bringing the
+        // AP up (including hotspots enabled outside asg_client). That broadcast can precede
+        // the AP interface holding its gateway IP, so route through the readiness watch —
+        // listeners only hear "enabled" once clients can actually join.
+        synchronized (hotspotWatchLock) {
+            if (hotspotStopRequested) {
+                // Teardown echo: after a deliberate stop the framework AP can still look
+                // active for a beat, and this broadcast fires while xy_ssid and the gateway
+                // IP may linger. Restarting the watch here would clear the stop flag and
+                // re-announce "enabled" right after the user disabled the AP. Only a real
+                // startHotspot() re-arms the watch.
+                Log.d(TAG, "🔥 ⛔ Ignoring tethering-active echo after hotspot stop");
+                return;
             }
-        } catch (Exception e) {
-            Log.e(TAG, "🔥 💥 Error refreshing K900 SSID from Settings.Global", e);
-            clearHotspotState();
-            notifyHotspotStateChanged(false);
         }
+        beginHotspotReadinessWatch();
     }
 
     /**
-     * Cancels any pending SSID retry attempts Called when hotspot is stopped to prevent stale
-     * callbacks from firing
+     * Cancels any pending hotspot readiness checks. Called when the hotspot is stopped to
+     * prevent stale callbacks from firing.
      */
-    private void cancelPendingSsidRetries() {
-        if (pendingSsidRetryRunnable != null) {
-            Log.d(TAG, "🔥 ⛔ Cancelling pending SSID retry");
-            ssidRetryHandler.removeCallbacks(pendingSsidRetryRunnable);
-            pendingSsidRetryRunnable = null;
+    private void cancelHotspotReadinessWatch() {
+        if (pendingHotspotReadinessRunnable != null) {
+            Log.d(TAG, "🔥 ⛔ Cancelling hotspot readiness watch");
+            hotspotReadinessHandler.removeCallbacks(pendingHotspotReadinessRunnable);
+            pendingHotspotReadinessRunnable = null;
         }
     }
 
@@ -442,8 +440,12 @@ public class K900NetworkManager extends BaseNetworkManager {
             // Clear hotspot state immediately
             clearHotspotState();
 
-            // Cancel any pending SSID retry attempts
-            cancelPendingSsidRetries();
+            // Cancel any pending readiness checks. The flag also stops a tick that is
+            // already executing on the main looper from reporting a late "enabled".
+            synchronized (hotspotWatchLock) {
+                hotspotStopRequested = true;
+                cancelHotspotReadinessWatch();
+            }
 
             Log.d(TAG, "🔥 ✅ K900 hotspot disable intent sent");
             notificationManager.showHotspotStateNotification(false);
@@ -511,14 +513,36 @@ public class K900NetworkManager extends BaseNetworkManager {
             }
         }
 
-        // Create new WiFi config
+        // Create new WiFi config. Security is derived from the AP's advertised capabilities
+        // (the glasses scanned this network moments ago in the provisioning flow) rather
+        // than inferred from password presence — see WifiSecurityChooser.
         android.net.wifi.WifiConfiguration config = new android.net.wifi.WifiConfiguration();
         config.SSID = quotedSsid;
-        if (password != null && !password.isEmpty()) {
-            config.preSharedKey = "\"" + password + "\"";
-            config.allowedKeyManagement.set(android.net.wifi.WifiConfiguration.KeyMgmt.WPA_PSK);
-        } else {
-            config.allowedKeyManagement.set(android.net.wifi.WifiConfiguration.KeyMgmt.NONE);
+        String capabilities = findScanCapabilitiesForSsid(ssid);
+        WifiSecurityChooser.Security security = WifiSecurityChooser.choose(password, capabilities);
+        Log.i(
+                TAG,
+                "📶 Configuring "
+                        + security
+                        + " for "
+                        + ssid
+                        + " (scan caps="
+                        + capabilities
+                        + ")");
+        switch (security) {
+            case OPEN:
+                config.allowedKeyManagement.set(android.net.wifi.WifiConfiguration.KeyMgmt.NONE);
+                break;
+            case SAE:
+                // setSecurityParams(SAE) sets SAE key management + required PMF.
+                config.setSecurityParams(android.net.wifi.WifiConfiguration.SECURITY_TYPE_SAE);
+                config.preSharedKey = "\"" + password + "\"";
+                break;
+            case PSK:
+            default:
+                config.setSecurityParams(android.net.wifi.WifiConfiguration.SECURITY_TYPE_PSK);
+                config.preSharedKey = "\"" + password + "\"";
+                break;
         }
 
         int netId = wifiManager.addNetwork(config);
@@ -542,6 +566,31 @@ public class K900NetworkManager extends BaseNetworkManager {
                         + ", netId="
                         + netId
                         + ")");
+    }
+
+    /**
+     * Latest scan capabilities string for an SSID (strongest BSS wins), or null when the
+     * SSID is not in current scan results.
+     */
+    private String findScanCapabilitiesForSsid(String ssid) {
+        try {
+            List<android.net.wifi.ScanResult> results = wifiManager.getScanResults();
+            if (results == null) {
+                return null;
+            }
+            String best = null;
+            int bestLevel = Integer.MIN_VALUE;
+            for (android.net.wifi.ScanResult result : results) {
+                if (ssid.equals(result.SSID) && result.level > bestLevel) {
+                    bestLevel = result.level;
+                    best = result.capabilities;
+                }
+            }
+            return best;
+        } catch (Exception e) {
+            Log.w(TAG, "📶 ⚠️ Could not read scan results for security detection", e);
+            return null;
+        }
     }
 
     @Override

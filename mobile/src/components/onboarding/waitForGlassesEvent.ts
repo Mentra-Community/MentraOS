@@ -1,5 +1,5 @@
 import {TouchEvent} from "@mentra/bluetooth-sdk"
-import {toolkit} from "@mentra/island"
+import {engine} from "@mentra/engine"
 
 // Helpers for onboarding steps that wait for a glasses interaction. Each takes
 // an AbortSignal and removes its listener both when it fires AND when the step
@@ -19,7 +19,7 @@ export const waitForButtonPress = (signal: AbortSignal, pressTypes: string[]): P
       resolve()
       return
     }
-    const unsub = toolkit.glasses.onButtonPress((data: any) => {
+    const unsub = engine.glasses.onButtonPress((data: any) => {
       if (pressTypes.includes(data?.pressType)) {
         unsub()
         signal.removeEventListener("abort", onAbort)
@@ -40,7 +40,7 @@ export const waitForTouchGesture = (signal: AbortSignal, gestureNames: string[])
       resolve()
       return
     }
-    const unsub = toolkit.glasses.onTouchGesture((data: TouchEvent) => {
+    const unsub = engine.glasses.onTouchGesture((data: TouchEvent) => {
       if (data?.gestureName && gestureNames.includes(data.gestureName)) {
         unsub()
         signal.removeEventListener("abort", onAbort)

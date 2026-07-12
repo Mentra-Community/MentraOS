@@ -1,9 +1,9 @@
 import {useEffect} from "react"
 
-import {useApps} from "@mentra/island"
+import {useApps} from "@mentra/engine"
 
 import {cameraPackageName} from "@/constants/miniapps"
-import {SETTINGS, useSetting} from "@mentra/island"
+import {SETTINGS, useSetting} from "@mentra/engine"
 
 /**
  * Syncs gallery mode state to glasses based on app status.

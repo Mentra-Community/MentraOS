@@ -4,6 +4,7 @@
  */
 
 import Slider from "@react-native-community/slider"
+import BottomSheet from "@gorhom/bottom-sheet"
 import {Image} from "expo-image"
 import {useState, useRef, useEffect, useCallback, useMemo, memo, type ElementRef} from "react"
 // eslint-disable-next-line no-restricted-imports
@@ -12,10 +13,14 @@ import Gallery, {GalleryRef} from "react-native-awesome-gallery"
 import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
 import MaterialCommunityIcons from "react-native-vector-icons/MaterialCommunityIcons"
 import Video from "react-native-video"
+import {scheduleOnRN} from "react-native-worklets"
 
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {ThemedStyle} from "@/theme"
 import {PhotoInfo} from "@/types/asg"
+
+import {MediaMetadataSheet} from "./MediaMetadataSheet"
+import {MediaDimensions} from "./mediaMetadata"
 
 // Screen dimensions are now obtained via useWindowDimensions() hook for rotation support
 
@@ -31,18 +36,25 @@ interface VideoPlayerItemProps {
   photo: PhotoInfo
   isActive: boolean
   onSeekingChange?: (seeking: boolean) => void
+  onDimensions: (dimensions: MediaDimensions) => void
 }
 
 interface ImageItemProps {
   photo: PhotoInfo
   setImageDimensions: (dimensions: {width: number; height: number}) => void
   isActive: boolean // Whether this is the currently visible image
+  onDimensions: (dimensions: MediaDimensions) => void
 }
 
 /**
  * Video player component for gallery items
  */
-const VideoPlayerItem = memo(function VideoPlayerItem({photo, isActive, onSeekingChange}: VideoPlayerItemProps) {
+const VideoPlayerItem = memo(function VideoPlayerItem({
+  photo,
+  isActive,
+  onSeekingChange,
+  onDimensions,
+}: VideoPlayerItemProps) {
   const {themed} = useAppTheme()
   const {width: screenWidth, height: screenHeight} = useWindowDimensions()
   const videoRef = useRef<ElementRef<typeof Video>>(null)
@@ -162,6 +174,7 @@ const VideoPlayerItem = memo(function VideoPlayerItem({photo, isActive, onSeekin
           setHasError(false)
           if (naturalSize?.width && naturalSize?.height && naturalSize.height > 0) {
             setVideoAspectRatio(naturalSize.width / naturalSize.height)
+            onDimensions({width: naturalSize.width, height: naturalSize.height})
           }
         }}
         onBuffer={({isBuffering: buffering}) => {
@@ -322,7 +335,12 @@ const VideoPlayerItem = memo(function VideoPlayerItem({photo, isActive, onSeekin
 /**
  * Image component for gallery items
  */
-const ImageItem = memo(function ImageItem({photo, setImageDimensions, isActive: _isActive}: ImageItemProps) {
+const ImageItem = memo(function ImageItem({
+  photo,
+  setImageDimensions,
+  isActive: _isActive,
+  onDimensions,
+}: ImageItemProps) {
   const {width: screenWidth, height: screenHeight} = useWindowDimensions()
   const hasReportedDimensions = useRef(false)
 
@@ -360,6 +378,7 @@ const ImageItem = memo(function ImageItem({photo, setImageDimensions, isActive: 
               width: e.source.width,
               height: e.source.height,
             })
+            onDimensions({width: e.source.width, height: e.source.height})
           }
         }}
       />
@@ -406,7 +425,11 @@ function CustomOverlay({onClose, currentIndex, total, onShare}: CustomOverlayPro
 export function AwesomeGalleryViewer({visible, photos, initialIndex, onClose, onShare}: AwesomeGalleryViewerProps) {
   const [currentIndex, setCurrentIndex] = useState(initialIndex)
   const [isVideoSeeking, setIsVideoSeeking] = useState(false)
+  const [isMetadataOpen, setIsMetadataOpen] = useState(false)
+  const [mediaDimensions, setMediaDimensions] = useState<Record<string, MediaDimensions>>({})
   const galleryRef = useRef<GalleryRef>(null)
+  const metadataSheetRef = useRef<BottomSheet>(null)
+  const verticalSwipeActionRef = useRef<"metadata" | null>(null)
 
   console.log("🎨 [AwesomeGalleryViewer] === RENDER START ===")
   console.log("🎨 [AwesomeGalleryViewer] visible:", visible)
@@ -422,12 +445,30 @@ export function AwesomeGalleryViewer({visible, photos, initialIndex, onClose, on
     if (visible) {
       console.log("🎨 [AwesomeGalleryViewer] Modal opened, setting index to:", initialIndex)
       setCurrentIndex(initialIndex)
+      setIsMetadataOpen(false)
+      verticalSwipeActionRef.current = null
+      metadataSheetRef.current?.close()
       // Reset gallery to initial position
       setTimeout(() => {
         galleryRef.current?.setIndex(initialIndex, false)
       }, 50)
     }
   }, [visible, initialIndex])
+
+  const recordDimensions = useCallback((name: string, dimensions: MediaDimensions) => {
+    setMediaDimensions((current) => {
+      const existing = current[name]
+      if (existing?.width === dimensions.width && existing.height === dimensions.height) return current
+      return {...current, [name]: dimensions}
+    })
+  }, [])
+
+  const handleVerticalSwipeThreshold = useCallback((translationY: number) => {
+    if (translationY >= 0 || verticalSwipeActionRef.current === "metadata") return
+    verticalSwipeActionRef.current = "metadata"
+    metadataSheetRef.current?.snapToIndex(0)
+    galleryRef.current?.reset(true)
+  }, [])
 
   // Memoized renderItem to prevent unnecessary re-renders of gallery items
   // Pass isActive to both videos and images for optimal loading
@@ -456,12 +497,26 @@ export function AwesomeGalleryViewer({visible, photos, initialIndex, onClose, on
       )
 
       if (isVideo) {
-        return <VideoPlayerItem photo={item} isActive={isActiveItem} onSeekingChange={setIsVideoSeeking} />
+        return (
+          <VideoPlayerItem
+            photo={item}
+            isActive={isActiveItem}
+            onSeekingChange={setIsVideoSeeking}
+            onDimensions={(dimensions) => recordDimensions(item.name, dimensions)}
+          />
+        )
       }
 
-      return <ImageItem photo={item} setImageDimensions={setImageDimensions} isActive={isActiveItem} />
+      return (
+        <ImageItem
+          photo={item}
+          setImageDimensions={setImageDimensions}
+          isActive={isActiveItem}
+          onDimensions={(dimensions) => recordDimensions(item.name, dimensions)}
+        />
+      )
     },
-    [currentIndex, setIsVideoSeeking],
+    [currentIndex, recordDimensions],
   )
 
   // Memoized keyExtractor
@@ -483,8 +538,22 @@ export function AwesomeGalleryViewer({visible, photos, initialIndex, onClose, on
           setCurrentIndex(newIndex)
         }}
         onSwipeToClose={() => {
+          if (verticalSwipeActionRef.current === "metadata") {
+            verticalSwipeActionRef.current = null
+            galleryRef.current?.reset(true)
+            return
+          }
           console.log("🎨 [AwesomeGalleryViewer] Swipe to close triggered")
           onClose()
+        }}
+        onPanStart={() => {
+          verticalSwipeActionRef.current = null
+        }}
+        onTranslationYChange={(translationY, shouldClose) => {
+          "worklet"
+          // Open before the gallery's close threshold so the JS-side action is
+          // recorded before onSwipeToClose runs at the end of a fast upward flick.
+          if (translationY < -40 || shouldClose) scheduleOnRN(handleVerticalSwipeThreshold, translationY)
         }}
         renderItem={renderItem}
         keyExtractor={keyExtractor}
@@ -493,9 +562,9 @@ export function AwesomeGalleryViewer({visible, photos, initialIndex, onClose, on
         maxScale={3}
         doubleTapScale={2}
         pinchEnabled={true}
-        swipeEnabled={!isVideoSeeking}
+        swipeEnabled={!isVideoSeeking && !isMetadataOpen}
         doubleTapEnabled={true}
-        disableVerticalSwipe={true}
+        disableVerticalSwipe={isMetadataOpen}
         disableTransitionOnScaledImage={true}
         loop={false}
         onTap={() => {
@@ -509,6 +578,23 @@ export function AwesomeGalleryViewer({visible, photos, initialIndex, onClose, on
         currentIndex={currentIndex}
         total={photos.length}
         onShare={onShare ? () => onShare(photos[currentIndex]) : undefined}
+      />
+
+      {!isMetadataOpen && (
+        <View style={$metadataHint} pointerEvents="none">
+          <MaterialCommunityIcons name="chevron-up" size={20} color="rgba(255,255,255,0.78)" />
+          <Text style={$metadataHintText}>Swipe up for details</Text>
+        </View>
+      )}
+
+      <MediaMetadataSheet
+        bottomSheetRef={metadataSheetRef}
+        photo={photos[currentIndex]}
+        dimensions={mediaDimensions[photos[currentIndex].name]}
+        onChange={(index) => {
+          setIsMetadataOpen(index >= 0)
+          if (index < 0) verticalSwipeActionRef.current = null
+        }}
       />
     </Modal>
   )
@@ -545,6 +631,21 @@ const $counterText: ThemedStyle<any> = ({spacing}) => ({
   fontWeight: "600",
   marginLeft: spacing.s3,
 })
+
+const $metadataHint = {
+  position: "absolute" as const,
+  bottom: 24,
+  left: 0,
+  right: 0,
+  alignItems: "center" as const,
+  zIndex: 90,
+}
+
+const $metadataHintText = {
+  color: "rgba(255,255,255,0.78)",
+  fontSize: 12,
+  fontWeight: "500" as const,
+}
 
 // Video player styles (dynamic dimensions now inlined via useWindowDimensions)
 

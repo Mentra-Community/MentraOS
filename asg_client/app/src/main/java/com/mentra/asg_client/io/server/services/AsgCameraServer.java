@@ -9,6 +9,7 @@ import com.mentra.asg_client.logging.Logger;
 import com.mentra.asg_client.io.file.core.FileManager;
 import com.mentra.asg_client.io.file.core.FileManager.FileMetadata;
 import com.mentra.asg_client.io.file.core.FileManager.FileOperationResult;
+import com.mentra.asg_client.utils.CaptureRequestId;
 import com.mentra.asg_client.utils.GallerySyncFilter;
 
 import java.io.BufferedInputStream;
@@ -392,6 +393,13 @@ public class AsgCameraServer extends AsgServer {
                 photoInfo.put("mime_type", photoMetadata.getMimeType());
                 photoInfo.put("url", "/api/photo?file=" + photoMetadata.getFileName());
                 photoInfo.put("download", "/api/download?file=" + photoMetadata.getFileName());
+
+                // Originating SDK requestId embedded in the capture directory name, when present.
+                String photoRequestId = CaptureRequestId.extractFromCaptureId(
+                        deriveCaptureId(photoMetadata.getFileName()));
+                if (photoRequestId != null) {
+                    photoInfo.put("request_id", photoRequestId);
+                }
                 
                 // Add video-specific information
                 if (isVideoFile(photoMetadata.getFileName())) {
@@ -1437,6 +1445,14 @@ public class AsgCameraServer extends AsgServer {
 
                 Map<String, Object> capture = new HashMap<>();
                 capture.put("capture_id", captureId);
+
+                // Surface the originating SDK requestId (embedded in the capture directory
+                // name) so clients can correlate synced files with photo/video requests
+                // without timestamp matching. Absent for button captures and legacy files.
+                String captureRequestId = CaptureRequestId.extractFromCaptureId(captureId);
+                if (captureRequestId != null) {
+                    capture.put("request_id", captureRequestId);
+                }
 
                 // Determine type from primary file
                 boolean isVideo = captureId.startsWith("VID_") || captureId.startsWith("BUFFER_");

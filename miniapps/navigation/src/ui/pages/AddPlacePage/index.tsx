@@ -335,17 +335,17 @@ export function AddPlacePage({presetType, onSave, onClose}: Props) {
       initial={{x: "100%"}}
       animate={{x: 0}}
       transition={{type: "spring", stiffness: 300, damping: 34, mass: 0.85}}
-      className="[font-synthesis:none] fixed inset-0 z-50 flex flex-col bg-white antialiased overflow-hidden">
+      className="[font-synthesis:none] fixed inset-0 z-50 flex flex-col bg-white dark:bg-zinc-950 antialiased overflow-hidden">
 
       {/* Header */}
       <div className={`flex items-center gap-3 px-4 ${safeHeadingAddPlaces} pb-4`}>
         <button
           type="button"
           onClick={onClose}
-          className="flex items-center justify-center size-9 rounded-full bg-[#0000000A] shrink-0">
+          className="flex items-center justify-center size-9 rounded-full bg-[#0000000A] dark:bg-[#FFFFFF14] shrink-0">
           <BackChevronIcon />
         </button>
-        <div className="text-[32px] tracking-tight leading-none font-sans font-bold text-black">Add a place</div>
+        <div className="text-[32px] tracking-tight leading-none font-sans font-bold text-black dark:text-zinc-50">Add a place</div>
       </div>    
 
       <div className="flex-1 overflow-y-auto px-4 pb-28">
@@ -361,12 +361,12 @@ export function AddPlacePage({presetType, onSave, onClose}: Props) {
         {/* Name (optional) */}
         <div className="mt-5">
           <div className="pb-2.5 px-1">
-            <div className="tracking-[0.16em] uppercase font-sans font-semibold text-[#0000008C] text-[11px]/3.5">Name (optional)</div>
+            <div className="tracking-[0.16em] uppercase font-sans font-semibold text-[#0000008C] dark:text-zinc-400 text-[11px]/3.5">Name (optional)</div>
           </div>
-          <div className="flex items-center rounded-[18px] py-3.5 px-4 [backdrop-filter:blur(30px)_saturate(180%)] [box-shadow:#FFFFFF80_0px_1px_0px_inset,#00000014_0px_4px_16px] bg-[#FFFFFFA6] border border-solid border-[#FFFFFF99]">
+          <div className="flex items-center rounded-[18px] py-3.5 px-4 [backdrop-filter:blur(30px)_saturate(180%)] [box-shadow:#FFFFFF80_0px_1px_0px_inset,#00000014_0px_4px_16px] bg-[#FFFFFFA6] dark:bg-[#161619CC] border border-solid border-[#FFFFFF99] dark:border-[#FFFFFF1A]">
             <input
               ref={nameInputRef}
-              className="grow shrink basis-0 bg-transparent font-sans text-[#000000E6] text-base/5 placeholder-[#0000008C] focus:outline-none border-none"
+              className="grow shrink basis-0 bg-transparent font-sans text-[#000000E6] dark:text-zinc-50 text-base/5 placeholder-[#0000008C] dark:placeholder-[#FFFFFF8C] focus:outline-none border-none"
               value={customName}
               onChange={(e) => {
                 // Auto-capitalize the first letter so "work" → "Work"
@@ -392,7 +392,7 @@ export function AddPlacePage({presetType, onSave, onClose}: Props) {
               address into the location search above so the user can
               edit it. */}
           {!presetType && nameFocused && (savedHome || savedWork) && (
-            <div className="mt-2 rounded-[18px] bg-white [box-shadow:#00000014_0px_6px_18px,#0000000A_0px_-3px_6px_-3px] overflow-hidden">
+            <div className="mt-2 rounded-[18px] bg-white dark:bg-zinc-900 [box-shadow:#00000014_0px_6px_18px,#0000000A_0px_-3px_6px_-3px] overflow-hidden">
               {savedHome && (
                 <button
                   type="button"
@@ -401,29 +401,29 @@ export function AddPlacePage({presetType, onSave, onClose}: Props) {
                   // close. Same trick the SuggestionsList uses.
                   onMouseDown={(e) => e.preventDefault()}
                   onClick={() => pickSlot("home")}
-                  className="w-full flex items-center gap-3 px-4 py-3.5 text-left active:bg-[#0000000A]">
-                  <div className="size-7 rounded-full bg-[#0000000A] flex items-center justify-center shrink-0">
+                  className="w-full flex items-center gap-3 px-4 py-3.5 text-left active:bg-[#0000000A] dark:active:bg-[#FFFFFF0F]">
+                  <div className="size-7 rounded-full bg-[#0000000A] dark:bg-[#FFFFFF14] flex items-center justify-center shrink-0">
                     <HomeIconOutline />
                   </div>
                   <div className="grow min-w-0">
-                    <div className="font-sans font-semibold text-[#000000E6] text-[15px]/4">Home</div>
-                    <div className="font-sans text-[#0000008C] text-[13px]/4 truncate mt-0.5">{savedHome.address || savedHome.name}</div>
+                    <div className="font-sans font-semibold text-[#000000E6] dark:text-zinc-50 text-[15px]/4">Home</div>
+                    <div className="font-sans text-[#0000008C] dark:text-zinc-400 text-[13px]/4 truncate mt-0.5">{savedHome.address || savedHome.name}</div>
                   </div>
                 </button>
               )}
-              {savedHome && savedWork && <div className="h-px bg-[#00000014] mx-4" />}
+              {savedHome && savedWork && <div className="h-px bg-[#00000014] dark:bg-[#FFFFFF1F] mx-4" />}
               {savedWork && (
                 <button
                   type="button"
                   onMouseDown={(e) => e.preventDefault()}
                   onClick={() => pickSlot("work")}
-                  className="w-full flex items-center gap-3 px-4 py-3.5 text-left active:bg-[#0000000A]">
-                  <div className="size-7 rounded-full bg-[#0000000A] flex items-center justify-center shrink-0">
+                  className="w-full flex items-center gap-3 px-4 py-3.5 text-left active:bg-[#0000000A] dark:active:bg-[#FFFFFF0F]">
+                  <div className="size-7 rounded-full bg-[#0000000A] dark:bg-[#FFFFFF14] flex items-center justify-center shrink-0">
                     <WorkIconOutline />
                   </div>
                   <div className="grow min-w-0">
-                    <div className="font-sans font-semibold text-[#000000E6] text-[15px]/4">Work</div>
-                    <div className="font-sans text-[#0000008C] text-[13px]/4 truncate mt-0.5">{savedWork.address || savedWork.name}</div>
+                    <div className="font-sans font-semibold text-[#000000E6] dark:text-zinc-50 text-[15px]/4">Work</div>
+                    <div className="font-sans text-[#0000008C] dark:text-zinc-400 text-[13px]/4 truncate mt-0.5">{savedWork.address || savedWork.name}</div>
                   </div>
                 </button>
               )}
@@ -453,8 +453,8 @@ export function AddPlacePage({presetType, onSave, onClose}: Props) {
             onSave(selectedPlace, trimmedName, resolvedType)
           }}
           disabled={!selectedPlace}
-          className="h-14 w-full flex items-center justify-center rounded-[28px] px-4 [box-shadow:#00000033_0px_6px_22px] bg-[#1A1A1A] disabled:opacity-40 transition-opacity">
-          <div className="tracking-[-0.005em] font-sans font-semibold text-white text-base/5">Save place</div>
+          className="h-14 w-full flex items-center justify-center rounded-[28px] px-4 [box-shadow:#00000033_0px_6px_22px] bg-[#1A1A1A] dark:bg-zinc-100 disabled:opacity-40 transition-opacity">
+          <div className="tracking-[-0.005em] font-sans font-semibold text-white dark:text-zinc-900 text-base/5">Save place</div>
         </button>
       </div>
     </motion.div>

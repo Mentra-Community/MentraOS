@@ -89,7 +89,7 @@ export function NavigationRunningDrawer({
           exit={{y: "100%"}}
           transition={{type: "spring", stiffness: 320, damping: 42}}
           className="fixed left-0 right-0 bottom-0 z-40 pointer-events-none">
-          <div ref={measureRef} className="[font-synthesis:none] pointer-events-auto mx-auto max-w-md flex items-center pt-4 pb-8.5 gap-2 bg-[#FFFFFFA6] border-t border-t-solid border-t-[#FFFFFF80] [backdrop-filter:blur(40px)_saturate(180%)] antialiased px-4 rounded-t-[28px]">
+          <div ref={measureRef} className="[font-synthesis:none] pointer-events-auto mx-auto max-w-md flex items-center pt-4 pb-8.5 gap-2 bg-[#FFFFFFA6] dark:bg-[#161619CC] border-t border-t-solid border-t-[#FFFFFF80] dark:border-t-[#FFFFFF1A] [backdrop-filter:blur(40px)_saturate(180%)] antialiased px-4 rounded-t-[28px]">
             <StatRow
               items={[
                 {label: arrivalLabel, sub: "Arrival"},
@@ -158,7 +158,7 @@ function StatRow({items}: {items: {label: string; sub: string}[]}) {
     <>
       {items.map((it, i) => (
         <>
-          {i > 0 ? <div key={`sep-${i}`} className="w-px h-7 bg-[#0000001A] shrink-0" /> : null}
+          {i > 0 ? <div key={`sep-${i}`} className="w-px h-7 bg-[#0000001A] dark:bg-[#FFFFFF26] shrink-0" /> : null}
           <div
             key={`stat-${i}`}
             className="grow shrink basis-[0%] min-w-0 flex flex-col items-center gap-0.5">
@@ -167,10 +167,10 @@ function StatRow({items}: {items: {label: string; sub: string}[]}) {
                 labelRefs.current[i] = el
               }}
               style={{fontSize: `${fontPx}px`, lineHeight: `${linePx}px`}}
-              className="tracking-[-0.01em] text-[#000000E6] font-sans font-bold whitespace-nowrap self-stretch text-center overflow-hidden">
+              className="tracking-[-0.01em] text-[#000000E6] dark:text-zinc-50 font-sans font-bold whitespace-nowrap self-stretch text-center overflow-hidden">
               {it.label}
             </div>
-            <div className="text-[#0000008C] font-sans text-[13px]/4 whitespace-nowrap">{it.sub}</div>
+            <div className="text-[#0000008C] dark:text-zinc-400 font-sans text-[13px]/4 whitespace-nowrap">{it.sub}</div>
           </div>
         </>
       ))}

@@ -1,8 +1,8 @@
-// Imports the real GlassesSettingsSync by path (not via "@mentra/island",
+// Imports the real GlassesSettingsSync by path (not via "@mentra/engine",
 // which jest mocks) so the actual diff logic runs under the mobile jest CI
 // runner.
-import {diffBluetoothSettingsForPush, stripPairingIdentity} from "../../modules/island/src/services/GlassesSettingsSync"
-import {PAIRING_IDENTITY_KEYS, SETTINGS} from "../../modules/island/src/stores/settings"
+import {diffBluetoothSettingsForPush, stripPairingIdentity} from "../../modules/engine/src/services/GlassesSettingsSync"
+import {PAIRING_IDENTITY_KEYS, SETTINGS} from "../../modules/engine/src/stores/settings"
 
 describe("diffBluetoothSettingsForPush", () => {
   it("pushes changed non-identity keys only", () => {

@@ -1,4 +1,4 @@
-import type {ReportTrigger} from "@mentra/island"
+import type {ReportTrigger} from "@mentra/engine"
 
 export interface BugReportCategorization {
   triggerSource: string

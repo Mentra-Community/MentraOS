@@ -2,12 +2,12 @@ import {useEffect, useRef} from "react"
 
 import {useNavigationStore} from "@/stores/navigation"
 import {Capabilities, getModelCapabilities} from "@/../../cloud/packages/types/src"
-import {useToolkitSnapshot} from "@/hooks/useToolkitSnapshot"
-import {SETTINGS, useSetting} from "@mentra/island"
+import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
+import {SETTINGS, useSetting} from "@mentra/engine"
 import showAlert from "@/utils/AlertUtils"
 import {translate} from "@/i18n/translate"
 import {usePathname} from "expo-router"
-import {BgTimer, toolkit, type VersionInfo} from "@mentra/island"
+import {BgTimer, engine, type VersionInfo} from "@mentra/engine"
 
 export {
   fetchVersionInfo,
@@ -16,19 +16,19 @@ export {
   findMatchingMtkPatch,
   checkBesUpdate,
   checkForOtaUpdate,
-} from "@mentra/island/internal"
+} from "@mentra/engine/internal"
 
 function areGlassesConnectedNow(): boolean {
-  return toolkit.ota.snapshot().connected
+  return engine.ota.snapshot().connected
 }
 
 export function OtaUpdateChecker() {
   const {push} = useNavigationStore.getState()
   const pathname = usePathname()
 
-  const otaSnapshot = useToolkitSnapshot(toolkit.ota.snapshot, toolkit.ota.onSnapshot)
+  const otaSnapshot = useEngineSnapshot(engine.ota.snapshot, engine.ota.onSnapshot)
 
-  // OTA check state from toolkit
+  // OTA check state from engine
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
   const [superMode] = useSetting(SETTINGS.super_mode.key)
   const glassesConnected = otaSnapshot.connected
@@ -77,10 +77,10 @@ export function OtaUpdateChecker() {
         otaCheckTimeoutRef.current = null
       }
       // Clear MTK session flag on disconnect (glasses rebooted, new version now active)
-      const mtkWasUpdated = toolkit.ota.snapshot().mtkUpdatedThisSession
+      const mtkWasUpdated = engine.ota.snapshot().mtkUpdatedThisSession
       if (mtkWasUpdated) {
         console.log("OTA: Clearing MTK session flag - glasses disconnected (likely rebooted)")
-        toolkit.ota.markMtkUpdatedThisSession(false)
+        engine.ota.markMtkUpdatedThisSession(false)
       }
     }
   }, [glassesConnected])
@@ -145,7 +145,7 @@ export function OtaUpdateChecker() {
     // Last-moment imperative check: reactive glassesConnected can be stale if
     // disconnect and navigation happen in the same render cycle.
     if (!areGlassesConnectedNow()) return
-    if (!toolkit.ota.snapshot().wifiConnected) {
+    if (!engine.ota.snapshot().wifiConnected) {
       console.log("OTA: Pending update is waiting for glasses WiFi before showing install prompt")
       return
     }
@@ -218,7 +218,7 @@ export function OtaUpdateChecker() {
       console.log("OTA: check starting")
       hasCheckedOta.current = true // Mark as checked to prevent duplicate checks
 
-      toolkit.ota
+      engine.ota
         .checkForUpdates({
           waitForBuildNumberMs: 0,
           waitForBesVersionMs: 5000,
@@ -269,7 +269,7 @@ export function OtaUpdateChecker() {
 
           pendingUpdate.current = {latestVersionInfo, updates}
 
-          if (toolkit.ota.snapshot().wifiConnected) {
+          if (engine.ota.snapshot().wifiConnected) {
             console.log("OTA: Update available and glasses are on WiFi - prompting install")
             pendingUpdate.current = null
             hasPromptedOta.current = true

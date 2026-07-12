@@ -1,8 +1,8 @@
-import {submitAutomaticReport} from "../../../modules/island/src/facades/reports"
-import {cloudClientService} from "../../../modules/island/src/services/CloudClientService"
-import {logBuffer} from "../../../modules/island/src/utils/devLogging"
+import {submitAutomaticReport} from "../../../modules/engine/src/facades/reports"
+import {cloudClientService} from "../../../modules/engine/src/services/CloudClientService"
+import {logBuffer} from "../../../modules/engine/src/utils/devLogging"
 
-jest.mock("../../../modules/island/src/services/CloudClientService", () => ({
+jest.mock("../../../modules/engine/src/services/CloudClientService", () => ({
   cloudClientService: {
     core: {
       reports: {
@@ -17,11 +17,11 @@ jest.mock("../../../modules/island/src/services/CloudClientService", () => ({
   },
 }))
 
-jest.mock("../../../modules/island/src/utils/diagnosticContext", () => ({
+jest.mock("../../../modules/engine/src/utils/diagnosticContext", () => ({
   collectDiagnosticContext: jest.fn(async (context) => context ?? {}),
 }))
 
-jest.mock("../../../modules/island/src/utils/devLogging", () => ({
+jest.mock("../../../modules/engine/src/utils/devLogging", () => ({
   logBuffer: {
     getRecentLogs: jest.fn(() => []),
   },

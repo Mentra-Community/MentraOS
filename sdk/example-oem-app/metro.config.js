@@ -19,11 +19,11 @@ config.watchFolders = [sdkRoot, modulesRoot, cloudPackagesRoot]
 
 config.resolver.extraNodeModules = {
   ...(config.resolver.extraNodeModules ?? {}),
-  // Every monorepo package island imports at runtime, mapped explicitly so
+  // Every monorepo package engine imports at runtime, mapped explicitly so
   // bundling never depends on which node_modules layout the installer chose
   // (bun's member-planting differs across versions).
   "@mentra/bluetooth-sdk": path.resolve(modulesRoot, "bluetooth-sdk"),
-  "@mentra/island": path.resolve(modulesRoot, "island"),
+  "@mentra/engine": path.resolve(modulesRoot, "engine"),
   "@mentra/crust": path.resolve(modulesRoot, "crust"),
   "@mentra/jspolyfill": path.resolve(modulesRoot, "jspolyfill"),
   "@mentra/miniapp": path.resolve(modulesRoot, "miniapp"),

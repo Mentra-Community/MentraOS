@@ -32,7 +32,7 @@ export function TranslationItem({translation, isFirst, isLast, showOriginalText 
 
   return (
     <div
-      className={`self-stretch p-4 bg-white/80 rounded-md flex flex-col gap-2 ${
+      className={`self-stretch p-4 bg-white/80 dark:bg-zinc-900/80 rounded-md flex flex-col gap-2 ${
         translation.isFinal ? "opacity-100" : "opacity-80"
       } ${isFirst ? "rounded-t-2xl" : ""} ${isLast ? "rounded-b-2xl" : ""}`}>
       <div className="flex items-center gap-2">
@@ -50,26 +50,26 @@ export function TranslationItem({translation, isFirst, isLast, showOriginalText 
           {translation.speaker}
         </span>
 
-        <span className="text-gray-500 text-xs font-medium font-['Red_Hat_Display'] leading-4">
+        <span className="text-gray-500 dark:text-zinc-400 text-xs font-medium font-['Red_Hat_Display'] leading-4">
           {sourceLanguage && sourceLanguage !== "auto"
             ? `${getFlagEmoji(sourceLanguage)} ${getLanguageName(sourceLanguage)} -> `
             : ""}
           {getFlagEmoji(translation.targetLanguage)} {getLanguageName(translation.targetLanguage)}
         </span>
 
-        <span className="text-gray-600 text-xs font-normal font-['Red_Hat_Display'] leading-4 ml-auto">
+        <span className="text-gray-600 dark:text-zinc-300 text-xs font-normal font-['Red_Hat_Display'] leading-4 ml-auto">
           {translation.timestamp ? formatTimestamp(translation.timestamp) : translation.isFinal ? "" : "Now"}
         </span>
       </div>
 
       {showOriginalText && translation.originalText && (
-        <p className="selectable-text self-stretch text-gray-500 text-sm font-normal font-['Red_Hat_Display'] leading-5">
+        <p className="selectable-text self-stretch text-gray-500 dark:text-zinc-400 text-sm font-normal font-['Red_Hat_Display'] leading-5">
           {translation.originalText}
         </p>
       )}
 
       <p
-        className={`selectable-text self-stretch text-gray-900 text-base font-normal font-['Red_Hat_Display'] leading-6 ${
+        className={`selectable-text self-stretch text-gray-900 dark:text-zinc-50 text-base font-normal font-['Red_Hat_Display'] leading-6 ${
           translation.isFinal ? "" : "italic"
         }`}>
         {translation.text}

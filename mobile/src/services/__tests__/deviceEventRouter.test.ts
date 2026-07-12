@@ -1,16 +1,16 @@
-// Exercises the real island DeviceEventRouter by path (not via "@mentra/island",
+// Exercises the real island DeviceEventRouter by path (not via "@mentra/engine",
 // which jest mocks): inbound device BLE events must route into island stores, the
 // process event bus (which island's own gallerySyncService listens on), the photo
 // coordinator, and local miniapps — so a bare OEM gets device data, not just the
 // Mentra app.
-import {startDeviceEventRouter, stopDeviceEventRouter} from "../../../modules/island/src/services/DeviceEventRouter"
-import {useGlassesStore} from "../../../modules/island/src/stores/glasses"
-import {useSettingsStore} from "../../../modules/island/src/stores/settings"
-import GlobalEventEmitter from "../../../modules/island/src/utils/GlobalEventEmitter"
-import {phonePhotoCoordinator} from "../../../modules/island/src/services/PhonePhotoCoordinator"
-import localMiniappRuntime from "../../../modules/island/src/services/LocalMiniappRuntime"
-import localSttFallbackCoordinator from "../../../modules/island/src/services/LocalSttFallbackCoordinator"
-import {asgCameraApi} from "../../../modules/island/src/services/asg/asgCameraApi"
+import {startDeviceEventRouter, stopDeviceEventRouter} from "../../../modules/engine/src/services/DeviceEventRouter"
+import {useGlassesStore} from "../../../modules/engine/src/stores/glasses"
+import {useSettingsStore} from "../../../modules/engine/src/stores/settings"
+import GlobalEventEmitter from "../../../modules/engine/src/utils/GlobalEventEmitter"
+import {phonePhotoCoordinator} from "../../../modules/engine/src/services/PhonePhotoCoordinator"
+import localMiniappRuntime from "../../../modules/engine/src/services/LocalMiniappRuntime"
+import localSttFallbackCoordinator from "../../../modules/engine/src/services/LocalSttFallbackCoordinator"
+import {asgCameraApi} from "../../../modules/engine/src/services/asg/asgCameraApi"
 import {emitBluetoothSdkEvent, resetBluetoothSdkMock} from "@/test-utils/mockBluetoothSdk"
 
 describe("DeviceEventRouter", () => {

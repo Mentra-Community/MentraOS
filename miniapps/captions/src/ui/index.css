@@ -1,6 +1,10 @@
 @import url("https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@400;500;600;700&display=swap");
 @import "tailwindcss";
 
+/* Tailwind v4: make `dark:` variants follow the host-driven `.dark` class
+   (toggled by MentraProvider) instead of prefers-color-scheme. */
+@custom-variant dark (&:is(.dark *));
+
 /* CSS Variables (ported verbatim from the cloud webview) */
 :root {
   --radius: 0.625rem;
@@ -138,4 +142,10 @@ select,
   /* IE and Edge */
   scrollbar-width: none;
   /* Firefox */
+}
+
+/* Dark-mode page background — the light `body { background: #f4f4f5 }` above
+   is untouched; this only applies when the host reports a dark scheme. */
+.dark body {
+  background: #0b0b0d;
 }

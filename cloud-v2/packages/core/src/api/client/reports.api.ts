@@ -189,6 +189,23 @@ function readReportId(c: AppContext, paramName: string): string {
   return reportId;
 }
 
+// The declared multipart type is attacker-controlled; store it only when it
+// names a plausible screenshot format, otherwise fall back to an opaque type.
+// The admin artifact route additionally allowlists what it will serve inline.
+const SCREENSHOT_CONTENT_TYPES = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/gif",
+  "image/heic",
+  "image/heif",
+]);
+
+function screenshotContentType(raw: string | undefined): string {
+  const cleaned = (raw ?? "").split(";")[0].trim().toLowerCase();
+  return SCREENSHOT_CONTENT_TYPES.has(cleaned) ? cleaned : "application/octet-stream";
+}
+
 async function readJsonObject(c: AppContext): Promise<Record<string, unknown>> {
   try {
     const parsed = await c.req.json();
@@ -222,7 +239,7 @@ async function readAttachmentFiles(c: AppContext): Promise<ReportAttachmentInput
     }
     files.push({
       filename: value.name || `artifact-${Date.now()}`,
-      contentType: value.type || "application/octet-stream",
+      contentType: screenshotContentType(value.type),
       bytes: new Uint8Array(await value.arrayBuffer()),
     });
   }

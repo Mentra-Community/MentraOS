@@ -1,4 +1,4 @@
-import {deriveGalleryDisplayName} from "../../../modules/island/src/utils/permissions/galleryDisplayName"
+import {deriveGalleryDisplayName} from "../../../modules/engine/src/utils/permissions/galleryDisplayName"
 
 describe("deriveGalleryDisplayName", () => {
   it("uses capture folder name for base.jpg in capture directories", () => {

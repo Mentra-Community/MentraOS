@@ -9,9 +9,9 @@ import {RouteButton} from "@/components/ui/RouteButton"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
-import {toolkit} from "@mentra/island"
-import {gallerySettingsService, localStorageService} from "@mentra/island/internal"
-import {SETTINGS, useSetting} from "@mentra/island"
+import {engine} from "@mentra/engine"
+import {gallerySettingsService, localStorageService} from "@mentra/engine/internal"
+import {SETTINGS, useSetting} from "@mentra/engine"
 import {ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
 
@@ -102,7 +102,7 @@ export default function GallerySettingsScreen() {
             // console.log("[GallerySettings] 🗑️ Clearing all downloaded files and sync queue")
             await localStorageService.clearAllFiles()
 
-            toolkit.gallery.clearQueue()
+            engine.gallery.clearQueue()
             // console.log("[GallerySettings] ✅ Cleared sync queue from store")
 
             showAlert("Success", "All photos deleted from device storage", [{text: translate("common:ok")}])

@@ -12,6 +12,7 @@ import { ulid } from "ulid";
 import { createLogger } from "@mentra/cloud-shared";
 import { ReportModel } from "../models/report.model";
 import { ReportAssetModel } from "../models/report-asset.model";
+import { notifyReportSlack } from "./report-slack.service";
 import { createStorageService } from "./storage/storage.service";
 
 const logger = createLogger("core").child({ service: "report.service" });
@@ -96,21 +97,35 @@ export interface AddReportArtifactsResult {
 export async function submitReport(input: SubmitReportInput): Promise<SubmitReportResult> {
   const reportId = `rep_${ulid()}`;
   const status: ReportStatus = input.kind === "feedback" ? "ready" : "collecting";
+  const feedback = "feedback" in input
+    ? typeof input.feedback === "string"
+      ? { message: input.feedback }
+      : input.feedback
+    : null;
   await ReportModel.create({
     reportId,
     mentraUserId: input.mentraUserId,
     kind: input.kind,
     trigger: "trigger" in input ? input.trigger : null,
     report: "report" in input ? input.report : null,
-    feedback: "feedback" in input
-      ? typeof input.feedback === "string"
-        ? { message: input.feedback }
-        : input.feedback
-      : null,
+    feedback,
     context: input.context,
     artifacts: [],
     status,
   });
+
+  // Feedback reports are complete as submitted, so they notify here;
+  // bug/automatic reports notify from markReportReady once artifact
+  // collection finishes. Fire-and-forget: the response never waits on Slack.
+  if (status === "ready") {
+    notifyReportSlack({
+      reportId,
+      mentraUserId: input.mentraUserId,
+      kind: input.kind,
+      feedback,
+      context: input.context,
+    }).catch(() => {});
+  }
 
   return { reportId, status };
 }
@@ -158,11 +173,27 @@ export async function markReportReady(input: {
   mentraUserId: string;
   reportId: string;
 }): Promise<ReportStatus | null> {
-  const result = await ReportModel.updateOne(
+  // The pre-update document shows whether this call actually finished
+  // collection (repeated /complete calls find "ready" and stay silent) and
+  // carries the snapshot the Slack notification summarizes.
+  const before = await ReportModel.findOneAndUpdate(
     { reportId: input.reportId, mentraUserId: input.mentraUserId },
     { $set: { status: "ready", updatedAt: new Date() } },
-  );
-  if (result.matchedCount !== 1) return null;
+    { returnDocument: "before" },
+  ).lean();
+  if (!before) return null;
+  if (before.status === "collecting") {
+    notifyReportSlack({
+      reportId: input.reportId,
+      mentraUserId: input.mentraUserId,
+      kind: before.kind,
+      trigger: before.trigger,
+      report: before.report,
+      feedback: before.feedback,
+      context: before.context,
+      artifactCount: before.artifacts?.length ?? 0,
+    }).catch(() => {});
+  }
   return "ready";
 }
 
@@ -273,6 +304,152 @@ async function addArtifacts(input: {
     }
     throw error;
   }
+}
+
+// === Admin read surface ===
+// Consumed by the adminAuth-gated routes behind the internal admin console.
+
+export interface AdminReportArtifact {
+  artifactId: string;
+  type: "logs" | "screenshot" | "state_snapshot";
+  source: string;
+  filename: string | null;
+  contentType: string | null;
+  sizeBytes: number | null;
+  createdAt: string | null;
+}
+
+export interface AdminReportSummary {
+  reportId: string;
+  kind: ReportKind;
+  status: ReportStatus;
+  mentraUserId: string;
+  trigger: ReportTrigger | null;
+  report: (ReportDetails & Record<string, unknown>) | null;
+  feedback: Record<string, unknown> | null;
+  artifacts: AdminReportArtifact[];
+  createdAt: string | null;
+  updatedAt: string | null;
+}
+
+export interface AdminReportDetail extends AdminReportSummary {
+  context: Record<string, unknown>;
+}
+
+export interface AdminReportAsset {
+  artifactId: string;
+  storageKey: string;
+  fileName: string | null;
+  contentType: string;
+  sizeBytes: number;
+  sha256: string;
+  createdAt: string | null;
+}
+
+export interface ListReportsFilter {
+  kind?: ReportKind;
+  status?: ReportStatus;
+  limit?: number;
+  before?: Date;
+}
+
+export async function listReports(filter: ListReportsFilter = {}): Promise<AdminReportSummary[]> {
+  const query: Record<string, unknown> = {};
+  if (filter.kind) query.kind = filter.kind;
+  if (filter.status) query.status = filter.status;
+  if (filter.before) query.createdAt = { $lt: filter.before };
+  const limit = Math.min(Math.max(Math.trunc(filter.limit ?? 50), 1), 200);
+  // Context is the one potentially chunky field and the list view never shows
+  // it; everything else on a report is metadata-sized.
+  const rows = await ReportModel.find(query, { context: 0 })
+    .sort({ createdAt: -1 })
+    .limit(limit)
+    .lean();
+  return rows.map(serializeReportSummary);
+}
+
+export async function getReport(
+  reportId: string,
+): Promise<{ report: AdminReportDetail; assets: AdminReportAsset[] } | null> {
+  const row = await ReportModel.findOne({ reportId }).lean();
+  if (!row) return null;
+  const assets = await ReportAssetModel.find({ reportId }).sort({ createdAt: 1 }).lean();
+  return {
+    report: {
+      ...serializeReportSummary(row),
+      context: (row.context ?? {}) as Record<string, unknown>,
+    },
+    assets: assets.map((asset) => ({
+      artifactId: asset.artifactId,
+      storageKey: asset.storageKey,
+      fileName: asset.fileName ?? null,
+      contentType: asset.contentType,
+      sizeBytes: asset.sizeBytes,
+      sha256: asset.sha256,
+      createdAt: toIso(asset.createdAt),
+    })),
+  };
+}
+
+/**
+ * Payload bytes for one artifact, or null when no such asset row exists.
+ * Throws when the row exists but the blob cannot be read (deleted or storage
+ * outage) — the API layer decides how to present that.
+ */
+export async function readReportArtifactPayload(
+  reportId: string,
+  artifactId: string,
+): Promise<{ bytes: Uint8Array; contentType: string; fileName: string | null } | null> {
+  const asset = await ReportAssetModel.findOne({ reportId, artifactId }).lean();
+  if (!asset) return null;
+  const bytes = await getStorage().getObject(asset.storageKey);
+  return { bytes, contentType: asset.contentType, fileName: asset.fileName ?? null };
+}
+
+function serializeReportSummary(row: {
+  reportId: string;
+  kind: string;
+  status: string;
+  mentraUserId: string;
+  trigger?: unknown;
+  report?: unknown;
+  feedback?: unknown;
+  artifacts?: Array<{
+    artifactId: string;
+    type: string;
+    source: string;
+    filename?: string | null;
+    contentType?: string | null;
+    sizeBytes?: number | null;
+    createdAt?: Date | null;
+  }> | null;
+  createdAt?: Date | null;
+  updatedAt?: Date | null;
+}): AdminReportSummary {
+  return {
+    reportId: row.reportId,
+    kind: row.kind as ReportKind,
+    status: row.status as ReportStatus,
+    mentraUserId: row.mentraUserId,
+    trigger: (row.trigger ?? null) as AdminReportSummary["trigger"],
+    report: (row.report ?? null) as AdminReportSummary["report"],
+    feedback: (row.feedback ?? null) as AdminReportSummary["feedback"],
+    artifacts: (row.artifacts ?? []).map((artifact) => ({
+      artifactId: artifact.artifactId,
+      type: artifact.type as AdminReportArtifact["type"],
+      source: artifact.source,
+      filename: artifact.filename ?? null,
+      contentType: artifact.contentType ?? null,
+      sizeBytes: artifact.sizeBytes ?? null,
+      createdAt: toIso(artifact.createdAt),
+    })),
+    createdAt: toIso(row.createdAt),
+    updatedAt: toIso(row.updatedAt),
+  };
+}
+
+function toIso(value: Date | null | undefined): string | null {
+  return value ? new Date(value).toISOString() : null;
 }
 
 /**

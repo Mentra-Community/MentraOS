@@ -4,17 +4,17 @@ import {Header, Screen} from "@/components/ignite"
 import {Group} from "@/components/ui/Group"
 import {RouteButton} from "@/components/ui/RouteButton"
 import {useAppTheme} from "@/contexts/ThemeContext"
-import {useToolkitSnapshot} from "@/hooks/useToolkitSnapshot"
+import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {translate} from "@/i18n"
 import {useNavigationStore} from "@/stores/navigation"
-import {SETTINGS, useSetting} from "@mentra/island"
-import {toolkit} from "@mentra/island"
+import {SETTINGS, useSetting} from "@mentra/engine"
+import {engine} from "@mentra/engine"
 
 export default function DeviceInfoScreen() {
   const {goBack} = useNavigationStore.getState()
   const {theme} = useAppTheme()
 
-  const deviceInfo = useToolkitSnapshot(toolkit.glasses.info, (onChange) => toolkit.glasses.onInfo(onChange))
+  const deviceInfo = useEngineSnapshot(engine.glasses.info, (onChange) => engine.glasses.onInfo(onChange))
   const connectedWifi = deviceInfo.wifi.state === "connected" ? deviceInfo.wifi : null
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
 

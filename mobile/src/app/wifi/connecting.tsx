@@ -1,4 +1,4 @@
-import {toolkit} from "@mentra/island"
+import {engine} from "@mentra/engine"
 import {useLocalSearchParams} from "expo-router"
 import {useEffect, useState, useCallback} from "react"
 import {ActivityIndicator, View} from "react-native"
@@ -81,7 +81,7 @@ export default function WifiConnectingScreen() {
   const attemptConnection = async () => {
     try {
       console.log("Attempting to send wifi credentials to Core", ssid, password)
-      await toolkit.glasses.wifi.connect(ssid, password)
+      await engine.glasses.wifi.connect(ssid, password)
 
       // Save credentials ONLY on successful connection if checkbox was checked.
       // This ensures we never save wrong passwords.
