@@ -39,6 +39,7 @@
         "babel-plugin-module-resolver": "5.0.0",
         "date-fns": "^4.1.0",
         "dotenv": "^17.3.1",
+        "exifr": "^7.1.3",
         "expo": "~55.0.24",
         "expo-application": "~55.0.15",
         "expo-asset": "~55.0.17",
@@ -356,6 +357,7 @@
   "patchedDependencies": {
     "react-native-draggable-masonry@1.3.0": "patches/react-native-draggable-masonry@1.3.0.patch",
     "react-native-webview@13.16.0": "patches/react-native-webview@13.16.0.patch",
+    "react-native-awesome-gallery@0.4.3": "patches/react-native-awesome-gallery@0.4.3.patch",
     "react-native-inner-shadow@2.4.0": "patches/react-native-inner-shadow@2.4.0.patch",
   },
   "packages": {
@@ -1722,6 +1724,8 @@
     "events": ["events@3.3.0", "", {}, "sha512-mQw+2fkQbALzQ7V0MY0IqdnXNOeTtP4r0lN9z7AAawCXgqea7bDii20AYrIBrFd/Hx0M2Ocz6S111CaFkUcb0Q=="],
 
     "execa": ["execa@5.1.1", "", { "dependencies": { "cross-spawn": "^7.0.3", "get-stream": "^6.0.0", "human-signals": "^2.1.0", "is-stream": "^2.0.0", "merge-stream": "^2.0.0", "npm-run-path": "^4.0.1", "onetime": "^5.1.2", "signal-exit": "^3.0.3", "strip-final-newline": "^2.0.0" } }, "sha512-8uSpZZocAZRBAPIEINJj3Lo9HyGitllczc27Eh5YYojjMFMn8yHMDMaUHE2Jqfq05D/wucwI4JGURyXt1vchyg=="],
+
+    "exifr": ["exifr@7.1.3", "", {}, "sha512-g/aje2noHivrRSLbAUtBPWFbxKdKhgj/xr1vATDdUXPOFYJlQ62Ft0oy+72V6XLIpDJfHs6gXLbBLAolqOXYRw=="],
 
     "exit": ["exit@0.1.2", "", {}, "sha512-Zk/eNKV2zbjpKzrsQ+n1G6poVbErQxJ0LBOJXaKZ1EViLzH+hrLu9cdXI4zw9dBQJslwBEpbQ2P1oS7nDxs6jQ=="],
 
