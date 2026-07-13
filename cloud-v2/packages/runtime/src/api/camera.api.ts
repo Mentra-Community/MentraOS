@@ -35,6 +35,25 @@ const WEBHOOK_SECRET = process.env.CAMERA_WEBHOOK_SECRET;
 
 export const cameraApi = new Hono();
 
+/**
+ * Return the public origin that reached the TLS-terminating ingress.
+ *
+ * Runtime receives plain HTTP from ingress-nginx after TLS termination, while
+ * devices must use the original HTTPS origin for generated photo URLs. The
+ * ingress overwrites x-forwarded-proto and preserves Host, so no per-cluster
+ * public URL configuration is required. Direct local requests have no
+ * forwarded header and keep their actual protocol.
+ */
+export function publicOrigin(c: Context): string {
+  const url = new URL(c.req.url);
+  const forwardedProto = c.req.header("x-forwarded-proto")?.split(",", 1)[0]?.trim().toLowerCase();
+  const proto =
+    forwardedProto === "http" || forwardedProto === "https"
+      ? forwardedProto
+      : url.protocol.replace(":", "");
+  return `${proto}://${url.host}`;
+}
+
 /** Verify the Bearer access token; returns the mentraUserId or an error Response. */
 async function authUser(
   c: Context,
@@ -74,7 +93,7 @@ cameraApi.post("/photo", async (c) => {
 
   // The local provider builds absolute URLs back at this runtime; pass the
   // origin the client used so the device/test can reach them.
-  const origin = new URL(c.req.url).origin;
+  const origin = publicOrigin(c);
   const result = await camera.requestPhoto(auth.mentraUserId, parsed.data, origin);
   return c.json(result, 200);
 });
