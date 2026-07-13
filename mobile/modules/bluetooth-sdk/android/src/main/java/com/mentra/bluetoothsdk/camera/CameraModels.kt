@@ -167,6 +167,17 @@ data class CameraFovResult(
     }
 }
 
+enum class PhotoMode(val value: String) {
+    PHOTO("photo"),
+    TEXT("text");
+
+    companion object {
+        @JvmStatic
+        fun fromValue(value: String?): PhotoMode =
+            values().firstOrNull { it.value == value } ?: PHOTO
+    }
+}
+
 data class PhotoRequest @JvmOverloads constructor(
     val requestId: String = generatedCameraRequestId("photo"),
     val size: PhotoSize,
@@ -188,6 +199,7 @@ data class PhotoRequest @JvmOverloads constructor(
     val ispDigitalGain: Int? = null,
     val ispAnalogGain: String? = null,
     val resetCaptureTuning: Boolean? = null,
+    val mode: PhotoMode = PhotoMode.PHOTO,
 ) {
     companion object {
         /** Mirrors iOS `BluetoothSdkModule` defaults for keys omitted from the JS bridge. */
@@ -225,6 +237,7 @@ data class PhotoRequest @JvmOverloads constructor(
                 compress = PhotoCompression.fromValue(stringValue(values, "compress") ?: "none"),
                 save = boolValue(values, "save", "saveToGallery") ?: false,
                 sound = boolValue(values, "sound") ?: true,
+                mode = PhotoMode.fromValue(stringValue(values, "mode")),
                 exposureTimeNs = exposureTimeNs,
                 iso = iso,
                 aeExposureDivisor = aeDivisor,

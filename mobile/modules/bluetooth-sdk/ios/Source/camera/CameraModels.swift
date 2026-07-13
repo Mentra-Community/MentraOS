@@ -35,6 +35,15 @@ public enum PhotoSize: String {
     }
 }
 
+public enum PhotoMode: String {
+    case photo
+    case text
+
+    public init(normalizedRawValue value: String?) {
+        self = PhotoMode(rawValue: value ?? "") ?? .photo
+    }
+}
+
 public enum ButtonPhotoSize: String {
     case low
     case medium
@@ -234,6 +243,7 @@ public struct CameraFovResult: CustomStringConvertible {
 public struct PhotoRequest {
     public let requestId: String
     public let size: PhotoSize
+    public let mode: PhotoMode
     public let webhookUrl: String?
     public let authToken: String?
     public let compress: PhotoCompression?
@@ -269,7 +279,8 @@ public struct PhotoRequest {
         mfnr: Bool? = nil,
         zsl: Bool? = nil,
         ispDigitalGain: Int? = nil,
-        ispAnalogGain: String? = nil
+        ispAnalogGain: String? = nil,
+        mode: PhotoMode = .photo
     ) {
         self.requestId = nonBlankRequestId(requestId) ?? generatedCameraRequestId("photo")
         self.size = size
@@ -288,6 +299,7 @@ public struct PhotoRequest {
         self.zsl = zsl
         self.ispDigitalGain = ispDigitalGain
         self.ispAnalogGain = ispAnalogGain
+        self.mode = mode
     }
 
     public static func from(params: [String: Any]) -> PhotoRequest {
@@ -354,7 +366,8 @@ public struct PhotoRequest {
             mfnr: optionalBool("mfnr"),
             zsl: optionalBool("zsl"),
             ispDigitalGain: optionalInt("ispDigitalGain"),
-            ispAnalogGain: params["ispAnalogGain"] as? String
+            ispAnalogGain: params["ispAnalogGain"] as? String,
+            mode: PhotoMode(normalizedRawValue: params["mode"] as? String)
         )
     }
 
@@ -403,7 +416,8 @@ public struct PhotoRequest {
             mfnr: mfnr,
             zsl: zsl,
             ispDigitalGain: ispDigitalGain,
-            ispAnalogGain: ispAnalogGain
+            ispAnalogGain: ispAnalogGain,
+            mode: mode
         )
     }
 }

@@ -86,8 +86,33 @@ public class TextRegionDetectorHarnessTest {
                         .improvedCropAccuracy(true)
                         .build();
 
+        // Mirrors MediaCaptureService.buildTextDetectConfig() exactly - what actually ships today.
+        TextDetectConfig productionConfig =
+                TextDetectConfig.defaults()
+                        .toBuilder()
+                        .allowSingleComponentLines(true)
+                        .cropFromTopLineOnly(true)
+                        .enableStructureFilter(true)
+                        .improvedCropAccuracy(true)
+                        .minCropAreaFraction(0.004f)
+                        .debugCaptureIntermediates(true)
+                        .build();
+
+        TextDetectConfig tunedPlusSingleConfig =
+                tunedConfig.toBuilder().allowSingleComponentLines(true).build();
+
         runBatch(images, new File(outputDir, "baseline"), baselineConfig, "results_baseline.json");
         runBatch(images, new File(outputDir, "tuned"), tunedConfig, "results_tuned.json");
+        runBatch(
+                images,
+                new File(outputDir, "production"),
+                productionConfig,
+                "results_production.json");
+        runBatch(
+                images,
+                new File(outputDir, "tuned_plus_single"),
+                tunedPlusSingleConfig,
+                "results_tuned_plus_single.json");
     }
 
     private static void runBatch(

@@ -129,6 +129,41 @@ public final class PhotoExifMetadataWriter {
     }
 
     /**
+     * Encode bitmap as JPEG for BLE when the source capture is already small enough that AVIF is
+     * unnecessary. Preserves IMU metadata from the source capture when present.
+     */
+    public static byte[] encodeJpegForBle(Bitmap bitmap, int quality, String sourceJpegPath)
+            throws IOException {
+        File tempJpeg = File.createTempFile("ble_jpeg_", ".jpg");
+        try {
+            try (java.io.FileOutputStream fos = new java.io.FileOutputStream(tempJpeg)) {
+                if (!bitmap.compress(Bitmap.CompressFormat.JPEG, quality, fos)) {
+                    throw new IOException("Bitmap JPEG compress failed");
+                }
+            }
+            if (hasImuMetadata(sourceJpegPath)) {
+                copyImuMetadata(sourceJpegPath, tempJpeg.getAbsolutePath());
+            } else {
+                writeCaptureIdFromPath(tempJpeg.getAbsolutePath());
+            }
+            byte[] jpegBytes = java.nio.file.Files.readAllBytes(tempJpeg.toPath());
+            Log.d(
+                    TAG,
+                    "encodeJpegForBle: "
+                            + jpegBytes.length
+                            + " bytes, quality="
+                            + quality
+                            + ", hasImuMetadata="
+                            + hasImuMetadata(sourceJpegPath));
+            return jpegBytes;
+        } finally {
+            if (!tempJpeg.delete()) {
+                tempJpeg.deleteOnExit();
+            }
+        }
+    }
+
+    /**
      * Encode bitmap as AVIF with embedded EXIF when source JPEG has IMU metadata; otherwise use
      * HeifCoder.
      */

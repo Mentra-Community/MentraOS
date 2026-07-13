@@ -112,6 +112,7 @@ describe("PhonePhotoCoordinator", () => {
         requestId: string
         appId: string
         size: string
+        mode: string
         webhookUrl: string
         authToken: string | null
         compress: string
@@ -122,6 +123,7 @@ describe("PhonePhotoCoordinator", () => {
       expect(arg.requestId).toMatch(/^[0-9a-f]{4}$/)
       expect(arg.appId).toBe("com.a")
       expect(arg.size).toBe("medium")
+      expect(arg.mode).toBe("photo")
       expect(arg.webhookUrl).toBe(PRESIGN.uploadUrl)
       expect(arg.authToken).toBeNull()
       expect(arg.compress).toBe("none")
@@ -161,6 +163,12 @@ describe("PhonePhotoCoordinator", () => {
       const coord = new PhonePhotoCoordinator()
       await coord.takePhoto("com.a", {exposureTimeNs: 12_000_000})
       expect(requestPhotoNative.mock.calls[0]![0]).toMatchObject({exposureTimeNs: 12_000_000})
+    })
+
+    test("passes text mode through to the native take_photo command", async () => {
+      const coord = new PhonePhotoCoordinator()
+      await coord.takePhoto("com.a", {mode: "text"})
+      expect(requestPhotoNative.mock.calls[0]![0]).toMatchObject({mode: "text"})
     })
 
     test("normalizes legacy size 'full' to 'max' for the native take_photo command", async () => {

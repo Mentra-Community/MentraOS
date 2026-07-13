@@ -71,6 +71,7 @@ Capture a still photo. The handler routes through `transferMethod` to one of thr
   "bleImgId": "img_001",
   "save": false,
   "size": "medium",
+  "mode": "text",
   "compress": "none",
   "flash": true,
   "sound": true
@@ -87,6 +88,7 @@ Capture a still photo. The handler routes through `transferMethod` to one of thr
 | `bleImgId`       | string  | ""                  | Required for `ble` and `auto` transfer methods              |
 | `save`           | boolean | `false`             | Also save the photo to local gallery                        |
 | `size`               | string  | `"medium"`          | `low`, `medium`, `high`, or `max` (legacy `small`→`low`, `large`→`high`, `full`→`max`) |
+| `mode`               | string  | `"photo"`           | `photo` for normal capture, or `text` to capture at maximum sensor quality and enable text-aware BLE processing |
 | `compress`           | string  | `"none"`            | Compression preset passed to capture pipeline               |
 | `flash`              | boolean | `true`              | Fire the privacy LED during capture                         |
 | `sound`              | boolean | `true`              | Play shutter sound                                          |
@@ -99,6 +101,14 @@ Capture a still photo. The handler routes through `transferMethod` to one of thr
 | `mfnr`               | boolean | absent              | `false` disables MFNR for this capture                      |
 | `ispDigitalGain`     | number  | absent              | Parsed; warn-only if unsupported                            |
 | `ispAnalogGain`      | string  | absent              | Parsed; warn-only if unsupported                            |
+
+In `text` mode, Mentra Live always captures the source JPEG at the camera's maximum
+resolution and JPEG quality. For auto-exposure captures (no `exposureTimeNs`), the glasses also
+divide the metered shutter time by 3 (`aeExposureDivisor: 3`) to reduce motion blur on text.
+Text-region detection and crop run on both WiFi upload and BLE transfer. On BLE, the crop
+happens before downscale. Text mode always uses the max-tier BLE downscale cap (1920 px) and
+AVIF quality (55), regardless of requested {@code size}. If the captured source JPEG is already
+under 200 KB, the glasses skip AVIF and send JPEG over BLE instead.
 
 **Constraints (all enforced in `PhotoCommandHandler`):**
 

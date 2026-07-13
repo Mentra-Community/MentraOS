@@ -112,6 +112,27 @@ public class PhotoExifMetadataWriterTest {
     }
 
     @Test
+    public void encodeJpegForBlePreservesImuMetadata() throws Exception {
+        File jpeg = tempFolder.newFile("source.jpg");
+        PhotoExifMetadataWriter.writeMinimalJpegForTest(jpeg);
+        PhotoExifMetadataWriter.writeImuPayload(jpeg.getAbsolutePath(), samplePayload(1));
+
+        android.graphics.Bitmap bitmap =
+                android.graphics.Bitmap.createBitmap(32, 16, android.graphics.Bitmap.Config.ARGB_8888);
+        try {
+            byte[] bleJpeg =
+                    PhotoExifMetadataWriter.encodeJpegForBle(
+                            bitmap, 95, jpeg.getAbsolutePath());
+            assertThat(bleJpeg.length).isGreaterThan(100);
+            File decoded = tempFolder.newFile("ble.jpg");
+            java.nio.file.Files.write(decoded.toPath(), bleJpeg);
+            assertThat(PhotoExifMetadataWriter.hasImuMetadata(decoded.getAbsolutePath())).isTrue();
+        } finally {
+            bitmap.recycle();
+        }
+    }
+
+    @Test
     public void buildExifApp1SegmentStartsWithExifHeader() throws Exception {
         byte[] segment = PhotoExifMetadataWriter.buildExifApp1Segment(samplePayload(1));
         assertThat(segment.length).isGreaterThan(10);

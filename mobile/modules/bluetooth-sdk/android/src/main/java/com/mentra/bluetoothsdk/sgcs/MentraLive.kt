@@ -5377,6 +5377,7 @@ class MentraLive : SGCManager() {
     override fun requestPhoto(request: PhotoRequest) {
         val requestId = request.requestId
         val size = request.size.value
+        val mode = request.mode.value
         val webhookUrl = request.webhookUrl
         val authToken = request.authToken
         val compress = request.compress.value
@@ -5390,6 +5391,8 @@ class MentraLive : SGCManager() {
                         requestId +
                         " with size: " +
                         size +
+                        ", mode=" +
+                        mode +
                         ", webhookUrl: " +
                         webhookUrl +
                         ", authToken: " +
@@ -5427,6 +5430,7 @@ class MentraLive : SGCManager() {
             if (size != null && !size.isEmpty()) {
                 json.put("size", size)
             }
+            json.put("mode", mode)
             if (compress != null && !compress.isEmpty()) {
                 json.put("compress", compress)
             } else {
@@ -5467,7 +5471,9 @@ class MentraLive : SGCManager() {
 
             Bridge.log("LIVE: Using auto transfer mode with BLE fallback ID: " + bleImgId)
             Bridge.log(
-                    "LIVE: PHOTO PIPELINE [5b/6] JSON ready — " +
+                    "LIVE: PHOTO PIPELINE [5b/6] JSON ready mode=" +
+                            mode +
+                            " — " +
                             summarizeOutgoingMessage(json.toString()) +
                             ", wakeup=true"
             )
@@ -7767,7 +7773,7 @@ class MentraLive : SGCManager() {
 
     private fun summarizeOutgoingMessage(payload: String?): String {
         if (payload == null || payload.isEmpty()) {
-            return "type=unknown, requestId=none, appId=none, transferMethod=none, bleImgId=none, exposureTimeNs=none, iso=none, mId=none"
+            return "type=unknown, requestId=none, appId=none, mode=none, transferMethod=none, bleImgId=none, exposureTimeNs=none, iso=none, mId=none"
         }
         try {
             val obj = JSONObject(payload)
@@ -7776,6 +7782,7 @@ class MentraLive : SGCManager() {
             val appId = obj.optString("appId", "none")
             val transferMethod = obj.optString("transferMethod", "none")
             val bleImgId = obj.optString("bleImgId", "none")
+            val mode = if (obj.has("mode")) obj.optString("mode", "photo") else "none"
             val exposure =
                     if (obj.has("exposureTimeNs")) obj.optLong("exposureTimeNs").toString()
                     else "none"
@@ -7791,6 +7798,8 @@ class MentraLive : SGCManager() {
                     transferMethod +
                     ", bleImgId=" +
                     bleImgId +
+                    ", mode=" +
+                    mode +
                     ", exposureTimeNs=" +
                     exposure +
                     ", iso=" +

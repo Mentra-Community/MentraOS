@@ -30,6 +30,7 @@ export function photoRequestParamsForNative(
 ): Record<string, string | number | boolean> {
   const payload: Record<string, string | number | boolean> = {
     size: normalizePhotoSizeTier(params.size),
+    mode: params.mode ?? "photo",
     webhookUrl: params.webhookUrl ?? "",
     compress: params.compress,
     sound: params.sound,

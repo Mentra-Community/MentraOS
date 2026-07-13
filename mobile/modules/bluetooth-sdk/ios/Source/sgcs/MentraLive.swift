@@ -1682,7 +1682,7 @@ class MentraLive: NSObject, SGCManager {
 
     func requestPhoto(_ request: PhotoRequest) {
         Bridge.log(
-            "LIVE: PHOTO PIPELINE [5/6] requestPhoto() entry requestId=\(request.requestId) save=\(request.save) sound=\(request.sound) iso=\(request.iso.map { String($0) } ?? "auto") aeDivisor=\(request.aeExposureDivisor.map { String($0) } ?? "nil")"
+            "LIVE: PHOTO PIPELINE [5/6] requestPhoto() entry requestId=\(request.requestId) mode=\(request.mode.rawValue) save=\(request.save) sound=\(request.sound) iso=\(request.iso.map { String($0) } ?? "auto") aeDivisor=\(request.aeExposureDivisor.map { String($0) } ?? "nil")"
         )
 
         var json: [String: Any] = [
@@ -1719,6 +1719,7 @@ class MentraLive: NSObject, SGCManager {
         let allowedSizes = ["low", "medium", "high", "max"]
         let size = request.size.rawValue
         json["size"] = allowedSizes.contains(size) ? size : "medium"
+        json["mode"] = request.mode.rawValue
 
         json["compress"] = request.compress?.rawValue ?? "none"
         json["save"] = request.save

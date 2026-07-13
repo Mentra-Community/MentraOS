@@ -440,6 +440,7 @@ export type SettingsAckSuccessEvent = Omit<SettingsAckEvent, "status"> & {
 export type RgbLedAction = "on" | "off"
 export type RgbLedColor = "red" | "green" | "blue" | "orange" | "white"
 export type PhotoSize = "low" | "medium" | "high" | "max"
+export type PhotoMode = "photo" | "text"
 export type ButtonPhotoSize = "low" | "medium" | "high" | "max"
 
 export type PhotoCaptureDefaults = {
@@ -544,6 +545,7 @@ export type PhotoRequestParams = {
   requestId?: string
   appId?: string
   size: PhotoSize
+  mode?: PhotoMode
   webhookUrl: string | null
   authToken: string | null
   compress: PhotoCompression
