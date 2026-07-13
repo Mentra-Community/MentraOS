@@ -14,6 +14,8 @@ public final class PhotoCaptureSettings {
 
     private static final String TAG = "PhotoCaptureSettings";
     private static final String WARNING_NOT_IMPLEMENTED = "not_implemented";
+    /** After AE meters in text mode, divide exposure time by this factor (shorter shutter). */
+    public static final int TEXT_MODE_AE_EXPOSURE_DIVISOR = 3;
 
     public static final PhotoCaptureSettings EMPTY = new PhotoCaptureSettings.Builder().build();
 
@@ -86,6 +88,27 @@ public final class PhotoCaptureSettings {
             }
         }
 
+        applyUnimplementedWarnings(builder);
+        return builder.build();
+    }
+
+    /**
+     * Text-mode auto exposure: divide metered shutter time by {@link #TEXT_MODE_AE_EXPOSURE_DIVISOR}.
+     * Caller must skip this when the request supplies manual {@code exposureTimeNs}.
+     */
+    public static PhotoCaptureSettings applyTextModeExposure(PhotoCaptureSettings settings) {
+        if (settings == null) {
+            settings = EMPTY;
+        }
+        Builder builder = new Builder();
+        builder.aeExposureDivisor(TEXT_MODE_AE_EXPOSURE_DIVISOR);
+        builder.isoCap(settings.isoCap);
+        builder.noiseReduction(settings.noiseReduction);
+        builder.edgeEnhancement(settings.edgeEnhancement);
+        builder.ispDigitalGain(settings.ispDigitalGain);
+        builder.ispAnalogGain(settings.ispAnalogGain);
+        builder.mfnr(settings.mfnr != null ? settings.mfnr : Boolean.FALSE);
+        builder.zsl(settings.zsl != null ? settings.zsl : Boolean.FALSE);
         applyUnimplementedWarnings(builder);
         return builder.build();
     }

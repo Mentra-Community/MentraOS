@@ -197,13 +197,16 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
                         PhotoCaptureSettings.mergeForSdkRequest(
                                 requestCaptureSettings, asgSettings);
             }
-            PhotoCaptureSettings.logMergeDiagnostics(
-                    requestCaptureSettings, captureSettings, asgSettings, requestId);
             String compress = resolvePhotoCompress(data, asgSettings);
             // Capture light is mandatory for privacy; ignore any caller-supplied flash value.
             boolean flash = true;
             boolean sound = resolvePhotoSound(data, asgSettings);
             Long exposureTimeNs = PhotoExposureTimeNs.parse(data);
+            if (PhotoMode.TEXT.equals(mode) && exposureTimeNs == null) {
+                captureSettings = PhotoCaptureSettings.applyTextModeExposure(captureSettings);
+            }
+            PhotoCaptureSettings.logMergeDiagnostics(
+                    requestCaptureSettings, captureSettings, asgSettings, requestId);
             Integer requestedIso = PhotoIso.parse(data);
             Integer iso = exposureTimeNs != null ? requestedIso : null;
             if (exposureTimeNs != null) {
