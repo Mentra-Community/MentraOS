@@ -20,6 +20,9 @@ import com.mentra.asg_client.io.hardware.interfaces.IHardwareManager;
 import com.mentra.asg_client.io.hardware.interfaces.RgbLedConstants;
 import com.mentra.asg_client.io.media.interfaces.ServiceCallbackInterface;
 import com.mentra.asg_client.io.media.managers.MediaUploadQueueManager;
+import com.mentra.asg_client.io.media.core.textdetect.DetectionResult;
+import com.mentra.asg_client.io.media.core.textdetect.TextDetectConfig;
+import com.mentra.asg_client.io.media.core.textdetect.TextRegionDetector;
 import com.mentra.asg_client.io.media.upload.MediaUploadService;
 import com.mentra.asg_client.io.storage.StorageManager;
 import com.mentra.asg_client.io.streaming.services.RtmpStreamingService;
@@ -148,6 +151,19 @@ public class MediaCaptureService {
     public static final int bleImageTargetWidth = 480;
     public static final int bleImageTargetHeight = 480;
     public static final int bleImageAvifQuality = 40;
+
+    // Flip to false to fall back to the legacy full-color BLE pipeline (full-res ARGB decode +
+    // createScaledBitmap + RGB BleImageSharpener). BLE photos exist to be read (documents/signs/
+    // screens), not viewed, so grayscale is the default - true here also cuts the per-photo peak
+    // transient memory from ~36MB down to ~9MB (see GrayscaleBleProcessor for the breakdown).
+    private static final boolean ENABLE_GRAYSCALE_BLE_PHOTOS = false;
+
+    // Independent of ENABLE_GRAYSCALE_BLE_PHOTOS. When true, runs TextRegionDetector on a
+    // subsampled luma copy of the source JPEG and crops the BLE photo to the detected ROI —
+    // in the grayscale path via GrayscaleBleProcessor.process(), in the legacy color path by
+    // cropping the decoded bitmap before scaling. Defaults OFF: detector is not yet
+    // tuned/benchmarked on-device (tune offline via TextRegionDetectorHarnessTest).
+    private static final boolean ENABLE_TEXT_REGION_CROP = false;
 
     private static class BleParams {
         final int targetWidth;
@@ -3988,14 +4004,7 @@ public class MediaCaptureService {
                             PhotoCaptureTestHooks.addFakeDelay("COMPRESSION");
 
                             try {
-                                // 1. Load original image
-                                android.graphics.Bitmap original =
-                                        android.graphics.BitmapFactory.decodeFile(originalPath);
-                                if (original == null) {
-                                    throw new Exception("Failed to decode image file");
-                                }
-
-                                // 2. Resolve BLE resize and quality parameters based on requested
+                                // 1. Resolve BLE resize and quality parameters based on requested
                                 // size
                                 String requestedSize = photoRequestedSizes.get(requestId);
                                 if (requestedSize == null || requestedSize.isEmpty()) {
@@ -4004,38 +4013,167 @@ public class MediaCaptureService {
 
                                 BleParams bleParams = resolveBleParams(requestedSize);
 
-                                // Calculate new dimensions maintaining aspect ratio, constrained by
-                                // requested target
-                                int targetWidth = bleParams.targetWidth;
-                                int targetHeight = bleParams.targetHeight;
-                                float aspectRatio =
-                                        (float) original.getWidth() / original.getHeight();
+                                android.graphics.Bitmap resized;
+                                DetectionResult.Confidence textCropConfidence = null;
+                                String textCropReason = null;
 
-                                if (aspectRatio > targetWidth / (float) targetHeight) {
-                                    targetHeight = (int) (targetWidth / aspectRatio);
+                                // 2a. Text-region ROI detection. Independent of the grayscale
+                                // flag: it only decides WHERE to crop, not how the pixels are
+                                // processed afterwards.
+                                android.graphics.Rect roi = null;
+                                if (ENABLE_TEXT_REGION_CROP) {
+                                    try {
+                                        GrayscaleBleProcessor.DetectionLuma input =
+                                                GrayscaleBleProcessor.extractDetectionLuma(
+                                                        originalPath,
+                                                        TextDetectConfig.defaults()
+                                                                .analysisWidth);
+                                        DetectionResult result =
+                                                TextRegionDetector.detect(
+                                                        input.luma,
+                                                        input.width,
+                                                        input.height,
+                                                        TextDetectConfig.defaults());
+                                        roi =
+                                                GrayscaleBleProcessor.scaleDetectionRoi(
+                                                        result.roi, input);
+                                        textCropConfidence = result.confidence;
+                                        textCropReason = result.fallbackReason;
+                                        Log.d(
+                                                TAG,
+                                                "TextRegionDetector: confidence="
+                                                        + result.confidence
+                                                        + " reason="
+                                                        + result.fallbackReason
+                                                        + " ms="
+                                                        + result.detectionTimeMs
+                                                        + " crop="
+                                                        + java.util.Arrays.toString(
+                                                                roi != null
+                                                                        ? new int[] {
+                                                                            roi.left,
+                                                                            roi.top,
+                                                                            roi.right,
+                                                                            roi.bottom
+                                                                        }
+                                                                        : null));
+                                    } catch (Throwable t) {
+                                        // Throwable, not Exception: OpenCV/JNI failures such as
+                                        // UnsatisfiedLinkError extend Error and must also fall
+                                        // back to a full-frame ROI instead of failing the BLE
+                                        // photo.
+                                        Log.w(
+                                                TAG,
+                                                "TextRegionDetector failed, falling back to"
+                                                        + " full-frame ROI",
+                                                t);
+                                        roi = null;
+                                        textCropConfidence = null;
+                                        textCropReason = null;
+                                    }
+                                }
+
+                                if (ENABLE_GRAYSCALE_BLE_PHOTOS) {
+                                    // 2b. Decode straight to a grayscale luma pipeline (crop +
+                                    // contrast + unsharp all happen on 1-byte/pixel buffers) and
+                                    // only rehydrate to a full RGBA bitmap at the end for the AVIF
+                                    // encoder. BLE photos exist to be read (documents/signs/
+                                    // screens), not viewed, so color is dead weight - this also
+                                    // avoids ever materializing the ~30MB full-res ARGB bitmap the
+                                    // old decode+resize+sharpen chain used.
+                                    resized =
+                                            GrayscaleBleProcessor.process(
+                                                    originalPath,
+                                                    roi,
+                                                    bleParams.targetWidth,
+                                                    bleParams.targetHeight);
                                 } else {
-                                    targetWidth = (int) (targetHeight * aspectRatio);
+                                    // Legacy full-color path. Honors the text-region ROI (when
+                                    // detection is enabled) by cropping the decoded bitmap
+                                    // before scaling.
+                                    android.graphics.Bitmap original =
+                                            android.graphics.BitmapFactory.decodeFile(
+                                                    originalPath);
+                                    if (original == null) {
+                                        throw new Exception("Failed to decode image file");
+                                    }
+
+                                    if (roi != null) {
+                                        int cropLeft =
+                                                Math.max(
+                                                        0,
+                                                        Math.min(
+                                                                roi.left,
+                                                                original.getWidth() - 1));
+                                        int cropTop =
+                                                Math.max(
+                                                        0,
+                                                        Math.min(
+                                                                roi.top,
+                                                                original.getHeight() - 1));
+                                        int cropWidth =
+                                                Math.max(
+                                                        1,
+                                                        Math.min(
+                                                                roi.width(),
+                                                                original.getWidth() - cropLeft));
+                                        int cropHeight =
+                                                Math.max(
+                                                        1,
+                                                        Math.min(
+                                                                roi.height(),
+                                                                original.getHeight() - cropTop));
+                                        android.graphics.Bitmap cropped =
+                                                android.graphics.Bitmap.createBitmap(
+                                                        original,
+                                                        cropLeft,
+                                                        cropTop,
+                                                        cropWidth,
+                                                        cropHeight);
+                                        if (cropped != original) {
+                                            original.recycle();
+                                        }
+                                        original = cropped;
+                                    }
+
+                                    int targetWidth = bleParams.targetWidth;
+                                    int targetHeight = bleParams.targetHeight;
+                                    float aspectRatio =
+                                            (float) original.getWidth() / original.getHeight();
+                                    if (aspectRatio > targetWidth / (float) targetHeight) {
+                                        targetHeight = (int) (targetWidth / aspectRatio);
+                                    } else {
+                                        targetWidth = (int) (targetHeight * aspectRatio);
+                                    }
+
+                                    android.graphics.Bitmap scaled =
+                                            android.graphics.Bitmap.createScaledBitmap(
+                                                    original, targetWidth, targetHeight, true);
+                                    if (scaled != original) {
+                                        original.recycle();
+                                    }
+                                    resized = BleImageSharpener.sharpen(mContext, scaled);
+                                    if (resized != scaled) {
+                                        scaled.recycle();
+                                    }
                                 }
 
-                                // 3. Resize bitmap, then restore edge contrast: the downscale
-                                // low-pass-filters text strokes, and a mild unsharp costs almost
-                                // no bytes while visibly improving glyph legibility.
-                                android.graphics.Bitmap scaled =
-                                        android.graphics.Bitmap.createScaledBitmap(
-                                                original, targetWidth, targetHeight, true);
-                                // createScaledBitmap returns the SAME object when the size
-                                // already matches (medium ladder == capture resolution), so
-                                // recycling unconditionally would kill the bitmap mid-pipeline.
-                                if (scaled != original) {
-                                    original.recycle();
-                                }
-                                android.graphics.Bitmap resized =
-                                        BleImageSharpener.sharpen(mContext, scaled);
-                                if (resized != scaled) {
-                                    scaled.recycle();
-                                }
+                                Log.d(
+                                        TAG,
+                                        "📐 BLE image ready for encode: "
+                                                + resized.getWidth()
+                                                + "x"
+                                                + resized.getHeight()
+                                                + " grayscale="
+                                                + ENABLE_GRAYSCALE_BLE_PHOTOS
+                                                + " textCrop="
+                                                + ENABLE_TEXT_REGION_CROP
+                                                + " textCropConfidence="
+                                                + textCropConfidence
+                                                + " textCropReason="
+                                                + textCropReason);
 
-                                // 4. Encode as AVIF only (no JPEG fallback over BLE)
+                                // 3. Encode as AVIF only (no JPEG fallback over BLE)
                                 Log.d(
                                         TAG,
                                         "BLE AVIF encode: originalPath="
@@ -4055,13 +4193,25 @@ public class MediaCaptureService {
 
                                 long compressionTime = System.currentTimeMillis() - startTime;
                                 recordTiming(requestId, "ble_compress_done");
+                                File originalFileForSize = new File(originalPath);
+                                long originalSizeBytes = originalFileForSize.length();
+                                double originalSizeKb = originalSizeBytes / 1024.0;
+                                double compressedSizeKb = compressedData.length / 1024.0;
                                 Log.d(
                                         TAG,
                                         "✅ Compressed photo for BLE: "
                                                 + originalPath
-                                                + " -> "
+                                                + " ("
+                                                + originalSizeBytes
+                                                + " bytes / "
+                                                + String.format(Locale.US, "%.1f", originalSizeKb)
+                                                + " KB) -> AVIF "
                                                 + compressedData.length
-                                                + " bytes");
+                                                + " bytes / "
+                                                + String.format(
+                                                        Locale.US, "%.1f", compressedSizeKb)
+                                                + " KB, grayscale="
+                                                + ENABLE_GRAYSCALE_BLE_PHOTOS);
                                 Log.d(TAG, "⏱️ Compression took: " + compressionTime + "ms");
 
                                 // 5. Save compressed data to temporary file with bleImgId as name

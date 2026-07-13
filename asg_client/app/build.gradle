@@ -246,6 +246,16 @@ android {
     testOptions {
         unitTests {
             includeAndroidResources = true
+            all {
+                def textDetectInputDir = System.getProperty('textdetect.inputDir')
+                if (textDetectInputDir != null) {
+                    systemProperty 'textdetect.inputDir', textDetectInputDir
+                }
+                def textDetectOutputDir = System.getProperty('textdetect.outputDir')
+                if (textDetectOutputDir != null) {
+                    systemProperty 'textdetect.outputDir', textDetectOutputDir
+                }
+            }
         }
     }
 
@@ -335,6 +345,8 @@ dependencies {
     testImplementation 'org.robolectric:robolectric:4.11.1'
     testImplementation 'org.assertj:assertj-core:3.24.2'
     testImplementation 'androidx.test:core:1.5.0'
+    // Desktop OpenCV natives for offline text-detect harness (JVM unit tests on dev machine)
+    testImplementation 'org.openpnp:opencv:4.9.0-0'
     androidTestImplementation 'androidx.test.ext:junit:1.1.5'
     androidTestImplementation 'androidx.test:runner:1.5.2'
     androidTestImplementation 'androidx.test:rules:1.5.0'
@@ -374,6 +386,9 @@ dependencies {
     // JSON handling
     implementation 'org.json:json:20210307'
     
+    // OpenCV for BLE text-region detection (adaptive threshold, morphology, connected components)
+    implementation 'org.opencv:opencv:4.13.0'
+
     // AVIF encoding/decoding support
     implementation 'com.github.awxkee:avif-coder:1.7.3'
     implementation 'androidx.heifwriter:heifwriter:1.1.0'
