@@ -177,6 +177,8 @@ public class MediaCaptureService {
     private static final boolean SAVE_TEXT_DETECT_DEBUG_ARTIFACTS = true;
     private static final int TEXT_MODE_AVIF_SIZE_THRESHOLD_BYTES = 200 * 1024;
     private static final int TEXT_MODE_BLE_JPEG_QUALITY = 95;
+    /** Text-mode BLE AVIF always uses the max-tier quality regardless of requested {@code size}. */
+    private static final int TEXT_MODE_AVIF_QUALITY = 55;
 
     private static class BleParams {
         final int targetWidth;
@@ -211,7 +213,7 @@ public class MediaCaptureService {
                 return new BleParams(1600, 1600, 48);
             case "max":
                 // ~90-160KB typical: document-grade
-                return new BleParams(1920, 1920, 55);
+                return new BleParams(1920, 1920, TEXT_MODE_AVIF_QUALITY);
             case "medium":
             default:
                 // ~30-55KB typical: matches the WiFi medium resolution
@@ -313,11 +315,30 @@ public class MediaCaptureService {
         }
     }
 
+    /**
+     * allowSingleComponentLines + cropFromTopLineOnly: a short, tightly-kerned word (e.g. a
+     * single price tag or label) commonly fuses into one connected component via morphological
+     * closing and can never satisfy minComponentsPerLine on its own; without these, such text is
+     * silently dropped while unrelated multi-blob clutter elsewhere in frame (cable loops, device
+     * corners) wins by default and/or drags the crop away from the real text via the
+     * union-of-all-lines bounds.
+     *
+     * <p>enableStructureFilter: periodic non-text patterns (spiral notebook binding holes,
+     * speaker grilles, perforated metal) satisfy the line-scoring formula's
+     * height-consistency/spacing-regularity terms extremely well and can out-score real text on
+     * component count alone; round/radially-symmetric blobs have gradient magnitude spread across
+     * all orientation bins (unlike glyph strokes) so this filters them out before they ever form
+     * a line.
+     *
+     * <p>See {@code TextRegionDetectorSyntheticTest}'s {@code detect_fusedWordVsNoiseCluster_*}
+     * and {@code detect_fusedWordVsPeriodicDotRow_*} tests.
+     */
     private TextDetectConfig buildTextDetectConfig() {
         return TextDetectConfig.defaults()
                 .toBuilder()
                 .allowSingleComponentLines(true)
                 .cropFromTopLineOnly(true)
+                .enableStructureFilter(true)
                 .debugCaptureIntermediates(SAVE_TEXT_DETECT_DEBUG_ARTIFACTS)
                 .build();
     }
@@ -4012,6 +4033,16 @@ public class MediaCaptureService {
             captureSettings = PhotoCaptureSettings.EMPTY;
         }
         String captureSize = PhotoMode.TEXT.equals(mode) ? PhotoSizeTier.normalize("max") : size;
+        Log.i(
+                TAG,
+                "📸 Mentra Live BLE capture mode="
+                        + mode
+                        + " sensorSize="
+                        + captureSize
+                        + " bleOutputSize="
+                        + size
+                        + " requestId="
+                        + requestId);
         // Start timing for end-to-end photo capture performance measurement
         final long requestStartTimeMs = System.currentTimeMillis();
         recordTiming(requestId, "ble_request_start");
@@ -4332,6 +4363,14 @@ public class MediaCaptureService {
                                 boolean textModeRequested = PhotoMode.TEXT.equals(requestedMode);
                                 boolean shouldCrop =
                                         ENABLE_TEXT_REGION_CROP || textModeRequested;
+                                Log.i(
+                                        TAG,
+                                        "📸 Mentra Live BLE compress mode="
+                                                + requestedMode
+                                                + " textCrop="
+                                                + shouldCrop
+                                                + " requestId="
+                                                + requestId);
 
                                 android.graphics.Bitmap resized;
                                 DetectionResult.Confidence textCropConfidence = null;
@@ -4476,11 +4515,23 @@ public class MediaCaptureService {
                                                         originalPath);
                                         bleEncodedFormat = "JPEG";
                                     } else {
+                                        int avifQuality =
+                                                textModeRequested
+                                                        ? TEXT_MODE_AVIF_QUALITY
+                                                        : bleParams.avifQuality;
+                                        if (textModeRequested
+                                                && avifQuality != bleParams.avifQuality) {
+                                            Log.d(
+                                                    TAG,
+                                                    "Text mode: using max AVIF quality "
+                                                            + avifQuality
+                                                            + " (size tier would use "
+                                                            + bleParams.avifQuality
+                                                            + ")");
+                                        }
                                         compressedData =
                                                 PhotoExifMetadataWriter.encodeAvifForBle(
-                                                        resized,
-                                                        bleParams.avifQuality,
-                                                        originalPath);
+                                                        resized, avifQuality, originalPath);
                                         bleEncodedFormat = "AVIF";
                                     }
                                 } finally {
