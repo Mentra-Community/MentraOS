@@ -4357,10 +4357,33 @@ public class MediaCaptureService {
                                     requestedSize = "medium";
                                 }
 
-                                BleParams bleParams = resolveBleParams(requestedSize);
+                                BleParams tierBleParams = resolveBleParams(requestedSize);
                                 String requestedMode =
                                         PhotoMode.normalize(photoRequestedModes.get(requestId));
                                 boolean textModeRequested = PhotoMode.TEXT.equals(requestedMode);
+                                BleParams bleParams =
+                                        textModeRequested
+                                                ? resolveBleParams("max")
+                                                : tierBleParams;
+                                if (textModeRequested && bleParams != tierBleParams) {
+                                    Log.d(
+                                            TAG,
+                                            "Text mode: using max BLE downscale "
+                                                    + bleParams.targetWidth
+                                                    + "x"
+                                                    + bleParams.targetHeight
+                                                    + " AVIF q"
+                                                    + bleParams.avifQuality
+                                                    + " (size tier "
+                                                    + requestedSize
+                                                    + " would use "
+                                                    + tierBleParams.targetWidth
+                                                    + "x"
+                                                    + tierBleParams.targetHeight
+                                                    + " AVIF q"
+                                                    + tierBleParams.avifQuality
+                                                    + ")");
+                                }
                                 boolean shouldCrop =
                                         ENABLE_TEXT_REGION_CROP || textModeRequested;
                                 Log.i(
@@ -4515,23 +4538,11 @@ public class MediaCaptureService {
                                                         originalPath);
                                         bleEncodedFormat = "JPEG";
                                     } else {
-                                        int avifQuality =
-                                                textModeRequested
-                                                        ? TEXT_MODE_AVIF_QUALITY
-                                                        : bleParams.avifQuality;
-                                        if (textModeRequested
-                                                && avifQuality != bleParams.avifQuality) {
-                                            Log.d(
-                                                    TAG,
-                                                    "Text mode: using max AVIF quality "
-                                                            + avifQuality
-                                                            + " (size tier would use "
-                                                            + bleParams.avifQuality
-                                                            + ")");
-                                        }
                                         compressedData =
                                                 PhotoExifMetadataWriter.encodeAvifForBle(
-                                                        resized, avifQuality, originalPath);
+                                                        resized,
+                                                        bleParams.avifQuality,
+                                                        originalPath);
                                         bleEncodedFormat = "AVIF";
                                     }
                                 } finally {
