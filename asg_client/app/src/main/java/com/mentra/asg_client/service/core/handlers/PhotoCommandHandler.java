@@ -187,6 +187,13 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
             boolean save = data.optBoolean("save", false);
             String size = PhotoSizeTier.normalize(data.optString("size", "medium"));
             String mode = PhotoMode.normalize(data.optString("mode", PhotoMode.PHOTO));
+            if (!data.has("mode")) {
+                Log.w(
+                        TAG,
+                        "📸 take_photo BLE payload missing mode field; defaulting to "
+                                + mode);
+            }
+            Log.i(TAG, "📸 Mentra Live take_photo mode: " + mode);
             PhotoCaptureSettings requestCaptureSettings =
                     PhotoCaptureSettings.fromTakePhotoJson(data);
             PhotoCaptureSettings.logIncomingTakePhotoFields(data, requestId);
@@ -359,6 +366,8 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
                     TAG,
                     "PHOTO PIPELINE [ASG 3/3] Starting capture requestId="
                             + requestId
+                            + " mode="
+                            + mode
                             + " transferMethod="
                             + transferMethod
                             + " size="

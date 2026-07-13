@@ -117,7 +117,8 @@ final class TextLineClusterer {
         List<List<ComponentStats>> groups = uf.groups(components, n);
         List<TextLine> lines = new ArrayList<>();
         for (List<ComponentStats> group : groups) {
-            if (group.size() < config.minComponentsPerLine) {
+            if (group.size() < config.minComponentsPerLine
+                    && !isPromotableSingleComponentGroup(group, config)) {
                 continue;
             }
             TextLine line = scoreLine(group, imageWidth, imageHeight);
@@ -126,6 +127,24 @@ final class TextLineClusterer {
             }
         }
         return lines;
+    }
+
+    /**
+     * A lone component (group of exactly one) normally can't satisfy {@code
+     * minComponentsPerLine} and would be dropped, even when it is itself a clean detection - e.g.
+     * a short word whose letters fused into a single blob via morphological closing. When {@code
+     * allowSingleComponentLines} is on, such a component is still promoted to a candidate line if
+     * its bounding box is notably wider than tall, which a fused word blob reliably is, unlike
+     * roughly circular/square single-blob noise (cable loops, device corners, screws, dust).
+     */
+    private static boolean isPromotableSingleComponentGroup(
+            List<ComponentStats> group, TextDetectConfig config) {
+        if (!config.allowSingleComponentLines || group.size() != 1) {
+            return false;
+        }
+        ComponentStats c = group.get(0);
+        float aspect = c.width / (float) Math.max(1, c.height);
+        return aspect >= config.singleComponentMinAspectRatio;
     }
 
     private static boolean areCompatible(

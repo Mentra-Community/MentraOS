@@ -177,7 +177,10 @@ public class MediaCaptureService {
     private static final boolean SAVE_TEXT_DETECT_DEBUG_ARTIFACTS = true;
     private static final int TEXT_MODE_AVIF_SIZE_THRESHOLD_BYTES = 200 * 1024;
     private static final int TEXT_MODE_BLE_JPEG_QUALITY = 95;
-    /** Text-mode BLE AVIF always uses the max-tier quality regardless of requested {@code size}. */
+    /** Long-edge cap for text-mode BLE downscale after crop (aspect ratio preserved). */
+    private static final int TEXT_MODE_BLE_TARGET_WIDTH = 1920;
+    private static final int TEXT_MODE_BLE_TARGET_HEIGHT = 1920;
+    /** AVIF constant-quality for text-mode BLE encode. */
     private static final int TEXT_MODE_AVIF_QUALITY = 55;
 
     private static class BleParams {
@@ -219,6 +222,13 @@ public class MediaCaptureService {
                 // ~30-55KB typical: matches the WiFi medium resolution
                 return new BleParams(1280, 1280, 50);
         }
+    }
+
+    private BleParams resolveTextModeBleParams() {
+        return new BleParams(
+                TEXT_MODE_BLE_TARGET_WIDTH,
+                TEXT_MODE_BLE_TARGET_HEIGHT,
+                TEXT_MODE_AVIF_QUALITY);
     }
 
     /**
@@ -4363,12 +4373,12 @@ public class MediaCaptureService {
                                 boolean textModeRequested = PhotoMode.TEXT.equals(requestedMode);
                                 BleParams bleParams =
                                         textModeRequested
-                                                ? resolveBleParams("max")
+                                                ? resolveTextModeBleParams()
                                                 : tierBleParams;
                                 if (textModeRequested && bleParams != tierBleParams) {
                                     Log.d(
                                             TAG,
-                                            "Text mode: using max BLE downscale "
+                                            "Text mode: using dedicated BLE downscale "
                                                     + bleParams.targetWidth
                                                     + "x"
                                                     + bleParams.targetHeight

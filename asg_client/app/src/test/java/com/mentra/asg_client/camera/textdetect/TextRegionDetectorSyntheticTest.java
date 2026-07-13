@@ -105,6 +105,259 @@ public class TextRegionDetectorSyntheticTest {
         }
     }
 
+    /**
+     * Regression test for the "fused single word" bug: a short word whose letters merge into one
+     * connected component via morphological closing (tight kerning, low analysis resolution)
+     * can't satisfy {@code minComponentsPerLine} on its own, so it is silently dropped while an
+     * unrelated multi-blob noise cluster elsewhere in the frame (cable loops, device corners - a
+     * handful of small, roughly square/circular blobs with compatible height/spacing) wins by
+     * default. With the default config, no genuine text line is ever formed, so the detector
+     * falls back to the safety-net center crop rather than a real detection.
+     */
+    @Test
+    public void detect_fusedWordVsNoiseCluster_defaultConfig_wordIsDropped() {
+        int width = 800;
+        int height = 600;
+        CropRect word = fusedWordBounds();
+        byte[] luma = renderFusedWordAndNoiseCluster(width, height, word);
+
+        TextDetectConfig config = TextDetectConfig.defaults();
+        DetectionResult result = TextRegionDetector.detect(luma, width, height, config);
+
+        assertNotNull(result.roi);
+        String reason = result.fallbackReason == null ? "" : result.fallbackReason;
+        assertTrue(
+                "with the word dropped, the noise-only cluster should not be trusted either,"
+                        + " expected a center-crop fallback, got reason="
+                        + reason
+                        + " confidence="
+                        + result.confidence,
+                reason.contains("untrustworthy_detection_center_fallback"));
+        if (result.debug != null) {
+            result.debug.release();
+        }
+    }
+
+    /**
+     * With {@code allowSingleComponentLines} (promotes a lone, notably-wide-than-tall component
+     * to a candidate line) and {@code cropFromTopLineOnly} (crop from the single best-scoring line
+     * instead of unioning every accepted line, so a real but unrelated noise cluster elsewhere in
+     * the frame can't drag the crop away from the actual text), the fused word is detected and
+     * wins the crop on its own merits - tightly, without also pulling in the noise cluster.
+     */
+    @Test
+    public void detect_fusedWordVsNoiseCluster_singleComponentFix_wordWins() {
+        int width = 800;
+        int height = 600;
+        CropRect word = fusedWordBounds();
+        byte[] luma = renderFusedWordAndNoiseCluster(width, height, word);
+
+        TextDetectConfig config =
+                TextDetectConfig.defaults()
+                        .toBuilder()
+                        .allowSingleComponentLines(true)
+                        .cropFromTopLineOnly(true)
+                        .build();
+        DetectionResult result = TextRegionDetector.detect(luma, width, height, config);
+
+        assertNotNull(result.roi);
+        assertTrue(
+                "crop " + result.roi + " must contain the fused word " + word,
+                result.roi.contains(word));
+        assertFalse(
+                "crop " + result.roi + " must not also pull in the unrelated noise cluster"
+                        + " near the top-left corner",
+                result.roi.contains(new CropRect(20, 20, 140, 140)));
+        if (result.debug != null) {
+            result.debug.release();
+        }
+    }
+
+    /**
+     * Regression test for periodic non-text patterns (spiral notebook binding holes, speaker
+     * grilles, perforated metal) out-scoring real text: a long, perfectly regular row of small
+     * round dots satisfies the line-scoring formula's height-consistency and spacing-regularity
+     * terms extremely well (better than most real text), and its large component count directly
+     * inflates the score, so with only the single-component-line fix, it wins the crop over an
+     * actual fused word elsewhere in frame.
+     */
+    @Test
+    public void detect_fusedWordVsPeriodicDotRow_singleComponentFixAlone_dotRowWins() {
+        int width = 800;
+        int height = 600;
+        CropRect word = fusedWordBounds();
+        CropRect dotRow = periodicDotRowBounds();
+        byte[] luma = renderFusedWordAndPeriodicDotRow(width, height, word, dotRow);
+
+        TextDetectConfig config =
+                TextDetectConfig.defaults()
+                        .toBuilder()
+                        .allowSingleComponentLines(true)
+                        .cropFromTopLineOnly(true)
+                        .build();
+        DetectionResult result = TextRegionDetector.detect(luma, width, height, config);
+
+        assertNotNull(result.roi);
+        assertTrue(
+                "documents the bug: without a structure filter, the periodic dot row should win"
+                        + " the crop over the real word, got roi="
+                        + result.roi,
+                result.roi.contains(dotRow));
+        if (result.debug != null) {
+            result.debug.release();
+        }
+    }
+
+    /**
+     * With {@code enableStructureFilter} also on, round dots (radially-symmetric gradients spread
+     * across all orientation bins) fail the structure filter and are dropped as components
+     * entirely, while the word's glyph strokes (gradient magnitude concentrated in one or two
+     * dominant orientations) pass - so the word wins the crop instead of the dot row.
+     */
+    @Test
+    public void detect_fusedWordVsPeriodicDotRow_structureFilter_wordWins() {
+        int width = 800;
+        int height = 600;
+        CropRect word = fusedWordBounds();
+        CropRect dotRow = periodicDotRowBounds();
+        byte[] luma = renderFusedWordAndPeriodicDotRow(width, height, word, dotRow);
+
+        TextDetectConfig config =
+                TextDetectConfig.defaults()
+                        .toBuilder()
+                        .allowSingleComponentLines(true)
+                        .cropFromTopLineOnly(true)
+                        .enableStructureFilter(true)
+                        .build();
+        DetectionResult result = TextRegionDetector.detect(luma, width, height, config);
+
+        assertNotNull(result.roi);
+        assertTrue(
+                "crop " + result.roi + " must contain the fused word " + word,
+                result.roi.contains(word));
+        assertFalse(
+                "crop " + result.roi + " must not be dominated by the periodic dot row " + dotRow,
+                result.roi.contains(dotRow));
+        if (result.debug != null) {
+            result.debug.release();
+        }
+    }
+
+    private static CropRect fusedWordBounds() {
+        return new CropRect(320, 260, 480, 300);
+    }
+
+    private static CropRect periodicDotRowBounds() {
+        return new CropRect(150, 40, 650, 56);
+    }
+
+    /**
+     * Renders the fused word plus a long, perfectly regular row of small filled circles (spiral
+     * notebook binding holes) spanning most of the frame width near the top - radially-symmetric
+     * shapes, unlike glyph strokes, so {@code enableStructureFilter} can tell them apart.
+     */
+    private static byte[] renderFusedWordAndPeriodicDotRow(
+            int width, int height, CropRect word, CropRect dotRow) {
+        byte[] luma = renderFusedWordOnly(width, height, word);
+
+        int radius = 7;
+        int centerY = (dotRow.top + dotRow.bottom) / 2;
+        int spacing = 24;
+        for (int cx = dotRow.left + radius; cx + radius <= dotRow.right; cx += spacing) {
+            fillCircle(luma, width, height, cx, centerY, radius, (byte) 0);
+        }
+        return luma;
+    }
+
+    private static byte[] renderFusedWordOnly(int width, int height, CropRect word) {
+        byte[] luma = new byte[width * height];
+        Arrays.fill(luma, (byte) 255);
+        renderFusedWordCells(luma, width, word);
+        return luma;
+    }
+
+    private static void fillCircle(
+            byte[] luma, int width, int height, int cx, int cy, int radius, byte value) {
+        int rSquared = radius * radius;
+        for (int y = Math.max(0, cy - radius); y <= Math.min(height - 1, cy + radius); y++) {
+            int dy = y - cy;
+            int row = y * width;
+            for (int x = Math.max(0, cx - radius); x <= Math.min(width - 1, cx + radius); x++) {
+                int dx = x - cx;
+                if (dx * dx + dy * dy <= rSquared) {
+                    luma[row + x] = value;
+                }
+            }
+        }
+    }
+
+    /**
+     * Renders a single wide "word" blob whose internal cell gaps are narrower than the default
+     * morphology kernel, so adaptive threshold + closing fuses it into one connected component
+     * (mimicking tightly-kerned letters like "TEXT"), plus 4 small, mutually-compatible square
+     * blobs clustered near the top-left corner (mimicking cable-loop/device-corner noise that
+     * satisfies {@code minComponentsPerLine} on its own).
+     */
+    private static byte[] renderFusedWordAndNoiseCluster(int width, int height, CropRect word) {
+        byte[] luma = new byte[width * height];
+        Arrays.fill(luma, (byte) 255);
+        renderFusedWordCells(luma, width, word);
+
+        // Noise cluster: 4 small hollow-square (loop-like) blobs near the top-left corner, evenly
+        // spaced so they satisfy areCompatible() (similar height, full vertical overlap, small
+        // horizontal gaps) and cluster into a single accepted line of size >= minComponentsPerLine
+        // on their own. Hollow rather than solid so fillRatio stays well under maxFillRatio, same
+        // as a real cable loop's thin traced outline.
+        int blobSize = 18;
+        int blobTop = 40;
+        int blobGap = 14;
+        int ringStroke = 4;
+        for (int i = 0; i < 4; i++) {
+            int blobLeft = 20 + i * (blobSize + blobGap);
+            int blobRight = blobLeft + blobSize;
+            int blobBottom = blobTop + blobSize;
+            fillRect(luma, width, blobLeft, blobTop, blobRight, blobTop + ringStroke, (byte) 0);
+            fillRect(luma, width, blobLeft, blobBottom - ringStroke, blobRight, blobBottom, (byte) 0);
+            fillRect(luma, width, blobLeft, blobTop, blobLeft + ringStroke, blobBottom, (byte) 0);
+            fillRect(luma, width, blobRight - ringStroke, blobTop, blobRight, blobBottom, (byte) 0);
+        }
+
+        return luma;
+    }
+
+    /**
+     * Draws "H"-cell glyphs with a 1px gap - well under the default 3x3 morphology kernel's
+     * closing reach, so the whole run becomes a single connected component (mimicking
+     * tightly-kerned letters like "TEXT").
+     */
+    private static void renderFusedWordCells(byte[] luma, int width, CropRect word) {
+        int cellWidth = 24;
+        int gapWidth = 1;
+        int strokeWidth = 5;
+        for (int cellLeft = word.left;
+                cellLeft + cellWidth <= word.right;
+                cellLeft += cellWidth + gapWidth) {
+            fillRect(luma, width, cellLeft, word.top, cellLeft + strokeWidth, word.bottom, (byte) 0);
+            fillRect(
+                    luma,
+                    width,
+                    cellLeft + cellWidth - strokeWidth,
+                    word.top,
+                    cellLeft + cellWidth,
+                    word.bottom,
+                    (byte) 0);
+            int midY = (word.top + word.bottom) / 2;
+            fillRect(
+                    luma,
+                    width,
+                    cellLeft,
+                    midY - strokeWidth / 2,
+                    cellLeft + cellWidth,
+                    midY + strokeWidth / 2 + 1,
+                    (byte) 0);
+        }
+    }
+
     private static byte[] renderSingleLine(
             int width, int height, int left, int top, int right, int bottom) {
         byte[] luma = new byte[width * height];

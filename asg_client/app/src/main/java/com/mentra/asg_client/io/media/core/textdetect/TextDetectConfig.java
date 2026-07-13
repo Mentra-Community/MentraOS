@@ -146,6 +146,26 @@ public final class TextDetectConfig {
      */
     public final boolean improvedCropAccuracy;
 
+    /**
+     * Tier 2 fix: a lone connected component - e.g. a short word whose letters fused into one
+     * blob via morphological closing (common for single-word signage/labels with tight kerning) -
+     * can never satisfy {@code minComponentsPerLine} on its own and is silently discarded even
+     * when it is otherwise a clean, well-formed detection, while nearby unrelated clutter that
+     * happens to break into 2+ components wins the polarity/scoring competition by default. When
+     * true, a group of exactly one component is still promoted to a candidate line if it looks
+     * sufficiently text-like on its own (see {@code singleComponentMinAspectRatio}), instead of
+     * requiring a second nearby component to exist.
+     */
+    public final boolean allowSingleComponentLines;
+
+    /**
+     * Min width/height aspect ratio required for a lone component to qualify as a
+     * single-component line when {@code allowSingleComponentLines} is on. A fused multi-letter
+     * word blob is reliably much wider than tall; requiring this keeps roughly circular/square
+     * single-blob noise (cable loops, device corners, screws, dust) from qualifying on their own.
+     */
+    public final float singleComponentMinAspectRatio;
+
     private TextDetectConfig(Builder builder) {
         this.analysisWidth = builder.analysisWidth;
         this.adaptiveThresholdBlockSize = builder.adaptiveThresholdBlockSize;
@@ -183,6 +203,8 @@ public final class TextDetectConfig {
         this.enableMser = builder.enableMser;
         this.minCropAreaFraction = builder.minCropAreaFraction;
         this.improvedCropAccuracy = builder.improvedCropAccuracy;
+        this.allowSingleComponentLines = builder.allowSingleComponentLines;
+        this.singleComponentMinAspectRatio = builder.singleComponentMinAspectRatio;
     }
 
     public static TextDetectConfig defaults() {
@@ -226,7 +248,9 @@ public final class TextDetectConfig {
                 .enableBlobSplitting(enableBlobSplitting)
                 .enableMser(enableMser)
                 .minCropAreaFraction(minCropAreaFraction)
-                .improvedCropAccuracy(improvedCropAccuracy);
+                .improvedCropAccuracy(improvedCropAccuracy)
+                .allowSingleComponentLines(allowSingleComponentLines)
+                .singleComponentMinAspectRatio(singleComponentMinAspectRatio);
     }
 
     public static final class Builder {
@@ -266,6 +290,8 @@ public final class TextDetectConfig {
         private boolean enableMser = false;
         private float minCropAreaFraction = 0.02f;
         private boolean improvedCropAccuracy = false;
+        private boolean allowSingleComponentLines = false;
+        private float singleComponentMinAspectRatio = 1.8f;
 
         public Builder analysisWidth(int value) {
             this.analysisWidth = value;
@@ -444,6 +470,16 @@ public final class TextDetectConfig {
 
         public Builder improvedCropAccuracy(boolean value) {
             this.improvedCropAccuracy = value;
+            return this;
+        }
+
+        public Builder allowSingleComponentLines(boolean value) {
+            this.allowSingleComponentLines = value;
+            return this;
+        }
+
+        public Builder singleComponentMinAspectRatio(float value) {
+            this.singleComponentMinAspectRatio = value;
             return this;
         }
 

@@ -317,9 +317,15 @@ public class CommandProcessor {
         Log.i(TAG, "🎯 Routing command type: " + type);
         BleTraceLogger.logJson("phone_to_glasses", "asg_command_router", commandData.data());
         if ("take_photo".equals(type)) {
+            String mode =
+                    commandData.data() != null && commandData.data().has("mode")
+                            ? commandData.data().optString("mode", "photo")
+                            : "photo (missing from payload)";
             Log.i(
                     TAG,
-                    "PHOTO PIPELINE [ASG 1/3] Received take_photo on glasses: "
+                    "PHOTO PIPELINE [ASG 1/3] Received take_photo on glasses mode="
+                            + mode
+                            + ": "
                             + commandData.data());
         }
 
