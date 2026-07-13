@@ -250,7 +250,7 @@ class BluetoothSdkModule : Module() {
             "ota_start_ack",
             "ota_status",
             "ar99_ota_status",
-            // Nex / BLE debug (NexEventUtils â†’ Bridge.sendTypedMessage)
+            // Nex / BLE debug (NexEventUtils â†?Bridge.sendTypedMessage)
             "send_command_to_ble",
             "receive_command_from_ble",
             "miniapp_selected",
@@ -406,7 +406,7 @@ class BluetoothSdkModule : Module() {
             deviceManager?.sgc?.dbg2()
         }
 
-        // Stub on Android â€” iOS uses this for the jetsam stress test.
+        // Stub on Android â€?iOS uses this for the jetsam stress test.
         Function("getMemoryMB") { -> 0.0 }
 
         // MARK: - Incident Reporting
@@ -523,9 +523,8 @@ class BluetoothSdkModule : Module() {
 
         AsyncFunction("cancelAr99Ota") { requireSdk().cancelAr99Ota() }
 
-        Function("buildAr99OtaSignature") { currentVersion: String, serialNumber: String, nonce: String ->
-            val secret = "a01afc69-b5c6-477a-88ca-5039cf795086"
-            val raw = secret + "AR99" + "juxinOTA" + currentVersion + serialNumber.trim() + nonce
+                Function("buildAr99OtaSignature") { secret: String, appName: String, currentVersion: String, serialNumber: String, nonce: String ->
+            val raw = secret + appName + "juxinOTA" + currentVersion + serialNumber.trim() + nonce
             val digest = MessageDigest.getInstance("MD5").digest(raw.toByteArray(Charsets.UTF_8))
             digest.joinToString("") { "%02x".format(it.toInt() and 0xff) }
         }
@@ -684,7 +683,7 @@ class BluetoothSdkModule : Module() {
         }
 
         // Runs on Dispatchers.IO, not the shared Expo AsyncFunctionQueue: bz2/tar
-        // extraction of the 100â€“350MB model is a multi-minute, CPU-bound job. On the
+        // extraction of the 100â€?50MB model is a multi-minute, CPU-bound job. On the
         // shared queue it froze every other native call in the app until it finished.
         AsyncFunction("extractTarBz2") Coroutine { sourcePath: String, destinationPath: String ->
             withContext(Dispatchers.IO) {
@@ -761,12 +760,14 @@ private fun Map<String, Any>?.toMentraDevice(): Device? {
     val model = values["model"] as? String ?: return null
     val name = values["name"] as? String ?: return null
     val address = values["address"] as? String
+    val projectName = values["projectName"] as? String
     val rssi = (values["rssi"] as? Number)?.toInt()
     val id = values["id"] as? String
     return Device(
             model = DeviceModel.fromDeviceType(model),
             name = name,
             address = address?.takeIf { it.isNotBlank() },
+            projectName = projectName?.takeIf { it.isNotBlank() },
             rssi = rssi,
             id = id?.takeIf { it.isNotBlank() } ?: address?.takeIf { it.isNotBlank() } ?: "$model:$name",
     )
@@ -795,3 +796,9 @@ private fun Map<String, Any>?.toMentraConnectOptions(): ConnectOptions {
             cancelExistingConnectionAttempt = values["cancelExistingConnectionAttempt"] as? Boolean ?: true,
     )
 }
+
+
+
+
+
+

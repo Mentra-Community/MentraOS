@@ -63,7 +63,7 @@ class MentraBluetoothSdk private constructor(
     }
 
     companion object {
-        private val DEFAULT_DEVICE_KEYS = setOf("default_wearable", "device_name", "device_address")
+        private val DEFAULT_DEVICE_KEYS = setOf("default_wearable", "device_name", "device_address", "project_name")
         private val SCAN_STATE_KEYS = setOf("searching", "searchingController", "searchResults")
         private const val DEFAULT_SCAN_TIMEOUT_MS = 15_000L
         private const val DEFAULT_REQUEST_TIMEOUT_MS = 15_000L
@@ -221,6 +221,7 @@ class MentraBluetoothSdk private constructor(
             DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "default_wearable", device.model.deviceType)
             DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "device_name", device.name)
             DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "device_address", device.address ?: "")
+            DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "project_name", device.projectName ?: "")
         } finally {
             suppressDefaultDeviceEvents = false
         }
@@ -233,6 +234,7 @@ class MentraBluetoothSdk private constructor(
             DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "default_wearable", "")
             DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "device_name", "")
             DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "device_address", "")
+            DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "project_name", "")
         } finally {
             suppressDefaultDeviceEvents = false
         }
@@ -1220,14 +1222,15 @@ class MentraBluetoothSdk private constructor(
         val name = core["device_name"] as? String ?: return null
         if (model.isBlank() || name.isBlank()) return null
         val address = (core["device_address"] as? String)?.takeIf { it.isNotBlank() }
+        val projectName = (core["project_name"] as? String)?.takeIf { it.isNotBlank() }
         return Device(
             model = DeviceModel.fromDeviceType(model),
             name = name,
             address = address,
+            projectName = projectName,
         )
     }
-
-    private fun requireBluetoothReady(operation: String) {
+private fun requireBluetoothReady(operation: String) {
         val bluetoothManager = appContext.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
         val adapter =
             bluetoothManager?.adapter
@@ -1558,7 +1561,7 @@ class MentraBluetoothSdk private constructor(
         if (pendingStreamStarts.size == 1) {
             // A streamId-less STOPPED is the glasses' stop-ack for a PREVIOUS
             // stream (their stop ack carries no streamId), not a verdict on the
-            // pending start â€” a start_stream that replaces a running publisher
+            // pending start â€?a start_stream that replaces a running publisher
             // emits exactly this sequence (stopped -> initializing -> streaming).
             // Attributing it here would reject a start that is about to succeed.
             if (event.state == StreamState.STOPPED) {
@@ -1860,3 +1863,7 @@ class MentraBluetoothSdk private constructor(
         }
     }
 }
+
+
+
+

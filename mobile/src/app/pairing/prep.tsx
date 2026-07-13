@@ -16,13 +16,15 @@ import GlassesTroubleshootingModal from "@/components/glasses/GlassesTroubleshoo
 import {OnboardingGuide, OnboardingStep} from "@/components/onboarding/OnboardingGuide"
 import {CDN_BASE_URL} from "@/constants/appConfig"
 import {toolkit} from "@mentra/island"
+import {getAr99DisplayName} from "@/utils/getGlassesImage"
 import {useAppStatusStore} from "@mentra/island/internal"
 
 type BluetoothPermission = Permission | "android.permission.BLUETOOTH" | "android.permission.BLUETOOTH_ADMIN"
 
 export default function PairingPrepScreen() {
   const route = useRoute()
-  const {deviceModel} = route.params as {deviceModel: string}
+  const {deviceModel, ar99ProjectName} = route.params as {deviceModel: string; ar99ProjectName?: string}
+  const displayName = deviceModel === DeviceTypes.AR99 ? getAr99DisplayName(ar99ProjectName) : deviceModel
   const {goBack, push, clearHistoryAndGoHome} = useNavigationStore.getState()
 
   const advanceToPairing = async () => {
@@ -207,7 +209,7 @@ export default function PairingPrepScreen() {
       return
     }
 
-    push("/pairing/scan", {deviceModel})
+    push("/pairing/scan", {deviceModel, ar99ProjectName})
   }
 
   const SimulatedPairingGuide = () => {
@@ -450,15 +452,11 @@ export default function PairingPrepScreen() {
           <Text tx="pairing:instructions" className="text-2xl font-bold mb-4 text-secondary-foreground" />
           <Text
             className="text-lg text-secondary-foreground mb-2"
-            text="1. Make sure your AR99 glasses are fully charged and turned on."
+            text="1. Confirm that the Bluetooth switch of the mobile phone is turned on."
           />
           <Text
             className="text-lg text-secondary-foreground mb-2"
-            text="2. Disconnect AR99 from other phones or apps before pairing."
-          />
-          <Text
-            className="text-lg text-secondary-foreground mb-2"
-            text="3. Keep the glasses nearby and wait for an AR99 device to appear."
+            text="2. Press and hold the power button for 3 to 5 seconds to turn on the glasses."
           />
         </ScrollView>
       </View>
@@ -506,7 +504,7 @@ export default function PairingPrepScreen() {
   return (
     <Screen preset="fixed" safeAreaEdges={["bottom"]} extraAndroidInsets>
       <Header
-        title={deviceModel}
+        title={displayName}
         leftIcon="chevron-left"
         onLeftPress={goBack}
         RightActionComponent={<MentraLogoStandalone />}
@@ -516,3 +514,7 @@ export default function PairingPrepScreen() {
     </Screen>
   )
 }
+
+
+
+

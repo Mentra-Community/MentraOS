@@ -127,7 +127,7 @@ public class Ar99 extends SGCManager {
   private static final long READY_BRIGHTNESS_DELAY_MS = 280L;
   private static final long READY_BATTERY_DELAY_MS = 420L;
   private static final long DISPLAY_SESSION_IDLE_RESTART_MS = 8_000L;
-  private static final String[] NAME_PREFIXES = new String[] {"AR99", "AF98", "AF99"};
+  private static final String[] NAME_PREFIXES = new String[] {"AR99", "AF98", "AF99", "HVXM", "HVXF"};
 
   private static final int CTRL_SENDER_MASK = 0x03;
 
@@ -711,13 +711,17 @@ public class Ar99 extends SGCManager {
 
     String displayName = buildDisplayName(name, advertisement, device.getAddress());
 
-    if (!forConnection) {
+        if (!forConnection) {
       if (discoveredNames.add(displayName)) {
-        Bridge.sendDiscoveredDevice(type, displayName);
+        Bridge.sendDiscoveredDevice(
+            type,
+            displayName,
+            device.getAddress() != null ? device.getAddress() : "",
+            result.getRssi(),
+            advertisement != null ? advertisement.projectName : null);
       }
       return;
     }
-
     String target = targetIdentifier != null ? targetIdentifier : "";
     String normalizedTarget = normalizeDisplayIdentifier(target);
     String targetSerial = extractTargetSerial(target);
@@ -2582,4 +2586,9 @@ public class Ar99 extends SGCManager {
     }
   }
 }
+
+
+
+
+
 

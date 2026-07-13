@@ -6,6 +6,7 @@ import {toolkit} from "@mentra/island"
 
 import {Text} from "@/components/ignite"
 import {Ar99VersionInfo, checkAr99OtaVersion, clearAr99OtaFiles, downloadAr99Firmware} from "@/services/ar99Ota"
+import {getAr99DisplayName} from "@/utils/getGlassesImage"
 import {useAppTheme} from "@/contexts/ThemeContext"
 
 type OtaPhase = "checking" | "no_update" | "confirm" | "downloading" | "transferring" | "paused" | "success" | "failed"
@@ -48,9 +49,11 @@ export function Ar99OtaModal({visible, onClose}: Ar99OtaModalProps) {
   const [serialNumber, setSerialNumber] = useState("")
   const [versionInfo, setVersionInfo] = useState<Ar99VersionInfo | null>(null)
   const [errorMessage, setErrorMessage] = useState("")
+  const [ar99ProjectName, setAr99ProjectName] = useState("AR99")
   const filePathRef = useRef<string | null>(null)
 
   const busy = phase === "checking" || phase === "downloading" || phase === "transferring" || phase === "paused"
+  const deviceDisplayName = getAr99DisplayName(ar99ProjectName)
   const forceUpdate = versionInfo?.forceUpdate === true
   const canDismiss = !busy
 
@@ -76,9 +79,12 @@ export function Ar99OtaModal({visible, onClose}: Ar99OtaModalProps) {
       setCurrentVersion(firmwareVersion)
       setSerialNumber(sn)
       if (!firmwareVersion || !sn) {
-        throw new Error("AR99 device information is not ready.")
+        throw new Error(`${deviceDisplayName} device information is not ready.`)
       }
-      const result = await checkAr99OtaVersion(firmwareVersion, sn)
+      const defaultDevice = await BluetoothSdk.getDefaultDevice()
+      const projectName = defaultDevice?.projectName?.trim() || "AR99"
+      setAr99ProjectName(projectName)
+      const result = await checkAr99OtaVersion(firmwareVersion, sn, projectName)
       setVersionInfo(result)
       setPhase(result.hasUpdate ? "confirm" : "no_update")
     } catch (error) {
@@ -121,8 +127,8 @@ export function Ar99OtaModal({visible, onClose}: Ar99OtaModalProps) {
         setTotal(event.total ?? 0)
         setErrorMessage(
           nativePhase === "cancelled"
-            ? "AR99 OTA was cancelled. You can retry the update after reconnecting the glasses."
-            : event.errorMessage || event.error_message || "AR99 OTA failed.",
+            ? `${deviceDisplayName} OTA was cancelled. You can retry the update after reconnecting the glasses.`
+            : event.errorMessage || event.error_message || `${deviceDisplayName} OTA failed.`,
         )
         setPhase("failed")
         await cleanupDownloadedFile()
@@ -152,7 +158,7 @@ export function Ar99OtaModal({visible, onClose}: Ar99OtaModalProps) {
       setTotal(0)
       const started = await BluetoothSdk.startAr99OtaFromFile(path)
       if (!started) {
-        throw new Error("Unable to start AR99 OTA.")
+        throw new Error(`Unable to start ${deviceDisplayName} OTA.`)
       }
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Firmware update failed.")
@@ -165,7 +171,7 @@ export function Ar99OtaModal({visible, onClose}: Ar99OtaModalProps) {
     try {
       await BluetoothSdk.cancelAr99Ota()
     } finally {
-      setErrorMessage("AR99 OTA was cancelled. You can retry the update after reconnecting the glasses.")
+      setErrorMessage(`${deviceDisplayName} OTA was cancelled. You can retry the update after reconnecting the glasses.`)
       setPhase("failed")
       await cleanupDownloadedFile()
     }
@@ -187,7 +193,7 @@ export function Ar99OtaModal({visible, onClose}: Ar99OtaModalProps) {
       case "downloading":
         return "Downloading firmware"
       case "transferring":
-        return "Updating AR99"
+        return `Updating ${deviceDisplayName}`
       case "paused":
         return "Waiting for reconnect"
       case "success":
@@ -259,7 +265,7 @@ export function Ar99OtaModal({visible, onClose}: Ar99OtaModalProps) {
           )}
 
           {phase === "success" && (
-            <Text className="text-sm text-muted-foreground" text="The AR99 firmware update finished." />
+            <Text className="text-sm text-muted-foreground" text={`The ${deviceDisplayName} firmware update finished.`} />
           )}
 
           {phase === "failed" && (
@@ -301,3 +307,11 @@ function ModalButton({label, muted = false, onPress}: {label: string; muted?: bo
     </TouchableOpacity>
   )
 }
+
+
+
+
+
+
+
+

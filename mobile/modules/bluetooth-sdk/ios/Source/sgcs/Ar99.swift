@@ -509,7 +509,7 @@ final class Ar99: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SGCM
     var type = DeviceTypes.AR99
     let hasMic = true
 
-    private let namePrefixes = ["AR99", "AF98", "AF99"]
+    private let namePrefixes = ["AR99", "AF98", "AF99", "HVXM", "HVXF"]
     private var centralManager: CBCentralManager?
     private var peripheral: CBPeripheral?
     private var controlWriteCharacteristic: CBCharacteristic?
@@ -1141,7 +1141,8 @@ final class Ar99: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SGCM
                     type,
                     displayName,
                     deviceAddress: peripheral.identifier.uuidString,
-                    rssi: rssi
+                    rssi: rssi,
+                    projectName: advertisement?.projectName
                 )
             }
             return
@@ -2399,3 +2400,7 @@ final class Ar99: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SGCM
         return String(trimmed[trimmed.index(after: underscore)...]).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
+
+
+
+

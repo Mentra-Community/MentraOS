@@ -444,9 +444,8 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             await MainActor.run { sdk.cancelAr99Ota() }
         }
 
-        Function("buildAr99OtaSignature") { (currentVersion: String, serialNumber: String, nonce: String) in
-            let secret = "a01afc69-b5c6-477a-88ca-5039cf795086"
-            let raw = secret + "AR99" + "juxinOTA" + currentVersion + serialNumber.trimmingCharacters(in: .whitespacesAndNewlines) + nonce
+                        Function("buildAr99OtaSignature") { (secret: String, appName: String, currentVersion: String, serialNumber: String, nonce: String) in
+            let raw = secret + appName + "juxinOTA" + currentVersion + serialNumber.trimmingCharacters(in: .whitespacesAndNewlines) + nonce
             let digest = Insecure.MD5.hash(data: Data(raw.utf8))
             return digest.map { String(format: "%02x", $0) }.joined()
         }
@@ -831,3 +830,9 @@ private extension ConnectOptions {
         )
     }
 }
+
+
+
+
+
+

@@ -16,7 +16,7 @@ import {useNavigationStore} from "@/stores/navigation"
 export default function GlassesPairingLoadingScreen() {
   const {replace, goBack} = useNavigationStore.getState()
   const route = useRoute()
-  const {deviceModel, deviceName} = route.params as {deviceModel: string; deviceName?: string}
+  const {deviceModel, deviceName, ar99ProjectName} = route.params as {deviceModel: string; deviceName?: string; ar99ProjectName?: string}
   const [showTroubleshootingModal, setShowTroubleshootingModal] = useState(false)
   const hasNavigatedRef = useRef(false)
   const glassesFullyBooted = useToolkitSnapshot(toolkit.pairing.readiness, (onChange) =>
@@ -85,7 +85,7 @@ export default function GlassesPairingLoadingScreen() {
     if (hasNavigatedRef.current) return
     hasNavigatedRef.current = true
     setTimeout(() => {
-      replace("/pairing/success", {deviceModel: deviceModel})
+      replace("/pairing/success", {deviceModel: deviceModel, ar99ProjectName})
     }, 1000)
   }, [glassesFullyBooted, replace, deviceModel])
 
@@ -97,6 +97,7 @@ export default function GlassesPairingLoadingScreen() {
           <GlassesPairingLoader
             deviceModel={deviceModel}
             deviceName={deviceName}
+            ar99ProjectName={ar99ProjectName}
             isBooting={showGlassesBooting}
             onCancel={handleGoBack}
           />
@@ -116,3 +117,8 @@ export default function GlassesPairingLoadingScreen() {
     </Screen>
   )
 }
+
+
+
+
+

@@ -1,10 +1,8 @@
 import * as RNFS from "@dr.pogodin/react-native-fs"
 
 import BluetoothSdk from "@mentra/bluetooth-sdk"
+import {getAr99ApiConfig} from "@/services/ar99ApiConfig"
 
-const AR99_OTA_BASE_URL = "https://ai.xyaiglasses.com/"
-const AR99_OTA_VERSION_URL = `${AR99_OTA_BASE_URL}api/v2/applications/public/getVersionURL`
-const AR99_OTA_DEVELOPER_ID = "d5afp25m5iuc73fdv3cg"
 const AR99_OTA_APP_NAME = "AR99"
 const AR99_OTA_APP_TYPE = "juxinOTA"
 const AR99_OTA_DIR = `${RNFS.CachesDirectoryPath}/ar99_ota`
@@ -51,23 +49,26 @@ export async function clearAr99OtaFiles(): Promise<void> {
   await RNFS.mkdir(AR99_OTA_DIR)
 }
 
-export async function checkAr99OtaVersion(currentVersion: string, serialNumber: string): Promise<Ar99VersionInfo> {
+export async function checkAr99OtaVersion(currentVersion: string, serialNumber: string, appName: string): Promise<Ar99VersionInfo> {
   const version = currentVersion.trim()
   const scope = serialNumber.trim()
   const nonce = Math.floor(Math.random() * 2147483647).toString()
-  const md5 = BluetoothSdk.buildAr99OtaSignature(version, scope, nonce)
+  const config = getAr99ApiConfig()
+  const otaAppName = appName.trim() || AR99_OTA_APP_NAME
+  const versionUrl = `${config.baseUrl}api/v2/applications/public/getVersionURL`
+  const md5 = BluetoothSdk.buildAr99OtaSignature(config.secret, otaAppName, version, scope, nonce)
 
   const body = {
-    app_name: AR99_OTA_APP_NAME,
+    app_name: otaAppName,
     app_type: AR99_OTA_APP_TYPE,
     current_version: version,
-    developerId: AR99_OTA_DEVELOPER_ID,
+    developerId: config.developerId,
     target_scope: scope,
     nonce,
     md5,
   }
 
-  const response = await fetch(AR99_OTA_VERSION_URL, {
+  const response = await fetch(versionUrl, {
     method: "POST",
     headers: {...AR99_OTA_HEADERS, "Content-Type": "application/json"},
     body: JSON.stringify(body),
@@ -148,5 +149,6 @@ function emptyVersionInfo(currentVersion: string): Ar99VersionInfo {
 function resolveFirmwareUrl(url: string): string {
   if (!url) return ""
   if (/^https?:\/\//i.test(url)) return url
-  return new URL(url.replace(/^\/+/, ""), AR99_OTA_BASE_URL).toString()
+  return new URL(url.replace(/^\/+/, ""), getAr99ApiConfig().baseUrl).toString()
 }
+

@@ -250,7 +250,8 @@ public class Bridge private constructor() {
                 deviceModel: String,
                 deviceName: String,
                 deviceAddress: String = "",
-                rssi: Int? = null
+                rssi: Int? = null,
+                projectName: String? = null
         ) {
             val searchResults =
                     (DeviceStore.store.getCategory("bluetooth")["searchResults"] as? List<*>)
@@ -262,7 +263,7 @@ public class Bridge private constructor() {
                                         ?.toMap()
                             }
                             ?: emptyList()
-            val id = "$deviceModel:$deviceName"
+            val id = listOfNotNull(deviceModel, projectName?.takeIf { it.isNotBlank() }, deviceName).joinToString(":")
             val newResult =
                     buildMap<String, Any> {
                         put("id", id)
@@ -271,6 +272,7 @@ public class Bridge private constructor() {
                         if (deviceAddress.isNotBlank()) {
                             put("address", deviceAddress)
                         }
+                        projectName?.takeIf { it.isNotBlank() }?.let { put("projectName", it) }
                         rssi?.let { put("rssi", it) }
                     }
             // Keep the public searchResults array stable as glasses are added or removed.
@@ -604,7 +606,7 @@ public class Bridge private constructor() {
             sendTypedMessage("mtk_update_complete", eventBody as Map<String, Any>)
         }
 
-        /** Send ota_start_ack â€” glasses confirmed receipt of ota_start command */
+        /** Send ota_start_ack â€?glasses confirmed receipt of ota_start command */
         @JvmStatic
         fun sendOtaStartAck() {
             val eventBody = HashMap<String, Any>()
@@ -821,3 +823,6 @@ public class Bridge private constructor() {
         }
     }
 }
+
+
+

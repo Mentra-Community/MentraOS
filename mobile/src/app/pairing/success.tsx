@@ -6,7 +6,7 @@ import {Screen} from "@/components/ignite"
 import {focusEffectPreventBack, usePushUnder} from "@/contexts/NavigationHistoryContext"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {useNavigationStore} from "@/stores/navigation"
-import {getGlassesImage} from "@/utils/getGlassesImage"
+import {getAr99ImageSource, getGlassesImage} from "@/utils/getGlassesImage"
 import {OnboardingGuide, OnboardingStep} from "@/components/onboarding/OnboardingGuide"
 import {translate} from "@/i18n"
 import {useCallback, useEffect, useRef, useState} from "react"
@@ -16,7 +16,7 @@ export default function PairingSuccessScreen() {
   const {clearHistoryAndGoHome, push} = useNavigationStore.getState()
   const pushUnder = usePushUnder()
   const route = useRoute()
-  const {deviceModel: routeDeviceModel} = (route.params as {deviceModel?: string}) || {}
+  const {deviceModel: routeDeviceModel, ar99ProjectName} = (route.params as {deviceModel?: string; ar99ProjectName?: string}) || {}
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
   const [buttonText, setButtonText] = useState<string>(translate("common:continue"))
   const [isStackReady, setIsStackReady] = useState(false)
@@ -32,7 +32,7 @@ export default function PairingSuccessScreen() {
     console.log("PAIR_SUCCESS: Using deviceModel from route params:", routeDeviceModel)
   }
 
-  const glassesImage = getGlassesImage(deviceModel)
+  const glassesImage = deviceModel === DeviceTypes.AR99 ? getAr99ImageSource(ar99ProjectName) : getGlassesImage(deviceModel)
 
   const buildLiveStack = useCallback(async (): Promise<string[]> => {
     const features = getModelCapabilities(deviceModel as DeviceTypes)
@@ -216,3 +216,4 @@ export default function PairingSuccessScreen() {
     </Screen>
   )
 }
+

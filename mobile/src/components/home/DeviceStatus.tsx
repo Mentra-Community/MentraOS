@@ -132,7 +132,11 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
       // window where the link is up but promotion hasn't echoed yet); only a
       // truly identity-less state starts over at model selection.
       if (identity.kind === "pending") {
-        push("/pairing/scan", {deviceModel: identity.model})
+        if (identity.model === DeviceTypes.AR99) {
+          push("/pairing/select-glasses-model", {transition: "simple_push"})
+        } else {
+          push("/pairing/scan", {deviceModel: identity.model})
+        }
       } else {
         push("/pairing/select-glasses-model", {transition: "simple_push"})
       }
@@ -147,11 +151,15 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
       }
       // A `paired` identity snapshot does not imply a native device to connect
       // to (the settings echo can outlive the native pairing). Without a
-      // native default device, connectDefault() throws â€” route back into
+      // native default device, connectDefault() throws â€?route back into
       // pairing for the already-selected model instead of erroring. Fail open
       // on a read error: connectDefault()'s catch is the pre-guard behavior.
       if (!(await toolkit.glasses.hasDefaultDevice().catch(() => true))) {
-        push("/pairing/scan", {deviceModel: pairedModel})
+        if (pairedModel === DeviceTypes.AR99) {
+          push("/pairing/select-glasses-model", {transition: "simple_push"})
+        } else {
+          push("/pairing/scan", {deviceModel: pairedModel})
+        }
         return
       }
       await toolkit.glasses.connectDefault()
@@ -174,19 +182,23 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
 
   // Pending selection: a model was chosen but pairing never completed (abandoned
   // mid-flow, or an orphaned identity demoted at boot). Offer to finish pairing
-  // that model â€” or start over with a different one â€” instead of a Connect
+  // that model â€?or start over with a different one â€?instead of a Connect
   // button that has no device to connect to.
   //
   // NOT when the glasses are already connected: right after a promotion, the
   // BLE link is up while the save_setting echoes are still landing, so the JS
-  // identity is momentarily still `pending` â€” render the normal connected card
+  // identity is momentarily still `pending` â€?render the normal connected card
   // (with the pending model as its display name) instead of finish-pairing
   // actions for a device that is already paired and connected.
   if (identity.kind === "pending" && !glassesConnected) {
     return (
       <View style={style}>
         <DeviceStatus
-          onPress={() => push("/pairing/scan", {deviceModel: identity.model})}
+          onPress={() =>
+            identity.model === DeviceTypes.AR99
+              ? push("/pairing/select-glasses-model", {transition: "simple_push"})
+              : push("/pairing/scan", {deviceModel: identity.model})
+          }
           image={getGlassesImage(identity.model)}>
           <View className="flex-row items-center gap-3">
             <Icon name="bluetooth-off" size={18} color={theme.colors.foreground} />
@@ -198,7 +210,11 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
             className="max-h-10"
             tx="home:finishPairingGlasses"
             preset="primary"
-            onPress={() => push("/pairing/scan", {deviceModel: identity.model})}
+            onPress={() =>
+              identity.model === DeviceTypes.AR99
+                ? push("/pairing/select-glasses-model", {transition: "simple_push"})
+                : push("/pairing/scan", {deviceModel: identity.model})
+            }
           />
         </DeviceStatus>
         <Button
@@ -212,8 +228,8 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
     )
   }
 
-  // The card body's model name/image: the paired model, or â€” in the mid-relay
-  // window above (connected while the promotion echoes land) â€” the pending one.
+  // The card body's model name/image: the paired model, or â€?in the mid-relay
+  // window above (connected while the promotion echoes land) â€?the pending one.
   const displayModel = pairedModel || (identity.kind === "pending" ? identity.model : "")
 
   const getCurrentGlassesImage = () => {
@@ -396,3 +412,5 @@ export const ControllerStatus = ({style}: {style?: ViewStyle}) => {
     </DeviceStatus>
   )
 }
+
+
