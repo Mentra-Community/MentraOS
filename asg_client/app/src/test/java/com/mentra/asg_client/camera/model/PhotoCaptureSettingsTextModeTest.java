@@ -3,6 +3,7 @@ package com.mentra.asg_client.camera.model;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 
+import com.mentra.asg_client.AsgConstants;
 import org.junit.Test;
 
 public class PhotoCaptureSettingsTextModeTest {
@@ -13,7 +14,7 @@ public class PhotoCaptureSettingsTextModeTest {
                 PhotoCaptureSettings.applyTextModeExposure(PhotoCaptureSettings.EMPTY);
 
         assertEquals(
-                Integer.valueOf(PhotoCaptureSettings.TEXT_MODE_AE_EXPOSURE_DIVISOR),
+                Integer.valueOf(AsgConstants.TEXT_MODE_AE_EXPOSURE_DIVISOR),
                 tuned.aeExposureDivisor);
         assertFalse(tuned.mfnrEnabled());
         assertEquals(Boolean.FALSE, tuned.zsl);

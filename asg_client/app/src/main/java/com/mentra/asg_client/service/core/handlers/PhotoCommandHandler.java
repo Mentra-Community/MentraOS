@@ -2,6 +2,7 @@ package com.mentra.asg_client.service.core.handlers;
 
 import android.content.Context;
 import android.util.Log;
+import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.camera.model.PhotoCaptureSettings;
 import com.mentra.asg_client.camera.policy.PhotoMode;
 import com.mentra.asg_client.camera.policy.PhotoSizeTier;
@@ -23,14 +24,6 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
 
     /** Default warm-up hold (ms) when {@code camera_warm_up} omits/zeros {@code durationMs}. */
     private static final long DEFAULT_WARM_UP_DURATION_MS = 15000;
-
-    // TEMP: force every take_photo request through BLE transfer, ignoring the requested
-    // transferMethod ("direct"/"auto" would otherwise attempt a WiFi webhook upload first). This
-    // is a stopgap while WiFi upload is not desired at all; flip back to false to restore normal
-    // direct/auto/ble routing in processPhotoCapture(). Only takes effect when the request
-    // supplies a bleImgId - without one there is no BLE destination to force onto, so the
-    // originally requested transferMethod is used as-is.
-    private static final boolean FORCE_BLE_TRANSFER = true;
 
     private final AsgClientServiceManager serviceManager;
     private final IStateManager stateManager;
@@ -447,7 +440,7 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
             PhotoCaptureSettings captureSettings) {
         Log.d(TAG, "Processing photo capture with transfer method: " + transferMethod);
 
-        if (FORCE_BLE_TRANSFER && !bleImgId.isEmpty() && !"ble".equals(transferMethod)) {
+        if (AsgConstants.FORCE_BLE_TRANSFER && !bleImgId.isEmpty() && !"ble".equals(transferMethod)) {
             Log.i(
                     TAG,
                     "🚫📶 FORCE_BLE_TRANSFER active: overriding requested transferMethod="

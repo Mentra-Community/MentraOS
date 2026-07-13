@@ -8,6 +8,7 @@ import android.os.Looper;
 import android.util.Log;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.audio.AudioAssets;
 import com.mentra.asg_client.camera.CameraNeoService;
 import com.mentra.asg_client.camera.model.CameraOperationError;
@@ -152,37 +153,6 @@ public class MediaCaptureService {
 
     // Default BLE params (used if size unspecified)
     public static final int bleImageTargetWidth = 480;
-    public static final int bleImageTargetHeight = 480;
-    public static final int bleImageAvifQuality = 40;
-
-    // Flip to false to fall back to the legacy full-color BLE pipeline (full-res ARGB decode +
-    // createScaledBitmap + RGB BleImageSharpener). BLE photos exist to be read (documents/signs/
-    // screens), not viewed, so grayscale is the default - true here also cuts the per-photo peak
-    // transient memory from ~36MB down to ~9MB (see GrayscaleBleProcessor for the breakdown).
-    private static final boolean ENABLE_GRAYSCALE_BLE_PHOTOS = false;
-
-    // Independent of ENABLE_GRAYSCALE_BLE_PHOTOS. When true, runs TextRegionDetector on a
-    // subsampled luma copy of the source JPEG and crops the BLE photo to the detected ROI —
-    // in the grayscale path via GrayscaleBleProcessor.process(), in the legacy color path by
-    // cropping the decoded bitmap before scaling. Tune offline via TextRegionDetectorHarnessTest
-    // before changing this default.
-    private static final boolean ENABLE_TEXT_REGION_CROP = true;
-
-    // Gated behind ENABLE_TEXT_REGION_CROP. When true, every detection run also dumps its
-    // intermediate state (analysis frame, dual-polarity threshold masks, component/line "zone"
-    // overlays, crop overlay, result.json) to external storage under textdetect_debug/ so it can
-    // be pulled off-device with `adb pull` for offline review - see TextDetectDebugWriter. This
-    // adds real per-photo overhead (extra Mat clones + PNG/JPEG writes) so it is a separate, more
-    // targeted debug switch, not implied by ENABLE_TEXT_REGION_CROP alone.
-    private static final boolean SAVE_TEXT_DETECT_DEBUG_ARTIFACTS = true;
-    private static final int TEXT_MODE_AVIF_SIZE_THRESHOLD_BYTES = 200 * 1024;
-    private static final int TEXT_MODE_BLE_JPEG_QUALITY = 95;
-    /** Long-edge cap for text-mode BLE downscale after crop (aspect ratio preserved). */
-    private static final int TEXT_MODE_BLE_TARGET_WIDTH = 1920;
-    private static final int TEXT_MODE_BLE_TARGET_HEIGHT = 1920;
-    /** AVIF constant-quality for text-mode BLE encode. */
-    private static final int TEXT_MODE_AVIF_QUALITY = 55;
-
     private static class BleParams {
         final int targetWidth;
         final int targetHeight;
@@ -210,25 +180,37 @@ public class MediaCaptureService {
         switch (tier) {
             case "low":
                 // ~15-25KB typical: readable large text, fastest transfer
-                return new BleParams(800, 800, 50);
+                return new BleParams(
+                        AsgConstants.BLE_PHOTO_LOW_TARGET_PX,
+                        AsgConstants.BLE_PHOTO_LOW_TARGET_PX,
+                        AsgConstants.BLE_PHOTO_LOW_AVIF_QUALITY);
             case "high":
                 // ~50-90KB typical: document text comfortably readable
-                return new BleParams(1600, 1600, 48);
+                return new BleParams(
+                        AsgConstants.BLE_PHOTO_HIGH_TARGET_PX,
+                        AsgConstants.BLE_PHOTO_HIGH_TARGET_PX,
+                        AsgConstants.BLE_PHOTO_HIGH_AVIF_QUALITY);
             case "max":
                 // ~90-160KB typical: document-grade
-                return new BleParams(1920, 1920, TEXT_MODE_AVIF_QUALITY);
+                return new BleParams(
+                        AsgConstants.BLE_PHOTO_MAX_TARGET_PX,
+                        AsgConstants.BLE_PHOTO_MAX_TARGET_PX,
+                        AsgConstants.TEXT_MODE_AVIF_QUALITY);
             case "medium":
             default:
                 // ~30-55KB typical: matches the WiFi medium resolution
-                return new BleParams(1280, 1280, 50);
+                return new BleParams(
+                        AsgConstants.BLE_PHOTO_MEDIUM_TARGET_PX,
+                        AsgConstants.BLE_PHOTO_MEDIUM_TARGET_PX,
+                        AsgConstants.BLE_PHOTO_MEDIUM_AVIF_QUALITY);
         }
     }
 
     private BleParams resolveTextModeBleParams() {
         return new BleParams(
-                TEXT_MODE_BLE_TARGET_WIDTH,
-                TEXT_MODE_BLE_TARGET_HEIGHT,
-                TEXT_MODE_AVIF_QUALITY);
+                AsgConstants.TEXT_MODE_BLE_TARGET_WIDTH,
+                AsgConstants.TEXT_MODE_BLE_TARGET_HEIGHT,
+                AsgConstants.TEXT_MODE_AVIF_QUALITY);
     }
 
     /**
@@ -346,10 +328,10 @@ public class MediaCaptureService {
     private TextDetectConfig buildTextDetectConfig() {
         return TextDetectConfig.defaults()
                 .toBuilder()
-                .allowSingleComponentLines(true)
-                .cropFromTopLineOnly(true)
-                .enableStructureFilter(true)
-                .debugCaptureIntermediates(SAVE_TEXT_DETECT_DEBUG_ARTIFACTS)
+                .allowSingleComponentLines(AsgConstants.TEXT_DETECT_ALLOW_SINGLE_COMPONENT_LINES)
+                .cropFromTopLineOnly(AsgConstants.TEXT_DETECT_CROP_FROM_TOP_LINE_ONLY)
+                .enableStructureFilter(AsgConstants.TEXT_DETECT_ENABLE_STRUCTURE_FILTER)
+                .debugCaptureIntermediates(AsgConstants.SAVE_TEXT_DETECT_DEBUG_ARTIFACTS)
                 .build();
     }
 
@@ -391,7 +373,7 @@ public class MediaCaptureService {
                                             }
                                             : null));
             Log.i(TAG, "✂️ CROP OUTCOME: " + outcome);
-            if (SAVE_TEXT_DETECT_DEBUG_ARTIFACTS) {
+            if (AsgConstants.SAVE_TEXT_DETECT_DEBUG_ARTIFACTS) {
                 File debugDir = resolveTextDetectDebugDir(originalPath);
                 TextDetectDebugWriter.save(debugDir, result, outcome);
             }
@@ -488,7 +470,7 @@ public class MediaCaptureService {
         try (java.io.FileOutputStream fos = new java.io.FileOutputStream(croppedPath)) {
             if (!cropped.compress(
                     android.graphics.Bitmap.CompressFormat.JPEG,
-                    TEXT_MODE_BLE_JPEG_QUALITY,
+                    AsgConstants.TEXT_MODE_BLE_JPEG_QUALITY,
                     fos)) {
                 throw new java.io.IOException("Failed to write text-mode cropped JPEG");
             }
@@ -4395,7 +4377,7 @@ public class MediaCaptureService {
                                                     + ")");
                                 }
                                 boolean shouldCrop =
-                                        ENABLE_TEXT_REGION_CROP || textModeRequested;
+                                        AsgConstants.ENABLE_TEXT_REGION_CROP || textModeRequested;
                                 Log.i(
                                         TAG,
                                         "📸 Mentra Live BLE compress mode="
@@ -4418,7 +4400,9 @@ public class MediaCaptureService {
                                         shouldCrop
                                                 ? "NOT_ATTEMPTED (pending detection)"
                                                 : "NOT_ATTEMPTED"
-                                                        + " (ENABLE_TEXT_REGION_CROP=false, mode="
+                                                        + " (ENABLE_TEXT_REGION_CROP="
+                                                        + AsgConstants.ENABLE_TEXT_REGION_CROP
+                                                        + ", mode="
                                                         + requestedMode
                                                         + ")";
 
@@ -4432,7 +4416,7 @@ public class MediaCaptureService {
                                     textCropOutcome = detection.outcome;
                                 }
 
-                                if (ENABLE_GRAYSCALE_BLE_PHOTOS) {
+                                if (AsgConstants.ENABLE_GRAYSCALE_BLE_PHOTOS) {
                                     // 2b. Decode straight to a grayscale luma pipeline (crop +
                                     // contrast + unsharp all happen on 1-byte/pixel buffers) and
                                     // only rehydrate to a full RGBA bitmap at the end for the AVIF
@@ -4506,7 +4490,7 @@ public class MediaCaptureService {
                                                 + "x"
                                                 + resized.getHeight()
                                                 + " grayscale="
-                                                + ENABLE_GRAYSCALE_BLE_PHOTOS
+                                                + AsgConstants.ENABLE_GRAYSCALE_BLE_PHOTOS
                                                 + " textCrop="
                                                 + shouldCrop
                                                 + " requestedMode="
@@ -4521,7 +4505,8 @@ public class MediaCaptureService {
                                 // 3. Encode for BLE. Skip AVIF when the source JPEG is already small.
                                 long sourceJpegBytes = new File(originalPath).length();
                                 boolean skipAvifForSmallJpeg =
-                                        sourceJpegBytes < TEXT_MODE_AVIF_SIZE_THRESHOLD_BYTES;
+                                        sourceJpegBytes
+                                                < AsgConstants.TEXT_MODE_AVIF_SIZE_THRESHOLD_BYTES;
                                 Log.d(
                                         TAG,
                                         "BLE encode: originalPath="
@@ -4544,7 +4529,7 @@ public class MediaCaptureService {
                                         compressedData =
                                                 PhotoExifMetadataWriter.encodeJpegForBle(
                                                         resized,
-                                                        TEXT_MODE_BLE_JPEG_QUALITY,
+                                                        AsgConstants.TEXT_MODE_BLE_JPEG_QUALITY,
                                                         originalPath);
                                         bleEncodedFormat = "JPEG";
                                     } else {
@@ -4584,7 +4569,7 @@ public class MediaCaptureService {
                                                 + String.format(
                                                         Locale.US, "%.1f", compressedSizeKb)
                                                 + " KB, grayscale="
-                                                + ENABLE_GRAYSCALE_BLE_PHOTOS);
+                                                + AsgConstants.ENABLE_GRAYSCALE_BLE_PHOTOS);
                                 Log.d(TAG, "⏱️ Compression took: " + compressionTime + "ms");
 
                                 // 5. Save compressed data to temporary file with bleImgId as name
