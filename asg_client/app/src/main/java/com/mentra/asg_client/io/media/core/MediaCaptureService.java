@@ -149,6 +149,12 @@ public class MediaCaptureService {
     public static final int bleImageTargetHeight = 480;
     public static final int bleImageAvifQuality = 40;
 
+    // Flip to false to fall back to the legacy full-color BLE pipeline (full-res ARGB decode +
+    // createScaledBitmap + RGB BleImageSharpener). BLE photos exist to be read (documents/signs/
+    // screens), not viewed, so grayscale is the default - true here also cuts the per-photo peak
+    // transient memory from ~36MB down to ~9MB (see GrayscaleBleProcessor for the breakdown).
+    private static final boolean ENABLE_GRAYSCALE_BLE_PHOTOS = false;
+
     private static class BleParams {
         final int targetWidth;
         final int targetHeight;
@@ -3988,14 +3994,7 @@ public class MediaCaptureService {
                             PhotoCaptureTestHooks.addFakeDelay("COMPRESSION");
 
                             try {
-                                // 1. Load original image
-                                android.graphics.Bitmap original =
-                                        android.graphics.BitmapFactory.decodeFile(originalPath);
-                                if (original == null) {
-                                    throw new Exception("Failed to decode image file");
-                                }
-
-                                // 2. Resolve BLE resize and quality parameters based on requested
+                                // 1. Resolve BLE resize and quality parameters based on requested
                                 // size
                                 String requestedSize = photoRequestedSizes.get(requestId);
                                 if (requestedSize == null || requestedSize.isEmpty()) {
@@ -4004,38 +4003,63 @@ public class MediaCaptureService {
 
                                 BleParams bleParams = resolveBleParams(requestedSize);
 
-                                // Calculate new dimensions maintaining aspect ratio, constrained by
-                                // requested target
-                                int targetWidth = bleParams.targetWidth;
-                                int targetHeight = bleParams.targetHeight;
-                                float aspectRatio =
-                                        (float) original.getWidth() / original.getHeight();
-
-                                if (aspectRatio > targetWidth / (float) targetHeight) {
-                                    targetHeight = (int) (targetWidth / aspectRatio);
+                                android.graphics.Bitmap resized;
+                                if (ENABLE_GRAYSCALE_BLE_PHOTOS) {
+                                    // 2. Decode straight to a grayscale luma pipeline (crop +
+                                    // contrast + unsharp all happen on 1-byte/pixel buffers) and
+                                    // only rehydrate to a full RGBA bitmap at the end for the AVIF
+                                    // encoder. BLE photos exist to be read (documents/signs/
+                                    // screens), not viewed, so color is dead weight - this also
+                                    // avoids ever materializing the ~30MB full-res ARGB bitmap the
+                                    // old decode+resize+sharpen chain used. ROI is null (full
+                                    // frame) until Phase 2 wires in real text-region detection.
+                                    resized =
+                                            GrayscaleBleProcessor.process(
+                                                    originalPath,
+                                                    null,
+                                                    bleParams.targetWidth,
+                                                    bleParams.targetHeight);
                                 } else {
-                                    targetWidth = (int) (targetHeight * aspectRatio);
+                                    // Legacy full-color path.
+                                    android.graphics.Bitmap original =
+                                            android.graphics.BitmapFactory.decodeFile(
+                                                    originalPath);
+                                    if (original == null) {
+                                        throw new Exception("Failed to decode image file");
+                                    }
+
+                                    int targetWidth = bleParams.targetWidth;
+                                    int targetHeight = bleParams.targetHeight;
+                                    float aspectRatio =
+                                            (float) original.getWidth() / original.getHeight();
+                                    if (aspectRatio > targetWidth / (float) targetHeight) {
+                                        targetHeight = (int) (targetWidth / aspectRatio);
+                                    } else {
+                                        targetWidth = (int) (targetHeight * aspectRatio);
+                                    }
+
+                                    android.graphics.Bitmap scaled =
+                                            android.graphics.Bitmap.createScaledBitmap(
+                                                    original, targetWidth, targetHeight, true);
+                                    if (scaled != original) {
+                                        original.recycle();
+                                    }
+                                    resized = BleImageSharpener.sharpen(mContext, scaled);
+                                    if (resized != scaled) {
+                                        scaled.recycle();
+                                    }
                                 }
 
-                                // 3. Resize bitmap, then restore edge contrast: the downscale
-                                // low-pass-filters text strokes, and a mild unsharp costs almost
-                                // no bytes while visibly improving glyph legibility.
-                                android.graphics.Bitmap scaled =
-                                        android.graphics.Bitmap.createScaledBitmap(
-                                                original, targetWidth, targetHeight, true);
-                                // createScaledBitmap returns the SAME object when the size
-                                // already matches (medium ladder == capture resolution), so
-                                // recycling unconditionally would kill the bitmap mid-pipeline.
-                                if (scaled != original) {
-                                    original.recycle();
-                                }
-                                android.graphics.Bitmap resized =
-                                        BleImageSharpener.sharpen(mContext, scaled);
-                                if (resized != scaled) {
-                                    scaled.recycle();
-                                }
+                                Log.d(
+                                        TAG,
+                                        "📐 BLE image ready for encode: "
+                                                + resized.getWidth()
+                                                + "x"
+                                                + resized.getHeight()
+                                                + " grayscale="
+                                                + ENABLE_GRAYSCALE_BLE_PHOTOS);
 
-                                // 4. Encode as AVIF only (no JPEG fallback over BLE)
+                                // 3. Encode as AVIF only (no JPEG fallback over BLE)
                                 Log.d(
                                         TAG,
                                         "BLE AVIF encode: originalPath="
@@ -4055,13 +4079,25 @@ public class MediaCaptureService {
 
                                 long compressionTime = System.currentTimeMillis() - startTime;
                                 recordTiming(requestId, "ble_compress_done");
+                                File originalFileForSize = new File(originalPath);
+                                long originalSizeBytes = originalFileForSize.length();
+                                double originalSizeKb = originalSizeBytes / 1024.0;
+                                double compressedSizeKb = compressedData.length / 1024.0;
                                 Log.d(
                                         TAG,
                                         "✅ Compressed photo for BLE: "
                                                 + originalPath
-                                                + " -> "
+                                                + " ("
+                                                + originalSizeBytes
+                                                + " bytes / "
+                                                + String.format(Locale.US, "%.1f", originalSizeKb)
+                                                + " KB) -> AVIF "
                                                 + compressedData.length
-                                                + " bytes");
+                                                + " bytes / "
+                                                + String.format(
+                                                        Locale.US, "%.1f", compressedSizeKb)
+                                                + " KB, grayscale="
+                                                + ENABLE_GRAYSCALE_BLE_PHOTOS);
                                 Log.d(TAG, "⏱️ Compression took: " + compressionTime + "ms");
 
                                 // 5. Save compressed data to temporary file with bleImgId as name
