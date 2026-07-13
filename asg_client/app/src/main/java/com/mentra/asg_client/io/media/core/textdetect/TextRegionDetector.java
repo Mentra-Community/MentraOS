@@ -116,9 +116,11 @@ public final class TextRegionDetector {
                         darkScore >= lightScore
                                 ? CvPrimitives.POLARITY_DARK_ON_LIGHT
                                 : CvPrimitives.POLARITY_LIGHT_ON_DARK;
+                // Pad from the raw (unpadded) bounds: winner.crop is already padded once, and
+                // padding it again compounds the inflation.
                 CropRect expanded =
                         TextLineClusterer.applyPadding(
-                                winner.crop,
+                                winner.rawBounds,
                                 analysisWidth,
                                 analysisHeight,
                                 medianHeight(winner.lines),
@@ -128,6 +130,7 @@ public final class TextRegionDetector {
                         new TextLineClusterer.ClusterResult(
                                 winner.lines,
                                 expanded,
+                                winner.rawBounds,
                                 winner.score,
                                 winner.acceptedComponentCount,
                                 winner.lineCount);
@@ -153,16 +156,18 @@ public final class TextRegionDetector {
         } else if (winner.score >= config.mediumConfidenceScore) {
             confidence = DetectionResult.Confidence.MEDIUM;
             reason = "medium_confidence_extra_padding";
+            // Pad from the raw (unpadded) bounds: winner.crop is already padded once.
             winner =
                     new TextLineClusterer.ClusterResult(
                             winner.lines,
                             TextLineClusterer.applyPadding(
-                                    winner.crop,
+                                    winner.rawBounds,
                                     analysisWidth,
                                     analysisHeight,
                                     medianHeight(winner.lines),
                                     config,
                                     1.35f),
+                            winner.rawBounds,
                             winner.score,
                             winner.acceptedComponentCount,
                             winner.lineCount);
@@ -182,11 +187,17 @@ public final class TextRegionDetector {
         if (selection.acceptedComponentCount <= 2) {
             return false;
         }
-        float cropAreaFraction = crop.pixelCount() / (float) (analysis.width * analysis.height);
-        if (cropAreaFraction < config.minCropAreaFraction) {
+        // Both checks run against the raw (pre-padding) detected bounds. The padded crop
+        // routinely gets clamped to the frame edge by design — padding reaching the boundary
+        // says nothing about whether the detected text itself was clipped, and padding can
+        // likewise inflate a degenerate detection past the min-area bar.
+        CropRect rawBounds = selection.rawBounds != null ? selection.rawBounds : crop;
+        float rawAreaFraction =
+                rawBounds.pixelCount() / (float) (analysis.width * analysis.height);
+        if (rawAreaFraction < config.minCropAreaFraction) {
             return false;
         }
-        if (touchesBoundary(crop, analysis.width, analysis.height)) {
+        if (touchesBoundary(rawBounds, analysis.width, analysis.height)) {
             return false;
         }
         return true;
@@ -244,6 +255,8 @@ public final class TextRegionDetector {
 
     private static final class PolaritySelection {
         final CropRect analysisCrop;
+        /** Detected bounds before padding; trust checks run against these, not the padded crop. */
+        final CropRect rawBounds;
         final String polarity;
         final DetectionResult.Confidence confidence;
         final int acceptedComponentCount;
@@ -254,6 +267,7 @@ public final class TextRegionDetector {
 
         private PolaritySelection(
                 CropRect analysisCrop,
+                CropRect rawBounds,
                 String polarity,
                 DetectionResult.Confidence confidence,
                 int acceptedComponentCount,
@@ -262,6 +276,7 @@ public final class TextRegionDetector {
                 List<TextLineClusterer.TextLine> acceptedLines,
                 String fallbackReason) {
             this.analysisCrop = analysisCrop;
+            this.rawBounds = rawBounds;
             this.polarity = polarity;
             this.confidence = confidence;
             this.acceptedComponentCount = acceptedComponentCount;
@@ -279,6 +294,7 @@ public final class TextRegionDetector {
             List<ComponentStats> components = flattenComponents(result.lines);
             return new PolaritySelection(
                     result.crop,
+                    result.rawBounds,
                     polarity,
                     confidence,
                     result.acceptedComponentCount,
@@ -290,6 +306,7 @@ public final class TextRegionDetector {
 
         static PolaritySelection fallback(String polarity, String reason) {
             return new PolaritySelection(
+                    null,
                     null,
                     polarity,
                     DetectionResult.Confidence.NONE,

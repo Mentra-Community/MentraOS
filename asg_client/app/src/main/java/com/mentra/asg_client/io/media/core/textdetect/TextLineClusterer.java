@@ -33,7 +33,7 @@ final class TextLineClusterer {
                 config.cropFromTopLineOnly ? merged.get(0).bounds : unionBounds(merged);
         CropRect padded = applyPadding(baseBounds, imageWidth, imageHeight, medianHeight, config, 1.0f);
         float topScore = merged.get(0).score;
-        return new ClusterResult(merged, padded, topScore, filtered.size(), merged.size());
+        return new ClusterResult(merged, padded, baseBounds, topScore, filtered.size(), merged.size());
     }
 
     private static List<ComponentStats> filterComponents(
@@ -360,20 +360,33 @@ final class TextLineClusterer {
     static final class ClusterResult {
         final List<TextLine> lines;
         final CropRect crop;
+        /**
+         * Detected bounds before safety padding was applied. Trust checks (boundary contact, min
+         * area) must run against these: padding routinely reaches the frame edge by design, which
+         * says nothing about whether the detected text itself was clipped.
+         */
+        final CropRect rawBounds;
         final float score;
         final int acceptedComponentCount;
         final int lineCount;
 
-        ClusterResult(List<TextLine> lines, CropRect crop, float score, int acceptedComponentCount, int lineCount) {
+        ClusterResult(
+                List<TextLine> lines,
+                CropRect crop,
+                CropRect rawBounds,
+                float score,
+                int acceptedComponentCount,
+                int lineCount) {
             this.lines = lines;
             this.crop = crop;
+            this.rawBounds = rawBounds;
             this.score = score;
             this.acceptedComponentCount = acceptedComponentCount;
             this.lineCount = lineCount;
         }
 
         static ClusterResult empty() {
-            return new ClusterResult(Collections.emptyList(), null, 0f, 0, 0);
+            return new ClusterResult(Collections.emptyList(), null, null, 0f, 0, 0);
         }
 
         boolean hasCrop() {
