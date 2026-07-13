@@ -4037,13 +4037,9 @@ public class MediaCaptureService {
                                                             input.width,
                                                             input.height,
                                                             TextDetectConfig.defaults());
-                                            int sample = input.sampleSize;
                                             roi =
-                                                    new android.graphics.Rect(
-                                                            result.roi.left * sample,
-                                                            result.roi.top * sample,
-                                                            result.roi.right * sample,
-                                                            result.roi.bottom * sample);
+                                                    GrayscaleBleProcessor.scaleDetectionRoi(
+                                                            result.roi, input.sampleSize);
                                             textCropConfidence = result.confidence;
                                             textCropReason = result.fallbackReason;
                                             Log.d(

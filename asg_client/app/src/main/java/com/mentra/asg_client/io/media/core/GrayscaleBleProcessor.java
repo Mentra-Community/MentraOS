@@ -5,6 +5,7 @@ import android.graphics.BitmapFactory;
 import android.graphics.Rect;
 import android.util.Log;
 import androidx.annotation.Nullable;
+import com.mentra.asg_client.io.media.core.textdetect.CropRect;
 import java.io.IOException;
 
 /**
@@ -327,6 +328,18 @@ final class GrayscaleBleProcessor {
         decoded.recycle();
 
         return new DetectionLuma(luma, width, height, sampleSize);
+    }
+
+    /**
+     * Scales a {@code TextRegionDetector} crop (computed against the subsampled dimensions
+     * returned by {@link #extractDetectionLuma}) back up to true source-JPEG pixel coordinates.
+     */
+    static Rect scaleDetectionRoi(CropRect roi, int sampleSize) {
+        return new Rect(
+                roi.left * sampleSize,
+                roi.top * sampleSize,
+                roi.right * sampleSize,
+                roi.bottom * sampleSize);
     }
 
     private static int clampInt(int v, int min, int max) {
