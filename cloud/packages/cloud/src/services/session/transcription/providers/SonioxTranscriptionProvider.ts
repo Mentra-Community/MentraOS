@@ -15,6 +15,7 @@ import { SonioxNodeClient } from "@soniox/node";
 import { StreamType, getLanguageInfo, parseLanguageStream, TranscriptionData, SonioxToken } from "@mentra/sdk";
 
 import { SonioxSdkStream } from "./SonioxSdkStream";
+import { SonioxCredential, SonioxKeyPool, getSharedSonioxKeyPool } from "../../soniox/SonioxKeyPool";
 
 import {
   TranscriptionProvider,
@@ -70,6 +71,10 @@ interface SonioxResponse {
   finished?: boolean; // Indicates end of transcription
 }
 
+type InitializableStreamInstance = StreamInstance & {
+  initialize(): Promise<void>;
+};
+
 export class SonioxTranscriptionProvider implements TranscriptionProvider {
   readonly name = ProviderType.SONIOX;
   readonly logger: Logger;
@@ -78,8 +83,9 @@ export class SonioxTranscriptionProvider implements TranscriptionProvider {
   private failureCount = 0;
   private lastFailureTime = 0;
 
-  /** Soniox Node SDK client — initialized when SONIOX_USE_SDK=true */
-  private sdkClient: SonioxNodeClient | null = null;
+  /** Soniox credential pool: primary key plus optional fallback keys. */
+  private readonly keyPool: SonioxKeyPool;
+  private readonly sdkClients = new Map<string, SonioxNodeClient>();
   private readonly useSdk: boolean;
 
   constructor(
@@ -88,6 +94,7 @@ export class SonioxTranscriptionProvider implements TranscriptionProvider {
   ) {
     this.logger = parentLogger.child({ provider: this.name });
     this.useSdk = process.env.SONIOX_USE_SDK !== "false";
+    this.keyPool = getSharedSonioxKeyPool(config.apiKey, config.fallbackApiKeys ?? []);
 
     this.healthStatus = {
       isHealthy: true,
@@ -100,6 +107,8 @@ export class SonioxTranscriptionProvider implements TranscriptionProvider {
         supportedLanguages: SONIOX_SUPPORTED_LANGUAGES.length,
         languages: SONIOX_SUPPORTED_LANGUAGES,
         useSdk: this.useSdk,
+        credentialCount: this.keyPool.size,
+        hasFallbackCredentials: this.keyPool.hasFallbacks,
       },
       `Soniox provider initialized with ${SONIOX_SUPPORTED_LANGUAGES.length} supported languages (SDK mode: ${this.useSdk})`,
     );
@@ -108,23 +117,16 @@ export class SonioxTranscriptionProvider implements TranscriptionProvider {
   async initialize(): Promise<void> {
     this.logger.info({ useSdk: this.useSdk }, "Initializing Soniox provider");
 
-    if (!this.config.apiKey) {
+    if (this.keyPool.size === 0) {
       throw new Error("Soniox API key is required");
-    }
-
-    // Initialize SDK client if enabled
-    if (this.useSdk) {
-      this.sdkClient = new SonioxNodeClient({
-        api_key: this.config.apiKey,
-      });
-      this.logger.info("✅ Soniox SDK client initialized");
     }
 
     this.logger.info(
       {
         endpoint: this.config.endpoint,
-        keyLength: this.config.apiKey.length,
         useSdk: this.useSdk,
+        credentialCount: this.keyPool.size,
+        hasFallbackCredentials: this.keyPool.hasFallbacks,
       },
       "Soniox provider initialized",
     );
@@ -132,7 +134,7 @@ export class SonioxTranscriptionProvider implements TranscriptionProvider {
 
   async dispose(): Promise<void> {
     this.logger.info("Disposing Soniox provider");
-    this.sdkClient = null;
+    this.sdkClients.clear();
   }
 
   async createTranscriptionStream(language: string, options: StreamOptions): Promise<StreamInstance> {
@@ -149,40 +151,59 @@ export class SonioxTranscriptionProvider implements TranscriptionProvider {
       throw new SonioxProviderError(`Language ${language} not supported by Soniox`, 400);
     }
 
-    // Use SDK-based stream when enabled
-    if (this.useSdk && this.sdkClient) {
-      const stream = new SonioxSdkStream(
-        options.streamId,
-        options.subscription,
-        this,
-        language,
-        undefined,
-        options.callbacks,
-        this.logger.child({ streamId: options.streamId, provider: "soniox-sdk" }),
-        this.config,
-        this.sdkClient,
-      );
+    const attempted = new Set<string>();
+    let lastError: Error | null = null;
 
-      await stream.initialize();
-      return stream;
+    while (attempted.size < this.keyPool.size) {
+      const credential = this.keyPool.selectCredential(attempted);
+      if (!credential) break;
+      attempted.add(credential.id);
+
+      let stream: InitializableStreamInstance | null = null;
+      try {
+        stream = this.createStreamForCredential(credential, language, options);
+        await stream.initialize();
+        this.keyPool.recordSuccess(credential.id);
+        return stream;
+      } catch (error) {
+        lastError = error as Error;
+        const classification = this.keyPool.recordFailure(credential.id, lastError);
+        this.logger.warn(
+          {
+            streamId: options.streamId,
+            credentialId: credential.id,
+            credentialRole: credential.role,
+            failureKind: classification?.kind,
+            error: lastError.message,
+            availableCredentials: this.keyPool.describeAvailability(),
+          },
+          "Soniox credential failed while creating stream; trying another credential if available",
+        );
+        if (stream) {
+          await stream.close().catch((closeError) => {
+            this.logger.debug({ closeError, streamId: options.streamId }, "Ignoring failed Soniox stream cleanup error");
+          });
+        }
+      }
     }
 
-    // Fall back to legacy raw-WebSocket stream
-    const stream = new SonioxTranscriptionStream(
-      options.streamId,
-      options.subscription,
-      this,
-      language,
-      undefined,
-      options.callbacks,
-      this.logger,
-      this.config,
+    throw (
+      lastError ??
+      new Error(`No available Soniox credentials: ${JSON.stringify(this.keyPool.describeAvailability())}`)
     );
+  }
 
-    // Initialize WebSocket connection
-    await stream.initialize();
-
-    return stream;
+  recordCredentialFailure(credentialId: string, error: Error): void {
+    const classification = this.keyPool.recordFailure(credentialId, error);
+    this.logger.warn(
+      {
+        credentialId,
+        failureKind: classification?.kind,
+        error: error.message,
+        availableCredentials: this.keyPool.describeAvailability(),
+      },
+      "Recorded Soniox credential failure",
+    );
   }
 
   // Translation is now handled by a separate TranslationManager
@@ -287,6 +308,71 @@ export class SonioxTranscriptionProvider implements TranscriptionProvider {
     this.logger.debug("Recorded provider success");
   }
 
+  private createStreamForCredential(
+    credential: SonioxCredential,
+    language: string,
+    options: StreamOptions,
+  ): InitializableStreamInstance {
+    const credentialConfig: SonioxProviderConfig = {
+      ...this.config,
+      apiKey: credential.apiKey,
+    };
+
+    const credentialLogger = this.logger.child({
+      streamId: options.streamId,
+      credentialId: credential.id,
+      credentialRole: credential.role,
+    });
+
+    // Use SDK-based stream when enabled
+    if (this.useSdk) {
+      const sdkClient = this.getSdkClient(credential);
+      return new SonioxSdkStream(
+        options.streamId,
+        options.subscription,
+        this,
+        language,
+        undefined,
+        options.callbacks,
+        credentialLogger.child({ provider: "soniox-sdk" }),
+        credentialConfig,
+        sdkClient,
+        credential.id,
+      );
+    }
+
+    // Fall back to legacy raw-WebSocket stream
+    return new SonioxTranscriptionStream(
+      options.streamId,
+      options.subscription,
+      this,
+      language,
+      undefined,
+      options.callbacks,
+      credentialLogger,
+      credentialConfig,
+      credential.id,
+    );
+  }
+
+  private getSdkClient(credential: SonioxCredential): SonioxNodeClient {
+    const existing = this.sdkClients.get(credential.id);
+    if (existing) return existing;
+
+    const client = new SonioxNodeClient({
+      api_key: credential.apiKey,
+    });
+    this.sdkClients.set(credential.id, client);
+    this.logger.info(
+      {
+        credentialId: credential.id,
+        credentialRole: credential.role,
+      },
+      "✅ Soniox SDK client initialized",
+    );
+    return client;
+  }
+
   private getRecentFailureCount(timeWindowMs: number): number {
     const now = Date.now();
     return this.lastFailureTime && now - this.lastFailureTime < timeWindowMs ? this.failureCount : 0;
@@ -381,6 +467,7 @@ class SonioxTranscriptionStream implements StreamInstance {
     public readonly callbacks: StreamCallbacks,
     public readonly logger: Logger,
     private readonly config: SonioxProviderConfig,
+    private readonly credentialId?: string,
   ) {
     this.metrics = {
       totalDuration: 0,
@@ -536,7 +623,7 @@ class SonioxTranscriptionStream implements StreamInstance {
     const enableLanguageIdentification = !(disableLangIdParam === true || disableLangIdParam === "true");
     const config: any = {
       api_key: this.config.apiKey,
-      model: this.config.model || "stt-rt-v4",
+      model: this.config.model || "stt-rt-v5",
       audio_format: "pcm_s16le",
       sample_rate: 16000,
       num_channels: 1,
@@ -943,6 +1030,9 @@ class SonioxTranscriptionStream implements StreamInstance {
     this.lastSentInterim = "";
 
     this.provider.recordFailure(error);
+    if (this.credentialId) {
+      this.provider.recordCredentialFailure(this.credentialId, error);
+    }
 
     if (this.callbacks.onError) {
       this.callbacks.onError(error);
