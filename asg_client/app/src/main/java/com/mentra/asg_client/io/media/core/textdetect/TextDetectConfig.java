@@ -84,6 +84,53 @@ public final class TextDetectConfig {
     /** When true, retain intermediate masks/overlays for offline harness dumps. */
     public final boolean debugCaptureIntermediates;
 
+    // --- Experimental feature flags (Tier 1-3 noise-robustness fixes; default off) ---
+
+    /**
+     * Tier 1 fix: crop from the single top-scoring text line's bounds instead of the union of
+     * every accepted line. Without this, one noise-driven line anywhere in the frame (dust,
+     * reflections, foliage) can balloon the crop out to the image boundary and trigger the
+     * center-crop safety fallback even when the real text line was detected correctly.
+     */
+    public final boolean cropFromTopLineOnly;
+
+    /** Tier 1: apply tighter aspect-ratio/fill-ratio bounds on top of the base config values. */
+    public final boolean strictComponentFilters;
+
+    /** Tier 1: reject components whose gradient-orientation structure doesn't look stroke-like. */
+    public final boolean enableStructureFilter;
+
+    /** Min {@code ComponentStats.structureScore} to accept a component when the filter is on. */
+    public final float minStructureScore;
+
+    /** Tier 2: reject components whose stroke-width consistency doesn't look character-like. */
+    public final boolean enableStrokeWidthFilter;
+
+    /** Max {@code ComponentStats.strokeWidthCv} to accept a component when the filter is on. */
+    public final float maxStrokeWidthCv;
+
+    /**
+     * Tier 2: split components that are far too elongated (fused character runs, e.g. a whole VIN
+     * merged into one blob by morphological closing) into sub-components by vertical-projection
+     * gaps, instead of discarding them outright on the aspect-ratio filter.
+     */
+    public final boolean enableBlobSplitting;
+
+    /**
+     * Tier 3: add MSER (Maximally Stable Extremal Regions) candidate blobs alongside the
+     * adaptive-threshold connected components, as an additional/alternate detection source.
+     */
+    public final boolean enableMser;
+
+    /**
+     * Min crop-area fraction (of the analysis image) for {@code isTrustworthyCrop} to accept a
+     * detection instead of falling back to the center crop. The original 0.02 default was
+     * calibrated against union-of-all-lines crops (typically large paragraphs); a single tight
+     * VIN/label line (see {@code cropFromTopLineOnly}) is legitimately much smaller, so this is
+     * tunable independently.
+     */
+    public final float minCropAreaFraction;
+
     private TextDetectConfig(Builder builder) {
         this.analysisWidth = builder.analysisWidth;
         this.adaptiveThresholdBlockSize = builder.adaptiveThresholdBlockSize;
@@ -111,6 +158,15 @@ public final class TextDetectConfig {
         this.highConfidenceScore = builder.highConfidenceScore;
         this.mediumConfidenceScore = builder.mediumConfidenceScore;
         this.debugCaptureIntermediates = builder.debugCaptureIntermediates;
+        this.cropFromTopLineOnly = builder.cropFromTopLineOnly;
+        this.strictComponentFilters = builder.strictComponentFilters;
+        this.enableStructureFilter = builder.enableStructureFilter;
+        this.minStructureScore = builder.minStructureScore;
+        this.enableStrokeWidthFilter = builder.enableStrokeWidthFilter;
+        this.maxStrokeWidthCv = builder.maxStrokeWidthCv;
+        this.enableBlobSplitting = builder.enableBlobSplitting;
+        this.enableMser = builder.enableMser;
+        this.minCropAreaFraction = builder.minCropAreaFraction;
     }
 
     public static TextDetectConfig defaults() {
@@ -144,7 +200,16 @@ public final class TextDetectConfig {
                 .paddingVerticalHeightFactor(paddingVerticalHeightFactor)
                 .highConfidenceScore(highConfidenceScore)
                 .mediumConfidenceScore(mediumConfidenceScore)
-                .debugCaptureIntermediates(debugCaptureIntermediates);
+                .debugCaptureIntermediates(debugCaptureIntermediates)
+                .cropFromTopLineOnly(cropFromTopLineOnly)
+                .strictComponentFilters(strictComponentFilters)
+                .enableStructureFilter(enableStructureFilter)
+                .minStructureScore(minStructureScore)
+                .enableStrokeWidthFilter(enableStrokeWidthFilter)
+                .maxStrokeWidthCv(maxStrokeWidthCv)
+                .enableBlobSplitting(enableBlobSplitting)
+                .enableMser(enableMser)
+                .minCropAreaFraction(minCropAreaFraction);
     }
 
     public static final class Builder {
@@ -174,6 +239,15 @@ public final class TextDetectConfig {
         private float highConfidenceScore = 8.0f;
         private float mediumConfidenceScore = 4.0f;
         private boolean debugCaptureIntermediates = false;
+        private boolean cropFromTopLineOnly = false;
+        private boolean strictComponentFilters = false;
+        private boolean enableStructureFilter = false;
+        private float minStructureScore = 0.35f;
+        private boolean enableStrokeWidthFilter = false;
+        private float maxStrokeWidthCv = 0.6f;
+        private boolean enableBlobSplitting = false;
+        private boolean enableMser = false;
+        private float minCropAreaFraction = 0.02f;
 
         public Builder analysisWidth(int value) {
             this.analysisWidth = value;
@@ -302,6 +376,51 @@ public final class TextDetectConfig {
 
         public Builder debugCaptureIntermediates(boolean value) {
             this.debugCaptureIntermediates = value;
+            return this;
+        }
+
+        public Builder cropFromTopLineOnly(boolean value) {
+            this.cropFromTopLineOnly = value;
+            return this;
+        }
+
+        public Builder strictComponentFilters(boolean value) {
+            this.strictComponentFilters = value;
+            return this;
+        }
+
+        public Builder enableStructureFilter(boolean value) {
+            this.enableStructureFilter = value;
+            return this;
+        }
+
+        public Builder minStructureScore(float value) {
+            this.minStructureScore = value;
+            return this;
+        }
+
+        public Builder enableStrokeWidthFilter(boolean value) {
+            this.enableStrokeWidthFilter = value;
+            return this;
+        }
+
+        public Builder maxStrokeWidthCv(float value) {
+            this.maxStrokeWidthCv = value;
+            return this;
+        }
+
+        public Builder enableBlobSplitting(boolean value) {
+            this.enableBlobSplitting = value;
+            return this;
+        }
+
+        public Builder enableMser(boolean value) {
+            this.enableMser = value;
+            return this;
+        }
+
+        public Builder minCropAreaFraction(float value) {
+            this.minCropAreaFraction = value;
             return this;
         }
 

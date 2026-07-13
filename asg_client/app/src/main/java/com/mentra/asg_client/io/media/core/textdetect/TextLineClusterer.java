@@ -29,7 +29,9 @@ final class TextLineClusterer {
         merged.sort(Comparator.comparingDouble((TextLine line) -> line.score).reversed());
 
         float medianHeight = medianComponentHeight(merged);
-        CropRect padded = applyPadding(unionBounds(merged), imageWidth, imageHeight, medianHeight, config, 1.0f);
+        CropRect baseBounds =
+                config.cropFromTopLineOnly ? merged.get(0).bounds : unionBounds(merged);
+        CropRect padded = applyPadding(baseBounds, imageWidth, imageHeight, medianHeight, config, 1.0f);
         float topScore = merged.get(0).score;
         return new ClusterResult(merged, padded, topScore, filtered.size(), merged.size());
     }
@@ -41,6 +43,19 @@ final class TextLineClusterer {
         int minWidth = Math.max(1, Math.round(imageWidth * config.minWidthFraction));
         int maxWidth = Math.max(minWidth, Math.round(imageWidth * config.maxWidthFraction));
         int maxArea = Math.round(imageWidth * imageHeight * 0.90f);
+
+        float minAspect = config.minAspectRatio;
+        float maxAspect = config.maxAspectRatio;
+        float minFill = config.minFillRatio;
+        float maxFill = config.maxFillRatio;
+        if (config.strictComponentFilters) {
+            // Tier 1: narrower bounds tuned against real captures with dust/foliage/reflection
+            // clutter, on top of the spec's permissive defaults.
+            minAspect = Math.max(minAspect, 0.15f);
+            maxAspect = Math.min(maxAspect, 6f);
+            minFill = Math.max(minFill, 0.12f);
+            maxFill = Math.min(maxFill, 0.85f);
+        }
 
         List<ComponentStats> out = new ArrayList<>();
         for (ComponentStats c : components) {
@@ -54,10 +69,16 @@ final class TextLineClusterer {
                 continue;
             }
             float aspect = c.width / (float) Math.max(1, c.height);
-            if (aspect < config.minAspectRatio || aspect > config.maxAspectRatio) {
+            if (aspect < minAspect || aspect > maxAspect) {
                 continue;
             }
-            if (c.fillRatio < config.minFillRatio || c.fillRatio > config.maxFillRatio) {
+            if (c.fillRatio < minFill || c.fillRatio > maxFill) {
+                continue;
+            }
+            if (config.enableStructureFilter && c.structureScore < config.minStructureScore) {
+                continue;
+            }
+            if (config.enableStrokeWidthFilter && c.strokeWidthCv > config.maxStrokeWidthCv) {
                 continue;
             }
             out.add(c);

@@ -1,5 +1,6 @@
 package com.mentra.asg_client.io.media.core.textdetect;
 
+import java.util.ArrayList;
 import java.util.List;
 import org.opencv.core.Mat;
 
@@ -24,12 +25,20 @@ public final class TextRegionDetector {
                     CvPrimitives.runPolarityPipeline(
                             analysis.gray, config, CvPrimitives.POLARITY_LIGHT_ON_DARK);
 
+            List<ComponentStats> darkComponents = new ArrayList<>(dark.components);
+            List<ComponentStats> lightComponents = new ArrayList<>(light.components);
+            if (config.enableMser) {
+                // Tier 3: MSER has no polarity concept of its own, so its candidate blobs are
+                // merged into both polarity pipelines as additional evidence.
+                List<ComponentStats> mserComponents = CvPrimitives.detectMserComponents(analysis.gray);
+                darkComponents.addAll(mserComponents);
+                lightComponents.addAll(mserComponents);
+            }
+
             TextLineClusterer.ClusterResult darkCluster =
-                    TextLineClusterer.cluster(
-                            dark.components, analysis.width, analysis.height, config);
+                    TextLineClusterer.cluster(darkComponents, analysis.width, analysis.height, config);
             TextLineClusterer.ClusterResult lightCluster =
-                    TextLineClusterer.cluster(
-                            light.components, analysis.width, analysis.height, config);
+                    TextLineClusterer.cluster(lightComponents, analysis.width, analysis.height, config);
 
             PolaritySelection selection =
                     selectPolarity(darkCluster, lightCluster, analysis.width, analysis.height, config);
@@ -174,7 +183,7 @@ public final class TextRegionDetector {
             return false;
         }
         float cropAreaFraction = crop.pixelCount() / (float) (analysis.width * analysis.height);
-        if (cropAreaFraction < 0.02f) {
+        if (cropAreaFraction < config.minCropAreaFraction) {
             return false;
         }
         if (touchesBoundary(crop, analysis.width, analysis.height)) {

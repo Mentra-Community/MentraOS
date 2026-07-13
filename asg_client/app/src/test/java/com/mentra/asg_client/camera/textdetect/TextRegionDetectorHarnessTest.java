@@ -16,7 +16,6 @@ import java.util.Locale;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import org.junit.BeforeClass;
-import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
@@ -38,7 +37,6 @@ import org.opencv.imgproc.Imgproc;
  *   -Dtextdetect.outputDir=/path/to/output
  * </pre>
  */
-@Ignore("Requires -Dtextdetect.inputDir; run manually against real Mentra captures")
 @RunWith(JUnit4.class)
 public class TextRegionDetectorHarnessTest {
     private static final String INPUT_DIR_PROP = "textdetect.inputDir";
@@ -72,16 +70,36 @@ public class TextRegionDetectorHarnessTest {
                         });
         assumeTrue("No images found in " + inputDirPath, images != null && images.length > 0);
 
-        JSONArray allResults = new JSONArray();
-        TextDetectConfig config =
+        TextDetectConfig baselineConfig =
                 TextDetectConfig.defaults().toBuilder().debugCaptureIntermediates(true).build();
+        TextDetectConfig tunedConfig =
+                TextDetectConfig.defaults()
+                        .toBuilder()
+                        .debugCaptureIntermediates(true)
+                        .cropFromTopLineOnly(true)
+                        .strictComponentFilters(true)
+                        .enableStructureFilter(true)
+                        .enableStrokeWidthFilter(true)
+                        .enableBlobSplitting(true)
+                        .enableMser(true)
+                        .minCropAreaFraction(0.004f)
+                        .build();
 
+        runBatch(images, new File(outputDir, "baseline"), baselineConfig, "results_baseline.json");
+        runBatch(images, new File(outputDir, "tuned"), tunedConfig, "results_tuned.json");
+    }
+
+    private static void runBatch(
+            File[] images, File batchOutputDir, TextDetectConfig config, String resultsFileName)
+            throws Exception {
+        Files.createDirectories(batchOutputDir.toPath());
+        JSONArray allResults = new JSONArray();
         for (File imageFile : images) {
-            JSONObject entry = processImage(imageFile, outputDir, config);
+            JSONObject entry = processImage(imageFile, batchOutputDir, config);
             allResults.put(entry);
         }
-
-        writeJson(new File(outputDir, "results.json"), new JSONObject().put("images", allResults));
+        writeJson(
+                new File(batchOutputDir, resultsFileName), new JSONObject().put("images", allResults));
     }
 
     private static JSONObject processImage(File imageFile, File outputDir, TextDetectConfig config)

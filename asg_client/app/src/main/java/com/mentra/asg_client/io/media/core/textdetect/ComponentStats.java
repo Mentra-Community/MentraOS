@@ -11,6 +11,24 @@ public final class ComponentStats {
     public final float centroidY;
     public final float fillRatio;
 
+    /**
+     * Concentration of gradient-magnitude-weighted edge orientations in the component's dominant
+     * two directions (0..1). Text strokes tend toward a couple of dominant edge orientations;
+     * random texture (dust, foliage, cloud) tends toward a flatter distribution. Only populated
+     * when {@code TextDetectConfig.enableStructureFilter} is set; otherwise defaults to 1
+     * (neutral / not penalized).
+     */
+    public final float structureScore;
+
+    /**
+     * Coefficient of variation (stddev/mean) of the distance-transform values inside the
+     * component mask — a proxy for stroke-width consistency. Real character strokes have fairly
+     * uniform thickness (low CV); filled blobs and textured noise tend to vary more (high CV).
+     * Only populated when {@code TextDetectConfig.enableStrokeWidthFilter} is set; otherwise
+     * defaults to 0 (neutral / not penalized).
+     */
+    public final float strokeWidthCv;
+
     public ComponentStats(
             int left,
             int top,
@@ -19,7 +37,9 @@ public final class ComponentStats {
             int area,
             float centroidX,
             float centroidY,
-            float fillRatio) {
+            float fillRatio,
+            float structureScore,
+            float strokeWidthCv) {
         this.left = left;
         this.top = top;
         this.width = width;
@@ -28,6 +48,8 @@ public final class ComponentStats {
         this.centroidX = centroidX;
         this.centroidY = centroidY;
         this.fillRatio = fillRatio;
+        this.structureScore = structureScore;
+        this.strokeWidthCv = strokeWidthCv;
     }
 
     public int right() {
