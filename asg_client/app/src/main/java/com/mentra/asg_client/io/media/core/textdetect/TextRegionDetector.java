@@ -197,7 +197,8 @@ public final class TextRegionDetector {
             PolaritySelection selection,
             CvPrimitives.AnalysisFrame analysis,
             TextDetectConfig config) {
-        if (selection.acceptedComponentCount <= 2) {
+        if (selection.acceptedComponentCount <= 2
+                && !isTrustedSingleComponentLine(selection, config)) {
             return false;
         }
         // improvedCropAccuracy: both checks run against the raw (pre-padding) detected bounds.
@@ -218,6 +219,27 @@ public final class TextRegionDetector {
             return false;
         }
         return true;
+    }
+
+    /**
+     * A promoted fused-word component has already passed the normal geometry and optional
+     * structure filters. Let that deliberately enabled candidate reach the remaining area and
+     * boundary trust checks instead of rejecting it solely because it contains one component.
+     */
+    private static boolean isTrustedSingleComponentLine(
+            PolaritySelection selection, TextDetectConfig config) {
+        if (!config.allowSingleComponentLines
+                || selection.acceptedLines == null
+                || selection.acceptedLines.size() != 1) {
+            return false;
+        }
+        TextLineClusterer.TextLine line = selection.acceptedLines.get(0);
+        if (line.components.size() != 1) {
+            return false;
+        }
+        ComponentStats component = line.components.get(0);
+        float aspect = component.width / (float) Math.max(1, component.height);
+        return aspect >= config.singleComponentMinAspectRatio;
     }
 
     private static boolean touchesBoundary(CropRect crop, int width, int height) {

@@ -93,6 +93,8 @@ public class TextRegionDetectorHarnessTest {
                         .allowSingleComponentLines(true)
                         .cropFromTopLineOnly(true)
                         .enableStructureFilter(true)
+                        .improvedCropAccuracy(true)
+                        .minCropAreaFraction(0.004f)
                         .debugCaptureIntermediates(true)
                         .build();
 

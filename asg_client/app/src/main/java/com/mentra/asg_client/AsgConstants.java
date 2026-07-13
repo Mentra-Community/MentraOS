@@ -95,7 +95,7 @@ public class AsgConstants {
     /** JPEG quality when skipping AVIF for small BLE payloads. */
     public static final int TEXT_MODE_BLE_JPEG_QUALITY = 95;
 
-    /** Skip AVIF and send JPEG when the source capture is already under this size. */
+    /** In text mode, skip AVIF and send JPEG when the source capture is under this size. */
     public static final int TEXT_MODE_AVIF_SIZE_THRESHOLD_BYTES = 200 * 1024;
 
     // BLE size-tier downscale caps (long edge; aspect ratio preserved) and AVIF quality
@@ -111,4 +111,6 @@ public class AsgConstants {
     public static final boolean TEXT_DETECT_ALLOW_SINGLE_COMPONENT_LINES = true;
     public static final boolean TEXT_DETECT_CROP_FROM_TOP_LINE_ONLY = true;
     public static final boolean TEXT_DETECT_ENABLE_STRUCTURE_FILTER = true;
+    public static final boolean TEXT_DETECT_IMPROVED_CROP_ACCURACY = true;
+    public static final float TEXT_DETECT_MIN_CROP_AREA_FRACTION = 0.004f;
 }

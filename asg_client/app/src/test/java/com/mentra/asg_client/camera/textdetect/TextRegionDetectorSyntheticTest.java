@@ -173,6 +173,38 @@ public class TextRegionDetectorSyntheticTest {
         }
     }
 
+    /** A fused word must also be trustworthy when it is the only component in the frame. */
+    @Test
+    public void detect_fusedWordOnly_productionConfig_doesNotCenterFallback() {
+        int width = 800;
+        int height = 600;
+        CropRect word = fusedWordBounds();
+        byte[] luma = renderFusedWordOnly(width, height, word);
+
+        TextDetectConfig config =
+                TextDetectConfig.defaults()
+                        .toBuilder()
+                        .allowSingleComponentLines(true)
+                        .cropFromTopLineOnly(true)
+                        .enableStructureFilter(true)
+                        .improvedCropAccuracy(true)
+                        .minCropAreaFraction(0.004f)
+                        .build();
+        DetectionResult result = TextRegionDetector.detect(luma, width, height, config);
+
+        assertNotNull(result.roi);
+        String reason = result.fallbackReason == null ? "" : result.fallbackReason;
+        assertFalse(
+                "a deliberately promoted fused word must not be rejected only for having one"
+                        + " connected component, got: "
+                        + reason,
+                reason.contains("untrustworthy_detection_center_fallback"));
+        assertTrue("crop " + result.roi + " must contain " + word, result.roi.contains(word));
+        if (result.debug != null) {
+            result.debug.release();
+        }
+    }
+
     /**
      * Regression test for periodic non-text patterns (spiral notebook binding holes, speaker
      * grilles, perforated metal) out-scoring real text: a long, perfectly regular row of small

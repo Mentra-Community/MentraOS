@@ -331,6 +331,8 @@ public class MediaCaptureService {
                 .allowSingleComponentLines(AsgConstants.TEXT_DETECT_ALLOW_SINGLE_COMPONENT_LINES)
                 .cropFromTopLineOnly(AsgConstants.TEXT_DETECT_CROP_FROM_TOP_LINE_ONLY)
                 .enableStructureFilter(AsgConstants.TEXT_DETECT_ENABLE_STRUCTURE_FILTER)
+                .improvedCropAccuracy(AsgConstants.TEXT_DETECT_IMPROVED_CROP_ACCURACY)
+                .minCropAreaFraction(AsgConstants.TEXT_DETECT_MIN_CROP_AREA_FRACTION)
                 .debugCaptureIntermediates(AsgConstants.SAVE_TEXT_DETECT_DEBUG_ARTIFACTS)
                 .build();
     }
@@ -477,34 +479,35 @@ public class MediaCaptureService {
         } finally {
             if (cropped != original) {
                 cropped.recycle();
-            } else {
-                original.recycle();
             }
+            original.recycle();
         }
         PhotoExifMetadataWriter.copyImuMetadata(originalPath, croppedPath);
         return croppedPath;
     }
 
-    private String preparePhotoPathForWifiUpload(String photoFilePath, String requestId) {
+    private String prepareTextModePhotoPath(String photoFilePath, String requestId) {
         String mode = PhotoMode.normalize(photoRequestedModes.get(requestId));
-        if (!PhotoMode.TEXT.equals(mode)) {
+        if (!PhotoMode.TEXT.equals(mode)
+                || Boolean.TRUE.equals(photoTextCropPrepared.get(requestId))) {
             return photoFilePath;
         }
 
-        Log.d(TAG, "✂️ Text mode WiFi upload: running text-region crop before upload");
+        Log.d(TAG, "✂️ Text mode: preparing the canonical cropped photo before transfer");
         TextRegionDetection detection = runTextRegionDetection(photoFilePath);
         try {
             String croppedPath =
                     writeCroppedBitmapToTempJpeg(
                             photoFilePath, detection.roi, requestId);
             if (croppedPath != null) {
-                new File(croppedPath).deleteOnExit();
-                return croppedPath;
+                PhotoArtifactFiles.promoteToCanonical(photoFilePath, croppedPath);
+                photoTextCropPrepared.put(requestId, true);
+                return photoFilePath;
             }
         } catch (java.io.IOException e) {
             Log.w(
                     TAG,
-                    "Text-mode WiFi crop failed, uploading original frame: " + e.getMessage(),
+                    "Text-mode crop failed, transferring original frame: " + e.getMessage(),
                     e);
         }
         return photoFilePath;
@@ -518,10 +521,41 @@ public class MediaCaptureService {
 
     // Track original photo paths for BLE fallback
     private Map<String, String> photoOriginalPaths = new HashMap<>();
+    // True after text mode has replaced the canonical capture with its final cropped JPEG.
+    private Map<String, Boolean> photoTextCropPrepared = new HashMap<>();
     // Track requested photo size per request for proper fallback handling
     private Map<String, String> photoRequestedSizes = new HashMap<>();
     // Track capture mode through asynchronous WiFi-to-BLE fallback.
     private Map<String, String> photoRequestedModes = new HashMap<>();
+
+    private String finalPhotoPath(String requestId, String fallbackPath) {
+        String path = photoOriginalPaths.get(requestId);
+        return path == null || path.isEmpty() ? fallbackPath : path;
+    }
+
+    private void cleanupPhotoArtifacts(String requestId, String transportPath, boolean keepFinal) {
+        String canonicalPath = finalPhotoPath(requestId, transportPath);
+        PhotoArtifactFiles.cleanup(canonicalPath, transportPath, keepFinal);
+        Log.d(
+                TAG,
+                keepFinal
+                        ? "💾 Kept final photo and removed transport temporaries: " + canonicalPath
+                        : "🗑️ Removed final photo and transport temporaries for " + requestId);
+    }
+
+    private void deletePhotoTransportTemporary(String requestId, String transportPath) {
+        PhotoArtifactFiles.deleteTransportTemporary(
+                finalPhotoPath(requestId, transportPath), transportPath);
+    }
+
+    private void clearPhotoTracking(String requestId) {
+        photoSaveFlags.remove(requestId);
+        photoBleIds.remove(requestId);
+        photoOriginalPaths.remove(requestId);
+        photoTextCropPrepared.remove(requestId);
+        photoRequestedSizes.remove(requestId);
+        photoRequestedModes.remove(requestId);
+    }
 
     // Photo job state tracking - one photo job (capture + upload/BLE-handoff) in flight at a time.
     // Set on entry to takePhotoAndUpload / takePhotoForBleTransfer; cleared only at terminal
@@ -2262,6 +2296,7 @@ public class MediaCaptureService {
 
         // Store the save flag for this request
         photoSaveFlags.put(requestId, save);
+        photoOriginalPaths.put(requestId, photoFilePath);
         // Track requested size for potential fallbacks
         photoRequestedSizes.put(requestId, size);
         photoRequestedModes.put(requestId, mode);
@@ -2281,6 +2316,8 @@ public class MediaCaptureService {
 
         // TESTING: Check for fake camera capture failure
         if (PhotoCaptureTestHooks.shouldFail("CAMERA_CAPTURE")) {
+            cleanupPhotoArtifacts(requestId, photoFilePath, false);
+            clearPhotoTracking(requestId);
             releasePhotoJob(requestId);
             Log.e(TAG, "TESTING: Simulating camera capture failure");
             sendPhotoErrorResponse(
@@ -2387,6 +2424,7 @@ public class MediaCaptureService {
                             }
 
                             Log.d(TAG, "Photo captured successfully at: " + filePath);
+                            prepareTextModePhotoPath(filePath, requestId);
                             sendPhotoStatus(
                                     requestId,
                                     "captured",
@@ -2415,6 +2453,7 @@ public class MediaCaptureService {
                             } else {
                                 // No webhook → no upload phase to run. Job ends here.
                                 sendPhotoSuccessResponse(requestId, "");
+                                clearPhotoTracking(requestId);
                                 releasePhotoJob(requestId);
                             }
                         }
@@ -2426,6 +2465,8 @@ public class MediaCaptureService {
 
                         @Override
                         public void onPhotoError(CameraOperationError error) {
+                            cleanupPhotoArtifacts(requestId, photoFilePath, false);
+                            clearPhotoTracking(requestId);
                             releasePhotoJob(requestId);
 
                             Log.e(TAG, "Failed to capture photo: " + error.message());
@@ -2446,6 +2487,8 @@ public class MediaCaptureService {
                     });
             return true;
         } catch (Exception e) {
+            cleanupPhotoArtifacts(requestId, photoFilePath, false);
+            clearPhotoTracking(requestId);
             releasePhotoJob(requestId);
             Log.e(TAG, "Error taking photo", e);
             sendPhotoErrorResponse(
@@ -2793,7 +2836,7 @@ public class MediaCaptureService {
             String webhookUrl,
             String authToken,
             String compress) {
-        String uploadPath = preparePhotoPathForWifiUpload(photoFilePath, requestId);
+        String uploadPath = prepareTextModePhotoPath(photoFilePath, requestId);
         Log.d(TAG, "📸 Processing photo upload with SDK compression setting: " + compress);
 
         // Check SDK compression setting
@@ -3074,11 +3117,11 @@ public class MediaCaptureService {
                                             "file_missing");
                                     sendPhotoErrorResponse(
                                             requestId, "PHOTO_FILE_NOT_FOUND", errorMessage);
-                                    photoSaveFlags.remove(requestId);
-                                    photoBleIds.remove(requestId);
-                                    photoOriginalPaths.remove(requestId);
-                                    photoRequestedSizes.remove(requestId);
-                                    photoRequestedModes.remove(requestId);
+                                    cleanupPhotoArtifacts(
+                                            requestId,
+                                            photoFilePath,
+                                            Boolean.TRUE.equals(photoSaveFlags.get(requestId)));
+                                    clearPhotoTracking(requestId);
                                     releasePhotoJob(requestId);
                                     if (mMediaCaptureListener != null) {
                                         mMediaCaptureListener.onMediaError(
@@ -3173,32 +3216,11 @@ public class MediaCaptureService {
                                     Log.d(TAG, "✅ Photo uploaded successfully to webhook");
                                     Log.d(TAG, "📄 Response body: " + responseBody);
 
-                                    // Check if we should save the photo
-                                    Boolean save = photoSaveFlags.get(requestId);
-                                    if (save == null || !save) {
-                                        // Delete the photo file to save storage
-                                        try {
-                                            if (photoFile.delete()) {
-                                                Log.d(
-                                                        TAG,
-                                                        "🗑️ Deleted photo file after successful upload");
-                                            } else {
-                                                Log.w(TAG, "⚠️ Failed to delete photo file");
-                                            }
-                                        } catch (Exception e) {
-                                            Log.e(
-                                                    TAG,
-                                                    "❌ Error deleting photo file after upload",
-                                                    e);
-                                        }
-                                    } else {
-                                        Log.d(TAG, "💾 Keeping photo file as requested");
-                                    }
-
-                                    // Clean up the flag
-                                    photoSaveFlags.remove(requestId);
-                                    photoRequestedSizes.remove(requestId);
-                                    photoRequestedModes.remove(requestId);
+                                    cleanupPhotoArtifacts(
+                                            requestId,
+                                            photoFilePath,
+                                            Boolean.TRUE.equals(photoSaveFlags.get(requestId)));
+                                    clearPhotoTracking(requestId);
 
                                     // Notify success
                                     if (mMediaCaptureListener != null) {
@@ -3242,9 +3264,10 @@ public class MediaCaptureService {
                                                 "http_status_" + response.code(),
                                                 bleImgId);
 
-                                        // Clean up tracking (will be re-added by BLE transfer)
+                                        String fallbackPhotoPath =
+                                                finalPhotoPath(requestId, photoFilePath);
+                                        deletePhotoTransportTemporary(requestId, photoFilePath);
                                         photoBleIds.remove(requestId);
-                                        photoOriginalPaths.remove(requestId);
 
                                         // Trigger BLE fallback - reuse the existing photo instead
                                         // of taking a new one
@@ -3266,7 +3289,7 @@ public class MediaCaptureService {
                                                         + requestId);
                                         response.close();
                                         reusePhotoForBleTransfer(
-                                                photoFilePath,
+                                                fallbackPhotoPath,
                                                 requestId,
                                                 bleImgId,
                                                 shouldSave,
@@ -3284,36 +3307,11 @@ public class MediaCaptureService {
                                             TAG,
                                             "❌ No BLE fallback available, handling as normal failure");
 
-                                    // Check if we should save the photo
-                                    Boolean save = photoSaveFlags.get(requestId);
-                                    if (save == null || !save) {
-                                        // Delete the photo file on failure
-                                        try {
-                                            if (photoFile.delete()) {
-                                                Log.d(
-                                                        TAG,
-                                                        "🗑️ Deleted photo file after failed upload");
-                                            } else {
-                                                Log.w(TAG, "⚠️ Failed to delete photo file");
-                                            }
-                                        } catch (Exception e) {
-                                            Log.e(
-                                                    TAG,
-                                                    "❌ Error deleting photo file after failed upload",
-                                                    e);
-                                        }
-                                    } else {
-                                        Log.d(
-                                                TAG,
-                                                "💾 Keeping photo file despite failed upload as requested");
-                                    }
-
-                                    // Clean up tracking
-                                    photoSaveFlags.remove(requestId);
-                                    photoBleIds.remove(requestId);
-                                    photoOriginalPaths.remove(requestId);
-                                    photoRequestedSizes.remove(requestId);
-                                    photoRequestedModes.remove(requestId);
+                                    cleanupPhotoArtifacts(
+                                            requestId,
+                                            photoFilePath,
+                                            Boolean.TRUE.equals(photoSaveFlags.get(requestId)));
+                                    clearPhotoTracking(requestId);
 
                                     if (mMediaCaptureListener != null) {
                                         mMediaCaptureListener.onMediaError(
@@ -3357,9 +3355,10 @@ public class MediaCaptureService {
                                             "exception",
                                             bleImgId);
 
-                                    // Clean up tracking (will be re-added by BLE transfer)
+                                    String fallbackPhotoPath =
+                                            finalPhotoPath(requestId, photoFilePath);
+                                    deletePhotoTransportTemporary(requestId, photoFilePath);
                                     photoBleIds.remove(requestId);
-                                    photoOriginalPaths.remove(requestId);
 
                                     // Trigger BLE fallback - reuse the existing photo instead of
                                     // taking a new one
@@ -3382,7 +3381,7 @@ public class MediaCaptureService {
                                             "🔄 Webhook exception, handing off to BLE transfer: "
                                                     + requestId);
                                     reusePhotoForBleTransfer(
-                                            photoFilePath,
+                                            fallbackPhotoPath,
                                             requestId,
                                             bleImgId,
                                             shouldSaveFallback1,
@@ -3397,36 +3396,11 @@ public class MediaCaptureService {
                                         "UPLOAD_FAILED",
                                         "Upload error: " + e.getMessage());
 
-                                // Check if we should save the photo on exception
-                                Boolean save = photoSaveFlags.get(requestId);
-                                if (save == null || !save) {
-                                    // Delete the photo file on exception
-                                    try {
-                                        if (photoFile.exists() && photoFile.delete()) {
-                                            Log.d(
-                                                    TAG,
-                                                    "🗑️ Deleted photo file after webhook upload exception");
-                                        } else {
-                                            Log.w(TAG, "⚠️ Failed to delete photo file");
-                                        }
-                                    } catch (Exception deleteEx) {
-                                        Log.e(
-                                                TAG,
-                                                "❌ Error deleting photo file after webhook upload exception",
-                                                deleteEx);
-                                    }
-                                } else {
-                                    Log.d(
-                                            TAG,
-                                            "💾 Keeping photo file despite upload exception as requested");
-                                }
-
-                                // Clean up tracking
-                                photoSaveFlags.remove(requestId);
-                                photoBleIds.remove(requestId);
-                                photoOriginalPaths.remove(requestId);
-                                photoRequestedSizes.remove(requestId);
-                                photoRequestedModes.remove(requestId);
+                                cleanupPhotoArtifacts(
+                                        requestId,
+                                        photoFilePath,
+                                        Boolean.TRUE.equals(photoSaveFlags.get(requestId)));
+                                clearPhotoTracking(requestId);
 
                                 if (mMediaCaptureListener != null) {
                                     mMediaCaptureListener.onMediaError(
@@ -4100,6 +4074,7 @@ public class MediaCaptureService {
 
         // Store the save flag for this request
         photoSaveFlags.put(requestId, save);
+        photoOriginalPaths.put(requestId, photoFilePath);
         // Track requested size for BLE compression
         photoRequestedSizes.put(requestId, size);
         photoRequestedModes.put(requestId, mode);
@@ -4113,6 +4088,8 @@ public class MediaCaptureService {
 
         // TESTING: Check for fake camera capture failure
         if (PhotoCaptureTestHooks.shouldFail("CAMERA_CAPTURE")) {
+            cleanupPhotoArtifacts(requestId, photoFilePath, false);
+            clearPhotoTracking(requestId);
             releasePhotoJob(requestId);
             Log.e(
                     TAG,
@@ -4204,6 +4181,7 @@ public class MediaCaptureService {
                             }
 
                             Log.d(TAG, "Photo captured successfully for BLE transfer: " + filePath);
+                            prepareTextModePhotoPath(filePath, requestId);
                             sendPhotoStatus(
                                     requestId,
                                     "captured",
@@ -4234,6 +4212,8 @@ public class MediaCaptureService {
 
                         @Override
                         public void onPhotoError(CameraOperationError error) {
+                            cleanupPhotoArtifacts(requestId, photoFilePath, false);
+                            clearPhotoTracking(requestId);
                             releasePhotoJob(requestId);
 
                             Log.e(TAG, "Failed to capture photo for BLE: " + error.message());
@@ -4254,6 +4234,8 @@ public class MediaCaptureService {
                     });
             return true;
         } catch (Exception e) {
+            cleanupPhotoArtifacts(requestId, photoFilePath, false);
+            clearPhotoTracking(requestId);
             releasePhotoJob(requestId);
             Log.e(TAG, "Error taking photo for BLE", e);
             sendPhotoErrorResponse(
@@ -4285,17 +4267,15 @@ public class MediaCaptureService {
                 || WhipStreamingService.isStreaming()) {
             Log.e(TAG, "Cannot transfer photo via BLE - streaming active");
             sendPhotoErrorResponse(requestId, "CAMERA_BUSY", "Camera busy with streaming");
-            photoSaveFlags.remove(requestId);
-            photoBleIds.remove(requestId);
-            photoOriginalPaths.remove(requestId);
-            photoRequestedSizes.remove(requestId);
-            photoRequestedModes.remove(requestId);
+            cleanupPhotoArtifacts(requestId, existingPhotoPath, save);
+            clearPhotoTracking(requestId);
             releasePhotoJob(requestId);
             return;
         }
 
         // Store the save flag for this request
         photoSaveFlags.put(requestId, save);
+        photoOriginalPaths.put(requestId, existingPhotoPath);
         // Track requested size for BLE compression
         photoRequestedSizes.put(requestId, size);
 
@@ -4329,12 +4309,17 @@ public class MediaCaptureService {
 
                             // TESTING: Check for fake compression failure
                             if (PhotoCaptureTestHooks.shouldFail("COMPRESSION")) {
-                                releasePhotoJob(requestId);
                                 Log.e(TAG, "TESTING: Simulating compression failure");
                                 sendPhotoErrorResponse(
                                         requestId,
                                         PhotoCaptureTestHooks.getErrorCode(),
                                         PhotoCaptureTestHooks.getErrorMessage());
+                                cleanupPhotoArtifacts(
+                                        requestId,
+                                        originalPath,
+                                        Boolean.TRUE.equals(photoSaveFlags.get(requestId)));
+                                clearPhotoTracking(requestId);
+                                releasePhotoJob(requestId);
                                 return;
                             }
 
@@ -4353,6 +4338,11 @@ public class MediaCaptureService {
                                 String requestedMode =
                                         PhotoMode.normalize(photoRequestedModes.get(requestId));
                                 boolean textModeRequested = PhotoMode.TEXT.equals(requestedMode);
+                                if (textModeRequested) {
+                                    prepareTextModePhotoPath(originalPath, requestId);
+                                }
+                                boolean textCropAlreadyPrepared =
+                                        Boolean.TRUE.equals(photoTextCropPrepared.get(requestId));
                                 BleParams bleParams =
                                         textModeRequested
                                                 ? resolveTextModeBleParams()
@@ -4397,7 +4387,9 @@ public class MediaCaptureService {
                                 // genuine detected text region vs. a safety-net fallback. See
                                 // classifyTextCropOutcome() for the exact rules.
                                 String textCropOutcome =
-                                        shouldCrop
+                                        textCropAlreadyPrepared
+                                                ? "PREPARED_CANONICAL_CROP"
+                                                : shouldCrop
                                                 ? "NOT_ATTEMPTED (pending detection)"
                                                 : "NOT_ATTEMPTED"
                                                         + " (ENABLE_TEXT_REGION_CROP="
@@ -4407,7 +4399,7 @@ public class MediaCaptureService {
                                                         + ")";
 
                                 android.graphics.Rect roi = null;
-                                if (shouldCrop) {
+                                if (shouldCrop && !textCropAlreadyPrepared) {
                                     TextRegionDetection detection =
                                             runTextRegionDetection(originalPath);
                                     roi = detection.roi;
@@ -4502,10 +4494,12 @@ public class MediaCaptureService {
                                                 + " textCropOutcome="
                                                 + textCropOutcome);
 
-                                // 3. Encode for BLE. Skip AVIF when the source JPEG is already small.
+                                // 3. Text mode can skip AVIF when its source JPEG is already small.
+                                // Ordinary photo mode retains the established AVIF path.
                                 long sourceJpegBytes = new File(originalPath).length();
                                 boolean skipAvifForSmallJpeg =
-                                        sourceJpegBytes
+                                        textModeRequested
+                                                && sourceJpegBytes
                                                 < AsgConstants.TEXT_MODE_AVIF_SIZE_THRESHOLD_BYTES;
                                 Log.d(
                                         TAG,
@@ -4586,48 +4580,17 @@ public class MediaCaptureService {
                                 sendCompressedPhotoViaBle(
                                         compressedPath, bleImgId, requestId, startTime);
 
-                                // 7. Delete original photo if not saving to gallery
-                                Boolean save = photoSaveFlags.get(requestId);
-                                if (save == null || !save) {
-                                    try {
-                                        File originalFile = new File(originalPath);
-                                        if (originalFile.exists() && originalFile.delete()) {
-                                            Log.d(
-                                                    TAG,
-                                                    "🗑️ Deleted original photo after BLE compression: "
-                                                            + originalPath);
-                                        } else {
-                                            Log.w(
-                                                    TAG,
-                                                    "Failed to delete original photo: "
-                                                            + originalPath);
-                                        }
-                                    } catch (Exception deleteEx) {
-                                        Log.e(
-                                                TAG,
-                                                "Error deleting original photo after BLE compression",
-                                                deleteEx);
-                                    }
-                                } else {
-                                    Log.d(
-                                            TAG,
-                                            "💾 Keeping original photo as requested: "
-                                                    + originalPath);
-                                }
-
-                                // Clean up the flag
-                                photoSaveFlags.remove(requestId);
                             } catch (Exception e) {
                                 Log.e(TAG, "Error compressing photo for BLE", e);
                                 dumpTimings(requestId);
                                 sendPhotoErrorResponse(
                                         requestId, "BLE_TRANSFER_FAILED", e.getMessage());
-
-                                // Clean up flag on error too
-                                photoSaveFlags.remove(requestId);
                             } finally {
-                                photoRequestedSizes.remove(requestId);
-                                photoRequestedModes.remove(requestId);
+                                cleanupPhotoArtifacts(
+                                        requestId,
+                                        originalPath,
+                                        Boolean.TRUE.equals(photoSaveFlags.get(requestId)));
+                                clearPhotoTracking(requestId);
                                 // BLE compress + handoff (or its failure) ends our authority over
                                 // the photo
                                 // job. From here, mServiceCallback.isBleTransferInProgress() is the
