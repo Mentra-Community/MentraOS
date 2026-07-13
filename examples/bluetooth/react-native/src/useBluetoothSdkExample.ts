@@ -65,6 +65,10 @@ export type ExampleTabKey = 'device' | 'camera' | 'stream' | 'system' | 'console
 export type BluetoothSdkExampleOptions = {
   activeTab?: ExampleTabKey;
 };
+// Remove this compatibility extension after the published SDK includes PhotoMode.
+type TextPhotoRequestParams = PhotoRequestParams & {
+  mode?: 'photo' | 'text';
+};
 
 export type StreamProtocol = 'rtmp' | 'srt' | 'webrtc';
 export type StreamPreviewTarget = {
@@ -1407,7 +1411,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   }
 
   function addRequestTuningFields(
-    fields: Omit<PhotoRequestParams, 'requestId' | 'webhookUrl' | 'authToken'>,
+    fields: Omit<TextPhotoRequestParams, 'requestId' | 'webhookUrl' | 'authToken'>,
   ) {
     if (!photoExposureManual && photoAeExposureDivisor !== null) {
       fields.aeExposureDivisor = photoAeExposureDivisor;
@@ -1441,7 +1445,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   }
 
   function buildPhotoRequestFields(): Omit<
-    PhotoRequestParams,
+    TextPhotoRequestParams,
     'requestId' | 'webhookUrl' | 'authToken'
   > {
     return addRequestTuningFields({
