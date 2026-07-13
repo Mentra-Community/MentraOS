@@ -20,6 +20,9 @@ import com.mentra.asg_client.io.hardware.interfaces.IHardwareManager;
 import com.mentra.asg_client.io.hardware.interfaces.RgbLedConstants;
 import com.mentra.asg_client.io.media.interfaces.ServiceCallbackInterface;
 import com.mentra.asg_client.io.media.managers.MediaUploadQueueManager;
+import com.mentra.asg_client.io.media.core.textdetect.DetectionResult;
+import com.mentra.asg_client.io.media.core.textdetect.TextDetectConfig;
+import com.mentra.asg_client.io.media.core.textdetect.TextRegionDetector;
 import com.mentra.asg_client.io.media.upload.MediaUploadService;
 import com.mentra.asg_client.io.storage.StorageManager;
 import com.mentra.asg_client.io.streaming.services.RtmpStreamingService;
@@ -154,6 +157,12 @@ public class MediaCaptureService {
     // screens), not viewed, so grayscale is the default - true here also cuts the per-photo peak
     // transient memory from ~36MB down to ~9MB (see GrayscaleBleProcessor for the breakdown).
     private static final boolean ENABLE_GRAYSCALE_BLE_PHOTOS = false;
+
+    // Gated behind ENABLE_GRAYSCALE_BLE_PHOTOS. When true, runs TextRegionDetector on a
+    // subsampled luma copy of the source JPEG and passes the detected ROI into
+    // GrayscaleBleProcessor.process() instead of null (full frame). Defaults OFF: detector is
+    // not yet tuned/benchmarked on-device (see asg_client/testdata/textdetect/README.md).
+    private static final boolean ENABLE_TEXT_REGION_CROP = false;
 
     private static class BleParams {
         final int targetWidth;
@@ -4004,6 +4013,8 @@ public class MediaCaptureService {
                                 BleParams bleParams = resolveBleParams(requestedSize);
 
                                 android.graphics.Bitmap resized;
+                                DetectionResult.Confidence textCropConfidence = null;
+                                String textCropReason = null;
                                 if (ENABLE_GRAYSCALE_BLE_PHOTOS) {
                                     // 2. Decode straight to a grayscale luma pipeline (crop +
                                     // contrast + unsharp all happen on 1-byte/pixel buffers) and
@@ -4011,12 +4022,63 @@ public class MediaCaptureService {
                                     // encoder. BLE photos exist to be read (documents/signs/
                                     // screens), not viewed, so color is dead weight - this also
                                     // avoids ever materializing the ~30MB full-res ARGB bitmap the
-                                    // old decode+resize+sharpen chain used. ROI is null (full
-                                    // frame) until Phase 2 wires in real text-region detection.
+                                    // old decode+resize+sharpen chain used.
+                                    android.graphics.Rect roi = null;
+                                    if (ENABLE_TEXT_REGION_CROP) {
+                                        try {
+                                            GrayscaleBleProcessor.DetectionLuma input =
+                                                    GrayscaleBleProcessor.extractDetectionLuma(
+                                                            originalPath,
+                                                            TextDetectConfig.defaults()
+                                                                    .analysisWidth);
+                                            DetectionResult result =
+                                                    TextRegionDetector.detect(
+                                                            input.luma,
+                                                            input.width,
+                                                            input.height,
+                                                            TextDetectConfig.defaults());
+                                            int sample = input.sampleSize;
+                                            roi =
+                                                    new android.graphics.Rect(
+                                                            result.roi.left * sample,
+                                                            result.roi.top * sample,
+                                                            result.roi.right * sample,
+                                                            result.roi.bottom * sample);
+                                            textCropConfidence = result.confidence;
+                                            textCropReason = result.fallbackReason;
+                                            Log.d(
+                                                    TAG,
+                                                    "TextRegionDetector: confidence="
+                                                            + result.confidence
+                                                            + " reason="
+                                                            + result.fallbackReason
+                                                            + " ms="
+                                                            + result.detectionTimeMs
+                                                            + " crop="
+                                                            + java.util.Arrays.toString(
+                                                                    roi != null
+                                                                            ? new int[] {
+                                                                                roi.left,
+                                                                                roi.top,
+                                                                                roi.right,
+                                                                                roi.bottom
+                                                                            }
+                                                                            : null));
+                                        } catch (Exception e) {
+                                            Log.w(
+                                                    TAG,
+                                                    "TextRegionDetector failed, falling back to"
+                                                            + " full-frame ROI",
+                                                    e);
+                                            roi = null;
+                                            textCropConfidence = null;
+                                            textCropReason = null;
+                                        }
+                                    }
                                     resized =
                                             GrayscaleBleProcessor.process(
                                                     originalPath,
-                                                    null,
+                                                    roi,
                                                     bleParams.targetWidth,
                                                     bleParams.targetHeight);
                                 } else {
@@ -4057,7 +4119,13 @@ public class MediaCaptureService {
                                                 + "x"
                                                 + resized.getHeight()
                                                 + " grayscale="
-                                                + ENABLE_GRAYSCALE_BLE_PHOTOS);
+                                                + ENABLE_GRAYSCALE_BLE_PHOTOS
+                                                + " textCrop="
+                                                + ENABLE_TEXT_REGION_CROP
+                                                + " textCropConfidence="
+                                                + textCropConfidence
+                                                + " textCropReason="
+                                                + textCropReason);
 
                                 // 3. Encode as AVIF only (no JPEG fallback over BLE)
                                 Log.d(

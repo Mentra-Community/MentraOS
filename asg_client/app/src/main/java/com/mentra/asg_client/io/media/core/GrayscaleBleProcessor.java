@@ -270,6 +270,65 @@ final class GrayscaleBleProcessor {
         return bitmap;
     }
 
+    /**
+     * Result of {@link #extractDetectionLuma}: a subsampled full-frame luma buffer plus the
+     * integer subsample factor used, so a caller running detection on this buffer can scale the
+     * returned crop back up to true source-pixel coordinates by multiplying by {@code
+     * sampleSize}.
+     */
+    static final class DetectionLuma {
+        final byte[] luma;
+        final int width;
+        final int height;
+        final int sampleSize;
+
+        DetectionLuma(byte[] luma, int width, int height, int sampleSize) {
+            this.luma = luma;
+            this.width = width;
+            this.height = height;
+            this.sampleSize = sampleSize;
+        }
+    }
+
+    /**
+     * Decodes {@code jpegPath} at the smallest sample size that still comfortably covers {@code
+     * analysisWidth}, then reduces it to a single-channel luma buffer. Used to feed {@code
+     * TextRegionDetector} a small analysis frame without ever allocating a full-resolution
+     * bitmap. Independent of {@link #process}, which performs its own separate decode.
+     */
+    static DetectionLuma extractDetectionLuma(String jpegPath, int analysisWidth) throws IOException {
+        BitmapFactory.Options bounds = new BitmapFactory.Options();
+        bounds.inJustDecodeBounds = true;
+        BitmapFactory.decodeFile(jpegPath, bounds);
+        int srcWidth = bounds.outWidth;
+        int srcHeight = bounds.outHeight;
+        if (srcWidth <= 0 || srcHeight <= 0) {
+            throw new IOException("Failed to read JPEG bounds: " + jpegPath);
+        }
+
+        // computeSampleSize doubles the sample size while both dimensions stay >= target; passing
+        // targetHeight=1 makes that condition a no-op for height (real photos are far from 1px
+        // tall at any sane sample size), so the loop is effectively driven by analysisWidth alone
+        // while inSampleSize decoding preserves aspect ratio for us.
+        int sampleSize = computeSampleSize(srcWidth, srcHeight, analysisWidth, 1);
+
+        BitmapFactory.Options decodeOpts = new BitmapFactory.Options();
+        decodeOpts.inSampleSize = sampleSize;
+        decodeOpts.inPreferredConfig = Bitmap.Config.RGB_565;
+        Bitmap decoded = BitmapFactory.decodeFile(jpegPath, decodeOpts);
+        if (decoded == null) {
+            throw new IOException("Failed to decode JPEG: " + jpegPath);
+        }
+
+        int width = decoded.getWidth();
+        int height = decoded.getHeight();
+        Rect fullFrame = new Rect(0, 0, width, height);
+        byte[] luma = extractCroppedLuma(decoded, fullFrame);
+        decoded.recycle();
+
+        return new DetectionLuma(luma, width, height, sampleSize);
+    }
+
     private static int clampInt(int v, int min, int max) {
         return Math.max(min, Math.min(max, v));
     }
