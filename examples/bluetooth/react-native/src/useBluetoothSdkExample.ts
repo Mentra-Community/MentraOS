@@ -65,9 +65,6 @@ export type ExampleTabKey = 'device' | 'camera' | 'stream' | 'system' | 'console
 export type BluetoothSdkExampleOptions = {
   activeTab?: ExampleTabKey;
 };
-type TextPhotoRequestParams = PhotoRequestParams & {
-  mode?: 'photo' | 'text';
-};
 
 export type StreamProtocol = 'rtmp' | 'srt' | 'webrtc';
 export type StreamPreviewTarget = {
@@ -1410,7 +1407,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   }
 
   function addRequestTuningFields(
-    fields: Omit<TextPhotoRequestParams, 'requestId' | 'webhookUrl' | 'authToken'>,
+    fields: Omit<PhotoRequestParams, 'requestId' | 'webhookUrl' | 'authToken'>,
   ) {
     if (!photoExposureManual && photoAeExposureDivisor !== null) {
       fields.aeExposureDivisor = photoAeExposureDivisor;
@@ -1444,7 +1441,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   }
 
   function buildPhotoRequestFields(): Omit<
-    TextPhotoRequestParams,
+    PhotoRequestParams,
     'requestId' | 'webhookUrl' | 'authToken'
   > {
     return addRequestTuningFields({
@@ -1464,7 +1461,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     startPhotoCaptureTiming('pending');
     clearCameraButtonNotice();
     resetBarcodeScan();
-    const captureLabel = scanMode ? 'Capture scan photo' : 'Capture & upload';
+    const captureLabel = scanMode ? 'Capture text scan photo' : 'Capture & upload';
     await runAction(captureLabel, async () => {
       requireConnected('capture photos');
       logPhotoCaptureTiming('Step 1: connection check passed');
@@ -2670,7 +2667,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
         sourceUri,
         state: 'none',
       });
-      addEvent('LIVE', 'barcode scan timed out');
+      addEvent('LIVE', 'text scan timed out');
     }, BARCODE_SCAN_VISIBLE_TIMEOUT_MS);
     await waitForNextFrame();
     if (barcodeScanTokenRef.current !== token) {
@@ -2691,7 +2688,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
         latestScan.state === 'found' &&
         latestScan.barcodes.length > 0
       ) {
-        addEvent('LIVE', 'ignored empty duplicate barcode scan');
+        addEvent('LIVE', 'ignored empty duplicate text scan');
         return;
       }
       updateBarcodeScan({
@@ -2702,9 +2699,9 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
         state: barcodes.length > 0 ? 'found' : 'none',
       });
       if (barcodes.length > 0) {
-        addEvent('LIVE', `barcode ${barcodeScanSummary(barcodes)}`);
+        addEvent('LIVE', `text scan ${barcodeScanSummary(barcodes)}`);
       } else {
-        addEvent('LIVE', 'no barcode found in photo preview');
+        addEvent('LIVE', 'no text found in photo preview');
       }
     } catch (error) {
       clearTimeout(visibleTimeout);
@@ -2720,7 +2717,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
         sourceUri,
         state: 'error',
       });
-      addEvent('TX', `barcode scan failed: ${message}`);
+      addEvent('TX', `text scan failed: ${message}`);
     }
   }
 

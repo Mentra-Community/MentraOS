@@ -165,7 +165,7 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
     (!glassesWifiConnected && !sdk.photoGlassesStorageEnabled) ||
     needsGlassesHotspotSetup ||
     sdk.activeAction === 'Capture & upload' ||
-    sdk.activeAction === 'Capture scan photo';
+    sdk.activeAction === 'Capture text scan photo';
   const photoStatusOverlay = photoStatusOverlayInfo(
     sdk.photoStatus,
     sdk.photoPreviewUrl,
@@ -220,7 +220,7 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
       setCaptureMode('video');
     } else if (
       sdk.activeAction === 'Capture & upload' ||
-      sdk.activeAction === 'Capture scan photo'
+      sdk.activeAction === 'Capture text scan photo'
     ) {
       setCaptureMode('photo');
     }
@@ -362,10 +362,10 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
                   ? sdk.galleryServerReachable === null
                     ? 'Preparing hotspot…'
                     : 'Connect glasses hotspot'
-                : sdk.activeAction === 'Capture & upload' || sdk.activeAction === 'Capture scan photo'
+                : sdk.activeAction === 'Capture & upload' || sdk.activeAction === 'Capture text scan photo'
                   ? 'Capturing…'
                   : sdk.scanMode
-                    ? 'Capture scan photo'
+                    ? 'Capture text scan photo'
                     : 'Capture photo'}
             </Text>
           </LinearGradient>
@@ -1145,9 +1145,9 @@ function ScanModeSettingsCard({
     <View style={styles.settingCard}>
       <View style={styles.settingHeader}>
         <View style={{ flex: 1 }}>
-          <Text style={styles.settingLabel}>BARCODE SCANNING</Text>
+          <Text style={styles.settingLabel}>TEXT SCANNING</Text>
           <Text style={styles.settingHint}>
-            {enabled ? 'Text mode on · barcode scan on preview' : 'Standard photo capture'}
+            {enabled ? 'Text mode on · text scan on preview' : 'Standard photo capture'}
           </Text>
         </View>
         <Switch
@@ -1160,7 +1160,7 @@ function ScanModeSettingsCard({
       </View>
       {enabled ? (
         <Text style={styles.settingDescription}>
-          Sends mode: &quot;text&quot; on photo requests (max capture + text-region crop on glasses) and scans delivered previews for barcodes.
+          Sends mode: &quot;text&quot; on photo requests (max capture + text-region crop on glasses) and runs text scanning on delivered previews.
         </Text>
       ) : (
         <Text style={styles.settingDescription}>
@@ -1693,21 +1693,21 @@ function BarcodeResult({scan}: {scan: BluetoothSdkExampleModel['barcodeScan']}) 
   const isError = scan.state === 'error';
   const isScanning = scan.state === 'scanning';
   const title = isScanning
-    ? 'Barcode scanning'
+    ? 'Text scanning'
     : isFound
       ? expectedMatched
-        ? `Barcode matched${foundTypeLabel}`
-        : `Barcode found${foundTypeLabel}`
+        ? `Text scan matched${foundTypeLabel}`
+        : `Text scan found${foundTypeLabel}`
       : isError
-        ? 'Barcode error'
-        : 'No barcode found';
+        ? 'Text scan error'
+        : 'No text found';
   const fallbackBody = isError
       ? scan.error ?? 'Scanner failed'
       : isScanning
         ? 'Analyzing photo preview...'
         : 'Photo preview scanned';
   const body = isFound
-    ? `${foundBarcodes.length} barcode${foundBarcodes.length === 1 ? '' : 's'} found`
+    ? `${foundBarcodes.length} text scan${foundBarcodes.length === 1 ? '' : 's'} found`
     : fallbackBody;
 
   return (
