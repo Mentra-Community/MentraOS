@@ -105,10 +105,9 @@ Capture a still photo. The handler routes through `transferMethod` to one of thr
 In `text` mode, Mentra Live always captures the source JPEG at the camera's maximum
 resolution and JPEG quality. For auto-exposure captures (no `exposureTimeNs`), the glasses also
 divide the metered shutter time by 3 (`aeExposureDivisor: 3`) to reduce motion blur on text.
-If the photo is transferred over BLE, the glasses detect and crop
-the text region before the normal BLE downscale, then preserve more AVIF quality when the
-result remains within the 200 KB BLE budget. WiFi upload continues to use the captured
-maximum-quality source without the BLE-specific crop or AVIF processing.
+Text-region detection and crop run on both WiFi upload and BLE transfer. On BLE, the crop
+happens before the normal downscale step. If the captured source JPEG is already under 200 KB,
+the glasses skip AVIF and send JPEG over BLE instead; otherwise they downscale and encode AVIF.
 
 **Constraints (all enforced in `PhotoCommandHandler`):**
 
