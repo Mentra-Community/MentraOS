@@ -12,6 +12,18 @@ import org.opencv.core.Mat;
 public final class TextRegionDetector {
     private TextRegionDetector() {}
 
+    /**
+     * Detects the most text-like region in a single-channel luma frame.
+     *
+     * @param luma single-channel luminance buffer, one byte per pixel, row-major
+     * @param width width of the luma frame in pixels
+     * @param height height of the luma frame in pixels
+     * @param config tunable detector parameters; see {@link TextDetectConfig#defaults()}
+     * @return detection result whose {@link DetectionResult#roi} is a padded crop in the input
+     *     frame's pixel coordinates — never null; falls back to a generous center crop (with
+     *     {@code LOW}/{@code NONE} confidence and a populated {@code fallbackReason}) when no
+     *     trustworthy text region is found
+     */
     public static DetectionResult detect(byte[] luma, int width, int height, TextDetectConfig config) {
         CvInit.ensureLoaded();
         long start = System.currentTimeMillis();

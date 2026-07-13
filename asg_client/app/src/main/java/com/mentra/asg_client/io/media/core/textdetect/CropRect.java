@@ -14,22 +14,27 @@ public final class CropRect {
         this.bottom = bottom;
     }
 
+    /** Width in pixels; never negative. */
     public int width() {
         return Math.max(0, right - left);
     }
 
+    /** Height in pixels; never negative. */
     public int height() {
         return Math.max(0, bottom - top);
     }
 
+    /** Number of pixels covered by this rect ({@code width() * height()}). */
     public int pixelCount() {
         return width() * height();
     }
 
+    /** Returns {@code [left, top, width, height]} for JSON/log serialization. */
     public int[] toArray() {
         return new int[] {left, top, width(), height()};
     }
 
+    /** Whether {@code other} lies fully inside (or exactly on) this rect's bounds. */
     public boolean contains(CropRect other) {
         return left <= other.left
                 && top <= other.top
@@ -37,6 +42,7 @@ public final class CropRect {
                 && bottom >= other.bottom;
     }
 
+    /** Clamps {@code rect} into {@code [0, maxWidth] x [0, maxHeight]}, keeping at least 1x1. */
     public static CropRect clamp(CropRect rect, int maxWidth, int maxHeight) {
         int left = clamp(rect.left, 0, maxWidth - 1);
         int top = clamp(rect.top, 0, maxHeight - 1);
@@ -45,6 +51,7 @@ public final class CropRect {
         return new CropRect(left, top, right, bottom);
     }
 
+    /** Smallest rect containing both {@code a} and {@code b}. */
     public static CropRect union(CropRect a, CropRect b) {
         return new CropRect(
                 Math.min(a.left, b.left),

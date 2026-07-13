@@ -162,7 +162,7 @@ public class MediaCaptureService {
     // subsampled luma copy of the source JPEG and crops the BLE photo to the detected ROI —
     // in the grayscale path via GrayscaleBleProcessor.process(), in the legacy color path by
     // cropping the decoded bitmap before scaling. Defaults OFF: detector is not yet
-    // tuned/benchmarked on-device (see asg_client/testdata/textdetect/README.md).
+    // tuned/benchmarked on-device (tune offline via TextRegionDetectorHarnessTest).
     private static final boolean ENABLE_TEXT_REGION_CROP = false;
 
     private static class BleParams {
@@ -4036,7 +4036,7 @@ public class MediaCaptureService {
                                                         TextDetectConfig.defaults());
                                         roi =
                                                 GrayscaleBleProcessor.scaleDetectionRoi(
-                                                        result.roi, input.sampleSize);
+                                                        result.roi, input);
                                         textCropConfidence = result.confidence;
                                         textCropReason = result.fallbackReason;
                                         Log.d(
@@ -4057,12 +4057,16 @@ public class MediaCaptureService {
                                                                             roi.bottom
                                                                         }
                                                                         : null));
-                                    } catch (Exception e) {
+                                    } catch (Throwable t) {
+                                        // Throwable, not Exception: OpenCV/JNI failures such as
+                                        // UnsatisfiedLinkError extend Error and must also fall
+                                        // back to a full-frame ROI instead of failing the BLE
+                                        // photo.
                                         Log.w(
                                                 TAG,
                                                 "TextRegionDetector failed, falling back to"
                                                         + " full-frame ROI",
-                                                e);
+                                                t);
                                         roi = null;
                                         textCropConfidence = null;
                                         textCropReason = null;

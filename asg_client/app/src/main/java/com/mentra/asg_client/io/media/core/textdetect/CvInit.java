@@ -15,6 +15,11 @@ public final class CvInit {
 
     private CvInit() {}
 
+    /**
+     * Loads the OpenCV native library exactly once; safe to call repeatedly and from any thread.
+     * Tries the desktop JVM build first (offline harness), then the Android loader. Throws
+     * {@link IllegalStateException} if neither succeeds.
+     */
     public static void ensureLoaded() {
         if (loaded) {
             return;

@@ -52,14 +52,17 @@ public final class ComponentStats {
         this.strokeWidthCv = strokeWidthCv;
     }
 
+    /** Exclusive right edge ({@code left + width}). */
     public int right() {
         return left + width;
     }
 
+    /** Exclusive bottom edge ({@code top + height}). */
     public int bottom() {
         return top + height;
     }
 
+    /** Vertical center of the bounding box. */
     public float centerY() {
         return top + height * 0.5f;
     }

@@ -273,21 +273,30 @@ final class GrayscaleBleProcessor {
 
     /**
      * Result of {@link #extractDetectionLuma}: a subsampled full-frame luma buffer plus the
-     * integer subsample factor used, so a caller running detection on this buffer can scale the
-     * returned crop back up to true source-pixel coordinates by multiplying by {@code
-     * sampleSize}.
+     * true source-JPEG dimensions, so a caller running detection on this buffer can scale the
+     * returned crop back up to source-pixel coordinates via {@link #scaleDetectionRoi}.
+     *
+     * <p>{@code srcWidth}/{@code srcHeight} are carried explicitly because {@code
+     * BitmapFactory.inSampleSize} decoding uses integer division — the decoded dimensions are
+     * often not exactly {@code src / sampleSize}, so multiplying back by {@code sampleSize}
+     * would misalign the crop.
      */
     static final class DetectionLuma {
         final byte[] luma;
         final int width;
         final int height;
         final int sampleSize;
+        final int srcWidth;
+        final int srcHeight;
 
-        DetectionLuma(byte[] luma, int width, int height, int sampleSize) {
+        DetectionLuma(
+                byte[] luma, int width, int height, int sampleSize, int srcWidth, int srcHeight) {
             this.luma = luma;
             this.width = width;
             this.height = height;
             this.sampleSize = sampleSize;
+            this.srcWidth = srcWidth;
+            this.srcHeight = srcHeight;
         }
     }
 
@@ -327,19 +336,26 @@ final class GrayscaleBleProcessor {
         byte[] luma = extractCroppedLuma(decoded, fullFrame);
         decoded.recycle();
 
-        return new DetectionLuma(luma, width, height, sampleSize);
+        return new DetectionLuma(luma, width, height, sampleSize, srcWidth, srcHeight);
     }
 
     /**
      * Scales a {@code TextRegionDetector} crop (computed against the subsampled dimensions
      * returned by {@link #extractDetectionLuma}) back up to true source-JPEG pixel coordinates.
+     *
+     * <p>Uses the actual decoded-to-source dimension ratio rather than multiplying by {@code
+     * sampleSize}: {@code BitmapFactory.inSampleSize} decoding rounds dimensions with integer
+     * division, so {@code decoded * sampleSize} can overshoot the real source size and misalign
+     * the crop. The result is clamped to the source bounds.
      */
-    static Rect scaleDetectionRoi(CropRect roi, int sampleSize) {
-        return new Rect(
-                roi.left * sampleSize,
-                roi.top * sampleSize,
-                roi.right * sampleSize,
-                roi.bottom * sampleSize);
+    static Rect scaleDetectionRoi(CropRect roi, DetectionLuma input) {
+        float scaleX = input.srcWidth / (float) Math.max(1, input.width);
+        float scaleY = input.srcHeight / (float) Math.max(1, input.height);
+        int left = clampInt(Math.round(roi.left * scaleX), 0, input.srcWidth - 1);
+        int top = clampInt(Math.round(roi.top * scaleY), 0, input.srcHeight - 1);
+        int right = clampInt(Math.round(roi.right * scaleX), left + 1, input.srcWidth);
+        int bottom = clampInt(Math.round(roi.bottom * scaleY), top + 1, input.srcHeight);
+        return new Rect(left, top, right, bottom);
     }
 
     private static int clampInt(int v, int min, int max) {

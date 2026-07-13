@@ -33,7 +33,21 @@ final class TextLineClusterer {
                 config.cropFromTopLineOnly ? merged.get(0).bounds : unionBounds(merged);
         CropRect padded = applyPadding(baseBounds, imageWidth, imageHeight, medianHeight, config, 1.0f);
         float topScore = merged.get(0).score;
-        return new ClusterResult(merged, padded, baseBounds, topScore, filtered.size(), merged.size());
+
+        // improvedCropAccuracy: confidence/trust thresholds should only count components that
+        // actually belong to an accepted text line. filtered.size() also includes components
+        // buildLines() discarded (e.g. isolated dust specks), which can inflate an otherwise
+        // weak detection past the confidence thresholds. With the flag off, the original count
+        // is preserved.
+        int acceptedComponents = filtered.size();
+        if (config.improvedCropAccuracy) {
+            int inLines = 0;
+            for (TextLine line : merged) {
+                inLines += line.components.size();
+            }
+            acceptedComponents = inLines;
+        }
+        return new ClusterResult(merged, padded, baseBounds, topScore, acceptedComponents, merged.size());
     }
 
     private static List<ComponentStats> filterComponents(
