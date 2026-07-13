@@ -71,6 +71,7 @@ Capture a still photo. The handler routes through `transferMethod` to one of thr
   "bleImgId": "img_001",
   "save": false,
   "size": "medium",
+  "mode": "text",
   "compress": "none",
   "flash": true,
   "sound": true
@@ -87,6 +88,7 @@ Capture a still photo. The handler routes through `transferMethod` to one of thr
 | `bleImgId`       | string  | ""                  | Required for `ble` and `auto` transfer methods              |
 | `save`           | boolean | `false`             | Also save the photo to local gallery                        |
 | `size`               | string  | `"medium"`          | `low`, `medium`, `high`, or `max` (legacy `small`→`low`, `large`→`high`, `full`→`max`) |
+| `mode`               | string  | `"photo"`           | `photo` for normal capture, or `text` to capture at maximum sensor quality and enable text-aware BLE processing |
 | `compress`           | string  | `"none"`            | Compression preset passed to capture pipeline               |
 | `flash`              | boolean | `true`              | Fire the privacy LED during capture                         |
 | `sound`              | boolean | `true`              | Play shutter sound                                          |
@@ -99,6 +101,12 @@ Capture a still photo. The handler routes through `transferMethod` to one of thr
 | `mfnr`               | boolean | absent              | `false` disables MFNR for this capture                      |
 | `ispDigitalGain`     | number  | absent              | Parsed; warn-only if unsupported                            |
 | `ispAnalogGain`      | string  | absent              | Parsed; warn-only if unsupported                            |
+
+In `text` mode, Mentra Live always captures the source JPEG at the camera's maximum
+resolution and JPEG quality. If the photo is transferred over BLE, the glasses detect and crop
+the text region before the normal BLE downscale, then preserve more AVIF quality when the
+result remains within the 200 KB BLE budget. WiFi upload continues to use the captured
+maximum-quality source without the BLE-specific crop or AVIF processing.
 
 **Constraints (all enforced in `PhotoCommandHandler`):**
 

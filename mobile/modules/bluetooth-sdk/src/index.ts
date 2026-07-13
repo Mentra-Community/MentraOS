@@ -204,6 +204,7 @@ export type {
   PhotoCompression,
   PhotoFpsRange,
   PhotoMeteredPreview,
+  PhotoMode,
   PhotoResponseEvent,
   PhotoRequestedCaptureConfig,
   PhotoRequestParams,

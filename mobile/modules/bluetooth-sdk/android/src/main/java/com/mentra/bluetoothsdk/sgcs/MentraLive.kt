@@ -5377,6 +5377,7 @@ class MentraLive : SGCManager() {
     override fun requestPhoto(request: PhotoRequest) {
         val requestId = request.requestId
         val size = request.size.value
+        val mode = request.mode.value
         val webhookUrl = request.webhookUrl
         val authToken = request.authToken
         val compress = request.compress.value
@@ -5390,6 +5391,8 @@ class MentraLive : SGCManager() {
                         requestId +
                         " with size: " +
                         size +
+                        ", mode=" +
+                        mode +
                         ", webhookUrl: " +
                         webhookUrl +
                         ", authToken: " +
@@ -5427,6 +5430,7 @@ class MentraLive : SGCManager() {
             if (size != null && !size.isEmpty()) {
                 json.put("size", size)
             }
+            json.put("mode", mode)
             if (compress != null && !compress.isEmpty()) {
                 json.put("compress", compress)
             } else {

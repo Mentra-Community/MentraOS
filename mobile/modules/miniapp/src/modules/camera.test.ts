@@ -58,11 +58,21 @@ describe("CameraModule", () => {
       {
         type: MiniappRequestType.PHOTO,
         size: "max",
+        mode: "photo",
         compress: "none",
         sound: true,
         saveToGallery: false,
         exposureTimeNs: undefined,
       },
     ])
+  })
+
+  test("takePhoto forwards text mode", async () => {
+    const {session, requestCalls} = mockSession({})
+    const camera = new CameraModule(session)
+
+    await camera.takePhoto({mode: "text"})
+
+    expect(requestCalls[0]).toMatchObject({mode: "text"})
   })
 })

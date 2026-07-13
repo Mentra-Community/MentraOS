@@ -48,6 +48,7 @@ function normalizePhotoSize(value: unknown): PhotoSize {
 export interface PhotoOpts {
   /** Legacy cloud size names are normalized before the native take_photo command. */
   size?: "low" | "medium" | "high" | "max" | "small" | "large" | "full"
+    mode?: "photo" | "text"
   compress?: "none" | "low" | "medium" | "high"
   sound?: boolean
   saveToGallery?: boolean
@@ -199,6 +200,7 @@ export class PhonePhotoCoordinator {
         requestId: bleRequestId,
         appId: packageName,
         size: normalizePhotoSize(opts.size ?? "medium"),
+        mode: opts.mode ?? "photo",
         webhookUrl: uploadUrl,
         authToken: null,
         ...(isLoopbackUpload ? {transferMethod: "ble" as const} : {}),

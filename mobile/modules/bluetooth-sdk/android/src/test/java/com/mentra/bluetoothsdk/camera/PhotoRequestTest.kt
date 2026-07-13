@@ -1,6 +1,7 @@
 package com.mentra.bluetoothsdk.camera
 
 import com.mentra.bluetoothsdk.PhotoCompression
+import com.mentra.bluetoothsdk.PhotoMode
 import com.mentra.bluetoothsdk.PhotoRequest
 import com.mentra.bluetoothsdk.PhotoSize
 import org.assertj.core.api.Assertions.assertThat
@@ -34,6 +35,7 @@ class PhotoRequestTest {
             )
 
         assertThat(request.exposureTimeNs).isNull()
+        assertThat(request.mode).isEqualTo(PhotoMode.PHOTO)
     }
 
     @Test
@@ -76,5 +78,19 @@ class PhotoRequestTest {
             )
 
         assertThat(request.requestId).isEqualTo("photo-1")
+    }
+
+    @Test
+    fun `fromMap preserves text mode`() {
+        val request =
+            PhotoRequest.fromMap(
+                mapOf(
+                    "size" to "medium",
+                    "mode" to "text",
+                    "webhookUrl" to "https://example.com/upload",
+                )
+            )
+
+        assertThat(request.mode).isEqualTo(PhotoMode.TEXT)
     }
 }

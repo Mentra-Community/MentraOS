@@ -11,6 +11,7 @@ import com.mentra.asg_client.audio.AudioAssets;
 import com.mentra.asg_client.camera.CameraNeoService;
 import com.mentra.asg_client.camera.model.CameraOperationError;
 import com.mentra.asg_client.camera.model.PhotoCaptureSettings;
+import com.mentra.asg_client.camera.policy.PhotoMode;
 import com.mentra.asg_client.settings.AsgSettings;
 import com.mentra.asg_client.camera.policy.PhotoSizeTier;
 import com.mentra.asg_client.camera.lifecycle.PhotoExifMetadataWriter;
@@ -22,6 +23,7 @@ import com.mentra.asg_client.io.media.interfaces.ServiceCallbackInterface;
 import com.mentra.asg_client.io.media.managers.MediaUploadQueueManager;
 import com.mentra.asg_client.io.media.core.textdetect.DetectionResult;
 import com.mentra.asg_client.io.media.core.textdetect.TextDetectConfig;
+import com.mentra.asg_client.io.media.core.textdetect.TextDetectDebugWriter;
 import com.mentra.asg_client.io.media.core.textdetect.TextRegionDetector;
 import com.mentra.asg_client.io.media.upload.MediaUploadService;
 import com.mentra.asg_client.io.storage.StorageManager;
@@ -161,9 +163,19 @@ public class MediaCaptureService {
     // Independent of ENABLE_GRAYSCALE_BLE_PHOTOS. When true, runs TextRegionDetector on a
     // subsampled luma copy of the source JPEG and crops the BLE photo to the detected ROI —
     // in the grayscale path via GrayscaleBleProcessor.process(), in the legacy color path by
-    // cropping the decoded bitmap before scaling. Defaults OFF: detector is not yet
-    // tuned/benchmarked on-device (tune offline via TextRegionDetectorHarnessTest).
-    private static final boolean ENABLE_TEXT_REGION_CROP = false;
+    // cropping the decoded bitmap before scaling. Tune offline via TextRegionDetectorHarnessTest
+    // before changing this default.
+    private static final boolean ENABLE_TEXT_REGION_CROP = true;
+
+    // Gated behind ENABLE_TEXT_REGION_CROP. When true, every detection run also dumps its
+    // intermediate state (analysis frame, dual-polarity threshold masks, component/line "zone"
+    // overlays, crop overlay, result.json) to external storage under textdetect_debug/ so it can
+    // be pulled off-device with `adb pull` for offline review - see TextDetectDebugWriter. This
+    // adds real per-photo overhead (extra Mat clones + PNG/JPEG writes) so it is a separate, more
+    // targeted debug switch, not implied by ENABLE_TEXT_REGION_CROP alone.
+    private static final boolean SAVE_TEXT_DETECT_DEBUG_ARTIFACTS = true;
+    private static final int TEXT_MODE_AVIF_SIZE_THRESHOLD_BYTES = 200 * 1024;
+    private static final int TEXT_MODE_AVIF_HIGH_QUALITY = 90;
 
     private static class BleParams {
         final int targetWidth;
@@ -206,6 +218,82 @@ public class MediaCaptureService {
         }
     }
 
+    /**
+     * Classifies whether a {@code TextRegionDetector} result represents a genuine detected text
+     * region, or one of the detector's own safety-net fallbacks (see {@code TextRegionDetector}
+     * and {@code TextDetectConfig} for the exact reason strings). Purely for logging/diagnostics -
+     * does not affect which ROI is actually used.
+     */
+    private static String classifyTextCropOutcome(
+            DetectionResult.Confidence confidence,
+            String fallbackReason,
+            int acceptedComponentCount,
+            int lineCount) {
+        boolean isCenterFallback =
+                fallbackReason != null
+                        && (fallbackReason.contains("untrustworthy_detection_center_fallback")
+                                || fallbackReason.contains("no_valid_polarity"));
+
+        if (confidence == DetectionResult.Confidence.NONE) {
+            return "FAILED (no valid polarity detected - crop is a generous center box, not"
+                    + " text-based)";
+        }
+        if (isCenterFallback) {
+            return "FALLBACK (detector rejected its own candidate crop as untrustworthy -"
+                    + " using a 75% center-crop safety net, NOT a real text detection)";
+        }
+        if (confidence == DetectionResult.Confidence.HIGH) {
+            return "SUCCESS (high confidence, "
+                    + acceptedComponentCount
+                    + " components across "
+                    + lineCount
+                    + " line(s))";
+        }
+        if (confidence == DetectionResult.Confidence.MEDIUM) {
+            return "SUCCESS (medium confidence, "
+                    + acceptedComponentCount
+                    + " components across "
+                    + lineCount
+                    + " line(s), extra padding applied)";
+        }
+        // LOW confidence but not a center-fallback: a real (weak) detection - e.g. low score or
+        // polarity disagreement - still text-based, just less trustworthy than HIGH/MEDIUM.
+        return "DEGRADED (low confidence, reason="
+                + fallbackReason
+                + ", "
+                + acceptedComponentCount
+                + " components across "
+                + lineCount
+                + " line(s) - real detection, but weak)";
+    }
+
+    // Monotonic per-process counter appended to every text-detect debug folder name so repeated
+    // detection runs never collide, even when the upstream capture reuses the same originalPath
+    // or requestId (observed on emulators/test harnesses that replay a cached capture request).
+    private static final java.util.concurrent.atomic.AtomicLong TEXT_DETECT_DEBUG_SEQUENCE =
+            new java.util.concurrent.atomic.AtomicLong();
+
+    /**
+     * Resolves an adb-pullable directory for {@link TextDetectDebugWriter} output for a given
+     * detection run: {@code <externalFilesDir>/textdetect_debug/<capture-name>_<millis>_<seq>/}.
+     *
+     * <p>The capture request's own directory name (the parent of {@code originalPath}, e.g.
+     * {@code IMG_20260713_070810_747_124_photo-1783926490251}) is included for correlation with
+     * the original JPEG, but is <em>not</em> relied on for uniqueness - a wall-clock timestamp
+     * plus a monotonic sequence number are appended so every call gets its own folder even if the
+     * same originalPath/requestId is reused for multiple detection runs.
+     */
+    private File resolveTextDetectDebugDir(String originalPath) {
+        File parent = new File(originalPath).getParentFile();
+        String captureName = parent != null ? parent.getName() : "unknown_capture";
+        String uniqueSuffix =
+                System.currentTimeMillis()
+                        + "_"
+                        + TEXT_DETECT_DEBUG_SEQUENCE.incrementAndGet();
+        File base = new File(mContext.getExternalFilesDir(null), "textdetect_debug");
+        return new File(base, captureName + "_" + uniqueSuffix);
+    }
+
     // Track which photos should be saved to gallery
     private Map<String, Boolean> photoSaveFlags = new HashMap<>();
 
@@ -216,6 +304,8 @@ public class MediaCaptureService {
     private Map<String, String> photoOriginalPaths = new HashMap<>();
     // Track requested photo size per request for proper fallback handling
     private Map<String, String> photoRequestedSizes = new HashMap<>();
+    // Track capture mode through asynchronous WiFi-to-BLE fallback.
+    private Map<String, String> photoRequestedModes = new HashMap<>();
 
     // Photo job state tracking - one photo job (capture + upload/BLE-handoff) in flight at a time.
     // Set on entry to takePhotoAndUpload / takePhotoForBleTransfer; cleared only at terminal
@@ -1672,6 +1762,7 @@ public class MediaCaptureService {
             String photoFilePath,
             String requestId,
             String size,
+            String mode,
             boolean enableFlash,
             boolean enableSound,
             Long exposureTimeNs,
@@ -1680,6 +1771,7 @@ public class MediaCaptureService {
         if (captureSettings == null) {
             captureSettings = PhotoCaptureSettings.EMPTY;
         }
+        String captureSize = PhotoMode.TEXT.equals(mode) ? PhotoSizeTier.normalize("max") : size;
 
         // Photos cannot interrupt streams
         if (RtmpStreamingService.isStreaming()
@@ -1713,6 +1805,10 @@ public class MediaCaptureService {
                         + requestId
                         + " size="
                         + size
+                        + " captureSize="
+                        + captureSize
+                        + " mode="
+                        + mode
                         + " path="
                         + photoFilePath);
         sendPhotoStatus(requestId, "queued");
@@ -1725,7 +1821,7 @@ public class MediaCaptureService {
             triggerPhotoFlashLed();
             if (enableSound) {
                 // Local-save SDK photo: isFromSdk=true, matching the enqueue below.
-                playShutterSound(size, true, exposureTimeNs);
+                playShutterSound(captureSize, true, exposureTimeNs);
             }
             if (enableFlash) {
                 flashPrivacyLedForPhoto();
@@ -1736,7 +1832,7 @@ public class MediaCaptureService {
             CameraNeoService.enqueuePhotoRequest(
                     mContext,
                     photoFilePath,
-                    size,
+                    captureSize,
                     enableFlash,
                     true, // isFromSdk — honor the SDK size tier
                     exposureTimeNs,
@@ -1872,6 +1968,7 @@ public class MediaCaptureService {
             String authToken,
             boolean save,
             String size,
+            String mode,
             boolean enableFlash,
             boolean enableSound,
             String compress,
@@ -1881,6 +1978,7 @@ public class MediaCaptureService {
         if (captureSettings == null) {
             captureSettings = PhotoCaptureSettings.EMPTY;
         }
+        String captureSize = PhotoMode.TEXT.equals(mode) ? PhotoSizeTier.normalize("max") : size;
         // Start timing for end-to-end photo capture performance measurement
         final long requestStartTimeMs = System.currentTimeMillis();
         recordTiming(requestId, "request_start");
@@ -1950,6 +2048,7 @@ public class MediaCaptureService {
         photoSaveFlags.put(requestId, save);
         // Track requested size for potential fallbacks
         photoRequestedSizes.put(requestId, size);
+        photoRequestedModes.put(requestId, mode);
 
         Log.d(TAG, "Taking photo and uploading to " + webhookUrl);
 
@@ -1987,7 +2086,7 @@ public class MediaCaptureService {
                 if (enableSound) {
                     // SDK photo: isFromSdk=true; size and exposure match the enqueuePhotoRequest
                     // call below so the warm/cold prediction lines up.
-                    playShutterSound(size, true, exposureTimeNs);
+                    playShutterSound(captureSize, true, exposureTimeNs);
                 }
                 if (enableFlash) {
                     flashPrivacyLedForPhoto();
@@ -2010,7 +2109,7 @@ public class MediaCaptureService {
             CameraNeoService.enqueuePhotoRequest(
                     mContext,
                     photoFilePath,
-                    size,
+                    captureSize,
                     enableFlash,
                     true, // isFromSdk - use optimized resolution for fast transfer
                     exposureTimeNs,
@@ -2762,6 +2861,7 @@ public class MediaCaptureService {
                                     photoBleIds.remove(requestId);
                                     photoOriginalPaths.remove(requestId);
                                     photoRequestedSizes.remove(requestId);
+                                    photoRequestedModes.remove(requestId);
                                     releasePhotoJob(requestId);
                                     if (mMediaCaptureListener != null) {
                                         mMediaCaptureListener.onMediaError(
@@ -2881,6 +2981,7 @@ public class MediaCaptureService {
                                     // Clean up the flag
                                     photoSaveFlags.remove(requestId);
                                     photoRequestedSizes.remove(requestId);
+                                    photoRequestedModes.remove(requestId);
 
                                     // Notify success
                                     if (mMediaCaptureListener != null) {
@@ -2995,6 +3096,7 @@ public class MediaCaptureService {
                                     photoBleIds.remove(requestId);
                                     photoOriginalPaths.remove(requestId);
                                     photoRequestedSizes.remove(requestId);
+                                    photoRequestedModes.remove(requestId);
 
                                     if (mMediaCaptureListener != null) {
                                         mMediaCaptureListener.onMediaError(
@@ -3107,6 +3209,7 @@ public class MediaCaptureService {
                                 photoBleIds.remove(requestId);
                                 photoOriginalPaths.remove(requestId);
                                 photoRequestedSizes.remove(requestId);
+                                photoRequestedModes.remove(requestId);
 
                                 if (mMediaCaptureListener != null) {
                                     mMediaCaptureListener.onMediaError(
@@ -3601,6 +3704,7 @@ public class MediaCaptureService {
             String bleImgId,
             boolean save,
             String size,
+            String mode,
             boolean enableFlash,
             boolean enableSound,
             String compress,
@@ -3639,6 +3743,7 @@ public class MediaCaptureService {
             photoBleIds.put(requestId, bleImgId);
             photoOriginalPaths.put(requestId, photoFilePath);
             photoRequestedSizes.put(requestId, size);
+            photoRequestedModes.put(requestId, mode);
             tracePhotoWifiRoute(requestId, "direct_webhook", "wifi_connected", webhookUrl, null);
 
             Log.d(TAG, "📶 WiFi connected - attempting direct upload for " + requestId);
@@ -3649,6 +3754,7 @@ public class MediaCaptureService {
                     authToken,
                     save,
                     size,
+                    mode,
                     enableFlash,
                     enableSound,
                     compress,
@@ -3665,6 +3771,7 @@ public class MediaCaptureService {
                     bleImgId,
                     save,
                     size,
+                    mode,
                     enableFlash,
                     enableSound,
                     exposureTimeNs,
@@ -3691,6 +3798,7 @@ public class MediaCaptureService {
             String bleImgId,
             boolean save,
             String size,
+            String mode,
             boolean enableFlash,
             boolean enableSound,
             Long exposureTimeNs,
@@ -3699,6 +3807,7 @@ public class MediaCaptureService {
         if (captureSettings == null) {
             captureSettings = PhotoCaptureSettings.EMPTY;
         }
+        String captureSize = PhotoMode.TEXT.equals(mode) ? PhotoSizeTier.normalize("max") : size;
         // Start timing for end-to-end photo capture performance measurement
         final long requestStartTimeMs = System.currentTimeMillis();
         recordTiming(requestId, "ble_request_start");
@@ -3766,6 +3875,7 @@ public class MediaCaptureService {
         photoSaveFlags.put(requestId, save);
         // Track requested size for BLE compression
         photoRequestedSizes.put(requestId, size);
+        photoRequestedModes.put(requestId, mode);
         // Notify that we're about to take a photo
         if (mMediaCaptureListener != null) {
             mMediaCaptureListener.onPhotoCapturing(requestId);
@@ -3799,7 +3909,7 @@ public class MediaCaptureService {
             if (enableSound) {
                 // BLE-transfer SDK photo: isFromSdk=true; size and exposure match the
                 // enqueuePhotoRequest call below so the warm/cold prediction lines up.
-                playShutterSound(size, true, exposureTimeNs);
+                playShutterSound(captureSize, true, exposureTimeNs);
             }
             if (enableFlash) {
                 flashPrivacyLedForPhoto();
@@ -3812,7 +3922,7 @@ public class MediaCaptureService {
             CameraNeoService.enqueuePhotoRequest(
                     mContext,
                     photoFilePath,
-                    size,
+                    captureSize,
                     enableFlash,
                     true, // isFromSdk — same sizing as webhook SDK path
                     exposureTimeNs,
@@ -3952,6 +4062,7 @@ public class MediaCaptureService {
             photoBleIds.remove(requestId);
             photoOriginalPaths.remove(requestId);
             photoRequestedSizes.remove(requestId);
+            photoRequestedModes.remove(requestId);
             releasePhotoJob(requestId);
             return;
         }
@@ -4012,33 +4123,59 @@ public class MediaCaptureService {
                                 }
 
                                 BleParams bleParams = resolveBleParams(requestedSize);
+                                String requestedMode =
+                                        PhotoMode.normalize(photoRequestedModes.get(requestId));
+                                boolean textModeRequested = PhotoMode.TEXT.equals(requestedMode);
+                                boolean shouldCrop =
+                                        ENABLE_TEXT_REGION_CROP || textModeRequested;
 
                                 android.graphics.Bitmap resized;
                                 DetectionResult.Confidence textCropConfidence = null;
                                 String textCropReason = null;
-
                                 // 2a. Text-region ROI detection. Independent of the grayscale
                                 // flag: it only decides WHERE to crop, not how the pixels are
                                 // processed afterwards.
+                                // Human-readable verdict for whether the ROI below represents a
+                                // genuine detected text region vs. a safety-net fallback. See
+                                // classifyTextCropOutcome() for the exact rules.
+                                String textCropOutcome =
+                                        shouldCrop
+                                                ? "NOT_ATTEMPTED (pending detection)"
+                                                : "NOT_ATTEMPTED"
+                                                        + " (ENABLE_TEXT_REGION_CROP=false, mode="
+                                                        + requestedMode
+                                                        + ")";
+
                                 android.graphics.Rect roi = null;
-                                if (ENABLE_TEXT_REGION_CROP) {
+                                if (shouldCrop) {
                                     try {
+                                        TextDetectConfig detectConfig =
+                                                SAVE_TEXT_DETECT_DEBUG_ARTIFACTS
+                                                        ? TextDetectConfig.defaults()
+                                                                .toBuilder()
+                                                                .debugCaptureIntermediates(true)
+                                                                .build()
+                                                        : TextDetectConfig.defaults();
                                         GrayscaleBleProcessor.DetectionLuma input =
                                                 GrayscaleBleProcessor.extractDetectionLuma(
-                                                        originalPath,
-                                                        TextDetectConfig.defaults()
-                                                                .analysisWidth);
+                                                        originalPath, detectConfig.analysisWidth);
                                         DetectionResult result =
                                                 TextRegionDetector.detect(
                                                         input.luma,
                                                         input.width,
                                                         input.height,
-                                                        TextDetectConfig.defaults());
+                                                        detectConfig);
                                         roi =
                                                 GrayscaleBleProcessor.scaleDetectionRoi(
                                                         result.roi, input);
                                         textCropConfidence = result.confidence;
                                         textCropReason = result.fallbackReason;
+                                        textCropOutcome =
+                                                classifyTextCropOutcome(
+                                                        result.confidence,
+                                                        result.fallbackReason,
+                                                        result.acceptedComponentCount,
+                                                        result.lineCount);
                                         Log.d(
                                                 TAG,
                                                 "TextRegionDetector: confidence="
@@ -4047,6 +4184,10 @@ public class MediaCaptureService {
                                                         + result.fallbackReason
                                                         + " ms="
                                                         + result.detectionTimeMs
+                                                        + " components="
+                                                        + result.acceptedComponentCount
+                                                        + " lines="
+                                                        + result.lineCount
                                                         + " crop="
                                                         + java.util.Arrays.toString(
                                                                 roi != null
@@ -4057,6 +4198,13 @@ public class MediaCaptureService {
                                                                             roi.bottom
                                                                         }
                                                                         : null));
+                                        Log.i(TAG, "✂️ CROP OUTCOME: " + textCropOutcome);
+                                        if (SAVE_TEXT_DETECT_DEBUG_ARTIFACTS) {
+                                            File debugDir =
+                                                    resolveTextDetectDebugDir(originalPath);
+                                            TextDetectDebugWriter.save(
+                                                    debugDir, result, textCropOutcome);
+                                        }
                                     } catch (Throwable t) {
                                         // Throwable, not Exception: OpenCV/JNI failures such as
                                         // UnsatisfiedLinkError extend Error and must also fall
@@ -4070,6 +4218,8 @@ public class MediaCaptureService {
                                         roi = null;
                                         textCropConfidence = null;
                                         textCropReason = null;
+                                        textCropOutcome = "FAILED (exception: " + t + ")";
+                                        Log.i(TAG, "✂️ CROP OUTCOME: " + textCropOutcome);
                                     }
                                 }
 
@@ -4081,6 +4231,12 @@ public class MediaCaptureService {
                                     // screens), not viewed, so color is dead weight - this also
                                     // avoids ever materializing the ~30MB full-res ARGB bitmap the
                                     // old decode+resize+sharpen chain used.
+                                    Log.i(
+                                            TAG,
+                                            "✂️ CROP CHECK (grayscale path): roi="
+                                                    + (roi != null ? roi.toShortString() : "null")
+                                                    + " - see GrayscaleBleProcessor log line"
+                                                    + " below for original->crop->out dims");
                                     resized =
                                             GrayscaleBleProcessor.process(
                                                     originalPath,
@@ -4088,9 +4244,10 @@ public class MediaCaptureService {
                                                     bleParams.targetWidth,
                                                     bleParams.targetHeight);
                                 } else {
-                                    // Legacy full-color path. Honors the text-region ROI (when
-                                    // detection is enabled) by cropping the decoded bitmap
-                                    // before scaling.
+                                    // Legacy full-color path. When a text-region ROI was detected
+                                    // above, crop to it (still in color) before the existing
+                                    // scale+sharpen chain - this keeps color for viewing while
+                                    // still spending the BLE byte budget on the text region.
                                     android.graphics.Bitmap original =
                                             android.graphics.BitmapFactory.decodeFile(
                                                     originalPath);
@@ -4098,48 +4255,91 @@ public class MediaCaptureService {
                                         throw new Exception("Failed to decode image file");
                                     }
 
+                                    int originalWidth = original.getWidth();
+                                    int originalHeight = original.getHeight();
+                                    Log.i(
+                                            TAG,
+                                            "✂️ CROP CHECK (color path): original photo decoded at "
+                                                    + originalWidth
+                                                    + "x"
+                                                    + originalHeight
+                                                    + " roi="
+                                                    + (roi != null ? roi.toShortString() : "null"));
+
+                                    android.graphics.Bitmap cropped = original;
                                     if (roi != null) {
-                                        int cropLeft =
-                                                Math.max(
+                                        android.graphics.Rect bounds =
+                                                new android.graphics.Rect(
                                                         0,
-                                                        Math.min(
-                                                                roi.left,
-                                                                original.getWidth() - 1));
-                                        int cropTop =
-                                                Math.max(
                                                         0,
-                                                        Math.min(
-                                                                roi.top,
-                                                                original.getHeight() - 1));
-                                        int cropWidth =
-                                                Math.max(
-                                                        1,
-                                                        Math.min(
-                                                                roi.width(),
-                                                                original.getWidth() - cropLeft));
-                                        int cropHeight =
-                                                Math.max(
-                                                        1,
-                                                        Math.min(
-                                                                roi.height(),
-                                                                original.getHeight() - cropTop));
-                                        android.graphics.Bitmap cropped =
-                                                android.graphics.Bitmap.createBitmap(
-                                                        original,
-                                                        cropLeft,
-                                                        cropTop,
-                                                        cropWidth,
-                                                        cropHeight);
-                                        if (cropped != original) {
+                                                        original.getWidth(),
+                                                        original.getHeight());
+                                        android.graphics.Rect clamped =
+                                                new android.graphics.Rect(roi);
+                                        if (clamped.intersect(bounds)
+                                                && clamped.width() > 0
+                                                && clamped.height() > 0) {
+                                            cropped =
+                                                    android.graphics.Bitmap.createBitmap(
+                                                            original,
+                                                            clamped.left,
+                                                            clamped.top,
+                                                            clamped.width(),
+                                                            clamped.height());
                                             original.recycle();
+                                            Log.i(
+                                                    TAG,
+                                                    "✂️ CROP APPLIED: "
+                                                            + originalWidth
+                                                            + "x"
+                                                            + originalHeight
+                                                            + " -> "
+                                                            + cropped.getWidth()
+                                                            + "x"
+                                                            + cropped.getHeight()
+                                                            + " (roi="
+                                                            + clamped.toShortString()
+                                                            + ", "
+                                                            + Math.round(
+                                                                    100.0
+                                                                            * (1.0
+                                                                                    - (cropped
+                                                                                                    .getWidth()
+                                                                                            * cropped
+                                                                                                    .getHeight())
+                                                                                            / (double)
+                                                                                                    (originalWidth
+                                                                                                            * originalHeight)))
+                                                            + "% pixel reduction) - outcome: "
+                                                            + textCropOutcome);
+                                        } else {
+                                            Log.i(
+                                                    TAG,
+                                                    "✂️ CROP SKIPPED: roi did not intersect"
+                                                            + " original bounds, using full frame "
+                                                            + originalWidth
+                                                            + "x"
+                                                            + originalHeight
+                                                            + " - outcome: "
+                                                            + textCropOutcome);
                                         }
-                                        original = cropped;
+                                    } else {
+                                        Log.i(
+                                                TAG,
+                                                "✂️ CROP SKIPPED: no ROI (detection disabled,"
+                                                        + " failed, or low-confidence fallback),"
+                                                        + " using full frame "
+                                                        + originalWidth
+                                                        + "x"
+                                                        + originalHeight
+                                                        + " - outcome: "
+                                                        + textCropOutcome);
                                     }
 
                                     int targetWidth = bleParams.targetWidth;
                                     int targetHeight = bleParams.targetHeight;
                                     float aspectRatio =
-                                            (float) original.getWidth() / original.getHeight();
+                                            (float) cropped.getWidth() / cropped.getHeight();
                                     if (aspectRatio > targetWidth / (float) targetHeight) {
                                         targetHeight = (int) (targetWidth / aspectRatio);
                                     } else {
@@ -4148,9 +4348,9 @@ public class MediaCaptureService {
 
                                     android.graphics.Bitmap scaled =
                                             android.graphics.Bitmap.createScaledBitmap(
-                                                    original, targetWidth, targetHeight, true);
-                                    if (scaled != original) {
-                                        original.recycle();
+                                                    cropped, targetWidth, targetHeight, true);
+                                    if (scaled != cropped) {
+                                        cropped.recycle();
                                     }
                                     resized = BleImageSharpener.sharpen(mContext, scaled);
                                     if (resized != scaled) {
@@ -4167,11 +4367,15 @@ public class MediaCaptureService {
                                                 + " grayscale="
                                                 + ENABLE_GRAYSCALE_BLE_PHOTOS
                                                 + " textCrop="
-                                                + ENABLE_TEXT_REGION_CROP
+                                                + shouldCrop
+                                                + " requestedMode="
+                                                + requestedMode
                                                 + " textCropConfidence="
                                                 + textCropConfidence
                                                 + " textCropReason="
-                                                + textCropReason);
+                                                + textCropReason
+                                                + " textCropOutcome="
+                                                + textCropOutcome);
 
                                 // 3. Encode as AVIF only (no JPEG fallback over BLE)
                                 Log.d(
@@ -4186,6 +4390,37 @@ public class MediaCaptureService {
                                     compressedData =
                                             PhotoExifMetadataWriter.encodeAvifForBle(
                                                     resized, bleParams.avifQuality, originalPath);
+                                    if (textModeRequested
+                                            && compressedData.length
+                                                    < TEXT_MODE_AVIF_SIZE_THRESHOLD_BYTES) {
+                                        byte[] highQualityData =
+                                                PhotoExifMetadataWriter.encodeAvifForBle(
+                                                        resized,
+                                                        TEXT_MODE_AVIF_HIGH_QUALITY,
+                                                        originalPath);
+                                        if (highQualityData.length
+                                                <= TEXT_MODE_AVIF_SIZE_THRESHOLD_BYTES) {
+                                            Log.d(
+                                                    TAG,
+                                                    "Text-mode AVIF quality increased from "
+                                                            + bleParams.avifQuality
+                                                            + " to "
+                                                            + TEXT_MODE_AVIF_HIGH_QUALITY
+                                                            + ": "
+                                                            + compressedData.length
+                                                            + " -> "
+                                                            + highQualityData.length
+                                                            + " bytes");
+                                            compressedData = highQualityData;
+                                        } else {
+                                            Log.d(
+                                                    TAG,
+                                                    "Text-mode high-quality AVIF exceeded 200KB; "
+                                                            + "keeping normal encode ("
+                                                            + highQualityData.length
+                                                            + " bytes)");
+                                        }
+                                    }
                                 } finally {
                                     resized.recycle();
                                 }
@@ -4269,6 +4504,8 @@ public class MediaCaptureService {
                                 // Clean up flag on error too
                                 photoSaveFlags.remove(requestId);
                             } finally {
+                                photoRequestedSizes.remove(requestId);
+                                photoRequestedModes.remove(requestId);
                                 // BLE compress + handoff (or its failure) ends our authority over
                                 // the photo
                                 // job. From here, mServiceCallback.isBleTransferInProgress() is the
