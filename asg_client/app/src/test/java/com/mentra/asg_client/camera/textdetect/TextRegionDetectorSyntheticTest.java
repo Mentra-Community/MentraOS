@@ -43,13 +43,14 @@ public class TextRegionDetectorSyntheticTest {
     }
 
     /**
-     * Regression test for the center-fallback bug: a single text line close to (but not touching)
-     * the frame edge — the windshield-VIN geometry. Safety padding around the detected line
-     * reaches the frame boundary by design; that must not be mistaken for clipped text and
-     * trigger the 75% center-crop fallback, which would discard a correct detection.
+     * Regression test for the center-fallback bug (gated behind {@code improvedCropAccuracy}): a
+     * single text line close to (but not touching) the frame edge — the windshield-VIN geometry.
+     * Safety padding around the detected line reaches the frame boundary by design; that must not
+     * be mistaken for clipped text and trigger the 75% center-crop fallback, which would discard
+     * a correct detection.
      */
     @Test
-    public void detect_edgeProximateTextLine_doesNotCenterFallback() {
+    public void detect_edgeProximateTextLine_improvedAccuracy_doesNotCenterFallback() {
         int width = 800;
         int height = 600;
         int textLeft = 80;
@@ -58,7 +59,8 @@ public class TextRegionDetectorSyntheticTest {
         int textBottom = textTop + 24;
         byte[] luma = renderSingleLine(width, height, textLeft, textTop, textRight, textBottom);
 
-        TextDetectConfig config = TextDetectConfig.defaults();
+        TextDetectConfig config =
+                TextDetectConfig.defaults().toBuilder().improvedCropAccuracy(true).build();
         DetectionResult result = TextRegionDetector.detect(luma, width, height, config);
 
         assertNotNull(result.roi);
@@ -73,6 +75,31 @@ public class TextRegionDetectorSyntheticTest {
         assertTrue(
                 "crop " + result.roi + " must contain the text line",
                 result.roi.contains(new CropRect(textLeft, textTop, textRight, textBottom)));
+        if (result.debug != null) {
+            result.debug.release();
+        }
+    }
+
+    /**
+     * With {@code improvedCropAccuracy} off (the default), the original algorithm runs unchanged:
+     * trust checks judge the padded crop, so the same edge-proximate line falls back to the 75%
+     * center crop. Guards that the flag actually switches behavior.
+     */
+    @Test
+    public void detect_edgeProximateTextLine_defaultConfig_usesOriginalFallbackBehavior() {
+        int width = 800;
+        int height = 600;
+        byte[] luma = renderSingleLine(width, height, 80, 12, 700, 36);
+
+        TextDetectConfig config = TextDetectConfig.defaults();
+        DetectionResult result = TextRegionDetector.detect(luma, width, height, config);
+
+        assertNotNull(result.roi);
+        String reason = result.fallbackReason == null ? "" : result.fallbackReason;
+        assertTrue(
+                "original algorithm is expected to center-fallback on edge-proximate text, got: "
+                        + reason,
+                reason.contains("untrustworthy_detection_center_fallback"));
         if (result.debug != null) {
             result.debug.release();
         }

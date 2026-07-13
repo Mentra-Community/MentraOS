@@ -158,10 +158,11 @@ public class MediaCaptureService {
     // transient memory from ~36MB down to ~9MB (see GrayscaleBleProcessor for the breakdown).
     private static final boolean ENABLE_GRAYSCALE_BLE_PHOTOS = false;
 
-    // Gated behind ENABLE_GRAYSCALE_BLE_PHOTOS. When true, runs TextRegionDetector on a
-    // subsampled luma copy of the source JPEG and passes the detected ROI into
-    // GrayscaleBleProcessor.process() instead of null (full frame). Defaults OFF: detector is
-    // not yet tuned/benchmarked on-device (see asg_client/testdata/textdetect/README.md).
+    // Independent of ENABLE_GRAYSCALE_BLE_PHOTOS. When true, runs TextRegionDetector on a
+    // subsampled luma copy of the source JPEG and crops the BLE photo to the detected ROI —
+    // in the grayscale path via GrayscaleBleProcessor.process(), in the legacy color path by
+    // cropping the decoded bitmap before scaling. Defaults OFF: detector is not yet
+    // tuned/benchmarked on-device (see asg_client/testdata/textdetect/README.md).
     private static final boolean ENABLE_TEXT_REGION_CROP = false;
 
     private static class BleParams {
@@ -4015,62 +4016,67 @@ public class MediaCaptureService {
                                 android.graphics.Bitmap resized;
                                 DetectionResult.Confidence textCropConfidence = null;
                                 String textCropReason = null;
+
+                                // 2a. Text-region ROI detection. Independent of the grayscale
+                                // flag: it only decides WHERE to crop, not how the pixels are
+                                // processed afterwards.
+                                android.graphics.Rect roi = null;
+                                if (ENABLE_TEXT_REGION_CROP) {
+                                    try {
+                                        GrayscaleBleProcessor.DetectionLuma input =
+                                                GrayscaleBleProcessor.extractDetectionLuma(
+                                                        originalPath,
+                                                        TextDetectConfig.defaults()
+                                                                .analysisWidth);
+                                        DetectionResult result =
+                                                TextRegionDetector.detect(
+                                                        input.luma,
+                                                        input.width,
+                                                        input.height,
+                                                        TextDetectConfig.defaults());
+                                        roi =
+                                                GrayscaleBleProcessor.scaleDetectionRoi(
+                                                        result.roi, input.sampleSize);
+                                        textCropConfidence = result.confidence;
+                                        textCropReason = result.fallbackReason;
+                                        Log.d(
+                                                TAG,
+                                                "TextRegionDetector: confidence="
+                                                        + result.confidence
+                                                        + " reason="
+                                                        + result.fallbackReason
+                                                        + " ms="
+                                                        + result.detectionTimeMs
+                                                        + " crop="
+                                                        + java.util.Arrays.toString(
+                                                                roi != null
+                                                                        ? new int[] {
+                                                                            roi.left,
+                                                                            roi.top,
+                                                                            roi.right,
+                                                                            roi.bottom
+                                                                        }
+                                                                        : null));
+                                    } catch (Exception e) {
+                                        Log.w(
+                                                TAG,
+                                                "TextRegionDetector failed, falling back to"
+                                                        + " full-frame ROI",
+                                                e);
+                                        roi = null;
+                                        textCropConfidence = null;
+                                        textCropReason = null;
+                                    }
+                                }
+
                                 if (ENABLE_GRAYSCALE_BLE_PHOTOS) {
-                                    // 2. Decode straight to a grayscale luma pipeline (crop +
+                                    // 2b. Decode straight to a grayscale luma pipeline (crop +
                                     // contrast + unsharp all happen on 1-byte/pixel buffers) and
                                     // only rehydrate to a full RGBA bitmap at the end for the AVIF
                                     // encoder. BLE photos exist to be read (documents/signs/
                                     // screens), not viewed, so color is dead weight - this also
                                     // avoids ever materializing the ~30MB full-res ARGB bitmap the
                                     // old decode+resize+sharpen chain used.
-                                    android.graphics.Rect roi = null;
-                                    if (ENABLE_TEXT_REGION_CROP) {
-                                        try {
-                                            GrayscaleBleProcessor.DetectionLuma input =
-                                                    GrayscaleBleProcessor.extractDetectionLuma(
-                                                            originalPath,
-                                                            TextDetectConfig.defaults()
-                                                                    .analysisWidth);
-                                            DetectionResult result =
-                                                    TextRegionDetector.detect(
-                                                            input.luma,
-                                                            input.width,
-                                                            input.height,
-                                                            TextDetectConfig.defaults());
-                                            roi =
-                                                    GrayscaleBleProcessor.scaleDetectionRoi(
-                                                            result.roi, input.sampleSize);
-                                            textCropConfidence = result.confidence;
-                                            textCropReason = result.fallbackReason;
-                                            Log.d(
-                                                    TAG,
-                                                    "TextRegionDetector: confidence="
-                                                            + result.confidence
-                                                            + " reason="
-                                                            + result.fallbackReason
-                                                            + " ms="
-                                                            + result.detectionTimeMs
-                                                            + " crop="
-                                                            + java.util.Arrays.toString(
-                                                                    roi != null
-                                                                            ? new int[] {
-                                                                                roi.left,
-                                                                                roi.top,
-                                                                                roi.right,
-                                                                                roi.bottom
-                                                                            }
-                                                                            : null));
-                                        } catch (Exception e) {
-                                            Log.w(
-                                                    TAG,
-                                                    "TextRegionDetector failed, falling back to"
-                                                            + " full-frame ROI",
-                                                    e);
-                                            roi = null;
-                                            textCropConfidence = null;
-                                            textCropReason = null;
-                                        }
-                                    }
                                     resized =
                                             GrayscaleBleProcessor.process(
                                                     originalPath,
@@ -4078,12 +4084,52 @@ public class MediaCaptureService {
                                                     bleParams.targetWidth,
                                                     bleParams.targetHeight);
                                 } else {
-                                    // Legacy full-color path.
+                                    // Legacy full-color path. Honors the text-region ROI (when
+                                    // detection is enabled) by cropping the decoded bitmap
+                                    // before scaling.
                                     android.graphics.Bitmap original =
                                             android.graphics.BitmapFactory.decodeFile(
                                                     originalPath);
                                     if (original == null) {
                                         throw new Exception("Failed to decode image file");
+                                    }
+
+                                    if (roi != null) {
+                                        int cropLeft =
+                                                Math.max(
+                                                        0,
+                                                        Math.min(
+                                                                roi.left,
+                                                                original.getWidth() - 1));
+                                        int cropTop =
+                                                Math.max(
+                                                        0,
+                                                        Math.min(
+                                                                roi.top,
+                                                                original.getHeight() - 1));
+                                        int cropWidth =
+                                                Math.max(
+                                                        1,
+                                                        Math.min(
+                                                                roi.width(),
+                                                                original.getWidth() - cropLeft));
+                                        int cropHeight =
+                                                Math.max(
+                                                        1,
+                                                        Math.min(
+                                                                roi.height(),
+                                                                original.getHeight() - cropTop));
+                                        android.graphics.Bitmap cropped =
+                                                android.graphics.Bitmap.createBitmap(
+                                                        original,
+                                                        cropLeft,
+                                                        cropTop,
+                                                        cropWidth,
+                                                        cropHeight);
+                                        if (cropped != original) {
+                                            original.recycle();
+                                        }
+                                        original = cropped;
                                     }
 
                                     int targetWidth = bleParams.targetWidth;

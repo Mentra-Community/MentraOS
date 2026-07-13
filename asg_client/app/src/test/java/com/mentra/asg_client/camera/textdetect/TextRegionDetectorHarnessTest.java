@@ -83,6 +83,7 @@ public class TextRegionDetectorHarnessTest {
                         .enableBlobSplitting(true)
                         .enableMser(true)
                         .minCropAreaFraction(0.004f)
+                        .improvedCropAccuracy(true)
                         .build();
 
         runBatch(images, new File(outputDir, "baseline"), baselineConfig, "results_baseline.json");

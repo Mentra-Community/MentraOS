@@ -116,11 +116,11 @@ public final class TextRegionDetector {
                         darkScore >= lightScore
                                 ? CvPrimitives.POLARITY_DARK_ON_LIGHT
                                 : CvPrimitives.POLARITY_LIGHT_ON_DARK;
-                // Pad from the raw (unpadded) bounds: winner.crop is already padded once, and
-                // padding it again compounds the inflation.
+                // improvedCropAccuracy: pad from the raw (unpadded) bounds — winner.crop is
+                // already padded once, and padding it again compounds the inflation.
                 CropRect expanded =
                         TextLineClusterer.applyPadding(
-                                winner.rawBounds,
+                                config.improvedCropAccuracy ? winner.rawBounds : winner.crop,
                                 analysisWidth,
                                 analysisHeight,
                                 medianHeight(winner.lines),
@@ -156,12 +156,13 @@ public final class TextRegionDetector {
         } else if (winner.score >= config.mediumConfidenceScore) {
             confidence = DetectionResult.Confidence.MEDIUM;
             reason = "medium_confidence_extra_padding";
-            // Pad from the raw (unpadded) bounds: winner.crop is already padded once.
+            // improvedCropAccuracy: pad from the raw (unpadded) bounds — winner.crop is
+            // already padded once.
             winner =
                     new TextLineClusterer.ClusterResult(
                             winner.lines,
                             TextLineClusterer.applyPadding(
-                                    winner.rawBounds,
+                                    config.improvedCropAccuracy ? winner.rawBounds : winner.crop,
                                     analysisWidth,
                                     analysisHeight,
                                     medianHeight(winner.lines),
@@ -187,17 +188,21 @@ public final class TextRegionDetector {
         if (selection.acceptedComponentCount <= 2) {
             return false;
         }
-        // Both checks run against the raw (pre-padding) detected bounds. The padded crop
-        // routinely gets clamped to the frame edge by design — padding reaching the boundary
-        // says nothing about whether the detected text itself was clipped, and padding can
-        // likewise inflate a degenerate detection past the min-area bar.
-        CropRect rawBounds = selection.rawBounds != null ? selection.rawBounds : crop;
-        float rawAreaFraction =
-                rawBounds.pixelCount() / (float) (analysis.width * analysis.height);
-        if (rawAreaFraction < config.minCropAreaFraction) {
+        // improvedCropAccuracy: both checks run against the raw (pre-padding) detected bounds.
+        // The padded crop routinely gets clamped to the frame edge by design — padding reaching
+        // the boundary says nothing about whether the detected text itself was clipped, and
+        // padding can likewise inflate a degenerate detection past the min-area bar. With the
+        // flag off, the original behavior (checks on the padded crop) is preserved.
+        CropRect checkedBounds =
+                config.improvedCropAccuracy && selection.rawBounds != null
+                        ? selection.rawBounds
+                        : crop;
+        float areaFraction =
+                checkedBounds.pixelCount() / (float) (analysis.width * analysis.height);
+        if (areaFraction < config.minCropAreaFraction) {
             return false;
         }
-        if (touchesBoundary(rawBounds, analysis.width, analysis.height)) {
+        if (touchesBoundary(checkedBounds, analysis.width, analysis.height)) {
             return false;
         }
         return true;

@@ -131,6 +131,21 @@ public final class TextDetectConfig {
      */
     public final float minCropAreaFraction;
 
+    /**
+     * When true, runs the crop-accuracy fixes; when false, the original cropping algorithm runs
+     * unchanged. The fixes:
+     *
+     * <ul>
+     *   <li>Trust checks (boundary contact, min area) run against the raw pre-padding detected
+     *       bounds instead of the padded crop. The padded crop is clamped to the frame edge by
+     *       design whenever text sits near a boundary, which the original logic misread as
+     *       clipped text — discarding correct detections in favor of the 75% center fallback.
+     *   <li>The polarity-disagreement and medium-confidence paths pad from the raw bounds
+     *       instead of re-padding the already padded crop (double padding).
+     * </ul>
+     */
+    public final boolean improvedCropAccuracy;
+
     private TextDetectConfig(Builder builder) {
         this.analysisWidth = builder.analysisWidth;
         this.adaptiveThresholdBlockSize = builder.adaptiveThresholdBlockSize;
@@ -167,6 +182,7 @@ public final class TextDetectConfig {
         this.enableBlobSplitting = builder.enableBlobSplitting;
         this.enableMser = builder.enableMser;
         this.minCropAreaFraction = builder.minCropAreaFraction;
+        this.improvedCropAccuracy = builder.improvedCropAccuracy;
     }
 
     public static TextDetectConfig defaults() {
@@ -209,7 +225,8 @@ public final class TextDetectConfig {
                 .maxStrokeWidthCv(maxStrokeWidthCv)
                 .enableBlobSplitting(enableBlobSplitting)
                 .enableMser(enableMser)
-                .minCropAreaFraction(minCropAreaFraction);
+                .minCropAreaFraction(minCropAreaFraction)
+                .improvedCropAccuracy(improvedCropAccuracy);
     }
 
     public static final class Builder {
@@ -248,6 +265,7 @@ public final class TextDetectConfig {
         private boolean enableBlobSplitting = false;
         private boolean enableMser = false;
         private float minCropAreaFraction = 0.02f;
+        private boolean improvedCropAccuracy = false;
 
         public Builder analysisWidth(int value) {
             this.analysisWidth = value;
@@ -421,6 +439,11 @@ public final class TextDetectConfig {
 
         public Builder minCropAreaFraction(float value) {
             this.minCropAreaFraction = value;
+            return this;
+        }
+
+        public Builder improvedCropAccuracy(boolean value) {
+            this.improvedCropAccuracy = value;
             return this;
         }
 
