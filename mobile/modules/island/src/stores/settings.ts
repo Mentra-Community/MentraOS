@@ -25,7 +25,7 @@ export interface Setting {
   // Pairing-identity keys are NATIVE-authoritative: the native layer writes
   // them on pairing success (handleDeviceReady) / forget and echoes them down
   // via save_setting; JSâ†’native they travel only in the explicit SEEDS
-  // (hydration, pre-connect, post-demotion, abandon re-seed) â€” never the
+  // (hydration, pre-connect, post-demotion, abandon re-seed) â€?never the
   // change-push and never the on-connect replay, whose mid-relay snapshot can
   // overwrite a just-promoted identity. PAIRING_IDENTITY_KEYS is derived from
   // this flag so the sync exclusions can't drift from the descriptors.
@@ -186,7 +186,7 @@ export const SETTINGS: Record<string, Setting> = {
     persist: true,
   },
   // Bookmarked Cloud V2 endpoint pairs. Each entry is {label, coreUrl,
-  // runtimeUrl} â€” core + runtime are saved together because they are always
+  // runtimeUrl} â€?core + runtime are saved together because they are always
   // applied as a matched set (presets fill both; Save & Test verifies both).
   saved_cloud_url_pairs: {
     key: "saved_cloud_url_pairs",
@@ -234,7 +234,7 @@ export const SETTINGS: Record<string, Setting> = {
   auth_email: {key: "auth_email", defaultValue: () => "", writable: true, saveOnServer: false, persist: true},
   // Pairing identity is per-phone, not per-account: two phones on one account
   // can be paired to different glasses, so none of these keys may sync to the
-  // server (saveOnServer: false â€” a stale server copy resurrecting a local
+  // server (saveOnServer: false â€?a stale server copy resurrecting a local
   // pairing identity is exactly the desync this group's flags prevent).
   //
   // Two-phase identity: pending_wearable is the model the user last STARTED
@@ -269,6 +269,14 @@ export const SETTINGS: Record<string, Setting> = {
   },
   device_address: {
     key: "device_address",
+    defaultValue: () => "",
+    writable: true,
+    saveOnServer: false,
+    persist: true,
+    nativeAuthoritative: true,
+  },
+  project_name: {
+    key: "project_name",
     defaultValue: () => "",
     writable: true,
     saveOnServer: false,
@@ -592,7 +600,7 @@ export const SETTINGS: Record<string, Setting> = {
     persist: true,
   },
   // Runtime flag: coordinator flips this on when cloud STT has failed and fallback is active.
-  // Native GlassesStore watches it to gate PCM â†’ Sherpa feeding. Not user-facing.
+  // Native GlassesStore watches it to gate PCM â†?Sherpa feeding. Not user-facing.
   local_stt_fallback_active: {
     key: "local_stt_fallback_active",
     defaultValue: () => false,
@@ -730,6 +738,7 @@ export const BLUETOOTH_SETTING_KEYS: string[] = [
   SETTINGS.default_wearable.key,
   SETTINGS.device_name.key,
   SETTINGS.device_address.key,
+  SETTINGS.project_name.key,
   SETTINGS.default_controller.key,
   SETTINGS.pending_controller.key,
   SETTINGS.controller_device_name.key,
@@ -738,7 +747,7 @@ export const BLUETOOTH_SETTING_KEYS: string[] = [
   SETTINGS.offline_mode.key,
   SETTINGS.offline_captions_running.key,
   // Runtime flag flipped by LocalSttFallbackCoordinator. Native reads it from
-  // GlassesStore to gate PCM â†’ Sherpa feeding in handlePcm and to keep the
+  // GlassesStore to gate PCM â†?Sherpa feeding in handlePcm and to keep the
   // mic on while local STT is the active engine.
   SETTINGS.local_stt_fallback_active.key,
   SETTINGS.gallery_mode.key,
@@ -751,7 +760,7 @@ export const BLUETOOTH_SETTING_KEYS: string[] = [
 // pairing success (handleDeviceReady) / forget and echoes it down via
 // save_setting; JS persists those echoes. JSâ†’native, identity travels ONLY in
 // the explicit full seeds (device-store hydration, pre-connect push,
-// post-demotion re-push) â€” never in the change-push subscription. Relaying an
+// post-demotion re-push) â€?never in the change-push subscription. Relaying an
 // echoed identity change back up would make the sync bidirectional with loop
 // gain 1: two identity values in flight (e.g. a boot demotion crossing a
 // native promotion) then chase each other through pushâ†’applyâ†’echoâ†’push
@@ -794,7 +803,7 @@ const getDefaultSettings = () =>
   )
 
 // Single-flight for loadAllSettings: the host fires it at module load and
-// toolkit.start()'s device-store hydration awaits it â€” without the memo the
+// toolkit.start()'s device-store hydration awaits it â€?without the memo the
 // second caller runs a duplicate full disk load while the first is still in
 // flight. Cleared on failure so a later call can retry.
 let loadAllSettingsInFlight: AsyncResult<void, Error> | null = null
@@ -965,10 +974,10 @@ export const useSettingsStore = create<SettingsState>()(
         // The dimezisBlurViewSdk31Plus blur each costs ~5-10ms/frame; with
         // multiple blurs on home (top fade + AppSwitcherButton x2) a low-end
         // device misses the 16ms budget consistently. Users can turn it back
-        // on under Settings â†’ Appearance once we've optimized further.
+        // on under Settings â†?Appearance once we've optimized further.
         //
         // The setSetting call also pushes to the server (saveOnServer: true)
-        // so the server-stored value flips too â€” otherwise the next sync
+        // so the server-stored value flips too â€?otherwise the next sync
         // from the user's server-stored prefs would re-enable blur.
         // Best-effort: a server failure (offline, 5xx) shouldn't block boot;
         // we still mark the migration done locally so we don't loop.
@@ -986,7 +995,7 @@ export const useSettingsStore = create<SettingsState>()(
               console.log("SETTINGS: android_blur migration server-push failed:", result.error)
             }
           }
-          // Mark done unconditionally â€” even on server-push failure we don't
+          // Mark done unconditionally â€?even on server-push failure we don't
           // want to retry the migration on every boot. The local value is
           // already correct.
           storage.save(MIGRATION_KEY, true)
@@ -1043,3 +1052,8 @@ export const useSetting = <T = any>(key: string): [T, (value: T) => AsyncResult<
   const setSetting = useSettingsStore((state) => state.setSetting)
   return [value, (newValue: T) => setSetting(key, newValue)]
 }
+
+
+
+
+

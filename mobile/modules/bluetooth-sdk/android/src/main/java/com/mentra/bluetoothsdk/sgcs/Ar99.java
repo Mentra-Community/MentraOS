@@ -146,6 +146,7 @@ public class Ar99 extends SGCManager {
   private BluetoothLeScanner scanner;
   private ScanCallback scanCallback;
   private String targetIdentifier;
+  private String currentProjectName;
 
   private BluetoothGatt controlGatt;
   private BluetoothGattCharacteristic controlWriteCharacteristic;
@@ -722,6 +723,10 @@ public class Ar99 extends SGCManager {
       }
       return;
     }
+    if (advertisement != null && advertisement.projectName != null && !advertisement.projectName.trim().isEmpty()) {
+      currentProjectName = advertisement.projectName.trim();
+    }
+
     String target = targetIdentifier != null ? targetIdentifier : "";
     String normalizedTarget = normalizeDisplayIdentifier(target);
     String targetSerial = extractTargetSerial(target);
@@ -2228,6 +2233,9 @@ public class Ar99 extends SGCManager {
     pendingDisplayText = "";
     resetMinimalTextSession();
     hasReceivedBatteryForCurrentConnection = false;
+    if (currentProjectName != null && !currentProjectName.trim().isEmpty()) {
+      DeviceStore.INSTANCE.apply("bluetooth", "project_name", currentProjectName.trim());
+    }
     DeviceStore.INSTANCE.apply("glasses", "connected", true);
     DeviceStore.INSTANCE.apply("glasses", "fullyBooted", true);
     updateConnectionState(ConnTypes.CONNECTED);
@@ -2586,6 +2594,12 @@ public class Ar99 extends SGCManager {
     }
   }
 }
+
+
+
+
+
+
 
 
 

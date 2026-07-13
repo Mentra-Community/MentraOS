@@ -162,7 +162,8 @@ export default function SelectGlassesBluetoothScreen() {
     }
 
     if (normalizedProjectName === "HVXM" || normalizedProjectName === "HVXF") {
-      const macSource = rawName.replace(/^MAC:\s*/i, "").trim() || device.address || ""
+      const fallbackMac = rawName.startsWith("MAC:") ? rawName.replace(/^MAC:\s*/i, "").trim() : ""
+      const macSource = (device.address || fallbackMac).trim()
       const lastFour = macSource.replace(/[^A-Fa-f0-9]/g, "").slice(-4).toUpperCase()
       return `${selectedDisplayName}-${lastFour || rawName}`
     }
@@ -244,4 +245,5 @@ export default function SelectGlassesBluetoothScreen() {
     </Screen>
   )
 }
+
 

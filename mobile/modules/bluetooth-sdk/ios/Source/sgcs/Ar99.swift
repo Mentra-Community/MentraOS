@@ -523,6 +523,7 @@ final class Ar99: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SGCM
     private var isScanning = false
     private var scanForConnection = false
     private var targetIdentifier: String?
+    private var currentProjectName: String?
     private var scanTimeoutItem: DispatchWorkItem?
     private var discoveredNames = Set<String>()
     private var lastConnectedDisplayName: String?
@@ -1148,6 +1149,10 @@ final class Ar99: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SGCM
             return
         }
 
+        if let projectName = advertisement?.projectName?.trimmingCharacters(in: .whitespacesAndNewlines), !projectName.isEmpty {
+            currentProjectName = projectName
+        }
+
         guard matchesTarget(
             targetIdentifier ?? "",
             name: name,
@@ -1249,6 +1254,9 @@ final class Ar99: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SGCM
         hasReceivedBatteryForCurrentConnection = false
         pendingBatteryRetries = 0
 
+        if let projectName = currentProjectName?.trimmingCharacters(in: .whitespacesAndNewlines), !projectName.isEmpty {
+            DeviceStore.shared.apply("bluetooth", "project_name", projectName)
+        }
         DeviceStore.shared.apply("glasses", "connected", true)
         DeviceStore.shared.apply("glasses", "fullyBooted", true)
         updateConnectionState(ConnTypes.CONNECTED)
@@ -2400,6 +2408,13 @@ final class Ar99: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SGCM
         return String(trimmed[trimmed.index(after: underscore)...]).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
+
+
+
+
+
+
+
 
 
 

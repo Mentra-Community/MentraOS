@@ -14,6 +14,8 @@ import {SETTINGS, useSetting} from "@/stores/settings"
 import {showAlert} from "@/utils/AlertUtils"
 import {checkConnectivityRequirementsUI} from "@/utils/PermissionsUtils"
 import {
+  getAr99DisplayName,
+  getAr99ImageSource,
   getEvenRealitiesG1Image,
   getGlassesClosedImage,
   getGlassesImage,
@@ -81,6 +83,7 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
   const caseOpen = glassesStatus.case.open
   const batteryLevel = glassesStatus.battery
   const charging = glassesStatus.charging
+  const [projectName] = useSetting<string>(SETTINGS.project_name.key)
   const wifiConnected = wifiStatus.state === "connected"
   const searching = useToolkitSnapshot(toolkit.pairing.scanning, (onChange) => toolkit.pairing.onScanning(onChange))
   const [showGlassesBooting, setShowGlassesBooting] = useState(false)
@@ -231,9 +234,10 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
   // The card body's model name/image: the paired model, or â€?in the mid-relay
   // window above (connected while the promotion echoes land) â€?the pending one.
   const displayModel = pairedModel || (identity.kind === "pending" ? identity.model : "")
+  const displayName = displayModel === DeviceTypes.AR99 ? getAr99DisplayName(projectName) : displayModel
 
   const getCurrentGlassesImage = () => {
-    let image = getGlassesImage(displayModel)
+    let image = displayModel === DeviceTypes.AR99 ? getAr99ImageSource(projectName) : getGlassesImage(displayModel)
 
     if (displayModel === DeviceTypes.G1) {
       let state = "folded"
@@ -267,7 +271,7 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
       <DeviceStatus onPress={onPress} image={getCurrentGlassesImage()}>
         <View className="flex-row items-center gap-3">
           <Icon name="bluetooth-off" size={18} color={theme.colors.foreground} />
-          <Text className="font-semibold text-secondary-foreground text-end self-end" text={displayModel} />
+          <Text className="font-semibold text-secondary-foreground text-end self-end" text={displayName} />
         </View>
         {!isSearching && (
           <Button
@@ -298,7 +302,7 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
 
   return (
     <DeviceStatus onPress={onPress} image={getCurrentGlassesImage()}>
-      <Text className="font-semibold text-secondary-foreground text-base" text={displayModel} />
+      <Text className="font-semibold text-secondary-foreground text-base" text={displayName} />
       <View className="flex-row items-center gap-3">
         {batteryLevel !== -1 && (
           <View className="flex-row items-center gap-1">
@@ -412,5 +416,11 @@ export const ControllerStatus = ({style}: {style?: ViewStyle}) => {
     </DeviceStatus>
   )
 }
+
+
+
+
+
+
 
 
