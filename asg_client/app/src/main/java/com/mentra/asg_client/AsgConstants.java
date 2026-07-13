@@ -90,7 +90,7 @@ public class AsgConstants {
     public static final int TEXT_MODE_BLE_TARGET_HEIGHT = 1920;
 
     /** AVIF constant-quality for text-mode BLE encode and max size-tier BLE encode. */
-    public static final int TEXT_MODE_AVIF_QUALITY = 75;
+    public static final int TEXT_MODE_AVIF_QUALITY = 55;
 
     /** JPEG quality when skipping AVIF for small BLE payloads. */
     public static final int TEXT_MODE_BLE_JPEG_QUALITY = 95;
