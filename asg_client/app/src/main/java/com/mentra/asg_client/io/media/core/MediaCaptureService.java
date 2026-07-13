@@ -460,6 +460,10 @@ public class MediaCaptureService {
     private String writeCroppedBitmapToTempJpeg(
             String originalPath, @Nullable android.graphics.Rect roi, String requestId)
             throws java.io.IOException {
+        if (roi == null) {
+            Log.w(TAG, "Text-mode detector returned no ROI; preserving the camera JPEG");
+            return null;
+        }
         android.graphics.Bitmap original =
                 android.graphics.BitmapFactory.decodeFile(originalPath);
         if (original == null) {
@@ -4494,38 +4498,38 @@ public class MediaCaptureService {
                                                 + " textCropOutcome="
                                                 + textCropOutcome);
 
-                                // 3. Text mode can skip AVIF when its source JPEG is already small.
-                                // Ordinary photo mode retains the established AVIF path.
-                                long sourceJpegBytes = new File(originalPath).length();
-                                boolean skipAvifForSmallJpeg =
-                                        textModeRequested
-                                                && sourceJpegBytes
-                                                < AsgConstants.TEXT_MODE_AVIF_SIZE_THRESHOLD_BYTES;
+                                // 3. Text mode can skip AVIF when the actual quality-95 BLE JPEG
+                                // payload is small. The canonical crop's file size is not a safe
+                                // proxy because the processed bitmap may be resized and sharpened.
+                                // Ordinary photo mode retains the established AVIF-only path.
                                 Log.d(
                                         TAG,
                                         "BLE encode: originalPath="
                                                 + originalPath
-                                                + " sourceJpegBytes="
-                                                + sourceJpegBytes
-                                                + " skipAvif="
-                                                + skipAvifForSmallJpeg
                                                 + " hasImuMetadata="
                                                 + PhotoExifMetadataWriter.hasImuMetadata(
                                                         originalPath));
                                 byte[] compressedData;
                                 String bleEncodedFormat;
                                 try {
-                                    if (skipAvifForSmallJpeg) {
-                                        Log.d(
-                                                TAG,
-                                                "Source JPEG under 200KB; skipping AVIF and"
-                                                        + " sending JPEG over BLE");
-                                        compressedData =
+                                    byte[] jpegCandidate = null;
+                                    if (textModeRequested) {
+                                        jpegCandidate =
                                                 PhotoExifMetadataWriter.encodeJpegForBle(
                                                         resized,
                                                         AsgConstants.TEXT_MODE_BLE_JPEG_QUALITY,
                                                         originalPath);
+                                    }
+                                    if (BlePhotoEncodingPolicy.shouldUseJpeg(
+                                            textModeRequested, jpegCandidate)) {
+                                        compressedData = jpegCandidate;
                                         bleEncodedFormat = "JPEG";
+                                        Log.d(
+                                                TAG,
+                                                "Text-mode BLE JPEG is under 200KB; skipping AVIF"
+                                                        + " (bytes="
+                                                        + compressedData.length
+                                                        + ")");
                                     } else {
                                         compressedData =
                                                 PhotoExifMetadataWriter.encodeAvifForBle(
