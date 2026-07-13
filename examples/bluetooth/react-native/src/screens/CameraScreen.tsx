@@ -81,6 +81,7 @@ console.log(\`Camera FOV applied at \${cameraFov.fov}°\`);
 `;
   const requestFields = [
         `  size: "${size}",`,
+        `  mode: "${scanMode ? 'text' : 'photo'}",`,
         `  compress: "${compression}",`,
         '  sound: true,',
         exposureManual ? `  exposureTimeNs: ${exposureTimeNs},` : '  exposureTimeNs: null, // auto exposure',
@@ -258,7 +259,16 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
           <LinearGradient colors={['#1F4A33', '#3A8A56', '#7DD89E', '#26B870', '#163A26']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.preview}>
             {sdk.photoPreviewUrl ? (
               <>
-                <Image source={{ uri: sdk.photoPreviewUrl }} style={styles.previewImage} resizeMode="cover" />
+                <Image
+                  source={{ uri: sdk.photoPreviewUrl }}
+                  style={styles.previewImage}
+                  resizeMode="cover"
+                  onLoadEnd={() => {
+                    console.log(
+                      `[BLE PHOTO TIMING] Step 7: photo image finished rendering on screen @ ${new Date().toISOString()} (${sdk.photoPreviewUrl})`,
+                    );
+                  }}
+                />
                 <Pressable
                   accessibilityLabel="Open photo preview"
                   hitSlop={8}
@@ -1137,7 +1147,7 @@ function ScanModeSettingsCard({
         <View style={{ flex: 1 }}>
           <Text style={styles.settingLabel}>BARCODE SCANNING</Text>
           <Text style={styles.settingHint}>
-            {enabled ? 'Barcode scanning on' : 'Standard photo capture'}
+            {enabled ? 'Text mode on · barcode scan on preview' : 'Standard photo capture'}
           </Text>
         </View>
         <Switch
@@ -1150,11 +1160,11 @@ function ScanModeSettingsCard({
       </View>
       {enabled ? (
         <Text style={styles.settingDescription}>
-          Applies the AE-divisor / ISO-cap barcode preset and scans captured photo previews for barcodes.
+          Sends mode: &quot;text&quot; on photo requests (max capture + text-region crop on glasses) and scans delivered previews for barcodes.
         </Text>
       ) : (
         <Text style={styles.settingDescription}>
-          Off - capture uses the current fields below without barcode recognition.
+          Off — photo requests use mode: &quot;photo&quot; with your current size and tuning fields below.
         </Text>
       )}
     </View>

@@ -17,7 +17,6 @@ import BluetoothSdk, {
   type MicLc3Event,
   type MicPcmEvent,
   type OtaStatusEvent,
-  type PhotoCaptureDefaults,
   type PhotoRequestParams,
   type PhotoSuccessResponseEvent,
   type PhotoStatusEvent,
@@ -65,6 +64,9 @@ import {
 export type ExampleTabKey = 'device' | 'camera' | 'stream' | 'system' | 'console';
 export type BluetoothSdkExampleOptions = {
   activeTab?: ExampleTabKey;
+};
+type TextPhotoRequestParams = PhotoRequestParams & {
+  mode?: 'photo' | 'text';
 };
 
 export type StreamProtocol = 'rtmp' | 'srt' | 'webrtc';
@@ -275,22 +277,6 @@ export type PhotoIsoCap = 400 | 800 | 1600;
 export type PhotoIspDigitalGain = 0 | 1 | 2 | 4;
 export type PhotoIspAnalogGain = 'low';
 export type PhotoTuningFlag = 'unset' | 'on' | 'off';
-export type ScanAeDivisor = 3 | 5;
-export const SCAN_DEFAULT_AE_DIVISOR: ScanAeDivisor = 3;
-export const SCAN_DEFAULT_ISO_CAP = 800;
-
-/** Base scan fields pushed via button_photo_setting; AE divisor and ISO cap are added at sync time. */
-export const SCAN_MODE_BUTTON_PRESET = {
-  size: 'max' as const,
-  mfnr: false,
-  zsl: false,
-  noiseReduction: false,
-  edgeEnhancement: false,
-  ispDigitalGain: 0,
-  ispAnalogGain: 'low' as const,
-  compress: 'none' as const,
-  sound: true,
-} as const;
 
 export const SCAN_MODELS = [DeviceModels.MentraLive, DeviceModels.G2] as const;
 export type ScanModel = (typeof SCAN_MODELS)[number];
@@ -314,19 +300,6 @@ type PersistedCloudUrls = {
   version: 1;
   webhookUrl?: string;
 };
-type PhotoCaptureDefaultsOverrides = {
-  aeExposureDivisor?: number | null;
-  compress?: PhotoCompression;
-  edgeEnhancement?: boolean;
-  ispAnalogGain?: string | null;
-  ispDigitalGain?: number | null;
-  isoCap?: number | null;
-  mfnr?: boolean;
-  noiseReduction?: boolean;
-  size?: PhotoCaptureDefaults['size'];
-  zsl?: boolean;
-};
-
 export const RGB_LED_COLORS: LedColor[] = ['red', 'green', 'blue', 'orange', 'white'];
 export const PHOTO_SIZES: PhotoSize[] = ['low', 'medium', 'high', 'max'];
 export const PHOTO_COMPRESSIONS: PhotoCompression[] = ['none', 'medium', 'heavy'];
@@ -344,17 +317,6 @@ export const PHOTO_EXPOSURE_DEFAULT_NS = 8_333_333;
 export const PHOTO_ISO_MIN = 100;
 export const PHOTO_ISO_MAX = 6400;
 export const PHOTO_ISO_DEFAULT = 200;
-const photoTuningFlagFromPreset = (value: boolean): Exclude<PhotoTuningFlag, 'unset'> =>
-  value ? 'on' : 'off';
-export const BARCODE_SCAN_PHOTO_PRESET = {
-  ...SCAN_MODE_BUTTON_PRESET,
-  aeExposureDivisor: SCAN_DEFAULT_AE_DIVISOR,
-  isoCap: SCAN_DEFAULT_ISO_CAP,
-  noiseReduction: photoTuningFlagFromPreset(SCAN_MODE_BUTTON_PRESET.noiseReduction),
-  edgeEnhancement: photoTuningFlagFromPreset(SCAN_MODE_BUTTON_PRESET.edgeEnhancement),
-  mfnr: photoTuningFlagFromPreset(SCAN_MODE_BUTTON_PRESET.mfnr),
-  zsl: photoTuningFlagFromPreset(SCAN_MODE_BUTTON_PRESET.zsl),
-} as const;
 export const CAMERA_FOV_MIN = 62;
 export const CAMERA_FOV_MAX = 118;
 export const CAMERA_FOV_DEFAULT = 102;
@@ -451,8 +413,6 @@ export type BluetoothSdkExampleState = {
   photoStatus: PhotoStatusEvent | null;
   photoSize: PhotoSize;
   scanMode: boolean;
-  scanAeDivisor: ScanAeDivisor;
-  scanIsoCap: number;
   videoPreviewDetails: VideoPreviewDetails | null;
   videoPreviewUrl: string | null;
   videoRecording: boolean;
@@ -523,8 +483,6 @@ export type BluetoothSdkExampleActions = {
   setPhotoExposureTimeNs: (exposureTimeNs: number) => void;
   setPhotoSize: (size: PhotoSize) => void;
   setScanMode: (enabled: boolean) => void;
-  setScanAeDivisor: (divisor: ScanAeDivisor) => void;
-  setScanIsoCap: (isoCap: number) => void;
   setCameraFov: (fov: number) => void;
   setCameraRoiPosition: (roiPosition: CameraRoiPosition) => void;
   applyCameraSettings: () => Promise<void>;
@@ -620,8 +578,6 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   const [photoSize, setPhotoSize] = useState<PhotoSize>('max');
   const [photoCompression, setPhotoCompression] = useState<PhotoCompression>('none');
   const [scanMode, setScanMode] = useState(false);
-  const [scanAeDivisor, setScanAeDivisor] = useState<ScanAeDivisor>(SCAN_DEFAULT_AE_DIVISOR);
-  const [scanIsoCap, setScanIsoCap] = useState(SCAN_DEFAULT_ISO_CAP);
   const [photoAeExposureDivisor, setPhotoAeExposureDivisor] =
     useState<PhotoAeExposureDivisor | null>(null);
   const [photoIsoCap, setPhotoIsoCap] = useState<PhotoIsoCap | null>(null);
@@ -698,8 +654,6 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   const galleryBaseUrlRef = useRef<string | null>(null);
   const galleryHotspotSsidRef = useRef<string | null>(null);
   const scanModeRef = useRef(false);
-  const photoCaptureDefaultsSyncGenerationRef = useRef(0);
-  const photoCaptureDefaultsSyncQueueRef = useRef<Promise<void>>(Promise.resolve());
   const cameraWarmUpFailureLoggedRef = useRef(false);
   const streamCloudServerEnabledRef = useRef(false);
   const activeTabRef = useRef<ExampleTabKey>('device');
@@ -713,6 +667,8 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   const galleryModePhotoRequestIdsRef = useRef(new Set<string>());
   const phonePhotoReceiverRef = useRef<PhotoReceiverResult | null>(null);
   const phonePhotoReceiverStartPromiseRef = useRef<Promise<PhotoReceiverResult> | null>(null);
+  const photoCaptureTimingStartRef = useRef<number | null>(null);
+  const photoCaptureTimingRequestIdRef = useRef<string | null>(null);
   const lastCameraInputCaptureAtRef = useRef(0);
   const lastMicFileUriRef = useRef<string | null>(null);
   const micElapsedSecondsRef = useRef(0);
@@ -1118,10 +1074,6 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
 
   useEffect(() => {
     if (glassesConnected) {
-      if (!wasConnectedRef.current && scanMode) {
-        // Re-apply scan preset on reconnect so glasses button preset stays in sync.
-        void syncScanCapturePreset(true, buildPhotoCaptureDefaults());
-      }
       if (!wasConnectedRef.current && photoDestinationRef.current === 'glasses') {
         void prepareGlassesPhotoPreviewAction();
       }
@@ -1132,10 +1084,38 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       wasConnectedRef.current = false;
       applyDisconnectedState('Disconnected');
     }
-  }, [glassesConnected, glasses, scanMode, scanAeDivisor, scanIsoCap]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [glassesConnected, glasses]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function addEvent(tag: SdkConsoleEvent['tag'], text: string) {
     setEvents((current) => [event(tag, text), ...current].slice(0, 30));
+  }
+
+  function startPhotoCaptureTiming(requestId: string) {
+    const now = Date.now();
+    photoCaptureTimingStartRef.current = now;
+    photoCaptureTimingRequestIdRef.current = requestId;
+    console.log(
+      `[BLE PHOTO TIMING] (+0ms) [${requestId}] Step 0: capture triggered @ ${new Date(now).toISOString()}`,
+    );
+  }
+
+  function logPhotoCaptureTiming(step: string, requestId?: string | null) {
+    const now = Date.now();
+    const activeRequestId = photoCaptureTimingRequestIdRef.current;
+    const idForLog = requestId ?? activeRequestId ?? 'unknown';
+    if (activeRequestId && requestId && requestId !== activeRequestId) {
+      // A status/response for a different (stale) request; still log it, but flag as stale.
+      console.log(
+        `[BLE PHOTO TIMING] [${idForLog}] (stale, ignored for timing) ${step}`,
+      );
+      return;
+    }
+    const startedAt = photoCaptureTimingStartRef.current;
+    const elapsedMs = startedAt != null ? now - startedAt : null;
+    const elapsedLabel = elapsedMs != null ? `+${elapsedMs}ms` : '+?ms';
+    console.log(
+      `[BLE PHOTO TIMING] (${elapsedLabel}) [${idForLog}] ${step} @ ${new Date(now).toISOString()}`,
+    );
   }
 
   function handleButtonPress(payload: ButtonPressEvent) {
@@ -1414,64 +1394,11 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     });
   }
 
-  function syncScanCapturePreset(
-    enabled: boolean,
-    settings?: PhotoCaptureDefaults,
-  ) {
-    if (!isGlassesConnected(bluetooth.glasses)) {
-      return;
-    }
-    const generation = photoCaptureDefaultsSyncGenerationRef.current + 1;
-    photoCaptureDefaultsSyncGenerationRef.current = generation;
-    const label = enabled ? 'Apply scan preset on glasses' : 'Restore photo preset on glasses';
-    const nextSettings = enabled
-      ? settings ?? buildPhotoCaptureDefaults()
-      : {
-          size: photoSize,
-          mfnr: true,
-          zsl: true,
-          resetCaptureTuning: true,
-        };
-    const syncTask = photoCaptureDefaultsSyncQueueRef.current.catch(() => undefined).then(async () => {
-      if (generation !== photoCaptureDefaultsSyncGenerationRef.current) {
-        return;
-      }
-      await runAction(label, async () => {
-        if (generation !== photoCaptureDefaultsSyncGenerationRef.current) {
-          return;
-        }
-        requireConnected('sync photo capture settings');
-        await BluetoothSdk.setPhotoCaptureDefaults(nextSettings);
-      });
-    });
-    photoCaptureDefaultsSyncQueueRef.current = syncTask;
-  }
-
   function setScanModeAction(enabled: boolean) {
     scanModeRef.current = enabled;
     setScanMode(enabled);
-    if (enabled) {
-      applyBarcodeScanPhotoPresetValues();
-      void syncScanCapturePreset(true, photoCaptureDefaultsFromBarcodePreset());
-    } else {
+    if (!enabled) {
       resetBarcodeScan();
-      void syncScanCapturePreset(false);
-    }
-  }
-
-  function setScanAeDivisorAction(divisor: ScanAeDivisor) {
-    setScanAeDivisor(divisor);
-    setPhotoAeExposureDivisor(divisor);
-    if (scanMode) {
-      void syncScanCapturePreset(true, buildPhotoCaptureDefaults({aeExposureDivisor: divisor}));
-    }
-  }
-
-  function setScanIsoCapAction(isoCapValue: number) {
-    setScanIsoCap(isoCapValue);
-    setPhotoIsoCap(isoCapValue as PhotoIsoCap);
-    if (scanMode) {
-      void syncScanCapturePreset(true, buildPhotoCaptureDefaults({isoCap: isoCapValue}));
     }
   }
 
@@ -1482,95 +1409,8 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     return value === 'on';
   }
 
-  function photoCaptureDefaultsFromBarcodePreset(): PhotoCaptureDefaults {
-    return {
-      ...SCAN_MODE_BUTTON_PRESET,
-      aeExposureDivisor: BARCODE_SCAN_PHOTO_PRESET.aeExposureDivisor,
-      isoCap: BARCODE_SCAN_PHOTO_PRESET.isoCap,
-    };
-  }
-
-  function buildPhotoCaptureDefaults(overrides: PhotoCaptureDefaultsOverrides = {}): PhotoCaptureDefaults {
-    const hasOverride = (key: keyof PhotoCaptureDefaultsOverrides) =>
-      Object.prototype.hasOwnProperty.call(overrides, key);
-    const settings: PhotoCaptureDefaults = {
-      size: overrides.size ?? photoSize,
-      compress: overrides.compress ?? photoCompression,
-      sound: true,
-    };
-    let shouldResetCaptureTuning = false;
-    const aeExposureDivisor = hasOverride('aeExposureDivisor')
-      ? overrides.aeExposureDivisor
-      : photoAeExposureDivisor;
-    if (aeExposureDivisor != null) {
-      settings.aeExposureDivisor = aeExposureDivisor;
-    } else {
-      shouldResetCaptureTuning = true;
-    }
-    const isoCap = hasOverride('isoCap') ? overrides.isoCap : photoIsoCap;
-    if (isoCap != null) {
-      settings.isoCap = isoCap;
-    } else {
-      shouldResetCaptureTuning = true;
-    }
-    const noiseReduction = hasOverride('noiseReduction')
-      ? overrides.noiseReduction
-      : optionalTuningFlag(photoNoiseReduction);
-    if (noiseReduction != null) {
-      settings.noiseReduction = noiseReduction;
-    } else {
-      shouldResetCaptureTuning = true;
-    }
-    const edgeEnhancement = hasOverride('edgeEnhancement')
-      ? overrides.edgeEnhancement
-      : optionalTuningFlag(photoEdgeEnhancement);
-    if (edgeEnhancement != null) {
-      settings.edgeEnhancement = edgeEnhancement;
-    } else {
-      shouldResetCaptureTuning = true;
-    }
-    const mfnr = hasOverride('mfnr') ? overrides.mfnr : optionalTuningFlag(photoMfnr);
-    if (mfnr != null) {
-      settings.mfnr = mfnr;
-    } else {
-      shouldResetCaptureTuning = true;
-    }
-    const zsl = hasOverride('zsl') ? overrides.zsl : optionalTuningFlag(photoZsl);
-    if (zsl != null) {
-      settings.zsl = zsl;
-    } else {
-      shouldResetCaptureTuning = true;
-    }
-    const ispDigitalGain = hasOverride('ispDigitalGain')
-      ? overrides.ispDigitalGain
-      : photoIspDigitalGain;
-    if (ispDigitalGain != null) {
-      settings.ispDigitalGain = ispDigitalGain;
-    } else {
-      shouldResetCaptureTuning = true;
-    }
-    const ispAnalogGain = hasOverride('ispAnalogGain')
-      ? overrides.ispAnalogGain
-      : photoIspAnalogGain;
-    if (ispAnalogGain != null) {
-      settings.ispAnalogGain = ispAnalogGain;
-    } else {
-      shouldResetCaptureTuning = true;
-    }
-    if (shouldResetCaptureTuning) {
-      settings.resetCaptureTuning = true;
-    }
-    return settings;
-  }
-
-  function syncButtonPresetIfScanMode(settings?: PhotoCaptureDefaults) {
-    if (scanModeRef.current) {
-      void syncScanCapturePreset(true, settings);
-    }
-  }
-
   function addRequestTuningFields(
-    fields: Omit<PhotoRequestParams, 'requestId' | 'webhookUrl' | 'authToken'>,
+    fields: Omit<TextPhotoRequestParams, 'requestId' | 'webhookUrl' | 'authToken'>,
   ) {
     if (!photoExposureManual && photoAeExposureDivisor !== null) {
       fields.aeExposureDivisor = photoAeExposureDivisor;
@@ -1604,11 +1444,12 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   }
 
   function buildPhotoRequestFields(): Omit<
-    PhotoRequestParams,
+    TextPhotoRequestParams,
     'requestId' | 'webhookUrl' | 'authToken'
   > {
     return addRequestTuningFields({
       size: photoSize,
+      mode: scanMode ? 'text' : 'photo',
       compress: photoCompression,
       sound: true,
       exposureTimeNs: photoExposureManual ? photoExposureTimeNs : null,
@@ -1617,14 +1458,20 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   }
 
   async function captureAndUpload() {
+    photoCaptureTimingStartRef.current = null;
+    photoCaptureTimingRequestIdRef.current = null;
+    console.log('[BLE PHOTO TIMING] ==== New photo capture starting ====');
+    startPhotoCaptureTiming('pending');
     clearCameraButtonNotice();
     resetBarcodeScan();
     const captureLabel = scanMode ? 'Capture scan photo' : 'Capture & upload';
     await runAction(captureLabel, async () => {
       requireConnected('capture photos');
+      logPhotoCaptureTiming('Step 1: connection check passed');
       if (!(await ensureAndroidPermissions('photo'))) {
         throw new Error('Camera and Bluetooth permissions are required for photos.');
       }
+      logPhotoCaptureTiming('Step 2: permissions confirmed');
       if (photoDestinationRef.current === 'glasses') {
         if (galleryServerReachableRef.current !== true) {
           throw new Error('Connect to the glasses hotspot before capturing.');
@@ -1786,6 +1633,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
 
       const requestedAt = Date.now();
       const requestId = `photo-${requestedAt}`;
+      photoCaptureTimingRequestIdRef.current = requestId;
       statusUrl = photoStatusUrl(uploadUrlText, requestId);
       activePhotoRequestIdRef.current = requestId;
       pollGenerationRef.current += 1;
@@ -1796,6 +1644,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       markPhotoRequestStarted(requestId, 'Cloud server', requestedAt);
       resetBarcodeScan();
       setCameraStatus(`Camera: webhook upload requested (${requestId})`);
+      logPhotoCaptureTiming('Step 3: sending BLE requestPhoto command to glasses (cloud server path)', requestId);
       try {
         const response = await BluetoothSdk.requestPhoto({
           requestId,
@@ -1803,9 +1652,11 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
           authToken: null,
           ...buildPhotoRequestFields(),
         });
+        logPhotoCaptureTiming('Step 4: BLE requestPhoto call resolved (initial ack from SDK)', requestId);
         handlePhotoResponse(response);
       } catch (error) {
         if (isPhotoRequestTimeoutError(error) && activePhotoRequestIdRef.current === requestId) {
+          logPhotoCaptureTiming('Step 4b: BLE requestPhoto call timed out; still waiting for delivery', requestId);
           markPhotoRequestStillWaiting(requestId, 'Cloud server', error);
           void pollPhotoPreview(requestId, statusUrl, pollGeneration);
           return;
@@ -1813,6 +1664,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
         if (activePhotoRequestIdRef.current === requestId) {
           activePhotoRequestIdRef.current = null;
         }
+        logPhotoCaptureTiming(`Step 4c: BLE requestPhoto call failed: ${formatError(error)}`, requestId);
         markPhotoRequestFailed(requestId, 'REQUEST_FAILED', formatError(error));
         throw error;
       }
@@ -1820,10 +1672,13 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   }
 
   async function captureAndUploadToPhone() {
+    logPhotoCaptureTiming('Step 2b: ensuring phone photo receiver is running');
     const receiver = await ensurePhonePhotoReceiver('capture');
+    logPhotoCaptureTiming('Step 2c: phone photo receiver ready');
 
     const requestedAt = Date.now();
     const requestId = `photo-${requestedAt}`;
+    photoCaptureTimingRequestIdRef.current = requestId;
     activePhotoRequestIdRef.current = requestId;
     pollGenerationRef.current += 1;
 
@@ -1833,6 +1688,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     resetBarcodeScan();
     setCameraStatus(`Camera: phone upload requested (${requestId})`);
     startPhonePhotoUploadTimeout(requestId);
+    logPhotoCaptureTiming('Step 3: sending BLE requestPhoto command to glasses (phone receiver path)', requestId);
 
     let response: PhotoSuccessResponseEvent;
     try {
@@ -1842,9 +1698,11 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
         authToken: null,
         ...buildPhotoRequestFields(),
       });
+      logPhotoCaptureTiming('Step 4: BLE requestPhoto call resolved (initial ack from SDK)', requestId);
       handlePhotoResponse(response);
     } catch (error) {
       if (isPhotoRequestTimeoutError(error) && activePhotoRequestIdRef.current === requestId) {
+        logPhotoCaptureTiming('Step 4b: BLE requestPhoto call timed out; still waiting for delivery', requestId);
         markPhotoRequestStillWaiting(requestId, 'Phone receiver', error);
         startPhonePhotoUploadTimeout(requestId);
         return;
@@ -1853,6 +1711,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       if (activePhotoRequestIdRef.current === requestId) {
         activePhotoRequestIdRef.current = null;
       }
+      logPhotoCaptureTiming(`Step 4c: BLE requestPhoto call failed: ${formatError(error)}`, requestId);
       markPhotoRequestFailed(requestId, 'REQUEST_FAILED', formatError(error));
       throw error;
     }
@@ -1975,11 +1834,16 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       addEvent('LIVE', `ignoring stale phone photo ${payload.requestId}`);
       return;
     }
+    logPhotoCaptureTiming(
+      `Step 5: photo received over BLE/phone receiver (${payload.byteCount} bytes)`,
+      payload.requestId,
+    );
     const deliveredAt = Date.now();
     clearPhotoUploadTimeout();
     activePhotoRequestIdRef.current = null;
     setPhonePhotoReceiverRunning(true);
     setPhotoPreviewUrl(payload.fileUri);
+    logPhotoCaptureTiming('Step 6: photo preview URL set, ready to display on screen', payload.requestId);
     setPhotoStatus(null);
     setPhotoPreviewDetails((current) => ({
       ...current,
@@ -2168,6 +2032,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       return;
     }
 
+    logPhotoCaptureTiming(`Step 4d: BLE photo status update -> "${payload.status}"`, payload.requestId);
     setPhotoStatus(payload);
     const label = photoStatusLabel(payload, isGalleryModeButtonPhoto);
     setCameraStatus(`Camera: ${label}`);
@@ -2418,8 +2283,13 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
           : 'Phone receiver';
     const responsePhoneTimestamp = Date.now();
     const responseDeviceTimestamp = response.timestamp ?? responsePhoneTimestamp;
+    logPhotoCaptureTiming(
+      `Step 5: photo response received from SDK (previewUrl ${previewUrl ? 'present' : 'absent'})`,
+      response.requestId,
+    );
     if (previewUrl) {
       setPhotoPreviewUrl(previewUrl);
+      logPhotoCaptureTiming('Step 6: photo preview URL set, ready to display on screen', response.requestId);
       setPhotoStatus(null);
       activePhotoRequestIdRef.current = null;
     }
@@ -2597,7 +2467,15 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
           };
           if (json.photoUrl) {
             const deliveredAt = Date.now();
+            logPhotoCaptureTiming(
+              `Step 5: photo found via status poll (attempt ${attempt + 1})`,
+              json.requestId ?? requestId,
+            );
             setPhotoPreviewUrl(json.photoUrl);
+            logPhotoCaptureTiming(
+              'Step 6: photo preview URL set, ready to display on screen',
+              json.requestId ?? requestId,
+            );
             setPhotoStatus(null);
             setPhotoPreviewDetails((current) => ({
               ...current,
@@ -2858,77 +2736,44 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     setPhotoIsoState(clampRounded(iso, PHOTO_ISO_MIN, PHOTO_ISO_MAX));
   }
 
-  function applyBarcodeScanPhotoPresetValues() {
-    setPhotoSize(BARCODE_SCAN_PHOTO_PRESET.size);
-    setPhotoCompression(BARCODE_SCAN_PHOTO_PRESET.compress);
-    setScanAeDivisor(BARCODE_SCAN_PHOTO_PRESET.aeExposureDivisor);
-    setScanIsoCap(BARCODE_SCAN_PHOTO_PRESET.isoCap);
-    // Barcode scan tuning relies on ASG auto metering plus AE divisor / ISO cap.
-    setPhotoExposureManual(false);
-    setPhotoAeExposureDivisor(BARCODE_SCAN_PHOTO_PRESET.aeExposureDivisor);
-    setPhotoIsoCap(BARCODE_SCAN_PHOTO_PRESET.isoCap);
-    setPhotoNoiseReduction(BARCODE_SCAN_PHOTO_PRESET.noiseReduction);
-    setPhotoEdgeEnhancement(BARCODE_SCAN_PHOTO_PRESET.edgeEnhancement);
-    setPhotoMfnr(BARCODE_SCAN_PHOTO_PRESET.mfnr);
-    setPhotoZsl(BARCODE_SCAN_PHOTO_PRESET.zsl);
-    setPhotoIspDigitalGain(BARCODE_SCAN_PHOTO_PRESET.ispDigitalGain);
-    setPhotoIspAnalogGain(BARCODE_SCAN_PHOTO_PRESET.ispAnalogGain);
-  }
-
   function setPhotoSizeAction(size: PhotoSize) {
     setPhotoSize(size);
-    syncButtonPresetIfScanMode(buildPhotoCaptureDefaults({size}));
   }
 
   function setPhotoCompressionAction(compression: PhotoCompression) {
     setPhotoCompression(compression);
-    syncButtonPresetIfScanMode(buildPhotoCaptureDefaults({compress: compression}));
   }
 
   function setPhotoAeExposureDivisorAction(divisor: PhotoAeExposureDivisor | null) {
     setPhotoAeExposureDivisor(divisor);
-    if (divisor === 3 || divisor === 5) {
-      setScanAeDivisor(divisor);
-    }
-    syncButtonPresetIfScanMode(buildPhotoCaptureDefaults({aeExposureDivisor: divisor}));
   }
 
   function setPhotoIsoCapAction(isoCap: PhotoIsoCap | null) {
     setPhotoIsoCap(isoCap);
-    if (isoCap === 400 || isoCap === 800) {
-      setScanIsoCap(isoCap);
-    }
-    syncButtonPresetIfScanMode(buildPhotoCaptureDefaults({isoCap}));
   }
 
   function setPhotoNoiseReductionAction(value: PhotoTuningFlag) {
     setPhotoNoiseReduction(value);
-    syncButtonPresetIfScanMode(buildPhotoCaptureDefaults({noiseReduction: optionalTuningFlag(value)}));
   }
 
   function setPhotoEdgeEnhancementAction(value: PhotoTuningFlag) {
     setPhotoEdgeEnhancement(value);
-    syncButtonPresetIfScanMode(buildPhotoCaptureDefaults({edgeEnhancement: optionalTuningFlag(value)}));
   }
 
   function setPhotoMfnrAction(value: PhotoTuningFlag) {
     setPhotoMfnr(value);
-    syncButtonPresetIfScanMode(buildPhotoCaptureDefaults({mfnr: optionalTuningFlag(value)}));
   }
 
   function setPhotoZslAction(value: PhotoTuningFlag) {
     setPhotoZsl(value);
-    syncButtonPresetIfScanMode(buildPhotoCaptureDefaults({zsl: optionalTuningFlag(value)}));
   }
 
   function setPhotoIspDigitalGainAction(gain: PhotoIspDigitalGain | null) {
     setPhotoIspDigitalGain(gain);
-    syncButtonPresetIfScanMode(buildPhotoCaptureDefaults({ispDigitalGain: gain}));
   }
 
   function setPhotoIspAnalogGainAction(gain: PhotoIspAnalogGain | null) {
     setPhotoIspAnalogGain(gain);
-    syncButtonPresetIfScanMode(buildPhotoCaptureDefaults({ispAnalogGain: gain}));
   }
 
   function setCameraFovAction(fov: number) {
@@ -4023,8 +3868,6 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     photoStatus,
     photoSize,
     scanMode,
-    scanAeDivisor,
-    scanIsoCap,
     videoPreviewDetails,
     videoPreviewUrl,
     videoRecording,
@@ -4057,8 +3900,6 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     setPhotoExposureTimeNs: setPhotoExposureTimeNsAction,
     setPhotoSize: setPhotoSizeAction,
     setScanMode: setScanModeAction,
-    setScanAeDivisor: setScanAeDivisorAction,
-    setScanIsoCap: setScanIsoCapAction,
     setCameraFov: setCameraFovAction,
     setCameraRoiPosition: setCameraRoiPositionAction,
     setRawJsonExpanded,
