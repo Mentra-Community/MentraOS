@@ -61,7 +61,7 @@ public class AsgConstants {
      * When true and {@code bleImgId} is present, every {@code take_photo} uses BLE transfer
      * regardless of requested {@code transferMethod}. Dev stopgap — set false for production.
      */
-    public static final boolean FORCE_BLE_TRANSFER = true;
+    public static final boolean FORCE_BLE_TRANSFER = false;
 
     /**
      * Grayscale luma BLE pipeline (crop + contrast + unsharp on 1-byte/pixel buffers). When false,
