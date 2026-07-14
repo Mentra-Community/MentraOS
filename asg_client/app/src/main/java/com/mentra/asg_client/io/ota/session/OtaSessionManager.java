@@ -4,28 +4,30 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.os.SystemClock;
 import android.util.Log;
-
+import java.util.UUID;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
-
-import java.util.UUID;
 
 public class OtaSessionManager {
     private static final String TAG = "OtaSessionManager";
     private static final String PREFS_NAME = "ota_session";
     private static final String KEY_SESSION_DATA = "ota_session_data";
+
     /**
-     * SharedPrefs key for the APK-done signal that must be sent on the next phone reconnect.
-     * Stored as a string: "step_complete" (more steps remain) or "complete" (APK-only session).
-     * Set by OtaService.resumeFromSession() and consumed by OtaHelper.onPhoneConnected().
+     * SharedPrefs key for the APK-done signal that must be sent on the next phone reconnect. Stored
+     * as a string: "step_complete" (more steps remain) or "complete" (APK-only session). Set by
+     * OtaService.resumeFromSession() and consumed by OtaHelper.onPhoneConnected().
      */
     private static final String KEY_PENDING_APK_STATUS = "pending_apk_status";
+
     private static final long SESSION_EXPIRY_MS = 30 * 60 * 1000L;
+
     /**
-     * Cooldown after APK install before auto-resuming the next OTA step (MTK/BES).
-     * Spec: notes/ota-rearchitecture-spec.md §A / EC-5 — ~10s from process start so the old process can exit.
-     * Must not reuse {@link #SESSION_EXPIRY_MS} (that is idle-session staleness, not restart pacing).
+     * Cooldown after APK install before auto-resuming the next OTA step (MTK/BES). Spec:
+     * notes/ota-rearchitecture-spec.md §A / EC-5 — ~10s from process start so the old process can
+     * exit. Must not reuse {@link #SESSION_EXPIRY_MS} (that is idle-session staleness, not restart
+     * pacing).
      */
     private static final long APK_RESTART_GUARD_MS = 10_000L;
 
@@ -41,7 +43,9 @@ public class OtaSessionManager {
     private String mErrorMessage;
     private String mVersionJsonUrl;
     private long mLastActivityAtElapsed;
+    private long mLastActivityAtWallClock;
     private long mRestartingSinceElapsed;
+    private long mRestartingSinceWallClock;
 
     private int mLastPersistedPercent;
 
@@ -85,8 +89,9 @@ public class OtaSessionManager {
         mStatus = "in_progress";
         mErrorMessage = null;
         mVersionJsonUrl = versionJsonUrl;
-        mLastActivityAtElapsed = SystemClock.elapsedRealtime();
+        markActivity();
         mRestartingSinceElapsed = -1;
+        mRestartingSinceWallClock = -1;
         mLastPersistedPercent = 0;
         persist();
         Log.i(TAG, "Created session " + mSessionId + " with " + mTotalSteps + " steps");
@@ -100,23 +105,28 @@ public class OtaSessionManager {
         if ("failed".equals(mStatus) || "complete".equals(mStatus) || "idle".equals(mStatus)) {
             return false;
         }
-        long now = SystemClock.elapsedRealtime();
+        long nowElapsed = SystemClock.elapsedRealtime();
+        long nowWallClock = System.currentTimeMillis();
         // Skip expiry check during APK restart path — but cap how long we trust it. Without
         // a cap, a stuck restart guard would keep the session "active" forever and prevent
         // any future OTA from even creating a session. SESSION_EXPIRY_MS (30 min) is safe:
         // APK_RESTART_GUARD_MS is only ~10s, so any restarting marker still set after this
         // is effectively a leak.
         if (mRestartingSinceElapsed >= 0) {
-            if (now < mRestartingSinceElapsed
-                    || (now - mRestartingSinceElapsed) <= SESSION_EXPIRY_MS) {
+            if (ageSince(
+                            nowElapsed,
+                            mRestartingSinceElapsed,
+                            nowWallClock,
+                            mRestartingSinceWallClock)
+                    <= SESSION_EXPIRY_MS) {
                 return true;
             }
             Log.w(TAG, "Restart guard exceeded SESSION_EXPIRY_MS — treating as stale and clearing");
             clear();
             return false;
         }
-        // elapsedRealtime resets on reboot — if now < last activity, device rebooted
-        if (now < mLastActivityAtElapsed || (now - mLastActivityAtElapsed) > SESSION_EXPIRY_MS) {
+        if (ageSince(nowElapsed, mLastActivityAtElapsed, nowWallClock, mLastActivityAtWallClock)
+                > SESSION_EXPIRY_MS) {
             Log.w(TAG, "Session expired, clearing");
             clear();
             return false;
@@ -132,16 +142,14 @@ public class OtaSessionManager {
     /**
      * Builds the JSON payload sent to the phone via BLE as an {@code ota_status} message.
      *
-     * Key names are intentionally abbreviated to keep the payload small — the K900 serial/BLE
-     * path drops packets that exceed its buffer limit. The phone (MentraLive.java) reads both
-     * the short and legacy verbose names so older firmware still works.
+     * <p>Key names are intentionally abbreviated to keep the payload small — the K900 serial/BLE
+     * path drops packets that exceed its buffer limit. The phone (MentraLive.java) reads both the
+     * short and legacy verbose names so older firmware still works.
      *
-     * Abbreviation map:
-     *   sid = session_id       ts  = total_steps      cs  = current_step
-     *   st  = step_type        sq  = step_sequence     sp  = step_percent
-     *   op  = overall_percent  err = error_message
+     * <p>Abbreviation map: sid = session_id ts = total_steps cs = current_step st = step_type sq =
+     * step_sequence sp = step_percent op = overall_percent err = error_message
      *
-     * {@code error_message} is omitted entirely when null — the phone defaults to null via
+     * <p>{@code error_message} is omitted entirely when null — the phone defaults to null via
      * {@code optString("err", null)}, so an explicit null key is unnecessary overhead.
      */
     public synchronized JSONObject getSessionState() {
@@ -151,10 +159,15 @@ public class OtaSessionManager {
         // "failed" snapshot to send it to the phone. We only suppress the snapshot when the
         // session is well past its idle deadline AND not in restart guard.
         if (mRestartingSinceElapsed < 0) {
-            long now = SystemClock.elapsedRealtime();
+            long nowElapsed = SystemClock.elapsedRealtime();
+            long nowWallClock = System.currentTimeMillis();
             if (mLastActivityAtElapsed > 0
-                    && (now < mLastActivityAtElapsed
-                        || (now - mLastActivityAtElapsed) > SESSION_EXPIRY_MS)) {
+                    && ageSince(
+                                    nowElapsed,
+                                    mLastActivityAtElapsed,
+                                    nowWallClock,
+                                    mLastActivityAtWallClock)
+                            > SESSION_EXPIRY_MS) {
                 Log.w(TAG, "getSessionState: session expired, clearing");
                 clear();
                 return null;
@@ -186,7 +199,7 @@ public class OtaSessionManager {
         mCurrentPhase = phase;
         mStepPercent = 0;
         mLastPersistedPercent = 0;
-        mLastActivityAtElapsed = SystemClock.elapsedRealtime();
+        markActivity();
         persist();
     }
 
@@ -204,7 +217,7 @@ public class OtaSessionManager {
         if (clamped < 0) clamped = 0;
         else if (clamped > 100) clamped = 100;
 
-        mLastActivityAtElapsed = SystemClock.elapsedRealtime();
+        markActivity();
         mStepPercent = clamped;
         if (Math.abs(clamped - mLastPersistedPercent) >= 5) {
             mLastPersistedPercent = clamped;
@@ -215,7 +228,7 @@ public class OtaSessionManager {
     public synchronized void setFailed(String errorMessage) {
         mStatus = "failed";
         mErrorMessage = errorMessage;
-        mLastActivityAtElapsed = SystemClock.elapsedRealtime();
+        markActivity();
         persist();
         Log.e(TAG, "Session failed: " + errorMessage);
     }
@@ -223,13 +236,14 @@ public class OtaSessionManager {
     public synchronized void setComplete() {
         mStatus = "complete";
         mStepPercent = 100;
-        mLastActivityAtElapsed = SystemClock.elapsedRealtime();
+        markActivity();
         persist();
         Log.i(TAG, "Session complete: " + mSessionId);
     }
 
     public synchronized void setRestarting() {
         mRestartingSinceElapsed = SystemClock.elapsedRealtime();
+        mRestartingSinceWallClock = System.currentTimeMillis();
         persist();
         Log.i(TAG, "Session marked as restarting");
     }
@@ -240,27 +254,25 @@ public class OtaSessionManager {
 
     public synchronized long getRestartGuardRemainingMs() {
         if (mRestartingSinceElapsed < 0) return 0;
-        long now = SystemClock.elapsedRealtime();
-        // After reboot, elapsedRealtime resets — wait one full short guard for stack to settle
-        long remaining;
-        if (now < mRestartingSinceElapsed) {
-            remaining = APK_RESTART_GUARD_MS;
-        } else {
-            long elapsed = now - mRestartingSinceElapsed;
-            remaining = Math.max(0, APK_RESTART_GUARD_MS - elapsed);
-        }
-        return remaining;
+        long elapsed =
+                ageSince(
+                        SystemClock.elapsedRealtime(),
+                        mRestartingSinceElapsed,
+                        System.currentTimeMillis(),
+                        mRestartingSinceWallClock);
+        return Math.max(0, APK_RESTART_GUARD_MS - elapsed);
     }
 
     public synchronized void clearRestartGuard() {
         mRestartingSinceElapsed = -1;
+        mRestartingSinceWallClock = -1;
         persist();
     }
 
     /**
-     * Persists the APK step completion status so it can be sent the next time the phone
-     * connects via BLE. Must be called BEFORE advancing/completing the session so that
-     * {@link #buildApkDoneJson} can still read the correct session fields.
+     * Persists the APK step completion status so it can be sent the next time the phone connects
+     * via BLE. Must be called BEFORE advancing/completing the session so that {@link
+     * #buildApkDoneJson} can still read the correct session fields.
      *
      * @param status "step_complete" if more OTA steps follow; "complete" for APK-only sessions.
      */
@@ -270,8 +282,8 @@ public class OtaSessionManager {
     }
 
     /**
-     * Retrieves and clears the pending APK status. Returns null if none is queued.
-     * Intended to be called from OtaHelper.onPhoneConnected().
+     * Retrieves and clears the pending APK status. Returns null if none is queued. Intended to be
+     * called from OtaHelper.onPhoneConnected().
      */
     public String consumePendingApkStatus() {
         String status = mPrefs.getString(KEY_PENDING_APK_STATUS, null);
@@ -283,9 +295,9 @@ public class OtaSessionManager {
     }
 
     /**
-     * Builds the {@code ota_status} JSON representing the just-completed APK step.
-     * Uses the persisted session fields so the signal carries correct session context
-     * even after the process has restarted.
+     * Builds the {@code ota_status} JSON representing the just-completed APK step. Uses the
+     * persisted session fields so the signal carries correct session context even after the process
+     * has restarted.
      *
      * @param status "step_complete" or "complete"
      */
@@ -334,7 +346,9 @@ public class OtaSessionManager {
         mErrorMessage = null;
         mVersionJsonUrl = null;
         mLastActivityAtElapsed = 0;
+        mLastActivityAtWallClock = 0;
         mRestartingSinceElapsed = -1;
+        mRestartingSinceWallClock = -1;
         mLastPersistedPercent = 0;
         mPrefs.edit().remove(KEY_SESSION_DATA).apply();
     }
@@ -367,25 +381,20 @@ public class OtaSessionManager {
     }
 
     /**
-     * Compute a weighted overall OTA progress percentage (0–100) that accounts for
-     * the relative cost of each step type.
+     * Compute a weighted overall OTA progress percentage (0–100) that accounts for the relative
+     * cost of each step type.
      *
-     * Weight table (based on which step types are present in the session):
-     *   [apk, mtk, bes] → 20 / 30 / 50
-     *   [apk, bes]       → 20 / 80
-     *   [apk, mtk]       → 20 / 80
-     *   [mtk, bes]       → 40 / 60
-     *   [bes]            → 100
-     *   [mtk]            → 100
-     *   [apk]            → 100
+     * <p>Weight table (based on which step types are present in the session): [apk, mtk, bes] → 20
+     * / 30 / 50 [apk, bes] → 20 / 80 [apk, mtk] → 20 / 80 [mtk, bes] → 40 / 60 [bes] → 100 [mtk] →
+     * 100 [apk] → 100
      *
-     * Within each step, stepPercent (0–100) maps linearly to that step's weight.
-     * APK install has no granular progress (process kill) so it jumps 0→100 instantly,
-     * but its small fixed weight (20%) means the jump is acceptable.
+     * <p>Within each step, stepPercent (0–100) maps linearly to that step's weight. APK install has
+     * no granular progress (process kill) so it jumps 0→100 instantly, but its small fixed weight
+     * (20%) means the jump is acceptable.
      *
-     * NOTE: BES progress that arrives via sr_adota on the phone side bypasses this
-     * method. The MentraLive sr_adota handler must apply the same weight table when
-     * computing the overall_percent it sends to the frontend.
+     * <p>NOTE: BES progress that arrives via sr_adota on the phone side bypasses this method. The
+     * MentraLive sr_adota handler must apply the same weight table when computing the
+     * overall_percent it sends to the frontend.
      */
     private int computeOverallPercent() {
         if (mTotalSteps == 0 || mStepSequence == null) return 0;
@@ -404,8 +413,8 @@ public class OtaSessionManager {
     }
 
     /**
-     * Assign a percentage weight to each step based on which step types are present.
-     * The returned array has one entry per step in {@link #mStepSequence}, in order.
+     * Assign a percentage weight to each step based on which step types are present. The returned
+     * array has one entry per step in {@link #mStepSequence}, in order.
      */
     private int[] computeStepWeights() {
         boolean hasApk = false, hasMtk = false, hasBes = false;
@@ -418,19 +427,33 @@ public class OtaSessionManager {
 
         int apkW, mtkW, besW;
         if (hasApk && hasMtk && hasBes) {
-            apkW = 20; mtkW = 30; besW = 50;
+            apkW = 20;
+            mtkW = 30;
+            besW = 50;
         } else if (hasApk && hasBes) {
-            apkW = 20; mtkW = 0;  besW = 80;
+            apkW = 20;
+            mtkW = 0;
+            besW = 80;
         } else if (hasApk && hasMtk) {
-            apkW = 20; mtkW = 80; besW = 0;
+            apkW = 20;
+            mtkW = 80;
+            besW = 0;
         } else if (hasMtk && hasBes) {
-            apkW = 0;  mtkW = 40; besW = 60;
+            apkW = 0;
+            mtkW = 40;
+            besW = 60;
         } else if (hasBes) {
-            apkW = 0;  mtkW = 0;  besW = 100;
+            apkW = 0;
+            mtkW = 0;
+            besW = 100;
         } else if (hasMtk) {
-            apkW = 0;  mtkW = 100; besW = 0;
+            apkW = 0;
+            mtkW = 100;
+            besW = 0;
         } else {
-            apkW = 100; mtkW = 0; besW = 0;
+            apkW = 100;
+            mtkW = 0;
+            besW = 0;
         }
 
         int[] weights = new int[mTotalSteps];
@@ -445,12 +468,12 @@ public class OtaSessionManager {
     }
 
     /**
-     * Returns the base overall_percent at the start of the BES step, using the same
-     * weight table as {@link #computeOverallPercent}. Used by MentraLive's sr_adota
-     * handler to compute the correct weighted overall_percent for BES progress events
-     * that arrive directly from the BES chip over BLE (bypassing the glasses session).
+     * Returns the base overall_percent at the start of the BES step, using the same weight table as
+     * {@link #computeOverallPercent}. Used by MentraLive's sr_adota handler to compute the correct
+     * weighted overall_percent for BES progress events that arrive directly from the BES chip over
+     * BLE (bypassing the glasses session).
      *
-     * @param totalSteps   total number of OTA steps in this session
+     * @param totalSteps total number of OTA steps in this session
      * @param stepSequence JSON array of step type strings (e.g. ["apk","bes"])
      * @return base percentage (0–100) at the start of the BES install phase
      */
@@ -465,13 +488,17 @@ public class OtaSessionManager {
 
         int apkW, mtkW;
         if (hasApk && hasMtk && hasBes) {
-            apkW = 20; mtkW = 30;
+            apkW = 20;
+            mtkW = 30;
         } else if (hasApk && hasBes) {
-            apkW = 20; mtkW = 0;
+            apkW = 20;
+            mtkW = 0;
         } else if (hasMtk && hasBes) {
-            apkW = 0;  mtkW = 40;
+            apkW = 0;
+            mtkW = 40;
         } else {
-            apkW = 0;  mtkW = 0;
+            apkW = 0;
+            mtkW = 0;
         }
 
         // Base = weight of all steps that precede BES
@@ -486,8 +513,8 @@ public class OtaSessionManager {
     }
 
     /**
-     * Returns the weight allocated to the BES step, using the same weight table.
-     * Companion to {@link #computeBesOverallBase}.
+     * Returns the weight allocated to the BES step, using the same weight table. Companion to
+     * {@link #computeBesOverallBase}.
      */
     public static int computeBesOverallWeight(int totalSteps, org.json.JSONArray stepSequence) {
         boolean hasApk = false, hasMtk = false, hasBes = false;
@@ -514,9 +541,13 @@ public class OtaSessionManager {
             json.put("step_percent", mStepPercent);
             json.put("status", mStatus != null ? mStatus : JSONObject.NULL);
             json.put("error_message", mErrorMessage != null ? mErrorMessage : JSONObject.NULL);
-            json.put("version_json_url", mVersionJsonUrl != null ? mVersionJsonUrl : JSONObject.NULL);
+            json.put(
+                    "version_json_url",
+                    mVersionJsonUrl != null ? mVersionJsonUrl : JSONObject.NULL);
             json.put("last_activity_at_elapsed", mLastActivityAtElapsed);
+            json.put("last_activity_at_wall_clock", mLastActivityAtWallClock);
             json.put("restarting_since_elapsed", mRestartingSinceElapsed);
+            json.put("restarting_since_wall_clock", mRestartingSinceWallClock);
             mPrefs.edit().putString(KEY_SESSION_DATA, json.toString()).apply();
         } catch (JSONException e) {
             Log.e(TAG, "Failed to persist session", e);
@@ -528,6 +559,7 @@ public class OtaSessionManager {
         if (data == null) {
             mStepSequence = new JSONArray();
             mRestartingSinceElapsed = -1;
+            mRestartingSinceWallClock = -1;
             return;
         }
         try {
@@ -540,15 +572,46 @@ public class OtaSessionManager {
             mCurrentPhase = json.optString("current_phase", "download");
             mStepPercent = json.optInt("step_percent", 0);
             mStatus = json.isNull("status") ? null : json.optString("status", null);
-            mErrorMessage = json.isNull("error_message") ? null : json.optString("error_message", null);
-            mVersionJsonUrl = json.isNull("version_json_url") ? null : json.optString("version_json_url", null);
+            mErrorMessage =
+                    json.isNull("error_message") ? null : json.optString("error_message", null);
+            mVersionJsonUrl =
+                    json.isNull("version_json_url")
+                            ? null
+                            : json.optString("version_json_url", null);
             mLastActivityAtElapsed = json.optLong("last_activity_at_elapsed", 0);
+            mLastActivityAtWallClock = json.optLong("last_activity_at_wall_clock", 0);
             mRestartingSinceElapsed = json.optLong("restarting_since_elapsed", -1);
+            mRestartingSinceWallClock = json.optLong("restarting_since_wall_clock", -1);
             mLastPersistedPercent = mStepPercent;
         } catch (JSONException e) {
             Log.e(TAG, "Failed to load session", e);
             mStepSequence = new JSONArray();
             mRestartingSinceElapsed = -1;
+            mRestartingSinceWallClock = -1;
         }
+    }
+
+    private void markActivity() {
+        mLastActivityAtElapsed = SystemClock.elapsedRealtime();
+        mLastActivityAtWallClock = System.currentTimeMillis();
+    }
+
+    /**
+     * Returns a reboot-safe age. elapsedRealtime is authoritative within one boot; after it resets,
+     * wall clock keeps persisted OTA sessions expirable. Legacy sessions without a wall timestamp
+     * fail open so the boot-time recovery path gets one chance to recheck them.
+     */
+    static long ageSince(
+            long nowElapsed, long sinceElapsed, long nowWallClock, long sinceWallClock) {
+        if (sinceElapsed < 0) {
+            return Long.MAX_VALUE;
+        }
+        if (nowElapsed >= sinceElapsed) {
+            return nowElapsed - sinceElapsed;
+        }
+        if (sinceWallClock > 0 && nowWallClock >= sinceWallClock) {
+            return nowWallClock - sinceWallClock;
+        }
+        return 0L;
     }
 }

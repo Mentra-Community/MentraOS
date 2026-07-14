@@ -190,7 +190,8 @@ jobs:
               fi
             fi
           done < <(jq -r '.assets[] | [.name, .browser_download_url] | @tsv' <<<"$release_json")
-          LAST_PUBLISHED_ASG_VERSION=$last_published \
+          ASG_BUILD_EPOCH_SECONDS=$(git show -s --format=%ct HEAD) \
+            LAST_PUBLISHED_ASG_VERSION=$last_published \
             PUBLISHED_ASG_VERSION_CODES="$(IFS=,; echo "${published_version_codes[*]}")" \
             ASG_VERSION_NAME_PREFIX="sdk-${{ needs.detect.outputs.version }}" \
             node .github/scripts/asg-version.mjs >> "$GITHUB_OUTPUT"
