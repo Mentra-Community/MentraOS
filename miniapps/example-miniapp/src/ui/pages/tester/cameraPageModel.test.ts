@@ -15,13 +15,11 @@ describe("cameraPageModel", () => {
       buildTakePhotoArgs({
         size: "high",
         mode: "text",
-        saveToGallery: true,
       }),
     ).toEqual([
       {
         size: "high",
         mode: "text",
-        saveToGallery: true,
       },
     ])
   })

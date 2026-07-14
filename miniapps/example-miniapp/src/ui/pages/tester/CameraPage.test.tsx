@@ -69,7 +69,6 @@ describe("CameraPage", () => {
         {
           size: "medium",
           mode: "photo",
-          saveToGallery: false,
         },
       ])
     })

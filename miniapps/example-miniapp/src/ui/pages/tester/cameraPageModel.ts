@@ -15,14 +15,12 @@ export interface PhotoTakenResult {
 export interface TakePhotoConfig {
   size: PhotoSize
   mode: PhotoMode
-  saveToGallery: boolean
 }
 
 export function buildTakePhotoArgs(config: TakePhotoConfig) {
   const options: Record<string, unknown> = {
     size: config.size,
     mode: config.mode,
-    saveToGallery: config.saveToGallery,
   }
   return [options] as const
 }

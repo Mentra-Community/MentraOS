@@ -3,7 +3,7 @@
 // value of invoke()), NOT a streamed tester:event — so capture results live
 // in local state.
 
-import {useMemo, useState} from "react"
+import {useState} from "react"
 import {useNavigate} from "react-router-dom"
 import {MiniappHeader} from "@mentra/miniapp/ui"
 
@@ -15,7 +15,6 @@ import {Input} from "../../components/input"
 import {Label} from "../../components/label"
 import {Select, SelectContent, SelectItem, SelectTrigger, SelectValue} from "../../components/select"
 import {Spinner} from "../../components/spinner"
-import {Switch} from "../../components/switch"
 import {ErrorRow, TableRow} from "./_TesterRow"
 import {
   buildTakePhotoArgs,
@@ -30,14 +29,6 @@ import {
   type TakePhotoConfig,
 } from "./cameraPageModel"
 
-function buildConfig(
-  size: PhotoSize,
-  mode: PhotoMode,
-  saveToGallery: boolean,
-): TakePhotoConfig {
-  return {size, mode, saveToGallery}
-}
-
 export default function CameraPage() {
   const navigate = useNavigate()
   const {invoke, lastError} = useTester("camera")
@@ -47,7 +38,6 @@ export default function CameraPage() {
   const [result, setResult] = useState<PhotoTakenResult | undefined>(undefined)
   const [size, setSize] = useState<PhotoSize>("medium")
   const [mode, setMode] = useState<PhotoMode>("photo")
-  const [saveToGallery, setSaveToGallery] = useState(false)
   const [durationMs, setDurationMs] = useState(String(DEFAULT_WARMUP_DURATION_MS))
   const [capturePending, setCapturePending] = useState(false)
   const [warmupPending, setWarmupPending] = useState(false)
@@ -61,10 +51,7 @@ export default function CameraPage() {
       ? parsedDurationMs
       : DEFAULT_WARMUP_DURATION_MS
   const busy = capturePending || warmupPending
-  const config = useMemo(
-    () => buildConfig(size, mode, saveToGallery),
-    [size, mode, saveToGallery],
-  )
+  const config: TakePhotoConfig = {size, mode}
 
   const captureWithConfig = async (captureConfig: TakePhotoConfig) => {
     const startedAt = performance.now()
@@ -149,15 +136,6 @@ export default function CameraPage() {
               </SelectContent>
             </Select>
           </div>
-          <div className="flex items-center justify-between gap-3">
-            <Label htmlFor="photo-gallery">saveToGallery</Label>
-            <Switch
-              id="photo-gallery"
-              checked={saveToGallery}
-              onCheckedChange={setSaveToGallery}
-              disabled={busy}
-            />
-          </div>
           <div>
             <Label htmlFor="warmup-duration">warmUp durationMs</Label>
             <Input
@@ -201,7 +179,6 @@ export default function CameraPage() {
           data={{
             size,
             mode,
-            saveToGallery,
             warmupDurationMs,
             warmupStatus: warmupStatus ?? "(not warmed)",
             warmupElapsed: formatElapsedMs(warmupElapsedMs),
