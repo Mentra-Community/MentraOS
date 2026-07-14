@@ -2,10 +2,12 @@
 // takePhoto() resolves through the RPC reply (the awaited return value of
 // invoke()), NOT a streamed tester:event — so capture it in local state.
 
-import {useState} from "react"
+import {useRef, useState} from "react"
 import {useNavigate} from "react-router-dom"
+import type {DownloadResult} from "@mentra/miniapp"
 import {MiniappHeader} from "@mentra/miniapp/ui"
 
+import type {TesterEventPayload} from "../../shared/types"
 import {useTester} from "../../hooks/useTester"
 import {Shell} from "../Shell"
 import {Button} from "../../components/button"
@@ -44,6 +46,8 @@ export default function CameraPage() {
   const [size, setSize] = useState<PhotoSize>("medium")
   const [mode, setMode] = useState<PhotoMode>("photo")
   const [isSharing, setIsSharing] = useState(false)
+  const [shareError, setShareError] = useState<TesterEventPayload | null>(null)
+  const sharingRef = useRef(false)
 
   const takePhoto = () => {
     invoke("takePhoto", [{size, mode}])
@@ -54,8 +58,10 @@ export default function CameraPage() {
   }
 
   const sharePhoto = () => {
-    if (!result?.photoUrl) return
+    if (!result?.photoUrl || sharingRef.current) return
+    sharingRef.current = true
     setIsSharing(true)
+    setShareError(null)
     invokeSystem("download", [
       {
         url: result.photoUrl,
@@ -63,10 +69,23 @@ export default function CameraPage() {
         filename: `mentra-photo-${result.requestId ?? Date.now()}.${imageExtension(result.mimeType)}`,
       },
     ])
+      .then((response) => {
+        const downloadResult = response as DownloadResult
+        if (!downloadResult?.success) {
+          setShareError({
+            iface: "system",
+            kind: "error",
+            payload: {method: "download", message: "The image could not be shared."},
+          })
+        }
+      })
       .catch(() => {
         /* error already surfaced via systemError → ErrorRow */
       })
-      .finally(() => setIsSharing(false))
+      .finally(() => {
+        sharingRef.current = false
+        setIsSharing(false)
+      })
   }
 
   return (
@@ -119,6 +138,7 @@ export default function CameraPage() {
         )}
         <ErrorRow event={lastError} />
         <ErrorRow event={systemError} />
+        <ErrorRow event={shareError} />
       </div>
     </Shell>
   )
