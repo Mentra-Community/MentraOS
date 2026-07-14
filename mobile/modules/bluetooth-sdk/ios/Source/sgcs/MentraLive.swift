@@ -104,6 +104,13 @@ class BlePhotoUploadService {
 
     private static func convertToJpegPreservingExif(imageData: Data) throws -> Data {
         logIncomingImageDiagnostics(imageData: imageData)
+        if isJpeg(imageData) {
+            Bridge.log(
+                "\(TAG): BLE relay pass-through: input already JPEG (\(imageData.count) bytes), skipping decode/re-encode"
+            )
+            return imageData
+        }
+
         let imuJson = readImuJsonFromImageData(imageData)
 
         guard let image = decodeImage(imageData: imageData) else {
@@ -118,10 +125,9 @@ class BlePhotoUploadService {
             "\(TAG): Decoded image to bitmap: \(Int(image.size.width))x\(Int(image.size.height))"
         )
 
-        // 1.0: the source already went through a lossy AVIF pass on the glasses,
-        // so this re-encode must not compound the loss. Phone CPU and upload
-        // bandwidth are cheap relative to what was paid to get the bytes over BLE.
-        guard var jpegData = image.jpegData(compressionQuality: 1.0) else {
+        // AVIF sources already went through a lossy pass on the glasses; re-encode
+        // at high-but-not-max quality. JPEG fast-path payloads upload as-is.
+        guard var jpegData = image.jpegData(compressionQuality: 0.9) else {
             throw NSError(
                 domain: "BlePhotoUpload",
                 code: -2,
@@ -146,6 +152,11 @@ class BlePhotoUploadService {
         Bridge.log(
             "\(TAG): BLE image diagnostics: size=\(imageData.count) bytes, container=\(describeContainer(imageData)), rawHasExifMarker=\(containsExifMarker(in: imageData))"
         )
+    }
+
+    private static func isJpeg(_ data: Data) -> Bool {
+        let bytes = [UInt8](data.prefix(2))
+        return bytes.count >= 2 && bytes[0] == 0xFF && bytes[1] == 0xD8
     }
 
     private static func describeContainer(_ data: Data) -> String {

@@ -37,10 +37,10 @@ import org.json.JSONObject;
  */
 public class BlePhotoUploadService {
     private static final String TAG = "BlePhotoUploadService";
-    // 100: the source already went through a lossy AVIF pass on the glasses, so
-    // this re-encode must not compound the loss. Phone CPU and upload bandwidth
-    // are cheap relative to what was paid to get the bytes over BLE.
-    private static final int JPEG_QUALITY = 100;
+    // AVIF sources already went through a lossy pass on the glasses; re-encode at
+    // high-but-not-max quality to avoid inflating upload size. JPEG fast-path
+    // payloads from text mode are uploaded as-is.
+    private static final int AVIF_TO_JPEG_QUALITY = 90;
 
     public interface UploadCallback {
         void onSuccess(String requestId, String responseBody);
@@ -84,6 +84,15 @@ public class BlePhotoUploadService {
      */
     @VisibleForTesting
     static byte[] convertToJpegPreservingExif(byte[] imageData) throws Exception {
+        if (isJpeg(imageData)) {
+            Log.d(
+                    TAG,
+                    "BLE relay pass-through: input already JPEG ("
+                            + imageData.length
+                            + " bytes), skipping decode/re-encode");
+            return imageData;
+        }
+
         File inputFile = File.createTempFile("ble_photo_in_", guessExtension(imageData));
         File outputFile = File.createTempFile("ble_photo_out_", ".jpg");
         try {
@@ -103,7 +112,7 @@ public class BlePhotoUploadService {
             Log.d(TAG, "Decoded image to bitmap: " + bitmap.getWidth() + "x" + bitmap.getHeight());
 
             try (FileOutputStream fos = new FileOutputStream(outputFile)) {
-                bitmap.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, fos);
+                bitmap.compress(Bitmap.CompressFormat.JPEG, AVIF_TO_JPEG_QUALITY, fos);
             } finally {
                 bitmap.recycle();
             }
@@ -252,6 +261,12 @@ public class BlePhotoUploadService {
         ExifInterface exif = new ExifInterface(jpegPath);
         exif.setAttribute(ExifInterface.TAG_USER_COMMENT, imuJson);
         exif.saveAttributes();
+    }
+
+    private static boolean isJpeg(byte[] imageData) {
+        return imageData.length >= 2
+                && (imageData[0] & 0xFF) == 0xFF
+                && (imageData[1] & 0xFF) == 0xD8;
     }
 
     private static String guessExtension(byte[] imageData) {

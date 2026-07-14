@@ -81,6 +81,13 @@ public class AsgConstants {
      */
     public static final boolean SAVE_TEXT_DETECT_DEBUG_ARTIFACTS = false;
 
+    /**
+     * Emit {@code ⏱️ [BLE PHOTO]} timing logs for the full take_photo → AVIF/JPEG compress → BLE
+     * transfer pipeline. Filter logcat on tag {@code BlePhotoTiming} or prefix {@code ⏱️ [BLE PHOTO]}.
+     * Keep false in production.
+     */
+    public static final boolean ENABLE_PHOTO_TIMING_LOGS = false;
+
     /** After AE meters in text mode, divide exposure time by this factor (shorter shutter). */
     public static final int TEXT_MODE_AE_EXPOSURE_DIVISOR = 3;
 

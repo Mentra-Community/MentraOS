@@ -631,9 +631,11 @@ class MantleManager {
           endDate: Math.floor(end.getTime() / 1000),
         }
       })
-      void BluetoothSdk.setCalendarEvents(shapedEvents).catch((error) => {
+      try {
+        await BluetoothSdk.setCalendarEvents(shapedEvents)
+      } catch (error) {
         console.warn("MANTLE: Failed to sync calendar events to glasses", error)
-      })
+      }
 
       // Direct forward to local miniapps. Emit one event per calendar entry
       // so miniapps can treat them as a stream rather than a digest.

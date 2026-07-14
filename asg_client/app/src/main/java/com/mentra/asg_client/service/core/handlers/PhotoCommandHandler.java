@@ -357,6 +357,9 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
             }
 
             // Process photo capture based on transfer method
+            if ("ble".equals(transferMethod) || !bleImgId.isEmpty()) {
+                captureService.markBlePhotoPipelineStart(requestId);
+            }
             Log.i(
                     TAG,
                     "PHOTO PIPELINE [ASG 3/3] Starting capture requestId="
