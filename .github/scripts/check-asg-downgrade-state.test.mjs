@@ -107,6 +107,18 @@ test('ASG and recovery worker share the complete install transaction action cont
   }
 });
 
+test('successful downgrade reset also clears the live OTA session snapshot', () => {
+  const otaHelper = readFileSync(
+    join(sourceRoot, 'com/mentra/asg_client/io/ota/helpers/OtaHelper.java'),
+    'utf8',
+  );
+  assert.match(
+    otaHelper,
+    /AsgDowngradeResetter\.reset\(context\);\s*\/\/[^\n]*\n\s*\/\/[^\n]*\n\s*if \(sessionManager != null\) \{\s*sessionManager\.clear\(\);\s*\}/,
+    'downgrade success must clear the in-memory OTA session after preferences are wiped',
+  );
+});
+
 test('ASG publishing workflows derive the logical version from the checked-out commit', () => {
   for (const workflow of [
     '.github/workflows/bluetooth-sdk-release.yml',

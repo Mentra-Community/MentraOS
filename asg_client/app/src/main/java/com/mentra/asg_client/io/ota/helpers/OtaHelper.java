@@ -1029,6 +1029,11 @@ public class OtaHelper {
                     Log.i(TAG, "ASG logical downgrade detected; clearing app state before install");
                     try {
                         AsgDowngradeResetter.reset(context);
+                        // reset() wipes ota_session on disk. Clear this process's in-memory
+                        // snapshot too so a later persist cannot resurrect pre-downgrade state.
+                        if (sessionManager != null) {
+                            sessionManager.clear();
+                        }
                     } catch (RuntimeException e) {
                         isUpdating = false;
                         notifyRecoveryAsgInstallCancelled(context, serverVersion);
