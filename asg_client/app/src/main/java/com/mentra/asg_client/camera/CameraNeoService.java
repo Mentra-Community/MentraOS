@@ -141,6 +141,13 @@ public class CameraNeoService extends LifecycleService {
 
     // Callback interface for photo capture
     public interface PhotoCaptureCallback {
+        /**
+         * Fired immediately before the still capture request is submitted to the camera HAL —
+         * the closest observable moment to the photo actually being taken. Use for
+         * capture-synchronized feedback (e.g. shutter sound).
+         */
+        default void onPhotoCapturing() {}
+
         void onPhotoCaptured(String filePath);
         void onPhotoError(String errorMessage);
     }
@@ -305,6 +312,22 @@ public class CameraNeoService extends LifecycleService {
             return photoSessionActive || recording;
         }
         return false; // Service not running or instance not set
+    }
+
+    /**
+     * Check whether the camera is already warm for an upcoming photo — i.e. the service is
+     * running and the camera device is open (kept alive after a recent shot or actively in use),
+     * so the next capture will skip the 1-2s cold camera/ISP startup.
+     *
+     * @return true if an upcoming photo capture will reuse the already-open camera
+     */
+    public static boolean isCameraWarm() {
+        CameraNeoService instance = sInstance;
+        if (instance == null) {
+            return false;
+        }
+        return instance.cameraCoordinator.isCameraKeptAlive()
+                || instance.cameraCoordinator.device() != null;
     }
 
     /**
