@@ -19,6 +19,7 @@ import androidx.core.content.ContextCompat;
 
 import com.mentra.recovery.health.HealthMonitor;
 import com.mentra.recovery.health.InstallPauseNotifier;
+import com.mentra.recovery.install.AsgInstallTransactionStore;
 import com.mentra.recovery.remediation.RemediationController;
 import com.mentra.recovery.reset.ResetController;
 import com.mentra.recovery.util.RecoveryConstants;
@@ -29,6 +30,7 @@ public class RecoveryService extends Service {
   private HealthMonitor healthMonitor;
   private BroadcastReceiver pongReceiver;
   private BroadcastReceiver installStateReceiver;
+  private AsgInstallTransactionStore installTransactionStore;
 
   @Override
   public void onCreate() {
@@ -36,6 +38,8 @@ public class RecoveryService extends Service {
     Log.i(RecoveryConstants.TAG, "RecoveryService onCreate");
     createNotificationChannel();
     startForeground(RecoveryConstants.NOTIFICATION_ID, createNotification());
+    installTransactionStore = new AsgInstallTransactionStore(this);
+    installTransactionStore.reconcileInstalledVersion();
 
     resetController = new ResetController(this);
     healthMonitor =
@@ -79,6 +83,7 @@ public class RecoveryService extends Service {
           @Override
           public void onReceive(Context context, Intent intent) {
             if (RecoveryConstants.ACTION_PONG.equals(intent.getAction())) {
+              installTransactionStore.reconcileInstalledVersion();
               healthMonitor.onPong();
               resetController.onAsgHealthy();
             }
@@ -100,6 +105,7 @@ public class RecoveryService extends Service {
               healthMonitor.setPaused(true);
               InstallPauseNotifier.setInstallPaused(true);
             } else if (RecoveryConstants.ACTION_INSTALL_COMPLETED.equals(intent.getAction())) {
+              installTransactionStore.reconcileInstalledVersion();
               healthMonitor.setPaused(false);
               InstallPauseNotifier.setInstallPaused(false);
             }

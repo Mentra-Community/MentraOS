@@ -37,6 +37,7 @@ export type ConnectedGlassesInfo = {
   appVersion?: string
   bluetoothName?: string
   buildNumber?: string
+  asgVersion?: number
   color?: string
   deviceModel?: string
   firmwareVersion?: string
@@ -190,6 +191,7 @@ function batteryState(status: Partial<PublicGlassesStatus>): BatteryState {
 function connectedGlassesInfo(status: Partial<PublicGlassesStatus>): ConnectedGlassesInfo {
   return {
     appVersion: stringValue(status.appVersion),
+    asgVersion: numberValue(status.asgVersion) ?? undefined,
     bluetoothName: stringValue(status.bluetoothName),
     buildNumber: stringValue(status.buildNumber),
     color: stringValue(status.color),

@@ -1,0 +1,69 @@
+import assert from 'node:assert/strict';
+import {readFileSync, readdirSync, statSync} from 'node:fs';
+import {join} from 'node:path';
+import test from 'node:test';
+
+const sourceRoot = 'asg_client/app/src/main/java';
+const resetterPath = join(
+  sourceRoot,
+  'com/mentra/asg_client/version/AsgDowngradeResetter.java',
+);
+const expectedCustomStores = new Set([
+  'MentraOSNetworkManager',
+  'RecoveryWorkerManagerPrefs',
+  'asg_settings',
+  'boot_stats',
+  'ota_session',
+  'ota_state',
+]);
+
+function javaFiles(directory) {
+  return readdirSync(directory).flatMap((entry) => {
+    const path = join(directory, entry);
+    return statSync(path).isDirectory() ? javaFiles(path) : path.endsWith('.java') ? [path] : [];
+  });
+}
+
+function preferenceStoresIn(path) {
+  const source = readFileSync(path, 'utf8');
+  const constants = new Map();
+  for (const match of source.matchAll(/static\s+final\s+String\s+(\w+)\s*=\s*"([^"]+)"/g)) {
+    constants.set(match[1], match[2]);
+  }
+
+  const stores = [];
+  for (const match of source.matchAll(/getSharedPreferences\s*\(\s*("[^"]+"|\w+)\s*,/g)) {
+    const expression = match[1];
+    const value = expression.startsWith('"')
+      ? expression.slice(1, -1)
+      : constants.get(expression);
+    assert.ok(value, `Cannot statically resolve preference store ${expression} in ${path}`);
+    stores.push(value);
+  }
+  return stores;
+}
+
+test('every ASG SharedPreferences store is owned by the downgrade reset contract', () => {
+  const discovered = new Set();
+  let usesDefaultPreferences = false;
+  for (const path of javaFiles(sourceRoot)) {
+    if (path === resetterPath) continue;
+    const source = readFileSync(path, 'utf8');
+    if (source.includes('PreferenceManager.getDefaultSharedPreferences(')) {
+      usesDefaultPreferences = true;
+    }
+    for (const store of preferenceStoresIn(path)) discovered.add(store);
+  }
+
+  assert.deepEqual([...discovered].sort(), [...expectedCustomStores].sort());
+  assert.equal(usesDefaultPreferences, true);
+
+  const resetter = readFileSync(resetterPath, 'utf8');
+  for (const store of expectedCustomStores) {
+    assert.ok(resetter.includes(`"${store}"`), `Downgrade reset omits ${store}`);
+  }
+  assert.ok(
+    resetter.includes('"com.mentra.asg_client_preferences"'),
+    'Downgrade reset omits Android default SharedPreferences',
+  );
+});

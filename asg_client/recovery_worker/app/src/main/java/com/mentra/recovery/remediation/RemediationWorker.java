@@ -112,7 +112,7 @@ public class RemediationWorker extends Worker {
       return Result.success();
     }
     if (RemediationEvaluator.alreadyApplied(context, policy)) {
-      Log.i(RecoveryConstants.TAG, "Remediation v" + policy.versionCode + " already applied; skipping");
+      Log.i(RecoveryConstants.TAG, "Remediation ASG " + policy.asgVersion + " already applied; skipping");
       return Result.success();
     }
 
@@ -142,7 +142,7 @@ public class RemediationWorker extends Worker {
       // remediation even when the install was rejected or dropped.
       long nowInstalled =
           RemediationEvaluator.getInstalledVersion(context, policy.packageName);
-      boolean installConfirmed = nowInstalled >= policy.versionCode;
+      boolean installConfirmed = nowInstalled == policy.asgVersion;
 
       if (alive) {
         if (installConfirmed) {
@@ -156,7 +156,7 @@ public class RemediationWorker extends Worker {
         // Do NOT mark applied so the next periodic run can retry.
         Log.w(RecoveryConstants.TAG,
             "PONG received but installed version " + nowInstalled
-                + " < target " + policy.versionCode + "; not marking applied, will retry");
+                + " != target " + policy.asgVersion + "; not marking applied, will retry");
         telemetry.emit(
             "mentra_remediation_failed",
             policy.versionName,

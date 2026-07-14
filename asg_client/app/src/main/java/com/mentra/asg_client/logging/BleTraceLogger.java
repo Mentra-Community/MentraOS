@@ -5,6 +5,7 @@ import android.content.pm.PackageInfo;
 import android.os.Build;
 import android.os.Process;
 import android.util.Log;
+import com.mentra.asg_client.BuildConfig;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -336,7 +337,7 @@ public final class BleTraceLogger {
                 versionCode = packageInfo.versionCode;
             }
             String versionName = packageInfo.versionName != null ? packageInfo.versionName : "unknown";
-            return versionName + "+" + versionCode;
+            return versionName + "+asg" + BuildConfig.ASG_VERSION + "+vc" + versionCode;
         } catch (Exception ignored) {
             return null;
         }

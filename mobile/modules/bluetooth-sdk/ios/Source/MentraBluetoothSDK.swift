@@ -1057,6 +1057,7 @@ public final class MentraBluetoothSDK {
         let manifest = try await OtaManifestChecker.fetch(manifestUrl)
         let otaStatus = try await waitForOtaManifestStatus(status, manifest: manifest)
         return try OtaManifestChecker.hasUpdate(
+            currentAsgVersion: otaStatus.asgVersion,
             currentBuildNumber: otaStatus.buildNumber,
             currentMtkVersion: otaStatus.mtkFirmwareVersion,
             currentBesVersion: otaStatus.besFirmwareVersion,
@@ -1137,7 +1138,7 @@ public final class MentraBluetoothSDK {
 
     private func getFreshGlassesStatus() async -> GlassesStatus {
         let status = glassesStatus
-        if !status.connected || !status.buildNumber.isEmpty {
+        if !status.connected || (!status.buildNumber.isEmpty && status.asgVersion != nil) {
             return status
         }
 

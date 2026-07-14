@@ -6,8 +6,8 @@ import com.mentra.recovery.util.RecoveryConstants;
 
 /**
  * In-process install pause signaling between {@link com.mentra.recovery.work.RecoveryWorker} and
- * {@link com.mentra.recovery.service.RecoveryService}. Avoids permission-gated broadcasts for
- * same-package control, which break while ASG is uninstalled during backup reinstall.
+ * {@link com.mentra.recovery.service.RecoveryService}. Avoids unnecessary permission-gated
+ * broadcasts for same-package control while ASG is being replaced.
  *
  * <p>Also exposes a readable {@link #isInstallPaused()} flag so the remediation worker can defer
  * its own download/install while an ASG-driven install is in flight, avoiding racing installs. The

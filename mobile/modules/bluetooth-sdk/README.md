@@ -130,7 +130,7 @@ if (!device) {
 
 await BluetoothSdk.connect(device)
 const versionInfo = await BluetoothSdk.requestVersionInfo()
-console.log(versionInfo.buildNumber)
+console.log(versionInfo.asgVersion)
 ```
 
 In multi-device environments, present an explicit picker instead of
@@ -341,10 +341,13 @@ Mentra Live firmware owns the OTA flow. The SDK mirrors the MentraOS app command
 The default manifest is derived from the SDK version:
 `https://github.com/Mentra-Community/MentraOS/releases/download/bluetooth-sdk-ota/bluetooth-sdk-<sdkVersion>-version.json`.
 Each published SDK version points at a durable ASG client APK and firmware
-manifest that were built for that SDK release. Pre-wall-clock ASG builds that
-ignore `ota_start.ota_version_url` are checked against the URL they advertise,
-or the production default if they do not advertise one, so the app does not
-prompt for an update the glasses cannot install.
+manifest built from the same source commit. `asgVersion` is the exact logical
+ASG compatibility pin: both older and newer ASG releases are replaced until the
+reported value equals the SDK target. Android `versionCode` is only a fixed
+package-install transport value. MTK and BES remain upgrade-only and are
+resolved from the latest shared production firmware manifest, so they are not
+frozen when the SDK is released. Pre-migration ASG builds fall back to their
+legacy build number until the first fixed-`versionCode` release is installed.
 
 ```ts
 import BluetoothSdk from '@mentra/bluetooth-sdk'
@@ -364,6 +367,10 @@ if (hasUpdate) {
 ```
 
 OTA requires Mentra Live glasses firmware that supports the ASG OTA protocol and network access from the glasses. During install, normal BLE traffic can be interrupted and the glasses may restart; keep the app connected and avoid sending unrelated commands until `ota_status.status` is `complete` or `failed`.
+After the glasses reconnect, call `checkForOtaUpdate()` again. A `false` result
+confirms the reported `asgVersion` exactly matches the SDK pin and that no newer
+applicable MTK/BES update remains; an install broadcast by itself is not treated
+as convergence.
 
 ## Photo Upload
 
@@ -475,7 +482,7 @@ For bare native iOS apps, use the public SwiftPM repository:
 https://github.com/Mentra-Community/mentra-bluetooth-sdk-ios.git
 ```
 
-Select version `0.1.19`, then add the `MentraBluetoothSDK` product to your app target.
+Select version `0.1.20`, then add the `MentraBluetoothSDK` product to your app target.
 
 For local SDK development, add this package folder directly in Xcode:
 

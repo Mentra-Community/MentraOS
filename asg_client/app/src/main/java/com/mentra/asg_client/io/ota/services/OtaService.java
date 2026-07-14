@@ -7,11 +7,11 @@ import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
-import android.content.pm.PackageInfo;
 import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.util.Log;
 import androidx.core.app.NotificationCompat;
 import com.mentra.asg_client.events.BatteryStatusEvent;
@@ -23,6 +23,7 @@ import com.mentra.asg_client.io.ota.helpers.OtaHelper;
 import com.mentra.asg_client.io.ota.session.OtaSessionManager;
 import com.mentra.asg_client.io.ota.utils.OtaConstants;
 import com.mentra.asg_client.service.system.core.SystemControllerFactory;
+import com.mentra.asg_client.version.AsgVersion;
 import dagger.hilt.android.AndroidEntryPoint;
 import javax.inject.Inject;
 import org.greenrobot.eventbus.EventBus;
@@ -313,6 +314,9 @@ public class OtaService extends Service {
             case FINISHED:
                 Log.i(TAG, "BES firmware update finished successfully");
                 updateNotification("BES firmware updated successfully");
+                if (otaHelper != null) {
+                    otaHelper.continueSessionAfterStepComplete(this);
+                }
                 // Note: BES chip will send sr_adota with progress=100 or type=success
                 break;
             case FAILED:
@@ -369,14 +373,19 @@ public class OtaService extends Service {
                 String currentStepType = sessionManager.getStepType(currentStepIndex);
                 String currentPhase = sessionManager.getCurrentPhase();
                 boolean isApkInstallRestart =
-                        currentStepIndex == 0
-                                && "apk".equals(currentStepType)
+                        "apk".equals(currentStepType)
                                 && "install".equals(currentPhase);
                 if (isApkInstallRestart) {
                     Log.i(
                             TAG,
                             "📱 Active APK install session found without restart guard — resuming next step");
                     resumeFromSession(sessionManager);
+                    return;
+                }
+                if (SystemClock.elapsedRealtime() < 120_000L) {
+                    Log.i(TAG, "Device rebooted during firmware OTA; rechecking current session step");
+                    new Handler(Looper.getMainLooper())
+                            .postDelayed(() -> resumeCurrentSession(sessionManager), 10_000L);
                     return;
                 }
                 Log.i(
@@ -395,8 +404,7 @@ public class OtaService extends Service {
             SharedPreferences prefs = getSharedPreferences("ota_state", Context.MODE_PRIVATE);
             long previousVersion = prefs.getLong("last_seen_asg_version", -1);
 
-            PackageInfo packageInfo = getPackageManager().getPackageInfo(getPackageName(), 0);
-            long currentVersion = packageInfo.getLongVersionCode();
+            long currentVersion = AsgVersion.current();
 
             if (previousVersion == -1) {
                 Log.i(
@@ -407,7 +415,7 @@ public class OtaService extends Service {
                 // Clear any recovery heartbeat pause that may have been set before this install.
                 OtaHelper.notifyRecoveryInstallCompleted(this);
 
-            } else if (currentVersion > previousVersion) {
+            } else if (currentVersion != previousVersion) {
                 Log.i(
                         TAG,
                         "📱 ASG client was updated from "
@@ -427,6 +435,16 @@ public class OtaService extends Service {
         } catch (Exception e) {
             Log.e(TAG, "Error checking for APK update auto-resume", e);
         }
+    }
+
+    private void resumeCurrentSession(OtaSessionManager sessionManager) {
+        String versionJsonUrl = sessionManager.getVersionJsonUrl();
+        if (otaHelper == null || versionJsonUrl == null || versionJsonUrl.isEmpty()) {
+            Log.e(TAG, "Cannot recheck OTA session after reboot");
+            return;
+        }
+        otaHelper.setPhoneInitiatedOta(true);
+        otaHelper.startVersionCheckWithUrl(this, versionJsonUrl);
     }
 
     private void resumeFromSession(OtaSessionManager sessionManager) {

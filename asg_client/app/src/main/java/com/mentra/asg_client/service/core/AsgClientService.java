@@ -46,6 +46,7 @@ import com.mentra.asg_client.service.system.interfaces.IStateManager;
 import com.mentra.asg_client.service.system.managers.AsgNotificationManager;
 import com.mentra.asg_client.service.utils.ServiceUtils;
 import com.mentra.asg_client.service.utils.SysProp;
+import com.mentra.asg_client.version.AsgVersion;
 import dagger.hilt.android.AndroidEntryPoint;
 import java.nio.charset.StandardCharsets;
 import java.util.Locale;
@@ -96,6 +97,7 @@ public class AsgClientService extends Service implements NetworkStateListener, T
     // Constants //TODO: Extract all the Constants and Magic Number/Text to AsgConstants
     // ---------------------------------------------
     public static final String TAG = "AsgClientServiceV2";
+    private static final long PACKAGE_REPLACEMENT_RECORDING_TIMEOUT_MS = 5_000L;
 
     // Service actions
     public static final String ACTION_START_CORE = "ACTION_START_CORE";
@@ -396,6 +398,47 @@ public class AsgClientService extends Service implements NetworkStateListener, T
 
     public static boolean isServiceRunning() {
         return serviceRunning.get();
+    }
+
+    /**
+     * Finalizes an active recording before Android replaces this package and kills the process.
+     *
+     * <p>The OTA pipeline calls this from its worker thread after the target APK has been verified
+     * and before it wipes downgrade state. MPEG4 writes its moov atom asynchronously during stop,
+     * so wait for the capture service to report that recording is finished instead of relying on a
+     * fixed delay.
+     */
+    public static boolean prepareForPackageReplacement() {
+        AsgClientService active = instance;
+        if (active == null || active.serviceInitializer == null) {
+            return true;
+        }
+        try {
+            MediaCaptureService mediaCaptureService =
+                    active.serviceInitializer.getServiceManager().getMediaCaptureService();
+            if (mediaCaptureService == null || !mediaCaptureService.isRecordingVideo()) {
+                return true;
+            }
+
+            Log.i(TAG, "Stopping active recording before ASG package replacement");
+            mediaCaptureService.stopVideoRecording();
+            long deadline = System.nanoTime() + PACKAGE_REPLACEMENT_RECORDING_TIMEOUT_MS * 1_000_000L;
+            while (mediaCaptureService.isRecordingVideo() && System.nanoTime() < deadline) {
+                Thread.sleep(50L);
+            }
+            if (mediaCaptureService.isRecordingVideo()) {
+                Log.e(TAG, "Recording did not finalize before ASG package replacement timeout");
+                return false;
+            }
+            Log.i(TAG, "Recording finalized before ASG package replacement");
+            return true;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        } catch (Exception e) {
+            Log.e(TAG, "Could not finalize recording before ASG package replacement", e);
+            return false;
+        }
     }
 
     /**
@@ -1105,7 +1148,7 @@ public class AsgClientService extends Service implements NetworkStateListener, T
 
     /**
      * Send version information to phone in two chunks to work around BLE MTU limitations. Chunk 1
-     * (version_info_1): app_version, build_number, device_model, android_version Chunk 2
+     * (version_info_1): app_version, build_number, asg_version, device_model, android_version Chunk 2
      * (version_info_2): ota_version_url, firmware_version, bt_mac_address Phone will accumulate
      * both chunks and process when complete.
      */
@@ -1116,7 +1159,14 @@ public class AsgClientService extends Service implements NetworkStateListener, T
             // Gather all version data
             String appVersion = "1.0.0";
             String buildNumber = "1";
-            Log.d(TAG, "📋 Default app version: " + appVersion + ", Build number: " + buildNumber);
+            Log.d(
+                    TAG,
+                    "📋 Default app version: "
+                            + appVersion
+                            + ", Android build number: "
+                            + buildNumber
+                            + ", ASG version: "
+                            + AsgVersion.current());
 
             try {
                 appVersion = getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
@@ -1129,8 +1179,10 @@ public class AsgClientService extends Service implements NetworkStateListener, T
                         TAG,
                         "✅ Retrieved app version: "
                                 + appVersion
-                                + ", Build number: "
-                                + buildNumber);
+                                + ", Android build number: "
+                                + buildNumber
+                                + ", ASG version: "
+                                + AsgVersion.current());
             } catch (Exception e) {
                 Log.e(TAG, "💥 Error getting app version - using defaults", e);
             }
@@ -1179,6 +1231,7 @@ public class AsgClientService extends Service implements NetworkStateListener, T
                 chunk1.put("type", "version_info_1");
                 chunk1.put("app_version", appVersion);
                 chunk1.put("build_number", buildNumber);
+                chunk1.put("asg_version", AsgVersion.current());
                 chunk1.put("device_model", deviceModel);
                 chunk1.put("android_version", androidVersion);
                 chunk1.put("system_time_ms", System.currentTimeMillis());

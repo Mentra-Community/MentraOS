@@ -4,6 +4,11 @@ on:
   pull_request:
     paths:
       - "asg_client/**"
+      - ".github/scripts/asg-version.mjs"
+      - ".github/scripts/asg-version.test.mjs"
+      - ".github/scripts/build-bluetooth-sdk-ota-manifest.mjs"
+      - ".github/scripts/build-bluetooth-sdk-ota-manifest.test.mjs"
+      - ".github/scripts/check-asg-downgrade-state.test.mjs"
       - ".github/workflows/mentra-asg-client-build.yml"
   push:
     branches:
@@ -100,6 +105,18 @@ jobs:
         with:
           java-version: "17"
           distribution: "temurin"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Test ASG release and downgrade contracts
+        run: >-
+          node --test
+          .github/scripts/asg-version.test.mjs
+          .github/scripts/build-bluetooth-sdk-ota-manifest.test.mjs
+          .github/scripts/check-asg-downgrade-state.test.mjs
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v2

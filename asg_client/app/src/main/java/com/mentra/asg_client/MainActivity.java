@@ -128,7 +128,14 @@ public class MainActivity extends AppCompatActivity {
                 PackageInfo pInfo = getPackageManager().getPackageInfo(getPackageName(), 0);
                 String versionName = pInfo.versionName;
                 long versionCode = pInfo.getLongVersionCode();
-                versionTextView.setText("Version: " + versionName + " (" + versionCode + ")");
+                versionTextView.setText(
+                        "Version: "
+                                + versionName
+                                + " (ASG "
+                                + BuildConfig.ASG_VERSION
+                                + ", Android "
+                                + versionCode
+                                + ")");
                 versionTextView.setVisibility(View.VISIBLE);
             } catch (PackageManager.NameNotFoundException e) {
                 versionTextView.setText("Version info not available");

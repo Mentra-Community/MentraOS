@@ -50,6 +50,25 @@ internal object OtaManifestChecker {
     }
 
     fun fetch(otaVersionUrl: String): JSONObject {
+        val manifest = fetchJson(otaVersionUrl)
+        val firmwareUrl = manifest.optString("firmwareManifestUrl", "").trim()
+        if (firmwareUrl.isNotEmpty()) {
+            val firmware = fetchJson(normalizeHttpUrl(firmwareUrl))
+            val mtkPatches = firmware.optJSONArray("mtk_patches")
+            val besFirmware = firmware.optJSONObject("bes_firmware")
+            if (mtkPatches == null || mtkPatches.length() == 0 || besFirmware == null) {
+                throw BluetoothSdkException(
+                    "invalid_ota_manifest",
+                    "Referenced firmware manifest must include non-empty mtk_patches and bes_firmware.",
+                )
+            }
+            manifest.put("mtk_patches", mtkPatches)
+            manifest.put("bes_firmware", besFirmware)
+        }
+        return manifest
+    }
+
+    private fun fetchJson(otaVersionUrl: String): JSONObject {
         val connection = URL(otaVersionUrl).openConnection() as HttpURLConnection
         connection.connectTimeout = 15_000
         connection.readTimeout = 15_000
@@ -66,12 +85,13 @@ internal object OtaManifestChecker {
     }
 
     fun hasUpdate(
+        currentAsgVersion: Long?,
         currentBuildNumber: String,
         currentMtkVersion: String,
         currentBesVersion: String,
         manifest: JSONObject,
     ): Boolean =
-        hasApkUpdate(currentBuildNumber, manifest) ||
+        hasApkUpdate(currentAsgVersion, currentBuildNumber, manifest) ||
             hasMtkUpdate(manifest.optJSONArray("mtk_patches"), currentMtkVersion) ||
             hasBesUpdate(manifest.optJSONObject("bes_firmware"), currentBesVersion)
 
@@ -84,7 +104,7 @@ internal object OtaManifestChecker {
     private fun latestAppInfo(manifest: JSONObject): JSONObject {
         val apps = manifest.optJSONObject("apps")
         val app = apps?.optJSONObject(ASG_CLIENT_PACKAGE)
-        if (app != null && app.hasNumber("versionCode")) {
+        if (app != null && (app.hasNumber("asgVersion") || app.hasNumber("versionCode"))) {
             return app
         }
 
@@ -92,18 +112,23 @@ internal object OtaManifestChecker {
             return manifest
         }
 
-        throw BluetoothSdkException("invalid_ota_manifest", "OTA manifest is missing ASG app versionCode.")
+        throw BluetoothSdkException("invalid_ota_manifest", "OTA manifest is missing ASG app asgVersion/versionCode.")
     }
 
-    private fun hasApkUpdate(currentBuildNumber: String, manifest: JSONObject): Boolean {
+    private fun hasApkUpdate(
+        currentAsgVersion: Long?,
+        currentBuildNumber: String,
+        manifest: JSONObject,
+    ): Boolean {
         val currentVersion =
-            currentBuildNumber.toLongOrNull()
+            currentAsgVersion ?: currentBuildNumber.toLongOrNull()
                 ?: throw BluetoothSdkException(
                     "invalid_glasses_version",
-                    "Cannot check OTA update because glasses build number is invalid.",
+                    "Cannot check OTA update because glasses ASG/build version is invalid.",
                 )
-        val serverVersion = latestAppInfo(manifest).requiredLong("versionCode")
-        return serverVersion > currentVersion
+        val app = latestAppInfo(manifest)
+        val serverVersion = app.optionalLong("asgVersion") ?: app.requiredLong("versionCode")
+        return serverVersion != currentVersion
     }
 
     private fun hasMtkUpdate(patches: JSONArray?, currentVersion: String): Boolean {
@@ -149,5 +174,7 @@ internal object OtaManifestChecker {
 
     private fun JSONObject.requiredLong(key: String): Long =
         (opt(key) as? Number)?.toLong()
-            ?: throw BluetoothSdkException("invalid_ota_manifest", "OTA manifest is missing ASG app versionCode.")
+            ?: throw BluetoothSdkException("invalid_ota_manifest", "OTA manifest is missing ASG app asgVersion/versionCode.")
+
+    private fun JSONObject.optionalLong(key: String): Long? = (opt(key) as? Number)?.toLong()
 }

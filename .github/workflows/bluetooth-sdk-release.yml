@@ -6,6 +6,7 @@ on:
       - dev
     paths:
       - ".github/scripts/build-bluetooth-sdk-ota-manifest.mjs"
+      - ".github/scripts/asg-version.mjs"
       - ".github/scripts/bluetooth-sdk-release-info.mjs"
       - ".github/workflows/bluetooth-sdk-release.yml"
       - "mobile/modules/bluetooth-sdk/**"
@@ -24,7 +25,8 @@ on:
         type: boolean
 
 concurrency:
-  group: bluetooth-sdk-release-${{ github.ref }}
+  # Shared with staging-builds: ASG logical versions must be globally unique.
+  group: asg-release-publish
   cancel-in-progress: false
 
 permissions:
@@ -117,6 +119,7 @@ jobs:
     runs-on: [self-hosted, macOS, ARM64]
     outputs:
       manifest_url: ${{ steps.sdk-ota-info.outputs.manifest_url }}
+      asg_version: ${{ steps.existing-sdk-ota.outputs.asg_version || steps.asg-build-info.outputs.asg_version }}
       version_code: ${{ steps.existing-sdk-ota.outputs.version_code || steps.asg-build-info.outputs.version_code }}
       version_name: ${{ steps.existing-sdk-ota.outputs.version_name || steps.asg-build-info.outputs.version_name }}
     steps:
@@ -147,33 +150,64 @@ jobs:
       - name: Compute ASG build info
         id: asg-build-info
         env:
-          SDK_VERSION: ${{ needs.detect.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          EPOCH_OFFSET_SECONDS=1735689600
-          BASELINE=100000
-          NOW_SECONDS=$(git show -s --format=%ct HEAD)
-          VERSION_CODE=$((BASELINE + NOW_SECONDS - EPOCH_OFFSET_SECONDS))
-          SHORT_SHA=$(git rev-parse --short HEAD)
-          VERSION_NAME="${SDK_VERSION}"
-
-          echo "version_code=${VERSION_CODE}" >> "$GITHUB_OUTPUT"
-          echo "version_name=${VERSION_NAME}" >> "$GITHUB_OUTPUT"
-          echo "short_sha=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          last_published=0
+          published_version_codes=()
+          for url in \
+            "https://ota.mentraglass.com/prod_live_version.json" \
+            "https://ota.mentraglass.com/prod_live_version_v2.json" \
+            "https://mentra-live-ota-staging.pages.dev/staging_live_version.json"; do
+            if json=$(curl --fail --silent --show-error --location "$url"); then
+              candidate=$(jq -r '.apps["com.mentra.asg_client"] | .asgVersion // .versionCode // 0' <<<"$json")
+              version_code=$(jq -r '.apps["com.mentra.asg_client"].versionCode // 0' <<<"$json")
+              if [[ "$version_code" =~ ^[0-9]+$ ]]; then
+                published_version_codes+=("$version_code")
+              fi
+              if [[ "$candidate" =~ ^[0-9]+$ ]] && (( candidate > last_published )); then
+                last_published=$candidate
+              fi
+            fi
+          done
+          release_json=$(curl --fail --silent --show-error --location \
+            --header "Authorization: Bearer ${GH_TOKEN}" \
+            --header "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/${SDK_OTA_RELEASE_TAG}")
+          while IFS=$'\t' read -r asset_name asset_url; do
+            if [[ "$asset_name" =~ -vc([0-9]+)- ]]; then
+              published_version_codes+=("${BASH_REMATCH[1]}")
+            fi
+            if [[ "$asset_name" == bluetooth-sdk-*-version.json ]]; then
+              json=$(curl --fail --silent --show-error --location "$asset_url")
+              candidate=$(jq -r '.apps["com.mentra.asg_client"] | .asgVersion // .versionCode // 0' <<<"$json")
+              version_code=$(jq -r '.apps["com.mentra.asg_client"].versionCode // 0' <<<"$json")
+              if [[ "$version_code" =~ ^[0-9]+$ ]]; then
+                published_version_codes+=("$version_code")
+              fi
+              if [[ "$candidate" =~ ^[0-9]+$ ]] && (( candidate > last_published )); then
+                last_published=$candidate
+              fi
+            fi
+          done < <(jq -r '.assets[] | [.name, .browser_download_url] | @tsv' <<<"$release_json")
+          LAST_PUBLISHED_ASG_VERSION=$last_published \
+            PUBLISHED_ASG_VERSION_CODES="$(IFS=,; echo "${published_version_codes[*]}")" \
+            ASG_VERSION_NAME_PREFIX="sdk-${{ needs.detect.outputs.version }}" \
+            node .github/scripts/asg-version.mjs >> "$GITHUB_OUTPUT"
 
       - name: Prepare SDK OTA release names
         id: sdk-ota-info
         env:
           SDK_VERSION: ${{ needs.detect.outputs.version }}
           SHORT_SHA: ${{ steps.asg-build-info.outputs.short_sha }}
-          VERSION_CODE: ${{ steps.asg-build-info.outputs.version_code }}
+          ASG_VERSION: ${{ steps.asg-build-info.outputs.asg_version }}
         run: |
           set -euo pipefail
           if ! printf '%s' "$SDK_VERSION" | grep -Eq '^[0-9A-Za-z][0-9A-Za-z._-]*$'; then
             echo "Unsafe SDK version for OTA path: $SDK_VERSION" >&2
             exit 1
           fi
-          APK_ASSET="asg-client-sdk-${SDK_VERSION}-vc${VERSION_CODE}-${SHORT_SHA}.apk"
+          APK_ASSET="asg-client-sdk-${SDK_VERSION}-asg${ASG_VERSION}-${SHORT_SHA}.apk"
           MANIFEST_ASSET="bluetooth-sdk-${SDK_VERSION}-version.json"
           APK_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${SDK_OTA_RELEASE_TAG}/${APK_ASSET}"
           MANIFEST_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${SDK_OTA_RELEASE_TAG}/${MANIFEST_ASSET}"
@@ -209,14 +243,18 @@ jobs:
           jq -e \
             '.apps["com.mentra.asg_client"].versionCode
               and .apps["com.mentra.asg_client"].versionName
-              and (.mtk_patches | type == "array" and length > 0)
-              and (.bes_firmware | type == "object")' \
+              and (.apps["com.mentra.asg_client"].asgVersion // .apps["com.mentra.asg_client"].versionCode)
+              and ((.firmwareManifestUrl | type == "string")
+                or ((.mtk_patches | type == "array" and length > 0)
+                  and (.bes_firmware | type == "object")))' \
             /tmp/sdk_ota_version.json >/dev/null
 
+          asg_version=$(jq -er '.apps["com.mentra.asg_client"] | .asgVersion // .versionCode' /tmp/sdk_ota_version.json)
           version_code=$(jq -er '.apps["com.mentra.asg_client"].versionCode' /tmp/sdk_ota_version.json)
           version_name=$(jq -er '.apps["com.mentra.asg_client"].versionName' /tmp/sdk_ota_version.json)
 
           echo "exists=true" >> "$GITHUB_OUTPUT"
+          echo "asg_version=${asg_version}" >> "$GITHUB_OUTPUT"
           echo "version_code=${version_code}" >> "$GITHUB_OUTPUT"
           echo "version_name=${version_name}" >> "$GITHUB_OUTPUT"
           echo "Reusing existing SDK OTA manifest at ${MANIFEST_URL}."
@@ -269,7 +307,7 @@ jobs:
         id: gradle-build
         if: steps.existing-sdk-ota.outputs.exists != 'true'
         working-directory: ./asg_client
-        run: ./gradlew -PASG_VERSION_CODE="${{ steps.asg-build-info.outputs.version_code }}" -PASG_VERSION_NAME="${{ steps.asg-build-info.outputs.version_name }}" assembleRelease --build-cache --parallel
+        run: ./gradlew -PASG_VERSION="${{ steps.asg-build-info.outputs.asg_version }}" -PASG_VERSION_NAME="${{ steps.asg-build-info.outputs.version_name }}" assembleRelease --build-cache --parallel
         continue-on-error: true
 
       - name: Retry ASG build with clean cache
@@ -279,14 +317,24 @@ jobs:
           echo "First ASG build failed, cleaning Gradle cache and retrying..."
           ./gradlew --stop || true
           rm -rf ~/.gradle/caches ~/.gradle/wrapper || true
-          ./gradlew -PASG_VERSION_CODE="${{ steps.asg-build-info.outputs.version_code }}" -PASG_VERSION_NAME="${{ steps.asg-build-info.outputs.version_name }}" assembleRelease --build-cache --parallel
+          ./gradlew -PASG_VERSION="${{ steps.asg-build-info.outputs.asg_version }}" -PASG_VERSION_NAME="${{ steps.asg-build-info.outputs.version_name }}" assembleRelease --build-cache --parallel
 
       - name: Collect ASG APK info
         id: asg-apk-info
         if: steps.existing-sdk-ota.outputs.exists != 'true'
+        env:
+          EXPECTED_ASG_VERSION: ${{ steps.asg-build-info.outputs.asg_version }}
+          EXPECTED_VERSION_CODE: ${{ steps.asg-build-info.outputs.version_code }}
         run: |
           set -euo pipefail
           APK="asg_client/app/build/outputs/apk/release/app-release.apk"
+          AAPT=$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort | tail -1)
+          test -n "$AAPT"
+          APK_BADGING=$("$AAPT" dump badging "$APK")
+          grep -F "versionCode='${EXPECTED_VERSION_CODE}'" <<<"$APK_BADGING"
+          APK_MANIFEST=$("$AAPT" dump xmltree "$APK" AndroidManifest.xml)
+          grep -F 'com.mentra.asg_client.ASG_VERSION' <<<"$APK_MANIFEST"
+          grep -F "asg-${EXPECTED_ASG_VERSION}" <<<"$APK_MANIFEST"
           if command -v shasum >/dev/null 2>&1; then
             SHA256=$(shasum -a 256 "$APK" | awk '{print $1}')
           else
@@ -301,11 +349,13 @@ jobs:
           ASG_APK_SHA256: ${{ steps.asg-apk-info.outputs.sha256 }}
           ASG_APK_SIZE: ${{ steps.asg-apk-info.outputs.size }}
           ASG_APK_URL: ${{ steps.sdk-ota-info.outputs.apk_url }}
+          ASG_VERSION: ${{ steps.asg-build-info.outputs.asg_version }}
           ASG_VERSION_CODE: ${{ steps.asg-build-info.outputs.version_code }}
           ASG_VERSION_NAME: ${{ steps.asg-build-info.outputs.version_name }}
-          FIRMWARE_MANIFEST: asg_client/ota_manifests/firmware_live.json
+          FIRMWARE_MANIFEST_URL: https://ota.mentraglass.com/prod_live_version_v2.json
           OUTPUT_PATH: sdk-ota-manifest/version.json
           SDK_VERSION: ${{ needs.detect.outputs.version }}
+          SOURCE_COMMIT: ${{ github.sha }}
         run: node .github/scripts/build-bluetooth-sdk-ota-manifest.mjs
 
       - name: Upload ASG APK and manifest to SDK OTA release
@@ -403,6 +453,7 @@ jobs:
       - name: Verify SDK OTA manifest release asset
         if: needs.detect.outputs.dry_run != 'true'
         env:
+          ASG_VERSION: ${{ steps.existing-sdk-ota.outputs.asg_version || steps.asg-build-info.outputs.asg_version }}
           VERSION_CODE: ${{ steps.existing-sdk-ota.outputs.version_code || steps.asg-build-info.outputs.version_code }}
         run: |
           set -euo pipefail
@@ -410,10 +461,12 @@ jobs:
           echo "Verifying ${{ steps.sdk-ota-info.outputs.manifest_url }}"
           for attempt in {1..12}; do
             if curl --fail --silent --show-error --location "${{ steps.sdk-ota-info.outputs.manifest_url }}" -o /tmp/sdk_ota_version.json \
-              && jq -e --argjson versionCode "$VERSION_CODE" \
+              && jq -e --argjson asgVersion "$ASG_VERSION" --argjson versionCode "$VERSION_CODE" \
                 '.apps["com.mentra.asg_client"].versionCode == $versionCode
-                  and (.mtk_patches | type == "array" and length > 0)
-                  and (.bes_firmware | type == "object")' \
+                  and (.apps["com.mentra.asg_client"].asgVersion // .apps["com.mentra.asg_client"].versionCode) == $asgVersion
+                  and ((.firmwareManifestUrl | type == "string")
+                    or ((.mtk_patches | type == "array" and length > 0)
+                      and (.bes_firmware | type == "object")))' \
                 /tmp/sdk_ota_version.json >/dev/null; then
               break
             fi
@@ -430,6 +483,7 @@ jobs:
             echo "## Bluetooth SDK OTA artifact"
             echo ""
             echo "- SDK version: \`${{ needs.detect.outputs.version }}\`"
+            echo "- ASG version: \`${{ steps.existing-sdk-ota.outputs.asg_version || steps.asg-build-info.outputs.asg_version }}\`"
             echo "- ASG versionCode: \`${{ steps.existing-sdk-ota.outputs.version_code || steps.asg-build-info.outputs.version_code }}\`"
             echo "- ASG versionName: \`${{ steps.existing-sdk-ota.outputs.version_name || steps.asg-build-info.outputs.version_name }}\`"
             echo "- APK asset: \`${{ steps.existing-sdk-ota.outputs.exists == 'true' && 'reused from existing manifest' || steps.sdk-ota-info.outputs.apk_asset }}\`"

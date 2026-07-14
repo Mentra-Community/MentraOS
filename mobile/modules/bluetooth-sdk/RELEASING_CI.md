@@ -63,14 +63,15 @@ workflow for a real release:
    the detector fails closed; rerun with `workflow_dispatch` and
    `force_release=true` after confirming the version should release.
 2. The SDK OTA job builds the ASG client APK from the same release commit,
-   generates a versioned manifest with ASG APK metadata plus the MTK and BES
-   metadata from `asg_client/ota_manifests/firmware_live.json`, then uploads the
-   APK and manifest to the persistent `bluetooth-sdk-ota` GitHub release. The APK
-   asset name includes the SDK version, ASG `versionCode`, and commit SHA; the
-   manifest asset name includes the SDK version.
-   The ASG `versionCode` uses the same Jan 1 2025 wall-clock offset formula as
-   rolling staging builds, but uses the release commit timestamp so reruns of the
-   same SDK release commit produce the same ASG target.
+   assigns a canonical `asgVersion`, and generates an immutable SDK-to-ASG
+   manifest. `asgVersion` continues the modified-epoch sequence (`100000` plus
+   seconds since Jan 1 2025 UTC) and advances past the last published value when
+   needed for same-second builds or clock skew. Android `versionCode` is fixed at
+   `1000000000` and is not a compatibility identifier. The manifest references
+   the mutable production firmware manifest for latest MTK/BES rather than
+   snapshotting firmware into each SDK release. The APK asset name includes the
+   SDK version, `asgVersion`, and source SHA; the manifest records the source
+   commit and exact APK SHA-256.
 3. The SDK OTA job verifies the GitHub release manifest URL before package
    publishing starts. If the same SDK release is rerun after OTA publishing
    succeeded, existing APK or manifest assets are reused only when their content

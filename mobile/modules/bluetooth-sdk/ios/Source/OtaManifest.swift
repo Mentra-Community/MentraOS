@@ -20,7 +20,8 @@ enum OtaManifestDefaults {
 }
 
 struct OtaManifestApp: Decodable {
-    let versionCode: Int?
+    let versionCode: Int64?
+    let asgVersion: Int64?
 }
 
 struct MtkPatch: Decodable {
@@ -37,14 +38,16 @@ struct BesFirmware: Decodable {
 
 struct OtaManifest: Decodable {
     let apps: [String: OtaManifestApp]?
-    let mtkPatches: [MtkPatch]?
-    let besFirmware: BesFirmware?
-    let versionCode: Int?
+    var mtkPatches: [MtkPatch]?
+    var besFirmware: BesFirmware?
+    let firmwareManifestUrl: String?
+    let versionCode: Int64?
 
     enum CodingKeys: String, CodingKey {
         case apps
         case mtkPatches = "mtk_patches"
         case besFirmware = "bes_firmware"
+        case firmwareManifestUrl
         case versionCode
     }
 }
@@ -81,16 +84,41 @@ enum OtaManifestChecker {
                 message: "OTA manifest request failed with HTTP \(httpResponse.statusCode) for \(otaVersionUrl)."
             )
         }
-        return try JSONDecoder().decode(OtaManifest.self, from: data)
+        var manifest = try JSONDecoder().decode(OtaManifest.self, from: data)
+        if let firmwareUrl = manifest.firmwareManifestUrl?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !firmwareUrl.isEmpty
+        {
+            let normalizedUrl = try normalizeHttpUrl(firmwareUrl)
+            guard let url = URL(string: normalizedUrl) else {
+                throw BluetoothSdkError(code: "invalid_ota_url", message: "Firmware manifest URL is invalid.")
+            }
+            let (firmwareData, firmwareResponse) = try await URLSession.shared.data(from: url)
+            guard let httpResponse = firmwareResponse as? HTTPURLResponse,
+                  (200 ... 299).contains(httpResponse.statusCode)
+            else {
+                throw BluetoothSdkError(code: "ota_manifest_request_failed", message: "Firmware manifest request failed.")
+            }
+            let firmware = try JSONDecoder().decode(OtaManifest.self, from: firmwareData)
+            guard let patches = firmware.mtkPatches, !patches.isEmpty, let bes = firmware.besFirmware else {
+                throw BluetoothSdkError(
+                    code: "invalid_ota_manifest",
+                    message: "Referenced firmware manifest must include non-empty mtk_patches and bes_firmware."
+                )
+            }
+            manifest.mtkPatches = patches
+            manifest.besFirmware = bes
+        }
+        return manifest
     }
 
     static func hasUpdate(
+        currentAsgVersion: Int64?,
         currentBuildNumber: String,
         currentMtkVersion: String,
         currentBesVersion: String,
         manifest: OtaManifest
     ) throws -> Bool {
-        try hasApkUpdate(currentBuildNumber: currentBuildNumber, manifest: manifest) ||
+        try hasApkUpdate(currentAsgVersion: currentAsgVersion, currentBuildNumber: currentBuildNumber, manifest: manifest) ||
             hasMtkUpdate(patches: manifest.mtkPatches, currentVersion: currentMtkVersion) ||
             hasBesUpdate(besFirmware: manifest.besFirmware, currentVersion: currentBesVersion)
     }
@@ -104,26 +132,31 @@ enum OtaManifestChecker {
     }
 
     private static func latestAppInfo(_ manifest: OtaManifest) throws -> OtaManifestApp {
-        if let app = manifest.apps?[asgClientPackage], app.versionCode != nil {
+        if let app = manifest.apps?[asgClientPackage], app.asgVersion != nil || app.versionCode != nil {
             return app
         }
         if let versionCode = manifest.versionCode {
-            return OtaManifestApp(versionCode: versionCode)
+            return OtaManifestApp(versionCode: versionCode, asgVersion: nil)
         }
-        throw BluetoothSdkError(code: "invalid_ota_manifest", message: "OTA manifest is missing ASG app versionCode.")
+        throw BluetoothSdkError(code: "invalid_ota_manifest", message: "OTA manifest is missing ASG app asgVersion/versionCode.")
     }
 
-    private static func hasApkUpdate(currentBuildNumber: String, manifest: OtaManifest) throws -> Bool {
-        guard let currentVersion = Int(currentBuildNumber) else {
+    private static func hasApkUpdate(
+        currentAsgVersion: Int64?,
+        currentBuildNumber: String,
+        manifest: OtaManifest
+    ) throws -> Bool {
+        guard let currentVersion = currentAsgVersion ?? Int64(currentBuildNumber) else {
             throw BluetoothSdkError(
                 code: "invalid_glasses_version",
-                message: "Cannot check OTA update because glasses build number is invalid."
+                message: "Cannot check OTA update because glasses ASG/build version is invalid."
             )
         }
-        guard let serverVersion = try latestAppInfo(manifest).versionCode else {
-            throw BluetoothSdkError(code: "invalid_ota_manifest", message: "OTA manifest is missing ASG app versionCode.")
+        let app = try latestAppInfo(manifest)
+        guard let serverVersion = app.asgVersion ?? app.versionCode else {
+            throw BluetoothSdkError(code: "invalid_ota_manifest", message: "OTA manifest is missing ASG app asgVersion/versionCode.")
         }
-        return serverVersion > currentVersion
+        return serverVersion != currentVersion
     }
 
     private static func hasMtkUpdate(patches: [MtkPatch]?, currentVersion: String) throws -> Bool {

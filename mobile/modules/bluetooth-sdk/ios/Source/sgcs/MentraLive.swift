@@ -2591,6 +2591,9 @@ class MentraLive: NSObject, SGCManager {
                     parsePeerWireCaps(json)
                     maybeSendWireHandshake()
                 }
+                if let asgVersion = fields["asg_version"] as? NSNumber {
+                    DeviceStore.shared.apply("glasses", "asgVersion", asgVersion.int64Value)
+                }
                 if let deviceModel = fields["device_model"] as? String {
                     DeviceStore.shared.apply("glasses", "deviceModel", deviceModel)
                 }
@@ -3115,6 +3118,7 @@ class MentraLive: NSObject, SGCManager {
         // Invalidate any version fields from a prior link session so the next version_info
         // cannot leave a stale build number in RN (ASG is source of truth for PackageInfo).
         DeviceStore.shared.apply("glasses", "buildNumber", "")
+        DeviceStore.shared.apply("glasses", "asgVersion", Int64(0))
         DeviceStore.shared.apply("glasses", "appVersion", "")
         DeviceStore.shared.apply("glasses", "besFirmwareVersion", "")
         DeviceStore.shared.apply("glasses", "mtkFirmwareVersion", "")
@@ -3180,6 +3184,7 @@ class MentraLive: NSObject, SGCManager {
     private func handleVersionInfo(_ json: [String: Any]) {
         let appVersion = json["app_version"] as? String ?? ""
         let buildNumber = json["build_number"] as? String ?? ""
+        let asgVersion = (json["asg_version"] as? NSNumber)?.int64Value
         let deviceModel = json["device_model"] as? String ?? ""
         let androidVersion = json["android_version"] as? String ?? ""
         let otaVersionUrl = json["ota_version_url"] as? String ?? ""
@@ -3188,6 +3193,9 @@ class MentraLive: NSObject, SGCManager {
 
         DeviceStore.shared.apply("glasses", "appVersion", appVersion)
         DeviceStore.shared.apply("glasses", "buildNumber", buildNumber)
+        if let asgVersion {
+            DeviceStore.shared.apply("glasses", "asgVersion", asgVersion)
+        }
         DeviceStore.shared.apply("glasses", "otaVersionUrl", otaVersionUrl)
         DeviceStore.shared.apply("glasses", "firmwareVersion", firmwareVersion)
         DeviceStore.shared.apply("glasses", "bluetoothMacAddress", bluetoothMacAddress)

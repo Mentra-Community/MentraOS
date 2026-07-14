@@ -96,6 +96,7 @@ public class SentryReportProvider implements IReportProvider {
             // Set default tags for all events
             Sentry.setTag("app_version", BuildConfig.VERSION_NAME);
             Sentry.setTag("build_number", String.valueOf(BuildConfig.VERSION_CODE));
+            Sentry.setTag("asg_version", String.valueOf(BuildConfig.ASG_VERSION));
             Sentry.setTag("device_model", Build.MODEL);
             Sentry.setTag("android_version", Build.VERSION.RELEASE);
             Sentry.setTag("sdk_int", String.valueOf(Build.VERSION.SDK_INT));
@@ -247,4 +248,4 @@ public class SentryReportProvider implements IReportProvider {
     
     // Note: Data filtering is now handled centrally by DataFilter utility
     // Provider-specific filtering methods have been removed to avoid duplication
-} 
+}

@@ -24,9 +24,9 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v2
 
-      - name: Build recovery worker debug APK
+      - name: Test and build recovery worker debug APK
         working-directory: ./asg_client/recovery_worker
-        run: ./gradlew clean assembleDebug
+        run: ./gradlew clean testDebugUnitTest assembleDebug
 
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4

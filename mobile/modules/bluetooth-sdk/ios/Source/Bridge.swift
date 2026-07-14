@@ -334,6 +334,9 @@ class Bridge {
         if let systemTimeMs = intValue(values["systemTimeMs"]) ?? intValue(values["system_time_ms"]) {
             body["systemTimeMs"] = systemTimeMs
         }
+        if let asgVersion = int64Value(values["asgVersion"]) ?? int64Value(values["asg_version"]) {
+            body["asgVersion"] = asgVersion
+        }
         Bridge.sendTypedMessage("version_info", body: body)
     }
 

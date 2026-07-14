@@ -1,16 +1,18 @@
 #!/usr/bin/env node
-import {mkdirSync, readFileSync, writeFileSync} from 'node:fs';
+import {mkdirSync, writeFileSync} from 'node:fs';
 import {dirname} from 'node:path';
 
 const requiredEnv = [
   'ASG_APK_SHA256',
   'ASG_APK_SIZE',
   'ASG_APK_URL',
+  'ASG_VERSION',
   'ASG_VERSION_CODE',
   'ASG_VERSION_NAME',
-  'FIRMWARE_MANIFEST',
+  'FIRMWARE_MANIFEST_URL',
   'OUTPUT_PATH',
   'SDK_VERSION',
+  'SOURCE_COMMIT',
 ];
 
 for (const key of requiredEnv) {
@@ -25,8 +27,8 @@ if (!/^[0-9A-Za-z][0-9A-Za-z._-]*$/.test(sdkVersion)) {
 }
 
 const versionCode = Number(process.env.ASG_VERSION_CODE);
-if (!Number.isSafeInteger(versionCode) || versionCode <= 0) {
-  throw new Error(`ASG_VERSION_CODE must be a positive integer, got: ${process.env.ASG_VERSION_CODE}`);
+if (versionCode !== 1_000_000_000) {
+  throw new Error(`ASG_VERSION_CODE must be the fixed transport value 1000000000, got: ${process.env.ASG_VERSION_CODE}`);
 }
 
 const apkSize = Number(process.env.ASG_APK_SIZE);
@@ -34,26 +36,43 @@ if (!Number.isSafeInteger(apkSize) || apkSize <= 0) {
   throw new Error(`ASG_APK_SIZE must be a positive integer, got: ${process.env.ASG_APK_SIZE}`);
 }
 
-const firmware = JSON.parse(readFileSync(process.env.FIRMWARE_MANIFEST, 'utf8'));
-if (!Array.isArray(firmware.mtk_patches) || firmware.mtk_patches.length === 0) {
-  throw new Error('Firmware manifest must include non-empty mtk_patches for SDK OTA releases.');
+if (!/^[0-9a-f]{64}$/i.test(process.env.ASG_APK_SHA256)) {
+  throw new Error('ASG_APK_SHA256 must be a 64-character hex digest.');
 }
-if (!firmware.bes_firmware || typeof firmware.bes_firmware !== 'object' || Array.isArray(firmware.bes_firmware)) {
-  throw new Error('Firmware manifest must include bes_firmware for SDK OTA releases.');
+
+const apkUrl = new URL(process.env.ASG_APK_URL);
+if (!['http:', 'https:'].includes(apkUrl.protocol)) {
+  throw new Error(`ASG_APK_URL must use http(s), got: ${apkUrl}`);
+}
+
+const asgVersion = Number(process.env.ASG_VERSION);
+if (!Number.isSafeInteger(asgVersion) || asgVersion <= 0) {
+  throw new Error(`ASG_VERSION must be a positive safe integer, got: ${process.env.ASG_VERSION}`);
+}
+
+const firmwareManifestUrl = new URL(process.env.FIRMWARE_MANIFEST_URL);
+if (!['http:', 'https:'].includes(firmwareManifestUrl.protocol)) {
+  throw new Error(`FIRMWARE_MANIFEST_URL must use http(s), got: ${firmwareManifestUrl}`);
+}
+
+if (!/^[0-9a-f]{7,64}$/i.test(process.env.SOURCE_COMMIT)) {
+  throw new Error(`SOURCE_COMMIT must be a Git commit SHA, got: ${process.env.SOURCE_COMMIT}`);
 }
 
 const manifest = {
+  sdkVersion,
+  sourceCommit: process.env.SOURCE_COMMIT,
   apps: {
     'com.mentra.asg_client': {
       versionCode,
       versionName: process.env.ASG_VERSION_NAME,
-      apkUrl: process.env.ASG_APK_URL,
+      asgVersion,
+      apkUrl: apkUrl.toString(),
       apkSize,
       sha256: process.env.ASG_APK_SHA256,
     },
   },
-  mtk_patches: firmware.mtk_patches,
-  bes_firmware: firmware.bes_firmware,
+  firmwareManifestUrl: firmwareManifestUrl.toString(),
 };
 
 mkdirSync(dirname(process.env.OUTPUT_PATH), {recursive: true});

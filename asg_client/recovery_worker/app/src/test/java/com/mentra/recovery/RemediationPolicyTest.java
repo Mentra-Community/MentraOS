@@ -50,6 +50,22 @@ public class RemediationPolicyTest {
   }
 
   @Test
+  public void prefersLogicalAsgVersionFields() throws Exception {
+    JSONObject json =
+        new JSONObject(
+            "{\"enabled\":true,\"maxVersionCode\":1000000000,"
+                + "\"versionCode\":1000000000,\"maxAsgVersion\":48332720,"
+                + "\"asgVersion\":48332721,\"apkUrl\":\"https://example.com/a.apk\","
+                + "\"sha256\":\"ab\"}");
+
+    RemediationPolicy policy = RemediationPolicy.fromJson(json);
+
+    assertNotNull(policy);
+    assertEquals(48_332_720L, policy.maxAsgVersion);
+    assertEquals(48_332_721L, policy.asgVersion);
+  }
+
+  @Test
   public void returnsNullWhenApkUrlMissing() throws Exception {
     JSONObject json = new JSONObject("{\"enabled\":true,\"versionCode\":39,\"sha256\":\"ab\"}");
     assertNull(RemediationPolicy.fromJson(json));

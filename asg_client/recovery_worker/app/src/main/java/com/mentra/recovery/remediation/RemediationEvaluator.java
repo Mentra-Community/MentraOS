@@ -5,9 +5,9 @@ import android.content.SharedPreferences;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.PackageManager.NameNotFoundException;
-import android.os.Build;
 import android.util.Log;
 
+import com.mentra.recovery.install.AsgInstallTransactionStore;
 import com.mentra.recovery.util.RecoveryConstants;
 
 /**
@@ -28,24 +28,24 @@ public final class RemediationEvaluator {
     if (policy == null || !policy.enabled) {
       return false;
     }
-    if (policy.versionCode <= 0 || policy.maxVersionCode < 0) {
+    if (policy.asgVersion <= 0 || policy.maxAsgVersion < 0) {
       return false;
     }
-    if (installedVersion > policy.maxVersionCode) {
+    if (installedVersion > policy.maxAsgVersion) {
       return false;
     }
-    return policy.versionCode > installedVersion;
+    return policy.asgVersion > installedVersion;
   }
 
   /** Installed version code of {@code packageName}, or {@code -1} when not installed/unknown. */
   public static long getInstalledVersion(Context context, String packageName) {
     try {
       PackageManager pm = context.getPackageManager();
-      PackageInfo info = pm.getPackageInfo(packageName, 0);
-      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-        return info.getLongVersionCode();
+      if (RecoveryConstants.ASG_PACKAGE.equals(packageName)) {
+        return AsgInstallTransactionStore.readInstalledAsgVersion(pm);
       }
-      return info.versionCode;
+      PackageInfo info = pm.getPackageInfo(packageName, 0);
+      return info.getLongVersionCode();
     } catch (NameNotFoundException e) {
       Log.d(RecoveryConstants.TAG, packageName + " not installed");
       return -1L;
@@ -71,7 +71,7 @@ public final class RemediationEvaluator {
     if (policy == null) {
       return false;
     }
-    return lastAppliedVersion >= policy.versionCode;
+    return lastAppliedVersion >= policy.asgVersion;
   }
 
   /** Records the target version as applied so subsequent runs skip the install. */
@@ -81,6 +81,6 @@ public final class RemediationEvaluator {
     }
     SharedPreferences prefs =
         context.getSharedPreferences(RecoveryConstants.REMEDIATION_PREFS, Context.MODE_PRIVATE);
-    prefs.edit().putLong(RecoveryConstants.KEY_LAST_APPLIED_VERSION, policy.versionCode).apply();
+    prefs.edit().putLong(RecoveryConstants.KEY_LAST_APPLIED_VERSION, policy.asgVersion).apply();
   }
 }

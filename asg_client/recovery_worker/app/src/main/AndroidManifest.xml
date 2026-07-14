@@ -48,6 +48,8 @@
             android:permission="com.mentra.recovery.permission.CONTROL">
             <intent-filter>
                 <action android:name="com.mentra.recovery.ACTION_START_RECOVERY" />
+                <action android:name="com.mentra.recovery.ACTION_ASG_INSTALL_PENDING" />
+                <action android:name="com.mentra.recovery.ACTION_ASG_INSTALL_READY" />
             </intent-filter>
         </receiver>
     </application>

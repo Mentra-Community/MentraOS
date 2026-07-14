@@ -1004,6 +1004,7 @@ class MentraBluetoothSdk private constructor(
         val manifest = OtaManifestChecker.fetch(manifestUrl)
         val otaStatus = waitForOtaManifestStatus(status, manifest)
         return OtaManifestChecker.hasUpdate(
+            otaStatus.asgVersion,
             otaStatus.buildNumber,
             otaStatus.mtkFirmwareVersion,
             otaStatus.besFirmwareVersion,
@@ -1079,7 +1080,7 @@ class MentraBluetoothSdk private constructor(
 
     private fun getFreshGlassesStatus(): GlassesStatus {
         val status = getRawGlassesStatus()
-        if (!status.connected || status.buildNumber.isNotBlank()) {
+        if (!status.connected || (status.buildNumber.isNotBlank() && status.asgVersion != null)) {
             return status
         }
 
@@ -1091,6 +1092,7 @@ class MentraBluetoothSdk private constructor(
                 besFirmwareVersion = versionInfo.besFirmwareVersion.ifBlank { status.besFirmwareVersion },
                 mtkFirmwareVersion = versionInfo.mtkFirmwareVersion.ifBlank { status.mtkFirmwareVersion },
                 buildNumber = versionInfo.buildNumber.ifBlank { status.buildNumber },
+                asgVersion = versionInfo.asgVersion ?: status.asgVersion,
                 systemTimeMs = versionInfo.systemTimeMs ?: status.systemTimeMs,
                 otaVersionUrl = versionInfo.otaVersionUrl.ifBlank { status.otaVersionUrl },
                 appVersion = versionInfo.appVersion.ifBlank { status.appVersion },

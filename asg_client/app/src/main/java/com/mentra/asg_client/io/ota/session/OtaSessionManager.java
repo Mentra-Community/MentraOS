@@ -292,13 +292,23 @@ public class OtaSessionManager {
     public synchronized JSONObject buildApkDoneJson(String status) {
         try {
             int[] weights = computeStepWeights();
-            int apkWeight = weights.length > 0 ? weights[0] : 100;
-            int op = "step_complete".equals(status) ? apkWeight : 100;
+            int apkIndex = -1;
+            for (int i = 0; i < mTotalSteps; i++) {
+                if ("apk".equals(getStepType(i))) {
+                    apkIndex = i;
+                    break;
+                }
+            }
+            int completedWeight = 0;
+            for (int i = 0; i <= apkIndex && i < weights.length; i++) {
+                completedWeight += weights[i];
+            }
+            int op = "step_complete".equals(status) ? completedWeight : 100;
 
             JSONObject json = new JSONObject();
             json.put("sid", mSessionId != null ? mSessionId : "");
             json.put("ts", mTotalSteps);
-            json.put("cs", 1); // APK is always the first step (index 0, reported as 1)
+            json.put("cs", apkIndex >= 0 ? apkIndex + 1 : 1);
             json.put("st", "apk");
             json.put("sq", mStepSequence != null ? mStepSequence : new JSONArray());
             json.put("phase", "install");

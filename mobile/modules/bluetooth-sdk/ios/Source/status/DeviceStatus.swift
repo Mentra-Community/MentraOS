@@ -198,6 +198,11 @@ struct GlassesStatus: CustomStringConvertible {
         stringValue(values, "buildNumber") ?? ""
     }
 
+    var asgVersion: Int64? {
+        guard let value = int64Value(values["asgVersion"]), value > 0 else { return nil }
+        return value
+    }
+
     var otaVersionUrl: String {
         stringValue(values, "otaVersionUrl") ?? ""
     }
@@ -356,6 +361,7 @@ public struct VersionInfoResult: CustomStringConvertible {
     public let besFirmwareVersion: String
     public let mtkFirmwareVersion: String
     public let buildNumber: String
+    public let asgVersion: Int64?
     public let systemTimeMs: Int?
     public let otaVersionUrl: String
     public let appVersion: String
@@ -366,6 +372,7 @@ public struct VersionInfoResult: CustomStringConvertible {
         besFirmwareVersion = status.besFirmwareVersion
         mtkFirmwareVersion = status.mtkFirmwareVersion
         buildNumber = status.buildNumber
+        asgVersion = status.asgVersion
         systemTimeMs = intValue(status.values["systemTimeMs"])
         otaVersionUrl = status.otaVersionUrl
         appVersion = status.appVersion
@@ -377,6 +384,7 @@ public struct VersionInfoResult: CustomStringConvertible {
         besFirmwareVersion = stringValue(values, "besFirmwareVersion", "bes_fw_version") ?? ""
         mtkFirmwareVersion = stringValue(values, "mtkFirmwareVersion", "mtk_fw_version") ?? ""
         buildNumber = stringValue(values, "buildNumber", "build_number") ?? ""
+        asgVersion = int64Value(values["asgVersion"]) ?? int64Value(values["asg_version"])
         systemTimeMs = intValue(values["systemTimeMs"]) ?? intValue(values["system_time_ms"])
         otaVersionUrl = stringValue(values, "otaVersionUrl", "ota_version_url") ?? ""
         appVersion = stringValue(values, "appVersion", "app_version") ?? ""
@@ -392,6 +400,9 @@ public struct VersionInfoResult: CustomStringConvertible {
             "otaVersionUrl": otaVersionUrl,
             "appVersion": appVersion,
         ]
+        if let asgVersion {
+            values["asgVersion"] = asgVersion
+        }
         if let systemTimeMs {
             values["systemTimeMs"] = systemTimeMs
         }

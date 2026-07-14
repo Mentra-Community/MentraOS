@@ -9,6 +9,14 @@ func intValue(_ value: Any?) -> Int? {
     return nil
 }
 
+func int64Value(_ value: Any?) -> Int64? {
+    if let value = value as? Int64 { return value }
+    if let value = value as? Int { return Int64(value) }
+    if let value = value as? Double { return Int64(value) }
+    if let value = value as? NSNumber { return value.int64Value }
+    return nil
+}
+
 func doubleValue(_ value: Any?) -> Double? {
     if let double = value as? Double { return double }
     if let int = value as? Int { return Double(int) }

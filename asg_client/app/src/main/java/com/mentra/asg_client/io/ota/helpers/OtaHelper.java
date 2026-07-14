@@ -1,6 +1,9 @@
 package com.mentra.asg_client.io.ota.helpers;
 
+import android.app.Activity;
+import android.content.BroadcastReceiver;
 import android.content.Context;
+import android.content.Intent;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
@@ -9,20 +12,25 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
-import android.content.Intent;
-
-import org.json.JSONException;
-import org.json.JSONObject;
-import org.greenrobot.eventbus.EventBus;
-import org.greenrobot.eventbus.Subscribe;
-import org.greenrobot.eventbus.ThreadMode;
-import com.mentra.asg_client.events.BatteryStatusEvent;
 import com.mentra.asg_client.di.hilt.AsgClientEntryPoint;
+import com.mentra.asg_client.events.BatteryStatusEvent;
 import com.mentra.asg_client.io.ota.events.DownloadProgressEvent;
 import com.mentra.asg_client.io.ota.events.InstallationProgressEvent;
 import com.mentra.asg_client.io.ota.events.MtkOtaProgressEvent;
 import com.mentra.asg_client.io.ota.interfaces.IBesOtaController;
 import com.mentra.asg_client.io.ota.interfaces.IBesOtaRegistry;
+import com.mentra.asg_client.io.ota.session.OtaSessionManager;
+import com.mentra.asg_client.io.ota.utils.FirmwareDownloadException;
+import com.mentra.asg_client.io.ota.utils.OtaConstants;
+import com.mentra.asg_client.io.ota.utils.OtaManifestResolver;
+import com.mentra.asg_client.io.ota.utils.OtaUpdatePlanner;
+import com.mentra.asg_client.service.core.AsgClientService;
+import com.mentra.asg_client.service.system.core.SystemControllerFactory;
+import com.mentra.asg_client.service.utils.SysProp;
+import com.mentra.asg_client.settings.AsgSettings;
+import com.mentra.asg_client.utils.WakeLockManager;
+import com.mentra.asg_client.version.AsgDowngradeResetter;
+import com.mentra.asg_client.version.AsgVersion;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileInputStream;
@@ -35,22 +43,20 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.TreeSet;
-import java.util.stream.Collectors;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.ReentrantLock;
-
-import com.mentra.asg_client.io.ota.session.OtaSessionManager;
-import com.mentra.asg_client.io.ota.utils.FirmwareDownloadException;
-import com.mentra.asg_client.io.ota.utils.OtaConstants;
-import com.mentra.asg_client.service.system.core.SystemControllerFactory;
-import com.mentra.asg_client.settings.AsgSettings;
-import com.mentra.asg_client.service.utils.SysProp;
-import com.mentra.asg_client.utils.WakeLockManager;
-
+import java.util.stream.Collectors;
 import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
+import org.greenrobot.eventbus.EventBus;
+import org.greenrobot.eventbus.Subscribe;
+import org.greenrobot.eventbus.ThreadMode;
 
 public class OtaHelper {
 
@@ -88,11 +94,11 @@ public class OtaHelper {
 
 
     // Update order configuration - can be easily modified to change update sequence
-    // Order: APK updates → MTK firmware → BES firmware
+    // Firmware is applied first. ASG is always final so a downgrade reset cannot orphan
+    // pending MTK/BES work in ASG-owned preferences.
     private static final String UPDATE_TYPE_APK = "apk";
     private static final String UPDATE_TYPE_MTK = "mtk";
     private static final String UPDATE_TYPE_BES = "bes";
-    private static final String[] UPDATE_ORDER = {UPDATE_TYPE_APK, UPDATE_TYPE_MTK, UPDATE_TYPE_BES};
 
     // ⚠️ DEBUG FLAG: Set to true to skip all checks and install MTK firmware from local file
     // This will bypass version checking, downloading, and directly install /storage/emulated/0/asg/mtk_firmware.zip
@@ -317,32 +323,35 @@ public class OtaHelper {
     private static final long OTA_WAKELOCK_TIMEOUT_MS = 600000;
 
     private List<String> buildStepSequence(JSONObject rootJson, JSONObject apps, Context context) {
-        List<String> steps = new ArrayList<>();
+        boolean mtkNeeded = false;
+        boolean besNeeded = false;
+        boolean asgNeeded = false;
         try {
-            String[] orderedPackages = {"com.mentra.asg_client", "com.augmentos.otaupdater"};
-            for (String pkg : orderedPackages) {
-                if (!apps.has(pkg)) continue;
-                long current = getInstalledVersion(pkg, context);
-                long server = apps.getJSONObject(pkg).getLong("versionCode");
-                if (server > current) {
-                    steps.add("apk");
-                    break;
-                }
-            }
             if (!wasMtkUpdatedThisSession() && !isMtkOtaInProgress() && rootJson.has("mtk_patches")) {
                 String currentMtk = SysProp.getProperty(context, "ro.custom.ota.version");
                 JSONObject mtkPatch = findMatchingMtkPatch(rootJson.getJSONArray("mtk_patches"), currentMtk);
-                if (mtkPatch != null) steps.add("mtk");
+                mtkNeeded = mtkPatch != null;
             }
             if (rootJson.has("bes_firmware")) {
                 String besVer = "";
                 try { besVer = new AsgSettings(context).getBesFirmwareVersion(); } catch (Exception ignored) {}
-                if (checkBesUpdate(rootJson.getJSONObject("bes_firmware"), besVer)) steps.add("bes");
+                besNeeded = checkBesUpdate(rootJson.getJSONObject("bes_firmware"), besVer);
+            }
+            String[] orderedPackages = {"com.mentra.asg_client", "com.augmentos.otaupdater"};
+            for (String pkg : orderedPackages) {
+                if (!apps.has(pkg)) continue;
+                JSONObject appInfo = apps.getJSONObject(pkg);
+                long current = getInstalledAppVersion(pkg, context);
+                long server = getTargetAppVersion(pkg, appInfo);
+                if (requiresAppInstall(pkg, current, server)) {
+                    asgNeeded = true;
+                    break;
+                }
             }
         } catch (Exception e) {
             Log.w(TAG, "Failed to build step sequence", e);
         }
-        return steps;
+        return OtaUpdatePlanner.plan(mtkNeeded, besNeeded, asgNeeded);
     }
 
     /**
@@ -497,6 +506,8 @@ public class OtaHelper {
                 String versionInfo = fetchVersionInfo(resolvedVersionJsonUrl);
                 stage[0] = "parse_version_json";
                 JSONObject json = new JSONObject(versionInfo);
+                stage[0] = "resolve_firmware_manifest";
+                OtaManifestResolver.resolveFirmware(json, this::fetchVersionInfo);
 
                 Log.d(TAG, "Version JSON parsed successfully. Root keys -> apps=" + json.has("apps")
                         + ", mtk_patches=" + json.has("mtk_patches")
@@ -509,7 +520,7 @@ public class OtaHelper {
                     // If the installed ASG version is in the remediation range, the recovery
                     // worker sidecar owns the ASG update for this device. Remove ASG from the
                     // apps map so the normal OTA loop skips it; the recovery worker will install
-                    // it autonomously. Once installed, the version exceeds maxVersionCode and
+                    // it autonomously. Once installed, the version exceeds maxAsgVersion and
                     // normal OTA resumes ownership on the next ota_start.
                     // TODO: re-enable once remediation is activated in the prod manifest.
                     // if (isAsgDeferredToRemediation(json, context)) {
@@ -623,9 +634,14 @@ public class OtaHelper {
             }
         }
 
+        String activeStep = null;
+        if (sessionManager != null && sessionManager.hasActiveSession()) {
+            activeStep = sessionManager.getStepType(sessionManager.getCurrentStepIndex());
+        }
+
         // Process apps in order - important for sequential updates
         String[] orderedPackages = {
-            "com.mentra.asg_client",     // Update ASG client first
+            "com.mentra.asg_client",     // ASG is the final OTA step
             // "com.augmentos.otaupdater"      // Then OTA updater
         };
 
@@ -633,38 +649,42 @@ public class OtaHelper {
         boolean apkUpdateFailed = false;
         String failedApkPackage = null;
 
-        // PHASE 1: Update APKs if needed
-        for (String packageName : orderedPackages) {
-            if (!apps.has(packageName)) continue;
+        // APK is deliberately the final step.
+        if (activeStep == null || UPDATE_TYPE_APK.equals(activeStep)) {
+            for (String packageName : orderedPackages) {
+                if (!apps.has(packageName)) continue;
 
-            JSONObject appInfo = apps.getJSONObject(packageName);
+                JSONObject appInfo = apps.getJSONObject(packageName);
 
             // Check if update needed
-            long currentVersion = getInstalledVersion(packageName, context);
-            long serverVersion = appInfo.getLong("versionCode");
+                long currentVersion = getInstalledAppVersion(packageName, context);
+                long serverVersion = getTargetAppVersion(packageName, appInfo);
 
-            if (serverVersion > currentVersion) {
-                Log.i(TAG, "Update available for " + packageName +
-                         " (current: " + currentVersion + ", server: " + serverVersion + ")");
+                if (requiresAppInstall(packageName, currentVersion, serverVersion)) {
+                    Log.i(TAG, "Update available for " + packageName +
+                             " (current: " + currentVersion + ", server: " + serverVersion + ")");
 
                 // Update this app and wait for completion
-                boolean success = checkAndUpdateApp(packageName, appInfo, context);
+                    boolean success = checkAndUpdateApp(packageName, appInfo, context);
 
-                if (success) {
-                    Log.i(TAG, "Successfully updated " + packageName);
-                    apkUpdateNeeded = true;
+                    if (success) {
+                        Log.i(TAG, "Successfully updated " + packageName);
+                        apkUpdateNeeded = true;
 
                     // Wait a bit for installation to complete before checking next app
-                    Thread.sleep(5000); // 5 seconds
+                        Thread.sleep(5000); // 5 seconds
+                    } else {
+                        Log.e(TAG, "Failed to process " + packageName);
+                        apkUpdateFailed = true;
+                        failedApkPackage = packageName;
+                        break; // Stop install sequence if update fails
+                    }
                 } else {
-                    Log.e(TAG, "Failed to process " + packageName);
-                    apkUpdateFailed = true;
-                    failedApkPackage = packageName;
-                    break; // Stop install sequence if update fails
+                    Log.d(TAG, packageName + " is up to date (version " + currentVersion + ")");
                 }
-            } else {
-                Log.d(TAG, packageName + " is up to date (version " + currentVersion + ")");
             }
+        } else {
+            Log.i(TAG, "Deferring ASG install until final OTA step; active step=" + activeStep);
         }
 
         Log.d(TAG, "apkUpdateNeeded: " + apkUpdateNeeded);
@@ -680,7 +700,7 @@ public class OtaHelper {
         }
 
         // PHASE 2 & 3: Firmware updates (MTK first, then BES) - only if no APK update
-        if (!apkUpdateNeeded) {
+        if (!apkUpdateNeeded && !UPDATE_TYPE_APK.equals(activeStep)) {
             JSONObject mtkPatch = null;
             boolean besUpdateAvailable = false;
 
@@ -748,6 +768,17 @@ public class OtaHelper {
                     besUpdateAvailable = checkBesUpdate(rootJson.getJSONObject("bes_firmware"), currentBesVersion);
                 }
 
+                if (UPDATE_TYPE_BES.equals(activeStep)) {
+                    mtkPatch = null;
+                }
+                if (UPDATE_TYPE_MTK.equals(activeStep)
+                        && mtkPatch == null
+                        && !isMtkOtaInProgress()) {
+                    Log.i(TAG, "MTK session step is already satisfied; advancing");
+                    continueSessionAfterStepComplete(context);
+                    return;
+                }
+
                 // Apply updates in correct order
                 if (mtkPatch != null && besUpdateAvailable) {
                     // MTK first. The upcoming BES install will power-cycle the device, so
@@ -795,17 +826,21 @@ public class OtaHelper {
                     }
                 } else {
                     Log.i(TAG, "No firmware updates available");
+                    if (activeStep != null) {
+                        continueSessionAfterStepComplete(context);
+                        return;
+                    }
                     // Send FINISHED to phone since no more updates
                     if (isPhoneInitiatedOta) {
                         sendProgressToPhone("install", 100, 0, 0, "FINISHED", null);
                     }
                 }
             }
-        } else {
-            Log.i(TAG, "APK update performed - remaining firmware steps will download fresh after restart");
+        } else if (apkUpdateNeeded) {
+            Log.i(TAG, "ASG install dispatched as the final OTA step");
         }
 
-        Log.d(TAG, "Sequential updates completed (APK → MTK → BES)");
+        Log.d(TAG, "Sequential updates completed (MTK → BES → APK)");
     }
 
     private long getInstalledVersion(String packageName, Context context) {
@@ -819,6 +854,38 @@ public class OtaHelper {
         }
     }
 
+    private long getInstalledAppVersion(String packageName, Context context) {
+        if (!OtaConstants.ASG_PACKAGE.equals(packageName)) {
+            return getInstalledVersion(packageName, context);
+        }
+        try {
+            PackageInfo info =
+                    context.getPackageManager()
+                            .getPackageInfo(packageName, PackageManager.GET_META_DATA);
+            return AsgVersion.fromPackageInfo(info);
+        } catch (PackageManager.NameNotFoundException e) {
+            Log.d(TAG, packageName + " not installed");
+            return 0L;
+        }
+    }
+
+    private long getTargetAppVersion(String packageName, JSONObject appInfo) throws JSONException {
+        if (OtaConstants.ASG_PACKAGE.equals(packageName)) {
+            long version = AsgVersion.fromManifestApp(appInfo);
+            if (version <= 0) {
+                throw new JSONException("ASG manifest is missing asgVersion/versionCode");
+            }
+            return version;
+        }
+        return appInfo.getLong("versionCode");
+    }
+
+    private boolean requiresAppInstall(String packageName, long installed, long target) {
+        return OtaConstants.ASG_PACKAGE.equals(packageName)
+                ? AsgVersion.requiresInstall(installed, target)
+                : target > installed;
+    }
+
     /**
      * Returns {@code true} when the installed ASG version falls within the remediation range
      * declared in the manifest's {@code remediation} block, meaning the recovery worker sidecar
@@ -827,7 +894,7 @@ public class OtaHelper {
      * <p>When this returns true, the normal OTA loop removes {@code com.mentra.asg_client} from
      * the apps map so it is not downloaded or installed by the phone-triggered OTA path.
      * Once the recovery worker installs the target version, {@code installedVersion} exceeds
-     * {@code maxVersionCode} and this method returns {@code false}, handing ownership back to
+     * {@code maxAsgVersion} and this method returns {@code false}, handing ownership back to
      * the normal OTA path automatically.
      */
     private boolean isAsgDeferredToRemediation(JSONObject rootJson, Context context) {
@@ -835,10 +902,12 @@ public class OtaHelper {
             JSONObject remediation = rootJson.optJSONObject("remediation");
             if (remediation == null) return false;
             if (!remediation.optBoolean("enabled", false)) return false;
-            long maxVersionCode = remediation.optLong("maxVersionCode", -1);
-            if (maxVersionCode < 0) return false;
-            long installed = getInstalledVersion("com.mentra.asg_client", context);
-            return installed <= maxVersionCode;
+            long maxAsgVersion =
+                    remediation.optLong(
+                            "maxAsgVersion", remediation.optLong("maxVersionCode", -1L));
+            if (maxAsgVersion < 0) return false;
+            long installed = getInstalledAppVersion(OtaConstants.ASG_PACKAGE, context);
+            return installed <= maxAsgVersion;
         } catch (Exception e) {
             Log.w(TAG, "Could not evaluate remediation block; proceeding with normal OTA", e);
             return false;
@@ -863,13 +932,16 @@ public class OtaHelper {
                 return false;
             }
 
-            long currentVersion = getInstalledVersion(packageName, context);
-            long serverVersion = appInfo.getLong("versionCode");
+            long currentVersion = getInstalledAppVersion(packageName, context);
+            long serverVersion = getTargetAppVersion(packageName, appInfo);
+            boolean isAsgDowngrade =
+                    OtaConstants.ASG_PACKAGE.equals(packageName)
+                            && AsgVersion.isDowngrade(currentVersion, serverVersion);
             String apkUrl = appInfo.getString("apkUrl");
 
             Log.d(TAG, "Checking " + packageName + " - current: " + currentVersion + ", server: " + serverVersion);
 
-            if (serverVersion > currentVersion) {
+            if (requiresAppInstall(packageName, currentVersion, serverVersion)) {
                 String filename = getApkFilename(packageName);
                 String localPath = OtaConstants.BASE_DIR + "/" + filename;
 
@@ -892,6 +964,14 @@ public class OtaHelper {
                     return false;
                 }
 
+                if (OtaConstants.ASG_PACKAGE.equals(packageName)
+                        && !AsgClientService.prepareForPackageReplacement()) {
+                    isUpdating = false;
+                    lastApkFailureErrorCode = "recording_finalize_failed";
+                    Log.e(TAG, "Refusing ASG install because active recording did not finalize");
+                    return false;
+                }
+
                 Log.i(TAG, "📲 Proceeding to install " + packageName + " from freshly downloaded artifact");
                 currentUpdateStage = "install";
                 sendProgressToPhone("install", 0, 0, 0, "STARTED", null);
@@ -906,17 +986,52 @@ public class OtaHelper {
                     sessionManager.setRestarting();
                 }
 
+                if (OtaConstants.ASG_PACKAGE.equals(packageName)
+                        && !notifyRecoveryAsgInstallPending(
+                                context,
+                                serverVersion,
+                                appInfo.optString("sha256", ""),
+                                isAsgDowngrade)) {
+                    isUpdating = false;
+                    lastApkFailureErrorCode = "recovery_handoff_failed";
+                    Log.e(TAG, "Refusing ASG install because recovery handoff was not persisted");
+                    return false;
+                }
+
+                if (isAsgDowngrade) {
+                    Log.i(TAG, "ASG logical downgrade detected; clearing app state before install");
+                    try {
+                        AsgDowngradeResetter.reset(context);
+                    } catch (RuntimeException e) {
+                        isUpdating = false;
+                        lastApkFailureErrorCode = "downgrade_reset_failed";
+                        Log.e(TAG, "Refusing ASG downgrade because app state was not fully reset", e);
+                        return false;
+                    }
+                    if (!notifyRecoveryAsgInstallReady(context, serverVersion)) {
+                        isUpdating = false;
+                        lastApkFailureErrorCode = "recovery_ready_handoff_failed";
+                        Log.e(TAG, "Refusing ASG downgrade because recovery did not arm the reset target");
+                        return false;
+                    }
+                }
+
                 boolean installKicked = installApk(context, localPath);
                 if (!installKicked) {
+                    isUpdating = false;
                     // Install never actually fired. Roll back the restart guard so the next
                     // OTA attempt does not inherit stale process-restart state.
                     Log.w(TAG, "installApk did not kick install — rolling back restart guard and reporting FAILED");
-                    if (sessionManager != null) {
+                    if (sessionManager != null && !isAsgDowngrade) {
                         sessionManager.clearRestartGuard();
                     }
                     sendProgressToPhone("install", 0, 0, 0, "FAILED", "install_failed");
-                    if (apkFile.exists() && !apkFile.delete()) {
+                    if (!OtaConstants.ASG_PACKAGE.equals(packageName)
+                            && apkFile.exists()
+                            && !apkFile.delete()) {
                         Log.w(TAG, "Failed deleting APK after install kickoff failure: " + localPath);
+                    } else if (OtaConstants.ASG_PACKAGE.equals(packageName)) {
+                        Log.w(TAG, "Retaining verified ASG APK for recovery-side install retry");
                     }
                     return false;
                 }
@@ -946,11 +1061,9 @@ public class OtaHelper {
             PackageManager pm = appContext.getPackageManager();
             PackageInfo installed =
                     pm.getPackageInfo(
-                            "com.mentra.asg_client", PackageManager.GET_SIGNING_CERTIFICATES);
-            long installedVersion =
-                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.P
-                            ? installed.getLongVersionCode()
-                            : installed.versionCode;
+                            "com.mentra.asg_client",
+                            PackageManager.GET_SIGNING_CERTIFICATES | PackageManager.GET_META_DATA);
+            long installedVersion = AsgVersion.fromPackageInfo(installed);
 
             File backupApk = new File(OtaConstants.BASE_DIR, OtaConstants.BACKUP_APK_FILENAME);
             long backupVersion = -1L;
@@ -960,12 +1073,8 @@ public class OtaHelper {
                 PackageInfo archive =
                         pm.getPackageArchiveInfo(
                                 backupApk.getAbsolutePath(),
-                                PackageManager.GET_SIGNING_CERTIFICATES);
+                                PackageManager.GET_SIGNING_CERTIFICATES | PackageManager.GET_META_DATA);
                 if (archive != null) {
-                    backupVersion =
-                            Build.VERSION.SDK_INT >= Build.VERSION_CODES.P
-                                    ? archive.getLongVersionCode()
-                                    : archive.versionCode;
                     if (archive.applicationInfo != null) {
                         archive.applicationInfo.sourceDir = backupApk.getAbsolutePath();
                         archive.applicationInfo.publicSourceDir = backupApk.getAbsolutePath();
@@ -973,11 +1082,12 @@ public class OtaHelper {
                                 (archive.applicationInfo.flags & ApplicationInfo.FLAG_TEST_ONLY)
                                         == 0;
                     }
+                    backupVersion = AsgVersion.fromPackageInfo(archive);
                 }
             }
 
             if (backupInstallable
-                    && backupVersion >= installedVersion
+                    && backupVersion == installedVersion
                     && backupModifiedMs >= installed.lastUpdateTime) {
                 Log.d(
                         TAG,
@@ -1024,7 +1134,9 @@ public class OtaHelper {
         try {
             PackageManager pm = context.getPackageManager();
             PackageInfo info =
-                    pm.getPackageInfo(packageName, PackageManager.GET_SIGNING_CERTIFICATES);
+                    pm.getPackageInfo(
+                            packageName,
+                            PackageManager.GET_SIGNING_CERTIFICATES | PackageManager.GET_META_DATA);
             File backupSource = resolveInstallableBackupSource(pm, info);
             if (backupSource == null) {
                 Log.e(
@@ -1042,10 +1154,14 @@ public class OtaHelper {
             PackageInfo sourceInfo =
                     pm.getPackageArchiveInfo(
                             backupSource.getAbsolutePath(),
-                            PackageManager.GET_SIGNING_CERTIFICATES);
+                            PackageManager.GET_SIGNING_CERTIFICATES | PackageManager.GET_META_DATA);
             long versionCode = info.getLongVersionCode();
             String versionName = info.versionName;
             if (sourceInfo != null) {
+                if (sourceInfo.applicationInfo != null) {
+                    sourceInfo.applicationInfo.sourceDir = backupSource.getAbsolutePath();
+                    sourceInfo.applicationInfo.publicSourceDir = backupSource.getAbsolutePath();
+                }
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                     versionCode = sourceInfo.getLongVersionCode();
                 } else {
@@ -1057,6 +1173,7 @@ public class OtaHelper {
             JSONObject backupMetadata = new JSONObject();
             backupMetadata.put("packageName", packageName);
             backupMetadata.put("versionCode", versionCode);
+            backupMetadata.put("asgVersion", AsgVersion.fromPackageInfo(sourceInfo != null ? sourceInfo : info));
             backupMetadata.put("versionName", versionName);
             backupMetadata.put("createdAtMs", System.currentTimeMillis());
             backupMetadata.put("path", backupFile.getAbsolutePath());
@@ -1158,6 +1275,56 @@ public class OtaHelper {
         intent.setPackage(OtaConstants.RECOVERY_PACKAGE);
         context.sendBroadcast(intent, OtaConstants.RECOVERY_CONTROL_PERMISSION);
         Log.d(TAG, "Notified recovery worker: install in progress");
+    }
+
+    private static boolean notifyRecoveryAsgInstallPending(
+            Context context, long targetAsgVersion, String sha256, boolean isDowngrade) {
+        Intent intent = new Intent(OtaConstants.RECOVERY_ASG_INSTALL_PENDING);
+        intent.setPackage(OtaConstants.RECOVERY_PACKAGE);
+        intent.putExtra(OtaConstants.EXTRA_TARGET_ASG_VERSION, targetAsgVersion);
+        intent.putExtra(OtaConstants.EXTRA_APK_SHA256, sha256 != null ? sha256 : "");
+        intent.putExtra(OtaConstants.EXTRA_IS_DOWNGRADE, isDowngrade);
+        return sendOrderedRecoveryHandoff(
+                context, intent, "persisted ASG install target " + targetAsgVersion);
+    }
+
+    private static boolean notifyRecoveryAsgInstallReady(Context context, long targetAsgVersion) {
+        Intent intent = new Intent(OtaConstants.RECOVERY_ASG_INSTALL_READY);
+        intent.setPackage(OtaConstants.RECOVERY_PACKAGE);
+        intent.putExtra(OtaConstants.EXTRA_TARGET_ASG_VERSION, targetAsgVersion);
+        return sendOrderedRecoveryHandoff(context, intent, "armed reset ASG install");
+    }
+
+    private static boolean sendOrderedRecoveryHandoff(
+            Context context, Intent intent, String description) {
+        CountDownLatch delivered = new CountDownLatch(1);
+        AtomicBoolean persisted = new AtomicBoolean(false);
+        BroadcastReceiver resultReceiver =
+                new BroadcastReceiver() {
+                    @Override
+                    public void onReceive(Context ignored, Intent resultIntent) {
+                        persisted.set(getResultCode() == Activity.RESULT_OK);
+                        delivered.countDown();
+                    }
+                };
+        context.sendOrderedBroadcast(
+                intent,
+                OtaConstants.RECOVERY_CONTROL_PERMISSION,
+                resultReceiver,
+                null,
+                Activity.RESULT_CANCELED,
+                null,
+                null);
+        try {
+            if (!delivered.await(5L, TimeUnit.SECONDS) || !persisted.get()) {
+                return false;
+            }
+            Log.d(TAG, "Recovery sidecar " + description);
+            return true;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
     }
 
     public static void notifyRecoveryInstallCompleted(Context context) {
@@ -1295,7 +1462,7 @@ public class OtaHelper {
         }
         EventBus.getDefault().post(DownloadProgressEvent.createFinished(fileSize));
         sendProgressToPhone("download", 100, fileSize, fileSize, "FINISHED", null);
-        createMetaDataJson(json, context);
+        createMetaDataJson(json);
         return true;
     }
 
@@ -1335,16 +1502,7 @@ public class OtaHelper {
         }
     }
 
-    private void createMetaDataJson(JSONObject json, Context context) {
-        long currentVersionCode;
-        try {
-            PackageManager pm = context.getPackageManager();
-            PackageInfo info = pm.getPackageInfo("com.mentra.asg_client", 0);
-            currentVersionCode = info.getLongVersionCode();
-        } catch (PackageManager.NameNotFoundException e) {
-            currentVersionCode = 0;
-        }
-
+    private void createMetaDataJson(JSONObject json) {
         try {
             File jsonFile = new File(OtaConstants.BASE_DIR, OtaConstants.METADATA_JSON);
             FileWriter writer = new FileWriter(jsonFile);
@@ -1422,13 +1580,13 @@ public class OtaHelper {
         PackageManager pm = context.getPackageManager();
         PackageInfo info = null;
         try {
-            info = pm.getPackageInfo("com.mentra.asg_client", 0);
+            info = pm.getPackageInfo("com.mentra.asg_client", PackageManager.GET_META_DATA);
         } catch (PackageManager.NameNotFoundException e) {
             throw new RuntimeException(e);
         }
-        long currentVersion = info.getLongVersionCode();
-        if(currentVersion >= getMetadataVersion()){
-            Log.d(TAG, "Already have a better version. removeing the APK file");
+        long currentVersion = AsgVersion.fromPackageInfo(info);
+        if (currentVersion == getMetadataAsgVersion()) {
+            Log.d(TAG, "Installed ASG exactly matches staged metadata; removing stale APK file");
             deleteOldFiles();
         }
     }
@@ -1449,8 +1607,8 @@ public class OtaHelper {
         }
     }
 
-    private int getMetadataVersion() {
-        int localJsonVersion = 0;
+    private long getMetadataAsgVersion() {
+        long localJsonVersion = -1L;
         File metaDataJson = new File(OtaConstants.BASE_DIR, OtaConstants.METADATA_JSON);
         if (metaDataJson.exists()) {
             FileInputStream fis = null;
@@ -1462,13 +1620,13 @@ public class OtaHelper {
 
                 String jsonStr = new String(data, StandardCharsets.UTF_8);
                 JSONObject json = new JSONObject(jsonStr);
-                localJsonVersion = json.optInt("versionCode", 0);
+                localJsonVersion = AsgVersion.fromManifestApp(json);
             } catch (IOException | JSONException e) {
                 e.printStackTrace();
             }
         }
 
-        Log.d(TAG, "metadata version:"+localJsonVersion);
+        Log.d(TAG, "metadata ASG version: " + localJsonVersion);
         return localJsonVersion;
     }
 
@@ -1490,14 +1648,17 @@ public class OtaHelper {
         try {
             // Verify the backup APK is valid using getPackageArchiveInfo
             PackageManager pm = context.getPackageManager();
-            PackageInfo info = pm.getPackageArchiveInfo(backupPath, PackageManager.GET_ACTIVITIES);
+            PackageInfo info =
+                    pm.getPackageArchiveInfo(
+                            backupPath,
+                            PackageManager.GET_ACTIVITIES | PackageManager.GET_META_DATA);
             if (info == null) {
                 Log.e(TAG, "Backup APK is not a valid Android package");
                 return false;
             }
 
             // Install the backup APK
-            Log.i(TAG, "Installing backup APK version: " + info.getLongVersionCode());
+            Log.i(TAG, "Installing backup ASG version: " + AsgVersion.fromPackageInfo(info));
             return installApk(context, backupPath);
         } catch (Exception e) {
             Log.e(TAG, "Failed to reinstall backup APK: " + e.getMessage(), e);

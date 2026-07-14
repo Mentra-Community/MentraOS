@@ -42,7 +42,8 @@ permissions:
 # manifests to Cloudflare Pages out of order (the older manifest could land
 # last and stay live) or race the delete/re-upload of rolling release assets.
 concurrency:
-  group: staging-builds
+  # Shared with bluetooth-sdk-release: ASG logical versions must be globally unique.
+  group: asg-release-publish
   cancel-in-progress: false
 
 # These URLs are used to publish and verify the staging OTA manifest below.
@@ -566,6 +567,7 @@ jobs:
     runs-on: blacksmith-4vcpu-ubuntu-2404
 
     outputs:
+      asg_version: ${{ steps.asg-build-info.outputs.asg_version }}
       version_code: ${{ steps.asg-build-info.outputs.version_code }}
       version_name: ${{ steps.asg-build-info.outputs.version_name }}
       apk_sha256: ${{ steps.asg-apk-info.outputs.sha256 }}
@@ -594,18 +596,59 @@ jobs:
           sudo docker image prune --all --force 2>/dev/null || true
           echo "After:"; df -h / | tail -1
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
       - name: Compute ASG build info
         id: asg-build-info
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SDK_OTA_RELEASE_TAG: bluetooth-sdk-ota
         run: |
-          EPOCH_OFFSET_SECONDS=1735689600
-          BASELINE=100000
-          NOW_SECONDS=$(date -u +%s)
-          VERSION_CODE=$((BASELINE + NOW_SECONDS - EPOCH_OFFSET_SECONDS))
-          SHORT_SHA=$(git rev-parse --short HEAD)
-          VERSION_NAME="staging.$(date -u +%Y%m%d.%H%M%S).${SHORT_SHA}"
-
-          echo "version_code=${VERSION_CODE}" >> "$GITHUB_OUTPUT"
-          echo "version_name=${VERSION_NAME}" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          last_published=0
+          published_version_codes=()
+          for url in \
+            "https://ota.mentraglass.com/prod_live_version.json" \
+            "https://ota.mentraglass.com/prod_live_version_v2.json" \
+            "https://mentra-live-ota-staging.pages.dev/staging_live_version.json"; do
+            if json=$(curl --fail --silent --show-error --location "$url"); then
+              candidate=$(jq -r '.apps["com.mentra.asg_client"] | .asgVersion // .versionCode // 0' <<<"$json")
+              version_code=$(jq -r '.apps["com.mentra.asg_client"].versionCode // 0' <<<"$json")
+              if [[ "$version_code" =~ ^[0-9]+$ ]]; then
+                published_version_codes+=("$version_code")
+              fi
+              if [[ "$candidate" =~ ^[0-9]+$ ]] && (( candidate > last_published )); then
+                last_published=$candidate
+              fi
+            fi
+          done
+          release_json=$(curl --fail --silent --show-error --location \
+            --header "Authorization: Bearer ${GH_TOKEN}" \
+            --header "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/${SDK_OTA_RELEASE_TAG}")
+          while IFS=$'\t' read -r asset_name asset_url; do
+            if [[ "$asset_name" =~ -vc([0-9]+)- ]]; then
+              published_version_codes+=("${BASH_REMATCH[1]}")
+            fi
+            if [[ "$asset_name" == bluetooth-sdk-*-version.json ]]; then
+              json=$(curl --fail --silent --show-error --location "$asset_url")
+              candidate=$(jq -r '.apps["com.mentra.asg_client"] | .asgVersion // .versionCode // 0' <<<"$json")
+              version_code=$(jq -r '.apps["com.mentra.asg_client"].versionCode // 0' <<<"$json")
+              if [[ "$version_code" =~ ^[0-9]+$ ]]; then
+                published_version_codes+=("$version_code")
+              fi
+              if [[ "$candidate" =~ ^[0-9]+$ ]] && (( candidate > last_published )); then
+                last_published=$candidate
+              fi
+            fi
+          done < <(jq -r '.assets[] | [.name, .browser_download_url] | @tsv' <<<"$release_json")
+          LAST_PUBLISHED_ASG_VERSION=$last_published \
+            PUBLISHED_ASG_VERSION_CODES="$(IFS=,; echo "${published_version_codes[*]}")" \
+            ASG_VERSION_NAME_PREFIX=staging \
+            node .github/scripts/asg-version.mjs >> "$GITHUB_OUTPUT"
 
       - name: Setup Java
         uses: actions/setup-java@v3
@@ -662,7 +705,7 @@ jobs:
       - name: Build Release APK
         id: gradle-build
         working-directory: ./asg_client
-        run: ./gradlew -PASG_VERSION_CODE="${{ steps.asg-build-info.outputs.version_code }}" -PASG_VERSION_NAME="${{ steps.asg-build-info.outputs.version_name }}" assembleRelease --build-cache --parallel
+        run: ./gradlew -PASG_VERSION="${{ steps.asg-build-info.outputs.asg_version }}" -PASG_VERSION_NAME="${{ steps.asg-build-info.outputs.version_name }}" assembleRelease --build-cache --parallel
         continue-on-error: true
 
       - name: Retry build with clean cache (if first attempt failed)
@@ -672,12 +715,23 @@ jobs:
           echo "First build failed, cleaning Gradle cache and retrying..."
           ./gradlew --stop || true
           rm -rf ~/.gradle/caches ~/.gradle/wrapper || true
-          ./gradlew -PASG_VERSION_CODE="${{ steps.asg-build-info.outputs.version_code }}" -PASG_VERSION_NAME="${{ steps.asg-build-info.outputs.version_name }}" assembleRelease --build-cache --parallel
+          ./gradlew -PASG_VERSION="${{ steps.asg-build-info.outputs.asg_version }}" -PASG_VERSION_NAME="${{ steps.asg-build-info.outputs.version_name }}" assembleRelease --build-cache --parallel
 
       - name: Collect ASG APK info
         id: asg-apk-info
+        env:
+          EXPECTED_ASG_VERSION: ${{ steps.asg-build-info.outputs.asg_version }}
+          EXPECTED_VERSION_CODE: ${{ steps.asg-build-info.outputs.version_code }}
         run: |
+          set -euo pipefail
           APK="asg_client/app/build/outputs/apk/release/app-release.apk"
+          AAPT=$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort | tail -1)
+          test -n "$AAPT"
+          APK_BADGING=$("$AAPT" dump badging "$APK")
+          grep -F "versionCode='${EXPECTED_VERSION_CODE}'" <<<"$APK_BADGING"
+          APK_MANIFEST=$("$AAPT" dump xmltree "$APK" AndroidManifest.xml)
+          grep -F 'com.mentra.asg_client.ASG_VERSION' <<<"$APK_MANIFEST"
+          grep -F "asg-${EXPECTED_ASG_VERSION}" <<<"$APK_MANIFEST"
           if command -v shasum >/dev/null 2>&1; then
             SHA256=$(shasum -a 256 "$APK" | awk '{print $1}')
           else
@@ -839,6 +893,7 @@ jobs:
         env:
           BUILD_DATE: ${{ steps.build-info.outputs.date }}
           BUILD_SHORT_SHA: ${{ steps.build-info.outputs.sha }}
+          ASG_VERSION: ${{ needs.build-asg.outputs.asg_version }}
           VERSION_CODE: ${{ needs.build-asg.outputs.version_code }}
           VERSION_NAME: ${{ needs.build-asg.outputs.version_name }}
           APK_SHA256: ${{ needs.build-asg.outputs.apk_sha256 }}
@@ -846,33 +901,17 @@ jobs:
         run: |
           mkdir -p asg-manifest
           APK_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/staging-builds/asg-staging-${BUILD_DATE}-${BUILD_SHORT_SHA}.apk"
-          FIRMWARE_MANIFEST="asg_client/ota_manifests/firmware_live.json"
-
-          jq -e '
-            (.mtk_patches | type == "array" and length > 0)
-            and (.bes_firmware | type == "object")
-          ' "$FIRMWARE_MANIFEST" >/dev/null
-
-          jq \
-            --arg apkUrl "$APK_URL" \
-            --arg versionName "$VERSION_NAME" \
-            --arg sha256 "$APK_SHA256" \
-            --argjson versionCode "$VERSION_CODE" \
-            --argjson apkSize "$APK_SIZE" \
-            '{
-              apps: {
-                "com.mentra.asg_client": {
-                  versionCode: $versionCode,
-                  versionName: $versionName,
-                  apkUrl: $apkUrl,
-                  apkSize: $apkSize,
-                  sha256: $sha256
-                }
-              },
-              mtk_patches: .mtk_patches,
-              bes_firmware: .bes_firmware
-            }
-            + (if .remediation then {remediation: .remediation} else {} end)' "$FIRMWARE_MANIFEST" > asg-manifest/staging_live_version.json
+          ASG_APK_SHA256="$APK_SHA256" \
+            ASG_APK_SIZE="$APK_SIZE" \
+            ASG_APK_URL="$APK_URL" \
+            ASG_VERSION="$ASG_VERSION" \
+            ASG_VERSION_CODE="$VERSION_CODE" \
+            ASG_VERSION_NAME="$VERSION_NAME" \
+            FIRMWARE_MANIFEST_URL="https://ota.mentraglass.com/prod_live_version_v2.json" \
+            OUTPUT_PATH="asg-manifest/staging_live_version.json" \
+            SDK_VERSION="staging" \
+            SOURCE_COMMIT="$GITHUB_SHA" \
+            node .github/scripts/build-bluetooth-sdk-ota-manifest.mjs
 
       - name: Build ASG OTA staging Pages site
         if: needs.build-asg.result == 'success'
@@ -913,8 +952,8 @@ jobs:
 
           jq -e '
             (.apps["com.mentra.asg_client"].versionCode | type == "number")
-            and (.mtk_patches | type == "array" and length > 0)
-            and (.bes_firmware | type == "object")
+            and (.apps["com.mentra.asg_client"].asgVersion | type == "number")
+            and (.firmwareManifestUrl | type == "string")
           ' asg-pages-site/staging_live_version.json >/dev/null
 
       - name: Upload ASG OTA manifest to staging-builds release
@@ -1013,7 +1052,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_PAGES_API_TOKEN }}
           BUILD_SHORT_SHA: ${{ steps.build-info.outputs.sha }}
-          VERSION_CODE: ${{ needs.build-asg.outputs.version_code }}
+          ASG_VERSION: ${{ needs.build-asg.outputs.asg_version }}
         run: |
           if [ -z "$CLOUDFLARE_ACCOUNT_ID" ] || [ -z "$CLOUDFLARE_API_TOKEN" ]; then
             echo "Cloudflare credentials are required to publish the staging OTA manifest." >&2
@@ -1030,8 +1069,8 @@ jobs:
           echo "Verifying $ASG_STAGING_OTA_VERSION_URL"
           for attempt in {1..12}; do
             if curl --fail --silent --show-error --location "$ASG_STAGING_OTA_VERSION_URL" -o /tmp/staging_live_version.json \
-              && jq -e --argjson versionCode "$VERSION_CODE" \
-                '.apps["com.mentra.asg_client"].versionCode == $versionCode' \
+              && jq -e --argjson asgVersion "$ASG_VERSION" \
+                '.apps["com.mentra.asg_client"].asgVersion == $asgVersion' \
                 /tmp/staging_live_version.json >/dev/null; then
               break
             fi
@@ -1046,8 +1085,8 @@ jobs:
           custom_domain_ready=false
           for attempt in {1..12}; do
             if curl --fail --silent --show-error --location "$ASG_STAGING_OTA_CUSTOM_DOMAIN_URL" -o /tmp/staging_custom_domain_live_version.json \
-              && jq -e --argjson versionCode "$VERSION_CODE" \
-                '.apps["com.mentra.asg_client"].versionCode == $versionCode' \
+              && jq -e --argjson asgVersion "$ASG_VERSION" \
+                '.apps["com.mentra.asg_client"].asgVersion == $asgVersion' \
                 /tmp/staging_custom_domain_live_version.json >/dev/null; then
               custom_domain_ready=true
               break

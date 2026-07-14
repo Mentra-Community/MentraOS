@@ -804,6 +804,7 @@ class MentraLive : SGCManager() {
             // repopulates RN. Otherwise a stale build (e.g. 38) can remain while ASG is still 36,
             // and the phone-side OTA manifest check will compare against the wrong build.
             DeviceStore.apply("glasses", "buildNumber", "")
+            DeviceStore.apply("glasses", "asgVersion", 0L)
             DeviceStore.apply("glasses", "appVersion", "")
             DeviceStore.apply("glasses", "besFirmwareVersion", "")
             DeviceStore.apply("glasses", "mtkFirmwareVersion", "")
@@ -3658,6 +3659,7 @@ class MentraLive : SGCManager() {
                 // Extract version information
                 val appVersionLegacy = json.optString("app_version", "")
                 val buildNumberLegacy = json.optString("build_number", "")
+                val asgVersionLegacy = if (json.has("asg_version")) json.optLong("asg_version") else null
                 val deviceModelLegacy = json.optString("device_model", "")
                 val androidVersionLegacy = json.optString("android_version", "")
                 val otaVersionUrlLegacy: String? = json.optString("ota_version_url", null)
@@ -3667,6 +3669,7 @@ class MentraLive : SGCManager() {
                 // Update parent SGCManager fields
                 DeviceStore.apply("glasses", "appVersion", appVersionLegacy)
                 DeviceStore.apply("glasses", "buildNumber", buildNumberLegacy)
+                asgVersionLegacy?.let { DeviceStore.apply("glasses", "asgVersion", it) }
                 DeviceStore.apply("glasses", "deviceModel", deviceModelLegacy)
                 DeviceStore.apply("glasses", "androidVersion", androidVersionLegacy)
                 DeviceStore.apply(
@@ -3680,6 +3683,7 @@ class MentraLive : SGCManager() {
                 val versionInfoLegacy = HashMap<String, Any>()
                 versionInfoLegacy["appVersion"] = appVersionLegacy
                 versionInfoLegacy["buildNumber"] = buildNumberLegacy
+                asgVersionLegacy?.let { versionInfoLegacy["asgVersion"] = it }
                 versionInfoLegacy["deviceModel"] = deviceModelLegacy
                 versionInfoLegacy["androidVersion"] = androidVersionLegacy
                 versionInfoLegacy["otaVersionUrl"] =
@@ -3889,6 +3893,12 @@ class MentraLive : SGCManager() {
                         } catch (e: NumberFormatException) {
                             buildNumberInt = 0
                             Log.e(TAG, "Failed to parse build number as integer: " + buildNum)
+                        }
+                    }
+                    if (fields.containsKey("asg_version")) {
+                        val asgVersion = fields["asg_version"]
+                        if (asgVersion is Number) {
+                            DeviceStore.apply("glasses", "asgVersion", asgVersion.toLong())
                         }
                     }
                     if (fields.containsKey("device_model")) {

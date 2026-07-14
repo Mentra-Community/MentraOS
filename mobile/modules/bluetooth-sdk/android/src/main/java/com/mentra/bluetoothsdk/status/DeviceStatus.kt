@@ -47,6 +47,7 @@ internal data class GlassesStatus(
     val rightMacAddress: String,
     val macAddress: String,
     val buildNumber: String,
+    val asgVersion: Long?,
     val systemTimeMs: Long?,
     val otaVersionUrl: String,
     val appVersion: String,
@@ -111,6 +112,7 @@ internal data class GlassesStatus(
             "controllerSignalStrength" to controllerSignalStrength,
             "ringSignalStrength" to ringSignalStrength,
         )
+        asgVersion?.let { values["asgVersion"] = it }
         systemTimeMs?.let { values["systemTimeMs"] = it }
         return values
     }
@@ -138,6 +140,7 @@ internal data class GlassesStatus(
                 rightMacAddress = stringValue(values, "rightMacAddress") ?: "",
                 macAddress = stringValue(values, "macAddress") ?: "",
                 buildNumber = stringValue(values, "buildNumber") ?: "",
+                asgVersion = longValue(values, "asgVersion")?.takeIf { it > 0 },
                 systemTimeMs = longValue(values, "systemTimeMs"),
                 otaVersionUrl = stringValue(values, "otaVersionUrl") ?: "",
                 appVersion = stringValue(values, "appVersion") ?: "",
@@ -170,6 +173,7 @@ data class VersionInfoResult(
     val besFirmwareVersion: String,
     val mtkFirmwareVersion: String,
     val buildNumber: String,
+    val asgVersion: Long?,
     val systemTimeMs: Long?,
     val otaVersionUrl: String,
     val appVersion: String,
@@ -181,6 +185,7 @@ data class VersionInfoResult(
             put("besFirmwareVersion", besFirmwareVersion)
             put("mtkFirmwareVersion", mtkFirmwareVersion)
             put("buildNumber", buildNumber)
+            asgVersion?.let { put("asgVersion", it) }
             systemTimeMs?.let { put("systemTimeMs", it) }
             put("otaVersionUrl", otaVersionUrl)
             put("appVersion", appVersion)
@@ -194,6 +199,7 @@ data class VersionInfoResult(
                 besFirmwareVersion = status.besFirmwareVersion,
                 mtkFirmwareVersion = status.mtkFirmwareVersion,
                 buildNumber = status.buildNumber,
+                asgVersion = status.asgVersion,
                 systemTimeMs = status.systemTimeMs,
                 otaVersionUrl = status.otaVersionUrl,
                 appVersion = status.appVersion,
@@ -206,6 +212,7 @@ data class VersionInfoResult(
                 besFirmwareVersion = stringValue(values, "besFirmwareVersion", "bes_fw_version") ?: "",
                 mtkFirmwareVersion = stringValue(values, "mtkFirmwareVersion", "mtk_fw_version") ?: "",
                 buildNumber = stringValue(values, "buildNumber", "build_number") ?: "",
+                asgVersion = longValue(values, "asgVersion", "asg_version")?.takeIf { it > 0 },
                 systemTimeMs = longValue(values, "systemTimeMs", "system_time_ms"),
                 otaVersionUrl = stringValue(values, "otaVersionUrl", "ota_version_url") ?: "",
                 appVersion = stringValue(values, "appVersion", "app_version") ?: "",
@@ -377,6 +384,7 @@ internal data class GlassesStatusUpdate(
     val rightMacAddress: String? = null,
     val macAddress: String? = null,
     val buildNumber: String? = null,
+    val asgVersion: Long? = null,
     val otaVersionUrl: String? = null,
     val appVersion: String? = null,
     val bluetoothName: String? = null,
@@ -426,6 +434,7 @@ internal data class GlassesStatusUpdate(
             putIfNotNull("rightMacAddress", rightMacAddress)
             putIfNotNull("macAddress", macAddress)
             putIfNotNull("buildNumber", buildNumber)
+            putIfNotNull("asgVersion", asgVersion)
             putIfNotNull("otaVersionUrl", otaVersionUrl)
             putIfNotNull("appVersion", appVersion)
             putIfNotNull("bluetoothName", bluetoothName)
@@ -474,6 +483,7 @@ internal data class GlassesStatusUpdate(
                 rightMacAddress = optionalStringValue(values, "rightMacAddress"),
                 macAddress = optionalStringValue(values, "macAddress"),
                 buildNumber = optionalStringValue(values, "buildNumber"),
+                asgVersion = optionalLongValue(values, "asgVersion")?.takeIf { it > 0 },
                 otaVersionUrl = optionalStringValue(values, "otaVersionUrl"),
                 appVersion = optionalStringValue(values, "appVersion"),
                 bluetoothName = optionalStringValue(values, "bluetoothName"),

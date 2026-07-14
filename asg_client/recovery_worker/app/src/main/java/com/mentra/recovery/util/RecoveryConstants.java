@@ -23,6 +23,13 @@ public final class RecoveryConstants {
   public static final String ACTION_PONG = "com.mentra.recovery.ACTION_PONG";
   public static final String ACTION_INSTALL_IN_PROGRESS = "com.mentra.recovery.ACTION_INSTALL_IN_PROGRESS";
   public static final String ACTION_INSTALL_COMPLETED = "com.mentra.recovery.ACTION_INSTALL_COMPLETED";
+  public static final String ACTION_ASG_INSTALL_PENDING =
+      "com.mentra.recovery.ACTION_ASG_INSTALL_PENDING";
+  public static final String ACTION_ASG_INSTALL_READY =
+      "com.mentra.recovery.ACTION_ASG_INSTALL_READY";
+  public static final String EXTRA_TARGET_ASG_VERSION = "target_asg_version";
+  public static final String EXTRA_APK_SHA256 = "apk_sha256";
+  public static final String EXTRA_IS_DOWNGRADE = "is_downgrade";
   public static final String ACTION_TELEMETRY = "com.mentra.recovery.ACTION_TELEMETRY";
 
   public static final String STATE_PREFS = "mentra_recovery_state";
@@ -64,9 +71,13 @@ public final class RecoveryConstants {
   public static final long INSTALL_PAUSE_MAX_MS = 5 * 60 * 1000L;
 
   public static final String UNIQUE_RECOVERY_WORK = "mentra_recovery_oneshot";
+  public static final String UNIQUE_ASG_INSTALL_RETRY_WORK = "mentra_asg_install_retry";
 
   public static final String BACKUP_APK_PATH = "/storage/emulated/0/asg/asg_client_backup.apk";
   public static final String BACKUP_METADATA_PATH = "/storage/emulated/0/asg/asg_client_backup.json";
+  public static final String ASG_UPDATE_APK_PATH = "/storage/emulated/0/asg/asg_client_update.apk";
+  public static final long ASG_INSTALL_RETRY_DELAY_MS = 90_000L;
+  public static final long ASG_INSTALL_VERIFY_TIMEOUT_MS = 60_000L;
 
   // --- Remediation (self-contained ASG force-install path) ---
 

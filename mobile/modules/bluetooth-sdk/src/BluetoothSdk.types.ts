@@ -142,6 +142,8 @@ export type VersionInfoResult = {
   besFirmwareVersion: string
   mtkFirmwareVersion: string
   buildNumber: string
+  /** Canonical logical ASG release; independent of Android versionCode. */
+  asgVersion?: number
   systemTimeMs?: number
   otaVersionUrl: string
   appVersion: string
@@ -1145,6 +1147,8 @@ export interface GlassesStatus {
   leftMacAddress: string
   rightMacAddress: string
   buildNumber: string
+  /** Canonical logical ASG release; independent of Android versionCode. */
+  asgVersion?: number
   /** Glasses System.currentTimeMillis() from last version_info (clock skew detection). */
   systemTimeMs?: number
   otaVersionUrl: string
