@@ -6,20 +6,21 @@ import com.mentra.asg_client.io.media.core.textdetect.CvInit;
 import com.mentra.asg_client.io.media.core.textdetect.DetectionResult;
 import com.mentra.asg_client.io.media.core.textdetect.TextDetectConfig;
 import com.mentra.asg_client.io.media.core.textdetect.TextRegionDetector;
-import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
 import org.junit.BeforeClass;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 import org.opencv.core.Mat;
+import org.opencv.core.MatOfByte;
 import org.opencv.imgcodecs.Imgcodecs;
 import org.opencv.imgproc.Imgproc;
 
 /** Fixture-backed regression for windshield VIN text-region detection. */
 @RunWith(JUnit4.class)
 public class TextRegionDetectorFixtureTest {
-    private static final File HONDA_VIN =
-            new File("testdata/textdetect/input/honda_windshield_vin_v2.png");
+    private static final String WINDSHIELD_VIN_FIXTURE = "/textdetect/synthetic_windshield_vin.png";
 
     @BeforeClass
     public static void loadOpenCv() {
@@ -27,10 +28,18 @@ public class TextRegionDetectorFixtureTest {
     }
 
     @Test
-    public void hondaWindshieldVin_producesSmallerCropThanFullFrame() {
-        org.junit.Assume.assumeTrue("Fixture image missing", HONDA_VIN.isFile());
+    public void windshieldVin_producesSmallerCropThanFullFrame() throws IOException {
+        InputStream stream =
+                TextRegionDetectorFixtureTest.class.getResourceAsStream(WINDSHIELD_VIN_FIXTURE);
+        assertThat(stream).as("committed windshield VIN fixture").isNotNull();
+        byte[] encodedBytes;
+        try (stream) {
+            encodedBytes = stream.readAllBytes();
+        }
 
-        Mat bgr = Imgcodecs.imread(HONDA_VIN.getAbsolutePath());
+        MatOfByte encoded = new MatOfByte(encodedBytes);
+        Mat bgr = Imgcodecs.imdecode(encoded, Imgcodecs.IMREAD_COLOR);
+        encoded.release();
         assertThat(bgr.empty()).isFalse();
 
         Mat gray = new Mat();

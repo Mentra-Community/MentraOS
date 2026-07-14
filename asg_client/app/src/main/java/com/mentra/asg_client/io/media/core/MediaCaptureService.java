@@ -548,19 +548,24 @@ public class MediaCaptureService {
                 finalPhotoPath(requestId, transportPath), transportPath);
     }
 
-    private void clearPhotoTracking(String requestId) {
+    /** Clear request-scoped photo state after capture/upload/BLE handoff. */
+    private void clearPhotoRequestTracking(String requestId) {
         photoSaveFlags.remove(requestId);
         photoBleIds.remove(requestId);
         photoOriginalPaths.remove(requestId);
         photoTextCropPrepared.remove(requestId);
         photoRequestedSizes.remove(requestId);
         photoRequestedModes.remove(requestId);
+    }
+
+    /** Clear all request state, including timing data, on a terminal non-BLE exit. */
+    private void clearPhotoTracking(String requestId) {
+        clearPhotoRequestTracking(requestId);
         // markBlePhotoPipelineStart() seeds blePhotoPipelineStartMs/photoTimings whenever a
-        // bleImgId is present, even if the capture ultimately resolves over WiFi (performDirectUpload)
-        // rather than BLE. Only the BLE encode path's own clearBlePhotoPipelineTracking() reclaims
-        // these on its exits, so a WiFi-successful capture with a speculative bleImgId would
-        // otherwise leak an entry per request. clearPhotoTracking() runs on every terminal exit of
-        // every photo job (BLE or WiFi), so reclaiming here covers both.
+        // bleImgId is present, even if the capture ultimately resolves over WiFi. Non-BLE terminal
+        // exits reclaim those speculative entries here. A successful BLE handoff uses
+        // clearPhotoRequestTracking() instead so transfer_complete can still report end-to-end
+        // timing.
         blePhotoPipelineStartMs.remove(requestId);
         photoTimings.remove(requestId);
     }
@@ -2609,10 +2614,13 @@ public class MediaCaptureService {
      * Dumps the full phase breakdown including end-to-end time from request_received.
      */
     public void onBlePhotoTransferComplete(String bleImgId, boolean success) {
-        if (!AsgConstants.ENABLE_PHOTO_TIMING_LOGS || bleImgId == null || bleImgId.isEmpty()) {
+        if (bleImgId == null || bleImgId.isEmpty()) {
             return;
         }
         String requestId = bleImgIdToRequestId.remove(bleImgId);
+        if (!AsgConstants.ENABLE_PHOTO_TIMING_LOGS) {
+            return;
+        }
         if (requestId == null) {
             Log.d(TAG, "⏱️ [BLE PHOTO] transfer_complete for unknown bleImgId=" + bleImgId);
             return;
@@ -4707,7 +4715,9 @@ public class MediaCaptureService {
                                     fos.write(compressedData);
                                 }
                                 logBlePhotoStep(requestId, "write_compressed_file_done");
-                                bleImgIdToRequestId.put(bleImgId, requestId);
+                                if (AsgConstants.ENABLE_PHOTO_TIMING_LOGS) {
+                                    bleImgIdToRequestId.put(bleImgId, requestId);
+                                }
 
                                 Log.i(
                                         TAG,
@@ -4733,8 +4743,8 @@ public class MediaCaptureService {
 
                             } catch (Exception e) {
                                 Log.e(TAG, "Error compressing photo for BLE", e);
-                                clearBlePhotoPipelineTracking(requestId, bleImgId);
                                 dumpTimings(requestId);
+                                clearBlePhotoPipelineTracking(requestId, bleImgId);
                                 sendPhotoErrorResponse(
                                         requestId, "BLE_TRANSFER_FAILED", e.getMessage());
                             } finally {
@@ -4742,7 +4752,10 @@ public class MediaCaptureService {
                                         requestId,
                                         originalPath,
                                         Boolean.TRUE.equals(photoSaveFlags.get(requestId)));
-                                clearPhotoTracking(requestId);
+                                // The BLE transport owns the file after a successful handoff. Keep
+                                // timing state alive until transfer_complete; every failed handoff
+                                // clears it inside sendCompressedPhotoViaBle().
+                                clearPhotoRequestTracking(requestId);
                                 // BLE compress + handoff (or its failure) ends our authority over
                                 // the photo
                                 // job. From here, mServiceCallback.isBleTransferInProgress() is the
