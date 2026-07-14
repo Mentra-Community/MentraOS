@@ -1,29 +1,35 @@
 package com.mentra.asg_client.io.media.core;
 
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.assertEquals;
 
-import com.mentra.asg_client.AsgConstants;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.robolectric.RobolectricTestRunner;
+import org.robolectric.annotation.Config;
 
+/** Robolectric because the policy's unknown-codec fallback logs via {@code android.util.Log}. */
+@RunWith(RobolectricTestRunner.class)
+@Config(sdk = 33)
 public class BlePhotoEncodingPolicyTest {
     @Test
-    public void textModeUsesJpegWhenActualPayloadIsUnderThreshold() {
-        byte[] jpeg = new byte[AsgConstants.TEXT_MODE_AVIF_SIZE_THRESHOLD_BYTES - 1];
-
-        assertTrue(BlePhotoEncodingPolicy.shouldUseJpeg(true, jpeg));
-    }
-
-    @Test
-    public void textModeUsesAvifWhenActualJpegPayloadReachesThreshold() {
-        byte[] jpeg = new byte[AsgConstants.TEXT_MODE_AVIF_SIZE_THRESHOLD_BYTES];
-
-        assertFalse(BlePhotoEncodingPolicy.shouldUseJpeg(true, jpeg));
+    public void textModeUsesConfiguredFastJpegCodec() {
+        assertEquals(BleCodec.JPEG_FAST, BlePhotoEncodingPolicy.selectCodec(true));
     }
 
     @Test
     public void ordinaryPhotoModeAlwaysUsesAvif() {
-        assertFalse(BlePhotoEncodingPolicy.shouldUseJpeg(true, null));
-        assertFalse(BlePhotoEncodingPolicy.shouldUseJpeg(false, new byte[1]));
+        assertEquals(BleCodec.AVIF, BlePhotoEncodingPolicy.selectCodec(false));
+    }
+
+    @Test
+    public void parseCodecAcceptsBothCodecNames() {
+        assertEquals(BleCodec.JPEG_FAST, BlePhotoEncodingPolicy.parseCodec("JPEG_FAST"));
+        assertEquals(BleCodec.AVIF, BlePhotoEncodingPolicy.parseCodec("AVIF"));
+    }
+
+    @Test
+    public void parseCodecFallsBackToAvifOnUnknownName() {
+        assertEquals(BleCodec.AVIF, BlePhotoEncodingPolicy.parseCodec("JPEG_XL"));
+        assertEquals(BleCodec.AVIF, BlePhotoEncodingPolicy.parseCodec(null));
     }
 }
