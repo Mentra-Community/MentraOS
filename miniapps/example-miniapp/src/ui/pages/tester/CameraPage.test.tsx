@@ -2,16 +2,18 @@ import {beforeEach, describe, expect, mock, test} from "bun:test"
 import {fireEvent, render, screen, waitFor} from "@testing-library/react"
 import {MemoryRouter} from "react-router-dom"
 
-const invokeMock = mock(async () => ({
+const photoResult = {
   requestId: "photo-1",
   photoUrl: "https://example.com/photo.jpg",
   mimeType: "image/jpeg",
   size: 2048,
-}))
+}
+const cameraInvokeMock = mock(async () => photoResult)
+const systemInvokeMock = mock(async () => ({success: true}))
 
 mock.module("../../hooks/useTester", () => ({
-  useTester: () => ({
-    invoke: invokeMock,
+  useTester: (iface: string) => ({
+    invoke: iface === "system" ? systemInvokeMock : cameraInvokeMock,
     lastError: null,
     log: [],
     clearLog: () => {},
@@ -28,16 +30,13 @@ const {default: CameraPage} = await import("./CameraPage")
 
 describe("CameraPage", () => {
   beforeEach(() => {
-    invokeMock.mockClear()
-    invokeMock.mockImplementation(async (method: string) => {
+    cameraInvokeMock.mockClear()
+    cameraInvokeMock.mockImplementation(async (method: string) => {
       if (method === "warmUp") return undefined
-      return {
-        requestId: "photo-1",
-        photoUrl: "https://example.com/photo.jpg",
-        mimeType: "image/jpeg",
-        size: 2048,
-      }
+      return photoResult
     })
+    systemInvokeMock.mockClear()
+    systemInvokeMock.mockImplementation(async () => ({success: true}))
   })
 
   test("warmUp sends the selected size and duration", async () => {
@@ -51,7 +50,7 @@ describe("CameraPage", () => {
     fireEvent.click(screen.getByRole("button", {name: /warmUp\(/}))
 
     await waitFor(() => {
-      expect(invokeMock).toHaveBeenCalledWith("warmUp", [{size: "medium", durationMs: 20000}])
+      expect(cameraInvokeMock).toHaveBeenCalledWith("warmUp", [{size: "medium", durationMs: 20000}])
     })
   })
 
@@ -65,7 +64,7 @@ describe("CameraPage", () => {
     fireEvent.click(screen.getByRole("button", {name: "takePhoto()"}))
 
     await waitFor(() => {
-      expect(invokeMock).toHaveBeenCalledWith("takePhoto", [
+      expect(cameraInvokeMock).toHaveBeenCalledWith("takePhoto", [
         {
           size: "medium",
           mode: "photo",
@@ -76,4 +75,38 @@ describe("CameraPage", () => {
     expect(screen.getByText("2.0 KB")).toBeTruthy()
   })
 
+  test("shares the latest photo through session.system.download", async () => {
+    render(
+      <MemoryRouter>
+        <CameraPage />
+      </MemoryRouter>,
+    )
+
+    fireEvent.click(screen.getByRole("button", {name: "takePhoto()"}))
+    fireEvent.click(await screen.findByRole("button", {name: "Share image"}))
+
+    await waitFor(() => {
+      expect(systemInvokeMock).toHaveBeenCalledWith("download", [
+        {
+          url: photoResult.photoUrl,
+          mimeType: photoResult.mimeType,
+          filename: "mentra-photo-photo-1.jpg",
+        },
+      ])
+    })
+  })
+
+  test("surfaces a resolved download failure", async () => {
+    systemInvokeMock.mockImplementationOnce(async () => ({success: false}))
+    render(
+      <MemoryRouter>
+        <CameraPage />
+      </MemoryRouter>,
+    )
+
+    fireEvent.click(screen.getByRole("button", {name: "takePhoto()"}))
+    fireEvent.click(await screen.findByRole("button", {name: "Share image"}))
+
+    expect(await screen.findByText(/The image could not be shared\./)).toBeTruthy()
+  })
 })

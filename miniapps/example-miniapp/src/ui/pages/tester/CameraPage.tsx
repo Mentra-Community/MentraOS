@@ -3,10 +3,12 @@
 // value of invoke()), NOT a streamed tester:event — so capture results live
 // in local state.
 
-import {useState} from "react"
+import {useRef, useState} from "react"
 import {useNavigate} from "react-router-dom"
+import type {DownloadResult} from "@mentra/miniapp"
 import {MiniappHeader} from "@mentra/miniapp/ui"
 
+import type {TesterEventPayload} from "../../shared/types"
 import {useChannel} from "../../hooks/useChannel"
 import {useTester} from "../../hooks/useTester"
 import {Shell} from "../Shell"
@@ -29,9 +31,23 @@ import {
   type TakePhotoConfig,
 } from "./cameraPageModel"
 
+function imageExtension(mimeType?: string): string {
+  switch (mimeType?.toLowerCase()) {
+    case "image/avif":
+      return "avif"
+    case "image/png":
+      return "png"
+    case "image/webp":
+      return "webp"
+    default:
+      return "jpg"
+  }
+}
+
 export default function CameraPage() {
   const navigate = useNavigate()
   const {invoke, lastError} = useTester("camera")
+  const {invoke: invokeSystem} = useTester("system")
   const snapshot = useChannel("captions:snapshot")
   const capabilities = snapshot?.capabilities
 
@@ -44,13 +60,14 @@ export default function CameraPage() {
   const [warmupStatus, setWarmupStatus] = useState<string | null>(null)
   const [captureElapsedMs, setCaptureElapsedMs] = useState<number | undefined>(undefined)
   const [warmupElapsedMs, setWarmupElapsedMs] = useState<number | undefined>(undefined)
+  const [isSharing, setIsSharing] = useState(false)
+  const [shareError, setShareError] = useState<TesterEventPayload | null>(null)
+  const sharingRef = useRef(false)
 
   const parsedDurationMs = Number.parseInt(durationMs, 10)
   const warmupDurationMs =
-    Number.isFinite(parsedDurationMs) && parsedDurationMs > 0
-      ? parsedDurationMs
-      : DEFAULT_WARMUP_DURATION_MS
-  const busy = capturePending || warmupPending
+    Number.isFinite(parsedDurationMs) && parsedDurationMs > 0 ? parsedDurationMs : DEFAULT_WARMUP_DURATION_MS
+  const busy = capturePending || warmupPending || isSharing
   const config: TakePhotoConfig = {size, mode}
 
   const captureWithConfig = async (captureConfig: TakePhotoConfig) => {
@@ -61,6 +78,7 @@ export default function CameraPage() {
   }
 
   const takePhoto = async () => {
+    setShareError(null)
     setCapturePending(true)
     try {
       await captureWithConfig(config)
@@ -86,6 +104,44 @@ export default function CameraPage() {
       .finally(() => setWarmupPending(false))
   }
 
+  const sharePhoto = () => {
+    if (!result?.photoUrl || sharingRef.current) return
+    sharingRef.current = true
+    setIsSharing(true)
+    setShareError(null)
+    invokeSystem("download", [
+      {
+        url: result.photoUrl,
+        mimeType: result.mimeType ?? "image/jpeg",
+        filename: `mentra-photo-${result.requestId ?? Date.now()}.${imageExtension(result.mimeType)}`,
+      },
+    ])
+      .then((response) => {
+        const downloadResult = response as DownloadResult
+        if (!downloadResult?.success) {
+          setShareError({
+            iface: "system",
+            kind: "error",
+            payload: {method: "download", message: "The image could not be shared."},
+          })
+        }
+      })
+      .catch((error) => {
+        setShareError({
+          iface: "system",
+          kind: "error",
+          payload: {
+            method: "download",
+            message: error instanceof Error ? error.message : String(error),
+          },
+        })
+      })
+      .finally(() => {
+        sharingRef.current = false
+        setIsSharing(false)
+      })
+  }
+
   return (
     <Shell>
       <MiniappHeader title="session.camera" onBack={() => navigate("/")} />
@@ -93,8 +149,8 @@ export default function CameraPage() {
         <p className="mb-3 text-[13px] text-muted-foreground">
           Exercises the Cloud V2 managed-photo API: <code className="mx-1">warmUp()</code> and{" "}
           <code className="mx-1">takePhoto()</code> with canonical sizes (
-          <code className="mx-1">low|medium|high|max</code>) and <code className="mx-1">mode</code>. The returned URL
-          is a short-TTL (~30 minute) signed download URL.
+          <code className="mx-1">low|medium|high|max</code>) and <code className="mx-1">mode</code>. The returned URL is
+          a short-TTL (~30 minute) signed download URL.
         </p>
 
         <TableRow
@@ -169,7 +225,6 @@ export default function CameraPage() {
               )}
             </Button>
           </div>
-
         </div>
 
         <TableRow
@@ -201,11 +256,17 @@ export default function CameraPage() {
           }
         />
         {result?.photoUrl && (
-          <div className="mt-2 overflow-hidden rounded-xl border border-border">
-            <img src={result.photoUrl} alt="Photo captured by the glasses camera" className="w-full" />
-          </div>
+          <>
+            <div className="mt-2 overflow-hidden rounded-xl border border-border">
+              <img src={result.photoUrl} alt="Photo captured by the glasses camera" className="w-full" />
+            </div>
+            <Button variant="outline" className="mt-2 w-full" disabled={busy} onClick={sharePhoto}>
+              {isSharing ? "Opening share sheet…" : "Share image"}
+            </Button>
+          </>
         )}
         <ErrorRow event={lastError} />
+        <ErrorRow event={shareError} />
       </div>
     </Shell>
   )
