@@ -1,5 +1,6 @@
 import {ScrollView, View} from "react-native"
 
+import {DeviceTypes} from "@/../../cloud/packages/types/src"
 import {Header, Screen} from "@/components/ignite"
 import {Group} from "@/components/ui/Group"
 import {RouteButton} from "@/components/ui/RouteButton"
@@ -8,6 +9,7 @@ import {useToolkitSnapshot} from "@/hooks/useToolkitSnapshot"
 import {translate} from "@/i18n"
 import {useNavigationStore} from "@/stores/navigation"
 import {SETTINGS, useSetting} from "@/stores/settings"
+import {getAr99DisplayName} from "@/utils/getGlassesImage"
 import {toolkit} from "@mentra/island"
 
 export default function DeviceInfoScreen() {
@@ -17,6 +19,8 @@ export default function DeviceInfoScreen() {
   const deviceInfo = useToolkitSnapshot(toolkit.glasses.info, (onChange) => toolkit.glasses.onInfo(onChange))
   const connectedWifi = deviceInfo.wifi.state === "connected" ? deviceInfo.wifi : null
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
+  const [projectName] = useSetting<string>(SETTINGS.project_name.key)
+  const displayModel = defaultWearable === DeviceTypes.AR99 ? getAr99DisplayName(projectName) : deviceInfo.model || defaultWearable || "Unknown"
 
   // Extract short bluetooth ID from full name (e.g., "MentraLive_664ebf" -> "664ebf")
   const bluetoothId = deviceInfo.bluetoothName?.split("_").pop() || deviceInfo.bluetoothName
@@ -30,7 +34,7 @@ export default function DeviceInfoScreen() {
           <Group title={translate("deviceInfo:deviceIdentity")}>
             <RouteButton
               label={translate("deviceInfo:model")}
-              text={deviceInfo.model || defaultWearable || "Unknown"}
+              text={displayModel}
             />
             {!!bluetoothId && <RouteButton label={translate("deviceInfo:deviceId")} text={bluetoothId} />}
             {!!deviceInfo.serialNumber && (
@@ -66,3 +70,5 @@ export default function DeviceInfoScreen() {
     </Screen>
   )
 }
+
+

@@ -38,15 +38,19 @@ export function useHasDeviceInfo(): boolean {
   const wifiLocalIp = glassesInfo.wifi.state === "connected" ? glassesInfo.wifi.localIp : undefined
   const bluetoothName = glassesInfo.bluetoothName
   const buildNumber = glassesInfo.buildNumber
-  return Boolean(bluetoothName || buildNumber || wifiLocalIp)
+  const model = glassesInfo.model
+  const firmwareVersion = glassesInfo.firmwareVersion
+  const serialNumber = glassesInfo.serialNumber
+  const btMac = glassesInfo.btMac
+  return Boolean(bluetoothName || buildNumber || wifiLocalIp || model || firmwareVersion || serialNumber || btMac)
 }
 
 /**
  * The device/glasses settings, rendered as a single flat card stack under the
- * paired device's name â€” matching Parth's flattened Settings design. Every row
+ * paired device's name â€?matching Parth's flattened Settings design. Every row
  * is conditional on the device's capabilities; for a connected Even Realities
- * G1 the visible order is display position â†’ dashboard â†’ auto-brightness â†’
- * microphone â†’ device info â†’ disconnect â†’ unpair (the design's reference
+ * G1 the visible order is display position â†?dashboard â†?auto-brightness â†?
+ * microphone â†?device info â†?disconnect â†?unpair (the design's reference
  * layout), with capability-specific rows (G2 menu, WiFi, OTA, Nex, Mentra Live
  * button, super-mode tools) slotting in where applicable.
  *
@@ -60,7 +64,7 @@ export function DeviceSettingsSection() {
   const glassesInfo = useToolkitSnapshot(toolkit.glasses.info, (onChange) => toolkit.glasses.onInfo(onChange))
   const [autoBrightness, setAutoBrightness] = useSetting(SETTINGS.auto_brightness.key)
   const [brightness, setBrightness] = useSetting(SETTINGS.brightness.key)
-  // Button-action settings are no longer surfaced in the UI â€” the action button always launches the
+  // Button-action settings are no longer surfaced in the UI â€?the action button always launches the
   // camera (forced at runtime in ButtonActions.tsx). See the commented-out ButtonSettings block below.
   // const [defaultButtonActionEnabled, setDefaultButtonActionEnabled] = useSetting(
   //   SETTINGS.default_button_action_enabled.key,
@@ -113,7 +117,7 @@ export function DeviceSettingsSection() {
     }
   }
 
-  // No glasses paired at all â€” no device section to show.
+  // No glasses paired at all â€?no device section to show.
   if (!defaultWearable) {
     return null
   }
@@ -131,7 +135,7 @@ export function DeviceSettingsSection() {
       {!glassesConnected && <ConnectDeviceButton />}
       {!glassesConnected && <NotConnectedInfo />}
 
-      {/* Display position â€” binocular glasses only */}
+      {/* Display position â€?binocular glasses only */}
       {defaultWearable && (features?.display?.count ?? 0) > 1 && (
         <RouteButton
           icon={<Icon name="locate" size={24} color={theme.colors.secondary_foreground} />}
@@ -140,7 +144,7 @@ export function DeviceSettingsSection() {
         />
       )}
 
-      {/* Dashboard â€” glasses with a MentraOS-managed display dashboard only.
+      {/* Dashboard â€?glasses with a MentraOS-managed display dashboard only.
           Devices with a native firmware dashboard (e.g. G2) manage it on-device,
           so our dashboard settings don't apply. */}
       {defaultWearable && features?.hasDisplay && !features?.hasNativeDashboard && (
@@ -151,7 +155,7 @@ export function DeviceSettingsSection() {
         />
       )}
 
-      {/* Glasses Menu â€” G2 only, requires connection */}
+      {/* Glasses Menu â€?G2 only, requires connection */}
       {defaultWearable === DeviceTypes.G2 && glassesConnected && (
         <RouteButton
           icon={<Icon name="menu-2" size={24} color={theme.colors.secondary_foreground} />}
@@ -173,12 +177,12 @@ export function DeviceSettingsSection() {
         />
       )}
 
-      {/* Layout settings â€” super mode (display layout tooling) */}
+      {/* Layout settings â€?super mode (display layout tooling) */}
       {superMode && (
         <RouteButton label={translate("settings:layoutSettings")} onPress={() => push("/miniapps/settings/layout")} />
       )}
 
-      {/* Button Settings â€” Mentra Live only (G2's button is a touchpad and conflicts with the native menu).
+      {/* Button Settings â€?Mentra Live only (G2's button is a touchpad and conflicts with the native menu).
           Hidden for now: the action button always launches the camera. ButtonActions.tsx already forces
           `default_button_action_app` to com.mentra.camera at runtime for any Mentra Live (camera) glasses, so
           there's nothing for the user to configure. Re-enable this block if we ship a real button-config UX. */}
@@ -199,7 +203,7 @@ export function DeviceSettingsSection() {
         onPress={() => push("/miniapps/settings/microphone")}
       />
 
-      {/* WiFi â€” connected glasses that support WiFi */}
+      {/* WiFi â€?connected glasses that support WiFi */}
       {showAr99OtaEntry && (
         <>
           <RouteButton
@@ -221,10 +225,10 @@ export function DeviceSettingsSection() {
         />
       )}
 
-      {/* OTA Progress â€” OTA-capable glasses in super mode */}
+      {/* OTA Progress â€?OTA-capable glasses in super mode */}
       {superMode && glassesConnected && features?.hasOta && <OtaProgressSection otaProgress={otaProgress} />}
 
-      {/* Nex Developer Settings â€” Mentra Display only */}
+      {/* Nex Developer Settings â€?Mentra Display only */}
       {defaultWearable && defaultWearable.includes(DeviceTypes.NEX) && (
         <RouteButton
           label="Nex Developer Settings"
@@ -260,7 +264,7 @@ export function DeviceSettingsSection() {
         />
       )}
 
-      {/* Pair controller â€” super mode */}
+      {/* Pair controller â€?super mode */}
       {superMode && (
         <RouteButton
           icon={<Icon name="bluetooth" size={24} color={theme.colors.secondary_foreground} />}
@@ -274,3 +278,4 @@ export function DeviceSettingsSection() {
     </View>
   )
 }
+

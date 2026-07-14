@@ -524,6 +524,7 @@ final class Ar99: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SGCM
     private var scanForConnection = false
     private var targetIdentifier: String?
     private var currentProjectName: String?
+    private var currentBroadcastMacAddress: String?
     private var scanTimeoutItem: DispatchWorkItem?
     private var discoveredNames = Set<String>()
     private var lastConnectedDisplayName: String?
@@ -1151,6 +1152,13 @@ final class Ar99: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SGCM
 
         if let projectName = advertisement?.projectName?.trimmingCharacters(in: .whitespacesAndNewlines), !projectName.isEmpty {
             currentProjectName = projectName
+            if let btAddress = advertisement?.btAddress?.trimmingCharacters(in: .whitespacesAndNewlines), !btAddress.isEmpty {
+                currentBroadcastMacAddress = btAddress
+            } else if let bleAddress = advertisement?.bleAddress?.trimmingCharacters(in: .whitespacesAndNewlines), !bleAddress.isEmpty {
+                currentBroadcastMacAddress = bleAddress
+            } else {
+                currentBroadcastMacAddress = nil
+            }
         }
 
         guard matchesTarget(
@@ -1880,7 +1888,8 @@ final class Ar99: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SGCM
             if let productName = info.productName {
                 DeviceStore.shared.apply("glasses", "deviceModel", productName)
             }
-            if let btMac = info.btMac {
+            let preferredBtMac = currentBroadcastMacAddress?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? currentBroadcastMacAddress : info.btMac
+            if let btMac = preferredBtMac, !btMac.isEmpty {
                 DeviceStore.shared.apply("glasses", "bluetoothMacAddress", btMac)
             }
             if let serialNumber = info.serialNumber {
@@ -2408,6 +2417,8 @@ final class Ar99: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SGCM
         return String(trimmed[trimmed.index(after: underscore)...]).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
+
+
 
 
 

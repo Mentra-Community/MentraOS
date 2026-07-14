@@ -147,6 +147,7 @@ public class Ar99 extends SGCManager {
   private ScanCallback scanCallback;
   private String targetIdentifier;
   private String currentProjectName;
+  private String currentBroadcastMacAddress;
 
   private BluetoothGatt controlGatt;
   private BluetoothGattCharacteristic controlWriteCharacteristic;
@@ -725,6 +726,9 @@ public class Ar99 extends SGCManager {
     }
     if (advertisement != null && advertisement.projectName != null && !advertisement.projectName.trim().isEmpty()) {
       currentProjectName = advertisement.projectName.trim();
+      currentBroadcastMacAddress = advertisement.btAddress != null && !advertisement.btAddress.trim().isEmpty()
+          ? advertisement.btAddress.trim()
+          : advertisement.bleAddress != null ? advertisement.bleAddress.trim() : null;
     }
 
     String target = targetIdentifier != null ? targetIdentifier : "";
@@ -1452,9 +1456,10 @@ public class Ar99 extends SGCManager {
         if (info.productName != null) {
           DeviceStore.INSTANCE.apply("glasses", "deviceModel", info.productName);
         }
-        if (info.btMac != null) {
-          DeviceStore.INSTANCE.apply("glasses", "bluetoothMacAddress", info.btMac);
-        }
+          String preferredBtMac = currentBroadcastMacAddress != null && !currentBroadcastMacAddress.trim().isEmpty() ? currentBroadcastMacAddress : info.btMac;
+          if (preferredBtMac != null && !preferredBtMac.trim().isEmpty()) {
+            DeviceStore.INSTANCE.apply("glasses", "bluetoothMacAddress", preferredBtMac);
+          }
         if (info.serialNumber != null) {
           DeviceStore.INSTANCE.apply("glasses", "serialNumber", info.serialNumber);
         }
@@ -2236,6 +2241,10 @@ public class Ar99 extends SGCManager {
     if (currentProjectName != null && !currentProjectName.trim().isEmpty()) {
       DeviceStore.INSTANCE.apply("bluetooth", "project_name", currentProjectName.trim());
     }
+    String connectedBluetoothName = getConnectedBluetoothName();
+    if (connectedBluetoothName != null && !connectedBluetoothName.trim().isEmpty()) {
+      DeviceStore.INSTANCE.apply("glasses", "bluetoothName", connectedBluetoothName.trim());
+    }
     DeviceStore.INSTANCE.apply("glasses", "connected", true);
     DeviceStore.INSTANCE.apply("glasses", "fullyBooted", true);
     updateConnectionState(ConnTypes.CONNECTED);
@@ -2594,6 +2603,11 @@ public class Ar99 extends SGCManager {
     }
   }
 }
+
+
+
+
+
 
 
 
