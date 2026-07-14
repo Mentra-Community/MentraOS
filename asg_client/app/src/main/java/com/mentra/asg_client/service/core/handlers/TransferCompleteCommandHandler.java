@@ -66,6 +66,12 @@ public class TransferCompleteCommandHandler implements ICommandHandler {
                         .getBluetoothManager()
                         .onFileTransferConfirmation(fileName, success);
                 Log.d(TAG, "✅ Forwarded transfer_complete to transport");
+
+                if (serviceManager.getMediaCaptureService() != null) {
+                    serviceManager
+                            .getMediaCaptureService()
+                            .onBlePhotoTransferComplete(fileName, success);
+                }
                 return true;
             } else {
                 Log.e(TAG, "❌ BluetoothManager not available");
