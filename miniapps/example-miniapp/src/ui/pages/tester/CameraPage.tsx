@@ -41,7 +41,7 @@ function imageExtension(mimeType?: string): string {
 export default function CameraPage() {
   const navigate = useNavigate()
   const {invoke, lastError} = useTester("camera")
-  const {invoke: invokeSystem, lastError: systemError} = useTester("system")
+  const {invoke: invokeSystem} = useTester("system")
   const [result, setResult] = useState<PhotoResult | undefined>(undefined)
   const [size, setSize] = useState<PhotoSize>("medium")
   const [mode, setMode] = useState<PhotoMode>("photo")
@@ -50,6 +50,7 @@ export default function CameraPage() {
   const sharingRef = useRef(false)
 
   const takePhoto = () => {
+    setShareError(null)
     invoke("takePhoto", [{size, mode}])
       .then((r) => setResult(r as PhotoResult))
       .catch(() => {
@@ -79,8 +80,15 @@ export default function CameraPage() {
           })
         }
       })
-      .catch(() => {
-        /* error already surfaced via systemError → ErrorRow */
+      .catch((error) => {
+        setShareError({
+          iface: "system",
+          kind: "error",
+          payload: {
+            method: "download",
+            message: error instanceof Error ? error.message : String(error),
+          },
+        })
       })
       .finally(() => {
         sharingRef.current = false
@@ -137,7 +145,6 @@ export default function CameraPage() {
           </>
         )}
         <ErrorRow event={lastError} />
-        <ErrorRow event={systemError} />
         <ErrorRow event={shareError} />
       </div>
     </Shell>
