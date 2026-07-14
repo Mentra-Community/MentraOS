@@ -647,6 +647,7 @@ public class OtaHelper {
 
         boolean apkUpdateNeeded = false;
         boolean apkUpdateFailed = false;
+        boolean apkTargetMatched = false;
         String failedApkPackage = null;
 
         // APK is deliberately the final step.
@@ -681,6 +682,9 @@ public class OtaHelper {
                     }
                 } else {
                     Log.d(TAG, packageName + " is up to date (version " + currentVersion + ")");
+                    if (OtaConstants.ASG_PACKAGE.equals(packageName)) {
+                        apkTargetMatched = true;
+                    }
                 }
             }
         } else {
@@ -696,6 +700,13 @@ public class OtaHelper {
                     : "download_failed";
             Log.e(TAG, "Stopping OTA flow because APK update failed for " + failedPkg);
             sendProgressToPhone("download", 0, 0, 0, "FAILED", errorCode);
+            return;
+        }
+
+        if (OtaUpdatePlanner.shouldAdvanceSatisfiedApkStep(
+                activeStep, apkTargetMatched, apkUpdateNeeded)) {
+            Log.i(TAG, "Active ASG step already matches its exact target; advancing session");
+            continueSessionAfterStepComplete(context);
             return;
         }
 

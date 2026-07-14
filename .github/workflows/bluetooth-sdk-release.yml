@@ -160,8 +160,8 @@ jobs:
             "https://ota.mentraglass.com/prod_live_version_v2.json" \
             "https://mentra-live-ota-staging.pages.dev/staging_live_version.json"; do
             if json=$(curl --fail --silent --show-error --location "$url"); then
-              candidate=$(jq -r '.apps["com.mentra.asg_client"] | .asgVersion // .versionCode // 0' <<<"$json")
-              version_code=$(jq -r '.apps["com.mentra.asg_client"].versionCode // 0' <<<"$json")
+              IFS=$'\t' read -r candidate version_code \
+                < <(node .github/scripts/asg-version.mjs --read-manifest <<<"$json")
               if [[ "$version_code" =~ ^[0-9]+$ ]]; then
                 published_version_codes+=("$version_code")
               fi
@@ -170,18 +170,28 @@ jobs:
               fi
             fi
           done
-          release_json=$(curl --fail --silent --show-error --location \
+          release_response=$(curl --silent --show-error --location \
+            --write-out $'\n%{http_code}' \
             --header "Authorization: Bearer ${GH_TOKEN}" \
             --header "Accept: application/vnd.github+json" \
             "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/${SDK_OTA_RELEASE_TAG}")
+          release_status="${release_response##*$'\n'}"
+          release_json="${release_response%$'\n'*}"
+          if [[ "$release_status" == "404" ]]; then
+            echo "No historical SDK OTA release exists yet; starting an empty artifact audit."
+            release_json='{"assets":[]}'
+          elif [[ "$release_status" != "200" ]]; then
+            echo "Could not audit historical SDK OTA release (HTTP ${release_status})." >&2
+            exit 1
+          fi
           while IFS=$'\t' read -r asset_name asset_url; do
             if [[ "$asset_name" =~ -vc([0-9]+)- ]]; then
               published_version_codes+=("${BASH_REMATCH[1]}")
             fi
             if [[ "$asset_name" == bluetooth-sdk-*-version.json ]]; then
               json=$(curl --fail --silent --show-error --location "$asset_url")
-              candidate=$(jq -r '.apps["com.mentra.asg_client"] | .asgVersion // .versionCode // 0' <<<"$json")
-              version_code=$(jq -r '.apps["com.mentra.asg_client"].versionCode // 0' <<<"$json")
+              IFS=$'\t' read -r candidate version_code \
+                < <(node .github/scripts/asg-version.mjs --read-manifest <<<"$json")
               if [[ "$version_code" =~ ^[0-9]+$ ]]; then
                 published_version_codes+=("$version_code")
               fi

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import {appendFileSync} from 'node:fs';
+import {appendFileSync, readFileSync} from 'node:fs';
 import {pathToFileURL} from 'node:url';
 
 export const ASG_ANDROID_VERSION_CODE = 1_000_000_000;
@@ -33,6 +33,24 @@ export function resolveAsgVersion(epochSeconds, lastPublishedVersion = 0) {
   return Math.max(calculateModifiedEpochVersion(epochSeconds), lastPublishedVersion + 1);
 }
 
+function positiveSafeInteger(value) {
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : 0;
+}
+
+/** Reads release identity without ever mistaking the fixed Android transport code for ASG. */
+export function readPublishedAsgMetadata(manifest) {
+  const app = manifest?.apps?.['com.mentra.asg_client'] ?? {};
+  const versionCode = positiveSafeInteger(app.versionCode);
+  const explicitAsgVersion = positiveSafeInteger(app.asgVersion);
+  return {
+    asgVersion:
+      explicitAsgVersion ||
+      (versionCode !== ASG_ANDROID_VERSION_CODE ? versionCode : 0),
+    versionCode,
+  };
+}
+
 export function formatAsgVersionName(epochSeconds, shortSha, prefix = '') {
   if (!/^[0-9a-f]{7,40}$/i.test(shortSha)) {
     throw new Error(`Invalid ASG source SHA: ${shortSha}`);
@@ -54,6 +72,11 @@ function setOutput(name, value) {
 }
 
 function main() {
+  if (process.argv[2] === '--read-manifest') {
+    const metadata = readPublishedAsgMetadata(JSON.parse(readFileSync(0, 'utf8')));
+    process.stdout.write(`${metadata.asgVersion}\t${metadata.versionCode}\n`);
+    return;
+  }
   const epochSeconds = Number(process.env.ASG_BUILD_EPOCH_SECONDS || Math.floor(Date.now() / 1000));
   const lastPublishedVersion = Number(process.env.LAST_PUBLISHED_ASG_VERSION || 0);
   const shortSha = process.env.ASG_SOURCE_SHA || process.env.GITHUB_SHA || '';

@@ -14,4 +14,10 @@ public final class OtaUpdatePlanner {
         if (asgNeeded) steps.add("apk");
         return steps;
     }
+
+    /** True when recovery already converged the active final APK step to its exact target. */
+    public static boolean shouldAdvanceSatisfiedApkStep(
+            String activeStep, boolean targetMatched, boolean installDispatched) {
+        return "apk".equals(activeStep) && targetMatched && !installDispatched;
+    }
 }

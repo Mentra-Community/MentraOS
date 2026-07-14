@@ -5,6 +5,7 @@ import {
   assertTransportVersionCodeSafe,
   calculateModifiedEpochVersion,
   formatAsgVersionName,
+  readPublishedAsgMetadata,
   resolveAsgVersion,
 } from './asg-version.mjs';
 
@@ -29,4 +30,30 @@ test('formats a diagnostic-only UTC version name', () => {
 test('fixed Android transport version is not below a published artifact', () => {
   assert.doesNotThrow(() => assertTransportVersionCodeSafe([39, 48_332_721, 1_000_000_000]));
   assert.throws(() => assertTransportVersionCodeSafe([1_000_000_001]), /not above published/);
+});
+
+test('reads explicit ASG versions without treating the fixed transport code as logical', () => {
+  assert.deepEqual(
+    readPublishedAsgMetadata({
+      apps: {
+        'com.mentra.asg_client': {
+          asgVersion: 48_332_721,
+          versionCode: ASG_ANDROID_VERSION_CODE,
+        },
+      },
+    }),
+    {asgVersion: 48_332_721, versionCode: ASG_ANDROID_VERSION_CODE},
+  );
+  assert.deepEqual(
+    readPublishedAsgMetadata({
+      apps: {'com.mentra.asg_client': {versionCode: ASG_ANDROID_VERSION_CODE}},
+    }),
+    {asgVersion: 0, versionCode: ASG_ANDROID_VERSION_CODE},
+  );
+  assert.deepEqual(
+    readPublishedAsgMetadata({
+      apps: {'com.mentra.asg_client': {versionCode: 47_442_366}},
+    }),
+    {asgVersion: 47_442_366, versionCode: 47_442_366},
+  );
 });
