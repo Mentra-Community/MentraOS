@@ -258,7 +258,7 @@ export async function dev(options: DevOptions = {}): Promise<void> {
 
   printBanner();
   const devUrl = await buildDevUrl(lanIp);
-  printQR(devUrl);
+  await printQR(devUrl);
   console.log(`\n${devUrl}\n`);
 
   // Monitor for LAN IP changes (e.g., WiFi switch).
@@ -269,7 +269,7 @@ export async function dev(options: DevOptions = {}): Promise<void> {
       console.log(`\nLAN IP changed to ${newIp}. New QR:`);
       printBanner();
       const newDevUrl = await buildDevUrl(newIp);
-      printQR(newDevUrl);
+      await printQR(newDevUrl);
       console.log(`\n${newDevUrl}\n`);
     }
   }, 10_000);
