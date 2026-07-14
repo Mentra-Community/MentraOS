@@ -444,6 +444,11 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             await MainActor.run { sdk.cancelAr99Ota() }
         }
 
+        AsyncFunction("sendAr99FactoryReset") {
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            try await MainActor.run { try sdk.sendAr99FactoryReset() }
+        }
+
                         Function("buildAr99OtaSignature") { (secret: String, appName: String, currentVersion: String, serialNumber: String, nonce: String) in
             let raw = secret + appName + "juxinOTA" + currentVersion + serialNumber.trimmingCharacters(in: .whitespacesAndNewlines) + nonce
             let digest = Insecure.MD5.hash(data: Data(raw.utf8))

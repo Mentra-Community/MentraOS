@@ -42,6 +42,12 @@ const en = {
     androidVersion: "Android version",
     wifiNetwork: "WiFi network",
     localIpAddress: "Local IP address",
+    factoryReset: "Reset to Factory Settings",
+    factoryResetAlertTitle: "Reset to Factory Settings?",
+    factoryResetAlertMessage:
+      "Resetting to factory settings will erase all information on the glasses and cannot be undone. Are you sure you want to continue?",
+    factoryResetFailedTitle: "Factory Reset Failed",
+    factoryResetFailedMessage: "Unable to send the factory reset command. Please try again.",
   },
   microphoneSettings: {
     title: "Microphone",
@@ -893,6 +899,7 @@ const en = {
     saved: "Saved",
     tryAgain: "Try again",
     connect: "Connect",
+    confirm: "Confirm",
     ignore: "Ignore",
     exit: "Exit",
   },

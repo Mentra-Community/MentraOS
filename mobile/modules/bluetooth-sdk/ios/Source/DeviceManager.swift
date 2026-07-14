@@ -1347,6 +1347,13 @@ struct ViewState {
         (sgc as? Ar99)?.cancelAr99Ota()
     }
 
+    func sendAr99FactoryReset() throws {
+        guard let ar99 = sgc as? Ar99 else {
+            throw BluetoothSdkError(code: "unsupported_device", message: "This command requires AR99 glasses.")
+        }
+        ar99.sendFactoryReset()
+    }
+
     private func liveSgc() throws -> MentraLive {
         guard let live = sgc as? MentraLive else {
             throw BluetoothSdkError(code: "unsupported_device", message: "This command requires Mentra Live glasses.")

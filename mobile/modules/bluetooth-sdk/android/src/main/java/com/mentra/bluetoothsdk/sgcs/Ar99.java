@@ -91,6 +91,7 @@ public class Ar99 extends SGCManager {
   private static final int CMD_DISPLAY_SET_AUTO_ADJUST_LIGHT = 138;
 
   private static final int CMD_DISPLAY_CTRL_AUDIO_RECORD = 161;
+  private static final int CMD_DISPLAY_CTRL_FACTORY_RESET = 162;
   private static final int CMD_DISPLAY_CTRL_SYS_FUNCTION = 164;
   private static final int CMD_DISPLAY_CTRL_MINIMAL_TEXT_START = 181;
   private static final int CMD_DISPLAY_CTRL_MINIMAL_TEXT_SET = 182;
@@ -108,6 +109,7 @@ public class Ar99 extends SGCManager {
   private static final int DISPLAY_FUNCTION_TYPE_UI_MODE = 2;
   private static final int DISPLAY_UI_MODE_MINIMAL = 1;
   private static final int DISPLAY_LANGUAGE_ENGLISH = 1;
+  private static final int FACTORY_RESET_CONFIRM_CODE = 0xAA;
 
   private static final int TARGET_MOBILE_APP = 0;
   private static final int TARGET_GLASS_ANDROID = 1;
@@ -536,6 +538,15 @@ public class Ar99 extends SGCManager {
 
   @Override
   public void sendReboot() {}
+
+  public void sendFactoryReset() {
+    Bridge.log(TAG + ": sending factory reset");
+    enqueueMessage(
+        FUNC_COMM_DISPLAY,
+        CMD_DISPLAY_CTRL_FACTORY_RESET,
+        buildProtoMessageUInt32(1, FACTORY_RESET_CONFIRM_CODE),
+        TARGET_GLASS_MCU_DISPLAY);
+  }
 
   @Override
   public void sendRgbLedControl(
@@ -1517,6 +1528,38 @@ public class Ar99 extends SGCManager {
                 + " currentBrightness="
                 + brightness);
       }
+    } else if (cmd == CMD_DISPLAY_CTRL_FACTORY_RESET) {
+      Boolean success = null;
+      Integer confirmCode = null;
+      try {
+        CodedInputStream input = CodedInputStream.newInstance(payload);
+        while (!input.isAtEnd()) {
+          int tag = input.readTag();
+          if (tag == 0) break;
+          switch (WireFormat.getTagFieldNumber(tag)) {
+            case 1:
+              success = input.readBool();
+              break;
+            case 2:
+              confirmCode = input.readUInt32();
+              break;
+            default:
+              input.skipField(tag);
+              break;
+          }
+        }
+      } catch (IOException e) {
+        Bridge.log(TAG + ": failed parsing factory reset response: " + e.getMessage());
+      }
+      logRecv(
+          "parsed cmd="
+              + cmd
+              + " isResponse="
+              + isResponse
+              + " success="
+              + success
+              + " confirmCode="
+              + confirmCode);
     } else if (cmd == CMD_DISPLAY_CTRL_SYS_FUNCTION) {
       Boolean success = parseSuccessResponse(payload);
       if (success != null) {

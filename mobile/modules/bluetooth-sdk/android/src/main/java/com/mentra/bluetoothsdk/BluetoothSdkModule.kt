@@ -523,6 +523,8 @@ class BluetoothSdkModule : Module() {
 
         AsyncFunction("cancelAr99Ota") { requireSdk().cancelAr99Ota() }
 
+        AsyncFunction("sendAr99FactoryReset") { requireSdk().sendAr99FactoryReset() }
+
                 Function("buildAr99OtaSignature") { secret: String, appName: String, currentVersion: String, serialNumber: String, nonce: String ->
             val raw = secret + appName + "juxinOTA" + currentVersion + serialNumber.trim() + nonce
             val digest = MessageDigest.getInstance("MD5").digest(raw.toByteArray(Charsets.UTF_8))

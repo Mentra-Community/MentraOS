@@ -1082,6 +1082,11 @@ class MentraBluetoothSdk private constructor(
         deviceManager.cancelAr99Ota()
     }
 
+    fun sendAr99FactoryReset() {
+        requireGlassesConnected("factory reset AR99")
+        deviceManager.sendAr99FactoryReset()
+    }
+
     private fun getFreshGlassesStatus(): GlassesStatus {
         val status = getRawGlassesStatus()
         if (!status.connected || status.buildNumber.isNotBlank()) {

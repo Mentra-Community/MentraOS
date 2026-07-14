@@ -1051,6 +1051,7 @@ export interface BluetoothSdkPublicModule {
   startOtaUpdate(): Promise<OtaStartAckEvent>
   startAr99OtaFromFile(path: string): Promise<boolean>
   cancelAr99Ota(): Promise<void>
+  sendAr99FactoryReset(): Promise<void>
   buildAr99OtaSignature(secret: string, appName: string, currentVersion: string, serialNumber: string, nonce: string): string
 
   // // stt commands (MOVE TO CRUST)

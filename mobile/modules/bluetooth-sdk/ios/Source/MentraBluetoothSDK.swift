@@ -1140,6 +1140,11 @@ public final class MentraBluetoothSDK {
         DeviceManager.shared.cancelAr99Ota()
     }
 
+    func sendAr99FactoryReset() throws {
+        try requireGlassesConnected(operation: "factory reset AR99")
+        try DeviceManager.shared.sendAr99FactoryReset()
+    }
+
     private func getFreshGlassesStatus() async -> GlassesStatus {
         let status = glassesStatus
         if !status.connected || !status.buildNumber.isEmpty {

@@ -128,6 +128,7 @@ export const BluetoothSdk: BluetoothSdkPublicModule = Object.freeze({
   startOtaUpdate,
   startAr99OtaFromFile: bindPublicMethod("startAr99OtaFromFile"),
   cancelAr99Ota: bindPublicMethod("cancelAr99Ota"),
+  sendAr99FactoryReset: bindPublicMethod("sendAr99FactoryReset"),
   buildAr99OtaSignature: bindPublicMethod("buildAr99OtaSignature"),
   setSttModelDetails: bindPublicMethod("setSttModelDetails"),
   getSttModelPath: bindPublicMethod("getSttModelPath"),

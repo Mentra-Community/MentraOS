@@ -40,6 +40,7 @@ private enum Ar99Protocol {
     static let cmdDisplaySetBright = 132
     static let cmdDisplaySetAutoAdjustLight = 138
     static let cmdDisplayCtrlAudioRecord = 161
+    static let cmdDisplayCtrlFactoryReset = 162
     static let cmdDisplayCtrlSysFunction = 164
     static let cmdDisplayCtrlMinimalTextStart = 181
     static let cmdDisplayCtrlMinimalTextSet = 182
@@ -54,6 +55,7 @@ private enum Ar99Protocol {
     static let displayFunctionTypeUiMode = 2
     static let displayUiModeMinimal = 1
     static let displayLanguageEnglish = 1
+    static let factoryResetConfirmCode = 0xAA
 
     static let targetMobileApp = 0
     static let targetGlassAndroid = 1
@@ -675,6 +677,15 @@ final class Ar99: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SGCM
     func exit() {}
     func sendShutdown() {}
     func sendReboot() {}
+    func sendFactoryReset() {
+        Bridge.log("AR99: sending factory reset")
+        enqueueMessage(
+            function: Ar99Protocol.funcCommDisplay,
+            cmd: Ar99Protocol.cmdDisplayCtrlFactoryReset,
+            payload: buildProtoUInt32(field: 1, value: Ar99Protocol.factoryResetConfirmCode),
+            receiver: Ar99Protocol.targetGlassMcuDisplay
+        )
+    }
 
     func sendRgbLedControl(
         requestId _: String,
@@ -1908,6 +1919,12 @@ final class Ar99: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SGCM
         case Ar99Protocol.cmdDisplaySetLanguage:
             _ = parseLanguageResponse(payload)
 
+        case Ar99Protocol.cmdDisplayCtrlFactoryReset:
+            if let success = parseSuccessResponse(payload) {
+                let confirmCode = parseFactoryResetConfirmCode(payload) ?? -1
+                Bridge.log("AR99: factory reset response success=\(success) confirmCode=\(confirmCode)")
+            }
+
         case Ar99Protocol.cmdDisplayCtrlSysFunction:
             if parseSuccessResponse(payload) == true {
                 minimalModeReady = true
@@ -2200,6 +2217,23 @@ final class Ar99: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SGCM
             }
         }
         return success
+    }
+
+    private func parseFactoryResetConfirmCode(_ payload: Data) -> Int? {
+        var reader = Ar99ProtoReader(payload)
+        var confirmCode: Int?
+        while !reader.isAtEnd {
+            guard let field = reader.nextField() else { break }
+            switch field.field {
+            case 1:
+                _ = readSuccessField(reader: &reader, wire: field.wire)
+            case 2 where field.wire == 0:
+                confirmCode = Int(reader.readVarint() ?? 0)
+            default:
+                guard reader.skipField(wire: field.wire) else { return nil }
+            }
+        }
+        return confirmCode
     }
 
     private func parseLegacyAudioRecordResponse(_ payload: Data) -> Bool? {

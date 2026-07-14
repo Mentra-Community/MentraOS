@@ -1626,6 +1626,11 @@ class DeviceManager {
         (sgc as? Ar99)?.cancelAr99Ota()
     }
 
+    fun sendAr99FactoryReset() {
+        val ar99 = sgc as? Ar99 ?: throw IllegalStateException("unsupported_device")
+        ar99.sendFactoryReset()
+    }
+
     fun sendGalleryMode(requestId: String, enabled: Boolean) {
         val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
         live.sendGalleryMode(requestId, enabled)
