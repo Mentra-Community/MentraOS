@@ -9,14 +9,6 @@ WORKDIR /app
 # Copy source code
 COPY . .
 
-# Diagnostic: verify the build context actually contains the workspace tree.
-# CI builds have been failing with files missing from the context (first the
-# soniox patch, then packages/sdk) while identical local builds pass.
-RUN echo "== /app top level ==" && ls -la && \
-    echo "== packages ==" && ls -la packages/ && \
-    echo "== workspace manifests ==" && \
-    find . -maxdepth 3 -name package.json -not -path "./node_modules/*" | sort
-
 # Install dependencies and ensure correct bun-types version
 RUN bun install --frozen-lockfile && \
     rm -rf node_modules/@types/bun && \
