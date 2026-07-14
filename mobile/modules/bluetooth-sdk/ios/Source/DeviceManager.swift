@@ -1546,13 +1546,19 @@ struct ViewState {
             Bridge.log("MAN: No default wearable, returning")
             return
         }
-        if deviceName.isEmpty {
-            Bridge.log("MAN: No device name, returning")
+        let reconnectTarget =
+            if defaultWearable.contains(DeviceTypes.AR99), !deviceAddress.isEmpty {
+                deviceAddress
+            } else {
+                deviceName
+            }
+        if reconnectTarget.isEmpty {
+            Bridge.log("MAN: No reconnect target, returning")
             return
         }
         initSGC(defaultWearable)
         searching = true
-        sgc?.connectById(deviceName)
+        sgc?.connectById(reconnectTarget)
         connectDefaultController()
     }
 
@@ -1732,6 +1738,4 @@ struct ViewState {
         cancellables.removeAll()
     }
 }
-
-
 

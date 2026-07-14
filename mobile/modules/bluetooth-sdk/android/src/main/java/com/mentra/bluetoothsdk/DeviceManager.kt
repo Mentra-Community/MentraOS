@@ -1850,8 +1850,14 @@ class DeviceManager {
             Bridge.log("MAN: No default wearable, returning")
             return
         }
-        if (deviceName.isEmpty()) {
-            Bridge.log("MAN: No device name, returning")
+        val reconnectTarget =
+            if (defaultWearable.contains(DeviceTypes.AR99) && deviceAddress.isNotBlank()) {
+                deviceAddress
+            } else {
+                deviceName
+            }
+        if (reconnectTarget.isEmpty()) {
+            Bridge.log("MAN: No reconnect target, returning")
             return
         }
         if (!hasBluetoothPermissions()) {
@@ -1863,7 +1869,7 @@ class DeviceManager {
         }
         initSGC(defaultWearable)
         searching = true
-        sgc?.connectById(deviceName)
+        sgc?.connectById(reconnectTarget)
         connectDefaultController()
     }
 
@@ -2067,6 +2073,4 @@ class DeviceManager {
         }
     }
 }
-
-
 

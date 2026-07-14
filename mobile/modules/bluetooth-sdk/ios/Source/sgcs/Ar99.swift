@@ -1893,9 +1893,6 @@ final class Ar99: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SGCM
             if let serialNumber = info.serialNumber {
                 DeviceStore.shared.apply("glasses", "serialNumber", serialNumber)
             }
-            if let deviceName = info.deviceName?.trimmingCharacters(in: .whitespacesAndNewlines), !deviceName.isEmpty {
-                Bridge.saveSetting("device_name", deviceName)
-            }
             sendVersionInfo(info)
 
         case Ar99Protocol.cmdDisplayGetBright:
@@ -2415,18 +2412,4 @@ final class Ar99: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SGCM
         return String(trimmed[trimmed.index(after: underscore)...]).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 

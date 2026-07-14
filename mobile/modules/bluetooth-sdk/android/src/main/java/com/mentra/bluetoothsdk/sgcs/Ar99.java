@@ -755,6 +755,14 @@ public class Ar99 extends SGCManager {
 
     if (!matchesTarget) return;
 
+    String reconnectAddress =
+        advertisement != null && advertisement.bleAddress != null && !advertisement.bleAddress.trim().isEmpty()
+            ? advertisement.bleAddress.trim()
+            : device.getAddress();
+    if (reconnectAddress != null && !reconnectAddress.trim().isEmpty()) {
+      DeviceManager.getInstance().setDeviceAddress(reconnectAddress);
+    }
+
     stopScan();
     connectGatt(device);
   }
@@ -1462,9 +1470,6 @@ public class Ar99 extends SGCManager {
           }
         if (info.serialNumber != null) {
           DeviceStore.INSTANCE.apply("glasses", "serialNumber", info.serialNumber);
-        }
-        if (info.deviceName != null && !info.deviceName.trim().isEmpty()) {
-          Bridge.saveSetting("device_name", info.deviceName);
         }
         sendVersionInfo(info);
       }
@@ -2603,22 +2608,4 @@ public class Ar99 extends SGCManager {
     }
   }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 

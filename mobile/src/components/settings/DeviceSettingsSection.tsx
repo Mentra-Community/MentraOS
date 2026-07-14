@@ -80,6 +80,10 @@ export function DeviceSettingsSection() {
   const features: Capabilities = getModelCapabilities(defaultWearable)
 
   const otaProgress = otaSnapshot.legacyProgress
+  const isAr99Family =
+    isAr99Identifier(defaultWearable) ||
+    isAr99Identifier(glassesInfo.model) ||
+    isAr99Identifier(glassesInfo.bluetoothName)
   const showAr99OtaEntry =
     glassesConnected &&
     (isAr99Identifier(defaultWearable) ||
@@ -136,7 +140,7 @@ export function DeviceSettingsSection() {
       {!glassesConnected && <NotConnectedInfo />}
 
       {/* Display position â€?binocular glasses only */}
-      {defaultWearable && (features?.display?.count ?? 0) > 1 && (
+      {defaultWearable && !isAr99Family && (features?.display?.count ?? 0) > 1 && (
         <RouteButton
           icon={<Icon name="locate" size={24} color={theme.colors.secondary_foreground} />}
           label={translate("settings:positionSettings")}
@@ -278,4 +282,6 @@ export function DeviceSettingsSection() {
     </View>
   )
 }
+
+
 
