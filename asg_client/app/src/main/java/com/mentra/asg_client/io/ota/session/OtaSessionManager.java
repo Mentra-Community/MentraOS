@@ -107,6 +107,7 @@ public class OtaSessionManager {
         }
         long nowElapsed = SystemClock.elapsedRealtime();
         long nowWallClock = System.currentTimeMillis();
+        rebaseLegacyClocksAfterReboot(nowElapsed, nowWallClock);
         // Skip expiry check during APK restart path — but cap how long we trust it. Without
         // a cap, a stuck restart guard would keep the session "active" forever and prevent
         // any future OTA from even creating a session. SESSION_EXPIRY_MS (30 min) is safe:
@@ -161,6 +162,7 @@ public class OtaSessionManager {
         if (mRestartingSinceElapsed < 0) {
             long nowElapsed = SystemClock.elapsedRealtime();
             long nowWallClock = System.currentTimeMillis();
+            rebaseLegacyClocksAfterReboot(nowElapsed, nowWallClock);
             if (mLastActivityAtElapsed > 0
                     && ageSince(
                                     nowElapsed,
@@ -254,11 +256,14 @@ public class OtaSessionManager {
 
     public synchronized long getRestartGuardRemainingMs() {
         if (mRestartingSinceElapsed < 0) return 0;
+        long nowElapsed = SystemClock.elapsedRealtime();
+        long nowWallClock = System.currentTimeMillis();
+        rebaseLegacyClocksAfterReboot(nowElapsed, nowWallClock);
         long elapsed =
                 ageSince(
-                        SystemClock.elapsedRealtime(),
+                        nowElapsed,
                         mRestartingSinceElapsed,
-                        System.currentTimeMillis(),
+                        nowWallClock,
                         mRestartingSinceWallClock);
         return Math.max(0, APK_RESTART_GUARD_MS - elapsed);
     }
@@ -596,10 +601,32 @@ public class OtaSessionManager {
         mLastActivityAtWallClock = System.currentTimeMillis();
     }
 
+    /** Gives pre-wall-clock session JSON one bounded recovery window after a detected reboot. */
+    private void rebaseLegacyClocksAfterReboot(long nowElapsed, long nowWallClock) {
+        boolean changed = false;
+        if (mLastActivityAtWallClock <= 0
+                && mLastActivityAtElapsed > 0
+                && nowElapsed < mLastActivityAtElapsed) {
+            mLastActivityAtElapsed = nowElapsed;
+            mLastActivityAtWallClock = nowWallClock;
+            changed = true;
+        }
+        if (mRestartingSinceElapsed >= 0
+                && mRestartingSinceWallClock <= 0
+                && nowElapsed < mRestartingSinceElapsed) {
+            mRestartingSinceElapsed = nowElapsed;
+            mRestartingSinceWallClock = nowWallClock;
+            changed = true;
+        }
+        if (changed) {
+            persist();
+        }
+    }
+
     /**
      * Returns a reboot-safe age. elapsedRealtime is authoritative within one boot; after it resets,
      * wall clock keeps persisted OTA sessions expirable. Legacy sessions without a wall timestamp
-     * fail open so the boot-time recovery path gets one chance to recheck them.
+     * fail open until they are rebased to one bounded boot-time recovery window.
      */
     static long ageSince(
             long nowElapsed, long sinceElapsed, long nowWallClock, long sinceWallClock) {

@@ -7,12 +7,14 @@ import static org.junit.Assert.assertTrue;
 import android.content.Context;
 import android.os.SystemClock;
 import androidx.test.core.app.ApplicationProvider;
+import java.time.Duration;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
+import org.robolectric.shadows.ShadowSystemClock;
 
 @RunWith(RobolectricTestRunner.class)
 public class OtaSessionManagerTest {
@@ -56,6 +58,16 @@ public class OtaSessionManagerTest {
         persistSession(System.currentTimeMillis() - (31L * 60L * 1000L));
 
         assertFalse(new OtaSessionManager(context).hasActiveSession());
+    }
+
+    @Test
+    public void legacySessionGetsOneBoundedRecoveryWindowAfterReboot() throws Exception {
+        persistSession(0L);
+        OtaSessionManager manager = new OtaSessionManager(context);
+
+        assertTrue(manager.hasActiveSession());
+        ShadowSystemClock.advanceBy(Duration.ofMinutes(31));
+        assertFalse(manager.hasActiveSession());
     }
 
     private void persistSession(long lastActivityWallClock) throws Exception {
