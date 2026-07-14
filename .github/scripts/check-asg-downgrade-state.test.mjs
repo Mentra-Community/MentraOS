@@ -106,3 +106,16 @@ test('ASG and recovery worker share the complete install transaction action cont
     assert.ok(recoveryManifest.includes(action), `manifest is missing recovery action ${action}`);
   }
 });
+
+test('ASG publishing workflows derive the logical version from the checked-out commit', () => {
+  for (const workflow of [
+    '.github/workflows/bluetooth-sdk-release.yml',
+    '.github/workflows/staging-builds.yml',
+  ]) {
+    const source = readFileSync(workflow, 'utf8');
+    assert.ok(
+      source.includes('ASG_BUILD_EPOCH_SECONDS=$(git show -s --format=%ct HEAD)'),
+      `${workflow} must bind asgVersion to its source commit`,
+    );
+  }
+});
