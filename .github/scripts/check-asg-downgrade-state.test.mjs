@@ -82,3 +82,27 @@ test('bundled recovery worker version advances with the downgrade handoff contra
   assert.ok(buildVersion >= 7, 'recovery worker handoff receiver requires versionCode 7+');
   assert.equal(assetVersion, buildVersion, 'bundled recovery fallback version must match the APK');
 });
+
+test('ASG and recovery worker share the complete install transaction action contract', () => {
+  const asgConstants = readFileSync(
+    join(sourceRoot, 'com/mentra/asg_client/io/ota/utils/OtaConstants.java'),
+    'utf8',
+  );
+  const recoveryConstants = readFileSync(
+    'asg_client/recovery_worker/app/src/main/java/com/mentra/recovery/util/RecoveryConstants.java',
+    'utf8',
+  );
+  const recoveryManifest = readFileSync(
+    'asg_client/recovery_worker/app/src/main/AndroidManifest.xml',
+    'utf8',
+  );
+  for (const action of [
+    'com.mentra.recovery.ACTION_ASG_INSTALL_PENDING',
+    'com.mentra.recovery.ACTION_ASG_INSTALL_READY',
+    'com.mentra.recovery.ACTION_ASG_INSTALL_CANCEL',
+  ]) {
+    assert.ok(asgConstants.includes(action), `ASG is missing recovery action ${action}`);
+    assert.ok(recoveryConstants.includes(action), `recovery is missing action ${action}`);
+    assert.ok(recoveryManifest.includes(action), `manifest is missing recovery action ${action}`);
+  }
+});

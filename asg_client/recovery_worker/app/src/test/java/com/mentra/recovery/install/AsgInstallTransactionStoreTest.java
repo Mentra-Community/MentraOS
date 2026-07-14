@@ -1,6 +1,8 @@
 package com.mentra.recovery.install;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 
 import java.io.File;
 import java.nio.charset.StandardCharsets;
@@ -28,5 +30,13 @@ public class AsgInstallTransactionStoreTest {
     assertEquals(
         "6b8c7cbc10e07c5d0d81e83041ef4fe7ee23af5bdeb0f30a0cf4f2423b229fdf",
         AsgInstallTransactionStore.sha256(apk));
+  }
+
+  @Test
+  public void expiresOnlyOldForwardMovingTransactions() {
+    assertTrue(AsgInstallTransactionStore.isExpired(1_000L, 7_001L, 6_000L));
+    assertFalse(AsgInstallTransactionStore.isExpired(1_000L, 7_000L, 6_000L));
+    assertFalse(AsgInstallTransactionStore.isExpired(-1L, 7_001L, 6_000L));
+    assertFalse(AsgInstallTransactionStore.isExpired(8_000L, 7_001L, 6_000L));
   }
 }

@@ -81,6 +81,8 @@ public class OtaConstants {
             "com.mentra.recovery.ACTION_ASG_INSTALL_PENDING";
     public static final String RECOVERY_ASG_INSTALL_READY =
             "com.mentra.recovery.ACTION_ASG_INSTALL_READY";
+    public static final String RECOVERY_ASG_INSTALL_CANCEL =
+            "com.mentra.recovery.ACTION_ASG_INSTALL_CANCEL";
     public static final String EXTRA_TARGET_ASG_VERSION = "target_asg_version";
     public static final String EXTRA_APK_SHA256 = "apk_sha256";
     public static final String EXTRA_IS_DOWNGRADE = "is_downgrade";

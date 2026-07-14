@@ -54,6 +54,16 @@ public class RecoveryControlReceiver extends BroadcastReceiver {
       } else {
         Log.e(RecoveryConstants.TAG, "Refusing to arm unknown ASG install target " + target);
       }
+    } else if (RecoveryConstants.ACTION_ASG_INSTALL_CANCEL.equals(intent.getAction())) {
+      long target = intent.getLongExtra(RecoveryConstants.EXTRA_TARGET_ASG_VERSION, -1L);
+      if (new AsgInstallTransactionStore(context).cancel(target)) {
+        WorkManager.getInstance(context)
+            .cancelUniqueWork(RecoveryConstants.UNIQUE_ASG_INSTALL_RETRY_WORK);
+        setResultCode(Activity.RESULT_OK);
+        Log.i(RecoveryConstants.TAG, "Cancelled pending ASG install target " + target);
+      } else {
+        Log.w(RecoveryConstants.TAG, "Ignoring cancel for unknown ASG install target " + target);
+      }
     } else if (RecoveryConstants.ACTION_START_RECOVERY.equals(intent.getAction())) {
       Log.i(RecoveryConstants.TAG, "Starting RecoveryService from ACTION_START_RECOVERY");
       BootReceiver.startRecoveryService(context);

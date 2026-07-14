@@ -1004,6 +1004,7 @@ public class OtaHelper {
                                 appInfo.optString("sha256", ""),
                                 isAsgDowngrade)) {
                     isUpdating = false;
+                    notifyRecoveryAsgInstallCancelled(context, serverVersion);
                     if (sessionManager != null) {
                         sessionManager.clearRestartGuard();
                     }
@@ -1018,6 +1019,7 @@ public class OtaHelper {
                         AsgDowngradeResetter.reset(context);
                     } catch (RuntimeException e) {
                         isUpdating = false;
+                        notifyRecoveryAsgInstallCancelled(context, serverVersion);
                         if (sessionManager != null) {
                             sessionManager.clear();
                         }
@@ -1027,6 +1029,7 @@ public class OtaHelper {
                     }
                     if (!notifyRecoveryAsgInstallReady(context, serverVersion)) {
                         isUpdating = false;
+                        notifyRecoveryAsgInstallCancelled(context, serverVersion);
                         if (sessionManager != null) {
                             sessionManager.clear();
                         }
@@ -1317,6 +1320,16 @@ public class OtaHelper {
         intent.setPackage(OtaConstants.RECOVERY_PACKAGE);
         intent.putExtra(OtaConstants.EXTRA_TARGET_ASG_VERSION, targetAsgVersion);
         return sendOrderedRecoveryHandoff(context, intent, "armed reset ASG install");
+    }
+
+    private static void notifyRecoveryAsgInstallCancelled(
+            Context context, long targetAsgVersion) {
+        Intent intent = new Intent(OtaConstants.RECOVERY_ASG_INSTALL_CANCEL);
+        intent.setPackage(OtaConstants.RECOVERY_PACKAGE);
+        intent.putExtra(OtaConstants.EXTRA_TARGET_ASG_VERSION, targetAsgVersion);
+        if (!sendOrderedRecoveryHandoff(context, intent, "cancelled ASG install")) {
+            Log.w(TAG, "Recovery sidecar did not confirm ASG install cancellation");
+        }
     }
 
     private static boolean sendOrderedRecoveryHandoff(

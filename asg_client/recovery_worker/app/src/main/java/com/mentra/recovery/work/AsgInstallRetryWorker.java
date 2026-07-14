@@ -26,6 +26,12 @@ public final class AsgInstallRetryWorker extends Worker {
       return Result.success();
     }
     if (!store.isReadyToInstall()) {
+      if (store.isUnarmedExpired(
+          System.currentTimeMillis(), RecoveryConstants.ASG_INSTALL_ARM_TIMEOUT_MS)) {
+        long target = store.targetAsgVersion();
+        Log.e(RecoveryConstants.TAG, "Expiring unarmed ASG install target " + target);
+        return store.cancel(target) ? Result.success() : Result.retry();
+      }
       Log.w(
           RecoveryConstants.TAG,
           "Pending ASG downgrade is not armed because its state reset was not confirmed");

@@ -64,6 +64,21 @@ public final class AsgInstallTransactionStore {
     return hasPending() && preferences.getBoolean(KEY_READY, false);
   }
 
+  /** Cancels only the matching transaction so a late failure cannot erase a newer target. */
+  public boolean cancel(long targetAsgVersion) {
+    if (targetAsgVersion <= 0 || targetAsgVersion != targetAsgVersion()) {
+      return false;
+    }
+    return preferences.edit().clear().commit();
+  }
+
+  public boolean isUnarmedExpired(long nowMs, long timeoutMs) {
+    if (!hasPending() || isReadyToInstall()) {
+      return false;
+    }
+    return isExpired(preferences.getLong(KEY_STARTED_AT, -1L), nowMs, timeoutMs);
+  }
+
   /** True only for the checksum-verified ASG APK that declares this pending logical target. */
   public boolean pendingArtifactMatches(File apk) {
     if (apk == null || !apk.exists() || !apk.canRead() || apk.length() <= 0) {
@@ -83,6 +98,10 @@ public final class AsgInstallTransactionStore {
           context
               .getPackageManager()
               .getPackageArchiveInfo(apk.getAbsolutePath(), PackageManager.GET_META_DATA);
+      if (archive != null && archive.applicationInfo != null) {
+        archive.applicationInfo.sourceDir = apk.getAbsolutePath();
+        archive.applicationInfo.publicSourceDir = apk.getAbsolutePath();
+      }
       return archive != null
           && RecoveryConstants.ASG_PACKAGE.equals(archive.packageName)
           && readAsgVersion(archive) == targetAsgVersion();
@@ -166,5 +185,12 @@ public final class AsgInstallTransactionStore {
     } catch (NumberFormatException ignored) {
       return -1L;
     }
+  }
+
+  static boolean isExpired(long startedAtMs, long nowMs, long timeoutMs) {
+    return startedAtMs > 0
+        && nowMs >= startedAtMs
+        && timeoutMs >= 0
+        && (nowMs - startedAtMs) > timeoutMs;
   }
 }
