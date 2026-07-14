@@ -27,6 +27,12 @@ jobs:
 
       - name: Setup Porter CLI
         uses: porter-dev/setup-porter@v0.1.0
+        with:
+          # Pinned: porter v0.68.39+ (released 2026-07-06) ships a broken
+          # dockerignore matcher that reduces the build context to almost
+          # nothing when a negation pattern (!bun.lock) is present. v0.68.38
+          # is the last release with correct context packaging.
+          tagged_release: v0.68.38
 
       - name: Deploy stack to Production
         timeout-minutes: 30
