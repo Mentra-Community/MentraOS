@@ -55,7 +55,7 @@ describe("CameraPage", () => {
     })
   })
 
-  test("takePhoto sends the full new API options", async () => {
+  test("takePhoto sends the selected camera options", async () => {
     render(
       <MemoryRouter>
         <CameraPage />
@@ -69,8 +69,6 @@ describe("CameraPage", () => {
         {
           size: "medium",
           mode: "photo",
-          compress: "none",
-          sound: true,
           saveToGallery: false,
         },
       ])
@@ -79,35 +77,4 @@ describe("CameraPage", () => {
     expect(screen.getByText("2.0 KB")).toBeTruthy()
   })
 
-  test("compare photo vs text captures both modes", async () => {
-    render(
-      <MemoryRouter>
-        <CameraPage />
-      </MemoryRouter>,
-    )
-
-    fireEvent.click(screen.getByRole("button", {name: "Compare photo vs text"}))
-
-    await waitFor(() => {
-      expect(invokeMock).toHaveBeenCalledTimes(2)
-    })
-    expect(invokeMock).toHaveBeenNthCalledWith(1, "takePhoto", [
-      {
-        size: "medium",
-        mode: "photo",
-        compress: "none",
-        sound: true,
-        saveToGallery: false,
-      },
-    ])
-    expect(invokeMock).toHaveBeenNthCalledWith(2, "takePhoto", [
-      {
-        size: "medium",
-        mode: "text",
-        compress: "none",
-        sound: true,
-        saveToGallery: false,
-      },
-    ])
-  })
 })

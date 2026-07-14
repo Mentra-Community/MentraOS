@@ -44,7 +44,7 @@ const API_ROWS: Row[] = [
   {
     emoji: "📸",
     title: "session.camera",
-    subtitle: "Cloud V2 warmUp/takePhoto — sizes, modes, compress, matrix",
+    subtitle: "Cloud V2 warmUp/takePhoto — sizes, modes, matrix",
     path: "/tester/camera",
   },
   {
