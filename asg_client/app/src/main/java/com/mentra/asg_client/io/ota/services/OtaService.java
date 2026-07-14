@@ -235,9 +235,23 @@ public class OtaService extends Service {
 
                 if (otaHelper != null) {
                     otaHelper.sendMtkInstallProgressToPhone("FINISHED", 100, null);
-                    // Session-based path: auto-advance to the next step (e.g. BES) immediately
-                    // so BES starts without waiting for a phone-side re-check or user tap.
-                    boolean advanced = otaHelper.continueSessionAfterStepComplete(this);
+                    boolean advanced;
+                    if (shouldRebootAfterMtk) {
+                        // Keep MTK as the active step until its staged A/B image is live. The
+                        // expected-reboot recovery path will recheck the manifest after boot;
+                        // seeing the new MTK version then advances to ASG without racing reboot.
+                        OtaSessionManager sessionManager = otaHelper.getSessionManager();
+                        advanced =
+                                sessionManager != null && sessionManager.hasActiveSession();
+                        if (advanced) {
+                            Log.i(
+                                    TAG,
+                                    "MTK session parked until reboot applies firmware; deferring next step");
+                        }
+                    } else {
+                        // BES follows and performs the power-cycle, so advance into BES now.
+                        advanced = otaHelper.continueSessionAfterStepComplete(this);
+                    }
                     if (!advanced) {
                         // Legacy path (no active session): tell the phone MTK is done so it
                         // can decide whether to start another round.

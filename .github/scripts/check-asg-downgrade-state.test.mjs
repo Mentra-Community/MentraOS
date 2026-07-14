@@ -119,6 +119,27 @@ test('successful downgrade reset also clears the live OTA session snapshot', () 
   );
 });
 
+test('MTK-only success parks the session until its expected reboot', () => {
+  const otaService = readFileSync(
+    join(sourceRoot, 'com/mentra/asg_client/io/ota/services/OtaService.java'),
+    'utf8',
+  );
+  const rebootBranch = otaService.match(
+    /if \(shouldRebootAfterMtk\) \{([\s\S]*?)\} else \{([\s\S]*?)\n\s*\}/,
+  );
+  assert.ok(rebootBranch, 'MTK success must distinguish self-reboot from BES continuation');
+  assert.doesNotMatch(
+    rebootBranch[1],
+    /continueSessionAfterStepComplete/,
+    'self-reboot path must not start the next OTA step before MTK is live',
+  );
+  assert.match(
+    rebootBranch[2],
+    /continueSessionAfterStepComplete/,
+    'BES path should continue immediately because BES supplies the reboot',
+  );
+});
+
 test('ASG publishing workflows derive the logical version from the checked-out commit', () => {
   for (const workflow of [
     '.github/workflows/bluetooth-sdk-release.yml',
