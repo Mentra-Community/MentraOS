@@ -67,3 +67,18 @@ test('every ASG SharedPreferences store is owned by the downgrade reset contract
     'Downgrade reset omits Android default SharedPreferences',
   );
 });
+
+test('bundled recovery worker version advances with the downgrade handoff contract', () => {
+  const recoveryBuild = readFileSync('asg_client/recovery_worker/app/build.gradle', 'utf8');
+  const recoveryManager = readFileSync(
+    join(sourceRoot, 'com/mentra/asg_client/RecoveryWorkerManager.java'),
+    'utf8',
+  );
+  const buildVersion = Number(recoveryBuild.match(/\bversionCode\s+(\d+)/)?.[1]);
+  const assetVersion = Number(
+    recoveryManager.match(/ASSETS_RECOVERY_VERSION\s*=\s*(\d+)/)?.[1],
+  );
+
+  assert.ok(buildVersion >= 7, 'recovery worker handoff receiver requires versionCode 7+');
+  assert.equal(assetVersion, buildVersion, 'bundled recovery fallback version must match the APK');
+});

@@ -41,7 +41,7 @@ public class RecoveryWorkerManager {
     private static final String RECOVERY_APK_ASSET_NAME = "recovery_worker.apk";
     private static final String RECOVERY_APK_FILE_PATH =
             "/storage/emulated/0/asg/recovery_worker.apk";
-    private static final int ASSETS_RECOVERY_VERSION = 6;
+    private static final int ASSETS_RECOVERY_VERSION = 7;
     private static final String PREFS = "RecoveryWorkerManagerPrefs";
     private static final String KEY_PURGED_LEGACY = "legacy_updater_purged";
 
