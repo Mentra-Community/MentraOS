@@ -3,6 +3,7 @@ package com.mentra.asg_client.io.ota.session;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.os.SystemClock;
+import android.provider.Settings;
 import android.util.Log;
 import java.util.UUID;
 import org.json.JSONArray;
@@ -31,6 +32,7 @@ public class OtaSessionManager {
      */
     private static final long APK_RESTART_GUARD_MS = 10_000L;
 
+    private final Context mContext;
     private final SharedPreferences mPrefs;
 
     private String mSessionId;
@@ -46,11 +48,16 @@ public class OtaSessionManager {
     private long mLastActivityAtWallClock;
     private long mRestartingSinceElapsed;
     private long mRestartingSinceWallClock;
+    private long mExpectedAsgVersion;
+    private int mExpectedFirmwareRebootBootCount;
+    private long mExpectedFirmwareRebootAtElapsed;
+    private long mExpectedFirmwareRebootAtWallClock;
 
     private int mLastPersistedPercent;
 
     public OtaSessionManager(Context context) {
-        mPrefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        mContext = context.getApplicationContext();
+        mPrefs = mContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
         load();
     }
 
@@ -92,6 +99,8 @@ public class OtaSessionManager {
         markActivity();
         mRestartingSinceElapsed = -1;
         mRestartingSinceWallClock = -1;
+        mExpectedAsgVersion = -1;
+        clearExpectedFirmwareRebootInMemory();
         mLastPersistedPercent = 0;
         persist();
         Log.i(TAG, "Created session " + mSessionId + " with " + mTotalSteps + " steps");
@@ -230,6 +239,10 @@ public class OtaSessionManager {
     public synchronized void setFailed(String errorMessage) {
         mStatus = "failed";
         mErrorMessage = errorMessage;
+        mRestartingSinceElapsed = -1;
+        mRestartingSinceWallClock = -1;
+        mExpectedAsgVersion = -1;
+        clearExpectedFirmwareRebootInMemory();
         markActivity();
         persist();
         Log.e(TAG, "Session failed: " + errorMessage);
@@ -238,16 +251,26 @@ public class OtaSessionManager {
     public synchronized void setComplete() {
         mStatus = "complete";
         mStepPercent = 100;
+        mRestartingSinceElapsed = -1;
+        mRestartingSinceWallClock = -1;
+        mExpectedAsgVersion = -1;
+        clearExpectedFirmwareRebootInMemory();
         markActivity();
         persist();
         Log.i(TAG, "Session complete: " + mSessionId);
     }
 
     public synchronized void setRestarting() {
+        setRestarting(-1L);
+    }
+
+    /** Arms package-replacement recovery for the exact logical ASG target. */
+    public synchronized void setRestarting(long expectedAsgVersion) {
         mRestartingSinceElapsed = SystemClock.elapsedRealtime();
         mRestartingSinceWallClock = System.currentTimeMillis();
+        mExpectedAsgVersion = expectedAsgVersion;
         persist();
-        Log.i(TAG, "Session marked as restarting");
+        Log.i(TAG, "Session marked as restarting for ASG " + expectedAsgVersion);
     }
 
     public synchronized boolean isInRestartGuard() {
@@ -271,6 +294,59 @@ public class OtaSessionManager {
     public synchronized void clearRestartGuard() {
         mRestartingSinceElapsed = -1;
         mRestartingSinceWallClock = -1;
+        persist();
+    }
+
+    public synchronized long getExpectedAsgVersion() {
+        return mExpectedAsgVersion;
+    }
+
+    public synchronized void clearExpectedAsgVersion() {
+        mExpectedAsgVersion = -1;
+        persist();
+    }
+
+    /** Records that the active firmware step is expected to reboot the Android device. */
+    public synchronized void expectFirmwareReboot() {
+        if (!hasActiveSession()) return;
+        mExpectedFirmwareRebootBootCount = readBootCount();
+        mExpectedFirmwareRebootAtElapsed = SystemClock.elapsedRealtime();
+        mExpectedFirmwareRebootAtWallClock = System.currentTimeMillis();
+        persist();
+    }
+
+    /** Returns whether the armed firmware reboot has occurred, without consuming the marker. */
+    public synchronized boolean hasExpectedFirmwareRebootOccurred() {
+        if (mExpectedFirmwareRebootAtElapsed < 0) return false;
+        long nowElapsed = SystemClock.elapsedRealtime();
+        long nowWallClock = System.currentTimeMillis();
+        if (ageSince(
+                        nowElapsed,
+                        mExpectedFirmwareRebootAtElapsed,
+                        nowWallClock,
+                        mExpectedFirmwareRebootAtWallClock)
+                > SESSION_EXPIRY_MS) {
+            clearExpectedFirmwareRebootInMemory();
+            persist();
+            return false;
+        }
+        int currentBootCount = readBootCount();
+        if (mExpectedFirmwareRebootBootCount >= 0 && currentBootCount >= 0) {
+            return currentBootCount != mExpectedFirmwareRebootBootCount;
+        }
+        return nowElapsed < mExpectedFirmwareRebootAtElapsed;
+    }
+
+    /** Consumes an expected-reboot marker only after a different boot is observed. */
+    public synchronized boolean consumeExpectedFirmwareReboot() {
+        if (!hasExpectedFirmwareRebootOccurred()) return false;
+        clearExpectedFirmwareRebootInMemory();
+        persist();
+        return true;
+    }
+
+    public synchronized void clearExpectedFirmwareReboot() {
+        clearExpectedFirmwareRebootInMemory();
         persist();
     }
 
@@ -354,6 +430,8 @@ public class OtaSessionManager {
         mLastActivityAtWallClock = 0;
         mRestartingSinceElapsed = -1;
         mRestartingSinceWallClock = -1;
+        mExpectedAsgVersion = -1;
+        clearExpectedFirmwareRebootInMemory();
         mLastPersistedPercent = 0;
         mPrefs.edit().remove(KEY_SESSION_DATA).apply();
     }
@@ -553,6 +631,10 @@ public class OtaSessionManager {
             json.put("last_activity_at_wall_clock", mLastActivityAtWallClock);
             json.put("restarting_since_elapsed", mRestartingSinceElapsed);
             json.put("restarting_since_wall_clock", mRestartingSinceWallClock);
+            json.put("expected_asg_version", mExpectedAsgVersion);
+            json.put("expected_firmware_reboot_boot_count", mExpectedFirmwareRebootBootCount);
+            json.put("expected_firmware_reboot_at_elapsed", mExpectedFirmwareRebootAtElapsed);
+            json.put("expected_firmware_reboot_at_wall_clock", mExpectedFirmwareRebootAtWallClock);
             mPrefs.edit().putString(KEY_SESSION_DATA, json.toString()).apply();
         } catch (JSONException e) {
             Log.e(TAG, "Failed to persist session", e);
@@ -565,6 +647,8 @@ public class OtaSessionManager {
             mStepSequence = new JSONArray();
             mRestartingSinceElapsed = -1;
             mRestartingSinceWallClock = -1;
+            mExpectedAsgVersion = -1;
+            clearExpectedFirmwareRebootInMemory();
             return;
         }
         try {
@@ -587,13 +671,33 @@ public class OtaSessionManager {
             mLastActivityAtWallClock = json.optLong("last_activity_at_wall_clock", 0);
             mRestartingSinceElapsed = json.optLong("restarting_since_elapsed", -1);
             mRestartingSinceWallClock = json.optLong("restarting_since_wall_clock", -1);
+            mExpectedAsgVersion = json.optLong("expected_asg_version", -1);
+            mExpectedFirmwareRebootBootCount =
+                    json.optInt("expected_firmware_reboot_boot_count", -1);
+            mExpectedFirmwareRebootAtElapsed =
+                    json.optLong("expected_firmware_reboot_at_elapsed", -1);
+            mExpectedFirmwareRebootAtWallClock =
+                    json.optLong("expected_firmware_reboot_at_wall_clock", -1);
             mLastPersistedPercent = mStepPercent;
         } catch (JSONException e) {
             Log.e(TAG, "Failed to load session", e);
             mStepSequence = new JSONArray();
             mRestartingSinceElapsed = -1;
             mRestartingSinceWallClock = -1;
+            mExpectedAsgVersion = -1;
+            clearExpectedFirmwareRebootInMemory();
         }
+    }
+
+    private int readBootCount() {
+        return Settings.Global.getInt(
+                mContext.getContentResolver(), Settings.Global.BOOT_COUNT, -1);
+    }
+
+    private void clearExpectedFirmwareRebootInMemory() {
+        mExpectedFirmwareRebootBootCount = -1;
+        mExpectedFirmwareRebootAtElapsed = -1;
+        mExpectedFirmwareRebootAtWallClock = -1;
     }
 
     private void markActivity() {

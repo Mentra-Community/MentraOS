@@ -270,6 +270,18 @@ public class OtaHelper {
         return sessionManager;
     }
 
+    public void expectFirmwareReboot() {
+        if (sessionManager != null) {
+            sessionManager.expectFirmwareReboot();
+        }
+    }
+
+    public void clearExpectedFirmwareReboot() {
+        if (sessionManager != null) {
+            sessionManager.clearExpectedFirmwareReboot();
+        }
+    }
+
     /**
      * Returns whether the most recently started MTK install should trigger a self-reboot on
      * success — i.e. it is an MTK-only update with no BES step to power-cycle the device — and
@@ -994,7 +1006,7 @@ public class OtaHelper {
                 // after the restart via sendCompletionToPhone(), or naturally from
                 // the next step for multi-step sessions.
                 if (sessionManager != null) {
-                    sessionManager.setRestarting();
+                    sessionManager.setRestarting(serverVersion);
                 }
 
                 if (OtaConstants.ASG_PACKAGE.equals(packageName)
@@ -1006,7 +1018,7 @@ public class OtaHelper {
                     isUpdating = false;
                     notifyRecoveryAsgInstallCancelled(context, serverVersion);
                     if (sessionManager != null) {
-                        sessionManager.clearRestartGuard();
+                        sessionManager.setFailed("recovery_handoff_failed");
                     }
                     lastApkFailureErrorCode = "recovery_handoff_failed";
                     Log.e(TAG, "Refusing ASG install because recovery handoff was not persisted");
@@ -1042,14 +1054,14 @@ public class OtaHelper {
                 boolean installKicked = installApk(context, localPath);
                 if (!installKicked) {
                     isUpdating = false;
-                    // Install never actually fired. Roll back the restart guard so the next
-                    // OTA attempt does not inherit stale process-restart state.
-                    Log.w(TAG, "installApk did not kick install — rolling back restart guard and reporting FAILED");
+                    // Install never actually fired. Terminate the session immediately so a
+                    // service restart cannot mistake the persisted install phase for success.
+                    Log.w(TAG, "installApk did not kick install — terminating session and reporting FAILED");
                     if (sessionManager != null) {
                         if (isAsgDowngrade) {
                             sessionManager.clear();
                         } else {
-                            sessionManager.clearRestartGuard();
+                            sessionManager.setFailed("install_failed");
                         }
                     }
                     sendProgressToPhone("install", 0, 0, 0, "FAILED", "install_failed");
@@ -2068,11 +2080,13 @@ public class OtaHelper {
             IBesOtaController manager = besOtaRegistry.getInstance();
             if (manager != null) {
                 Log.i(TAG, "Starting BES firmware update from: " + OtaConstants.BES_FIRMWARE_PATH);
+                expectFirmwareReboot();
                 boolean started = manager.startFirmwareUpdate(OtaConstants.BES_FIRMWARE_PATH);
                 if (started) {
                     Log.i(TAG, "BES firmware update initiated successfully");
                     return true;
                 } else {
+                    clearExpectedFirmwareReboot();
                     Log.e(TAG, "Failed to start BES firmware update");
                     File firmwareFile = new File(OtaConstants.BES_FIRMWARE_PATH);
                     if (firmwareFile.exists() && !firmwareFile.delete()) {
@@ -2080,6 +2094,7 @@ public class OtaHelper {
                     }
                 }
             } else {
+                clearExpectedFirmwareReboot();
                 Log.e(TAG, "BesOtaManager not available");
                 File firmwareFile = new File(OtaConstants.BES_FIRMWARE_PATH);
                 if (firmwareFile.exists() && !firmwareFile.delete()) {
@@ -2087,6 +2102,7 @@ public class OtaHelper {
                 }
             }
         } catch (Exception e) {
+            clearExpectedFirmwareReboot();
             Log.e(TAG, "Failed to update BES firmware", e);
             File firmwareFile = new File(OtaConstants.BES_FIRMWARE_PATH);
             if (firmwareFile.exists() && !firmwareFile.delete()) {

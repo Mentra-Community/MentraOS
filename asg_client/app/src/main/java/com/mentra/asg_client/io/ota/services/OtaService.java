@@ -11,7 +11,6 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
-import android.os.SystemClock;
 import android.util.Log;
 import androidx.core.app.NotificationCompat;
 import com.mentra.asg_client.events.BatteryStatusEvent;
@@ -231,7 +230,8 @@ public class OtaService extends Service {
                 // whether a BES update follows), NOT from session state — so it is correct on both
                 // the session path and the legacy/no-session path below. consume*() clears the flag
                 // so a duplicate/late SUCCESS event can't schedule a second reboot.
-                boolean shouldRebootAfterMtk = otaHelper != null && otaHelper.consumeRebootAfterMtkInstall();
+                boolean shouldRebootAfterMtk =
+                        otaHelper != null && otaHelper.consumeRebootAfterMtkInstall();
 
                 if (otaHelper != null) {
                     otaHelper.sendMtkInstallProgressToPhone("FINISHED", 100, null);
@@ -278,20 +278,29 @@ public class OtaService extends Service {
     /**
      * Reboot the device to apply a staged MTK-only firmware update.
      *
-     * MTK A/B updates do not change ro.custom.ota.version until the device reboots. When MTK is
+     * <p>MTK A/B updates do not change ro.custom.ota.version until the device reboots. When MTK is
      * bundled with a BES update the BES install power-cycles the device for us; for an MTK-only
      * update nothing else triggers the reboot, so the device would otherwise keep re-offering the
      * same patch (current firmware still matches the patch's start_firmware) in a loop.
      *
-     * Delayed so the phone receives the BLE "complete" status before the connection drops.
+     * <p>Delayed so the phone receives the BLE "complete" status before the connection drops.
      */
     private void scheduleMtkRebootToApplyUpdate() {
-        Log.i(TAG, "🔄 MTK was the final OTA step (no BES update) - rebooting in "
-                + (MTK_REBOOT_DELAY_MS / 1000) + "s to apply staged firmware");
-        new Handler(Looper.getMainLooper()).postDelayed(() -> {
-            Log.i(TAG, "🔄 Rebooting now to apply staged MTK firmware update");
-            SystemControllerFactory.get(this).reboot();
-        }, MTK_REBOOT_DELAY_MS);
+        Log.i(
+                TAG,
+                "🔄 MTK was the final OTA step (no BES update) - rebooting in "
+                        + (MTK_REBOOT_DELAY_MS / 1000)
+                        + "s to apply staged firmware");
+        if (otaHelper != null) {
+            otaHelper.expectFirmwareReboot();
+        }
+        new Handler(Looper.getMainLooper())
+                .postDelayed(
+                        () -> {
+                            Log.i(TAG, "🔄 Rebooting now to apply staged MTK firmware update");
+                            SystemControllerFactory.get(this).reboot();
+                        },
+                        MTK_REBOOT_DELAY_MS);
     }
 
     @Subscribe(threadMode = ThreadMode.MAIN)
@@ -324,6 +333,7 @@ public class OtaService extends Service {
                 updateNotification("BES firmware update failed: " + event.getErrorMessage());
                 // Try to notify phone of failure (might work if UART recovers)
                 if (otaHelper != null) {
+                    otaHelper.clearExpectedFirmwareReboot();
                     otaHelper.sendBesInstallProgressToPhone("FAILED", 0, event.getErrorMessage());
                     otaHelper.deleteDownloadedArtifactForType("bes");
                 }
@@ -333,7 +343,10 @@ public class OtaService extends Service {
 
     private void checkAndResumeAfterApkUpdate() {
         try {
-            OtaSessionManager sessionManager = new OtaSessionManager(this);
+            // OtaHelper owns the process-wide session manager. Reusing it here prevents two
+            // in-memory snapshots from overwriting each other's consumed reboot/install markers.
+            OtaSessionManager sessionManager =
+                    otaHelper != null ? otaHelper.getSessionManager() : new OtaSessionManager(this);
 
             if (sessionManager.hasActiveSession() && sessionManager.isInRestartGuard()) {
                 Log.i(TAG, "📱 Active OTA session found in restart guard - auto-continuing");
@@ -354,43 +367,32 @@ public class OtaService extends Service {
                 return;
             }
 
-            // Edge case: an active session exists but the restart guard was never armed (or
-            // was already cleared, e.g. by an installApk failure rollback). Without this
-            // branch we fall through to the version-bump heuristic and may either skip the
-            // resume entirely, or kick a duplicate version check while a real session is
-            // still in flight. Resume directly so the next step is picked up.
-            //
-            // CRITICAL: resumeFromSession() unconditionally advances currentStepIndex + 1.
-            // We must only invoke it when the active session is the APK install restart
-            // recovery case (step 0, type=apk, phase=install). For any other in-flight
-            // session (e.g. MTK/BES download or install) the service may have been
-            // recreated by the OS while a real OTA step is still running on the glasses,
-            // so advancing here would skip the current step or mark the session complete
-            // before the update actually finished. Leave that session alone and let
-            // normal OTA progress events drive it.
+            // Never infer OTA completion from a young device uptime. A persisted session can
+            // outlive an unrelated user reboot, and an APK install phase without its restart
+            // guard can be a failed recovery handoff. Firmware code explicitly arms a marker
+            // with the current Android boot count before an OTA-owned reboot; only a different
+            // boot count is allowed to restart the current manifest step.
             if (sessionManager.hasActiveSession()) {
                 int currentStepIndex = sessionManager.getCurrentStepIndex();
                 String currentStepType = sessionManager.getStepType(currentStepIndex);
                 String currentPhase = sessionManager.getCurrentPhase();
-                boolean isApkInstallRestart =
-                        "apk".equals(currentStepType)
-                                && "install".equals(currentPhase);
-                if (isApkInstallRestart) {
+                if (sessionManager.hasExpectedFirmwareRebootOccurred()) {
                     Log.i(
                             TAG,
-                            "📱 Active APK install session found without restart guard — resuming next step");
-                    resumeFromSession(sessionManager);
-                    return;
-                }
-                if (SystemClock.elapsedRealtime() < 120_000L) {
-                    Log.i(TAG, "Device rebooted during firmware OTA; rechecking current session step");
+                            "Expected firmware reboot observed; rechecking current session step");
                     new Handler(Looper.getMainLooper())
-                            .postDelayed(() -> resumeCurrentSession(sessionManager), 10_000L);
+                            .postDelayed(
+                                    () -> {
+                                        if (sessionManager.consumeExpectedFirmwareReboot()) {
+                                            resumeCurrentSession(sessionManager);
+                                        }
+                                    },
+                                    10_000L);
                     return;
                 }
                 Log.i(
                         TAG,
-                        "📱 Active OTA session found without restart guard but not APK install restart "
+                        "📱 Active OTA session found without a verified package replacement or expected firmware reboot "
                                 + "(step="
                                 + currentStepIndex
                                 + " type="
@@ -449,9 +451,22 @@ public class OtaService extends Service {
 
     private void resumeFromSession(OtaSessionManager sessionManager) {
         try {
+            long expectedAsgVersion = sessionManager.getExpectedAsgVersion();
+            long installedAsgVersion = AsgVersion.current();
+            if (expectedAsgVersion > 0 && installedAsgVersion != expectedAsgVersion) {
+                Log.w(
+                        TAG,
+                        "ASG restart guard fired before exact target converged (installed="
+                                + installedAsgVersion
+                                + ", expected="
+                                + expectedAsgVersion
+                                + "); leaving session on APK install");
+                return;
+            }
             // Clear any recovery heartbeat pause that was set before the APK install.
             OtaHelper.notifyRecoveryInstallCompleted(this);
             sessionManager.clearRestartGuard();
+            sessionManager.clearExpectedAsgVersion();
             int nextStep = sessionManager.getCurrentStepIndex() + 1;
 
             if (nextStep >= sessionManager.getTotalSteps()) {

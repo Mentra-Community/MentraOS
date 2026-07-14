@@ -6,6 +6,7 @@ import static org.junit.Assert.assertTrue;
 
 import android.content.Context;
 import android.os.SystemClock;
+import android.provider.Settings;
 import androidx.test.core.app.ApplicationProvider;
 import java.time.Duration;
 import org.json.JSONArray;
@@ -24,6 +25,7 @@ public class OtaSessionManagerTest {
     public void setUp() {
         context = ApplicationProvider.getApplicationContext();
         context.getSharedPreferences("ota_session", Context.MODE_PRIVATE).edit().clear().commit();
+        Settings.Global.putInt(context.getContentResolver(), Settings.Global.BOOT_COUNT, 100);
     }
 
     @Test
@@ -68,6 +70,53 @@ public class OtaSessionManagerTest {
         assertTrue(manager.hasActiveSession());
         ShadowSystemClock.advanceBy(Duration.ofMinutes(31));
         assertFalse(manager.hasActiveSession());
+    }
+
+    @Test
+    public void firmwareResumeRequiresAnExplicitMarkerAndDifferentBootCount() {
+        OtaSessionManager manager = new OtaSessionManager(context);
+        assertTrue(manager.createSession(new String[] {"bes", "apk"}, "https://example.test/v2"));
+
+        Settings.Global.putInt(context.getContentResolver(), Settings.Global.BOOT_COUNT, 101);
+        assertFalse(manager.hasExpectedFirmwareRebootOccurred());
+        Settings.Global.putInt(context.getContentResolver(), Settings.Global.BOOT_COUNT, 100);
+        manager.expectFirmwareReboot();
+
+        assertFalse(manager.hasExpectedFirmwareRebootOccurred());
+        Settings.Global.putInt(context.getContentResolver(), Settings.Global.BOOT_COUNT, 101);
+
+        OtaSessionManager reloaded = new OtaSessionManager(context);
+        assertTrue(reloaded.hasExpectedFirmwareRebootOccurred());
+        assertTrue(reloaded.consumeExpectedFirmwareReboot());
+        assertFalse(reloaded.consumeExpectedFirmwareReboot());
+    }
+
+    @Test
+    public void expectedFirmwareRebootExpiresWithTheSessionWindow() {
+        OtaSessionManager manager = new OtaSessionManager(context);
+        assertTrue(manager.createSession(new String[] {"mtk", "apk"}, "https://example.test/v2"));
+        manager.expectFirmwareReboot();
+        Settings.Global.putInt(context.getContentResolver(), Settings.Global.BOOT_COUNT, 101);
+        ShadowSystemClock.advanceBy(Duration.ofMinutes(31));
+
+        assertFalse(manager.hasExpectedFirmwareRebootOccurred());
+        assertFalse(manager.consumeExpectedFirmwareReboot());
+    }
+
+    @Test
+    public void packageRestartPersistsExactAsgTargetAndFailureDisarmsIt() {
+        OtaSessionManager manager = new OtaSessionManager(context);
+        assertTrue(manager.createSession(new String[] {"apk"}, "https://example.test/v2"));
+        manager.setRestarting(48_500_123L);
+
+        OtaSessionManager reloaded = new OtaSessionManager(context);
+        assertEquals(48_500_123L, reloaded.getExpectedAsgVersion());
+        assertTrue(reloaded.isInRestartGuard());
+
+        reloaded.setFailed("recovery_handoff_failed");
+        assertEquals(-1L, reloaded.getExpectedAsgVersion());
+        assertFalse(reloaded.isInRestartGuard());
+        assertFalse(reloaded.hasActiveSession());
     }
 
     private void persistSession(long lastActivityWallClock) throws Exception {
