@@ -92,11 +92,21 @@ public class AsgConstants {
     /** AVIF constant-quality for text-mode BLE encode and max size-tier BLE encode. */
     public static final int TEXT_MODE_AVIF_QUALITY = 55;
 
-    /** JPEG quality when skipping AVIF for small BLE payloads. */
+    /** JPEG quality for the canonical text-mode crop written to disk (gallery/WiFi upload). */
     public static final int TEXT_MODE_BLE_JPEG_QUALITY = 95;
 
-    /** In text mode, skip AVIF and send JPEG when the source capture is under this size. */
-    public static final int TEXT_MODE_AVIF_SIZE_THRESHOLD_BYTES = 200 * 1024;
+    /**
+     * Codec for the text-mode BLE payload. {@code JPEG_FAST} encodes in tens of milliseconds on
+     * the MT8766 versus ~4-5s for the software AVIF encoder, at a somewhat larger payload; flip
+     * to {@code "AVIF"} to restore the previous behavior. Matches {@code BleCodec} names.
+     */
+    public static final String TEXT_MODE_BLE_CODEC = "JPEG_FAST";
+
+    /**
+     * JPEG quality for the text-mode BLE payload on the {@code JPEG_FAST} codec. 75 keeps
+     * character edges OCR-legible after the 1920px downscale while staying BLE-transfer-friendly.
+     */
+    public static final int TEXT_MODE_JPEG_FAST_QUALITY = 75;
 
     // BLE size-tier downscale caps (long edge; aspect ratio preserved) and AVIF quality
     public static final int BLE_PHOTO_LOW_TARGET_PX = 800;
