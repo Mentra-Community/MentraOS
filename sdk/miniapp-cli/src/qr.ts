@@ -1,6 +1,8 @@
 import QRCode from 'qrcode';
+import {join} from 'node:path';
+import {tmpdir} from 'node:os';
 
-export function printQR(url: string): void {
+export async function printQR(url: string): Promise<void> {
   // We render with `qrcode` (node-qrcode), not `qrcode-terminal`, to fix two
   // distinct ways the QR came out unscannable for some users:
   //
@@ -15,15 +17,25 @@ export function printQR(url: string): void {
   //     unscannable. `small: true` packs two module rows per line (~23 rows),
   //     which fits while keeping the forced colors above.
   //
-  // The callback runs synchronously for the terminal renderer, so this stays a
-  // simple void function and output order is preserved at the call sites.
-  QRCode.toString(url, { type: 'terminal', small: true }, (err, str) => {
-    if (err) {
-      // The caller prints the raw URL right after this, so a render failure is
-      // recoverable — just surface it and let the URL fallback stand.
-      console.error(`Could not render QR code: ${err.message}`);
-      return;
-    }
+  try {
+    const str = await QRCode.toString(url, {type: 'terminal', small: true});
     process.stdout.write(str);
-  });
+  } catch (error) {
+    console.error(`Could not render terminal QR code: ${(error as Error).message}`);
+  }
+
+  // Terminal line-height and font settings can distort half-block QRs. Always
+  // provide a high-resolution PNG fallback that can be opened or command-clicked.
+  const pngPath = join(tmpdir(), `mentra-miniapp-dev-qr-${process.pid}.png`);
+  try {
+    await QRCode.toFile(pngPath, url, {
+      type: 'png',
+      width: 1024,
+      margin: 4,
+      errorCorrectionLevel: 'M',
+    });
+    console.log(`\nHigh-resolution QR: file://${pngPath}`);
+  } catch (error) {
+    console.error(`Could not write QR image: ${(error as Error).message}`);
+  }
 }

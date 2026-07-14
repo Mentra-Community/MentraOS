@@ -8,12 +8,14 @@ import android.util.Log;
 import androidx.annotation.Nullable;
 import androidx.exifinterface.media.ExifInterface;
 import androidx.heifwriter.AvifWriter;
+import com.mentra.asg_client.io.media.core.BlePhotoTimingLog;
 import com.radzivon.bartoshyk.avif.coder.HeifCoder;
 import com.radzivon.bartoshyk.avif.coder.PreciseMode;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.util.Arrays;
+import java.util.Locale;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -26,6 +28,27 @@ public final class PhotoExifMetadataWriter {
     private static final int MAX_EXIF_SAMPLES = 400;
 
     private PhotoExifMetadataWriter() {}
+
+    private static void logAvifEncodeTiming(long encodeStartMs, String path, int bytes) {
+        long ms = System.currentTimeMillis() - encodeStartMs;
+        String encoder =
+                switch (path) {
+                    case "avifwriter_exif" -> "Android AvifWriter with embedded EXIF";
+                    case "heifcoder_bmff_exif" -> "HeifCoder AVIF + BMFF EXIF inject";
+                    case "heifcoder_plain_fallback" -> "HeifCoder plain AVIF (EXIF inject failed)";
+                    case "heifcoder_plain" -> "HeifCoder plain AVIF (no IMU metadata)";
+                    default -> path;
+                };
+        BlePhotoTimingLog.event(
+                "COMPRESS",
+                "AVIF encoded via "
+                        + encoder
+                        + " in "
+                        + ms
+                        + "ms, output="
+                        + String.format(Locale.US, "%.1f", bytes / 1024.0)
+                        + "KB");
+    }
 
     public static void writeImuPayload(String jpegPath, JSONObject imuPayload) throws IOException {
         try {
@@ -169,6 +192,7 @@ public final class PhotoExifMetadataWriter {
      */
     public static byte[] encodeAvifForBle(Bitmap bitmap, int quality, String sourceJpegPath)
             throws Exception {
+        long encodeStartMs = System.currentTimeMillis();
         boolean hasImu = hasImuMetadata(sourceJpegPath);
         Log.d(
                 TAG,
@@ -194,6 +218,7 @@ public final class PhotoExifMetadataWriter {
                     if (isAv1EncoderAvailable()) {
                         try {
                             byte[] withExif = encodeAvifWithExif(bitmap, quality, payload);
+                            logAvifEncodeTiming(encodeStartMs, "avifwriter_exif", withExif.length);
                             Log.d(
                                     TAG,
                                     "encodeAvifForBle: AvifWriter+EXIF, "
@@ -216,6 +241,7 @@ public final class PhotoExifMetadataWriter {
                     byte[] avif = heifCoder.encodeAvif(bitmap, quality, PreciseMode.LOSSY);
                     try {
                         byte[] withExif = AvifBmffExifInjector.injectExif(avif, exifTiff);
+                        logAvifEncodeTiming(encodeStartMs, "heifcoder_bmff_exif", withExif.length);
                         Log.d(
                                 TAG,
                                 "encodeAvifForBle: HeifCoder+EXIF, "
@@ -228,6 +254,7 @@ public final class PhotoExifMetadataWriter {
                                 TAG,
                                 "BMFF EXIF inject failed, sending plain AVIF: "
                                         + injectError.getMessage());
+                        logAvifEncodeTiming(encodeStartMs, "heifcoder_plain_fallback", avif.length);
                         return avif;
                     }
                 } catch (Exception exifPathError) {
@@ -239,6 +266,7 @@ public final class PhotoExifMetadataWriter {
             }
         }
         byte[] plain = heifCoder.encodeAvif(bitmap, quality, PreciseMode.LOSSY);
+        logAvifEncodeTiming(encodeStartMs, "heifcoder_plain", plain.length);
         Log.d(
                 TAG,
                 "encodeAvifForBle: HeifCoder (no IMU), "

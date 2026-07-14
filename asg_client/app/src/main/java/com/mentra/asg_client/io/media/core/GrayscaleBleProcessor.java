@@ -98,17 +98,17 @@ final class GrayscaleBleProcessor {
 
         Bitmap gray = lumaToGrayscaleBitmap(sharpened, outDims[0], outDims[1]);
 
-        Log.d(
+        Log.i(
                 TAG,
-                "GrayscaleBleProcessor: "
+                "GrayscaleBleProcessor finished: "
                         + srcWidth
                         + "x"
                         + srcHeight
-                        + " -> crop "
+                        + " JPEG → crop "
                         + lumaWidth
                         + "x"
                         + lumaHeight
-                        + " -> out "
+                        + " → BLE bitmap "
                         + outDims[0]
                         + "x"
                         + outDims[1]
