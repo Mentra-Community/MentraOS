@@ -399,6 +399,16 @@ public class SrtStreamingService extends Service {
           long streamDuration = mStreamStartTime > 0 ? currentTime - mStreamStartTime : 0;
           Log.e(TAG, "🔴 SRT STREAM DISCONNECTED after " + formatDuration(streamDuration));
           mLastReconnectionTime = currentTime;
+          synchronized (mStateLock) {
+            // StreamPack reports connection loss asynchronously. Mark the
+            // publisher non-streaming while we give its internal recovery a
+            // moment to succeed; otherwise the delayed check below always
+            // sees STREAMING/true and incorrectly concludes it recovered.
+            if (mStreamState == StreamState.STREAMING) {
+              mStreamState = StreamState.STARTING;
+              mIsStreaming = false;
+            }
+          }
           EventBus.getDefault().post(new StreamingEvent.Disconnected());
           StreamingReporting.reportRtmpConnectionLost(SrtStreamingService.this, mSrtUrl, streamDuration, message);
 
@@ -410,6 +420,8 @@ public class SrtStreamingService extends Service {
                 Log.d(TAG, "SRT library recovered internally");
               } else if (mStreamState == StreamState.IDLE || mStreamState == StreamState.STOPPING) {
                 Log.d(TAG, "SRT stream stopped, not reconnecting");
+              } else if (mReconnecting) {
+                Log.d(TAG, "SRT reconnection already scheduled");
               } else {
                 scheduleReconnect("connection_lost");
               }
