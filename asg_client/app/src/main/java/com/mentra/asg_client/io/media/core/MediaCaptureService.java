@@ -566,8 +566,14 @@ public class MediaCaptureService {
         // exits reclaim those speculative entries here. A successful BLE handoff uses
         // clearPhotoRequestTracking() instead so transfer_complete can still report end-to-end
         // timing.
+        clearBlePhotoTimingTracking(requestId);
+    }
+
+    /** Clear BLE timing and transfer-correlation state without touching capture artifacts. */
+    private void clearBlePhotoTimingTracking(String requestId) {
         blePhotoPipelineStartMs.remove(requestId);
         photoTimings.remove(requestId);
+        bleImgIdToRequestId.entrySet().removeIf(entry -> requestId.equals(entry.getValue()));
     }
 
     // Photo job state tracking - one photo job (capture + upload/BLE-handoff) in flight at a time.
@@ -605,11 +611,11 @@ public class MediaCaptureService {
     private String captureSafetyTimeoutRequestId;
 
     // Per-request timing instrumentation (gated by AsgConstants.ENABLE_PHOTO_TIMING_LOGS)
-    private final Map<String, Map<String, Long>> photoTimings = new HashMap<>();
+    private final Map<String, Map<String, Long>> photoTimings = new ConcurrentHashMap<>();
     /** Wall-clock start for BLE photo pipeline (request received on glasses). */
-    private final Map<String, Long> blePhotoPipelineStartMs = new HashMap<>();
+    private final Map<String, Long> blePhotoPipelineStartMs = new ConcurrentHashMap<>();
     /** Maps BLE transfer filename (bleImgId) back to the originating requestId. */
-    private final Map<String, String> bleImgIdToRequestId = new HashMap<>();
+    private final Map<String, String> bleImgIdToRequestId = new ConcurrentHashMap<>();
 
     private final FileManager fileManager;
 
@@ -2263,6 +2269,7 @@ public class MediaCaptureService {
                 || WhipStreamingService.isStreaming()) {
             Log.e(TAG, "Cannot take photo - streaming active");
             sendPhotoErrorResponse(requestId, "CAMERA_BUSY", "Camera busy with streaming");
+            clearPhotoTracking(requestId);
             return false;
         }
 
@@ -2270,6 +2277,7 @@ public class MediaCaptureService {
         if (CameraRestartCooldown.isActive()) {
             Log.w(TAG, "Cannot take photo - camera HAL restarting after FOV change");
             sendPhotoErrorResponse(requestId, "CAMERA_BUSY", "Camera restarting after FOV change");
+            clearPhotoTracking(requestId);
             return false;
         }
 
@@ -2283,6 +2291,7 @@ public class MediaCaptureService {
                         requestId,
                         "BATTERY_LOW",
                         "Battery too low to take photo (" + batteryLevel + "%)");
+                clearPhotoTracking(requestId);
                 return false;
             }
         } else {
@@ -2298,6 +2307,7 @@ public class MediaCaptureService {
                     requestId,
                     "INSUFFICIENT_STORAGE",
                     "Insufficient storage space for photo capture");
+            clearPhotoTracking(requestId);
             return false;
         }
 
@@ -2573,6 +2583,7 @@ public class MediaCaptureService {
                                         + "ms - no terminal callback fired for "
                                         + requestId);
                         dumpTimings(requestId);
+                        clearBlePhotoTimingTracking(requestId);
                         sendPhotoErrorResponse(
                                 requestId,
                                 "CAPTURE_TIMEOUT",
@@ -4017,6 +4028,7 @@ public class MediaCaptureService {
         if (CameraRestartCooldown.isActive()) {
             Log.w(TAG, "Cannot take photo - camera HAL restarting after FOV change");
             sendPhotoErrorResponse(requestId, "CAMERA_BUSY", "Camera restarting after FOV change");
+            clearPhotoTracking(requestId);
             return false;
         }
 
@@ -4030,6 +4042,7 @@ public class MediaCaptureService {
                         requestId,
                         "BATTERY_LOW",
                         "Battery too low to take photo (" + batteryLevel + "%)");
+                clearPhotoTracking(requestId);
                 return false;
             }
         } else {
@@ -4121,12 +4134,15 @@ public class MediaCaptureService {
                         + " requestId="
                         + requestId);
         // Start timing for end-to-end photo capture performance measurement
-        Long existingPipelineStart = blePhotoPipelineStartMs.get(requestId);
+        Long existingPipelineStart =
+                AsgConstants.ENABLE_PHOTO_TIMING_LOGS
+                        ? blePhotoPipelineStartMs.get(requestId)
+                        : null;
         final long requestStartTimeMs =
                 existingPipelineStart != null
                         ? existingPipelineStart
                         : System.currentTimeMillis();
-        if (existingPipelineStart == null) {
+        if (AsgConstants.ENABLE_PHOTO_TIMING_LOGS && existingPipelineStart == null) {
             blePhotoPipelineStartMs.put(requestId, requestStartTimeMs);
             logBlePhotoStep(requestId, "request_received");
         }
@@ -4138,6 +4154,7 @@ public class MediaCaptureService {
                 || WhipStreamingService.isStreaming()) {
             Log.e(TAG, "Cannot take photo - streaming active");
             sendPhotoErrorResponse(requestId, "CAMERA_BUSY", "Camera busy with streaming");
+            clearPhotoTracking(requestId);
             return false;
         }
 
@@ -4145,6 +4162,7 @@ public class MediaCaptureService {
         if (CameraRestartCooldown.isActive()) {
             Log.w(TAG, "Cannot take photo - camera HAL restarting after FOV change");
             sendPhotoErrorResponse(requestId, "CAMERA_BUSY", "Camera restarting after FOV change");
+            clearPhotoTracking(requestId);
             return false;
         }
 
@@ -4158,6 +4176,7 @@ public class MediaCaptureService {
                         requestId,
                         "BATTERY_LOW",
                         "Battery too low to take photo (" + batteryLevel + "%)");
+                clearPhotoTracking(requestId);
                 return false;
             }
         } else {
@@ -4173,6 +4192,7 @@ public class MediaCaptureService {
                     requestId,
                     "INSUFFICIENT_STORAGE",
                     "Insufficient storage space for photo capture");
+            clearPhotoTracking(requestId);
             return false;
         }
 
@@ -4183,6 +4203,7 @@ public class MediaCaptureService {
         if (!acquirePhotoJob(requestId)) {
             Log.w(TAG, "🚫 Photo job in flight - rejecting concurrent BLE request: " + requestId);
             sendPhotoErrorResponse(requestId, "CAMERA_BUSY", "Another photo job is in progress");
+            clearPhotoTracking(requestId);
             return false;
         }
         startCaptureSafetyTimeout(requestId);
