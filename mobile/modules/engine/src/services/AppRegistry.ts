@@ -904,9 +904,24 @@ export function getLocalAppRunningState(packageName: string): boolean {
 }
 
 export function getLocalAppScreenshot(packageName: string): string | undefined {
-  const res = storage.load<string>(`${packageName}_screenshot`)
-  if (res.is_ok()) return res.value
-  return undefined
+  const key = `${packageName}_screenshot`
+  const res = storage.load<string>(key)
+  if (res.is_error()) return undefined
+
+  const uri = res.value
+  if (uri.startsWith("file://")) {
+    try {
+      if (!new File(uri).exists) {
+        storage.remove(key)
+        return undefined
+      }
+    } catch {
+      storage.remove(key)
+      return undefined
+    }
+  }
+
+  return uri
 }
 
 /**
