@@ -726,9 +726,9 @@ public class Ar99 extends SGCManager {
     }
     if (advertisement != null && advertisement.projectName != null && !advertisement.projectName.trim().isEmpty()) {
       currentProjectName = advertisement.projectName.trim();
-      currentBroadcastMacAddress = advertisement.btAddress != null && !advertisement.btAddress.trim().isEmpty()
-          ? advertisement.btAddress.trim()
-          : advertisement.bleAddress != null ? advertisement.bleAddress.trim() : null;
+      currentBroadcastMacAddress = advertisement.bleAddress != null && !advertisement.bleAddress.trim().isEmpty()
+          ? advertisement.bleAddress.trim()
+          : null;
     }
 
     String target = targetIdentifier != null ? targetIdentifier : "";
@@ -2603,6 +2603,7 @@ public class Ar99 extends SGCManager {
     }
   }
 }
+
 
 
 

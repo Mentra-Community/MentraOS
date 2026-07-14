@@ -1152,9 +1152,7 @@ final class Ar99: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SGCM
 
         if let projectName = advertisement?.projectName?.trimmingCharacters(in: .whitespacesAndNewlines), !projectName.isEmpty {
             currentProjectName = projectName
-            if let btAddress = advertisement?.btAddress?.trimmingCharacters(in: .whitespacesAndNewlines), !btAddress.isEmpty {
-                currentBroadcastMacAddress = btAddress
-            } else if let bleAddress = advertisement?.bleAddress?.trimmingCharacters(in: .whitespacesAndNewlines), !bleAddress.isEmpty {
+            if let bleAddress = advertisement?.bleAddress?.trimmingCharacters(in: .whitespacesAndNewlines), !bleAddress.isEmpty {
                 currentBroadcastMacAddress = bleAddress
             } else {
                 currentBroadcastMacAddress = nil
@@ -2417,6 +2415,7 @@ final class Ar99: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SGCM
         return String(trimmed[trimmed.index(after: underscore)...]).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
+
 
 
 
