@@ -2627,6 +2627,77 @@ public class MediaCaptureService {
         Log.i(TAG, sb.toString());
     }
 
+    /**
+     * Emits per-stage {@code COMPRESS:} timing lines for the BLE compression pipeline, e.g.
+     * {@code COMPRESS: JPEG encode finished (+412ms total, +38ms this step)}. Gated on
+     * ENABLE_PHOTO_TIMING_LOGS like the rest of the photo timing instrumentation.
+     */
+    private static final class CompressStageTimer {
+        private final long startMs = System.currentTimeMillis();
+        private long lastMs = startMs;
+
+        void start(String stage) {
+            if (!ENABLE_PHOTO_TIMING_LOGS) return;
+            long now = System.currentTimeMillis();
+            Log.i(TAG, "COMPRESS: " + stage + " started (+" + (now - startMs) + "ms total)");
+            lastMs = now;
+        }
+
+        void finish(String stage) {
+            finish(stage, null);
+        }
+
+        void finish(String stage, @Nullable String detail) {
+            if (!ENABLE_PHOTO_TIMING_LOGS) return;
+            long now = System.currentTimeMillis();
+            Log.i(
+                    TAG,
+                    "COMPRESS: "
+                            + stage
+                            + " finished (+"
+                            + (now - startMs)
+                            + "ms total, +"
+                            + (now - lastMs)
+                            + "ms this step)"
+                            + (detail != null ? " - " + detail : ""));
+            lastMs = now;
+        }
+
+        long totalMs() {
+            return System.currentTimeMillis() - startMs;
+        }
+    }
+
+    /**
+     * Largest power-of-two JPEG subsampling factor that still keeps the decoded region at or
+     * above the BLE target box, so the follow-up {@code createScaledBitmap} only ever shrinks.
+     * Decoding 4032x3024 at inSampleSize=2 cuts the ARGB working set 4x with no quality cost
+     * at a 1920px output cap.
+     */
+    private static int computeBleDecodeSampleSize(
+            int regionWidth, int regionHeight, int targetWidth, int targetHeight) {
+        int sample = 1;
+        while ((regionWidth / (sample * 2)) >= targetWidth
+                && (regionHeight / (sample * 2)) >= targetHeight) {
+            sample *= 2;
+        }
+        return sample;
+    }
+
+    /** Maps a source-pixel ROI onto the subsampled decode's coordinate space. */
+    @Nullable
+    private static android.graphics.Rect scaleRoiToDecoded(
+            @Nullable android.graphics.Rect roi, int sampleSize) {
+        if (roi == null || sampleSize <= 1) {
+            return roi;
+        }
+        return new android.graphics.Rect(
+                roi.left / sampleSize,
+                roi.top / sampleSize,
+                roi.right / sampleSize,
+                roi.bottom / sampleSize);
+    }
+
     private void tracePhotoWifiRoute(
             String requestId, String route, String reason, String webhookUrl, File photoFile) {
         JSONObject payload = createPhotoWifiPayload(requestId, webhookUrl, photoFile);
@@ -4305,6 +4376,7 @@ public class MediaCaptureService {
         new Thread(
                         () -> {
                             long startTime = System.currentTimeMillis();
+                            CompressStageTimer stage = new CompressStageTimer();
                             recordTiming(requestId, "ble_compress_start");
                             sendPhotoStatus(
                                     requestId,
@@ -4404,12 +4476,14 @@ public class MediaCaptureService {
 
                                 android.graphics.Rect roi = null;
                                 if (shouldCrop && !textCropAlreadyPrepared) {
+                                    stage.start("text-region detection");
                                     TextRegionDetection detection =
                                             runTextRegionDetection(originalPath);
                                     roi = detection.roi;
                                     textCropConfidence = detection.confidence;
                                     textCropReason = detection.reason;
                                     textCropOutcome = detection.outcome;
+                                    stage.finish("text-region detection");
                                 }
 
                                 if (AsgConstants.ENABLE_GRAYSCALE_BLE_PHOTOS) {
@@ -4426,23 +4500,70 @@ public class MediaCaptureService {
                                                     + (roi != null ? roi.toShortString() : "null")
                                                     + " - see GrayscaleBleProcessor log line"
                                                     + " below for original->crop->out dims");
+                                    stage.start("grayscale decode+crop+resize+sharpen");
                                     resized =
                                             GrayscaleBleProcessor.process(
                                                     originalPath,
                                                     roi,
                                                     bleParams.targetWidth,
                                                     bleParams.targetHeight);
+                                    stage.finish(
+                                            "grayscale decode+crop+resize+sharpen",
+                                            "output "
+                                                    + resized.getWidth()
+                                                    + "x"
+                                                    + resized.getHeight());
                                 } else {
                                     // Legacy full-color path. When a text-region ROI was detected
                                     // above, crop to it (still in color) before the existing
                                     // scale+sharpen chain - this keeps color for viewing while
                                     // still spending the BLE byte budget on the text region.
+                                    stage.start("input decode");
+                                    android.graphics.BitmapFactory.Options bounds =
+                                            new android.graphics.BitmapFactory.Options();
+                                    bounds.inJustDecodeBounds = true;
+                                    android.graphics.BitmapFactory.decodeFile(
+                                            originalPath, bounds);
+                                    int srcWidth = bounds.outWidth;
+                                    int srcHeight = bounds.outHeight;
+                                    if (srcWidth <= 0 || srcHeight <= 0) {
+                                        throw new Exception("Failed to read image bounds");
+                                    }
+
+                                    // Decode subsampled: never materialize the ~46MB full-res
+                                    // ARGB frame when the output is capped at 1920px anyway.
+                                    // The ROI (source-pixel coordinates) is mapped onto the
+                                    // subsampled space so the crop lands on the same region.
+                                    int regionWidth = roi != null ? roi.width() : srcWidth;
+                                    int regionHeight = roi != null ? roi.height() : srcHeight;
+                                    int sampleSize =
+                                            computeBleDecodeSampleSize(
+                                                    regionWidth,
+                                                    regionHeight,
+                                                    bleParams.targetWidth,
+                                                    bleParams.targetHeight);
+                                    android.graphics.BitmapFactory.Options decodeOpts =
+                                            new android.graphics.BitmapFactory.Options();
+                                    decodeOpts.inSampleSize = sampleSize;
                                     android.graphics.Bitmap original =
                                             android.graphics.BitmapFactory.decodeFile(
-                                                    originalPath);
+                                                    originalPath, decodeOpts);
                                     if (original == null) {
                                         throw new Exception("Failed to decode image file");
                                     }
+                                    stage.finish(
+                                            "input decode",
+                                            "source "
+                                                    + srcWidth
+                                                    + "x"
+                                                    + srcHeight
+                                                    + " decoded at "
+                                                    + original.getWidth()
+                                                    + "x"
+                                                    + original.getHeight()
+                                                    + " (inSampleSize="
+                                                    + sampleSize
+                                                    + ")");
 
                                     Log.i(
                                             TAG,
@@ -4455,7 +4576,15 @@ public class MediaCaptureService {
 
                                     android.graphics.Bitmap cropped =
                                             cropBitmapToDetectedRoi(
-                                                    original, roi, textCropOutcome);
+                                                    original,
+                                                    scaleRoiToDecoded(roi, sampleSize),
+                                                    textCropOutcome);
+                                    stage.finish(
+                                            "crop",
+                                            "cropped "
+                                                    + cropped.getWidth()
+                                                    + "x"
+                                                    + cropped.getHeight());
 
                                     int targetWidth = bleParams.targetWidth;
                                     int targetHeight = bleParams.targetHeight;
@@ -4473,10 +4602,13 @@ public class MediaCaptureService {
                                     if (scaled != cropped) {
                                         cropped.recycle();
                                     }
+                                    stage.finish(
+                                            "resize", "final " + targetWidth + "x" + targetHeight);
                                     resized = BleImageSharpener.sharpen(mContext, scaled);
                                     if (resized != scaled) {
                                         scaled.recycle();
                                     }
+                                    stage.finish("sharpen");
                                 }
 
                                 Log.d(
@@ -4498,49 +4630,52 @@ public class MediaCaptureService {
                                                 + " textCropOutcome="
                                                 + textCropOutcome);
 
-                                // 3. Text mode can skip AVIF when the actual quality-95 BLE JPEG
-                                // payload is small. The canonical crop's file size is not a safe
-                                // proxy because the processed bitmap may be resized and sharpened.
-                                // Ordinary photo mode retains the established AVIF-only path.
+                                // 3. Encode with the policy-selected codec. Text mode defaults to
+                                // the low-latency JPEG_FAST path (tens of ms on the MT8766 vs
+                                // ~4-5s software AVIF); ordinary photo mode retains the
+                                // established AVIF path. A JPEG failure falls back to AVIF
+                                // inside the selector.
+                                BleCodec codec =
+                                        BlePhotoEncodingPolicy.selectCodec(textModeRequested);
+                                int encodeQuality =
+                                        codec == BleCodec.JPEG_FAST
+                                                ? AsgConstants.TEXT_MODE_JPEG_FAST_QUALITY
+                                                : bleParams.avifQuality;
                                 Log.d(
                                         TAG,
                                         "BLE encode: originalPath="
                                                 + originalPath
+                                                + " codec="
+                                                + codec
+                                                + " quality="
+                                                + encodeQuality
                                                 + " hasImuMetadata="
                                                 + PhotoExifMetadataWriter.hasImuMetadata(
                                                         originalPath));
-                                byte[] compressedData;
-                                String bleEncodedFormat;
+                                stage.start(codec + " encode");
+                                BlePhotoEncoder.EncodeResult encodeResult;
                                 try {
-                                    byte[] jpegCandidate = null;
-                                    if (textModeRequested) {
-                                        jpegCandidate =
-                                                PhotoExifMetadataWriter.encodeJpegForBle(
-                                                        resized,
-                                                        AsgConstants.TEXT_MODE_BLE_JPEG_QUALITY,
-                                                        originalPath);
-                                    }
-                                    if (BlePhotoEncodingPolicy.shouldUseJpeg(
-                                            textModeRequested, jpegCandidate)) {
-                                        compressedData = jpegCandidate;
-                                        bleEncodedFormat = "JPEG";
-                                        Log.d(
-                                                TAG,
-                                                "Text-mode BLE JPEG is under 200KB; skipping AVIF"
-                                                        + " (bytes="
-                                                        + compressedData.length
-                                                        + ")");
-                                    } else {
-                                        compressedData =
-                                                PhotoExifMetadataWriter.encodeAvifForBle(
-                                                        resized,
-                                                        bleParams.avifQuality,
-                                                        originalPath);
-                                        bleEncodedFormat = "AVIF";
-                                    }
+                                    encodeResult =
+                                            BlePhotoEncoders.encodeWithFallback(
+                                                    resized,
+                                                    codec,
+                                                    encodeQuality,
+                                                    bleParams.avifQuality,
+                                                    originalPath);
                                 } finally {
                                     resized.recycle();
                                 }
+                                byte[] compressedData = encodeResult.data;
+                                String bleEncodedFormat =
+                                        encodeResult.codecUsed == BleCodec.JPEG_FAST
+                                                ? "JPEG"
+                                                : "AVIF";
+                                stage.finish(
+                                        encodeResult.codecUsed + " encode",
+                                        compressedData.length
+                                                + " bytes (quality="
+                                                + encodeQuality
+                                                + ")");
                                 Log.d(
                                         TAG,
                                         "Successfully encoded as " + bleEncodedFormat + " for BLE");
@@ -4574,9 +4709,24 @@ public class MediaCaptureService {
                                 // (no extension in filename due to 16-char limit)
                                 String compressedPath =
                                         fileManager.getDefaultMediaDirectory() + "/" + bleImgId;
+                                stage.start("payload file write");
                                 try (java.io.FileOutputStream fos =
                                         new java.io.FileOutputStream(compressedPath)) {
                                     fos.write(compressedData);
+                                }
+                                stage.finish("payload file write", compressedPath);
+                                if (ENABLE_PHOTO_TIMING_LOGS) {
+                                    Log.i(
+                                            TAG,
+                                            "COMPRESS: pipeline complete in "
+                                                    + stage.totalMs()
+                                                    + "ms - codec="
+                                                    + bleEncodedFormat
+                                                    + ", encode="
+                                                    + encodeResult.encodeMs
+                                                    + "ms, output="
+                                                    + compressedData.length
+                                                    + " bytes");
                                 }
 
                                 // 6. Send via BLE using K900BluetoothManager
