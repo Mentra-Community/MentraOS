@@ -1004,6 +1004,9 @@ public class OtaHelper {
                                 appInfo.optString("sha256", ""),
                                 isAsgDowngrade)) {
                     isUpdating = false;
+                    if (sessionManager != null) {
+                        sessionManager.clearRestartGuard();
+                    }
                     lastApkFailureErrorCode = "recovery_handoff_failed";
                     Log.e(TAG, "Refusing ASG install because recovery handoff was not persisted");
                     return false;
@@ -1015,12 +1018,18 @@ public class OtaHelper {
                         AsgDowngradeResetter.reset(context);
                     } catch (RuntimeException e) {
                         isUpdating = false;
+                        if (sessionManager != null) {
+                            sessionManager.clear();
+                        }
                         lastApkFailureErrorCode = "downgrade_reset_failed";
                         Log.e(TAG, "Refusing ASG downgrade because app state was not fully reset", e);
                         return false;
                     }
                     if (!notifyRecoveryAsgInstallReady(context, serverVersion)) {
                         isUpdating = false;
+                        if (sessionManager != null) {
+                            sessionManager.clear();
+                        }
                         lastApkFailureErrorCode = "recovery_ready_handoff_failed";
                         Log.e(TAG, "Refusing ASG downgrade because recovery did not arm the reset target");
                         return false;
@@ -1033,8 +1042,12 @@ public class OtaHelper {
                     // Install never actually fired. Roll back the restart guard so the next
                     // OTA attempt does not inherit stale process-restart state.
                     Log.w(TAG, "installApk did not kick install — rolling back restart guard and reporting FAILED");
-                    if (sessionManager != null && !isAsgDowngrade) {
-                        sessionManager.clearRestartGuard();
+                    if (sessionManager != null) {
+                        if (isAsgDowngrade) {
+                            sessionManager.clear();
+                        } else {
+                            sessionManager.clearRestartGuard();
+                        }
                     }
                     sendProgressToPhone("install", 0, 0, 0, "FAILED", "install_failed");
                     if (!OtaConstants.ASG_PACKAGE.equals(packageName)
