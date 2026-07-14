@@ -17,17 +17,33 @@ type PhotoSize = "low" | "medium" | "high" | "max"
 type PhotoMode = "photo" | "text"
 
 interface PhotoResult {
+  requestId?: string
   photoUrl?: string
   mimeType?: string
   size?: number
 }
 
+function imageExtension(mimeType?: string): string {
+  switch (mimeType?.toLowerCase()) {
+    case "image/avif":
+      return "avif"
+    case "image/png":
+      return "png"
+    case "image/webp":
+      return "webp"
+    default:
+      return "jpg"
+  }
+}
+
 export default function CameraPage() {
   const navigate = useNavigate()
   const {invoke, lastError} = useTester("camera")
+  const {invoke: invokeSystem, lastError: systemError} = useTester("system")
   const [result, setResult] = useState<PhotoResult | undefined>(undefined)
   const [size, setSize] = useState<PhotoSize>("medium")
   const [mode, setMode] = useState<PhotoMode>("photo")
+  const [isSharing, setIsSharing] = useState(false)
 
   const takePhoto = () => {
     invoke("takePhoto", [{size, mode}])
@@ -35,6 +51,22 @@ export default function CameraPage() {
       .catch(() => {
         /* error already surfaced via lastError → ErrorRow */
       })
+  }
+
+  const sharePhoto = () => {
+    if (!result?.photoUrl) return
+    setIsSharing(true)
+    invokeSystem("download", [
+      {
+        url: result.photoUrl,
+        mimeType: result.mimeType ?? "image/jpeg",
+        filename: `mentra-photo-${result.requestId ?? Date.now()}.${imageExtension(result.mimeType)}`,
+      },
+    ])
+      .catch(() => {
+        /* error already surfaced via systemError → ErrorRow */
+      })
+      .finally(() => setIsSharing(false))
   }
 
   return (
@@ -76,11 +108,17 @@ export default function CameraPage() {
         </div>
         <Row emoji="🖼️" label="latest photoUrl" value={result?.photoUrl ?? "(no photo yet)"} />
         {result?.photoUrl && (
-          <div className="mt-2 overflow-hidden rounded-xl border border-border">
-            <img src={result.photoUrl} alt="Photo captured by the glasses camera" className="w-full" />
-          </div>
+          <>
+            <div className="mt-2 overflow-hidden rounded-xl border border-border">
+              <img src={result.photoUrl} alt="Photo captured by the glasses camera" className="w-full" />
+            </div>
+            <Button variant="outline" className="mt-2 w-full" disabled={isSharing} onClick={sharePhoto}>
+              {isSharing ? "Opening share sheet…" : "Share image"}
+            </Button>
+          </>
         )}
         <ErrorRow event={lastError} />
+        <ErrorRow event={systemError} />
       </div>
     </Shell>
   )
