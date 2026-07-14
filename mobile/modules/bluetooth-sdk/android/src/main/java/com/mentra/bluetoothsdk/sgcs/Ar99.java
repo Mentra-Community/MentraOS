@@ -718,7 +718,7 @@ public class Ar99 extends SGCManager {
         Bridge.sendDiscoveredDevice(
             type,
             displayName,
-            device.getAddress() != null ? device.getAddress() : "",
+            advertisement != null && advertisement.bleAddress != null && !advertisement.bleAddress.trim().isEmpty() ? advertisement.bleAddress.trim() : "",
             result.getRssi(),
             advertisement != null ? advertisement.projectName : null);
       }
@@ -2603,6 +2603,7 @@ public class Ar99 extends SGCManager {
     }
   }
 }
+
 
 
 

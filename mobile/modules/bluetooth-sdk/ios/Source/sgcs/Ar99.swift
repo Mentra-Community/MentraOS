@@ -1142,7 +1142,7 @@ final class Ar99: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SGCM
                 Bridge.sendDiscoveredDevice(
                     type,
                     displayName,
-                    deviceAddress: peripheral.identifier.uuidString,
+                    deviceAddress: advertisement?.bleAddress?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "",
                     rssi: rssi,
                     projectName: advertisement?.projectName
                 )
@@ -2415,6 +2415,7 @@ final class Ar99: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SGCM
         return String(trimmed[trimmed.index(after: underscore)...]).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
+
 
 
 
