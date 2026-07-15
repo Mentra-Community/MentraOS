@@ -1,4 +1,5 @@
 import groovy.json.JsonSlurper
+import java.security.MessageDigest
 
 apply plugin: 'com.android.library'
 apply plugin: 'maven-publish'
@@ -9,7 +10,99 @@ def mavenGroupId = 'com.mentraglass'
 def mavenPublishVersion = (findProperty('mentraMavenVersion') ?: System.getenv('MENTRA_MAVEN_VERSION') ?: packageJson.version).toString()
 def publicMavenSdk = (findProperty('mentraPublicSdk') ?: System.getenv('MENTRA_PUBLIC_SDK') ?: 'false').toString().toBoolean()
 
+// Download Sherpa-ONNX Android AAR from the upstream GitHub release and stage
+// it as a Maven artifact in a tiny on-disk repository under libs/maven/.
+// Why this shape:
+//   - Jitpack stopped publishing for v1.13.2+ (their build step fails because
+//     the AAR asset isn't present when its install-file step runs).
+//   - We can't just `implementation files("…aar")` because AGP refuses local
+//     .aar deps from library modules ("Direct local .aar file dependencies
+//     are not supported when building an AAR"). Maven-coord deps are fine.
+// The SHA-256 is pinned (matches the upstream checksum.txt for v1.13.2) so a
+// tampered or partially-written artifact is rejected before being used.
+def sherpaOnnxGroup = "com.k2fsa.sherpa.onnx"
+def sherpaOnnxArtifact = "sherpa-onnx"
+def sherpaOnnxVersion = "1.13.2"
+def sherpaOnnxSha256 = "aa5505c0ec4f8bdaee5f214a64ba3012be64f2aecc022e82a64f33392b8dd245"
+
+def sherpaOnnxMavenRoot = file("libs/maven")
+def sherpaOnnxRepoDir = new File(
+  sherpaOnnxMavenRoot,
+  "${sherpaOnnxGroup.replace('.', '/')}/${sherpaOnnxArtifact}/${sherpaOnnxVersion}"
+)
+def sherpaOnnxAar = new File(sherpaOnnxRepoDir, "${sherpaOnnxArtifact}-${sherpaOnnxVersion}.aar")
+def sherpaOnnxPom = new File(sherpaOnnxRepoDir, "${sherpaOnnxArtifact}-${sherpaOnnxVersion}.pom")
+
+def sha256OfFile = { File f ->
+  def digest = MessageDigest.getInstance("SHA-256")
+  f.withInputStream { input ->
+    def buf = new byte[64 * 1024]
+    int n
+    while ((n = input.read(buf)) != -1) {
+      digest.update(buf, 0, n)
+    }
+  }
+  digest.digest().collect { String.format("%02x", it & 0xff) }.join("")
+}
+
+// If a stale AAR exists with the wrong hash (e.g. from a previous failed
+// download or a version bump), drop it so we re-fetch.
+if (sherpaOnnxAar.exists() && sha256OfFile(sherpaOnnxAar) != sherpaOnnxSha256) {
+  logger.lifecycle("Sherpa-ONNX AAR checksum mismatch on disk; redownloading.")
+  if (!sherpaOnnxAar.delete()) {
+    throw new GradleException(
+      "Sherpa-ONNX AAR at ${sherpaOnnxAar.absolutePath} has a mismatched SHA-256 " +
+      "but could not be deleted. Refusing to continue with a potentially tampered artifact."
+    )
+  }
+}
+
+if (!sherpaOnnxAar.exists()) {
+  sherpaOnnxRepoDir.mkdirs()
+  def sherpaOnnxUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/v${sherpaOnnxVersion}/${sherpaOnnxArtifact}-${sherpaOnnxVersion}.aar"
+  logger.lifecycle("Downloading Sherpa-ONNX AAR v${sherpaOnnxVersion} from GitHub release…")
+  // Download to a .part sibling and rename only after the SHA-256 matches, so
+  // an interrupted or tampered download can't be silently accepted as valid.
+  def partial = file("${sherpaOnnxAar.absolutePath}.part")
+  try {
+    new URL(sherpaOnnxUrl).withInputStream { input ->
+      partial.withOutputStream { output -> output << input }
+    }
+    def actual = sha256OfFile(partial)
+    if (actual != sherpaOnnxSha256) {
+      throw new GradleException(
+        "Sherpa-ONNX AAR v${sherpaOnnxVersion} SHA-256 mismatch.\n" +
+        "  expected: ${sherpaOnnxSha256}\n" +
+        "  actual:   ${actual}\n" +
+        "Refusing to use the downloaded artifact."
+      )
+    }
+    if (!partial.renameTo(sherpaOnnxAar)) {
+      throw new GradleException("Failed to move ${partial.name} to ${sherpaOnnxAar.name}")
+    }
+  } finally {
+    if (partial.exists()) {
+      partial.delete()
+    }
+  }
+}
+
+// Minimal POM so the Maven resolver is happy. No transitive deps — the AAR
+// ships its own native libs and we already pin onnxruntime separately below.
+if (!sherpaOnnxPom.exists()) {
+  sherpaOnnxPom.text = """<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>${sherpaOnnxGroup}</groupId>
+  <artifactId>${sherpaOnnxArtifact}</artifactId>
+  <version>${sherpaOnnxVersion}</version>
+  <packaging>aar</packaging>
+</project>
+"""
+}
+
 repositories {
+  maven { url = uri(sherpaOnnxMavenRoot) }
   maven { url 'https://jitpack.io' }
 }
 
@@ -195,14 +288,21 @@ dependencies {
   // Maven Central/Google repositories for normal SDK use.
   def optionalMentraOsIntegrationDependency = publicMavenSdk ? 'compileOnly' : 'implementation'
 
+  // Sherpa-ONNX for local transcription. Jitpack's v1.13.2 build failed
+  // upstream, so we stage the prebuilt AAR into libs/maven/ (see top of file)
+  // and consume it as a Maven coord — AGP rejects raw files() .aar deps in
+  // library modules.
+  dependencies.add(optionalMentraOsIntegrationDependency, "${sherpaOnnxGroup}:${sherpaOnnxArtifact}:${sherpaOnnxVersion}@aar")
 
   if (!publicMavenSdk) {
     // Silero VAD — vendored source under silero/, wired as :silero
     // sub-project (see settings.gradle). This replaces the previous Jitpack AAR
     // (com.github.gkonovalov:android-vad:2.0.9) whose prebuilt JNI was bound to
-    // an incompatible ORT version, causing a dlopen UnsatisfiedLinkError at VAD
-    // startup. By owning the source we control the Java API surface and the ORT
-    // version it links against; see packagingOptions pickFirst above.
+    // an ORT version incompatible with the one bundled by sherpa-onnx, causing a
+    // dlopen UnsatisfiedLinkError for OrtGetApiBase at VAD startup. By owning the
+    // source we control both the Java API surface and the ORT version it links
+    // against; today both consumers (Silero VAD and sherpa-onnx) load their own
+    // libonnxruntime.so — see packagingOptions pickFirst above.
     implementation project(':silero')
 
     // Vuzix Z100
@@ -218,17 +318,21 @@ dependencies {
   implementation 'com.google.protobuf:protobuf-java-util:4.32.0'
 }
 
-// Pin the ONNX Runtime version used by the vendored :silero VAD module.
+// Pin onnxruntime-android to 1.24.3 — the version sherpa-onnx 1.13.2 was built
+// against (its libonnxruntime.so exports OrtGetApiBase@@VERS_1.24.3). Matching
+// this lets the :silero VAD module share a single libonnxruntime.so with
+// sherpa-onnx, resolving the ELF symbol-versioning conflict that crashed VAD
+// startup on previous mismatched versions.
 configurations.all {
   resolutionStrategy {
     eachDependency { DependencyResolveDetails details ->
       if (details.requested.group == 'com.microsoft.onnxruntime') {
         details.useVersion '1.24.3'
-        details.because('Keep the vendored Silero VAD runtime consistent')
+        details.because('Match sherpa-onnx 1.13.2 ORT 1.24.3')
       }
       if (details.requested.name == 'onnxruntime-android') {
         details.useVersion '1.24.3'
-        details.because('Keep the vendored Silero VAD runtime consistent')
+        details.because('Match sherpa-onnx 1.13.2 ORT 1.24.3')
       }
     }
   }
