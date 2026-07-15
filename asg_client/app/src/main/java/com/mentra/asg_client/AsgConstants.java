@@ -86,7 +86,7 @@ public class AsgConstants {
      * transfer pipeline. Filter logcat on tag {@code BlePhotoTiming} or prefix {@code ⏱️ [BLE PHOTO]}.
      * Keep false in production.
      */
-    public static final boolean ENABLE_PHOTO_TIMING_LOGS = true;
+    public static final boolean ENABLE_PHOTO_TIMING_LOGS = false;
 
     /** After AE meters in text mode, divide exposure time by this factor (shorter shutter). */
     public static final int TEXT_MODE_AE_EXPOSURE_DIVISOR = 3;
