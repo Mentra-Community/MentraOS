@@ -179,6 +179,37 @@ async function makeProvider(): Promise<{
   return { session, events, provider };
 }
 
+describe("SonioxProvider session configuration", () => {
+  test("sends the Mentra activation phrase as recognition context", async () => {
+    const session = new FakeSession();
+    let sessionConfig: Record<string, unknown> | undefined;
+    const client = {
+      realtime: {
+        stt: (config: Record<string, unknown>) => {
+          sessionConfig = config;
+          return session;
+        },
+      },
+    };
+
+    const provider = await createSonioxProvider({
+      scope: "user_test",
+      language: "auto",
+      client: client as never,
+      onTranscript: () => {},
+    });
+
+    expect(sessionConfig).toMatchObject({
+      context: {
+        terms: ["Mentra", "Hey Mentra"],
+        text: "Mentra, Hey Mentra (an AI assistant)",
+      },
+    });
+
+    await provider.close();
+  });
+});
+
 describe("SonioxProvider utterance lifecycle", () => {
   test("does not churn finals/utteranceIds when the rolling window's speaker flips mid-utterance", async () => {
     const { session, events, provider } = await makeProvider();
