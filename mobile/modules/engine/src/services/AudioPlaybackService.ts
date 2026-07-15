@@ -2,6 +2,8 @@ import {createAudioPlayer, AudioPlayer, AudioStatus, setAudioModeAsync} from "ex
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
 import {BgTimer} from "../utils/timers"
 
+const RESTORE_GLASSES_VOLUME_AFTER_PLAYBACK = false
+
 interface AudioPlayRequest {
   requestId: string
   audioUrl: string
@@ -158,9 +160,11 @@ class AudioPlaybackService {
       await this.setGlassesMediaVolumeWithTiming(AudioPlaybackService.GLASSES_VOLUME_FLOOR)
       if (this.currentPlayback === playback && !playback.completed) {
         this.glassesVolumeRestoreLevel = level
-      } else {
+      } else if (RESTORE_GLASSES_VOLUME_AFTER_PLAYBACK) {
         console.log("AUDIO: Restoring glasses volume immediately; playback ended during volume bump")
         await this.setGlassesMediaVolumeWithTiming(level)
+      } else {
+        console.log("AUDIO: Leaving bumped glasses media volume unchanged after playback")
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
@@ -174,6 +178,11 @@ class AudioPlaybackService {
   private async restoreGlassesMediaVolume(): Promise<void> {
     const restoreLevel = this.glassesVolumeRestoreLevel
     if (restoreLevel === null) {
+      return
+    }
+    if (!RESTORE_GLASSES_VOLUME_AFTER_PLAYBACK) {
+      this.glassesVolumeRestoreLevel = null
+      console.log("AUDIO: Leaving bumped glasses media volume unchanged after playback")
       return
     }
 
