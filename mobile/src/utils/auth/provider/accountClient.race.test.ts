@@ -13,15 +13,14 @@
  * run (and CI, which has no local core) skips it instead of failing:
  *
  *   1. cd cloud-v2 && bash scripts/dev-local.sh   (core on :3000)
- *   2. cd mobile && RUN_LIVE_AUTH_TESTS=1 \
- *        MENTRA_LIVE_TEST_EMAIL=<standing e2e test account> \
- *        MENTRA_LIVE_TEST_PASSWORD=<its password> \
- *        bunx jest accountClient.race
+ *   2. cd mobile && RUN_LIVE_AUTH_TESTS=1 doppler run --project mentra-sre \
+ *        --config dev -- bunx jest accountClient.race
  *
- * Credentials come from env, not hardcoded: dev-local.sh points core at the
- * real (shared, dev-tier) Supabase project via Doppler, so a real account
- * password belongs in an untracked local shell env or Doppler, never in a
- * public repo's git history.
+ * Credentials come from MENTRA_LIVE_TEST_EMAIL / MENTRA_LIVE_TEST_PASSWORD
+ * env vars, not hardcoded: dev-local.sh points core at the real (shared,
+ * dev-tier) Supabase project via Doppler, so a real account password
+ * belongs in Doppler (mentra-sre, config dev), never in a public repo's
+ * git history.
  */
 jest.mock("@/services/cloudClient", () => ({
   resolvedEndpoints: () => ({core: "http://localhost:3000", runtime: "ws://localhost:3001"}),
