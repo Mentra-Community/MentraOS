@@ -11,6 +11,7 @@ import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.K900Lengt
 import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.MessageChunker;
 import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.SerialPortBridge;
 import com.mentra.asg_client.io.bluetooth.utils.DebugNotificationManager;
+import com.mentra.asg_client.io.media.core.BlePhotoTimingLog;
 import com.mentra.asg_client.logging.BleTraceLogger;
 import com.mentra.asg_client.reporting.domains.BluetoothReporting;
 import com.mentra.asg_client.service.core.AsgClientService;
@@ -1916,6 +1917,21 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         if (currentFileTransfer.highestAckedIndex + 1 >= currentFileTransfer.totalPackets) {
             // All packets sent and ACKed by MCU
             long transferDuration = System.currentTimeMillis() - currentFileTransfer.startTime;
+            int rateKbps =
+                    transferDuration > 0
+                            ? (int) (currentFileTransfer.fileSize * 1000L / transferDuration / 1024)
+                            : 0;
+            BlePhotoTimingLog.event(
+                    "TRANSFER",
+                    "all UART/BLE packets sent and ACKed by glasses MCU (BES) | file="
+                            + currentFileTransfer.fileName
+                            + " | uart_tx="
+                            + transferDuration
+                            + "ms | size="
+                            + String.format("%.1f", currentFileTransfer.fileSize / 1024.0)
+                            + "KB | ~"
+                            + rateKbps
+                            + "KB/s — now waiting for phone transfer_complete");
             Log.d(TAG, "📤 All packets sent and ACKed by MCU: " + currentFileTransfer.fileName);
             Log.d(
                     TAG,
@@ -2400,8 +2416,15 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
         if (success) {
             // SUCCESS! Clean up and delete file
-            Log.d(TAG, "✅ Phone confirmed success - cleaning up");
             long transferDuration = System.currentTimeMillis() - currentFileTransfer.startTime;
+            BlePhotoTimingLog.event(
+                    "TRANSFER",
+                    "phone confirmed transfer_complete (photo received on phone) | file="
+                            + fileName
+                            + " | full_ble_round_trip="
+                            + transferDuration
+                            + "ms");
+            Log.d(TAG, "✅ Phone confirmed success - cleaning up");
 
             notificationManager.showDebugNotification(
                     "Transfer Success!", currentFileTransfer.fileName + " confirmed by phone");

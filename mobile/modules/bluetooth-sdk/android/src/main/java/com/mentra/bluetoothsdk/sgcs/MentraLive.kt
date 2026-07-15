@@ -5458,7 +5458,7 @@ class MentraLive : SGCManager() {
             val bleImgId = "I" + String.format("%09d", System.currentTimeMillis() % 1000000000)
             json.put("bleImgId", bleImgId)
 
-            // Use auto mode by default - glasses will decide based on connectivity
+            // Use auto mode by default - glasses try WiFi direct upload, BLE fallback via bleImgId
             json.put("transferMethod", "auto")
 
             // Always prepare for potential BLE transfer

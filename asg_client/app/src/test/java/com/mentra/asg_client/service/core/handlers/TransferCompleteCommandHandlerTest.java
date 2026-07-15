@@ -9,6 +9,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.mentra.asg_client.io.bluetooth.interfaces.ICompanionTransport;
+import com.mentra.asg_client.io.media.core.MediaCaptureService;
 import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
 import org.json.JSONObject;
 import org.junit.Before;
@@ -29,13 +30,16 @@ public class TransferCompleteCommandHandlerTest {
 
     private AsgClientServiceManager serviceManager;
     private ICompanionTransport transport;
+    private MediaCaptureService mediaCaptureService;
     private TransferCompleteCommandHandler handler;
 
     @Before
     public void setUp() {
         serviceManager = mock(AsgClientServiceManager.class);
         transport = mock(ICompanionTransport.class);
+        mediaCaptureService = mock(MediaCaptureService.class);
         when(serviceManager.getBluetoothManager()).thenReturn(transport);
+        when(serviceManager.getMediaCaptureService()).thenReturn(mediaCaptureService);
         handler = new TransferCompleteCommandHandler(serviceManager);
     }
 
@@ -48,6 +52,7 @@ public class TransferCompleteCommandHandlerTest {
 
         assertThat(handled).isTrue();
         verify(transport).onFileTransferConfirmation("photo.jpg", true);
+        verify(mediaCaptureService).onBlePhotoTransferComplete("photo.jpg", true);
     }
 
     @Test
@@ -59,6 +64,21 @@ public class TransferCompleteCommandHandlerTest {
 
         assertThat(handled).isTrue();
         verify(transport).onFileTransferConfirmation("video.mp4", false);
+        verify(mediaCaptureService).onBlePhotoTransferComplete("video.mp4", false);
+    }
+
+    @Test
+    public void transferComplete_failureRetry_defersTerminalPhotoTiming() throws Exception {
+        when(transport.isFileTransferInProgress()).thenReturn(true);
+
+        boolean handled =
+                handler.handleCommand(
+                        "transfer_complete",
+                        new JSONObject().put("fileName", "photo.jpg").put("success", false));
+
+        assertThat(handled).isTrue();
+        verify(transport).onFileTransferConfirmation("photo.jpg", false);
+        verify(mediaCaptureService, never()).onBlePhotoTransferComplete(anyString(), anyBoolean());
     }
 
     @Test

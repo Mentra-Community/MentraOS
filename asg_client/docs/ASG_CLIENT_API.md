@@ -89,6 +89,15 @@ Capture a still photo. The handler routes through `transferMethod` to one of thr
 | `save`           | boolean | `false`             | Also save the photo to local gallery                        |
 | `size`               | string  | `"medium"`          | `low`, `medium`, `high`, or `max` (legacy `small`→`low`, `large`→`high`, `full`→`max`) |
 | `mode`               | string  | `"photo"`           | `photo` for normal capture, or `text` to capture at maximum sensor quality and enable text-aware BLE processing |
+
+**Text mode behavior**
+
+- Forces max sensor capture quality regardless of the requested `size` tier.
+- Applies shorter auto-exposure (unless `exposureTimeNs` is set manually).
+- Runs text-region detection and crops to the detected/fallback ROI before BLE transfer.
+- Uses dedicated text BLE downscale/encode targets (1920 px long edge, AVIF q55).
+- If detection is untrustworthy, the pipeline falls back to a generous center crop and logs the outcome (`confidence`, `fallback_reason`) in logcat — the photo still completes.
+- Best results on documents, signs, and windshield VIN stickers; plain scenes may look similar to `photo` when the fallback crop is used.
 | `compress`           | string  | `"none"`            | Compression preset passed to capture pipeline               |
 | `flash`              | boolean | `true`              | Fire the privacy LED during capture                         |
 | `sound`              | boolean | `true`              | Play shutter sound                                          |
