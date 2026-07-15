@@ -477,6 +477,12 @@ class MentraBluetoothSdk private constructor(
         DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "voice_activity_detection_enabled", enabled)
     }
 
+    @Deprecated(
+        message =
+            "Sticky action-button photo presets are deprecated. Prefer per-request " +
+                "requestPhoto(...) options (e.g. mode=TEXT for AE ÷3, or explicit per-shot fields). " +
+                "This method still works but will be removed in a future release.",
+    )
     fun setPhotoCaptureDefaults(settings: PhotoCaptureDefaults): SettingsAckEvent =
         performSettingsCommand(
             setting = "button_photo",

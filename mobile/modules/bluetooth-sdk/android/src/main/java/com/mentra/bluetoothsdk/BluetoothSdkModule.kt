@@ -524,6 +524,7 @@ class BluetoothSdkModule : Module() {
             sdk?.setVoiceActivityDetectionEnabled(enabled)
         }
 
+        @Suppress("DEPRECATION")
         SdkAsyncFunction("setPhotoCaptureDefaults") { params: Map<String, Any?> ->
             requireSdk().setPhotoCaptureDefaults(params.toPhotoCaptureDefaults()).values
         }
