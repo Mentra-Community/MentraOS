@@ -2737,7 +2737,7 @@ public class MediaCaptureService {
         private long lastMs = startMs;
 
         void start(String stage) {
-            if (!ENABLE_PHOTO_TIMING_LOGS) return;
+            if (!AsgConstants.ENABLE_PHOTO_TIMING_LOGS) return;
             long now = System.currentTimeMillis();
             Log.i(TAG, "COMPRESS: " + stage + " started (+" + (now - startMs) + "ms total)");
             lastMs = now;
@@ -2748,7 +2748,7 @@ public class MediaCaptureService {
         }
 
         void finish(String stage, @Nullable String detail) {
-            if (!ENABLE_PHOTO_TIMING_LOGS) return;
+            if (!AsgConstants.ENABLE_PHOTO_TIMING_LOGS) return;
             long now = System.currentTimeMillis();
             Log.i(
                     TAG,
@@ -4876,7 +4876,7 @@ public class MediaCaptureService {
                                     fos.write(compressedData);
                                 }
                                 stage.finish("payload file write", compressedPath);
-                                if (ENABLE_PHOTO_TIMING_LOGS) {
+                                if (AsgConstants.ENABLE_PHOTO_TIMING_LOGS) {
                                     Log.i(
                                             TAG,
                                             "COMPRESS: pipeline complete in "
