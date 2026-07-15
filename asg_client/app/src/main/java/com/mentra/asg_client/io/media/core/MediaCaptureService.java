@@ -616,6 +616,18 @@ public class MediaCaptureService {
     private final Map<String, Long> blePhotoPipelineStartMs = new ConcurrentHashMap<>();
     /** Maps BLE transfer filename (bleImgId) back to the originating requestId. */
     private final Map<String, String> bleImgIdToRequestId = new ConcurrentHashMap<>();
+    /**
+     * Counts BLE payload encode invocations per request. There should only ever be exactly one
+     * (whichever codec {@link BlePhotoEncodingPolicy} selects) — this exists purely to detect and
+     * quantify a regression back to the old dual JPEG+AVIF encode path.
+     */
+    private final Map<String, Integer> bleEncodeInvocationCount = new ConcurrentHashMap<>();
+    /** Cumulative encoder time (ms) actually spent per request, across all encode calls. */
+    private final Map<String, Long> bleEncodeTotalMs = new ConcurrentHashMap<>();
+    /** Original captured JPEG size on disk (bytes) per request. */
+    private final Map<String, Long> bleOriginalBytes = new ConcurrentHashMap<>();
+    /** Compressed BLE payload size (bytes) per request. */
+    private final Map<String, Long> bleCompressedBytes = new ConcurrentHashMap<>();
 
     private final FileManager fileManager;
 
@@ -2648,14 +2660,33 @@ public class MediaCaptureService {
         Long pipelineStart = blePhotoPipelineStartMs.remove(requestId);
         long totalMs = pipelineStart != null ? System.currentTimeMillis() - pipelineStart : -1;
         Map<String, Long> phases = photoTimings.get(requestId);
-        BlePhotoTimingLog.pipelineDone(requestId, bleImgId, success, totalMs, phases);
-        dumpTimings(requestId);
+        int encodeCalls = bleEncodeInvocationCount.getOrDefault(requestId, 0);
+        long encodeTotalMs = bleEncodeTotalMs.getOrDefault(requestId, 0L);
+        long originalBytes = bleOriginalBytes.getOrDefault(requestId, 0L);
+        long compressedBytes = bleCompressedBytes.getOrDefault(requestId, 0L);
+        BlePhotoTimingLog.UartTransferStats uart = BlePhotoTimingLog.takeUartTransfer(bleImgId);
+        BlePhotoTimingLog.pipelineDone(
+                requestId,
+                bleImgId,
+                success,
+                totalMs,
+                phases,
+                encodeCalls,
+                encodeTotalMs,
+                originalBytes,
+                compressedBytes,
+                uart);
+        dumpTimings(requestId, originalBytes, compressedBytes, uart);
     }
 
     private void clearBlePhotoPipelineTracking(String requestId, String bleImgId) {
         if (requestId != null) {
             blePhotoPipelineStartMs.remove(requestId);
             photoTimings.remove(requestId);
+            bleEncodeInvocationCount.remove(requestId);
+            bleEncodeTotalMs.remove(requestId);
+            bleOriginalBytes.remove(requestId);
+            bleCompressedBytes.remove(requestId);
         }
         if (bleImgId != null) {
             bleImgIdToRequestId.remove(bleImgId);
@@ -2684,17 +2715,21 @@ public class MediaCaptureService {
         long now = System.currentTimeMillis();
         Map<String, Long> timings =
                 photoTimings.computeIfAbsent(requestId, k -> new java.util.LinkedHashMap<>());
-        long delta = 0;
-        if (!timings.isEmpty()) {
-            long prev = 0;
-            for (Long t : timings.values()) {
-                prev = t;
+        long delta;
+        long elapsed;
+        synchronized (timings) {
+            delta = 0;
+            if (!timings.isEmpty()) {
+                long prev = 0;
+                for (Long t : timings.values()) {
+                    prev = t;
+                }
+                delta = now - prev;
             }
-            delta = now - prev;
+            timings.put(step, now);
+            Long pipelineStart = blePhotoPipelineStartMs.get(requestId);
+            elapsed = pipelineStart != null ? now - pipelineStart : -1;
         }
-        timings.put(step, now);
-        Long pipelineStart = blePhotoPipelineStartMs.get(requestId);
-        long elapsed = pipelineStart != null ? now - pipelineStart : -1;
         BlePhotoTimingLog.requestStep(requestId, step, detail, elapsed, delta);
     }
 
@@ -2702,37 +2737,30 @@ public class MediaCaptureService {
      * Dump all recorded timings for a photo request and clean up. Shows cumulative time from start
      * and delta between each phase. No-op if AsgConstants.ENABLE_PHOTO_TIMING_LOGS is false.
      */
-    private void dumpTimings(String requestId) {
+    private void dumpTimings(
+            String requestId,
+            long originalBytes,
+            long compressedBytes,
+            @Nullable BlePhotoTimingLog.UartTransferStats uart) {
         if (!AsgConstants.ENABLE_PHOTO_TIMING_LOGS) return;
         Map<String, Long> timings = photoTimings.remove(requestId);
         if (timings == null || timings.isEmpty()) return;
-
-        StringBuilder sb = new StringBuilder();
-        sb.append("⏱️ [BLE PHOTO] PHASE BREAKDOWN | requestId=").append(requestId).append('\n');
-        long firstTime = 0;
-        long prevTime = 0;
-        for (Map.Entry<String, Long> entry : timings.entrySet()) {
-            long time = entry.getValue();
-            if (firstTime == 0) {
-                firstTime = time;
-                prevTime = time;
-                sb.append("  ")
-                        .append(BlePhotoTimingLog.label(entry.getKey()))
-                        .append(" (+0ms)\n");
-                continue;
-            }
-            long delta = time - prevTime;
-            sb.append("  ")
-                    .append(BlePhotoTimingLog.label(entry.getKey()))
-                    .append(" (+")
-                    .append(time - firstTime)
-                    .append("ms total, +")
-                    .append(delta)
-                    .append("ms this step)\n");
-            prevTime = time;
+        Map<String, Long> snapshot;
+        synchronized (timings) {
+            snapshot = new java.util.LinkedHashMap<>(timings);
         }
-        sb.append("  END-TO-END: ").append(prevTime - firstTime).append("ms");
-        Log.i(BlePhotoTimingLog.TAG, sb.toString());
+        Log.i(
+                BlePhotoTimingLog.TAG,
+                BlePhotoTimingLog.formatPhaseBreakdown(
+                        requestId, snapshot, originalBytes, compressedBytes, uart));
+    }
+
+    private void dumpTimings(String requestId) {
+        dumpTimings(
+                requestId,
+                bleOriginalBytes.getOrDefault(requestId, 0L),
+                bleCompressedBytes.getOrDefault(requestId, 0L),
+                null);
     }
 
     /**
@@ -4346,6 +4374,9 @@ public class MediaCaptureService {
         try {
             // Use CameraNeoService for photo capture
             logBlePhotoStep(requestId, "enqueue_camera");
+            final BlePhotoTimingLog.PhaseSink capturePhaseSink =
+                    (step, detail) -> logBlePhotoStep(requestId, step, detail);
+            BlePhotoTimingLog.bindPhaseSink(capturePhaseSink);
             CameraNeoService.enqueuePhotoRequest(
                     mContext,
                     photoFilePath,
@@ -4358,6 +4389,10 @@ public class MediaCaptureService {
                     new CameraNeoService.PhotoCaptureCallback() {
                         @Override
                         public void onPhotoConfigured(JSONObject resolvedConfig) {
+                            logBlePhotoStep(
+                                    requestId,
+                                    "capture_configured",
+                                    "camera configuration resolved for the requested size and exposure");
                             sendPhotoStatus(
                                     requestId,
                                     "configuring",
@@ -4369,6 +4404,10 @@ public class MediaCaptureService {
                         @Override
                         public void onPhotoCapturing(
                                 JSONObject requestedCaptureConfig, JSONObject meteredPreview) {
+                            logBlePhotoStep(
+                                    requestId,
+                                    "capture_started",
+                                    "camera sensor capture is now in progress");
                             sendPhotoStatus(
                                     requestId,
                                     "capturing",
@@ -4390,13 +4429,24 @@ public class MediaCaptureService {
                             // NOTE: do NOT clear isPhotoJobInFlight here — the job continues
                             // through BLE compression + handoff. Flag is cleared in
                             // compressAndSendViaBle's finally block.
+                            BlePhotoTimingLog.unbindPhaseSink(capturePhaseSink);
+                            long capturedBytes = new File(filePath).length();
+                            if (capturedBytes > 0) {
+                                bleOriginalBytes.put(requestId, capturedBytes);
+                            }
                             logBlePhotoStep(
                                     requestId,
                                     "photo_captured",
                                     "capture took "
                                             + (System.currentTimeMillis() - requestStartTimeMs)
                                             + "ms, file="
-                                            + filePath);
+                                            + filePath
+                                            + ", size="
+                                            + capturedBytes
+                                            + " bytes ("
+                                            + String.format(
+                                                    Locale.US, "%.1f", capturedBytes / 1024.0)
+                                            + "KB)");
 
                             Log.d(TAG, "Photo captured successfully for BLE transfer: " + filePath);
                             prepareTextModePhotoPath(filePath, requestId);
@@ -4430,6 +4480,7 @@ public class MediaCaptureService {
 
                         @Override
                         public void onPhotoError(CameraOperationError error) {
+                            BlePhotoTimingLog.unbindPhaseSink(capturePhaseSink);
                             cleanupPhotoArtifacts(requestId, photoFilePath, false);
                             clearPhotoTracking(requestId);
                             releasePhotoJob(requestId);
@@ -4452,6 +4503,7 @@ public class MediaCaptureService {
                     });
             return true;
         } catch (Exception e) {
+            BlePhotoTimingLog.unbindPhaseSink(null);
             cleanupPhotoArtifacts(requestId, photoFilePath, false);
             clearPhotoTracking(requestId);
             releasePhotoJob(requestId);
@@ -4883,6 +4935,14 @@ public class MediaCaptureService {
                                                 + " hasImuMetadata="
                                                 + PhotoExifMetadataWriter.hasImuMetadata(
                                                         originalPath));
+                                // Verification instrumentation: confirm exactly one encoder runs
+                                // per request. A count > 1 here would mean the old dual
+                                // JPEG+AVIF encode path regressed back in, silently doubling
+                                // encoder cost — see BlePhotoEncoders.encode(), which is the
+                                // single call site for BLE payload encoding.
+                                int encodeCallNumber =
+                                        bleEncodeInvocationCount.merge(
+                                                requestId, 1, Integer::sum);
                                 stage.start(codec + " encode");
                                 BlePhotoEncoder.EncodeResult encodeResult;
                                 try {
@@ -4897,10 +4957,17 @@ public class MediaCaptureService {
                                                     + resized.getWidth()
                                                     + "x"
                                                     + resized.getHeight()
-                                                    + " input");
+                                                    + " input (encode call #"
+                                                    + encodeCallNumber
+                                                    + " for this request)");
                                     encodeResult =
                                             BlePhotoEncoders.encode(
                                                     resized, codec, encodeQuality, originalPath);
+                                    long cumulativeEncodeMs =
+                                            bleEncodeTotalMs.merge(
+                                                    requestId,
+                                                    encodeResult.encodeMs,
+                                                    Long::sum);
                                     logBlePhotoStep(
                                             requestId,
                                             "encode_done",
@@ -4908,7 +4975,36 @@ public class MediaCaptureService {
                                                     + encodeResult.data.length
                                                     + " bytes in "
                                                     + encodeResult.encodeMs
-                                                    + "ms");
+                                                    + "ms (cumulative encoder time this request: "
+                                                    + cumulativeEncodeMs
+                                                    + "ms across "
+                                                    + encodeCallNumber
+                                                    + " call(s))");
+                                    if (encodeCallNumber > 1) {
+                                        Log.w(
+                                                TAG,
+                                                "⚠️ BLE encode invoked "
+                                                        + encodeCallNumber
+                                                        + " times for requestId="
+                                                        + requestId
+                                                        + " — redundant encode added ~"
+                                                        + encodeResult.encodeMs
+                                                        + "ms with no benefit (cumulative="
+                                                        + cumulativeEncodeMs
+                                                        + "ms)");
+                                        BlePhotoTimingLog.event(
+                                                "ENCODE VERIFY",
+                                                "redundant encode call #"
+                                                        + encodeCallNumber
+                                                        + " for requestId="
+                                                        + requestId
+                                                        + " cost an extra "
+                                                        + encodeResult.encodeMs
+                                                        + "ms (cumulative="
+                                                        + cumulativeEncodeMs
+                                                        + "ms) — this is pure waste, not needed"
+                                                        + " for the single codec BLE payload");
+                                    }
                                 } finally {
                                     resized.recycle();
                                 }
@@ -4975,6 +5071,10 @@ public class MediaCaptureService {
                                                 + compressedData.length
                                                 + " bytes to "
                                                 + compressedPath);
+                                bleCompressedBytes.put(requestId, (long) compressedData.length);
+                                if (originalSizeBytes > 0) {
+                                    bleOriginalBytes.put(requestId, originalSizeBytes);
+                                }
                                 if (AsgConstants.ENABLE_PHOTO_TIMING_LOGS) {
                                     bleImgIdToRequestId.put(bleImgId, requestId);
                                 }
