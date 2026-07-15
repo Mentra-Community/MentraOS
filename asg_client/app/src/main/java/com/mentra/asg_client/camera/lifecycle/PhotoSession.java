@@ -694,9 +694,9 @@ public final class PhotoSession {
         }
 
         long imageAvailableStartMs = System.currentTimeMillis();
-        BlePhotoTimingLog.event(
-                "CAPTURE STORAGE",
-                "image reader delivered still frame; starting buffer extraction");
+        BlePhotoTimingLog.capturePhase(
+                "still_frame_available",
+                "ImageReader delivered still frame; starting buffer extraction");
         Log.d(TAG, "Processing photo capture...");
         try (Image image = reader.acquireLatestImage()) {
             try {
@@ -723,10 +723,9 @@ public final class PhotoSession {
             ByteBuffer buffer = image.getPlanes()[0].getBuffer();
             byte[] bytes = new byte[buffer.remaining()];
             buffer.get(bytes);
-            BlePhotoTimingLog.event(
-                    "CAPTURE STORAGE",
-                    "image buffer extracted: "
-                            + bytes.length
+            BlePhotoTimingLog.capturePhase(
+                    "still_buffer_extracted",
+                    bytes.length
                             + " bytes in "
                             + (System.currentTimeMillis() - imageAvailableStartMs)
                             + "ms; starting file write");
@@ -797,15 +796,15 @@ public final class PhotoSession {
     private void finishImuRecording(String photoPath) {
         ImuRecorder imu = hooks.imuRecorderOrNull();
         if (imu == null) {
-            BlePhotoTimingLog.event(
-                    "CAPTURE STORAGE", "no IMU metadata writer; capture file is ready");
+            BlePhotoTimingLog.capturePhase(
+                    "still_imu_metadata_done", "no IMU metadata writer; capture file is ready");
             return;
         }
         long imuStartMs = System.currentTimeMillis();
         JSONObject payload = imu.stopRecordingAndBuildPayload();
         if (payload == null || payload.optInt("sampleCount", 0) <= 0) {
-            BlePhotoTimingLog.event(
-                    "CAPTURE STORAGE",
+            BlePhotoTimingLog.capturePhase(
+                    "still_imu_metadata_done",
                     "IMU metadata unavailable; file finalization took "
                             + (System.currentTimeMillis() - imuStartMs)
                             + "ms");
@@ -826,8 +825,8 @@ public final class PhotoSession {
         if (imuPath != null) {
             Log.d(TAG, "IMU sidecar saved: " + imuPath);
         }
-        BlePhotoTimingLog.event(
-                "CAPTURE STORAGE",
+        BlePhotoTimingLog.capturePhase(
+                "still_imu_metadata_done",
                 "IMU sidecar write completed in "
                         + (System.currentTimeMillis() - sidecarStartMs)
                         + "ms; total metadata finalization="
@@ -857,9 +856,9 @@ public final class PhotoSession {
             }
             long fileWriteMs = System.currentTimeMillis() - fileWriteStartMs;
             long fileSize = file.length();
-            BlePhotoTimingLog.event(
-                    "CAPTURE STORAGE",
-                    "JPEG file write and close took "
+            BlePhotoTimingLog.capturePhase(
+                    "still_jpeg_write_done",
+                    "JPEG file write/close took "
                             + fileWriteMs
                             + "ms; expected="
                             + data.length
@@ -872,15 +871,15 @@ public final class PhotoSession {
             // Runs before finishImuRecording's EXIF pass; saveAttributes preserves it.
             long exifStartMs = System.currentTimeMillis();
             PhotoExifMetadataWriter.writeCaptureIdFromPath(filePath);
-            BlePhotoTimingLog.event(
-                    "CAPTURE STORAGE",
+            BlePhotoTimingLog.capturePhase(
+                    "still_capture_id_exif_done",
                     "capture ID EXIF write took "
                             + (System.currentTimeMillis() - exifStartMs)
                             + "ms");
 
             Log.d(TAG, "Saved image to: " + filePath);
-            BlePhotoTimingLog.event(
-                    "CAPTURE STORAGE",
+            BlePhotoTimingLog.capturePhase(
+                    "still_image_save_done",
                     "image save completed in "
                             + (System.currentTimeMillis() - storageStartMs)
                             + "ms");
@@ -1678,6 +1677,9 @@ public final class PhotoSession {
             synchronized (captureMetadataLock) {
                 captureGeneration = captureMetadataGeneration;
             }
+            BlePhotoTimingLog.capturePhase(
+                    "still_shutter_submitted",
+                    "still capture request submitted to CameraCaptureSession");
             activeSession.capture(
                     captureRequest,
                     new StillCaptureCallback(

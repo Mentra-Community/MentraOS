@@ -443,6 +443,11 @@ export type PhotoSize = "low" | "medium" | "high" | "max"
 export type PhotoMode = "photo" | "text"
 export type ButtonPhotoSize = "low" | "medium" | "high" | "max"
 
+/**
+ * @deprecated Sticky action-button photo presets via {@link BluetoothSdkPublicModule.setPhotoCaptureDefaults}
+ * are deprecated. Prefer per-request {@link BluetoothSdkPublicModule.requestPhoto} options
+ * (e.g. `mode: "text"` for AE ÷3) instead of persisting button-photo tuning on the glasses.
+ */
 export type PhotoCaptureDefaults = {
   size?: PhotoSize
   mfnr?: boolean
@@ -988,6 +993,11 @@ export interface BluetoothSdkPublicModule {
 
   setGalleryModeEnabled(enabled: boolean): Promise<SettingsAckSuccessEvent>
   setVoiceActivityDetectionEnabled(enabled: boolean): Promise<void>
+  /**
+   * @deprecated Sticky action-button photo presets are deprecated. Prefer per-request
+   * `requestPhoto(...)` options (e.g. `mode: "text"` for AE ÷3, or explicit per-shot
+   * fields). Still functional until removed in a future release.
+   */
   setPhotoCaptureDefaults(settings: PhotoCaptureDefaults): Promise<SettingsAckSuccessEvent>
   setVideoRecordingDefaults(settings: VideoRecordingDefaults): Promise<SettingsAckSuccessEvent>
   setMaxVideoRecordingDuration(minutes: number): Promise<SettingsAckSuccessEvent>
