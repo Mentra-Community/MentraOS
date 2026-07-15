@@ -105,15 +105,6 @@ public class AsgConstants {
     /** In text mode, skip AVIF and send JPEG when the source capture is under this size. */
     public static final int TEXT_MODE_AVIF_SIZE_THRESHOLD_BYTES = 200 * 1024;
 
-    /**
-     * libavif encoder speed (0 slowest .. 10 fastest) for BLE AVIF encodes. The old
-     * libheif-backed avif-coder 1.x hardcoded aom speed 6, which cost 2.5-4.7s per BLE photo on
-     * the K900; higher speeds trade a few percent of compression efficiency (extra bytes on the
-     * ~45-70KB/s BLE pipe) for a much shorter encode. Tune on hardware with
-     * {@link #ENABLE_PHOTO_TIMING_LOGS}.
-     */
-    public static final int BLE_AVIF_ENCODE_SPEED = 8;
-
     // BLE size-tier downscale caps (long edge; aspect ratio preserved) and AVIF quality
     public static final int BLE_PHOTO_LOW_TARGET_PX = 800;
     public static final int BLE_PHOTO_LOW_AVIF_QUALITY = 50;
