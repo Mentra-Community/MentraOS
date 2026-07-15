@@ -2,7 +2,9 @@
 
 These outputs were generated on-device with the BLE encoder benchmark. Each
 image directory contains the AVIF q55 output plus JPEG q75, q80, q85, q90,
-q95, and q100 outputs.
+q95, and q100 outputs. The encoded image files themselves are gitignored —
+regenerate them locally with the benchmark harness if you need to inspect
+them; only this summary is committed.
 
 Times are encoder time in milliseconds. Sizes are encoded payload bytes.
 
