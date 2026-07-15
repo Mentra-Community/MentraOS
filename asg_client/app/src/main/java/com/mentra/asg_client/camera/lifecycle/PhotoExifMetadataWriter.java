@@ -152,33 +152,38 @@ public final class PhotoExifMetadataWriter {
     }
 
     /**
-     * Encode bitmap as JPEG for BLE when the source capture is already small enough that AVIF is
-     * unnecessary. Preserves IMU metadata from the source capture when present.
+     * Builds an EXIF APP1 segment (including the {@code FFE1} marker and length) carrying the
+     * source capture's IMU UserComment and/or ImageUniqueID, for splicing into an in-memory
+     * re-encoded JPEG without round-tripping the full image through a temp file. Returns
+     * {@code null} when the source carries neither attribute. The only disk I/O is the same
+     * 2x2-pixel scratch JPEG {@link #buildExifApp1Segment} already uses, because
+     * {@link ExifInterface} can only write to files.
      */
-    public static byte[] encodeJpegForBle(Bitmap bitmap, int quality, String sourceJpegPath)
-            throws IOException {
-        File tempJpeg = File.createTempFile("ble_jpeg_", ".jpg");
+    @Nullable
+    public static byte[] buildCaptureExifApp1Segment(String sourceJpegPath) throws IOException {
+        String imuJson = readImuJsonFromJpeg(sourceJpegPath);
+        String uniqueId =
+                new ExifInterface(sourceJpegPath)
+                        .getAttribute(ExifInterface.TAG_IMAGE_UNIQUE_ID);
+        boolean hasJson = imuJson != null && !imuJson.isEmpty();
+        boolean hasUniqueId = uniqueId != null && !uniqueId.isEmpty();
+        if (!hasJson && !hasUniqueId) {
+            return null;
+        }
+
+        File tempDir = new File(System.getProperty("java.io.tmpdir"));
+        File tempJpeg = File.createTempFile("capture_exif_", ".jpg", tempDir);
         try {
-            try (java.io.FileOutputStream fos = new java.io.FileOutputStream(tempJpeg)) {
-                if (!bitmap.compress(Bitmap.CompressFormat.JPEG, quality, fos)) {
-                    throw new IOException("Bitmap JPEG compress failed");
-                }
+            writeMinimalJpeg(tempJpeg);
+            ExifInterface exif = new ExifInterface(tempJpeg.getAbsolutePath());
+            if (hasJson) {
+                exif.setAttribute(ExifInterface.TAG_USER_COMMENT, imuJson);
             }
-            if (hasImuMetadata(sourceJpegPath)) {
-                copyImuMetadata(sourceJpegPath, tempJpeg.getAbsolutePath());
-            } else {
-                writeCaptureIdFromPath(tempJpeg.getAbsolutePath());
+            if (hasUniqueId) {
+                exif.setAttribute(ExifInterface.TAG_IMAGE_UNIQUE_ID, uniqueId);
             }
-            byte[] jpegBytes = java.nio.file.Files.readAllBytes(tempJpeg.toPath());
-            Log.d(
-                    TAG,
-                    "encodeJpegForBle: "
-                            + jpegBytes.length
-                            + " bytes, quality="
-                            + quality
-                            + ", hasImuMetadata="
-                            + hasImuMetadata(sourceJpegPath));
-            return jpegBytes;
+            exif.saveAttributes();
+            return extractExifApp1Segment(tempJpeg);
         } finally {
             if (!tempJpeg.delete()) {
                 tempJpeg.deleteOnExit();
