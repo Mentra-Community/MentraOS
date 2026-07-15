@@ -4,8 +4,7 @@ import android.graphics.Bitmap;
 
 /**
  * Selector over the concrete {@link BlePhotoEncoder} implementations. Callers pick a codec (via
- * {@link BlePhotoEncodingPolicy}) and get one encoding contract. BLE production policy selects
- * JPEG; AVIF remains available only for explicit benchmark or compatibility callers.
+ * {@link BlePhotoEncodingPolicy}) and get one encoding contract.
  */
 final class BlePhotoEncoders {
     private static final JpegFastBleEncoder JPEG_FAST = new JpegFastBleEncoder();

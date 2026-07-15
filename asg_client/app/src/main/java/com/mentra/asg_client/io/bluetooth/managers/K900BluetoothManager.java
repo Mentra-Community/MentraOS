@@ -1917,6 +1917,10 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         if (currentFileTransfer.highestAckedIndex + 1 >= currentFileTransfer.totalPackets) {
             // All packets sent and ACKed by MCU
             long transferDuration = System.currentTimeMillis() - currentFileTransfer.startTime;
+            BlePhotoTimingLog.recordUartTransfer(
+                    currentFileTransfer.fileName,
+                    currentFileTransfer.fileSize,
+                    transferDuration);
             int rateKbps =
                     transferDuration > 0
                             ? (int) (currentFileTransfer.fileSize * 1000L / transferDuration / 1024)

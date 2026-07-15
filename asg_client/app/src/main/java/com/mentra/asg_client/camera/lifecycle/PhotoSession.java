@@ -30,6 +30,7 @@ import com.mentra.asg_client.camera.request.AePreviewController;
 import com.mentra.asg_client.camera.request.HdrBurstBuilder;
 import com.mentra.asg_client.camera.request.StillCaptureBuilder;
 import com.mentra.asg_client.camera.request.StillCaptureCallback;
+import com.mentra.asg_client.io.media.core.BlePhotoTimingLog;
 import com.mentra.asg_client.sensors.ImuRecorder;
 import java.io.File;
 import java.io.FileOutputStream;
@@ -692,6 +693,10 @@ public final class PhotoSession {
             return;
         }
 
+        long imageAvailableStartMs = System.currentTimeMillis();
+        BlePhotoTimingLog.event(
+                "CAPTURE STORAGE",
+                "image reader delivered still frame; starting buffer extraction");
         Log.d(TAG, "Processing photo capture...");
         try (Image image = reader.acquireLatestImage()) {
             try {
@@ -718,6 +723,13 @@ public final class PhotoSession {
             ByteBuffer buffer = image.getPlanes()[0].getBuffer();
             byte[] bytes = new byte[buffer.remaining()];
             buffer.get(bytes);
+            BlePhotoTimingLog.event(
+                    "CAPTURE STORAGE",
+                    "image buffer extracted: "
+                            + bytes.length
+                            + " bytes in "
+                            + (System.currentTimeMillis() - imageAvailableStartMs)
+                            + "ms; starting file write");
 
             String currentPath = currentFilePath();
             String targetPath = (currentPath != null) ? currentPath : listenerFallbackPhotoPath;
@@ -785,42 +797,93 @@ public final class PhotoSession {
     private void finishImuRecording(String photoPath) {
         ImuRecorder imu = hooks.imuRecorderOrNull();
         if (imu == null) {
+            BlePhotoTimingLog.event(
+                    "CAPTURE STORAGE", "no IMU metadata writer; capture file is ready");
             return;
         }
+        long imuStartMs = System.currentTimeMillis();
         JSONObject payload = imu.stopRecordingAndBuildPayload();
         if (payload == null || payload.optInt("sampleCount", 0) <= 0) {
+            BlePhotoTimingLog.event(
+                    "CAPTURE STORAGE",
+                    "IMU metadata unavailable; file finalization took "
+                            + (System.currentTimeMillis() - imuStartMs)
+                            + "ms");
             return;
         }
         try {
             PhotoExifMetadataWriter.writeImuPayload(photoPath, payload);
+            BlePhotoTimingLog.event(
+                    "CAPTURE STORAGE",
+                    "IMU EXIF write completed in "
+                            + (System.currentTimeMillis() - imuStartMs)
+                            + "ms");
         } catch (IOException e) {
             Log.w(TAG, "Failed to write IMU EXIF on photo: " + photoPath, e);
         }
+        long sidecarStartMs = System.currentTimeMillis();
         String imuPath = imu.writeSidecar(photoPath, payload);
         if (imuPath != null) {
             Log.d(TAG, "IMU sidecar saved: " + imuPath);
         }
+        BlePhotoTimingLog.event(
+                "CAPTURE STORAGE",
+                "IMU sidecar write completed in "
+                        + (System.currentTimeMillis() - sidecarStartMs)
+                        + "ms; total metadata finalization="
+                        + (System.currentTimeMillis() - imuStartMs)
+                        + "ms");
     }
 
     private boolean saveImageDataToFile(byte[] data, String filePath) {
+        long storageStartMs = System.currentTimeMillis();
         try {
             File file = new File(filePath);
 
             File parentDir = file.getParentFile();
             if (parentDir != null && !parentDir.exists()) {
+                long mkdirStartMs = System.currentTimeMillis();
                 parentDir.mkdirs();
+                BlePhotoTimingLog.event(
+                        "CAPTURE STORAGE",
+                        "capture directory creation took "
+                                + (System.currentTimeMillis() - mkdirStartMs)
+                                + "ms");
             }
 
+            long fileWriteStartMs = System.currentTimeMillis();
             try (FileOutputStream output = new FileOutputStream(file)) {
                 output.write(data);
             }
+            long fileWriteMs = System.currentTimeMillis() - fileWriteStartMs;
+            long fileSize = file.length();
+            BlePhotoTimingLog.event(
+                    "CAPTURE STORAGE",
+                    "JPEG file write and close took "
+                            + fileWriteMs
+                            + "ms; expected="
+                            + data.length
+                            + " bytes, on_disk="
+                            + fileSize
+                            + " bytes");
 
             // Stamp the capture ID (directory name, carries the SDK requestId) into EXIF
             // ImageUniqueID so the correlation survives renames and camera-roll export.
             // Runs before finishImuRecording's EXIF pass; saveAttributes preserves it.
+            long exifStartMs = System.currentTimeMillis();
             PhotoExifMetadataWriter.writeCaptureIdFromPath(filePath);
+            BlePhotoTimingLog.event(
+                    "CAPTURE STORAGE",
+                    "capture ID EXIF write took "
+                            + (System.currentTimeMillis() - exifStartMs)
+                            + "ms");
 
             Log.d(TAG, "Saved image to: " + filePath);
+            BlePhotoTimingLog.event(
+                    "CAPTURE STORAGE",
+                    "image save completed in "
+                            + (System.currentTimeMillis() - storageStartMs)
+                            + "ms");
             return true;
         } catch (Exception e) {
             Log.e(TAG, "Error saving image", e);

@@ -2618,7 +2618,7 @@ public class MediaCaptureService {
 
     /**
      * Mark the start of a BLE photo pipeline when the take_photo command is received on glasses.
-     * Subsequent steps log elapsed time from this point through JPEG compression and BLE transfer.
+     * Subsequent steps log elapsed time from this point through AVIF compression and BLE transfer.
      */
     public void markBlePhotoPipelineStart(String requestId) {
         if (!AsgConstants.ENABLE_PHOTO_TIMING_LOGS || requestId == null || requestId.isEmpty()) {
@@ -4569,6 +4569,7 @@ public class MediaCaptureService {
                                         textModeRequested
                                                 ? resolveTextModeBleParams()
                                                 : tierBleParams;
+                                BleCodec codec = BlePhotoEncodingPolicy.selectCodec();
                                 logBlePhotoStep(
                                         requestId,
                                         "compress_resolve_params",
@@ -4580,8 +4581,12 @@ public class MediaCaptureService {
                                                 + bleParams.targetWidth
                                                 + "x"
                                                 + bleParams.targetHeight
-                                                + ", jpegQ="
-                                                + AsgConstants.TEXT_MODE_JPEG_FAST_QUALITY);
+                                                + ", codec="
+                                                + codec
+                                                + ", quality="
+                                                + (codec == BleCodec.AVIF
+                                                        ? bleParams.avifQuality
+                                                        : AsgConstants.TEXT_MODE_JPEG_FAST_QUALITY));
                                 logBlePhotoStep(
                                         requestId,
                                         "text_mode_prepare",
@@ -4860,13 +4865,11 @@ public class MediaCaptureService {
                                 final int bleResizedWidth = resized.getWidth();
                                 final int bleResizedHeight = resized.getHeight();
 
-                                // 3. Encode with the policy-selected JPEG codec. JPEG_FAST keeps
-                                // BLE photo latency low on the MT8766 and avoids the multi-second
-                                // software AVIF encode.
-                                BleCodec codec =
-                                        BlePhotoEncodingPolicy.selectCodec();
+                                // 3. Encode with the policy-selected BLE codec.
                                 int encodeQuality =
-                                        AsgConstants.TEXT_MODE_JPEG_FAST_QUALITY;
+                                        codec == BleCodec.AVIF
+                                                ? bleParams.avifQuality
+                                                : AsgConstants.TEXT_MODE_JPEG_FAST_QUALITY;
                                 Log.d(
                                         TAG,
                                         "BLE encode: originalPath="
@@ -4883,8 +4886,10 @@ public class MediaCaptureService {
                                 try {
                                     logBlePhotoStep(
                                             requestId,
-                                            "jpeg_encode_start",
-                                            "encoding JPEG at quality "
+                                            "encode_start",
+                                            "encoding "
+                                                    + codec
+                                                    + " at quality "
                                                     + encodeQuality
                                                     + " with "
                                                     + resized.getWidth()
@@ -4896,7 +4901,7 @@ public class MediaCaptureService {
                                                     resized, codec, encodeQuality, originalPath);
                                     logBlePhotoStep(
                                             requestId,
-                                            "jpeg_encode_done",
+                                            "encode_done",
                                             "encoded "
                                                     + encodeResult.data.length
                                                     + " bytes in "

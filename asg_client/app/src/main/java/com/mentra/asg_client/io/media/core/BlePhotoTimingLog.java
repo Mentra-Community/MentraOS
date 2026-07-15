@@ -4,12 +4,23 @@ import android.util.Log;
 import com.mentra.asg_client.AsgConstants;
 import java.util.Locale;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
-/** Human-readable {@code ⏱️ [BLE PHOTO]} timing lines for the take_photo → JPEG → BLE pipeline. */
+/** Human-readable {@code ⏱️ [BLE PHOTO]} timing lines for the take_photo → AVIF → BLE pipeline. */
 public final class BlePhotoTimingLog {
     public static final String TAG = "BlePhotoTiming";
+    private static final Map<String, UartTransferStats> UART_TRANSFER_STATS =
+            new ConcurrentHashMap<>();
 
     private BlePhotoTimingLog() {}
+
+    /** Record the completed glasses-MCU packet transfer for the final pipeline summary. */
+    public static void recordUartTransfer(String bleImgId, long payloadBytes, long durationMs) {
+        if (!enabled() || bleImgId == null || bleImgId.isEmpty()) {
+            return;
+        }
+        UART_TRANSFER_STATS.put(bleImgId, new UartTransferStats(payloadBytes, durationMs));
+    }
 
     public static void event(String category, String message) {
         if (!enabled()) {
@@ -49,11 +60,37 @@ public final class BlePhotoTimingLog {
         sb.append(" | bleImgId=").append(bleImgId);
         sb.append(" | success=").append(success);
         sb.append(" | total=").append(totalMs).append("ms");
+        UartTransferStats uart = UART_TRANSFER_STATS.remove(bleImgId);
+        if (uart != null) {
+            double speedBytesPerSecond =
+                    uart.durationMs > 0 ? uart.payloadBytes * 1000.0 / uart.durationMs : 0.0;
+            sb.append(" | payload=")
+                    .append(uart.payloadBytes)
+                    .append(" bytes (")
+                    .append(String.format(Locale.US, "%.1f", uart.payloadBytes / 1024.0))
+                    .append("KB)");
+            sb.append(" | uart_tx=")
+                    .append(uart.durationMs)
+                    .append("ms");
+            sb.append(" | uart_speed=")
+                    .append(String.format(Locale.US, "%.1f", speedBytesPerSecond / 1024.0))
+                    .append("KB/s");
+        }
         if (phases != null && !phases.isEmpty()) {
             sb.append(" | ");
             appendMilestoneDurations(sb, phases);
         }
         Log.i(TAG, sb.toString());
+    }
+
+    private static final class UartTransferStats {
+        final long payloadBytes;
+        final long durationMs;
+
+        UartTransferStats(long payloadBytes, long durationMs) {
+            this.payloadBytes = payloadBytes;
+            this.durationMs = durationMs;
+        }
     }
 
     private static void appendMilestoneDurations(StringBuilder sb, Map<String, Long> phases) {
@@ -121,7 +158,7 @@ public final class BlePhotoTimingLog {
             case "ble_compress_thread_start":
                 return "COMPRESS: background compression thread started";
             case "compress_resolve_params":
-                return "COMPRESS: resolved BLE downscale size and JPEG quality";
+                return "COMPRESS: resolved BLE downscale size and AVIF quality";
             case "text_mode_prepare":
                 return "COMPRESS: resolved text-mode crop preparation state";
             case "text_region_detection_start":
@@ -147,19 +184,19 @@ public final class BlePhotoTimingLog {
             case "resize_done":
                 return "COMPRESS: bitmap resize finished";
             case "sharpen_start":
-                return "COMPRESS: applying image sharpening before JPEG encoding";
+                return "COMPRESS: applying image sharpening before AVIF encoding";
             case "sharpen_done":
                 return "COMPRESS: image sharpening finished";
             case "image_process_done":
-                return "COMPRESS: bitmap ready for JPEG encoder";
+                return "COMPRESS: bitmap ready for AVIF encoder";
             case "jpeg_encode_start":
                 return "COMPRESS: encoding the JPEG payload at the configured quality";
             case "jpeg_encode_done":
                 return "COMPRESS: JPEG encode finished";
-            case "avif_encode_start":
-                return "COMPRESS: encoding AVIF for BLE transfer";
-            case "avif_encode_done":
-                return "COMPRESS: AVIF encode finished";
+            case "encode_start":
+                return "COMPRESS: encoding the selected BLE payload codec";
+            case "encode_done":
+                return "COMPRESS: selected BLE codec encode finished";
             case "ble_compress_done":
                 return "COMPRESS: compression phase complete";
             case "write_compressed_file_start":
