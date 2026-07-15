@@ -30,9 +30,9 @@ public class K900ProtocolUtils {
     public static final byte CMD_TYPE_BINARY_MSG = BleWireProtocol.CMD_TYPE_BINARY_MSG;
 
     // File transfer constants
-    // Negotiated file protocol ceiling. Legacy/GATT transfers remain smaller; 800-byte frames are
+    // Negotiated file protocol ceiling. Legacy/GATT transfers remain smaller; 460-byte frames are
     // accepted only after file_payload_v2 negotiation and an open CoC channel.
-    public static final int FILE_PACK_SIZE = 800;
+    public static final int FILE_PACK_SIZE = 460;
     public static final int LENGTH_FILE_START = 2;
     public static final int LENGTH_FILE_TYPE = 1;
     public static final int LENGTH_FILE_PACKSIZE = 2;

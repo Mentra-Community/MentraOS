@@ -526,9 +526,9 @@ enum K900ProtocolUtils {
     static let CMD_TYPE_DATA: UInt8 = 0x35
 
     // File transfer constants
-    // Negotiated file protocol ceiling. Legacy/GATT transfers remain smaller; 800-byte frames are
+    // Negotiated file protocol ceiling. Legacy/GATT transfers remain smaller; 460-byte frames are
     // accepted only after file_payload_v2 negotiation and an open CoC channel.
-    static let FILE_PACK_SIZE = 800
+    static let FILE_PACK_SIZE = 460
     static let LENGTH_FILE_START = 2
     static let LENGTH_FILE_TYPE = 1
     static let LENGTH_FILE_PACKSIZE = 2

@@ -55,7 +55,7 @@ public class BesWireFormat {
     // payload selected from the actual CoC transmit MTU.
     public static final int FILE_PACK_SIZE_LEGACY = 400;
     public static final int FILE_PACK_SIZE_GATT_MAX = 474;
-    public static final int FILE_PACK_SIZE_COC_MAX = 800;
+    public static final int FILE_PACK_SIZE_COC_MAX = 460 * 2;
     public static final int FILE_PACK_SIZE_MAX = FILE_PACK_SIZE_COC_MAX;
     public static final int FILE_PACK_SIZE_DEFAULT = FILE_PACK_SIZE_LEGACY;
     public static final int FILE_PACK_SIZE_MIN = 100; // Minimum safe packet size
