@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
+  ActivityIndicator,
   View,
   Text,
   ScrollView,
@@ -107,6 +108,7 @@ export function SystemScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
           />
         ) : null}
         {visibleNetworks.map((network, index) => {
+          const connectingThis = sdk.wifiConnectingSsid === network.ssid;
           const joinNetwork = () => {
             if (network.requiresPassword) {
               setPendingWifi({ssid: network.ssid, requiresPassword: true});
@@ -121,19 +123,27 @@ export function SystemScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
             <NetworkRow
               key={`${network.ssid}-${index}`}
               actionColor={colors.greenDeep}
-              actionLabel="Join"
+              actionLabel={connectingThis ? undefined : 'Join'}
+              busy={connectingThis}
               name={network.ssid}
-              sub={`${network.requiresPassword ? 'secured' : 'open'} · ${network.signalStrength ?? 0}`}
-              subColor={colors.muted}
+              sub={
+                connectingThis
+                  ? 'connecting…'
+                  : `${network.requiresPassword ? 'secured' : 'open'} · ${network.signalStrength ?? 0}`
+              }
+              subColor={connectingThis ? colors.greenAccent : colors.muted}
               faint
               locked={network.requiresPassword}
               last={index === visibleNetworks.length - 1 && !canToggleWifiList}
-              disabled={!connected}
-              onActionPress={joinNetwork}
-              onPress={joinNetwork}
+              disabled={!connected || (sdk.wifiConnectingSsid !== null && !connectingThis)}
+              onActionPress={connectingThis ? undefined : joinNetwork}
+              onPress={connectingThis ? undefined : joinNetwork}
             />
           );
         })}
+        {sdk.wifiConnectError ? (
+          <Text style={styles.wifiErrorText}>{sdk.wifiConnectError}</Text>
+        ) : null}
         {canToggleWifiList ? (
           <Pressable style={styles.wifiExpandRow} onPress={() => setWifiExpanded((expanded) => !expanded)}>
             <Text style={styles.wifiExpandText}>
@@ -394,6 +404,7 @@ export function SystemScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
 function NetworkRow({
   actionColor = colors.ink,
   actionLabel,
+  busy,
   check,
   disabled,
   faint,
@@ -408,6 +419,7 @@ function NetworkRow({
 }: {
   actionColor?: string;
   actionLabel?: string;
+  busy?: boolean;
   check?: boolean;
   disabled?: boolean;
   faint?: boolean;
@@ -445,7 +457,9 @@ function NetworkRow({
           <Path d="M7 11V7a5 5 0 0 1 10 0v4" />
         </Svg>
       )}
-      {actionLabel ? (
+      {busy ? (
+        <ActivityIndicator color={colors.greenDeep} size="small" />
+      ) : actionLabel ? (
         <Pressable disabled={!onActionPress} onPress={onActionPress} style={[styles.networkAction, { backgroundColor: `${actionColor}1A` }]}>
           <Text style={[styles.networkActionText, { color: actionColor }]}>{actionLabel}</Text>
         </Pressable>
@@ -668,6 +682,7 @@ const styles = StyleSheet.create({
   networkSub: { fontSize: 12, fontWeight: '500' },
   networkAction: { minHeight: 40, minWidth: 64, alignItems: 'center', justifyContent: 'center', paddingVertical: 8, paddingHorizontal: 12, borderRadius: 999 },
   networkActionText: { fontSize: 12, fontWeight: '700' },
+  wifiErrorText: { color: colors.red, fontSize: 12, fontWeight: '600', marginTop: 8 },
   wifiExpandRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, borderTopWidth: 1, borderTopColor: 'rgba(15,42,29,0.06)', paddingTop: 12, paddingBottom: 2 },
   wifiExpandText: { color: colors.greenInk, fontSize: 12, fontWeight: '700' },
   tileCard: { flex: 1, borderRadius: 22, paddingVertical: 16, paddingHorizontal: 16, gap: 10, borderWidth: 1, borderColor: colors.borderSoft },

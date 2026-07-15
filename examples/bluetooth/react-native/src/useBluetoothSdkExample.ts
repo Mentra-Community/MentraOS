@@ -80,6 +80,11 @@ type MediaUploadErrorEvent = BluetoothSdkEventMap['media_error'];
 // Bound the automatic continuations so a misbehaving manifest cannot loop.
 const MAX_OTA_CHAIN_PASSES = 4;
 
+// The SDK gives up waiting for a wifi connect ack after 15s, but the glasses
+// often finish associating shortly after; keep the connecting state alive a
+// little longer before declaring failure.
+const WIFI_CONNECT_GRACE_MS = 20_000;
+
 function isDisplayableOtaStatus(payload: OtaStatusEvent) {
   return payload.status !== 'idle' || Boolean(payload.error_message);
 }
@@ -434,6 +439,8 @@ export type BluetoothSdkExampleState = {
   pcmFrames: number;
   speaking: boolean | null;
   voiceActivityDetectionEnabled: boolean;
+  wifiConnectError: string | null;
+  wifiConnectingSsid: string | null;
   permissionStatus: string;
   phonePhotoReceiverRunning: boolean;
   phonePhotoUploadUrl: string | null;
@@ -676,6 +683,8 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   const [otaDisplayPercent, setOtaDisplayPercent] = useState<number | null>(null);
   const [otaStatusMessage, setOtaStatusMessage] = useState<string | null>(null);
   const [otaUpdateAvailable, setOtaUpdateAvailable] = useState(false);
+  const [wifiConnectingSsid, setWifiConnectingSsid] = useState<string | null>(null);
+  const [wifiConnectError, setWifiConnectError] = useState<string | null>(null);
   const [micAudioRouteStatus, setMicAudioRouteStatus] = useState(
     Platform.OS === 'ios'
       ? IOS_AUDIO_ROUTE_HINT
@@ -743,6 +752,8 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   const postOtaCheckInProgressRef = useRef(false);
   const postOtaCheckedSessionRef = useRef<string | null>(null);
   const otaChainRemainingRef = useRef(0);
+  const wifiConnectAttemptRef = useRef(0);
+  const wifiConnectGraceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [autoOtaCheckRetryTick, setAutoOtaCheckRetryTick] = useState(0);
   const [latestVersionInfo, setLatestVersionInfo] = useState<VersionInfoResult | null>(null);
   const [latestVersionInfoSignature, setLatestVersionInfoSignature] = useState<string | null>(null);
@@ -950,6 +961,11 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
         addEvent('STORE', `battery ${payload.level}%${payload.charging ? ' charging' : ''}`);
       }),
       BluetoothSdk.addListener('wifi_status_change', (payload) => {
+        if (payload.state === 'connected') {
+          // A connect that outlived the SDK request timeout resolved late.
+          settleWifiConnectAttempt();
+          setWifiConnectError(null);
+        }
         addEvent('STORE', `Wi-Fi ${payload.state === 'connected' ? payload.ssid : payload.state}`);
       }),
       BluetoothSdk.addListener('hotspot_status_change', (payload) => {
@@ -3460,14 +3476,56 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     });
   }
 
+  function settleWifiConnectAttempt() {
+    wifiConnectAttemptRef.current += 1;
+    if (wifiConnectGraceTimerRef.current) {
+      clearTimeout(wifiConnectGraceTimerRef.current);
+      wifiConnectGraceTimerRef.current = null;
+    }
+    setWifiConnectingSsid(null);
+  }
+
   async function sendWifiCredentials(ssid: string, password: string, requiresPassword: boolean) {
     await runAction(`Connect Wi-Fi ${ssid}`, async () => {
       requireConnected('send Wi-Fi credentials');
       if (requiresPassword && !password) {
         throw new Error(`Enter the Wi-Fi password before connecting to ${ssid}.`);
       }
-      const status = await BluetoothSdk.sendWifiCredentials(ssid, requiresPassword ? password : '');
-      addEvent('LIVE', `Wi-Fi ${status.state === 'connected' ? status.ssid : status.state}`);
+      const attempt = ++wifiConnectAttemptRef.current;
+      if (wifiConnectGraceTimerRef.current) {
+        clearTimeout(wifiConnectGraceTimerRef.current);
+        wifiConnectGraceTimerRef.current = null;
+      }
+      setWifiConnectingSsid(ssid);
+      setWifiConnectError(null);
+      try {
+        const status = await BluetoothSdk.sendWifiCredentials(ssid, requiresPassword ? password : '');
+        if (wifiConnectAttemptRef.current === attempt) {
+          setWifiConnectingSsid(null);
+        }
+        addEvent('LIVE', `Wi-Fi ${status.state === 'connected' ? status.ssid : status.state}`);
+      } catch (error) {
+        if (wifiConnectAttemptRef.current !== attempt) {
+          return;
+        }
+        if ((error as {code?: string})?.code === 'request_timeout') {
+          // The glasses often finish associating after the SDK stops
+          // waiting; keep the connecting state during a grace window and
+          // let a late wifi_status_change resolve it.
+          wifiConnectGraceTimerRef.current = setTimeout(() => {
+            wifiConnectGraceTimerRef.current = null;
+            if (wifiConnectAttemptRef.current === attempt) {
+              setWifiConnectingSsid(null);
+              setWifiConnectError(`Could not connect to ${ssid}. Check the password and try again.`);
+            }
+          }, WIFI_CONNECT_GRACE_MS);
+          addEvent('LIVE', `Wi-Fi connect to ${ssid} still pending`);
+          return;
+        }
+        setWifiConnectingSsid(null);
+        setWifiConnectError(formatError(error));
+        throw error;
+      }
     });
   }
 
@@ -3905,6 +3963,8 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     clearOtaDisplayProgress();
     setOtaStatusMessage(null);
     setOtaUpdateAvailable(false);
+    settleWifiConnectAttempt();
+    setWifiConnectError(null);
     setMicRecording(false);
     micRecordingRef.current = false;
     stopMicElapsedTimer();
@@ -4137,6 +4197,8 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     toggleStream,
     voiceActivityDetectionEnabled,
     webhookUrl,
+    wifiConnectError,
+    wifiConnectingSsid,
   };
 }
 
