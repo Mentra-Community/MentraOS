@@ -86,39 +86,39 @@ public class AsgConstants {
      * transfer pipeline. Filter logcat on tag {@code BlePhotoTiming} or prefix {@code ⏱️ [BLE PHOTO]}.
      * Keep false in production.
      */
-    public static final boolean ENABLE_PHOTO_TIMING_LOGS = false;
+    public static final boolean ENABLE_PHOTO_TIMING_LOGS = true;
 
     /** After AE meters in text mode, divide exposure time by this factor (shorter shutter). */
     public static final int TEXT_MODE_AE_EXPOSURE_DIVISOR = 3;
 
     /** Long-edge cap for text-mode BLE downscale after crop (aspect ratio preserved). */
-    public static final int TEXT_MODE_BLE_TARGET_WIDTH = 1920;
+    public static final int TEXT_MODE_BLE_TARGET_WIDTH = 1280;
 
-    public static final int TEXT_MODE_BLE_TARGET_HEIGHT = 1920;
+    public static final int TEXT_MODE_BLE_TARGET_HEIGHT = 1280;
 
     /** AVIF quality for the canonical text-mode BLE payload. */
-    public static final int TEXT_MODE_AVIF_QUALITY = 55;
+    public static final int TEXT_MODE_AVIF_QUALITY = 46;
 
     /** JPEG quality for the canonical text-mode crop written to disk (gallery/WiFi upload). */
     public static final int TEXT_MODE_BLE_JPEG_QUALITY = 95;
 
     /**
-     * Codec for all BLE photo payloads. Change this one value to {@code AVIF} or {@code JPEG_FAST}
-     * when comparing transfer behavior.
+     * Codec for every BLE photo payload — text mode and ordinary size-tier photos alike. Change
+     * this one value to {@code AVIF} or {@code JPEG_FAST} to switch both paths at once.
      */
-    public static final String TEXT_MODE_BLE_CODEC = "AVIF";
+    public static final String BLE_PHOTO_CODEC = "AVIF";
 
-    /** Legacy JPEG quality retained for callers that still use the JPEG_FAST encoder directly. */
-    public static final int TEXT_MODE_JPEG_FAST_QUALITY = 80;
+    /** JPEG quality for all BLE photo payloads when {@link #BLE_PHOTO_CODEC} is {@code JPEG_FAST}. */
+    public static final int BLE_PHOTO_JPEG_FAST_QUALITY = 80;
 
     // BLE size-tier downscale caps (long edge; aspect ratio preserved) and AVIF quality
-    public static final int BLE_PHOTO_LOW_TARGET_PX = 800;
-    public static final int BLE_PHOTO_LOW_AVIF_QUALITY = 50;
-    public static final int BLE_PHOTO_MEDIUM_TARGET_PX = 1280;
-    public static final int BLE_PHOTO_MEDIUM_AVIF_QUALITY = 50;
-    public static final int BLE_PHOTO_HIGH_TARGET_PX = 1600;
-    public static final int BLE_PHOTO_HIGH_AVIF_QUALITY = 48;
-    public static final int BLE_PHOTO_MAX_TARGET_PX = 1920;
+    public static final int BLE_PHOTO_LOW_TARGET_PX = 640;
+    public static final int BLE_PHOTO_LOW_AVIF_QUALITY = 46;
+    public static final int BLE_PHOTO_MEDIUM_TARGET_PX = 1024;
+    public static final int BLE_PHOTO_MEDIUM_AVIF_QUALITY = 46;
+    public static final int BLE_PHOTO_HIGH_TARGET_PX = 1280;
+    public static final int BLE_PHOTO_HIGH_AVIF_QUALITY = 46;
+    public static final int BLE_PHOTO_MAX_TARGET_PX = 1600;
 
     // Text-region detector production flags (see MediaCaptureService.buildTextDetectConfig)
     public static final boolean TEXT_DETECT_ALLOW_SINGLE_COMPONENT_LINES = true;

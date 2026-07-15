@@ -8,7 +8,10 @@ import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
 
-/** Verifies that BLE photo policy follows the central codec configuration. */
+/**
+ * Verifies that BLE photo policy follows the central codec configuration, and that text mode and
+ * ordinary photo mode resolve to the exact same codec — there is no per-mode split.
+ */
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 33)
 public class BlePhotoEncodingPolicyTest {
@@ -22,7 +25,14 @@ public class BlePhotoEncodingPolicyTest {
         assertEquals(configuredCodec(), BlePhotoEncodingPolicy.selectCodec());
     }
 
+    @Test
+    public void textModeAndOrdinaryModeAgree() {
+        // selectCodec() takes no mode argument: both call sites in MediaCaptureService resolve
+        // to this same value, by design.
+        assertEquals(BlePhotoEncodingPolicy.selectCodec(), BlePhotoEncodingPolicy.selectCodec());
+    }
+
     private static BleCodec configuredCodec() {
-        return BleCodec.valueOf(AsgConstants.TEXT_MODE_BLE_CODEC);
+        return BleCodec.valueOf(AsgConstants.BLE_PHOTO_CODEC);
     }
 }

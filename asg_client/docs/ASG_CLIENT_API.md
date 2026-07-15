@@ -116,11 +116,13 @@ resolution and JPEG quality. For auto-exposure captures (no `exposureTimeNs`), t
 divide the metered shutter time by 3 (`aeExposureDivisor: 3`) to reduce motion blur on text.
 Text-region detection and crop run on both WiFi upload and BLE transfer. On BLE, the crop
 happens before downscale. Text mode always uses the max-tier BLE downscale cap (1920 px),
-regardless of requested {@code size}, and encodes the BLE payload with the codec configured in
-`AsgConstants.TEXT_MODE_BLE_CODEC`: `JPEG_FAST` by default (baseline JPEG at
-`TEXT_MODE_JPEG_FAST_QUALITY`, currently 75 — encodes in tens of milliseconds on the MT8766
-instead of the ~4-5 s software AVIF encode), or `AVIF` (quality 55) as the optional/fallback
-codec. Non-text photos keep the established AVIF encode.
+regardless of requested {@code size}.
+
+All BLE photo payloads — text mode and ordinary size-tier photos alike — encode with the single
+codec configured in `AsgConstants.BLE_PHOTO_CODEC`. There is no per-mode split: flipping this one
+constant between `AVIF` (default; quality set per size tier) and `JPEG_FAST` (baseline JPEG at
+`BLE_PHOTO_JPEG_FAST_QUALITY`, encodes in tens of milliseconds on the MT8766 instead of the ~4-5 s
+software AVIF encode) changes both paths at once.
 
 **Constraints (all enforced in `PhotoCommandHandler`):**
 

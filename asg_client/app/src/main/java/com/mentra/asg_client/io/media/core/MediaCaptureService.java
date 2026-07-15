@@ -175,26 +175,26 @@ public class MediaCaptureService {
         String tier = PhotoSizeTier.normalize(requestedSize);
         switch (tier) {
             case "low":
-                // ~15-25KB typical: readable large text, fastest transfer
+                // Smallest/fastest tier: readable large text at minimal payload
                 return new BleParams(
                         AsgConstants.BLE_PHOTO_LOW_TARGET_PX,
                         AsgConstants.BLE_PHOTO_LOW_TARGET_PX,
                         AsgConstants.BLE_PHOTO_LOW_AVIF_QUALITY);
             case "high":
-                // ~50-90KB typical: document text comfortably readable
+                // Document text comfortably readable, payload still capped for BLE throughput
                 return new BleParams(
                         AsgConstants.BLE_PHOTO_HIGH_TARGET_PX,
                         AsgConstants.BLE_PHOTO_HIGH_TARGET_PX,
                         AsgConstants.BLE_PHOTO_HIGH_AVIF_QUALITY);
             case "max":
-                // ~90-160KB typical: document-grade
+                // Largest BLE tier; still capped well below the sensor's native resolution
                 return new BleParams(
                         AsgConstants.BLE_PHOTO_MAX_TARGET_PX,
                         AsgConstants.BLE_PHOTO_MAX_TARGET_PX,
                         AsgConstants.TEXT_MODE_AVIF_QUALITY);
             case "medium":
             default:
-                // ~30-55KB typical: matches the WiFi medium resolution
+                // Default balance of legibility and transfer time
                 return new BleParams(
                         AsgConstants.BLE_PHOTO_MEDIUM_TARGET_PX,
                         AsgConstants.BLE_PHOTO_MEDIUM_TARGET_PX,
@@ -4586,7 +4586,7 @@ public class MediaCaptureService {
                                                 + ", quality="
                                                 + (codec == BleCodec.AVIF
                                                         ? bleParams.avifQuality
-                                                        : AsgConstants.TEXT_MODE_JPEG_FAST_QUALITY));
+                                                        : AsgConstants.BLE_PHOTO_JPEG_FAST_QUALITY));
                                 logBlePhotoStep(
                                         requestId,
                                         "text_mode_prepare",
@@ -4601,17 +4601,17 @@ public class MediaCaptureService {
                                                     + bleParams.targetWidth
                                                     + "x"
                                                     + bleParams.targetHeight
-                                                    + " AVIF q"
+                                                    + " (cfg AVIF q"
                                                     + bleParams.avifQuality
-                                                    + " (size tier "
+                                                    + ") (size tier "
                                                     + requestedSize
                                                     + " would use "
                                                     + tierBleParams.targetWidth
                                                     + "x"
                                                     + tierBleParams.targetHeight
-                                                    + " AVIF q"
+                                                    + " (cfg AVIF q"
                                                     + tierBleParams.avifQuality
-                                                    + ")");
+                                                    + "))");
                                 }
                                 boolean shouldCrop =
                                         AsgConstants.ENABLE_TEXT_REGION_CROP || textModeRequested;
@@ -4865,11 +4865,13 @@ public class MediaCaptureService {
                                 final int bleResizedWidth = resized.getWidth();
                                 final int bleResizedHeight = resized.getHeight();
 
-                                // 3. Encode with the policy-selected BLE codec.
+                                // 3. Encode with the policy-selected BLE codec. Text mode and
+                                // ordinary size-tier photos share this exact codec/quality
+                                // resolution — there is no per-mode branch here by design.
                                 int encodeQuality =
                                         codec == BleCodec.AVIF
                                                 ? bleParams.avifQuality
-                                                : AsgConstants.TEXT_MODE_JPEG_FAST_QUALITY;
+                                                : AsgConstants.BLE_PHOTO_JPEG_FAST_QUALITY;
                                 Log.d(
                                         TAG,
                                         "BLE encode: originalPath="
