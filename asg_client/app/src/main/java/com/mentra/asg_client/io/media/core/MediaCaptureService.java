@@ -452,6 +452,101 @@ public class MediaCaptureService {
         return cropped;
     }
 
+    /** Result of {@link #decodeSubsampledForBle}: decoded bitmap plus the ROI mapped into it. */
+    private static final class SubsampledDecode {
+        final android.graphics.Bitmap bitmap;
+        @Nullable final android.graphics.Rect roi;
+
+        SubsampledDecode(android.graphics.Bitmap bitmap, @Nullable android.graphics.Rect roi) {
+            this.bitmap = bitmap;
+            this.roi = roi;
+        }
+    }
+
+    /**
+     * Decodes the capture JPEG for BLE compression at the largest power-of-two inSampleSize whose
+     * output still covers the final downscale target, instead of materializing the full-resolution
+     * (~12MP, ~48MB ARGB) frame just to immediately shrink it to <=1920px. JPEG inSampleSize
+     * decoding scales inside the DCT, so this cuts both decode time and peak memory. The detection
+     * ROI (source-pixel coordinates) is mapped into the subsampled space so the existing crop
+     * logic is unchanged.
+     */
+    private SubsampledDecode decodeSubsampledForBle(
+            String path, @Nullable android.graphics.Rect roi, BleParams bleParams)
+            throws Exception {
+        android.graphics.BitmapFactory.Options bounds =
+                new android.graphics.BitmapFactory.Options();
+        bounds.inJustDecodeBounds = true;
+        android.graphics.BitmapFactory.decodeFile(path, bounds);
+        int srcWidth = bounds.outWidth;
+        int srcHeight = bounds.outHeight;
+        if (srcWidth <= 0 || srcHeight <= 0) {
+            throw new Exception("Failed to read image bounds: " + path);
+        }
+
+        // The post-crop region is what gets aspect-fit into the BLE target box, so sampling is
+        // limited to what keeps that region at or above its final size (sampling further would
+        // force an upscale and soften text).
+        int cropWidth = srcWidth;
+        int cropHeight = srcHeight;
+        if (roi != null) {
+            android.graphics.Rect clamped = new android.graphics.Rect(roi);
+            if (clamped.intersect(0, 0, srcWidth, srcHeight)
+                    && clamped.width() > 0
+                    && clamped.height() > 0) {
+                cropWidth = clamped.width();
+                cropHeight = clamped.height();
+            }
+        }
+        float aspectRatio = cropWidth / (float) cropHeight;
+        int finalWidth = bleParams.targetWidth;
+        int finalHeight = bleParams.targetHeight;
+        if (aspectRatio > finalWidth / (float) finalHeight) {
+            finalHeight = Math.max(1, (int) (finalWidth / aspectRatio));
+        } else {
+            finalWidth = Math.max(1, (int) (finalHeight * aspectRatio));
+        }
+        int sampleSize = 1;
+        while (cropWidth / (sampleSize * 2) >= finalWidth
+                && cropHeight / (sampleSize * 2) >= finalHeight) {
+            sampleSize *= 2;
+        }
+
+        android.graphics.BitmapFactory.Options opts = new android.graphics.BitmapFactory.Options();
+        opts.inSampleSize = sampleSize;
+        android.graphics.Bitmap decoded = android.graphics.BitmapFactory.decodeFile(path, opts);
+        if (decoded == null) {
+            throw new Exception("Failed to decode image file");
+        }
+
+        android.graphics.Rect mappedRoi = null;
+        if (roi != null) {
+            // inSampleSize decoding rounds dimensions with integer division, so map by the actual
+            // decoded/source ratio rather than dividing by sampleSize.
+            float scaleX = decoded.getWidth() / (float) srcWidth;
+            float scaleY = decoded.getHeight() / (float) srcHeight;
+            mappedRoi =
+                    new android.graphics.Rect(
+                            Math.round(roi.left * scaleX),
+                            Math.round(roi.top * scaleY),
+                            Math.round(roi.right * scaleX),
+                            Math.round(roi.bottom * scaleY));
+        }
+        Log.d(
+                TAG,
+                "📐 BLE subsampled decode: "
+                        + srcWidth
+                        + "x"
+                        + srcHeight
+                        + " @1/"
+                        + sampleSize
+                        + " -> "
+                        + decoded.getWidth()
+                        + "x"
+                        + decoded.getHeight());
+        return new SubsampledDecode(decoded, mappedRoi);
+    }
+
     @Nullable
     private String writeCroppedBitmapToTempJpeg(
             String originalPath, @Nullable android.graphics.Rect roi, String requestId)
@@ -511,6 +606,31 @@ public class MediaCaptureService {
                     e);
         }
         return photoFilePath;
+    }
+
+    /**
+     * Writes the text-mode canonical cropped JPEG using an already-computed detection ROI (no
+     * re-detection), promoting it over the original capture. Used by the BLE path after the
+     * transfer handoff so gallery-saved text photos keep the cropped frame without blocking the
+     * transfer-critical compression phase.
+     */
+    private void prepareTextModeCanonicalCrop(
+            String photoFilePath, String requestId, @Nullable android.graphics.Rect roi) {
+        if (Boolean.TRUE.equals(photoTextCropPrepared.get(requestId))) {
+            return;
+        }
+        try {
+            String croppedPath = writeCroppedBitmapToTempJpeg(photoFilePath, roi, requestId);
+            if (croppedPath != null) {
+                PhotoArtifactFiles.promoteToCanonical(photoFilePath, croppedPath);
+                photoTextCropPrepared.put(requestId, true);
+            }
+        } catch (java.io.IOException e) {
+            Log.w(
+                    TAG,
+                    "Text-mode canonical crop failed, keeping original frame: " + e.getMessage(),
+                    e);
+        }
     }
 
     // Track which photos should be saved to gallery
@@ -4313,7 +4433,11 @@ public class MediaCaptureService {
                                             + filePath);
 
                             Log.d(TAG, "Photo captured successfully for BLE transfer: " + filePath);
-                            prepareTextModePhotoPath(filePath, requestId);
+                            // Text-mode canonical-crop prep is deliberately NOT done here: it
+                            // costs ~1-1.6s (full-res decode + crop + q95 JPEG re-encode) on the
+                            // camera callback thread and the BLE compression worker crops from
+                            // the detection ROI itself. Saved photos get their canonical crop
+                            // after the BLE handoff, overlapping the transfer.
                             sendPhotoStatus(
                                     requestId,
                                     "captured",
@@ -4472,9 +4596,12 @@ public class MediaCaptureService {
                                 String requestedMode =
                                         PhotoMode.normalize(photoRequestedModes.get(requestId));
                                 boolean textModeRequested = PhotoMode.TEXT.equals(requestedMode);
-                                if (textModeRequested) {
-                                    prepareTextModePhotoPath(originalPath, requestId);
-                                }
+                                // Text-mode canonical-crop prep (full-res decode + crop + q95
+                                // JPEG re-encode) used to run here, ahead of BLE compression,
+                                // adding ~1-1.6s to every text-mode photo. The BLE encode crops
+                                // from the detection ROI directly, so the canonical crop is only
+                                // written for gallery-saved photos - after the BLE handoff,
+                                // overlapping the transfer (see step 7 below).
                                 boolean textCropAlreadyPrepared =
                                         Boolean.TRUE.equals(photoTextCropPrepared.get(requestId));
                                 BleParams bleParams =
@@ -4583,25 +4710,26 @@ public class MediaCaptureService {
                                     // above, crop to it (still in color) before the existing
                                     // scale+sharpen chain - this keeps color for viewing while
                                     // still spending the BLE byte budget on the text region.
-                                    android.graphics.Bitmap original =
-                                            android.graphics.BitmapFactory.decodeFile(
-                                                    originalPath);
-                                    if (original == null) {
-                                        throw new Exception("Failed to decode image file");
-                                    }
+                                    // Decode is subsampled to the smallest size that still covers
+                                    // the BLE target instead of materializing the full frame.
+                                    SubsampledDecode decode =
+                                            decodeSubsampledForBle(originalPath, roi, bleParams);
+                                    android.graphics.Bitmap original = decode.bitmap;
 
                                     Log.i(
                                             TAG,
-                                            "✂️ CROP CHECK (color path): original photo decoded at "
+                                            "✂️ CROP CHECK (color path): photo decoded at "
                                                     + original.getWidth()
                                                     + "x"
                                                     + original.getHeight()
                                                     + " roi="
-                                                    + (roi != null ? roi.toShortString() : "null"));
+                                                    + (decode.roi != null
+                                                            ? decode.roi.toShortString()
+                                                            : "null"));
 
                                     android.graphics.Bitmap cropped =
                                             cropBitmapToDetectedRoi(
-                                                    original, roi, textCropOutcome);
+                                                    original, decode.roi, textCropOutcome);
 
                                     int targetWidth = bleParams.targetWidth;
                                     int targetHeight = bleParams.targetHeight;
@@ -4659,24 +4787,21 @@ public class MediaCaptureService {
                                 // payload is small. The canonical crop's file size is not a safe
                                 // proxy because the processed bitmap may be resized and sharpened.
                                 // Ordinary photo mode retains the established AVIF-only path.
-                                Log.d(
-                                        TAG,
-                                        "BLE encode: originalPath="
-                                                + originalPath
-                                                + " hasImuMetadata="
-                                                + PhotoExifMetadataWriter.hasImuMetadata(
-                                                        originalPath));
                                 byte[] compressedData;
                                 String bleEncodedFormat;
                                 try {
                                     byte[] jpegCandidate = null;
                                     if (textModeRequested) {
                                         logBlePhotoStep(requestId, "jpeg_encode_start");
+                                        // Threshold passed through so oversized candidates skip
+                                        // the EXIF temp-file round trip they'd never use.
                                         jpegCandidate =
                                                 PhotoExifMetadataWriter.encodeJpegForBle(
                                                         resized,
                                                         AsgConstants.TEXT_MODE_BLE_JPEG_QUALITY,
-                                                        originalPath);
+                                                        originalPath,
+                                                        AsgConstants
+                                                                .TEXT_MODE_AVIF_SIZE_THRESHOLD_BYTES);
                                         logBlePhotoStep(requestId, "jpeg_encode_done");
                                     }
                                     if (BlePhotoEncodingPolicy.shouldUseJpeg(
@@ -4761,6 +4886,16 @@ public class MediaCaptureService {
                                         bleImgId,
                                         requestId,
                                         compressThreadStart);
+
+                                // 7. Saved text-mode photos keep the cropped frame as their
+                                // canonical gallery artifact. Writing it here overlaps the BLE
+                                // packet stream instead of blocking compression, and is skipped
+                                // entirely for unsaved photos (whose canonical is deleted in the
+                                // finally block anyway).
+                                if (textModeRequested
+                                        && Boolean.TRUE.equals(photoSaveFlags.get(requestId))) {
+                                    prepareTextModeCanonicalCrop(originalPath, requestId, roi);
+                                }
 
                             } catch (Exception e) {
                                 Log.e(TAG, "Error compressing photo for BLE", e);
