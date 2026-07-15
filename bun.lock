@@ -53,7 +53,7 @@
     },
     "cloud-v2/packages/cloud-client": {
       "name": "@mentra/cloud-client",
-      "version": "0.0.0",
+      "version": "0.1.0-dev.0",
       "dependencies": {
         "@mentra/cloud-runtime": "workspace:*",
         "tweetnacl": "^1.0.3",
@@ -85,7 +85,7 @@
     },
     "cloud-v2/packages/runtime": {
       "name": "@mentra/cloud-runtime",
-      "version": "0.0.0",
+      "version": "0.1.0-dev.0",
       "dependencies": {
         "@mentra/cloud-shared": "workspace:*",
         "@soniox/node": "^2.1.0",
@@ -98,7 +98,7 @@
     },
     "cloud-v2/packages/shared": {
       "name": "@mentra/cloud-shared",
-      "version": "0.0.0",
+      "version": "0.1.0-dev.0",
       "dependencies": {
         "hono": "^4.11.1",
         "jose": "^5.9.6",

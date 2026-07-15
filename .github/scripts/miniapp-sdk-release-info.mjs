@@ -67,6 +67,50 @@ const PACKAGES = [
     installDir: 'cloud-v2',
     buildCmd: '',
   },
+  // ---- @mentra/engine peer closure (see PR #3412): the engine cannot be
+  // installed from npm until every package below exists there. Source-TS
+  // publishes target Metro consumers; bootstrap order is leaves first:
+  // jspolyfill + cloud-shared -> crust + cloud-runtime -> cloud-client.
+  {
+    // MentraJS polyfill bundle. crust's android gradle reads its assets/ by a
+    // relative path that resolves identically in the monorepo and under an
+    // npm-installed @mentra/* sibling layout.
+    key: 'jspolyfill',
+    path: 'mobile/modules/jspolyfill/package.json',
+    dir: 'mobile/modules/jspolyfill',
+    installDir: 'mobile',
+    buildCmd: 'bun run build',
+  },
+  {
+    // Native expo module (QuickJS runtime, navigation, device utilities) +
+    // its config plugin carrying the Android build contract.
+    key: 'crust',
+    path: 'mobile/modules/crust/package.json',
+    dir: 'mobile/modules/crust',
+    installDir: 'mobile',
+    buildCmd: 'bun run build',
+  },
+  {
+    key: 'cloud-shared',
+    path: 'cloud-v2/packages/shared/package.json',
+    dir: 'cloud-v2/packages/shared',
+    installDir: 'cloud-v2',
+    buildCmd: '',
+  },
+  {
+    key: 'cloud-runtime',
+    path: 'cloud-v2/packages/runtime/package.json',
+    dir: 'cloud-v2/packages/runtime',
+    installDir: 'cloud-v2',
+    buildCmd: '',
+  },
+  {
+    key: 'cloud-client',
+    path: 'cloud-v2/packages/cloud-client/package.json',
+    dir: 'cloud-v2/packages/cloud-client',
+    installDir: 'cloud-v2',
+    buildCmd: '',
+  },
 ];
 
 const outputPath = process.env.GITHUB_OUTPUT;

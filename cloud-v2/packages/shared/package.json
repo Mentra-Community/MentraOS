@@ -1,7 +1,6 @@
 {
   "name": "@mentra/cloud-shared",
-  "version": "0.0.0",
-  "private": true,
+  "version": "0.1.0-dev.0",
   "type": "module",
   "main": "./src/index.ts",
   "exports": {
@@ -20,5 +19,16 @@
   },
   "devDependencies": {
     "pino-pretty": "^11.3.0"
+  },
+  "files": [
+    "src"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Mentra-Community/MentraOS.git",
+    "directory": "cloud-v2/packages/shared"
   }
 }

@@ -26,6 +26,11 @@ on:
     branches: [main, staging, dev]
     paths:
       - "mobile/modules/miniapp/**"
+      - "mobile/modules/jspolyfill/**"
+      - "mobile/modules/crust/**"
+      - "cloud-v2/packages/shared/**"
+      - "cloud-v2/packages/runtime/**"
+      - "cloud-v2/packages/cloud-client/**"
       - "sdk/miniapp-cli/**"
       - "sdk/create-mentra-miniapp/**"
       - "cloud-v2/packages/auth/**"
@@ -136,11 +141,21 @@ jobs:
         id: registry
         run: |
           set -euo pipefail
-          if npm view "${{ matrix.pkg.name }}@${{ matrix.pkg.version }}" version --registry=https://registry.npmjs.org >/dev/null 2>&1; then
+          # E404 is the ONLY absence signal; any other npm failure (5xx,
+          # network, auth) fails the job rather than being read as "absent".
+          set +e
+          out=$(npm view "${{ matrix.pkg.name }}@${{ matrix.pkg.version }}" version --json --registry=https://registry.npmjs.org 2>&1)
+          code=$?
+          set -e
+          if [[ $code -eq 0 ]]; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
             echo "npm already has ${{ matrix.pkg.name }}@${{ matrix.pkg.version }}; nothing to do."
-          else
+          elif echo "$out" | grep -q '"code": *"E404"' || echo "$out" | grep -q "code E404"; then
             echo "exists=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::npm view failed with a non-404 error — refusing to guess registry state." >&2
+            echo "$out" >&2
+            exit 1
           fi
 
       - name: Pack (dry run)
