@@ -84,12 +84,15 @@ public class BlePhotoUploadService {
      */
     @VisibleForTesting
     static byte[] convertToJpegPreservingExif(byte[] imageData) throws Exception {
+        long conversionStartMs = System.currentTimeMillis();
         if (isJpeg(imageData)) {
             Log.d(
                     TAG,
                     "BLE relay pass-through: input already JPEG ("
                             + imageData.length
-                            + " bytes), skipping decode/re-encode");
+                            + " bytes), skipping decode/re-encode in "
+                            + (System.currentTimeMillis() - conversionStartMs)
+                            + "ms");
             return imageData;
         }
 
@@ -104,19 +107,39 @@ public class BlePhotoUploadService {
 
             String imuJson = readImuJsonFromBleImage(imageData, inputFile.getAbsolutePath());
 
+            long decodeStartMs = System.currentTimeMillis();
             Bitmap bitmap = decodeImage(imageData);
+            long decodeDurationMs = System.currentTimeMillis() - decodeStartMs;
             if (bitmap == null) {
                 throw new Exception("Failed to decode image data");
             }
 
-            Log.d(TAG, "Decoded image to bitmap: " + bitmap.getWidth() + "x" + bitmap.getHeight());
+            Log.d(
+                    TAG,
+                    "AVIF decode complete: "
+                            + bitmap.getWidth()
+                            + "x"
+                            + bitmap.getHeight()
+                            + " in "
+                            + decodeDurationMs
+                            + "ms");
 
+            long encodeStartMs = System.currentTimeMillis();
             try (FileOutputStream fos = new FileOutputStream(outputFile)) {
                 bitmap.compress(Bitmap.CompressFormat.JPEG, AVIF_TO_JPEG_QUALITY, fos);
             } finally {
                 bitmap.recycle();
             }
+            long encodeDurationMs = System.currentTimeMillis() - encodeStartMs;
+            Log.d(
+                    TAG,
+                    "AVIF->JPEG encode complete: quality="
+                            + AVIF_TO_JPEG_QUALITY
+                            + " in "
+                            + encodeDurationMs
+                            + "ms");
 
+            long metadataStartMs = System.currentTimeMillis();
             if (imuJson != null && !imuJson.isEmpty()) {
                 logImuData(imuJson);
                 // IMU EXIF is enrichment, not the payload: a write failure must not drop the
@@ -140,8 +163,27 @@ public class BlePhotoUploadService {
                                 + "). If rawHasExifMarker=true, EXIF may be present but unreadable via"
                                 + " ExifInterface on this container.");
             }
+            Log.d(
+                    TAG,
+                    "AVIF metadata handling complete in "
+                            + (System.currentTimeMillis() - metadataStartMs)
+                            + "ms");
 
-            return java.nio.file.Files.readAllBytes(outputFile.toPath());
+            byte[] jpegData = java.nio.file.Files.readAllBytes(outputFile.toPath());
+            Log.d(
+                    TAG,
+                    "Phone image conversion complete: AVIF "
+                            + imageData.length
+                            + " bytes -> JPEG "
+                            + jpegData.length
+                            + " bytes in "
+                            + (System.currentTimeMillis() - conversionStartMs)
+                            + "ms (decode="
+                            + decodeDurationMs
+                            + "ms, encode="
+                            + encodeDurationMs
+                            + "ms)");
+            return jpegData;
         } finally {
             if (!inputFile.delete()) {
                 inputFile.deleteOnExit();

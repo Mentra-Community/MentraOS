@@ -2610,7 +2610,7 @@ public class MediaCaptureService {
 
     /**
      * Mark the start of a BLE photo pipeline when the take_photo command is received on glasses.
-     * Subsequent steps log elapsed time from this point through AVIF compression and BLE transfer.
+     * Subsequent steps log elapsed time from this point through JPEG compression and BLE transfer.
      */
     public void markBlePhotoPipelineStart(String requestId) {
         if (!AsgConstants.ENABLE_PHOTO_TIMING_LOGS || requestId == null || requestId.isEmpty()) {
@@ -4788,17 +4788,13 @@ public class MediaCaptureService {
                                 final int bleResizedWidth = resized.getWidth();
                                 final int bleResizedHeight = resized.getHeight();
 
-                                // 3. Encode with the policy-selected codec. Text mode defaults to
-                                // the low-latency JPEG_FAST path (tens of ms on the MT8766 vs
-                                // ~4-5s software AVIF); ordinary photo mode retains the
-                                // established AVIF path. A JPEG failure falls back to AVIF
-                                // inside the selector.
+                                // 3. Encode with the policy-selected JPEG codec. JPEG_FAST keeps
+                                // BLE photo latency low on the MT8766 and avoids the multi-second
+                                // software AVIF encode.
                                 BleCodec codec =
-                                        BlePhotoEncodingPolicy.selectCodec(textModeRequested);
+                                        BlePhotoEncodingPolicy.selectCodec();
                                 int encodeQuality =
-                                        codec == BleCodec.JPEG_FAST
-                                                ? AsgConstants.TEXT_MODE_JPEG_FAST_QUALITY
-                                                : bleParams.avifQuality;
+                                        AsgConstants.TEXT_MODE_JPEG_FAST_QUALITY;
                                 Log.d(
                                         TAG,
                                         "BLE encode: originalPath="
@@ -4816,12 +4812,8 @@ public class MediaCaptureService {
                                     logBlePhotoStep(
                                             requestId, "encode_start", "codec=" + codec);
                                     encodeResult =
-                                            BlePhotoEncoders.encodeWithFallback(
-                                                    resized,
-                                                    codec,
-                                                    encodeQuality,
-                                                    bleParams.avifQuality,
-                                                    originalPath);
+                                            BlePhotoEncoders.encode(
+                                                    resized, codec, encodeQuality, originalPath);
                                     logBlePhotoStep(
                                             requestId,
                                             "encode_done",

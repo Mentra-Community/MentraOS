@@ -78,6 +78,31 @@ public class BlePhotoEncoderInstrumentedTest {
     }
 
     @Test
+    public void benchmarkFullResolutionJpegQ80() throws Exception {
+        runConfig("full_q80", BleCodec.JPEG_FAST, Integer.MAX_VALUE, 80);
+    }
+
+    @Test
+    public void benchmarkFullResolutionJpegQ85() throws Exception {
+        runConfig("full_q85", BleCodec.JPEG_FAST, Integer.MAX_VALUE, 85);
+    }
+
+    @Test
+    public void benchmarkFullResolutionJpegQ90() throws Exception {
+        runConfig("full_q90", BleCodec.JPEG_FAST, Integer.MAX_VALUE, 90);
+    }
+
+    @Test
+    public void benchmarkFullResolutionJpegQ95() throws Exception {
+        runConfig("full_q95", BleCodec.JPEG_FAST, Integer.MAX_VALUE, 95);
+    }
+
+    @Test
+    public void benchmarkFullResolutionJpegQ100() throws Exception {
+        runConfig("full_q100", BleCodec.JPEG_FAST, Integer.MAX_VALUE, 100);
+    }
+
+    @Test
     public void benchmark1280JpegQ75() throws Exception {
         runConfig("1280_q75", BleCodec.JPEG_FAST, 1280, 75);
     }

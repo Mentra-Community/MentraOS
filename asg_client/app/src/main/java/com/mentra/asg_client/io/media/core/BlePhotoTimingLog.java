@@ -101,7 +101,7 @@ public final class BlePhotoTimingLog {
             case "ble_compress_thread_start":
                 return "COMPRESS: background compression thread started";
             case "compress_resolve_params":
-                return "COMPRESS: resolved BLE downscale size and AVIF/JPEG quality";
+                return "COMPRESS: resolved BLE downscale size and JPEG quality";
             case "text_region_detection_start":
                 return "COMPRESS: running text-region detection for crop";
             case "text_region_detection_done":
@@ -109,7 +109,7 @@ public final class BlePhotoTimingLog {
             case "image_process_start":
                 return "COMPRESS: decoding, cropping, resizing, and sharpening bitmap";
             case "image_process_done":
-                return "COMPRESS: bitmap ready for AVIF/JPEG encoder";
+                return "COMPRESS: bitmap ready for JPEG encoder";
             case "jpeg_encode_start":
                 return "COMPRESS: encoding small JPEG payload (text-mode fast path)";
             case "jpeg_encode_done":
