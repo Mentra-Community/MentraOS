@@ -16,6 +16,7 @@ The Mentra Bluetooth SDK exposes the same core glasses lifecycle across Android,
 | iOS | `MentraBluetoothSDK` Swift package | `import MentraBluetoothSDK` |
 | React Native / Expo | `@mentra/bluetooth-sdk` | `import BluetoothSdk, {DeviceModels} from '@mentra/bluetooth-sdk'` |
 | React Native hooks | `@mentra/bluetooth-sdk` | `import {useMentraBluetooth} from '@mentra/bluetooth-sdk/react'` |
+| React Native OTA debugging | `@mentra/bluetooth-sdk` | `import {getOtaVersionUrl, setOtaVersionUrl} from '@mentra/bluetooth-sdk/debug'` |
 
 Only documented imports are part of the supported app developer API. Undocumented package subpaths or symbols with a leading underscore can change without notice.
 
@@ -268,6 +269,27 @@ Mentra Live OTA is owned by the glasses firmware. The SDK exposes the same comma
 Use the returned query/start values for one-shot UI. Keep `ota_status` listeners/delegates for install progress and terminal `complete` / `failed` state.
 
 OTA requires Mentra Live glasses firmware that supports the ASG OTA protocol and network access from the glasses. During install, normal BLE traffic can be interrupted and the glasses may restart; keep the app connected and avoid sending unrelated commands until the OTA status is `complete` or `failed`.
+
+### Override The OTA Version URL (React Native)
+
+The React Native debug entrypoint lets development and staging builds point OTA availability checks at a different version-manifest URL. Production apps should normally use the SDK's default URL.
+
+```ts
+import BluetoothSdk from '@mentra/bluetooth-sdk';
+import {getOtaVersionUrl, setOtaVersionUrl} from '@mentra/bluetooth-sdk/debug';
+
+setOtaVersionUrl('https://staging.example.com/firmware/version.json');
+
+console.log('OTA version URL:', getOtaVersionUrl());
+const updateAvailable = await BluetoothSdk.checkForOtaUpdate();
+```
+
+| Method | Returns | Use |
+| --- | --- | --- |
+| `setOtaVersionUrl(otaVersionUrl)` | `void` | Set the HTTP or HTTPS version-manifest URL used by subsequent OTA availability checks. The SDK rejects invalid or non-HTTP(S) URLs. |
+| `getOtaVersionUrl()` | `string` | Read the currently configured override, or the SDK's default version-manifest URL when no override has been set. |
+
+Set the override before calling `checkForOtaUpdate()`. The override applies to the current SDK session and is not an app setting; if a development build needs it after restart, configure it again during app startup. Do not import these helpers from the main `@mentra/bluetooth-sdk` entrypoint.
 
 ## Display
 
