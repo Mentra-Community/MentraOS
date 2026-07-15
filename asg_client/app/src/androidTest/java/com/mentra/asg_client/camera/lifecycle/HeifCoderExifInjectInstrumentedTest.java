@@ -9,6 +9,9 @@ import android.os.Build;
 import android.util.Log;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.platform.app.InstrumentationRegistry;
+import com.radzivon.bartoshyk.avif.coder.AvifChromaSubsampling;
+import com.radzivon.bartoshyk.avif.coder.AvifSpeed;
+import com.radzivon.bartoshyk.avif.coder.AvifSurfaceMode;
 import com.radzivon.bartoshyk.avif.coder.HeifCoder;
 import com.radzivon.bartoshyk.avif.coder.PreciseMode;
 import java.io.File;
@@ -26,7 +29,15 @@ public class HeifCoderExifInjectInstrumentedTest {
     public void injectExif_embedsReadableExifInAvif() throws Exception {
         Bitmap bitmap = Bitmap.createBitmap(128, 96, Bitmap.Config.ARGB_8888);
         bitmap.eraseColor(Color.GREEN);
-        byte[] avif = new HeifCoder().encodeAvif(bitmap, 40, PreciseMode.LOSSY);
+        byte[] avif =
+                new HeifCoder()
+                        .encodeAvif(
+                                bitmap,
+                                40,
+                                AvifSpeed.TEN,
+                                PreciseMode.LOSSY,
+                                AvifSurfaceMode.RGB,
+                                AvifChromaSubsampling.YUV420);
         bitmap.recycle();
 
         JSONObject payload = samplePayload(5);

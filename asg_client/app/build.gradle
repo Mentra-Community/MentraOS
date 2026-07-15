@@ -389,8 +389,11 @@ dependencies {
     // OpenCV for BLE text-region detection (adaptive threshold, morphology, connected components)
     implementation 'org.opencv:opencv:4.13.0'
 
-    // AVIF encoding/decoding support
-    implementation 'com.github.awxkee:avif-coder:1.7.3'
+    // AVIF encoding/decoding support. 2.x switched the native backend from libheif+libaom
+    // (fixed encoder speed 6) to libavif with a caller-controlled AvifSpeed — the BLE photo
+    // pipeline depends on that speed knob (see AsgConstants.BLE_AVIF_ENCODE_SPEED).
+    // 2.1.4 is the newest release that still targets compileSdk 34 (2.2.x requires 36).
+    implementation 'com.github.awxkee:avif-coder:2.1.4'
     implementation 'androidx.heifwriter:heifwriter:1.1.0'
     implementation "androidx.exifinterface:exifinterface:1.3.7"
 
