@@ -13,6 +13,26 @@ import com.mentra.crust.jsc.InstalledMiniappManifest
 import com.mentra.crust.jsc.JSCPolyfillBridge
 
 class CrustModule : Module() {
+  // Whether the Mapbox Navigation SDK is compiled into this APK. crust's config
+  // plugin defaults navigation off (compileOnly deps → classes absent at
+  // runtime) so non-navigating hosts build without a Mapbox credential; when
+  // off, the nav commands below return a clean error instead of crashing with
+  // NoClassDefFoundError. Resolved once, lazily (never during class init, which
+  // must not touch NavigationManager). Catches Throwable — a missing class
+  // surfaces as an Error, not an Exception.
+  private val navAvailable: Boolean by lazy {
+    try {
+      Class.forName("com.mapbox.navigation.core.MapboxNavigation")
+      true
+    } catch (t: Throwable) {
+      Log.i(TAG, "Mapbox Navigation SDK not compiled in — navigation commands disabled")
+      false
+    }
+  }
+
+  private val navUnavailableResult: Map<String, Any> =
+          mapOf("ok" to false, "error" to "navigation not available in this build")
+
   companion object {
     private const val TAG = "CrustModule"
 
@@ -640,6 +660,7 @@ class CrustModule : Module() {
     // MARK: - Navigation Commands (Google Navigation SDK)
 
     AsyncFunction("startNavigation") { lat: Double, lng: Double, options: Map<String, Any?>? ->
+      if (!navAvailable) return@AsyncFunction navUnavailableResult
       val activity = appContext.currentActivity
         ?: return@AsyncFunction mapOf("ok" to false, "error" to "no current activity (app backgrounded?)")
       val simulate = (options?.get("simulate") as? Boolean) ?: false
@@ -785,6 +806,10 @@ class CrustModule : Module() {
     // friction-free. Idempotent — resolves immediately when the user has
     // already accepted (in-process flag, on-disk pref, or SDK state).
     AsyncFunction("requestNavigationPermission") { promise: expo.modules.kotlin.Promise ->
+      if (!navAvailable) {
+        promise.resolve(navUnavailableResult)
+        return@AsyncFunction
+      }
       val activity = appContext.currentActivity
       if (activity == null) {
         promise.resolve(mapOf("ok" to false, "accepted" to false, "error" to "no current activity"))
@@ -801,6 +826,10 @@ class CrustModule : Module() {
     // pref + in-process) so the next requestNavigationPermission() call
     // re-shows the dialog. Used by the dev-settings re-trigger button.
     AsyncFunction("resetNavigationPermission") { promise: expo.modules.kotlin.Promise ->
+      if (!navAvailable) {
+        promise.resolve(navUnavailableResult)
+        return@AsyncFunction
+      }
       val activity = appContext.currentActivity
       if (activity == null) {
         promise.resolve(mapOf("ok" to false, "error" to "no current activity"))
@@ -818,6 +847,7 @@ class CrustModule : Module() {
     }
 
     AsyncFunction("stopNavigation") {
+      if (!navAvailable) return@AsyncFunction navUnavailableResult
       try {
         NavigationManager.stop()
         mapOf("ok" to true)
@@ -831,6 +861,7 @@ class CrustModule : Module() {
     // exercise the Nav SDK's onRerouting() pipeline without having to
     // physically walk off the planned path. No-op on real GPS fixes.
     AsyncFunction("simulateDeviation") { offsetMeters: Double? ->
+      if (!navAvailable) return@AsyncFunction navUnavailableResult
       try {
         NavigationManager.simulateDeviation(offsetMeters ?: 20.0)
         mapOf("ok" to true)
@@ -841,6 +872,7 @@ class CrustModule : Module() {
     }
 
     AsyncFunction("setWrongSidewalkOffset") { enabled: Boolean ->
+      if (!navAvailable) return@AsyncFunction navUnavailableResult
       try {
         NavigationManager.setWrongSidewalkOffset(enabled)
         mapOf("ok" to true)
@@ -851,6 +883,7 @@ class CrustModule : Module() {
     }
 
     AsyncFunction("setSkipCrossings") { enabled: Boolean ->
+      if (!navAvailable) return@AsyncFunction navUnavailableResult
       try {
         NavigationManager.setSkipCrossings(enabled)
         mapOf("ok" to true)

@@ -98,7 +98,13 @@ dependencies {
   // banner/maneuver formatting used to label turns.
   // Version pinned to 3.25.0 — re-check https://docs.mapbox.com/android/navigation/releases/
   def isChinaBuild = System.getenv("EXPO_PUBLIC_DEPLOYMENT_REGION") == "china"
-  if (isChinaBuild) {
+  // Host opt-in via the @mentra/crust config plugin (default false). China has
+  // always excluded the Nav SDK from the APK; a non-navigating host does the
+  // same, so it needs no MAPBOX_DOWNLOADS_TOKEN to build. Either way crust still
+  // compiles against the SDK — the classes are just absent at runtime, and
+  // CrustModule's navAvailable guard returns a clean error if nav is invoked.
+  def navigationEnabled = (findProperty("mentraCrustNavigation") ?: "false").toString() == "true"
+  if (isChinaBuild || !navigationEnabled) {
     compileOnly 'com.mapbox.navigationcore:navigation:3.25.0'
     compileOnly 'com.mapbox.navigationcore:tripdata:3.25.0'
   } else {
