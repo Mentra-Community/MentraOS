@@ -8,6 +8,17 @@ Mentra Engine — the on-device miniapp library.
 npm install @mentra/engine
 ```
 
+> **Peer packages:** the engine's `@mentra/*` peer dependencies (`crust`,
+> `cloud-client`, `cloud-runtime`, `miniapp`) must be available to your
+> package manager. Until every peer is published to npm, consume the engine
+> from this monorepo's workspace (as the example OEM app does).
+
+> **Module format:** the published entry points target **React Native /
+> Metro** consumers (the `react-native` exports condition). Loading
+> `@mentra/engine` from plain Node (`require`/ESM) is not supported at 0.1.x —
+> the `default` condition's build output is ESM with extensionless imports and
+> will not resolve under Node's loader.
+
 ## Entry points
 
 The package exposes three entry points (declared in `package.json` `exports`,

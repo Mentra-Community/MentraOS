@@ -58,15 +58,15 @@
   },
   "author": "Mentra Community",
   "license": "MIT",
-  "homepage": "https://github.com/Mentra-Community/MentraOS/tree/main/mobile/modules/engine#readme",
+  "homepage": "https://github.com/Mentra-Community/MentraOS/tree/dev/mobile/modules/engine#readme",
   "publishConfig": {
     "access": "public",
     "registry": "https://registry.npmjs.org/"
   },
   "dependencies": {
-    "@types/semver": "^7.7.1",
     "buffer": "^6.0.3",
     "events": "^3.3.0",
+    "semver": "^7.7.4",
     "typesafe-ts": "^1.7.1"
   },
   "devDependencies": {
@@ -74,6 +74,7 @@
     "@mentra/cloud-client": "workspace:*",
     "@mentra/cloud-runtime": "workspace:*",
     "@mentra/miniapp": "workspace:*",
+    "@types/semver": "^7.7.1",
     "expo-module-scripts": "^55.0.2",
     "expo-modules-core": "55.0.25",
     "react-native-nitro-modules": "^0.31.10",
@@ -92,7 +93,6 @@
     "react-native-reanimated": "*",
     "expo-file-system": "*",
     "react-native-zip-archive": "*",
-    "semver": "*",
     "zustand": "*",
     "expo-battery": "*",
     "expo-audio": "*",

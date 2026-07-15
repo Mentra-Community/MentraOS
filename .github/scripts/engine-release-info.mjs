@@ -1,9 +1,8 @@
 #!/usr/bin/env node
 import {execFileSync} from "node:child_process"
-import {readFileSync} from "node:fs"
+import {appendFileSync, readFileSync} from "node:fs"
 
 const packagePath = "mobile/modules/engine/package.json"
-const workflowPath = ".github/workflows/engine-release.yml"
 
 const outputPath = process.env.GITHUB_OUTPUT
 const eventName = process.env.GITHUB_EVENT_NAME || ""
@@ -26,24 +25,12 @@ function readJsonAt(ref, path) {
   }
 }
 
-function fileExistsAt(ref, path) {
-  try {
-    git(["cat-file", "-e", `${ref}:${path}`])
-    return true
-  } catch {
-    return false
-  }
-}
-
 function setOutput(name, value) {
   if (!outputPath) {
     console.log(`${name}=${value}`)
     return
   }
-  execFileSync("bash", ["-lc", 'cat >> "$GITHUB_OUTPUT"'], {
-    input: `${name}=${value}\n`,
-    env: process.env,
-  })
+  appendFileSync(outputPath, `${name}=${value}\n`)
 }
 
 const currentPackage = JSON.parse(readFileSync(packagePath, "utf8"))
@@ -71,32 +58,38 @@ if (/^0+$/.test(beforeSha)) {
   beforeSha = ""
 }
 
+// The before-SHA may not exist in a shallow checkout (or at all, after a
+// force-push to dev): fetch just that commit, and treat any failure as
+// "previous state unknown".
+if (beforeSha) {
+  try {
+    git(["fetch", "--depth=1", "origin", beforeSha])
+  } catch {
+    // readJsonAt below returns null for an unresolvable ref; fail closed there.
+  }
+}
+
 const previousPackage = beforeSha ? readJsonAt(beforeSha, packagePath) : null
 const previousVersion = previousPackage?.version || ""
-// A missing package at the before-SHA is the initial release, so 0.1.0 is
-// published when the Engine package first lands on dev.
-const versionChanged = Boolean(beforeSha) && previousVersion !== currentVersion
-// Also run when this workflow first lands. That covers the stacked-PR merge
-// order where the Engine package reaches dev before its release workflow.
-const workflowAdded = Boolean(beforeSha) && !fileExistsAt(beforeSha, workflowPath)
-const runRelease = versionChanged || workflowAdded || forceRelease || (eventName === "workflow_dispatch" && dryRun)
+// FAIL CLOSED (same gate as the bluetooth-sdk/miniapp siblings): a release only
+// auto-fires when the previous state is KNOWN and the version actually moved.
+// An unresolvable before-SHA, a git error, or the package being new all yield
+// hasPreviousVersion=false — no auto-publish. The first-ever publish is a
+// deliberate, supervised `workflow_dispatch` with force_release=true.
+const hasPreviousVersion = Boolean(previousPackage?.version)
+const versionChanged = hasPreviousVersion && previousVersion !== currentVersion
+const runRelease = versionChanged || forceRelease || (eventName === "workflow_dispatch" && dryRun)
 
 setOutput("package_name", currentPackage.name)
 setOutput("version", currentVersion)
-setOutput("previous_version", previousVersion)
-setOutput("compare_sha", beforeSha)
-setOutput("version_changed", String(versionChanged))
-setOutput("workflow_added", String(workflowAdded))
-setOutput("force_release", String(forceRelease))
 setOutput("dry_run", String(dryRun))
 setOutput("run_release", String(runRelease))
 
 console.log(`Mentra Engine package: ${currentPackage.name}`)
 console.log(`Current version: ${currentVersion}`)
-console.log(`Previous version: ${previousVersion || "(not present)"}`)
+console.log(`Previous version: ${previousVersion || "(unknown — releases fail closed)"}`)
 console.log(`Compare SHA: ${beforeSha || "(unavailable)"}`)
 console.log(`Version changed: ${versionChanged}`)
-console.log(`Release workflow added: ${workflowAdded}`)
 console.log(`Force release: ${forceRelease}`)
 console.log(`Dry run: ${dryRun}`)
 console.log(`Run release job: ${runRelease}`)

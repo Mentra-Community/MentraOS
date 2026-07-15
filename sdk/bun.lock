@@ -283,9 +283,9 @@
       "name": "@mentra/engine",
       "version": "0.1.0",
       "dependencies": {
-        "@types/semver": "^7.7.1",
         "buffer": "^6.0.3",
         "events": "^3.3.0",
+        "semver": "^7.7.4",
         "typesafe-ts": "^1.7.1",
       },
       "devDependencies": {
@@ -293,6 +293,7 @@
         "@mentra/cloud-client": "workspace:*",
         "@mentra/cloud-runtime": "workspace:*",
         "@mentra/miniapp": "workspace:*",
+        "@types/semver": "^7.7.1",
         "expo-module-scripts": "^55.0.2",
         "expo-modules-core": "55.0.25",
         "react-native-nitro-modules": "^0.31.10",
@@ -332,7 +333,6 @@
         "react-native-udp": "*",
         "react-native-wifi-reborn": "*",
         "react-native-zip-archive": "*",
-        "semver": "*",
         "zustand": "*",
       },
     },
