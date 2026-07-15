@@ -59,7 +59,7 @@ describe("AudioPlaybackService", () => {
     jest.useRealTimers()
   })
 
-  it("bumps low Mentra Live volume, suspends mic while playing, then restores on finish", async () => {
+  it("bumps low Mentra Live volume, suspends mic while playing, and leaves the volume bumped", async () => {
     const onComplete = jest.fn()
 
     await audioPlaybackService.play(
@@ -88,7 +88,8 @@ describe("AudioPlaybackService", () => {
 
     expect(mockPlayer.pause).not.toHaveBeenCalled()
     expect(onComplete).toHaveBeenCalledWith("audio-1", true, null, 2000)
-    expect(BluetoothSdk.setGlassesMediaVolume).toHaveBeenLastCalledWith(1)
+    expect(BluetoothSdk.setGlassesMediaVolume).toHaveBeenCalledTimes(1)
+    expect(BluetoothSdk.setGlassesMediaVolume).toHaveBeenLastCalledWith(9)
 
     jest.advanceTimersByTime(900)
     expect(mockPlayer.pause).toHaveBeenCalled()
@@ -98,7 +99,7 @@ describe("AudioPlaybackService", () => {
     expect(BluetoothSdk.setOwnAppAudioPlaying).toHaveBeenLastCalledWith(false)
   })
 
-  it("interrupts existing playback without restoring bumped volume until the replacement finishes", async () => {
+  it("interrupts existing playback without restoring bumped volume after the replacement finishes", async () => {
     const firstComplete = jest.fn()
     const secondComplete = jest.fn()
 
@@ -115,7 +116,8 @@ describe("AudioPlaybackService", () => {
     statusListener({didJustFinish: true, duration: 1})
 
     expect(secondComplete).toHaveBeenCalledWith("second", true, null, 1000)
-    expect(BluetoothSdk.setGlassesMediaVolume).toHaveBeenLastCalledWith(1)
+    expect(BluetoothSdk.setGlassesMediaVolume).toHaveBeenCalledTimes(1)
+    expect(BluetoothSdk.setGlassesMediaVolume).toHaveBeenLastCalledWith(9)
   })
 
   it("starts playback without waiting for a slow glasses volume response", async () => {
