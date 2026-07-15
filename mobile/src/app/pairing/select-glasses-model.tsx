@@ -15,6 +15,9 @@ import {SETTINGS, useSetting} from "@/stores/settings"
 import {AR99_MODEL_OPTIONS, type Ar99ProjectName, getGlassesImage} from "@/utils/getGlassesImage"
 import GlassView from "@/components/ui/GlassView"
 
+const AR99_LOGO = require("../../../assets/logo/ar99_logo.png")
+const HOLOVOX_LOGO = require("../../../assets/logo/holovox_log.png")
+
 type GlassesOption = {
   key: string
   deviceModel: string
@@ -29,8 +32,28 @@ export default function SelectGlassesModelScreen() {
   const {push, goBack} = useNavigationStore.getState()
   const [superMode] = useSetting(SETTINGS.super_mode.key)
 
+  const getTitleLogoSource = (option: GlassesOption) => {
+    const normalizedProjectName = option.projectName?.trim().toUpperCase()
+    if (normalizedProjectName === "AR99" || normalizedProjectName === "AF99") {
+      return AR99_LOGO
+    }
+    if (normalizedProjectName === "HVXM" || normalizedProjectName === "HVXF") {
+      return HOLOVOX_LOGO
+    }
+    return null
+  }
+
   const getManufacturerLogo = (option: GlassesOption) => {
+    const titleLogoSource = getTitleLogoSource(option)
     if (option.manufacturerName) {
+      if (titleLogoSource) {
+        return (
+          <View className="flex-row items-center gap-2">
+            <Image source={titleLogoSource} className="h-5 w-5" resizeMode="contain" />
+            <Text text={option.manufacturerName} className="text-foreground font-semibold text-lg" />
+          </View>
+        )
+      }
       return <Text text={option.manufacturerName} className="text-foreground font-semibold text-lg" />
     }
 
@@ -105,7 +128,9 @@ export default function SelectGlassesModelScreen() {
                 <GlassView className="bg-primary-foreground flex-col items-center justify-center p-6 rounded-2xl overflow-hidden">
                   <View className="flex-row gap-4">
                     <View className="flex-col flex-1 justify-center">
-                      <View className="justify-center min-h-6">{getManufacturerLogo(glasses)}</View>
+                      {getManufacturerLogo(glasses) ? (
+                        <View className="justify-center min-h-6">{getManufacturerLogo(glasses)}</View>
+                      ) : null}
                       <Text
                         className="text-2xl text-foreground font-medium"
                         numberOfLines={1}

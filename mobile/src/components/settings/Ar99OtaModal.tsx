@@ -1,13 +1,13 @@
 import {useCallback, useEffect, useMemo, useRef, useState} from "react"
-import {ActivityIndicator, Modal, TouchableOpacity, View} from "react-native"
+import {ActivityIndicator, Modal, ScrollView, TouchableOpacity, useWindowDimensions, View} from "react-native"
 
 import BluetoothSdk, {Ar99OtaStatusEvent} from "@mentra/bluetooth-sdk"
 import {toolkit} from "@mentra/island"
 
 import {Text} from "@/components/ignite"
 import {Ar99VersionInfo, checkAr99OtaVersion, clearAr99OtaFiles, downloadAr99Firmware} from "@/services/ar99Ota"
-import {getAr99DisplayName} from "@/utils/getGlassesImage"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {getAr99DisplayName} from "@/utils/getGlassesImage"
 
 type OtaPhase = "checking" | "no_update" | "confirm" | "downloading" | "transferring" | "paused" | "success" | "failed"
 
@@ -41,6 +41,7 @@ async function waitForAr99SerialNumber(firmwareVersion: string) {
 
 export function Ar99OtaModal({visible, onClose}: Ar99OtaModalProps) {
   const {theme} = useAppTheme()
+  const {height: windowHeight} = useWindowDimensions()
   const [phase, setPhase] = useState<OtaPhase>("checking")
   const [progress, setProgress] = useState(0)
   const [offset, setOffset] = useState(0)
@@ -55,7 +56,17 @@ export function Ar99OtaModal({visible, onClose}: Ar99OtaModalProps) {
   const busy = phase === "checking" || phase === "downloading" || phase === "transferring" || phase === "paused"
   const deviceDisplayName = getAr99DisplayName(ar99ProjectName)
   const forceUpdate = versionInfo?.forceUpdate === true
-  const canDismiss = !busy
+  const normalizedProjectName = ar99ProjectName.trim().toUpperCase()
+  const isHolovoxAr99 = normalizedProjectName === "HVXM" || normalizedProjectName === "HVXF"
+  const displayCurrentVersion =
+    isHolovoxAr99 && currentVersion && !currentVersion.startsWith("HVX-FW-") ? `HVX-FW-${currentVersion}` : currentVersion
+  const displayLatestVersion =
+    isHolovoxAr99 && versionInfo?.currentVersion && !versionInfo.currentVersion.startsWith("HVX-FW-")
+      ? `HVX-FW-${versionInfo.currentVersion}`
+      : (versionInfo?.currentVersion ?? "")
+  const isForceUpdatePrompt = forceUpdate && phase === "confirm"
+  const canDismiss = !busy && !isForceUpdatePrompt
+  const maxModalHeight = windowHeight * 0.5
 
   const cleanupDownloadedFile = useCallback(async () => {
     filePathRef.current = null
@@ -219,58 +230,63 @@ export function Ar99OtaModal({visible, onClose}: Ar99OtaModalProps) {
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={close}>
       <View className="flex-1 justify-center px-6" style={{backgroundColor: "rgba(0,0,0,0.45)"}}>
-        <View className="rounded-2xl bg-background p-5" style={{gap: theme.spacing.s4}}>
+        <View className="rounded-2xl bg-background p-5" style={{gap: theme.spacing.s4, maxHeight: maxModalHeight}}>
           <Text className="text-lg font-semibold text-foreground" text={title} />
 
-          {phase === "checking" && <ActivityIndicator color={theme.colors.foreground} />}
+          <ScrollView
+            style={{flexGrow: 0}}
+            contentContainerStyle={{gap: theme.spacing.s2}}
+            showsVerticalScrollIndicator={false}>
+            {phase === "checking" && <ActivityIndicator color={theme.colors.foreground} />}
 
-          {phase === "no_update" && (
-            <Text className="text-sm text-muted-foreground" text={`Current version: ${currentVersion || "--"}`} />
-          )}
+            {phase === "no_update" && (
+              <Text className="text-sm text-muted-foreground" text={`Current version: ${displayCurrentVersion || "--"}`} />
+            )}
 
-          {phase === "confirm" && versionInfo && (
-            <View style={{gap: theme.spacing.s2}}>
-              <Text className="text-sm text-secondary-foreground" text={`Current: ${currentVersion || "--"}`} />
-              <Text
-                className="text-sm text-secondary-foreground"
-                text={`Latest: ${versionInfo.currentVersion || "--"}`}
-              />
-              {!!serialNumber && <Text className="text-xs text-muted-foreground" text={`SN: ${serialNumber}`} />}
-              {!!versionInfo.changeLog && (
-                <Text className="text-sm text-muted-foreground" text={versionInfo.changeLog.trim()} />
-              )}
-            </View>
-          )}
-
-          {(phase === "downloading" || phase === "transferring" || phase === "paused") && (
-            <View style={{gap: theme.spacing.s2}}>
-              <View className="h-2 w-full overflow-hidden rounded-full" style={{backgroundColor: theme.colors.border}}>
-                <View
-                  className="h-2 rounded-full"
-                  style={{
-                    backgroundColor: theme.colors.primary,
-                    width: `${Math.max(0, Math.min(100, progress))}%`,
-                  }}
-                />
-              </View>
-              <Text className="text-sm text-muted-foreground" text={`${Math.max(0, Math.min(100, progress))}%`} />
-              {!!progressDetail && <Text className="text-sm text-muted-foreground" text={progressDetail} />}
-              {phase === "paused" && (
+            {phase === "confirm" && versionInfo && (
+              <View style={{gap: theme.spacing.s2}}>
+                <Text className="text-sm text-secondary-foreground" text={`Current: ${displayCurrentVersion || "--"}`} />
                 <Text
-                  className="text-sm text-muted-foreground"
-                  text="Reconnect the glasses to continue, or cancel and retry later."
+                  className="text-sm text-secondary-foreground"
+                  text={`Latest: ${displayLatestVersion || "--"}`}
                 />
-              )}
-            </View>
-          )}
+                {!!serialNumber && <Text className="text-xs text-muted-foreground" text={`SN: ${serialNumber}`} />}
+                {!!versionInfo.changeLog && (
+                  <Text className="text-sm text-muted-foreground" text={versionInfo.changeLog.trim()} />
+                )}
+              </View>
+            )}
 
-          {phase === "success" && (
-            <Text className="text-sm text-muted-foreground" text={`The ${deviceDisplayName} firmware update finished.`} />
-          )}
+            {(phase === "downloading" || phase === "transferring" || phase === "paused") && (
+              <View style={{gap: theme.spacing.s2}}>
+                <View className="h-2 w-full overflow-hidden rounded-full" style={{backgroundColor: theme.colors.border}}>
+                  <View
+                    className="h-2 rounded-full"
+                    style={{
+                      backgroundColor: theme.colors.primary,
+                      width: `${Math.max(0, Math.min(100, progress))}%`,
+                    }}
+                  />
+                </View>
+                <Text className="text-sm text-muted-foreground" text={`${Math.max(0, Math.min(100, progress))}%`} />
+                {!!progressDetail && <Text className="text-sm text-muted-foreground" text={progressDetail} />}
+                {phase === "paused" && (
+                  <Text
+                    className="text-sm text-muted-foreground"
+                    text="Reconnect the glasses to continue, or cancel and retry later."
+                  />
+                )}
+              </View>
+            )}
 
-          {phase === "failed" && (
-            <Text className="text-sm text-destructive" text={errorMessage || "Firmware update failed."} />
-          )}
+            {phase === "success" && (
+              <Text className="text-sm text-muted-foreground" text={`The ${deviceDisplayName} firmware update finished.`} />
+            )}
+
+            {phase === "failed" && (
+              <Text className="text-sm text-destructive" text={errorMessage || "Firmware update failed."} />
+            )}
+          </ScrollView>
 
           <View className="flex-row justify-end gap-3">
             {phase === "confirm" && canDismiss && (
@@ -307,11 +323,3 @@ function ModalButton({label, muted = false, onPress}: {label: string; muted?: bo
     </TouchableOpacity>
   )
 }
-
-
-
-
-
-
-
-

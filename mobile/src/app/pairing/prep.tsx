@@ -449,6 +449,13 @@ export default function PairingPrepScreen() {
     return (
       <View className="flex-1 mt-6">
         <ScrollView showsVerticalScrollIndicator={false}>
+          <View className="self-center w-[320px] h-[320px] flex-col items-center justify-center bg-primary-foreground rounded-xl mb-6 overflow-hidden">
+            <Image
+              source={require("../../../assets/guide/image_ar99_pair.png")}
+              resizeMode="contain"
+              className="w-full h-full"
+            />
+          </View>
           <Text tx="pairing:instructions" className="text-2xl font-bold mb-4 text-secondary-foreground" />
           <Text
             className="text-lg text-secondary-foreground mb-2"
@@ -514,7 +521,6 @@ export default function PairingPrepScreen() {
     </Screen>
   )
 }
-
 
 
 

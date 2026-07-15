@@ -6,7 +6,7 @@ import {Screen} from "@/components/ignite"
 import {focusEffectPreventBack, usePushUnder} from "@/contexts/NavigationHistoryContext"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {useNavigationStore} from "@/stores/navigation"
-import {getAr99ImageSource, getGlassesImage} from "@/utils/getGlassesImage"
+import {getAr99DisplayName, getAr99ImageSource, getGlassesImage} from "@/utils/getGlassesImage"
 import {OnboardingGuide, OnboardingStep} from "@/components/onboarding/OnboardingGuide"
 import {translate} from "@/i18n"
 import {useCallback, useEffect, useRef, useState} from "react"
@@ -165,6 +165,7 @@ export default function PairingSuccessScreen() {
           containerClassName: "px-12",
           transition: false,
           title: translate("common:success"),
+          subtitle: getAr99DisplayName(ar99ProjectName) + " connected",
         },
       ]
       break

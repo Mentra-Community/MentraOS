@@ -27,6 +27,12 @@ export default function DeviceInfoScreen() {
   const isAr99Family = [defaultWearable, deviceInfo.model, deviceInfo.bluetoothName].some(
     (value) => typeof value === "string" && value.toUpperCase().includes(DeviceTypes.AR99),
   )
+  const normalizedProjectName = projectName?.trim().toUpperCase()
+  const isHolovoxAr99 = normalizedProjectName === "HVXM" || normalizedProjectName === "HVXF"
+  const displayFirmwareVersion =
+    isHolovoxAr99 && deviceInfo.firmwareVersion && !deviceInfo.firmwareVersion.startsWith("HVX-FW-")
+      ? `HVX-FW-${deviceInfo.firmwareVersion}`
+      : deviceInfo.firmwareVersion
 
   // Extract short bluetooth ID from full name (e.g., "MentraLive_664ebf" -> "664ebf")
   const bluetoothId = deviceInfo.bluetoothName?.split("_").pop() || deviceInfo.bluetoothName
@@ -69,7 +75,7 @@ export default function DeviceInfoScreen() {
               label={translate("deviceInfo:model")}
               text={displayModel}
             />
-            {!!bluetoothId && <RouteButton label={translate("deviceInfo:deviceId")} text={bluetoothId} />}
+            {!!bluetoothId && !isAr99Family && <RouteButton label={translate("deviceInfo:deviceId")} text={bluetoothId} />}
             {!!deviceInfo.serialNumber && (
               <RouteButton label={translate("deviceInfo:serialNumber")} text={deviceInfo.serialNumber} />
             )}
@@ -83,8 +89,8 @@ export default function DeviceInfoScreen() {
             {!!deviceInfo.buildNumber && (
               <RouteButton label={translate("deviceInfo:buildNumber")} text={deviceInfo.buildNumber} />
             )}
-            {!!deviceInfo.firmwareVersion && (
-              <RouteButton label={translate("deviceInfo:firmwareVersion")} text={deviceInfo.firmwareVersion} />
+            {!!displayFirmwareVersion && (
+              <RouteButton label={translate("deviceInfo:firmwareVersion")} text={displayFirmwareVersion} />
             )}
             {!!deviceInfo.appVersion && (
               <RouteButton label={translate("deviceInfo:appVersion")} text={deviceInfo.appVersion} />
@@ -112,5 +118,3 @@ export default function DeviceInfoScreen() {
     </Screen>
   )
 }
-
-
