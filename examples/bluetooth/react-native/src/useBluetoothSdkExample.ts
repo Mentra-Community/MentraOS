@@ -75,6 +75,11 @@ export type StreamPreviewTarget = {
 type MediaUploadSuccessEvent = BluetoothSdkEventMap['media_success'];
 type MediaUploadErrorEvent = BluetoothSdkEventMap['media_error'];
 
+// A single user-initiated update may need several OTA passes (e.g. legacy
+// glasses first hop to an intermediate ASG client before the firmware pass).
+// Bound the automatic continuations so a misbehaving manifest cannot loop.
+const MAX_OTA_CHAIN_PASSES = 4;
+
 function isDisplayableOtaStatus(payload: OtaStatusEvent) {
   return payload.status !== 'idle' || Boolean(payload.error_message);
 }
@@ -737,6 +742,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   const otaStartingAppIdentityRef = useRef<string | null>(null);
   const postOtaCheckInProgressRef = useRef(false);
   const postOtaCheckedSessionRef = useRef<string | null>(null);
+  const otaChainRemainingRef = useRef(0);
   const [autoOtaCheckRetryTick, setAutoOtaCheckRetryTick] = useState(0);
   const [latestVersionInfo, setLatestVersionInfo] = useState<VersionInfoResult | null>(null);
   const [latestVersionInfoSignature, setLatestVersionInfoSignature] = useState<string | null>(null);
@@ -1298,14 +1304,41 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       setOtaStatusMessage(null);
       setOtaUpdateAvailable(true);
       addEvent('LIVE', 'OTA update available');
+      maybeContinueOtaChain();
       return true;
     }
+    otaChainRemainingRef.current = 0;
     otaStatusRef.current = null;
     setOtaStatus(null);
     setOtaStatusMessage('Glasses firmware is up to date');
     setOtaUpdateAvailable(false);
     addEvent('LIVE', 'OTA up to date');
     return false;
+  }
+
+  // One user-initiated update run may span several OTA passes: legacy
+  // glasses can finish a pass on an intermediate ASG client (or reboot
+  // after a BES flash) while still being behind the manifest. Whenever a
+  // post-pass or reconnect check reports another update during an armed
+  // run, start the next pass without requiring another tap.
+  function maybeContinueOtaChain() {
+    if (otaChainRemainingRef.current <= 0) {
+      return;
+    }
+    if (!glassesConnectedRef.current || !glassesWifiConnectedRef.current) {
+      return;
+    }
+    if (isOtaEventInProgress(otaStatusRef.current)) {
+      return;
+    }
+    otaChainRemainingRef.current -= 1;
+    void runAction('Continue OTA', async () => {
+      postOtaCheckedSessionRef.current = null;
+      otaStartingAppIdentityRef.current = otaAppIdentity(glasses);
+      clearOtaDisplayProgress();
+      await BluetoothSdk.startOtaUpdate();
+      addEvent('LIVE', 'OTA continuing with next update pass');
+    });
   }
 
   function clearOtaDisplayProgress() {
@@ -1370,6 +1403,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
         throw new Error('Connect glasses first.');
       }
       requireGlassesWifi('start OTA updates');
+      otaChainRemainingRef.current = MAX_OTA_CHAIN_PASSES;
       postOtaCheckedSessionRef.current = null;
       otaStartingAppIdentityRef.current = otaAppIdentity(glasses);
       clearOtaDisplayProgress();
@@ -1380,6 +1414,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
 
   async function disconnect() {
     await runAction('Disconnect', async () => {
+      otaChainRemainingRef.current = 0;
       stopDirectStreamFrameWatchdog();
       await bluetooth.disconnect();
       applyDisconnectedState('Disconnected');
@@ -3896,6 +3931,9 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     if (payload.status === 'complete' || payload.status === 'failed') {
       otaStartingAppIdentityRef.current = null;
       setOtaUpdateAvailable(false);
+    }
+    if (payload.status === 'failed') {
+      otaChainRemainingRef.current = 0;
     }
     addEvent('LIVE', `OTA ${payload.status} ${payload.overall_percent ?? 0}%`);
     schedulePostOtaCheck(payload);
