@@ -882,6 +882,14 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       postOtaCheckInProgressRef.current = false;
       postOtaCheckedSessionRef.current = null;
       setLatestVersionInfoSignature(null);
+      // A stale in-progress OTA status (e.g. the BES step's final
+      // 'step_complete' before the reboot) must not gate the next check.
+      otaStatusRef.current = null;
+      otaStartingAppIdentityRef.current = null;
+      setOtaStatus(null);
+      clearOtaDisplayProgress();
+      setOtaStatusMessage(null);
+      setOtaUpdateAvailable(false);
       return;
     }
     if (
@@ -1128,9 +1136,13 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       wasConnectedRef.current = true;
       return;
     }
-    if (wasConnectedRef.current && isDisconnectedStatus(glasses)) {
+    // Reset on any connected -> not-connected transition. During an
+    // auto-reconnect (e.g. the post-BES-update reboot) the SDK publishes
+    // 'disconnected' and 'connecting' in the same bridge flush, so the app
+    // never renders the 'disconnected' state.
+    if (wasConnectedRef.current) {
       wasConnectedRef.current = false;
-      applyDisconnectedState('Disconnected');
+      applyDisconnectedState(isDisconnectedStatus(glasses) ? 'Disconnected' : 'Reconnecting');
     }
   }, [glassesConnected, glasses, scanMode, scanAeDivisor, scanIsoCap]); // eslint-disable-line react-hooks/exhaustive-deps
 
