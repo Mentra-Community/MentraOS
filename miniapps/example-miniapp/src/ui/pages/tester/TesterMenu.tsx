@@ -41,7 +41,12 @@ const API_ROWS: Row[] = [
     path: "/tester/transcription",
   },
   {emoji: "🌐", title: "session.translation", subtitle: "forLanguagePair, stop", path: "/tester/translation"},
-  {emoji: "📸", title: "session.camera", subtitle: "takePhoto + image preview", path: "/tester/camera"},
+  {
+    emoji: "📸",
+    title: "session.camera",
+    subtitle: "Cloud V2 warmUp/takePhoto — sizes, modes, matrix",
+    path: "/tester/camera",
+  },
   {
     emoji: "🎬",
     title: "session.stream",

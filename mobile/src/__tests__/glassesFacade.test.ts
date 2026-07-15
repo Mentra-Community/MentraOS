@@ -1,12 +1,12 @@
-// Imports the real glasses facade by path (not via "@mentra/island", which jest
+// Imports the real glasses facade by path (not via "@mentra/engine", which jest
 // mocks) so the actual projection + delegation run under the mobile jest runner.
 import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
-import {dev} from "../../modules/island/src/facades/dev"
-import {glasses} from "../../modules/island/src/facades/glasses"
-import {useCloudClientStatusStore} from "../../modules/island/src/stores/cloudClientStatus"
-import {WebSocketStatus, useConnectionStore} from "../../modules/island/src/stores/connection"
-import {useCoreStore} from "../../modules/island/src/stores/core"
-import {useGlassesStore} from "../../modules/island/src/stores/glasses"
+import {dev} from "../../modules/engine/src/facades/dev"
+import {glasses} from "../../modules/engine/src/facades/glasses"
+import {useCloudClientStatusStore} from "../../modules/engine/src/stores/cloudClientStatus"
+import {WebSocketStatus, useConnectionStore} from "../../modules/engine/src/stores/connection"
+import {useCoreStore} from "../../modules/engine/src/stores/core"
+import {useGlassesStore} from "../../modules/engine/src/stores/glasses"
 
 describe("glasses facade", () => {
   beforeEach(() => {

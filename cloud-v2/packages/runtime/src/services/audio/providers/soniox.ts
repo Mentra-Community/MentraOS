@@ -145,6 +145,10 @@ export async function createSonioxProvider(
     max_endpoint_delay_ms: 2_000,
     language_hints:
       opts.language && opts.language !== "auto" ? [opts.language] : undefined,
+    context: {
+      terms: ["Mentra", "Hey Mentra"],
+      text: "Mentra, Hey Mentra (an AI assistant)",
+    },
     // For translation subs, configure Soniox's one-way translation. Result
     // tokens then carry `translation_status: "original" | "translation"`
     // and we filter to the translation half.

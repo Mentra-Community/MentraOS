@@ -96,6 +96,11 @@ export const BluetoothSdk: BluetoothSdkPublicModule = Object.freeze({
   setHotspotState: bindPublicMethod("setHotspotState"),
   setGalleryModeEnabled: bindPublicMethod("setGalleryModeEnabled"),
   setVoiceActivityDetectionEnabled: bindPublicMethod("setVoiceActivityDetectionEnabled"),
+  /**
+   * @deprecated Sticky action-button photo presets are deprecated. Prefer per-request
+   * `requestPhoto(...)` options (e.g. `mode: "text"` for AE ÷3, or explicit per-shot
+   * fields). Still functional until removed in a future release.
+   */
   setPhotoCaptureDefaults: bindPublicMethod("setPhotoCaptureDefaults"),
   setVideoRecordingDefaults: ({width, height, fps}: VideoRecordingDefaults) => {
     const method = (PrivateBluetoothSdkModule as unknown as Record<string, unknown>).setVideoRecordingDefaults
@@ -204,6 +209,7 @@ export type {
   PhotoCompression,
   PhotoFpsRange,
   PhotoMeteredPreview,
+  PhotoMode,
   PhotoResponseEvent,
   PhotoRequestedCaptureConfig,
   PhotoRequestParams,

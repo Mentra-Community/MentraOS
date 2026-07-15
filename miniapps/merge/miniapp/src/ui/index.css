@@ -1,6 +1,10 @@
 @import url("https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@400;500;600;700&display=swap");
 @import "tailwindcss";
 
+/* Dark mode is class-based: `.dark` on <html>, toggled from useColorScheme
+   (what the Mentra host reports). Light stays the untouched default. */
+@custom-variant dark (&:is(.dark *));
+
 html,
 body,
 #root {
@@ -52,4 +56,22 @@ select,
   user-select: text;
   -webkit-user-select: text;
   -webkit-touch-callout: default;
+}
+
+/*
+ * Dark palette — purely additive overrides. Zinc neutrals; the pink brand
+ * accent is untouched (it carries enough contrast on dark surfaces).
+ */
+.dark body {
+  background: #0b0b0d;
+  color: #fafafa;
+}
+
+/*
+ * The app shell paints its light gradient via an inline style object in
+ * App.tsx (MERGE_SHELL_STYLE), which class utilities can't beat. Override it
+ * here for dark only — `!important` is required to outrank the inline style.
+ */
+.dark .merge-shell {
+  background: linear-gradient(180deg, #0b0b0d 0%, #0e0e12 42%, #131318 100%) !important;
 }

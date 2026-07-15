@@ -11,10 +11,11 @@
  */
 
 import {useEffect, useRef, useState} from "react"
+import {useColorScheme} from "@mentra/miniapp/ui"
 
 import {getMapbox} from "@/ui/lib/mapbox"
 
-function buildIframeHtml(token: string): string {
+function buildIframeHtml(token: string, dark: boolean): string {
   return `<!doctype html>
 <html>
   <head>
@@ -32,7 +33,7 @@ function buildIframeHtml(token: string): string {
       mapboxgl.accessToken = ${JSON.stringify(token)};
       new mapboxgl.Map({
         container: "map",
-        style: "mapbox://styles/mapbox/streets-v12",
+        style: ${JSON.stringify(dark ? "mapbox://styles/mapbox/dark-v11" : "mapbox://styles/mapbox/streets-v12")},
         center: [-122.3933, 37.7956],
         zoom: 15,
       });
@@ -44,6 +45,9 @@ function buildIframeHtml(token: string): string {
 export function RawMapPage({onClose}: {onClose: () => void}) {
   const [srcDoc, setSrcDoc] = useState<string | null>(null)
   const iframeRef = useRef<HTMLIFrameElement | null>(null)
+  // The iframe has its own document, so the parent's .dark class can't style
+  // it — bake the scheme-appropriate basemap into the generated HTML instead.
+  const dark = useColorScheme() === "dark"
 
   useEffect(() => {
     // Reuse the parent's MapboxManager only to grab the resolved token —
@@ -52,13 +56,14 @@ export function RawMapPage({onClose}: {onClose: () => void}) {
       .whenReady()
       .then(() => {
         const token = getMapbox().apiKey
-        setSrcDoc(buildIframeHtml(token))
+        setSrcDoc(buildIframeHtml(token, dark))
       })
-      .catch(() => setSrcDoc(buildIframeHtml("")))
+      .catch(() => setSrcDoc(buildIframeHtml("", dark)))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   return (
-    <div className="fixed inset-0 z-60 bg-white">
+    <div className="fixed inset-0 z-60 bg-white dark:bg-zinc-950">
       {srcDoc ? (
         <iframe
           ref={iframeRef}
@@ -67,7 +72,7 @@ export function RawMapPage({onClose}: {onClose: () => void}) {
           className="absolute inset-0 w-full h-full border-0"
         />
       ) : (
-        <div className="absolute inset-0 flex items-center justify-center text-neutral-500 text-[13px]">
+        <div className="absolute inset-0 flex items-center justify-center text-neutral-500 dark:text-zinc-400 text-[13px]">
           loading raw map…
         </div>
       )}

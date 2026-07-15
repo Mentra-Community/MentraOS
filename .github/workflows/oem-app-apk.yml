@@ -1,7 +1,7 @@
 name: OEM Example App APK
 
 # Publishes an installable APK of sdk/example-oem-app — the reference second
-# host built against the public @mentra/island entry — as a workflow artifact
+# host built against the public @mentra/engine entry — as a workflow artifact
 # on every dev push that touches its inputs (mirroring how the MentraOS app
 # APK is produced on dev pushes by "Mobile App Android Build").
 #
@@ -20,7 +20,7 @@ on:
     branches:
       - dev
     paths:
-      - "mobile/modules/island/**"
+      - "mobile/modules/engine/**"
       - "mobile/modules/bluetooth-sdk/**"
       - "mobile/modules/crust/**"
       - "mobile/modules/miniapp/**"
@@ -117,8 +117,8 @@ jobs:
         working-directory: mobile/modules/crust
         run: bun run build
 
-      - name: Build island
-        working-directory: mobile/modules/island
+      - name: Build engine
+        working-directory: mobile/modules/engine
         run: bun run build
 
       - name: Run Expo prebuild
@@ -180,7 +180,7 @@ jobs:
               if (e.status !== 404) throw e;
               release = (await github.rest.repos.createRelease({
                 owner, repo, tag_name: tag, name: 'Example OEM app builds (rolling)',
-                body: 'Rolling dev builds of sdk/example-oem-app — the reference second host built against the public @mentra/island entry. Debug-keystore-signed release APKs, one per dev commit that touches the OEM stack. Assets older than 14 days are swept automatically.',
+                body: 'Rolling dev builds of sdk/example-oem-app — the reference second host built against the public @mentra/engine entry. Debug-keystore-signed release APKs, one per dev commit that touches the OEM stack. Assets older than 14 days are swept automatically.',
                 prerelease: true,
               })).data;
             }

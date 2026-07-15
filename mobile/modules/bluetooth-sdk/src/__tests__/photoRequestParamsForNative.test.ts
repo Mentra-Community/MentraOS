@@ -14,8 +14,9 @@ describe("photoRequestParamsForNative", () => {
   it("produces only supported native payload keys", () => {
     const payload = photoRequestParamsForNative(baseParams)
     expect(Object.keys(payload).sort()).toEqual(
-      ["compress", "requestId", "size", "sound", "webhookUrl"].sort(),
+      ["compress", "mode", "requestId", "size", "sound", "webhookUrl"].sort(),
     )
+    expect(payload.mode).toBe("photo")
   })
 
   it("omits requestId when omitted or blank so native can generate it", () => {
@@ -62,6 +63,10 @@ describe("photoRequestParamsForNative", () => {
     expect(payload.zsl).toBe(false)
     expect(payload.aeExposureDivisor).toBe(3)
     expect(payload.isoCap).toBe(800)
+  })
+
+  it("preserves text capture mode", () => {
+    expect(photoRequestParamsForNative({...baseParams, mode: "text"}).mode).toBe("text")
   })
 })
 

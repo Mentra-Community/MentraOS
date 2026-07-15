@@ -1,8 +1,6 @@
-import {toolkit} from "@mentra/island"
-import {Session} from "@supabase/supabase-js"
+import {engine} from "@mentra/engine"
 
 import mantle from "@/services/MantleManager"
-import restComms from "@/services/RestComms"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 import mentraAuth from "@/utils/auth/authClient"
 import {storage} from "@/utils/storage"
@@ -24,11 +22,8 @@ export class LogoutUtils {
       // Step 2: Stop island runtime services before clearing auth/session state
       await this.stopToolkitRuntime()
 
-      // Step 3: Clear Supabase authentication
-      await this.clearSupabaseAuth()
-
-      // Step 4: Clear backend communication tokens
-      await this.clearBackendTokens()
+      // Step 3: Sign out of the account provider + wipe legacy auth storage
+      await this.clearAuthSession()
 
       // Step 5: Clear all app settings and user data
       await this.clearAppSettings()
@@ -54,7 +49,7 @@ export class LogoutUtils {
 
     try {
       // First try to disconnect any connected glasses
-      await toolkit.glasses.disconnect()
+      await engine.glasses.disconnect()
       console.log(`${this.TAG}: Disconnected glasses`)
     } catch (error) {
       console.warn(`${this.TAG}: Error disconnecting glasses:`, error)
@@ -62,7 +57,7 @@ export class LogoutUtils {
 
     try {
       // Then forget the glasses completely
-      await toolkit.glasses.forget()
+      await engine.glasses.forget()
       console.log(`${this.TAG}: Forgot glasses pairing`)
     } catch (error) {
       console.warn(`${this.TAG}: Error forgetting glasses:`, error)
@@ -70,11 +65,11 @@ export class LogoutUtils {
   }
 
   /**
-   * Stop island runtime services that were started by toolkit.start().
+   * Stop island runtime services that were started by engine.start().
    *
    * MantleManager.cleanup() runs first: it tears down the host-side wiring from
    * the previous session AND resets its `initialized` guard, so the next login in
-   * the same process re-runs mantle.init() → toolkit.configure()/start() instead
+   * the same process re-runs mantle.init() → engine.configure()/start() instead
    * of leaving the stopped runtime dead until an app restart.
    */
   private static async stopToolkitRuntime(): Promise<void> {
@@ -88,7 +83,7 @@ export class LogoutUtils {
     }
 
     try {
-      await toolkit.stop()
+      await engine.stop()
       console.log(`${this.TAG}: Stopped island runtime`)
     } catch (error) {
       console.warn(`${this.TAG}: Error stopping island runtime:`, error)
@@ -96,17 +91,19 @@ export class LogoutUtils {
   }
 
   /**
-   * Clear Supabase authentication and related tokens
+   * Sign out of the auth provider (V2 account tokens), then wipe the legacy
+   * Supabase storage keys so users upgrading from pre-cutover builds don't
+   * carry stale auth material forward.
    */
-  private static async clearSupabaseAuth(): Promise<void> {
-    console.log(`${this.TAG}: Clearing Supabase authentication...`)
+  private static async clearAuthSession(): Promise<void> {
+    console.log(`${this.TAG}: Clearing auth session...`)
 
     const res = await mentraAuth.signOut()
     if (res.is_error()) {
       console.error(`${this.TAG}: Error signing out:`, res.error)
     }
 
-    // Completely clear ALL Supabase Auth storage
+    // Legacy pre-cutover Supabase storage keys (migration hygiene only).
     const supabaseKeys = [
       "supabase.auth.token",
       "supabase.auth.refreshToken",
@@ -126,21 +123,6 @@ export class LogoutUtils {
   }
 
   /**
-   * Clear backend server communication tokens
-   */
-  private static async clearBackendTokens(): Promise<void> {
-    console.log(`${this.TAG}: Clearing backend tokens...`)
-
-    try {
-      // Clear the core token from RestComms
-      restComms.setCoreToken(null)
-      console.log(`${this.TAG}: Cleared backend core token`)
-    } catch (error) {
-      console.error(`${this.TAG}: Error clearing backend tokens:`, error)
-    }
-  }
-
-  /**
    * Clear all app-specific settings from AsyncStorage
    */
   private static async clearAppSettings(): Promise<void> {
@@ -148,7 +130,7 @@ export class LogoutUtils {
 
     // burn it all:
     try {
-      toolkit.settings.resetAllLocal()
+      engine.settings.resetAllLocal()
       storage.clearAll()
     } catch (error) {
       console.error(`${this.TAG}: Error clearing app settings:`, error)
@@ -202,15 +184,11 @@ export class LogoutUtils {
    * Check if user is properly logged out by verifying key storage items
    */
   public static async verifyLogoutSuccess(): Promise<boolean> {
-    // Check if any critical auth tokens remain
-    const res = storage.load<Session>("supabase.auth.session")
-    let supabaseSession = null
-    if (res.is_ok()) {
-      supabaseSession = res.value
-    }
-    const coreToken = restComms.getCoreToken()
-
-    const isLoggedOut = !supabaseSession && !coreToken
+    // The device only holds V2 account tokens now (issue 019); logged out
+    // means the MMKV token pair is gone.
+    const access = storage.load<string>("mentra.account.accessToken")
+    const refresh = storage.load<string>("mentra.account.refreshToken")
+    const isLoggedOut = (access.is_error() || !access.value) && (refresh.is_error() || !refresh.value)
 
     console.log(`${this.TAG}: Logout verification - Success: ${isLoggedOut}`)
     return isLoggedOut

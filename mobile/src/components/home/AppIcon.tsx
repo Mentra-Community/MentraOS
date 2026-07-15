@@ -12,7 +12,7 @@ import {
   markRemoteImageSourceFailed,
   useCachedRemoteImageSource,
 } from "@/hooks/useCachedRemoteImageSource"
-import type {ClientApp} from "@mentra/island"
+import type {ClientApp} from "@mentra/engine"
 import React from "react"
 
 // Helper to extract style properties for width/height override

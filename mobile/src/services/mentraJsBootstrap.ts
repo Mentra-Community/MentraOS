@@ -11,11 +11,11 @@
  * a singleton and the host attach runs once.
  */
 
-import {toolkit} from "@mentra/island"
+import {engine} from "@mentra/engine"
 import {Platform} from "react-native"
 import * as Sentry from "@sentry/react-native"
 
-import {ensureMiniappEngine, getMiniappEngine} from "@mentra/island/internal"
+import {ensureMiniappEngine, getMiniappEngine} from "@mentra/engine/internal"
 
 import showAlert from "@/utils/AlertUtils"
 
@@ -28,11 +28,11 @@ export function bootstrapMentraJS() {
   // Construct (or reuse) the island-owned engine, then attach the host concerns
   // once. ensureMiniappEngine() is idempotent; the hostAttached guard keeps the
   // telemetry from re-binding on repeat calls.
-  const engine = ensureMiniappEngine()
-  if (hostAttached) return engine
+  const miniappEngine = ensureMiniappEngine()
+  if (hostAttached) return miniappEngine
   hostAttached = true
 
-  const {router} = engine
+  const {router} = miniappEngine
 
   // Surface crashloop transitions as Sentry events tagged with the
   // miniapp packageName + engine + host version + platform so on-call
@@ -60,7 +60,7 @@ export function bootstrapMentraJS() {
     }
 
     // Look up the miniapp's display name for the alert + report.
-    const app = toolkit.miniapps.list().find((a) => a.packageName === packageName)
+    const app = engine.miniapps.list().find((a) => a.packageName === packageName)
     const appName = app?.name ?? packageName
 
     // User-facing alert. Last so even if Sentry/reporting fails the user
@@ -88,7 +88,7 @@ export function bootstrapMentraJS() {
   // via `getMentraJS().uiRouter.bindWebView(...)` — no global attach
   // step needed. The router is reachable on the island engine singleton.
 
-  return engine
+  return miniappEngine
 }
 
 /** Returns the island MentraJS engine singletons if constructed, else null. */

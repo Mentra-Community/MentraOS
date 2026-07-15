@@ -1,4 +1,4 @@
-# Fable 5 Handoff - Toolkit Boundary Stack
+# Fable 5 Handoff - Engine Boundary Stack
 
 Date: 2026-07-01
 
@@ -6,13 +6,13 @@ Current top branch: `codex/scope-glasses-status-boundary`
 
 Top PR: https://github.com/Mentra-Community/MentraOS/pull/3276
 
-## What Is The Toolkit?
+## What Is The Engine?
 
-The toolkit is the MentraOS runtime API that the host app should use. In this
-stack it is implemented by the island package under `mobile/modules/island` and
+The engine is the MentraOS runtime API that the host app should use. In this
+stack it is implemented by the island package under `mobile/modules/engine` and
 exported to `mobile/src` through typed facades.
 
-The toolkit owns MentraOS behavior:
+The engine owns MentraOS behavior:
 
 - normalized glasses runtime state
 - pairing and reconnect readiness rules
@@ -31,14 +31,14 @@ The host app owns OEM presentation:
 - user choices such as "start update", "retry", "open settings", or
   "submit report"
 
-The boundary we are enforcing is: host UI asks the toolkit for a typed read
+The boundary we are enforcing is: host UI asks the engine for a typed read
 model, event, or command. It does not import the raw glasses status store,
 mutate runtime state, normalize SDK state, or shuttle internal state out of the
-toolkit and back in.
+engine and back in.
 
 ## What We Are Doing
 
-This stack moves MentraOS runtime logic behind toolkit facades so the host app
+This stack moves MentraOS runtime logic behind engine facades so the host app
 can become OEM-brandable UI rather than another owner of smartglasses OS state.
 
 The work started with Cloud V2 incident reporting. The current top branch then
@@ -49,11 +49,11 @@ The important shape is:
 
 ```text
 mobile/src UI
-  -> toolkit facades exported by mobile/modules/island
+  -> engine facades exported by mobile/modules/engine
       -> island services, stores, Bluetooth SDK, native modules, cloud-client
 ```
 
-The host should not reach around the toolkit into island internals, Bluetooth
+The host should not reach around the engine into island internals, Bluetooth
 SDK internal event stores, or Cloud V1 device-state sync.
 
 ## Stack Map
@@ -63,7 +63,7 @@ The PR stack is currently:
 1. `aisraelov/island-namespace-wifi`
    - PR: https://github.com/Mentra-Community/MentraOS/pull/3167
    - Base: `dev`
-   - Purpose: broad island/toolkit namespace work, moving more host runtime
+   - Purpose: broad island/engine namespace work, moving more host runtime
      functionality into the island package.
    - Current live GitHub state when this doc was written: conflict exists
      against `dev`. Resolve this first when babysitting the stack.
@@ -72,7 +72,7 @@ The PR stack is currently:
    - PR: https://github.com/Mentra-Community/MentraOS/pull/3268
    - Base: `aisraelov/island-namespace-wifi`
    - Purpose: migrate incident/feedback/bug reporting to Cloud V2 reports and
-     route mobile submission through the toolkit/cloud-client boundary.
+     route mobile submission through the engine/cloud-client boundary.
    - Current live GitHub state when this doc was written: mergeable, checks not
      fully green yet.
 
@@ -80,7 +80,7 @@ The PR stack is currently:
    - PR: https://github.com/Mentra-Community/MentraOS/pull/3276
    - Base: `codex/migrate-incidents-cloud-v2`
    - Purpose: remove host-side leaks of glasses runtime state and route glasses,
-     OTA, pairing, gallery, and devtools usage through toolkit facades.
+     OTA, pairing, gallery, and devtools usage through engine facades.
    - Current live GitHub state when this doc was written: mergeable, checks not
      fully green yet.
 
@@ -92,8 +92,8 @@ The current decision is that bug reports, feedback, and automatic runtime
 reports are all one Cloud V2 reporting primitive. "Incident" and "feedback" are
 not separate concepts in the new design.
 
-Host UI calls the toolkit report surface for manual user submission. The island
-toolkit owns the internal details:
+Host UI calls the engine report surface for manual user submission. The island
+engine owns the internal details:
 
 - collecting phone state, logs, and runtime diagnostic context
 - attaching artifacts, including glasses logs
@@ -117,11 +117,11 @@ based on internal state that should not be part of the app branding API.
 
 The current top branch replaces that with smaller surfaces:
 
-- `toolkit.glasses` for product/status read models and readiness snapshots
-- `toolkit.pairing` for pairing and reconnect flows
-- `toolkit.ota` for update check/progress/runtime OTA commands
-- `toolkit.gallery` for gallery network/media runtime plumbing
-- `toolkit.dev` for debug read models and toolkit-owned developer screens
+- `engine.glasses` for product/status read models and readiness snapshots
+- `engine.pairing` for pairing and reconnect flows
+- `engine.ota` for update check/progress/runtime OTA commands
+- `engine.gallery` for gallery network/media runtime plumbing
+- `engine.dev` for debug read models and engine-owned developer screens
 
 The goal is not to create a new public `GlassesStatus` type. The goal is to
 avoid needing one.
@@ -135,10 +135,10 @@ avoid needing one.
 - Do not wrap the entire Bluetooth SDK just to hide it. The Bluetooth SDK is a
   standalone lower-level product and should continue to expose low-level
   connection data to SDK consumers.
-- Toolkit facades should add MentraOS runtime semantics, not duplicate SDK data.
-- Debug/dev screens are allowed to live in and be exported by the toolkit. They
+- Engine facades should add MentraOS runtime semantics, not duplicate SDK data.
+- Debug/dev screens are allowed to live in and be exported by the engine. They
   are not OEM surfaces.
-- Cloud V1 remnants should not make the new toolkit API more complicated.
+- Cloud V1 remnants should not make the new engine API more complicated.
 - Cloud V1 device-state/app sync is not being ported just to preserve old
   miniapp behavior. Cloud V1 miniapps were removed from the home screen.
 - BLE command names on glasses can keep legacy wording like "core token" when
@@ -147,13 +147,13 @@ avoid needing one.
 
 ## What Changed In The Top Branch
 
-The top branch added toolkit facades and moved host callers onto them:
+The top branch added engine facades and moved host callers onto them:
 
-- `mobile/modules/island/src/facades/glasses.ts`
-- `mobile/modules/island/src/facades/pairing.ts`
-- `mobile/modules/island/src/facades/ota.ts`
-- `mobile/modules/island/src/facades/gallery.ts`
-- `mobile/modules/island/src/facades/dev.ts`
+- `mobile/modules/engine/src/facades/glasses.ts`
+- `mobile/modules/engine/src/facades/pairing.ts`
+- `mobile/modules/engine/src/facades/ota.ts`
+- `mobile/modules/engine/src/facades/gallery.ts`
+- `mobile/modules/engine/src/facades/dev.ts`
 
 It added runtime services/projections inside island:
 
@@ -165,7 +165,7 @@ It added runtime services/projections inside island:
 - `OtaUpdateCheckService`
 - `RestComms`
 
-It converted host UI and app services to consume toolkit snapshots/commands
+It converted host UI and app services to consume engine snapshots/commands
 instead of raw runtime state. The broad areas touched are:
 
 - home/status UI
@@ -181,7 +181,7 @@ It also added a guardrail:
 - `scripts/check-mobile-runtime-boundary.sh`
 - `mobile/boundary-allowlist.txt`
 
-That script is intended to catch new host imports of raw toolkit/internal
+That script is intended to catch new host imports of raw engine/internal
 runtime state. The allowlist is not a policy ideal; it is the current migration
 state.
 
@@ -194,7 +194,7 @@ These are worth preserving because they came out of review/conflict work:
   boundaries.
 - Stale host-side OTA availability projection was removed. The view should not
   keep pretending there is a separate `ota_update_available` source if the
-  toolkit is the owner of update availability.
+  engine is the owner of update availability.
 - The OTA disconnect guard behavior was preserved. We deferred a deeper
   `checkForOtaUpdate` behavior change because it would have changed view
   behavior beyond the review item.
@@ -235,8 +235,8 @@ Read these docs in order:
 
 Then inspect these code areas:
 
-- `mobile/modules/island/src/facades/`
-- `mobile/modules/island/src/services/`
+- `mobile/modules/engine/src/facades/`
+- `mobile/modules/engine/src/services/`
 - `mobile/src/services/core/`
 - `mobile/src/app/`
 - `mobile/src/components/`
@@ -282,12 +282,12 @@ touched:
 
 ## Suggested Follow-Up Work
 
-For Fable 5, the highest-value follow-up is not to invent new toolkit API. It is
+For Fable 5, the highest-value follow-up is not to invent new engine API. It is
 to keep reducing host access to runtime details while preserving the simple
 mental model:
 
 - host renders OEM UI
-- toolkit owns MentraOS runtime behavior
+- engine owns MentraOS runtime behavior
 - Bluetooth SDK remains the lower-level customer SDK
 - Cloud V2 owns new core web services
 
@@ -296,7 +296,7 @@ Specific next work:
 - babysit the three PRs bottom-up until all are mergeable and green
 - review remaining allowlisted imports and decide which are true host needs
 - continue Cloud V1 removal by feature, especially sign-in/sign-up SSO
-- do the same host/toolkit separation review for gallery behavior
+- do the same host/engine separation review for gallery behavior
 - avoid temporary Cloud V1 compatibility concerns when designing new Cloud V2
-  toolkit APIs
+  engine APIs
 

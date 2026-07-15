@@ -2,7 +2,7 @@
  * @fileoverview Cloud V2 user/system reporting API.
  *
  * A report is the single device-facing primitive for manual bug reports,
- * feature/general feedback, and automatic runtime reports. The toolkit supplies
+ * feature/general feedback, and automatic runtime reports. The engine supplies
  * diagnostic context and artifacts; host UI supplies only user-visible content.
  */
 

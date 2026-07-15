@@ -31,6 +31,8 @@ export interface CameraFovResult {
 
 export interface TakePhotoOptions {
   size?: "low" | "medium" | "high" | "max"
+  /** Capture at maximum source quality and optimize BLE delivery for readable text. */
+  mode?: "photo" | "text"
   compress?: "none" | "low" | "medium" | "high"
   sound?: boolean
   saveToGallery?: boolean
@@ -123,6 +125,7 @@ export class CameraModule {
     return this.session.sendRequest<PhotoTaken>({
       type: MiniappRequestType.PHOTO,
       size: options.size ?? "medium",
+      mode: options.mode ?? "photo",
       compress: options.compress ?? "none",
       sound: options.sound ?? true,
       saveToGallery: options.saveToGallery ?? false,

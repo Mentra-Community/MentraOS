@@ -37,10 +37,10 @@ import org.json.JSONObject;
  */
 public class BlePhotoUploadService {
     private static final String TAG = "BlePhotoUploadService";
-    // 100: the source already went through a lossy AVIF pass on the glasses, so
-    // this re-encode must not compound the loss. Phone CPU and upload bandwidth
-    // are cheap relative to what was paid to get the bytes over BLE.
-    private static final int JPEG_QUALITY = 100;
+    // AVIF sources already went through a lossy pass on the glasses; re-encode at
+    // high-but-not-max quality to avoid inflating upload size. JPEG fast-path
+    // payloads from text mode are uploaded as-is.
+    private static final int AVIF_TO_JPEG_QUALITY = 90;
 
     public interface UploadCallback {
         void onSuccess(String requestId, String responseBody);
@@ -84,6 +84,18 @@ public class BlePhotoUploadService {
      */
     @VisibleForTesting
     static byte[] convertToJpegPreservingExif(byte[] imageData) throws Exception {
+        long conversionStartMs = System.currentTimeMillis();
+        if (isJpeg(imageData)) {
+            Log.d(
+                    TAG,
+                    "BLE relay pass-through: input already JPEG ("
+                            + imageData.length
+                            + " bytes), skipping decode/re-encode in "
+                            + (System.currentTimeMillis() - conversionStartMs)
+                            + "ms");
+            return imageData;
+        }
+
         File inputFile = File.createTempFile("ble_photo_in_", guessExtension(imageData));
         File outputFile = File.createTempFile("ble_photo_out_", ".jpg");
         try {
@@ -95,19 +107,39 @@ public class BlePhotoUploadService {
 
             String imuJson = readImuJsonFromBleImage(imageData, inputFile.getAbsolutePath());
 
+            long decodeStartMs = System.currentTimeMillis();
             Bitmap bitmap = decodeImage(imageData);
+            long decodeDurationMs = System.currentTimeMillis() - decodeStartMs;
             if (bitmap == null) {
                 throw new Exception("Failed to decode image data");
             }
 
-            Log.d(TAG, "Decoded image to bitmap: " + bitmap.getWidth() + "x" + bitmap.getHeight());
+            Log.d(
+                    TAG,
+                    "AVIF decode complete: "
+                            + bitmap.getWidth()
+                            + "x"
+                            + bitmap.getHeight()
+                            + " in "
+                            + decodeDurationMs
+                            + "ms");
 
+            long encodeStartMs = System.currentTimeMillis();
             try (FileOutputStream fos = new FileOutputStream(outputFile)) {
-                bitmap.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, fos);
+                bitmap.compress(Bitmap.CompressFormat.JPEG, AVIF_TO_JPEG_QUALITY, fos);
             } finally {
                 bitmap.recycle();
             }
+            long encodeDurationMs = System.currentTimeMillis() - encodeStartMs;
+            Log.d(
+                    TAG,
+                    "AVIF->JPEG encode complete: quality="
+                            + AVIF_TO_JPEG_QUALITY
+                            + " in "
+                            + encodeDurationMs
+                            + "ms");
 
+            long metadataStartMs = System.currentTimeMillis();
             if (imuJson != null && !imuJson.isEmpty()) {
                 logImuData(imuJson);
                 // IMU EXIF is enrichment, not the payload: a write failure must not drop the
@@ -131,8 +163,27 @@ public class BlePhotoUploadService {
                                 + "). If rawHasExifMarker=true, EXIF may be present but unreadable via"
                                 + " ExifInterface on this container.");
             }
+            Log.d(
+                    TAG,
+                    "AVIF metadata handling complete in "
+                            + (System.currentTimeMillis() - metadataStartMs)
+                            + "ms");
 
-            return java.nio.file.Files.readAllBytes(outputFile.toPath());
+            byte[] jpegData = java.nio.file.Files.readAllBytes(outputFile.toPath());
+            Log.d(
+                    TAG,
+                    "Phone image conversion complete: AVIF "
+                            + imageData.length
+                            + " bytes -> JPEG "
+                            + jpegData.length
+                            + " bytes in "
+                            + (System.currentTimeMillis() - conversionStartMs)
+                            + "ms (decode="
+                            + decodeDurationMs
+                            + "ms, encode="
+                            + encodeDurationMs
+                            + "ms)");
+            return jpegData;
         } finally {
             if (!inputFile.delete()) {
                 inputFile.deleteOnExit();
@@ -252,6 +303,12 @@ public class BlePhotoUploadService {
         ExifInterface exif = new ExifInterface(jpegPath);
         exif.setAttribute(ExifInterface.TAG_USER_COMMENT, imuJson);
         exif.saveAttributes();
+    }
+
+    private static boolean isJpeg(byte[] imageData) {
+        return imageData.length >= 2
+                && (imageData[0] & 0xFF) == 0xFF
+                && (imageData[1] & 0xFF) == 0xD8;
     }
 
     private static String guessExtension(byte[] imageData) {

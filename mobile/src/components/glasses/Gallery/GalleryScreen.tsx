@@ -29,12 +29,12 @@ import {PhotoImage} from "@/components/glasses/Gallery/PhotoImage"
 import {ProgressRing} from "@/components/glasses/Gallery/ProgressRing"
 import {Header, Icon, Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
-import {useToolkitSnapshot} from "@/hooks/useToolkitSnapshot"
+import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
-import {MediaLibraryPermissions, toolkit} from "@mentra/island"
-import {localStorageService} from "@mentra/island/internal"
-import {SETTINGS, useSetting} from "@mentra/island"
+import {MediaLibraryPermissions, engine} from "@mentra/engine"
+import {localStorageService} from "@mentra/engine/internal"
+import {SETTINGS, useSetting} from "@mentra/engine"
 import {spacing, ThemedStyle} from "@/theme"
 import {PhotoInfo} from "@/types/asg"
 import Share from "react-native-share"
@@ -82,9 +82,9 @@ export function GalleryScreen() {
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
   const features = getModelCapabilities(defaultWearable)
   const glassesConnected =
-    useToolkitSnapshot(toolkit.glasses.status, (onChange) => toolkit.glasses.onStatus(onChange)).state === "connected"
+    useEngineSnapshot(engine.glasses.status, (onChange) => engine.glasses.onStatus(onChange)).state === "connected"
 
-  const galleryStatus = useToolkitSnapshot(toolkit.gallery.status, (onChange) => toolkit.gallery.onStatus(onChange))
+  const galleryStatus = useEngineSnapshot(engine.gallery.status, (onChange) => engine.gallery.onStatus(onChange))
   const syncState = galleryStatus.syncState
   const currentFile = galleryStatus.currentFile
   const currentFileProgress = galleryStatus.currentFileProgress
@@ -133,7 +133,7 @@ export function GalleryScreen() {
   // Render the island gallery sync's structured notices (it no longer shows its own
   // alerts). The host owns the alert text/buttons/i18n + the OS-settings deep-links.
   useEffect(() => {
-    return toolkit.gallery.onNotice((notice) => {
+    return engine.gallery.onNotice((notice) => {
       switch (notice.code) {
         case "glasses_disconnected":
           showAlert("Glasses Disconnected", "Please connect your glasses before syncing the gallery.", [{text: "OK"}])
@@ -597,7 +597,7 @@ export function GalleryScreen() {
     // Connectivity preconditions (BT adapter, Android location) live in the island
     // sync pre-flight now — it emits structured notices that the onNotice handler
     // above renders as alerts.
-    void toolkit.gallery.sync()
+    void engine.gallery.sync()
   }
 
   // Handle deletion of selected photos
@@ -643,7 +643,7 @@ export function GalleryScreen() {
 
             if (deletedPhotoNames.length > 0) {
               setDownloadedPhotos((prev) => prev.filter((photo) => !deletedPhotoNames.includes(photo.name)))
-              toolkit.gallery.removeFilesFromQueue(deletedPhotoNames)
+              engine.gallery.removeFilesFromQueue(deletedPhotoNames)
             }
 
             // Refresh gallery
@@ -795,7 +795,7 @@ export function GalleryScreen() {
     // Only query glasses if we have glasses info (meaning glasses are connected) AND glasses have gallery capability
     if (glassesConnected && features?.hasCamera) {
       console.log("[GalleryScreen] Glasses connected with gallery capability - querying gallery status")
-      void toolkit.gallery.refreshStatus()
+      void engine.gallery.refreshStatus()
     }
 
     // Note: Sync service is initialized globally in GallerySyncEffect
@@ -805,7 +805,7 @@ export function GalleryScreen() {
   useEffect(() => {
     if (!glassesConnected) {
       console.log("[GalleryScreen] Glasses disconnected - clearing gallery state")
-      toolkit.gallery.clearGlassesGalleryStatus()
+      engine.gallery.clearGlassesGalleryStatus()
     }
   }, [glassesConnected])
 
