@@ -366,7 +366,13 @@ function otaDisplayPercent(sdk: BluetoothSdkExampleModel) {
 }
 
 function isOtaInstalling(sdk: BluetoothSdkExampleModel) {
-  return sdk.otaStatus?.status === 'in_progress' && sdk.otaStatus.phase === 'install';
+  // Only the APK install is indeterminate (pm install restarts the glasses
+  // client); MTK and BES report flash progress with phase 'install'.
+  return (
+    sdk.otaStatus?.status === 'in_progress' &&
+    sdk.otaStatus.phase === 'install' &&
+    (sdk.otaStatus.step_type ?? 'apk') === 'apk'
+  );
 }
 
 function OtaCard({ sdk }: { sdk: BluetoothSdkExampleModel }) {
