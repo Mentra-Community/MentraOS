@@ -4726,16 +4726,6 @@ public class MediaCaptureService {
                                                 compressedSizeKb,
                                                 compressionTime));
 
-                                // 5. Save compressed data to temporary file with bleImgId as name
-                                // (no extension in filename due to 16-char limit)
-                                String compressedPath =
-                                        fileManager.getDefaultMediaDirectory() + "/" + bleImgId;
-                                logBlePhotoStep(requestId, "write_compressed_file_start");
-                                try (java.io.FileOutputStream fos =
-                                        new java.io.FileOutputStream(compressedPath)) {
-                                    fos.write(compressedData);
-                                }
-                                logBlePhotoStep(requestId, "write_compressed_file_done");
                                 if (AsgConstants.ENABLE_PHOTO_TIMING_LOGS) {
                                     bleImgIdToRequestId.put(bleImgId, requestId);
                                 }
@@ -4755,9 +4745,12 @@ public class MediaCaptureService {
                                                 + requestId
                                                 + ")");
 
-                                // 6. Send via BLE using K900BluetoothManager
+                                // 5. Hand the compressed payload straight to the BLE transport.
+                                // The K900 packet pump streams from an in-memory buffer (including
+                                // retries), so no transport artifact is written to disk. bleImgId
+                                // is the wire name (16-char protocol cap, no extension).
                                 sendCompressedPhotoViaBle(
-                                        compressedPath,
+                                        compressedData,
                                         bleImgId,
                                         requestId,
                                         compressThreadStart);
@@ -4792,13 +4785,13 @@ public class MediaCaptureService {
                 .start();
     }
 
-    /** Send compressed photo via BLE */
+    /** Send compressed photo via BLE, streaming the payload directly from memory. */
     private void sendCompressedPhotoViaBle(
-            String compressedPath, String bleImgId, String requestId, long transferStartTime) {
+            byte[] compressedData, String bleImgId, String requestId, long transferStartTime) {
         logBlePhotoStep(
                 requestId,
                 "ble_send_start",
-                "bleImgId=" + bleImgId + ", file=" + compressedPath);
+                "bleImgId=" + bleImgId + ", payload=" + compressedData.length + " bytes (in-memory)");
 
         // TESTING: Check for fake BLE transfer failure
         if (PhotoCaptureTestHooks.shouldFail("BLE_TRANSFER")) {
@@ -4846,7 +4839,7 @@ public class MediaCaptureService {
                         requestId,
                         "ble_ready_msg",
                         "notified phone that compressed photo is ready");
-                sendBlePhotoReadyMsg(compressedPath, bleImgId, requestId, transferStartTime);
+                sendBlePhotoReadyMsg(bleImgId, requestId, transferStartTime);
 
                 // Brief delay so the ble_photo_ready JSON drains ahead of file packets.
                 // Was 200ms; the firmware TX window now queues both in order (and the
@@ -4861,7 +4854,7 @@ public class MediaCaptureService {
 
                 // Then try to start the file transfer
                 logBlePhotoStep(requestId, "ble_file_transfer_start", "starting UART packet pump");
-                transferStarted = mServiceCallback.sendFileViaBluetooth(compressedPath);
+                transferStarted = mServiceCallback.sendFileViaBluetooth(compressedData, bleImgId);
 
                 if (transferStarted) {
                     logBlePhotoStep(
@@ -4885,31 +4878,17 @@ public class MediaCaptureService {
                         requestId, "BLE_TRANSFER_FAILED", "Service callback not available");
             }
         } finally {
-            // Critical: Clean up compressed file if transfer didn't start
+            // The payload only ever lived in RAM - nothing to clean up on disk. Just clear
+            // pipeline tracking if the transfer never started.
             if (!transferStarted) {
                 clearBlePhotoPipelineTracking(requestId, bleImgId);
-                try {
-                    File compressedFile = new File(compressedPath);
-                    if (compressedFile.exists()) {
-                        if (compressedFile.delete()) {
-                            Log.d(
-                                    TAG,
-                                    "🗑️ Deleted compressed file after BLE transfer failure: "
-                                            + compressedPath);
-                        } else {
-                            Log.w(TAG, "⚠️ Failed to delete compressed file: " + compressedPath);
-                        }
-                    }
-                } catch (Exception e) {
-                    Log.e(TAG, "Error deleting compressed file: " + compressedPath, e);
-                }
             }
         }
     }
 
     /** Request BLE file transfer through AsgClientService */
     private void sendBlePhotoReadyMsg(
-            String filePath, String bleImgId, String requestId, long transferStartTime) {
+            String bleImgId, String requestId, long transferStartTime) {
         try {
             // Calculate compression duration on glasses side
             long compressionDuration = System.currentTimeMillis() - transferStartTime;
