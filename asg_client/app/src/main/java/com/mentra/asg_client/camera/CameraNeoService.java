@@ -604,6 +604,37 @@ public class CameraNeoService extends LifecycleService {
             Integer iso,
             PhotoCaptureSettings captureSettings,
             PhotoCaptureCallback callback) {
+        enqueuePhotoRequest(
+                context,
+                filePath,
+                size,
+                enableLed,
+                isFromSdk,
+                exposureTimeNs,
+                iso,
+                captureSettings,
+                false,
+                callback);
+    }
+
+    /**
+     * @param deferDiskWrite when {@code true}, {@code onPhotoCaptured} fires as soon as the JPEG
+     *     bytes are in memory (published via {@link
+     *     com.mentra.asg_client.camera.model.CapturedPhotoStore}); the disk write runs in the
+     *     background. Callers MUST consume the store entry and gate file access on its persistence
+     *     future. See {@link QueuedPhotoRequest#deferDiskWrite}.
+     */
+    public static void enqueuePhotoRequest(
+            Context context,
+            String filePath,
+            String size,
+            boolean enableLed,
+            boolean isFromSdk,
+            Long exposureTimeNs,
+            Integer iso,
+            PhotoCaptureSettings captureSettings,
+            boolean deferDiskWrite,
+            PhotoCaptureCallback callback) {
         synchronized (SERVICE_LOCK) {
             // Create and queue the request immediately
             QueuedPhotoRequest request =
@@ -615,6 +646,7 @@ public class CameraNeoService extends LifecycleService {
                             exposureTimeNs,
                             iso,
                             captureSettings,
+                            deferDiskWrite,
                             callback);
             QueuedPhotoRequestQueue.getInstance().offer(request);
 

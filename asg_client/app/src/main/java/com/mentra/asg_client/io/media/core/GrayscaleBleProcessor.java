@@ -45,15 +45,31 @@ final class GrayscaleBleProcessor {
      */
     static Bitmap process(String jpegPath, @Nullable Rect roi, int targetWidth, int targetHeight)
             throws IOException {
+        return process(null, jpegPath, roi, targetWidth, targetHeight);
+    }
+
+    /** In-memory variant of {@link #process(String, Rect, int, int)} - no disk reads. */
+    static Bitmap process(byte[] jpegBytes, @Nullable Rect roi, int targetWidth, int targetHeight)
+            throws IOException {
+        return process(jpegBytes, "in-memory JPEG", roi, targetWidth, targetHeight);
+    }
+
+    private static Bitmap process(
+            @Nullable byte[] jpegBytes,
+            String jpegSource,
+            @Nullable Rect roi,
+            int targetWidth,
+            int targetHeight)
+            throws IOException {
         long start = System.currentTimeMillis();
 
         BitmapFactory.Options bounds = new BitmapFactory.Options();
         bounds.inJustDecodeBounds = true;
-        BitmapFactory.decodeFile(jpegPath, bounds);
+        decodeJpeg(jpegBytes, jpegSource, bounds);
         int srcWidth = bounds.outWidth;
         int srcHeight = bounds.outHeight;
         if (srcWidth <= 0 || srcHeight <= 0) {
-            throw new IOException("Failed to read JPEG bounds: " + jpegPath);
+            throw new IOException("Failed to read JPEG bounds: " + jpegSource);
         }
 
         Rect region =
@@ -68,9 +84,9 @@ final class GrayscaleBleProcessor {
         // Source JPEG has no alpha; RGB_565 halves decode memory vs ARGB_8888 (2B/px vs 4B/px)
         // and loses nothing we need since we reduce to luma immediately below.
         decodeOpts.inPreferredConfig = Bitmap.Config.RGB_565;
-        Bitmap decoded = BitmapFactory.decodeFile(jpegPath, decodeOpts);
+        Bitmap decoded = decodeJpeg(jpegBytes, jpegSource, decodeOpts);
         if (decoded == null) {
-            throw new IOException("Failed to decode JPEG: " + jpegPath);
+            throw new IOException("Failed to decode JPEG: " + jpegSource);
         }
 
         float scale = 1f / sampleSize;
@@ -116,6 +132,20 @@ final class GrayscaleBleProcessor {
                         + (System.currentTimeMillis() - start)
                         + "ms");
         return gray;
+    }
+
+    /**
+     * Decodes from the in-memory JPEG when present, else from the file path in {@code jpegSource}.
+     * Returns null (with populated bounds when {@code inJustDecodeBounds}) exactly like
+     * {@link BitmapFactory}.
+     */
+    @Nullable
+    private static Bitmap decodeJpeg(
+            @Nullable byte[] jpegBytes, String jpegSource, BitmapFactory.Options opts) {
+        if (jpegBytes != null) {
+            return BitmapFactory.decodeByteArray(jpegBytes, 0, jpegBytes.length, opts);
+        }
+        return BitmapFactory.decodeFile(jpegSource, opts);
     }
 
     private static Rect clampRect(Rect r, int width, int height) {
@@ -307,13 +337,24 @@ final class GrayscaleBleProcessor {
      * bitmap. Independent of {@link #process}, which performs its own separate decode.
      */
     static DetectionLuma extractDetectionLuma(String jpegPath, int analysisWidth) throws IOException {
+        return extractDetectionLuma(null, jpegPath, analysisWidth);
+    }
+
+    /** In-memory variant of {@link #extractDetectionLuma(String, int)} - no disk reads. */
+    static DetectionLuma extractDetectionLuma(byte[] jpegBytes, int analysisWidth)
+            throws IOException {
+        return extractDetectionLuma(jpegBytes, "in-memory JPEG", analysisWidth);
+    }
+
+    private static DetectionLuma extractDetectionLuma(
+            @Nullable byte[] jpegBytes, String jpegSource, int analysisWidth) throws IOException {
         BitmapFactory.Options bounds = new BitmapFactory.Options();
         bounds.inJustDecodeBounds = true;
-        BitmapFactory.decodeFile(jpegPath, bounds);
+        decodeJpeg(jpegBytes, jpegSource, bounds);
         int srcWidth = bounds.outWidth;
         int srcHeight = bounds.outHeight;
         if (srcWidth <= 0 || srcHeight <= 0) {
-            throw new IOException("Failed to read JPEG bounds: " + jpegPath);
+            throw new IOException("Failed to read JPEG bounds: " + jpegSource);
         }
 
         // computeSampleSize doubles the sample size while both dimensions stay >= target; passing
@@ -325,9 +366,9 @@ final class GrayscaleBleProcessor {
         BitmapFactory.Options decodeOpts = new BitmapFactory.Options();
         decodeOpts.inSampleSize = sampleSize;
         decodeOpts.inPreferredConfig = Bitmap.Config.RGB_565;
-        Bitmap decoded = BitmapFactory.decodeFile(jpegPath, decodeOpts);
+        Bitmap decoded = decodeJpeg(jpegBytes, jpegSource, decodeOpts);
         if (decoded == null) {
-            throw new IOException("Failed to decode JPEG: " + jpegPath);
+            throw new IOException("Failed to decode JPEG: " + jpegSource);
         }
 
         int width = decoded.getWidth();

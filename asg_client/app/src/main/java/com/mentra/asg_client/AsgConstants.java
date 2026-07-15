@@ -105,6 +105,14 @@ public class AsgConstants {
     /** In text mode, skip AVIF and send JPEG when the source capture is under this size. */
     public static final int TEXT_MODE_AVIF_SIZE_THRESHOLD_BYTES = 200 * 1024;
 
+    /**
+     * Max wait for the deferred background photo write ({@code CapturedPhoto.persistence}) when a
+     * BLE photo consumer needs the file on disk (gallery save, text-mode canonical crop, cleanup).
+     * Generous: the write runs concurrently with capture-to-transfer work and normally finishes
+     * long before anyone awaits it.
+     */
+    public static final long BLE_PHOTO_PERSISTENCE_AWAIT_TIMEOUT_MS = 10_000;
+
     // BLE size-tier downscale caps (long edge; aspect ratio preserved) and AVIF quality
     public static final int BLE_PHOTO_LOW_TARGET_PX = 800;
     public static final int BLE_PHOTO_LOW_AVIF_QUALITY = 50;

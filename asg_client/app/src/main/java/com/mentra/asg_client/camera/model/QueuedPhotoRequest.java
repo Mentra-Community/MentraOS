@@ -54,6 +54,15 @@ public final class QueuedPhotoRequest {
      */
     public final Integer iso;
 
+    /**
+     * When {@code true}, the capture callback fires as soon as the JPEG bytes are in memory (via
+     * {@link CapturedPhotoStore}), and the disk write (JPEG + EXIF + IMU sidecar) runs on a
+     * background thread whose result rides on {@link CapturedPhoto#persistence}. Callers that opt
+     * in MUST consume the bytes from the store and gate any file access on that future. {@code
+     * false} keeps the classic write-then-callback behavior.
+     */
+    public final boolean deferDiskWrite;
+
     /** Wall-clock time when this entry was enqueued; copied to {@link ActivePhotoCapture#startTimeMs}. */
     public final long enqueuedAtMs;
 
@@ -93,6 +102,28 @@ public final class QueuedPhotoRequest {
             Integer iso,
             PhotoCaptureSettings captureSettings,
             CameraNeoService.PhotoCaptureCallback callback) {
+        this(
+                filePath,
+                size,
+                enableLed,
+                isFromSdk,
+                exposureTimeNs,
+                iso,
+                captureSettings,
+                false,
+                callback);
+    }
+
+    public QueuedPhotoRequest(
+            String filePath,
+            String size,
+            boolean enableLed,
+            boolean isFromSdk,
+            Long exposureTimeNs,
+            Integer iso,
+            PhotoCaptureSettings captureSettings,
+            boolean deferDiskWrite,
+            CameraNeoService.PhotoCaptureCallback callback) {
         this.requestId = "photo_" + System.currentTimeMillis() + "_" + filePath.hashCode();
         this.filePath = filePath;
         this.size = size;
@@ -102,6 +133,7 @@ public final class QueuedPhotoRequest {
         this.iso = iso;
         this.captureSettings =
                 captureSettings != null ? captureSettings : PhotoCaptureSettings.EMPTY;
+        this.deferDiskWrite = deferDiskWrite;
         this.callback = callback;
         this.enqueuedAtMs = System.currentTimeMillis();
     }

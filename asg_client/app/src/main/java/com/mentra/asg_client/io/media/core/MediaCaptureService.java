@@ -12,6 +12,8 @@ import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.audio.AudioAssets;
 import com.mentra.asg_client.camera.CameraNeoService;
 import com.mentra.asg_client.camera.model.CameraOperationError;
+import com.mentra.asg_client.camera.model.CapturedPhoto;
+import com.mentra.asg_client.camera.model.CapturedPhotoStore;
 import com.mentra.asg_client.camera.model.PhotoCaptureSettings;
 import com.mentra.asg_client.camera.policy.PhotoMode;
 import com.mentra.asg_client.settings.AsgSettings;
@@ -335,11 +337,21 @@ public class MediaCaptureService {
 
     @Nullable
     private TextRegionDetection runTextRegionDetection(String originalPath) {
+        return runTextRegionDetection(null, originalPath);
+    }
+
+    /** Runs detection from the in-memory JPEG when available, else from {@code originalPath}. */
+    @Nullable
+    private TextRegionDetection runTextRegionDetection(
+            @Nullable byte[] jpegBytes, String originalPath) {
         try {
             TextDetectConfig detectConfig = buildTextDetectConfig();
             GrayscaleBleProcessor.DetectionLuma input =
-                    GrayscaleBleProcessor.extractDetectionLuma(
-                            originalPath, detectConfig.analysisWidth);
+                    jpegBytes != null
+                            ? GrayscaleBleProcessor.extractDetectionLuma(
+                                    jpegBytes, detectConfig.analysisWidth)
+                            : GrayscaleBleProcessor.extractDetectionLuma(
+                                    originalPath, detectConfig.analysisWidth);
             DetectionResult result =
                     TextRegionDetector.detect(
                             input.luma, input.width, input.height, detectConfig);
@@ -511,6 +523,31 @@ public class MediaCaptureService {
                     e);
         }
         return photoFilePath;
+    }
+
+    /**
+     * Writes the text-mode canonical cropped JPEG from an already-computed detection ROI (no
+     * re-detection) and promotes it over the original capture. Used by the RAM-first BLE path for
+     * gallery-saved photos, after the BLE handoff and after the background persistence write has
+     * landed the original on disk.
+     */
+    private void prepareTextModeCanonicalCrop(
+            String photoFilePath, String requestId, @Nullable android.graphics.Rect roi) {
+        if (Boolean.TRUE.equals(photoTextCropPrepared.get(requestId))) {
+            return;
+        }
+        try {
+            String croppedPath = writeCroppedBitmapToTempJpeg(photoFilePath, roi, requestId);
+            if (croppedPath != null) {
+                PhotoArtifactFiles.promoteToCanonical(photoFilePath, croppedPath);
+                photoTextCropPrepared.put(requestId, true);
+            }
+        } catch (java.io.IOException e) {
+            Log.w(
+                    TAG,
+                    "Text-mode canonical crop failed, keeping original frame: " + e.getMessage(),
+                    e);
+        }
     }
 
     // Track which photos should be saved to gallery
@@ -4269,6 +4306,10 @@ public class MediaCaptureService {
                     exposureTimeNs,
                     iso,
                     captureSettings,
+                    // RAM-first: the callback fires with the JPEG bytes in memory
+                    // (CapturedPhotoStore); the disk write runs in the background and only
+                    // gallery-save/cleanup consumers gate on it.
+                    true,
                     new CameraNeoService.PhotoCaptureCallback() {
                         @Override
                         public void onPhotoConfigured(JSONObject resolvedConfig) {
@@ -4313,7 +4354,11 @@ public class MediaCaptureService {
                                             + filePath);
 
                             Log.d(TAG, "Photo captured successfully for BLE transfer: " + filePath);
-                            prepareTextModePhotoPath(filePath, requestId);
+                            // The in-memory capture (JPEG bytes + IMU payload + persistence
+                            // future). The file may not exist yet, so nothing here may touch the
+                            // path directly - text-mode crop and canonical prep both happen in
+                            // the compression worker from these bytes.
+                            CapturedPhoto capturedPhoto = CapturedPhotoStore.take(filePath);
                             sendPhotoStatus(
                                     requestId,
                                     "captured",
@@ -4334,7 +4379,7 @@ public class MediaCaptureService {
 
                             // Compress and send via BLE
                             logBlePhotoStep(requestId, "start_compress_for_ble");
-                            compressAndSendViaBle(filePath, requestId, bleImgId);
+                            compressAndSendViaBle(filePath, requestId, bleImgId, false, capturedPhoto);
                         }
 
                         @Override
@@ -4423,13 +4468,24 @@ public class MediaCaptureService {
     }
 
     /** Compress photo and send via BLE */
-    private void compressAndSendViaBle(String originalPath, String requestId, String bleImgId) {
-        compressAndSendViaBle(originalPath, requestId, bleImgId, false);
-    }
-
-    /** Compress photo and send via BLE */
     private void compressAndSendViaBle(
             String originalPath, String requestId, String bleImgId, boolean isWifiFallback) {
+        compressAndSendViaBle(originalPath, requestId, bleImgId, isWifiFallback, null);
+    }
+
+    /**
+     * Compress photo and send via BLE.
+     *
+     * @param capturedPhoto in-memory capture (JPEG bytes + IMU payload + persistence future) for
+     *     RAM-first captures; {@code null} for file-based flows (WiFi-fallback reuse), which read
+     *     {@code originalPath} from disk as before
+     */
+    private void compressAndSendViaBle(
+            String originalPath,
+            String requestId,
+            String bleImgId,
+            boolean isWifiFallback,
+            @Nullable CapturedPhoto capturedPhoto) {
         new Thread(
                         () -> {
                             long compressThreadStart = System.currentTimeMillis();
@@ -4448,6 +4504,11 @@ public class MediaCaptureService {
                                         requestId,
                                         PhotoCaptureTestHooks.getErrorCode(),
                                         PhotoCaptureTestHooks.getErrorMessage());
+                                if (capturedPhoto != null) {
+                                    // Never let cleanup race the background write.
+                                    capturedPhoto.awaitPersistence(
+                                            AsgConstants.BLE_PHOTO_PERSISTENCE_AWAIT_TIMEOUT_MS);
+                                }
                                 cleanupPhotoArtifacts(
                                         requestId,
                                         originalPath,
@@ -4472,7 +4533,12 @@ public class MediaCaptureService {
                                 String requestedMode =
                                         PhotoMode.normalize(photoRequestedModes.get(requestId));
                                 boolean textModeRequested = PhotoMode.TEXT.equals(requestedMode);
-                                if (textModeRequested) {
+                                if (textModeRequested && capturedPhoto == null) {
+                                    // File-based flow (WiFi fallback): prepare the canonical
+                                    // cropped JPEG up front as before. RAM-first captures crop
+                                    // from the detection ROI in-memory below and only write the
+                                    // canonical crop for gallery-saved photos, after the BLE
+                                    // handoff.
                                     prepareTextModePhotoPath(originalPath, requestId);
                                 }
                                 boolean textCropAlreadyPrepared =
@@ -4549,7 +4615,11 @@ public class MediaCaptureService {
                                 if (shouldCrop && !textCropAlreadyPrepared) {
                                     logBlePhotoStep(requestId, "text_region_detection_start");
                                     TextRegionDetection detection =
-                                            runTextRegionDetection(originalPath);
+                                            runTextRegionDetection(
+                                                    capturedPhoto != null
+                                                            ? capturedPhoto.jpegBytes
+                                                            : null,
+                                                    originalPath);
                                     roi = detection.roi;
                                     textCropConfidence = detection.confidence;
                                     textCropReason = detection.reason;
@@ -4573,19 +4643,32 @@ public class MediaCaptureService {
                                                     + " - see GrayscaleBleProcessor log line"
                                                     + " below for original->crop->out dims");
                                     resized =
-                                            GrayscaleBleProcessor.process(
-                                                    originalPath,
-                                                    roi,
-                                                    bleParams.targetWidth,
-                                                    bleParams.targetHeight);
+                                            capturedPhoto != null
+                                                    ? GrayscaleBleProcessor.process(
+                                                            capturedPhoto.jpegBytes,
+                                                            roi,
+                                                            bleParams.targetWidth,
+                                                            bleParams.targetHeight)
+                                                    : GrayscaleBleProcessor.process(
+                                                            originalPath,
+                                                            roi,
+                                                            bleParams.targetWidth,
+                                                            bleParams.targetHeight);
                                 } else {
                                     // Legacy full-color path. When a text-region ROI was detected
                                     // above, crop to it (still in color) before the existing
                                     // scale+sharpen chain - this keeps color for viewing while
                                     // still spending the BLE byte budget on the text region.
+                                    // RAM-first captures decode straight from the in-memory JPEG.
                                     android.graphics.Bitmap original =
-                                            android.graphics.BitmapFactory.decodeFile(
-                                                    originalPath);
+                                            capturedPhoto != null
+                                                    ? android.graphics.BitmapFactory
+                                                            .decodeByteArray(
+                                                                    capturedPhoto.jpegBytes,
+                                                                    0,
+                                                                    capturedPhoto.jpegBytes.length)
+                                                    : android.graphics.BitmapFactory.decodeFile(
+                                                            originalPath);
                                     if (original == null) {
                                         throw new Exception("Failed to decode image file");
                                     }
@@ -4659,13 +4742,17 @@ public class MediaCaptureService {
                                 // payload is small. The canonical crop's file size is not a safe
                                 // proxy because the processed bitmap may be resized and sharpened.
                                 // Ordinary photo mode retains the established AVIF-only path.
+                                // RAM-first captures embed the in-memory IMU payload directly;
+                                // file-based flows re-read it from the source JPEG's EXIF.
                                 Log.d(
                                         TAG,
                                         "BLE encode: originalPath="
                                                 + originalPath
                                                 + " hasImuMetadata="
-                                                + PhotoExifMetadataWriter.hasImuMetadata(
-                                                        originalPath));
+                                                + (capturedPhoto != null
+                                                        ? (capturedPhoto.imuPayload != null)
+                                                        : PhotoExifMetadataWriter.hasImuMetadata(
+                                                                originalPath)));
                                 byte[] compressedData;
                                 String bleEncodedFormat;
                                 try {
@@ -4673,10 +4760,17 @@ public class MediaCaptureService {
                                     if (textModeRequested) {
                                         logBlePhotoStep(requestId, "jpeg_encode_start");
                                         jpegCandidate =
-                                                PhotoExifMetadataWriter.encodeJpegForBle(
-                                                        resized,
-                                                        AsgConstants.TEXT_MODE_BLE_JPEG_QUALITY,
-                                                        originalPath);
+                                                capturedPhoto != null
+                                                        ? PhotoExifMetadataWriter.encodeJpegForBle(
+                                                                resized,
+                                                                AsgConstants
+                                                                        .TEXT_MODE_BLE_JPEG_QUALITY,
+                                                                capturedPhoto.imuPayload)
+                                                        : PhotoExifMetadataWriter.encodeJpegForBle(
+                                                                resized,
+                                                                AsgConstants
+                                                                        .TEXT_MODE_BLE_JPEG_QUALITY,
+                                                                originalPath);
                                         logBlePhotoStep(requestId, "jpeg_encode_done");
                                     }
                                     if (BlePhotoEncodingPolicy.shouldUseJpeg(
@@ -4692,10 +4786,15 @@ public class MediaCaptureService {
                                     } else {
                                         logBlePhotoStep(requestId, "avif_encode_start");
                                         compressedData =
-                                                PhotoExifMetadataWriter.encodeAvifForBle(
-                                                        resized,
-                                                        bleParams.avifQuality,
-                                                        originalPath);
+                                                capturedPhoto != null
+                                                        ? PhotoExifMetadataWriter.encodeAvifForBle(
+                                                                resized,
+                                                                bleParams.avifQuality,
+                                                                capturedPhoto.imuPayload)
+                                                        : PhotoExifMetadataWriter.encodeAvifForBle(
+                                                                resized,
+                                                                bleParams.avifQuality,
+                                                                originalPath);
                                         bleEncodedFormat = "AVIF";
                                         logBlePhotoStep(
                                                 requestId,
@@ -4711,8 +4810,10 @@ public class MediaCaptureService {
                                 }
 
                                 long compressionTime = System.currentTimeMillis() - compressThreadStart;
-                                File originalFileForSize = new File(originalPath);
-                                long originalSizeBytes = originalFileForSize.length();
+                                long originalSizeBytes =
+                                        capturedPhoto != null
+                                                ? capturedPhoto.jpegBytes.length
+                                                : new File(originalPath).length();
                                 double originalSizeKb = originalSizeBytes / 1024.0;
                                 double compressedSizeKb = compressedData.length / 1024.0;
                                 logBlePhotoStep(
@@ -4755,6 +4856,19 @@ public class MediaCaptureService {
                                         requestId,
                                         compressThreadStart);
 
+                                // 6. Gallery-saved text-mode photos keep the cropped frame as
+                                // their canonical artifact. This runs after the BLE handoff -
+                                // overlapping the transfer - and must wait for the background
+                                // persistence write before touching the file.
+                                if (capturedPhoto != null
+                                        && textModeRequested
+                                        && Boolean.TRUE.equals(photoSaveFlags.get(requestId))
+                                        && capturedPhoto.awaitPersistence(
+                                                AsgConstants
+                                                        .BLE_PHOTO_PERSISTENCE_AWAIT_TIMEOUT_MS)) {
+                                    prepareTextModeCanonicalCrop(originalPath, requestId, roi);
+                                }
+
                             } catch (Exception e) {
                                 Log.e(TAG, "Error compressing photo for BLE", e);
                                 dumpTimings(requestId);
@@ -4762,10 +4876,21 @@ public class MediaCaptureService {
                                 sendPhotoErrorResponse(
                                         requestId, "BLE_TRANSFER_FAILED", e.getMessage());
                             } finally {
-                                cleanupPhotoArtifacts(
-                                        requestId,
-                                        originalPath,
-                                        Boolean.TRUE.equals(photoSaveFlags.get(requestId)));
+                                boolean savePhoto =
+                                        Boolean.TRUE.equals(photoSaveFlags.get(requestId));
+                                if (capturedPhoto != null) {
+                                    // Cleanup must never race the background write. For unsaved
+                                    // photos, cancelling first usually prevents the write from
+                                    // ever happening (zero disk touch); when the write already
+                                    // started - or the photo is being kept - wait for it to land
+                                    // before the keep/delete pass below.
+                                    if (!(!savePhoto && capturedPhoto.cancelPersistence())) {
+                                        capturedPhoto.awaitPersistence(
+                                                AsgConstants
+                                                        .BLE_PHOTO_PERSISTENCE_AWAIT_TIMEOUT_MS);
+                                    }
+                                }
+                                cleanupPhotoArtifacts(requestId, originalPath, savePhoto);
                                 // The BLE transport owns the file after a successful handoff. Keep
                                 // timing state alive until transfer_complete; every failed handoff
                                 // clears it inside sendCompressedPhotoViaBle().

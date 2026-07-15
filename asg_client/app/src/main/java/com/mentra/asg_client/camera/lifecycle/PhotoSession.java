@@ -17,6 +17,8 @@ import com.mentra.asg_client.camera.CameraSettings;
 import com.mentra.asg_client.camera.diagnostics.CameraDiagnosticsLog;
 import com.mentra.asg_client.camera.model.ActivePhotoCapture;
 import com.mentra.asg_client.camera.model.CameraOperationError;
+import com.mentra.asg_client.camera.model.CapturedPhoto;
+import com.mentra.asg_client.camera.model.CapturedPhotoStore;
 import com.mentra.asg_client.camera.model.PhotoCaptureSettings;
 import com.mentra.asg_client.camera.model.QueuedPhotoRequest;
 import com.mentra.asg_client.camera.model.QueuedPhotoRequestQueue;
@@ -37,6 +39,9 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.Objects;
 import java.util.concurrent.Executor;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import org.json.JSONObject;
 
 import org.json.JSONException;
@@ -98,6 +103,14 @@ public final class PhotoSession {
     private volatile Long mLastStillSensorTimestampNs;
 
     private final HdrBurstCapture hdrBurstCapture = new HdrBurstCapture();
+
+    /**
+     * Background writer for deferred-persistence captures ({@link ActivePhotoCapture#deferDiskWrite}).
+     * Single thread keeps writes ordered; daemon so it never blocks process exit. Created lazily —
+     * classic captures never spin it up.
+     */
+    @Nullable private volatile ExecutorService persistenceExecutor;
+
     private final Object captureMetadataLock = new Object();
     @Nullable
     private JSONObject pendingStillCaptureMetadata;
@@ -748,6 +761,14 @@ public final class PhotoSession {
                 return;
             }
 
+            ActivePhotoCapture capture = activeCapture;
+            if (capture != null && capture.deferDiskWrite) {
+                // RAM-first path: publish the bytes and fire the callback now; the disk write
+                // happens in the background and consumers gate on its future.
+                handleDeferredPersistenceCapture(bytes, targetPath);
+                return;
+            }
+
             boolean success = saveImageDataToFile(bytes, targetPath);
 
             if (success) {
@@ -791,6 +812,11 @@ public final class PhotoSession {
         if (payload == null || payload.optInt("sampleCount", 0) <= 0) {
             return;
         }
+        writeImuArtifacts(photoPath, payload, imu);
+    }
+
+    /** Writes IMU EXIF + sidecar for an already-assembled payload. Safe to run off-thread. */
+    private void writeImuArtifacts(String photoPath, JSONObject payload, ImuRecorder imu) {
         try {
             PhotoExifMetadataWriter.writeImuPayload(photoPath, payload);
         } catch (IOException e) {
@@ -800,6 +826,62 @@ public final class PhotoSession {
         if (imuPath != null) {
             Log.d(TAG, "IMU sidecar saved: " + imuPath);
         }
+    }
+
+    /**
+     * Deferred-persistence capture ({@link ActivePhotoCapture#deferDiskWrite}): stop the IMU
+     * recorder and assemble its payload in memory, publish the full in-memory capture through
+     * {@link CapturedPhotoStore}, fire {@code onPhotoCaptured} immediately, and run the JPEG +
+     * EXIF + IMU-sidecar write on the background persistence executor. The consumer (BLE photo
+     * pipeline) compresses from the published bytes and gates any file access on {@link
+     * CapturedPhoto#persistence}, so the write is fully off the transfer-critical path.
+     */
+    private void handleDeferredPersistenceCapture(byte[] bytes, String targetPath) {
+        ImuRecorder imu = hooks.imuRecorderOrNull();
+        JSONObject payload = imu != null ? imu.stopRecordingAndBuildPayload() : null;
+        if (payload != null && payload.optInt("sampleCount", 0) <= 0) {
+            payload = null;
+        }
+        final JSONObject imuPayload = payload;
+        Future<Boolean> persistence =
+                persistenceExecutor()
+                        .submit(
+                                () -> {
+                                    boolean ok = saveImageDataToFile(bytes, targetPath);
+                                    if (!ok) {
+                                        Log.e(
+                                                TAG,
+                                                "Deferred photo persistence failed: " + targetPath);
+                                        return false;
+                                    }
+                                    if (imuPayload != null && imu != null) {
+                                        writeImuArtifacts(targetPath, imuPayload, imu);
+                                    }
+                                    Log.d(TAG, "Deferred photo persisted: " + targetPath);
+                                    return true;
+                                });
+        CapturedPhotoStore.put(targetPath, new CapturedPhoto(bytes, imuPayload, persistence));
+        notifyPhotoCaptured(targetPath);
+    }
+
+    private ExecutorService persistenceExecutor() {
+        ExecutorService executor = persistenceExecutor;
+        if (executor == null) {
+            synchronized (this) {
+                executor = persistenceExecutor;
+                if (executor == null) {
+                    executor =
+                            Executors.newSingleThreadExecutor(
+                                    r -> {
+                                        Thread t = new Thread(r, "PhotoPersistence");
+                                        t.setDaemon(true);
+                                        return t;
+                                    });
+                    persistenceExecutor = executor;
+                }
+            }
+        }
+        return executor;
     }
 
     private boolean saveImageDataToFile(byte[] data, String filePath) {

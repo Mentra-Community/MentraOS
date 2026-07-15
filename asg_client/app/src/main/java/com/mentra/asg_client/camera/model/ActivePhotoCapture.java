@@ -31,6 +31,8 @@ public final class ActivePhotoCapture {
     public final PhotoCaptureSettings captureSettings;
     public final boolean ledEnabled;
     public final long startTimeMs;
+    /** Mirrors {@link QueuedPhotoRequest#deferDiskWrite}. */
+    public final boolean deferDiskWrite;
     public final CameraNeoService.PhotoCaptureCallback callback;
 
     public ActivePhotoCapture(
@@ -66,6 +68,30 @@ public final class ActivePhotoCapture {
             boolean ledEnabled,
             long startTimeMs,
             CameraNeoService.PhotoCaptureCallback callback) {
+        this(
+                filePath,
+                size,
+                isFromSdk,
+                exposureTimeNs,
+                iso,
+                captureSettings,
+                ledEnabled,
+                startTimeMs,
+                false,
+                callback);
+    }
+
+    public ActivePhotoCapture(
+            String filePath,
+            String size,
+            boolean isFromSdk,
+            Long exposureTimeNs,
+            Integer iso,
+            PhotoCaptureSettings captureSettings,
+            boolean ledEnabled,
+            long startTimeMs,
+            boolean deferDiskWrite,
+            CameraNeoService.PhotoCaptureCallback callback) {
         this.filePath = filePath;
         this.size = size;
         this.isFromSdk = isFromSdk;
@@ -75,6 +101,7 @@ public final class ActivePhotoCapture {
                 captureSettings != null ? captureSettings : PhotoCaptureSettings.EMPTY;
         this.ledEnabled = ledEnabled;
         this.startTimeMs = startTimeMs;
+        this.deferDiskWrite = deferDiskWrite;
         this.callback = callback;
     }
 
@@ -92,6 +119,7 @@ public final class ActivePhotoCapture {
                 queued.captureSettings,
                 queued.enableLed,
                 queued.enqueuedAtMs,
+                queued.deferDiskWrite,
                 queued.callback);
     }
 
@@ -107,6 +135,7 @@ public final class ActivePhotoCapture {
         return isFromSdk == that.isFromSdk
                 && ledEnabled == that.ledEnabled
                 && startTimeMs == that.startTimeMs
+                && deferDiskWrite == that.deferDiskWrite
                 && Objects.equals(filePath, that.filePath)
                 && Objects.equals(size, that.size)
                 && Objects.equals(exposureTimeNs, that.exposureTimeNs)
@@ -116,6 +145,15 @@ public final class ActivePhotoCapture {
 
     @Override
     public int hashCode() {
-        return Objects.hash(filePath, size, isFromSdk, exposureTimeNs, iso, ledEnabled, startTimeMs, callback);
+        return Objects.hash(
+                filePath,
+                size,
+                isFromSdk,
+                exposureTimeNs,
+                iso,
+                ledEnabled,
+                startTimeMs,
+                deferDiskWrite,
+                callback);
     }
 }
