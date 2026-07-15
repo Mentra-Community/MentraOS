@@ -4,7 +4,7 @@ import mantle from "@/services/MantleManager"
 import {useCoreStore} from "@mentra/engine/internal"
 import {useDisplayStore} from "@mentra/engine/internal"
 import {isGlassesConnected, useGlassesStore} from "../../modules/engine/src/stores/glasses"
-import {SETTINGS} from "@mentra/engine"
+import {engine, SETTINGS} from "@mentra/engine"
 import {useSettingsStore} from "@mentra/engine/internal"
 import {crustModuleMock, emitCrustEvent, resetCrustModuleMock} from "@/test-utils/mockCrustModule"
 import {
@@ -29,6 +29,13 @@ jest.mock("@mentra/crust", () => {
     default: crustModuleMock,
   }
 })
+
+const mockShowAlert = jest.fn()
+jest.mock("@/utils/AlertUtils", () => ({
+  __esModule: true,
+  default: (...args: unknown[]) => mockShowAlert(...args),
+  showAlert: (...args: unknown[]) => mockShowAlert(...args),
+}))
 
 // gallerySyncService moved into @mentra/engine; the global @mentra/engine jest mock
 // already supplies it (gallerySyncService.initialize), so no local mock is needed.
@@ -83,6 +90,8 @@ function resetMantleTestState() {
   useDisplayStore.setState({view: "main"})
 }
 
+let requestWifiSetup: (reason?: string) => Promise<void>
+
 describe("MantleManager", () => {
   beforeAll(async () => {
     jest.useFakeTimers()
@@ -95,6 +104,7 @@ describe("MantleManager", () => {
       settings: {...state.settings, contextual_dashboard: true, auth_email: "from-server@example.com"},
     }))
     await mantle.init()
+    requestWifiSetup = (engine.configure as jest.Mock).mock.calls[0][0].ui.requestWifiSetup
   })
 
   afterEach(() => {
@@ -339,5 +349,23 @@ describe("MantleManager", () => {
     })
     expect(useGlassesStore.getState().otaUpdateAvailable).toBeNull()
     expect(useGlassesStore.getState().otaInProgress).toBe(false)
+  })
+
+  it("prompts before opening Wi-Fi setup and backgrounds the requesting miniapp", async () => {
+    const cancelRequest = requestWifiSetup("Streaming needs Wi-Fi")
+    const [, message, cancelButtons] = mockShowAlert.mock.calls.at(-1)!
+
+    expect(message).toBe("Streaming needs Wi-Fi")
+    expect(engine.miniapps.clearForeground).not.toHaveBeenCalled()
+    cancelButtons[0].onPress()
+    await cancelRequest
+    expect(engine.miniapps.clearForeground).not.toHaveBeenCalled()
+
+    const confirmRequest = requestWifiSetup("Streaming needs Wi-Fi")
+    const confirmButtons = mockShowAlert.mock.calls.at(-1)![2]
+    confirmButtons[1].onPress()
+    await confirmRequest
+
+    expect(engine.miniapps.clearForeground).toHaveBeenCalledTimes(1)
   })
 })

@@ -1415,9 +1415,15 @@ public final class MentraBluetoothSDK {
             case .streaming:
                 pendingStreamStarts.removeValue(forKey: streamId)
                 pending.resolve(event)
-            case .error, .reconnectFailed, .stopped:
+            case .reconnectFailed, .stopped:
                 pendingStreamStarts.removeValue(forKey: streamId)
                 pending.reject(streamStatusError(event, code: "stream_start_failed"))
+            case .error:
+                // The glasses publisher automatically retries transient transport
+                // errors. Keep the start pending so a subsequent `streaming`
+                // status can resolve it; `reconnectFailed` or the request timeout
+                // still terminates a publisher that cannot recover.
+                break
             default:
                 break
             }

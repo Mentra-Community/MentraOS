@@ -48,7 +48,7 @@ function normalizePhotoSize(value: unknown): PhotoSize {
 export interface PhotoOpts {
   /** Legacy cloud size names are normalized before the native take_photo command. */
   size?: "low" | "medium" | "high" | "max" | "small" | "large" | "full"
-    mode?: "photo" | "text"
+  mode?: "photo" | "text"
   compress?: "none" | "low" | "medium" | "high"
   sound?: boolean
   saveToGallery?: boolean
@@ -87,9 +87,16 @@ interface ActiveRequest {
   reject: (err: Error) => void
 }
 
-/** How long to wait for the glasses to acknowledge a capture before failing
- *  fast with CAPTURE_TIMEOUT, instead of hanging on the cloud push timeout. */
-const CAPTURE_TIMEOUT_MS = 15_000
+/**
+ * Last-resort ceiling for the complete capture + encode + transfer + upload
+ * pipeline. This must exceed the managed-photo service's 30s ready-push
+ * timeout so the cloud can return its more specific failure first.
+ *
+ * Text mode commonly spends several seconds detecting/cropping the region and
+ * can take another 10s+ to transfer over BLE. A 15s ceiling incorrectly
+ * rejected successful captures while their upload was still in progress.
+ */
+export const CAPTURE_PIPELINE_TIMEOUT_MS = 45_000
 
 let bleRequestCounter = 0
 
@@ -137,8 +144,14 @@ export class PhonePhotoCoordinator {
     let requestId: string
     let uploadUrl: string
     let readUrl: string
+    const flowStarted = performance.now()
     try {
+      const presignStarted = performance.now()
       const r = await cloudClientService.startManagedPhoto({size: opts.size ?? "medium"})
+      const presignMs = Math.round(performance.now() - presignStarted)
+      if (typeof __DEV__ !== "undefined" && __DEV__) {
+        console.debug(`[PhonePhotoCoordinator] presign ${presignMs}ms size=${opts.size ?? "medium"}`)
+      }
       requestId = r.requestId
       uploadUrl = r.uploadUrl
       readUrl = r.readUrl
@@ -167,11 +180,9 @@ export class PhonePhotoCoordinator {
       this.activeRequests.set(requestId, {packageName, abort, resolve, reject})
     })
 
-    // Capture watchdog: if the glasses never acknowledge the command (no camera
-    // sound, no capture, no upload — e.g. the command was dropped, or WiFi
-    // upload to an unreachable host stalled), fail FAST and specifically rather
-    // than waiting on the cloud push to time out. A dev should see
-    // "CAPTURE_TIMEOUT stage:capture via:ble" within seconds, not a silent hang.
+    // Last-resort watchdog for a wedged pipeline. The managed-photo ready push
+    // normally resolves or rejects first; this only prevents an indefinite hang
+    // if both the native terminal response and cloud push disappear.
     const captureWatchdog = setTimeout(() => {
       const e = this.activeRequests.get(requestId)
       if (!e) return
@@ -179,12 +190,12 @@ export class PhonePhotoCoordinator {
       e.reject(
         new PhotoError(
           "CAPTURE_TIMEOUT",
-          "Glasses never acknowledged the capture (no photo_response). The take_photo command may not have reached the device, or the upload target was unreachable.",
+          "Photo capture did not complete. The take_photo command, media processing, transfer, or upload may have stalled.",
           "capture",
           isLoopbackUpload ? "ble" : "wifi",
         ),
       )
-    }, CAPTURE_TIMEOUT_MS)
+    }, CAPTURE_PIPELINE_TIMEOUT_MS)
     // Clear the watchdog on BOTH arms. Not `.finally()`: that would mint a new
     // promise that re-rejects unobserved whenever the photo fails (the caller
     // only awaits `outcome` itself), i.e. an unhandled rejection per failure.
@@ -237,6 +248,11 @@ export class PhonePhotoCoordinator {
 
     try {
       const result = await outcome
+      if (typeof __DEV__ !== "undefined" && __DEV__) {
+        console.debug(
+          `[PhonePhotoCoordinator] takePhoto complete ${Math.round(performance.now() - flowStarted)}ms requestId=${requestId}`,
+        )
+      }
       return {
         photoUrl: result.photoUrl,
         mimeType: result.mimeType,

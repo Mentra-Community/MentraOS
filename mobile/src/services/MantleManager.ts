@@ -12,7 +12,18 @@ import {CHINA_HIDDEN_APPS, isChinaBuild} from "@/constants/miniapps"
 import {migrate} from "@/services/Migrations"
 import {cloudConfigValues} from "@/services/cloudClient"
 import {engine, BgTimer} from "@mentra/engine"
-import {appRegistry, displayProcessor, gallerySyncService, phoneLocationService, localDisplayManager, localMiniappRuntime, miniappLauncher, localSttFallbackCoordinator, micStateCoordinator, offlineSpeechModelService} from "@mentra/engine/internal"
+import {
+  appRegistry,
+  displayProcessor,
+  gallerySyncService,
+  phoneLocationService,
+  localDisplayManager,
+  localMiniappRuntime,
+  miniappLauncher,
+  localSttFallbackCoordinator,
+  micStateCoordinator,
+  offlineSpeechModelService,
+} from "@mentra/engine/internal"
 import {SETTINGS} from "@mentra/engine"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 import {useDebugStore} from "@/stores/debug"
@@ -20,6 +31,7 @@ import {checkFeaturePermissions, PermissionFeatures} from "@/utils/PermissionsUt
 import {attemptReconnectToDefaultWearable} from "@/effects/Reconnect"
 import {ensureDevModeForUser} from "@/utils/dev/devModeAllowlist"
 import mentraAuth from "@/utils/auth/authClient"
+import {showAlert} from "@/utils/AlertUtils"
 import {Buffer} from "@craftzdog/react-native-buffer"
 
 /**
@@ -139,9 +151,23 @@ class MantleManager {
       // Named host-UI seams: island dispatches the miniapp request, the host
       // owns the screen (branding/navigation).
       ui: {
-        requestWifiSetup: (reason?: string) => {
-          router.push({pathname: "/wifi/scan" as any, params: (reason ? {reason} : {}) as any})
-        },
+        requestWifiSetup: (reason?: string) =>
+          new Promise<void>((resolve) => {
+            showAlert("Connect to Wi-Fi", reason || "This miniapp needs your glasses to be connected to Wi-Fi.", [
+              {text: "Cancel", style: "cancel", onPress: resolve},
+              {
+                text: "OK",
+                onPress: () => {
+                  // The Compositor is an app-wide overlay, so navigating
+                  // without clearing foreground leaves the Wi-Fi route
+                  // rendered underneath the requesting miniapp.
+                  engine.miniapps.clearForeground()
+                  router.push({pathname: "/wifi/scan" as any})
+                  resolve()
+                },
+              },
+            ])
+          }),
       },
     })
     await engine.start()
@@ -214,7 +240,6 @@ class MantleManager {
 
     localMiniappRuntime.cleanup()
     micStateCoordinator.cleanup()
-
 
     // Allow a later init() to rebuild everything this cleanup tore down — the
     // logout→login-in-the-same-process path and the dev backend-URL
@@ -631,9 +656,11 @@ class MantleManager {
           endDate: Math.floor(end.getTime() / 1000),
         }
       })
-      void BluetoothSdk.setCalendarEvents(shapedEvents).catch((error) => {
+      try {
+        await BluetoothSdk.setCalendarEvents(shapedEvents)
+      } catch (error) {
         console.warn("MANTLE: Failed to sync calendar events to glasses", error)
-      })
+      }
 
       // Direct forward to local miniapps. Emit one event per calendar entry
       // so miniapps can treat them as a stream rather than a digest.

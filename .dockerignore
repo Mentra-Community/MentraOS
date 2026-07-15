@@ -3,6 +3,36 @@
 !bun.lock
 !package.json
 
+# Legacy Cloud V1 (build context = cloud/): porter reads THIS file from its
+# working directory instead of <context>/.dockerignore (plain docker reads the
+# context's own file), so the V1 workspace layout must be allowlisted here
+# with context-relative paths. These dirs do not exist at repo root, so the
+# entries are no-ops for repo-root build contexts like cloud-v2.
+!packages/
+!packages/**
+!websites/
+!websites/**
+!tools/
+!tools/**
+!infra/
+!infra/**
+!docker/
+!docker/**
+!tsconfig.json
+!tsconfig.base.json
+!start.sh
+!.npmrc
+!.bun-version
+packages/**/node_modules
+websites/**/node_modules
+tools/**/node_modules
+packages/**/dist
+websites/**/dist
+packages/*/bun.lock
+packages/*/*/bun.lock
+tools/*/bun.lock
+websites/*/bun.lock
+
 !cloud-v2/
 !cloud-v2/**
 cloud-v2/**/node_modules
