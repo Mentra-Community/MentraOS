@@ -19,7 +19,10 @@
 !docker/
 !docker/**
 !tsconfig.json
-!bunfig.toml
+!tsconfig.base.json
+!start.sh
+!.npmrc
+!.bun-version
 packages/**/node_modules
 websites/**/node_modules
 tools/**/node_modules
