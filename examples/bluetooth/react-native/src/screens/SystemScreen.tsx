@@ -40,6 +40,7 @@ export function SystemScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
   const inputChips = recentInputChips(sdk.events);
   const [pendingWifi, setPendingWifi] = useState<{ssid: string; requiresPassword: boolean} | null>(null);
   const [pendingWifiPassword, setPendingWifiPassword] = useState('');
+  const [showWifiPassword, setShowWifiPassword] = useState(false);
   const [wifiExpanded, setWifiExpanded] = useState(false);
   const didAutoScanWifi = useRef(false);
   const visibleNetworks = wifiExpanded ? networks : networks.slice(0, WIFI_COLLAPSED_NETWORK_LIMIT);
@@ -110,6 +111,7 @@ export function SystemScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
             if (network.requiresPassword) {
               setPendingWifi({ssid: network.ssid, requiresPassword: true});
               setPendingWifiPassword('');
+              setShowWifiPassword(false);
             } else {
               void sdk.sendWifiCredentials(network.ssid, '', false);
             }
@@ -332,17 +334,39 @@ export function SystemScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>Join Wi-Fi</Text>
             <Text style={styles.modalSub}>{pendingWifi?.ssid}</Text>
-            <TextInput
-              autoCapitalize="none"
-              autoCorrect={false}
-              onChangeText={setPendingWifiPassword}
-              placeholder="Password"
-              placeholderTextColor={colors.muted}
-              returnKeyType="done"
-              secureTextEntry
-              style={styles.modalInput}
-              value={pendingWifiPassword}
-            />
+            <View style={styles.modalInputRow}>
+              <TextInput
+                autoCapitalize="none"
+                autoCorrect={false}
+                onChangeText={setPendingWifiPassword}
+                placeholder="Password"
+                placeholderTextColor={colors.muted}
+                returnKeyType="done"
+                secureTextEntry={!showWifiPassword}
+                style={styles.modalInput}
+                value={pendingWifiPassword}
+              />
+              <Pressable
+                accessibilityLabel={showWifiPassword ? 'Hide password' : 'Show password'}
+                accessibilityRole="button"
+                hitSlop={10}
+                onPress={() => setShowWifiPassword((visible) => !visible)}
+                style={styles.modalInputEye}>
+                <Svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke={colors.muted} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                  {showWifiPassword ? (
+                    <>
+                      <Path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
+                      <Line x1={1} y1={1} x2={23} y2={23} />
+                    </>
+                  ) : (
+                    <>
+                      <Path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8Z" />
+                      <Circle cx={12} cy={12} r={3} />
+                    </>
+                  )}
+                </Svg>
+              </Pressable>
+            </View>
             <View style={styles.modalActions}>
               <Pressable style={styles.modalCancel} onPress={() => setPendingWifi(null)}>
                 <Text style={styles.modalCancelText}>Cancel</Text>
@@ -699,7 +723,9 @@ const styles = StyleSheet.create({
   modalCard: { width: '100%', borderRadius: 24, backgroundColor: colors.bg, padding: 20, gap: 12 },
   modalTitle: { color: colors.ink, fontSize: 22, fontWeight: '800' },
   modalSub: { color: colors.muted, fontSize: 15, fontWeight: '600' },
-  modalInput: { color: colors.ink, fontSize: 16, fontWeight: '500', backgroundColor: 'rgba(15,42,29,0.04)', borderRadius: 14, paddingHorizontal: 14, paddingVertical: 14 },
+  modalInputRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(15,42,29,0.04)', borderRadius: 14 },
+  modalInput: { flex: 1, color: colors.ink, fontSize: 16, fontWeight: '500', paddingHorizontal: 14, paddingVertical: 14 },
+  modalInputEye: { alignItems: 'center', justifyContent: 'center', minWidth: 44, minHeight: 44, paddingRight: 4 },
   modalActions: { flexDirection: 'row', gap: 10, marginTop: 4 },
   modalCancel: { flex: 1, alignItems: 'center', backgroundColor: 'rgba(15,42,29,0.06)', borderRadius: 16, paddingVertical: 14 },
   modalCancelText: { color: colors.ink, fontSize: 15, fontWeight: '700' },
