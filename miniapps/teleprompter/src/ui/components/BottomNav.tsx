@@ -3,7 +3,7 @@ import {ScrollText, Settings as SettingsGlyph} from "lucide-react"
 import {useColorScheme} from "@mentra/miniapp/ui"
 
 import type {HoldHandlers} from "../hooks/useDeveloperMode"
-import {ACCENT, ACCENT_FG} from "../lib/theme"
+import {ACCENT, ACCENT_FG, ACCENT_TEXT} from "../lib/theme"
 
 export type Tab = "script" | "settings"
 
@@ -87,7 +87,7 @@ function NavButton({
       </span>
       <span
         className="text-[11px] font-medium transition-colors"
-        style={{color: active ? ACCENT : inactive, opacity: active ? 1 : 0.7}}>
+        style={{color: active ? ACCENT_TEXT : inactive, opacity: active ? 1 : 0.7}}>
         {label}
       </span>
     </button>
