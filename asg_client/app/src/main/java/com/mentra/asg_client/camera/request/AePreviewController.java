@@ -22,7 +22,8 @@ public final class AePreviewController {
             CameraCaptureSession.CaptureCallback callback,
             Handler handler,
             CameraSettings cameraSettings,
-            AeStateMachine aeStateMachine) {
+            AeStateMachine aeStateMachine,
+            boolean zslMfnr) {
         if (session == null || !hasCameraDevice || previewBuilder == null) {
             Log.w(TAG, "Cannot lock AE: session/camera is null");
             return false;
@@ -33,7 +34,7 @@ public final class AePreviewController {
             previewBuilder.set(CaptureRequest.CONTROL_AE_LOCK, true);
 
             if (cameraSettings != null && cameraSettings.isZslSupported()) {
-                cameraSettings.configurePreviewBuilder(previewBuilder);
+                cameraSettings.configurePreviewBuilder(previewBuilder, zslMfnr);
             }
 
             session.setRepeatingRequest(previewBuilder.build(), callback, handler);
@@ -59,7 +60,8 @@ public final class AePreviewController {
             Handler handler,
             CameraSettings cameraSettings,
             AeStateMachine aeStateMachine,
-            boolean clearAeWaitFlags) {
+            boolean clearAeWaitFlags,
+            boolean zslMfnr) {
         try {
             if (session == null || !hasCameraDevice || previewBuilder == null) {
                 Log.w(TAG, "Cannot restore preview: session/camera is null");
@@ -75,7 +77,7 @@ public final class AePreviewController {
             }
 
             if (cameraSettings != null && cameraSettings.isZslSupported()) {
-                cameraSettings.configurePreviewBuilder(previewBuilder);
+                cameraSettings.configurePreviewBuilder(previewBuilder, zslMfnr);
             }
 
             session.setRepeatingRequest(previewBuilder.build(), callback, handler);
