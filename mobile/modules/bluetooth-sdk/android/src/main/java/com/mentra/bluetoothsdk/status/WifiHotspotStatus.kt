@@ -68,13 +68,25 @@ sealed interface WifiStatus {
 
 data class WifiStatusEvent(
     val status: WifiStatus,
+    /**
+     * Glasses-reported provisioning failure reason (e.g. "connect_timeout",
+     * "connected_to_other_network") when this status is the verdict of a failed
+     * connect attempt; null for routine link-state updates. Sent by ASG client
+     * builds that include the WiFi error surfacing (v40+); older glasses never
+     * set it.
+     */
+    val error: String? = null,
 ) {
-    internal constructor(values: Map<String, Any>) : this(WifiStatus.fromMap(values) ?: WifiStatus.Disconnected)
+    internal constructor(values: Map<String, Any>) : this(
+        WifiStatus.fromMap(values) ?: WifiStatus.Disconnected,
+        stringValue(values, "error")?.takeIf { it.isNotEmpty() },
+    )
     internal constructor(connected: Boolean, ssid: String?, localIp: String?) : this(
         WifiStatus.fromStoreFields(connected, ssid, localIp) ?: WifiStatus.Disconnected
     )
 
-    val values: Map<String, Any> get() = status.toEventMap()
+    val values: Map<String, Any>
+        get() = status.toEventMap() + (error?.let { mapOf("error" to it) } ?: emptyMap())
 }
 
 sealed interface HotspotStatus {

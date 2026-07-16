@@ -1617,6 +1617,24 @@ public final class MentraBluetoothSDK {
 
     private func handleWifiStatusForRequests(_ event: WifiStatusEvent) {
         guard let request = pendingWifiStatus else { return }
+        // A wifi_status carrying the explicit error field is the glasses' failure
+        // verdict for the in-flight connect: reject now instead of running out the
+        // request timeout. Only the error field counts as failure — the glasses'
+        // connect sequence emits a debounced bare connected=false ~1-2s after
+        // credentials while association is still in progress, and rejecting on that
+        // would kill every connect attempt early.
+        if request.operation == .connect, let error = event.error {
+            if pendingWifiStatus === request {
+                pendingWifiStatus = nil
+            }
+            request.pending.reject(
+                BluetoothSdkError(
+                    code: error,
+                    message: "Glasses failed to join \"\(request.ssid)\": \(error)"
+                )
+            )
+            return
+        }
         guard wifiStatusMatches(event.status, request: request) else { return }
         if pendingWifiStatus === request {
             pendingWifiStatus = nil

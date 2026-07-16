@@ -520,11 +520,24 @@ public class Bridge private constructor() {
             sendTypedMessage("glasses_serial_number", body as Map<String, Any>)
         }
 
-        /** Send WiFi status change */
+        /**
+         * Send WiFi status change. [error] is the glasses' provisioning failure reason
+         * (e.g. "connect_timeout", "connected_to_other_network") when this status is the
+         * verdict of a failed connect attempt; null for routine link-state updates.
+         */
         @JvmStatic
-        fun sendWifiStatusChange(connected: Boolean, ssid: String?, localIp: String?) {
+        @JvmOverloads
+        fun sendWifiStatusChange(
+                connected: Boolean,
+                ssid: String?,
+                localIp: String?,
+                error: String? = null
+        ) {
             val status = WifiStatus.fromStoreFields(connected, ssid, localIp) ?: return
-            sendTypedMessage("wifi_status_change", status.toMap())
+            val payload =
+                    if (error != null) status.toMap() + mapOf("error" to error)
+                    else status.toMap()
+            sendTypedMessage("wifi_status_change", payload)
         }
 
         /** Send WiFi scan results */

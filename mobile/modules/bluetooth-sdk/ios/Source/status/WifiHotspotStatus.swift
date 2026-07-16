@@ -133,20 +133,35 @@ public enum WifiStatus: CustomStringConvertible, Equatable {
 public struct WifiStatusEvent: CustomStringConvertible {
     public let status: WifiStatus
 
-    public init(status: WifiStatus) {
+    /// Glasses-reported provisioning failure reason (e.g. "connect_timeout",
+    /// "connected_to_other_network") when this status is the verdict of a failed
+    /// connect attempt; nil for routine link-state updates. Sent by ASG client
+    /// builds that include the WiFi error surfacing (v40+); older glasses never
+    /// set it.
+    public let error: String?
+
+    public init(status: WifiStatus, error: String? = nil) {
         self.status = status
+        self.error = error
     }
 
     init(connected: Bool, ssid: String?, localIp: String?) {
         status = WifiStatus.fromStoreFields(connected: connected, ssid: ssid, localIp: localIp) ?? .disconnected
+        error = nil
     }
 
     init(values: [String: Any]) {
         status = WifiStatus(values: values) ?? .disconnected
+        let rawError = stringValue(values, "error")
+        error = rawError?.isEmpty == false ? rawError : nil
     }
 
     public var values: [String: Any] {
-        status.values.merging(["type": "wifi_status_change"]) { _, new in new }
+        var body = status.values.merging(["type": "wifi_status_change"]) { _, new in new }
+        if let error {
+            body["error"] = error
+        }
+        return body
     }
 
     public var description: String {

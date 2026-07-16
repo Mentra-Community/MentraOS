@@ -106,7 +106,16 @@ export type LogEvent = {
   message: string
 }
 
-export type WifiStatus = {state: "disconnected"} | {state: "connected"; ssid: string; localIp?: string}
+/**
+ * `error` is the glasses-reported provisioning failure reason (e.g. "connect_timeout",
+ * "connected_to_other_network") when the status is the verdict of a failed connect
+ * attempt; absent on routine link-state updates. Requires ASG client v40+ — older
+ * glasses never send it. Note "connected_to_other_network" arrives on a *connected*
+ * status (joined a different SSID than requested).
+ */
+export type WifiStatus =
+  | {state: "disconnected"; error?: string}
+  | {state: "connected"; ssid: string; localIp?: string; error?: string}
 
 export type ConnectedWifiStatus = Extract<WifiStatus, {state: "connected"}>
 
