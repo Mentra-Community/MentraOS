@@ -40,8 +40,7 @@ const SCAN_MODE_PRESET = {
   ispDigitalGain: 0,
   ispAnalogGain: "low" as const,
   edgeEnhancement: false,
-  mfnr: false,
-  zsl: false,
+  zslMfnr: false,
   compress: "none" as const,
   sound: false,
 }
@@ -58,6 +57,7 @@ export default function App() {
   const [tab, setTab] = useState<TabId>("camera")
   const [photoSize, setPhotoSize] = useState<PhotoSize>("max")
   const [scanMode, setScanMode] = useState(false)
+  const [zslMfnr, setZslMfnr] = useState(true)
   const [aeDivisor, setAeDivisor] = useState<3 | 5>(3)
   const [isoCap, setIsoCap] = useState(800)
   const [capturing, setCapturing] = useState(false)
@@ -71,14 +71,16 @@ export default function App() {
 
   const scanFields = useCallback((): Partial<PhotoRequestParams> => {
     if (!scanMode) {
-      return {size: "medium", compress: "none", sound: true}
+      return {size: "medium", compress: "none", sound: true, zslMfnr}
     }
     return {
       ...SCAN_MODE_PRESET,
       aeExposureDivisor: aeDivisor,
       isoCap,
+      // Scan mode forces the pair off; the UI toggle still reflects the explicit opt-out.
+      zslMfnr: false,
     }
-  }, [scanMode, aeDivisor, isoCap])
+  }, [scanMode, aeDivisor, isoCap, zslMfnr])
 
   useEffect(() => {
     const statusSub = BluetoothSdk.addListener("photo_status", (event: PhotoStatusEvent) => {
@@ -124,8 +126,7 @@ export default function App() {
   const pushScanButtonPreset = useCallback(async () => {
     await BluetoothSdk.setPhotoCaptureDefaults({
       size: "max",
-      mfnr: false,
-      zsl: false,
+      zslMfnr: false,
       noiseReduction: false,
       edgeEnhancement: false,
       ispDigitalGain: 0,
@@ -140,15 +141,16 @@ export default function App() {
   const handleScanModeChange = async (enabled: boolean) => {
     setScanMode(enabled)
     if (enabled) {
+      setZslMfnr(false)
       return
     }
     try {
       await BluetoothSdk.setPhotoCaptureDefaults({
         size: photoSize,
-        mfnr: true,
-        zsl: true,
+        zslMfnr: true,
         resetCaptureTuning: true,
       })
+      setZslMfnr(true)
     } catch (err) {
       setStatusMessage(err instanceof Error ? err.message : "failed to sync scan preset")
     }
@@ -181,6 +183,8 @@ export default function App() {
         size: fields.size ?? "medium",
         compress: fields.compress ?? "none",
         sound: fields.sound ?? true,
+        // Always send an explicit boolean so the glasses never inherit an ambiguous default.
+        zslMfnr: fields.zslMfnr ?? zslMfnr,
       })
       setLastCapture({
         fileUri: uploadedUriRef.current ?? "",
@@ -246,9 +250,22 @@ export default function App() {
             <Group name="Scan Mode capture">
               <View style={styles.row}>
                 <View style={styles.labelBlock}>
+                  <Text style={styles.label}>ZSL + MFNR</Text>
+                  <Text style={styles.hintInline}>
+                    Coupled preview buffering and multi-frame capture. Off for scan mode.
+                  </Text>
+                </View>
+                <Switch
+                  value={zslMfnr}
+                  disabled={scanMode}
+                  onValueChange={setZslMfnr}
+                />
+              </View>
+              <View style={styles.row}>
+                <View style={styles.labelBlock}>
                   <Text style={styles.label}>Scan Mode</Text>
                   <Text style={styles.hintInline}>
-                    Document / barcode tuning — max res, darker exposure, edge & MFNR off.
+                    Document / barcode tuning — max res, darker exposure, edge & ZSL/MFNR off.
                   </Text>
                 </View>
                 <Switch value={scanMode} onValueChange={(enabled) => void handleScanModeChange(enabled)} />
@@ -327,6 +344,8 @@ function formatMetadata(meta: PhotoCaptureMetadata): string {
   if (meta.iso != null) parts.push(`ISO ${meta.iso}`)
   if (meta.edgeMode != null) parts.push(`edge ${meta.edgeMode}`)
   if (meta.mfnrApplied != null) parts.push(`mfnr ${meta.mfnrApplied}`)
+  if (meta.zsl != null) parts.push(`zsl ${meta.zsl}`)
+  if (meta.zslMfnr != null) parts.push(`zslMfnr ${meta.zslMfnr}`)
   if (meta.noiseReductionWarning) parts.push(`NR: ${meta.noiseReductionWarning}`)
   if (meta.ispDigitalGainWarning) parts.push(`digital gain: ${meta.ispDigitalGainWarning}`)
   if (meta.ispAnalogGainWarning) parts.push(`analog gain: ${meta.ispAnalogGainWarning}`)
