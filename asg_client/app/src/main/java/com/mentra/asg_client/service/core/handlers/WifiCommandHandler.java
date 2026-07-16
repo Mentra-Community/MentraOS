@@ -20,6 +20,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Handler for WiFi-related commands.
@@ -31,6 +32,17 @@ public class WifiCommandHandler implements ICommandHandler {
     private final AsgClientServiceManager serviceManager;
     private final ICommunicationManager communicationManager;
     private final IStateManager stateManager;
+
+    /** Verdict sources for one connect attempt: the status poll and the supplicant listener. */
+    private static final class ConnectAttempt {
+        final AtomicBoolean verdictSent = new AtomicBoolean(false);
+        volatile BroadcastReceiver authFailureReceiver;
+    }
+
+    // The single in-flight connect attempt. A new set_wifi_credentials supersedes the
+    // previous attempt (its poll and receiver are silenced) so a single supplicant
+    // auth-failure broadcast can never produce more than one wrong_password verdict.
+    private final AtomicReference<ConnectAttempt> activeConnectAttempt = new AtomicReference<>();
 
     public WifiCommandHandler(AsgClientServiceManager serviceManager,
                               ICommunicationManager communicationManager,
@@ -110,9 +122,18 @@ public class WifiCommandHandler implements ICommandHandler {
      */
     private void scheduleWifiStatusCheck(String targetSsid) {
         // One verdict per connect attempt: either the supplicant's fast wrong-password
-        // signal below or this poll reports, never both.
-        AtomicBoolean verdictSent = new AtomicBoolean(false);
-        BroadcastReceiver authFailureReceiver = registerAuthFailureReceiver(verdictSent);
+        // signal below or this poll reports, never both. A new attempt supersedes any
+        // in-flight one - silencing the old verdict flag also makes its still-registered
+        // receiver and poll thread no-ops until they tear down.
+        ConnectAttempt attempt = new ConnectAttempt();
+        ConnectAttempt previous = activeConnectAttempt.getAndSet(attempt);
+        if (previous != null) {
+            previous.verdictSent.set(true);
+            unregisterAuthFailureReceiver(previous.authFailureReceiver);
+            previous.authFailureReceiver = null;
+        }
+        AtomicBoolean verdictSent = attempt.verdictSent;
+        attempt.authFailureReceiver = registerAuthFailureReceiver(verdictSent);
         new Thread(() -> {
             try {
                 // Wait for WiFi connection to establish (3 seconds initial, then poll)
@@ -161,7 +182,9 @@ public class WifiCommandHandler implements ICommandHandler {
             } catch (Exception e) {
                 Log.e(TAG, "📶 💥 Error during WiFi status check", e);
             } finally {
-                unregisterAuthFailureReceiver(authFailureReceiver);
+                unregisterAuthFailureReceiver(attempt.authFailureReceiver);
+                attempt.authFailureReceiver = null;
+                activeConnectAttempt.compareAndSet(attempt, null);
             }
         }).start();
     }
