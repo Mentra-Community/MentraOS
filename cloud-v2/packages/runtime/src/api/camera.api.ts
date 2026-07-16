@@ -24,7 +24,7 @@ import {
   createLogger,
   verifyRuntimeToken,
 } from "@mentra/cloud-shared";
-import { photoOptionsSchema, streamOptionsSchema } from "../protocol/camera";
+import { photoOptionsSchema, streamOptionsSchema } from "@mentra/cloud-protocol/camera";
 import { getStorageProvider } from "../services/storage/storage.service";
 import * as camera from "../services/camera/camera.service";
 

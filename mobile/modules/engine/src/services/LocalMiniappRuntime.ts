@@ -67,7 +67,7 @@ import type {
   LanguageSource,
   TranscriptionData,
   TranslationData,
-} from "@mentra/cloud-runtime/protocol"
+} from "@mentra/cloud-protocol"
 import ttsModelManager from "./TTSModelManager"
 import {NavigationHandlers} from "./NavigationHandlers"
 import type {ClientApp} from "../types/applet"

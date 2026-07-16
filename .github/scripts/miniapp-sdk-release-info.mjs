@@ -70,7 +70,7 @@ const PACKAGES = [
   // ---- @mentra/engine peer closure (see PR #3412): the engine cannot be
   // installed from npm until every package below exists there. Source-TS
   // publishes target Metro consumers; bootstrap order is leaves first:
-  // jspolyfill + cloud-shared -> crust + cloud-runtime -> cloud-client.
+  // jspolyfill + cloud-protocol -> crust + cloud-client.
   {
     // MentraJS polyfill bundle. crust's android gradle reads its assets/ by a
     // relative path that resolves identically in the monorepo and under an
@@ -91,16 +91,12 @@ const PACKAGES = [
     buildCmd: 'bun run build',
   },
   {
-    key: 'cloud-shared',
-    path: 'cloud-v2/packages/shared/package.json',
-    dir: 'cloud-v2/packages/shared',
-    installDir: 'cloud-v2',
-    buildCmd: '',
-  },
-  {
-    key: 'cloud-runtime',
-    path: 'cloud-v2/packages/runtime/package.json',
-    dir: 'cloud-v2/packages/runtime',
+    // The phone<->cloud wire protocol (schemas/types, zod only) — extracted so
+    // cloud-client/engine consumers don't drag the server runtime's deps
+    // (ioredis, @soniox/node, hono stay private to the server).
+    key: 'cloud-protocol',
+    path: 'cloud-v2/packages/protocol/package.json',
+    dir: 'cloud-v2/packages/protocol',
     installDir: 'cloud-v2',
     buildCmd: '',
   },

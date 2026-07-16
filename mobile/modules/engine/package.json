@@ -113,7 +113,7 @@
     "@mentra/bluetooth-sdk": "*",
     "@mentra/crust": "^0.1.0-dev.0",
     "@mentra/cloud-client": "^0.1.0-dev.0",
-    "@mentra/cloud-runtime": "^0.1.0-dev.0",
-    "@mentra/miniapp": "^0.3.0-dev.0"
+    "@mentra/miniapp": "^0.3.0-dev.0",
+    "@mentra/cloud-protocol": "^0.1.0-dev.0"
   }
 }

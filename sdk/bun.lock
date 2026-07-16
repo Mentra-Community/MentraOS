@@ -30,7 +30,7 @@
       "name": "@mentra/cloud-client",
       "version": "0.1.0-dev.0",
       "dependencies": {
-        "@mentra/cloud-runtime": "^0.1.0-dev.0",
+        "@mentra/cloud-protocol": "^0.1.0-dev.0",
         "tweetnacl": "^1.0.3",
       },
       "devDependencies": {
@@ -51,6 +51,13 @@
         "zod": "^3.24.1",
       },
     },
+    "../cloud-v2/packages/protocol": {
+      "name": "@mentra/cloud-protocol",
+      "version": "0.1.0-dev.0",
+      "dependencies": {
+        "zod": "^3.24.1",
+      },
+    },
     "../cloud-v2/packages/proxy": {
       "name": "@mentra/cloud-proxy",
       "version": "0.0.0",
@@ -60,9 +67,10 @@
     },
     "../cloud-v2/packages/runtime": {
       "name": "@mentra/cloud-runtime",
-      "version": "0.1.0-dev.0",
+      "version": "0.0.0",
       "dependencies": {
-        "@mentra/cloud-shared": "^0.1.0-dev.0",
+        "@mentra/cloud-protocol": "^0.1.0-dev.0",
+        "@mentra/cloud-shared": "workspace:*",
         "@soniox/node": "^2.1.0",
         "hono": "^4.11.1",
         "ioredis": "^5.4.1",
@@ -73,7 +81,7 @@
     },
     "../cloud-v2/packages/shared": {
       "name": "@mentra/cloud-shared",
-      "version": "0.1.0-dev.0",
+      "version": "0.0.0",
       "dependencies": {
         "hono": "^4.11.1",
         "jose": "^5.9.6",
@@ -304,7 +312,7 @@
         "@dr.pogodin/react-native-fs": "*",
         "@mentra/bluetooth-sdk": "*",
         "@mentra/cloud-client": "^0.1.0-dev.0",
-        "@mentra/cloud-runtime": "^0.1.0-dev.0",
+        "@mentra/cloud-protocol": "^0.1.0-dev.0",
         "@mentra/crust": "^0.1.0-dev.0",
         "@mentra/miniapp": "^0.3.0-dev.0",
         "@react-native-community/netinfo": "*",
@@ -911,6 +919,8 @@
     "@mentra/cloud-client": ["@mentra/cloud-client@workspace:../cloud-v2/packages/cloud-client"],
 
     "@mentra/cloud-core": ["@mentra/cloud-core@workspace:../cloud-v2/packages/core"],
+
+    "@mentra/cloud-protocol": ["@mentra/cloud-protocol@workspace:../cloud-v2/packages/protocol"],
 
     "@mentra/cloud-proxy": ["@mentra/cloud-proxy@workspace:../cloud-v2/packages/proxy"],
 

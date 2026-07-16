@@ -30,7 +30,7 @@ import {
 } from "../services/session/stream";
 import { publishUdpLivenessAck } from "../services/session/control-stream";
 import { getSessionByTag } from "./ws";
-import { PROTOCOL_MAJOR } from "../protocol/envelope";
+import { PROTOCOL_MAJOR } from "@mentra/cloud-protocol/envelope";
 
 const logger = createLogger("audio").child({ service: "udp-ingress" });
 
