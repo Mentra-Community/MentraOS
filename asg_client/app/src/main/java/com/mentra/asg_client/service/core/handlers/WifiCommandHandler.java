@@ -1,5 +1,10 @@
 package com.mentra.asg_client.service.core.handlers;
 
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
+import android.net.wifi.WifiManager;
 import android.util.Log;
 import com.mentra.asg_client.io.network.interfaces.INetworkManager;
 import com.mentra.asg_client.io.network.interfaces.IWifiScanCallback;
@@ -14,6 +19,7 @@ import org.json.JSONObject;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Handler for WiFi-related commands.
@@ -103,6 +109,10 @@ public class WifiCommandHandler implements ICommandHandler {
      * even if NETWORK_STATE_CHANGED broadcast doesn't fire reliably
      */
     private void scheduleWifiStatusCheck(String targetSsid) {
+        // One verdict per connect attempt: either the supplicant's fast wrong-password
+        // signal below or this poll reports, never both.
+        AtomicBoolean verdictSent = new AtomicBoolean(false);
+        BroadcastReceiver authFailureReceiver = registerAuthFailureReceiver(verdictSent);
         new Thread(() -> {
             try {
                 // Wait for WiFi connection to establish (3 seconds initial, then poll)
@@ -111,6 +121,9 @@ public class WifiCommandHandler implements ICommandHandler {
 
                 // Poll WiFi status multiple times over 12 seconds (total 15s)
                 for (int i = 0; i < 4; i++) {
+                    if (verdictSent.get()) {
+                        return; // supplicant already reported wrong_password
+                    }
                     boolean isConnected = stateManager.isConnectedToWifi();
                     String currentSsid = serviceManager.getNetworkManager() != null ?
                             serviceManager.getNetworkManager().getCurrentWifiSsid() : "";
@@ -129,6 +142,9 @@ public class WifiCommandHandler implements ICommandHandler {
                         if (!connectedToTarget) {
                             error = isConnected ? "connected_to_other_network" : "connect_timeout";
                         }
+                        if (!verdictSent.compareAndSet(false, true)) {
+                            return; // supplicant verdict won the race
+                        }
                         Log.d(TAG, "📶 ✅ Sending WiFi status update: " +
                                 (isConnected ? "CONNECTED to " + currentSsid : "DISCONNECTED") +
                                 (error != null ? " (error=" + error + ")" : ""));
@@ -144,8 +160,61 @@ public class WifiCommandHandler implements ICommandHandler {
                 Thread.currentThread().interrupt();
             } catch (Exception e) {
                 Log.e(TAG, "📶 💥 Error during WiFi status check", e);
+            } finally {
+                unregisterAuthFailureReceiver(authFailureReceiver);
             }
         }).start();
+    }
+
+    /**
+     * Listens for the supplicant's authentication-failure signal during a connect attempt
+     * so a wrong password is reported in ~5-7s (when the 4-way handshake fails) instead of
+     * the generic connect_timeout at the end of the 12s poll window - and with a reason the
+     * app can distinguish from out-of-range. Fast-path only: the broadcast is deprecated
+     * (still delivered on Android 11, where asg_client runs as a system app), so if it never
+     * fires the poll verdict above remains the fallback. The broadcast carries no SSID, but
+     * the connect sequence just disabled all other configured networks (enableNetwork
+     * disableOthers=true), so an auth failure inside this window belongs to this attempt.
+     */
+    private BroadcastReceiver registerAuthFailureReceiver(AtomicBoolean verdictSent) {
+        Context context = serviceManager.getService();
+        if (context == null) {
+            return null;
+        }
+        BroadcastReceiver receiver = new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context ctx, Intent intent) {
+                int supplicantError = intent.getIntExtra(WifiManager.EXTRA_SUPPLICANT_ERROR, -1);
+                if (supplicantError == WifiManager.ERROR_AUTHENTICATING
+                        && verdictSent.compareAndSet(false, true)) {
+                    Log.i(TAG, "📶 ❌ Supplicant authentication failure - sending wrong_password verdict");
+                    communicationManager.sendWifiStatusOverBle(false, "wrong_password");
+                }
+            }
+        };
+        try {
+            context.registerReceiver(receiver,
+                    new IntentFilter(WifiManager.SUPPLICANT_STATE_CHANGED_ACTION));
+            return receiver;
+        } catch (Exception e) {
+            Log.w(TAG, "📶 ⚠️ Could not register supplicant auth-failure listener", e);
+            return null;
+        }
+    }
+
+    private void unregisterAuthFailureReceiver(BroadcastReceiver receiver) {
+        if (receiver == null) {
+            return;
+        }
+        Context context = serviceManager.getService();
+        if (context == null) {
+            return;
+        }
+        try {
+            context.unregisterReceiver(receiver);
+        } catch (IllegalArgumentException e) {
+            Log.w(TAG, "📶 ⚠️ Auth-failure receiver already unregistered", e);
+        }
     }
 
     /**
