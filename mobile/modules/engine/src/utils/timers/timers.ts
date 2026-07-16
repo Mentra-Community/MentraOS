@@ -1,12 +1,12 @@
-// until https://github.com/tconns/react-native-nitro-bg-timer/issues/2 is resolved, we need to use this class to disable this package on iOS:
-
 import {Platform} from "react-native"
 
+type TimerHandle = ReturnType<typeof setTimeout> | number
+
 type NitroTimerApi = {
-  setInterval: (callback: () => void, delay: number) => number
-  clearInterval: (intervalId: number) => void
-  setTimeout: (callback: () => void, delay: number) => number
-  clearTimeout: (timeoutId: number) => void
+  setTimeout: (callback: () => void, duration: number) => number
+  clearTimeout: (id: number) => void
+  setInterval: (callback: () => void, interval: number) => number
+  clearInterval: (id: number) => void
 }
 
 let nitroTimer: NitroTimerApi | null | undefined
@@ -21,17 +21,19 @@ function warnUnavailable(reason: string) {
   console.warn(`BgTimer: ${reason}, using JS timers`)
 }
 
+/**
+ * react-native-nitro-bg-timer calls NitroModules.createHybridObject() at require()
+ * time. When the native hybrid is missing or throws NPE, bridgeless React Native
+ * can still report a fatal host exception and kill the process even if JS catches
+ * the error. Keep nitro opt-in only (EXPO_PUBLIC_USE_NITRO_BG_TIMER=true) after a
+ * native rebuild that includes a working NitroBackgroundTimer.
+ */
 function getNitroTimer(): NitroTimerApi | null {
   if (nitroDisabled || Platform.OS !== "android") {
     return null
   }
 
-  // react-native-nitro-bg-timer calls createHybridObject() at require() time. On dev
-  // builds with a stale native binary that throws NPE, React Native still surfaces a
-  // red LogBox error even when the exception is caught. Skip nitro in __DEV__ unless
-  // explicitly enabled after a native rebuild (bun android).
-  if (__DEV__ && process.env.EXPO_PUBLIC_USE_NITRO_BG_TIMER !== "true") {
-    warnUnavailable("nitro bg-timer disabled in dev (set EXPO_PUBLIC_USE_NITRO_BG_TIMER=true after native rebuild)")
+  if (process.env.EXPO_PUBLIC_USE_NITRO_BG_TIMER !== "true") {
     return null
   }
 
@@ -40,10 +42,23 @@ function getNitroTimer(): NitroTimerApi | null {
   }
 
   try {
-    const {isRuntimeAlive} = require("react-native-nitro-modules") as {isRuntimeAlive?: () => boolean}
-    if (typeof isRuntimeAlive === "function" && !isRuntimeAlive()) {
+    const nitroModules = require("react-native-nitro-modules") as {
+      isRuntimeAlive?: () => boolean
+      NitroModules?: {hasHybridObject?: (name: string) => boolean}
+    }
+    if (typeof nitroModules.isRuntimeAlive === "function" && !nitroModules.isRuntimeAlive()) {
       nitroTimer = null
+      nitroDisabled = true
       warnUnavailable("nitro runtime is not alive")
+      return nitroTimer
+    }
+    if (
+      typeof nitroModules.NitroModules?.hasHybridObject === "function" &&
+      !nitroModules.NitroModules.hasHybridObject("NitroBackgroundTimer")
+    ) {
+      nitroTimer = null
+      nitroDisabled = true
+      warnUnavailable("NitroBackgroundTimer hybrid is not registered")
       return nitroTimer
     }
 
@@ -51,8 +66,8 @@ function getNitroTimer(): NitroTimerApi | null {
     nitroTimer =
       BackgroundTimer &&
       typeof BackgroundTimer.setTimeout === "function" &&
-      typeof BackgroundTimer.setInterval === "function" &&
       typeof BackgroundTimer.clearTimeout === "function" &&
+      typeof BackgroundTimer.setInterval === "function" &&
       typeof BackgroundTimer.clearInterval === "function"
         ? BackgroundTimer
         : null
@@ -67,73 +82,69 @@ function getNitroTimer(): NitroTimerApi | null {
   return nitroTimer
 }
 
-function withNitro<T>(run: (api: NitroTimerApi) => T, fallback: () => T): T {
+function withNitro<T>(nitroFn: (api: NitroTimerApi) => T, fallback: () => T): T {
   const api = getNitroTimer()
   if (!api) {
     return fallback()
   }
   try {
-    return run(api)
-  } catch (error) {
+    return nitroFn(api)
+  } catch {
     nitroDisabled = true
     nitroTimer = null
-    console.warn("BgTimer: nitro timer failed, using JS timers", error)
+    warnUnavailable("nitro timer call failed")
     return fallback()
   }
 }
 
-export class BgTimer {
-  static setInterval(callback: () => void, delay: number): number {
+/**
+ * Background-capable timer utilities.
+ *
+ * On Android, uses native nitro timers when EXPO_PUBLIC_USE_NITRO_BG_TIMER=true and
+ * the hybrid is healthy; otherwise falls back to JS timers. On iOS, always uses JS
+ * timers (react-native-nitro-bg-timer is currently broken on iOS —
+ * https://github.com/tconns/react-native-nitro-bg-timer/issues/2).
+ */
+export const BgTimer = {
+  setTimeout(callback: () => void, duration: number): TimerHandle {
     return withNitro(
-      (api) => api.setInterval(callback, delay),
-      () => setInterval(callback, delay) as unknown as number,
+      api => api.setTimeout(callback, duration),
+      () => setTimeout(callback, duration),
     )
-  }
+  },
 
-  static clearInterval(intervalId: number): void {
+  clearTimeout(id: TimerHandle | null | undefined) {
+    if (id == null) {
+      return
+    }
     withNitro(
-      (api) => api.clearInterval(intervalId),
-      () => clearInterval(intervalId),
+      api => {
+        api.clearTimeout(id as number)
+      },
+      () => {
+        clearTimeout(id as ReturnType<typeof setTimeout>)
+      },
     )
-  }
+  },
 
-  static setTimeout(callback: () => void, delay: number): number {
+  setInterval(callback: () => void, interval: number): TimerHandle {
     return withNitro(
-      (api) => api.setTimeout(callback, delay),
-      () => setTimeout(callback, delay) as unknown as number,
+      api => api.setInterval(callback, interval),
+      () => setInterval(callback, interval),
     )
-  }
+  },
 
-  static clearTimeout(timeoutId: number): void {
+  clearInterval(id: TimerHandle | null | undefined) {
+    if (id == null) {
+      return
+    }
     withNitro(
-      (api) => api.clearTimeout(timeoutId),
-      () => clearTimeout(timeoutId),
+      api => {
+        api.clearInterval(id as number)
+      },
+      () => {
+        clearInterval(id as ReturnType<typeof setInterval>)
+      },
     )
-  }
-}
-
-export function throttle<T extends (...args: any[]) => any>(fn: T, ms: number): (...args: Parameters<T>) => void {
-  let lastCalled = 0
-
-  return (...args: Parameters<T>) => {
-    const now = Date.now()
-    if (now - lastCalled >= ms) {
-      lastCalled = now
-      fn(...args)
-    }
-  }
-}
-
-export function debounce<T extends (...args: any[]) => any>(fn: T, ms: number): (...args: Parameters<T>) => void {
-  let timeoutId: number | null = null
-
-  return (...args: Parameters<T>) => {
-    if (timeoutId) {
-      BgTimer.clearTimeout(timeoutId)
-    }
-    timeoutId = BgTimer.setTimeout(() => {
-      fn(...args)
-      timeoutId = null
-    }, ms)
-  }
+  },
 }
