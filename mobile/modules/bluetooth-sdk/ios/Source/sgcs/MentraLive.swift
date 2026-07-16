@@ -1272,6 +1272,7 @@ class MentraLive: NSObject, SGCManager {
             useBinaryWireProtocol = false
             wireHandshakeQueued = false
             wireHandshakeAttempts = 0
+            wireSessionGeneration += 1
             peerK900Le = false
             peerWireCapsBinary = false
             peerFilePayloadV2 = false
@@ -1455,6 +1456,9 @@ class MentraLive: NSObject, SGCManager {
     private var useBinaryWireProtocol = false
     private var wireHandshakeQueued = false
     private var wireHandshakeAttempts = 0
+    // Bumped on every BLE session reset; scheduled handshake-retry callbacks capture it
+    // and no-op if the session changed, so a timer from a dead session can't poke a new one.
+    private var wireSessionGeneration = 0
     // Grace period before an unanswered BLE wire v2 handshake is re-armed for retry,
     // and the per-session cap on automatic retries (see sendWireHandshake).
     private static let wireHandshakeRetryGraceSeconds: TimeInterval = 5
@@ -4119,8 +4123,10 @@ class MentraLive: NSObject, SGCManager {
         // so a peer that advertises binary but never answers doesn't get pinged
         // forever (later caps/version triggers may still retry explicitly).
         wireHandshakeAttempts += 1
+        let scheduledGeneration = wireSessionGeneration
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.wireHandshakeRetryGraceSeconds) { [weak self] in
             guard let self else { return }
+            guard scheduledGeneration == self.wireSessionGeneration else { return }
             if self.wireHandshakeQueued, self.peerWireProtocolVersion < BleWireProtocol.protocolV2 {
                 Bridge.log(
                     "LIVE: BLE wire v2 handshake unanswered after \(Self.wireHandshakeRetryGraceSeconds)s " +
@@ -5051,6 +5057,7 @@ class MentraLive: NSObject, SGCManager {
         useBinaryWireProtocol = false
         wireHandshakeQueued = false
         wireHandshakeAttempts = 0
+        wireSessionGeneration += 1
         peerK900Le = false
         peerWireCapsBinary = false
         peerFilePayloadV2 = false

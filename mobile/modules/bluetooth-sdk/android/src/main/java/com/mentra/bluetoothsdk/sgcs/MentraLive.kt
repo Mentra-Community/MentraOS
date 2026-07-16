@@ -218,6 +218,9 @@ class MentraLive : SGCManager() {
     private var useBinaryWireProtocol = false
     private var wireHandshakeQueued = false
     private var wireHandshakeAttempts = 0
+    // Bumped on every BLE session reset; scheduled handshake-retry callbacks capture it
+    // and no-op if the session changed, so a timer from a dead session can't poke a new one.
+    private var wireSessionGeneration = 0
     // Negotiated K900 STRING length endianness for the phone<->glasses BLE link. Defaults to
     // legacy big-endian; upgraded to little-endian only when the glasses advertise wire_caps.k900_le
     // (or a v2 binary handshake succeeds, which implies wire-v2 LE).
@@ -790,6 +793,7 @@ class MentraLive : SGCManager() {
                 useBinaryWireProtocol = false
                 wireHandshakeQueued = false
                 wireHandshakeAttempts = 0
+                wireSessionGeneration++
                 peerK900Le = false
                 peerWireCapsBinary = false
                 peerFilePayloadV2 = false
@@ -826,6 +830,7 @@ class MentraLive : SGCManager() {
             useBinaryWireProtocol = false
             wireHandshakeQueued = false
             wireHandshakeAttempts = 0
+            wireSessionGeneration++
             peerK900Le = false
             peerWireCapsBinary = false
             peerFilePayloadV2 = false
@@ -7260,9 +7265,11 @@ class MentraLive : SGCManager() {
             // so a peer that advertises binary but never answers doesn't get pinged
             // forever (later caps/version triggers may still retry explicitly).
             wireHandshakeAttempts++
+            val scheduledGeneration = wireSessionGeneration
             handler.postDelayed(
                     {
-                        if (wireHandshakeQueued &&
+                        if (scheduledGeneration == wireSessionGeneration &&
+                                        wireHandshakeQueued &&
                                         peerWireProtocolVersion < BleWireProtocol.PROTOCOL_V2
                         ) {
                             Bridge.log(
