@@ -15,12 +15,23 @@ describe("cameraPageModel", () => {
       buildTakePhotoArgs({
         size: "high",
         mode: "text",
+        zslMfnr: false,
       }),
     ).toEqual([
       {
         size: "high",
         mode: "text",
+        zslMfnr: false,
       },
+    ])
+  })
+
+  test("buildTakePhotoArgs always includes explicit zslMfnr", () => {
+    expect(buildTakePhotoArgs({size: "medium", mode: "photo", zslMfnr: true})).toEqual([
+      {size: "medium", mode: "photo", zslMfnr: true},
+    ])
+    expect(buildTakePhotoArgs({size: "medium", mode: "photo", zslMfnr: false})).toEqual([
+      {size: "medium", mode: "photo", zslMfnr: false},
     ])
   })
 
