@@ -89,6 +89,10 @@ const WIFI_CONNECT_GRACE_MS = 20_000;
 // device that stays away longer than this needs a fresh user tap.
 const OTA_CHAIN_RESUME_WINDOW_MS = 5 * 60_000;
 
+// A failed chain-start dispatch does not consume a pass, but this many
+// consecutive failures end the run instead of retrying on every check.
+const MAX_OTA_CHAIN_START_FAILURES = 3;
+
 function isDisplayableOtaStatus(payload: OtaStatusEvent) {
   return payload.status !== 'idle' || Boolean(payload.error_message);
 }
@@ -567,10 +571,10 @@ const GLASSES_PHOTO_POLL_ATTEMPTS = 120;
 const GLASSES_GALLERY_FAILURE_THRESHOLD = 3;
 const VIDEO_POLL_ATTEMPTS = 180;
 const DIRECT_PHOTO_UPLOAD_TIMEOUT_MS = 75_000;
-export const PHOTO_BLE_FALLBACK_QUALITY_WARNING =
-  'Wi-Fi upload failed; photo was compressed for Bluetooth fallback, so image quality is lower.';
+export const PHOTO_BLE_FALLBACK_TRANSFER_MESSAGE =
+  'Photo is transferred over Bluetooth, which takes longer than Wi-Fi.';
 const PHOTO_BLE_FALLBACK_COMPRESSION_MESSAGE =
-  'Wi-Fi upload failed; compressing photo for Bluetooth fallback.';
+  'Preparing the photo for Bluetooth transfer.';
 const DIRECT_WEBRTC_RECEIVER_WARMUP_MS = 1000;
 const BARCODE_SCAN_VISIBLE_TIMEOUT_MS = 2_500;
 const ANDROID_12_API_LEVEL = 31;
@@ -758,6 +762,8 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   const otaChainRemainingRef = useRef(0);
   const otaChainDeviceKeyRef = useRef<string | null>(null);
   const otaChainDisconnectedAtRef = useRef<number | null>(null);
+  const otaChainStartFailuresRef = useRef(0);
+  const otaChainGenerationRef = useRef(0);
   const otaStartInFlightRef = useRef(false);
   const connectedDeviceKeyRef = useRef<string | null>(null);
   const otaAppIdentityRef = useRef<string | null>(null);
@@ -927,7 +933,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     }
     if (otaChainDisconnectedAtRef.current !== null) {
       if (Date.now() - otaChainDisconnectedAtRef.current > OTA_CHAIN_RESUME_WINDOW_MS) {
-        otaChainRemainingRef.current = 0;
+        cancelOtaChain();
       }
       otaChainDisconnectedAtRef.current = null;
     }
@@ -1356,13 +1362,20 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       maybeContinueOtaChain();
       return true;
     }
-    otaChainRemainingRef.current = 0;
+    cancelOtaChain();
     otaStatusRef.current = null;
     setOtaStatus(null);
     setOtaStatusMessage('Glasses firmware is up to date');
     setOtaUpdateAvailable(false);
     addEvent('LIVE', 'OTA up to date');
     return false;
+  }
+
+  // Cancel the armed run; bumping the generation invalidates any pending
+  // continuation dispatch so its failure handling cannot re-arm the chain.
+  function cancelOtaChain() {
+    otaChainGenerationRef.current += 1;
+    otaChainRemainingRef.current = 0;
   }
 
   // One user-initiated update run may span several OTA passes: legacy
@@ -1376,7 +1389,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     }
     if (otaChainDeviceKeyRef.current && otaChainDeviceKeyRef.current !== connectedDeviceKeyRef.current) {
       // The armed run belongs to another device/connection; require a fresh tap.
-      otaChainRemainingRef.current = 0;
+      cancelOtaChain();
       return;
     }
     if (!glassesConnectedRef.current || !glassesWifiConnectedRef.current) {
@@ -1385,6 +1398,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     if (otaStartInFlightRef.current || isOtaEventInProgress(otaStatusRef.current)) {
       return;
     }
+    const generation = otaChainGenerationRef.current;
     otaChainRemainingRef.current -= 1;
     otaStartInFlightRef.current = true;
     void runAction('Continue OTA', async () => {
@@ -1393,9 +1407,24 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
         otaStartingAppIdentityRef.current = otaAppIdentityRef.current;
         clearOtaDisplayProgress();
         await BluetoothSdk.startOtaUpdate();
+        if (otaChainGenerationRef.current === generation) {
+          otaChainStartFailuresRef.current = 0;
+        }
         addEvent('LIVE', 'OTA continuing with next update pass');
       } catch (error) {
         otaStartInFlightRef.current = false;
+        // Nothing started, so the failed dispatch should not consume a
+        // pass — but stop the run after repeated failures rather than
+        // retrying on every subsequent check. If the run was cancelled or
+        // re-armed while the dispatch was pending, leave it alone.
+        if (otaChainGenerationRef.current === generation) {
+          otaChainStartFailuresRef.current += 1;
+          if (otaChainStartFailuresRef.current >= MAX_OTA_CHAIN_START_FAILURES) {
+            cancelOtaChain();
+          } else {
+            otaChainRemainingRef.current += 1;
+          }
+        }
         throw error;
       }
     });
@@ -1478,15 +1507,17 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
         throw error;
       }
       // Arm the auto-chain only once the start is acknowledged.
+      otaChainGenerationRef.current += 1;
       otaChainRemainingRef.current = MAX_OTA_CHAIN_PASSES;
       otaChainDeviceKeyRef.current = connectedDeviceKeyRef.current;
+      otaChainStartFailuresRef.current = 0;
       addEvent('LIVE', 'OTA start acknowledged');
     });
   }
 
   async function disconnect() {
     await runAction('Disconnect', async () => {
-      otaChainRemainingRef.current = 0;
+      cancelOtaChain();
       stopDirectStreamFrameWatchdog();
       await bluetooth.disconnect();
       applyDisconnectedState('Disconnected');
@@ -1751,7 +1782,8 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
         await captureToGlassesStorage();
         return;
       }
-      requireGlassesWifi('capture photos');
+      // Without glasses Wi-Fi the photo is delivered over the Bluetooth
+      // transfer path instead of the network upload.
       if (photoDestinationRef.current === 'phone') {
         await captureAndUploadToPhone();
         return;
@@ -2103,7 +2135,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     setPhotoPreviewDetails((current) => ({
       ...current,
       bleFallbackMessage: current?.bleFallbackUsed
-        ? PHOTO_BLE_FALLBACK_QUALITY_WARNING
+        ? PHOTO_BLE_FALLBACK_TRANSFER_MESSAGE
         : current?.bleFallbackMessage,
       byteCount: payload.byteCount,
       previewUrl: payload.fileUri,
@@ -2721,7 +2753,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
             setPhotoPreviewDetails((current) => ({
               ...current,
               bleFallbackMessage: current?.bleFallbackUsed
-                ? PHOTO_BLE_FALLBACK_QUALITY_WARNING
+                ? PHOTO_BLE_FALLBACK_TRANSFER_MESSAGE
                 : current?.bleFallbackMessage,
               byteCount: typeof json.fileSizeBytes === 'number' ? json.fileSizeBytes : current?.byteCount,
               contentType: json.contentType ?? current?.contentType,
@@ -4056,7 +4088,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       setOtaUpdateAvailable(false);
     }
     if (payload.status === 'failed') {
-      otaChainRemainingRef.current = 0;
+      cancelOtaChain();
     }
     addEvent('LIVE', `OTA ${payload.status} ${payload.overall_percent ?? 0}%`);
     schedulePostOtaCheck(payload);
@@ -4963,9 +4995,9 @@ function photoBleFallbackMessage(status: string) {
 function photoBleFallbackProgressMessage(status: string, currentMessage?: string) {
   switch (status) {
     case 'ready_for_transfer':
-      return PHOTO_BLE_FALLBACK_QUALITY_WARNING;
+      return PHOTO_BLE_FALLBACK_TRANSFER_MESSAGE;
     case 'transferring':
-      return PHOTO_BLE_FALLBACK_QUALITY_WARNING;
+      return PHOTO_BLE_FALLBACK_TRANSFER_MESSAGE;
     default:
       return currentMessage;
   }

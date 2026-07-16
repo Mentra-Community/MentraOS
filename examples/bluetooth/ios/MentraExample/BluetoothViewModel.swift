@@ -1091,7 +1091,8 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                 try await captureToGlassesStorage()
                 return
             }
-            try requireGlassesWifi("capture photos")
+            // Without glasses Wi-Fi the photo is delivered over the Bluetooth
+            // transfer path instead of the network upload.
             if photoDestination == .thisPhone {
                 try await captureAndUploadToPhone()
                 return
