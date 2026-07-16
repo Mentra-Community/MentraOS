@@ -85,6 +85,10 @@ const MAX_OTA_CHAIN_PASSES = 4;
 // little longer before declaring failure.
 const WIFI_CONNECT_GRACE_MS = 20_000;
 
+// An armed OTA chain survives the reboots an update itself causes, but a
+// device that stays away longer than this needs a fresh user tap.
+const OTA_CHAIN_RESUME_WINDOW_MS = 5 * 60_000;
+
 function isDisplayableOtaStatus(payload: OtaStatusEvent) {
   return payload.status !== 'idle' || Boolean(payload.error_message);
 }
@@ -752,6 +756,11 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   const postOtaCheckInProgressRef = useRef(false);
   const postOtaCheckedSessionRef = useRef<string | null>(null);
   const otaChainRemainingRef = useRef(0);
+  const otaChainDeviceKeyRef = useRef<string | null>(null);
+  const otaChainDisconnectedAtRef = useRef<number | null>(null);
+  const otaStartInFlightRef = useRef(false);
+  const connectedDeviceKeyRef = useRef<string | null>(null);
+  const otaAppIdentityRef = useRef<string | null>(null);
   const wifiConnectAttemptRef = useRef(0);
   const wifiConnectGraceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [autoOtaCheckRetryTick, setAutoOtaCheckRetryTick] = useState(0);
@@ -793,6 +802,8 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   galleryModeEnabledRef.current = galleryModeEnabled;
   latestAutoOtaCheckKeyRef.current = autoOtaCheckKey;
   otaStatusRef.current = otaStatus;
+  connectedDeviceKeyRef.current = connectedDeviceKey;
+  otaAppIdentityRef.current = otaAppIdentity(glasses);
   glassesConnectedRef.current = glassesConnected;
   glassesWifiConnectedRef.current = glassesWifiConnected;
   galleryServerReachableRef.current = galleryServerReachable;
@@ -903,17 +914,28 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       // 'step_complete' before the reboot) must not gate the next check.
       otaStatusRef.current = null;
       otaStartingAppIdentityRef.current = null;
+      otaStartInFlightRef.current = false;
+      if (otaChainRemainingRef.current > 0 && otaChainDisconnectedAtRef.current === null) {
+        otaChainDisconnectedAtRef.current = Date.now();
+      }
       setOtaStatus(null);
       clearOtaDisplayProgress();
       setOtaStatusMessage(null);
       setOtaUpdateAvailable(false);
       return;
     }
+    if (otaChainDisconnectedAtRef.current !== null) {
+      if (Date.now() - otaChainDisconnectedAtRef.current > OTA_CHAIN_RESUME_WINDOW_MS) {
+        otaChainRemainingRef.current = 0;
+      }
+      otaChainDisconnectedAtRef.current = null;
+    }
     if (
       !autoOtaCheckKey ||
       !glassesWifiConnected ||
       autoOtaCheckedConnectionRef.current === autoOtaCheckKey ||
       autoOtaCheckInProgressRef.current ||
+      otaStartInFlightRef.current ||
       otaInProgress
     ) {
       return;
@@ -935,6 +957,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
         if (
           latestAutoOtaCheckKeyRef.current &&
           latestAutoOtaCheckKeyRef.current !== checkedKey &&
+          !otaStartInFlightRef.current &&
           !isOtaEventInProgress(otaStatusRef.current)
         ) {
           setAutoOtaCheckRetryTick((tick) => tick + 1);
@@ -1298,7 +1321,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
         throw new Error('Connect glasses first.');
       }
       requireGlassesWifi('check for OTA updates');
-      if (isOtaEventInProgress(otaStatusRef.current)) {
+      if (otaStartInFlightRef.current || isOtaEventInProgress(otaStatusRef.current)) {
         addEvent('TX', 'OTA check skipped while update is in progress');
         return;
       }
@@ -1308,7 +1331,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
 
   async function checkForOtaUpdateResult(): Promise<boolean> {
     const updateAvailable = await BluetoothSdk.checkForOtaUpdate();
-    if (isOtaEventInProgress(otaStatusRef.current)) {
+    if (otaStartInFlightRef.current || isOtaEventInProgress(otaStatusRef.current)) {
       addEvent('LIVE', 'OTA check result ignored while update is in progress');
       return updateAvailable;
     }
@@ -1341,19 +1364,30 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     if (otaChainRemainingRef.current <= 0) {
       return;
     }
+    if (otaChainDeviceKeyRef.current && otaChainDeviceKeyRef.current !== connectedDeviceKeyRef.current) {
+      // The armed run belongs to another device/connection; require a fresh tap.
+      otaChainRemainingRef.current = 0;
+      return;
+    }
     if (!glassesConnectedRef.current || !glassesWifiConnectedRef.current) {
       return;
     }
-    if (isOtaEventInProgress(otaStatusRef.current)) {
+    if (otaStartInFlightRef.current || isOtaEventInProgress(otaStatusRef.current)) {
       return;
     }
     otaChainRemainingRef.current -= 1;
+    otaStartInFlightRef.current = true;
     void runAction('Continue OTA', async () => {
-      postOtaCheckedSessionRef.current = null;
-      otaStartingAppIdentityRef.current = otaAppIdentity(glasses);
-      clearOtaDisplayProgress();
-      await BluetoothSdk.startOtaUpdate();
-      addEvent('LIVE', 'OTA continuing with next update pass');
+      try {
+        postOtaCheckedSessionRef.current = null;
+        otaStartingAppIdentityRef.current = otaAppIdentityRef.current;
+        clearOtaDisplayProgress();
+        await BluetoothSdk.startOtaUpdate();
+        addEvent('LIVE', 'OTA continuing with next update pass');
+      } catch (error) {
+        otaStartInFlightRef.current = false;
+        throw error;
+      }
     });
   }
 
@@ -1419,11 +1453,23 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
         throw new Error('Connect glasses first.');
       }
       requireGlassesWifi('start OTA updates');
-      otaChainRemainingRef.current = MAX_OTA_CHAIN_PASSES;
+      if (otaStartInFlightRef.current) {
+        addEvent('TX', 'OTA start skipped; a start is already in flight');
+        return;
+      }
       postOtaCheckedSessionRef.current = null;
       otaStartingAppIdentityRef.current = otaAppIdentity(glasses);
       clearOtaDisplayProgress();
-      await BluetoothSdk.startOtaUpdate();
+      otaStartInFlightRef.current = true;
+      try {
+        await BluetoothSdk.startOtaUpdate();
+      } catch (error) {
+        otaStartInFlightRef.current = false;
+        throw error;
+      }
+      // Arm the auto-chain only once the start is acknowledged.
+      otaChainRemainingRef.current = MAX_OTA_CHAIN_PASSES;
+      otaChainDeviceKeyRef.current = connectedDeviceKeyRef.current;
       addEvent('LIVE', 'OTA start acknowledged');
     });
   }
@@ -3959,6 +4005,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     }
     otaStatusRef.current = null;
     otaStartingAppIdentityRef.current = null;
+    otaStartInFlightRef.current = false;
     setOtaStatus(null);
     clearOtaDisplayProgress();
     setOtaStatusMessage(null);
@@ -3972,6 +4019,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   }
 
   function applyOtaStatus(payload: OtaStatusEvent) {
+    otaStartInFlightRef.current = false;
     if (!isDisplayableOtaStatus(payload)) {
       otaStatusRef.current = null;
       otaStartingAppIdentityRef.current = null;
