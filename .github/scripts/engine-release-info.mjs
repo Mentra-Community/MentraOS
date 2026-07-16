@@ -80,13 +80,29 @@ const hasPreviousVersion = Boolean(previousPackage?.version)
 const versionChanged = hasPreviousVersion && previousVersion !== currentVersion
 const runRelease = versionChanged || forceRelease || (eventName === "workflow_dispatch" && dryRun)
 
+// Dist-tag derived from the prerelease label, same convention as the
+// bluetooth-sdk/miniapp pipelines: 1.2.3-dev.4 -> dev, 1.2.3-beta.4 -> beta.
+// The engine publishes from dev only (workflow-enforced), so a plain version —
+// which would take the `latest` dist-tag, npm's default install — is refused
+// outright until a main release channel exists.
+const dash = currentVersion.indexOf("-")
+const distTag = dash === -1 ? "latest" : currentVersion.slice(dash + 1).split(".")[0].toLowerCase() || "latest"
+if (runRelease && distTag === "latest") {
+  throw new Error(
+    `${currentPackage.name}@${currentVersion} would publish to the "latest" dist-tag, but engine releases ` +
+      `ship from dev. Use a prerelease version (-dev.N / -beta.N) until a main release channel exists.`,
+  )
+}
+
 setOutput("package_name", currentPackage.name)
 setOutput("version", currentVersion)
+setOutput("dist_tag", distTag)
 setOutput("dry_run", String(dryRun))
 setOutput("run_release", String(runRelease))
 
 console.log(`Mentra Engine package: ${currentPackage.name}`)
 console.log(`Current version: ${currentVersion}`)
+console.log(`Dist-tag: ${distTag}`)
 console.log(`Previous version: ${previousVersion || "(unknown — releases fail closed)"}`)
 console.log(`Compare SHA: ${beforeSha || "(unavailable)"}`)
 console.log(`Version changed: ${versionChanged}`)

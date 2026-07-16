@@ -297,7 +297,7 @@
     },
     "../mobile/modules/engine": {
       "name": "@mentra/engine",
-      "version": "0.1.0",
+      "version": "0.1.0-dev.0",
       "dependencies": {
         "buffer": "^6.0.3",
         "events": "^3.3.0",

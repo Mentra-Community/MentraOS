@@ -108,8 +108,11 @@ jobs:
 
       - name: Use npm with staged publishing support
         # Pinned major: the release-critical path must not pick up whatever npm
-        # shipped this morning. Bump deliberately.
-        run: npm install -g npm@11
+        # shipped this morning. Bump deliberately. `npm stage publish` needs
+        # >=11.15.0 (staged publishing GA).
+        run: |
+          npm install -g npm@11
+          npm stage --help >/dev/null 2>&1 || { echo "::error::this npm ($(npm --version)) lacks 'npm stage' — staged publishing needs >=11.15.0."; exit 1; }
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -193,15 +196,19 @@ jobs:
       - name: Publish initial npm package
         if: needs.detect.outputs.dry_run != 'true' && steps.npm-registry.outputs.package_exists != 'true' && steps.npm-registry.outputs.version_exists != 'true'
         working-directory: ${{ env.ENGINE_PACKAGE_DIR }}
-        # access/registry come from the package's publishConfig.
-        run: npm publish
+        # access/registry come from the package's publishConfig. The dist-tag is
+        # derived from the version's prerelease label — without --tag, npm
+        # defaults a prerelease onto `latest`.
+        run: npm publish --tag "${{ needs.detect.outputs.dist_tag }}"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Stage npm package
         if: needs.detect.outputs.dry_run != 'true' && steps.npm-registry.outputs.package_exists == 'true' && steps.npm-registry.outputs.version_exists != 'true'
         working-directory: ${{ env.ENGINE_PACKAGE_DIR }}
-        run: npm stage publish
+        # Same --tag logic as npm publish; the tag is immutable once staged, so
+        # it must be right here, not at approval time.
+        run: npm stage publish --tag "${{ needs.detect.outputs.dist_tag }}"
 
       - name: Skip npm stage publish
         if: steps.npm-registry.outputs.version_exists == 'true'
