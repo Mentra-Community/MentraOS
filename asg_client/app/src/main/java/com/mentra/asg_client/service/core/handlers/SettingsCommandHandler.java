@@ -5,6 +5,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
 import com.dev.api.DevApi;
+import com.mentra.asg_client.camera.model.PhotoCaptureSettings;
 import com.mentra.asg_client.camera.policy.PhotoSizeTier;
 import com.mentra.asg_client.service.communication.interfaces.ICommunicationManager;
 import com.mentra.asg_client.service.communication.interfaces.IResponseBuilder;
@@ -199,6 +200,7 @@ public class SettingsCommandHandler implements ICommandHandler {
             String requestId = getRequestId(data);
             boolean hasSize = data.has("size") && !data.isNull("size");
             String size = PhotoSizeTier.normalize(data.optString("size", "medium"));
+            boolean hasZslMfnr = data.has("zslMfnr") && !data.isNull("zslMfnr");
             boolean hasMfnr = data.has("mfnr") && !data.isNull("mfnr");
             boolean hasZsl = data.has("zsl") && !data.isNull("zsl");
             boolean hasNoiseReduction = data.has("noiseReduction") && !data.isNull("noiseReduction");
@@ -210,8 +212,10 @@ public class SettingsCommandHandler implements ICommandHandler {
             boolean hasIsoCap = data.has("isoCap") && !data.isNull("isoCap");
             boolean hasCompress = data.has("compress") && !data.isNull("compress");
             boolean hasSound = data.has("sound") && !data.isNull("sound");
+            Boolean zslMfnrInput = hasZslMfnr ? data.optBoolean("zslMfnr", false) : null;
             Boolean mfnr = hasMfnr ? data.optBoolean("mfnr", true) : null;
             Boolean zsl = hasZsl ? data.optBoolean("zsl", true) : null;
+            Boolean zslMfnr = PhotoCaptureSettings.resolveZslMfnr(zslMfnrInput, mfnr, zsl);
             Boolean noiseReduction =
                     hasNoiseReduction ? data.optBoolean("noiseReduction", true) : null;
             Boolean edgeEnhancement =
@@ -230,6 +234,7 @@ public class SettingsCommandHandler implements ICommandHandler {
                     TAG,
                     "📱 Received button photo setting: size="
                             + size
+                            + (zslMfnr != null ? ", zslMfnr=" + zslMfnr : "")
                             + (hasMfnr ? ", mfnr=" + mfnr : "")
                             + (hasZsl ? ", zsl=" + zsl : "")
                             + (hasNoiseReduction ? ", noiseReduction=" + noiseReduction : "")
@@ -277,14 +282,11 @@ public class SettingsCommandHandler implements ICommandHandler {
                 if (hasSize) {
                     asgSettings.setButtonPhotoSize(size);
                 }
-                if (mfnr != null) {
-                    // Store as button-photo scan preset only; do NOT write to the global
-                    // mfnr_enabled device pref so unrelated SDK take_photo requests keep
-                    // their own MFNR default (mergeForSdkRequest falls back to that global).
-                    asgSettings.setButtonPhotoMfnr(mfnr);
-                }
-                if (zsl != null) {
-                    asgSettings.setButtonPhotoZsl(zsl);
+                if (zslMfnr != null) {
+                    // Store as button-photo preset only; do NOT write the global
+                    // zsl_mfnr_enabled device pref so unrelated SDK take_photo requests keep
+                    // their own default (mergeForSdkRequest falls back to that global).
+                    asgSettings.setButtonPhotoZslMfnr(zslMfnr);
                 }
                 if (hasNoiseReduction) {
                     asgSettings.setButtonPhotoNoiseReduction(noiseReduction);
