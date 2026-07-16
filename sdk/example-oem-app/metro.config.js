@@ -28,8 +28,6 @@ config.resolver.extraNodeModules = {
   "@mentra/jspolyfill": path.resolve(modulesRoot, "jspolyfill"),
   "@mentra/miniapp": path.resolve(modulesRoot, "miniapp"),
   "@mentra/cloud-client": path.resolve(cloudPackagesRoot, "cloud-client"),
-  // NOTE: the package NAME is @mentra/cloud-runtime but its DIRECTORY is `runtime`.
-  "@mentra/cloud-runtime": path.resolve(cloudPackagesRoot, "runtime"),
   "@mentra/cloud-protocol": path.resolve(cloudPackagesRoot, "protocol"),
 }
 

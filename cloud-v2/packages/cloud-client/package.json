@@ -19,6 +19,14 @@
     "ws": "^8.18.0",
     "@types/ws": "^8.5.12"
   },
+  "peerDependencies": {
+    "ws": "^8.18.0"
+  },
+  "peerDependenciesMeta": {
+    "ws": {
+      "optional": true
+    }
+  },
   "files": [
     "src",
     "react-native",

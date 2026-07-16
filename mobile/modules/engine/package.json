@@ -72,7 +72,7 @@
   "devDependencies": {
     "@mentra/bluetooth-sdk": "workspace:*",
     "@mentra/cloud-client": "workspace:*",
-    "@mentra/cloud-runtime": "workspace:*",
+    "@mentra/cloud-protocol": "workspace:*",
     "@mentra/miniapp": "workspace:*",
     "@types/semver": "^7.7.1",
     "expo-module-scripts": "^55.0.2",

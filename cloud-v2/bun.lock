@@ -43,6 +43,12 @@
         "@types/ws": "^8.5.12",
         "ws": "^8.18.0",
       },
+      "peerDependencies": {
+        "ws": "^8.18.0",
+      },
+      "optionalPeers": [
+        "ws",
+      ],
     },
     "packages/core": {
       "name": "@mentra/cloud-core",

@@ -9,7 +9,7 @@ npm install @mentra/engine
 ```
 
 > **Peer packages:** the engine's `@mentra/*` peer dependencies (`crust`,
-> `cloud-client`, `cloud-runtime`, `miniapp`) must be available to your
+> `cloud-client`, `cloud-protocol`, `miniapp`) must be available to your
 > package manager. Until every peer is published to npm, consume the engine
 > from this monorepo's workspace (as the example OEM app does).
 

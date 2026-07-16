@@ -182,6 +182,12 @@
         "@types/ws": "^8.5.12",
         "ws": "^8.18.0",
       },
+      "peerDependencies": {
+        "ws": "^8.18.0",
+      },
+      "optionalPeers": [
+        "ws",
+      ],
     },
     "../cloud-v2/packages/core": {
       "name": "@mentra/cloud-core",
@@ -282,7 +288,7 @@
       "devDependencies": {
         "@mentra/bluetooth-sdk": "workspace:*",
         "@mentra/cloud-client": "workspace:*",
-        "@mentra/cloud-runtime": "workspace:*",
+        "@mentra/cloud-protocol": "workspace:*",
         "@mentra/miniapp": "workspace:*",
         "@types/semver": "^7.7.1",
         "expo-module-scripts": "^55.0.2",
