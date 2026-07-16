@@ -571,10 +571,10 @@ const GLASSES_PHOTO_POLL_ATTEMPTS = 120;
 const GLASSES_GALLERY_FAILURE_THRESHOLD = 3;
 const VIDEO_POLL_ATTEMPTS = 180;
 const DIRECT_PHOTO_UPLOAD_TIMEOUT_MS = 75_000;
-export const PHOTO_BLE_FALLBACK_QUALITY_WARNING =
-  'Wi-Fi upload failed; photo was compressed for Bluetooth fallback, so image quality is lower.';
+export const PHOTO_BLE_FALLBACK_TRANSFER_MESSAGE =
+  'Photo is transferred over Bluetooth, which takes longer than Wi-Fi.';
 const PHOTO_BLE_FALLBACK_COMPRESSION_MESSAGE =
-  'Wi-Fi upload failed; compressing photo for Bluetooth fallback.';
+  'Preparing the photo for Bluetooth transfer.';
 const DIRECT_WEBRTC_RECEIVER_WARMUP_MS = 1000;
 const BARCODE_SCAN_VISIBLE_TIMEOUT_MS = 2_500;
 const ANDROID_12_API_LEVEL = 31;
@@ -1782,7 +1782,8 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
         await captureToGlassesStorage();
         return;
       }
-      requireGlassesWifi('capture photos');
+      // Without glasses Wi-Fi the photo is delivered over the Bluetooth
+      // transfer path instead of the network upload.
       if (photoDestinationRef.current === 'phone') {
         await captureAndUploadToPhone();
         return;
@@ -2134,7 +2135,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     setPhotoPreviewDetails((current) => ({
       ...current,
       bleFallbackMessage: current?.bleFallbackUsed
-        ? PHOTO_BLE_FALLBACK_QUALITY_WARNING
+        ? PHOTO_BLE_FALLBACK_TRANSFER_MESSAGE
         : current?.bleFallbackMessage,
       byteCount: payload.byteCount,
       previewUrl: payload.fileUri,
@@ -2752,7 +2753,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
             setPhotoPreviewDetails((current) => ({
               ...current,
               bleFallbackMessage: current?.bleFallbackUsed
-                ? PHOTO_BLE_FALLBACK_QUALITY_WARNING
+                ? PHOTO_BLE_FALLBACK_TRANSFER_MESSAGE
                 : current?.bleFallbackMessage,
               byteCount: typeof json.fileSizeBytes === 'number' ? json.fileSizeBytes : current?.byteCount,
               contentType: json.contentType ?? current?.contentType,
@@ -4994,9 +4995,9 @@ function photoBleFallbackMessage(status: string) {
 function photoBleFallbackProgressMessage(status: string, currentMessage?: string) {
   switch (status) {
     case 'ready_for_transfer':
-      return PHOTO_BLE_FALLBACK_QUALITY_WARNING;
+      return PHOTO_BLE_FALLBACK_TRANSFER_MESSAGE;
     case 'transferring':
-      return PHOTO_BLE_FALLBACK_QUALITY_WARNING;
+      return PHOTO_BLE_FALLBACK_TRANSFER_MESSAGE;
     default:
       return currentMessage;
   }

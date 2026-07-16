@@ -119,7 +119,7 @@ struct CameraScreen: View {
         model.photoDestination == .thisPhone
     }
 
-    private var wifiRequired: Bool {
+    private var glassesWifiOff: Bool {
         model.glassesConnected && !model.glassesWifiConnected && !glassesStorageEnabled
     }
 
@@ -148,7 +148,6 @@ struct CameraScreen: View {
 
     private var photoControlsEnabled: Bool {
         model.glassesConnected &&
-            (glassesStorageEnabled || model.glassesWifiConnected) &&
             !needsGlassesHotspotSetup &&
             model.activeAction != "Capture & upload" &&
             model.activeAction != "Capture scan photo"
@@ -167,8 +166,8 @@ struct CameraScreen: View {
                     OfflineNotice()
                         .padding(.horizontal, 16)
                         .padding(.bottom, 8)
-                } else if wifiRequired {
-                    OfflineNotice(message: "Connect the glasses to Wi-Fi from the System tab before capturing camera media. Cloud uploads use the glasses network connection.")
+                } else if glassesWifiOff {
+                    OfflineNotice(message: "Glasses Wi-Fi is off. Photos still work over Bluetooth but take longer to transfer. Connect Wi-Fi from the System tab for faster photos and for video.")
                         .padding(.horizontal, 16)
                         .padding(.bottom, 8)
                 }
@@ -348,7 +347,6 @@ struct CameraScreen: View {
 
     private var captureButtonTitle: String {
         if !model.glassesConnected { return "Connect glasses first" }
-        if !model.glassesWifiConnected && !glassesStorageEnabled { return "Connect glasses to Wi-Fi" }
         if needsGlassesHotspotSetup {
             return model.galleryServerReachable == nil ? "Preparing hotspot..." : "Connect glasses hotspot"
         }
