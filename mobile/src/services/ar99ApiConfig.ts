@@ -12,7 +12,7 @@ export type Ar99ApiConfig = {
   secret: string
 }
 
-export const AR99_API_ENV = AR99_API_ENVS.TEST
+export const AR99_API_ENV = AR99_API_ENVS.RELEASE
 
 const AR99_API_CONFIGS: Record<Ar99ApiEnv, Ar99ApiConfig> = {
   [AR99_API_ENVS.TEST]: {
