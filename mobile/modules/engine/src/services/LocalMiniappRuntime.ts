@@ -2489,6 +2489,7 @@ class LocalMiniappRuntime {
         sound: payload.sound as boolean | undefined,
         saveToGallery: payload.saveToGallery as boolean | undefined,
         exposureTimeNs: payload.exposureTimeNs as number | undefined,
+        zslMfnr: payload.zslMfnr as boolean | undefined,
       })
       this.sendResult(packageName, requestId, true, result)
     } catch (err) {
