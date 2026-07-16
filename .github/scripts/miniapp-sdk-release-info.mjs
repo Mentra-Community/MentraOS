@@ -12,8 +12,9 @@
 //   - E404 is the only "absent" signal; any other npm error fails the run.
 //   - A package that has NEVER been published does not auto-release: its first
 //     publish is a supervised workflow_dispatch with force_release=true.
-//   - The main channel (latest = npm's default install) is additionally held
-//     behind the NPM_MAIN_CHANNEL repository variable until the team opens it.
+//   - beta/latest publishes land in npm's staging queue (see the workflow):
+//     a maintainer approves each version before it goes live, so merging to
+//     main IS the go signal and the approval is the only remaining gate.
 //   - A package only ships when every internal dep it pins will resolve on
 //     this channel (already on npm, or earlier in this run's matrix).
 //
@@ -120,7 +121,6 @@ const outputPath = process.env.GITHUB_OUTPUT;
 const branch = process.env.GITHUB_REF_NAME || '';
 const forceRelease = process.env.FORCE_RELEASE === 'true';
 const dryRun = process.env.DRY_RUN === 'true';
-const mainChannelEnabled = process.env.MAIN_CHANNEL_ENABLED === 'true';
 
 function setOutput(name, value) {
   if (!outputPath) {
@@ -169,15 +169,6 @@ for (const pkg of PACKAGES) {
     // build+pack preview is the point of a dry run.
     reason = 'not on npm yet — bootstrap via workflow_dispatch force_release=true';
     console.log(`::notice::${pkg.name} is not on npm yet; skipping auto-publish. ${reason}.`);
-  } else if (branch === 'main' && !mainChannelEnabled && !dryRun) {
-    // `latest` is npm's default install: hold the public channel behind an
-    // explicit repo variable until the team opens it. Deliberately NOT
-    // bypassable by force_release — opening the public channel is a separate
-    // decision from forcing a publish.
-    reason = 'main channel disabled — set repo variable NPM_MAIN_CHANNEL=true';
-    console.log(
-      `::notice::${pkg.name}@${derived} would ship to "latest" but the main channel is disabled. ${reason}.`,
-    );
   } else {
     include = true;
     reason = forceRelease ? 'force_release' : 'derived version absent from npm';

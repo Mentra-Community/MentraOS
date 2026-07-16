@@ -35,20 +35,19 @@ so **merging a branch up the chain IS the promotion** — no version edits ride
 The prerelease number carries across channels (`-dev.3` promotes to `-beta.3`)
 so a beta is traceable to the dev build it came from. Each channel's artifact is
 a **rebuild of that branch's code** — npm has no re-tag-the-same-bytes
-promotion. The `main` channel is additionally held behind the
-`NPM_MAIN_CHANNEL` repository variable (Settings → Secrets and variables →
-Actions → Variables): until it is `true`, merges to main skip publishing with a
-notice, so opening the public channel stays a deliberate human act.
+promotion.
 
 **Publish mode per channel:** `dev` publishes **directly** (fast internal
 iteration). `beta` and `latest` go through **npm's staging queue**
 (`npm stage publish`) — a maintainer must approve each version in the npm UI
-(2FA) before it goes live. Why: internal ranges are carets, so a new peer
-version *floats into already-approved `@mentra/engine` installs on the same
-channel* — every version that can reach beta/latest therefore needs its own
-approval. A staged-but-unapproved version isn't live (`npm view` won't list
-it), so a re-merge before approval just re-attempts the stage (tolerated);
-**approve or reject staged versions promptly** to keep the queue meaningful.
+(2FA) before it goes live; that approval is the only gate past merge, so
+**merging to main IS the go signal**. Why the queue: internal ranges are
+carets, so a new peer version *floats into already-approved `@mentra/engine`
+installs on the same channel* — every version that can reach beta/latest
+therefore needs its own approval. A staged-but-unapproved version isn't live
+(`npm view` won't list it), so a re-merge before approval just re-attempts the
+stage (tolerated); **approve or reject staged versions promptly** to keep the
+queue meaningful.
 
 ## One-time setup (required before the first publish)
 
@@ -77,9 +76,9 @@ Workflow: [`.github/workflows/miniapp-sdk-release.yml`](../.github/workflows/min
   field, so git-diffing can't see it). E404 is the only "absent" signal — any
   other npm error fails the run rather than guessing. Extra gates: a package
   that has **never** been published only ships via a supervised
-  `workflow_dispatch` with `force_release=true`; the main channel needs
-  `NPM_MAIN_CHANNEL=true`; and a package is held back (with a notice) while any
-  internal dep it pins doesn't yet exist on the channel.
+  `workflow_dispatch` with `force_release=true`, and a package is held back
+  (with a notice) while any internal dep it pins doesn't yet exist on the
+  channel.
 - **Idempotent:** the derived version already existing on npm means "nothing to
   do" — re-running a workflow or re-merging a branch is safe.
 - **Version stamp:** before packing, [`stamp-channel-manifests.mjs`](../.github/scripts/stamp-channel-manifests.mjs)
@@ -103,8 +102,8 @@ Workflow: [`.github/workflows/miniapp-sdk-release.yml`](../.github/workflows/min
   caret). This is why a project scaffolded from *any* channel installs — see
   below. No-op for packages without a `template/`; never committed.
 - **Guardrail:** the `latest` dist-tag (npm's default install) only ever ships
-  from `main`, and only with `NPM_MAIN_CHANNEL=true` — structurally, because
-  only the main channel derives a plain version.
+  from `main` — structurally, because only the main channel derives a plain
+  version — and only after a maintainer approves the staged version.
 - **Dry run:** `workflow_dispatch` defaults to `dry_run: true`, which builds and
   `npm pack --dry-run`s without publishing. Use it to validate the tarball
   contents before a real release.
@@ -113,9 +112,10 @@ Workflow: [`.github/workflows/miniapp-sdk-release.yml`](../.github/workflows/min
 
 1. On `dev`, bump the base `version` of the package(s) you're shipping:
    `0.4.0-dev.0`, `0.4.0-dev.1`, … CI publishes `0.4.0-dev.N` to the `dev` tag.
-2. Merge `dev → staging`: CI publishes `0.4.0-beta.N` to `beta`. Nothing to edit.
-3. Merge `staging → main`: CI publishes `0.4.0` to `latest` (once
-   `NPM_MAIN_CHANNEL=true`). Nothing to edit.
+2. Merge `dev → staging`: CI stages `0.4.0-beta.N` for `beta` — approve it in
+   the npm UI to go live. Nothing to edit.
+3. Merge `staging → main`: CI stages `0.4.0` for `latest` — approve it in the
+   npm UI to go live. Nothing to edit.
 4. After a plain `0.4.0` has shipped, the base is **spent**: start the next
    cycle by bumping `dev` to `0.4.1-dev.0` (or `0.5.0-dev.0`). Until then,
    further merges to main are no-ops for that package.
@@ -172,10 +172,10 @@ types) and `@mentra/auth` (compiled `dist/`). **Published docs must say `bunx` /
 - `bun add @mentra/cli@dev` (or `@beta`) gets the Cloud V2 CLI.
 
 This holds until v2 is deliberately promoted: a `2.0.0` on `latest` (replacing
-what every plain install resolves) requires its base to reach `main` **and**
-`NPM_MAIN_CHANNEL=true`. Note this means opening the main channel promotes v2
-over the legacy 1.0.3 — that's part of the decision the variable exists to
-gate.
+what every plain install resolves) requires its base to reach `main` and a
+maintainer to **approve the staged version in the npm UI**. Approving it
+promotes v2 over the legacy 1.0.3 — reject the staged version if that's not
+intended yet.
 
 ## Manual publishing (fallback)
 

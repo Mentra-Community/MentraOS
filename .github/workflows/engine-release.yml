@@ -8,16 +8,13 @@ name: Release Mentra Engine
 # ride the branches. A release fires when the derived version is absent from
 # npm (E404-strict), so re-runs and re-merges are no-ops.
 #
-# The main channel (latest = npm's default install) additionally requires the
-# NPM_MAIN_CHANNEL repository variable to be "true" — the public switch stays
-# with a human until the team opens it.
-#
 # Publish mode per channel (same policy as the miniapp pipeline): dev publishes
 # DIRECTLY (fast internal iteration); beta and latest go through npm's staging
 # queue (`npm stage publish`) and a maintainer must approve each version in the
 # npm UI before it goes live. The engine's peer ranges are carets, so its peers
 # stage on those channels too — every version that can float into an approved
-# engine gets its own approval.
+# engine gets its own approval. That approval is the only gate past merge:
+# merging to main IS the go signal.
 #
 # FIRST PUBLISH (deliberately manual): @mentra/engine cannot go to npm before
 # its @mentra/* peer dependencies exist there (crust, cloud-client,
@@ -52,7 +49,7 @@ on:
         default: true
         type: boolean
       force_release:
-        description: "Bootstrap the first-ever release (a package absent from npm never auto-publishes). Does NOT bypass the NPM_MAIN_CHANNEL gate or the peer-availability gate."
+        description: "Bootstrap the first-ever release (a package absent from npm never auto-publishes). Does NOT bypass the peer-availability gate."
         required: true
         default: false
         type: boolean
@@ -91,7 +88,6 @@ jobs:
         env:
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
           FORCE_RELEASE: ${{ github.event_name == 'workflow_dispatch' && inputs.force_release || false }}
-          MAIN_CHANNEL_ENABLED: ${{ vars.NPM_MAIN_CHANNEL || 'false' }}
 
       - name: Summarize release decision
         run: |

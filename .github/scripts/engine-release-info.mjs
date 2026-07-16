@@ -13,8 +13,9 @@
 //     other npm error fails the run.
 //   - The first-ever publish never fires off a push: the workflow's bootstrap
 //     gate requires a supervised workflow_dispatch with force_release=true.
-//   - The main channel (latest = npm's default install) is additionally held
-//     behind the NPM_MAIN_CHANNEL repository variable until the team opens it.
+//   - beta/latest publishes land in npm's staging queue (see the workflow):
+//     a maintainer approves each version before it goes live, so merging to
+//     main IS the go signal and the approval is the only remaining gate.
 import {readFileSync, appendFileSync} from "node:fs"
 import {channelFor, deriveVersion, publishedVersions, CHANNEL_MANIFESTS} from "./npm-channel.mjs"
 
@@ -26,7 +27,6 @@ const eventName = process.env.GITHUB_EVENT_NAME || ""
 const branch = process.env.GITHUB_REF_NAME || ""
 const forceRelease = process.env.FORCE_RELEASE === "true"
 const dryRun = process.env.DRY_RUN === "true"
-const mainChannelEnabled = process.env.MAIN_CHANNEL_ENABLED === "true"
 
 function setOutput(name, value) {
   if (!outputPath) {
@@ -76,11 +76,6 @@ if (versionExists) {
         `bump the base version on dev and merge it up.`,
     )
   }
-} else if (branch === "main" && !mainChannelEnabled && !dryRun) {
-  // Deliberately NOT bypassable by force_release — opening the public channel
-  // is a separate decision from forcing a publish.
-  reason = "main channel disabled — set repo variable NPM_MAIN_CHANNEL=true"
-  console.log(`::notice::${packageName}@${derived} would ship to "latest" but the main channel is disabled. ${reason}.`)
 } else if (missingPeers.length > 0 && !dryRun) {
   reason = `waits for ${missingPeers.join(", ")} to be live on this channel`
   console.log(`::notice::${packageName}@${derived} skipped: ${reason}. Publish/approve the peers, then re-run this workflow.`)
