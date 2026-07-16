@@ -1,5 +1,7 @@
 package com.mentra.asg_client;
 
+import com.mentra.asg_client.io.media.core.textdetect.roi.TextCropModel;
+
 public class AsgConstants {
     public static String appName = "AugmentOS ASG Client";
     public static int augmentOsSdkVerion = 1;
@@ -74,6 +76,12 @@ public class AsgConstants {
      * mode == "text"}.
      */
     public static final boolean ENABLE_TEXT_REGION_CROP = false;
+
+    /** Use the selected ONNX text detector instead of the classical OpenCV detector. */
+    public static final boolean ENABLE_MODEL_TEXT_CROP = false;
+
+    /** Text-region detector selected when {@link #ENABLE_MODEL_TEXT_CROP} is enabled. */
+    public static final TextCropModel TEXT_CROP_MODEL = TextCropModel.PPOCR_V5_MOBILE_DET;
 
     /**
      * Dump text-detect intermediates to {@code textdetect_debug/} on every detection run. Adds

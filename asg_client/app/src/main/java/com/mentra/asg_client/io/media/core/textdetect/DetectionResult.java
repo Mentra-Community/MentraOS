@@ -22,7 +22,7 @@ public final class DetectionResult {
 
     @Nullable public final DebugArtifacts debug;
 
-    DetectionResult(
+    public DetectionResult(
             CropRect roi,
             Confidence confidence,
             String selectedPolarity,

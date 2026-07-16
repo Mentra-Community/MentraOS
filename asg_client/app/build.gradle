@@ -255,6 +255,18 @@ android {
                 if (textDetectOutputDir != null) {
                     systemProperty 'textdetect.outputDir', textDetectOutputDir
                 }
+                [
+                    'textroi.inputDir',
+                    'textroi.outputDir',
+                    'textroi.modelDir',
+                    'textroi.detectors',
+                    'textroi.bleBytesPerSecond'
+                ].each { propertyName ->
+                    def propertyValue = System.getProperty(propertyName)
+                    if (propertyValue != null) {
+                        systemProperty propertyName, propertyValue
+                    }
+                }
             }
         }
     }
@@ -347,6 +359,8 @@ dependencies {
     testImplementation 'androidx.test:core:1.5.0'
     // Desktop OpenCV natives for offline text-detect harness (JVM unit tests on dev machine)
     testImplementation 'org.openpnp:opencv:4.9.0-0'
+    // Desktop ONNX Runtime for the swappable text-ROI benchmark harness.
+    testImplementation 'com.microsoft.onnxruntime:onnxruntime:1.27.0'
     androidTestImplementation 'androidx.test.ext:junit:1.1.5'
     androidTestImplementation 'androidx.test:runner:1.5.2'
     androidTestImplementation 'androidx.test:rules:1.5.0'
@@ -388,6 +402,8 @@ dependencies {
     
     // OpenCV for BLE text-region detection (adaptive threshold, morphology, connected components)
     implementation 'org.opencv:opencv:4.13.0'
+    // Detection-only text models used before BLE encoding. Sessions are cached for service life.
+    implementation 'com.microsoft.onnxruntime:onnxruntime-android:1.27.0'
 
     // AVIF encoding/decoding support
     implementation 'com.github.awxkee:avif-coder:1.7.3'

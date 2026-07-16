@@ -26,7 +26,11 @@ import com.mentra.asg_client.io.media.managers.MediaUploadQueueManager;
 import com.mentra.asg_client.io.media.core.textdetect.DetectionResult;
 import com.mentra.asg_client.io.media.core.textdetect.TextDetectConfig;
 import com.mentra.asg_client.io.media.core.textdetect.TextDetectDebugWriter;
-import com.mentra.asg_client.io.media.core.textdetect.TextRegionDetector;
+import com.mentra.asg_client.io.media.core.textdetect.roi.AndroidAssetModelSource;
+import com.mentra.asg_client.io.media.core.textdetect.roi.DetectionInput;
+import com.mentra.asg_client.io.media.core.textdetect.roi.TextCropModel;
+import com.mentra.asg_client.io.media.core.textdetect.roi.TextRoiDetector;
+import com.mentra.asg_client.io.media.core.textdetect.roi.TextRoiDetectorFactory;
 import com.mentra.asg_client.io.media.upload.MediaUploadService;
 import com.mentra.asg_client.io.storage.StorageManager;
 import com.mentra.asg_client.io.streaming.services.RtmpStreamingService;
@@ -85,6 +89,7 @@ public class MediaCaptureService {
     private MediaCaptureListener mMediaCaptureListener;
     private ServiceCallbackInterface mServiceCallback;
     private final IHardwareManager hardwareManager;
+    @Nullable private volatile TextRoiDetector textRoiDetector;
 
     // Track current video recording
     private boolean isRecordingVideo = false;
@@ -333,6 +338,28 @@ public class MediaCaptureService {
                 .build();
     }
 
+    private TextRoiDetector getTextRoiDetector() {
+        TextRoiDetector current = textRoiDetector;
+        if (current != null) {
+            return current;
+        }
+        synchronized (this) {
+            if (textRoiDetector == null) {
+                TextCropModel selected =
+                        AsgConstants.ENABLE_MODEL_TEXT_CROP
+                                ? AsgConstants.TEXT_CROP_MODEL
+                                : TextCropModel.CLASSICAL;
+                textRoiDetector =
+                        TextRoiDetectorFactory.create(
+                                selected,
+                                buildTextDetectConfig(),
+                                new AndroidAssetModelSource(mContext.getAssets(), "textroi"));
+                Log.i(TAG, "Text ROI detector initialized: " + textRoiDetector.id());
+            }
+            return textRoiDetector;
+        }
+    }
+
     @Nullable
     private TextRegionDetection runTextRegionDetection(String originalPath) {
         try {
@@ -340,9 +367,9 @@ public class MediaCaptureService {
             GrayscaleBleProcessor.DetectionLuma input =
                     GrayscaleBleProcessor.extractDetectionLuma(
                             originalPath, detectConfig.analysisWidth);
+            TextRoiDetector detector = getTextRoiDetector();
             DetectionResult result =
-                    TextRegionDetector.detect(
-                            input.luma, input.width, input.height, detectConfig);
+                    detector.detect(new DetectionInput(input.luma, input.width, input.height));
             android.graphics.Rect roi =
                     GrayscaleBleProcessor.scaleDetectionRoi(result.roi, input);
             String outcome =
@@ -353,7 +380,9 @@ public class MediaCaptureService {
                             result.lineCount);
             Log.d(
                     TAG,
-                    "TextRegionDetector: confidence="
+                    "TextRegionDetector: detector="
+                            + detector.id()
+                            + " confidence="
                             + result.confidence
                             + " reason="
                             + result.fallbackReason
@@ -5814,6 +5843,12 @@ public class MediaCaptureService {
             if (mBatteryMonitorHandler != null) {
                 mBatteryMonitorHandler.removeCallbacksAndMessages(null);
                 mBatteryMonitorHandler = null;
+            }
+
+            TextRoiDetector detector = textRoiDetector;
+            textRoiDetector = null;
+            if (detector != null) {
+                detector.close();
             }
 
             videoIntegrityExecutor.shutdown();
