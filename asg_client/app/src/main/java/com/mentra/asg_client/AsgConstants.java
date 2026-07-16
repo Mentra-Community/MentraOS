@@ -36,6 +36,17 @@ public class AsgConstants {
     public static final String ACTION_GLASSES_BATTERY_STATUS =
             "com.mentra.recovery.ACTION_GLASSES_BATTERY_STATUS";
 
+    /**
+     * Awake window granted per wake-flagged phone command ("W":1 string wrapper or FLAG_WAKE
+     * binary frame). The BES only pulses the MTK power key for these when the SoC is already
+     * asleep, so a command landing mid-awake-window gets no extra time — this window is the
+     * in-band equivalent. Must outlive the longest command follow-up that runs on
+     * suspend-frozen clocks: the wifi credentials flow sends its failure verdict at ~12.4s
+     * (3s + 3x3s status polls), so 15s covers it with margin. Acquired extend-only, so it
+     * never shortens a longer-lived lock (BES/MTK OTA).
+     */
+    public static final long PHONE_WAKE_COMMAND_WINDOW_MS = 15000;
+
     // RGB LED Control Constants (Glasses BES Chipset - Remote Control via Bluetooth)
     // NOTE: These are different from the local MTK recording LED
 

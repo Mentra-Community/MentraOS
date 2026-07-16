@@ -2,6 +2,7 @@ package com.mentra.asg_client.service.core.processors;
 
 import android.content.Context;
 import android.util.Log;
+import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.io.bes.log.BesTracePoller;
 import com.mentra.asg_client.io.file.core.FileManager;
 import com.mentra.asg_client.io.peripheral.IPeripheralBus;
@@ -187,7 +188,7 @@ public class CommandProcessor {
             // frames carry the same flag in the frame header; K900BluetoothManager grants it.
             if (json.optInt("W", 0) == 1) {
                 WakeLockManager.acquireCpuWakeLock(
-                        context, WakeLockManager.PHONE_WAKE_COMMAND_WINDOW_MS);
+                        context, AsgConstants.PHONE_WAKE_COMMAND_WINDOW_MS);
             }
 
             // Check for ACK first (from phone acknowledging our sent messages)
