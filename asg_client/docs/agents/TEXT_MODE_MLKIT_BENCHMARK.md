@@ -174,6 +174,36 @@ camera thread has transitioned into its IDLE keep-alive state. This optimization
 with the same JPEG, 1280 analysis size, model instance, and thermal state before claiming a latency
 win.
 
+### Comparison with a real WHIP stream
+
+A local MediaMTX WHIP ingest was run over ADB-forwarded WebRTC/TCP so the measurement included a
+negotiated peer connection and actual published media, without internet variability. The default
+WHIP configuration requested 854x480 at 15 fps and 1 Mbps. The camera selected 960x720 at a fixed
+15 fps; WebRTC cropped/scaled it, negotiated H.264, encoded through
+`OMX.MTK.VIDEO.ENCODER.AVC`, and published H.264 plus Opus audio.
+
+| Five-second state | ASG app | Camera HAL | Camera server | Audio HAL | Hardware codec | System server | Listed total |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Warm photo preview, average | 13.1% | 95.5% | 9.9% | 0.0% | 0.0% | 5.5% | 124.0% |
+| Live WHIP, interval 1 | 57.3% | 41.9% | 4.6% | 21.7% | 9.9% | 5.4% | 140.8% |
+| Live WHIP, interval 2 | 57.6% | 42.5% | 4.8% | 21.4% | 9.7% | 4.8% | 140.8% |
+
+Again, 100% is one core and 400% is the four-core device. The supposedly idle photo warm-up uses
+about 88% of the listed CPU used by a complete WHIP video+audio stream. It is therefore high for an
+idle grace period, even though it is not evidence of a runaway loop: Camera2 frame counts matched
+the requested work and the load was stable. The main reason is configuration. Photo warm-up selects
+the flexible `[5,30]` AE range and ran at 30 fps in the measured lighting, while WHIP locks the
+camera to 15 fps. WHIP moves more work into the app, audio HAL, and hardware encoder, but its camera
+HAL load is less than half the warm-photo HAL load.
+
+The current evidence supports an expected detector saving of roughly 50-100 ms from closing the
+camera, with a plausible per-shot range from effectively zero to about 150 ms. It does not support
+hundreds of milliseconds as a reliable claim: closed-camera 1280 runs already varied by 278 ms,
+and immediate live runs overlap that range. The larger and more certain benefit is eliminating
+roughly 1.2 core-equivalents for the remainder of the three-second keep-alive, reducing energy,
+heat, and contention during ROI decode/sharpen/encode. A controlled A/B implementation is required
+for a tighter latency number.
+
 ## Earlier candidate bakeoff and why its results looked poor
 
 ### PR #3463 implementation
