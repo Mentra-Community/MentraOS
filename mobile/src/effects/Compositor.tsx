@@ -20,7 +20,7 @@
  */
 
 import {useCallback, useEffect, useRef, useState} from "react"
-import {Dimensions, Platform, View} from "react-native"
+import {Dimensions, Keyboard, Platform, View} from "react-native"
 import {Gesture, GestureDetector} from "react-native-gesture-handler"
 import Animated, {
   Easing,
@@ -95,6 +95,12 @@ export default function Compositor() {
     SETTINGS.ios_app_switcher_bottom_swipe.key,
   )
   useEffect(() => {
+    // A TextInput focused in one miniapp/screen can otherwise keep the IME's
+    // served view across a switch to a different app (or back to none on
+    // minimize), causing the keyboard to pop back up over a screen with no
+    // visible input field. This is the single choke point both directions
+    // funnel through, so dismiss unconditionally on every foreground change.
+    Keyboard.dismiss()
     if (foregroundApp) {
       // Only swap renderedApp when a DIFFERENT app is foregrounded. refresh()
       // hands us a new foregroundApp object reference on every poll even when

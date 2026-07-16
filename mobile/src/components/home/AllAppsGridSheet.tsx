@@ -1,5 +1,5 @@
 import {useCallback, useEffect, useMemo, useRef, useState} from "react"
-import {BackHandler, Keyboard, Platform, TextInput, TouchableOpacity, View} from "react-native"
+import {AppState, BackHandler, Keyboard, Platform, TextInput, TouchableOpacity, View} from "react-native"
 import {Icon} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import BottomSheet, {
@@ -58,6 +58,23 @@ export default function AllAppsGridSheet({bottomSheetRef}: {bottomSheetRef: Reac
     })
     return () => sub.remove()
   }, [isOpen, bottomSheetRef])
+
+  // The sheet's own onChange only fires blur+dismiss when it closes via its own
+  // gesture/programmatic close() path. If the user backgrounds the whole app
+  // (Home button, app switcher) while the search field is still focused and the
+  // sheet never closes, the ReactEditText keeps the IME's served view — Android
+  // then re-shows the keyboard over whatever screen is on top on the next
+  // resume. Blur + dismiss on any non-active AppState transition closes that
+  // gap regardless of how the app left the foreground.
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (state) => {
+      if (state !== "active") {
+        searchInputRef.current?.blur()
+        Keyboard.dismiss()
+      }
+    })
+    return () => sub.remove()
+  }, [])
 
   return (
     <>
