@@ -28,9 +28,9 @@
     },
     "../cloud-v2/packages/cloud-client": {
       "name": "@mentra/cloud-client",
-      "version": "0.1.0-dev.0",
+      "version": "0.1.0",
       "dependencies": {
-        "@mentra/cloud-protocol": "^0.1.0-dev.0",
+        "@mentra/cloud-protocol": "^0.1.0",
         "tweetnacl": "^1.0.3",
       },
       "devDependencies": {
@@ -59,7 +59,7 @@
     },
     "../cloud-v2/packages/protocol": {
       "name": "@mentra/cloud-protocol",
-      "version": "0.1.0-dev.0",
+      "version": "0.1.0",
       "dependencies": {
         "zod": "^3.24.1",
       },
@@ -279,9 +279,9 @@
     },
     "../mobile/modules/crust": {
       "name": "@mentra/crust",
-      "version": "0.1.0-dev.0",
+      "version": "0.1.0",
       "dependencies": {
-        "@mentra/jspolyfill": "^0.1.0-dev.0",
+        "@mentra/jspolyfill": "^0.1.0",
       },
       "devDependencies": {
         "@expo/config-plugins": ">=8.0.0",
@@ -319,10 +319,10 @@
         "@craftzdog/react-native-buffer": "*",
         "@dr.pogodin/react-native-fs": "*",
         "@mentra/bluetooth-sdk": "*",
-        "@mentra/cloud-client": "^0.1.0-dev.0",
-        "@mentra/cloud-protocol": "^0.1.0-dev.0",
-        "@mentra/crust": "^0.1.0-dev.0",
-        "@mentra/miniapp": "^0.3.0-dev.0",
+        "@mentra/cloud-client": "^0.1.0",
+        "@mentra/cloud-protocol": "^0.1.0",
+        "@mentra/crust": "^0.1.0",
+        "@mentra/miniapp": "^0.3.0",
         "@react-native-community/netinfo": "*",
         "@types/react": "*",
         "axios": "*",
@@ -354,14 +354,14 @@
     },
     "../mobile/modules/jspolyfill": {
       "name": "@mentra/jspolyfill",
-      "version": "0.1.0-dev.0",
+      "version": "0.1.0",
       "devDependencies": {
         "esbuild": "^0.23.0",
       },
     },
     "../mobile/modules/miniapp": {
       "name": "@mentra/miniapp",
-      "version": "0.3.0-dev.0",
+      "version": "0.3.0",
       "dependencies": {
         "@mentra/types": "1.0.0-beta.2",
         "eventemitter3": "^5.0.1",

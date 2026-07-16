@@ -8,7 +8,7 @@ name: Release Mentra Engine
 #
 # FIRST PUBLISH (deliberately manual): @mentra/engine cannot go to npm before
 # its @mentra/* peer dependencies exist there (crust, cloud-client,
-# cloud-runtime, miniapp — npm >=7 auto-installs peers, so consumers would
+# cloud-protocol, miniapp — npm >=7 auto-installs peers, so consumers would
 # E404). Once the peers are published, run a supervised workflow_dispatch with
 # force_release=true (dry_run=false); that first publish uses NPM_TOKEN because
 # npm cannot stage a package that does not exist. Later versions publish
