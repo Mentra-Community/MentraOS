@@ -763,6 +763,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   const otaAppIdentityRef = useRef<string | null>(null);
   const wifiConnectAttemptRef = useRef(0);
   const wifiConnectGraceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const wifiConnectingSsidRef = useRef<string | null>(null);
   const [autoOtaCheckRetryTick, setAutoOtaCheckRetryTick] = useState(0);
   const [latestVersionInfo, setLatestVersionInfo] = useState<VersionInfoResult | null>(null);
   const [latestVersionInfoSignature, setLatestVersionInfoSignature] = useState<string | null>(null);
@@ -985,9 +986,18 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       }),
       BluetoothSdk.addListener('wifi_status_change', (payload) => {
         if (payload.state === 'connected') {
-          // A connect that outlived the SDK request timeout resolved late.
-          settleWifiConnectAttempt();
-          setWifiConnectError(null);
+          const targetSsid = wifiConnectingSsidRef.current;
+          if (!targetSsid || payload.ssid === targetSsid) {
+            // A connect that outlived the SDK request timeout resolved late,
+            // or the glasses (re)connected with no attempt pending.
+            settleWifiConnectAttempt();
+            setWifiConnectError(null);
+          } else {
+            // Re-associating with a different network while a join is
+            // pending means the join failed (e.g. wrong password).
+            settleWifiConnectAttempt();
+            setWifiConnectError(`Could not connect to ${targetSsid}. Check the password and try again.`);
+          }
         }
         addEvent('STORE', `Wi-Fi ${payload.state === 'connected' ? payload.ssid : payload.state}`);
       }),
@@ -1914,7 +1924,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
         });
         handlePhotoResponse(response);
       } catch (error) {
-        if (isPhotoRequestTimeoutError(error) && activePhotoRequestIdRef.current === requestId) {
+        if (isRequestTimeoutError(error) && activePhotoRequestIdRef.current === requestId) {
           markPhotoRequestStillWaiting(requestId, 'Cloud server', error);
           void pollPhotoPreview(requestId, statusUrl, pollGeneration);
           return;
@@ -1953,7 +1963,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       });
       handlePhotoResponse(response);
     } catch (error) {
-      if (isPhotoRequestTimeoutError(error) && activePhotoRequestIdRef.current === requestId) {
+      if (isRequestTimeoutError(error) && activePhotoRequestIdRef.current === requestId) {
         markPhotoRequestStillWaiting(requestId, 'Phone receiver', error);
         startPhonePhotoUploadTimeout(requestId);
         return;
@@ -3524,6 +3534,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
 
   function settleWifiConnectAttempt() {
     wifiConnectAttemptRef.current += 1;
+    wifiConnectingSsidRef.current = null;
     if (wifiConnectGraceTimerRef.current) {
       clearTimeout(wifiConnectGraceTimerRef.current);
       wifiConnectGraceTimerRef.current = null;
@@ -3542,25 +3553,29 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
         clearTimeout(wifiConnectGraceTimerRef.current);
         wifiConnectGraceTimerRef.current = null;
       }
+      wifiConnectingSsidRef.current = ssid;
       setWifiConnectingSsid(ssid);
       setWifiConnectError(null);
       try {
         const status = await BluetoothSdk.sendWifiCredentials(ssid, requiresPassword ? password : '');
         if (wifiConnectAttemptRef.current === attempt) {
-          setWifiConnectingSsid(null);
+          settleWifiConnectAttempt();
         }
         addEvent('LIVE', `Wi-Fi ${status.state === 'connected' ? status.ssid : status.state}`);
       } catch (error) {
         if (wifiConnectAttemptRef.current !== attempt) {
           return;
         }
-        if ((error as {code?: string})?.code === 'request_timeout') {
+        // iOS loses the 'request_timeout' code in the Expo bridge, so also
+        // match on the message like isRequestTimeoutError does.
+        if ((error as {code?: string})?.code === 'request_timeout' || isRequestTimeoutError(error)) {
           // The glasses often finish associating after the SDK stops
           // waiting; keep the connecting state during a grace window and
           // let a late wifi_status_change resolve it.
           wifiConnectGraceTimerRef.current = setTimeout(() => {
             wifiConnectGraceTimerRef.current = null;
             if (wifiConnectAttemptRef.current === attempt) {
+              wifiConnectingSsidRef.current = null;
               setWifiConnectingSsid(null);
               setWifiConnectError(`Could not connect to ${ssid}. Check the password and try again.`);
             }
@@ -3568,7 +3583,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
           addEvent('LIVE', `Wi-Fi connect to ${ssid} still pending`);
           return;
         }
-        setWifiConnectingSsid(null);
+        settleWifiConnectAttempt();
         setWifiConnectError(formatError(error));
         throw error;
       }
@@ -5164,7 +5179,7 @@ function formatError(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
 
-function isPhotoRequestTimeoutError(error: unknown) {
+function isRequestTimeoutError(error: unknown) {
   const message = formatError(error).toLowerCase();
   return (
     message.includes('request_timeout') ||
