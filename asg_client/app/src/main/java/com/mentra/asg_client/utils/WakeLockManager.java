@@ -28,6 +28,14 @@ public class WakeLockManager {
     // Default timeouts
     private static final long DEFAULT_CPU_TIMEOUT_MS = 60000; // 60 seconds
     private static final long DEFAULT_SCREEN_TIMEOUT_MS = 15000; // 15 seconds
+
+    // Awake window granted per wake-flagged phone command ("W":1 string wrapper or FLAG_WAKE
+    // binary frame). The BES only pulses the MTK power key for these when the SoC is already
+    // asleep, so a command landing mid-awake-window gets no extra time — this window is the
+    // in-band equivalent. Must outlive the longest command follow-up that runs on
+    // suspend-frozen clocks: the wifi credentials flow sends its failure verdict at ~12.4s
+    // (3s + 3x3s status polls), so 15s covers it with margin.
+    public static final long PHONE_WAKE_COMMAND_WINDOW_MS = 15000;
     
     // Static wake lock instances for sharing across the app
     private static PowerManager.WakeLock sCpuWakeLock;

@@ -38,6 +38,7 @@ import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
 import com.mentra.asg_client.service.media.interfaces.IMediaManager;
 import com.mentra.asg_client.service.system.interfaces.IConfigurationManager;
 import com.mentra.asg_client.service.system.interfaces.IStateManager;
+import com.mentra.asg_client.utils.WakeLockManager;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
@@ -179,6 +180,16 @@ public class CommandProcessor {
 
         Log.d(TAG, "📊 processJsonCommand() started" + json.toString());
         try {
+            // Wake-flagged command ("W":1): grant a fresh awake window so its follow-up work
+            // survives the 12s screen timeout — the BES power-key pulse for W=1 only fires
+            // when the SoC is already asleep, never extending a window already in progress.
+            // Extend-only: never shortens a longer-lived lock (BES/MTK OTA). Binary wire-v2
+            // frames carry the same flag in the frame header; K900BluetoothManager grants it.
+            if (json.optInt("W", 0) == 1) {
+                WakeLockManager.acquireCpuWakeLock(
+                        context, WakeLockManager.PHONE_WAKE_COMMAND_WINDOW_MS);
+            }
+
             // Check for ACK first (from phone acknowledging our sent messages)
             String type = json.optString("type", json.optString("t", ""));
             if ("msg_ack".equals(type)) {

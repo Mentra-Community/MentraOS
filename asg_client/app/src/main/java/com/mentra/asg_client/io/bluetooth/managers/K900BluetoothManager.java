@@ -17,6 +17,7 @@ import com.mentra.asg_client.reporting.domains.BluetoothReporting;
 import com.mentra.asg_client.service.core.AsgClientService;
 import com.mentra.asg_client.service.core.processors.ChunkReassembler;
 import com.mentra.asg_client.service.core.processors.ChunkedMessageProtocolStrategy;
+import com.mentra.asg_client.utils.WakeLockManager;
 
 import org.json.JSONObject;
 
@@ -582,6 +583,15 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                 }
             }
             return true;
+        }
+
+        // Wake-flagged frame: grant a fresh awake window (see PHONE_WAKE_COMMAND_WINDOW_MS —
+        // the BES power-key pulse never extends a window already in progress). The string-frame
+        // path gets the same grant from CommandProcessor via the "W":1 wrapper field, which
+        // binary frames do not carry.
+        if ((header.flags & BesWireFormat.FLAG_WAKE) != 0) {
+            WakeLockManager.acquireCpuWakeLock(
+                    context, WakeLockManager.PHONE_WAKE_COMMAND_WINDOW_MS);
         }
 
         byte[] reassembled = inboundBinaryStrategy.processBinaryWireFrame(message);
