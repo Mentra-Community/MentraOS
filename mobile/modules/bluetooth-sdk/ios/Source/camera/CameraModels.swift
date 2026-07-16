@@ -68,6 +68,7 @@ public enum PhotoCompression: String {
 
 public struct PhotoCaptureDefaults {
     public let size: PhotoSize?
+    public let zslMfnr: Bool?
     public let mfnr: Bool?
     public let zsl: Bool?
     public let noiseReduction: Bool?
@@ -82,6 +83,7 @@ public struct PhotoCaptureDefaults {
 
     public init(
         size: PhotoSize? = nil,
+        zslMfnr: Bool? = nil,
         mfnr: Bool? = nil,
         zsl: Bool? = nil,
         noiseReduction: Bool? = nil,
@@ -95,6 +97,7 @@ public struct PhotoCaptureDefaults {
         resetCaptureTuning: Bool? = nil
     ) {
         self.size = size
+        self.zslMfnr = zslMfnr
         self.mfnr = mfnr
         self.zsl = zsl
         self.noiseReduction = noiseReduction
@@ -108,6 +111,17 @@ public struct PhotoCaptureDefaults {
         self.resetCaptureTuning = resetCaptureTuning
     }
 
+    /// Resolved coupled flag: `zslMfnr` wins; else both legacy flags must be true.
+    public func resolvedZslMfnr() -> Bool? {
+        if let zslMfnr {
+            return zslMfnr
+        }
+        if mfnr != nil || zsl != nil {
+            return mfnr == true && zsl == true
+        }
+        return nil
+    }
+
     static func from(params: [String: Any]) -> PhotoCaptureDefaults {
         let size = (params["size"] as? String).map { PhotoSize(normalizedRawValue: $0) }
         let aeExposureDivisor =
@@ -115,6 +129,7 @@ public struct PhotoCaptureDefaults {
         let isoCap = optionalIntValue(params, "isoCap").flatMap { $0 > 0 ? $0 : nil }
         return PhotoCaptureDefaults(
             size: size,
+            zslMfnr: optionalBoolValue(params, "zslMfnr"),
             mfnr: optionalBoolValue(params, "mfnr"),
             zsl: optionalBoolValue(params, "zsl"),
             noiseReduction: optionalBoolValue(params, "noiseReduction"),
@@ -257,6 +272,7 @@ public struct PhotoRequest {
     public let isoCap: Int?
     public let noiseReduction: Bool?
     public let edgeEnhancement: Bool?
+    public let zslMfnr: Bool?
     public let mfnr: Bool?
     public let zsl: Bool?
     public let ispDigitalGain: Int?
@@ -276,6 +292,7 @@ public struct PhotoRequest {
         isoCap: Int? = nil,
         noiseReduction: Bool? = nil,
         edgeEnhancement: Bool? = nil,
+        zslMfnr: Bool? = nil,
         mfnr: Bool? = nil,
         zsl: Bool? = nil,
         ispDigitalGain: Int? = nil,
@@ -295,6 +312,7 @@ public struct PhotoRequest {
         self.isoCap = isoCap
         self.noiseReduction = noiseReduction
         self.edgeEnhancement = edgeEnhancement
+        self.zslMfnr = zslMfnr
         self.mfnr = mfnr
         self.zsl = zsl
         self.ispDigitalGain = ispDigitalGain
@@ -363,6 +381,7 @@ public struct PhotoRequest {
             isoCap: optionalInt("isoCap", min: 1) { $0 > 0 },
             noiseReduction: optionalBool("noiseReduction"),
             edgeEnhancement: optionalBool("edgeEnhancement"),
+            zslMfnr: optionalBool("zslMfnr"),
             mfnr: optionalBool("mfnr"),
             zsl: optionalBool("zsl"),
             ispDigitalGain: optionalInt("ispDigitalGain"),
@@ -384,11 +403,17 @@ public struct PhotoRequest {
         if let edgeEnhancement {
             json["edgeEnhancement"] = edgeEnhancement
         }
-        if let mfnr {
-            json["mfnr"] = mfnr
-        }
-        if let zsl {
-            json["zsl"] = zsl
+        if let zslMfnr {
+            json["zslMfnr"] = zslMfnr
+            json["mfnr"] = zslMfnr
+            json["zsl"] = zslMfnr
+        } else {
+            if let mfnr {
+                json["mfnr"] = mfnr
+            }
+            if let zsl {
+                json["zsl"] = zsl
+            }
         }
         if let ispDigitalGain {
             json["ispDigitalGain"] = ispDigitalGain
@@ -413,6 +438,7 @@ public struct PhotoRequest {
             isoCap: isoCap,
             noiseReduction: noiseReduction,
             edgeEnhancement: edgeEnhancement,
+            zslMfnr: zslMfnr,
             mfnr: mfnr,
             zsl: zsl,
             ispDigitalGain: ispDigitalGain,
