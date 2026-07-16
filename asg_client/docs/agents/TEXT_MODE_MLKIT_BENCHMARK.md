@@ -33,14 +33,20 @@ that `byte[]` in memory until detection, crop, encoding, and BLE handoff finish.
 - `save=false`: the JPEG is never persisted. It is copied out of `ImageReader`, published through
   `CapturedPhotoStore`, consumed by the BLE worker, and released. The final encoded BLE payload is
   also transferred from a `byte[]`; there is no payload temp file.
-- `save=true`: the same RAM-first path runs immediately, while the original JPEG, EXIF, and IMU
-  sidecar are persisted asynchronously for gallery use.
+- `save=true`: the sensor JPEG remains RAM-only while localization runs. A successful detection
+  persists only the full-resolution cropped JPEG; if detection/cropping fails, the retained sensor
+  JPEG is persisted as the safe full-frame fallback. EXIF and the IMU sidecar are attached to that
+  final selected artifact.
 - The existing IMU recorder still uses a small `.jsonl.partial` scratch file during capture. The
   claim here is specifically that `save=false` does not write the multi-megabyte JPEG or encoded
   BLE payload.
 
 An ADB filesystem check after the final `save=false` run found an empty request directory and no
 `base.jpg`.
+
+A separate `save=true` device run localized two lines in 594 ms and wrote exactly two files: a
+183,436-byte cropped `base.jpg` plus the 3,125-byte `imu.json` sidecar. The capture directory did
+not contain the 12 MP sensor JPEG or a temporary selected JPEG.
 
 ## End-to-end pipeline
 
@@ -119,6 +125,54 @@ The tight one-line result was fast but visually unsafe: the detected conventiona
 guarantee that the nearby stylized product text was included. The final padding deliberately spends
 bytes for recall. This is the right direction for a payload that will later be read by a human or
 VLM.
+
+## Camera CPU profile and the apparent 600 ms versus 150 ms gap
+
+The camera does consume substantial CPU while it is held warm, but the earlier comparison
+overstated its effect on ML Kit. Percentages below are normalized so 100% means one fully occupied
+core; the device has four cores.
+
+| Five-second state | ASG app | `camerahalserver` | `cameraserver` | `system_server` | `surfaceflinger` |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Camera closed | 1.3% | 0.0% | 0.0% | 0.0% | 0.0% |
+| Warm preview, interval 1 | 13.4% | 95.9% | 10.0% | 5.2% | 1.6% |
+| Warm preview, interval 2 | 12.8% | 95.0% | 9.8% | 5.8% | 1.8% |
+
+`dumpsys media.camera` confirmed that warm-up configures two outputs: a 320x240 YUV preview and a
+4032x3024 JPEG still surface. The still surface produced no frames while parked, but the preview
+produced approximately 30 frames per second despite the requested `[5,30]` AE range. MediaTek HAL
+threads such as `fpipe.g_p2a`, `3ATHREAD`, `p2_streaming`, `CAM_P1`, and `CAM_P2` accounted for the
+HAL load. The ASG app also acquires and immediately discards every YUV preview image so the
+`ImageReader` queue does not stall. CPU 0/1 rose from about 1.53 GHz at idle to the 2.001 GHz maximum
+during preview.
+
+Therefore, “camera warm-up uses 100% CPU” is directionally true for the camera HAL: it uses about
+one full Cortex-A53 core. It does **not** mean all four cores are saturated. The measured camera
+processes and ASG preview draining together consumed roughly 1.3 core-equivalents, before kernel
+and unlisted work.
+
+The production camera also keeps that repeating preview alive for three seconds after a still. In
+one traced capture the camera connected at 21:13:16, delivered JPEG bytes at 21:13:18, ran ML Kit
+for 449 ms while the preview remained active, and disconnected at 21:13:21. This overlap is real
+and wastes compute for text mode.
+
+It does not, however, establish a same-workload 600 ms versus 150 ms camera penalty:
+
+- The approximately 150 ms result came from a 640-long-edge/simple-text case. The difficult label
+  needed 1280 pixels for acceptable recall; 480 and 640 missed it entirely.
+- With the camera closed, the identical saved label at 1280 took 529, 416, and 694 ms in a fresh
+  run (an earlier run was 691, 384, and 426 ms).
+- Immediate real 1280 captures took 449-651 ms. That range overlaps the camera-closed range and
+  shows considerable model/runtime scheduling jitter.
+
+The correct conclusion is that the three-second post-capture preview is expensive and should be
+disabled for text mode, but it is not the primary explanation for the fourfold headline gap. A
+proper implementation should carry an explicit `closeAfterCapture` policy into `CameraNeoService`
+and release the session immediately after publishing the in-memory JPEG. Calling the existing
+`closeKeptAliveCamera()` from the media callback is racy because the callback can start before the
+camera thread has transitioned into its IDLE keep-alive state. This optimization should be measured
+with the same JPEG, 1280 analysis size, model instance, and thermal state before claiming a latency
+win.
 
 ## Earlier candidate bakeoff and why its results looked poor
 

@@ -401,27 +401,104 @@ public class MediaCaptureService {
     }
 
     /**
-     * Writes the text-mode canonical cropped JPEG from an already-computed detection ROI (no
-     * re-detection) and promotes it over the original capture. Used by the RAM-first BLE path for
-     * gallery-saved photos, after the BLE handoff and after the background persistence write has
-     * landed the original on disk.
+     * Persists the final text-mode selection without first writing the sensor JPEG. A successful
+     * detection writes only the full-resolution ROI. Detection/crop failure is the one case that
+     * writes the retained sensor JPEG as the safe full-frame fallback.
      */
-    private void prepareTextModeCanonicalCrop(
-            String photoFilePath, String requestId, @Nullable android.graphics.Rect roi) {
-        if (Boolean.TRUE.equals(photoTextCropPrepared.get(requestId))) {
-            return;
+    private boolean persistTextModeSelectionFromMemory(
+            CapturedPhoto capturedPhoto,
+            String canonicalPath,
+            String requestId,
+            @Nullable android.graphics.Rect roi) {
+        String preparedPath = canonicalPath.replace(".jpg", "_textselected_" + requestId + ".jpg");
+        File preparedFile = new File(preparedPath);
+        File parent = preparedFile.getParentFile();
+        if (parent != null && !parent.exists() && !parent.mkdirs()) {
+            Log.e(TAG, "Could not create text-mode gallery directory: " + parent);
+            return false;
         }
-        try {
-            String croppedPath = writeCroppedBitmapToTempJpeg(photoFilePath, roi, requestId);
-            if (croppedPath != null) {
-                PhotoArtifactFiles.promoteToCanonical(photoFilePath, croppedPath);
-                photoTextCropPrepared.put(requestId, true);
+
+        boolean wroteCrop = false;
+        android.graphics.Bitmap selected = null;
+        if (roi != null) {
+            try {
+                android.graphics.BitmapFactory.Options bounds =
+                        new android.graphics.BitmapFactory.Options();
+                bounds.inJustDecodeBounds = true;
+                android.graphics.BitmapFactory.decodeByteArray(
+                        capturedPhoto.jpegBytes, 0, capturedPhoto.jpegBytes.length, bounds);
+                if (bounds.outWidth > 0 && bounds.outHeight > 0) {
+                    android.graphics.Rect sourceRegion =
+                            clampRoiToBounds(roi, bounds.outWidth, bounds.outHeight);
+                    selected =
+                            decodeJpegRegion(
+                                    capturedPhoto.jpegBytes,
+                                    canonicalPath,
+                                    sourceRegion,
+                                    new android.graphics.BitmapFactory.Options());
+                }
+                if (selected != null) {
+                    try (FileOutputStream output = new FileOutputStream(preparedFile)) {
+                        wroteCrop =
+                                selected.compress(
+                                        android.graphics.Bitmap.CompressFormat.JPEG,
+                                        AsgConstants.TEXT_MODE_BLE_JPEG_QUALITY,
+                                        output);
+                    }
+                }
+            } catch (Exception error) {
+                Log.w(TAG, "Could not persist text ROI; saving full-frame fallback", error);
+            } finally {
+                if (selected != null) {
+                    selected.recycle();
+                }
             }
-        } catch (java.io.IOException e) {
-            Log.w(
+        }
+
+        try {
+            if (!wroteCrop) {
+                try (FileOutputStream output = new FileOutputStream(preparedFile)) {
+                    output.write(capturedPhoto.jpegBytes);
+                }
+                Log.w(
+                        TAG,
+                        "Text mode saved retained full frame because no usable ROI was available");
+            }
+
+            // Metadata is best-effort; failure must not discard an otherwise valid selected image.
+            PhotoExifMetadataWriter.writeCaptureIdFromPath(preparedPath);
+            if (capturedPhoto.imuPayload != null) {
+                try {
+                    PhotoExifMetadataWriter.writeImuPayload(preparedPath, capturedPhoto.imuPayload);
+                } catch (java.io.IOException metadataError) {
+                    Log.w(TAG, "Could not embed IMU metadata in text-mode photo", metadataError);
+                }
+            }
+
+            PhotoArtifactFiles.promoteToCanonical(canonicalPath, preparedPath);
+            if (capturedPhoto.imuPayload != null && parent != null) {
+                File sidecar = new File(parent, "imu.json");
+                try (FileOutputStream output = new FileOutputStream(sidecar)) {
+                    output.write(
+                            capturedPhoto
+                                    .imuPayload
+                                    .toString()
+                                    .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                } catch (java.io.IOException sidecarError) {
+                    Log.w(TAG, "Could not persist text-mode IMU sidecar", sidecarError);
+                }
+            }
+            photoTextCropPrepared.put(requestId, true);
+            Log.i(
                     TAG,
-                    "Text-mode canonical crop failed, keeping original frame: " + e.getMessage(),
-                    e);
+                    wroteCrop
+                            ? "Text mode persisted cropped gallery output: " + canonicalPath
+                            : "Text mode persisted full-frame fallback: " + canonicalPath);
+            return true;
+        } catch (java.io.IOException error) {
+            Log.e(TAG, "Could not persist final text-mode photo", error);
+            PhotoArtifactFiles.deleteTransportTemporary(canonicalPath, preparedPath);
+            return false;
         }
     }
 
@@ -2011,6 +2088,7 @@ public class MediaCaptureService {
         if (PhotoMode.TEXT.equals(mode)) {
             textRoiDetector.warmUp();
         }
+        final boolean textModeRequested = PhotoMode.TEXT.equals(mode);
         String captureSize = PhotoMode.TEXT.equals(mode) ? PhotoSizeTier.normalize("max") : size;
 
         // Photos cannot interrupt streams
@@ -2078,6 +2156,8 @@ public class MediaCaptureService {
                     exposureTimeNs,
                     iso,
                     captureSettings,
+                    textModeRequested,
+                    !textModeRequested,
                     new CameraNeoService.PhotoCaptureCallback() {
                         @Override
                         public void onPhotoConfigured(JSONObject resolvedConfig) {
@@ -2110,6 +2190,26 @@ public class MediaCaptureService {
 
                         @Override
                         public void onPhotoCaptured(String filePath, JSONObject captureMetadata) {
+                            if (textModeRequested) {
+                                CapturedPhoto capturedPhoto = CapturedPhotoStore.take(filePath);
+                                if (capturedPhoto == null) {
+                                    sendPhotoErrorResponse(
+                                            requestId,
+                                            "PHOTO_SAVE_FAILED",
+                                            "Text-mode capture was not available in memory");
+                                    return;
+                                }
+                                TextRegionDetection detection =
+                                        runTextRegionDetection(capturedPhoto.jpegBytes, filePath);
+                                if (!persistTextModeSelectionFromMemory(
+                                        capturedPhoto, filePath, requestId, detection.roi)) {
+                                    sendPhotoErrorResponse(
+                                            requestId,
+                                            "PHOTO_SAVE_FAILED",
+                                            "Could not save final text-mode output");
+                                    return;
+                                }
+                            }
                             Log.d(TAG, "Local-save photo captured: " + filePath);
                             sendPhotoStatus(
                                     requestId,
@@ -4398,10 +4498,10 @@ public class MediaCaptureService {
                     iso,
                     captureSettings,
                     // RAM-first: the callback fires with the JPEG bytes in memory
-                    // (CapturedPhotoStore); the disk write runs in the background and only
-                    // gallery-save/cleanup consumers gate on it.
+                    // (CapturedPhotoStore). Text mode never persists the sensor JPEG up front;
+                    // save=true writes only the selected crop, or the full-frame fallback.
                     true,
-                    save,
+                    save && !PhotoMode.TEXT.equals(mode),
                     new CameraNeoService.PhotoCaptureCallback() {
                         @Override
                         public void onPhotoConfigured(JSONObject resolvedConfig) {
@@ -5201,20 +5301,31 @@ public class MediaCaptureService {
                                 sendCompressedPhotoViaBle(
                                         compressedData, bleImgId, requestId, compressThreadStart);
 
-                                // 6. Gallery-saved text-mode photos keep the cropped frame as
-                                // their canonical artifact. This runs after the BLE handoff -
-                                // overlapping the transfer - and must wait for the background
-                                // persistence write before touching the file.
+                                // 6. Persist only the final text-mode selection. The sensor JPEG
+                                // remains RAM-only unless detection/cropping failed, in which case
+                                // it is the safe full-frame fallback.
                                 if (capturedPhoto != null
                                         && textModeRequested
-                                        && Boolean.TRUE.equals(photoSaveFlags.get(requestId))
-                                        && capturedPhoto.awaitPersistence(
-                                                AsgConstants
-                                                        .BLE_PHOTO_PERSISTENCE_AWAIT_TIMEOUT_MS)) {
-                                    prepareTextModeCanonicalCrop(originalPath, requestId, roi);
+                                        && Boolean.TRUE.equals(photoSaveFlags.get(requestId))) {
+                                    if (!persistTextModeSelectionFromMemory(
+                                            capturedPhoto, originalPath, requestId, roi)) {
+                                        sendPhotoErrorResponse(
+                                                requestId,
+                                                "PHOTO_SAVE_FAILED",
+                                                "Could not save final text-mode output");
+                                    }
                                 }
 
                             } catch (Exception e) {
+                                if (capturedPhoto != null
+                                        && PhotoMode.TEXT.equals(
+                                                PhotoMode.normalize(
+                                                        photoRequestedModes.get(requestId)))
+                                        && Boolean.TRUE.equals(photoSaveFlags.get(requestId))
+                                        && !new File(originalPath).exists()) {
+                                    persistTextModeSelectionFromMemory(
+                                            capturedPhoto, originalPath, requestId, null);
+                                }
                                 Log.e(TAG, "Error compressing photo for BLE", e);
                                 dumpTimings(requestId);
                                 clearBlePhotoPipelineTracking(requestId, bleImgId);
@@ -5228,10 +5339,9 @@ public class MediaCaptureService {
                                 boolean savePhoto =
                                         Boolean.TRUE.equals(photoSaveFlags.get(requestId));
                                 if (capturedPhoto != null) {
-                                    // Cleanup must never race the background write. For unsaved
-                                    // photos, cancelling first prevents JPEG persistence; when the
-                                    // write already started - or the photo is being kept - wait for
-                                    // it to land before the keep/delete pass below.
+                                    // Non-text save=true captures may still have a background
+                                    // sensor-JPEG write. Text mode uses a completed no-persistence
+                                    // future and writes only its final selection above.
                                     if (!(!savePhoto && capturedPhoto.cancelPersistence())) {
                                         capturedPhoto.awaitPersistence(
                                                 AsgConstants

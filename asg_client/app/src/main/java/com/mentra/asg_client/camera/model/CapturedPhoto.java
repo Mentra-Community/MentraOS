@@ -12,8 +12,9 @@ import java.util.concurrent.TimeoutException;
 
 /**
  * In-memory result of a photo capture: the sensor JPEG bytes plus the assembled IMU payload, handed
- * directly to consumers (BLE compression). Persistence is optional: save=true writes in the
- * background, while save=false uses a completed false future and never persists the JPEG.
+ * directly to consumers (BLE compression). Sensor-JPEG persistence is optional. Text mode keeps it
+ * disabled even for save=true so the consumer can persist only its final crop (or a full-frame
+ * fallback); save=false also uses a completed false future.
  *
  * <p>Produced by {@code PhotoSession} for captures enqueued with {@code deferDiskWrite=true} and
  * retrieved via {@link CapturedPhotoStore}. The {@link #persistence} future tracks the background
