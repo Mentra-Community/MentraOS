@@ -7,6 +7,8 @@ import android.hardware.camera2.CaptureRequest;
 import android.media.Image;
 import android.media.ImageReader;
 import android.os.Handler;
+import android.os.HandlerThread;
+import android.os.SystemClock;
 import android.util.Log;
 import android.util.Range;
 import android.util.Size;
@@ -97,6 +99,23 @@ public final class PhotoSession {
     private volatile Integer mLastMeteredIso;
     private volatile Long mLastMeteredExposureNs;
     private volatile Long mLastStillSensorTimestampNs;
+    /** Wall-clock of last still {@code onCaptureCompleted}; used for ImageReader delivery lag. */
+    private volatile long mLastStillCaptureCompletedWallMs;
+    private volatile long mStillShutterSubmittedWallMs;
+    private volatile long mStillShutterSubmittedElapsedNs;
+    private volatile long mStillRequestedExposureNs;
+    private volatile int mStillRequestedNrMode = -1;
+    private volatile boolean mStillMfnrRequested;
+    private volatile boolean mStillHalStartedLogged;
+    private volatile long mStillHalStartedWallMs;
+    /**
+     * ImageReader already wrote estimated shutter→JPEG phases; ignore late HAL phase rows so they
+     * don't land after storage steps.
+     */
+    private volatile boolean mStillTimingFinalizedByImageReader;
+    /** Dedicated looper so HAL CaptureCallbacks are not queued behind ImageReader JPEG work. */
+    @Nullable private HandlerThread stillCaptureCallbackThread;
+    @Nullable private Handler stillCaptureCallbackHandler;
 
     private final HdrBurstCapture hdrBurstCapture = new HdrBurstCapture();
     private final Object captureMetadataLock = new Object();
@@ -168,7 +187,8 @@ public final class PhotoSession {
                                                 aeCallback,
                                                 hooks.backgroundHandler(),
                                                 hooks.cameraSettings(),
-                                                aeStateMachine);
+                                                aeStateMachine,
+                                                previewZslMfnrEnabled());
                                 if (lockRequested) {
                                     shotState = AeStateMachine.ShotState.WAITING_AE_LOCK;
                                 } else {
@@ -312,15 +332,25 @@ public final class PhotoSession {
     }
 
     /**
-     * Explicit {@code zsl} on the request wins; otherwise let the global device setting apply.
-     * ZSL and MFNR are independent capabilities — ZSL being off should not be implied by MFNR
-     * being off, as ZSL reduces shutter lag regardless of multi-frame processing.
+     * Resolved coupled ZSL/MFNR for the active request. Manual and scan exposure force the pair
+     * off because they conflict with the vendor multi-frame path.
      */
-    private static Boolean resolveRequestZsl(PhotoCaptureSettings captureSettings) {
-        if (captureSettings != null && captureSettings.zsl != null) {
-            return captureSettings.zsl;
+    private boolean resolveZslMfnrForCapture(boolean useManualExposure) {
+        if (useManualExposure) {
+            return false;
         }
-        return null;
+        PhotoCaptureSettings settings = currentCaptureSettings();
+        return settings != null && settings.zslMfnrEnabled();
+    }
+
+    /** Preview buffer should match the pending capture's resolved ZSL/MFNR value. */
+    public boolean previewZslMfnrEnabled() {
+        PhotoCaptureSettings settings = currentCaptureSettings();
+        if (settings != null && settings.zslMfnr != null) {
+            return settings.zslMfnrEnabled();
+        }
+        return hooks.cameraSettings() != null
+                && hooks.cameraSettings().mAsgSettings.isZslMfnrEnabled();
     }
 
     private long currentStartTimeMs() {
@@ -694,13 +724,22 @@ public final class PhotoSession {
         }
 
         long imageAvailableStartMs = System.currentTimeMillis();
-        BlePhotoTimingLog.capturePhase(
-                "still_frame_available",
-                "ImageReader delivered still frame; starting buffer extraction");
+        long imageAvailableElapsedNs = SystemClock.elapsedRealtimeNanos();
+        long halCompleteToImageMs =
+                mLastStillCaptureCompletedWallMs > 0
+                        ? imageAvailableStartMs - mLastStillCaptureCompletedWallMs
+                        : -1L;
         Log.d(TAG, "Processing photo capture...");
         try (Image image = reader.acquireLatestImage()) {
+            int width = -1;
+            int height = -1;
+            long imgTs = -1L;
             try {
-                long imgTs = (image != null) ? image.getTimestamp() : -1L;
+                if (image != null) {
+                    width = image.getWidth();
+                    height = image.getHeight();
+                    imgTs = image.getTimestamp();
+                }
                 Long stillTs = mLastStillSensorTimestampNs;
                 long deltaMs =
                         (stillTs != null && imgTs > 0) ? (stillTs - imgTs) / 1_000_000L : -1L;
@@ -709,6 +748,17 @@ public final class PhotoSession {
             } catch (Throwable t) {
                 // Never let logging crash capture.
             }
+
+            String frameDetail =
+                    logStillShutterToImageBreakdown(
+                            imageAvailableStartMs,
+                            imageAvailableElapsedNs,
+                            imgTs,
+                            width,
+                            height,
+                            halCompleteToImageMs);
+            BlePhotoTimingLog.capturePhase("still_frame_available", frameDetail);
+
             if (image == null) {
                 Log.e(TAG, "Acquired image is null");
                 if (!hdrBurstCapture.isActive()) {
@@ -721,12 +771,15 @@ public final class PhotoSession {
             }
 
             ByteBuffer buffer = image.getPlanes()[0].getBuffer();
-            byte[] bytes = new byte[buffer.remaining()];
+            int remaining = buffer.remaining();
+            byte[] bytes = new byte[remaining];
             buffer.get(bytes);
             BlePhotoTimingLog.capturePhase(
                     "still_buffer_extracted",
                     bytes.length
-                            + " bytes in "
+                            + " bytes ("
+                            + String.format(java.util.Locale.US, "%.1f", bytes.length / 1024.0)
+                            + "KB) copied in "
                             + (System.currentTimeMillis() - imageAvailableStartMs)
                             + "ms; starting file write");
 
@@ -791,6 +844,172 @@ public final class PhotoSession {
                 hooks.stopService();
             }
         }
+    }
+
+    /**
+     * Splits shutter→ImageReader into queue / exposure / ISP+JPEG. Uses HAL callback marks when
+     * they already arrived on the dedicated callback thread; otherwise estimates from
+     * {@link Image#getTimestamp()} vs {@link SystemClock#elapsedRealtimeNanos()}.
+     */
+    private String logStillShutterToImageBreakdown(
+            long imageAvailableWallMs,
+            long imageAvailableElapsedNs,
+            long imageSensorTimestampNs,
+            int width,
+            int height,
+            long halCompleteToImageMs) {
+        long submitWallMs = mStillShutterSubmittedWallMs;
+        long shutterToImageMs =
+                submitWallMs > 0 ? Math.max(0L, imageAvailableWallMs - submitWallMs) : -1L;
+        long exposureBudgetMs =
+                mStillRequestedExposureNs > 0
+                        ? Math.max(1L, Math.round(mStillRequestedExposureNs / 1_000_000.0))
+                        : 10L;
+        boolean halStarted = mStillHalStartedLogged && mStillHalStartedWallMs > 0;
+        boolean halCompleted = mLastStillCaptureCompletedWallMs > 0;
+
+        long queueMs = -1L;
+        long ispJpegMs = -1L;
+        long sinceSensorStartMs = -1L;
+        boolean estimated = false;
+        String note;
+
+        if (halStarted) {
+            queueMs = Math.max(0L, mStillHalStartedWallMs - submitWallMs);
+            if (halCompleted && mLastStillCaptureCompletedWallMs >= mStillHalStartedWallMs) {
+                long startToComplete =
+                        mLastStillCaptureCompletedWallMs - mStillHalStartedWallMs;
+                long ispAfterExposure = Math.max(0L, startToComplete - exposureBudgetMs);
+                long completeToImage =
+                        halCompleteToImageMs >= 0 ? halCompleteToImageMs : 0L;
+                ispJpegMs = ispAfterExposure + completeToImage;
+                sinceSensorStartMs = startToComplete + completeToImage;
+                note = "HAL callbacks arrived before ImageReader";
+            } else {
+                // ImageReader often beats onCaptureCompleted without ZSL/MFNR. Image.getTimestamp()
+                // is not reliably elapsedRealtime on MTK — use wall-clock remainder instead.
+                sinceSensorStartMs = Math.max(0L, shutterToImageMs - queueMs);
+                ispJpegMs = Math.max(0L, sinceSensorStartMs - exposureBudgetMs);
+                estimated = true;
+                note =
+                        halCompleted
+                                ? "HAL start/complete marks inconsistent; wall-clock ISP/JPEG split"
+                                : "HAL started; completed mark late — ISP/JPEG from wall-clock"
+                                        + " remainder";
+            }
+        } else if (imageSensorTimestampNs > 0
+                && mStillShutterSubmittedElapsedNs > 0
+                && shutterToImageMs >= 0) {
+            // Image.timestamp is normally the start of exposure (same timebase as elapsedRealtime).
+            sinceSensorStartMs =
+                    Math.max(0L, (imageAvailableElapsedNs - imageSensorTimestampNs) / 1_000_000L);
+            if (sinceSensorStartMs > shutterToImageMs + 50) {
+                // Timebase mismatch — fall back to wall-clock only.
+                long sensorLagMs = sinceSensorStartMs;
+                queueMs = 0L;
+                sinceSensorStartMs = shutterToImageMs;
+                ispJpegMs = Math.max(0L, shutterToImageMs - exposureBudgetMs);
+                note =
+                        "Image.timestamp timebase mismatch; falling back to wall-clock split"
+                                + " (sensor_lag="
+                                + sensorLagMs
+                                + "ms vs shutter→image="
+                                + shutterToImageMs
+                                + "ms)";
+            } else {
+                queueMs = Math.max(0L, shutterToImageMs - sinceSensorStartMs);
+                ispJpegMs = Math.max(0L, sinceSensorStartMs - exposureBudgetMs);
+                note =
+                        "ESTIMATED — HAL CaptureCallback marks missing/late at ImageReader"
+                                + " (ZSL/MFNR often delivers JPEG before callbacks on shared"
+                                + " handler; callbacks now use a dedicated thread)";
+            }
+            estimated = true;
+
+            // Backfill phase rows so the main table shows the split with correct ΔSTEP values.
+            long exposureStartWall = submitWallMs + queueMs;
+            long exposureEndWall = exposureStartWall + exposureBudgetMs;
+            BlePhotoTimingLog.capturePhaseAt(
+                    "still_hal_started",
+                    String.format(
+                            java.util.Locale.US,
+                            "ESTIMATED exposure start; submit→start=%dms; sensor_ts_ns=%d",
+                            queueMs,
+                            imageSensorTimestampNs),
+                    exposureStartWall);
+            BlePhotoTimingLog.capturePhaseAt(
+                    "still_sensor_exposure_end",
+                    String.format(
+                            java.util.Locale.US,
+                            "ESTIMATED shutter closed; exposure_budget=%dms; mfnr_req=%s nr=%d",
+                            exposureBudgetMs,
+                            mStillMfnrRequested,
+                            mStillRequestedNrMode),
+                    exposureEndWall);
+            mStillHalStartedLogged = true;
+            mStillHalStartedWallMs = exposureStartWall;
+            mStillTimingFinalizedByImageReader = true;
+        } else {
+            queueMs = 0L;
+            ispJpegMs = Math.max(0L, shutterToImageMs - exposureBudgetMs);
+            sinceSensorStartMs = shutterToImageMs;
+            estimated = true;
+            note = "no Image.timestamp / shutter marks; coarse wall-clock split only";
+        }
+
+        if (shutterToImageMs > 0 && queueMs >= 0 && ispJpegMs >= 0) {
+            long maxIspMs = Math.max(0L, shutterToImageMs - queueMs - exposureBudgetMs);
+            if (ispJpegMs > maxIspMs + 50) {
+                ispJpegMs = maxIspMs;
+                sinceSensorStartMs = Math.max(0L, shutterToImageMs - queueMs);
+                estimated = true;
+                note =
+                        (note != null ? note + "; " : "")
+                                + "ISP/JPEG clamped to shutter→ImageReader remainder ("
+                                + maxIspMs
+                                + "ms)";
+            }
+        }
+
+        BlePhotoTimingLog.StillCaptureBreakdown breakdown =
+                new BlePhotoTimingLog.StillCaptureBreakdown(
+                        shutterToImageMs,
+                        queueMs,
+                        exposureBudgetMs,
+                        ispJpegMs,
+                        sinceSensorStartMs,
+                        halStarted && halCompleted && !estimated,
+                        estimated,
+                        mStillMfnrRequested,
+                        mStillRequestedNrMode,
+                        note);
+        BlePhotoTimingLog.recordStillCaptureBreakdown(breakdown);
+
+        String sizePrefix = (width > 0 && height > 0) ? width + "x" + height + "; " : "";
+        return String.format(
+                java.util.Locale.US,
+                "%ssubmit→ImageReader=%dms = queue=%dms + exposure=%dms + ISP/MFNR/JPEG=%dms"
+                        + " (sensor→app=%dms); hal_complete→image=%s; mfnr_req=%s nr=%d; %s;"
+                        + " starting buffer extraction",
+                sizePrefix,
+                shutterToImageMs,
+                queueMs,
+                exposureBudgetMs,
+                ispJpegMs,
+                sinceSensorStartMs,
+                halCompleteToImageMs >= 0 ? halCompleteToImageMs + "ms" : "n/a",
+                mStillMfnrRequested,
+                mStillRequestedNrMode,
+                estimated ? "ESTIMATED" : "HAL-measured");
+    }
+
+    private Handler stillCaptureCallbackHandler() {
+        if (stillCaptureCallbackHandler == null) {
+            stillCaptureCallbackThread = new HandlerThread("StillCaptureCb");
+            stillCaptureCallbackThread.start();
+            stillCaptureCallbackHandler = new Handler(stillCaptureCallbackThread.getLooper());
+        }
+        return stillCaptureCallbackHandler;
     }
 
     private void finishImuRecording(String photoPath) {
@@ -1284,13 +1503,13 @@ public final class PhotoSession {
 
             aeStateMachine.beginWaitingForAe();
 
-            boolean zslEnabled =
-                    (hooks.cameraSettings() != null
+            boolean zslMfnrEnabled =
+                    hooks.cameraSettings() != null
                             && hooks.cameraSettings().isZslSupported()
-                            && hooks.cameraSettings().mAsgSettings.isZslEnabled());
+                            && resolveZslMfnrForCapture(shouldUseManualExposure());
 
             Log.d(TAG, "🔍 DIAGNOSTIC: startPrecaptureSequence() called");
-            Log.d(TAG, "🔍 ZSL enabled: " + zslEnabled);
+            Log.d(TAG, "🔍 ZSL/MFNR enabled: " + zslMfnrEnabled);
             Log.d(TAG, "🔍 Current shot state: " + shotState);
             Log.d(
                     TAG,
@@ -1333,7 +1552,8 @@ public final class PhotoSession {
                 backgroundHandler,
                 hooks.cameraSettings(),
                 aeStateMachine,
-                clearAeWait);
+                clearAeWait,
+                previewZslMfnrEnabled());
     }
 
     private boolean shouldUseManualExposure() {
@@ -1563,25 +1783,9 @@ public final class PhotoSession {
                             + " for display orientation: "
                             + displayOrientation);
 
+            boolean zslMfnr = resolveZslMfnrForCapture(useManual);
             if (hooks.cameraSettings() != null) {
-                Boolean requestMfnr =
-                        captureSettings.mfnr != null ? captureSettings.mfnr : null;
-                Boolean requestZsl = resolveRequestZsl(captureSettings);
-                if (!useManual) {
-                    if (requestMfnr != null || requestZsl != null) {
-                        hooks.cameraSettings()
-                                .configureCaptureBuilder(stillBuilder, requestMfnr, requestZsl);
-                    } else if (hooks.cameraSettings().mAsgSettings.isZslEnabled()
-                            || hooks.cameraSettings().mAsgSettings.isMfnrEnabled()) {
-                        hooks.cameraSettings().configureCaptureBuilder(stillBuilder);
-                    }
-                } else if ((requestMfnr != null && !requestMfnr)
-                        || (requestZsl != null && !requestZsl)) {
-                    // Pass the explicit values as-is; null = "use global device default",
-                    // false = "explicitly disabled". Do NOT coerce null to false here.
-                    hooks.cameraSettings()
-                            .configureCaptureBuilder(stillBuilder, requestMfnr, requestZsl);
-                }
+                hooks.cameraSettings().configureCaptureBuilder(stillBuilder, zslMfnr);
             }
 
             CaptureRequest captureRequest = stillBuilder.build();
@@ -1597,15 +1801,9 @@ public final class PhotoSession {
                                 + ")");
             }
 
-            Boolean requestMfnrForLog =
-                    captureSettings.mfnr != null ? captureSettings.mfnr : null;
-            Boolean requestZslForLog = resolveRequestZsl(captureSettings);
-            boolean globalMfnr =
+            boolean globalZslMfnr =
                     hooks.cameraSettings() != null
-                            && hooks.cameraSettings().mAsgSettings.isMfnrEnabled();
-            boolean globalZsl =
-                    hooks.cameraSettings() != null
-                            && hooks.cameraSettings().mAsgSettings.isZslEnabled();
+                            && hooks.cameraSettings().mAsgSettings.isZslMfnrEnabled();
             PhotoCaptureSettings.logAppliedAtCapture(
                     currentFilePath() != null ? currentFilePath() : "unknown",
                     captureSettings,
@@ -1617,10 +1815,7 @@ public final class PhotoSession {
                     useManual
                             ? manualIso
                             : captureRequest.get(CaptureRequest.SENSOR_SENSITIVITY),
-                    requestMfnrForLog,
-                    requestZslForLog,
-                    globalMfnr,
-                    globalZsl);
+                    globalZslMfnr);
 
             if (useManual) {
                 Log.i(
@@ -1677,9 +1872,53 @@ public final class PhotoSession {
             synchronized (captureMetadataLock) {
                 captureGeneration = captureMetadataGeneration;
             }
+            mLastStillCaptureCompletedWallMs = 0L;
+            mStillHalStartedLogged = false;
+            mStillHalStartedWallMs = 0L;
+            mStillTimingFinalizedByImageReader = false;
+            mStillShutterSubmittedWallMs = System.currentTimeMillis();
+            mStillShutterSubmittedElapsedNs = SystemClock.elapsedRealtimeNanos();
+            Long reqExpNs = captureRequest.get(CaptureRequest.SENSOR_EXPOSURE_TIME);
+            Integer reqIso = captureRequest.get(CaptureRequest.SENSOR_SENSITIVITY);
+            Boolean reqZsl = captureRequest.get(CaptureRequest.CONTROL_ENABLE_ZSL);
+            Integer reqNr = captureRequest.get(CaptureRequest.NOISE_REDUCTION_MODE);
+            // AUTO path often leaves SENSOR_EXPOSURE_TIME null on the request; use last metered
+            // preview exposure so bottleneck math has a real shutter budget.
+            if (reqExpNs != null && reqExpNs > 0) {
+                mStillRequestedExposureNs = reqExpNs;
+            } else if (mLastMeteredExposureNs != null && mLastMeteredExposureNs > 0) {
+                mStillRequestedExposureNs = mLastMeteredExposureNs;
+            } else {
+                mStillRequestedExposureNs = 10_000_000L; // 10ms fallback
+            }
+            mStillRequestedNrMode = reqNr != null ? reqNr : -1;
+            mStillMfnrRequested = zslMfnr;
+            int jpegQ = getJpegQualityForSize();
+            String sizeLabel =
+                    jpegSize != null
+                            ? jpegSize.getWidth() + "x" + jpegSize.getHeight()
+                            : "unknown";
+            String expLabel =
+                    String.format(
+                            java.util.Locale.US,
+                            "%.2fms",
+                            mStillRequestedExposureNs / 1_000_000.0);
+            if (reqExpNs == null) {
+                expLabel += "(metered)";
+            }
             BlePhotoTimingLog.capturePhase(
                     "still_shutter_submitted",
-                    "still capture request submitted to CameraCaptureSession");
+                    String.format(
+                            java.util.Locale.US,
+                            "%s jpegQ=%d mode=%s req_exp=%s req_iso=%s zsl=%s nr=%s zslMfnr=%s — waiting for HAL onCaptureStarted",
+                            sizeLabel,
+                            jpegQ,
+                            useManual ? "MANUAL" : "AUTO",
+                            expLabel,
+                            reqIso != null ? reqIso.toString() : "ae",
+                            String.valueOf(reqZsl),
+                            reqNr != null ? reqNr.toString() : "?",
+                            mStillMfnrRequested));
             activeSession.capture(
                     captureRequest,
                     new StillCaptureCallback(
@@ -1687,6 +1926,29 @@ public final class PhotoSession {
                                 @Override
                                 public void recordStillSensorTimestampNs(Long timestampNs) {
                                     mLastStillSensorTimestampNs = timestampNs;
+                                }
+
+                                @Override
+                                public void recordStillHalStartedWallMs(long startedWallMs) {
+                                    if (!mStillHalStartedLogged) {
+                                        mStillHalStartedLogged = true;
+                                        mStillHalStartedWallMs = startedWallMs;
+                                    }
+                                }
+
+                                @Override
+                                public boolean stillHalStartedAlreadyLogged() {
+                                    return mStillHalStartedLogged;
+                                }
+
+                                @Override
+                                public boolean stillTimingFinalizedByImageReader() {
+                                    return mStillTimingFinalizedByImageReader;
+                                }
+
+                                @Override
+                                public void recordStillCaptureCompletedWallMs(long completedWallMs) {
+                                    mLastStillCaptureCompletedWallMs = completedWallMs;
                                 }
 
                                 @Override
@@ -1737,7 +1999,8 @@ public final class PhotoSession {
                                     hooks.stopService();
                                 }
                             }),
-                    hooks.backgroundHandler());
+                    // Dedicated thread: ImageReader JPEG work must not delay HAL timing callbacks.
+                    stillCaptureCallbackHandler());
 
         } catch (CameraAccessException e) {
             Log.e(TAG, "Error during photo capture", e);
