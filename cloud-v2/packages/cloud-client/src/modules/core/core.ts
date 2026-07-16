@@ -46,7 +46,7 @@ export type {
  *
  * These shapes are owned by miniapp-service, which is not finalized yet, so they
  * are defined here against the spec rather than imported. They are intentionally
- * NOT taken from `@mentra/cloud-runtime/protocol`: that package is the live
+ * NOT taken from `@mentra/cloud-protocol`: that package is the live
  * session wire contract (subscriptions, transcripts, the message unions), while
  * a miniapp listing is a core REST resource with no place on the runtime wire.
  * When miniapp-service locks its schema, move these to the shared package and

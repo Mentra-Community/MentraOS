@@ -36,6 +36,10 @@ config.watchFolders = [
   path.resolve(__dirname, "./modules/miniapp"),
   path.resolve(__dirname, "../cloud/packages/types/src"),
   path.resolve(__dirname, "../cloud/packages/display-utils/src"),
+  // The aliased cloud-v2 sources must be watched or Metro can't hash them.
+  path.resolve(__dirname, "../cloud-v2/packages/protocol/src"),
+  path.resolve(__dirname, "../cloud-v2/packages/cloud-client"),
+  path.resolve(__dirname, "../cloud-v2/packages/runtime/src"),
 ]
 
 // Resolve the core module from the parent directory
@@ -52,6 +56,10 @@ const CLOUD_V2_PACKAGES = path.resolve(__dirname, "../cloud-v2/packages")
 const CLOUD_V2_ALIASES = {
   "@mentra/cloud-client": path.join(CLOUD_V2_PACKAGES, "cloud-client/src/index.ts"),
   "@mentra/cloud-client/react-native": path.join(CLOUD_V2_PACKAGES, "cloud-client/react-native/index.ts"),
+  // The wire protocol lives in its own leaf package now; the old
+  // cloud-runtime/protocol entry is a shim that re-exports it, so both
+  // specifiers must resolve.
+  "@mentra/cloud-protocol": path.join(CLOUD_V2_PACKAGES, "protocol/src/index.ts"),
   "@mentra/cloud-runtime/protocol": path.join(CLOUD_V2_PACKAGES, "runtime/src/protocol/index.ts"),
 }
 

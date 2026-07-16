@@ -67,6 +67,46 @@ const PACKAGES = [
     installDir: 'cloud-v2',
     buildCmd: '',
   },
+  // ---- @mentra/engine peer closure (see PR #3412): the engine cannot be
+  // installed from npm until every package below exists there. Source-TS
+  // publishes target Metro consumers; bootstrap order is leaves first:
+  // jspolyfill + cloud-protocol -> crust + cloud-client.
+  {
+    // MentraJS polyfill bundle. crust's android gradle reads its assets/ by a
+    // relative path that resolves identically in the monorepo and under an
+    // npm-installed @mentra/* sibling layout.
+    key: 'jspolyfill',
+    path: 'mobile/modules/jspolyfill/package.json',
+    dir: 'mobile/modules/jspolyfill',
+    installDir: 'mobile',
+    buildCmd: 'bun run build',
+  },
+  {
+    // Native expo module (QuickJS runtime, navigation, device utilities) +
+    // its config plugin carrying the Android build contract.
+    key: 'crust',
+    path: 'mobile/modules/crust/package.json',
+    dir: 'mobile/modules/crust',
+    installDir: 'mobile',
+    buildCmd: 'bun run build',
+  },
+  {
+    // The phone<->cloud wire protocol (schemas/types, zod only) — extracted so
+    // cloud-client/engine consumers don't drag the server runtime's deps
+    // (ioredis, @soniox/node, hono stay private to the server).
+    key: 'cloud-protocol',
+    path: 'cloud-v2/packages/protocol/package.json',
+    dir: 'cloud-v2/packages/protocol',
+    installDir: 'cloud-v2',
+    buildCmd: '',
+  },
+  {
+    key: 'cloud-client',
+    path: 'cloud-v2/packages/cloud-client/package.json',
+    dir: 'cloud-v2/packages/cloud-client',
+    installDir: 'cloud-v2',
+    buildCmd: '',
+  },
 ];
 
 const outputPath = process.env.GITHUB_OUTPUT;
@@ -171,6 +211,7 @@ for (const pkg of PACKAGES) {
 setOutput('matrix', JSON.stringify(matrix));
 setOutput('has_publishes', String(matrix.length > 0));
 setOutput('dry_run', String(dryRun));
+setOutput('force_release', String(forceRelease));
 
 if (outputPath) {
   const summaryPath = process.env.GITHUB_STEP_SUMMARY;

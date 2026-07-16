@@ -8,7 +8,7 @@ name: Release Mentra Engine
 #
 # FIRST PUBLISH (deliberately manual): @mentra/engine cannot go to npm before
 # its @mentra/* peer dependencies exist there (crust, cloud-client,
-# cloud-runtime, miniapp — npm >=7 auto-installs peers, so consumers would
+# cloud-protocol, miniapp — npm >=7 auto-installs peers, so consumers would
 # E404). Once the peers are published, run a supervised workflow_dispatch with
 # force_release=true (dry_run=false); that first publish uses NPM_TOKEN because
 # npm cannot stage a package that does not exist. Later versions publish
@@ -59,8 +59,10 @@ jobs:
     outputs:
       package_name: ${{ steps.release-info.outputs.package_name }}
       version: ${{ steps.release-info.outputs.version }}
+      dist_tag: ${{ steps.release-info.outputs.dist_tag }}
       run_release: ${{ steps.release-info.outputs.run_release }}
       dry_run: ${{ steps.release-info.outputs.dry_run }}
+      force_release: ${{ steps.release-info.outputs.force_release }}
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
@@ -108,8 +110,11 @@ jobs:
 
       - name: Use npm with staged publishing support
         # Pinned major: the release-critical path must not pick up whatever npm
-        # shipped this morning. Bump deliberately.
-        run: npm install -g npm@11
+        # shipped this morning. Bump deliberately. `npm stage publish` needs
+        # >=11.15.0 (staged publishing GA).
+        run: |
+          npm install -g npm@11
+          npm stage --help >/dev/null 2>&1 || { echo "::error::this npm ($(npm --version)) lacks 'npm stage' — staged publishing needs >=11.15.0."; exit 1; }
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -180,8 +185,16 @@ jobs:
         working-directory: ${{ env.ENGINE_PACKAGE_DIR }}
         run: npm pack --dry-run
 
+      - name: Bootstrap gate — first publish must be supervised
+        # Same gate as the miniapp pipeline: a package that does not exist on
+        # npm never auto-publishes off a push (a version bump merged to dev
+        # must not mint the first release). Bootstrap is a workflow_dispatch
+        # with force_release=true.
+        if: needs.detect.outputs.dry_run != 'true' && steps.npm-registry.outputs.package_exists != 'true' && steps.npm-registry.outputs.version_exists != 'true' && needs.detect.outputs.force_release != 'true'
+        run: echo "::notice::${{ needs.detect.outputs.package_name }} does not exist on npm yet; skipping auto-publish. Bootstrap it with a supervised workflow_dispatch (force_release=true)."
+
       - name: Check initial publish token
-        if: needs.detect.outputs.dry_run != 'true' && steps.npm-registry.outputs.package_exists != 'true' && steps.npm-registry.outputs.version_exists != 'true'
+        if: needs.detect.outputs.dry_run != 'true' && steps.npm-registry.outputs.package_exists != 'true' && steps.npm-registry.outputs.version_exists != 'true' && needs.detect.outputs.force_release == 'true'
         run: |
           if [[ -z "${NODE_AUTH_TOKEN:-}" ]]; then
             echo "::error::Set the NPM_TOKEN repository secret to bootstrap the first @mentra/engine release."
@@ -191,17 +204,21 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish initial npm package
-        if: needs.detect.outputs.dry_run != 'true' && steps.npm-registry.outputs.package_exists != 'true' && steps.npm-registry.outputs.version_exists != 'true'
+        if: needs.detect.outputs.dry_run != 'true' && steps.npm-registry.outputs.package_exists != 'true' && steps.npm-registry.outputs.version_exists != 'true' && needs.detect.outputs.force_release == 'true'
         working-directory: ${{ env.ENGINE_PACKAGE_DIR }}
-        # access/registry come from the package's publishConfig.
-        run: npm publish
+        # access/registry come from the package's publishConfig. The dist-tag is
+        # derived from the version's prerelease label — without --tag, npm
+        # defaults a prerelease onto `latest`.
+        run: npm publish --tag "${{ needs.detect.outputs.dist_tag }}"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Stage npm package
         if: needs.detect.outputs.dry_run != 'true' && steps.npm-registry.outputs.package_exists == 'true' && steps.npm-registry.outputs.version_exists != 'true'
         working-directory: ${{ env.ENGINE_PACKAGE_DIR }}
-        run: npm stage publish
+        # Same --tag logic as npm publish; the tag is immutable once staged, so
+        # it must be right here, not at approval time.
+        run: npm stage publish --tag "${{ needs.detect.outputs.dist_tag }}"
 
       - name: Skip npm stage publish
         if: steps.npm-registry.outputs.version_exists == 'true'

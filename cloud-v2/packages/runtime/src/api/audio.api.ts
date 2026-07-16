@@ -29,7 +29,7 @@ import {
   createLogger,
   verifyRuntimeToken,
 } from "@mentra/cloud-shared";
-import { audioSubscriptionSchema } from "../protocol/audio";
+import { audioSubscriptionSchema } from "@mentra/cloud-protocol/audio";
 import {
   takeoverSubscriptions,
   writeSubscriptions,

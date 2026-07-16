@@ -26,6 +26,10 @@ on:
     branches: [main, staging, dev]
     paths:
       - "mobile/modules/miniapp/**"
+      - "mobile/modules/jspolyfill/**"
+      - "mobile/modules/crust/**"
+      - "cloud-v2/packages/protocol/**"
+      - "cloud-v2/packages/cloud-client/**"
       - "sdk/miniapp-cli/**"
       - "sdk/create-mentra-miniapp/**"
       - "cloud-v2/packages/auth/**"
@@ -62,6 +66,7 @@ jobs:
       matrix: ${{ steps.info.outputs.matrix }}
       has_publishes: ${{ steps.info.outputs.has_publishes }}
       dry_run: ${{ steps.info.outputs.dry_run }}
+      force_release: ${{ steps.info.outputs.force_release }}
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
@@ -136,7 +141,28 @@ jobs:
         id: registry
         run: |
           set -euo pipefail
-          if npm view "${{ matrix.pkg.name }}@${{ matrix.pkg.version }}" version --registry=https://registry.npmjs.org >/dev/null 2>&1; then
+          # E404 is the ONLY absence signal; any other npm failure (5xx,
+          # network, auth) fails the job rather than being read as "absent".
+          check_absent() {
+            local spec="$1" out code
+            set +e
+            out=$(npm view "$spec" version --json --registry=https://registry.npmjs.org 2>&1)
+            code=$?
+            set -e
+            if [[ $code -eq 0 ]]; then echo "exists"; return 0; fi
+            if echo "$out" | grep -q '"code": *"E404"' || echo "$out" | grep -q "code E404"; then
+              echo "absent"; return 0
+            fi
+            echo "::error::npm view '$spec' failed with a non-404 error — refusing to guess registry state." >&2
+            echo "$out" >&2
+            return 1
+          }
+
+          pkg_state=$(check_absent "${{ matrix.pkg.name }}")
+          echo "package_exists=$([[ "$pkg_state" == "exists" ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
+          ver_state=$(check_absent "${{ matrix.pkg.name }}@${{ matrix.pkg.version }}")
+          if [[ "$ver_state" == "exists" ]]; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
             echo "npm already has ${{ matrix.pkg.name }}@${{ matrix.pkg.version }}; nothing to do."
           else
@@ -148,8 +174,17 @@ jobs:
         working-directory: ${{ matrix.pkg.dir }}
         run: npm pack --dry-run
 
+      - name: Bootstrap gate — first publish must be supervised
+        # A package that has NEVER been published does not auto-release from a
+        # version bump landing on a branch: its first publish is a deliberate
+        # workflow_dispatch with force_release=true (same rule as the engine
+        # release workflow). Established packages auto-release as before.
+        if: needs.detect.outputs.dry_run != 'true' && steps.registry.outputs.exists != 'true' && steps.registry.outputs.package_exists != 'true' && needs.detect.outputs.force_release != 'true'
+        run: |
+          echo "::notice::${{ matrix.pkg.name }} is not on npm yet — skipping auto-publish. Bootstrap it with a workflow_dispatch (force_release=true)."
+
       - name: Publish to npm
-        if: needs.detect.outputs.dry_run != 'true' && steps.registry.outputs.exists != 'true'
+        if: needs.detect.outputs.dry_run != 'true' && steps.registry.outputs.exists != 'true' && (steps.registry.outputs.package_exists == 'true' || needs.detect.outputs.force_release == 'true')
         working-directory: ${{ matrix.pkg.dir }}
         run: npm publish --tag "${{ matrix.pkg.tag }}" --access public
         env:
