@@ -88,6 +88,23 @@ public class AsgConstants {
      */
     public static final boolean ENABLE_PHOTO_TIMING_LOGS = true;
 
+    /**
+     * Coupled ZSL preview buffering + MFNR still capture. Disable only as an emergency kill
+     * switch; normal photo capture uses this path by default.
+     */
+    public static final boolean ENABLE_ZSL_MFNR = true;
+
+    /** Default for photo requests and physical camera-button captures when not explicitly opted out. */
+    public static final boolean DEFAULT_ZSL_MFNR = true;
+
+    /** @deprecated Use {@link #ENABLE_ZSL_MFNR}. */
+    @Deprecated
+    public static final boolean ENABLE_ZSL = ENABLE_ZSL_MFNR;
+
+    /** @deprecated Use {@link #ENABLE_ZSL_MFNR}. */
+    @Deprecated
+    public static final boolean ENABLE_MFNR = ENABLE_ZSL_MFNR;
+
     /** After AE meters in text mode, divide exposure time by this factor (shorter shutter). */
     public static final int TEXT_MODE_AE_EXPOSURE_DIVISOR = 3;
 
@@ -110,6 +127,11 @@ public class AsgConstants {
 
     /** JPEG quality for all BLE photo payloads when {@link #BLE_PHOTO_CODEC} is {@code JPEG_FAST}. */
     public static final int BLE_PHOTO_JPEG_FAST_QUALITY = 80;
+
+    /**
+     * Log UART file-transfer send progress every N packets. {@code 0} = off (start/end/errors only).
+     */
+    public static final int FILE_TRANSFER_PROGRESS_LOG_INTERVAL = 10;
 
     // BLE size-tier downscale caps (long edge; aspect ratio preserved) and AVIF quality
     public static final int BLE_PHOTO_LOW_TARGET_PX = 800;
