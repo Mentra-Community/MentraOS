@@ -846,6 +846,7 @@ private fun Map<String, Any>?.toMentraDevice(): Device? {
 private fun Map<String, Any?>.toPhotoCaptureDefaults(): PhotoCaptureDefaults =
         PhotoCaptureDefaults(
                 size = (this["size"] as? String)?.let { PhotoSize.fromValue(it) },
+                zslMfnr = this["zslMfnr"] as? Boolean,
                 mfnr = this["mfnr"] as? Boolean,
                 zsl = this["zsl"] as? Boolean,
                 noiseReduction = this["noiseReduction"] as? Boolean,
