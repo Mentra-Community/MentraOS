@@ -313,6 +313,7 @@ function InsightsView({
                     insight={insight}
                     decision={decision}
                     isNewest={insight.id === newestId}
+                    developerMode={developerMode}
                     expanded={expandedInsightId === insight.id}
                     onToggle={() => setExpandedInsightId((current) => (current === insight.id ? null : insight.id))}
                   />
@@ -652,22 +653,27 @@ function InsightCard({
   insight,
   decision,
   isNewest,
+  developerMode,
   expanded,
   onToggle,
 }: {
   insight: MergeInsight
   decision?: MergeDecision
   isNewest: boolean
+  developerMode: boolean
   expanded: boolean
   onToggle: () => void
 }) {
   const quote = decision?.chunkText?.trim()
   const duration = insight.profiling ? formatDuration(insight.profiling.totalMs) : null
+  const sources = insight.sources ?? decision?.sources ?? []
+  const hasUserDetails = sources.length > 0
+  const canExpand = developerMode || hasUserDetails
   return (
     <article
       className={`rounded-[20px] bg-white dark:bg-zinc-900 p-4 ${isNewest ? "border-2 border-[#F8B4CC] dark:border-pink-900" : "border border-[#ECECF1] dark:border-zinc-800"}`}
       style={{boxShadow: CARD_SHADOW}}>
-      <button className="w-full text-left" onClick={onToggle}>
+      <button className="w-full text-left" onClick={canExpand ? onToggle : undefined}>
         <div className="flex items-center gap-2.5">
           <AgentIconTile type={insight.agentType} />
           <span className="flex-1 text-[15px] font-bold text-[#15171c] dark:text-zinc-50 truncate">{insight.agentType || "Merge"}</span>
@@ -689,28 +695,33 @@ function InsightCard({
           {insight.text}
         </p>
 
-        <div className="mt-3 flex items-center gap-2">
-          {insight.displayAction ? <ActionBadge action={insight.displayAction} /> : null}
-          {typeof insight.confidence === "number" ? (
-            <span className="text-xs font-semibold text-[#8a8f9c] dark:text-zinc-400">{Math.round(insight.confidence * 100)}%</span>
-          ) : null}
-          {duration ? (
-            <>
-              <span className="text-[#c4c8d1] dark:text-zinc-600">·</span>
-              <span className="text-xs text-[#8a8f9c] dark:text-zinc-400">{duration}</span>
-            </>
-          ) : null}
-        </div>
+        {developerMode ? (
+          <div className="mt-3 flex items-center gap-2">
+            {insight.displayAction ? <ActionBadge action={insight.displayAction} /> : null}
+            {typeof insight.confidence === "number" ? (
+              <span className="text-xs font-semibold text-[#8a8f9c] dark:text-zinc-400">{Math.round(insight.confidence * 100)}%</span>
+            ) : null}
+            {duration ? (
+              <>
+                <span className="text-[#c4c8d1] dark:text-zinc-600">·</span>
+                <span className="text-xs text-[#8a8f9c] dark:text-zinc-400">{duration}</span>
+              </>
+            ) : null}
+          </div>
+        ) : null}
       </button>
 
-      {expanded ? (
+      {expanded && canExpand ? (
         <div className="mt-3 space-y-2">
-          {decision?.chunkText ? <DetailBlock label="Conversation" text={decision.chunkText} /> : null}
-          {insight.reasoning || decision?.reasoning ? (
+          {developerMode && decision?.chunkText ? <DetailBlock label="Conversation" text={decision.chunkText} /> : null}
+          {developerMode && (insight.reasoning || decision?.reasoning) ? (
             <DetailBlock label="Reasoning" text={insight.reasoning ?? decision?.reasoning ?? ""} />
           ) : null}
-          <SourcesBlock sources={insight.sources ?? decision?.sources ?? []} searchQueries={insight.searchQueries ?? decision?.searchQueries ?? []} />
-          <ProfilingBlock profiling={insight.profiling ?? decision?.profiling} />
+          <SourcesBlock
+            sources={sources}
+            searchQueries={developerMode ? (insight.searchQueries ?? decision?.searchQueries ?? []) : []}
+          />
+          {developerMode ? <ProfilingBlock profiling={insight.profiling ?? decision?.profiling} /> : null}
         </div>
       ) : null}
     </article>
