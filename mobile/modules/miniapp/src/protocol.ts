@@ -312,6 +312,9 @@ export enum MiniappStreamType {
 // ============================================================================
 
 export enum MiniappErrorCode {
+  /** Request arguments failed host-side validation. */
+  INVALID_ARGUMENT = "INVALID_ARGUMENT",
+
   /** The miniapp subscribed to a stream whose required permission wasn't in its manifest. */
   PERMISSION_NOT_DECLARED = "PERMISSION_NOT_DECLARED",
 

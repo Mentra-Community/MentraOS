@@ -186,8 +186,8 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
 
   // Live PCM output stream (miniapp speaker.createStream). MentraOS-internal
   // — 16-bit LE PCM chunks into a streaming AudioTrack (USAGE_MEDIA, so it
-  // follows the phone's media route, e.g. A2DP to glasses). Android only in
-  // v1; iOS rejects with "not available in this native build".
+  // follows the phone's media route, e.g. A2DP to glasses). Implemented with
+  // AudioTrack on Android and AVAudioEngine on iOS.
   /** Open a PCM stream session. One AudioTrack per id; caller manages ids. */
   pcmStreamOpen(streamId: string, sampleRate: number, channels: number, volume: number): Promise<void>
   /**
@@ -261,10 +261,7 @@ const DEFAULT_CONNECT_OPTIONS: Required<ConnectOptions> = {
 
 const DEFAULT_SCAN_TIMEOUT_MS = 15_000
 
-function bindNativeMethod<T extends (...args: never[]) => unknown>(
-  module: Record<string, unknown>,
-  name: string,
-): T {
+function bindNativeMethod<T extends (...args: never[]) => unknown>(module: Record<string, unknown>, name: string): T {
   const method = module[name]
   if (typeof method !== "function") {
     console.warn(`[BluetoothSdk] Native method "${name}" is unavailable — rebuild the app (bun android / bun ios)`)
@@ -303,11 +300,7 @@ function normalizeCameraFov(request: CameraFovRequest): CameraFovSetting {
   const roiPosition = request.roiPosition ?? "center"
 
   return {
-    fov: clampInteger(
-      Number.isFinite(request.fov) ? request.fov : CAMERA_FOV_DEFAULT,
-      CAMERA_FOV_MIN,
-      CAMERA_FOV_MAX,
-    ),
+    fov: clampInteger(Number.isFinite(request.fov) ? request.fov : CAMERA_FOV_DEFAULT, CAMERA_FOV_MIN, CAMERA_FOV_MAX),
     roiPosition: clampInteger(CAMERA_ROI_POSITION_VALUES[roiPosition] ?? 0, CAMERA_ROI_MIN, CAMERA_ROI_MAX) as
       | 0
       | 1
@@ -487,9 +480,10 @@ NativeBluetoothSdkModule.setVoiceActivityDetectionEnabled = function (enabled: b
   return this.updateBluetoothSettings({voice_activity_detection_enabled: enabled})
 }
 
-const nativeSetCameraFov = bindNativeMethod<
-  (fov: CameraFovSetting) => MaybePromise<CameraFovResult>
->(NativeBluetoothSdkModule as unknown as Record<string, unknown>, "setCameraFov")
+const nativeSetCameraFov = bindNativeMethod<(fov: CameraFovSetting) => MaybePromise<CameraFovResult>>(
+  NativeBluetoothSdkModule as unknown as Record<string, unknown>,
+  "setCameraFov",
+)
 NativeBluetoothSdkModule.setCameraFov = function (request: CameraFovRequest) {
   const setting = normalizeCameraFov(request)
   return Promise.resolve(nativeSetCameraFov(setting))

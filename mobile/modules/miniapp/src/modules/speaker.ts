@@ -82,7 +82,9 @@ export interface SpeakerStreamWriteResult {
 
 /** Raw bytes per bridge write. PCM chunks are small; keep messages snappy. */
 export const SPEAKER_WRITE_CHUNK_BYTES = 256 * 1024
-const SPEAKER_WRITE_CHUNK_B64 = Math.floor(SPEAKER_WRITE_CHUNK_BYTES / 3) * 4
+// Every non-final base64 slice must decode to complete 16-bit samples. Six
+// raw bytes map to eight base64 chars, preserving both base64 and PCM framing.
+const SPEAKER_WRITE_CHUNK_B64 = Math.floor(SPEAKER_WRITE_CHUNK_BYTES / 6) * 8
 
 /**
  * Soft backpressure ceiling. When the host reports more than this buffered,
@@ -101,6 +103,7 @@ export const SPEAKER_STREAM_MAX_BUFFERED_MS = 2000
  */
 export class SpeakerStreamWriter {
   private settled = false
+  private writeChain: Promise<void> = Promise.resolve()
 
   constructor(
     private readonly session: MiniappSession,
@@ -116,28 +119,39 @@ export class SpeakerStreamWriter {
   async write(chunk: Uint8Array | ArrayBuffer): Promise<SpeakerStreamWriteResult> {
     this.assertOpen()
     const bytes = toUint8Array(chunk)
-    let last: SpeakerStreamWriteResult = {bufferedMs: 0}
-    for (let off = 0; off < bytes.length; off += SPEAKER_WRITE_CHUNK_BYTES) {
-      last = await this.send(bytesToBase64(bytes.subarray(off, off + SPEAKER_WRITE_CHUNK_BYTES)))
-    }
-    return last
+    if (bytes.byteLength === 0) throw new Error("PCM chunk cannot be empty")
+    if (bytes.byteLength % 2 !== 0) throw new Error("PCM chunk must contain complete 16-bit samples")
+    return this.enqueueWrite(async () => {
+      let last: SpeakerStreamWriteResult = {bufferedMs: 0}
+      for (let off = 0; off < bytes.length; off += SPEAKER_WRITE_CHUNK_BYTES) {
+        last = await this.send(bytesToBase64(bytes.subarray(off, off + SPEAKER_WRITE_CHUNK_BYTES)))
+      }
+      return last
+    })
   }
 
   /** Append already-base64-encoded PCM bytes (e.g. relayed straight off a WS frame). */
   async writeBase64(b64: string): Promise<SpeakerStreamWriteResult> {
     this.assertOpen()
-    let last: SpeakerStreamWriteResult = {bufferedMs: 0}
-    // Slice on 4-char boundaries so each chunk is whole base64 groups.
-    for (let off = 0; off < b64.length; off += SPEAKER_WRITE_CHUNK_B64) {
-      last = await this.send(b64.slice(off, off + SPEAKER_WRITE_CHUNK_B64))
-    }
-    return last
+    if (b64.length === 0 || b64.length % 4 !== 0) throw new Error("PCM base64 must be non-empty and padded")
+    const padding = b64.endsWith("==") ? 2 : b64.endsWith("=") ? 1 : 0
+    const decodedBytes = (b64.length / 4) * 3 - padding
+    if (decodedBytes % 2 !== 0) throw new Error("PCM base64 must contain complete 16-bit samples")
+    return this.enqueueWrite(async () => {
+      let last: SpeakerStreamWriteResult = {bufferedMs: 0}
+      // Slice on 4-char boundaries so each chunk is whole base64 groups.
+      for (let off = 0; off < b64.length; off += SPEAKER_WRITE_CHUNK_B64) {
+        last = await this.send(b64.slice(off, off + SPEAKER_WRITE_CHUNK_B64))
+      }
+      return last
+    })
   }
 
   /** Drain the remaining buffer and finish. Resolves when playback has ended. */
   async close(): Promise<{durationMs?: number}> {
     this.assertOpen()
     this.settled = true
+    await this.writeChain
     // Draining takes as long as the buffered audio — opt out of the default
     // request timeout like play()/speak() do.
     const res = await this.session.sendRequest<{durationMs?: number} | null>(
@@ -168,6 +182,16 @@ export class SpeakerStreamWriter {
       base64,
     })
     return res ?? {bufferedMs: 0}
+  }
+
+  /** Preserve PCM ordering even when a producer issues overlapping writes. */
+  private enqueueWrite<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.writeChain.then(operation)
+    this.writeChain = result.then(
+      () => undefined,
+      () => undefined,
+    )
+    return result
   }
 }
 
@@ -253,10 +277,16 @@ export class SpeakerModule {
    * `play()`, nothing has to be a file or URL first.
    *
    * One stream per miniapp: opening a second closes the first. Rejects with
-   * `NOT_IMPLEMENTED` on hosts that predate streaming (gate miniapps with
-   * `minHostVersion`).
+   * `NOT_IMPLEMENTED` on hosts that predate streaming. Miniapps that depend on
+   * this API must declare `minHostVersion: "2.13.0"` or newer.
    */
   async createStream(options: SpeakerStreamOptions = {}): Promise<SpeakerStreamWriter> {
+    if (
+      options.volume !== undefined &&
+      (!Number.isFinite(options.volume) || options.volume < 0 || options.volume > 1)
+    ) {
+      throw new RangeError("speaker stream volume must be between 0 and 1")
+    }
     const res = await this.session.sendRequest<{streamId: string}>({
       type: MiniappRequestType.SPEAKER_STREAM_OPEN,
       sampleRate: options.sampleRate ?? 16000,

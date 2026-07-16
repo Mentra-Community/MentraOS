@@ -361,6 +361,7 @@ class BluetoothSdkModule : Module() {
                     "module_destroy"
             )
             sdk?.close()
+            PcmStreamManager.abortAll()
             sdk = null
             deviceManager = null
         }

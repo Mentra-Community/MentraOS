@@ -1363,7 +1363,9 @@ class LocalMiniappRuntime {
       })
       .catch((err) => {
         console.warn(
-          `${LOG_TAG}: miniapp auth mint failed for ${packageName} (attempt ${attempt}): ${(err as Error)?.message ?? err}`,
+          `${LOG_TAG}: miniapp auth mint failed for ${packageName} (attempt ${attempt}): ${
+            (err as Error)?.message ?? err
+          }`,
         )
         this.scheduleInitialMiniappAuthRetry(packageName, attempt)
       })
@@ -1752,6 +1754,7 @@ class LocalMiniappRuntime {
 
   /** Valid PCM sample rates for speaker streams. Mirrors the SDK contract. */
   private static readonly SPEAKER_STREAM_SAMPLE_RATES = new Set([16000, 24000, 48000])
+  private static readonly SPEAKER_STREAM_MAX_BASE64_CHARS = Math.ceil((256 * 1024) / 3) * 4
   private speakerStreamCounter = 0
 
   private async handleSpeakerStreamOpen(
@@ -1774,8 +1777,24 @@ class LocalMiniappRuntime {
     const sampleRate = typeof payload.sampleRate === "number" ? payload.sampleRate : 16000
     if (!LocalMiniappRuntime.SPEAKER_STREAM_SAMPLE_RATES.has(sampleRate)) {
       this.sendResult(packageName, requestId, false, undefined, {
-        code: MiniappErrorCode.INTERNAL,
+        code: MiniappErrorCode.INVALID_ARGUMENT,
         message: `unsupported sampleRate ${sampleRate} (use 16000, 24000, or 48000)`,
+      })
+      return
+    }
+    const channels = typeof payload.channels === "number" ? payload.channels : 1
+    if (channels !== 1) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INVALID_ARGUMENT,
+        message: "speaker streams currently support mono PCM only",
+      })
+      return
+    }
+    const volume = typeof payload.volume === "number" ? payload.volume : 1
+    if (!Number.isFinite(volume) || volume < 0 || volume > 1) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INVALID_ARGUMENT,
+        message: "speaker stream volume must be between 0 and 1",
       })
       return
     }
@@ -1787,8 +1806,8 @@ class LocalMiniappRuntime {
         streamId,
         appId: packageName,
         sampleRate,
-        channels: 1,
-        volume: typeof payload.volume === "number" ? payload.volume : undefined,
+        channels,
+        volume,
         stopOtherAudio: payload.stopOtherAudio !== false,
         onEnded: (endedId, success, error, durationMs) => {
           const current = this.connectedApps.get(packageName)
@@ -1807,20 +1826,25 @@ class LocalMiniappRuntime {
         },
       })
     } catch (error) {
-      // Typically "not available in this native build" on iOS (Android-only v1).
       const message = error instanceof Error ? error.message : String(error)
-      const notSupported = message.includes("not available in this native build")
       this.setSpeakerState(packageName, "error", {
-        errorCode: notSupported ? MiniappErrorCode.NOT_IMPLEMENTED : MiniappErrorCode.INTERNAL,
+        errorCode: MiniappErrorCode.INTERNAL,
         errorMessage: message,
       })
       this.sendResult(packageName, requestId, false, undefined, {
-        code: notSupported ? MiniappErrorCode.NOT_IMPLEMENTED : MiniappErrorCode.INTERNAL,
+        code: MiniappErrorCode.INTERNAL,
         message,
       })
       return
     }
 
+    // The native open can outlive a miniapp disconnect. Its ordinary teardown
+    // ran while no StreamState existed yet, so close this late result here
+    // instead of leaving an orphan AudioTrack/AVAudioEngine session.
+    if (this.connectedApps.get(packageName) !== app) {
+      await audioPlaybackService.abortStream(streamId)
+      return
+    }
     app.activeSpeakerStreamId = streamId
     // Optimistic "playing", same as play(): the chunk player starts as soon
     // as the first write lands. Microtask so "loading" flushes first.
@@ -1850,6 +1874,20 @@ class LocalMiniappRuntime {
       return
     }
     const base64 = typeof payload.base64 === "string" ? payload.base64 : ""
+    if (!base64 || base64.length % 4 !== 0) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INVALID_ARGUMENT,
+        message: "speaker stream write requires padded base64 PCM data",
+      })
+      return
+    }
+    if (base64.length > LocalMiniappRuntime.SPEAKER_STREAM_MAX_BASE64_CHARS) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.PAYLOAD_TOO_LARGE,
+        message: "speaker stream chunk exceeds the 256 KB raw PCM limit",
+      })
+      return
+    }
     try {
       const result = await audioPlaybackService.writeStreamChunk(streamId, base64)
       this.sendResult(packageName, requestId, true, result)
@@ -3108,7 +3146,9 @@ class LocalMiniappRuntime {
       const receivedAt = Date.now()
       if (TRANSCRIPT_TIMING_TELEMETRY) {
         console.log(
-          `${LOG_TAG}: transcript cloud_recv t=${receivedAt} final=${d.isFinal} lang=${d.resolvedLanguage} text="${d.text.slice(0, 48)}"`,
+          `${LOG_TAG}: transcript cloud_recv t=${receivedAt} final=${d.isFinal} lang=${
+            d.resolvedLanguage
+          } text="${d.text.slice(0, 48)}"`,
         )
       }
       this.forwardEvent(`transcription:${d.resolvedLanguage}`, {

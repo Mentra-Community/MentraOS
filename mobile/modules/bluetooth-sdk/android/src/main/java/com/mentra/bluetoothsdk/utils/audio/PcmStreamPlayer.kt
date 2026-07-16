@@ -59,6 +59,9 @@ class PcmStreamPlayer(
 
     private var closing = false
     private var aborted = false
+    private var writeInProgress = false
+    private var released = false
+    private var finalPlayedFrames: Long? = null
     private var endedError: String? = null
 
     private val audioTrack: AudioTrack
@@ -114,6 +117,10 @@ class PcmStreamPlayer(
      */
     fun write(base64: String): Long {
         val bytes = Base64.decode(base64, Base64.DEFAULT)
+        require(bytes.isNotEmpty()) { "PCM chunk is empty" }
+        require(bytes.size % bytesPerFrame == 0) {
+            "PCM chunk length ${bytes.size} is not aligned to a $bytesPerFrame-byte frame"
+        }
         lock.withLock {
             check(!closing && !aborted) { "stream is closed" }
             endedError?.let { throw IllegalStateException(it) }
@@ -143,14 +150,14 @@ class PcmStreamPlayer(
             closing = true
             queueChanged.signalAll()
             // Wait for the feeder to hand everything to the track...
-            while (queue.isNotEmpty() && endedError == null) {
+            while ((queue.isNotEmpty() || writeInProgress) && endedError == null && !aborted) {
                 queueChanged.await()
             }
         }
-        // ...then for the track to play it out. stop() lets the written tail
-        // drain rather than cutting it; poll the head position until done.
+        // ...then for the track to play it out while AudioTrack is still in
+        // PLAYSTATE_PLAYING. Calling stop() first flushes pending MODE_STREAM
+        // audio on several Android builds and truncates the final chunk.
         try {
-            audioTrack.stop()
             val deadline = System.currentTimeMillis() + MAX_BACKLOG_MS
             while (System.currentTimeMillis() < deadline) {
                 val drained =
@@ -161,6 +168,7 @@ class PcmStreamPlayer(
                 if (drained) break
                 Thread.sleep(20)
             }
+            audioTrack.stop()
         } catch (e: Exception) {
             Log.w(TAG, "[$streamId] drain-on-close failed", e)
         } finally {
@@ -193,11 +201,12 @@ class PcmStreamPlayer(
 
     private fun playedMsLocked(): Long {
         val played =
-                try {
-                    audioTrack.playbackHeadPosition.toLong() and 0xFFFFFFFFL
-                } catch (e: Exception) {
-                    framesWritten
-                }
+                finalPlayedFrames
+                        ?: try {
+                            audioTrack.playbackHeadPosition.toLong() and 0xFFFFFFFFL
+                        } catch (e: Exception) {
+                            framesWritten
+                        }
         return played * 1000L / sampleRate
     }
 
@@ -211,7 +220,7 @@ class PcmStreamPlayer(
                             }
                             if (aborted) return
                             if (queue.isEmpty() && closing) return
-                            queue.poll()!!
+                            queue.poll()!!.also { writeInProgress = true }
                         }
                 // Blocking write OUTSIDE the lock so write()/abort() stay responsive.
                 var off = 0
@@ -223,6 +232,7 @@ class PcmStreamPlayer(
                 lock.withLock {
                     queuedBytes -= chunk.size
                     framesWritten += chunk.size / bytesPerFrame
+                    writeInProgress = false
                     queueChanged.signalAll()
                 }
             }
@@ -233,6 +243,7 @@ class PcmStreamPlayer(
                     endedError = e.message ?: "feeder failed"
                     queue.clear()
                     queuedBytes = 0
+                    writeInProgress = false
                     queueChanged.signalAll()
                 }
             }
@@ -242,6 +253,22 @@ class PcmStreamPlayer(
     }
 
     private fun releaseInternals() {
+        val shouldRelease =
+                lock.withLock {
+                    if (released) {
+                        false
+                    } else {
+                        finalPlayedFrames =
+                                try {
+                                    audioTrack.playbackHeadPosition.toLong() and 0xFFFFFFFFL
+                                } catch (_: Exception) {
+                                    framesWritten
+                                }
+                        released = true
+                        true
+                    }
+                }
+        if (!shouldRelease) return
         try {
             audioTrack.release()
         } catch (e: Exception) {
@@ -259,6 +286,11 @@ object PcmStreamManager {
     private val players = java.util.concurrent.ConcurrentHashMap<String, PcmStreamPlayer>()
 
     fun open(streamId: String, sampleRate: Int, channels: Int, volume: Float) {
+        require(streamId.isNotBlank()) { "streamId is required" }
+        require(sampleRate == 16000 || sampleRate == 24000 || sampleRate == 48000) {
+            "unsupported PCM sample rate $sampleRate"
+        }
+        require(channels == 1) { "only mono PCM is supported" }
         // Replacing an id is a caller bug, but never leak the old track.
         players.remove(streamId)?.abort()
         players[streamId] = PcmStreamPlayer(streamId, sampleRate, channels, volume)
@@ -272,12 +304,25 @@ object PcmStreamManager {
 
     fun close(streamId: String): Long {
         val player =
-                players.remove(streamId)
+                players[streamId]
                         ?: throw IllegalStateException("pcm stream $streamId is not open")
-        return player.close()
+        return try {
+            player.close()
+        } finally {
+            // Leave a draining player addressable so teardown can still abort
+            // it. The conditional remove preserves a replacement with the
+            // same id if one was opened while this close was completing.
+            players.remove(streamId, player)
+        }
     }
 
     fun abort(streamId: String) {
         players.remove(streamId)?.abort()
+    }
+
+    fun abortAll() {
+        val active = players.values.toList()
+        players.clear()
+        active.forEach { it.abort() }
     }
 }

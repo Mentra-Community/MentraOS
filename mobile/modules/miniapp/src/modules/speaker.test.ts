@@ -78,7 +78,7 @@ describe("SpeakerStreamWriter", () => {
     const {session, requestCalls} = mockSession([{bufferedMs: 0}])
     const writer = new SpeakerStreamWriter(session, "spk-1")
 
-    const big = new Uint8Array(SPEAKER_WRITE_CHUNK_BYTES * 2 + 5)
+    const big = new Uint8Array(SPEAKER_WRITE_CHUNK_BYTES * 2 + 6)
     await writer.write(big)
 
     expect(requestCalls).toHaveLength(3)
@@ -130,18 +130,71 @@ describe("SpeakerStreamWriter", () => {
     expect(requestCalls[0]).toEqual({type: MiniappRequestType.SPEAKER_STREAM_ABORT, streamId: "spk-1"})
   })
 
-  test("writeBase64 splits on 4-char base64 boundaries", async () => {
+  test("writeBase64 splits on base64 and 16-bit PCM boundaries", async () => {
     const {session, requestCalls} = mockSession([{bufferedMs: 10}])
     const writer = new SpeakerStreamWriter(session, "spk-1")
 
-    // A base64 string bigger than one chunk (chunk is chunkBytes/3*4 chars).
-    const chunkChars = Math.floor(SPEAKER_WRITE_CHUNK_BYTES / 3) * 4
+    // Six raw bytes map to eight chars, preserving both framing boundaries.
+    const chunkChars = Math.floor(SPEAKER_WRITE_CHUNK_BYTES / 6) * 8
     const b64 = "A".repeat(chunkChars + 8)
     await writer.writeBase64(b64)
 
     expect(requestCalls).toHaveLength(2)
     for (const call of requestCalls) {
       expect((call.base64 as string).length % 4).toBe(0)
+      expect(base64ToBytes(call.base64 as string).length % 2).toBe(0)
     }
+  })
+
+  test("writeBase64 rejects a partial 16-bit PCM sample", async () => {
+    const {session} = mockSession([])
+    const writer = new SpeakerStreamWriter(session, "spk-1")
+
+    await expect(writer.writeBase64("AAAA")).rejects.toThrow("complete 16-bit samples")
+  })
+
+  test("serializes overlapping writes so PCM stays ordered", async () => {
+    const order: number[] = []
+    let releaseFirst: (() => void) | undefined
+    const session = {
+      sendRequest: async (payload: Record<string, unknown>) => {
+        const firstByte = base64ToBytes(payload.base64 as string)[0]
+        order.push(firstByte)
+        if (firstByte === 1) {
+          await new Promise<void>((resolve) => {
+            releaseFirst = resolve
+          })
+        }
+        return {bufferedMs: 0}
+      },
+    } as unknown as MiniappSession
+    const writer = new SpeakerStreamWriter(session, "spk-ordered")
+
+    const first = writer.write(new Uint8Array([1, 0]))
+    const second = writer.write(new Uint8Array([2, 0]))
+    await Promise.resolve()
+
+    expect(order).toEqual([1])
+    releaseFirst?.()
+    await Promise.all([first, second])
+    expect(order).toEqual([1, 2])
+  })
+
+  test("rejects empty and partial 16-bit PCM samples", async () => {
+    const {session} = mockSession([{bufferedMs: 0}])
+    const writer = new SpeakerStreamWriter(session, "spk-validation")
+
+    expect(writer.write(new Uint8Array())).rejects.toThrow("cannot be empty")
+    expect(writer.write(new Uint8Array([1]))).rejects.toThrow("complete 16-bit samples")
+  })
+})
+
+describe("SpeakerModule.createStream validation", () => {
+  test("rejects a volume outside the native range before opening", async () => {
+    const {session, requestCalls} = mockSession([{streamId: "unused"}])
+    const speaker = new SpeakerModule(session)
+
+    expect(speaker.createStream({volume: 1.1})).rejects.toThrow("between 0 and 1")
+    expect(requestCalls).toHaveLength(0)
   })
 })

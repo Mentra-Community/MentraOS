@@ -37,10 +37,7 @@ export class TesterController {
 
     const ui = this.session.ui as unknown as {
       send: Send
-      on: <C extends keyof Channels & string>(
-        channel: C,
-        cb: (p: Channels[C]) => void,
-      ) => () => void
+      on: <C extends keyof Channels & string>(channel: C, cb: (p: Channels[C]) => void) => () => void
       handle: <C extends keyof Channels & string>(
         channel: C,
         handler: (payload: unknown, ctx?: {signal: AbortSignal}) => Promise<unknown> | unknown,

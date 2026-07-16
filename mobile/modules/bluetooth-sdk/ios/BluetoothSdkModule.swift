@@ -77,6 +77,9 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
         }
 
         OnDestroy {
+            Task {
+                await PcmStreamManager.abortAll()
+            }
             Task { @MainActor [weak self] in
                 self?.sdk?.invalidate()
                 self?.sdk = nil
@@ -512,6 +515,32 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             await MainActor.run {
                 self.bluetoothSdk().setOwnAppAudioPlaying(playing)
             }
+        }
+
+        // MARK: - Live PCM output stream (miniapp speaker.createStream)
+
+        AsyncFunction("pcmStreamOpen") {
+            (streamId: String, sampleRate: Int, channels: Int, volume: Double) async throws in
+            try PcmStreamManager.open(
+                streamId: streamId,
+                sampleRate: sampleRate,
+                channels: channels,
+                volume: Float(volume)
+            )
+        }
+
+        AsyncFunction("pcmStreamWrite") {
+            (streamId: String, base64: String) async throws -> [String: Int64] in
+            try ["bufferedMs": await PcmStreamManager.write(streamId: streamId, base64: base64)]
+        }
+
+        AsyncFunction("pcmStreamClose") {
+            (streamId: String) async throws -> [String: Int64] in
+            try ["durationMs": await PcmStreamManager.close(streamId: streamId)]
+        }
+
+        AsyncFunction("pcmStreamAbort") { (streamId: String) async in
+            await PcmStreamManager.abort(streamId: streamId)
         }
 
         AsyncFunction("getGlassesMediaVolume") { () async throws -> [String: Any] in

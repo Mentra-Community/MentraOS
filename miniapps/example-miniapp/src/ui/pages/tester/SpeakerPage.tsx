@@ -60,9 +60,7 @@ export default function SpeakerPage() {
             placeholder="https://example.com/clip.mp3"
           />
           <div className="mt-2 flex gap-2">
-            <Button onClick={() => invoke("play", [{audioUrl}]).catch(() => {})}>
-              play({"{audioUrl}"})
-            </Button>
+            <Button onClick={() => invoke("play", [{audioUrl}]).catch(() => {})}>play({"{audioUrl}"})</Button>
           </div>
         </div>
 

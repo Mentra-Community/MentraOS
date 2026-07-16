@@ -37,7 +37,7 @@ export interface AudioStreamOpenRequest {
   onEnded: (streamId: string, success: boolean, error: string | null, durationMs: number | null) => void
 }
 
-/** One live PCM stream session, backed by a native AudioTrack. */
+/** One live PCM stream session, backed by native streaming audio. */
 interface StreamState {
   streamId: string
   appId: string
@@ -264,7 +264,7 @@ class AudioPlaybackService {
       }
       // Live PCM streams count as "other audio" too.
       if (stopOtherAudio) {
-        this.abortAllStreams()
+        await this.abortAllStreams()
       }
 
       // Get or create the reusable player
@@ -417,9 +417,8 @@ class AudioPlaybackService {
 
   /**
    * Open a live PCM stream session. Chunks are pushed with writeStreamChunk
-   * into a native streaming AudioTrack (USAGE_MEDIA → follows the media route,
-   * e.g. A2DP to glasses). Android only in v1 — the native call rejects on
-   * iOS and the error propagates to the miniapp as NOT_IMPLEMENTED-ish.
+   * into native streaming audio (AudioTrack on Android, AVAudioEngine on iOS),
+   * following the media route such as A2DP to connected glasses.
    */
   public async openStream(request: AudioStreamOpenRequest): Promise<void> {
     const {streamId, appId, sampleRate, channels, volume = 1.0, stopOtherAudio = true} = request
@@ -432,7 +431,7 @@ class AudioPlaybackService {
         console.log("AUDIO: Interrupting current playback for new stream")
         this.interruptCurrentPlayback(true)
       }
-      this.abortAllStreams(streamId)
+      await this.abortAllStreams(streamId)
     }
 
     await BluetoothSdk.pcmStreamOpen(streamId, sampleRate, channels, Math.max(0, Math.min(1, volume)))
@@ -502,14 +501,11 @@ class AudioPlaybackService {
   }
 
   /** Abort every active stream (optionally sparing one about to replace them). */
-  private abortAllStreams(exceptStreamId?: string): void {
-    for (const stream of [...this.streams.values()]) {
-      if (stream.streamId === exceptStreamId) continue
-      BluetoothSdk.pcmStreamAbort(stream.streamId).catch((e) => {
-        console.warn(`AUDIO: Stream abort ${stream.streamId} native call failed:`, e)
-      })
-      this.endStream(stream, true, null, Date.now() - stream.startTime)
-    }
+  private async abortAllStreams(exceptStreamId?: string): Promise<void> {
+    const streamIds = [...this.streams.values()]
+      .filter((stream) => stream.streamId !== exceptStreamId)
+      .map((stream) => stream.streamId)
+    await Promise.all(streamIds.map((streamId) => this.abortStream(streamId)))
   }
 
   /** Terminal bookkeeping for a stream: dedup, unregister, notify. */
@@ -551,11 +547,10 @@ class AudioPlaybackService {
    */
   public async stopForApp(appId?: string): Promise<void> {
     // Abort this app's live PCM streams too (miniapp stop/disconnect path).
-    for (const stream of [...this.streams.values()]) {
-      if (!appId || stream.appId === appId) {
-        void this.abortStream(stream.streamId)
-      }
-    }
+    const streamIds = [...this.streams.values()]
+      .filter((stream) => !appId || stream.appId === appId)
+      .map((stream) => stream.streamId)
+    await Promise.all(streamIds.map((streamId) => this.abortStream(streamId)))
 
     if (!this.currentPlayback || this.currentPlayback.completed) return
 
@@ -569,7 +564,7 @@ class AudioPlaybackService {
    * Stop all audio playback
    */
   public async stopAll(): Promise<void> {
-    this.abortAllStreams()
+    await this.abortAllStreams()
     if (this.currentPlayback && !this.currentPlayback.completed) {
       console.log("AUDIO: Stopping all playback")
       this.interruptCurrentPlayback()
@@ -580,31 +575,33 @@ class AudioPlaybackService {
    * Check if audio is currently playing
    */
   public isPlaying(): boolean {
-    return this.currentPlayback !== null && !this.currentPlayback.completed
+    return (this.currentPlayback !== null && !this.currentPlayback.completed) || this.streams.size > 0
   }
 
   /**
    * Get current playback app IDs (all active)
    */
   public getActiveAppIds(): string[] {
+    const appIds = new Set<string>()
     if (this.currentPlayback && !this.currentPlayback.completed && this.currentPlayback.appId) {
-      return [this.currentPlayback.appId]
+      appIds.add(this.currentPlayback.appId)
     }
-    return []
+    for (const stream of this.streams.values()) appIds.add(stream.appId)
+    return [...appIds]
   }
 
   /**
    * Get number of active playbacks
    */
   public getActiveCount(): number {
-    return this.currentPlayback && !this.currentPlayback.completed ? 1 : 0
+    return (this.currentPlayback && !this.currentPlayback.completed ? 1 : 0) + this.streams.size
   }
 
   /**
    * Release the player entirely (call when app is shutting down)
    */
   public release(): void {
-    this.abortAllStreams()
+    void this.abortAllStreams()
     if (this.currentPlayback && !this.currentPlayback.completed) {
       this.interruptCurrentPlayback()
     } else {
