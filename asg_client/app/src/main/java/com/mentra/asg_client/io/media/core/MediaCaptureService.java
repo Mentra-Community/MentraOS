@@ -573,6 +573,7 @@ public class MediaCaptureService {
     private void clearBlePhotoTimingTracking(String requestId) {
         blePhotoPipelineStartMs.remove(requestId);
         photoTimings.remove(requestId);
+        photoTimingDetails.remove(requestId);
         bleImgIdToRequestId.entrySet().removeIf(entry -> requestId.equals(entry.getValue()));
     }
 
@@ -612,6 +613,8 @@ public class MediaCaptureService {
 
     // Per-request timing instrumentation (gated by AsgConstants.ENABLE_PHOTO_TIMING_LOGS)
     private final Map<String, Map<String, Long>> photoTimings = new ConcurrentHashMap<>();
+    /** Optional per-step detail strings shown in PHASE BREAKDOWN (exposure/ISO/size/etc.). */
+    private final Map<String, Map<String, String>> photoTimingDetails = new ConcurrentHashMap<>();
     /** Wall-clock start for BLE photo pipeline (request received on glasses). */
     private final Map<String, Long> blePhotoPipelineStartMs = new ConcurrentHashMap<>();
     /** Maps BLE transfer filename (bleImgId) back to the originating requestId. */
@@ -2413,7 +2416,8 @@ public class MediaCaptureService {
                             logBlePhotoStep(
                                     requestId,
                                     "capture_configured",
-                                    "camera configuration resolved for the requested size and exposure");
+                                    summarizeCaptureTimingDetail(
+                                            "resolved", resolvedConfig, null));
                             sendPhotoStatus(
                                     requestId,
                                     "configuring",
@@ -2434,7 +2438,10 @@ public class MediaCaptureService {
                             logBlePhotoStep(
                                     requestId,
                                     "capture_started",
-                                    "camera sensor capture is now in progress");
+                                    summarizeCaptureTimingDetail(
+                                            "requested",
+                                            requestedCaptureConfig,
+                                            meteredPreview));
                             sendPhotoStatus(
                                     requestId,
                                     "capturing",
@@ -2683,6 +2690,7 @@ public class MediaCaptureService {
         if (requestId != null) {
             blePhotoPipelineStartMs.remove(requestId);
             photoTimings.remove(requestId);
+            photoTimingDetails.remove(requestId);
             bleEncodeInvocationCount.remove(requestId);
             bleEncodeTotalMs.remove(requestId);
             bleOriginalBytes.remove(requestId);
@@ -2708,11 +2716,67 @@ public class MediaCaptureService {
         logBlePhotoStep(requestId, step, null);
     }
 
+    /**
+     * Compact capture-config summary for PHASE BREAKDOWN / live timing lines (size, AE mode,
+     * exposure, ISO, ZSL, metered preview).
+     */
+    private static String summarizeCaptureTimingDetail(
+            String kind,
+            @Nullable JSONObject captureConfig,
+            @Nullable JSONObject meteredPreview) {
+        StringBuilder sb = new StringBuilder(kind);
+        if (captureConfig != null) {
+            int width = captureConfig.optInt("width", -1);
+            int height = captureConfig.optInt("height", -1);
+            if (width > 0 && height > 0) {
+                sb.append(' ').append(width).append('x').append(height);
+            }
+            if (captureConfig.has("quality")) {
+                sb.append(" jpegQ=").append(captureConfig.optInt("quality"));
+            }
+            if (captureConfig.has("manual")) {
+                sb.append(captureConfig.optBoolean("manual") ? " MANUAL" : " AUTO");
+            }
+            if (captureConfig.has("exposureTimeNs")) {
+                double expMs = captureConfig.optLong("exposureTimeNs") / 1_000_000.0;
+                sb.append(String.format(Locale.US, " exp=%.2fms", expMs));
+            }
+            if (captureConfig.has("iso")) {
+                sb.append(" iso=").append(captureConfig.optInt("iso"));
+            }
+            if (captureConfig.has("zsl")) {
+                sb.append(" zsl=").append(captureConfig.optBoolean("zsl"));
+            }
+            if (captureConfig.has("noiseReductionMode")) {
+                sb.append(" nr=").append(captureConfig.optInt("noiseReductionMode"));
+            }
+        } else {
+            sb.append(" (no config)");
+        }
+        if (meteredPreview != null) {
+            if (meteredPreview.has("iso") || meteredPreview.has("exposureTimeNs")) {
+                sb.append(" | metered");
+                if (meteredPreview.has("iso")) {
+                    sb.append(" iso=").append(meteredPreview.optInt("iso"));
+                }
+                if (meteredPreview.has("exposureTimeNs")) {
+                    double expMs = meteredPreview.optLong("exposureTimeNs") / 1_000_000.0;
+                    sb.append(String.format(Locale.US, " exp=%.2fms", expMs));
+                }
+            }
+        }
+        return sb.toString();
+    }
+
     private void logBlePhotoStep(String requestId, String step, String detail) {
+        logBlePhotoStepAt(requestId, step, detail, System.currentTimeMillis());
+    }
+
+    private void logBlePhotoStepAt(
+            String requestId, String step, String detail, long wallTimeMs) {
         if (!AsgConstants.ENABLE_PHOTO_TIMING_LOGS || requestId == null || requestId.isEmpty()) {
             return;
         }
-        long now = System.currentTimeMillis();
         Map<String, Long> timings =
                 photoTimings.computeIfAbsent(requestId, k -> new java.util.LinkedHashMap<>());
         long delta;
@@ -2724,11 +2788,19 @@ public class MediaCaptureService {
                 for (Long t : timings.values()) {
                     prev = t;
                 }
-                delta = now - prev;
+                delta = wallTimeMs - prev;
             }
-            timings.put(step, now);
+            timings.put(step, wallTimeMs);
             Long pipelineStart = blePhotoPipelineStartMs.get(requestId);
-            elapsed = pipelineStart != null ? now - pipelineStart : -1;
+            elapsed = pipelineStart != null ? wallTimeMs - pipelineStart : -1;
+        }
+        if (detail != null && !detail.isEmpty()) {
+            Map<String, String> details =
+                    photoTimingDetails.computeIfAbsent(
+                            requestId, k -> new java.util.LinkedHashMap<>());
+            synchronized (details) {
+                details.put(step, detail);
+            }
         }
         BlePhotoTimingLog.requestStep(requestId, step, detail, elapsed, delta);
     }
@@ -2744,15 +2816,27 @@ public class MediaCaptureService {
             @Nullable BlePhotoTimingLog.UartTransferStats uart) {
         if (!AsgConstants.ENABLE_PHOTO_TIMING_LOGS) return;
         Map<String, Long> timings = photoTimings.remove(requestId);
+        Map<String, String> details = photoTimingDetails.remove(requestId);
         if (timings == null || timings.isEmpty()) return;
         Map<String, Long> snapshot;
         synchronized (timings) {
             snapshot = new java.util.LinkedHashMap<>(timings);
         }
+        Map<String, String> detailSnapshot = null;
+        if (details != null && !details.isEmpty()) {
+            synchronized (details) {
+                detailSnapshot = new java.util.LinkedHashMap<>(details);
+            }
+        }
         Log.i(
                 BlePhotoTimingLog.TAG,
                 BlePhotoTimingLog.formatPhaseBreakdown(
-                        requestId, snapshot, originalBytes, compressedBytes, uart));
+                        requestId,
+                        snapshot,
+                        detailSnapshot,
+                        originalBytes,
+                        compressedBytes,
+                        uart));
     }
 
     private void dumpTimings(String requestId) {
@@ -4375,7 +4459,18 @@ public class MediaCaptureService {
             // Use CameraNeoService for photo capture
             logBlePhotoStep(requestId, "enqueue_camera");
             final BlePhotoTimingLog.PhaseSink capturePhaseSink =
-                    (step, detail) -> logBlePhotoStep(requestId, step, detail);
+                    new BlePhotoTimingLog.PhaseSink() {
+                        @Override
+                        public void onPhase(String step, @Nullable String detail) {
+                            logBlePhotoStep(requestId, step, detail);
+                        }
+
+                        @Override
+                        public void onPhaseAt(
+                                String step, @Nullable String detail, long wallTimeMs) {
+                            logBlePhotoStepAt(requestId, step, detail, wallTimeMs);
+                        }
+                    };
             BlePhotoTimingLog.bindPhaseSink(capturePhaseSink);
             CameraNeoService.enqueuePhotoRequest(
                     mContext,
@@ -4392,7 +4487,8 @@ public class MediaCaptureService {
                             logBlePhotoStep(
                                     requestId,
                                     "capture_configured",
-                                    "camera configuration resolved for the requested size and exposure");
+                                    summarizeCaptureTimingDetail(
+                                            "resolved", resolvedConfig, null));
                             sendPhotoStatus(
                                     requestId,
                                     "configuring",
@@ -4407,7 +4503,10 @@ public class MediaCaptureService {
                             logBlePhotoStep(
                                     requestId,
                                     "capture_started",
-                                    "camera sensor capture is now in progress");
+                                    summarizeCaptureTimingDetail(
+                                            "requested",
+                                            requestedCaptureConfig,
+                                            meteredPreview));
                             sendPhotoStatus(
                                     requestId,
                                     "capturing",
