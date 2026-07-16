@@ -1502,6 +1502,7 @@ struct ViewState {
             isoCap: request.isoCap,
             noiseReduction: request.noiseReduction,
             edgeEnhancement: request.edgeEnhancement,
+            zslMfnr: request.zslMfnr,
             mfnr: request.mfnr,
             zsl: request.zsl,
             ispDigitalGain: request.ispDigitalGain,
