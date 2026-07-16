@@ -28,14 +28,7 @@ public final class OnnxDbNetRoiDetector extends AbstractOnnxRoiDetector {
                 (outputs, elapsed) -> {
                     float[][] map = firstProbabilityMap(outputs);
                     return RoiPostprocessor.postprocessProbabilityMap(
-                            map,
-                            input.width(),
-                            input.height(),
-                            0.3f,
-                            0.5f,
-                            1.5f,
-                            id(),
-                            elapsed);
+                            map, input.width(), input.height(), 0.3f, 0.5f, 1.5f, id(), elapsed);
                 });
     }
 
@@ -51,14 +44,7 @@ public final class OnnxDbNetRoiDetector extends AbstractOnnxRoiDetector {
     public static DetectionResult postprocess(
             float[][] probabilityMap, int inputWidth, int inputHeight, long elapsedMs) {
         return RoiPostprocessor.postprocessProbabilityMap(
-                probabilityMap,
-                inputWidth,
-                inputHeight,
-                0.3f,
-                0.5f,
-                1.5f,
-                "dbnet",
-                elapsedMs);
+                probabilityMap, inputWidth, inputHeight, 0.3f, 0.5f, 1.5f, "dbnet", elapsedMs);
     }
 
     /**

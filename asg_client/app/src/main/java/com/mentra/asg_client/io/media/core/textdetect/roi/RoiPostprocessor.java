@@ -41,7 +41,8 @@ public final class RoiPostprocessor {
                 || probabilityMap.length == 0
                 || probabilityMap[0] == null
                 || probabilityMap[0].length == 0) {
-            return fallback(inputWidth, inputHeight, detectorId, elapsedMs, "empty_probability_map");
+            return fallback(
+                    inputWidth, inputHeight, detectorId, elapsedMs, "empty_probability_map");
         }
         CvInit.ensureLoaded();
         int mapHeight = probabilityMap.length;
@@ -55,8 +56,7 @@ public final class RoiPostprocessor {
                         inputWidth, inputHeight, detectorId, elapsedMs, "ragged_probability_map");
             }
             for (int x = 0; x < mapWidth; x++) {
-                bytes[y * mapWidth + x] =
-                        probabilityMap[y][x] >= threshold ? (byte) 255 : (byte) 0;
+                bytes[y * mapWidth + x] = probabilityMap[y][x] >= threshold ? (byte) 255 : (byte) 0;
             }
         }
         mask.put(0, 0, bytes);
@@ -68,9 +68,7 @@ public final class RoiPostprocessor {
         List<CropRect> boxes = new ArrayList<>();
         for (MatOfPoint contour : contours) {
             Rect rect = Imgproc.boundingRect(contour);
-            if (rect.width >= 3
-                    && rect.height >= 3
-                    && mean(probabilityMap, rect) >= minimumScore) {
+            if (rect.width >= 3 && rect.height >= 3 && mean(probabilityMap, rect) >= minimumScore) {
                 boxes.add(expand(rect, expansion, mapWidth, mapHeight));
             }
             contour.release();
@@ -163,8 +161,7 @@ public final class RoiPostprocessor {
         return count == 0 ? 0 : (float) (total / count);
     }
 
-    private static CropRect expand(
-            Rect rect, float expansion, int mapWidth, int mapHeight) {
+    private static CropRect expand(Rect rect, float expansion, int mapWidth, int mapHeight) {
         float extraX = rect.width * Math.max(0, expansion - 1f) * 0.5f;
         float extraY = rect.height * Math.max(0, expansion - 1f) * 0.5f;
         return CropRect.clamp(

@@ -19,12 +19,7 @@ public enum TextCropModel {
     private final int inputWidth;
     private final int inputHeight;
 
-    TextCropModel(
-            String id,
-            String family,
-            String assetFilename,
-            int inputWidth,
-            int inputHeight) {
+    TextCropModel(String id, String family, String assetFilename, int inputWidth, int inputHeight) {
         this.id = id;
         this.family = family;
         this.assetFilename = assetFilename;

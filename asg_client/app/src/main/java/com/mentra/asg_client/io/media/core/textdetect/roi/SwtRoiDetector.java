@@ -34,8 +34,7 @@ public final class SwtRoiDetector implements TextRoiDetector {
     @Override
     public DetectionResult detect(DetectionInput input) {
         Objects.requireNonNull(input, "input");
-        return TextRegionDetector.detect(
-                input.lumaUnsafe(), input.width(), input.height(), config);
+        return TextRegionDetector.detect(input.lumaUnsafe(), input.width(), input.height(), config);
     }
 
     /** Returns {@code swt}. */

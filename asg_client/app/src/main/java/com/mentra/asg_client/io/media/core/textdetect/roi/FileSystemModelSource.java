@@ -15,7 +15,8 @@ public final class FileSystemModelSource implements ModelSource {
      * @param directory directory containing model assets
      */
     public FileSystemModelSource(Path directory) {
-        this.directory = Objects.requireNonNull(directory, "directory").toAbsolutePath().normalize();
+        this.directory =
+                Objects.requireNonNull(directory, "directory").toAbsolutePath().normalize();
     }
 
     /** Loads the named file while preventing traversal outside the configured directory. */

@@ -65,10 +65,7 @@ public final class MserOnlyRoiDetector implements TextRoiDetector {
                 if (accept(rect, regionArea, analysisWidth, analysisHeight)) {
                     accepted.add(
                             new CropRect(
-                                    rect.x,
-                                    rect.y,
-                                    rect.x + rect.width,
-                                    rect.y + rect.height));
+                                    rect.x, rect.y, rect.x + rect.width, rect.y + rect.height));
                     heightTotal += rect.height;
                 }
             }
@@ -146,8 +143,7 @@ public final class MserOnlyRoiDetector implements TextRoiDetector {
         return TextCropModel.MSER_ONLY.id();
     }
 
-    private boolean accept(
-            Rect rect, double regionArea, int analysisWidth, int analysisHeight) {
+    private boolean accept(Rect rect, double regionArea, int analysisWidth, int analysisHeight) {
         if (rect.width <= 0 || rect.height <= 0) {
             return false;
         }

@@ -64,15 +64,13 @@ public final class OnnxYoloRoiDetector extends AbstractOnnxRoiDetector {
      * @param modelHeight model input height
      * @return retained boxes
      */
-    public static List<float[]> parseDetections(
-            float[][] output, int modelWidth, int modelHeight) {
+    public static List<float[]> parseDetections(float[][] output, int modelWidth, int modelHeight) {
         List<float[]> candidates = new ArrayList<>();
         if (output == null || output.length == 0 || output[0] == null) {
             return candidates;
         }
         boolean transposed =
-                output[0].length < 5
-                        || (output.length >= 5 && output.length < output[0].length);
+                output[0].length < 5 || (output.length >= 5 && output.length < output[0].length);
         if (transposed) {
             int channels = output.length;
             int count = output[0].length;
@@ -190,10 +188,7 @@ public final class OnnxYoloRoiDetector extends AbstractOnnxRoiDetector {
         if (confidence < 0.4f || width <= 0 || height <= 0) {
             return;
         }
-        if (Math.abs(centerX) <= 2f
-                && Math.abs(centerY) <= 2f
-                && width <= 2f
-                && height <= 2f) {
+        if (Math.abs(centerX) <= 2f && Math.abs(centerY) <= 2f && width <= 2f && height <= 2f) {
             centerX *= modelWidth;
             width *= modelWidth;
             centerY *= modelHeight;

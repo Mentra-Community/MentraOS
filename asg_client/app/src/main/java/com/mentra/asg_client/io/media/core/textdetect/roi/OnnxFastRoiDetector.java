@@ -33,14 +33,7 @@ public final class OnnxFastRoiDetector extends AbstractOnnxRoiDetector {
                         }
                     }
                     return RoiPostprocessor.postprocessProbabilityMap(
-                            map,
-                            input.width(),
-                            input.height(),
-                            0.5f,
-                            0.5f,
-                            1.25f,
-                            id(),
-                            elapsed);
+                            map, input.width(), input.height(), 0.5f, 0.5f, 1.25f, id(), elapsed);
                 });
     }
 

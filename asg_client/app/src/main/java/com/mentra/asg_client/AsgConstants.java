@@ -91,8 +91,8 @@ public class AsgConstants {
 
     /**
      * Emit {@code ⏱️ [BLE PHOTO]} timing logs for the full take_photo → AVIF/JPEG compress → BLE
-     * transfer pipeline. Filter logcat on tag {@code BlePhotoTiming} or prefix {@code ⏱️ [BLE PHOTO]}.
-     * Keep false in production.
+     * transfer pipeline. Filter logcat on tag {@code BlePhotoTiming} or prefix {@code ⏱️ [BLE
+     * PHOTO]}. Keep false in production.
      */
     public static final boolean ENABLE_PHOTO_TIMING_LOGS = true;
 
@@ -116,7 +116,9 @@ public class AsgConstants {
      */
     public static final String BLE_PHOTO_CODEC = "JPEG_FAST";
 
-    /** JPEG quality for all BLE photo payloads when {@link #BLE_PHOTO_CODEC} is {@code JPEG_FAST}. */
+    /**
+     * JPEG quality for all BLE photo payloads when {@link #BLE_PHOTO_CODEC} is {@code JPEG_FAST}.
+     */
     public static final int BLE_PHOTO_JPEG_FAST_QUALITY = 80;
 
     // BLE size-tier downscale caps (long edge; aspect ratio preserved) and AVIF quality

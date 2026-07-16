@@ -45,8 +45,7 @@ public abstract class AbstractOnnxRoiDetector implements TextRoiDetector {
         try (OrtSession.SessionOptions options = new OrtSession.SessionOptions()) {
             createdSession = environment.createSession(modelBytes, options);
         }
-        String discoveredInput =
-                createdSession.getInputNames().stream().findFirst().orElse(null);
+        String discoveredInput = createdSession.getInputNames().stream().findFirst().orElse(null);
         if (discoveredInput == null) {
             createdSession.close();
             throw new IllegalArgumentException("ONNX model has no inputs");
@@ -84,8 +83,7 @@ public abstract class AbstractOnnxRoiDetector implements TextRoiDetector {
         return model;
     }
 
-    final DetectionResult runInference(
-            DetectionInput input, InferencePostprocessor postprocessor) {
+    final DetectionResult runInference(DetectionInput input, InferencePostprocessor postprocessor) {
         Objects.requireNonNull(input, "input");
         if (closed) {
             throw new IllegalStateException("Detector is closed");
@@ -94,16 +92,14 @@ public abstract class AbstractOnnxRoiDetector implements TextRoiDetector {
         float[] normalized = resizeAndNormalize(input, model.inputWidth(), model.inputHeight());
         long[] shape = {1, 3, model.inputHeight(), model.inputWidth()};
         try (OnnxTensor tensor =
-                        OnnxTensor.createTensor(
-                                environment, FloatBuffer.wrap(normalized), shape);
+                        OnnxTensor.createTensor(environment, FloatBuffer.wrap(normalized), shape);
                 OrtSession.Result result = session.run(Map.of(inputName, tensor))) {
             List<Object> outputs = new ArrayList<>(result.size());
             for (int i = 0; i < result.size(); i++) {
                 OnnxValue value = result.get(i);
                 outputs.add(value.getValue());
             }
-            return postprocessor.process(
-                    outputs, System.currentTimeMillis() - start);
+            return postprocessor.process(outputs, System.currentTimeMillis() - start);
         } catch (OrtException | RuntimeException exception) {
             return RoiPostprocessor.fallback(
                     input.width(),

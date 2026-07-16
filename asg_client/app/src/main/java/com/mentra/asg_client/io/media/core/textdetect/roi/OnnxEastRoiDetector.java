@@ -178,8 +178,7 @@ public final class OnnxEastRoiDetector extends AbstractOnnxRoiDetector {
                 return false;
             }
             for (int row = 0; row < rows; row++) {
-                if (geometry[channel][row] == null
-                        || geometry[channel][row].length != columns) {
+                if (geometry[channel][row] == null || geometry[channel][row].length != columns) {
                     return false;
                 }
             }

@@ -11,22 +11,6 @@ import com.mentra.asg_client.io.media.core.textdetect.roi.FileSystemModelSource;
 import com.mentra.asg_client.io.media.core.textdetect.roi.TextCropModel;
 import com.mentra.asg_client.io.media.core.textdetect.roi.TextRoiDetector;
 import com.mentra.asg_client.io.media.core.textdetect.roi.TextRoiDetectorFactory;
-
-import org.json.JSONArray;
-import org.json.JSONObject;
-import org.junit.BeforeClass;
-import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.JUnit4;
-import org.opencv.core.Mat;
-import org.opencv.core.MatOfByte;
-import org.opencv.core.MatOfInt;
-import org.opencv.core.Point;
-import org.opencv.core.Rect;
-import org.opencv.core.Scalar;
-import org.opencv.imgcodecs.Imgcodecs;
-import org.opencv.imgproc.Imgproc;
-
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -40,6 +24,21 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
+import org.junit.BeforeClass;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.JUnit4;
+import org.opencv.core.Mat;
+import org.opencv.core.MatOfByte;
+import org.opencv.core.MatOfInt;
+import org.opencv.core.Point;
+import org.opencv.core.Rect;
+import org.opencv.core.Scalar;
+import org.opencv.imgcodecs.Imgcodecs;
+import org.opencv.imgproc.Imgproc;
 
 /**
  * Manual offline benchmark for comparing classical and ONNX text ROI detectors.
@@ -329,7 +328,7 @@ public class TextRoiBenchmarkHarnessTest {
             Path outputDirectory,
             List<TextCropModel> requestedModels,
             List<BenchmarkResult> results)
-            throws IOException {
+            throws Exception {
         JSONArray summaries = new JSONArray();
         StringBuilder csv =
                 new StringBuilder(
@@ -539,7 +538,7 @@ public class TextRoiBenchmarkHarnessTest {
                     bytesSaved / bleBytesPerSecond);
         }
 
-        JSONObject toJson() {
+        JSONObject toJson() throws JSONException {
             return new JSONObject()
                     .put("image", image)
                     .put("requested_enum", requested.name())
@@ -646,7 +645,7 @@ public class TextRoiBenchmarkHarnessTest {
                     fallbackRate);
         }
 
-        JSONObject toJson() {
+        JSONObject toJson() throws JSONException {
             return new JSONObject()
                     .put("requested_id", requestedId)
                     .put("detector_id", detectorId)

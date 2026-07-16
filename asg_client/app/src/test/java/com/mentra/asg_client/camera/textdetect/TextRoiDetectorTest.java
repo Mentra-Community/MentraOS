@@ -18,16 +18,14 @@ import com.mentra.asg_client.io.media.core.textdetect.roi.OnnxYoloRoiDetector;
 import com.mentra.asg_client.io.media.core.textdetect.roi.TextCropModel;
 import com.mentra.asg_client.io.media.core.textdetect.roi.TextRoiDetector;
 import com.mentra.asg_client.io.media.core.textdetect.roi.TextRoiDetectorFactory;
-
-import org.junit.BeforeClass;
-import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.JUnit4;
-
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.List;
+import org.junit.BeforeClass;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.JUnit4;
 
 /** Focused contract tests for swappable text ROI detectors and static neural postprocessing. */
 @RunWith(JUnit4.class)
