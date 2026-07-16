@@ -1620,6 +1620,7 @@ class DeviceManager {
         live.sendButtonPhotoSettings(
             requestId,
             settings.size?.value,
+            settings.resolvedZslMfnr(),
             settings.mfnr,
             settings.zsl,
             settings.noiseReduction,
