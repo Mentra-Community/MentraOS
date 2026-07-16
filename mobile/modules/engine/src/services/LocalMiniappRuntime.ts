@@ -640,6 +640,21 @@ class LocalMiniappRuntime {
     // dangling references. The WebView will re-subscribe after its CONNECT.
     if (this.connectedApps.has(packageName)) {
       const existing = this.connectedApps.get(packageName)!
+      // A crash respawn replaces the ConnectedMiniapp without going through
+      // unregisterApp(). Abort the old incarnation's native PCM player before
+      // its only stream id is lost. Target the exact stream rather than using
+      // stopForApp(), whose async playback cleanup could race with audio the
+      // replacement app starts after it connects.
+      const existingSpeakerStreamId = existing.activeSpeakerStreamId
+      if (existingSpeakerStreamId) {
+        existing.activeSpeakerStreamId = undefined
+        void audioPlaybackService.abortStream(existingSpeakerStreamId).catch((error) => {
+          console.warn(
+            `${LOG_TAG}: failed to abort speaker stream while replacing ${packageName}`,
+            error,
+          )
+        })
+      }
       if (existing.authRefreshTimerId !== null) {
         BgTimer.clearTimeout(existing.authRefreshTimerId)
         existing.authRefreshTimerId = null
@@ -1811,9 +1826,11 @@ class LocalMiniappRuntime {
         stopOtherAudio: payload.stopOtherAudio !== false,
         onEnded: (endedId, success, error, durationMs) => {
           const current = this.connectedApps.get(packageName)
-          if (current?.activeSpeakerStreamId === endedId) {
-            current.activeSpeakerStreamId = undefined
-          }
+          // Ignore completion from an app incarnation replaced by a crash
+          // respawn. Its abort may finish after the new app has registered and
+          // must not overwrite that app's speaker state.
+          if (current !== app) return
+          if (current.activeSpeakerStreamId === endedId) current.activeSpeakerStreamId = undefined
           if (success) {
             this.setSpeakerState(packageName, "stopped", {durationMs: durationMs ?? undefined})
           } else {
