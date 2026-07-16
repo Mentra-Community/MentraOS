@@ -13,25 +13,32 @@ one workflow ([`miniapp-sdk-release.yml`](../.github/workflows/miniapp-sdk-relea
 
 `@mentra/miniapp`, `@mentra/miniapp-cli`, `create-mentra-miniapp`, and `@mentra/auth`
 are not on npm yet. `@mentra/cli` has a legacy `1.0.3` on the `latest` tag (the
-v1 CLI); the Cloud V2 rewrite here is `2.0.0-alpha.*` and publishes to the `alpha`
-tag, so it does **not** disturb `latest` — see the collision note below. This doc
-is how they get to npm and stay there.
+v1 CLI); the Cloud V2 rewrite here has base `2.0.0-dev.*` and publishes to the
+`dev`/`beta` channel tags, so it does **not** disturb `latest` — see the
+collision note below. This doc is how they get to npm and stay there.
 
-## Channels (branch → dist-tag)
+## Channels (branch → derived version → dist-tag)
 
-Same model as the websites and the mobile app: each long-lived branch maps to an
-npm dist-tag, and the tag is derived from the package **version's prerelease
-label** (so the tag can never drift from the version — this matches how
-`@mentra/sdk` already ships).
+Git holds **one prerelease base version per package** (`X.Y.Z-dev.N`), only ever
+edited on `dev`. CI derives the published version from the branch at publish
+time ([`npm-channel.mjs`](../.github/scripts/npm-channel.mjs) +
+[`stamp-channel-manifests.mjs`](../.github/scripts/stamp-channel-manifests.mjs)),
+so **merging a branch up the chain IS the promotion** — no version edits ride
+`dev → staging → main`:
 
-| Branch | Version shape | dist-tag | `npm install` resolves it when… |
-| --- | --- | --- | --- |
-| `main` | `1.2.3` | `latest` | `npm i @mentra/miniapp` (default) |
-| `staging` | `1.2.3-beta.4` | `beta` | `npm i @mentra/miniapp@beta` |
-| `dev` | `1.2.3-dev.4` | `dev` | `npm i @mentra/miniapp@dev` |
+| Branch | Base in git | Published as | dist-tag | `npm install` resolves it when… |
+| --- | --- | --- | --- | --- |
+| `dev` | `1.2.3-dev.4` | `1.2.3-dev.4` | `dev` | `npm i @mentra/miniapp@dev` |
+| `staging` | `1.2.3-dev.4` | `1.2.3-beta.4` | `beta` | `npm i @mentra/miniapp@beta` |
+| `main` | `1.2.3-dev.4` | `1.2.3` | `latest` | `npm i @mentra/miniapp` (default) |
 
-`-alpha.N` → `alpha` and any other `-<label>.N` → `<label>` also work, so you can
-cut a one-off channel without touching CI.
+The prerelease number carries across channels (`-dev.3` promotes to `-beta.3`)
+so a beta is traceable to the dev build it came from. Each channel's artifact is
+a **rebuild of that branch's code** — npm has no re-tag-the-same-bytes
+promotion. The `main` channel is additionally held behind the
+`NPM_MAIN_CHANNEL` repository variable (Settings → Secrets and variables →
+Actions → Variables): until it is `true`, merges to main skip publishing with a
+notice, so opening the public channel stays a deliberate human act.
 
 ## One-time setup (required before the first publish)
 
@@ -51,15 +58,24 @@ cut a one-off channel without touching CI.
 
 Workflow: [`.github/workflows/miniapp-sdk-release.yml`](../.github/workflows/miniapp-sdk-release.yml).
 
-- **Trigger:** push to `main` / `staging` / `dev` that touches any of the three
-  package dirs (or the workflow/script itself). Also `workflow_dispatch`.
-- **Gate:** a package publishes **only when the `version` field in its
-  `package.json` changes** on that push (detected by
-  [`.github/scripts/miniapp-sdk-release-info.mjs`](../.github/scripts/miniapp-sdk-release-info.mjs),
-  which diffs the version against the push's before-SHA). Bumping one package
-  does not republish the others.
-- **Idempotent:** before publishing it runs `npm view <pkg>@<version>` and skips
-  if that exact version already exists. Re-running a workflow is safe.
+- **Trigger:** push to `main` / `staging` / `dev` that touches any of the
+  package dirs (or the workflow/scripts themselves). Also `workflow_dispatch`.
+- **Gate:** a package publishes **when its derived version for the branch is
+  absent from npm** (decided by
+  [`.github/scripts/miniapp-sdk-release-info.mjs`](../.github/scripts/miniapp-sdk-release-info.mjs)
+  — registry-state detection; a promotion merge doesn't change the version
+  field, so git-diffing can't see it). E404 is the only "absent" signal — any
+  other npm error fails the run rather than guessing. Extra gates: a package
+  that has **never** been published only ships via a supervised
+  `workflow_dispatch` with `force_release=true`; the main channel needs
+  `NPM_MAIN_CHANNEL=true`; and a package is held back (with a notice) while any
+  internal dep it pins doesn't yet exist on the channel.
+- **Idempotent:** the derived version already existing on npm means "nothing to
+  do" — re-running a workflow or re-merging a branch is safe.
+- **Version stamp:** before packing, [`stamp-channel-manifests.mjs`](../.github/scripts/stamp-channel-manifests.mjs)
+  rewrites every family manifest in the CI checkout to the branch's derived
+  versions, including cross-package ranges (`^0.1.0-dev.0` → `^0.1.0` on main).
+  Checkout-only; never committed — the repo keeps the base versions.
 - **Ordered:** packages publish sequentially in dependency order
   (`@mentra/miniapp` → `@mentra/miniapp-cli` → `create-mentra-miniapp` →
   `@mentra/auth` → `@mentra/cli`) so downstream pins resolve once their base lands
@@ -76,23 +92,23 @@ Workflow: [`.github/workflows/miniapp-sdk-release.yml`](../.github/workflows/min
   the **exact versions being published this run** (prerelease → exact, stable →
   caret). This is why a project scaffolded from *any* channel installs — see
   below. No-op for packages without a `template/`; never committed.
-- **Guardrail:** a plain (non-prerelease) version resolves to the `latest`
-  dist-tag — the workflow refuses to publish that from any branch other than
-  `main`, so a `-dev` build can never accidentally become what `npm install`
-  hands every developer.
+- **Guardrail:** the `latest` dist-tag (npm's default install) only ever ships
+  from `main`, and only with `NPM_MAIN_CHANNEL=true` — structurally, because
+  only the main channel derives a plain version.
 - **Dry run:** `workflow_dispatch` defaults to `dry_run: true`, which builds and
   `npm pack --dry-run`s without publishing. Use it to validate the tarball
   contents before a real release.
 
 ### Cutting a release
 
-1. On the channel branch, bump `version` in the package(s) you're shipping:
-   - dev: `0.4.0-dev.1`, `0.4.0-dev.2`, …
-   - staging: `0.4.0-beta.1`, …
-   - production: `0.4.0`
-2. Merge to the branch. CI publishes the changed packages at the matching tag.
-3. Promotion is a version bump, not a re-tag: land `0.4.0-beta.1` on `staging`,
-   then land `0.4.0` on `main`.
+1. On `dev`, bump the base `version` of the package(s) you're shipping:
+   `0.4.0-dev.0`, `0.4.0-dev.1`, … CI publishes `0.4.0-dev.N` to the `dev` tag.
+2. Merge `dev → staging`: CI publishes `0.4.0-beta.N` to `beta`. Nothing to edit.
+3. Merge `staging → main`: CI publishes `0.4.0` to `latest` (once
+   `NPM_MAIN_CHANNEL=true`). Nothing to edit.
+4. After a plain `0.4.0` has shipped, the base is **spent**: start the next
+   cycle by bumping `dev` to `0.4.1-dev.0` (or `0.5.0-dev.0`). Until then,
+   further merges to main are no-ops for that package.
 
 ## Publish order & the template stamp
 
@@ -135,21 +151,21 @@ runtime/library packages are Node-compatible: `@mentra/miniapp` (compiled JS +
 types) and `@mentra/auth` (compiled `dist/`). **Published docs must say `bunx` /
 `bun` for anything that invokes a CLI.**
 
-## ⚠️ `@mentra/cli` version collision (1.x latest vs 2.x alpha)
+## ⚠️ `@mentra/cli` version collision (1.x latest vs 2.x prereleases)
 
 `@mentra/cli@1.0.3` already sits on the `latest` tag on npm — that's the v1 CLI
 (same maintainers, so we own the name). The Cloud V2 rewrite in
-`cloud-v2/packages/cli` is `2.0.0-alpha.*` and, because of its prerelease label,
-publishes to the **`alpha`** tag. So:
+`cloud-v2/packages/cli` has base `2.0.0-dev.*`, so it ships to the `dev` and
+`beta` channel tags. So:
 
 - `npm i @mentra/cli` (or `bun add`) still resolves the old `1.0.3`.
-- `bun add @mentra/cli@alpha` gets the Cloud V2 CLI.
+- `bun add @mentra/cli@dev` (or `@beta`) gets the Cloud V2 CLI.
 
-This is intentional during the alpha. **Do not** ship a bare `2.0.0` (no
-prerelease) until the team decides to promote v2 to `latest` — that would replace
-what every plain install resolves. When ready, that promotion is just a version
-bump to `2.0.0` merged to `main` (the workflow's `latest`-only-on-`main` guardrail
-still applies).
+This holds until v2 is deliberately promoted: a `2.0.0` on `latest` (replacing
+what every plain install resolves) requires its base to reach `main` **and**
+`NPM_MAIN_CHANNEL=true`. Note this means opening the main channel promotes v2
+over the legacy 1.0.3 — that's part of the decision the variable exists to
+gate.
 
 ## Manual publishing (fallback)
 
@@ -179,8 +195,13 @@ npm publish --tag <alpha|dev|beta|latest> --access public
 #    Rewrite its file: dep to the published miniapp-cli version first.
 cd ../cli
 node ../../../.github/scripts/rewrite-file-deps.mjs .
-npm publish --tag alpha --access public   # keep on alpha; do NOT publish a bare 2.0.0
+npm publish --tag dev --access public     # channel tag only; do NOT publish a bare 2.0.0
 git checkout -- package.json               # undo the rewrite locally
+
+# When publishing by hand for a non-dev channel, stamp the derived versions
+# first (from the repo root): GITHUB_REF_NAME=<staging|main> \
+#   node .github/scripts/stamp-channel-manifests.mjs
+# then undo with: git checkout -- <the stamped package.json files>
 ```
 
 You need `npm login` (or `NPM_TOKEN` in `~/.npmrc`) with `@mentra` publish

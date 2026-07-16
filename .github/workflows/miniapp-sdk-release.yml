@@ -4,19 +4,23 @@ name: Release Miniapp SDK
 # npm: @mentra/miniapp, @mentra/miniapp-cli, create-mentra-miniapp, @mentra/auth,
 # and @mentra/cli.
 #
-# Channel = branch -> dist-tag (derived from the package version's prerelease label):
-#   main     -> latest   (X.Y.Z)
-#   staging  -> beta     (X.Y.Z-beta.N)
-#   dev      -> dev      (X.Y.Z-dev.N)
-#   (any other -<label>.N -> <label>, e.g. -alpha.N -> alpha)
+# Channel promotion (see .github/scripts/npm-channel.mjs): git holds one
+# prerelease base version per package (X.Y.Z-dev.N, only edited on dev) and the
+# branch derives what publishes:
+#   dev      -> X.Y.Z-dev.N   (dev tag)
+#   staging  -> X.Y.Z-beta.N  (beta tag)
+#   main     -> X.Y.Z         (latest tag)
+# Merging up the chain IS the promotion; no version edits ride the branches. A
+# package publishes when its derived version is absent from npm (E404-strict),
+# so re-runs and re-merges are no-ops. First-ever publishes require a
+# supervised workflow_dispatch with force_release=true, and the main channel
+# (latest = npm's default install) additionally requires the NPM_MAIN_CHANNEL
+# repository variable to be "true".
 #
-# A package publishes only when the `version` field in its package.json changes
-# on the push (same gate as bluetooth-sdk-release.yml). Bump the version, merge
-# to the channel branch, and CI ships it. Existing versions are skipped, so
-# re-runs are safe.
-#
-# Before packing, workspace `file:` deps are rewritten to exact published versions
-# (rewrite-file-deps.mjs) so wrappers like @mentra/cli install cleanly for users.
+# Before packing, manifests are stamped to the channel's derived versions and
+# ranges (stamp-channel-manifests.mjs), then workspace `file:` deps are
+# rewritten to exact published versions (rewrite-file-deps.mjs) so wrappers
+# like @mentra/cli install cleanly for users.
 #
 # Requires repo secret NPM_TOKEN: an npm *automation* token (bypasses 2FA) for
 # an account with publish rights on the @mentra org. See sdk/PUBLISHING.md.
@@ -35,6 +39,8 @@ on:
       - "cloud-v2/packages/auth/**"
       - "cloud-v2/packages/cli/**"
       - ".github/scripts/miniapp-sdk-release-info.mjs"
+      - ".github/scripts/npm-channel.mjs"
+      - ".github/scripts/stamp-channel-manifests.mjs"
       - ".github/scripts/rewrite-file-deps.mjs"
       - ".github/scripts/stamp-template-versions.mjs"
       - ".github/workflows/miniapp-sdk-release.yml"
@@ -70,15 +76,16 @@ jobs:
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+        # Depth 1 is fine: the decision reads the working tree + the npm
+        # registry, never git history.
 
-      - name: Detect package version changes
+      - name: Decide releases for this channel
         id: info
         run: node .github/scripts/miniapp-sdk-release-info.mjs
         env:
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
           FORCE_RELEASE: ${{ github.event_name == 'workflow_dispatch' && inputs.force_release || false }}
+          MAIN_CHANNEL_ENABLED: ${{ vars.NPM_MAIN_CHANNEL || 'false' }}
 
   publish:
     name: Publish ${{ matrix.pkg.name }}@${{ matrix.pkg.version }}
@@ -124,9 +131,16 @@ jobs:
         working-directory: ${{ matrix.pkg.dir }}
         run: ${{ matrix.pkg.buildCmd }}
 
+      # After install+build (a frozen install would reject changed version
+      # fields): stamp every channel-released manifest to this branch's derived
+      # versions and cross-package ranges. The later rewrite/stamp steps read
+      # the stamped manifests, so their pins come out channel-correct. This
+      # only mutates the checkout that gets packed/published — never committed.
+      - name: Stamp channel versions
+        run: node .github/scripts/stamp-channel-manifests.mjs
+
       # Rewrite workspace `file:` deps to exact published versions so the tarball
-      # installs for end users (no-op for packages without them). This only
-      # mutates the checkout that gets packed/published — it is never committed.
+      # installs for end users (no-op for packages without them).
       - name: "Rewrite workspace file: deps"
         run: node .github/scripts/rewrite-file-deps.mjs "${{ matrix.pkg.dir }}"
 

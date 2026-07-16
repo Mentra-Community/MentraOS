@@ -1,18 +1,25 @@
 name: Release Mentra Engine
 
-# Publishes @mentra/engine to npm when its package version changes on dev.
-# Existing versions are skipped, making workflow re-runs safe. Detection FAILS
-# CLOSED (same as the bluetooth-sdk/miniapp pipelines): when the previous state
-# is unknown — force-push, unresolvable before-SHA, first appearance of the
-# package — nothing auto-publishes.
+# Publishes @mentra/engine to npm under the channel-promotion scheme (see
+# .github/scripts/npm-channel.mjs): git holds one prerelease base version
+# (X.Y.Z-dev.N, only edited on dev) and the branch derives what publishes —
+# dev -> X.Y.Z-dev.N (dev tag), staging -> X.Y.Z-beta.N (beta tag), main ->
+# X.Y.Z (latest tag). Merging up the chain IS the promotion; no version edits
+# ride the branches. A release fires when the derived version is absent from
+# npm (E404-strict), so re-runs and re-merges are no-ops.
+#
+# The main channel (latest = npm's default install) additionally requires the
+# NPM_MAIN_CHANNEL repository variable to be "true" — the public switch stays
+# with a human until the team opens it.
 #
 # FIRST PUBLISH (deliberately manual): @mentra/engine cannot go to npm before
 # its @mentra/* peer dependencies exist there (crust, cloud-client,
 # cloud-protocol, miniapp — npm >=7 auto-installs peers, so consumers would
 # E404). Once the peers are published, run a supervised workflow_dispatch with
 # force_release=true (dry_run=false); that first publish uses NPM_TOKEN because
-# npm cannot stage a package that does not exist. Later versions publish
-# automatically on version bumps via the OIDC staged-publishing flow.
+# npm cannot stage a package that does not exist. Later derived versions
+# publish automatically via the OIDC staged-publishing flow (held for human
+# approval).
 #
 # After the initial release, configure @mentra/engine's npm trusted publisher:
 #   organization: Mentra-Community
@@ -24,8 +31,12 @@ on:
   push:
     branches:
       - dev
+      - staging
+      - main
     paths:
       - ".github/scripts/engine-release-info.mjs"
+      - ".github/scripts/npm-channel.mjs"
+      - ".github/scripts/stamp-channel-manifests.mjs"
       - ".github/workflows/engine-release.yml"
       - "mobile/modules/engine/**"
   workflow_dispatch:
@@ -66,15 +77,16 @@ jobs:
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
-        # Depth 1: the detect script reads two blobs at the before-SHA and
-        # fetches that single commit itself; full history is ~1 GiB of waste.
+        # Depth 1 is fine: the decision reads the working tree + the npm
+        # registry, never git history.
 
-      - name: Detect package version change
+      - name: Decide release for this channel
         id: release-info
         run: node .github/scripts/engine-release-info.mjs
         env:
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
           FORCE_RELEASE: ${{ github.event_name == 'workflow_dispatch' && inputs.force_release || false }}
+          MAIN_CHANNEL_ENABLED: ${{ vars.NPM_MAIN_CHANNEL || 'false' }}
 
       - name: Summarize release decision
         run: |
@@ -82,7 +94,7 @@ jobs:
             echo "## Mentra Engine release decision"
             echo ""
             echo "- Package: \`${{ steps.release-info.outputs.package_name }}\`"
-            echo "- Current version: \`${{ steps.release-info.outputs.version }}\`"
+            echo "- Derived version: \`${{ steps.release-info.outputs.version }}\` (dist-tag \`${{ steps.release-info.outputs.dist_tag }}\`)"
             echo "- Dry run: \`${{ steps.release-info.outputs.dry_run }}\`"
             echo "- Run release job: \`${{ steps.release-info.outputs.run_release }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
@@ -93,12 +105,6 @@ jobs:
     if: needs.detect.outputs.run_release == 'true'
     runs-on: ubuntu-latest
     steps:
-      - name: Refuse non-dev publish
-        if: needs.detect.outputs.dry_run != 'true' && github.ref_name != 'dev'
-        run: |
-          echo "Mentra Engine releases must publish from the dev branch." >&2
-          exit 1
-
       - name: Checkout source
         uses: actions/checkout@v4
 
@@ -132,6 +138,13 @@ jobs:
       - name: Install mobile dependencies
         working-directory: mobile
         run: bun install --frozen-lockfile
+
+      # After the frozen install (which would reject changed version fields):
+      # stamp every channel-released manifest to this branch's derived versions
+      # so the packed engine carries the right version and peer ranges. Packed
+      # checkout only — never committed.
+      - name: Stamp channel versions
+        run: node .github/scripts/stamp-channel-manifests.mjs
 
       - name: Build package
         working-directory: ${{ env.ENGINE_PACKAGE_DIR }}
