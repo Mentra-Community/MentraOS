@@ -65,6 +65,23 @@ describe("photoRequestParamsForNative", () => {
     expect(payload.isoCap).toBe(800)
   })
 
+  it("includes zslMfnr and mirrors legacy mfnr/zsl for wire compatibility", () => {
+    const payload = photoRequestParamsForNative({
+      ...baseParams,
+      zslMfnr: true,
+      mfnr: false,
+      zsl: false,
+    })
+
+    expect(payload.zslMfnr).toBe(true)
+    expect(payload.mfnr).toBe(true)
+    expect(payload.zsl).toBe(true)
+  })
+
+  it("omits zslMfnr when unset", () => {
+    expect(photoRequestParamsForNative(baseParams)).not.toHaveProperty("zslMfnr")
+  })
+
   it("preserves text capture mode", () => {
     expect(photoRequestParamsForNative({...baseParams, mode: "text"}).mode).toBe("text")
   })
