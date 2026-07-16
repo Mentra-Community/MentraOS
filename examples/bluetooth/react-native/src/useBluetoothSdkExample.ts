@@ -763,6 +763,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   const otaChainDeviceKeyRef = useRef<string | null>(null);
   const otaChainDisconnectedAtRef = useRef<number | null>(null);
   const otaChainStartFailuresRef = useRef(0);
+  const otaChainGenerationRef = useRef(0);
   const otaStartInFlightRef = useRef(false);
   const connectedDeviceKeyRef = useRef<string | null>(null);
   const otaAppIdentityRef = useRef<string | null>(null);
@@ -932,7 +933,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     }
     if (otaChainDisconnectedAtRef.current !== null) {
       if (Date.now() - otaChainDisconnectedAtRef.current > OTA_CHAIN_RESUME_WINDOW_MS) {
-        otaChainRemainingRef.current = 0;
+        cancelOtaChain();
       }
       otaChainDisconnectedAtRef.current = null;
     }
@@ -1361,13 +1362,20 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       maybeContinueOtaChain();
       return true;
     }
-    otaChainRemainingRef.current = 0;
+    cancelOtaChain();
     otaStatusRef.current = null;
     setOtaStatus(null);
     setOtaStatusMessage('Glasses firmware is up to date');
     setOtaUpdateAvailable(false);
     addEvent('LIVE', 'OTA up to date');
     return false;
+  }
+
+  // Cancel the armed run; bumping the generation invalidates any pending
+  // continuation dispatch so its failure handling cannot re-arm the chain.
+  function cancelOtaChain() {
+    otaChainGenerationRef.current += 1;
+    otaChainRemainingRef.current = 0;
   }
 
   // One user-initiated update run may span several OTA passes: legacy
@@ -1381,7 +1389,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     }
     if (otaChainDeviceKeyRef.current && otaChainDeviceKeyRef.current !== connectedDeviceKeyRef.current) {
       // The armed run belongs to another device/connection; require a fresh tap.
-      otaChainRemainingRef.current = 0;
+      cancelOtaChain();
       return;
     }
     if (!glassesConnectedRef.current || !glassesWifiConnectedRef.current) {
@@ -1390,6 +1398,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     if (otaStartInFlightRef.current || isOtaEventInProgress(otaStatusRef.current)) {
       return;
     }
+    const generation = otaChainGenerationRef.current;
     otaChainRemainingRef.current -= 1;
     otaStartInFlightRef.current = true;
     void runAction('Continue OTA', async () => {
@@ -1404,12 +1413,15 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
         otaStartInFlightRef.current = false;
         // Nothing started, so the failed dispatch should not consume a
         // pass — but stop the run after repeated failures rather than
-        // retrying on every subsequent check.
-        otaChainStartFailuresRef.current += 1;
-        if (otaChainStartFailuresRef.current >= MAX_OTA_CHAIN_START_FAILURES) {
-          otaChainRemainingRef.current = 0;
-        } else {
-          otaChainRemainingRef.current += 1;
+        // retrying on every subsequent check. If the run was cancelled or
+        // re-armed while the dispatch was pending, leave it alone.
+        if (otaChainGenerationRef.current === generation) {
+          otaChainStartFailuresRef.current += 1;
+          if (otaChainStartFailuresRef.current >= MAX_OTA_CHAIN_START_FAILURES) {
+            cancelOtaChain();
+          } else {
+            otaChainRemainingRef.current += 1;
+          }
         }
         throw error;
       }
@@ -1493,6 +1505,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
         throw error;
       }
       // Arm the auto-chain only once the start is acknowledged.
+      otaChainGenerationRef.current += 1;
       otaChainRemainingRef.current = MAX_OTA_CHAIN_PASSES;
       otaChainDeviceKeyRef.current = connectedDeviceKeyRef.current;
       otaChainStartFailuresRef.current = 0;
@@ -1502,7 +1515,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
 
   async function disconnect() {
     await runAction('Disconnect', async () => {
-      otaChainRemainingRef.current = 0;
+      cancelOtaChain();
       stopDirectStreamFrameWatchdog();
       await bluetooth.disconnect();
       applyDisconnectedState('Disconnected');
@@ -4072,7 +4085,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       setOtaUpdateAvailable(false);
     }
     if (payload.status === 'failed') {
-      otaChainRemainingRef.current = 0;
+      cancelOtaChain();
     }
     addEvent('LIVE', `OTA ${payload.status} ${payload.overall_percent ?? 0}%`);
     schedulePostOtaCheck(payload);
