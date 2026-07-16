@@ -75,6 +75,20 @@ export type StreamPreviewTarget = {
 type MediaUploadSuccessEvent = BluetoothSdkEventMap['media_success'];
 type MediaUploadErrorEvent = BluetoothSdkEventMap['media_error'];
 
+// A single user-initiated update may need several OTA passes (e.g. legacy
+// glasses first hop to an intermediate ASG client before the firmware pass).
+// Bound the automatic continuations so a misbehaving manifest cannot loop.
+const MAX_OTA_CHAIN_PASSES = 4;
+
+// The SDK gives up waiting for a wifi connect ack after 15s, but the glasses
+// often finish associating shortly after; keep the connecting state alive a
+// little longer before declaring failure.
+const WIFI_CONNECT_GRACE_MS = 20_000;
+
+// An armed OTA chain survives the reboots an update itself causes, but a
+// device that stays away longer than this needs a fresh user tap.
+const OTA_CHAIN_RESUME_WINDOW_MS = 5 * 60_000;
+
 function isDisplayableOtaStatus(payload: OtaStatusEvent) {
   return payload.status !== 'idle' || Boolean(payload.error_message);
 }
@@ -429,6 +443,8 @@ export type BluetoothSdkExampleState = {
   pcmFrames: number;
   speaking: boolean | null;
   voiceActivityDetectionEnabled: boolean;
+  wifiConnectError: string | null;
+  wifiConnectingSsid: string | null;
   permissionStatus: string;
   phonePhotoReceiverRunning: boolean;
   phonePhotoUploadUrl: string | null;
@@ -671,6 +687,8 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   const [otaDisplayPercent, setOtaDisplayPercent] = useState<number | null>(null);
   const [otaStatusMessage, setOtaStatusMessage] = useState<string | null>(null);
   const [otaUpdateAvailable, setOtaUpdateAvailable] = useState(false);
+  const [wifiConnectingSsid, setWifiConnectingSsid] = useState<string | null>(null);
+  const [wifiConnectError, setWifiConnectError] = useState<string | null>(null);
   const [micAudioRouteStatus, setMicAudioRouteStatus] = useState(
     Platform.OS === 'ios'
       ? IOS_AUDIO_ROUTE_HINT
@@ -737,6 +755,15 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   const otaStartingAppIdentityRef = useRef<string | null>(null);
   const postOtaCheckInProgressRef = useRef(false);
   const postOtaCheckedSessionRef = useRef<string | null>(null);
+  const otaChainRemainingRef = useRef(0);
+  const otaChainDeviceKeyRef = useRef<string | null>(null);
+  const otaChainDisconnectedAtRef = useRef<number | null>(null);
+  const otaStartInFlightRef = useRef(false);
+  const connectedDeviceKeyRef = useRef<string | null>(null);
+  const otaAppIdentityRef = useRef<string | null>(null);
+  const wifiConnectAttemptRef = useRef(0);
+  const wifiConnectGraceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const wifiConnectingSsidRef = useRef<string | null>(null);
   const [autoOtaCheckRetryTick, setAutoOtaCheckRetryTick] = useState(0);
   const [latestVersionInfo, setLatestVersionInfo] = useState<VersionInfoResult | null>(null);
   const [latestVersionInfoSignature, setLatestVersionInfoSignature] = useState<string | null>(null);
@@ -776,6 +803,8 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   galleryModeEnabledRef.current = galleryModeEnabled;
   latestAutoOtaCheckKeyRef.current = autoOtaCheckKey;
   otaStatusRef.current = otaStatus;
+  connectedDeviceKeyRef.current = connectedDeviceKey;
+  otaAppIdentityRef.current = otaAppIdentity(glasses);
   glassesConnectedRef.current = glassesConnected;
   glassesWifiConnectedRef.current = glassesWifiConnected;
   galleryServerReachableRef.current = galleryServerReachable;
@@ -882,13 +911,32 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       postOtaCheckInProgressRef.current = false;
       postOtaCheckedSessionRef.current = null;
       setLatestVersionInfoSignature(null);
+      // A stale in-progress OTA status (e.g. the BES step's final
+      // 'step_complete' before the reboot) must not gate the next check.
+      otaStatusRef.current = null;
+      otaStartingAppIdentityRef.current = null;
+      otaStartInFlightRef.current = false;
+      if (otaChainRemainingRef.current > 0 && otaChainDisconnectedAtRef.current === null) {
+        otaChainDisconnectedAtRef.current = Date.now();
+      }
+      setOtaStatus(null);
+      clearOtaDisplayProgress();
+      setOtaStatusMessage(null);
+      setOtaUpdateAvailable(false);
       return;
+    }
+    if (otaChainDisconnectedAtRef.current !== null) {
+      if (Date.now() - otaChainDisconnectedAtRef.current > OTA_CHAIN_RESUME_WINDOW_MS) {
+        otaChainRemainingRef.current = 0;
+      }
+      otaChainDisconnectedAtRef.current = null;
     }
     if (
       !autoOtaCheckKey ||
       !glassesWifiConnected ||
       autoOtaCheckedConnectionRef.current === autoOtaCheckKey ||
       autoOtaCheckInProgressRef.current ||
+      otaStartInFlightRef.current ||
       otaInProgress
     ) {
       return;
@@ -910,6 +958,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
         if (
           latestAutoOtaCheckKeyRef.current &&
           latestAutoOtaCheckKeyRef.current !== checkedKey &&
+          !otaStartInFlightRef.current &&
           !isOtaEventInProgress(otaStatusRef.current)
         ) {
           setAutoOtaCheckRetryTick((tick) => tick + 1);
@@ -936,6 +985,20 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
         addEvent('STORE', `battery ${payload.level}%${payload.charging ? ' charging' : ''}`);
       }),
       BluetoothSdk.addListener('wifi_status_change', (payload) => {
+        if (payload.state === 'connected') {
+          const targetSsid = wifiConnectingSsidRef.current;
+          if (!targetSsid || payload.ssid === targetSsid) {
+            // A connect that outlived the SDK request timeout resolved late,
+            // or the glasses (re)connected with no attempt pending.
+            settleWifiConnectAttempt();
+            setWifiConnectError(null);
+          } else {
+            // Re-associating with a different network while a join is
+            // pending means the join failed (e.g. wrong password).
+            settleWifiConnectAttempt();
+            setWifiConnectError(`Could not connect to ${targetSsid}. Check the password and try again.`);
+          }
+        }
         addEvent('STORE', `Wi-Fi ${payload.state === 'connected' ? payload.ssid : payload.state}`);
       }),
       BluetoothSdk.addListener('hotspot_status_change', (payload) => {
@@ -1128,9 +1191,13 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       wasConnectedRef.current = true;
       return;
     }
-    if (wasConnectedRef.current && isDisconnectedStatus(glasses)) {
+    // Reset on any connected -> not-connected transition. During an
+    // auto-reconnect (e.g. the post-BES-update reboot) the SDK publishes
+    // 'disconnected' and 'connecting' in the same bridge flush, so the app
+    // never renders the 'disconnected' state.
+    if (wasConnectedRef.current) {
       wasConnectedRef.current = false;
-      applyDisconnectedState('Disconnected');
+      applyDisconnectedState(isDisconnectedStatus(glasses) ? 'Disconnected' : 'Reconnecting');
     }
   }, [glassesConnected, glasses, scanMode, scanAeDivisor, scanIsoCap]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -1264,7 +1331,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
         throw new Error('Connect glasses first.');
       }
       requireGlassesWifi('check for OTA updates');
-      if (isOtaEventInProgress(otaStatusRef.current)) {
+      if (otaStartInFlightRef.current || isOtaEventInProgress(otaStatusRef.current)) {
         addEvent('TX', 'OTA check skipped while update is in progress');
         return;
       }
@@ -1274,7 +1341,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
 
   async function checkForOtaUpdateResult(): Promise<boolean> {
     const updateAvailable = await BluetoothSdk.checkForOtaUpdate();
-    if (isOtaEventInProgress(otaStatusRef.current)) {
+    if (otaStartInFlightRef.current || isOtaEventInProgress(otaStatusRef.current)) {
       addEvent('LIVE', 'OTA check result ignored while update is in progress');
       return updateAvailable;
     }
@@ -1286,14 +1353,52 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       setOtaStatusMessage(null);
       setOtaUpdateAvailable(true);
       addEvent('LIVE', 'OTA update available');
+      maybeContinueOtaChain();
       return true;
     }
+    otaChainRemainingRef.current = 0;
     otaStatusRef.current = null;
     setOtaStatus(null);
     setOtaStatusMessage('Glasses firmware is up to date');
     setOtaUpdateAvailable(false);
     addEvent('LIVE', 'OTA up to date');
     return false;
+  }
+
+  // One user-initiated update run may span several OTA passes: legacy
+  // glasses can finish a pass on an intermediate ASG client (or reboot
+  // after a BES flash) while still being behind the manifest. Whenever a
+  // post-pass or reconnect check reports another update during an armed
+  // run, start the next pass without requiring another tap.
+  function maybeContinueOtaChain() {
+    if (otaChainRemainingRef.current <= 0) {
+      return;
+    }
+    if (otaChainDeviceKeyRef.current && otaChainDeviceKeyRef.current !== connectedDeviceKeyRef.current) {
+      // The armed run belongs to another device/connection; require a fresh tap.
+      otaChainRemainingRef.current = 0;
+      return;
+    }
+    if (!glassesConnectedRef.current || !glassesWifiConnectedRef.current) {
+      return;
+    }
+    if (otaStartInFlightRef.current || isOtaEventInProgress(otaStatusRef.current)) {
+      return;
+    }
+    otaChainRemainingRef.current -= 1;
+    otaStartInFlightRef.current = true;
+    void runAction('Continue OTA', async () => {
+      try {
+        postOtaCheckedSessionRef.current = null;
+        otaStartingAppIdentityRef.current = otaAppIdentityRef.current;
+        clearOtaDisplayProgress();
+        await BluetoothSdk.startOtaUpdate();
+        addEvent('LIVE', 'OTA continuing with next update pass');
+      } catch (error) {
+        otaStartInFlightRef.current = false;
+        throw error;
+      }
+    });
   }
 
   function clearOtaDisplayProgress() {
@@ -1358,16 +1463,30 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
         throw new Error('Connect glasses first.');
       }
       requireGlassesWifi('start OTA updates');
+      if (otaStartInFlightRef.current) {
+        addEvent('TX', 'OTA start skipped; a start is already in flight');
+        return;
+      }
       postOtaCheckedSessionRef.current = null;
       otaStartingAppIdentityRef.current = otaAppIdentity(glasses);
       clearOtaDisplayProgress();
-      await BluetoothSdk.startOtaUpdate();
+      otaStartInFlightRef.current = true;
+      try {
+        await BluetoothSdk.startOtaUpdate();
+      } catch (error) {
+        otaStartInFlightRef.current = false;
+        throw error;
+      }
+      // Arm the auto-chain only once the start is acknowledged.
+      otaChainRemainingRef.current = MAX_OTA_CHAIN_PASSES;
+      otaChainDeviceKeyRef.current = connectedDeviceKeyRef.current;
       addEvent('LIVE', 'OTA start acknowledged');
     });
   }
 
   async function disconnect() {
     await runAction('Disconnect', async () => {
+      otaChainRemainingRef.current = 0;
       stopDirectStreamFrameWatchdog();
       await bluetooth.disconnect();
       applyDisconnectedState('Disconnected');
@@ -1805,7 +1924,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
         });
         handlePhotoResponse(response);
       } catch (error) {
-        if (isPhotoRequestTimeoutError(error) && activePhotoRequestIdRef.current === requestId) {
+        if (isRequestTimeoutError(error) && activePhotoRequestIdRef.current === requestId) {
           markPhotoRequestStillWaiting(requestId, 'Cloud server', error);
           void pollPhotoPreview(requestId, statusUrl, pollGeneration);
           return;
@@ -1844,7 +1963,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       });
       handlePhotoResponse(response);
     } catch (error) {
-      if (isPhotoRequestTimeoutError(error) && activePhotoRequestIdRef.current === requestId) {
+      if (isRequestTimeoutError(error) && activePhotoRequestIdRef.current === requestId) {
         markPhotoRequestStillWaiting(requestId, 'Phone receiver', error);
         startPhonePhotoUploadTimeout(requestId);
         return;
@@ -3413,14 +3532,61 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     });
   }
 
+  function settleWifiConnectAttempt() {
+    wifiConnectAttemptRef.current += 1;
+    wifiConnectingSsidRef.current = null;
+    if (wifiConnectGraceTimerRef.current) {
+      clearTimeout(wifiConnectGraceTimerRef.current);
+      wifiConnectGraceTimerRef.current = null;
+    }
+    setWifiConnectingSsid(null);
+  }
+
   async function sendWifiCredentials(ssid: string, password: string, requiresPassword: boolean) {
     await runAction(`Connect Wi-Fi ${ssid}`, async () => {
       requireConnected('send Wi-Fi credentials');
       if (requiresPassword && !password) {
         throw new Error(`Enter the Wi-Fi password before connecting to ${ssid}.`);
       }
-      const status = await BluetoothSdk.sendWifiCredentials(ssid, requiresPassword ? password : '');
-      addEvent('LIVE', `Wi-Fi ${status.state === 'connected' ? status.ssid : status.state}`);
+      const attempt = ++wifiConnectAttemptRef.current;
+      if (wifiConnectGraceTimerRef.current) {
+        clearTimeout(wifiConnectGraceTimerRef.current);
+        wifiConnectGraceTimerRef.current = null;
+      }
+      wifiConnectingSsidRef.current = ssid;
+      setWifiConnectingSsid(ssid);
+      setWifiConnectError(null);
+      try {
+        const status = await BluetoothSdk.sendWifiCredentials(ssid, requiresPassword ? password : '');
+        if (wifiConnectAttemptRef.current === attempt) {
+          settleWifiConnectAttempt();
+        }
+        addEvent('LIVE', `Wi-Fi ${status.state === 'connected' ? status.ssid : status.state}`);
+      } catch (error) {
+        if (wifiConnectAttemptRef.current !== attempt) {
+          return;
+        }
+        // iOS loses the 'request_timeout' code in the Expo bridge, so also
+        // match on the message like isRequestTimeoutError does.
+        if ((error as {code?: string})?.code === 'request_timeout' || isRequestTimeoutError(error)) {
+          // The glasses often finish associating after the SDK stops
+          // waiting; keep the connecting state during a grace window and
+          // let a late wifi_status_change resolve it.
+          wifiConnectGraceTimerRef.current = setTimeout(() => {
+            wifiConnectGraceTimerRef.current = null;
+            if (wifiConnectAttemptRef.current === attempt) {
+              wifiConnectingSsidRef.current = null;
+              setWifiConnectingSsid(null);
+              setWifiConnectError(`Could not connect to ${ssid}. Check the password and try again.`);
+            }
+          }, WIFI_CONNECT_GRACE_MS);
+          addEvent('LIVE', `Wi-Fi connect to ${ssid} still pending`);
+          return;
+        }
+        settleWifiConnectAttempt();
+        setWifiConnectError(formatError(error));
+        throw error;
+      }
     });
   }
 
@@ -3854,10 +4020,13 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     }
     otaStatusRef.current = null;
     otaStartingAppIdentityRef.current = null;
+    otaStartInFlightRef.current = false;
     setOtaStatus(null);
     clearOtaDisplayProgress();
     setOtaStatusMessage(null);
     setOtaUpdateAvailable(false);
+    settleWifiConnectAttempt();
+    setWifiConnectError(null);
     setMicRecording(false);
     micRecordingRef.current = false;
     stopMicElapsedTimer();
@@ -3865,6 +4034,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   }
 
   function applyOtaStatus(payload: OtaStatusEvent) {
+    otaStartInFlightRef.current = false;
     if (!isDisplayableOtaStatus(payload)) {
       otaStatusRef.current = null;
       otaStartingAppIdentityRef.current = null;
@@ -3884,6 +4054,9 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     if (payload.status === 'complete' || payload.status === 'failed') {
       otaStartingAppIdentityRef.current = null;
       setOtaUpdateAvailable(false);
+    }
+    if (payload.status === 'failed') {
+      otaChainRemainingRef.current = 0;
     }
     addEvent('LIVE', `OTA ${payload.status} ${payload.overall_percent ?? 0}%`);
     schedulePostOtaCheck(payload);
@@ -4087,6 +4260,8 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     toggleStream,
     voiceActivityDetectionEnabled,
     webhookUrl,
+    wifiConnectError,
+    wifiConnectingSsid,
   };
 }
 
@@ -5004,7 +5179,7 @@ function formatError(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
 
-function isPhotoRequestTimeoutError(error: unknown) {
+function isRequestTimeoutError(error: unknown) {
   const message = formatError(error).toLowerCase();
   return (
     message.includes('request_timeout') ||

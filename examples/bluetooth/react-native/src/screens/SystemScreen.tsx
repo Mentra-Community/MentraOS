@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
+  ActivityIndicator,
   View,
   Text,
   ScrollView,
@@ -40,6 +41,7 @@ export function SystemScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
   const inputChips = recentInputChips(sdk.events);
   const [pendingWifi, setPendingWifi] = useState<{ssid: string; requiresPassword: boolean} | null>(null);
   const [pendingWifiPassword, setPendingWifiPassword] = useState('');
+  const [showWifiPassword, setShowWifiPassword] = useState(false);
   const [wifiExpanded, setWifiExpanded] = useState(false);
   const didAutoScanWifi = useRef(false);
   const visibleNetworks = wifiExpanded ? networks : networks.slice(0, WIFI_COLLAPSED_NETWORK_LIMIT);
@@ -106,10 +108,12 @@ export function SystemScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
           />
         ) : null}
         {visibleNetworks.map((network, index) => {
+          const connectingThis = sdk.wifiConnectingSsid === network.ssid;
           const joinNetwork = () => {
             if (network.requiresPassword) {
               setPendingWifi({ssid: network.ssid, requiresPassword: true});
               setPendingWifiPassword('');
+              setShowWifiPassword(false);
             } else {
               void sdk.sendWifiCredentials(network.ssid, '', false);
             }
@@ -119,19 +123,27 @@ export function SystemScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
             <NetworkRow
               key={`${network.ssid}-${index}`}
               actionColor={colors.greenDeep}
-              actionLabel="Join"
+              actionLabel={connectingThis ? undefined : 'Join'}
+              busy={connectingThis}
               name={network.ssid}
-              sub={`${network.requiresPassword ? 'secured' : 'open'} · ${network.signalStrength ?? 0}`}
-              subColor={colors.muted}
+              sub={
+                connectingThis
+                  ? 'connecting…'
+                  : `${network.requiresPassword ? 'secured' : 'open'} · ${network.signalStrength ?? 0}`
+              }
+              subColor={connectingThis ? colors.greenAccent : colors.muted}
               faint
               locked={network.requiresPassword}
               last={index === visibleNetworks.length - 1 && !canToggleWifiList}
-              disabled={!connected}
-              onActionPress={joinNetwork}
-              onPress={joinNetwork}
+              disabled={!connected || (sdk.wifiConnectingSsid !== null && !connectingThis)}
+              onActionPress={connectingThis ? undefined : joinNetwork}
+              onPress={connectingThis ? undefined : joinNetwork}
             />
           );
         })}
+        {sdk.wifiConnectError ? (
+          <Text style={styles.wifiErrorText}>{sdk.wifiConnectError}</Text>
+        ) : null}
         {canToggleWifiList ? (
           <Pressable style={styles.wifiExpandRow} onPress={() => setWifiExpanded((expanded) => !expanded)}>
             <Text style={styles.wifiExpandText}>
@@ -332,17 +344,39 @@ export function SystemScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>Join Wi-Fi</Text>
             <Text style={styles.modalSub}>{pendingWifi?.ssid}</Text>
-            <TextInput
-              autoCapitalize="none"
-              autoCorrect={false}
-              onChangeText={setPendingWifiPassword}
-              placeholder="Password"
-              placeholderTextColor={colors.muted}
-              returnKeyType="done"
-              secureTextEntry
-              style={styles.modalInput}
-              value={pendingWifiPassword}
-            />
+            <View style={styles.modalInputRow}>
+              <TextInput
+                autoCapitalize="none"
+                autoCorrect={false}
+                onChangeText={setPendingWifiPassword}
+                placeholder="Password"
+                placeholderTextColor={colors.muted}
+                returnKeyType="done"
+                secureTextEntry={!showWifiPassword}
+                style={styles.modalInput}
+                value={pendingWifiPassword}
+              />
+              <Pressable
+                accessibilityLabel={showWifiPassword ? 'Hide password' : 'Show password'}
+                accessibilityRole="button"
+                hitSlop={10}
+                onPress={() => setShowWifiPassword((visible) => !visible)}
+                style={styles.modalInputEye}>
+                <Svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke={colors.muted} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                  {showWifiPassword ? (
+                    <>
+                      <Path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
+                      <Line x1={1} y1={1} x2={23} y2={23} />
+                    </>
+                  ) : (
+                    <>
+                      <Path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8Z" />
+                      <Circle cx={12} cy={12} r={3} />
+                    </>
+                  )}
+                </Svg>
+              </Pressable>
+            </View>
             <View style={styles.modalActions}>
               <Pressable style={styles.modalCancel} onPress={() => setPendingWifi(null)}>
                 <Text style={styles.modalCancelText}>Cancel</Text>
@@ -370,6 +404,7 @@ export function SystemScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
 function NetworkRow({
   actionColor = colors.ink,
   actionLabel,
+  busy,
   check,
   disabled,
   faint,
@@ -384,6 +419,7 @@ function NetworkRow({
 }: {
   actionColor?: string;
   actionLabel?: string;
+  busy?: boolean;
   check?: boolean;
   disabled?: boolean;
   faint?: boolean;
@@ -421,7 +457,9 @@ function NetworkRow({
           <Path d="M7 11V7a5 5 0 0 1 10 0v4" />
         </Svg>
       )}
-      {actionLabel ? (
+      {busy ? (
+        <ActivityIndicator color={colors.greenDeep} size="small" />
+      ) : actionLabel ? (
         <Pressable disabled={!onActionPress} onPress={onActionPress} style={[styles.networkAction, { backgroundColor: `${actionColor}1A` }]}>
           <Text style={[styles.networkActionText, { color: actionColor }]}>{actionLabel}</Text>
         </Pressable>
@@ -644,6 +682,7 @@ const styles = StyleSheet.create({
   networkSub: { fontSize: 12, fontWeight: '500' },
   networkAction: { minHeight: 40, minWidth: 64, alignItems: 'center', justifyContent: 'center', paddingVertical: 8, paddingHorizontal: 12, borderRadius: 999 },
   networkActionText: { fontSize: 12, fontWeight: '700' },
+  wifiErrorText: { color: colors.red, fontSize: 12, fontWeight: '600', marginTop: 8 },
   wifiExpandRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, borderTopWidth: 1, borderTopColor: 'rgba(15,42,29,0.06)', paddingTop: 12, paddingBottom: 2 },
   wifiExpandText: { color: colors.greenInk, fontSize: 12, fontWeight: '700' },
   tileCard: { flex: 1, borderRadius: 22, paddingVertical: 16, paddingHorizontal: 16, gap: 10, borderWidth: 1, borderColor: colors.borderSoft },
@@ -699,7 +738,9 @@ const styles = StyleSheet.create({
   modalCard: { width: '100%', borderRadius: 24, backgroundColor: colors.bg, padding: 20, gap: 12 },
   modalTitle: { color: colors.ink, fontSize: 22, fontWeight: '800' },
   modalSub: { color: colors.muted, fontSize: 15, fontWeight: '600' },
-  modalInput: { color: colors.ink, fontSize: 16, fontWeight: '500', backgroundColor: 'rgba(15,42,29,0.04)', borderRadius: 14, paddingHorizontal: 14, paddingVertical: 14 },
+  modalInputRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(15,42,29,0.04)', borderRadius: 14 },
+  modalInput: { flex: 1, color: colors.ink, fontSize: 16, fontWeight: '500', paddingHorizontal: 14, paddingVertical: 14 },
+  modalInputEye: { alignItems: 'center', justifyContent: 'center', minWidth: 44, minHeight: 44, paddingRight: 4 },
   modalActions: { flexDirection: 'row', gap: 10, marginTop: 4 },
   modalCancel: { flex: 1, alignItems: 'center', backgroundColor: 'rgba(15,42,29,0.06)', borderRadius: 16, paddingVertical: 14 },
   modalCancelText: { color: colors.ink, fontSize: 15, fontWeight: '700' },
