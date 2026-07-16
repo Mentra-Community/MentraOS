@@ -3,7 +3,7 @@
 // value of invoke()), NOT a streamed tester:event — so capture results live
 // in local state.
 
-import {useRef, useState} from "react"
+import {useEffect, useRef, useState} from "react"
 import {useNavigate} from "react-router-dom"
 import type {DownloadResult} from "@mentra/miniapp"
 import {MiniappHeader} from "@mentra/miniapp/ui"
@@ -48,6 +48,9 @@ export default function CameraPage() {
   const navigate = useNavigate()
   const {invoke, lastError} = useTester("camera")
   const {invoke: invokeSystem} = useTester("system")
+  // Subscribing to the input tester keeps session.input.onButtonPress open
+  // only while this page is mounted.
+  const {latest: latestInputEvent} = useTester("input")
   const snapshot = useChannel("captions:snapshot")
   const capabilities = snapshot?.capabilities
 
@@ -88,6 +91,16 @@ export default function CameraPage() {
       setCapturePending(false)
     }
   }
+
+  // The glasses hardware button mirrors the takePhoto() button — same
+  // handler, same selected size/mode. Keyed on the event object: each press
+  // streams a fresh object, and busy/config are from the render it arrived in.
+  useEffect(() => {
+    if (latestInputEvent?.kind !== "button") return
+    if (busy) return
+    void takePhoto()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [latestInputEvent])
 
   const warmUp = () => {
     const started = performance.now()
@@ -225,6 +238,10 @@ export default function CameraPage() {
               )}
             </Button>
           </div>
+          <p className="text-[13px] text-muted-foreground">
+            Pressing the hardware button on the glasses also runs <code className="mx-1">takePhoto()</code> with the
+            selected options.
+          </p>
         </div>
 
         <TableRow
