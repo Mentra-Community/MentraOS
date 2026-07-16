@@ -450,7 +450,14 @@ export type ButtonPhotoSize = "low" | "medium" | "high" | "max"
  */
 export type PhotoCaptureDefaults = {
   size?: PhotoSize
+  /**
+   * Coupled ZSL preview buffering + MFNR still capture. When set, wins over legacy
+   * {@link mfnr}/{@link zsl}. Physical camera-button photos use this path by default.
+   */
+  zslMfnr?: boolean
+  /** @deprecated Use {@link zslMfnr}. Kept for wire compatibility with older clients. */
   mfnr?: boolean
+  /** @deprecated Use {@link zslMfnr}. Kept for wire compatibility with older clients. */
   zsl?: boolean
   noiseReduction?: boolean
   edgeEnhancement?: boolean
@@ -566,7 +573,15 @@ export type PhotoRequestParams = {
   /** Requested on wire; glasses may log not_implemented. */
   noiseReduction?: boolean
   edgeEnhancement?: boolean
+  /**
+   * Coupled ZSL preview buffering + MFNR still capture. Enabled by default; pass false for
+   * the standard single-frame pipeline. Wins over legacy
+   * {@link mfnr}/{@link zsl}. Forced off for text/scan/manual-exposure modes.
+   */
+  zslMfnr?: boolean
+  /** @deprecated Use {@link zslMfnr}. Both legacy fields must be true to enable the pair. */
   mfnr?: boolean
+  /** @deprecated Use {@link zslMfnr}. Both legacy fields must be true to enable the pair. */
   zsl?: boolean
   ispDigitalGain?: number
   ispAnalogGain?: string
