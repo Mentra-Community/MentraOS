@@ -1407,7 +1407,9 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
         otaStartingAppIdentityRef.current = otaAppIdentityRef.current;
         clearOtaDisplayProgress();
         await BluetoothSdk.startOtaUpdate();
-        otaChainStartFailuresRef.current = 0;
+        if (otaChainGenerationRef.current === generation) {
+          otaChainStartFailuresRef.current = 0;
+        }
         addEvent('LIVE', 'OTA continuing with next update pass');
       } catch (error) {
         otaStartInFlightRef.current = false;
