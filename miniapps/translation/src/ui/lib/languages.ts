@@ -17,6 +17,7 @@ export const TARGET_LANGUAGES: Language[] = [
   {code: "ko", name: "Korean", nativeName: "한국어", flag: "🇰🇷"},
   {code: "ar", name: "Arabic", nativeName: "العربية", flag: "🇸🇦"},
   {code: "hi", name: "Hindi", nativeName: "हिन्दी", flag: "🇮🇳"},
+  {code: "vi", name: "Vietnamese", nativeName: "Tiếng Việt", flag: "🇻🇳"},
 ]
 
 export function getLanguageName(code: string): string {

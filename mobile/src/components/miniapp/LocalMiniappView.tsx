@@ -495,6 +495,13 @@ function LocalMiniappView({
         allowingReadAccessToURL={uiBaseDir ?? undefined}
         javaScriptEnabled={true}
         domStorageEnabled={true}
+        // Miniapps such as Livestreamer render muted autoplay previews using
+        // either an inline WebRTC <video> or an HLS player iframe. WKWebView
+        // blocks both unless the native host explicitly permits inline,
+        // non-user-initiated media playback.
+        allowsInlineMediaPlayback={true}
+        mediaPlaybackRequiresUserAction={false}
+        allowsFullscreenVideo={true}
         injectedJavaScriptBeforeContentLoaded={injectedJS}
         onMessage={handleMessage}
         onLoadEnd={handleLoadEnd}

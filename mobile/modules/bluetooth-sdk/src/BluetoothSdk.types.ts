@@ -440,8 +440,14 @@ export type SettingsAckSuccessEvent = Omit<SettingsAckEvent, "status"> & {
 export type RgbLedAction = "on" | "off"
 export type RgbLedColor = "red" | "green" | "blue" | "orange" | "white"
 export type PhotoSize = "low" | "medium" | "high" | "max"
+export type PhotoMode = "photo" | "text"
 export type ButtonPhotoSize = "low" | "medium" | "high" | "max"
 
+/**
+ * @deprecated Sticky action-button photo presets via {@link BluetoothSdkPublicModule.setPhotoCaptureDefaults}
+ * are deprecated. Prefer per-request {@link BluetoothSdkPublicModule.requestPhoto} options
+ * (e.g. `mode: "text"` for AE ÷3) instead of persisting button-photo tuning on the glasses.
+ */
 export type PhotoCaptureDefaults = {
   size?: PhotoSize
   mfnr?: boolean
@@ -544,6 +550,7 @@ export type PhotoRequestParams = {
   requestId?: string
   appId?: string
   size: PhotoSize
+  mode?: PhotoMode
   webhookUrl: string | null
   authToken: string | null
   compress: PhotoCompression
@@ -690,11 +697,25 @@ export type StreamResolvedConfig = {
   }
 }
 
+/** Live encoder telemetry, when the glasses emit it (no firmware does yet). */
+export type StreamLiveStats = {
+  /** Current encoded video bitrate in bits per second. */
+  bitrate?: number
+  /** Current encode frame rate. */
+  fps?: number
+  droppedFrames?: number
+  /** Seconds since the stream started. */
+  duration?: number
+  /** Device temperature in °C, if the hardware reports it. */
+  temperatureC?: number
+}
+
 type StreamStatusCommon = {
   type: "stream_status"
   streamId?: string
   timestamp?: number
   resolvedConfig?: StreamResolvedConfig
+  stats?: StreamLiveStats
 }
 
 export type StreamStatusEvent =
@@ -972,6 +993,11 @@ export interface BluetoothSdkPublicModule {
 
   setGalleryModeEnabled(enabled: boolean): Promise<SettingsAckSuccessEvent>
   setVoiceActivityDetectionEnabled(enabled: boolean): Promise<void>
+  /**
+   * @deprecated Sticky action-button photo presets are deprecated. Prefer per-request
+   * `requestPhoto(...)` options (e.g. `mode: "text"` for AE ÷3, or explicit per-shot
+   * fields). Still functional until removed in a future release.
+   */
   setPhotoCaptureDefaults(settings: PhotoCaptureDefaults): Promise<SettingsAckSuccessEvent>
   setVideoRecordingDefaults(settings: VideoRecordingDefaults): Promise<SettingsAckSuccessEvent>
   setMaxVideoRecordingDuration(minutes: number): Promise<SettingsAckSuccessEvent>

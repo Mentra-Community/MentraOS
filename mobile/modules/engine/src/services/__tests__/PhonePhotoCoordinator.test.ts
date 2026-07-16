@@ -42,7 +42,8 @@ mock.module("../GlassesReadiness", () => ({
   isGlassesConnected: (connection: {state?: string} | undefined) => connection?.state === "connected",
 }))
 
-const {PhonePhotoCoordinator, PhotoError} = await import("../PhonePhotoCoordinator")
+const {CAPTURE_PIPELINE_TIMEOUT_MS, PhonePhotoCoordinator, PhotoError} =
+  await import("../PhonePhotoCoordinator")
 
 beforeEach(() => {
   requestPhotoNative.mockClear()
@@ -69,6 +70,10 @@ async function expectPhotoError(p: Promise<unknown>): Promise<InstanceType<typeo
 }
 
 describe("PhonePhotoCoordinator", () => {
+  test("pipeline watchdog does not preempt the managed-photo ready-push timeout", () => {
+    expect(CAPTURE_PIPELINE_TIMEOUT_MS).toBeGreaterThan(30_000)
+  })
+
   describe("prechecks", () => {
     test("rejects with GLASSES_NOT_CONNECTED when glasses are disconnected", async () => {
       glassesState = {connection: {state: "disconnected"}}
@@ -112,6 +117,7 @@ describe("PhonePhotoCoordinator", () => {
         requestId: string
         appId: string
         size: string
+        mode: string
         webhookUrl: string
         authToken: string | null
         compress: string
@@ -122,6 +128,7 @@ describe("PhonePhotoCoordinator", () => {
       expect(arg.requestId).toMatch(/^[0-9a-f]{4}$/)
       expect(arg.appId).toBe("com.a")
       expect(arg.size).toBe("medium")
+      expect(arg.mode).toBe("photo")
       expect(arg.webhookUrl).toBe(PRESIGN.uploadUrl)
       expect(arg.authToken).toBeNull()
       expect(arg.compress).toBe("none")
@@ -163,12 +170,29 @@ describe("PhonePhotoCoordinator", () => {
       expect(requestPhotoNative.mock.calls[0]![0]).toMatchObject({exposureTimeNs: 12_000_000})
     })
 
+    test("passes text mode through to the native take_photo command", async () => {
+      const coord = new PhonePhotoCoordinator()
+      await coord.takePhoto("com.a", {mode: "text"})
+      expect(requestPhotoNative.mock.calls[0]![0]).toMatchObject({mode: "text"})
+    })
+
     test("normalizes legacy size 'full' to 'max' for the native take_photo command", async () => {
       const coord = new PhonePhotoCoordinator()
       // Legacy wire values may still arrive from older callers at runtime.
       await coord.takePhoto("com.a", {size: "full"})
       expect(requestPhotoNative.mock.calls[0]![0]).toMatchObject({size: "max"})
+      expect(startManagedPhoto).toHaveBeenCalledWith({size: "full"})
     })
+
+    test.each(["low", "high", "max"] as const)(
+      "presign accepts canonical size %s without HTTP 400",
+      async (size) => {
+        const coord = new PhonePhotoCoordinator()
+        await coord.takePhoto("com.a", {size})
+        expect(startManagedPhoto).toHaveBeenCalledWith({size})
+        expect(requestPhotoNative.mock.calls[0]![0]).toMatchObject({size})
+      },
+    )
 
     test("owns(requestId) true mid-flight, false after completion", async () => {
       const coord = new PhonePhotoCoordinator()

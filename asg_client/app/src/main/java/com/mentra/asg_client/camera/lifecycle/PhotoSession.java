@@ -16,6 +16,7 @@ import com.mentra.asg_client.camera.CameraNeoService;
 import com.mentra.asg_client.camera.CameraSettings;
 import com.mentra.asg_client.camera.diagnostics.CameraDiagnosticsLog;
 import com.mentra.asg_client.camera.model.ActivePhotoCapture;
+import com.mentra.asg_client.camera.model.CameraOperationError;
 import com.mentra.asg_client.camera.model.PhotoCaptureSettings;
 import com.mentra.asg_client.camera.model.QueuedPhotoRequest;
 import com.mentra.asg_client.camera.model.QueuedPhotoRequestQueue;
@@ -29,6 +30,7 @@ import com.mentra.asg_client.camera.request.AePreviewController;
 import com.mentra.asg_client.camera.request.HdrBurstBuilder;
 import com.mentra.asg_client.camera.request.StillCaptureBuilder;
 import com.mentra.asg_client.camera.request.StillCaptureCallback;
+import com.mentra.asg_client.io.media.core.BlePhotoTimingLog;
 import com.mentra.asg_client.sensors.ImuRecorder;
 import java.io.File;
 import java.io.FileOutputStream;
@@ -570,7 +572,7 @@ public final class PhotoSession {
             @Nullable PhotoCaptureSettings captureSettings,
             long durationMs,
             Runnable onReady,
-            java.util.function.Consumer<String> onError) {
+            java.util.function.Consumer<CameraOperationError> onError) {
         synchronized (hooks.serviceLock()) {
             // Serialize warm-ups: the camera is a single shared resource. If a capture is in flight,
             // or another warm-up is still opening, reject with a retryable busy error rather than
@@ -586,7 +588,7 @@ public final class PhotoSession {
                                 + shotState
                                 + ")");
                 if (onError != null) {
-                    onError.accept("camera_busy");
+                    onError.accept(CameraOperationError.cameraBusy());
                 }
                 return;
             }
@@ -657,20 +659,27 @@ public final class PhotoSession {
         }
     }
 
-    private void failWarmUp(String errorMessage) {
+    private void failWarmUp(CameraOperationError error) {
         WarmUpRequest req = warmUpRequest;
         warmUpRequest = null;
         clearActiveCapture();
         if (req != null && req.onError != null) {
-            hooks.executor().execute(() -> req.onError.accept(errorMessage));
+            hooks.executor().execute(() -> req.onError.accept(error));
         }
     }
 
     private void failWarmUpOrPhoto(String errorMessage) {
+        failWarmUpOrPhoto(
+                warmUpRequest != null
+                        ? CameraOperationError.warmUpFailed(errorMessage)
+                        : CameraOperationError.captureFailed(errorMessage));
+    }
+
+    private void failWarmUpOrPhoto(CameraOperationError error) {
         if (warmUpRequest != null) {
-            failWarmUp(errorMessage);
+            failWarmUp(error);
         } else {
-            notifyPhotoError(errorMessage);
+            notifyPhotoError(error);
         }
     }
 
@@ -684,6 +693,10 @@ public final class PhotoSession {
             return;
         }
 
+        long imageAvailableStartMs = System.currentTimeMillis();
+        BlePhotoTimingLog.capturePhase(
+                "still_frame_available",
+                "ImageReader delivered still frame; starting buffer extraction");
         Log.d(TAG, "Processing photo capture...");
         try (Image image = reader.acquireLatestImage()) {
             try {
@@ -710,6 +723,12 @@ public final class PhotoSession {
             ByteBuffer buffer = image.getPlanes()[0].getBuffer();
             byte[] bytes = new byte[buffer.remaining()];
             buffer.get(bytes);
+            BlePhotoTimingLog.capturePhase(
+                    "still_buffer_extracted",
+                    bytes.length
+                            + " bytes in "
+                            + (System.currentTimeMillis() - imageAvailableStartMs)
+                            + "ms; starting file write");
 
             String currentPath = currentFilePath();
             String targetPath = (currentPath != null) ? currentPath : listenerFallbackPhotoPath;
@@ -777,42 +796,93 @@ public final class PhotoSession {
     private void finishImuRecording(String photoPath) {
         ImuRecorder imu = hooks.imuRecorderOrNull();
         if (imu == null) {
+            BlePhotoTimingLog.capturePhase(
+                    "still_imu_metadata_done", "no IMU metadata writer; capture file is ready");
             return;
         }
+        long imuStartMs = System.currentTimeMillis();
         JSONObject payload = imu.stopRecordingAndBuildPayload();
         if (payload == null || payload.optInt("sampleCount", 0) <= 0) {
+            BlePhotoTimingLog.capturePhase(
+                    "still_imu_metadata_done",
+                    "IMU metadata unavailable; file finalization took "
+                            + (System.currentTimeMillis() - imuStartMs)
+                            + "ms");
             return;
         }
         try {
             PhotoExifMetadataWriter.writeImuPayload(photoPath, payload);
+            BlePhotoTimingLog.event(
+                    "CAPTURE STORAGE",
+                    "IMU EXIF write completed in "
+                            + (System.currentTimeMillis() - imuStartMs)
+                            + "ms");
         } catch (IOException e) {
             Log.w(TAG, "Failed to write IMU EXIF on photo: " + photoPath, e);
         }
+        long sidecarStartMs = System.currentTimeMillis();
         String imuPath = imu.writeSidecar(photoPath, payload);
         if (imuPath != null) {
             Log.d(TAG, "IMU sidecar saved: " + imuPath);
         }
+        BlePhotoTimingLog.capturePhase(
+                "still_imu_metadata_done",
+                "IMU sidecar write completed in "
+                        + (System.currentTimeMillis() - sidecarStartMs)
+                        + "ms; total metadata finalization="
+                        + (System.currentTimeMillis() - imuStartMs)
+                        + "ms");
     }
 
     private boolean saveImageDataToFile(byte[] data, String filePath) {
+        long storageStartMs = System.currentTimeMillis();
         try {
             File file = new File(filePath);
 
             File parentDir = file.getParentFile();
             if (parentDir != null && !parentDir.exists()) {
+                long mkdirStartMs = System.currentTimeMillis();
                 parentDir.mkdirs();
+                BlePhotoTimingLog.event(
+                        "CAPTURE STORAGE",
+                        "capture directory creation took "
+                                + (System.currentTimeMillis() - mkdirStartMs)
+                                + "ms");
             }
 
+            long fileWriteStartMs = System.currentTimeMillis();
             try (FileOutputStream output = new FileOutputStream(file)) {
                 output.write(data);
             }
+            long fileWriteMs = System.currentTimeMillis() - fileWriteStartMs;
+            long fileSize = file.length();
+            BlePhotoTimingLog.capturePhase(
+                    "still_jpeg_write_done",
+                    "JPEG file write/close took "
+                            + fileWriteMs
+                            + "ms; expected="
+                            + data.length
+                            + " bytes, on_disk="
+                            + fileSize
+                            + " bytes");
 
             // Stamp the capture ID (directory name, carries the SDK requestId) into EXIF
             // ImageUniqueID so the correlation survives renames and camera-roll export.
             // Runs before finishImuRecording's EXIF pass; saveAttributes preserves it.
+            long exifStartMs = System.currentTimeMillis();
             PhotoExifMetadataWriter.writeCaptureIdFromPath(filePath);
+            BlePhotoTimingLog.capturePhase(
+                    "still_capture_id_exif_done",
+                    "capture ID EXIF write took "
+                            + (System.currentTimeMillis() - exifStartMs)
+                            + "ms");
 
             Log.d(TAG, "Saved image to: " + filePath);
+            BlePhotoTimingLog.capturePhase(
+                    "still_image_save_done",
+                    "image save completed in "
+                            + (System.currentTimeMillis() - storageStartMs)
+                            + "ms");
             return true;
         } catch (Exception e) {
             Log.e(TAG, "Error saving image", e);
@@ -1007,11 +1077,15 @@ public final class PhotoSession {
     }
 
     private void notifyPhotoError(String errorMessage) {
+        notifyPhotoError(CameraOperationError.captureFailed(errorMessage));
+    }
+
+    private void notifyPhotoError(CameraOperationError error) {
         resetCaptureMetadataState();
         CameraNeoService.PhotoCaptureCallback callback =
                 activeCapture != null ? activeCapture.callback : null;
         if (callback != null) {
-            hooks.executor().execute(() -> callback.onPhotoError(errorMessage));
+            hooks.executor().execute(() -> callback.onPhotoError(error));
         }
     }
 
@@ -1175,7 +1249,9 @@ public final class PhotoSession {
         } catch (CameraAccessException e) {
             Log.e(TAG, "Error starting preview with AE monitoring", e);
             if (warmUpRequest != null) {
-                failWarmUp("Error starting preview: " + e.getMessage());
+                failWarmUp(
+                        CameraOperationError.warmUpFailed(
+                                "Error starting preview: " + e.getMessage()));
             } else {
                 notifyPhotoError("Error starting preview: " + e.getMessage());
             }
@@ -1601,6 +1677,9 @@ public final class PhotoSession {
             synchronized (captureMetadataLock) {
                 captureGeneration = captureMetadataGeneration;
             }
+            BlePhotoTimingLog.capturePhase(
+                    "still_shutter_submitted",
+                    "still capture request submitted to CameraCaptureSession");
             activeSession.capture(
                     captureRequest,
                     new StillCaptureCallback(
@@ -1743,11 +1822,19 @@ public final class PhotoSession {
 
     /** Called from {@link CameraNeoService} when setup/open/session errors occur before capture. */
     public void notifyHostPhotoError(String errorMessage) {
+        notifyHostPhotoError(
+                warmUpRequest != null
+                        ? CameraOperationError.warmUpFailed(errorMessage)
+                        : CameraOperationError.captureFailed(errorMessage));
+    }
+
+    /** Called when setup/open/session code has classified the failure. */
+    public void notifyHostPhotoError(CameraOperationError error) {
         if (warmUpRequest != null) {
-            failWarmUp(errorMessage);
+            failWarmUp(error);
             return;
         }
-        notifyPhotoError(errorMessage);
+        notifyPhotoError(error);
     }
 
     public int previewJpegQuality() {
@@ -1761,7 +1848,7 @@ public final class PhotoSession {
         @Nullable final PhotoCaptureSettings captureSettings;
         final long durationMs;
         @Nullable final Runnable onReady;
-        @Nullable final java.util.function.Consumer<String> onError;
+        @Nullable final java.util.function.Consumer<CameraOperationError> onError;
 
         WarmUpRequest(
                 @Nullable String size,
@@ -1769,7 +1856,7 @@ public final class PhotoSession {
                 @Nullable PhotoCaptureSettings captureSettings,
                 long durationMs,
                 @Nullable Runnable onReady,
-                @Nullable java.util.function.Consumer<String> onError) {
+                @Nullable java.util.function.Consumer<CameraOperationError> onError) {
             this.size = size;
             this.exposureTimeNs = exposureTimeNs;
             this.captureSettings = captureSettings;

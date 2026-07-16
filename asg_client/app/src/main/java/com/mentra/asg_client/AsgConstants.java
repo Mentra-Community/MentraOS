@@ -53,4 +53,77 @@ public class AsgConstants {
     // RGB LED Command Types (from phone to glasses)
     public static final String CMD_RGB_LED_CONTROL_ON = "rgb_led_control_on";
     public static final String CMD_RGB_LED_CONTROL_OFF = "rgb_led_control_off";
+
+    // Photo capture: BLE transfer and text mode
+    // -------------------------------------------------------------------------
+
+    /**
+     * When true and {@code bleImgId} is present, every {@code take_photo} uses BLE transfer
+     * regardless of requested {@code transferMethod}. Dev stopgap — set false for production.
+     */
+    public static final boolean FORCE_BLE_TRANSFER = false;
+
+    /**
+     * Grayscale luma BLE pipeline (crop + contrast + unsharp on 1-byte/pixel buffers). When false,
+     * uses the legacy full-color decode → scale → sharpen path.
+     */
+    public static final boolean ENABLE_GRAYSCALE_BLE_PHOTOS = false;
+
+    /**
+     * Run text-region detection and crop on all BLE photos. When false, crop runs only when {@code
+     * mode == "text"}.
+     */
+    public static final boolean ENABLE_TEXT_REGION_CROP = false;
+
+    /**
+     * Dump text-detect intermediates to {@code textdetect_debug/} on every detection run. Adds
+     * per-photo I/O overhead; keep false in production.
+     */
+    public static final boolean SAVE_TEXT_DETECT_DEBUG_ARTIFACTS = false;
+
+    /**
+     * Emit {@code ⏱️ [BLE PHOTO]} timing logs for the full take_photo → AVIF/JPEG compress → BLE
+     * transfer pipeline. Filter logcat on tag {@code BlePhotoTiming} or prefix {@code ⏱️ [BLE PHOTO]}.
+     * Keep false in production.
+     */
+    public static final boolean ENABLE_PHOTO_TIMING_LOGS = true;
+
+    /** After AE meters in text mode, divide exposure time by this factor (shorter shutter). */
+    public static final int TEXT_MODE_AE_EXPOSURE_DIVISOR = 3;
+
+    /** Long-edge cap for text-mode BLE downscale after crop (aspect ratio preserved). */
+    public static final int TEXT_MODE_BLE_TARGET_WIDTH = 1920;
+
+    public static final int TEXT_MODE_BLE_TARGET_HEIGHT = 1920;
+
+    /** AVIF quality for the canonical text-mode BLE payload. */
+    public static final int TEXT_MODE_AVIF_QUALITY = 55;
+
+    /** JPEG quality for the canonical text-mode crop written to disk (gallery/WiFi upload). */
+    public static final int TEXT_MODE_BLE_JPEG_QUALITY = 95;
+
+    /**
+     * Codec for every BLE photo payload — text mode and ordinary size-tier photos alike. Change
+     * this one value to {@code AVIF} or {@code JPEG_FAST} to switch both paths at once.
+     */
+    public static final String BLE_PHOTO_CODEC = "JPEG_FAST";
+
+    /** JPEG quality for all BLE photo payloads when {@link #BLE_PHOTO_CODEC} is {@code JPEG_FAST}. */
+    public static final int BLE_PHOTO_JPEG_FAST_QUALITY = 80;
+
+    // BLE size-tier downscale caps (long edge; aspect ratio preserved) and AVIF quality
+    public static final int BLE_PHOTO_LOW_TARGET_PX = 800;
+    public static final int BLE_PHOTO_LOW_AVIF_QUALITY = 50;
+    public static final int BLE_PHOTO_MEDIUM_TARGET_PX = 1280;
+    public static final int BLE_PHOTO_MEDIUM_AVIF_QUALITY = 50;
+    public static final int BLE_PHOTO_HIGH_TARGET_PX = 1600;
+    public static final int BLE_PHOTO_HIGH_AVIF_QUALITY = 48;
+    public static final int BLE_PHOTO_MAX_TARGET_PX = 1920;
+
+    // Text-region detector production flags (see MediaCaptureService.buildTextDetectConfig)
+    public static final boolean TEXT_DETECT_ALLOW_SINGLE_COMPONENT_LINES = true;
+    public static final boolean TEXT_DETECT_CROP_FROM_TOP_LINE_ONLY = true;
+    public static final boolean TEXT_DETECT_ENABLE_STRUCTURE_FILTER = true;
+    public static final boolean TEXT_DETECT_IMPROVED_CROP_ACCURACY = true;
+    public static final float TEXT_DETECT_MIN_CROP_AREA_FRACTION = 0.004f;
 }

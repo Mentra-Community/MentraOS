@@ -16,6 +16,10 @@ export function slimStreamStatusEvent(
   if (options.includeResolvedConfig && event.resolvedConfig) {
     slim.resolvedConfig = event.resolvedConfig
   }
+  // Live telemetry passes straight through — unlike resolvedConfig it changes
+  // per event, and the signature dedupe upstream only suppresses identical
+  // payloads.
+  if (event.stats) slim.stats = event.stats
   return slim
 }
 

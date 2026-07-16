@@ -487,6 +487,7 @@ public final class MentraBluetoothSDK {
         DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "voice_activity_detection_enabled", enabled)
     }
 
+    @available(*, deprecated, message: "Sticky action-button photo presets are deprecated. Prefer per-request requestPhoto(...) options (e.g. mode .text for AE ÷3, or explicit per-shot fields). This method still works but will be removed in a future release.")
     public func setPhotoCaptureDefaults(_ settings: PhotoCaptureDefaults) async throws -> SettingsAckEvent {
         try await performSettingsCommand(
             setting: "button_photo",
@@ -550,6 +551,12 @@ public final class MentraBluetoothSDK {
         try await performSettingsCommand(
             setting: "button_video_recording",
             updateStore: { _ in
+                DeviceStore.shared.set(
+                    ObservableStore.bluetoothCategory,
+                    "button_video_settings",
+                    ["width": defaults.width, "height": defaults.height, "fps": defaults.fps]
+                )
+                // Keep legacy cache keys readable for older internal callers during migration.
                 DeviceStore.shared.set(ObservableStore.bluetoothCategory, "button_video_width", defaults.width)
                 DeviceStore.shared.set(ObservableStore.bluetoothCategory, "button_video_height", defaults.height)
                 DeviceStore.shared.set(ObservableStore.bluetoothCategory, "button_video_fps", defaults.fps)
@@ -1409,9 +1416,15 @@ public final class MentraBluetoothSDK {
             case .streaming:
                 pendingStreamStarts.removeValue(forKey: streamId)
                 pending.resolve(event)
-            case .error, .reconnectFailed, .stopped:
+            case .reconnectFailed, .stopped:
                 pendingStreamStarts.removeValue(forKey: streamId)
                 pending.reject(streamStatusError(event, code: "stream_start_failed"))
+            case .error:
+                // The glasses publisher automatically retries transient transport
+                // errors. Keep the start pending so a subsequent `streaming`
+                // status can resolve it; `reconnectFailed` or the request timeout
+                // still terminates a publisher that cannot recover.
+                break
             default:
                 break
             }

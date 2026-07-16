@@ -1,8 +1,8 @@
 import {useState} from "react"
-import {useSafeArea} from "@mentra/miniapp/ui"
+import {useColorScheme, useSafeArea} from "@mentra/miniapp/ui"
 
 import {BottomNav} from "./components/BottomNav"
-import {APP_BAR_BACKGROUND, Header} from "./components/Header"
+import {Header} from "./components/Header"
 import {Settings} from "./components/Settings"
 import {TargetLanguageSelector} from "./components/TargetLanguageSelector"
 import {TranslationList} from "./components/TranslationList"
@@ -22,6 +22,7 @@ import {useTranslations} from "./hooks/useTranslations"
 export function App() {
   const [activeTab, setActiveTab] = useState<"translation" | "settings">("translation")
   const [showTargetLanguageSelector, setShowTargetLanguageSelector] = useState(false)
+  const isDark = useColorScheme() === "dark"
   const {insets} = useSafeArea()
   const {developerMode, holdHandlers} = useDeveloperMode()
   const {
@@ -50,7 +51,8 @@ export function App() {
     setShowTargetLanguageSelector(false)
   }
 
-  const presentation = getCloudPresentation(cloudStatus)
+  const presentation = getCloudPresentation(cloudStatus, isDark)
+  const appBarBackground = isDark ? "#174A73" : "#2089F3"
 
   return (
     <div
@@ -58,15 +60,16 @@ export function App() {
       style={{
         // Paint the safe-area insets with the app-bar surface so the status-bar
         // area blends into the header instead of showing the cloud-status color.
-        background: APP_BAR_BACKGROUND,
+        backgroundColor: appBarBackground,
         paddingTop: insets.top,
         paddingBottom: insets.bottom,
         paddingLeft: insets.left,
         paddingRight: insets.right,
       }}>
-      <div className="min-h-0 flex-1 bg-zinc-100 flex flex-col overflow-hidden">
+      <div className="min-h-0 flex-1 bg-zinc-100 dark:bg-zinc-950 flex flex-col overflow-hidden">
         <Header
           connected={connected}
+          appBarBackground={appBarBackground}
           accentColor={presentation.accentColor}
           accentForeground={presentation.accentForeground}
           error={error}
@@ -138,21 +141,14 @@ export function App() {
 
 export default App
 
-/**
- * The app icon's vertical gradient (sky `#18C3FF` down to royal `#2072F1`).
- * Painted on the chrome surfaces (root + header) in the healthy states so the
- * app visually matches its icon; `accentColor` stays the flat mid-blue for
- * small fills (pills, toggles, nav) where a gradient would be noise.
- */
-const ICON_GRADIENT = "linear-gradient(180deg, #18C3FF 0%, #2089F3 55%, #2072F1 100%)"
-
-function getCloudPresentation(cloudStatus?: {status: string; audioTransport: string}): {
+function getCloudPresentation(
+  cloudStatus: {status: string; audioTransport: string} | undefined,
+  isDark: boolean,
+): {
   label: string
   detail: string
   accentColor: string
   accentForeground: string
-  /** Chrome-surface background; falls back to `accentColor` when unset. */
-  accentSurface?: string
   dark: boolean
 } {
   const status = cloudStatus ?? {status: "disconnected", audioTransport: "none"}
@@ -169,20 +165,18 @@ function getCloudPresentation(cloudStatus?: {status: string; audioTransport: str
     return {
       label: "Cloud translation",
       detail: "WebSocket audio",
-      accentColor: "#A9D4FB",
-      accentForeground: "#1F2937",
-      accentSurface: "linear-gradient(180deg, #9FE0FE 0%, #A9D4FB 55%, #A4C4F9 100%)",
-      dark: false,
+      accentColor: isDark ? "#285A7D" : "#A9D4FB",
+      accentForeground: isDark ? "#FFFFFF" : "#1F2937",
+      dark: isDark,
     }
   }
   if (status.audioTransport === "udp") {
     return {
       label: "Cloud translation",
       detail: "UDP audio",
-      accentColor: "#2089F3",
+      accentColor: isDark ? "#174A73" : "#2089F3",
       accentForeground: "#FFFFFF",
-      accentSurface: ICON_GRADIENT,
-      dark: false,
+      dark: isDark,
     }
   }
   if (status.status === "connecting" || status.status === "reconnecting") {
@@ -219,7 +213,9 @@ function CloudStatusFooter({
   return (
     <div
       className={`w-full px-5 py-2 border-t flex items-center justify-between gap-3 ${
-        dark ? "bg-zinc-900 border-zinc-800 text-white" : "bg-white/90 border-zinc-200 text-zinc-800"
+        dark
+          ? "bg-zinc-900 border-zinc-800 text-white"
+          : "bg-white/90 border-zinc-200 text-zinc-800 dark:bg-zinc-900/90 dark:border-zinc-800 dark:text-zinc-200"
       }`}>
       <div className="flex items-center gap-2 min-w-0">
         <span
@@ -228,7 +224,9 @@ function CloudStatusFooter({
         />
         <span className="text-sm font-semibold truncate">{label}</span>
       </div>
-      <span className={`text-xs font-medium flex-shrink-0 ${dark ? "text-zinc-300" : "text-zinc-500"}`}>{detail}</span>
+      <span className={`text-xs font-medium flex-shrink-0 ${dark ? "text-zinc-300" : "text-zinc-500 dark:text-zinc-400"}`}>
+        {detail}
+      </span>
     </div>
   )
 }

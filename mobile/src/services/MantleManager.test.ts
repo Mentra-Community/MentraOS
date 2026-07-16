@@ -1,11 +1,10 @@
 import {waitFor} from "@testing-library/react-native"
 
 import mantle from "@/services/MantleManager"
-import restComms from "@/services/RestComms"
 import {useCoreStore} from "@mentra/engine/internal"
 import {useDisplayStore} from "@mentra/engine/internal"
 import {isGlassesConnected, useGlassesStore} from "../../modules/engine/src/stores/glasses"
-import {SETTINGS} from "@mentra/engine"
+import {engine, SETTINGS} from "@mentra/engine"
 import {useSettingsStore} from "@mentra/engine/internal"
 import {crustModuleMock, emitCrustEvent, resetCrustModuleMock} from "@/test-utils/mockCrustModule"
 import {
@@ -31,48 +30,11 @@ jest.mock("@mentra/crust", () => {
   }
 })
 
-jest.mock("@/services/RestComms", () => ({
+const mockShowAlert = jest.fn()
+jest.mock("@/utils/AlertUtils", () => ({
   __esModule: true,
-  default: {
-    loadUserSettings: jest.fn(async () => ({
-      is_ok: () => true,
-      is_error: () => false,
-      value: {
-        contextual_dashboard: true,
-        core_token: "server-token",
-        auth_email: "from-server@example.com",
-      },
-    })),
-    writeUserSettings: jest.fn(async () => ({
-      is_ok: () => true,
-      is_error: () => false,
-    })),
-    sendPhoneNotification: jest.fn(async () => ({
-      is_ok: () => true,
-      is_error: () => false,
-    })),
-    sendPhoneNotificationDismissed: jest.fn(async () => ({
-      is_ok: () => true,
-      is_error: () => false,
-    })),
-    sendCalendarData: jest.fn(async () => ({
-      is_ok: () => true,
-      is_error: () => false,
-    })),
-    sendLocationData: jest.fn(),
-    goodbye: jest.fn(async () => ({
-      is_ok: () => true,
-      is_error: () => false,
-    })),
-  },
-}))
-
-jest.mock("@/services/SocketComms", () => ({
-  __esModule: true,
-  default: {
-    connectWebsocket: jest.fn(),
-    cleanup: jest.fn(),
-  },
+  default: (...args: unknown[]) => mockShowAlert(...args),
+  showAlert: (...args: unknown[]) => mockShowAlert(...args),
 }))
 
 // gallerySyncService moved into @mentra/engine; the global @mentra/engine jest mock
@@ -128,13 +90,21 @@ function resetMantleTestState() {
   useDisplayStore.setState({view: "main"})
 }
 
+let requestWifiSetup: (reason?: string) => Promise<void>
+
 describe("MantleManager", () => {
   beforeAll(async () => {
     jest.useFakeTimers()
     resetBluetoothSdkMock()
     resetCrustModuleMock()
     resetMantleTestState()
+    // The V1 settings pull is retired; seed what its mock used to return so
+    // the glasses-sync assertions still exercise the propagation path.
+    useSettingsStore.setState((state) => ({
+      settings: {...state.settings, contextual_dashboard: true, auth_email: "from-server@example.com"},
+    }))
     await mantle.init()
+    requestWifiSetup = (engine.configure as jest.Mock).mock.calls[0][0].ui.requestWifiSetup
   })
 
   afterEach(() => {
@@ -205,9 +175,8 @@ describe("MantleManager", () => {
     // photo_response / touch_event routing moved into island's DeviceEventRouter
     // (covered by deviceEventRouter.test.ts); MantleManager no longer handles them.
 
-    // Local transcripts no longer roundtrip through the cloud (SocketComms has
-    // no transcription send anymore). With no local-miniapp subscription,
-    // the transcript is simply dropped.
+    // Local transcripts no longer roundtrip through the cloud. With no
+    // local-miniapp subscription, the transcript is simply dropped.
     emitBluetoothSdkEvent("local_transcription", {
       text: "hello world",
       isFinal: true,
@@ -316,10 +285,9 @@ describe("MantleManager", () => {
     expect(useGlassesStore.getState().wifi).toEqual({state: "disconnected"})
   })
 
-  it("maps notification events to REST payloads", async () => {
-    ;(restComms.sendPhoneNotification as jest.Mock).mockClear()
-    ;(restComms.sendPhoneNotificationDismissed as jest.Mock).mockClear()
-
+  it("routes notification events without the retired V1 upload", async () => {
+    // The Cloud V1 REST upload is gone; the events still flow through the
+    // local-miniapp forward path without throwing.
     emitCrustEvent("phone_notification", {
       notificationId: "n-1",
       app: "Calendar",
@@ -334,23 +302,7 @@ describe("MantleManager", () => {
       notificationKey: "key-1",
       packageName: "com.calendar",
     })
-
-    await waitFor(() => {
-      expect(restComms.sendPhoneNotification).toHaveBeenCalledWith({
-        notificationId: "n-1",
-        app: "Calendar",
-        title: "Standup",
-        content: "Daily sync",
-        priority: "4",
-        timestamp: 12345,
-        packageName: "com.calendar",
-      })
-      expect(restComms.sendPhoneNotificationDismissed).toHaveBeenCalledWith({
-        notificationId: "n-1",
-        notificationKey: "key-1",
-        packageName: "com.calendar",
-      })
-    })
+    await Promise.resolve()
   })
 
   it("tracks OTA status without allowing backward progress or stale terminal update hints", async () => {
@@ -397,5 +349,23 @@ describe("MantleManager", () => {
     })
     expect(useGlassesStore.getState().otaUpdateAvailable).toBeNull()
     expect(useGlassesStore.getState().otaInProgress).toBe(false)
+  })
+
+  it("prompts before opening Wi-Fi setup and backgrounds the requesting miniapp", async () => {
+    const cancelRequest = requestWifiSetup("Streaming needs Wi-Fi")
+    const [, message, cancelButtons] = mockShowAlert.mock.calls.at(-1)!
+
+    expect(message).toBe("Streaming needs Wi-Fi")
+    expect(engine.miniapps.clearForeground).not.toHaveBeenCalled()
+    cancelButtons[0].onPress()
+    await cancelRequest
+    expect(engine.miniapps.clearForeground).not.toHaveBeenCalled()
+
+    const confirmRequest = requestWifiSetup("Streaming needs Wi-Fi")
+    const confirmButtons = mockShowAlert.mock.calls.at(-1)![2]
+    confirmButtons[1].onPress()
+    await confirmRequest
+
+    expect(engine.miniapps.clearForeground).toHaveBeenCalledTimes(1)
   })
 })

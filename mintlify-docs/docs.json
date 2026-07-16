@@ -15,7 +15,7 @@
         "groups": [
           {
             "group": "Welcome",
-            "pages": ["index"]
+            "pages": ["index", "contributing"]
           },
           {
             "group": "Legal",
@@ -24,7 +24,7 @@
         ]
       },
       {
-        "tab": "App Devs",
+        "tab": "Miniapp Development",
         "groups": [
           {
             "group": "Getting Started",
@@ -122,6 +122,7 @@
             "icon": "bluetooth",
             "pages": [
               "mentra-live/overview",
+              "mentra-live/software-update",
               "mentra-live/ai-ide-integration",
               "mentra-live/quickstart",
               "mentra-live/examples"
@@ -150,38 +151,16 @@
         ]
       },
       {
-        "tab": "OS Devs",
-        "groups": [
-          {
-            "group": "Contributing",
-            "icon": "users",
-            "pages": [
-              "os-devs/contributing/overview",
-              "os-devs/contributing/mentraos-manager-guidelines",
-              "os-devs/contributing/mentraos-asg-client-guidelines",
-              "os-devs/contributing/add-new-glasses-support",
-              {
-                "group": "Android Smart Glasses (ASG) Client",
-                "icon": "microchip",
-                "pages": [
-                  "os-devs/asg-client/README",
-                  "os-devs/asg-client/architecture",
-                  "os-devs/asg-client/mentra-live",
-                  "os-devs/asg-client/button-system",
-                  "os-devs/asg-client/streaming"
-                ]
-              }
-            ]
-          }
-        ]
-      },
-      {
         "tab": "Glasses OEMs",
         "groups": [
           {
             "group": "Glasses OEMs",
             "icon": "industry",
-            "pages": ["glasses-oems/overview"]
+            "pages": [
+              "glasses-oems/overview",
+              "glasses-oems/engine",
+              "glasses-oems/firmware-spec"
+            ]
           }
         ]
       }
@@ -316,6 +295,15 @@
     {"source": "/app-devs/reference/interfaces/setting-types", "destination": "/app-devs/core-concepts/session"},
     {"source": "/app-devs/reference/interfaces/tool-types", "destination": "/app-devs/core-concepts/miniapp-interop"},
     {"source": "/app-devs/reference/interfaces/webhook-types", "destination": "/app-devs/core-concepts/session"},
-    {"source": "/cookbook/dashboard-note-app", "destination": "/app-devs/getting-started/overview"}
+    {"source": "/cookbook/dashboard-note-app", "destination": "/app-devs/getting-started/overview"},
+    {"source": "/os-devs/contributing/overview", "destination": "/contributing"},
+    {"source": "/os-devs/contributing/mentraos-manager-guidelines", "destination": "/contributing"},
+    {"source": "/os-devs/contributing/mentraos-asg-client-guidelines", "destination": "/contributing"},
+    {"source": "/os-devs/contributing/add-new-glasses-support", "destination": "/contributing"},
+    {"source": "/os-devs/asg-client/README", "destination": "/contributing"},
+    {"source": "/os-devs/asg-client/architecture", "destination": "/contributing"},
+    {"source": "/os-devs/asg-client/mentra-live", "destination": "/contributing"},
+    {"source": "/os-devs/asg-client/button-system", "destination": "/contributing"},
+    {"source": "/os-devs/asg-client/streaming", "destination": "/contributing"}
   ]
 }

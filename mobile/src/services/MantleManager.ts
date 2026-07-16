@@ -10,11 +10,20 @@ import builtInMiniappCatalog from "@/services/miniapps/BuiltInMiniappCatalog"
 import {BUNDLED_MINIAPPS} from "@/generated/bundledMiniapps"
 import {CHINA_HIDDEN_APPS, isChinaBuild} from "@/constants/miniapps"
 import {migrate} from "@/services/Migrations"
-import restComms from "@/services/RestComms"
-import socketComms from "@/services/SocketComms"
 import {cloudConfigValues} from "@/services/cloudClient"
 import {engine, BgTimer} from "@mentra/engine"
-import {appRegistry, displayProcessor, gallerySyncService, phoneLocationService, localDisplayManager, localMiniappRuntime, miniappLauncher, localSttFallbackCoordinator, micStateCoordinator, offlineSpeechModelService} from "@mentra/engine/internal"
+import {
+  appRegistry,
+  displayProcessor,
+  gallerySyncService,
+  phoneLocationService,
+  localDisplayManager,
+  localMiniappRuntime,
+  miniappLauncher,
+  localSttFallbackCoordinator,
+  micStateCoordinator,
+  offlineSpeechModelService,
+} from "@mentra/engine/internal"
 import {SETTINGS} from "@mentra/engine"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 import {useDebugStore} from "@/stores/debug"
@@ -22,6 +31,7 @@ import {checkFeaturePermissions, PermissionFeatures} from "@/utils/PermissionsUt
 import {attemptReconnectToDefaultWearable} from "@/effects/Reconnect"
 import {ensureDevModeForUser} from "@/utils/dev/devModeAllowlist"
 import mentraAuth from "@/utils/auth/authClient"
+import {showAlert} from "@/utils/AlertUtils"
 import {Buffer} from "@craftzdog/react-native-buffer"
 
 /**
@@ -141,9 +151,23 @@ class MantleManager {
       // Named host-UI seams: island dispatches the miniapp request, the host
       // owns the screen (branding/navigation).
       ui: {
-        requestWifiSetup: (reason?: string) => {
-          router.push({pathname: "/wifi/scan" as any, params: (reason ? {reason} : {}) as any})
-        },
+        requestWifiSetup: (reason?: string) =>
+          new Promise<void>((resolve) => {
+            showAlert("Connect to Wi-Fi", reason || "This miniapp needs your glasses to be connected to Wi-Fi.", [
+              {text: "Cancel", style: "cancel", onPress: resolve},
+              {
+                text: "OK",
+                onPress: () => {
+                  // The Compositor is an app-wide overlay, so navigating
+                  // without clearing foreground leaves the Wi-Fi route
+                  // rendered underneath the requesting miniapp.
+                  engine.miniapps.clearForeground()
+                  router.push({pathname: "/wifi/scan" as any})
+                  resolve()
+                },
+              },
+            ])
+          }),
       },
     })
     await engine.start()
@@ -173,34 +197,16 @@ class MantleManager {
     builtInMiniappCatalog.init()
 
     await migrate() // do any local migrations here
-    const res = await restComms.loadUserSettings() // get settings from server
-    if (res.is_ok()) {
-      let loadedSettings = res.value
-      // Device/pairing identity and core_token are phone-local state and are now
-      // saveOnServer: false, so they should never come back from the server. These
-      // deletes guard legacy values persisted before those flags flipped.
-      delete loadedSettings["core_token"]
-      delete loadedSettings["default_wearable"]
-      delete loadedSettings["pending_wearable"]
-      delete loadedSettings["device_name"]
-      delete loadedSettings["device_address"]
-      delete loadedSettings["default_controller"]
-      delete loadedSettings["pending_controller"]
-      delete loadedSettings["controller_device_name"]
-      delete loadedSettings["controller_address"]
 
-      await engine.settings.setManyLocal(loadedSettings) // write settings to local storage
-    } else {
-      console.error("MANTLE: No settings received from server")
-    }
+    // Cloud V1 settings pull removed with the login cutover: the endpoint only
+    // exists on V1 and authenticated with a token the app no longer mints.
+    // Settings are local-first until a V2 sync lands (tracked in the ripout
+    // issue; island's per-change server write is the island-side cleanup).
 
     const userRes = await mentraAuth.getUser()
     if (userRes.is_ok()) {
       await ensureDevModeForUser(userRes.value.email)
     }
-
-    // Send device timezone to cloud (used for calendar/time display)
-    this.syncTimezone()
 
     offlineSpeechModelService.startBackgroundDownloads()
 
@@ -220,16 +226,6 @@ class MantleManager {
     this.setupSubscriptions()
   }
 
-  private async syncTimezone() {
-    const timezone = engine.settings.get(SETTINGS.time_zone.key)
-    const result = await restComms.writeUserSettings({time_zone: timezone})
-    if (result.is_error()) {
-      console.error("MANTLE: Failed to sync timezone:", result.error)
-    } else {
-      console.log("MANTLE: Timezone synced:", timezone)
-    }
-  }
-
   public async cleanup() {
     // Stop timers
     if (this.calendarSyncTimer) {
@@ -245,9 +241,6 @@ class MantleManager {
     localMiniappRuntime.cleanup()
     micStateCoordinator.cleanup()
 
-    await socketComms.cleanup()
-    restComms.goodbye()
-
     // Allow a later init() to rebuild everything this cleanup tore down — the
     // logout→login-in-the-same-process path and the dev backend-URL
     // cleanup()→init() cycle both depend on init() re-running after cleanup().
@@ -255,10 +248,6 @@ class MantleManager {
   }
 
   private async initServices() {
-    // Cloud V1 websocket intentionally NOT started: post-cutover there is no
-    // V1 coreToken, so it would dial prod with `token=` and retry-loop forever
-    // (burning battery on every boot). SocketComms/WSM removal lands in the
-    // V1-ripout PR; until then the path is dormant, not broken.
     gallerySyncService.initialize()
 
     // Bootstrap MentraJS — wires MentraJSRouter + MentraUIRouter +
@@ -496,18 +485,9 @@ class MantleManager {
           timestamp: parseInt(event.timestamp?.toString?.() ?? "0"),
           packageName: event.packageName,
         })
-        const res = await restComms.sendPhoneNotification({
-          notificationId: event.notificationId,
-          app: event.app,
-          title: event.title,
-          content: event.content,
-          priority: event.priority.toString(),
-          timestamp: parseInt(event.timestamp.toString()),
-          packageName: event.packageName,
-        })
-        if (res.is_error()) {
-          console.error("Failed to send phone notification:", res.error)
-        }
+        // (Cloud V1 notification upload removed; local miniapps get the event
+        // above. A V2 notification channel for cloud miniapps is tracked in
+        // the ripout issue.)
       }
 
       // Android: Crust's NotificationListenerService reads notifications.
@@ -530,14 +510,6 @@ class MantleManager {
             packageName: event.packageName,
             timestamp: Date.now(),
           })
-          const res = await restComms.sendPhoneNotificationDismissed({
-            notificationKey: event.notificationKey,
-            packageName: event.packageName,
-            notificationId: event.notificationId,
-          })
-          if (res.is_error()) {
-            console.error("Failed to send phone notification dismissal:", res.error)
-          }
         }),
       )
 
@@ -684,10 +656,11 @@ class MantleManager {
           endDate: Math.floor(end.getTime() / 1000),
         }
       })
-      void BluetoothSdk.setCalendarEvents(shapedEvents).catch((error) => {
+      try {
+        await BluetoothSdk.setCalendarEvents(shapedEvents)
+      } catch (error) {
         console.warn("MANTLE: Failed to sync calendar events to glasses", error)
-      })
-      restComms.sendCalendarData({events, calendars})
+      }
 
       // Direct forward to local miniapps. Emit one event per calendar entry
       // so miniapps can treat them as a stream rather than a digest.

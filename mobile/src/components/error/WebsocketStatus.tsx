@@ -4,7 +4,6 @@ import {TouchableOpacity, View} from "react-native"
 import {Icon, Text, type IconTypes} from "@/components/ignite"
 import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {translate} from "@/i18n"
-import {WebSocketStatus} from "@/services/WebSocketManager"
 import {engine, useRefresh} from "@mentra/engine"
 import {BgTimer} from "@mentra/engine"
 import {useAppTheme} from "@/contexts/ThemeContext"
@@ -35,8 +34,11 @@ const STATUS_CONFIG: Record<DisplayStatus, {icon: IconTypes; label: () => string
 }
 
 export default function WebsocketStatus() {
-  const connectionStatus = useEngineSnapshot(engine.session.legacyWebsocketStatus, (onChange) =>
-    engine.session.onLegacyWebsocketStatus(onChange),
+  // Cloud-v2 runtime connection (the Cloud V1 websocket this pill used to
+  // render is retired).
+  const connectionStatus = useEngineSnapshot(
+    () => engine.session.status().status,
+    (onChange) => engine.session.onStatus(() => onChange()),
   )
   const [displayStatus, setDisplayStatus] = useState<DisplayStatus>("connected")
   const [offlineMode] = useSetting(SETTINGS.offline_mode.key)
@@ -64,9 +66,9 @@ export default function WebsocketStatus() {
     const prevStatus = prevConnectionStatusRef.current
     prevConnectionStatusRef.current = connectionStatus
 
-    console.log(`WSM: useEffect: connectionStatus: ${connectionStatus}`)
+    console.log(`CLOUD-STATUS: useEffect: connectionStatus: ${connectionStatus}`)
 
-    if (connectionStatus === WebSocketStatus.CONNECTED) {
+    if (connectionStatus === "connected") {
       if (disconnectionTimerRef.current) {
         BgTimer.clearTimeout(disconnectionTimerRef.current)
         disconnectionTimerRef.current = null
@@ -80,7 +82,7 @@ export default function WebsocketStatus() {
     }
 
     // Now you can compare:
-    if (prevStatus === WebSocketStatus.CONNECTED) {
+    if (prevStatus === "connected") {
       // we just disconnected
       setDisplayStatus("warning")
       if (disconnectionTimerRef.current) {

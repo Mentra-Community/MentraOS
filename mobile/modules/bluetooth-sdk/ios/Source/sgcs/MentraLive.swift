@@ -104,6 +104,13 @@ class BlePhotoUploadService {
 
     private static func convertToJpegPreservingExif(imageData: Data) throws -> Data {
         logIncomingImageDiagnostics(imageData: imageData)
+        if isJpeg(imageData) {
+            Bridge.log(
+                "\(TAG): BLE relay pass-through: input already JPEG (\(imageData.count) bytes), skipping decode/re-encode"
+            )
+            return imageData
+        }
+
         let imuJson = readImuJsonFromImageData(imageData)
 
         guard let image = decodeImage(imageData: imageData) else {
@@ -118,10 +125,9 @@ class BlePhotoUploadService {
             "\(TAG): Decoded image to bitmap: \(Int(image.size.width))x\(Int(image.size.height))"
         )
 
-        // 1.0: the source already went through a lossy AVIF pass on the glasses,
-        // so this re-encode must not compound the loss. Phone CPU and upload
-        // bandwidth are cheap relative to what was paid to get the bytes over BLE.
-        guard var jpegData = image.jpegData(compressionQuality: 1.0) else {
+        // AVIF sources already went through a lossy pass on the glasses; re-encode
+        // at high-but-not-max quality. JPEG fast-path payloads upload as-is.
+        guard var jpegData = image.jpegData(compressionQuality: 0.9) else {
             throw NSError(
                 domain: "BlePhotoUpload",
                 code: -2,
@@ -146,6 +152,11 @@ class BlePhotoUploadService {
         Bridge.log(
             "\(TAG): BLE image diagnostics: size=\(imageData.count) bytes, container=\(describeContainer(imageData)), rawHasExifMarker=\(containsExifMarker(in: imageData))"
         )
+    }
+
+    private static func isJpeg(_ data: Data) -> Bool {
+        let bytes = [UInt8](data.prefix(2))
+        return bytes.count >= 2 && bytes[0] == 0xFF && bytes[1] == 0xD8
     }
 
     private static func describeContainer(_ data: Data) -> String {
@@ -495,7 +506,7 @@ extension Data {
     }
 }
 
-private enum K900ProtocolUtils {
+enum K900ProtocolUtils {
     // Protocol constants
     static let CMD_START_CODE: [UInt8] = [0x23, 0x23] // ##
     static let CMD_END_CODE: [UInt8] = [0x24, 0x24] // $$
@@ -515,7 +526,9 @@ private enum K900ProtocolUtils {
     static let CMD_TYPE_DATA: UInt8 = 0x35
 
     // File transfer constants
-    static let FILE_PACK_SIZE = 400 // Max data size per packet
+    // Negotiated file protocol ceiling. Legacy/GATT transfers remain smaller; 800-byte frames are
+    // accepted only after file_payload_v2 negotiation and an open CoC channel.
+    static let FILE_PACK_SIZE = 800
     static let LENGTH_FILE_START = 2
     static let LENGTH_FILE_TYPE = 1
     static let LENGTH_FILE_PACKSIZE = 2
@@ -618,13 +631,21 @@ private enum K900ProtocolUtils {
             print(
                 "K900ProtocolUtils: File packet checksum failed. Expected: \(String(format: "%02X", info.verifyCode)), Calculated: \(String(format: "%02X", calculatedVerify))"
             )
-        } else {
+        } else if shouldLogFilePacket(info) {
             print(
                 "K900ProtocolUtils: File packet extracted successfully: index=\(info.packIndex), size=\(info.packSize), fileName=\(info.fileName)"
             )
         }
 
         return info
+    }
+
+    static func shouldLogFilePacket(_ info: FilePacketInfo) -> Bool {
+        let totalPackets =
+            (Int(info.fileSize) + FILE_PACK_SIZE - 1) / FILE_PACK_SIZE
+        return info.packIndex == 0
+            || info.packIndex % 32 == 0
+            || Int(info.packIndex) >= max(totalPackets - 1, 0)
     }
 }
 
@@ -921,6 +942,7 @@ extension MentraLive: CBCentralManagerDelegate {
             self.rgbLedAuthorityClaimed = false
 
             self.stopAllTimers()
+            self.closeL2capFileChannel()
 
             // Clean up characteristics
             self.txCharacteristic = nil
@@ -941,6 +963,7 @@ extension MentraLive: CBCentralManagerDelegate {
 
             self.stopConnectionTimeout()
             self.isConnecting = false
+            self.closeL2capFileChannel()
             self.connectedPeripheral = nil
             self.updateConnectionState(ConnTypes.DISCONNECTED)
 
@@ -1089,6 +1112,29 @@ extension MentraLive: CBPeripheralDelegate {
     }
 
     nonisolated func peripheral(
+        _ peripheral: CBPeripheral, didOpen channel: CBL2CAPChannel?, error: Error?
+    ) {
+        let errorDescription = error?.localizedDescription
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.l2capFileChannelOpening = false
+
+            if let errorDescription {
+                Bridge.log(
+                    "LIVE: L2CAP: unavailable, staying on GATT (\(errorDescription))"
+                )
+                return
+            }
+            guard peripheral === self.connectedPeripheral, let channel else {
+                Bridge.log("LIVE: L2CAP: open completed for a stale connection")
+                return
+            }
+
+            self.attachL2capFileChannel(channel)
+        }
+    }
+
+    nonisolated func peripheral(
         _: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?
     ) {
         let uuid = characteristic.uuid
@@ -1227,6 +1273,7 @@ class MentraLive: NSObject, SGCManager {
             wireHandshakeQueued = false
             peerK900Le = false
             peerWireCapsBinary = false
+            peerFilePayloadV2 = false
             BleJsonCompact.resetSession()
             stopSignalStrengthPolling()
             DeviceStore.shared.apply("glasses", "signalStrength", -1)
@@ -1328,6 +1375,7 @@ class MentraLive: NSObject, SGCManager {
     private let TX_CHAR_UUID = CBUUID(string: "000071FF-0000-1000-8000-00805f9b34fb") // Central transmits on peripheral's RX
     private let FILE_READ_UUID = CBUUID(string: "000072FF-0000-1000-8000-00805f9b34fb")
     private let FILE_WRITE_UUID = CBUUID(string: "000073FF-0000-1000-8000-00805f9b34fb")
+    private let L2CAP_FILE_PSM: CBL2CAPPSM = 0x00C9
 
     // LC3 Audio UUIDs (for K901+ devices with microphone support)
     private let LC3_READ_UUID = CBUUID(string: "6E400002-B5A3-F393-E0A9-E50E24DCCA9E")
@@ -1341,6 +1389,9 @@ class MentraLive: NSObject, SGCManager {
     private var activeFileTransfers = [String: FileTransferSession]()
     private var blePhotoTransfers = [String: BlePhotoTransfer]()
     private var bleIncidentLogRelays = [String: BleIncidentLogRelayEntry]()
+    private var l2capFileChannel: MentraLiveL2capChannel?
+    private var l2capFileChannelId: UUID?
+    private var l2capFileChannelOpening = false
     private var rgbLedAuthorityClaimed = false
 
     // LC3 Audio properties
@@ -1407,6 +1458,7 @@ class MentraLive: NSObject, SGCManager {
     // v2 binary handshake succeeds, which implies wire-v2 LE).
     private var peerK900Le = false
     private var peerWireCapsBinary = false
+    private var peerFilePayloadV2 = false
     private var globalMessageId = 0
     private var lastReceivedMessageId = 0
     private var bleWriteTraceSequence = 0
@@ -1641,7 +1693,7 @@ class MentraLive: NSObject, SGCManager {
 
     func requestPhoto(_ request: PhotoRequest) {
         Bridge.log(
-            "LIVE: PHOTO PIPELINE [5/6] requestPhoto() entry requestId=\(request.requestId) save=\(request.save) sound=\(request.sound) iso=\(request.iso.map { String($0) } ?? "auto") aeDivisor=\(request.aeExposureDivisor.map { String($0) } ?? "nil")"
+            "LIVE: PHOTO PIPELINE [5/6] requestPhoto() entry requestId=\(request.requestId) mode=\(request.mode.rawValue) save=\(request.save) sound=\(request.sound) iso=\(request.iso.map { String($0) } ?? "auto") aeDivisor=\(request.aeExposureDivisor.map { String($0) } ?? "nil")"
         )
 
         var json: [String: Any] = [
@@ -1678,6 +1730,7 @@ class MentraLive: NSObject, SGCManager {
         let allowedSizes = ["low", "medium", "high", "max"]
         let size = request.size.rawValue
         json["size"] = allowedSizes.contains(size) ? size : "medium"
+        json["mode"] = request.mode.rawValue
 
         json["compress"] = request.compress?.rawValue ?? "none"
         json["save"] = request.save
@@ -2067,6 +2120,56 @@ class MentraLive: NSObject, SGCManager {
         )
     }
 
+    // MARK: - L2CAP file channel
+
+    /// Open the BES file CoC. CoreBluetooth does not expose PHY or connection-priority
+    /// controls, so BES owns those link updates when this channel is established.
+    /// Any open failure leaves FILE_READ GATT notifications active as the fallback.
+    private func openL2capFileChannel() {
+        guard !l2capFileChannelOpening, l2capFileChannel == nil else { return }
+        guard let peripheral = connectedPeripheral else { return }
+
+        l2capFileChannelOpening = true
+        Bridge.log("LIVE: L2CAP: opening file channel (PSM 0xC9)")
+        peripheral.openL2CAPChannel(L2CAP_FILE_PSM)
+    }
+
+    private func attachL2capFileChannel(_ channel: CBL2CAPChannel) {
+        closeL2capFileChannel()
+
+        let channelId = UUID()
+        l2capFileChannelId = channelId
+        let reader = MentraLiveL2capChannel(
+            channel: channel,
+            onFileFrame: { [weak self] frame in
+                // The reader thread keeps draining the stream (and returning CoC credits)
+                // while the existing transfer state remains serialized on the main actor.
+                DispatchQueue.main.async {
+                    self?.processReceivedData(frame)
+                }
+            },
+            onClose: { [weak self] in
+                DispatchQueue.main.async {
+                    guard let self, self.l2capFileChannelId == channelId else { return }
+                    self.l2capFileChannel = nil
+                    self.l2capFileChannelId = nil
+                    Bridge.log("LIVE: L2CAP: channel closed; using GATT fallback")
+                }
+            }
+        )
+        l2capFileChannel = reader
+        reader.start()
+        Bridge.log("LIVE: L2CAP: channel open (PSM 0xC9)")
+    }
+
+    private func closeL2capFileChannel() {
+        l2capFileChannelOpening = false
+        l2capFileChannelId = nil
+        let reader = l2capFileChannel
+        l2capFileChannel = nil
+        reader?.close()
+    }
+
     // MARK: - Data Processing
 
     private func processReceivedData(_ data: Data) {
@@ -2105,10 +2208,6 @@ class MentraLive: NSObject, SGCManager {
             || commandType == K900ProtocolUtils.CMD_TYPE_AUDIO
             || commandType == K900ProtocolUtils.CMD_TYPE_DATA
         {
-            Bridge.log(
-                "📦 DETECTED FILE TRANSFER PACKET (type: 0x\(String(format: "%02X", commandType)))"
-            )
-
             // Debug: Log the raw data
             // let hexDump = data.prefix(64).map { String(format: "%02X ", $0) }.joined()
             // Bridge.log("📦 Raw file packet data length=\(data.count), first 64 bytes: \(hexDump)")
@@ -3020,6 +3119,8 @@ class MentraLive: NSObject, SGCManager {
         Bridge.log("LIVE: 🎉 Received glasses_ready message - SOC is booted and ready!")
 
         stopReadinessCheckLoop()
+        advertiseFilePayloadCapabilityToBes()
+        openL2capFileChannel()
         sendBleMtuConfig()
 
         // Invalidate any version fields from a prior link session so the next version_info
@@ -3336,7 +3437,9 @@ class MentraLive: NSObject, SGCManager {
         }
 
         if let incidentRelay = bleIncidentLogRelays[bleImgId] {
-            Bridge.log("LIVE: 📦 BLE incident log relay packet for: \(bleImgId)")
+            if K900ProtocolUtils.shouldLogFilePacket(packetInfo) {
+                Bridge.log("LIVE: 📦 BLE incident log relay packet for: \(bleImgId)")
+            }
 
             if incidentRelay.session == nil {
                 activeFileTransfers.removeValue(forKey: packetInfo.fileName)
@@ -3386,7 +3489,9 @@ class MentraLive: NSObject, SGCManager {
 
         if var photoTransfer = blePhotoTransfers[bleImgId] {
             // This is a BLE photo transfer
-            Bridge.log("📦 BLE photo transfer packet for requestId: \(photoTransfer.requestId)")
+            if K900ProtocolUtils.shouldLogFilePacket(packetInfo) {
+                Bridge.log("📦 BLE photo transfer packet for requestId: \(photoTransfer.requestId)")
+            }
 
             // Get or create session for this transfer
             if photoTransfer.session == nil {
@@ -3482,9 +3587,11 @@ class MentraLive: NSObject, SGCManager {
             activeFileTransfers[packetInfo.fileName] = sess
 
             if added {
-                Bridge.log(
-                    "LIVE: 📦 Packet \(packetInfo.packIndex) received successfully (BES will auto-ACK)"
-                )
+                if K900ProtocolUtils.shouldLogFilePacket(packetInfo) {
+                    Bridge.log(
+                        "LIVE: 📦 Packet \(packetInfo.packIndex) received successfully (BES will auto-ACK)"
+                    )
+                }
 
                 if sess.isComplete {
                     Bridge.log("LIVE: 📦 File transfer complete: \(packetInfo.fileName)")
@@ -4905,7 +5012,9 @@ class MentraLive: NSObject, SGCManager {
         wireHandshakeQueued = false
         peerK900Le = false
         peerWireCapsBinary = false
+        peerFilePayloadV2 = false
         BleJsonCompact.resetSession()
+        closeL2capFileChannel()
 
         // Disconnect BLE
         if let peripheral = connectedPeripheral {
@@ -5007,6 +5116,20 @@ extension MentraLive {
         }
         if caps.keys.contains("binary") {
             peerWireCapsBinary = (caps["binary"] as? Bool) == true
+        }
+        if caps.keys.contains("file_payload_v2") {
+            peerFilePayloadV2 = (caps["file_payload_v2"] as? Bool) == true
+        }
+    }
+
+    private func advertiseFilePayloadCapabilityToBes() {
+        guard peerFilePayloadV2 else { return }
+        let body = "{\"max\":\(K900ProtocolUtils.FILE_PACK_SIZE)}"
+        let command: [String: Any] = ["C": "cs_file_payload", "B": body]
+        if sendRawK900Command(command) {
+            Bridge.log(
+                "LIVE: 📦 Advertised file payload ceiling \(K900ProtocolUtils.FILE_PACK_SIZE) to BES"
+            )
         }
     }
 

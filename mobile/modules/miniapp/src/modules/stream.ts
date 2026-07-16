@@ -98,10 +98,26 @@ export interface StreamResult {
   webrtcUrl?: string
 }
 
+/** Live encoder telemetry, when the glasses emit it (no firmware does yet). */
+export interface StreamLiveStats {
+  /** Current encoded video bitrate in bits per second. */
+  bitrate?: number
+  /** Current encode frame rate. */
+  fps?: number
+  droppedFrames?: number
+  /** Seconds since the stream started. */
+  duration?: number
+  /** Device temperature in °C, if the hardware reports it. */
+  temperatureC?: number
+}
+
 export interface StreamStatus {
   streamId: string
   status: string
   errorDetails?: string
+  /** Negotiated encode config — forwarded once, on the first status ack. */
+  resolvedConfig?: StreamResolvedConfig
+  stats?: StreamLiveStats
 }
 
 export class StreamModule {

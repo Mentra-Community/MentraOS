@@ -30,7 +30,9 @@ public class K900ProtocolUtils {
     public static final byte CMD_TYPE_BINARY_MSG = BleWireProtocol.CMD_TYPE_BINARY_MSG;
 
     // File transfer constants
-    public static final int FILE_PACK_SIZE = 400; // Max data size per packet
+    // Negotiated file protocol ceiling. Legacy/GATT transfers remain smaller; 800-byte frames are
+    // accepted only after file_payload_v2 negotiation and an open CoC channel.
+    public static final int FILE_PACK_SIZE = 800;
     public static final int LENGTH_FILE_START = 2;
     public static final int LENGTH_FILE_TYPE = 1;
     public static final int LENGTH_FILE_PACKSIZE = 2;
@@ -274,9 +276,6 @@ public class K900ProtocolUtils {
             return false;
         }
 
-        Log.d("K900ProtocolUtils", "isK900ProtocolFormat: " + data[0] + " " + data[1]);
-        Log.d("K900ProtocolUtils", "CMD_START_CODE: " + CMD_START_CODE[0] + " " + CMD_START_CODE[1]);
-        
         return data[0] == CMD_START_CODE[0] && 
                data[1] == CMD_START_CODE[1];
     }
@@ -792,7 +791,9 @@ public class K900ProtocolUtils {
             Log.e("K900ProtocolUtils", "File packet checksum failed. Expected: " +
                   String.format("%02X", info.verifyCode) + ", Calculated: " +
                   String.format("%02X", calculatedVerify));
-        } else {
+        } else if (info.packIndex == 0
+                || info.packIndex % 32 == 0
+                || info.packIndex == (info.fileSize + FILE_PACK_SIZE - 1) / FILE_PACK_SIZE - 1) {
             Log.d("K900ProtocolUtils", "File packet extracted successfully: index=" + info.packIndex +
                   ", size=" + info.packSize + ", fileName=" + info.fileName);
         }

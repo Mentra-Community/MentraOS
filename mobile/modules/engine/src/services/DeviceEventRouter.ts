@@ -171,7 +171,8 @@ export function startDeviceEventRouter(): void {
   )
 
   // --- device input → local miniapps (forwardEvent is subscriber-gated; a no-op when
-  // no miniapp listens). MantleManager keeps the v1 SocketComms legs for these. ---
+  // no miniapp listens). The v1 SocketComms cloud legs for these were removed with
+  // the Cloud V1 ripout. ---
 
   subs.push(
     BluetoothSdk.addListener("button_press", (event) => {

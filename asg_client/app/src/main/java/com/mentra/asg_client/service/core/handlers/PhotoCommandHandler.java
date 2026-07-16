@@ -2,7 +2,9 @@ package com.mentra.asg_client.service.core.handlers;
 
 import android.content.Context;
 import android.util.Log;
+import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.camera.model.PhotoCaptureSettings;
+import com.mentra.asg_client.camera.policy.PhotoMode;
 import com.mentra.asg_client.camera.policy.PhotoSizeTier;
 import com.mentra.asg_client.io.file.core.FileManager;
 import com.mentra.asg_client.io.media.core.MediaCaptureService;
@@ -177,23 +179,36 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
             String bleImgId = data.optString("bleImgId", "");
             boolean save = data.optBoolean("save", false);
             String size = PhotoSizeTier.normalize(data.optString("size", "medium"));
+            String mode = PhotoMode.normalize(data.optString("mode", PhotoMode.PHOTO));
+            if (!data.has("mode")) {
+                Log.w(
+                        TAG,
+                        "📸 take_photo BLE payload missing mode field; defaulting to "
+                                + mode);
+            }
+            Log.i(TAG, "📸 Mentra Live take_photo mode: " + mode);
             PhotoCaptureSettings requestCaptureSettings =
                     PhotoCaptureSettings.fromTakePhotoJson(data);
             PhotoCaptureSettings.logIncomingTakePhotoFields(data, requestId);
             AsgSettings asgSettings = serviceManager.getAsgSettings();
+            Long exposureTimeNs = PhotoExposureTimeNs.parse(data);
             PhotoCaptureSettings captureSettings = requestCaptureSettings;
+            if (PhotoMode.TEXT.equals(mode) && exposureTimeNs == null) {
+                // Apply text-mode defaults before stored global MFNR/ZSL defaults are merged.
+                // Explicit per-request values remain preserved by applyTextModeExposure().
+                captureSettings = PhotoCaptureSettings.applyTextModeExposure(captureSettings);
+            }
             if (asgSettings != null) {
                 captureSettings =
                         PhotoCaptureSettings.mergeForSdkRequest(
-                                requestCaptureSettings, asgSettings);
+                                captureSettings, asgSettings);
             }
-            PhotoCaptureSettings.logMergeDiagnostics(
-                    requestCaptureSettings, captureSettings, asgSettings, requestId);
             String compress = resolvePhotoCompress(data, asgSettings);
             // Capture light is mandatory for privacy; ignore any caller-supplied flash value.
             boolean flash = true;
             boolean sound = resolvePhotoSound(data, asgSettings);
-            Long exposureTimeNs = PhotoExposureTimeNs.parse(data);
+            PhotoCaptureSettings.logMergeDiagnostics(
+                    requestCaptureSettings, captureSettings, asgSettings, requestId);
             Integer requestedIso = PhotoIso.parse(data);
             Integer iso = exposureTimeNs != null ? requestedIso : null;
             if (exposureTimeNs != null) {
@@ -217,6 +232,7 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
             logResolvedTakePhotoParams(
                     requestId,
                     size,
+                    mode,
                     compress,
                     flash,
                     sound,
@@ -305,6 +321,7 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
                                 photoFilePath,
                                 requestId,
                                 size,
+                                mode,
                                 flash,
                                 sound,
                                 exposureTimeNs,
@@ -340,10 +357,15 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
             }
 
             // Process photo capture based on transfer method
+            if ("ble".equals(transferMethod) || !bleImgId.isEmpty()) {
+                captureService.markBlePhotoPipelineStart(requestId);
+            }
             Log.i(
                     TAG,
                     "PHOTO PIPELINE [ASG 3/3] Starting capture requestId="
                             + requestId
+                            + " mode="
+                            + mode
                             + " transferMethod="
                             + transferMethod
                             + " size="
@@ -358,6 +380,7 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
                             bleImgId,
                             save,
                             size,
+                            mode,
                             transferMethod,
                             flash,
                             sound,
@@ -396,6 +419,7 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
      * @param bleImgId BLE image ID
      * @param save Whether to save the photo
      * @param size Photo size
+     * @param mode Photo capture mode
      * @param transferMethod Transfer method
      * @param flash Whether to enable privacy flash LED
      * @param sound Whether to enable shutter sound
@@ -411,6 +435,7 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
             String bleImgId,
             boolean save,
             String size,
+            String mode,
             String transferMethod,
             boolean flash,
             boolean sound,
@@ -419,6 +444,28 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
             Integer iso,
             PhotoCaptureSettings captureSettings) {
         Log.d(TAG, "Processing photo capture with transfer method: " + transferMethod);
+
+        if (AsgConstants.FORCE_BLE_TRANSFER && !bleImgId.isEmpty() && !"ble".equals(transferMethod)) {
+            Log.i(
+                    TAG,
+                    "🚫📶 FORCE_BLE_TRANSFER active: overriding requested transferMethod="
+                            + transferMethod
+                            + " -> ble (skipping WiFi upload attempt) requestId="
+                            + requestId);
+            return captureService.takePhotoForBleTransfer(
+                    photoFilePath,
+                    requestId,
+                    bleImgId,
+                    save,
+                    size,
+                    mode,
+                    flash,
+                    sound,
+                    exposureTimeNs,
+                    iso,
+                    captureSettings);
+        }
+
         switch (transferMethod) {
             case "ble":
                 return captureService.takePhotoForBleTransfer(
@@ -427,6 +474,7 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
                         bleImgId,
                         save,
                         size,
+                        mode,
                         flash,
                         sound,
                         exposureTimeNs,
@@ -445,6 +493,7 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
                         bleImgId,
                         save,
                         size,
+                        mode,
                         flash,
                         sound,
                         compress,
@@ -459,6 +508,7 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
                         authToken,
                         save,
                         size,
+                        mode,
                         flash,
                         sound,
                         compress,
@@ -471,6 +521,7 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
     private static void logResolvedTakePhotoParams(
             String requestId,
             String size,
+            String mode,
             String compress,
             boolean flash,
             boolean sound,
@@ -488,6 +539,8 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
                         + requestId
                         + " size="
                         + size
+                        + " mode="
+                        + mode
                         + " compress="
                         + compress
                         + " flash="

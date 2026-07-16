@@ -145,10 +145,21 @@ asg_client/
 - **Java Version**: Java 17 required
 - **Classes**: PascalCase (e.g., `AsgClientService`)
 - **Methods**: camelCase (e.g., `connectToCloud()`)
-- **Constants**: UPPER_SNAKE_CASE (e.g., `MAX_RETRY_ATTEMPTS`)
+- **Constants**: UPPER_SNAKE_CASE (e.g., `MAX_RETRY_ATTEMPTS`). See [Constants (`AsgConstants.java`)](#constants-asgconstantsjava) below.
 - **Member Variables**: mCamelCase with 'm' prefix (e.g., `mWebSocketClient`)
 - **Indentation**: 4 spaces
 - **Braces**: Opening brace on same line
+
+### Constants (`AsgConstants.java`)
+
+**Whenever you are asked to add a constant in `asg_client`, add it to `app/src/main/java/com/mentra/asg_client/AsgConstants.java`.** Do not introduce duplicate `private static final` fields in individual classes.
+
+- Naming: `public static final`, `UPPER_SNAKE_CASE`
+- Document tunables and debug/feature flags with a short Javadoc
+- Consume as `AsgConstants.FOO` from call sites
+- Group related constants together (photo/BLE pipeline, LED, endpoints, etc.)
+
+Examples already in that file: `ENABLE_PHOTO_TIMING_LOGS`, `ENABLE_GRAYSCALE_BLE_PHOTOS`, `FORCE_BLE_TRANSFER`, BLE quality caps.
 
 ### Documentation
 
