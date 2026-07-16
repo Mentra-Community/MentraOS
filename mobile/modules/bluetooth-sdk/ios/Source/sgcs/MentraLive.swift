@@ -5882,6 +5882,7 @@ extension MentraLive {
         let size = (DeviceStore.shared.get("bluetooth", "button_photo_size") as? String).flatMap { rawSize in
             rawSize.isEmpty ? nil : PhotoSize(normalizedRawValue: rawSize)
         }
+        let zslMfnr = DeviceStore.shared.get("bluetooth", "button_photo_zsl_mfnr") as? Bool
         let mfnr = DeviceStore.shared.get("bluetooth", "button_photo_mfnr") as? Bool
         let zsl = DeviceStore.shared.get("bluetooth", "button_photo_zsl") as? Bool
         let noiseReduction = DeviceStore.shared.get("bluetooth", "button_photo_noise_reduction") as? Bool
@@ -5895,6 +5896,7 @@ extension MentraLive {
 
         let settings = PhotoCaptureDefaults(
             size: size,
+            zslMfnr: zslMfnr,
             mfnr: mfnr,
             zsl: zsl,
             noiseReduction: noiseReduction,
@@ -5917,11 +5919,15 @@ extension MentraLive {
 
     func sendButtonPhotoSettings(requestId: String?, settings: PhotoCaptureDefaults) {
         var details = settings.size.map { "size=\($0.rawValue)" } ?? "size=unchanged"
-        if let mfnr = settings.mfnr {
-            details += ", mfnr=\(mfnr)"
-        }
-        if let zsl = settings.zsl {
-            details += ", zsl=\(zsl)"
+        if let resolvedZslMfnr = settings.resolvedZslMfnr() {
+            details += ", zslMfnr=\(resolvedZslMfnr)"
+        } else {
+            if let mfnr = settings.mfnr {
+                details += ", mfnr=\(mfnr)"
+            }
+            if let zsl = settings.zsl {
+                details += ", zsl=\(zsl)"
+            }
         }
         if let noiseReduction = settings.noiseReduction {
             details += ", noiseReduction=\(noiseReduction)"
@@ -5963,11 +5969,17 @@ extension MentraLive {
         if let requestId, !requestId.isEmpty {
             json["request_id"] = requestId
         }
-        if let mfnr = settings.mfnr {
-            json["mfnr"] = mfnr
-        }
-        if let zsl = settings.zsl {
-            json["zsl"] = zsl
+        if let resolvedZslMfnr = settings.resolvedZslMfnr() {
+            json["zslMfnr"] = resolvedZslMfnr
+            json["mfnr"] = resolvedZslMfnr
+            json["zsl"] = resolvedZslMfnr
+        } else {
+            if let mfnr = settings.mfnr {
+                json["mfnr"] = mfnr
+            }
+            if let zsl = settings.zsl {
+                json["zsl"] = zsl
+            }
         }
         if let noiseReduction = settings.noiseReduction {
             json["noiseReduction"] = noiseReduction
