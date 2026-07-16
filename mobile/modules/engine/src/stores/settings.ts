@@ -292,7 +292,7 @@ export const SETTINGS: Record<string, Setting> = {
   },
   theme_preference: {
     key: "theme_preference",
-    defaultValue: () => (__DEV__ ? "system" : "light"),
+    defaultValue: () => "light",
     // Force light mode - i mode is not complete yet
     // override: () => "light",
     writable: true,
