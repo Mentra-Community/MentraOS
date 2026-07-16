@@ -1,0 +1,220 @@
+name: Release Mentra Engine
+
+# Publishes @mentra/engine to npm when its package version changes on dev.
+# Existing versions are skipped, making workflow re-runs safe. Detection FAILS
+# CLOSED (same as the bluetooth-sdk/miniapp pipelines): when the previous state
+# is unknown — force-push, unresolvable before-SHA, first appearance of the
+# package — nothing auto-publishes.
+#
+# FIRST PUBLISH (deliberately manual): @mentra/engine cannot go to npm before
+# its @mentra/* peer dependencies exist there (crust, cloud-client,
+# cloud-runtime, miniapp — npm >=7 auto-installs peers, so consumers would
+# E404). Once the peers are published, run a supervised workflow_dispatch with
+# force_release=true (dry_run=false); that first publish uses NPM_TOKEN because
+# npm cannot stage a package that does not exist. Later versions publish
+# automatically on version bumps via the OIDC staged-publishing flow.
+#
+# After the initial release, configure @mentra/engine's npm trusted publisher:
+#   organization: Mentra-Community
+#   repository: MentraOS
+#   workflow: engine-release.yml
+#   allowed action: npm stage publish
+
+on:
+  push:
+    branches:
+      - dev
+    paths:
+      - ".github/scripts/engine-release-info.mjs"
+      - ".github/workflows/engine-release.yml"
+      - "mobile/modules/engine/**"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Build and pack without publishing to npm"
+        required: true
+        default: true
+        type: boolean
+      force_release:
+        description: "Required for ANY manual publish, including the first-ever release (a dispatch with dry_run=false and force_release=false is a no-op)"
+        required: true
+        default: false
+        type: boolean
+
+concurrency:
+  group: engine-release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  ENGINE_PACKAGE_DIR: mobile/modules/engine
+
+jobs:
+  detect:
+    name: Detect Engine version change
+    runs-on: ubuntu-latest
+    outputs:
+      package_name: ${{ steps.release-info.outputs.package_name }}
+      version: ${{ steps.release-info.outputs.version }}
+      run_release: ${{ steps.release-info.outputs.run_release }}
+      dry_run: ${{ steps.release-info.outputs.dry_run }}
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        # Depth 1: the detect script reads two blobs at the before-SHA and
+        # fetches that single commit itself; full history is ~1 GiB of waste.
+
+      - name: Detect package version change
+        id: release-info
+        run: node .github/scripts/engine-release-info.mjs
+        env:
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
+          FORCE_RELEASE: ${{ github.event_name == 'workflow_dispatch' && inputs.force_release || false }}
+
+      - name: Summarize release decision
+        run: |
+          {
+            echo "## Mentra Engine release decision"
+            echo ""
+            echo "- Package: \`${{ steps.release-info.outputs.package_name }}\`"
+            echo "- Current version: \`${{ steps.release-info.outputs.version }}\`"
+            echo "- Dry run: \`${{ steps.release-info.outputs.dry_run }}\`"
+            echo "- Run release job: \`${{ steps.release-info.outputs.run_release }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  npm:
+    name: Release npm package
+    needs: detect
+    if: needs.detect.outputs.run_release == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Refuse non-dev publish
+        if: needs.detect.outputs.dry_run != 'true' && github.ref_name != 'dev'
+        run: |
+          echo "Mentra Engine releases must publish from the dev branch." >&2
+          exit 1
+
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Use npm with staged publishing support
+        # Pinned major: the release-critical path must not pick up whatever npm
+        # shipped this morning. Bump deliberately.
+        run: npm install -g npm@11
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Cache Bun cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-cache-engine-${{ hashFiles('mobile/bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-cache-engine-
+
+      - name: Install mobile dependencies
+        working-directory: mobile
+        run: bun install --frozen-lockfile
+
+      - name: Build package
+        working-directory: ${{ env.ENGINE_PACKAGE_DIR }}
+        run: bun run build
+
+      - name: Check npm registry
+        id: npm-registry
+        # E404 is the ONLY signal that a package/version is absent. Any other
+        # npm error (5xx, network, auth) must FAIL this step — treating a flake
+        # as "doesn't exist" would route a routine release down the NPM_TOKEN
+        # bootstrap path, silently bypassing the OIDC staged flow.
+        run: |
+          set -euo pipefail
+          check_absent() {
+            local spec="$1"
+            local out code
+            set +e
+            out=$(npm view "$spec" version --json --registry=https://registry.npmjs.org 2>&1)
+            code=$?
+            set -e
+            if [[ $code -eq 0 ]]; then
+              echo "exists"
+              return 0
+            fi
+            if echo "$out" | grep -q '"code": *"E404"' || echo "$out" | grep -q "code E404"; then
+              echo "absent"
+              return 0
+            fi
+            echo "::error::npm view '$spec' failed with a non-404 error — refusing to guess registry state." >&2
+            echo "$out" >&2
+            return 1
+          }
+
+          pkg_state=$(check_absent "${{ needs.detect.outputs.package_name }}")
+          if [[ "$pkg_state" == "exists" ]]; then
+            echo "package_exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "package_exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          ver_state=$(check_absent "${{ needs.detect.outputs.package_name }}@${{ needs.detect.outputs.version }}")
+          if [[ "$ver_state" == "exists" ]]; then
+            echo "version_exists=true" >> "$GITHUB_OUTPUT"
+            echo "npm already has ${{ needs.detect.outputs.package_name }}@${{ needs.detect.outputs.version }}."
+          else
+            echo "version_exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Dry-run npm package
+        if: steps.npm-registry.outputs.version_exists != 'true'
+        working-directory: ${{ env.ENGINE_PACKAGE_DIR }}
+        run: npm pack --dry-run
+
+      - name: Check initial publish token
+        if: needs.detect.outputs.dry_run != 'true' && steps.npm-registry.outputs.package_exists != 'true' && steps.npm-registry.outputs.version_exists != 'true'
+        run: |
+          if [[ -z "${NODE_AUTH_TOKEN:-}" ]]; then
+            echo "::error::Set the NPM_TOKEN repository secret to bootstrap the first @mentra/engine release."
+            exit 1
+          fi
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish initial npm package
+        if: needs.detect.outputs.dry_run != 'true' && steps.npm-registry.outputs.package_exists != 'true' && steps.npm-registry.outputs.version_exists != 'true'
+        working-directory: ${{ env.ENGINE_PACKAGE_DIR }}
+        # access/registry come from the package's publishConfig.
+        run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Stage npm package
+        if: needs.detect.outputs.dry_run != 'true' && steps.npm-registry.outputs.package_exists == 'true' && steps.npm-registry.outputs.version_exists != 'true'
+        working-directory: ${{ env.ENGINE_PACKAGE_DIR }}
+        run: npm stage publish
+
+      - name: Skip npm stage publish
+        if: steps.npm-registry.outputs.version_exists == 'true'
+        run: echo "Skipping npm stage publish because this version already exists on npm."
+
+      - name: Summarize
+        if: always()
+        run: |
+          {
+            echo "## ${{ needs.detect.outputs.package_name }}"
+            echo ""
+            echo "- Version: \`${{ needs.detect.outputs.version }}\`"
+            echo "- Package already exists: \`${{ steps.npm-registry.outputs.package_exists }}\`"
+            echo "- Version already exists: \`${{ steps.npm-registry.outputs.version_exists }}\`"
+            echo "- Dry run: \`${{ needs.detect.outputs.dry_run }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
