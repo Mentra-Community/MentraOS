@@ -30,7 +30,10 @@
   "files": [
     "src",
     "react-native",
-    "node"
+    "node",
+    "!src/**/*.test.ts",
+    "!react-native/**/*.test.ts",
+    "!node/**/*.test.ts"
   ],
   "publishConfig": {
     "access": "public"
