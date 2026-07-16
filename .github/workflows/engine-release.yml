@@ -52,7 +52,7 @@ on:
         default: true
         type: boolean
       force_release:
-        description: "Required for ANY manual publish, including the first-ever release (a dispatch with dry_run=false and force_release=false is a no-op)"
+        description: "Bootstrap the first-ever release (a package absent from npm never auto-publishes). Does NOT bypass the NPM_MAIN_CHANNEL gate or the peer-availability gate."
         required: true
         default: false
         type: boolean

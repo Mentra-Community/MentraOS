@@ -48,6 +48,24 @@ const published = publishedVersions(packageName)
 const packageExists = published !== null
 const versionExists = packageExists && published.includes(derived)
 
+// Installability gate: every internal peer/dep the stamp will pin must be
+// LIVE on this channel before the engine ships — the engine and miniapp
+// pipelines run independently, so an engine-only push (or an engine job
+// outrunning the peer matrix) must not publish/stage an engine whose peer
+// ranges resolve to 404s. Note "live" means approved: staged-but-unapproved
+// versions are not in the registry, so on beta/latest the engine waits for
+// the peers' approvals (approve bottom-up, then re-run this workflow).
+const missingPeers = []
+for (const field of ["dependencies", "peerDependencies"]) {
+  for (const dep of Object.keys(currentPackage[field] || {})) {
+    if (!(dep in CHANNEL_MANIFESTS) || dep === packageName) continue
+    if (currentPackage.peerDependenciesMeta?.[dep]?.optional) continue
+    const depBase = JSON.parse(readFileSync(CHANNEL_MANIFESTS[dep], "utf8")).version
+    const depDerived = deriveVersion(depBase, branch)
+    if (!publishedVersions(dep)?.includes(depDerived)) missingPeers.push(`${dep}@${depDerived}`)
+  }
+}
+
 let runRelease = false
 let reason
 if (versionExists) {
@@ -58,9 +76,14 @@ if (versionExists) {
         `bump the base version on dev and merge it up.`,
     )
   }
-} else if (branch === "main" && !mainChannelEnabled && !forceRelease) {
+} else if (branch === "main" && !mainChannelEnabled && !dryRun) {
+  // Deliberately NOT bypassable by force_release — opening the public channel
+  // is a separate decision from forcing a publish.
   reason = "main channel disabled — set repo variable NPM_MAIN_CHANNEL=true"
   console.log(`::notice::${packageName}@${derived} would ship to "latest" but the main channel is disabled. ${reason}.`)
+} else if (missingPeers.length > 0 && !dryRun) {
+  reason = `waits for ${missingPeers.join(", ")} to be live on this channel`
+  console.log(`::notice::${packageName}@${derived} skipped: ${reason}. Publish/approve the peers, then re-run this workflow.`)
 } else {
   // The absent-from-npm bootstrap case still reaches the npm job: its
   // bootstrap gate skips with a notice unless this is a force_release

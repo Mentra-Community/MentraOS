@@ -59,7 +59,7 @@ on:
         default: true
         type: boolean
       force_release:
-        description: "Publish even if the package version did not change"
+        description: "Bootstrap first-ever publishes (packages absent from npm never auto-release). Does NOT bypass the NPM_MAIN_CHANNEL gate."
         required: true
         default: false
         type: boolean
@@ -102,8 +102,13 @@ jobs:
     strategy:
       # Sequential + dependency-ordered: the scaffolder's template pins
       # @mentra/miniapp and @mentra/miniapp-cli, so those publish first.
+      # fail-fast: the detect script admits a package on the promise that its
+      # deps publish earlier in this run — if an upstream job fails, later
+      # packages would ship pins to versions that never landed, so the whole
+      # matrix stops. Re-running after a fix is safe: already-published
+      # versions skip.
       max-parallel: 1
-      fail-fast: false
+      fail-fast: true
       matrix:
         pkg: ${{ fromJSON(needs.detect.outputs.matrix) }}
     steps:

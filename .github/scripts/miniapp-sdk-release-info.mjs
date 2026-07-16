@@ -163,13 +163,17 @@ for (const pkg of PACKAGES) {
   let reason;
   if (versionExists) {
     reason = 'already on npm';
-  } else if (!packageExists && !forceRelease) {
-    // Bootstrap gate: a first-ever publish never fires off a push.
+  } else if (!packageExists && !forceRelease && !dryRun) {
+    // Bootstrap gate: a first-ever publish never fires off a push. Dry runs
+    // may still include it — the publish steps are dry_run-gated, and the
+    // build+pack preview is the point of a dry run.
     reason = 'not on npm yet — bootstrap via workflow_dispatch force_release=true';
     console.log(`::notice::${pkg.name} is not on npm yet; skipping auto-publish. ${reason}.`);
-  } else if (branch === 'main' && !mainChannelEnabled && !forceRelease) {
+  } else if (branch === 'main' && !mainChannelEnabled && !dryRun) {
     // `latest` is npm's default install: hold the public channel behind an
-    // explicit repo variable until the team opens it.
+    // explicit repo variable until the team opens it. Deliberately NOT
+    // bypassable by force_release — opening the public channel is a separate
+    // decision from forcing a publish.
     reason = 'main channel disabled — set repo variable NPM_MAIN_CHANNEL=true';
     console.log(
       `::notice::${pkg.name}@${derived} would ship to "latest" but the main channel is disabled. ${reason}.`,
