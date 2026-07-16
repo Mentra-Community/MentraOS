@@ -66,7 +66,7 @@ sealed interface WifiStatus {
     }
 }
 
-data class WifiStatusEvent(
+data class WifiStatusEvent @JvmOverloads constructor(
     val status: WifiStatus,
     /**
      * Glasses-reported provisioning failure reason (e.g. "connect_timeout",
