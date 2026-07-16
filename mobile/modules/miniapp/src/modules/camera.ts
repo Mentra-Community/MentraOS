@@ -42,6 +42,11 @@ export interface TakePhotoOptions {
    * manual exposure; ignored otherwise.
    */
   exposureTimeNs?: number
+  /**
+   * Coupled ZSL preview buffering + MFNR still capture. Enabled by default; pass false for
+   * the standard single-frame pipeline. Forced off in text mode and when manual exposure is set.
+   */
+  zslMfnr?: boolean
 }
 
 export interface PhotoTaken {
@@ -130,6 +135,7 @@ export class CameraModule {
       sound: options.sound ?? true,
       saveToGallery: options.saveToGallery ?? false,
       exposureTimeNs: options.exposureTimeNs,
+      zslMfnr: options.zslMfnr,
     })
   }
 
