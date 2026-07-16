@@ -59,6 +59,12 @@ jobs:
       - name: Validate root Bun lockfile
         run: bun install --frozen-lockfile --ignore-scripts
 
+      - name: Internal @mentra ranges match workspace versions
+        # A drifted range makes bun silently install the npm tarball instead of
+        # linking local source once our packages exist on the registry — see
+        # the script header for the prerelease-tuple trap.
+        run: node .github/scripts/check-workspace-range-sync.mjs
+
       - name: Validate mobile Bun lockfile
         working-directory: mobile
         run: bun install --frozen-lockfile --ignore-scripts
