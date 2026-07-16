@@ -176,6 +176,18 @@ describe("PhonePhotoCoordinator", () => {
       expect(requestPhotoNative.mock.calls[0]![0]).toMatchObject({mode: "text"})
     })
 
+    test("passes zslMfnr through to the native take_photo command", async () => {
+      const coord = new PhonePhotoCoordinator()
+      await coord.takePhoto("com.a", {zslMfnr: true})
+      expect(requestPhotoNative.mock.calls[0]![0]).toMatchObject({zslMfnr: true})
+    })
+
+    test("omits zslMfnr when unset", async () => {
+      const coord = new PhonePhotoCoordinator()
+      await coord.takePhoto("com.a", {})
+      expect(requestPhotoNative.mock.calls[0]![0]).not.toHaveProperty("zslMfnr")
+    })
+
     test("normalizes legacy size 'full' to 'max' for the native take_photo command", async () => {
       const coord = new PhonePhotoCoordinator()
       // Legacy wire values may still arrive from older callers at runtime.
