@@ -12,6 +12,8 @@ public final class BlePhotoTimingLog {
     public static final String TAG = "BlePhotoTiming";
     private static final Map<String, UartTransferStats> UART_TRANSFER_STATS =
             new ConcurrentHashMap<>();
+    private static final Object STILL_BREAKDOWN_LOCK = new Object();
+    @Nullable private static StillCaptureBreakdown pendingStillBreakdown;
 
     /**
      * Optional sink that folds camera-side capture/storage checkpoints into the same request-scoped
@@ -20,6 +22,14 @@ public final class BlePhotoTimingLog {
      */
     public interface PhaseSink {
         void onPhase(String step, @Nullable String detail);
+
+        /**
+         * Record a checkpoint at an explicit wall-clock time (for estimated HAL sub-stages that
+         * must appear before {@code still_frame_available} in the phase table).
+         */
+        default void onPhaseAt(String step, @Nullable String detail, long wallTimeMs) {
+            onPhase(step, detail);
+        }
     }
 
     private static final Object PHASE_SINK_LOCK = new Object();
@@ -48,6 +58,14 @@ public final class BlePhotoTimingLog {
      * also appends the step to the request PHASE BREAKDOWN table.
      */
     public static void capturePhase(String step, @Nullable String detail) {
+        capturePhaseAt(step, detail, System.currentTimeMillis());
+    }
+
+    /**
+     * Like {@link #capturePhase(String, String)} but stamps the phase at {@code wallTimeMs} so
+     * estimated shutter→ImageReader sub-stages keep correct ΔSTEP ordering.
+     */
+    public static void capturePhaseAt(String step, @Nullable String detail, long wallTimeMs) {
         if (!enabled()) {
             return;
         }
@@ -57,7 +75,63 @@ public final class BlePhotoTimingLog {
             sink = activePhaseSink;
         }
         if (sink != null) {
-            sink.onPhase(step, detail);
+            sink.onPhaseAt(step, detail, wallTimeMs);
+        }
+    }
+
+    /** Stash still-capture bottleneck math for the end-of-request PHASE BREAKDOWN dump. */
+    public static void recordStillCaptureBreakdown(@Nullable StillCaptureBreakdown breakdown) {
+        synchronized (STILL_BREAKDOWN_LOCK) {
+            pendingStillBreakdown = breakdown;
+        }
+    }
+
+    @Nullable
+    static StillCaptureBreakdown takeStillCaptureBreakdown() {
+        synchronized (STILL_BREAKDOWN_LOCK) {
+            StillCaptureBreakdown breakdown = pendingStillBreakdown;
+            pendingStillBreakdown = null;
+            return breakdown;
+        }
+    }
+
+    /**
+     * Shutter→ImageReader decomposition. Prefer HAL callback marks when present; otherwise
+     * estimates from {@code Image.getTimestamp()} vs {@code SystemClock.elapsedRealtimeNanos()}.
+     */
+    public static final class StillCaptureBreakdown {
+        public final long shutterToImageMs;
+        public final long queueMs;
+        public final long exposureBudgetMs;
+        public final long ispJpegMs;
+        public final long sinceSensorStartMs;
+        public final boolean fromHalCallbacks;
+        public final boolean estimated;
+        public final boolean mfnrRequested;
+        public final int noiseReductionMode;
+        @Nullable public final String note;
+
+        public StillCaptureBreakdown(
+                long shutterToImageMs,
+                long queueMs,
+                long exposureBudgetMs,
+                long ispJpegMs,
+                long sinceSensorStartMs,
+                boolean fromHalCallbacks,
+                boolean estimated,
+                boolean mfnrRequested,
+                int noiseReductionMode,
+                @Nullable String note) {
+            this.shutterToImageMs = shutterToImageMs;
+            this.queueMs = queueMs;
+            this.exposureBudgetMs = exposureBudgetMs;
+            this.ispJpegMs = ispJpegMs;
+            this.sinceSensorStartMs = sinceSensorStartMs;
+            this.fromHalCallbacks = fromHalCallbacks;
+            this.estimated = estimated;
+            this.mfnrRequested = mfnrRequested;
+            this.noiseReductionMode = noiseReductionMode;
+            this.note = note;
         }
     }
 
@@ -177,21 +251,22 @@ public final class BlePhotoTimingLog {
         }
         long uartMs = uart != null ? uart.durationMs : 0L;
         if (uart != null && uartMs > 0) {
+            // True transfer speed: payload bytes / time until last MCU packet ACK.
             double uartSpeedKBs = uart.payloadBytes * 1000.0 / uartMs / 1024.0;
             sb.append(" | uart_tx=").append(uartMs).append("ms");
-            sb.append(" | uart_speed=")
+            sb.append(" | transfer_speed=")
                     .append(String.format(Locale.US, "%.1f", uartSpeedKBs))
                     .append("KB/s");
         }
         long transferStart = phaseMs(phases, "ble_file_transfer_start");
         long transferDone = phaseMs(phases, "ble_transfer_complete");
-        if (payloadBytes > 0 && transferStart > 0 && transferDone > transferStart) {
-            long phoneRoundTripMs = transferDone - transferStart;
-            double e2eSpeedKBs = payloadBytes * 1000.0 / phoneRoundTripMs / 1024.0;
-            sb.append(" | transfer_round_trip=").append(phoneRoundTripMs).append("ms");
-            sb.append(" | transfer_speed=")
-                    .append(String.format(Locale.US, "%.1f", e2eSpeedKBs))
-                    .append("KB/s");
+        // Phone transfer_complete is confirmation latency, not part of TX throughput.
+        if (transferStart > 0 && transferDone > transferStart) {
+            long wallToPhoneAckMs = transferDone - transferStart;
+            sb.append(" | phone_confirm=").append(wallToPhoneAckMs).append("ms");
+            if (uartMs > 0 && wallToPhoneAckMs > uartMs) {
+                sb.append(" | phone_ack_wait=").append(wallToPhoneAckMs - uartMs).append("ms");
+            }
         }
     }
 
@@ -213,7 +288,8 @@ public final class BlePhotoTimingLog {
         }
         if (transferStart > 0 && transferDone > transferStart) {
             if (any) sb.append(", ");
-            sb.append("ble_transfer=").append(transferDone - transferStart).append("ms");
+            // Wall-clock until phone confirms; packet TX alone is uart_tx / transfer_speed.
+            sb.append("ble_to_phone_confirm=").append(transferDone - transferStart).append("ms");
         }
     }
 
@@ -235,6 +311,21 @@ public final class BlePhotoTimingLog {
             long originalBytes,
             long compressedBytes,
             @Nullable UartTransferStats uart) {
+        return formatPhaseBreakdown(
+                requestId, timings, null, originalBytes, compressedBytes, uart);
+    }
+
+    /**
+     * Same as {@link #formatPhaseBreakdown(String, Map, long, long, UartTransferStats)} but
+     * appends per-step detail strings (exposure/ISO/size/etc.) when present.
+     */
+    static String formatPhaseBreakdown(
+            String requestId,
+            Map<String, Long> timings,
+            @Nullable Map<String, String> details,
+            long originalBytes,
+            long compressedBytes,
+            @Nullable UartTransferStats uart) {
         StringBuilder sb = new StringBuilder();
         sb.append("⏱️ [BLE PHOTO] PHASE BREAKDOWN | requestId=").append(requestId).append('\n');
         sb.append(String.format(Locale.US, "  %8s  %8s  %s%n", "TOTAL", "ΔSTEP", "PHASE"));
@@ -252,6 +343,7 @@ public final class BlePhotoTimingLog {
         for (Map.Entry<String, Long> entry : timings.entrySet()) {
             long time = entry.getValue();
             String step = entry.getKey();
+            String phaseLabel = phaseLabelWithDetail(step, details);
             if (firstTime == 0) {
                 firstTime = time;
                 prevTime = time;
@@ -261,7 +353,7 @@ public final class BlePhotoTimingLog {
                                 "  %8s  %8s  %s%n",
                                 formatMs(0),
                                 formatMs(0),
-                                label(step)));
+                                phaseLabel));
                 continue;
             }
             long total = time - firstTime;
@@ -272,7 +364,7 @@ public final class BlePhotoTimingLog {
                             "  %8s  %8s  %s%n",
                             formatMs(total),
                             formatMs(delta),
-                            label(step)));
+                            phaseLabel));
             switch (phaseBucket(step)) {
                 case SETUP:
                     setupMs += delta;
@@ -305,6 +397,7 @@ public final class BlePhotoTimingLog {
                         "",
                         "END-TO-END"));
         sb.append('\n');
+        appendCaptureBottleneckSummary(sb, timings, takeStillCaptureBreakdown());
         sb.append("  PHASE SUMMARY (how long each major phase took)\n");
         sb.append(String.format(Locale.US, "  %8s  %s%n", "DURATION", "PHASE"));
         sb.append(String.format(Locale.US, "  %8s  %s%n", "--------", "-----"));
@@ -314,7 +407,11 @@ public final class BlePhotoTimingLog {
         appendSummaryLine(
                 sb, compressMs, endToEndMs, "COMPRESS", "decode/crop/resize/sharpen/encode/write");
         appendSummaryLine(
-                sb, transferMs, endToEndMs, "TRANSFER", "BLE packets + phone transfer_complete");
+                sb,
+                transferMs,
+                endToEndMs,
+                "TRANSFER",
+                "BLE packet TX + wait for phone transfer_complete");
         appendSummaryLine(sb, cleanupMs, endToEndMs, "CLEANUP", "temp artifacts + job release");
         if (otherMs > 0) {
             appendSummaryLine(sb, otherMs, endToEndMs, "OTHER", "unclassified steps");
@@ -359,38 +456,40 @@ public final class BlePhotoTimingLog {
                             String.format(Locale.US, "%.1fx", ratio),
                             "compression ratio (original/payload)"));
         }
-        if (uart != null && uart.durationMs > 0 && uart.payloadBytes > 0) {
-            double uartSpeedKBs = uart.payloadBytes * 1000.0 / uart.durationMs / 1024.0;
+        long uartMs = uart != null ? uart.durationMs : 0L;
+        if (uart != null && uartMs > 0 && uart.payloadBytes > 0) {
+            double transferSpeedKBs = uart.payloadBytes * 1000.0 / uartMs / 1024.0;
             sb.append(
                     String.format(
                             Locale.US,
                             "  %12s  %s%n",
-                            formatMs(uart.durationMs),
-                            "UART/BLE packet TX (MCU ACKed)"));
+                            formatMs(uartMs),
+                            "UART/BLE packet TX (until last MCU ACK)"));
             sb.append(
                     String.format(
                             Locale.US,
                             "  %12s  %s%n",
-                            String.format(Locale.US, "%.1fKB/s", uartSpeedKBs),
-                            "UART/BLE packet TX speed"));
+                            String.format(Locale.US, "%.1fKB/s", transferSpeedKBs),
+                            "transfer speed (payload / last MCU ACK)"));
         }
         long transferStart = phaseMs(timings, "ble_file_transfer_start");
         long transferDone = phaseMs(timings, "ble_transfer_complete");
-        if (payloadBytes > 0 && transferStart > 0 && transferDone > transferStart) {
-            long phoneRoundTripMs = transferDone - transferStart;
-            double e2eSpeedKBs = payloadBytes * 1000.0 / phoneRoundTripMs / 1024.0;
+        if (transferStart > 0 && transferDone > transferStart) {
+            long wallToPhoneAckMs = transferDone - transferStart;
             sb.append(
                     String.format(
                             Locale.US,
                             "  %12s  %s%n",
-                            formatMs(phoneRoundTripMs),
+                            formatMs(wallToPhoneAckMs),
                             "transfer start → phone transfer_complete"));
-            sb.append(
-                    String.format(
-                            Locale.US,
-                            "  %12s  %s",
-                            String.format(Locale.US, "%.1fKB/s", e2eSpeedKBs),
-                            "effective transfer speed (incl. phone ack wait)"));
+            if (uartMs > 0 && wallToPhoneAckMs > uartMs) {
+                sb.append(
+                        String.format(
+                                Locale.US,
+                                "  %12s  %s",
+                                formatMs(wallToPhoneAckMs - uartMs),
+                                "phone ack wait (after last MCU ACK)"));
+            }
         }
         return sb.toString();
     }
@@ -428,6 +527,9 @@ public final class BlePhotoTimingLog {
             case "capture_configured":
             case "capture_started":
             case "still_shutter_submitted":
+            case "still_hal_started":
+            case "still_hal_completed":
+            case "still_sensor_exposure_end":
             case "still_frame_available":
             case "still_buffer_extracted":
             case "still_jpeg_write_done":
@@ -502,6 +604,148 @@ public final class BlePhotoTimingLog {
         return "+" + ms + "ms";
     }
 
+    private static String phaseLabelWithDetail(
+            String step, @Nullable Map<String, String> details) {
+        String base = label(step);
+        if (details == null) {
+            return base;
+        }
+        String detail = details.get(step);
+        if (detail == null || detail.isEmpty()) {
+            return base;
+        }
+        return base + " — " + detail;
+    }
+
+    /**
+     * Rolls up shutter→disk sub-stages so the opaque HAL wait is split into queue, exposure/ISP,
+     * JPEG delivery, copy, and storage.
+     */
+    private static void appendCaptureBottleneckSummary(
+            StringBuilder sb,
+            Map<String, Long> timings,
+            @Nullable StillCaptureBreakdown stillBreakdown) {
+        long submit = phaseMs(timings, "still_shutter_submitted");
+        long halStart = phaseMs(timings, "still_hal_started");
+        long halDone = phaseMs(timings, "still_hal_completed");
+        long exposureEnd = phaseMs(timings, "still_sensor_exposure_end");
+        long frameAvail = phaseMs(timings, "still_frame_available");
+        long bufferDone = phaseMs(timings, "still_buffer_extracted");
+        long jpegWrite = phaseMs(timings, "still_jpeg_write_done");
+        long imageSave = phaseMs(timings, "still_image_save_done");
+        if (submit <= 0 || frameAvail <= 0) {
+            return;
+        }
+
+        long shutterToFrameMs =
+                stillBreakdown != null && stillBreakdown.shutterToImageMs > 0
+                        ? stillBreakdown.shutterToImageMs
+                        : frameAvail - submit;
+
+        sb.append("  CAPTURE BOTTLENECKS (shutter → JPEG ready)\n");
+        if (stillBreakdown != null && stillBreakdown.estimated) {
+            sb.append(
+                    "  (estimated from Image.sensorTimestamp — HAL CaptureCallback marks were"
+                            + " late/missing; common with ZSL/MFNR on shared camera handler)\n");
+        } else if (stillBreakdown != null && stillBreakdown.fromHalCallbacks) {
+            sb.append("  (from HAL onCaptureStarted / onCaptureCompleted marks)\n");
+        }
+        if (stillBreakdown != null && stillBreakdown.note != null && !stillBreakdown.note.isEmpty()) {
+            sb.append("  note: ").append(stillBreakdown.note).append('\n');
+        }
+        sb.append(String.format(Locale.US, "  %8s  %s%n", "DURATION", "SEGMENT"));
+        sb.append(String.format(Locale.US, "  %8s  %s%n", "--------", "-------"));
+
+        if (stillBreakdown != null
+                && (stillBreakdown.estimated || stillBreakdown.fromHalCallbacks)) {
+            appendBottleneckLine(
+                    sb,
+                    stillBreakdown.queueMs,
+                    shutterToFrameMs,
+                    "HAL queue/schedule",
+                    "submit → sensor exposure start");
+            appendBottleneckLine(
+                    sb,
+                    stillBreakdown.exposureBudgetMs,
+                    shutterToFrameMs,
+                    "sensor exposure",
+                    "requested/actual shutter time");
+            String ispDetail =
+                    "exposure end → ImageReader (ISP"
+                            + (stillBreakdown.mfnrRequested ? "+MFNR" : "")
+                            + "+JPEG encode/delivery; nr="
+                            + stillBreakdown.noiseReductionMode
+                            + ")";
+            appendBottleneckLine(
+                    sb, stillBreakdown.ispJpegMs, shutterToFrameMs, "ISP/MFNR/JPEG", ispDetail);
+        } else {
+            long halQueueMs = (halStart > submit) ? halStart - submit : -1L;
+            long exposureMs =
+                    (exposureEnd > 0 && halStart > 0 && exposureEnd >= halStart)
+                            ? exposureEnd - halStart
+                            : -1L;
+            long ispMs = -1L;
+            if (exposureEnd > 0 && frameAvail >= exposureEnd) {
+                ispMs = frameAvail - exposureEnd;
+            } else if (halDone > 0 && frameAvail >= halDone) {
+                ispMs = frameAvail - halDone;
+            } else if (halStart > 0) {
+                ispMs = frameAvail - halStart;
+            }
+            appendBottleneckLine(
+                    sb,
+                    halQueueMs,
+                    shutterToFrameMs,
+                    "HAL queue/schedule",
+                    "submit → onCaptureStarted");
+            appendBottleneckLine(
+                    sb, exposureMs, shutterToFrameMs, "sensor exposure", "exposure budget");
+            appendBottleneckLine(
+                    sb,
+                    ispMs,
+                    shutterToFrameMs,
+                    "ISP/MFNR/JPEG",
+                    "after exposure → ImageReader");
+        }
+
+        long bufferCopyMs =
+                (bufferDone > frameAvail) ? bufferDone - frameAvail : -1L;
+        long storageMs =
+                (imageSave > bufferDone)
+                        ? imageSave - bufferDone
+                        : (jpegWrite > bufferDone ? jpegWrite - bufferDone : -1L);
+        appendBottleneckLine(
+                sb, bufferCopyMs, shutterToFrameMs, "buffer copy", "ImageReader → byte[]");
+        appendBottleneckLine(
+                sb, storageMs, shutterToFrameMs, "disk/EXIF", "byte[] → JPEG file + EXIF");
+        sb.append(
+                String.format(
+                        Locale.US,
+                        "  %8s  %s%n",
+                        formatMs(shutterToFrameMs),
+                        "shutter → ImageReader (primary capture wait)"));
+        sb.append('\n');
+    }
+
+    private static void appendBottleneckLine(
+            StringBuilder sb, long durationMs, long totalMs, String name, String detail) {
+        if (durationMs < 0) {
+            return;
+        }
+        double pct = totalMs > 0 ? (100.0 * durationMs) / totalMs : 0.0;
+        if (pct > 999.0) {
+            pct = 999.0;
+        }
+        sb.append(
+                String.format(
+                        Locale.US,
+                        "  %8s  %s — %s (%.0f%%)%n",
+                        formatMs(durationMs),
+                        name,
+                        detail,
+                        pct));
+    }
+
     static String label(String step) {
         if (step == null) {
             return "UNKNOWN STEP";
@@ -532,9 +776,15 @@ public final class BlePhotoTimingLog {
             case "capture_configured":
                 return "CAPTURE: camera configuration was resolved";
             case "capture_started":
-                return "CAPTURE: sensor exposure and image capture started";
+                return "CAPTURE: app notified capturing (shutter about to submit)";
             case "still_shutter_submitted":
                 return "CAPTURE: still capture request submitted to camera HAL";
+            case "still_hal_started":
+                return "CAPTURE: HAL began sensor exposure (onCaptureStarted)";
+            case "still_sensor_exposure_end":
+                return "CAPTURE: sensor exposure budget elapsed (shutter closed)";
+            case "still_hal_completed":
+                return "CAPTURE: HAL finished capture + metadata (onCaptureCompleted)";
             case "still_frame_available":
                 return "CAPTURE: ImageReader delivered still JPEG frame";
             case "still_buffer_extracted":
