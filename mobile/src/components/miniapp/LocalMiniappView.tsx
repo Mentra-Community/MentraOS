@@ -69,6 +69,14 @@ function LocalMiniappView({
   const onExitRef = useRef(onExit)
   onExitRef.current = onExit
 
+  // Read inside the launch effect's catch handler without adding appName/iconUrl
+  // to its dependency array — they're display-only and shouldn't re-trigger a
+  // JSContext respawn on their own (e.g. a store refresh resolving a lazy icon).
+  const appNameRef = useRef(appName)
+  appNameRef.current = appName
+  const iconUrlRef = useRef(iconUrl)
+  iconUrlRef.current = iconUrl
+
   const viewShotRef = useRef<View | null>(null)
   const webViewRef = useRef<WebView | null>(null)
   const appStateRef = useRef<AppStateStatus>(AppState.currentState)
@@ -279,12 +287,20 @@ function LocalMiniappView({
 
     launch().catch((e: Error) => {
       if (e.name === "AbortError") return // stale run — ignore entirely
-      // if (devUrl) {
-      //   // failed to load the dev url (we probably are connected to a different wifi network)
-      //   engine.miniapps.clearForeground()
-      //   useNavigationStore.getState().push("/applet/dev-offline", {packageName, name: appName, iconUrl})
-      //   return
-      // }
+      if (devUrl) {
+        // Dev bundle couldn't be resolved (dev server unreachable, or the
+        // manifest/background bundle fetch failed) — route to the dedicated
+        // offline screen with "Try again" / "Re-scan QR" instead of leaving
+        // the user stuck on a bare error splash with no recovery action.
+        console.warn(`LocalMiniappView: ${packageName} dev bundle unresolvable, routing to dev-offline: ${e.message}`)
+        engine.miniapps.clearForeground()
+        useNavigationStore.getState().push("/applet/dev-offline", {
+          packageName,
+          name: appNameRef.current,
+          iconUrl: iconUrlRef.current,
+        })
+        return
+      }
       fail(e.message)
     })
 
