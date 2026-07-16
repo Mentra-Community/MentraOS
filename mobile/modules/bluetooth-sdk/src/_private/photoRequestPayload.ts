@@ -65,11 +65,18 @@ export function photoRequestParamsForNative(
   if (params.edgeEnhancement != null) {
     payload.edgeEnhancement = params.edgeEnhancement
   }
-  if (params.mfnr != null) {
-    payload.mfnr = params.mfnr
-  }
-  if (params.zsl != null) {
-    payload.zsl = params.zsl
+  if (params.zslMfnr != null) {
+    payload.zslMfnr = params.zslMfnr
+    // Emit legacy pair alongside for older glasses firmware.
+    payload.mfnr = params.zslMfnr
+    payload.zsl = params.zslMfnr
+  } else {
+    if (params.mfnr != null) {
+      payload.mfnr = params.mfnr
+    }
+    if (params.zsl != null) {
+      payload.zsl = params.zsl
+    }
   }
   if (params.ispDigitalGain != null) {
     payload.ispDigitalGain = Math.round(params.ispDigitalGain)
