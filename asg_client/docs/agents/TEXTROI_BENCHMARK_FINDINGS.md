@@ -10,7 +10,9 @@ Test device: Mentra Live, Android 11 (API 30), MediaTek MT8766B/MT6761 class SoC
 
 The detector interface, factory, model source abstraction, cached-session intent, documentation, and artifact-producing benchmark harness are useful scaffolding. Keep those ideas.
 
-Do not enable or ship the neural crop path in its current form, and do not treat the current benchmark as a model bakeoff. The implementation does not use the official preprocessing or DB postprocessing for the PaddleOCR models; the fallback deletes the outer 25% of the image precisely when detection is uncertain; the benchmark has no text-retention ground truth; and the tested ONNX path is too slow and memory-heavy on Mentra Live.
+Do not enable or ship the PR's neural crop path in its current form, and do not treat the current benchmark as a model bakeoff. The implementation does not use the official preprocessing or DB postprocessing for the PaddleOCR models; the fallback deletes the outer 25% of the image precisely when detection is uncertain; and the benchmark has no text-retention ground truth.
+
+Sub-second on-glasses detection is achievable. An independent implementation of the official PP-OCRv6 tiny pipeline ran a correct 480-long-edge case in about 266 ms warm on Mentra Live, versus about 900 ms for the PR path. ML Kit at 640 long edge ran in about 97-151 ms after the camera settled and 462-634 ms immediately after real capture/camera teardown. ML Kit 640 is the current practical leader, but the image set is much too small for a production accuracy decision.
 
 The current PR should remain a draft or receive changes before merge. A safe merge would need to be explicitly framed as disabled experimental scaffolding, with the issues below tracked and no claim that the listed model families have been validated.
 
@@ -25,6 +27,9 @@ All tests used the PR code at commit `0028ce33180ac7578f78c7836d029d29de90b67c` 
 - Bundled ML Kit Latin text recognition as an external, turnkey baseline.
 - Clean `origin/dev` versus PR APK-size builds.
 - Official PaddleOCR-style preprocessing and DB postprocessing on the host for PP-OCRv5 mobile and PP-OCRv6 tiny.
+- An independent detector-only port of the current official PaddleOCR Android preprocessing, DB postprocessing, and PP-OCRv6 tiny model on the physical glasses at 320/480/640/960 long edge and 1/2/4 CPU threads.
+- ML Kit and official PP-OCRv6 tiny against a new 1280x960 SDK-medium capture containing several small text regions.
+- Two complete cold camera-request-to-encoded-ROI runs using ML Kit at 640 long edge, including camera release and immediate post-capture contention.
 - One attempted physical BLE transfer. It timed out after packet 88 of 893, so it is not reported as completed goodput.
 
 This is a diagnostic benchmark, not an accuracy study. The image set is far too small to rank models for production.
@@ -93,16 +98,62 @@ The official Android implementation uses color-aware input, aspect-preserving re
 
 Both found the real printed line, and PP-OCRv6 tiny returned no boxes on the no-text frame. These Mac host times are not comparable to the A53 device times. The qualitative result is the important part: the model can work on the image when its intended pipeline is used. The current PR's fixed-square grayscale path is the primary correctness problem, not evidence that PaddleOCR itself is unsuitable.
 
-### ML Kit baseline
+### Official PP-OCRv6 tiny on Mentra Live
 
-Bundled ML Kit Latin text recognition 16.0.1 was run six times on the same frame:
+An independent instrumentation app used the current official Android preprocessing and DB postprocessing, detection only, aspect-preserving resize aligned to 32, ONNX Runtime CPU, and a generous padded crop. The input was the same 1920x1080 JPEG containing one printed line. Each row is three warm measured calls after one warmup.
+
+| Threads | Long edge | Detector times | Result |
+| ---: | ---: | --- | --- |
+| 1 | 480 | 474, 459, 456 ms | Correct line box |
+| 2 | 480 | 327, 319, 314 ms | Correct line box |
+| 4 | 320 | 164, 160, 161 ms | Rejected: clipped most of the line |
+| 4 | 480 | 273, 266, 265 ms | Correct line box; 5 ms encode; 17,109 B payload |
+| 4 | 640 | 445, 432, 432 ms | Correct line box; 5 ms encode; 18,981 B payload |
+| 4 | 960 | 962, 919, 913 ms | Correct, but no useful latency tradeoff |
+
+JPEG decode was 38 ms. The winning correct 480/4-thread path therefore took about 309 ms from existing JPEG bytes to encoded ROI. Model/session load was about 262-266 ms after the first-ever load and should occur before capture, not on the critical path. At 480/4 threads the two no-text frames returned zero boxes in 312-329 ms; full-frame fallback encoding took another 21-38 ms.
+
+This is the critical diagnosis: PP-OCRv6 tiny is not intrinsically a one-second detector on this device. The PR made it slow and inaccurate by distorting every frame to 640x640, discarding color, using a generic connected-component postprocessor, leaving CPU options untuned, and allocating/copying through the Java path. The official 480 tensor was 1x3x352x480, about 41% of the PR's 640x640 pixel count.
+
+The result is not a universal win. On a second 1280x960 capture with several much smaller text regions, 480 returned no boxes in 327-330 ms. At 640 it took 575-622 ms and returned an overly large region. Paddle would need threshold/input-size tuning and a real recall dataset before production use.
+
+### ML Kit baseline and current leader
+
+Bundled ML Kit Latin text recognition 16.0.1 was run repeatedly. Recognition strings were poor, but recognition accuracy is irrelevant if only localization boxes are consumed.
 
 | Input | Timings | Warm median | Output |
 | --- | --- | ---: | --- |
-| 1920x1080 | 667, 317, 220, 226, 308, 219 ms | 226 ms | 1 block, 1 line, 2 elements; approximate text `SWEE ENER` |
-| 640x360 | 205, 185, 437, 295, 308, 261 ms | 295 ms | 1 block, 1 line, 1 element; approximate text `5WEELNEB` |
+| 1920x1080 printed-line frame | 255, 220, 219, 288, 253 ms | 253 ms | Correct line box |
+| 960x540 printed-line frame | 93, 115, 156, 338, 258 ms | 156 ms | Correct line box |
+| 640x360 printed-line frame | 97, 97, 95, 106, 94 ms | 97 ms | Correct line box; recognition poor |
+| 1280x960 small-text frame | 304, 247, 178, 175, 179 ms | 179 ms | Three text lines localized |
+| 768x576 small-text frame | 93, 88, 91, 84, 87 ms | 88 ms | Missed a separate lower text region |
+| 640x480 small-text frame | 140, 146, 142, 146, 151 ms | 146 ms | Two regions whose padded union retained the relevant text |
+| 512x384 small-text frame | 151, 101, 104, 515, 300 ms | 151 ms | Zero boxes; reject |
+| 480x360 small-text frame | 67, 69, 70, 66, 69 ms | 69 ms | Zero boxes; reject |
 
-ML Kit localized the printed line and was much faster than the PR's ONNX path, but recognition was poor and the lower-resolution run was not faster in this small sample. The bundled dependency increased this monorepo's universal APK by about 20 MB in the test build, larger than Google's approximately 4 MB-per-script-per-architecture guidance because both native ABIs were packaged. It is a useful baseline, not an automatic winner.
+ML Kit returned zero boxes on both no-text frames. At 640 long edge, decode + scale + warm detection + padded crop encode was about 150-200 ms on the saved frames. The bundled dependency increased this monorepo's universal APK by about 20 MB in the test build, larger than Google's approximately 4 MB-per-script-per-architecture guidance because both native ABIs were packaged.
+
+ML Kit 640 is the best candidate measured so far: materially faster than official PP-OCRv6, no separate ONNX runtime integration, and better small-text behavior in the new capture. This is a provisional engineering choice, not a production accuracy conclusion.
+
+### Camera request to ready payload
+
+Two cold SDK-medium (1280x960) captures were measured from `enqueuePhotoRequest` through an encoded ML Kit-selected JPEG payload. The recognizer was initialized and warmed before the request.
+
+| Stage | Run 1 | Run 2 |
+| --- | ---: | ---: |
+| Cold camera request to saved JPEG callback | 2,237 ms | 3,007 ms |
+| Wait for post-photo camera state and request close | 442 ms | 182 ms |
+| JPEG decode | 38 ms | 50 ms |
+| Scale to 640x480 | 13 ms | 13 ms |
+| Immediate post-camera ML Kit detection | 634 ms | 462 ms |
+| Padded crop encode | 2 ms | 9 ms |
+| Callback to ready payload | about 1,129 ms | about 716 ms |
+| Full request to ready payload | 3,367 ms | 3,725 ms |
+
+The camera's 2.2-3.0 second cold startup/capture is pre-existing and dominates total latency. It must not be attributed to text detection. The same captured frame ran at a 140-151 ms detector time after the camera settled, proving that the 462-634 ms immediate result is camera/ISP teardown and CPU contention rather than image difficulty.
+
+The architecture should remain entirely on-glasses: retain the captured full-resolution JPEG, run a warmed detector locally on a downscaled bitmap (or correlated YUV analysis frame), then crop and transmit once. No phone preview round trip and no double image transfer are required. For a one-shot text ROI request, the camera keep-alive should be disabled or released promptly so the ISP does not compete with inference.
 
 ### APK footprint
 
@@ -137,7 +188,7 @@ Use or faithfully port the official PaddleOCR Android detector preprocessing and
 
 Every empty map, no-box result, inference exception, or untrustworthy classical result returns a centered 75%-by-75% crop. That removes the outer 12.5% on every side when the system has the least evidence about where text is. Edge text is a normal glasses-camera case.
 
-On uncertainty, send the full frame. If bandwidth requires a degraded fallback, send a lower-quality full-frame preview and allow a phone/server decision or a second capture. A center crop must not be called a safety fallback.
+On uncertainty, send the retained full frame once at the chosen quality. A center crop must not be called a safety fallback. A phone-assisted preview/coordinate round trip is inappropriate here because BLE image transfer itself takes seconds and would create a second transfer before the useful payload.
 
 ### 3. The benchmark rewards destructive crops
 
@@ -145,9 +196,9 @@ The harness reports latency, crop size, JPEG byte savings, and an estimated BLE 
 
 The primary release gate must be text retention: all readable ground-truth polygons contained with a margin, plus explicit accounting for clipped and missed text. Byte savings and latency are secondary after correctness.
 
-### 4. Current latency, memory, and package cost are not viable
+### 4. The PR implementation's latency, memory, and package cost are not viable
 
-On this Cortex-A53 device, the fastest neural result was about 900 ms warm before JPEG crop/encode, versus roughly 123-242 ms for classical approaches and 226 ms warm for the ML Kit baseline. ONNX Runtime added about 47.6 MiB to the universal release APK, and inference produced large PSS/native-heap increases.
+On this Cortex-A53 device, the PR's fastest neural result was about 900 ms warm before JPEG crop/encode. The corrected official PP-OCRv6 path reached 266 ms and ML Kit reached 97-151 ms on saved frames, proving the PR path is the problem rather than a fundamental device limit. The PR's ONNX Runtime dependency still added about 47.6 MiB to the universal release APK, and its inference produced large PSS/native-heap increases.
 
 This cost can exceed the transfer time saved unless the crop is both very small and correct. The only extremely small payload observed was not correct enough to ship.
 
@@ -183,12 +234,12 @@ Primary metrics:
 
 ### Candidate matrix
 
-1. Official PaddleOCR Android pipeline, detection only:
+1. Bundled ML Kit Latin at 640 long edge as the current leader, fed Camera2 YUV rather than a decoded bitmap where safe correlation with the retained still is possible.
+2. Official PaddleOCR Android pipeline, detection only:
    - PP-OCRv6 tiny at aspect-preserved 640 and 960 long edge.
    - PP-OCRv5 mobile at the same sizes.
    - PP-OCRv6 small only if accuracy materially improves enough to justify its measured 1.73 s warm latency.
-2. Bundled ML Kit Latin as the turnkey baseline, fed Camera2 YUV rather than a decoded bitmap where possible.
-3. Runtime bakeoff for the winning Paddle model:
+3. Runtime bakeoff only if a Paddle candidate beats ML Kit on the ground-truthed recall set:
    - ONNX Runtime default CPU with measured thread counts.
    - A reduced-operator/custom ONNX Runtime arm64 build.
    - ncnn CPU/NEON and Vulkan.
@@ -201,10 +252,10 @@ Do not invest in NNAPI on this hardware: no vendor NNAPI service/driver was visi
 
 1. Analyze an aspect-preserved low-resolution frame.
 2. If every detected polygon passes confidence/geometry checks, transmit their union with generous fixed and relative padding.
-3. If there is no text or any uncertainty, transmit the full frame, optionally at lower quality, or send a coarse full preview followed by a phone/server retry decision.
+3. If there is no text or any uncertainty, transmit the retained full frame once at the selected quality.
 4. Record the detector, model/runtime version, confidence, fallback reason, ROI, stage timings, memory, encoded bytes, and final transfer result for every capture.
 
-An initial performance target should be under 200 ms detector time on Mentra Live, subject to the zero-clipped-text gate. The current ONNX implementation is about 4-9x beyond that target.
+An initial steady-state target should be under 200 ms detector time and under 700 ms p50 from saved-JPEG callback to encoded payload on Mentra Live, subject to the zero-clipped-text gate. Also measure immediate post-camera p95/p99: the first two runs were 462-634 ms for inference because the active camera/ISP competed for this small SoC.
 
 ## Primary references
 
@@ -223,4 +274,4 @@ An initial performance target should be under 200 ms detector time on Mentra Liv
 
 ## Bottom line
 
-The PR brings the right architectural question—make text ROI detection replaceable and measurable—but the current implementation answers the model question before defining or measuring the safety objective. Preserve the abstraction and benchmark artifacts; replace the Paddle pipeline with the official algorithm, make uncertainty full-frame-safe, build a ground-truthed Mentra dataset, and then select model/runtime based on text retention first and end-to-end device cost second.
+The PR brings the right architectural question—make text ROI detection replaceable and measurable—but its PP-OCR path is technically incorrect and creates a false impression that light on-glasses inference must take more than a second. It does not. The best measured path is currently warmed ML Kit at a 640-pixel long edge, with a generous padded crop and full-frame-on-uncertainty fallback; official PP-OCRv6 is a slower second candidate. Keep the full-resolution JPEG on the glasses, detect locally, and transmit exactly once. Preserve the abstraction and benchmark artifacts, but do not ship the PR's detector implementation without a ground-truthed Mentra recall set and immediate post-camera latency distribution.
