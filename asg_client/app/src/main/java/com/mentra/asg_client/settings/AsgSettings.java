@@ -4,6 +4,7 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.util.Log;
 
+import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.camera.policy.PhotoSizeTier;
 
 import java.util.Arrays;
@@ -23,6 +24,7 @@ public class AsgSettings {
     private static final String KEY_SAVE_IN_GALLERY_MODE = "save_in_gallery_mode";
     private static final String KEY_ZSL_ENABLED = "zsl_enabled";
     private static final String KEY_MFNR_ENABLED = "mfnr_enabled";
+    private static final String KEY_ZSL_MFNR_ENABLED = "zsl_mfnr_enabled";
     private static final String KEY_BUTTON_PHOTO_NOISE_REDUCTION = "button_photo_noise_reduction";
     private static final String KEY_BUTTON_PHOTO_EDGE_ENHANCEMENT = "button_photo_edge_enhancement";
     private static final String KEY_BUTTON_PHOTO_ISP_DIGITAL_GAIN = "button_photo_isp_digital_gain";
@@ -33,6 +35,7 @@ public class AsgSettings {
     private static final String KEY_BUTTON_PHOTO_SOUND = "button_photo_sound";
     private static final String KEY_BUTTON_PHOTO_MFNR = "button_photo_mfnr";
     private static final String KEY_BUTTON_PHOTO_ZSL = "button_photo_zsl";
+    private static final String KEY_BUTTON_PHOTO_ZSL_MFNR = "button_photo_zsl_mfnr";
     private static final String KEY_HDR_BURST_ENABLED = "hdr_burst_enabled";
     private static final String KEY_MCU_FIRMWARE_VERSION = "mcu_firmware_version";
     private static final String KEY_CAMERA_FOV = "camera_fov";
@@ -52,7 +55,37 @@ public class AsgSettings {
     public AsgSettings(Context context) {
         this.context = context;
         this.prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        migrateLegacyZslMfnrPreferences();
         Log.d(TAG, "AsgSettings initialized");
+    }
+
+    /**
+     * Maps legacy independent preferences to the atomic pair without turning on a partial legacy
+     * configuration. The new key is never overwritten once explicitly set.
+     */
+    private void migrateLegacyZslMfnrPreferences() {
+        SharedPreferences.Editor editor = prefs.edit();
+        boolean changed = false;
+        if (!prefs.contains(KEY_ZSL_MFNR_ENABLED)
+                && (prefs.contains(KEY_MFNR_ENABLED) || prefs.contains(KEY_ZSL_ENABLED))) {
+            boolean enabled =
+                    prefs.getBoolean(KEY_MFNR_ENABLED, false)
+                            && prefs.getBoolean(KEY_ZSL_ENABLED, false);
+            editor.putBoolean(KEY_ZSL_MFNR_ENABLED, enabled);
+            changed = true;
+        }
+        if (!prefs.contains(KEY_BUTTON_PHOTO_ZSL_MFNR)
+                && (prefs.contains(KEY_BUTTON_PHOTO_MFNR) || prefs.contains(KEY_BUTTON_PHOTO_ZSL))) {
+            boolean enabled =
+                    prefs.getBoolean(KEY_BUTTON_PHOTO_MFNR, false)
+                            && prefs.getBoolean(KEY_BUTTON_PHOTO_ZSL, false);
+            editor.putBoolean(KEY_BUTTON_PHOTO_ZSL_MFNR, enabled);
+            changed = true;
+        }
+        if (changed) {
+            editor.commit();
+            Log.i(TAG, "Migrated legacy ZSL/MFNR preferences to coupled settings");
+        }
     }
     
     /**
@@ -218,53 +251,79 @@ public class AsgSettings {
     }
 
     /**
-     * Get the ZSL (Zero Shutter Lag) setting
-     * @return true if ZSL should be enabled, false otherwise (default: true)
+     * Coupled ZSL preview buffering + MFNR still capture.
+     *
+     * @return true when both features should be enabled (default: true)
      */
+    public boolean isZslMfnrEnabled() {
+        if (!AsgConstants.ENABLE_ZSL_MFNR) {
+            return false;
+        }
+        // This is intentionally a product default rather than a button-photo preference. A
+        // request can still explicitly opt out with zslMfnr=false, while physical button photos
+        // always use the default unless they are text/scan/manual captures.
+        boolean enabled = AsgConstants.DEFAULT_ZSL_MFNR;
+        Log.d(TAG, "Retrieved ZSL/MFNR enabled setting: " + enabled);
+        return enabled;
+    }
+
+    /** Persist the coupled ZSL/MFNR device default and mirror legacy keys for compatibility. */
+    public void setZslMfnrEnabled(boolean enabled) {
+        Log.d(TAG, "Setting ZSL/MFNR enabled to: " + enabled);
+        prefs.edit()
+                .putBoolean(KEY_ZSL_MFNR_ENABLED, enabled)
+                .putBoolean(KEY_ZSL_ENABLED, enabled)
+                .putBoolean(KEY_MFNR_ENABLED, enabled)
+                .commit();
+    }
+
+    /** @return true if {@link #KEY_ZSL_MFNR_ENABLED} has been written (not just default). */
+    public boolean hasZslMfnrPreference() {
+        return prefs.contains(KEY_ZSL_MFNR_ENABLED);
+    }
+
+    /**
+     * @deprecated Use {@link #isZslMfnrEnabled()}.
+     */
+    @Deprecated
     public boolean isZslEnabled() {
-        boolean enabled = prefs.getBoolean(KEY_ZSL_ENABLED, true);
-        Log.d(TAG, "Retrieved ZSL enabled setting: " + enabled);
-        return enabled;
+        return isZslMfnrEnabled();
     }
 
     /**
-     * Set the ZSL (Zero Shutter Lag) setting
-     * @param enabled true to enable ZSL, false to disable
+     * @deprecated Use {@link #setZslMfnrEnabled(boolean)}.
      */
+    @Deprecated
     public void setZslEnabled(boolean enabled) {
-        Log.d(TAG, "Setting ZSL enabled to: " + enabled);
-        // Using commit() for immediate persistence
-        prefs.edit().putBoolean(KEY_ZSL_ENABLED, enabled).commit();
+        setZslMfnrEnabled(enabled);
     }
 
     /**
-     * Get the MFNR (Multi-Frame Noise Reduction) setting
-     * @return true if MFNR should be enabled, false otherwise (default: true)
+     * @deprecated Use {@link #isZslMfnrEnabled()}.
      */
+    @Deprecated
     public boolean isMfnrEnabled() {
-        boolean enabled = prefs.getBoolean(KEY_MFNR_ENABLED, true);
-        Log.d(TAG, "Retrieved MFNR enabled setting: " + enabled);
-        return enabled;
+        return isZslMfnrEnabled();
     }
 
     /**
-     * Set the MFNR (Multi-Frame Noise Reduction) setting
-     * @param enabled true to enable MFNR, false to disable
+     * @deprecated Use {@link #setZslMfnrEnabled(boolean)}.
      */
+    @Deprecated
     public void setMfnrEnabled(boolean enabled) {
-        Log.d(TAG, "Setting MFNR enabled to: " + enabled);
-        // Using commit() for immediate persistence
-        prefs.edit().putBoolean(KEY_MFNR_ENABLED, enabled).commit();
+        setZslMfnrEnabled(enabled);
     }
 
     /** @return true if {@link #KEY_MFNR_ENABLED} has been written (not just default). */
+    @Deprecated
     public boolean hasMfnrPreference() {
-        return prefs.contains(KEY_MFNR_ENABLED);
+        return prefs.contains(KEY_MFNR_ENABLED) || prefs.contains(KEY_ZSL_MFNR_ENABLED);
     }
 
     /** @return true if {@link #KEY_ZSL_ENABLED} has been written (not just default). */
+    @Deprecated
     public boolean hasZslPreference() {
-        return prefs.contains(KEY_ZSL_ENABLED);
+        return prefs.contains(KEY_ZSL_ENABLED) || prefs.contains(KEY_ZSL_MFNR_ENABLED);
     }
 
     /** Stored phone preset for MFNR; {@code null} if unset. */
@@ -299,6 +358,36 @@ public class AsgSettings {
         }
         Log.d(TAG, "Setting button photo ZSL to: " + enabled);
         prefs.edit().putBoolean(KEY_BUTTON_PHOTO_ZSL, enabled).commit();
+    }
+
+    /** Stored phone preset for coupled ZSL/MFNR; {@code null} if unset. */
+    public Boolean getButtonPhotoZslMfnr() {
+        if (prefs.contains(KEY_BUTTON_PHOTO_ZSL_MFNR)) {
+            return prefs.getBoolean(KEY_BUTTON_PHOTO_ZSL_MFNR, false);
+        }
+        Boolean legacyMfnr = getButtonPhotoMfnr();
+        Boolean legacyZsl = getButtonPhotoZsl();
+        if (legacyMfnr != null || legacyZsl != null) {
+            return Boolean.TRUE.equals(legacyMfnr) && Boolean.TRUE.equals(legacyZsl);
+        }
+        return null;
+    }
+
+    public void setButtonPhotoZslMfnr(Boolean enabled) {
+        if (enabled == null) {
+            prefs.edit()
+                    .remove(KEY_BUTTON_PHOTO_ZSL_MFNR)
+                    .remove(KEY_BUTTON_PHOTO_MFNR)
+                    .remove(KEY_BUTTON_PHOTO_ZSL)
+                    .commit();
+            return;
+        }
+        Log.d(TAG, "Setting button photo ZSL/MFNR to: " + enabled);
+        prefs.edit()
+                .putBoolean(KEY_BUTTON_PHOTO_ZSL_MFNR, enabled)
+                .putBoolean(KEY_BUTTON_PHOTO_MFNR, enabled)
+                .putBoolean(KEY_BUTTON_PHOTO_ZSL, enabled)
+                .commit();
     }
 
     /** Stored phone preset for noise reduction; {@code null} if unset. */
@@ -439,9 +528,9 @@ public class AsgSettings {
         prefs.edit().putBoolean(KEY_BUTTON_PHOTO_SOUND, enabled).commit();
     }
 
-    /** Clears scan/button-photo tuning prefs and restores global MFNR/ZSL defaults. */
+    /** Clears scan/button-photo tuning prefs and restores global ZSL/MFNR defaults. */
     public void clearButtonPhotoCaptureTuning() {
-        Log.d(TAG, "Clearing button photo capture tuning and restoring MFNR/ZSL defaults");
+        Log.d(TAG, "Clearing button photo capture tuning and restoring ZSL/MFNR defaults");
         prefs.edit()
                 .remove(KEY_BUTTON_PHOTO_NOISE_REDUCTION)
                 .remove(KEY_BUTTON_PHOTO_EDGE_ENHANCEMENT)
@@ -453,8 +542,10 @@ public class AsgSettings {
                 .remove(KEY_BUTTON_PHOTO_SOUND)
                 .remove(KEY_BUTTON_PHOTO_MFNR)
                 .remove(KEY_BUTTON_PHOTO_ZSL)
-                .putBoolean(KEY_MFNR_ENABLED, true)
-                .putBoolean(KEY_ZSL_ENABLED, true)
+                .remove(KEY_BUTTON_PHOTO_ZSL_MFNR)
+                .putBoolean(KEY_ZSL_MFNR_ENABLED, false)
+                .putBoolean(KEY_MFNR_ENABLED, false)
+                .putBoolean(KEY_ZSL_ENABLED, false)
                 .commit();
     }
 
