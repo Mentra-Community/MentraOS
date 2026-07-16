@@ -299,7 +299,7 @@ public class SerialPortBridge {
     public boolean send(byte[] data) {
         OutputStream os = mOS;
         if (mbStart && os != null && !mbOtaUpdating) {
-            Log.d(TAG, ">>> sending " + data.length + " bytes");
+            // Hot path — avoid Log.d per UART write (file TX + status JSON share this).
             return writeAllToSerial(os, data, "data");
         } else {
             if (mbOtaUpdating) {
