@@ -1408,6 +1408,33 @@ public class AsgClientService extends Service implements NetworkStateListener, T
             }
 
             @Override
+            public boolean sendFileViaBluetooth(byte[] data, String fileName) {
+                Log.d(
+                        TAG,
+                        "📁 sendFileViaBluetooth(byte[]) called - "
+                                + (data != null ? data.length : 0)
+                                + " bytes as "
+                                + fileName);
+
+                if (serviceInitializer.getServiceManager().getBluetoothManager() != null) {
+                    boolean started =
+                            serviceInitializer
+                                    .getServiceManager()
+                                    .getBluetoothManager()
+                                    .sendFile(data, fileName);
+                    if (started) {
+                        Log.i(TAG, "✅ In-memory BLE file transfer started for: " + fileName);
+                    } else {
+                        Log.e(TAG, "❌ Failed to start in-memory BLE file transfer for: " + fileName);
+                    }
+                    return started;
+                } else {
+                    Log.w(TAG, "⚠️ Bluetooth manager is null - cannot send file");
+                    return false;
+                }
+            }
+
+            @Override
             public boolean isBleTransferInProgress() {
                 Log.d(TAG, "📊 isBleTransferInProgress() called");
 
