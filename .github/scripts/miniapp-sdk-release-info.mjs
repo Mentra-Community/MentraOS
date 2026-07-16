@@ -211,6 +211,7 @@ for (const pkg of PACKAGES) {
 setOutput('matrix', JSON.stringify(matrix));
 setOutput('has_publishes', String(matrix.length > 0));
 setOutput('dry_run', String(dryRun));
+setOutput('force_release', String(forceRelease));
 
 if (outputPath) {
   const summaryPath = process.env.GITHUB_STEP_SUMMARY;
