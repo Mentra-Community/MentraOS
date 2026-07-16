@@ -146,6 +146,10 @@ class MentraLive : SGCManager() {
 
         // Heartbeat parameters
         private const val HEARTBEAT_INTERVAL_MS = 30000 // 30 seconds
+        // Grace period before an unanswered BLE wire v2 handshake is re-armed for retry,
+        // and the per-session cap on automatic retries (see sendWireHandshake).
+        private const val WIRE_HANDSHAKE_RETRY_GRACE_MS = 5000L
+        private const val WIRE_HANDSHAKE_MAX_ATTEMPTS = 3
         private const val BATTERY_REQUEST_EVERY_N_HEARTBEATS = 10 // Every 10 heartbeats (5 minutes)
         private const val RSSI_READ_INTERVAL_MS = 10000L // 10 seconds
 
@@ -213,6 +217,7 @@ class MentraLive : SGCManager() {
     private var peerWireProtocolVersion = 0
     private var useBinaryWireProtocol = false
     private var wireHandshakeQueued = false
+    private var wireHandshakeAttempts = 0
     // Negotiated K900 STRING length endianness for the phone<->glasses BLE link. Defaults to
     // legacy big-endian; upgraded to little-endian only when the glasses advertise wire_caps.k900_le
     // (or a v2 binary handshake succeeds, which implies wire-v2 LE).
@@ -784,6 +789,7 @@ class MentraLive : SGCManager() {
                 peerWireProtocolVersion = 0
                 useBinaryWireProtocol = false
                 wireHandshakeQueued = false
+                wireHandshakeAttempts = 0
                 peerK900Le = false
                 peerWireCapsBinary = false
                 peerFilePayloadV2 = false
@@ -819,6 +825,7 @@ class MentraLive : SGCManager() {
             peerWireProtocolVersion = 0
             useBinaryWireProtocol = false
             wireHandshakeQueued = false
+            wireHandshakeAttempts = 0
             peerK900Le = false
             peerWireCapsBinary = false
             peerFilePayloadV2 = false
@@ -3493,7 +3500,11 @@ class MentraLive : SGCManager() {
                 Bridge.log("LIVE: 🎉 Received glasses_ready message - SOC is booted and ready!")
 
                 // Negotiate wire capabilities advertised in the glasses_ready handshake.
+                // Also attempt the v2 handshake here: when the glasses' service restarts
+                // mid-session (OTA install, crash restart) the build number is already
+                // known, and glasses_ready is the message that re-advertises the caps.
                 parsePeerWireCaps(json)
+                maybeSendWireHandshake()
 
                 // Set the ready flag to stop any future readiness checks
                 glassesReady = true
@@ -3884,8 +3895,6 @@ class MentraLive : SGCManager() {
                             val buildNumInt = Integer.parseInt(buildNum)
                             buildNumberInt = buildNumInt
                             Bridge.log("LIVE: Parsed build number as integer: " + buildNumInt)
-                            parsePeerWireCaps(json)
-                            maybeSendWireHandshake()
                         } catch (e: NumberFormatException) {
                             buildNumberInt = 0
                             Log.e(TAG, "Failed to parse build number as integer: " + buildNum)
@@ -3952,6 +3961,16 @@ class MentraLive : SGCManager() {
                             DeviceStore.apply("glasses", "systemTimeMs", v.toLong())
                         }
                     }
+
+                    // Negotiate wire caps from ANY version_info chunk, not only the one
+                    // carrying build_number: the glasses put wire_caps in version_info_3
+                    // (firmware chunk) while build_number travels in version_info_1, so
+                    // gating negotiation on build_number silently discards the caps.
+                    // parsePeerWireCaps no-ops without a wire_caps key and
+                    // maybeSendWireHandshake gates on caps + build + not-yet-queued, so
+                    // running them per chunk is safe.
+                    parsePeerWireCaps(json)
+                    maybeSendWireHandshake()
 
                     Bridge.log("LIVE: Processed version_info fields and sent to RN")
                     Bridge.sendVersionInfo(fields)
@@ -7234,6 +7253,35 @@ class MentraLive : SGCManager() {
             Bridge.log("LIVE: Sending BLE wire v2 handshake")
             wireHandshakeQueued = true
             queueData(packed, null)
+            // The handshake and its reply are fire-and-forget binary frames with no ACK
+            // tracking; if either is lost, wireHandshakeQueued would block every future
+            // attempt and the session would silently stay on the legacy string wire.
+            // Re-arm after a grace period so negotiation can retry, bounded per session
+            // so a peer that advertises binary but never answers doesn't get pinged
+            // forever (later caps/version triggers may still retry explicitly).
+            wireHandshakeAttempts++
+            handler.postDelayed(
+                    {
+                        if (wireHandshakeQueued &&
+                                        peerWireProtocolVersion < BleWireProtocol.PROTOCOL_V2
+                        ) {
+                            Bridge.log(
+                                    "LIVE: BLE wire v2 handshake unanswered after " +
+                                            WIRE_HANDSHAKE_RETRY_GRACE_MS +
+                                            "ms (attempt " +
+                                            wireHandshakeAttempts +
+                                            "/" +
+                                            WIRE_HANDSHAKE_MAX_ATTEMPTS +
+                                            ") - re-arming"
+                            )
+                            wireHandshakeQueued = false
+                            if (wireHandshakeAttempts < WIRE_HANDSHAKE_MAX_ATTEMPTS) {
+                                maybeSendWireHandshake()
+                            }
+                        }
+                    },
+                    WIRE_HANDSHAKE_RETRY_GRACE_MS
+            )
         } catch (e: Exception) {
             Log.e(TAG, "Failed to send wire handshake", e)
         }
@@ -7243,6 +7291,7 @@ class MentraLive : SGCManager() {
         peerWireProtocolVersion = BleWireProtocol.PROTOCOL_V2
         useBinaryWireProtocol = true
         wireHandshakeQueued = false
+        wireHandshakeAttempts = 0
         peerK900Le = true
         BleJsonCompact.markSessionConnected(System.currentTimeMillis())
         Bridge.log(logMessage)

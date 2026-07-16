@@ -1271,6 +1271,7 @@ class MentraLive: NSObject, SGCManager {
             peerWireProtocolVersion = 0
             useBinaryWireProtocol = false
             wireHandshakeQueued = false
+            wireHandshakeAttempts = 0
             peerK900Le = false
             peerWireCapsBinary = false
             peerFilePayloadV2 = false
@@ -1453,6 +1454,11 @@ class MentraLive: NSObject, SGCManager {
     private var peerWireProtocolVersion = 0
     private var useBinaryWireProtocol = false
     private var wireHandshakeQueued = false
+    private var wireHandshakeAttempts = 0
+    // Grace period before an unanswered BLE wire v2 handshake is re-armed for retry,
+    // and the per-session cap on automatic retries (see sendWireHandshake).
+    private static let wireHandshakeRetryGraceSeconds: TimeInterval = 5
+    private static let wireHandshakeMaxAttempts = 3
     // Negotiated K900 STRING length endianness for the phone<->glasses BLE link. Defaults to legacy
     // big-endian; upgraded to little-endian only when the glasses advertise wire_caps.k900_le (or a
     // v2 binary handshake succeeds, which implies wire-v2 LE).
@@ -2320,7 +2326,12 @@ class MentraLive: NSObject, SGCManager {
 
         switch type {
         case "glasses_ready":
+            // Negotiate wire capabilities advertised in the glasses_ready handshake.
+            // Also attempt the v2 handshake here: when the glasses' service restarts
+            // mid-session (OTA install, crash restart) the build number is already
+            // known, and glasses_ready is the message that re-advertises the caps.
             parsePeerWireCaps(json)
+            maybeSendWireHandshake()
             handleGlassesReady()
 
         case "battery_status":
@@ -2599,8 +2610,6 @@ class MentraLive: NSObject, SGCManager {
                 if let buildNumber = fields["build_number"] as? String {
                     isNewVersion = (Int(buildNumber) ?? 0) >= 5
                     DeviceStore.shared.apply("glasses", "buildNumber", buildNumber)
-                    parsePeerWireCaps(json)
-                    maybeSendWireHandshake()
                 }
                 if let deviceModel = fields["device_model"] as? String {
                     DeviceStore.shared.apply("glasses", "deviceModel", deviceModel)
@@ -2631,6 +2640,16 @@ class MentraLive: NSObject, SGCManager {
                 if let systemTimeMs = fields["system_time_ms"] as? NSNumber {
                     DeviceStore.shared.apply("glasses", "systemTimeMs", systemTimeMs.int64Value)
                 }
+
+                // Negotiate wire caps from ANY version_info chunk, not only the one
+                // carrying build_number: the glasses put wire_caps in version_info_3
+                // (firmware chunk) while build_number travels in version_info_1, so
+                // gating negotiation on build_number silently discards the caps.
+                // parsePeerWireCaps no-ops without a wire_caps key and
+                // maybeSendWireHandshake gates on caps + build + not-yet-queued, so
+                // running them per chunk is safe.
+                parsePeerWireCaps(json)
+                maybeSendWireHandshake()
 
                 Bridge.sendVersionInfo(fields)
             } else {
@@ -4093,12 +4112,33 @@ class MentraLive: NSObject, SGCManager {
         Bridge.log("LIVE: Sending BLE wire v2 handshake")
         wireHandshakeQueued = true
         queueSend(packed, id: "-1")
+        // The handshake and its reply are fire-and-forget binary frames with no ACK
+        // tracking; if either is lost, wireHandshakeQueued would block every future
+        // attempt and the session would silently stay on the legacy string wire.
+        // Re-arm after a grace period so negotiation can retry, bounded per session
+        // so a peer that advertises binary but never answers doesn't get pinged
+        // forever (later caps/version triggers may still retry explicitly).
+        wireHandshakeAttempts += 1
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.wireHandshakeRetryGraceSeconds) { [weak self] in
+            guard let self else { return }
+            if self.wireHandshakeQueued, self.peerWireProtocolVersion < BleWireProtocol.protocolV2 {
+                Bridge.log(
+                    "LIVE: BLE wire v2 handshake unanswered after \(Self.wireHandshakeRetryGraceSeconds)s " +
+                        "(attempt \(self.wireHandshakeAttempts)/\(Self.wireHandshakeMaxAttempts)) - re-arming"
+                )
+                self.wireHandshakeQueued = false
+                if self.wireHandshakeAttempts < Self.wireHandshakeMaxAttempts {
+                    self.maybeSendWireHandshake()
+                }
+            }
+        }
     }
 
     private func activateBinaryWireV2Session(logMessage: String) {
         peerWireProtocolVersion = BleWireProtocol.protocolV2
         useBinaryWireProtocol = true
         wireHandshakeQueued = false
+        wireHandshakeAttempts = 0
         peerK900Le = true
         BleJsonCompact.markSessionConnected(epochMs: Int64(Date().timeIntervalSince1970 * 1000))
         Bridge.log(logMessage)
@@ -5010,6 +5050,7 @@ class MentraLive: NSObject, SGCManager {
         peerWireProtocolVersion = 0
         useBinaryWireProtocol = false
         wireHandshakeQueued = false
+        wireHandshakeAttempts = 0
         peerK900Le = false
         peerWireCapsBinary = false
         peerFilePayloadV2 = false
