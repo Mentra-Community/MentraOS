@@ -89,6 +89,10 @@ const WIFI_CONNECT_GRACE_MS = 20_000;
 // device that stays away longer than this needs a fresh user tap.
 const OTA_CHAIN_RESUME_WINDOW_MS = 5 * 60_000;
 
+// A failed chain-start dispatch does not consume a pass, but this many
+// consecutive failures end the run instead of retrying on every check.
+const MAX_OTA_CHAIN_START_FAILURES = 3;
+
 function isDisplayableOtaStatus(payload: OtaStatusEvent) {
   return payload.status !== 'idle' || Boolean(payload.error_message);
 }
@@ -758,6 +762,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   const otaChainRemainingRef = useRef(0);
   const otaChainDeviceKeyRef = useRef<string | null>(null);
   const otaChainDisconnectedAtRef = useRef<number | null>(null);
+  const otaChainStartFailuresRef = useRef(0);
   const otaStartInFlightRef = useRef(false);
   const connectedDeviceKeyRef = useRef<string | null>(null);
   const otaAppIdentityRef = useRef<string | null>(null);
@@ -1393,9 +1398,19 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
         otaStartingAppIdentityRef.current = otaAppIdentityRef.current;
         clearOtaDisplayProgress();
         await BluetoothSdk.startOtaUpdate();
+        otaChainStartFailuresRef.current = 0;
         addEvent('LIVE', 'OTA continuing with next update pass');
       } catch (error) {
         otaStartInFlightRef.current = false;
+        // Nothing started, so the failed dispatch should not consume a
+        // pass — but stop the run after repeated failures rather than
+        // retrying on every subsequent check.
+        otaChainStartFailuresRef.current += 1;
+        if (otaChainStartFailuresRef.current >= MAX_OTA_CHAIN_START_FAILURES) {
+          otaChainRemainingRef.current = 0;
+        } else {
+          otaChainRemainingRef.current += 1;
+        }
         throw error;
       }
     });
@@ -1480,6 +1495,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       // Arm the auto-chain only once the start is acknowledged.
       otaChainRemainingRef.current = MAX_OTA_CHAIN_PASSES;
       otaChainDeviceKeyRef.current = connectedDeviceKeyRef.current;
+      otaChainStartFailuresRef.current = 0;
       addEvent('LIVE', 'OTA start acknowledged');
     });
   }
