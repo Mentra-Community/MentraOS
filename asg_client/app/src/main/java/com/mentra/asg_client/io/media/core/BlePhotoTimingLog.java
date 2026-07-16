@@ -548,7 +548,7 @@ public final class BlePhotoTimingLog {
             case "still_image_save_done":
                 return "CAPTURE: image save pipeline finished (ready to notify)";
             case "photo_captured":
-                return "CAPTURE: sensor JPEG written to storage";
+                return "CAPTURE: sensor JPEG available to photo pipeline";
             case "start_compress_for_ble":
                 return "COMPRESS: handing captured JPEG to BLE compression worker";
             case "ble_compress_thread_start":

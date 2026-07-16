@@ -1,0 +1,68 @@
+package com.mentra.asg_client.camera.model;
+
+import androidx.annotation.Nullable;
+
+import org.json.JSONObject;
+
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+
+/**
+ * In-memory result of a photo capture: the sensor JPEG bytes plus the assembled IMU payload, handed
+ * directly to consumers (BLE compression). Persistence is optional: save=true writes in the
+ * background, while save=false uses a completed false future and never persists the JPEG.
+ *
+ * <p>Produced by {@code PhotoSession} for captures enqueued with {@code deferDiskWrite=true} and
+ * retrieved via {@link CapturedPhotoStore}. The {@link #persistence} future tracks the background
+ * optional JPEG + EXIF + IMU-sidecar write; any consumer that needs the file on disk must gate on
+ * {@link #awaitPersistence} instead of touching the path directly, so it can never race the write.
+ */
+public final class CapturedPhoto {
+
+    /** Complete sensor JPEG as delivered by the camera HAL. */
+    public final byte[] jpegBytes;
+
+    /** Assembled IMU payload for EXIF embedding, or {@code null} when no samples were captured. */
+    @Nullable public final JSONObject imuPayload;
+
+    /**
+     * Persistence result: {@code true} once the JPEG (and IMU artifacts, if any) are on disk,
+     * {@code false} when persistence was intentionally skipped or failed.
+     */
+    public final Future<Boolean> persistence;
+
+    public CapturedPhoto(
+            byte[] jpegBytes, @Nullable JSONObject imuPayload, Future<Boolean> persistence) {
+        this.jpegBytes = jpegBytes;
+        this.imuPayload = imuPayload;
+        this.persistence = persistence;
+    }
+
+    /**
+     * Block until the background disk write finishes.
+     *
+     * @return true when the file is on disk, false on write failure or timeout
+     */
+    public boolean awaitPersistence(long timeoutMs) {
+        try {
+            return Boolean.TRUE.equals(persistence.get(timeoutMs, TimeUnit.MILLISECONDS));
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        } catch (ExecutionException | TimeoutException | CancellationException e) {
+            return false;
+        }
+    }
+
+    /**
+     * Try to cancel the background write for photos that will never be kept (save=false). Returns
+     * true when the write was cancelled before starting — nothing was or will be written. When
+     * cancellation loses the race, the caller must await and clean the file up as usual.
+     */
+    public boolean cancelPersistence() {
+        return persistence.cancel(false);
+    }
+}

@@ -83,8 +83,8 @@ public class AsgConstants {
 
     /**
      * Emit {@code ⏱️ [BLE PHOTO]} timing logs for the full take_photo → AVIF/JPEG compress → BLE
-     * transfer pipeline. Filter logcat on tag {@code BlePhotoTiming} or prefix {@code ⏱️ [BLE PHOTO]}.
-     * Keep false in production.
+     * transfer pipeline. Filter logcat on tag {@code BlePhotoTiming} or prefix {@code ⏱️ [BLE
+     * PHOTO]}. Keep false in production.
      */
     public static final boolean ENABLE_PHOTO_TIMING_LOGS = true;
 
@@ -102,14 +102,48 @@ public class AsgConstants {
     /** JPEG quality for the canonical text-mode crop written to disk (gallery/WiFi upload). */
     public static final int TEXT_MODE_BLE_JPEG_QUALITY = 95;
 
+    /** Long-edge size used for on-glasses ML Kit text localization. */
+    // 1280 is the smallest tested size that consistently retained stylized/low-contrast label
+    // text on real 4032x3024 Mentra Live captures while remaining below the 1s detector budget.
+    public static final int TEXT_MODE_MLKIT_ANALYSIS_LONG_EDGE = 1280;
+
+    /** Minimum source-pixel padding around the union of ML Kit text lines. */
+    public static final int TEXT_MODE_MLKIT_MIN_PADDING_PX = 32;
+
+    /** Horizontal padding relative to the detected text-union width. */
+    public static final float TEXT_MODE_MLKIT_PADDING_X_FRACTION = 0.12f;
+
+    /** Vertical padding relative to the detected text-union height. */
+    public static final float TEXT_MODE_MLKIT_PADDING_Y_FRACTION = 0.25f;
+
+    // A lone OCR line is weak evidence for the complete text-bearing object. Keep generous
+    // surrounding context so a small conventional label can pull in nearby stylized text that
+    // the recognizer did not box (validated on curved product labels).
+    public static final float TEXT_MODE_MLKIT_SINGLE_LINE_PADDING_X_HEIGHTS = 3f;
+    public static final float TEXT_MODE_MLKIT_SINGLE_LINE_PADDING_TOP_HEIGHTS = 4f;
+    public static final float TEXT_MODE_MLKIT_SINGLE_LINE_PADDING_BOTTOM_HEIGHTS = 11f;
+
+    /** Hard timeout for one local ML Kit request; failure preserves the full frame. */
+    public static final long TEXT_MODE_MLKIT_TIMEOUT_MS = 5000L;
+
     /**
      * Codec for every BLE photo payload — text mode and ordinary size-tier photos alike. Change
      * this one value to {@code AVIF} or {@code JPEG_FAST} to switch both paths at once.
      */
     public static final String BLE_PHOTO_CODEC = "JPEG_FAST";
 
-    /** JPEG quality for all BLE photo payloads when {@link #BLE_PHOTO_CODEC} is {@code JPEG_FAST}. */
+    /**
+     * JPEG quality for all BLE photo payloads when {@link #BLE_PHOTO_CODEC} is {@code JPEG_FAST}.
+     */
     public static final int BLE_PHOTO_JPEG_FAST_QUALITY = 80;
+
+    /**
+     * Max wait for the deferred background photo write ({@code CapturedPhoto.persistence}) when a
+     * BLE photo consumer needs the file on disk (gallery save, text-mode canonical crop, cleanup).
+     * Generous: the write runs concurrently with capture-to-transfer work and normally finishes
+     * long before anyone awaits it.
+     */
+    public static final long BLE_PHOTO_PERSISTENCE_AWAIT_TIMEOUT_MS = 10_000;
 
     // BLE size-tier downscale caps (long edge; aspect ratio preserved) and AVIF quality
     public static final int BLE_PHOTO_LOW_TARGET_PX = 800;
@@ -119,11 +153,4 @@ public class AsgConstants {
     public static final int BLE_PHOTO_HIGH_TARGET_PX = 1600;
     public static final int BLE_PHOTO_HIGH_AVIF_QUALITY = 48;
     public static final int BLE_PHOTO_MAX_TARGET_PX = 1920;
-
-    // Text-region detector production flags (see MediaCaptureService.buildTextDetectConfig)
-    public static final boolean TEXT_DETECT_ALLOW_SINGLE_COMPONENT_LINES = true;
-    public static final boolean TEXT_DETECT_CROP_FROM_TOP_LINE_ONLY = true;
-    public static final boolean TEXT_DETECT_ENABLE_STRUCTURE_FILTER = true;
-    public static final boolean TEXT_DETECT_IMPROVED_CROP_ACCURACY = true;
-    public static final float TEXT_DETECT_MIN_CROP_AREA_FRACTION = 0.004f;
 }

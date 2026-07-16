@@ -2,6 +2,10 @@ package com.mentra.asg_client.io.media.core;
 
 import android.graphics.Bitmap;
 
+import androidx.annotation.Nullable;
+
+import org.json.JSONObject;
+
 /**
  * Selector over the concrete {@link BlePhotoEncoder} implementations. Callers pick a codec (via
  * {@link BlePhotoEncodingPolicy}) and get one encoding contract.
@@ -18,14 +22,31 @@ final class BlePhotoEncoders {
 
     /** Encode {@code bitmap} with the selected codec without silently switching codecs. */
     static BlePhotoEncoder.EncodeResult encode(
-            Bitmap bitmap,
-            BleCodec codec,
-            int quality,
-            String sourceJpegPath)
-            throws Exception {
+            Bitmap bitmap, BleCodec codec, int quality, String sourceJpegPath) throws Exception {
         if (codec == BleCodec.JPEG_FAST) {
             return JPEG_FAST.encode(bitmap, quality, sourceJpegPath);
         }
         return AVIF.encode(bitmap, quality, sourceJpegPath);
+    }
+
+    /** Encode a RAM-first capture without consulting the source JPEG path for IMU metadata. */
+    static BlePhotoEncoder.EncodeResult encode(
+            Bitmap bitmap,
+            BleCodec codec,
+            int quality,
+            @Nullable String sourceJpegPath,
+            @Nullable JSONObject imuPayload)
+            throws Exception {
+        // A null source path explicitly identifies a RAM-first capture, including the valid case
+        // where the IMU recorder produced no samples. Never probe a path that was intentionally
+        // not persisted.
+        if (codec == BleCodec.JPEG_FAST) {
+            return sourceJpegPath == null
+                    ? JPEG_FAST.encode(bitmap, quality, imuPayload)
+                    : JPEG_FAST.encode(bitmap, quality, sourceJpegPath);
+        }
+        return sourceJpegPath == null
+                ? AVIF.encode(bitmap, quality, imuPayload)
+                : AVIF.encode(bitmap, quality, sourceJpegPath);
     }
 }
