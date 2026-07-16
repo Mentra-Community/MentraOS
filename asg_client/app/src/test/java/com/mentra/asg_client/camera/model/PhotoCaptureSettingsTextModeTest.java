@@ -19,39 +19,41 @@ public class PhotoCaptureSettingsTextModeTest {
         assertEquals(
                 Integer.valueOf(AsgConstants.TEXT_MODE_AE_EXPOSURE_DIVISOR),
                 tuned.aeExposureDivisor);
-        assertFalse(tuned.mfnrEnabled());
+        assertFalse(tuned.zslMfnrEnabled());
+        assertEquals(Boolean.FALSE, tuned.zslMfnr);
+        assertEquals(Boolean.FALSE, tuned.mfnr);
         assertEquals(Boolean.FALSE, tuned.zsl);
     }
 
     @Test
-    public void applyTextModeExposurePreservesExplicitTuning() {
+    public void applyTextModeExposurePreservesExplicitTuningButForcesZslMfnrOff() {
         PhotoCaptureSettings request =
                 new PhotoCaptureSettings.Builder()
                         .isoCap(800)
-                        .mfnr(true)
-                        .zsl(true)
+                        .zslMfnr(true)
                         .edgeEnhancement(false)
                         .build();
 
         PhotoCaptureSettings tuned = PhotoCaptureSettings.applyTextModeExposure(request);
 
         assertEquals(Integer.valueOf(800), tuned.isoCap);
-        assertEquals(Boolean.TRUE, tuned.mfnr);
-        assertEquals(Boolean.TRUE, tuned.zsl);
+        assertEquals(Boolean.FALSE, tuned.zslMfnr);
+        assertEquals(Boolean.FALSE, tuned.mfnr);
+        assertEquals(Boolean.FALSE, tuned.zsl);
         assertEquals(Boolean.FALSE, tuned.edgeEnhancement);
     }
 
     @Test
-    public void textModeDefaultsOverrideStoredGlobalMfnrAndZsl() {
+    public void textModeDefaultsOverrideStoredGlobalZslMfnr() {
         AsgSettings stored = mock(AsgSettings.class);
-        when(stored.isMfnrEnabled()).thenReturn(true);
-        when(stored.isZslEnabled()).thenReturn(true);
+        when(stored.isZslMfnrEnabled()).thenReturn(true);
 
         PhotoCaptureSettings textDefaults =
                 PhotoCaptureSettings.applyTextModeExposure(PhotoCaptureSettings.EMPTY);
         PhotoCaptureSettings merged =
                 PhotoCaptureSettings.mergeForSdkRequest(textDefaults, stored);
 
+        assertEquals(Boolean.FALSE, merged.zslMfnr);
         assertEquals(Boolean.FALSE, merged.mfnr);
         assertEquals(Boolean.FALSE, merged.zsl);
     }
