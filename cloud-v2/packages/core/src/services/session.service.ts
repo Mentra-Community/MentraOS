@@ -172,10 +172,23 @@ export async function refreshSession(args: {
   const presentedHash = hashRefreshToken(args.refreshToken);
 
   const now = new Date();
-  const oldDoc = await RefreshTokenModel.findOne({
+  // Normal path: the presented token is the session's live refresh token.
+  // Recovery path (OS-1703): it is the immediate predecessor — the client
+  // refreshed, the server rotated, but the response carrying the successor
+  // never got persisted (process killed mid-rotation, dropped connection).
+  // The predecessor stays honored until the successor is first USED: once a
+  // successor is presented it becomes `prevTokenHash` itself, and anything
+  // older matches nothing and fails exactly as before.
+  let oldDoc = await RefreshTokenModel.findOne({
     refreshTokenHash: presentedHash,
     expiresAt: { $gt: now },
   }).lean();
+  if (!oldDoc) {
+    oldDoc = await RefreshTokenModel.findOne({
+      prevTokenHash: presentedHash,
+      expiresAt: { $gt: now },
+    }).lean();
+  }
   if (!oldDoc) {
     throw new InvalidGrant("refresh_token unknown, expired, or already used");
   }
@@ -198,22 +211,39 @@ export async function refreshSession(args: {
   });
   const nextRefresh = mintRefreshToken();
 
-  // Single-use guarantee: only the request still holding the current hash can
-  // rotate it. A concurrent refresh that arrives milliseconds later sees no
-  // matching current hash and fails instead of minting a second live token.
-  const rotated = await RefreshTokenModel.findOneAndUpdate(
+  // Single-use guarantee with one-step recovery. The same $set serves both
+  // paths: on a normal rotation the presented hash becomes `prevTokenHash`,
+  // retiring the grandparent; on a recovery rotation the presented hash
+  // already IS `prevTokenHash` (so it stays put, and the client can recover
+  // repeatedly if it keeps losing responses) while the never-delivered
+  // successor's hash is overwritten — orphaned, dead. Only one concurrent
+  // request can win each findOneAndUpdate; a loser on the live-hash path
+  // retries once via the predecessor path, so a concurrent duplicate gets a
+  // valid pair instead of a spurious invalid_grant.
+  const rotation = {
+    $set: {
+      refreshTokenHash: nextRefresh.hash,
+      prevTokenHash: presentedHash,
+      issuedAt: new Date(),
+      expiresAt: nextRefresh.expiresAt,
+    },
+  };
+  let rotated = await RefreshTokenModel.findOneAndUpdate(
     {
       refreshTokenHash: presentedHash,
       expiresAt: { $gt: new Date() },
     },
-    {
-      $set: {
-        refreshTokenHash: nextRefresh.hash,
-        issuedAt: new Date(),
-        expiresAt: nextRefresh.expiresAt,
-      },
-    },
+    rotation,
   ).lean();
+  if (!rotated) {
+    rotated = await RefreshTokenModel.findOneAndUpdate(
+      {
+        prevTokenHash: presentedHash,
+        expiresAt: { $gt: new Date() },
+      },
+      rotation,
+    ).lean();
+  }
   if (!rotated) {
     throw new InvalidGrant("refresh_token unknown, expired, or already used");
   }
