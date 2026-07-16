@@ -53,6 +53,8 @@ export interface PhotoOpts {
   sound?: boolean
   saveToGallery?: boolean
   exposureTimeNs?: number
+  /** Coupled ZSL preview buffering + MFNR still capture. */
+  zslMfnr?: boolean
 }
 
 export interface PhotoTaken {
@@ -219,6 +221,7 @@ export class PhonePhotoCoordinator {
         save: opts.saveToGallery ?? false,
         sound: opts.sound ?? true,
         exposureTimeNs: opts.exposureTimeNs ?? null,
+        ...(opts.zslMfnr != null ? {zslMfnr: opts.zslMfnr} : {}),
       }).catch((err) => {
         const e = this.activeRequests.get(requestId)
         if (!e) return
