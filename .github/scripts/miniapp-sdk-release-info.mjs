@@ -172,21 +172,17 @@ for (const pkg of PACKAGES) {
   const previous = beforeSha ? readJsonAt(beforeSha, pkg.path) : null;
   const previousVersion = previous?.version || '';
   const versionChanged = Boolean(previousVersion) && previousVersion !== current.version;
-  let include = versionChanged || forceRelease;
+  const include = versionChanged || forceRelease;
 
   const tag = distTagFor(current.version);
 
   // Guardrail: a plain (non-prerelease) version publishes to `latest`, which is
   // what `npm install` resolves by default. Never let that happen off `main`.
-  // Not an error — a plain bump legitimately rides dev -> staging on its way to
-  // main; those pushes just aren't its channel, so it skips and publishes when
-  // the same bump lands on main.
   if (include && tag === 'latest' && branch && branch !== 'main') {
-    console.log(
-      `::notice::${current.name}@${current.version} targets the "latest" dist-tag, which only ships from main; ` +
-        `skipping on "${branch}". It publishes when this version reaches main.`,
+    throw new Error(
+      `${current.name}@${current.version} would publish to the "latest" dist-tag from branch "${branch}". ` +
+        `Production releases (no prerelease label) must land on main. Use a -dev / -beta prerelease here.`,
     );
-    include = false;
   }
   if (include && branch === 'staging' && tag !== 'beta') {
     console.log(`::warning::${current.name}@${current.version} on staging resolves to dist-tag "${tag}" (expected "beta").`);

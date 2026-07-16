@@ -1,6 +1,6 @@
 {
   "name": "@mentra/miniapp",
-  "version": "0.3.0",
+  "version": "0.3.0-dev.0",
   "description": "SDK for building MentraOS local miniapps (browser/WebView)",
   "author": "Mentra Labs",
   "license": "MIT",
