@@ -99,6 +99,7 @@ setOutput("version", currentVersion)
 setOutput("dist_tag", distTag)
 setOutput("dry_run", String(dryRun))
 setOutput("run_release", String(runRelease))
+setOutput("force_release", String(forceRelease))
 
 console.log(`Mentra Engine package: ${currentPackage.name}`)
 console.log(`Current version: ${currentVersion}`)

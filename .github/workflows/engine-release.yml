@@ -59,8 +59,10 @@ jobs:
     outputs:
       package_name: ${{ steps.release-info.outputs.package_name }}
       version: ${{ steps.release-info.outputs.version }}
+      dist_tag: ${{ steps.release-info.outputs.dist_tag }}
       run_release: ${{ steps.release-info.outputs.run_release }}
       dry_run: ${{ steps.release-info.outputs.dry_run }}
+      force_release: ${{ steps.release-info.outputs.force_release }}
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
@@ -183,8 +185,16 @@ jobs:
         working-directory: ${{ env.ENGINE_PACKAGE_DIR }}
         run: npm pack --dry-run
 
+      - name: Bootstrap gate — first publish must be supervised
+        # Same gate as the miniapp pipeline: a package that does not exist on
+        # npm never auto-publishes off a push (a version bump merged to dev
+        # must not mint the first release). Bootstrap is a workflow_dispatch
+        # with force_release=true.
+        if: needs.detect.outputs.dry_run != 'true' && steps.npm-registry.outputs.package_exists != 'true' && steps.npm-registry.outputs.version_exists != 'true' && needs.detect.outputs.force_release != 'true'
+        run: echo "::notice::${{ needs.detect.outputs.package_name }} does not exist on npm yet; skipping auto-publish. Bootstrap it with a supervised workflow_dispatch (force_release=true)."
+
       - name: Check initial publish token
-        if: needs.detect.outputs.dry_run != 'true' && steps.npm-registry.outputs.package_exists != 'true' && steps.npm-registry.outputs.version_exists != 'true'
+        if: needs.detect.outputs.dry_run != 'true' && steps.npm-registry.outputs.package_exists != 'true' && steps.npm-registry.outputs.version_exists != 'true' && needs.detect.outputs.force_release == 'true'
         run: |
           if [[ -z "${NODE_AUTH_TOKEN:-}" ]]; then
             echo "::error::Set the NPM_TOKEN repository secret to bootstrap the first @mentra/engine release."
@@ -194,7 +204,7 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish initial npm package
-        if: needs.detect.outputs.dry_run != 'true' && steps.npm-registry.outputs.package_exists != 'true' && steps.npm-registry.outputs.version_exists != 'true'
+        if: needs.detect.outputs.dry_run != 'true' && steps.npm-registry.outputs.package_exists != 'true' && steps.npm-registry.outputs.version_exists != 'true' && needs.detect.outputs.force_release == 'true'
         working-directory: ${{ env.ENGINE_PACKAGE_DIR }}
         # access/registry come from the package's publishConfig. The dist-tag is
         # derived from the version's prerelease label — without --tag, npm
