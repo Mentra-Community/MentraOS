@@ -40,6 +40,16 @@ promotion. The `main` channel is additionally held behind the
 Actions → Variables): until it is `true`, merges to main skip publishing with a
 notice, so opening the public channel stays a deliberate human act.
 
+**Publish mode per channel:** `dev` publishes **directly** (fast internal
+iteration). `beta` and `latest` go through **npm's staging queue**
+(`npm stage publish`) — a maintainer must approve each version in the npm UI
+(2FA) before it goes live. Why: internal ranges are carets, so a new peer
+version *floats into already-approved `@mentra/engine` installs on the same
+channel* — every version that can reach beta/latest therefore needs its own
+approval. A staged-but-unapproved version isn't live (`npm view` won't list
+it), so a re-merge before approval just re-attempts the stage (tolerated);
+**approve or reject staged versions promptly** to keep the queue meaningful.
+
 ## One-time setup (required before the first publish)
 
 1. **npm org access.** The `@mentra` org already owns `@mentra/sdk`,

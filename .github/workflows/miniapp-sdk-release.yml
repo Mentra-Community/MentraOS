@@ -17,6 +17,13 @@ name: Release Miniapp SDK
 # (latest = npm's default install) additionally requires the NPM_MAIN_CHANNEL
 # repository variable to be "true".
 #
+# Publish mode per channel: dev publishes DIRECTLY (fast internal iteration);
+# beta and latest go through npm's STAGING QUEUE (`npm stage publish`) and a
+# maintainer must approve each version in the npm UI before it goes live. Why:
+# the engine's peer ranges are carets, so a new peer version floats into
+# already-approved engine installs on the same channel — every version that
+# can reach beta/latest therefore needs its own human approval.
+#
 # Before packing, manifests are stamped to the channel's derived versions and
 # ranges (stamp-channel-manifests.mjs), then workspace `file:` deps are
 # rewritten to exact published versions (rewrite-file-deps.mjs) so wrappers
@@ -114,6 +121,15 @@ jobs:
           node-version: "20"
           registry-url: "https://registry.npmjs.org"
 
+      - name: Use npm with staged publishing support
+        # beta/latest publishes go through npm's staging queue for human
+        # approval. `npm stage publish` needs npm >=11.15.0; pin the major so
+        # the release path doesn't pick up whatever npm shipped this morning.
+        if: github.ref_name != 'dev'
+        run: |
+          npm install -g npm@11
+          npm stage --help >/dev/null 2>&1 || { echo "::error::this npm ($(npm --version)) lacks 'npm stage' — staged publishing needs >=11.15.0."; exit 1; }
+
       - name: Cache Bun cache
         uses: actions/cache@v4
         with:
@@ -197,10 +213,41 @@ jobs:
         run: |
           echo "::notice::${{ matrix.pkg.name }} is not on npm yet — skipping auto-publish. Bootstrap it with a workflow_dispatch (force_release=true)."
 
-      - name: Publish to npm
-        if: needs.detect.outputs.dry_run != 'true' && steps.registry.outputs.exists != 'true' && (steps.registry.outputs.package_exists == 'true' || needs.detect.outputs.force_release == 'true')
+      # Direct publish covers the dev channel (fast internal iteration) and
+      # bootstraps (npm cannot stage a package that does not exist — those are
+      # supervised force_release dispatches anyway). Everything else on
+      # beta/latest goes through the staging queue below: engine peer ranges
+      # are carets, so a new peer version FLOATS into already-approved engine
+      # installs — every version that can reach those channels needs its own
+      # human approval.
+      - name: Publish to npm (dev channel / bootstrap)
+        if: needs.detect.outputs.dry_run != 'true' && steps.registry.outputs.exists != 'true' && (github.ref_name == 'dev' || steps.registry.outputs.package_exists != 'true') && (steps.registry.outputs.package_exists == 'true' || needs.detect.outputs.force_release == 'true')
         working-directory: ${{ matrix.pkg.dir }}
         run: npm publish --tag "${{ matrix.pkg.tag }}" --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Stage for approval (beta/latest channels)
+        if: needs.detect.outputs.dry_run != 'true' && steps.registry.outputs.exists != 'true' && steps.registry.outputs.package_exists == 'true' && github.ref_name != 'dev'
+        working-directory: ${{ matrix.pkg.dir }}
+        # The tag is immutable once staged, so it must be right here. A staged
+        # version is not live yet (npm view won't list it), so a re-merge before
+        # anyone approves re-attempts the stage — tolerate that one error.
+        run: |
+          set +e
+          out=$(npm stage publish --tag "${{ matrix.pkg.tag }}" --access public 2>&1)
+          code=$?
+          set -e
+          echo "$out"
+          if [[ $code -ne 0 ]]; then
+            if echo "$out" | grep -qi "already"; then
+              echo "::notice::${{ matrix.pkg.name }}@${{ matrix.pkg.version }} is already in the staging queue — approve or reject it in the npm UI."
+            else
+              exit $code
+            fi
+          else
+            echo "::notice::${{ matrix.pkg.name }}@${{ matrix.pkg.version }} staged for '${{ matrix.pkg.tag }}' — a maintainer must approve it in the npm UI before it goes live."
+          fi
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
