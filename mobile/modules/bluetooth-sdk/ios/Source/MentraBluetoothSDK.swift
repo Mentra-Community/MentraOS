@@ -496,7 +496,7 @@ public final class MentraBluetoothSDK {
                     // Mirror Android: clear all cached scan-tuning keys so reconnect sync
                     // does not replay stale values after a reset.
                     let cat = ObservableStore.bluetoothCategory
-                    for key in ["button_photo_mfnr", "button_photo_zsl", "button_photo_noise_reduction",
+                    for key in ["button_photo_zsl_mfnr", "button_photo_mfnr", "button_photo_zsl", "button_photo_noise_reduction",
                                 "button_photo_edge_enhancement", "button_photo_isp_digital_gain",
                                 "button_photo_isp_analog_gain", "button_photo_ae_exposure_divisor",
                                 "button_photo_iso_cap", "button_photo_compress", "button_photo_sound"] {
@@ -506,11 +506,17 @@ public final class MentraBluetoothSDK {
                 if let size = settings.size {
                     DeviceStore.shared.set(ObservableStore.bluetoothCategory, "button_photo_size", size.rawValue)
                 }
-                if let mfnr = settings.mfnr {
-                    DeviceStore.shared.set(ObservableStore.bluetoothCategory, "button_photo_mfnr", mfnr)
-                }
-                if let zsl = settings.zsl {
-                    DeviceStore.shared.set(ObservableStore.bluetoothCategory, "button_photo_zsl", zsl)
+                if let resolvedZslMfnr = settings.resolvedZslMfnr() {
+                    DeviceStore.shared.set(ObservableStore.bluetoothCategory, "button_photo_zsl_mfnr", resolvedZslMfnr)
+                    DeviceStore.shared.set(ObservableStore.bluetoothCategory, "button_photo_mfnr", resolvedZslMfnr)
+                    DeviceStore.shared.set(ObservableStore.bluetoothCategory, "button_photo_zsl", resolvedZslMfnr)
+                } else {
+                    if let mfnr = settings.mfnr {
+                        DeviceStore.shared.set(ObservableStore.bluetoothCategory, "button_photo_mfnr", mfnr)
+                    }
+                    if let zsl = settings.zsl {
+                        DeviceStore.shared.set(ObservableStore.bluetoothCategory, "button_photo_zsl", zsl)
+                    }
                 }
                 if let noiseReduction = settings.noiseReduction {
                     DeviceStore.shared.set(ObservableStore.bluetoothCategory, "button_photo_noise_reduction", noiseReduction)
