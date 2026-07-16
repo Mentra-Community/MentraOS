@@ -63,6 +63,7 @@ describe("CameraModule", () => {
         sound: true,
         saveToGallery: false,
         exposureTimeNs: undefined,
+        zslMfnr: undefined,
       },
     ])
   })
@@ -74,6 +75,15 @@ describe("CameraModule", () => {
     await camera.takePhoto({mode: "text"})
 
     expect(requestCalls[0]).toMatchObject({mode: "text"})
+  })
+
+  test("takePhoto forwards zslMfnr", async () => {
+    const {session, requestCalls} = mockSession({})
+    const camera = new CameraModule(session)
+
+    await camera.takePhoto({zslMfnr: true})
+
+    expect(requestCalls[0]).toMatchObject({zslMfnr: true})
   })
 
   test("warmUp forwards size and default duration", async () => {
