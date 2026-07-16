@@ -15,12 +15,15 @@ export interface PhotoTakenResult {
 export interface TakePhotoConfig {
   size: PhotoSize
   mode: PhotoMode
+  /** Coupled ZSL preview buffering + MFNR capture. Always sent as an explicit boolean. */
+  zslMfnr: boolean
 }
 
 export function buildTakePhotoArgs(config: TakePhotoConfig) {
   const options: Record<string, unknown> = {
     size: config.size,
     mode: config.mode,
+    zslMfnr: config.zslMfnr,
   }
   return [options] as const
 }
