@@ -5,7 +5,10 @@ import static org.junit.Assert.assertEquals;
 import com.mentra.asg_client.camera.CameraConstants;
 
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.robolectric.RobolectricTestRunner;
 
+@RunWith(RobolectricTestRunner.class)
 public class PhotoModeTest {
 
     @Test
@@ -30,5 +33,12 @@ public class PhotoModeTest {
     public void captureSizePreservesPhotoTier() {
         assertEquals("low", PhotoMode.captureSize("photo", "low"));
         assertEquals("high", PhotoMode.captureSize("photo", "high"));
+    }
+
+    @Test
+    public void captureSizeRejectsInternalTextTierForPhotoMode() {
+        assertEquals(
+                CameraConstants.SIZE_MEDIUM,
+                PhotoMode.captureSize(PhotoMode.PHOTO, CameraConstants.SIZE_TEXT));
     }
 }

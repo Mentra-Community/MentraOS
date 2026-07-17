@@ -33,11 +33,19 @@ public final class PhotoSizeTier {
             case CameraConstants.SIZE_MEDIUM:
             case CameraConstants.SIZE_HIGH:
             case CameraConstants.SIZE_MAX:
-            case CameraConstants.SIZE_TEXT:
                 return size;
             default:
                 Log.w(TAG, "Unknown photo size '" + size + "' — using medium");
                 return CameraConstants.SIZE_MEDIUM;
         }
+    }
+
+    /**
+     * Normalizes a size after {@link PhotoMode#captureSize} has resolved the capture mode. Unlike
+     * {@link #normalize}, this accepts the internal text-mode sensor tier; do not use it to parse a
+     * public {@code size} wire field.
+     */
+    public static String normalizeCaptureSize(String size) {
+        return CameraConstants.SIZE_TEXT.equals(size) ? size : normalize(size);
     }
 }

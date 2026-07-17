@@ -11,7 +11,7 @@ public final class PhotoResolutionPolicy {
     private PhotoResolutionPolicy() {}
 
     public static Size targetSize(boolean fromSdk, String requestedSizeTier) {
-        String tier = PhotoSizeTier.normalize(requestedSizeTier);
+        String tier = PhotoSizeTier.normalizeCaptureSize(requestedSizeTier);
         if (CameraConstants.SIZE_TEXT.equals(tier)) {
             return textModeSensorTarget();
         }
