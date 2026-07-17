@@ -417,7 +417,7 @@ public class CameraNeoService extends LifecycleService {
      *       enqueuePhotoRequest}) and runs without a cold ISP start, so we must NOT gate on the
      *       shot state being idle.
      *   <li>The open session won't be reconfigured for this request. A differing size, SDK flag,
-     *       or manual exposure forces a close + reopen (see {@code
+     *       manual exposure, or resolved {@code zslMfnr} forces a close + reopen (see {@code
      *       PhotoSession#willReuseConfiguredCamera}), which is effectively a cold start.
      * </ul>
      *

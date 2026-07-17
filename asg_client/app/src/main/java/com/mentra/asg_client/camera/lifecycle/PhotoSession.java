@@ -386,8 +386,41 @@ public final class PhotoSession {
 
     private void rememberConfiguredCamera(QueuedPhotoRequest pr) {
         if (pr != null) {
-            configuredCameraConfig = ConfiguredCameraConfig.from(pr);
+            configuredCameraConfig = configFrom(pr);
         }
+    }
+
+    private ConfiguredCameraConfig configFrom(QueuedPhotoRequest request) {
+        return new ConfiguredCameraConfig(
+                request.size,
+                request.isFromSdk,
+                request.exposureTimeNs,
+                resolveZslMfnrForRequest(request.captureSettings, request.exposureTimeNs));
+    }
+
+    private ConfiguredCameraConfig configFrom(ActivePhotoCapture request) {
+        return new ConfiguredCameraConfig(
+                request.size,
+                request.isFromSdk,
+                request.exposureTimeNs,
+                resolveZslMfnrForRequest(request.captureSettings, request.exposureTimeNs));
+    }
+
+    /**
+     * Resolved coupled ZSL/MFNR for a request shape (queue / warm prediction), matching the preview
+     * + still policy used once that request becomes active. Explicit manual shutter forces the pair
+     * off; omitted {@code zslMfnr} inherits the global default.
+     */
+    private boolean resolveZslMfnrForRequest(
+            @Nullable PhotoCaptureSettings settings, @Nullable Long exposureTimeNs) {
+        if (exposureTimeNs != null && exposureTimeNs > 0) {
+            return false;
+        }
+        if (settings != null && settings.zslMfnr != null) {
+            return settings.zslMfnrEnabled();
+        }
+        return hooks.cameraSettings() != null
+                && hooks.cameraSettings().mAsgSettings.isZslMfnrEnabled();
     }
 
     /** Clears the configured-camera snapshot when the HAL session is torn down. */
@@ -435,9 +468,10 @@ public final class PhotoSession {
     // ----- Dispatch -----
 
     /**
-     * Compares {@code request} to the active session camera config (size, SDK flag, exposure). Uses
-     * {@link #configuredCameraConfig} when {@link #activeCapture} was cleared after a shot. Must be
-     * called before {@link #activateQueuedRequest(QueuedPhotoRequest)} mutates current state.
+     * Compares {@code request} to the active session camera config (size, SDK flag, exposure,
+     * resolved zslMfnr). Uses {@link #configuredCameraConfig} when {@link #activeCapture} was
+     * cleared after a shot. Must be called before {@link #activateQueuedRequest(QueuedPhotoRequest)}
+     * mutates current state.
      */
     private boolean needsReconfigurationForQueued(QueuedPhotoRequest request) {
         if (request == null) {
@@ -445,12 +479,16 @@ public final class PhotoSession {
         }
         ConfiguredCameraConfig baseline = configuredCameraConfig;
         if (baseline == null && activeCapture != null) {
-            baseline = ConfiguredCameraConfig.from(activeCapture);
+            baseline = configFrom(activeCapture);
         }
         if (baseline == null) {
             return false;
         }
-        return baseline.differsFrom(request);
+        return baseline.differsFrom(
+                request.size,
+                request.isFromSdk,
+                request.exposureTimeNs,
+                resolveZslMfnrForRequest(request.captureSettings, request.exposureTimeNs));
     }
 
     /**
@@ -458,22 +496,37 @@ public final class PhotoSession {
      * session (a "warm" capture) instead of triggering a close + reopen reconfiguration.
      *
      * <p>The camera is reconfigured (and therefore effectively cold) when the requested size, SDK
-     * flag, or manual exposure differs from the open session — see {@link
+     * flag, manual exposure, or resolved {@code zslMfnr} differs from the open session — see {@link
      * #needsReconfigurationForQueued}. When there is no configured baseline (camera never opened or
      * already torn down) this returns {@code false}: a fresh open is a cold start.
+     *
+     * <p>When {@code captureSettings} is omitted, {@code zslMfnr} is resolved from the global
+     * default (same as {@link PhotoCaptureSettings#EMPTY}).
      *
      * @return true if a capture with these params would reuse the open session, false otherwise.
      */
     public boolean willReuseConfiguredCamera(
             @Nullable String size, boolean isFromSdk, @Nullable Long exposureTimeNs) {
+        return willReuseConfiguredCamera(size, isFromSdk, exposureTimeNs, null);
+    }
+
+    public boolean willReuseConfiguredCamera(
+            @Nullable String size,
+            boolean isFromSdk,
+            @Nullable Long exposureTimeNs,
+            @Nullable PhotoCaptureSettings captureSettings) {
         ConfiguredCameraConfig baseline = configuredCameraConfig;
         if (baseline == null && activeCapture != null) {
-            baseline = ConfiguredCameraConfig.from(activeCapture);
+            baseline = configFrom(activeCapture);
         }
         if (baseline == null) {
             return false;
         }
-        return !baseline.differsFrom(size, isFromSdk, exposureTimeNs);
+        return !baseline.differsFrom(
+                size,
+                isFromSdk,
+                exposureTimeNs,
+                resolveZslMfnrForRequest(captureSettings, exposureTimeNs));
     }
 
     public void dispatchNextPhotoRequest() {
@@ -2153,39 +2206,35 @@ public final class PhotoSession {
         @Nullable final String size;
         final boolean isFromSdk;
         @Nullable final Long exposureTimeNs;
+        /** Resolved coupled ZSL/MFNR applied to the open preview/still path. */
+        final boolean zslMfnr;
 
         ConfiguredCameraConfig(
-                @Nullable String size, boolean isFromSdk, @Nullable Long exposureTimeNs) {
+                @Nullable String size,
+                boolean isFromSdk,
+                @Nullable Long exposureTimeNs,
+                boolean zslMfnr) {
             this.size = size;
             this.isFromSdk = isFromSdk;
             this.exposureTimeNs = exposureTimeNs;
-        }
-
-        static ConfiguredCameraConfig from(QueuedPhotoRequest request) {
-            return new ConfiguredCameraConfig(
-                    request.size, request.isFromSdk, request.exposureTimeNs);
-        }
-
-        static ConfiguredCameraConfig from(ActivePhotoCapture request) {
-            return new ConfiguredCameraConfig(
-                    request.size, request.isFromSdk, request.exposureTimeNs);
-        }
-
-        boolean differsFrom(QueuedPhotoRequest request) {
-            return differsFrom(request.size, request.isFromSdk, request.exposureTimeNs);
+            this.zslMfnr = zslMfnr;
         }
 
         boolean differsFrom(
                 @Nullable String otherSize,
                 boolean otherIsFromSdk,
-                @Nullable Long otherExposureTimeNs) {
+                @Nullable Long otherExposureTimeNs,
+                boolean otherZslMfnr) {
             if (!Objects.equals(size, otherSize)) {
                 return true;
             }
             if (isFromSdk != otherIsFromSdk) {
                 return true;
             }
-            return !Objects.equals(exposureTimeNs, otherExposureTimeNs);
+            if (!Objects.equals(exposureTimeNs, otherExposureTimeNs)) {
+                return true;
+            }
+            return zslMfnr != otherZslMfnr;
         }
     }
 

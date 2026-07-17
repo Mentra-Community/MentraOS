@@ -1,6 +1,10 @@
 import {Platform} from "react-native"
 
-type TimerHandle = ReturnType<typeof setTimeout> | number
+/**
+ * React Native timers are numeric handles at runtime. Node/DOM typings may type
+ * `setTimeout` as `Timeout`, so we normalize BgTimer to always return `number`.
+ */
+export type TimerHandle = number
 
 type NitroTimerApi = {
   setTimeout: (callback: () => void, duration: number) => number
@@ -109,7 +113,7 @@ export const BgTimer = {
   setTimeout(callback: () => void, duration: number): TimerHandle {
     return withNitro(
       api => api.setTimeout(callback, duration),
-      () => setTimeout(callback, duration),
+      () => setTimeout(callback, duration) as unknown as number,
     )
   },
 
@@ -119,10 +123,10 @@ export const BgTimer = {
     }
     withNitro(
       api => {
-        api.clearTimeout(id as number)
+        api.clearTimeout(id)
       },
       () => {
-        clearTimeout(id as ReturnType<typeof setTimeout>)
+        clearTimeout(id as unknown as ReturnType<typeof setTimeout>)
       },
     )
   },
@@ -130,7 +134,7 @@ export const BgTimer = {
   setInterval(callback: () => void, interval: number): TimerHandle {
     return withNitro(
       api => api.setInterval(callback, interval),
-      () => setInterval(callback, interval),
+      () => setInterval(callback, interval) as unknown as number,
     )
   },
 
@@ -140,10 +144,10 @@ export const BgTimer = {
     }
     withNitro(
       api => {
-        api.clearInterval(id as number)
+        api.clearInterval(id)
       },
       () => {
-        clearInterval(id as ReturnType<typeof setInterval>)
+        clearInterval(id as unknown as ReturnType<typeof setInterval>)
       },
     )
   },

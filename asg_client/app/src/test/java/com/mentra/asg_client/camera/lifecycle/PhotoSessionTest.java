@@ -125,6 +125,37 @@ public class PhotoSessionTest {
     }
 
     @Test
+    public void dispatchNextPhotoRequest_configuredCamera_zslMfnrChange_reopens() throws Exception {
+        PhotoSession.Hooks hooks = mockConfiguredCameraHooks();
+        PhotoCaptureSettings zslOn = new PhotoCaptureSettings.Builder().zslMfnr(true).build();
+        PhotoCaptureSettings zslOff = new PhotoCaptureSettings.Builder().zslMfnr(false).build();
+        QueuedPhotoRequest prior =
+                new QueuedPhotoRequest(
+                        "/tmp/zsl-on.jpg", "large", false, true, null, null, zslOn, null);
+        PhotoSession session = new PhotoSession(hooks);
+        activateQueuedRequest(session, prior);
+        clearActiveCapture(session);
+
+        QueuedPhotoRequestQueue.getInstance()
+                .offer(
+                        new QueuedPhotoRequest(
+                                "/tmp/zsl-off.jpg",
+                                "large",
+                                false,
+                                true,
+                                null,
+                                null,
+                                zslOff,
+                                null));
+
+        session.dispatchNextPhotoRequest();
+
+        verify(hooks).cancelKeepAliveTimer();
+        verify(hooks).closeCamera();
+        verify(hooks).openCameraInternal("/tmp/zsl-off.jpg", false);
+    }
+
+    @Test
     public void onCameraClosed_clearsConfiguredSnapshot() throws Exception {
         PhotoSession.Hooks hooks = mockConfiguredCameraHooks();
         QueuedPhotoRequest prior =
