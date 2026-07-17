@@ -176,16 +176,17 @@ describe("PhonePhotoCoordinator", () => {
       expect(requestPhotoNative.mock.calls[0]![0]).toMatchObject({mode: "text"})
     })
 
-    test("passes zslMfnr through to the native take_photo command", async () => {
+    test("passes zsl and mfnr through to the native take_photo command", async () => {
       const coord = new PhonePhotoCoordinator()
-      await coord.takePhoto("com.a", {zslMfnr: true})
-      expect(requestPhotoNative.mock.calls[0]![0]).toMatchObject({zslMfnr: true})
+      await coord.takePhoto("com.a", {zsl: true, mfnr: false})
+      expect(requestPhotoNative.mock.calls[0]![0]).toMatchObject({zsl: true, mfnr: false})
     })
 
-    test("omits zslMfnr when unset", async () => {
+    test("omits zsl and mfnr when unset", async () => {
       const coord = new PhonePhotoCoordinator()
       await coord.takePhoto("com.a", {})
-      expect(requestPhotoNative.mock.calls[0]![0]).not.toHaveProperty("zslMfnr")
+      expect(requestPhotoNative.mock.calls[0]![0]).not.toHaveProperty("zsl")
+      expect(requestPhotoNative.mock.calls[0]![0]).not.toHaveProperty("mfnr")
     })
 
     test("normalizes legacy size 'full' to 'max' for the native take_photo command", async () => {
