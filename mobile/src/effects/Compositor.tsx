@@ -79,6 +79,9 @@ const GLASS_WARMUP_MS = 10
 
 export default function Compositor() {
   const foregroundApp = useForegroundApp()
+  // Last foregrounded packageName (null = none) — lets the keyboard-dismiss
+  // effect below fire only on real identity changes, not reference churn.
+  const prevForegroundPackageRef = useRef<string | null>(null)
   const didSwipeToExit = useRef(false)
   const viewShotRef = useRef<View | null>(null)
   const insets = useSaferAreaInsets()
@@ -99,8 +102,16 @@ export default function Compositor() {
     // served view across a switch to a different app (or back to none on
     // minimize), causing the keyboard to pop back up over a screen with no
     // visible input field. This is the single choke point both directions
-    // funnel through, so dismiss unconditionally on every foreground change.
-    Keyboard.dismiss()
+    // funnel through. Gate on the foregrounded IDENTITY, not the object:
+    // refresh() hands this effect a new foregroundApp reference on every
+    // store poll even while the same miniapp stays foregrounded, and
+    // dismissing on those would drop the keyboard mid-typing (e.g. an RN
+    // TextInput on a settings screen) with no actual app switch.
+    const currentPackage = foregroundApp?.packageName ?? null
+    if (currentPackage !== prevForegroundPackageRef.current) {
+      prevForegroundPackageRef.current = currentPackage
+      Keyboard.dismiss()
+    }
     if (foregroundApp) {
       // Only swap renderedApp when a DIFFERENT app is foregrounded. refresh()
       // hands us a new foregroundApp object reference on every poll even when
