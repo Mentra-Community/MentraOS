@@ -2090,11 +2090,11 @@ public class MediaCaptureService {
 
     /**
      * Capture a photo that is only saved to the gallery: an SDK take_photo with save=true and no
-     * upload target. There is no delivery leg (no webhook upload, no BLE transfer), so this
-     * bypasses the single-flight photo-job gate and enqueues straight into the camera queue,
-     * exactly like button photos — rapid bursts serialize at the camera instead of failing
-     * CAMERA_BUSY. The terminal photo_response carries the captureId (the requestId-stamped capture
-     * directory name) for sync-time correlation.
+     * upload target. Ordinary photos bypass the single-flight photo-job gate and enqueue straight
+     * into the camera queue, exactly like button photos. Text mode remains single-flight through
+     * detection and final persistence so bursts cannot retain an unbounded queue of sensor JPEGs.
+     * The terminal photo_response carries the captureId (the requestId-stamped capture directory
+     * name) for sync-time correlation.
      */
     public boolean takePhotoForLocalSave(
             String photoFilePath,
@@ -2108,9 +2108,6 @@ public class MediaCaptureService {
             PhotoCaptureSettings captureSettings) {
         if (captureSettings == null) {
             captureSettings = PhotoCaptureSettings.EMPTY;
-        }
-        if (PhotoMode.TEXT.equals(mode)) {
-            textRoiDetector.warmUp();
         }
         final boolean textModeRequested = PhotoMode.TEXT.equals(mode);
         String captureSize = PhotoMode.TEXT.equals(mode) ? PhotoSizeTier.normalize("max") : size;
@@ -2139,6 +2136,17 @@ public class MediaCaptureService {
                     "INSUFFICIENT_STORAGE",
                     "Insufficient storage space for photo capture");
             return false;
+        }
+
+        if (textModeRequested && !acquirePhotoJob(requestId)) {
+            Log.w(TAG, "Text-mode local-save job already in flight: " + requestId);
+            sendPhotoErrorResponse(
+                    requestId, "CAMERA_BUSY", "Another photo job is in progress");
+            return false;
+        }
+        if (textModeRequested) {
+            startCaptureSafetyTimeout(requestId);
+            textRoiDetector.warmUp();
         }
 
         Log.i(
@@ -2224,40 +2232,55 @@ public class MediaCaptureService {
                                 CapturedPhoto capturedPhoto) {
                             if (textModeRequested) {
                                 if (capturedPhoto == null) {
-                                    sendPhotoErrorResponse(
-                                            requestId,
-                                            "PHOTO_SAVE_FAILED",
-                                            "Text-mode capture was not available in memory");
+                                    try {
+                                        sendPhotoErrorResponse(
+                                                requestId,
+                                                "PHOTO_SAVE_FAILED",
+                                                "Text-mode capture was not available in memory");
+                                    } finally {
+                                        releasePhotoJob(requestId);
+                                    }
                                     return;
                                 }
                                 try {
                                     textModeProcessingExecutor.execute(
                                             () -> {
-                                                TextRegionDetection detection =
-                                                        runTextRegionDetection(
-                                                                capturedPhoto.jpegBytes, filePath);
-                                                if (!persistTextModeSelectionFromMemory(
-                                                        capturedPhoto,
-                                                        filePath,
-                                                        requestId,
-                                                        detection.roi)) {
-                                                    sendPhotoErrorResponse(
+                                                try {
+                                                    TextRegionDetection detection =
+                                                            runTextRegionDetection(
+                                                                    capturedPhoto.jpegBytes,
+                                                                    filePath);
+                                                    if (!persistTextModeSelectionFromMemory(
+                                                            capturedPhoto,
+                                                            filePath,
                                                             requestId,
-                                                            "PHOTO_SAVE_FAILED",
-                                                            "Could not save final text-mode output");
-                                                    return;
+                                                            detection.roi)) {
+                                                        sendPhotoErrorResponse(
+                                                                requestId,
+                                                                "PHOTO_SAVE_FAILED",
+                                                                "Could not save final text-mode"
+                                                                        + " output");
+                                                        return;
+                                                    }
+                                                    finishLocalSavePhoto(
+                                                            requestId,
+                                                            captureId,
+                                                            filePath,
+                                                            captureMetadata);
+                                                } finally {
+                                                    releasePhotoJob(requestId);
                                                 }
-                                                finishLocalSavePhoto(
-                                                        requestId,
-                                                        captureId,
-                                                        filePath,
-                                                        captureMetadata);
                                             });
                                 } catch (RejectedExecutionException executorClosed) {
-                                    sendPhotoErrorResponse(
-                                            requestId,
-                                            "PHOTO_SAVE_FAILED",
-                                            "Text-mode processing stopped during service cleanup");
+                                    try {
+                                        sendPhotoErrorResponse(
+                                                requestId,
+                                                "PHOTO_SAVE_FAILED",
+                                                "Text-mode processing stopped during service"
+                                                        + " cleanup");
+                                    } finally {
+                                        releasePhotoJob(requestId);
+                                    }
                                 }
                                 return;
                             }
@@ -2272,22 +2295,38 @@ public class MediaCaptureService {
 
                         @Override
                         public void onPhotoError(CameraOperationError error) {
-                            Log.e(TAG, "Failed to capture local-save photo: " + error.message());
-                            sendPhotoErrorResponse(requestId, error.code(), error.message());
+                            try {
+                                Log.e(
+                                        TAG,
+                                        "Failed to capture local-save photo: " + error.message());
+                                sendPhotoErrorResponse(requestId, error.code(), error.message());
 
-                            if (mMediaCaptureListener != null) {
-                                mMediaCaptureListener.onMediaError(
-                                        requestId,
-                                        error.message(),
-                                        MediaUploadQueueManager.MEDIA_TYPE_PHOTO);
+                                if (mMediaCaptureListener != null) {
+                                    mMediaCaptureListener.onMediaError(
+                                            requestId,
+                                            error.message(),
+                                            MediaUploadQueueManager.MEDIA_TYPE_PHOTO);
+                                }
+                            } finally {
+                                if (textModeRequested) {
+                                    releasePhotoJob(requestId);
+                                }
                             }
                         }
                     });
             return true;
         } catch (Exception e) {
-            Log.e(TAG, "Error taking local-save photo", e);
-            sendPhotoErrorResponse(
-                    requestId, "CAMERA_CAPTURE_FAILED", "Error taking photo: " + e.getMessage());
+            try {
+                Log.e(TAG, "Error taking local-save photo", e);
+                sendPhotoErrorResponse(
+                        requestId,
+                        "CAMERA_CAPTURE_FAILED",
+                        "Error taking photo: " + e.getMessage());
+            } finally {
+                if (textModeRequested) {
+                    releasePhotoJob(requestId);
+                }
+            }
             return false;
         }
     }
