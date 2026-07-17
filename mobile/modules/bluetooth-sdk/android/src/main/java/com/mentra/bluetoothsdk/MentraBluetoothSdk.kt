@@ -10,6 +10,7 @@ import java.util.Collections
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeoutOrNull
@@ -120,6 +121,7 @@ class MentraBluetoothSdk private constructor(
     private data class PendingWifiScan(
         val pending: PendingResponse<List<WifiScanResult>>,
         var latestResults: List<WifiScanResult> = emptyList(),
+        var waiters: Int = 0,
     )
 
     private data class PendingWifiStatusRequest(
@@ -640,10 +642,10 @@ class MentraBluetoothSdk private constructor(
 
     suspend fun requestWifiScan(): List<WifiScanResult> {
         val pending = PendingResponse<List<WifiScanResult>>("WiFi scan request")
-        val request = PendingWifiScan(pending)
+        val request = PendingWifiScan(pending, waiters = 1)
         val existing =
             synchronized(oneShotLock) {
-                pendingWifiScan ?: run {
+                pendingWifiScan?.also { it.waiters++ } ?: run {
                     pendingWifiScan = request
                     null
                 }
@@ -651,13 +653,22 @@ class MentraBluetoothSdk private constructor(
         if (existing != null) {
             // Join the in-flight scan instead of failing with request_in_flight;
             // the scan screen auto-starts a scan on mount and can be pushed twice.
-            return existing.pending.await(WIFI_SCAN_TIMEOUT_MS)
+            try {
+                return existing.pending.await(WIFI_SCAN_TIMEOUT_MS)
+            } finally {
+                releaseWifiScanWaiter(existing)
+            }
         }
         try {
             deviceManager.requestWifiScan()
             // The glasses wait up to 15s for scan-results broadcasts before sending
             // scan_complete, so give them longer than that before falling back.
             return pending.await(WIFI_SCAN_TIMEOUT_MS)
+        } catch (cancellation: CancellationException) {
+            // Only this caller is going away; the glasses scan keeps running and
+            // other coroutines may have joined the same pending entry. Leave the
+            // shared deferred alone so scan_complete can still resolve for them.
+            throw cancellation
         } catch (error: Throwable) {
             if (error is BluetoothSdkException && error.code == "request_timeout") {
                 val fallbackResults = synchronized(oneShotLock) { request.latestResults }
@@ -672,10 +683,18 @@ class MentraBluetoothSdk private constructor(
             pending.reject(error)
             throw error
         } finally {
-            synchronized(oneShotLock) {
-                if (pendingWifiScan?.pending === pending) {
-                    pendingWifiScan = null
-                }
+            releaseWifiScanWaiter(request)
+        }
+    }
+
+    /** Last waiter (starter or joiner) out clears the shared scan entry so a
+     * cancelled starter can't strand it, and an abandoned scan can't wedge
+     * future ones. handleWifiScanResultsForRequests may clear it first. */
+    private fun releaseWifiScanWaiter(request: PendingWifiScan) {
+        synchronized(oneShotLock) {
+            request.waiters--
+            if (request.waiters <= 0 && pendingWifiScan === request) {
+                pendingWifiScan = null
             }
         }
     }
@@ -1097,6 +1116,11 @@ class MentraBluetoothSdk private constructor(
                 otaVersionUrl = versionInfo.otaVersionUrl.ifBlank { status.otaVersionUrl },
                 appVersion = versionInfo.appVersion.ifBlank { status.appVersion },
             )
+        } catch (cancellation: CancellationException) {
+            // Never swallow cancellation into the stale-status fallback: callers
+            // like startOtaUpdate() would otherwise keep running side effects
+            // (sendOtaStart) on behalf of an already-cancelled coroutine.
+            throw cancellation
         } catch (_: Throwable) {
             status
         }
