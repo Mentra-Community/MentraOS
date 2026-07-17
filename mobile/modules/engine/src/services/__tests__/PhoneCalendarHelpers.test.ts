@@ -68,6 +68,40 @@ describe("PhoneCalendarService", () => {
     })
   })
 
+  test("preserves an all-day event's calendar date in its timezone", () => {
+    expect(
+      normalizeCalendarEvent({
+        id: "event-2",
+        calendarId: "calendar-1",
+        title: "Holiday",
+        startDate: "2026-07-16T15:00:00.000Z",
+        endDate: "2026-07-17T15:00:00.000Z",
+        timeZone: "Asia/Tokyo",
+        allDay: true,
+      }),
+    ).toMatchObject({
+      id: "calendar-1:event-2:2026-07-17T00:00:00.000+09:00",
+      startsAt: "2026-07-17T00:00:00.000+09:00",
+      endsAt: "2026-07-18T00:00:00.000+09:00",
+      timezone: "Asia/Tokyo",
+      allDay: true,
+    })
+  })
+
+  test("keeps date-only all-day values on their intended date", () => {
+    const event = normalizeCalendarEvent({
+      id: "event-3",
+      calendarId: "calendar-1",
+      startDate: "2026-03-08",
+      endDate: "2026-03-09",
+      timeZone: "America/Los_Angeles",
+      allDay: true,
+    })
+
+    expect(event.startsAt).toBe("2026-03-08T00:00:00.000-08:00")
+    expect(event.endsAt).toBe("2026-03-09T00:00:00.000-07:00")
+  })
+
   test("enforces a half-open calendar window", () => {
     const startsAt = new Date("2026-07-17T10:00:00.000Z")
     const endsAt = new Date("2026-07-17T11:00:00.000Z")

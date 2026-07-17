@@ -87,7 +87,9 @@ export interface CalendarEvent {
   id: string
   calendarId: string
   title: string
+  /** ISO 8601 start time. All-day events preserve their calendar timezone offset. */
   startsAt: string
+  /** ISO 8601 end time. All-day events preserve their calendar timezone offset. */
   endsAt: string
   timezone?: string
   allDay: boolean

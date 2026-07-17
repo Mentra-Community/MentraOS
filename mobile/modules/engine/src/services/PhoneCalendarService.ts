@@ -33,7 +33,7 @@ export async function listPhoneCalendarEvents(request: CalendarListRequest): Pro
   const events = rawEvents
     .map(normalizeCalendarEvent)
     .filter((event) => calendarEventOverlapsWindow(event, startsAt, endsAt))
-    .sort((a, b) => a.startsAt.localeCompare(b.startsAt) || a.endsAt.localeCompare(b.endsAt))
+    .sort((a, b) => Date.parse(a.startsAt) - Date.parse(b.startsAt) || Date.parse(a.endsAt) - Date.parse(b.endsAt))
 
   return {
     events: events.slice(0, limit),
