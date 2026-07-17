@@ -133,11 +133,15 @@ public enum WifiStatus: CustomStringConvertible, Equatable {
 public struct WifiStatusEvent: CustomStringConvertible {
     public let status: WifiStatus
 
-    /// Glasses-reported provisioning failure reason (e.g. "connect_timeout",
-    /// "connected_to_other_network") when this status is the verdict of a failed
-    /// connect attempt; nil for routine link-state updates. Sent by ASG client
-    /// builds that include the WiFi error surfacing (v40+); older glasses never
-    /// set it.
+    /// Glasses-reported provisioning failure reason when THIS event is the verdict of a
+    /// failed connect attempt; nil for routine link-state updates. An attempt property,
+    /// not a link property — which is why it lives on the event and not on `WifiStatus`:
+    /// "connect_timeout" arrives with a disconnected status (never associated), while
+    /// "connected_to_other_network" arrives with a *connected* status — the attempt
+    /// failed and Android's auto-join left the glasses on (or returned them to) a
+    /// different SSID than requested, so the link is genuinely up while the request
+    /// genuinely failed. Sent by ASG client builds that include the WiFi error
+    /// surfacing (v40+); older glasses never set it.
     public let error: String?
 
     public init(status: WifiStatus, error: String? = nil) {
