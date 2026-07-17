@@ -231,6 +231,46 @@ describe("cameraRollExportCoordinator", () => {
     })
   })
 
+  it("returns a receipt committed before its source waiter registers", async () => {
+    const file = legacyFile("IMG_receipt_race")
+    const receipt = {platform: "ios" as const, identifier: "already-exported", exportedAt: Date.now()}
+    await cameraRollExportCoordinator.initialize()
+    mockFiles[file.name] = file
+    const staleEntry = await cameraRollExportCoordinator.recordIndexed(file, true, "SOURCE_BARRIER", file.name)
+    cameraRollExportLedger.update(staleEntry.id, {state: "EXPORTED", receipt})
+    const recordSpy = jest
+      .spyOn(cameraRollExportCoordinator, "recordIndexed")
+      .mockResolvedValueOnce({...staleEntry, state: "QUEUED", receipt: undefined})
+
+    try {
+      await expect(cameraRollExportCoordinator.exportForSource(file, file.name)).resolves.toEqual(receipt)
+    } finally {
+      recordSpy.mockRestore()
+    }
+  })
+
+  it("drains eligible work after a concurrent resume handoff", async () => {
+    const file = legacyFile("IMG_resume_handoff")
+    await cameraRollExportCoordinator.initialize()
+    mockFiles[file.name] = file
+    await cameraRollExportCoordinator.recordIndexed(file, true, "HISTORICAL_BACKFILL", file.name)
+
+    const coordinatorState = cameraRollExportCoordinator as unknown as {
+      running: boolean
+      rerunRequested: boolean
+    }
+    coordinatorState.running = true
+    const concurrentResume = cameraRollExportCoordinator.resume("concurrent handoff")
+    for (let i = 0; i < 10 && !coordinatorState.rerunRequested; i += 1) await Promise.resolve()
+    expect(coordinatorState.rerunRequested).toBe(true)
+
+    coordinatorState.running = false
+    await concurrentResume
+
+    expect(MediaLibraryPermissions.saveToLibraryWithReceipt).toHaveBeenCalledWith(file.filePath, file.modified)
+    expect(cameraRollExportLedger.list()[0].state).toBe("EXPORTED")
+  })
+
   it("clears local media and its export receipts through one serialized operation", async () => {
     const file = legacyFile()
     mockFiles[file.name] = file

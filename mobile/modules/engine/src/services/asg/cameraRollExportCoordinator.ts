@@ -162,9 +162,32 @@ class CameraRollExportCoordinator {
     const entry = await this.recordIndexed(file, true, "SOURCE_BARRIER", captureId)
     if (entry.receipt) return entry.receipt
     return new Promise<GalleryAssetReceipt>((resolve, reject) => {
+      const current = cameraRollExportLedger.get(entry.id)
+      if (current?.receipt) {
+        resolve(current.receipt)
+        return
+      }
+      if (!current) {
+        reject(new Error("Camera-roll export was removed before its source barrier registered"))
+        return
+      }
       const waiters = this.sourceWaiters.get(entry.id) || []
       waiters.push({resolve, reject})
       this.sourceWaiters.set(entry.id, waiters)
+      // Re-read after registration so any future refactor that yields while installing a
+      // waiter still cannot miss a receipt committed by the active runner.
+      const registered = cameraRollExportLedger.get(entry.id)
+      if (registered?.receipt) {
+        this.resolveSourceWaiters(entry.id, registered.receipt)
+        return
+      }
+      if (!registered) {
+        this.rejectSourceWaiters(
+          entry.id,
+          new Error("Camera-roll export was removed before its source barrier registered"),
+        )
+        return
+      }
       void this.resume("source barrier")
     })
   }
@@ -220,24 +243,27 @@ class CameraRollExportCoordinator {
       while (this.running) {
         await new Promise<void>((resolve) => BgTimer.setTimeout(resolve, 25))
       }
+      // The active drain normally consumes rerunRequested before releasing running. Keep
+      // this final durable-work check so a late handoff can never strand an eligible entry.
+      if (this.nextEntry()) await this.resume("work remained after concurrent resume")
       return
     }
     this.running = true
-    this.rerunRequested = false
     this.emitSummary()
     try {
-      let entry = this.nextEntry()
-      while (entry) {
-        await this.processEntry(entry)
-        entry = this.nextEntry()
-      }
+      do {
+        this.rerunRequested = false
+        let entry = this.nextEntry()
+        while (entry) {
+          await this.processEntry(entry)
+          entry = this.nextEntry()
+        }
+      } while (this.rerunRequested)
     } finally {
-      const shouldRerun = this.rerunRequested
       this.rerunRequested = false
       this.running = false
       this.emitSummary()
       this.scheduleRetry()
-      if (shouldRerun) void this.resume("work arrived")
     }
   }
 
