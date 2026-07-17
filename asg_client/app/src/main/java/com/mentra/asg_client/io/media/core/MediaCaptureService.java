@@ -760,7 +760,7 @@ public class MediaCaptureService {
      * @param size requested photo size for the upcoming capture (nullable)
      * @param isFromSdk whether the upcoming capture is an SDK request (vs. a button photo)
      * @param exposureTimeNs requested manual exposure for the upcoming capture, or null for auto
-     * @param captureSettings per-request tuning (including resolved {@code zslMfnr}) for warmth
+     * @param captureSettings per-request tuning (including resolved {@code zsl}/{@code mfnr}) for warmth
      */
     private void playShutterSound(
             String size,
