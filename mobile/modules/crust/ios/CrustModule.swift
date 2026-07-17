@@ -594,14 +594,15 @@ public class CrustModule: Module {
                 stableIdentifiers.append(asset.localIdentifier)
                 return
             }
-            let legacyMatch = resources.contains {
+            let legacyNameMatch = resources.contains {
                 guard fileNames.contains($0.originalFilename), $0.originalFilename != stableFileName else {
                     return false
                 }
-                guard let expectedFileSize else { return false }
-                return self.assetResource($0, matchesByteCount: expectedFileSize)
+                return true
             }
-            if legacyMatch {
+            if legacyNameMatch,
+               let expectedFileSize,
+               self.assetOriginalFile(asset, matchesByteCount: expectedFileSize) {
                 legacyIdentifiers.append(asset.localIdentifier)
             }
         }
@@ -612,39 +613,52 @@ public class CrustModule: Module {
     }
 
     /// PhotoKit does not expose resource byte size on the deployment targets we support.
-    /// Stream a narrowed legacy candidate locally to verify it before reusing its receipt.
-    /// Network access stays disabled: if the original is only in iCloud, reconciliation fails
-    /// closed and the caller creates a fresh local-library asset instead of risking data loss.
-    private func assetResource(
-        _ resource: PHAssetResource,
+    /// Request the local original URL and inspect its file metadata instead of streaming a
+    /// potentially large video. Network access stays disabled: if the original is only in
+    /// iCloud, reconciliation fails closed and the caller creates a fresh local-library asset.
+    private func assetOriginalFile(
+        _ asset: PHAsset,
         matchesByteCount expectedByteCount: Int64
     ) -> Bool {
-        let options = PHAssetResourceRequestOptions()
-        options.isNetworkAccessAllowed = false
-        let manager = PHAssetResourceManager.default()
         let semaphore = DispatchSemaphore(value: 0)
-        var receivedByteCount: Int64 = 0
-        var resultError: Error?
+        var matches = false
 
-        let requestID = manager.requestData(
-            for: resource,
-            options: options,
-            dataReceivedHandler: { data in
-                // Once a candidate exceeds the expected size it cannot match. Keep the
-                // counter bounded even though PhotoKit may deliver the remaining chunks.
-                receivedByteCount = min(expectedByteCount + 1, receivedByteCount + Int64(data.count))
-            },
-            completionHandler: { error in
-                resultError = error
+        if asset.mediaType == .video {
+            let options = PHVideoRequestOptions()
+            options.isNetworkAccessAllowed = false
+            options.version = .original
+            let requestID = PHImageManager.default().requestAVAsset(forVideo: asset, options: options) { avAsset, _, _ in
+                if let originalURL = (avAsset as? AVURLAsset)?.url,
+                   let attributes = try? FileManager.default.attributesOfItem(atPath: originalURL.path),
+                   let byteCount = attributes[.size] as? NSNumber {
+                    matches = byteCount.int64Value == expectedByteCount
+                }
                 semaphore.signal()
             }
-        )
 
-        if semaphore.wait(timeout: .now() + 30) == .timedOut {
-            manager.cancelDataRequest(requestID)
-            return false
+            if semaphore.wait(timeout: .now() + 30) == .timedOut {
+                PHImageManager.default().cancelImageRequest(requestID)
+                return false
+            }
+        } else {
+            let options = PHContentEditingInputRequestOptions()
+            options.isNetworkAccessAllowed = false
+            let requestID = asset.requestContentEditingInput(with: options) { input, _ in
+                if let originalURL = input?.fullSizeImageURL,
+                   let attributes = try? FileManager.default.attributesOfItem(atPath: originalURL.path),
+                   let byteCount = attributes[.size] as? NSNumber {
+                    matches = byteCount.int64Value == expectedByteCount
+                }
+                semaphore.signal()
+            }
+
+            if semaphore.wait(timeout: .now() + 30) == .timedOut {
+                asset.cancelContentEditingInputRequest(requestID)
+                return false
+            }
         }
-        return resultError == nil && receivedByteCount == expectedByteCount
+
+        return matches
     }
 }
 
