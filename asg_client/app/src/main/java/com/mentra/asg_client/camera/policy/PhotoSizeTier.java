@@ -33,6 +33,7 @@ public final class PhotoSizeTier {
             case CameraConstants.SIZE_MEDIUM:
             case CameraConstants.SIZE_HIGH:
             case CameraConstants.SIZE_MAX:
+            case CameraConstants.SIZE_TEXT:
                 return size;
             default:
                 Log.w(TAG, "Unknown photo size '" + size + "' — using medium");
