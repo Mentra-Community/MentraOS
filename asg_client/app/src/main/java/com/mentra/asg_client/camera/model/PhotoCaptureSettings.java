@@ -22,12 +22,10 @@ public final class PhotoCaptureSettings {
     public final Integer isoCap;
     public final Boolean noiseReduction;
     public final Boolean edgeEnhancement;
-    /** Resolved coupled ZSL preview + MFNR capture flag for this request. */
-    public final Boolean zslMfnr;
-    /** @deprecated Legacy wire input; kept for compatibility diagnostics. */
-    @Deprecated public final Boolean mfnr;
-    /** @deprecated Legacy wire input; kept for compatibility diagnostics. */
-    @Deprecated public final Boolean zsl;
+    /** Independent ZSL buffering flag for this request; null inherits the global default. */
+    public final Boolean zsl;
+    /** Independent vendor MFNR flag for this request; null inherits the global default. */
+    public final Boolean mfnr;
     public final Integer ispDigitalGain;
     public final String ispAnalogGain;
 
@@ -40,9 +38,8 @@ public final class PhotoCaptureSettings {
         isoCap = builder.isoCap;
         noiseReduction = builder.noiseReduction;
         edgeEnhancement = builder.edgeEnhancement;
-        zslMfnr = builder.zslMfnr;
-        mfnr = builder.mfnr;
         zsl = builder.zsl;
+        mfnr = builder.mfnr;
         ispDigitalGain = builder.ispDigitalGain;
         ispAnalogGain = builder.ispAnalogGain;
         noiseReductionWarning = builder.noiseReductionWarning;
@@ -74,9 +71,6 @@ public final class PhotoCaptureSettings {
         if (data.has("edgeEnhancement") && !data.isNull("edgeEnhancement")) {
             builder.edgeEnhancement(data.optBoolean("edgeEnhancement", true));
         }
-        if (data.has("zslMfnr") && !data.isNull("zslMfnr")) {
-            builder.zslMfnr(data.optBoolean("zslMfnr", false));
-        }
         if (data.has("mfnr") && !data.isNull("mfnr")) {
             builder.mfnr(data.optBoolean("mfnr", true));
         }
@@ -95,58 +89,29 @@ public final class PhotoCaptureSettings {
             }
         }
 
-        Boolean resolved = resolveZslMfnr(builder.zslMfnr, builder.mfnr, builder.zsl);
-        if (resolved != null) {
-            builder.zslMfnr(resolved);
-        }
         applyUnimplementedWarnings(builder);
-        syncLegacyZslMfnrFields(builder);
         return builder.build();
     }
 
     /**
-     * Resolve the coupled ZSL/MFNR flag from unified and legacy wire inputs.
-     *
-     * <p>{@code zslMfnr} wins when present. Otherwise legacy {@code mfnr} and {@code zsl} must both
-     * be {@code true} to enable the pair; every other combination maps off. Returns {@code null}
-     * when no input was supplied so callers can inherit stored defaults.
+     * Resolve a single optional request flag against an optional stored button preset and the
+     * global device default. Scan AE path forces the flag off.
      */
-    public static Boolean resolveZslMfnr(Boolean zslMfnr, Boolean legacyMfnr, Boolean legacyZsl) {
-        if (zslMfnr != null) {
-            return zslMfnr;
-        }
-        if (legacyMfnr != null || legacyZsl != null) {
-            return Boolean.TRUE.equals(legacyMfnr) && Boolean.TRUE.equals(legacyZsl);
-        }
-        return null;
-    }
-
-    private static void syncLegacyZslMfnrFields(Builder builder) {
-        if (builder.zslMfnr != null) {
-            builder.mfnr(builder.zslMfnr);
-            builder.zsl(builder.zslMfnr);
-        }
-    }
-
-    private static Boolean resolveMergedZslMfnr(
-            Boolean requestZslMfnr,
-            Boolean requestMfnr,
-            Boolean requestZsl,
-            Boolean storedButtonZslMfnr,
+    public static boolean resolveMergedFlag(
+            Boolean requestValue,
+            Boolean storedButtonValue,
             boolean hasScanDivisor,
-            boolean globalZslMfnr) {
-        // Scan AE path conflicts with vendor multi-frame capture — force the pair off.
+            boolean globalDefault) {
         if (hasScanDivisor) {
-            return Boolean.FALSE;
+            return false;
         }
-        Boolean resolved = resolveZslMfnr(requestZslMfnr, requestMfnr, requestZsl);
-        if (resolved != null) {
-            return resolved;
+        if (requestValue != null) {
+            return requestValue;
         }
-        if (storedButtonZslMfnr != null) {
-            return storedButtonZslMfnr;
+        if (storedButtonValue != null) {
+            return storedButtonValue;
         }
-        return globalZslMfnr;
+        return globalDefault;
     }
 
     /**
@@ -165,25 +130,21 @@ public final class PhotoCaptureSettings {
         builder.edgeEnhancement(settings.edgeEnhancement);
         builder.ispDigitalGain(settings.ispDigitalGain);
         builder.ispAnalogGain(settings.ispAnalogGain);
-        // Text/scan AE path conflicts with vendor multi-frame capture — force the pair off.
-        builder.zslMfnr(Boolean.FALSE);
+        // Text/scan AE path conflicts with vendor multi-frame capture — force both off.
+        builder.zsl(Boolean.FALSE);
+        builder.mfnr(Boolean.FALSE);
         applyUnimplementedWarnings(builder);
-        syncLegacyZslMfnrFields(builder);
         return builder.build();
     }
 
-    /**
-     * Fills per-request fields missing from {@code take_photo} with values previously stored via
-     * {@code button_photo_setting}.
-     */
     /**
      * Merge a remote SDK take_photo request with stored device-level settings.
      *
      * <p>Unlike {@link #mergeWithStoredDefaults(PhotoCaptureSettings, AsgSettings)} this variant
      * does NOT inherit stored button-photo scan presets (aeExposureDivisor, isoCap,
      * edgeEnhancement, etc.). Those presets are for the hardware-button capture path only. Remote
-     * app requests use only their explicitly supplied fields; MFNR/ZSL fall back to the global
-     * device setting, not to scan-mode button presets.
+     * app requests use only their explicitly supplied fields; ZSL/MFNR fall back to the global
+     * device settings, not to scan-mode button presets.
      */
     public static PhotoCaptureSettings mergeForSdkRequest(
             PhotoCaptureSettings request, AsgSettings stored) {
@@ -194,7 +155,6 @@ public final class PhotoCaptureSettings {
             return request;
         }
         Builder builder = new Builder();
-        // Scan-specific fields: only from the explicit request, never from stored button presets
         builder.aeExposureDivisor(request.aeExposureDivisor);
         builder.isoCap(request.isoCap);
         builder.noiseReduction(request.noiseReduction);
@@ -202,24 +162,21 @@ public final class PhotoCaptureSettings {
         builder.ispDigitalGain(request.ispDigitalGain);
         builder.ispAnalogGain(request.ispAnalogGain);
         boolean hasScanDivisor = request.aeExposureDivisor != null && request.aeExposureDivisor > 1;
-        builder.zslMfnr(
-                resolveMergedZslMfnr(
-                        request.zslMfnr,
-                        request.mfnr,
-                        request.zsl,
-                        null,
-                        hasScanDivisor,
-                        stored.isZslMfnrEnabled()));
+        builder.zsl(
+                resolveMergedFlag(
+                        request.zsl, null, hasScanDivisor, stored.isZslEnabled()));
+        builder.mfnr(
+                resolveMergedFlag(
+                        request.mfnr, null, hasScanDivisor, stored.isMfnrEnabled()));
         applyUnimplementedWarnings(builder);
-        syncLegacyZslMfnrFields(builder);
         return builder.build();
     }
 
     /**
      * Merge a button/local capture request with stored button-photo tuning.
      *
-     * <p>Physical camera-button photos deliberately ignore stored ZSL/MFNR preferences and use the
-     * global default. Text/scan exposure still forces the coupled path off.
+     * <p>Physical camera-button photos deliberately ignore stored ZSL/MFNR button presets and use
+     * the global defaults. Text/scan exposure still forces both off.
      */
     public static PhotoCaptureSettings mergeWithStoredDefaults(
             PhotoCaptureSettings request, AsgSettings stored) {
@@ -247,14 +204,12 @@ public final class PhotoCaptureSettings {
         boolean hasScanDivisor =
                 (request.aeExposureDivisor != null && request.aeExposureDivisor > 1)
                         || stored.getButtonPhotoAeExposureDivisor() != null;
-        builder.zslMfnr(
-                resolveMergedZslMfnr(
-                        request.zslMfnr,
-                        request.mfnr,
-                        request.zsl,
-                        null,
-                        hasScanDivisor,
-                        stored.isZslMfnrEnabled()));
+        builder.zsl(
+                resolveMergedFlag(
+                        request.zsl, null, hasScanDivisor, stored.isZslEnabled()));
+        builder.mfnr(
+                resolveMergedFlag(
+                        request.mfnr, null, hasScanDivisor, stored.isMfnrEnabled()));
         builder.ispDigitalGain(
                 request.ispDigitalGain != null
                         ? request.ispDigitalGain
@@ -264,7 +219,6 @@ public final class PhotoCaptureSettings {
                         ? request.ispAnalogGain
                         : stored.getButtonPhotoIspAnalogGain());
         applyUnimplementedWarnings(builder);
-        syncLegacyZslMfnrFields(builder);
         return builder.build();
     }
 
@@ -291,14 +245,12 @@ public final class PhotoCaptureSettings {
         return edgeEnhancement == null || edgeEnhancement;
     }
 
-    public boolean zslMfnrEnabled() {
-        return Boolean.TRUE.equals(zslMfnr);
+    public boolean zslEnabled() {
+        return Boolean.TRUE.equals(zsl);
     }
 
-    /** @deprecated Use {@link #zslMfnrEnabled()}. */
-    @Deprecated
     public boolean mfnrEnabled() {
-        return zslMfnrEnabled();
+        return Boolean.TRUE.equals(mfnr);
     }
 
     /**
@@ -320,8 +272,6 @@ public final class PhotoCaptureSettings {
                         + optFieldSummary(data, "compress")
                         + " sound="
                         + optFieldSummary(data, "sound")
-                        + " zslMfnr="
-                        + optFieldSummary(data, "zslMfnr")
                         + " mfnr="
                         + optFieldSummary(data, "mfnr")
                         + " zsl="
@@ -380,41 +330,15 @@ public final class PhotoCaptureSettings {
                                 fromRequest.edgeEnhancement,
                                 stored != null ? stored.getButtonPhotoEdgeEnhancement() : null,
                                 merged.edgeEnhancement)
-                        + " zslMfnr="
-                        + fieldSource(
-                                fromRequest.zslMfnr != null
-                                        ? fromRequest.zslMfnr
-                                        : resolveZslMfnr(
-                                                null, fromRequest.mfnr, fromRequest.zsl),
-                                stored != null
-                                        ? (stored.getButtonPhotoZslMfnr() != null
-                                                ? stored.getButtonPhotoZslMfnr()
-                                                : stored.getButtonPhotoAeExposureDivisor() != null
-                                                        ? false
-                                                        : null)
-                                        : null,
-                                merged.zslMfnr)
                         + " mfnr="
                         + fieldSource(
                                 fromRequest.mfnr,
-                                stored != null
-                                        ? (stored.getButtonPhotoMfnr() != null
-                                                ? stored.getButtonPhotoMfnr()
-                                                : stored.getButtonPhotoAeExposureDivisor() != null
-                                                        ? false
-                                                        : null)
-                                        : null,
+                                stored != null ? stored.getButtonPhotoMfnr() : null,
                                 merged.mfnr)
                         + " zsl="
                         + fieldSource(
                                 fromRequest.zsl,
-                                stored != null
-                                        ? (stored.getButtonPhotoZsl() != null
-                                                ? stored.getButtonPhotoZsl()
-                                                : stored.getButtonPhotoAeExposureDivisor() != null
-                                                        ? false
-                                                        : null)
-                                        : null,
+                                stored != null ? stored.getButtonPhotoZsl() : null,
                                 merged.zsl)
                         + " ispDigitalGain="
                         + fieldSource(
@@ -430,21 +354,14 @@ public final class PhotoCaptureSettings {
                         + merged.describeForLog()
                         + "}");
         if (stored != null) {
-            Boolean storedZslMfnrForLog = stored.getButtonPhotoZslMfnr();
-            if (storedZslMfnrForLog == null && stored.getButtonPhotoAeExposureDivisor() != null) {
-                storedZslMfnrForLog = false;
-            }
             Log.i(
                     TAG,
                     "SCAN_PARAMS stored button_photo globals requestId="
                             + requestId
-                            + " zslMfnr="
-                            + (storedZslMfnrForLog != null
-                                    ? storedZslMfnrForLog
-                                    : stored.isZslMfnrEnabled())
-                            + " (global zslMfnr="
-                            + stored.isZslMfnrEnabled()
-                            + ")"
+                            + " zsl="
+                            + stored.isZslEnabled()
+                            + " mfnr="
+                            + stored.isMfnrEnabled()
                             + " size="
                             + stored.getButtonPhotoSize()
                             + " compress="
@@ -462,7 +379,8 @@ public final class PhotoCaptureSettings {
             Long meteredExposureNs,
             Long targetExposureNs,
             Integer resolvedIso,
-            boolean globalZslMfnr) {
+            boolean globalZsl,
+            boolean globalMfnr) {
         if (settings == null) {
             settings = EMPTY;
         }
@@ -488,12 +406,18 @@ public final class PhotoCaptureSettings {
                         + settings.noiseReduction
                         + " edgeEnhancement="
                         + settings.edgeEnhancement
-                        + " zslMfnr(request="
-                        + settings.zslMfnr
+                        + " zsl(request="
+                        + settings.zsl
                         + ", global="
-                        + globalZslMfnr
+                        + globalZsl
                         + ", effective="
-                        + settings.zslMfnrEnabled()
+                        + settings.zslEnabled()
+                        + ") mfnr(request="
+                        + settings.mfnr
+                        + ", global="
+                        + globalMfnr
+                        + ", effective="
+                        + settings.mfnrEnabled()
                         + ") tuning={"
                         + settings.describeForLog()
                         + "}");
@@ -538,9 +462,8 @@ public final class PhotoCaptureSettings {
         sb.append(", isoCap=").append(isoCap);
         sb.append(", noiseReduction=").append(noiseReduction);
         sb.append(", edgeEnhancement=").append(edgeEnhancement);
-        sb.append(", zslMfnr=").append(zslMfnr);
-        sb.append(", mfnr=").append(mfnr);
         sb.append(", zsl=").append(zsl);
+        sb.append(", mfnr=").append(mfnr);
         sb.append(", ispDigitalGain=").append(ispDigitalGain);
         sb.append(", ispAnalogGain=").append(ispAnalogGain);
         if (noiseReductionWarning != null) {
@@ -578,9 +501,6 @@ public final class PhotoCaptureSettings {
             if (edgeEnhancement != null) {
                 target.put("edgeEnhancement", edgeEnhancement);
             }
-            if (zslMfnr != null) {
-                target.put("zslMfnr", zslMfnr);
-            }
             if (mfnr != null) {
                 target.put("mfnr", mfnr);
             }
@@ -597,7 +517,6 @@ public final class PhotoCaptureSettings {
         private Integer isoCap;
         private Boolean noiseReduction;
         private Boolean edgeEnhancement;
-        private Boolean zslMfnr;
         private Boolean mfnr;
         private Boolean zsl;
         private Integer ispDigitalGain;
@@ -623,11 +542,6 @@ public final class PhotoCaptureSettings {
 
         public Builder edgeEnhancement(Boolean value) {
             edgeEnhancement = value;
-            return this;
-        }
-
-        public Builder zslMfnr(Boolean value) {
-            zslMfnr = value;
             return this;
         }
 
