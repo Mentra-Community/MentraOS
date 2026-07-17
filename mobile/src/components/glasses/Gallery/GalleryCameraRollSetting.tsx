@@ -16,7 +16,7 @@ import {
 } from "@mentra/engine/internal"
 
 const EMPTY_SUMMARY: CameraRollExportSummary = {
-  enabled: true,
+  enabled: false,
   total: 0,
   exported: 0,
   pending: 0,
@@ -30,7 +30,7 @@ const EMPTY_SUMMARY: CameraRollExportSummary = {
 
 export function GalleryCameraRollSetting() {
   const {themed} = useAppTheme()
-  const [enabled, setEnabled] = useState(true)
+  const [enabled, setEnabled] = useState(false)
   const [busy, setBusy] = useState(true)
   const [summary, setSummary] = useState(EMPTY_SUMMARY)
 
@@ -166,6 +166,9 @@ function getStatusText(summary: CameraRollExportSummary, enabled: boolean): stri
     return `${summary.isRunning ? "Saving" : "Waiting to save"} ${summary.pending} ${
       summary.pending === 1 ? "item" : "items"
     } to your camera roll.`
+  }
+  if (summary.missing > 0) {
+    return `${summary.missing} ${summary.missing === 1 ? "item is" : "items are"} no longer available to save.`
   }
   if (summary.total > 0) return `All ${summary.exported} items are saved to your camera roll.`
   return "New photos and videos will also be saved to your camera roll."

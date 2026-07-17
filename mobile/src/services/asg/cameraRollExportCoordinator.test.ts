@@ -299,6 +299,37 @@ describe("cameraRollExportCoordinator", () => {
     }
   })
 
+  it("stops source waiters and serializes restart reconciliation behind an in-flight export", async () => {
+    const file = legacyFile("IMG_engine_restart")
+    let finishExport!: (receipt: {success: true; platform: "ios"; identifier: string}) => void
+    ;(MediaLibraryPermissions.saveToLibraryWithReceipt as jest.Mock).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishExport = resolve
+        }),
+    )
+
+    await cameraRollExportCoordinator.initialize()
+    mockFiles[file.name] = file
+    const sourceExport = cameraRollExportCoordinator.exportForSource(file, file.name)
+    for (let i = 0; i < 10 && !finishExport; i += 1) await Promise.resolve()
+    expect(finishExport).toBeDefined()
+
+    cameraRollExportCoordinator.cleanup()
+    await expect(sourceExport).rejects.toThrow("coordinator stopped")
+
+    const reconciliationCalls = (localStorageService.getDownloadedFiles as jest.Mock).mock.calls.length
+    const restart = cameraRollExportCoordinator.initialize()
+    await Promise.resolve()
+    expect(localStorageService.getDownloadedFiles).toHaveBeenCalledTimes(reconciliationCalls)
+
+    finishExport({success: true, platform: "ios", identifier: "asset-after-restart"})
+    await restart
+
+    expect(MediaLibraryPermissions.saveToLibraryWithReceipt).toHaveBeenCalledTimes(1)
+    expect(cameraRollExportCoordinator.getSummary()).toMatchObject({exported: 1, pending: 0, isRunning: false})
+  })
+
   it("drains eligible work after a concurrent resume handoff", async () => {
     const file = legacyFile("IMG_resume_handoff")
     await cameraRollExportCoordinator.initialize()

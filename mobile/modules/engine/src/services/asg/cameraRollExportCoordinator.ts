@@ -35,6 +35,7 @@ type SummaryListener = (summary: CameraRollExportSummary) => void
 class CameraRollExportCoordinator {
   private initialized = false
   private initializing: Promise<void> | null = null
+  private lifecycleGeneration = 0
   private enabled = true
   private running = false
   private rerunRequested = false
@@ -48,25 +49,45 @@ class CameraRollExportCoordinator {
     Array<{resolve: (receipt: GalleryAssetReceipt) => void; reject: (error: Error) => void}>
   >()
 
-  initialize(): Promise<void> {
-    if (this.initialized) return Promise.resolve()
-    if (this.initializing) return this.initializing
-    this.initializing = this.initializeInternal().finally(() => {
-      this.initializing = null
-    })
-    return this.initializing
+  async initialize(): Promise<void> {
+    while (!this.initialized) {
+      if (!this.initializing) {
+        const generation = this.lifecycleGeneration
+        this.initializing = this.initializeInternal(generation)
+      }
+      const initialization = this.initializing
+      try {
+        await initialization
+      } finally {
+        if (this.initializing === initialization) this.initializing = null
+      }
+    }
   }
 
   cleanup(): void {
+    this.lifecycleGeneration += 1
     if (this.retryTimer != null) BgTimer.clearTimeout(this.retryTimer)
     this.retryTimer = null
     this.initialized = false
+    this.rerunRequested = false
+    const error = new Error("Camera-roll export coordinator stopped")
+    for (const id of [...this.sourceWaiters.keys()]) this.rejectSourceWaiters(id, error)
+    if (!this.running) this.activeEntryId = null
   }
 
-  private async initializeInternal(): Promise<void> {
+  private async initializeInternal(generation: number): Promise<void> {
     cameraRollExportLedger.setDocumentDirectory(RNFS.DocumentDirectoryPath)
-    this.enabled = await gallerySettingsService.getAutoSaveToCameraRoll()
+    // A native camera-roll insert is atomic and cannot be cancelled. On a quick engine
+    // stop/start, let the old drain commit its receipt before the new lifecycle reconciles.
+    while (this.running) {
+      await new Promise<void>((resolve) => BgTimer.setTimeout(resolve, 25))
+    }
+    if (generation !== this.lifecycleGeneration) return
+    const enabled = await gallerySettingsService.getAutoSaveToCameraRoll()
+    if (generation !== this.lifecycleGeneration) return
+    this.enabled = enabled
     await this.reconcileLocalIndex()
+    if (generation !== this.lifecycleGeneration) return
     this.initialized = true
     this.emitSummary()
     if (this.enabled) void this.resume("startup")
@@ -225,11 +246,14 @@ class CameraRollExportCoordinator {
   }
 
   async resume(reason: string): Promise<void> {
+    const generation = this.lifecycleGeneration
     await this.initialize()
+    if (generation !== this.lifecycleGeneration) return
     console.log(`${TAG} Resume requested: ${reason}`)
     if (cameraRollExportLedger.list().some((entry) => entry.state === "BLOCKED_PERMISSION")) {
       const hasPermission = await MediaLibraryPermissions.checkPermission()
       const hasLimitedAccess = hasPermission && (await MediaLibraryPermissions.hasLimitedAccess())
+      if (generation !== this.lifecycleGeneration) return
       if (hasPermission) {
         for (const entry of cameraRollExportLedger.list()) {
           if (entry.state === "BLOCKED_PERMISSION" && !(entry.requiresFullLibraryReconciliation && hasLimitedAccess)) {
@@ -238,6 +262,7 @@ class CameraRollExportCoordinator {
         }
       }
     }
+    if (generation !== this.lifecycleGeneration) return
     if (this.retryTimer != null) {
       BgTimer.clearTimeout(this.retryTimer)
       this.retryTimer = null
@@ -247,6 +272,7 @@ class CameraRollExportCoordinator {
       while (this.running) {
         await new Promise<void>((resolve) => BgTimer.setTimeout(resolve, 25))
       }
+      if (generation !== this.lifecycleGeneration) return
       // The active drain normally consumes rerunRequested before releasing running. Keep
       // this final durable-work check so a late handoff can never strand an eligible entry.
       if (this.nextEntry()) await this.resume("work remained after concurrent resume")
@@ -258,16 +284,19 @@ class CameraRollExportCoordinator {
       do {
         this.rerunRequested = false
         let entry = this.nextEntry()
-        while (entry) {
-          await this.processEntry(entry)
+        while (entry && generation === this.lifecycleGeneration) {
+          await this.processEntry(entry, generation)
+          if (generation !== this.lifecycleGeneration) break
           entry = this.nextEntry()
         }
-      } while (this.rerunRequested)
+      } while (this.rerunRequested && generation === this.lifecycleGeneration)
     } finally {
       this.rerunRequested = false
       this.running = false
-      this.emitSummary()
-      this.scheduleRetry()
+      if (generation === this.lifecycleGeneration) {
+        this.emitSummary()
+        this.scheduleRetry()
+      }
     }
   }
 
@@ -392,7 +421,7 @@ class CameraRollExportCoordinator {
       })[0]
   }
 
-  private async processEntry(original: CameraRollExportEntry): Promise<void> {
+  private async processEntry(original: CameraRollExportEntry, generation: number): Promise<void> {
     let entry = original
     this.activeEntryId = entry.id
     try {
@@ -401,11 +430,14 @@ class CameraRollExportCoordinator {
         this.rejectSourceWaiters(entry.id, new Error("Automatic camera-roll saving was disabled"))
         return
       }
-      if (!(await RNFS.exists(entry.filePath))) {
+      const exists = await RNFS.exists(entry.filePath)
+      if (generation !== this.lifecycleGeneration) return
+      if (!exists) {
         cameraRollExportLedger.update(entry.id, {state: "MISSING_LOCAL", lastError: "Local media is missing"})
         throw new Error("Local media is missing")
       }
       const permission = await MediaLibraryPermissions.checkPermission()
+      if (generation !== this.lifecycleGeneration) return
       if (!permission) {
         cameraRollExportLedger.update(entry.id, {
           state: "BLOCKED_PERMISSION",
@@ -413,7 +445,10 @@ class CameraRollExportCoordinator {
         })
         throw new Error("Camera-roll permission is required")
       }
-      if (entry.requiresFullLibraryReconciliation && (await MediaLibraryPermissions.hasLimitedAccess())) {
+      const hasLimitedAccess =
+        entry.requiresFullLibraryReconciliation && (await MediaLibraryPermissions.hasLimitedAccess())
+      if (generation !== this.lifecycleGeneration) return
+      if (hasLimitedAccess) {
         cameraRollExportLedger.update(entry.id, {
           state: "BLOCKED_PERMISSION",
           lastError: "Full photo-library access is required to reconcile this legacy export safely",
@@ -421,6 +456,7 @@ class CameraRollExportCoordinator {
         throw new Error("Full photo-library access is required to reconcile this legacy export safely")
       }
       const fsInfo = await RNFS.getFSInfo()
+      if (generation !== this.lifecycleGeneration) return
       if (fsInfo.freeSpace < entry.size + MIN_FREE_SPACE_BYTES) {
         throw new Error("Insufficient free space for camera-roll export")
       }
@@ -475,7 +511,7 @@ class CameraRollExportCoordinator {
       console.warn(`${TAG} Export remains pending for ${entry.mediaName}: ${message}`)
     } finally {
       if (this.activeEntryId === entry.id) this.activeEntryId = null
-      this.emitSummary()
+      if (generation === this.lifecycleGeneration) this.emitSummary()
     }
   }
 
@@ -494,9 +530,11 @@ class CameraRollExportCoordinator {
       .filter((entry) => entry.state === "FAILED_RETRYABLE" && entry.nextRetryAt)
       .sort((a, b) => (a.nextRetryAt || 0) - (b.nextRetryAt || 0))[0]
     if (!next?.nextRetryAt) return
+    const generation = this.lifecycleGeneration
     this.retryTimer = BgTimer.setTimeout(
       () => {
         this.retryTimer = null
+        if (generation !== this.lifecycleGeneration) return
         void this.resume("retry timer")
       },
       Math.max(0, next.nextRetryAt - Date.now()),
