@@ -148,3 +148,29 @@ export const BgTimer = {
     )
   },
 }
+
+export function throttle<T extends (...args: any[]) => any>(fn: T, ms: number): (...args: Parameters<T>) => void {
+  let lastCalled = 0
+
+  return (...args: Parameters<T>) => {
+    const now = Date.now()
+    if (now - lastCalled >= ms) {
+      lastCalled = now
+      fn(...args)
+    }
+  }
+}
+
+export function debounce<T extends (...args: any[]) => any>(fn: T, ms: number): (...args: Parameters<T>) => void {
+  let timeoutId: TimerHandle | null = null
+
+  return (...args: Parameters<T>) => {
+    if (timeoutId != null) {
+      BgTimer.clearTimeout(timeoutId)
+    }
+    timeoutId = BgTimer.setTimeout(() => {
+      fn(...args)
+      timeoutId = null
+    }, ms)
+  }
+}
