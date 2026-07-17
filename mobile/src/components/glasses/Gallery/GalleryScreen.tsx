@@ -39,6 +39,7 @@ import {spacing, ThemedStyle} from "@/theme"
 import {PhotoInfo} from "@/types/asg"
 import Share from "react-native-share"
 import showAlert, {showBluetoothAlert} from "@/utils/AlertUtils"
+import {canShareGallerySelection, MAX_GALLERY_SHARE_ITEMS} from "@/utils/galleryShareLimits"
 import {SettingsNavigationUtils} from "@/utils/SettingsNavigationUtils"
 import {ENABLE_TEST_GALLERY_DATA, TEST_GALLERY_ITEMS} from "@/utils/testGalleryData"
 import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
@@ -671,6 +672,14 @@ export function GalleryScreen() {
   // Handle sharing multiple selected photos/videos
   const handleShareSelectedPhotos = async () => {
     if (selectedPhotos.size === 0) return
+    if (!canShareGallerySelection(selectedPhotos.size)) {
+      showAlert(
+        "Share Limit",
+        `You can share up to ${MAX_GALLERY_SHARE_ITEMS} items at a time. You currently have ${selectedPhotos.size} selected.`,
+        [{text: translate("common:ok")}],
+      )
+      return
+    }
 
     try {
       const photosToShare = allPhotos.filter((p) => p.photo && selectedPhotos.has(p.photo.name)).map((p) => p.photo!)
