@@ -10,109 +10,125 @@ import static org.mockito.Mockito.when;
 import com.mentra.asg_client.settings.AsgSettings;
 import org.json.JSONObject;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.robolectric.RobolectricTestRunner;
+import org.robolectric.annotation.Config;
 
+@RunWith(RobolectricTestRunner.class)
+@Config(sdk = 28)
 public class PhotoCaptureSettingsZslMfnrTest {
 
     @Test
-    public void resolveZslMfnrUnifiedWinsOverLegacy() {
-        assertEquals(Boolean.FALSE, PhotoCaptureSettings.resolveZslMfnr(false, true, true));
-        assertEquals(Boolean.TRUE, PhotoCaptureSettings.resolveZslMfnr(true, false, false));
+    public void resolveMergedFlag_requestWinsOverGlobal() {
+        assertTrue(PhotoCaptureSettings.resolveMergedFlag(true, null, false, false));
+        assertFalse(PhotoCaptureSettings.resolveMergedFlag(false, null, false, true));
     }
 
     @Test
-    public void resolveZslMfnrLegacyRequiresBothTrue() {
-        assertEquals(Boolean.TRUE, PhotoCaptureSettings.resolveZslMfnr(null, true, true));
-        assertEquals(Boolean.FALSE, PhotoCaptureSettings.resolveZslMfnr(null, true, false));
-        assertEquals(Boolean.FALSE, PhotoCaptureSettings.resolveZslMfnr(null, false, true));
-        assertEquals(Boolean.FALSE, PhotoCaptureSettings.resolveZslMfnr(null, false, false));
-        assertEquals(Boolean.FALSE, PhotoCaptureSettings.resolveZslMfnr(null, true, null));
-        assertEquals(Boolean.FALSE, PhotoCaptureSettings.resolveZslMfnr(null, null, true));
+    public void resolveMergedFlag_scanDivisorForcesOff() {
+        assertFalse(PhotoCaptureSettings.resolveMergedFlag(true, true, true, true));
     }
 
     @Test
-    public void resolveZslMfnrAbsentReturnsNull() {
-        assertNull(PhotoCaptureSettings.resolveZslMfnr(null, null, null));
+    public void resolveMergedFlag_inheritsStoredThenGlobal() {
+        assertTrue(PhotoCaptureSettings.resolveMergedFlag(null, true, false, false));
+        assertFalse(PhotoCaptureSettings.resolveMergedFlag(null, null, false, false));
+        assertTrue(PhotoCaptureSettings.resolveMergedFlag(null, null, false, true));
     }
 
     @Test
-    public void fromTakePhotoJsonParsesUnifiedAndMirrorsLegacy() throws Exception {
+    public void fromTakePhotoJson_parsesIndependentFlags() throws Exception {
+        JSONObject data = new JSONObject();
+        data.put("zsl", true);
+        data.put("mfnr", false);
+        PhotoCaptureSettings settings = PhotoCaptureSettings.fromTakePhotoJson(data);
+        assertEquals(Boolean.TRUE, settings.zsl);
+        assertEquals(Boolean.FALSE, settings.mfnr);
+        assertTrue(settings.zslEnabled());
+        assertFalse(settings.mfnrEnabled());
+    }
+
+    @Test
+    public void fromTakePhotoJson_ignoresRemovedZslMfnrKey() throws Exception {
         JSONObject data = new JSONObject();
         data.put("zslMfnr", true);
-
         PhotoCaptureSettings settings = PhotoCaptureSettings.fromTakePhotoJson(data);
-
-        assertEquals(Boolean.TRUE, settings.zslMfnr);
-        assertEquals(Boolean.TRUE, settings.mfnr);
-        assertEquals(Boolean.TRUE, settings.zsl);
-        assertTrue(settings.zslMfnrEnabled());
+        assertNull(settings.zsl);
+        assertNull(settings.mfnr);
     }
 
     @Test
-    public void fromTakePhotoJsonMapsLegacyPair() throws Exception {
-        JSONObject both = new JSONObject().put("mfnr", true).put("zsl", true);
-        assertEquals(Boolean.TRUE, PhotoCaptureSettings.fromTakePhotoJson(both).zslMfnr);
+    public void fromTakePhotoJson_allowsIndependentCombinations() throws Exception {
+        JSONObject zslOnly = new JSONObject();
+        zslOnly.put("zsl", true);
+        assertEquals(Boolean.TRUE, PhotoCaptureSettings.fromTakePhotoJson(zslOnly).zsl);
+        assertNull(PhotoCaptureSettings.fromTakePhotoJson(zslOnly).mfnr);
 
-        JSONObject conflict = new JSONObject().put("mfnr", true).put("zsl", false);
-        assertEquals(Boolean.FALSE, PhotoCaptureSettings.fromTakePhotoJson(conflict).zslMfnr);
+        JSONObject mfnrOnly = new JSONObject();
+        mfnrOnly.put("mfnr", true);
+        assertNull(PhotoCaptureSettings.fromTakePhotoJson(mfnrOnly).zsl);
+        assertEquals(Boolean.TRUE, PhotoCaptureSettings.fromTakePhotoJson(mfnrOnly).mfnr);
     }
 
     @Test
-    public void mergeForSdkRequestInheritsGlobalDefault() {
+    public void mergeForSdkRequest_inheritsGlobalWhenAbsent() {
         AsgSettings stored = mock(AsgSettings.class);
-        when(stored.isZslMfnrEnabled()).thenReturn(true);
+        when(stored.isZslEnabled()).thenReturn(true);
+        when(stored.isMfnrEnabled()).thenReturn(false);
 
         PhotoCaptureSettings absent =
                 PhotoCaptureSettings.mergeForSdkRequest(PhotoCaptureSettings.EMPTY, stored);
-        assertEquals(Boolean.TRUE, absent.zslMfnr);
+        assertEquals(Boolean.TRUE, absent.zsl);
+        assertEquals(Boolean.FALSE, absent.mfnr);
     }
 
     @Test
-    public void mergeForSdkRequestScanDivisorForcesOff() {
+    public void mergeForSdkRequest_scanDivisorForcesBothOff() {
         AsgSettings stored = mock(AsgSettings.class);
-        when(stored.isZslMfnrEnabled()).thenReturn(true);
+        when(stored.isZslEnabled()).thenReturn(true);
+        when(stored.isMfnrEnabled()).thenReturn(true);
 
         PhotoCaptureSettings request =
-                new PhotoCaptureSettings.Builder().aeExposureDivisor(3).build();
-        PhotoCaptureSettings merged =
-                PhotoCaptureSettings.mergeForSdkRequest(request, stored);
-
-        assertEquals(Boolean.FALSE, merged.zslMfnr);
-        assertFalse(merged.zslMfnrEnabled());
+                new PhotoCaptureSettings.Builder().aeExposureDivisor(3).zsl(true).mfnr(true).build();
+        PhotoCaptureSettings merged = PhotoCaptureSettings.mergeForSdkRequest(request, stored);
+        assertEquals(Boolean.FALSE, merged.zsl);
+        assertEquals(Boolean.FALSE, merged.mfnr);
+        assertFalse(merged.zslEnabled());
+        assertFalse(merged.mfnrEnabled());
     }
 
     @Test
-    public void mergeWithStoredDefaultsIgnoresButtonZslMfnrPreset() {
+    public void mergeWithStoredDefaults_usesGlobalNotButtonPreset() {
         AsgSettings stored = mock(AsgSettings.class);
-        when(stored.isZslMfnrEnabled()).thenReturn(true);
-        when(stored.getButtonPhotoZslMfnr()).thenReturn(false);
+        when(stored.isZslEnabled()).thenReturn(true);
+        when(stored.isMfnrEnabled()).thenReturn(true);
+        when(stored.getButtonPhotoZsl()).thenReturn(false);
+        when(stored.getButtonPhotoMfnr()).thenReturn(false);
         when(stored.getButtonPhotoAeExposureDivisor()).thenReturn(null);
-        when(stored.getButtonPhotoNoiseReduction()).thenReturn(null);
-        when(stored.getButtonPhotoIspDigitalGain()).thenReturn(null);
-        when(stored.getButtonPhotoIspAnalogGain()).thenReturn(null);
 
         PhotoCaptureSettings merged =
                 PhotoCaptureSettings.mergeWithStoredDefaults(PhotoCaptureSettings.EMPTY, stored);
-
-        assertEquals(Boolean.TRUE, merged.zslMfnr);
+        assertEquals("zsl should inherit global, not button preset", Boolean.TRUE, merged.zsl);
+        assertEquals("mfnr should inherit global, not button preset", Boolean.TRUE, merged.mfnr);
     }
 
     @Test
-    public void applyTextModeExposureForcesZslMfnrOff() {
+    public void applyTextModeExposure_forcesBothOff() {
         PhotoCaptureSettings request =
-                new PhotoCaptureSettings.Builder().zslMfnr(true).isoCap(800).build();
-
+                new PhotoCaptureSettings.Builder().zsl(true).mfnr(true).isoCap(800).build();
         PhotoCaptureSettings tuned = PhotoCaptureSettings.applyTextModeExposure(request);
-
-        assertEquals(Boolean.FALSE, tuned.zslMfnr);
-        assertEquals(Boolean.FALSE, tuned.mfnr);
         assertEquals(Boolean.FALSE, tuned.zsl);
-        assertFalse(tuned.zslMfnrEnabled());
+        assertEquals(Boolean.FALSE, tuned.mfnr);
         assertEquals(Integer.valueOf(800), tuned.isoCap);
+        assertFalse(tuned.zslEnabled());
+        assertFalse(tuned.mfnrEnabled());
     }
 
     @Test
-    public void zslMfnrEnabledDefaultsFalseWhenUnset() {
-        assertFalse(PhotoCaptureSettings.EMPTY.zslMfnrEnabled());
-        assertFalse(new PhotoCaptureSettings.Builder().zslMfnr(false).build().zslMfnrEnabled());
+    public void enabledAccessorsDefaultFalseWhenUnset() {
+        assertFalse(PhotoCaptureSettings.EMPTY.zslEnabled());
+        assertFalse(PhotoCaptureSettings.EMPTY.mfnrEnabled());
+        assertFalse(new PhotoCaptureSettings.Builder().zsl(false).build().zslEnabled());
+        assertFalse(new PhotoCaptureSettings.Builder().mfnr(false).build().mfnrEnabled());
     }
 }
