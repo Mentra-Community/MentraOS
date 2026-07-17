@@ -499,9 +499,12 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
         bWait4Confirm = false;
         // Progress-coupled lease: while segments keep confirming, the transfer's wake
         // protection never expires; a wedged transfer stops re-arming and the device may
-        // sleep once the window runs out.
+        // sleep once the window runs out. Gated on isBesOtaInProgress so a late UART
+        // segment-verify arriving after cleanup() cannot re-acquire leases nothing will
+        // ever release.
         long nowMs = android.os.SystemClock.elapsedRealtime();
-        if (nowMs - lastLeaseArmMs > AsgConstants.BES_OTA_SEGMENT_LEASE_WINDOW_MS / 2) {
+        if (isBesOtaInProgress
+                && nowMs - lastLeaseArmMs > AsgConstants.BES_OTA_SEGMENT_LEASE_WINDOW_MS / 2) {
             lastLeaseArmMs = nowMs;
             WakeLockManager.acquireFull(mContext, WakeLockManager.WakeOwner.BES_OTA,
                     AsgConstants.BES_OTA_SEGMENT_LEASE_WINDOW_MS,

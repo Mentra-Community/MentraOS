@@ -51,6 +51,9 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     private final ChunkedMessageProtocolStrategy inboundBinaryStrategy =
             new ChunkedMessageProtocolStrategy(inboundBinaryReassembler);
     private boolean wireV2HandshakeSent = false;
+    // A FLAG_WAKE fragment arrived and its message is still reassembling; on completion the
+    // wake window is granted again so follow-up work gets the full window (see above).
+    private boolean pendingBinaryWake = false;
     private volatile boolean besWireCapsK900Le = false;
     private volatile boolean besWireCapsBinary = false;
     private volatile boolean besWireCapsFilePayloadV2 = false;
@@ -589,8 +592,12 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         // Wake-flagged frame: grant a fresh awake window (see AsgConstants.PHONE_WAKE_COMMAND_WINDOW_MS —
         // the BES power-key pulse never extends a window already in progress). The string-frame
         // path gets the same grant from CommandProcessor via the "W":1 wrapper field, which
-        // binary frames do not carry.
+        // binary frames do not carry. FLAG_WAKE rides only the FIRST fragment of a message,
+        // so remember it and grant AGAIN when reassembly completes: the command's follow-up
+        // work needs its full window from completion, not from the first fragment (a slow
+        // multi-fragment reassembly must not eat into it). Extend-only merges the grants.
         if ((header.flags & BesWireFormat.FLAG_WAKE) != 0) {
+            pendingBinaryWake = true;
             WakeLockManager.acquireCpu(
                     context, WakeLockManager.WakeOwner.PHONE_COMMAND, AsgConstants.PHONE_WAKE_COMMAND_WINDOW_MS);
         }
@@ -598,6 +605,12 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         byte[] reassembled = inboundBinaryStrategy.processBinaryWireFrame(message);
         if (reassembled == null) {
             return true;
+        }
+
+        if (pendingBinaryWake) {
+            pendingBinaryWake = false;
+            WakeLockManager.acquireCpu(
+                    context, WakeLockManager.WakeOwner.PHONE_COMMAND, AsgConstants.PHONE_WAKE_COMMAND_WINDOW_MS);
         }
 
         BleTraceLogger.logWireMetrics(
