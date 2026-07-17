@@ -71,5 +71,14 @@
     "mentraos",
     "miniapp",
     "smart-glasses"
-  ]
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Mentra-Community/MentraOS.git",
+    "directory": "mobile/modules/miniapp"
+  },
+  "homepage": "https://github.com/Mentra-Community/MentraOS/tree/dev/mobile/modules/miniapp#readme",
+  "bugs": {
+    "url": "https://github.com/Mentra-Community/MentraOS/issues"
+  }
 }

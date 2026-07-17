@@ -32,5 +32,9 @@
     "type": "git",
     "url": "git+https://github.com/Mentra-Community/MentraOS.git",
     "directory": "mobile/modules/jspolyfill"
+  },
+  "homepage": "https://github.com/Mentra-Community/MentraOS/tree/dev/mobile/modules/jspolyfill#readme",
+  "bugs": {
+    "url": "https://github.com/Mentra-Community/MentraOS/issues"
   }
 }
