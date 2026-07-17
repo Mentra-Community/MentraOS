@@ -246,7 +246,7 @@ describe("OEM auth — refresh", () => {
     expect(body.refresh_token).not.toBe(rt1);
   });
 
-  test("reuse: old refresh token after rotation → invalid_grant", async () => {
+  test("reuse: predecessor dies only after its successor is first used", async () => {
     const { jwt } = await mintJwt({
       keypair: oemKeypair,
       tenantId: TEST_OEM_ID,
@@ -258,10 +258,26 @@ describe("OEM auth — refresh", () => {
 
     const first = await refresh(rt1);
     expect(first.status).toBe(200);
+    const { refresh_token: rt2 } = (await first.json()) as {
+      refresh_token: string;
+    };
 
-    const second = await refresh(rt1);
-    expect(second.status).toBe(400);
-    expect(((await second.json()) as { error: string }).error).toBe(
+    // One-step recovery window: until rt2 is used, presenting rt1 again is
+    // treated as "the rt2 response never reached the client" and succeeds
+    // (see session.service.ts rotation + refresh-rotation.integration.test.ts).
+    const recovery = await refresh(rt1);
+    expect(recovery.status).toBe(200);
+    const { refresh_token: rt3 } = (await recovery.json()) as {
+      refresh_token: string;
+    };
+
+    // First use of the live successor retires the predecessor for good.
+    const successorUse = await refresh(rt3);
+    expect(successorUse.status).toBe(200);
+
+    const afterRetirement = await refresh(rt1);
+    expect(afterRetirement.status).toBe(400);
+    expect(((await afterRetirement.json()) as { error: string }).error).toBe(
       "invalid_grant",
     );
   });
