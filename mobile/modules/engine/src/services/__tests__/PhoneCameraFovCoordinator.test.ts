@@ -83,4 +83,31 @@ describe("PhoneCameraFovCoordinator", () => {
     })
     await coordinator.releaseForApp("com.a")
   })
+
+  test("retains the effective owner when restoring a previous override fails", async () => {
+    const coordinator = new PhoneCameraFovCoordinator()
+    await coordinator.setOverride("com.a", {fov: 82})
+    await coordinator.setOverride("com.b", {fov: 102})
+    const bLease = (setCameraFovOverride.mock.calls[1]![0] as {leaseId: string}).leaseId
+    setCameraFovOverride.mockRejectedValueOnce(new Error("glasses disconnected"))
+
+    await expect(coordinator.releaseForApp("com.b")).rejects.toThrow("glasses disconnected")
+    await coordinator.releaseForApp("com.b")
+
+    expect(setCameraFovOverride.mock.calls[3]![0]).toMatchObject({fov: 82})
+    expect(releaseCameraFovOverride).not.toHaveBeenCalledWith(bLease)
+    await coordinator.releaseForApp("com.a")
+  })
+
+  test("retains the final owner when restoring the persistent base fails", async () => {
+    const coordinator = new PhoneCameraFovCoordinator()
+    await coordinator.setOverride("com.a", {fov: 82})
+    const leaseId = (setCameraFovOverride.mock.calls[0]![0] as {leaseId: string}).leaseId
+    releaseCameraFovOverride.mockRejectedValueOnce(new Error("glasses disconnected"))
+
+    await expect(coordinator.releaseForApp("com.a")).rejects.toThrow("glasses disconnected")
+    await coordinator.releaseForApp("com.a")
+
+    expect(releaseCameraFovOverride.mock.calls).toEqual([[leaseId], [leaseId]])
+  })
 })

@@ -60,10 +60,15 @@ export class PhoneCameraFovCoordinator {
     return this.enqueue(async () => {
       const removed = this.overrides.get(packageName)
       if (!removed) return
-      this.overrides.delete(packageName)
-      if (removed.leaseId !== this.effectiveLeaseId) return
+      if (removed.leaseId !== this.effectiveLeaseId) {
+        this.overrides.delete(packageName)
+        return
+      }
 
-      const next = [...this.overrides.values()].sort((a, b) => b.order - a.order)[0]
+      const next = [...this.overrides.entries()]
+        .filter(([candidatePackage]) => candidatePackage !== packageName)
+        .map(([, entry]) => entry)
+        .sort((a, b) => b.order - a.order)[0]
       if (next) {
         await BluetoothSdk.setCameraFovOverride({
           leaseId: next.leaseId,
@@ -71,12 +76,16 @@ export class PhoneCameraFovCoordinator {
           roiPosition: next.roiPosition,
           ttlMs: CAMERA_FOV_OVERRIDE_TTL_MS,
         })
+        // Commit phone-side ownership only after ASG accepted the replacement. On failure the
+        // closing app remains effective here, allowing unregister/reconnect cleanup to retry.
+        this.overrides.delete(packageName)
         this.effectiveLeaseId = next.leaseId
         this.scheduleRefresh()
       } else {
+        await BluetoothSdk.releaseCameraFovOverride(removed.leaseId)
+        this.overrides.delete(packageName)
         this.clearRefresh()
         this.effectiveLeaseId = undefined
-        await BluetoothSdk.releaseCameraFovOverride(removed.leaseId)
       }
     })
   }

@@ -344,9 +344,11 @@ export class PhonePhotoCoordinator {
   async stopWarmUpForApp(packageName: string): Promise<void> {
     const active = this.activeWarmUps.get(packageName)
     if (!active) return
-    this.activeWarmUps.delete(packageName)
-    if (active.expiryTimer) clearTimeout(active.expiryTimer)
     await BluetoothSdk.stopCameraWarmUp(active.requestId)
+    if (this.activeWarmUps.get(packageName) === active) {
+      this.activeWarmUps.delete(packageName)
+      if (active.expiryTimer) clearTimeout(active.expiryTimer)
+    }
   }
 
   /** True iff this requestId (short BLE id or cloud id) is one we're currently waiting on. */

@@ -557,14 +557,9 @@ public class SettingsCommandHandler implements ICommandHandler {
                     leaseId.equals(cameraFovOverrideLeaseId)
                             && fov == cameraFovOverrideValue
                             && roi == cameraFovOverrideRoi;
-            cameraFovOverrideLeaseId = leaseId;
-            cameraFovOverrideValue = fov;
-            cameraFovOverrideRoi = roi;
-            scheduleCameraFovOverrideExpiry(
-                    leaseId,
-                    ttlMs + (refresh ? 0L : CameraRestartCooldown.DEFAULT_COOLDOWN_DURATION_MS));
 
             if (refresh) {
+                scheduleCameraFovOverrideExpiry(leaseId, ttlMs);
                 JSONObject values = cameraFovValues(fov, roi, true);
                 values.put("lease_id", leaseId);
                 values.put("refreshed", true);
@@ -572,8 +567,23 @@ public class SettingsCommandHandler implements ICommandHandler {
                 return true;
             }
 
-            return applyEffectiveCameraFov(
-                    requestId, "camera_fov_override", fov, roi, leaseId);
+            boolean applied =
+                    applyEffectiveCameraFov(
+                            requestId, "camera_fov_override", fov, roi, leaseId);
+            if (!applied) {
+                return false;
+            }
+
+            // Do not make a lease current until its HAL change succeeds. If DevApi or the restart
+            // throws, the prior lease remains authoritative and persistent FOV updates are not
+            // incorrectly deferred behind an override that was reported as failed.
+            cameraFovOverrideLeaseId = leaseId;
+            cameraFovOverrideValue = fov;
+            cameraFovOverrideRoi = roi;
+            scheduleCameraFovOverrideExpiry(
+                    leaseId,
+                    ttlMs + CameraRestartCooldown.DEFAULT_COOLDOWN_DURATION_MS);
+            return true;
         } catch (Exception e) {
             Log.e(TAG, "Error handling camera_fov_override", e);
             sendSettingsError(
@@ -609,7 +619,6 @@ public class SettingsCommandHandler implements ICommandHandler {
                 return true;
             }
 
-            clearCameraFovOverride();
             AsgSettings settings = serviceManager.getAsgSettings();
             int fov =
                     settings != null
@@ -619,8 +628,14 @@ public class SettingsCommandHandler implements ICommandHandler {
                     settings != null
                             ? settings.getCameraRoiPosition()
                             : AsgConstants.CAMERA_ROI_POSITION_DEFAULT;
-            return applyEffectiveCameraFov(
-                    requestId, "camera_fov_override", fov, roi, leaseId);
+            boolean applied =
+                    applyEffectiveCameraFov(
+                            requestId, "camera_fov_override", fov, roi, leaseId);
+            if (applied) {
+                // Preserve the lease if restoring the base fails so the phone can retry release.
+                clearCameraFovOverride();
+            }
+            return applied;
         } catch (Exception e) {
             Log.e(TAG, "Error releasing camera_fov_override", e);
             sendSettingsError(

@@ -801,12 +801,18 @@ class LocalMiniappRuntime {
 
     // Warm-up is a request-owned camera lease. Cancel it even if the app record was already
     // removed so a close racing the camera-open promise cannot leave the sensor running.
-    void phonePhotoCoordinator.stopWarmUpForApp(packageName).catch((error) => {
-      console.warn(`${LOG_TAG}: failed to stop camera warm-up for ${packageName} on unregister`, error)
-    })
-    void phoneCameraFovCoordinator.releaseForApp(packageName).catch((error) => {
-      console.warn(`${LOG_TAG}: failed to release camera FOV override for ${packageName} on unregister`, error)
-    })
+    // Keep camera teardown ordered: restoring FOV can restart the HAL, so the warm-up lease must
+    // finish closing the sensor before FOV reconciliation begins. Continue to FOV cleanup even if
+    // warm-up cancellation fails; phone ownership remains retryable until the ASG lease TTL.
+    void phonePhotoCoordinator
+      .stopWarmUpForApp(packageName)
+      .catch((error) => {
+        console.warn(`${LOG_TAG}: failed to stop camera warm-up for ${packageName} on unregister`, error)
+      })
+      .then(() => phoneCameraFovCoordinator.releaseForApp(packageName))
+      .catch((error) => {
+        console.warn(`${LOG_TAG}: failed to release camera FOV override for ${packageName} on unregister`, error)
+      })
     const app = this.connectedApps.get(packageName)
     if (!app) return
 

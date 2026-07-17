@@ -438,5 +438,17 @@ describe("PhonePhotoCoordinator", () => {
       expect(warmUpCameraNative).toHaveBeenCalledTimes(2)
       await coord.stopWarmUpForApp("com.a")
     })
+
+    test("retains a warm-up lease when native cancellation fails", async () => {
+      const coord = new PhonePhotoCoordinator()
+      await coord.warmUpCamera("com.a", {})
+      const requestId = (warmUpCameraNative.mock.calls[0]![0] as {requestId: string}).requestId
+      stopCameraWarmUpNative.mockRejectedValueOnce(new Error("BLE down"))
+
+      await expect(coord.stopWarmUpForApp("com.a")).rejects.toThrow("BLE down")
+      await coord.stopWarmUpForApp("com.a")
+
+      expect(stopCameraWarmUpNative.mock.calls).toEqual([[requestId], [requestId]])
+    })
   })
 })
