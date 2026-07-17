@@ -24,7 +24,8 @@ public interface FileManager extends FileOperations, FileMetadataOperations, Pac
      * caller asked us NOT to keep ({@code save=false}). Files written under this directory are
      * intentionally hidden from {@link #listFiles(String)} so they cannot leak into gallery
      * counts or Wi-Fi sync responses while their upload is still in flight. The directory is
-     * still walked by {@link #cleanupOldFiles(String, long)} so orphans get age-cleaned.
+     * still walked by {@link #cleanupOldSdkPendingFiles(String, long)} so orphans get age-cleaned
+     * without applying gallery cleanup policy to live captures.
      */
     String SDK_PENDING_DIR_NAME = "_sdk_pending";
 

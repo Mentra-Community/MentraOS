@@ -978,19 +978,33 @@ public class AsgCameraServer extends AsgServer {
             // Cleanup is restricted to already-acknowledged recoverable trash. Live captures are
             // never age-deleted because a failed phone sync must leave its source retryable.
             long effectiveAgeMs = Math.max(maxAgeMs, MIN_TRASH_RETENTION_MS);
-            int cleanedCount = galleryTrashManager.garbageCollect(effectiveAgeMs);
-            int thumbnailCleanedCount = 0;
+            int captureCleanedCount = galleryTrashManager.garbageCollect(effectiveAgeMs);
+
+            // Preserve the non-gallery maintenance performed by the legacy endpoint. SDK no-save
+            // uploads live under a dedicated hidden tree, so orphan cleanup can be scoped there
+            // without age-deleting live captures or bypassing recoverable-trash retention.
+            int pendingCleanedCount =
+                    fileManager.cleanupOldSdkPendingFiles(
+                            fileManager.getDefaultPackageName(), maxAgeMs);
+            int thumbnailCleanedCount =
+                    fileManager.getThumbnailManager().cleanupOldThumbnails(maxAgeMs);
+            int cleanedCount = captureCleanedCount + pendingCleanedCount;
 
             logger.debug(
                     TAG,
                     "🧹 ✅ Cleanup completed: "
-                            + cleanedCount
-                            + " acknowledged captures permanently removed");
+                            + captureCleanedCount
+                            + " acknowledged captures permanently removed, "
+                            + pendingCleanedCount
+                            + " pending SDK files removed, and "
+                            + thumbnailCleanedCount
+                            + " thumbnails removed");
 
             Map<String, Object> data = new HashMap<>();
             data.put("message", "Cleanup completed successfully");
             data.put("files_removed", cleanedCount);
-            data.put("captures_removed", cleanedCount);
+            data.put("captures_removed", captureCleanedCount);
+            data.put("pending_files_removed", pendingCleanedCount);
             data.put("thumbnails_removed", thumbnailCleanedCount);
             data.put("max_age_hours", maxAgeHours);
             data.put("effective_retention_hours", effectiveAgeMs / (60 * 60 * 1000));
