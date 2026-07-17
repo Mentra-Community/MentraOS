@@ -125,15 +125,17 @@ public class PhotoSessionTest {
     }
 
     @Test
-    public void dispatchNextPhotoRequest_configuredCamera_zslChange_reopens() throws Exception {
+    public void dispatchNextPhotoRequest_configuredCamera_previewBufferOffToOn_reopens()
+            throws Exception {
+        // Baseline has no preview-ZSL buffer; request needs one → must reopen.
         PhotoSession.Hooks hooks = mockConfiguredCameraHooks();
-        PhotoCaptureSettings zslOn =
-                new PhotoCaptureSettings.Builder().zsl(true).mfnr(false).build();
-        PhotoCaptureSettings zslOff =
+        PhotoCaptureSettings bufferOff =
                 new PhotoCaptureSettings.Builder().zsl(false).mfnr(false).build();
+        PhotoCaptureSettings bufferOn =
+                new PhotoCaptureSettings.Builder().zsl(true).mfnr(false).build();
         QueuedPhotoRequest prior =
                 new QueuedPhotoRequest(
-                        "/tmp/zsl-on.jpg", "large", false, true, null, null, zslOn, null);
+                        "/tmp/zsl-off.jpg", "large", false, true, null, null, bufferOff, null);
         PhotoSession session = new PhotoSession(hooks);
         activateQueuedRequest(session, prior);
         clearActiveCapture(session);
@@ -141,24 +143,28 @@ public class PhotoSessionTest {
         QueuedPhotoRequestQueue.getInstance()
                 .offer(
                         new QueuedPhotoRequest(
-                                "/tmp/zsl-off.jpg",
+                                "/tmp/zsl-on.jpg",
                                 "large",
                                 false,
                                 true,
                                 null,
                                 null,
-                                zslOff,
+                                bufferOn,
                                 null));
 
         session.dispatchNextPhotoRequest();
 
         verify(hooks).cancelKeepAliveTimer();
         verify(hooks).closeCamera();
-        verify(hooks).openCameraInternal("/tmp/zsl-off.jpg", false);
+        verify(hooks).openCameraInternal("/tmp/zsl-on.jpg", false);
     }
 
     @Test
-    public void dispatchNextPhotoRequest_configuredCamera_mfnrChange_reopens() throws Exception {
+    public void dispatchNextPhotoRequest_configuredCamera_mfnrToggleWithBufferKept_reuses()
+            throws Exception {
+        // Warm-up / prior shot had MFNR on (preview buffer armed). take_photo with MFNR off but
+        // ZSL on still needs the same preview buffer — still-side MFNR is applied per capture,
+        // so do NOT close+reopen (that was the warm→cold bug).
         PhotoSession.Hooks hooks = mockConfiguredCameraHooks();
         PhotoCaptureSettings mfnrOn =
                 new PhotoCaptureSettings.Builder().zsl(true).mfnr(true).build();
@@ -186,8 +192,9 @@ public class PhotoSessionTest {
         session.dispatchNextPhotoRequest();
 
         verify(hooks).cancelKeepAliveTimer();
-        verify(hooks).closeCamera();
-        verify(hooks).openCameraInternal("/tmp/mfnr-off.jpg", false);
+        verify(hooks, never()).closeCamera();
+        verify(hooks, never()).openCameraInternal(anyString(), eq(false));
+        assertThat(session.shotState()).isEqualTo(AeStateMachine.ShotState.WAITING_AE);
     }
 
     @Test
