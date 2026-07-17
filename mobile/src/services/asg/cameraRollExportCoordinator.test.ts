@@ -92,6 +92,18 @@ describe("cameraRollExportCoordinator", () => {
 
   afterEach(() => cameraRollExportCoordinator.cleanup())
 
+  it("does not emit a default enabled state before durable settings load", async () => {
+    mockAutoSaveEnabled = false
+    const listener = jest.fn()
+
+    const unsubscribe = cameraRollExportCoordinator.subscribe(listener)
+    expect(listener).not.toHaveBeenCalled()
+
+    await cameraRollExportCoordinator.initialize()
+    expect(listener).toHaveBeenCalledWith(expect.objectContaining({enabled: false}))
+    unsubscribe()
+  })
+
   it("backfills a legacy item and reconciles its old basename before inserting", async () => {
     const file = legacyFile()
     mockFiles[file.name] = file

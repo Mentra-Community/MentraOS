@@ -278,7 +278,9 @@ class CameraRollExportCoordinator {
 
   subscribe(listener: SummaryListener): () => void {
     this.listeners.add(listener)
-    listener(this.getSummary())
+    // `enabled` is loaded from durable settings during initialize(). Do not emit the
+    // default before that read completes or disabled users briefly see the toggle as on.
+    if (this.initialized) listener(this.getSummary())
     return () => this.listeners.delete(listener)
   }
 

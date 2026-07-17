@@ -453,7 +453,7 @@ public class CrustModule: Module {
             // The JS ledger normally supplies the previous PhotoKit receipt. If the app was
             // terminated after Photos committed but before that receipt was persisted, reconcile
             // by our stable capture filename/date before creating another asset.
-            if let existingIdentifier = self.findExistingGalleryAssetIdentifier(
+            if let existingIdentifier = await self.findExistingGalleryAssetIdentifier(
                 fileNames: candidateFileNames,
                 stableFileName: stableFileName,
                 expectedFileSize: expectedFileSize,
@@ -469,89 +469,71 @@ public class CrustModule: Module {
             }
 
             var assetIdentifier: String?
-            let semaphore = DispatchSemaphore(value: 0)
-            var resultError: Error?
-            var resultSucceeded = false
             var creationFailed = false
 
-            PHPhotoLibrary.shared().performChanges {
-                let creationRequest = PHAssetCreationRequest.forAsset()
-                let resourceOptions = PHAssetResourceCreationOptions()
-                resourceOptions.originalFilename = assetFileName
-                creationRequest.addResource(
-                    with: isVideo ? .video : .photo,
-                    fileURL: fileURL,
-                    options: resourceOptions
-                )
-
-                if let captureDate {
-                    creationRequest.creationDate = captureDate
-                    NSLog("CrustModule: Setting creation date to: \(captureDate)")
-                }
-
-                guard let assetPlaceholder = creationRequest.placeholderForCreatedAsset else {
-                    NSLog("CrustModule: Missing placeholder for created asset")
-                    creationFailed = true
-                    return
-                }
-
-                assetIdentifier = assetPlaceholder.localIdentifier
-
-                // Limited-library access permits creating an asset, but does not reliably
-                // permit enumerating or mutating arbitrary user albums. Save to the camera
-                // roll and skip Mentra album mutation in that mode.
-                guard !hasLimitedAccess else { return }
-
-                let albumFetch = PHFetchOptions()
-                albumFetch.predicate = NSPredicate(
-                    format: "localizedTitle == %@", MentraSyncedMediaAlbum.localizedTitle
-                )
-                albumFetch.fetchLimit = 1
-
-                let existingAlbums = PHAssetCollection.fetchAssetCollections(
-                    with: .album,
-                    subtype: .albumRegular,
-                    options: albumFetch
-                )
-
-                if let album = existingAlbums.firstObject,
-                   let albumChange = PHAssetCollectionChangeRequest(for: album)
-                {
-                    albumChange.addAssets([assetPlaceholder] as NSArray)
-                } else if existingAlbums.firstObject == nil {
-                    let newAlbumChange = PHAssetCollectionChangeRequest.creationRequestForAssetCollection(
-                        withTitle: MentraSyncedMediaAlbum.localizedTitle
+            do {
+                try await PHPhotoLibrary.shared().performChanges {
+                    let creationRequest = PHAssetCreationRequest.forAsset()
+                    let resourceOptions = PHAssetResourceCreationOptions()
+                    resourceOptions.originalFilename = assetFileName
+                    creationRequest.addResource(
+                        with: isVideo ? .video : .photo,
+                        fileURL: fileURL,
+                        options: resourceOptions
                     )
-                    newAlbumChange.addAssets([assetPlaceholder] as NSArray)
-                } else {
-                    NSLog(
-                        "CrustModule: Mentra album exists but is not writable; asset saved to library only"
+
+                    if let captureDate {
+                        creationRequest.creationDate = captureDate
+                        NSLog("CrustModule: Setting creation date to: \(captureDate)")
+                    }
+
+                    guard let assetPlaceholder = creationRequest.placeholderForCreatedAsset else {
+                        NSLog("CrustModule: Missing placeholder for created asset")
+                        creationFailed = true
+                        return
+                    }
+
+                    assetIdentifier = assetPlaceholder.localIdentifier
+
+                    // Limited-library access permits creating an asset, but does not reliably
+                    // permit enumerating or mutating arbitrary user albums. Save to the camera
+                    // roll and skip Mentra album mutation in that mode.
+                    guard !hasLimitedAccess else { return }
+
+                    let albumFetch = PHFetchOptions()
+                    albumFetch.predicate = NSPredicate(
+                        format: "localizedTitle == %@", MentraSyncedMediaAlbum.localizedTitle
                     )
+                    albumFetch.fetchLimit = 1
+
+                    let existingAlbums = PHAssetCollection.fetchAssetCollections(
+                        with: .album,
+                        subtype: .albumRegular,
+                        options: albumFetch
+                    )
+
+                    if let album = existingAlbums.firstObject,
+                       let albumChange = PHAssetCollectionChangeRequest(for: album)
+                    {
+                        albumChange.addAssets([assetPlaceholder] as NSArray)
+                    } else if existingAlbums.firstObject == nil {
+                        let newAlbumChange = PHAssetCollectionChangeRequest.creationRequestForAssetCollection(
+                            withTitle: MentraSyncedMediaAlbum.localizedTitle
+                        )
+                        newAlbumChange.addAssets([assetPlaceholder] as NSArray)
+                    } else {
+                        NSLog(
+                            "CrustModule: Mentra album exists but is not writable; asset saved to library only"
+                        )
+                    }
                 }
-            } completionHandler: { success, error in
-                resultSucceeded = success
-                resultError = error
-                semaphore.signal()
-            }
-
-            if semaphore.wait(timeout: .now() + 120) == .timedOut {
-                return [
-                    "success": false,
-                    "error": "Photo library save timed out; retry will reconcile the result",
-                ]
-            }
-
-            if creationFailed {
-                return ["success": false, "error": "Failed to create PhotoKit asset placeholder"]
-            }
-
-            if let error = resultError {
+            } catch {
                 NSLog("CrustModule: Error saving to gallery: \(error.localizedDescription)")
                 return ["success": false, "error": error.localizedDescription]
             }
 
-            guard resultSucceeded else {
-                return ["success": false, "error": "Photo library did not commit the asset"]
+            if creationFailed {
+                return ["success": false, "error": "Failed to create PhotoKit asset placeholder"]
             }
 
             NSLog("CrustModule: Successfully saved to gallery with proper creation date")
@@ -565,7 +547,7 @@ public class CrustModule: Module {
         expectedFileSize: Int64?,
         captureDate: Date?,
         isVideo: Bool
-    ) -> String? {
+    ) async -> String? {
         guard !fileNames.isEmpty else { return nil }
         let options = PHFetchOptions()
         let mediaType = isVideo ? PHAssetMediaType.video : PHAssetMediaType.image
@@ -584,7 +566,7 @@ public class CrustModule: Module {
 
         let assets = PHAsset.fetchAssets(with: options)
         var stableIdentifiers: [String] = []
-        var legacyIdentifiers: [String] = []
+        var legacyCandidates: [PHAsset] = []
         assets.enumerateObjects { asset, _, _ in
             let resources = PHAssetResource.assetResources(for: asset)
             let stableMatch = stableFileName.map { stableName in
@@ -600,65 +582,61 @@ public class CrustModule: Module {
                 }
                 return true
             }
-            if legacyNameMatch,
-               let expectedFileSize,
-               self.assetOriginalFile(asset, matchesByteCount: expectedFileSize) {
+            if legacyNameMatch { legacyCandidates.append(asset) }
+        }
+        // Capture-derived names are stable. If an older retry already created duplicates,
+        // reuse the newest completed asset instead of inserting another.
+        if let stableIdentifier = stableIdentifiers.first { return stableIdentifier }
+
+        // PhotoKit's original-resource lookups are asynchronous. Resolve legacy candidates
+        // after enumeration so the fetch callback never blocks the Photos framework.
+        guard let expectedFileSize else { return nil }
+        var legacyIdentifiers: [String] = []
+        for asset in legacyCandidates {
+            if await self.assetOriginalFile(asset, matchesByteCount: expectedFileSize) {
                 legacyIdentifiers.append(asset.localIdentifier)
             }
         }
-        // Capture-derived names are stable. If an older retry already created duplicates,
-        // reuse the newest completed asset instead of inserting another. Legacy base names
-        // remain safe only when name + capture time + media type + size identify one asset.
-        return stableIdentifiers.first ?? (legacyIdentifiers.count == 1 ? legacyIdentifiers[0] : nil)
+        // Legacy base names remain safe only when name + capture time + media type + exact
+        // original byte size identify one asset.
+        return legacyIdentifiers.count == 1 ? legacyIdentifiers[0] : nil
     }
 
     /// PhotoKit does not expose resource byte size on the deployment targets we support.
-    /// Request the local original URL and inspect its file metadata instead of streaming a
-    /// potentially large video. Network access stays disabled: if the original is only in
-    /// iCloud, reconciliation fails closed and the caller creates a fresh local-library asset.
+    /// Inspect a video's local original URL or an image's original bytes asynchronously.
+    /// Network access stays disabled: if the original is only in iCloud, reconciliation fails
+    /// closed and the caller creates a fresh local-library asset instead of risking data loss.
     private func assetOriginalFile(
         _ asset: PHAsset,
         matchesByteCount expectedByteCount: Int64
-    ) -> Bool {
-        let semaphore = DispatchSemaphore(value: 0)
-        var matches = false
-
+    ) async -> Bool {
+        let manager = PHImageManager.default()
         if asset.mediaType == .video {
             let options = PHVideoRequestOptions()
             options.isNetworkAccessAllowed = false
             options.version = .original
-            let requestID = PHImageManager.default().requestAVAsset(forVideo: asset, options: options) { avAsset, _, _ in
-                if let originalURL = (avAsset as? AVURLAsset)?.url,
-                   let attributes = try? FileManager.default.attributesOfItem(atPath: originalURL.path),
-                   let byteCount = attributes[.size] as? NSNumber {
-                    matches = byteCount.int64Value == expectedByteCount
+            return await withCheckedContinuation { continuation in
+                manager.requestAVAsset(forVideo: asset, options: options) { avAsset, _, _ in
+                    guard let originalURL = (avAsset as? AVURLAsset)?.url,
+                          let attributes = try? FileManager.default.attributesOfItem(atPath: originalURL.path),
+                          let byteCount = attributes[.size] as? NSNumber else {
+                        continuation.resume(returning: false)
+                        return
+                    }
+                    continuation.resume(returning: byteCount.int64Value == expectedByteCount)
                 }
-                semaphore.signal()
-            }
-
-            if semaphore.wait(timeout: .now() + 30) == .timedOut {
-                PHImageManager.default().cancelImageRequest(requestID)
-                return false
-            }
-        } else {
-            let options = PHContentEditingInputRequestOptions()
-            options.isNetworkAccessAllowed = false
-            let requestID = asset.requestContentEditingInput(with: options) { input, _ in
-                if let originalURL = input?.fullSizeImageURL,
-                   let attributes = try? FileManager.default.attributesOfItem(atPath: originalURL.path),
-                   let byteCount = attributes[.size] as? NSNumber {
-                    matches = byteCount.int64Value == expectedByteCount
-                }
-                semaphore.signal()
-            }
-
-            if semaphore.wait(timeout: .now() + 30) == .timedOut {
-                asset.cancelContentEditingInputRequest(requestID)
-                return false
             }
         }
 
-        return matches
+        let options = PHImageRequestOptions()
+        options.isNetworkAccessAllowed = false
+        options.version = .original
+        options.deliveryMode = .highQualityFormat
+        return await withCheckedContinuation { continuation in
+            manager.requestImageDataAndOrientation(for: asset, options: options) { data, _, _, _ in
+                continuation.resume(returning: data.map { Int64($0.count) == expectedByteCount } ?? false)
+            }
+        }
     }
 }
 
