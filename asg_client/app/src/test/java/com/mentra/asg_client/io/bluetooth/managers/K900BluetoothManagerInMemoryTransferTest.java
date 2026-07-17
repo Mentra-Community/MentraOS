@@ -101,6 +101,23 @@ public class K900BluetoothManagerInMemoryTransferTest {
         verify(serial, never()).sendFile(any());
     }
 
+    @Test
+    public void inMemorySendFile_declinesWhileAnotherTransferIsActive() throws Exception {
+        boolean firstStarted = manager.sendFile(new byte[] {1, 2, 3, 4}, "first.jpg");
+
+        assertThat(firstStarted).isTrue();
+        assertThat(manager.isFileTransferInProgress()).isTrue();
+
+        // The in-memory path must route a concurrent request through the
+        // transfer_already_in_progress failure-reporting branch (using the synthetic mem: path)
+        // and leave the active session untouched rather than clobbering it.
+        boolean secondStarted = manager.sendFile(new byte[] {5, 6, 7, 8}, "second.jpg");
+
+        assertThat(secondStarted).isFalse();
+        assertThat(manager.isFileTransferInProgress()).isTrue();
+        assertThat(activeTransferFileName(manager)).isEqualTo("first.jpg");
+    }
+
     private static String activeTransferFileName(K900BluetoothManager manager) throws Exception {
         Field sessionField = findField(manager.getClass(), "currentFileTransfer");
         sessionField.setAccessible(true);
