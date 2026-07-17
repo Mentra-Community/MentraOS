@@ -1366,6 +1366,7 @@ struct ViewState {
     func warmUpCamera(
         requestId: String,
         size: PhotoSize,
+        mode: PhotoMode = .photo,
         exposureTimeNs: Double?,
         durationMs: Int
     ) throws {
@@ -1378,6 +1379,7 @@ struct ViewState {
         live.warmUpCamera(
             requestId: requestId,
             size: size,
+            mode: mode,
             exposureTimeNs: exposureTimeNs,
             durationMs: durationMs
         )
