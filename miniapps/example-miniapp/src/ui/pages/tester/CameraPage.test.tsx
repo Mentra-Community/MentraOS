@@ -92,7 +92,8 @@ describe("CameraPage", () => {
         {
           size: "medium",
           mode: "photo",
-          zslMfnr: true,
+          zsl: true,
+          mfnr: true,
         },
       ])
     })
@@ -100,14 +101,15 @@ describe("CameraPage", () => {
     expect(screen.getByText("2.0 KB")).toBeTruthy()
   })
 
-  test("takePhoto sends zslMfnr false when the toggle is off", async () => {
+  test("takePhoto sends zsl and mfnr false when the toggles are off", async () => {
     render(
       <MemoryRouter>
         <CameraPage />
       </MemoryRouter>,
     )
 
-    fireEvent.click(screen.getByRole("switch", {name: "zslMfnr"}))
+    fireEvent.click(screen.getByRole("switch", {name: "zsl"}))
+    fireEvent.click(screen.getByRole("switch", {name: "mfnr"}))
     fireEvent.click(screen.getByRole("button", {name: "takePhoto()"}))
 
     await waitFor(() => {
@@ -115,7 +117,8 @@ describe("CameraPage", () => {
         {
           size: "medium",
           mode: "photo",
-          zslMfnr: false,
+          zsl: false,
+          mfnr: false,
         },
       ])
     })
@@ -137,7 +140,8 @@ describe("CameraPage", () => {
         {
           size: "medium",
           mode: "photo",
-          zslMfnr: true,
+          zsl: true,
+          mfnr: true,
         },
       ])
     })
