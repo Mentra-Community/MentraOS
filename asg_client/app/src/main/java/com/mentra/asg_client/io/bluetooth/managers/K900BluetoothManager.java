@@ -8,6 +8,7 @@ import com.mentra.asg_client.io.bluetooth.core.BaseBluetoothManager;
 import com.mentra.asg_client.io.bluetooth.interfaces.SerialListener;
 import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.BesMessageParser;
 import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.BesWireFormat;
+import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.CsFltsAckPayload;
 import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.K900LengthCodec;
 import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.MessageChunker;
 import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.SerialPortBridge;
@@ -1763,36 +1764,15 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
      * @return true if the payload was a cs_flts ACK and was consumed
      */
     private boolean handleCsFltsAckPayload(byte[] payload) {
-        if (payload == null || payload.length < 20) {
+        CsFltsAckPayload parsed = CsFltsAckPayload.parse(payload);
+        if (parsed.kind == CsFltsAckPayload.Kind.NOT_CS_FLTS) {
             return false;
         }
-        // Cheap reject before JSON parse — hot path during photo/file TX.
-        String probe = new String(payload, 0, Math.min(payload.length, 64), StandardCharsets.UTF_8);
-        if (!probe.contains("cs_flts")) {
-            return false;
+        if (parsed.kind == CsFltsAckPayload.Kind.ACK) {
+            handleFileTransferAck(parsed.state, parsed.index);
         }
-        try {
-            JSONObject json = new JSONObject(new String(payload, StandardCharsets.UTF_8));
-            if (!"cs_flts".equals(json.optString("C", ""))) {
-                return false;
-            }
-            JSONObject body = json.optJSONObject("B");
-            if (body == null) {
-                String bodyString = json.optString("B", "");
-                body = bodyString.isEmpty() ? null : new JSONObject(bodyString);
-            }
-            if (body == null) {
-                return true; // recognized but malformed — don't fan out
-            }
-            int state = body.optInt("state", -1);
-            int index = body.optInt("index", -1);
-            if (state >= 0 && index >= 0) {
-                handleFileTransferAck(state, index);
-            }
-            return true;
-        } catch (Exception e) {
-            return false;
-        }
+        // MALFORMED and ACK both consume the payload so CommandProcessor is not spammed.
+        return true;
     }
 
     @Override
