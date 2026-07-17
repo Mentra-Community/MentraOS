@@ -507,15 +507,8 @@ class MentraBluetoothSdk private constructor(
                 }
                 // Only update size if explicitly provided; omitted size = leave stored value unchanged
                 settings.size?.let { DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_size", it.value) }
-                val resolvedZslMfnr = settings.resolvedZslMfnr()
-                if (resolvedZslMfnr != null) {
-                    DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_zsl_mfnr", resolvedZslMfnr)
-                    DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_mfnr", resolvedZslMfnr)
-                    DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_zsl", resolvedZslMfnr)
-                } else {
-                    settings.mfnr?.let { DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_mfnr", it) }
-                    settings.zsl?.let { DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_zsl", it) }
-                }
+                settings.mfnr?.let { DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_mfnr", it) }
+                settings.zsl?.let { DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_zsl", it) }
                 settings.noiseReduction?.let {
                     DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_noise_reduction", it)
                 }
