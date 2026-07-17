@@ -186,6 +186,8 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         int highestAckedIndex = -1; // highest packet index BES has acked
         boolean isActive;
         long startTime;
+        /** Wall-clock millis when the last UART/BLE packet was MCU-ACKed. */
+        long packetsCompleteAtEpochMs;
         boolean waitingForPhoneConfirmation;
         int retryCount;
 
@@ -1961,7 +1963,9 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
         if (currentFileTransfer.highestAckedIndex + 1 >= currentFileTransfer.totalPackets) {
             // All packets sent and ACKed by MCU
-            long transferDuration = System.currentTimeMillis() - currentFileTransfer.startTime;
+            long now = System.currentTimeMillis();
+            long transferDuration = now - currentFileTransfer.startTime;
+            currentFileTransfer.packetsCompleteAtEpochMs = now;
             BlePhotoTimingLog.recordUartTransfer(
                     currentFileTransfer.fileName,
                     currentFileTransfer.fileSize,
@@ -2465,15 +2469,32 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
         if (success) {
             // SUCCESS! Clean up and delete file
-            long transferDuration = System.currentTimeMillis() - currentFileTransfer.startTime;
+            long now = System.currentTimeMillis();
+            long transferDuration = now - currentFileTransfer.startTime;
+            long lastPacketToPhoneAckMs =
+                    currentFileTransfer.packetsCompleteAtEpochMs > 0
+                            ? now - currentFileTransfer.packetsCompleteAtEpochMs
+                            : -1L;
             BlePhotoTimingLog.event(
                     "TRANSFER",
                     "phone confirmed transfer_complete (photo received on phone) | file="
                             + fileName
                             + " | full_ble_round_trip="
                             + transferDuration
-                            + "ms");
-            Log.d(TAG, "✅ Phone confirmed success - cleaning up");
+                            + "ms"
+                            + (lastPacketToPhoneAckMs >= 0
+                                    ? " | last_packet_to_phone_ack="
+                                            + lastPacketToPhoneAckMs
+                                            + "ms"
+                                    : ""));
+            Log.i(
+                    TAG,
+                    "✅ Phone confirmed success - cleaning up"
+                            + (lastPacketToPhoneAckMs >= 0
+                                    ? " (last MCU-acked packet → phone ack: "
+                                            + lastPacketToPhoneAckMs
+                                            + "ms)"
+                                    : ""));
 
             notificationManager.showDebugNotification(
                     "Transfer Success!", currentFileTransfer.fileName + " confirmed by phone");
@@ -2509,6 +2530,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                 currentFileTransfer.currentPacketIndex = 0;
                 currentFileTransfer.highestAckedIndex = -1;
                 currentFileTransfer.startTime = System.currentTimeMillis();
+                currentFileTransfer.packetsCompleteAtEpochMs = 0L;
                 currentFileTransfer.waitingForPhoneConfirmation = false;
                 pendingPackets.clear();
 
