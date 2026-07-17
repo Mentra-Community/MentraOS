@@ -73,9 +73,20 @@ battery drain, and log noise that can mask a real reinit when one is needed.
 ## Suggested fix
 
 Before firing the reinit in `checkAndReinitGlassesMic()`, check the model's
-own VAD state (already available via the `voice_activity_detection_enabled`
-/ `sr_vad`-derived signal in `DeviceStore`) and skip the reinit if the model
-reports VAD-confirmed silence rather than "no signal at all." Concretely:
+own VAD state and skip the reinit if the model reports VAD-confirmed silence
+rather than "no signal at all."
+
+Note that this state does not exist yet and must be added first:
+`voice_activity_detection_enabled` in `DeviceStore` is only the
+enable/disable SETTING, and the `sr_vad` handler
+(`MentraLive.kt:4676-4684`) just forwards each event via
+`Bridge.sendSpeakingStatus(speaking)` without persisting anything. The
+implementation therefore needs to record the latest VAD speaking status and
+its timestamp somewhere the watchdog can read (e.g. a
+`lastVadStatus`/`lastVadStatusAtMs` pair updated from the `sr_vad` handler,
+in `DeviceManager` or `DeviceStore`). Do NOT gate on the
+`voice_activity_detection_enabled` setting itself; that would suppress real
+mic recovery whenever VAD is merely enabled. Concretely:
 
 - For SGCs that expose a reliable VAD/speaking-status channel (confirmed:
   Mentra Live via `sr_vad`), gate the 5s-silence check on "no VAD status
