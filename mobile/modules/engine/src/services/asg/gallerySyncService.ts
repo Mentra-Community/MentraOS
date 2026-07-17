@@ -31,6 +31,7 @@ import {mediaProcessingQueue} from "./mediaProcessingQueue"
 import {validateCaptureMetadataForDownload} from "./galleryMediaValidation"
 import {emitGalleryNotice} from "./galleryNotices"
 import {galleryTransferLedger} from "./galleryTransferLedger"
+import {cameraRollExportCoordinator} from "./cameraRollExportCoordinator"
 
 // Timing constants
 const TIMING = {
@@ -112,6 +113,8 @@ class GallerySyncService {
     this.hotspotListenerRegistered = true
     this.isInitialized = true
 
+    void cameraRollExportCoordinator.initialize()
+
     // console.log("[GallerySyncService] Initialized")
 
     // Check for resumable sync on startup
@@ -138,6 +141,7 @@ class GallerySyncService {
       this.appStateSubscription.remove()
       this.appStateSubscription = null
     }
+    cameraRollExportCoordinator.cleanup()
 
     if (this.hotspotConnectionTimeout) {
       BgTimer.clearTimeout(this.hotspotConnectionTimeout!)
@@ -202,6 +206,9 @@ class GallerySyncService {
     if (nextAppState !== "active") {
       return
     }
+
+    // Camera-roll backfill is phone-local and must resume independently of glasses/WiFi.
+    void cameraRollExportCoordinator.resume("app foreground")
 
     // Only auto-retry if we were waiting for WiFi
     if (!this.waitingForWifiRetry) {
@@ -537,9 +544,10 @@ class GallerySyncService {
         console.log("[GallerySyncService]   ⚠️ Camera roll permission not granted - requesting...")
         const granted = await MediaLibraryPermissions.requestPermission()
         if (!granted) {
-          console.warn("[GallerySyncService]   ❌ Camera roll permission denied - photos will still sync to app")
-          // Don't block sync - photos will still be downloaded to app storage
-          // They just won't be saved to the camera roll
+          console.warn("[GallerySyncService]   ❌ Camera roll permission denied - auto-save sync cannot continue")
+          store.setSyncError("Camera-roll permission required while automatic saving is enabled")
+          emitGalleryNotice({code: "camera_roll_permission_required"})
+          return
         } else {
           console.log("[GallerySyncService]   ✅ Camera roll permission granted")
         }

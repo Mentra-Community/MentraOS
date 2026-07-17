@@ -411,7 +411,11 @@ public class CrustModule: Module {
         // MARK: - Media Library Commands
 
         AsyncFunction("saveToGalleryWithDate") {
-            (filePath: String, captureTimeMillis: Int64?, displayName: String?) -> [String: Any] in
+            (
+                filePath: String,
+                captureTimeMillis: Int64?,
+                displayName: String?
+            ) -> [String: Any] in
             let fileURL = URL(fileURLWithPath: filePath)
 
             guard FileManager.default.fileExists(atPath: filePath) else {
@@ -426,12 +430,26 @@ public class CrustModule: Module {
             let captureDate = captureTimeMillis.map {
                 Date(timeIntervalSince1970: TimeInterval($0) / 1000.0)
             }
+            let candidateFileNames = [assetFileName, fileURL.lastPathComponent]
+                .filter { !$0.isEmpty }
+            let authorizationStatus: PHAuthorizationStatus
+            if #available(iOS 14, *) {
+                authorizationStatus = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+            } else {
+                authorizationStatus = PHPhotoLibrary.authorizationStatus()
+            }
+            let hasLimitedAccess: Bool
+            if #available(iOS 14, *) {
+                hasLimitedAccess = authorizationStatus == .limited
+            } else {
+                hasLimitedAccess = false
+            }
 
             // The JS ledger normally supplies the previous PhotoKit receipt. If the app was
             // terminated after Photos committed but before that receipt was persisted, reconcile
             // by our stable capture filename/date before creating another asset.
             if let existingIdentifier = self.findExistingGalleryAssetIdentifier(
-                fileName: assetFileName,
+                fileNames: candidateFileNames,
                 captureDate: captureDate,
                 isVideo: isVideo
             ) {
@@ -471,6 +489,11 @@ public class CrustModule: Module {
                 }
 
                 assetIdentifier = assetPlaceholder.localIdentifier
+
+                // Limited-library access permits creating an asset, but does not reliably
+                // permit enumerating or mutating arbitrary user albums. Save to the camera
+                // roll and skip Mentra album mutation in that mode.
+                guard !hasLimitedAccess else { return }
 
                 let albumFetch = PHFetchOptions()
                 albumFetch.predicate = NSPredicate(
@@ -530,10 +553,11 @@ public class CrustModule: Module {
     }
 
     private func findExistingGalleryAssetIdentifier(
-        fileName: String,
+        fileNames: [String],
         captureDate: Date?,
         isVideo: Bool
     ) -> String? {
+        guard !fileNames.isEmpty else { return nil }
         let options = PHFetchOptions()
         let mediaType = isVideo ? PHAssetMediaType.video : PHAssetMediaType.image
         if let captureDate {
@@ -550,17 +574,18 @@ public class CrustModule: Module {
         options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
 
         let assets = PHAsset.fetchAssets(with: options)
-        var identifier: String?
-        assets.enumerateObjects { asset, _, stop in
+        var identifiers: [String] = []
+        assets.enumerateObjects { asset, _, _ in
             let matches = PHAssetResource.assetResources(for: asset).contains {
-                $0.originalFilename == fileName
+                fileNames.contains($0.originalFilename)
             }
             if matches {
-                identifier = asset.localIdentifier
-                stop.pointee = true
+                identifiers.append(asset.localIdentifier)
             }
         }
-        return identifier
+        // Legacy base filenames were shared by every capture. Only reuse one when
+        // filename + capture time + media type identify a single accessible asset.
+        return identifiers.count == 1 ? identifiers[0] : nil
     }
 }
 

@@ -14,8 +14,8 @@ import {INVALID_DOWNLOADED_MEDIA, validateDownloadedMediaFile} from "./galleryMe
 import {reportInvalidGalleryMedia} from "./GalleryMediaIntegrityReportService"
 import {useGallerySyncStore} from "../../stores/gallerySync"
 import {BgTimer} from "../../utils/timers"
-import {MediaLibraryPermissions} from "../../utils/permissions/MediaLibraryPermissions"
 import {galleryTransferLedger, GalleryTransferEntry} from "./galleryTransferLedger"
+import {cameraRollExportCoordinator} from "./cameraRollExportCoordinator"
 
 const TAG = "[MediaProcessingQueue]"
 
@@ -131,15 +131,11 @@ class MediaProcessingQueue {
           throw new Error(`Recovery file is missing for ${entry.captureId}`)
         }
         if (entry.state === "EXPORT_PENDING" || (entry.state === "INDEXED" && entry.shouldAutoSave)) {
-          const receipt = await MediaLibraryPermissions.saveToLibraryWithReceipt(entry.finalPath, entry.timestamp)
-          if (!receipt.success) throw new Error(receipt.error || "camera roll save failed")
+          const downloadedFile = await localStorageService.getDownloadedFile(entry.captureId)
+          if (!downloadedFile) throw new Error(`Local gallery index is missing for ${entry.captureId}`)
+          const receipt = await cameraRollExportCoordinator.exportForSource(downloadedFile, entry.captureId)
           entry = galleryTransferLedger.transition(entry.captureId, "EXPORTED", {
-            assetReceipt: {
-              platform: receipt.platform,
-              uri: receipt.uri,
-              identifier: receipt.identifier,
-              exportedAt: Date.now(),
-            },
+            assetReceipt: receipt,
           })
         }
         entry = galleryTransferLedger.transition(entry.captureId, "ACK_PENDING")
@@ -346,6 +342,7 @@ class MediaProcessingQueue {
       localThumbnailPath,
       item.glassesModel,
     )
+    downloadedFile.capture_id = item.id
     try {
       await localStorageService.saveDownloadedFile(downloadedFile)
       ledgerEntry = galleryTransferLedger.transition(item.id, "INDEXED", {
@@ -353,6 +350,12 @@ class MediaProcessingQueue {
         thumbnailPath: localThumbnailPath,
         shouldAutoSave: item.shouldAutoSave,
       })
+      await cameraRollExportCoordinator.recordIndexed(
+        downloadedFile,
+        item.shouldAutoSave,
+        item.shouldAutoSave ? "SOURCE_BARRIER" : "HISTORICAL_BACKFILL",
+        item.id,
+      )
     } catch (metadataError) {
       console.error(`${TAG} Metadata save failed for ${item.id}; retaining local and glasses copies:`, metadataError)
       galleryTransferLedger.recordFailure(item.id, metadataError)
@@ -362,23 +365,10 @@ class MediaProcessingQueue {
     // 7. Export is a durable, receipted step. Failure leaves EXPORT_PENDING and blocks ack.
     if (item.shouldAutoSave) {
       galleryTransferLedger.transition(item.id, "EXPORT_PENDING")
-      const receipt = await MediaLibraryPermissions.saveToLibraryWithReceipt(filePathToSave, item.timestamp)
-      if (!receipt.success) {
-        const error = new Error(receipt.error || "camera roll save failed")
-        galleryTransferLedger.recordFailure(item.id, error)
-        useGallerySyncStore.getState().onFileFailed(item.id, error.message)
-        throw error
-      }
+      const receipt = await cameraRollExportCoordinator.exportForSource(downloadedFile, item.id)
       ledgerEntry = galleryTransferLedger.transition(item.id, "EXPORTED", {
-        assetReceipt: {
-          platform: receipt.platform,
-          uri: receipt.uri,
-          identifier: receipt.identifier,
-          exportedAt: Date.now(),
-        },
+        assetReceipt: receipt,
       })
-      downloadedFile.assetReceipt = ledgerEntry.assetReceipt
-      await localStorageService.saveDownloadedFile(downloadedFile)
       console.log(`${TAG} ✅ Saved to camera roll with receipt: ${item.id}`)
     }
 

@@ -1,3 +1,4 @@
+/* eslint-disable no-restricted-imports */
 import * as RNFS from "@dr.pogodin/react-native-fs"
 
 import {localStorageService} from "../../../modules/engine/src/services/asg/localStorageService"
@@ -6,7 +7,7 @@ import {useGallerySyncStore} from "../../../modules/engine/src/stores/gallerySyn
 import {asgCameraApi} from "../../../modules/engine/src/services/asg/asgCameraApi"
 // The durable ledger is engine-internal; this host test exercises restart recovery directly.
 import {galleryTransferLedger} from "../../../modules/engine/src/services/asg/galleryTransferLedger"
-import {MediaLibraryPermissions} from "../../../modules/engine/src/utils/permissions/MediaLibraryPermissions"
+import {cameraRollExportCoordinator} from "../../../modules/engine/src/services/asg/cameraRollExportCoordinator"
 
 import {mediaProcessingQueue} from "../../../modules/engine/src/services/asg/mediaProcessingQueue"
 
@@ -36,6 +37,14 @@ jest.mock("../../../modules/engine/src/services/asg/localStorageService", () => 
   localStorageService: {
     convertToDownloadedFile: jest.fn((info: any) => info),
     saveDownloadedFile: jest.fn(),
+    getDownloadedFile: jest.fn(),
+  },
+}))
+
+jest.mock("../../../modules/engine/src/services/asg/cameraRollExportCoordinator", () => ({
+  cameraRollExportCoordinator: {
+    recordIndexed: jest.fn(() => Promise.resolve()),
+    exportForSource: jest.fn(() => Promise.resolve({platform: "ios", identifier: "asset", exportedAt: Date.now()})),
   },
 }))
 
@@ -114,11 +123,7 @@ describe("mediaProcessingQueue", () => {
     ;(RNFS.read as jest.Mock).mockResolvedValue(
       Buffer.from([0xff, 0xd8, 0x76, 0x61, 0x6c, 0x69, 0x64]).toString("base64"),
     )
-    ;(MediaLibraryPermissions.saveToLibraryWithReceipt as jest.Mock).mockResolvedValueOnce({
-      success: false,
-      platform: "ios",
-      error: "PhotoKit unavailable",
-    })
+    ;(cameraRollExportCoordinator.exportForSource as jest.Mock).mockRejectedValueOnce(new Error("PhotoKit unavailable"))
 
     mediaProcessingQueue.reset()
     mediaProcessingQueue.enqueue({
@@ -186,7 +191,7 @@ describe("mediaProcessingQueue", () => {
 
     await expect(mediaProcessingQueue.retryPending()).resolves.toEqual({retried: 1, failed: 0})
 
-    expect(MediaLibraryPermissions.saveToLibraryWithReceipt).not.toHaveBeenCalled()
+    expect(cameraRollExportCoordinator.exportForSource).not.toHaveBeenCalled()
     expect(asgCameraApi.acknowledgeCapture).toHaveBeenCalledWith(capture.capture_id, entry.ackId)
     expect(galleryTransferLedger.get(capture.capture_id)?.state).toBe("TRASHED")
     recoverySpy.mockRestore()

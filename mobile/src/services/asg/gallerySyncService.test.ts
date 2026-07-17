@@ -1,3 +1,4 @@
+/* eslint-disable no-restricted-imports */
 import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
 
 // gallerySyncService + its asg cluster moved into @mentra/engine; this CI-gated jest
@@ -8,9 +9,12 @@ import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
 import {asgCameraApi} from "../../../modules/engine/src/services/asg/asgCameraApi"
 import {gallerySyncNotifications} from "../../../modules/engine/src/services/asg/gallerySyncNotifications"
 import {galleryTransferLedger} from "../../../modules/engine/src/services/asg/galleryTransferLedger"
+import {gallerySettingsService} from "../../../modules/engine/src/services/asg/gallerySettingsService"
+import {onGalleryNotice} from "../../../modules/engine/src/services/asg/galleryNotices"
 import {localStorageService} from "../../../modules/engine/src/services/asg/localStorageService"
 import {mediaProcessingQueue} from "../../../modules/engine/src/services/asg/mediaProcessingQueue"
 import {gallerySyncService} from "../../../modules/engine/src/services/asg/gallerySyncService"
+import {MediaLibraryPermissions} from "../../../modules/engine/src/utils/permissions/MediaLibraryPermissions"
 import {useGallerySyncStore} from "../../../modules/engine/src/stores/gallerySync"
 import {useGlassesStore} from "../../../modules/engine/src/stores/glasses"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
@@ -101,6 +105,14 @@ jest.mock("../../../modules/engine/src/services/asg/localStorageService", () => 
     clearSyncQueue: jest.fn(() => Promise.resolve()),
     convertToDownloadedFile: jest.fn((file: any) => file),
     saveDownloadedFile: jest.fn(() => Promise.resolve()),
+  },
+}))
+
+jest.mock("../../../modules/engine/src/services/asg/cameraRollExportCoordinator", () => ({
+  cameraRollExportCoordinator: {
+    initialize: jest.fn(() => Promise.resolve()),
+    cleanup: jest.fn(),
+    resume: jest.fn(() => Promise.resolve()),
   },
 }))
 
@@ -220,6 +232,22 @@ describe("GallerySyncService", () => {
     expect(useGallerySyncStore.getState().syncState).toBe("requesting_hotspot")
     expect(useGallerySyncStore.getState().syncServiceOpenedHotspot).toBe(true)
     expect(BluetoothSdk.setHotspotState).toHaveBeenCalledWith(true)
+  })
+
+  it("does not begin a source-destructive sync when camera-roll intent is on but permission is denied", async () => {
+    ;(gallerySettingsService.getAutoSaveToCameraRoll as jest.Mock).mockResolvedValueOnce(true)
+    ;(MediaLibraryPermissions.checkPermission as jest.Mock).mockResolvedValueOnce(false)
+    ;(MediaLibraryPermissions.requestPermission as jest.Mock).mockResolvedValueOnce(false)
+    const notices: string[] = []
+    const unsubscribe = onGalleryNotice((notice) => notices.push(notice.code))
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
+
+    await gallerySyncService.startSync()
+    unsubscribe()
+
+    expect(notices).toContain("camera_roll_permission_required")
+    expect(useGallerySyncStore.getState().syncState).toBe("error")
+    expect(BluetoothSdk.setHotspotState).not.toHaveBeenCalled()
   })
 
   it("aborts pre-flight quietly when glasses disconnect during any pre-flight await", async () => {

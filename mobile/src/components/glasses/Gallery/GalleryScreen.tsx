@@ -32,9 +32,8 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
-import {MediaLibraryPermissions, engine} from "@mentra/engine"
-import {localStorageService} from "@mentra/engine/internal"
-import {SETTINGS, useSetting} from "@mentra/engine"
+import {engine, MediaLibraryPermissions, SETTINGS, useSetting} from "@mentra/engine"
+import {cameraRollExportCoordinator, localStorageService} from "@mentra/engine/internal"
 import {spacing, ThemedStyle} from "@/theme"
 import {PhotoInfo} from "@/types/asg"
 import Share from "react-native-share"
@@ -70,7 +69,7 @@ interface GalleryItem {
 }
 
 export function GalleryScreen() {
-  const {goBack, push} = useNavigationStore.getState()
+  const {push} = useNavigationStore.getState()
   const {theme, themed} = useAppTheme()
   const insets = useSaferAreaInsets()
 
@@ -180,6 +179,16 @@ export function GalleryScreen() {
               {text: "Enable", onPress: () => void SettingsNavigationUtils.showLocationServicesDialog()},
             ],
             {cancelable: false},
+          )
+          break
+        case "camera_roll_permission_required":
+          showAlert(
+            "Camera Roll Access Required",
+            "Automatic saving is enabled. Allow photo-library access, or turn automatic saving off in Gallery Settings before syncing.",
+            [
+              {text: "Cancel", style: "cancel"},
+              {text: "Open Settings", onPress: () => void SettingsNavigationUtils.openAppSettings()},
+            ],
           )
           break
         case "bluetooth_off":
@@ -607,8 +616,15 @@ export function GalleryScreen() {
 
     const selectedCount = selectedPhotos.size
     const itemText = selectedCount === 1 ? "item" : "items"
+    const notExportedCount = cameraRollExportCoordinator.countNotExported(Array.from(selectedPhotos))
+    const exportWarning =
+      notExportedCount > 0
+        ? ` ${notExportedCount} ${
+            notExportedCount === 1 ? "item has" : "items have"
+          } not been confirmed in your camera roll and may be permanently lost.`
+        : " Copies already saved to your camera roll will not be affected."
 
-    showAlert("Delete Photos", `Are you sure you want to delete ${selectedCount} ${itemText}?`, [
+    showAlert("Delete Photos", `Are you sure you want to delete ${selectedCount} ${itemText}?${exportWarning}`, [
       {text: translate("common:cancel"), style: "cancel"},
       {
         text: translate("common:delete"),
@@ -628,7 +644,7 @@ export function GalleryScreen() {
             if (localPhotos.length > 0) {
               for (const photoName of localPhotos) {
                 try {
-                  const deleted = await localStorageService.deleteDownloadedFile(photoName)
+                  const deleted = await cameraRollExportCoordinator.deleteLocalMedia(photoName)
                   if (deleted) {
                     deletedPhotoNames.push(photoName)
                   } else {
@@ -1054,12 +1070,12 @@ export function GalleryScreen() {
                       ? "item"
                       : "items"
                     : glassesGalleryStatus.photos > 0
-                    ? glassesGalleryStatus.photos === 1
-                      ? "photo"
-                      : "photos"
-                    : glassesGalleryStatus.videos === 1
-                    ? "video"
-                    : "videos"}
+                      ? glassesGalleryStatus.photos === 1
+                        ? "photo"
+                        : "photos"
+                      : glassesGalleryStatus.videos === 1
+                        ? "video"
+                        : "videos"}
                 </Text>
               </View>
             </View>
