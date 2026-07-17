@@ -94,6 +94,20 @@ private final class PendingVideoRecordingRequest {
 }
 
 @MainActor
+private final class PendingStreamStart {
+    let pending: PendingResponse<StreamStatusEvent>
+    // Set when an id-carrying error arrives: a fatal publisher error never
+    // reaches the reconnect machinery and winds down with a streamId-less
+    // stopped, so the stash both attributes that stopped to this start and
+    // preserves the real error details for the rejection.
+    var lastError: StreamStatusEvent?
+
+    init(pending: PendingResponse<StreamStatusEvent>) {
+        self.pending = pending
+    }
+}
+
+@MainActor
 private final class PendingResponse<T> {
     private let operation: String
     private var continuation: CheckedContinuation<T, Error>?
@@ -175,7 +189,7 @@ public final class MentraBluetoothSDK {
     private var pendingVideoRecordingRequests: [String: PendingVideoRecordingRequest] = [:]
     private var pendingRgbLedRequests: [String: PendingResponse<RgbLedControlResponseEvent>] = [:]
     private var pendingSettingsRequests: [String: PendingResponse<SettingsAckEvent>] = [:]
-    private var pendingStreamStarts: [String: PendingResponse<StreamStatusEvent>] = [:]
+    private var pendingStreamStarts: [String: PendingStreamStart] = [:]
     private var pendingStreamStop: (streamId: String?, pending: PendingResponse<StreamStatusEvent>)?
     private var pendingGalleryStatus: PendingResponse<GalleryStatusEvent>?
     private var pendingOtaQuery: PendingResponse<OtaQueryResult>?
@@ -869,7 +883,7 @@ public final class MentraBluetoothSDK {
         let streamId = stringValue(values, "streamId").flatMap { $0.isEmpty ? nil : $0 } ?? "sdk-\(UUID().uuidString)"
         values["streamId"] = streamId
         let pending = PendingResponse<StreamStatusEvent>(operation: "start stream \(streamId)")
-        pendingStreamStarts[streamId] = pending
+        pendingStreamStarts[streamId] = PendingStreamStart(pending: pending)
         stopStreamKeepAliveMonitor()
         DeviceManager.shared.startStream(values)
         do {
@@ -1413,20 +1427,28 @@ public final class MentraBluetoothSDK {
     }
 
     private func handleStreamStatusForRequests(_ event: StreamStatusEvent) {
-        if let (streamId, pending) = matchingStreamStart(for: event) {
+        if let (streamId, start) = matchingStreamStart(for: event) {
             switch event.state {
             case .streaming:
                 pendingStreamStarts.removeValue(forKey: streamId)
-                pending.resolve(event)
+                start.pending.resolve(event)
             case .reconnectFailed, .stopped:
                 pendingStreamStarts.removeValue(forKey: streamId)
-                pending.reject(streamStatusError(event, code: "stream_start_failed"))
+                start.pending.reject(streamStatusError(start.lastError ?? event, code: "stream_start_failed"))
             case .error:
-                // The glasses publisher automatically retries transient transport
-                // errors. Keep the start pending so a subsequent `streaming`
-                // status can resolve it; `reconnectFailed` or the request timeout
-                // still terminates a publisher that cannot recover.
-                break
+                if let eventStreamId = event.streamId, !eventStreamId.isEmpty {
+                    // The glasses publisher automatically retries transient transport
+                    // errors, so keep the start pending for a later `streaming`.
+                    // Stash the details for the streamId-less `stopped` that a fatal
+                    // publisher error winds down with instead.
+                    start.lastError = event
+                } else {
+                    // An id-less error is the glasses' command-level rejection
+                    // (missing URL, low battery, no WiFi), emitted before any
+                    // publisher starts; nothing further follows for this start.
+                    pendingStreamStarts.removeValue(forKey: streamId)
+                    start.pending.reject(streamStatusError(event, code: "stream_start_failed"))
+                }
             default:
                 break
             }
@@ -1447,12 +1469,24 @@ public final class MentraBluetoothSDK {
         }
     }
 
-    private func matchingStreamStart(for event: StreamStatusEvent) -> (String, PendingResponse<StreamStatusEvent>)? {
+    private func matchingStreamStart(for event: StreamStatusEvent) -> (String, PendingStreamStart)? {
         if let streamId = event.streamId, !streamId.isEmpty {
-            guard let pending = pendingStreamStarts[streamId] else { return nil }
-            return (streamId, pending)
+            guard let start = pendingStreamStarts[streamId] else { return nil }
+            return (streamId, start)
         }
         if pendingStreamStarts.count == 1, let entry = pendingStreamStarts.first {
+            // A streamId-less STOPPED is the glasses' stop-ack for a PREVIOUS
+            // stream (their stop ack carries no streamId), not a verdict on the
+            // pending start — a start_stream that replaces a running publisher
+            // emits exactly this sequence (stopped -> initializing -> streaming).
+            // Attributing it here would reject a start that is about to succeed.
+            // After an id-carrying error for the pending start, though, the
+            // stopped is a fatal publisher's wind-down (the stop-ack always
+            // precedes any status for the new start), so it is that start's
+            // verdict.
+            if event.state == .stopped, entry.value.lastError == nil {
+                return nil
+            }
             return (entry.key, entry.value)
         }
         return nil
