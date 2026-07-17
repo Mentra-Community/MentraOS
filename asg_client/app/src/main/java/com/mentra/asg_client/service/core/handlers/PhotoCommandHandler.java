@@ -79,7 +79,9 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
             }
 
             String requestId = data.optString("requestId", "");
-            String size = PhotoSizeTier.normalize(data.optString("size", "medium"));
+            String mode = PhotoMode.normalize(data.optString("mode", PhotoMode.PHOTO));
+            String requestedSize = PhotoSizeTier.normalize(data.optString("size", "medium"));
+            String size = PhotoMode.captureSize(mode, requestedSize);
             Long exposureTimeNs = PhotoExposureTimeNs.parse(data);
             long durationMs = data.optLong("durationMs", 0L);
             if (durationMs <= 0) {
@@ -100,15 +102,18 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
                     TAG,
                     "📷 camera_warm_up requestId="
                             + requestId
+                            + " mode="
+                            + mode
                             + " size="
                             + size
+                            + (size.equals(requestedSize) ? "" : " (from " + requestedSize + ")")
                             + " exposureTimeNs="
                             + exposureTimeNs
                             + " durationMs="
                             + durationMs);
 
             boolean accepted =
-                    captureService.warmUpCamera(requestId, size, exposureTimeNs, durationMs);
+                    captureService.warmUpCamera(requestId, size, exposureTimeNs, durationMs, mode);
             logCommandResult("camera_warm_up", accepted, accepted ? null : "Warm-up rejected");
             return accepted;
         } catch (Exception e) {
@@ -178,8 +183,9 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
             String transferMethod = data.optString("transferMethod", "direct");
             String bleImgId = data.optString("bleImgId", "");
             boolean save = data.optBoolean("save", false);
-            String size = PhotoSizeTier.normalize(data.optString("size", "medium"));
             String mode = PhotoMode.normalize(data.optString("mode", PhotoMode.PHOTO));
+            String requestedSize = PhotoSizeTier.normalize(data.optString("size", "medium"));
+            String size = PhotoMode.captureSize(mode, requestedSize);
             if (!data.has("mode")) {
                 Log.w(
                         TAG,
@@ -187,6 +193,15 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
                                 + mode);
             }
             Log.i(TAG, "📸 Mentra Live take_photo mode: " + mode);
+            if (!size.equals(requestedSize)) {
+                Log.i(
+                        TAG,
+                        "📸 Text mode overriding capture size "
+                                + requestedSize
+                                + " → "
+                                + size
+                                + " (ASG text sensor constants)");
+            }
             PhotoCaptureSettings requestCaptureSettings =
                     PhotoCaptureSettings.fromTakePhotoJson(data);
             PhotoCaptureSettings.logIncomingTakePhotoFields(data, requestId);

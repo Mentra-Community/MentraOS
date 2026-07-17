@@ -106,7 +106,7 @@ export default function CameraPage() {
     const started = performance.now()
     setWarmupPending(true)
     setWarmupStatus("warming")
-    invoke("warmUp", [...buildWarmUpArgs(size, warmupDurationMs)])
+    invoke("warmUp", [...buildWarmUpArgs(size, mode, warmupDurationMs)])
       .then(() => {
         setWarmupElapsedMs(performance.now() - started)
         setWarmupStatus("ready")
@@ -161,9 +161,9 @@ export default function CameraPage() {
       <div className="flex-1 overflow-y-auto px-4 pb-6">
         <p className="mb-3 text-[13px] text-muted-foreground">
           Exercises the Cloud V2 managed-photo API: <code className="mx-1">warmUp()</code> and{" "}
-          <code className="mx-1">takePhoto()</code> with canonical sizes (
-          <code className="mx-1">low|medium|high|max</code>) and <code className="mx-1">mode</code>. The returned URL is
-          a short-TTL (~30 minute) signed download URL.
+          <code className="mx-1">takePhoto()</code>. Photo mode uses quality tiers (
+          <code className="mx-1">low|medium|high|max</code>); text mode uses ASG sensor constants for
+          capture/warm-up resolution. The returned URL is a short-TTL (~30 minute) signed download URL.
         </p>
 
         <TableRow
@@ -178,21 +178,23 @@ export default function CameraPage() {
         />
 
         <div className="mt-3 flex flex-col gap-3">
-          <div>
-            <Label htmlFor="photo-size">size</Label>
-            <Select value={size} onValueChange={(value) => setSize(value as PhotoSize)} disabled={busy}>
-              <SelectTrigger id="photo-size">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {CANONICAL_PHOTO_SIZES.map((value) => (
-                  <SelectItem key={value} value={value}>
-                    {value}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+          {mode === "photo" && (
+            <div>
+              <Label htmlFor="photo-size">quality</Label>
+              <Select value={size} onValueChange={(value) => setSize(value as PhotoSize)} disabled={busy}>
+                <SelectTrigger id="photo-size">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {CANONICAL_PHOTO_SIZES.map((value) => (
+                    <SelectItem key={value} value={value}>
+                      {value}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
           <div>
             <Label htmlFor="photo-mode">mode</Label>
             <Select value={mode} onValueChange={(value) => setMode(value as PhotoMode)} disabled={busy}>
@@ -224,7 +226,7 @@ export default function CameraPage() {
                   warming…
                 </span>
               ) : (
-                `warmUp({ size: "${size}", durationMs: ${warmupDurationMs} })`
+                "warmUp()"
               )}
             </Button>
             <Button onClick={takePhoto} disabled={busy} className="sm:flex-1">
@@ -249,7 +251,7 @@ export default function CameraPage() {
           label="capture options"
           ordered
           data={{
-            size,
+            ...(mode === "photo" ? {size} : {sensor: "ASG text constants"}),
             mode,
             warmupDurationMs,
             warmupStatus: warmupStatus ?? "(not warmed)",

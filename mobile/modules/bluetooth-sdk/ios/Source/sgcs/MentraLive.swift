@@ -1755,11 +1755,12 @@ class MentraLive: NSObject, SGCManager {
     func warmUpCamera(
         requestId: String,
         size: PhotoSize,
+        mode: PhotoMode = .photo,
         exposureTimeNs: Double?,
         durationMs: Int
     ) {
         Bridge.log(
-            "LIVE: warmUpCamera() entry requestId=\(requestId) size=\(size.rawValue) durationMs=\(durationMs)"
+            "LIVE: warmUpCamera() entry requestId=\(requestId) size=\(size.rawValue) mode=\(mode.rawValue) durationMs=\(durationMs)"
         )
 
         let allowedSizes = ["low", "medium", "high", "max"]
@@ -1768,6 +1769,7 @@ class MentraLive: NSObject, SGCManager {
             "type": "camera_warm_up",
             "requestId": requestId,
             "size": allowedSizes.contains(sizeRaw) ? sizeRaw : "medium",
+            "mode": mode.rawValue,
             "durationMs": durationMs > 0 ? durationMs : 15000,
         ]
 

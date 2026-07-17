@@ -17,16 +17,28 @@ export interface TakePhotoConfig {
   mode: PhotoMode
 }
 
+/**
+ * Wire size for the request. Text mode ignores the public quality tier — ASG owns sensor
+ * resolution via TEXT_MODE_SENSOR_CAPTURE_* constants — but the BLE schema still requires a size.
+ */
+export function wirePhotoSize(size: PhotoSize, mode: PhotoMode): PhotoSize {
+  return mode === "text" ? "medium" : size
+}
+
 export function buildTakePhotoArgs(config: TakePhotoConfig) {
   const options: Record<string, unknown> = {
-    size: config.size,
+    size: wirePhotoSize(config.size, config.mode),
     mode: config.mode,
   }
   return [options] as const
 }
 
-export function buildWarmUpArgs(size: PhotoSize, durationMs = DEFAULT_WARMUP_DURATION_MS) {
-  return [{size, durationMs}] as const
+export function buildWarmUpArgs(
+  size: PhotoSize,
+  mode: PhotoMode,
+  durationMs = DEFAULT_WARMUP_DURATION_MS,
+) {
+  return [{size: wirePhotoSize(size, mode), mode, durationMs}] as const
 }
 
 export function formatElapsedMs(elapsedMs: number | undefined): string {

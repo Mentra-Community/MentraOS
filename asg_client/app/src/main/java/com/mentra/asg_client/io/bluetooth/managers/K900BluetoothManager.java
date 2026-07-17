@@ -186,6 +186,8 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         int highestAckedIndex = -1; // highest packet index BES has acked
         boolean isActive;
         long startTime;
+        /** Wall-clock millis when the last UART/BLE packet was MCU-ACKed. */
+        long packetsCompleteAtEpochMs;
         boolean waitingForPhoneConfirmation;
         int retryCount;
 
@@ -1859,8 +1861,51 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             return false;
         }
 
-        // Create file transfer session
-        String fileName = file.getName();
+        return startFileTransferSession(filePath, file.getName(), fileData);
+    }
+
+    /**
+     * Send an in-memory payload over the K900 file-transfer protocol without a backing file.
+     * Everything after session creation (packet pump, acks, retries) already operates on the
+     * in-memory {@code fileData} buffer, so no disk artifact is required.
+     *
+     * @param data payload bytes
+     * @param fileName wire name for the transfer (truncated to the 16-char protocol cap)
+     * @return true if transfer started successfully
+     */
+    @Override
+    protected boolean sendFileInternal(byte[] data, String fileName) {
+        if (!isSerialOpen) {
+            Log.e(TAG, "Cannot send in-memory file - serial port not open");
+            BluetoothReporting.reportFileTransferFailure(
+                    context, memoryReportPath(fileName), "send_file", "serial_port_not_open", null);
+            return false;
+        }
+
+        if (currentFileTransfer != null && currentFileTransfer.isActive) {
+            Log.e(TAG, "File transfer already in progress");
+            BluetoothReporting.reportFileTransferFailure(
+                    context,
+                    memoryReportPath(fileName),
+                    "send_file",
+                    "transfer_already_in_progress",
+                    null);
+            return false;
+        }
+
+        return startFileTransferSession(null, fileName, data);
+    }
+
+    /** Synthetic identifier for Sentry reports on transfers that never touch disk. */
+    private static String memoryReportPath(String fileName) {
+        return "mem:" + fileName;
+    }
+
+    /**
+     * Create the transfer session and start the packet pump. {@code filePath} is {@code null} for
+     * in-memory transfers; it is only used for post-transfer cleanup and failure reporting.
+     */
+    private boolean startFileTransferSession(String filePath, String fileName, byte[] fileData) {
         if (fileName.length() > 16) {
             fileName = fileName.substring(0, 16); // Truncate to 16 chars max
         }
@@ -1885,7 +1930,9 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                         + fileData.length
                         + " bytes, "
                         + currentFileTransfer.totalPackets
-                        + " packets)");
+                        + " packets, "
+                        + (filePath != null ? "disk-backed" : "in-memory")
+                        + ")");
 
         notificationManager.showDebugNotification(
                 "File Transfer",
@@ -1916,7 +1963,9 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
         if (currentFileTransfer.highestAckedIndex + 1 >= currentFileTransfer.totalPackets) {
             // All packets sent and ACKed by MCU
-            long transferDuration = System.currentTimeMillis() - currentFileTransfer.startTime;
+            long now = System.currentTimeMillis();
+            long transferDuration = now - currentFileTransfer.startTime;
+            currentFileTransfer.packetsCompleteAtEpochMs = now;
             BlePhotoTimingLog.recordUartTransfer(
                     currentFileTransfer.fileName,
                     currentFileTransfer.fileSize,
@@ -2028,7 +2077,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         if (!sent) {
             Log.e(TAG, "Failed to write file packet " + packetIndex + " to UART");
             BluetoothReporting.reportFileTransferFailure(
-                    context, currentFileTransfer.filePath, "send_file", "uart_write_failed", null);
+                    context, transferReportPath(), "send_file", "uart_write_failed", null);
             notificationManager.showDebugNotification(
                     "File Transfer Failed", "UART write failed at packet " + packetIndex);
             notifyTransferFailedToPhone("uart_write_failed");
@@ -2099,7 +2148,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
                 // Report file transfer failure
                 BluetoothReporting.reportFileTransferFailure(
-                        context, currentFileTransfer.filePath, "send_file", "packet_timeout", null);
+                        context, transferReportPath(), "send_file", "packet_timeout", null);
 
                 notificationManager.showDebugNotification(
                         "File Transfer Failed", "Packet " + packetIndex + " timeout");
@@ -2277,7 +2326,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                 // Report the failure
                 BluetoothReporting.reportFileTransferFailure(
                         context,
-                        currentFileTransfer.filePath,
+                        transferReportPath(),
                         "send_file",
                         "ble_tx_stuck_consecutive_failures",
                         null);
@@ -2420,15 +2469,32 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
         if (success) {
             // SUCCESS! Clean up and delete file
-            long transferDuration = System.currentTimeMillis() - currentFileTransfer.startTime;
+            long now = System.currentTimeMillis();
+            long transferDuration = now - currentFileTransfer.startTime;
+            long lastPacketToPhoneAckMs =
+                    currentFileTransfer.packetsCompleteAtEpochMs > 0
+                            ? now - currentFileTransfer.packetsCompleteAtEpochMs
+                            : -1L;
             BlePhotoTimingLog.event(
                     "TRANSFER",
                     "phone confirmed transfer_complete (photo received on phone) | file="
                             + fileName
                             + " | full_ble_round_trip="
                             + transferDuration
-                            + "ms");
-            Log.d(TAG, "✅ Phone confirmed success - cleaning up");
+                            + "ms"
+                            + (lastPacketToPhoneAckMs >= 0
+                                    ? " | last_packet_to_phone_ack="
+                                            + lastPacketToPhoneAckMs
+                                            + "ms"
+                                    : ""));
+            Log.i(
+                    TAG,
+                    "✅ Phone confirmed success - cleaning up"
+                            + (lastPacketToPhoneAckMs >= 0
+                                    ? " (last MCU-acked packet → phone ack: "
+                                            + lastPacketToPhoneAckMs
+                                            + "ms)"
+                                    : ""));
 
             notificationManager.showDebugNotification(
                     "Transfer Success!", currentFileTransfer.fileName + " confirmed by phone");
@@ -2464,6 +2530,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                 currentFileTransfer.currentPacketIndex = 0;
                 currentFileTransfer.highestAckedIndex = -1;
                 currentFileTransfer.startTime = System.currentTimeMillis();
+                currentFileTransfer.packetsCompleteAtEpochMs = 0L;
                 currentFileTransfer.waitingForPhoneConfirmation = false;
                 pendingPackets.clear();
 
@@ -2563,9 +2630,23 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         }
     }
 
+    /** Identifier for failure reports on the active transfer (synthetic for in-memory sends). */
+    private String transferReportPath() {
+        if (currentFileTransfer == null) {
+            return "mem:unknown";
+        }
+        return currentFileTransfer.filePath != null
+                ? currentFileTransfer.filePath
+                : memoryReportPath(currentFileTransfer.fileName);
+    }
+
     /** Delete file after successful transfer */
     private void deleteFileAfterSuccess() {
         if (currentFileTransfer == null) {
+            return;
+        }
+        if (currentFileTransfer.filePath == null) {
+            // In-memory transfer - nothing was ever written to disk.
             return;
         }
 

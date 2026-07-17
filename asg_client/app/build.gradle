@@ -345,8 +345,6 @@ dependencies {
     testImplementation 'org.robolectric:robolectric:4.11.1'
     testImplementation 'org.assertj:assertj-core:3.24.2'
     testImplementation 'androidx.test:core:1.5.0'
-    // Desktop OpenCV natives for offline text-detect harness (JVM unit tests on dev machine)
-    testImplementation 'org.openpnp:opencv:4.9.0-0'
     androidTestImplementation 'androidx.test.ext:junit:1.1.5'
     androidTestImplementation 'androidx.test:runner:1.5.2'
     androidTestImplementation 'androidx.test:rules:1.5.0'
@@ -368,6 +366,9 @@ dependencies {
     //location services
     implementation 'com.google.android.gms:play-services-location:18.0.0'
 
+    // Bundled/offline text localization for Mentra Live text-mode photos.
+    implementation 'com.google.mlkit:text-recognition:16.0.1'
+
     //websocket
     implementation 'com.squareup.okhttp3:okhttp:4.9.3'
 
@@ -386,9 +387,6 @@ dependencies {
     // JSON handling
     implementation 'org.json:json:20210307'
     
-    // OpenCV for BLE text-region detection (adaptive threshold, morphology, connected components)
-    implementation 'org.opencv:opencv:4.13.0'
-
     // AVIF encoding/decoding support
     implementation 'com.github.awxkee:avif-coder:1.7.3'
     implementation 'androidx.heifwriter:heifwriter:1.1.0'

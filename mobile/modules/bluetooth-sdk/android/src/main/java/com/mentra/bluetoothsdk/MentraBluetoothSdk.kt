@@ -795,6 +795,7 @@ class MentraBluetoothSdk private constructor(
     suspend fun warmUpCamera(
         requestId: String? = null,
         size: PhotoSize,
+        mode: PhotoMode = PhotoMode.PHOTO,
         exposureTimeNs: Long?,
         durationMs: Int,
     ): CameraStatusEvent {
@@ -810,7 +811,7 @@ class MentraBluetoothSdk private constructor(
         }
         try {
             cameraCommandMutex.withLock {
-                deviceManager.warmUpCamera(effectiveRequestId, size, exposureTimeNs, durationMs)
+                deviceManager.warmUpCamera(effectiveRequestId, size, mode, exposureTimeNs, durationMs)
                 return pending.await()
             }
         } finally {

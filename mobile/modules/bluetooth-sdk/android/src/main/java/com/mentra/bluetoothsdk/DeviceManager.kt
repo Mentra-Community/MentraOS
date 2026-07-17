@@ -1657,6 +1657,7 @@ class DeviceManager {
     fun warmUpCamera(
         requestId: String,
         size: PhotoSize,
+        mode: PhotoMode = PhotoMode.PHOTO,
         exposureTimeNs: Long?,
         durationMs: Int,
     ) {
@@ -1668,7 +1669,7 @@ class DeviceManager {
                     "unsupported_device",
                     "This command requires Mentra Live glasses.",
                 )
-        live.warmUpCamera(requestId, size, exposureTimeNs, durationMs)
+        live.warmUpCamera(requestId, size, mode, exposureTimeNs, durationMs)
     }
 
     /**

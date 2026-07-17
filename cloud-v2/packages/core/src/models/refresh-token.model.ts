@@ -12,11 +12,16 @@
  * server-held pepper protects against DB-only leaks just as well, with no
  * per-refresh CPU cost.
  *
- * **Rotation.** Every successful refresh deletes the old document and inserts
- * a new one. A token can only be used once. Reusing a previously-rotated
- * token (e.g. by a thief who grabbed it before the legitimate client
- * refreshed) yields `invalid_grant`, surfacing the breach to the legitimate
- * client on its next refresh attempt.
+ * **Rotation.** Every successful refresh rotates the stored hash in place and
+ * records the presented hash in `prevTokenHash`. A rotated-away token stays
+ * honored until its successor is first USED (OS-1703): a client that sent a
+ * refresh but never received the response (killed mid-rotation, dropped
+ * connection) still holds the predecessor, and re-presenting it rotates again
+ * instead of bricking the session — the never-delivered successor is orphaned
+ * by that recovery rotation. Anything older than the immediate predecessor,
+ * or a predecessor whose successor has already been used, yields
+ * `invalid_grant`, surfacing token theft to the legitimate client on its next
+ * refresh attempt exactly as before.
  *
  * **TTL.** A TTL index on `expiresAt` lets Mongo auto-delete expired
  * sessions; no background cleanup job needed.
@@ -41,6 +46,14 @@ const RefreshTokenSchema = new Schema(
      */
     refreshTokenHash: { type: String, required: true, unique: true },
 
+    /**
+     * Hash of the immediately-superseded refresh token, set on every
+     * rotation. Recovery lookup field (OS-1703): a client that lost the
+     * rotation response re-presents its old token, which matches here as
+     * long as the successor was never used. Absent on brand-new sessions.
+     */
+    prevTokenHash: { type: String },
+
     /** Whose session this is. Matches `users.mentraUserId`. */
     mentraUserId: { type: String, required: true },
 
@@ -58,6 +71,10 @@ const RefreshTokenSchema = new Schema(
 // TTL index. `expireAfterSeconds: 0` means "delete the doc as soon as the
 // indexed field's date is in the past." Mongo scans every ~60s.
 RefreshTokenSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+
+// Recovery lookup: refresh presented with the immediately-superseded token
+// (OS-1703). Sparse — brand-new sessions have no predecessor.
+RefreshTokenSchema.index({ prevTokenHash: 1 }, { sparse: true });
 
 // Revocation queries: "kill every session belonging to this user / OEM."
 RefreshTokenSchema.index({ mentraUserId: 1, tenantId: 1 });

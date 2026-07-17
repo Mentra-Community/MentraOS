@@ -8,7 +8,8 @@
     "./*": "./src/*.ts"
   },
   "files": [
-    "src"
+    "src",
+    "!src/**/*.test.ts"
   ],
   "scripts": {
     "test": "bun test"

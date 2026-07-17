@@ -4,6 +4,7 @@ package com.mentra.bluetoothsdk
 
 import com.mentra.bluetoothsdk.debug.BleTraceLogger
 import com.mentra.bluetoothsdk.utils.DeviceTypes
+import com.mentra.bluetoothsdk.utils.audio.PcmStreamManager
 import expo.modules.kotlin.exception.CodedException
 import expo.modules.kotlin.functions.Coroutine
 import expo.modules.kotlin.modules.Module
@@ -399,6 +400,7 @@ class BluetoothSdkModule : Module() {
                     "module_destroy"
             )
             sdk?.close()
+            PcmStreamManager.abortAll()
             sdk = null
             deviceManager = null
         }
@@ -607,12 +609,13 @@ class BluetoothSdkModule : Module() {
         SdkCoroutineFunction("warmUpCamera") { params: Map<String, Any?> ->
             val requestId = params["requestId"] as? String
             val size = PhotoSize.fromValue(params["size"] as? String)
+            val mode = PhotoMode.fromValue(params["mode"] as? String)
             val exposureRaw = (params["exposureTimeNs"] as? Number)?.toDouble()
             val exposureTimeNs =
                 if (exposureRaw != null && exposureRaw.isFinite() && exposureRaw > 0) exposureRaw.toLong() else null
             val durationRaw = (params["durationMs"] as? Number)?.toInt() ?: 0
             val durationMs = if (durationRaw > 0) durationRaw else 15000
-            requireSdk().warmUpCamera(requestId, size, exposureTimeNs, durationMs).values
+            requireSdk().warmUpCamera(requestId, size, mode, exposureTimeNs, durationMs).values
         }
 
         // MARK: - OTA Commands
@@ -725,6 +728,35 @@ class BluetoothSdkModule : Module() {
 
         SdkAsyncFunction("setOwnAppAudioPlaying") { playing: Boolean ->
             sdk?.setOwnAppAudioPlaying(playing)
+        }
+
+        // MARK: - Live PCM output stream (miniapp speaker.createStream)
+        //
+        // MentraOS-internal. 16-bit LE PCM chunks into a streaming AudioTrack
+        // (USAGE_MEDIA → follows the media route, e.g. A2DP to glasses).
+        // write/close run *blocking on Dispatchers.IO*, not the shared Expo
+        // AsyncFunctionQueue: write intentionally blocks for backpressure and
+        // close blocks until the backlog drains — either would otherwise stall
+        // every other native call queued behind them.
+
+        AsyncFunction("pcmStreamOpen") { streamId: String, sampleRate: Int, channels: Int, volume: Double ->
+            PcmStreamManager.open(streamId, sampleRate, channels, volume.toFloat())
+        }
+
+        AsyncFunction("pcmStreamWrite") Coroutine { streamId: String, base64: String ->
+            withContext(Dispatchers.IO) {
+                mapOf("bufferedMs" to PcmStreamManager.write(streamId, base64))
+            }
+        }
+
+        AsyncFunction("pcmStreamClose") Coroutine { streamId: String ->
+            withContext(Dispatchers.IO) {
+                mapOf("durationMs" to PcmStreamManager.close(streamId))
+            }
+        }
+
+        AsyncFunction("pcmStreamAbort") { streamId: String ->
+            PcmStreamManager.abort(streamId)
         }
 
         // *Blocking on Dispatchers.IO, not the shared AsyncFunctionQueue: these wait on
