@@ -218,6 +218,11 @@ class MentraLive : SGCManager() {
     private var useBinaryWireProtocol = false
     private var wireHandshakeQueued = false
     private var wireHandshakeAttempts = 0
+    // Session generation in which the LAST outgoing v2 handshake was sent. A handshake
+    // reply only activates v2 when it answers a handshake from the CURRENT epoch - a
+    // stale handshake that survived in flight across an epoch reset must not flip the
+    // new session to v2 before it negotiated its own build and capabilities.
+    private var wireHandshakeSentGeneration = -1
     // Bumped on every BLE session reset; scheduled handshake-retry callbacks capture it
     // and no-op if the session changed, so a timer from a dead session can't poke a new one.
     private var wireSessionGeneration = 0
@@ -7196,6 +7201,7 @@ class MentraLive : SGCManager() {
         peerWireCapsBinary = false
         peerFilePayloadV2 = false
         BleJsonCompact.resetSession()
+        wireHandshakeSentGeneration = -1
     }
 
     private fun parsePeerWireCaps(json: JSONObject) {
@@ -7269,6 +7275,7 @@ class MentraLive : SGCManager() {
                     )
             Bridge.log("LIVE: Sending BLE wire v2 handshake")
             wireHandshakeQueued = true
+            wireHandshakeSentGeneration = wireSessionGeneration
             queueData(packed, null)
             // The handshake and its reply are fire-and-forget binary frames with no ACK
             // tracking; if either is lost, wireHandshakeQueued would block every future
@@ -7317,6 +7324,10 @@ class MentraLive : SGCManager() {
     }
 
     private fun handlePeerWireHandshake() {
+        if (wireHandshakeSentGeneration != wireSessionGeneration) {
+            Bridge.log("LIVE: Ignoring wire v2 handshake reply from a previous session epoch")
+            return
+        }
         activateBinaryWireV2Session("LIVE: Peer confirmed BLE wire protocol v2")
     }
 

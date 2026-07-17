@@ -1451,6 +1451,10 @@ class MentraLive: NSObject, SGCManager {
     private var useBinaryWireProtocol = false
     private var wireHandshakeQueued = false
     private var wireHandshakeAttempts = 0
+    // Session generation in which the LAST outgoing v2 handshake was sent; a reply only
+    // activates v2 when it answers a handshake from the CURRENT epoch (see PendingMessage
+    // .generation for the queue-side guard).
+    private var wireHandshakeSentGeneration = -1
     // Bumped on every BLE session reset; scheduled handshake-retry callbacks capture it
     // and no-op if the session changed, so a timer from a dead session can't poke a new one.
     private var wireSessionGeneration = 0
@@ -1824,17 +1828,24 @@ class MentraLive: NSObject, SGCManager {
     // MARK: - Command Queue
 
     class PendingMessage {
-        init(data: Data, id: String, retries: Int, trace: BleWriteTrace? = nil) {
+        init(data: Data, id: String, retries: Int, trace: BleWriteTrace? = nil, generation: Int = 0) {
             self.data = data
             self.id = id
             self.retries = retries
             self.trace = trace
+            self.generation = generation
         }
 
         let data: Data
         let retries: Int
         let id: String
         let trace: BleWriteTrace?
+        // Wire-session generation at enqueue time; the drain loop drops entries from a
+        // previous session so a stale write (worst case: an old handshake whose reply
+        // would activate v2 pre-negotiation) can never cross a session boundary. This is
+        // the deterministic guard - the async removeAll() on disconnect is best-effort
+        // cleanup that may land after a reconnect has already resumed the drain loop.
+        let generation: Int
     }
 
     struct OutgoingBleCommandTraceInfo {
@@ -1893,7 +1904,12 @@ class MentraLive: NSObject, SGCManager {
                 let pendingIsNil = await MainActor.run { self.pending == nil }
                 if pendingIsNil {
                     if let command = await self.commandQueue.dequeue() {
-                        await self.processSendQueue(command)
+                        let currentGeneration = await MainActor.run { self.wireSessionGeneration }
+                        if command.generation != currentGeneration {
+                            Bridge.log("LIVE: Dropping stale queued write from a previous session epoch (id: \(command.id))")
+                        } else {
+                            await self.processSendQueue(command)
+                        }
                     }
                 }
                 try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
@@ -1969,7 +1985,8 @@ class MentraLive: NSObject, SGCManager {
                 data: pendingMessage.data,
                 id: pendingMessage.id,
                 retries: pendingMessage.retries + 1,
-                trace: pendingMessage.trace
+                trace: pendingMessage.trace,
+                generation: pendingMessage.generation
             )
 
             // Push to front of queue for immediate retry
@@ -3886,7 +3903,7 @@ class MentraLive: NSObject, SGCManager {
     func queueSend(_ data: Data, id: String, trace: BleWriteTrace?) {
         let significantQueueSize = SIGNIFICANT_BLE_TRACE_QUEUE_SIZE
         Task {
-            let queueSize = await commandQueue.enqueue(PendingMessage(data: data, id: id, retries: 0, trace: trace))
+            let queueSize = await commandQueue.enqueue(PendingMessage(data: data, id: id, retries: 0, trace: trace, generation: wireSessionGeneration))
             guard trace != nil, queueSize >= significantQueueSize else {
                 return
             }
@@ -4116,6 +4133,7 @@ class MentraLive: NSObject, SGCManager {
         }
         Bridge.log("LIVE: Sending BLE wire v2 handshake")
         wireHandshakeQueued = true
+        wireHandshakeSentGeneration = wireSessionGeneration
         queueSend(packed, id: "-1")
         // The handshake and its reply are fire-and-forget binary frames with no ACK
         // tracking; if either is lost, wireHandshakeQueued would block every future
@@ -4152,6 +4170,10 @@ class MentraLive: NSObject, SGCManager {
     }
 
     private func handlePeerWireHandshake() {
+        if wireHandshakeSentGeneration != wireSessionGeneration {
+            Bridge.log("LIVE: Ignoring wire v2 handshake reply from a previous session epoch")
+            return
+        }
         activateBinaryWireV2Session(logMessage: "LIVE: Peer confirmed BLE wire protocol v2")
     }
 
@@ -5164,6 +5186,7 @@ extension MentraLive {
         peerWireCapsBinary = false
         peerFilePayloadV2 = false
         BleJsonCompact.resetSession()
+        wireHandshakeSentGeneration = -1
     }
 
     private func parsePeerWireCaps(_ json: [String: Any]) {
