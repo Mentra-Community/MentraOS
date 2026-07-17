@@ -906,7 +906,11 @@ export const useSettingsStore = create<SettingsState>()(
           }
           // normal key:value pair:
           let value = res.value
-          console.log(`SETTINGS: LOAD: ${setting.key} = ${value.value}`)
+          // res.value IS the stored value; logging value.value printed
+          // "undefined" for every loaded setting and disguised present
+          // values as missing. Redact token-bearing keys.
+          const printable = setting.key.includes("token") ? "<redacted>" : JSON.stringify(value)
+          console.log(`SETTINGS: LOAD: ${setting.key} = ${printable}`)
           loadedSettings[setting.key] = value
         }
 
