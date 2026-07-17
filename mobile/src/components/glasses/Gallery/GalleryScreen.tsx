@@ -308,9 +308,9 @@ export function GalleryScreen() {
         }
       }
 
-      // Clean up stale metadata entries (files that no longer exist on disk)
+      // Preserve stale metadata for path recovery/support instead of deleting the only record.
       for (const fileName of staleFileNames) {
-        await localStorageService.deleteDownloadedFile(fileName)
+        await localStorageService.quarantineDownloadedFile(fileName, "local media missing or empty during gallery load")
       }
 
       // Also unlink zero-byte files from disk so they don't accumulate.

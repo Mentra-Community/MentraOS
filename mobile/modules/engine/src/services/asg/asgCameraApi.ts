@@ -11,11 +11,38 @@ import {BgTimer} from "../../utils/timers"
 import {localStorageService} from "./localStorageService"
 import {validateDownloadedMediaFile} from "./galleryMediaValidation"
 import {reportInvalidGalleryMedia} from "./GalleryMediaIntegrityReportService"
+import {galleryTransferLedger} from "./galleryTransferLedger"
+
+export interface GalleryCapabilities {
+  api_version: number
+  range_downloads: boolean
+  fixed_length_downloads: boolean
+  etag: boolean
+  sha256: boolean
+  recoverable_trash: boolean
+  idempotent_ack: boolean
+  selected_capture?: boolean
+  recommended_segment_bytes?: number
+  max_manifest_page_size?: number
+}
+
+type V3ManifestResponse = {
+  status: string
+  data: {
+    api_version: 3
+    captures: CaptureGroup[]
+    has_more: boolean
+    next_cursor?: string | null
+    total_count: number
+    server_time: number
+  }
+}
 
 export class AsgCameraApiClient {
   private baseUrl: string
   private port: number
   private lastRequestTime: number = 0
+  private galleryCapabilities: GalleryCapabilities | null | undefined
 
   constructor(serverUrl?: string, port: number = 8089) {
     this.port = port
@@ -44,6 +71,7 @@ export class AsgCameraApiClient {
     if (this.baseUrl !== newUrl) {
       this.baseUrl = newUrl
       this.port = newPort
+      this.galleryCapabilities = undefined
       // console.log(`[ASG Camera API] Server changed from ${oldUrl} to ${this.baseUrl}`)
     } else {
       // console.log(`[ASG Camera API] Server URL unchanged: ${this.baseUrl}`)
@@ -60,10 +88,9 @@ export class AsgCameraApiClient {
   /**
    * Rate limiting helper - ensures minimum delay between requests
    */
-  private async rateLimit(): Promise<void> {
+  private async rateLimit(minDelay: number = 500): Promise<void> {
     const now = Date.now()
     const timeSinceLastRequest = now - this.lastRequestTime
-    const minDelay = 500 // 500ms minimum delay between requests
 
     if (timeSinceLastRequest < minDelay) {
       const delay = minDelay - timeSinceLastRequest
@@ -77,7 +104,12 @@ export class AsgCameraApiClient {
   /**
    * Make a request to the ASG Camera Server with rate limiting and retry logic
    */
-  private async makeRequest<T>(endpoint: string, options?: RequestInit, retries: number = 5): Promise<T> {
+  private async makeRequest<T>(
+    endpoint: string,
+    options?: RequestInit,
+    retries: number = 5,
+    writeIntervalMs: number = 500,
+  ): Promise<T> {
     const url = `${this.baseUrl}${endpoint}`
     const method = options?.method || "GET"
 
@@ -96,8 +128,8 @@ export class AsgCameraApiClient {
 
     try {
       // Apply rate limiting only for non-GET requests
-      if (method !== "GET") {
-        await this.rateLimit()
+      if (method !== "GET" && writeIntervalMs > 0) {
+        await this.rateLimit(writeIntervalMs)
       }
 
       // Prepare headers - don't set Content-Type for GET requests
@@ -140,7 +172,7 @@ export class AsgCameraApiClient {
           const retryDelay = Math.min(Math.pow(2, 6 - retries) * 1000, 10000)
           console.log(`[ASG Camera API] Rate limited, retrying in ${retryDelay}ms (${retries} retries left)`)
           await new Promise<void>((resolve) => BgTimer.setTimeout(() => resolve(), retryDelay))
-          return this.makeRequest<T>(endpoint, options, retries - 1)
+          return this.makeRequest<T>(endpoint, options, retries - 1, writeIntervalMs)
         }
 
         throw new Error(`HTTP ${response.status}: ${response.statusText}`)
@@ -152,7 +184,12 @@ export class AsgCameraApiClient {
 
       if (contentType?.includes("application/json")) {
         const data = await response.json()
-        console.log(`[ASG Camera API] JSON Response received:`, data)
+        console.log(`[ASG Camera API] JSON response received`, {
+          endpoint,
+          status: data?.status,
+          apiVersion: data?.data?.api_version,
+          captureCount: data?.data?.captures?.length,
+        })
         return data
       } else if (contentType?.includes("image/") || contentType?.includes("application/octet-stream")) {
         // For image responses and binary data (including AVIF), return the blob
@@ -602,6 +639,100 @@ export class AsgCameraApiClient {
     }
   }
 
+  /** Probe the additive gallery protocol. A 404 cleanly falls back to legacy v2. */
+  async getGalleryCapabilities(): Promise<GalleryCapabilities | null> {
+    if (this.galleryCapabilities !== undefined) return this.galleryCapabilities
+    try {
+      const response = await fetch(`${this.baseUrl}/api/v3/capabilities`, {
+        headers: {"Accept": "application/json", "User-Agent": "MentraOS-Mobile/1.0"},
+        signal: this.createTimeoutSignal(5000),
+      })
+      if (response.status === 404) {
+        this.galleryCapabilities = null
+        return null
+      }
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      const payload = await response.json()
+      const capabilities = (payload.data || payload) as GalleryCapabilities
+      this.galleryCapabilities = capabilities.api_version >= 3 ? capabilities : null
+      return this.galleryCapabilities
+    } catch (error) {
+      // A failed probe must not break old firmware. Do not permanently cache transient failures.
+      console.warn("[ASG Camera API] v3 capability probe failed; using legacy sync for this attempt", error)
+      return null
+    }
+  }
+
+  /** Fetch all lightweight v3 manifest pages, newest first. */
+  async getV3Manifest(): Promise<V3ManifestResponse["data"] | null> {
+    const capabilities = await this.getGalleryCapabilities()
+    if (!capabilities) return null
+
+    const captures: CaptureGroup[] = []
+    let cursor: string | undefined
+    let serverTime = Date.now()
+    let totalCount = 0
+    do {
+      const params = new URLSearchParams({limit: String(capabilities.max_manifest_page_size || 100)})
+      if (cursor) params.set("cursor", cursor)
+      const response = await this.makeRequest<V3ManifestResponse>(`/api/v3/manifest?${params.toString()}`)
+      const data = response.data || (response as unknown as V3ManifestResponse["data"])
+      captures.push(...(data.captures || []))
+      serverTime = data.server_time || serverTime
+      totalCount = data.total_count || captures.length
+      cursor = data.has_more && data.next_cursor ? data.next_cursor : undefined
+    } while (cursor)
+
+    return {
+      api_version: 3,
+      captures,
+      has_more: false,
+      next_cursor: null,
+      total_count: totalCount,
+      server_time: serverTime,
+    }
+  }
+
+  async getV3FileHash(fileName: string): Promise<{sha256: string; etag: string; size: number}> {
+    const response = await fetch(`${this.baseUrl}/api/v3/hash?file=${encodeURIComponent(fileName)}`, {
+      headers: {"Accept": "application/json", "User-Agent": "MentraOS-Mobile/1.0"},
+      signal: this.createTimeoutSignal(10 * 60 * 1000),
+    })
+    if (!response.ok) throw new Error(`Hash request failed: HTTP ${response.status}`)
+    const payload = await response.json()
+    return (payload.data || payload) as {sha256: string; etag: string; size: number}
+  }
+
+  async acknowledgeCapture(captureId: string, ackId: string): Promise<void> {
+    const response = await this.makeRequest<any>(
+      "/api/v3/ack",
+      {
+        method: "POST",
+        body: JSON.stringify({capture_id: captureId, ack_id: ackId}),
+      },
+      5,
+      0,
+    )
+    const data = response.data || response
+    if (!data.success && !data.already_trashed) {
+      throw new Error(data.message || `Glasses did not acknowledge ${captureId}`)
+    }
+  }
+
+  async restoreCapture(captureId: string): Promise<void> {
+    const response = await this.makeRequest<any>(
+      "/api/v3/restore",
+      {
+        method: "POST",
+        body: JSON.stringify({capture_id: captureId}),
+      },
+      5,
+      0,
+    )
+    const data = response.data || response
+    if (!data.success) throw new Error(data.message || `Glasses did not restore ${captureId}`)
+  }
+
   /**
    * Batch sync files from server with controlled concurrency.
    * Used by the legacy executeDownload path for old asg_client firmware
@@ -637,7 +768,9 @@ export class AsgCameraApiClient {
     for (let i = 0; i < files.length; i += CONCURRENCY_LIMIT) {
       const batch = files.slice(i, i + CONCURRENCY_LIMIT)
       console.log(
-        `[ASG Camera API] Processing batch ${Math.floor(i / CONCURRENCY_LIMIT) + 1}/${Math.ceil(files.length / CONCURRENCY_LIMIT)}: ${batch.length} files`,
+        `[ASG Camera API] Processing batch ${Math.floor(i / CONCURRENCY_LIMIT) + 1}/${Math.ceil(
+          files.length / CONCURRENCY_LIMIT,
+        )}: ${batch.length} files`,
       )
 
       // Process batch in parallel
@@ -706,12 +839,6 @@ export class AsgCameraApiClient {
           results.failed.push(result.error)
         }
       }
-
-      // Small delay between batches to prevent overwhelming the server
-      if (i + CONCURRENCY_LIMIT < files.length) {
-        console.log(`[ASG Camera API] Waiting 300ms between batches`)
-        await new Promise<void>((resolve) => BgTimer.setTimeout(() => resolve(), 300))
-      }
     }
 
     console.log(
@@ -724,7 +851,297 @@ export class AsgCameraApiClient {
    * Download all files in a capture group sequentially.
    * Reports aggregate byte progress across all files in the group.
    */
+  private async downloadResumableCaptureFile(
+    captureId: string,
+    file: CaptureGroup["files"][number],
+    localFilePath: string,
+    onProgress?: (bytesDownloaded: number) => void,
+    abortSignal?: AbortSignal,
+  ): Promise<void> {
+    const segmentBytes = 16 * 1024 * 1024
+    const segmentCount = Math.max(1, Math.ceil(file.size / segmentBytes))
+    const generation = (file.etag || `${file.size}`).replace(/[^A-Za-z0-9_-]/g, "").slice(0, 48) || "legacy"
+    const partPath = (index: number) => `${localFilePath}.partial.${generation}.${index}`
+    const assemblingPath = `${localFilePath}.assembling.${generation}`
+    const transferStartedAt = Date.now()
+    let networkDurationMs = 0
+    let networkBytes = 0
+
+    if (await RNFS.exists(localFilePath)) {
+      const existing = await RNFS.stat(localFilePath)
+      if (existing.size === file.size) {
+        if (file.etag) {
+          const remoteHash = file.sha256 ? {sha256: file.sha256, etag: file.etag} : await this.getV3FileHash(file.name)
+          if (remoteHash.etag && remoteHash.etag !== file.etag) {
+            throw new Error("Source generation changed before existing-file verification")
+          }
+          const localHash = await RNFS.hash(localFilePath, "sha256")
+          if (localHash.toLowerCase() === remoteHash.sha256.toLowerCase()) {
+            galleryTransferLedger.markFileHash(captureId, file.name, localHash.toLowerCase())
+            onProgress?.(file.size)
+            return
+          }
+          console.warn(`[ASG Camera API] Existing file failed SHA-256 verification; replacing ${file.name}`)
+        } else {
+          // Legacy servers have no generation/hash endpoint. Preserve old-client
+          // compatibility and let the media validator below reject corrupt data.
+          onProgress?.(file.size)
+          return
+        }
+      }
+      await RNFS.moveFile(localFilePath, `${localFilePath}.recovery.${Date.now()}`).catch(() => {})
+    }
+
+    let completedBytes = 0
+    let resumedSegmentCount = 0
+    for (let index = 0; index < segmentCount; index++) {
+      const start = index * segmentBytes
+      const expectedLength = Math.min(segmentBytes, file.size - start)
+      if (await RNFS.exists(partPath(index))) {
+        const stat = await RNFS.stat(partPath(index))
+        if (stat.size === expectedLength) {
+          completedBytes += expectedLength
+          resumedSegmentCount++
+          galleryTransferLedger.markSegmentComplete(captureId, file.name, index)
+          continue
+        }
+        await RNFS.unlink(partPath(index)).catch(() => {})
+      }
+
+      let completed = false
+      let lastError: unknown
+      for (let attempt = 0; attempt < 5 && !completed; attempt++) {
+        if (abortSignal?.aborted) throw new Error("Sync cancelled")
+        await RNFS.unlink(partPath(index)).catch(() => {})
+        const end = start + expectedLength - 1
+        let responseHeaders: Record<string, string> = {}
+        const {jobId, promise} = RNFS.downloadFile({
+          fromUrl: `${this.baseUrl}/api/download?file=${encodeURIComponent(file.name)}`,
+          toFile: partPath(index),
+          headers: {
+            "Accept": "*/*",
+            "User-Agent": "MentraOS-Mobile/1.0",
+            "Range": `bytes=${start}-${end}`,
+            ...(file.etag ? {"If-Range": file.etag} : {}),
+          },
+          connectionTimeout: 300000,
+          readTimeout: 300000,
+          backgroundTimeout: 24 * 60 * 60 * 1000,
+          progressDivider: 2,
+          progressInterval: 250,
+          begin: (response) => {
+            responseHeaders = response.headers || {}
+          },
+          progress: (progress) => onProgress?.(completedBytes + (progress.bytesWritten || 0)),
+        })
+
+        let abortPollTimer: number | undefined
+        if (abortSignal) {
+          abortPollTimer = BgTimer.setInterval(() => {
+            if (abortSignal.aborted) RNFS.stopDownload(jobId)
+          }, 500)
+        }
+
+        const attemptStartedAt = Date.now()
+        try {
+          const result = await promise
+          const attemptDurationMs = Math.max(1, Date.now() - attemptStartedAt)
+          networkDurationMs += attemptDurationMs
+          networkBytes += result.bytesWritten || 0
+          if (abortSignal?.aborted) throw new Error("Sync cancelled")
+          const header = (name: string): string | undefined => {
+            const key = Object.keys(responseHeaders).find((candidate) => candidate.toLowerCase() === name.toLowerCase())
+            return key ? responseHeaders[key] : undefined
+          }
+
+          if (result.statusCode === 200 && index === 0 && result.bytesWritten === file.size) {
+            // Older servers ignore Range. A full fixed/chunked response is still compatible;
+            // commit it through the same staging path and skip the remaining segments.
+            await RNFS.unlink(assemblingPath).catch(() => {})
+            await RNFS.moveFile(partPath(index), assemblingPath)
+            completedBytes = file.size
+            completed = true
+            break
+          }
+          if (result.statusCode !== 206) throw new Error(`HTTP ${result.statusCode}; expected 206`)
+          if (result.bytesWritten !== expectedLength) {
+            throw new Error(`Segment ${index} truncated: ${result.bytesWritten}/${expectedLength} bytes`)
+          }
+          const contentRange = header("content-range")
+          if (contentRange !== `bytes ${start}-${end}/${file.size}`) {
+            throw new Error(`Invalid Content-Range: ${contentRange || "missing"}`)
+          }
+          const responseEtag = header("etag")
+          if (file.etag && responseEtag && responseEtag !== file.etag) {
+            throw new Error("Source generation changed during transfer")
+          }
+          galleryTransferLedger.markSegmentComplete(captureId, file.name, index)
+          completedBytes += expectedLength
+          completed = true
+          console.log("[ASG Camera API] Gallery segment complete", {
+            captureId,
+            file: file.name,
+            segment: index,
+            segmentCount,
+            attempt: attempt + 1,
+            status: result.statusCode,
+            bytes: result.bytesWritten,
+            durationMs: attemptDurationMs,
+            throughputMbps: (((result.bytesWritten || 0) * 8) / attemptDurationMs / 1000).toFixed(2),
+            etag: file.etag,
+          })
+        } catch (error) {
+          lastError = error
+          if (error instanceof Error && error.message === "Sync cancelled") throw error
+          console.warn("[ASG Camera API] Gallery segment attempt failed", {
+            captureId,
+            file: file.name,
+            segment: index,
+            segmentCount,
+            attempt: attempt + 1,
+            rangeStart: start,
+            rangeEnd: end,
+            message: error instanceof Error ? error.message : String(error),
+          })
+          await RNFS.unlink(partPath(index)).catch(() => {})
+          if (attempt < 4) {
+            const delay = Math.min(1000 * 2 ** attempt, 10000) + Math.floor(Math.random() * 500)
+            await new Promise<void>((resolve) => BgTimer.setTimeout(resolve, delay))
+          }
+        } finally {
+          if (abortPollTimer !== undefined) BgTimer.clearInterval(abortPollTimer)
+        }
+      }
+      if (!completed) throw lastError || new Error(`Segment ${index} failed`)
+      if (completedBytes === file.size && (await RNFS.exists(assemblingPath))) break
+    }
+
+    if (!(await RNFS.exists(assemblingPath))) {
+      await RNFS.unlink(assemblingPath).catch(() => {})
+      await RNFS.writeFile(assemblingPath, "", "utf8")
+      for (let index = 0; index < segmentCount; index++) {
+        const data = await RNFS.readFile(partPath(index), "base64")
+        await RNFS.appendFile(assemblingPath, data, "base64")
+      }
+    }
+
+    const assembledStat = await RNFS.stat(assemblingPath)
+    if (assembledStat.size !== file.size) {
+      await RNFS.moveFile(assemblingPath, `${assemblingPath}.invalid.${Date.now()}`).catch(() => {})
+      throw new Error(`Assembled file has ${assembledStat.size}/${file.size} bytes`)
+    }
+
+    const verificationStartedAt = Date.now()
+    const capabilities = await this.getGalleryCapabilities()
+    if (capabilities?.sha256) {
+      const remoteHash = file.sha256 ? {sha256: file.sha256, etag: file.etag} : await this.getV3FileHash(file.name)
+      if (file.etag && remoteHash.etag && file.etag !== remoteHash.etag) {
+        throw new Error("Source generation changed before integrity verification")
+      }
+      const localHash = await RNFS.hash(assemblingPath, "sha256")
+      if (localHash.toLowerCase() !== remoteHash.sha256.toLowerCase()) {
+        await RNFS.moveFile(assemblingPath, `${assemblingPath}.invalid.${Date.now()}`).catch(() => {})
+        throw new Error(`SHA-256 mismatch for ${file.name}`)
+      }
+      galleryTransferLedger.markFileHash(captureId, file.name, localHash.toLowerCase())
+    }
+
+    await RNFS.moveFile(assemblingPath, localFilePath)
+    for (let index = 0; index < segmentCount; index++) await RNFS.unlink(partPath(index)).catch(() => {})
+    console.log("[ASG Camera API] Gallery file committed", {
+      captureId,
+      file: file.name,
+      bytes: file.size,
+      segments: segmentCount,
+      networkDurationMs,
+      networkMbps: networkDurationMs > 0 ? ((networkBytes * 8) / networkDurationMs / 1000).toFixed(2) : "0.00",
+      verificationDurationMs: Date.now() - verificationStartedAt,
+      totalDurationMs: Date.now() - transferStartedAt,
+      resumedSegments: resumedSegmentCount,
+    })
+    onProgress?.(file.size)
+  }
+
   async downloadCapture(
+    capture: CaptureGroup,
+    onProgress?: (bytesDownloaded: number, totalBytes: number) => void,
+    abortSignal?: AbortSignal,
+  ): Promise<{captureDir: string; primaryPath: string; bracketPaths: string[]; sidecarPath?: string}> {
+    if (capture.files.some((file) => !file.size || file.size <= 0)) {
+      // Preserve support for malformed manifests from pre-v2 development firmware.
+      return this.downloadCaptureLegacyUnsafe(capture, onProgress, abortSignal)
+    }
+    const captureDir = localStorageService.getPhotoFilePath(capture.capture_id)
+    if (!(await RNFS.exists(captureDir))) await RNFS.mkdir(captureDir)
+    const capabilities = await this.getGalleryCapabilities()
+    galleryTransferLedger.ensureCapture(capture, capabilities?.api_version || 2)
+    galleryTransferLedger.transition(capture.capture_id, "TRANSFERRING")
+
+    const sortedFiles = [...capture.files].sort((a, b) => {
+      const order = {bracket: 0, primary: 1, sidecar: 2}
+      return (order[a.role] ?? 1) - (order[b.role] ?? 1)
+    })
+    let completedCaptureBytes = 0
+    let primaryPath = ""
+    const bracketPaths: string[] = []
+    let sidecarPath: string | undefined
+
+    try {
+      for (const file of sortedFiles) {
+        const leafName = file.name.includes("/") ? file.name.split("/").pop()! : file.name
+        const localFilePath = `${captureDir}/${leafName}`
+        await this.downloadResumableCaptureFile(
+          capture.capture_id,
+          file,
+          localFilePath,
+          (fileBytes) => onProgress?.(completedCaptureBytes + fileBytes, capture.total_size),
+          abortSignal,
+        )
+
+        const isVideo = !!file.name.match(/\.(mp4|mov|avi|webm|mkv)$/i)
+        const mediaKind = file.role === "sidecar" ? "unknown" : isVideo ? "video" : "photo"
+        try {
+          await validateDownloadedMediaFile({
+            path: localFilePath,
+            name: file.name,
+            expectedSize: file.size,
+            mediaKind,
+          })
+        } catch (validationError: any) {
+          reportInvalidGalleryMedia({
+            name: file.name,
+            path: localFilePath,
+            mediaKind,
+            stage: "download_capture_validation",
+            reason: validationError?.message || String(validationError),
+            expectedSize: file.size,
+            captureId: capture.capture_id,
+            duration: capture.duration,
+          })
+          await RNFS.moveFile(localFilePath, `${localFilePath}.invalid.${Date.now()}`).catch(() => {})
+          throw validationError
+        }
+
+        completedCaptureBytes += file.size
+        if (file.role === "primary") primaryPath = localFilePath
+        else if (file.role === "bracket") bracketPaths.push(localFilePath)
+        else if (file.role === "sidecar") sidecarPath = localFilePath
+      }
+      if (!primaryPath && sortedFiles.length > 0) {
+        const leafName = sortedFiles[0].name.includes("/") ? sortedFiles[0].name.split("/").pop()! : sortedFiles[0].name
+        primaryPath = `${captureDir}/${leafName}`
+      }
+      galleryTransferLedger.transition(capture.capture_id, "VERIFIED")
+      onProgress?.(capture.total_size, capture.total_size)
+      return {captureDir, primaryPath, bracketPaths, sidecarPath}
+    } catch (error) {
+      galleryTransferLedger.recordFailure(capture.capture_id, error)
+      throw error
+    }
+  }
+
+  /** Previous direct-to-final implementation kept for binary-source compatibility only. */
+  private async downloadCaptureLegacyUnsafe(
     capture: CaptureGroup,
     onProgress?: (bytesDownloaded: number, totalBytes: number) => void,
     abortSignal?: AbortSignal,
@@ -893,10 +1310,15 @@ export class AsgCameraApiClient {
     }
 
     try {
-      const response = await this.makeRequest("/api/delete-files", {
-        method: "POST",
-        body: JSON.stringify({files: fileNames}),
-      })
+      const response = await this.makeRequest(
+        "/api/delete-files",
+        {
+          method: "POST",
+          body: JSON.stringify({files: fileNames}),
+        },
+        5,
+        0,
+      )
 
       // Parse the response format from the ASG server
       const responseData = response as any
@@ -949,6 +1371,68 @@ export class AsgCameraApiClient {
    * Download a file from the server and save to filesystem
    */
   async downloadFile(
+    filename: string,
+    includeThumbnail: boolean = false,
+    onProgress?: (progress: number) => void,
+    abortSignal?: AbortSignal,
+    expectedSize?: number,
+  ): Promise<{filePath: string; thumbnailPath?: string; mime_type: string}> {
+    // The legacy public shape did not require a size. Keep that rare call compatible while all
+    // sync manifests use the verified resumable path below.
+    if (!expectedSize || expectedSize <= 0) {
+      return this.downloadFileLegacyUnsafe(filename, includeThumbnail, onProgress, abortSignal, expectedSize)
+    }
+
+    const localFilePath = localStorageService.getPhotoFilePath(filename)
+    const parentDir = localFilePath.substring(0, localFilePath.lastIndexOf("/"))
+    if (!(await RNFS.exists(parentDir))) await RNFS.mkdir(parentDir)
+    const lowerName = filename.toLowerCase()
+    const isVideo = /\.(mp4|mov|avi|webm|mkv)$/.test(lowerName)
+    const captureId = filename.includes("/")
+      ? filename.substring(0, filename.indexOf("/"))
+      : filename.replace(/\.imu\.json$/i, "").replace(/\.[^.]+$/, "")
+    const capture: CaptureGroup = {
+      capture_id: captureId,
+      type: isVideo ? "video" : "photo",
+      timestamp: Date.now(),
+      total_size: expectedSize,
+      files: [{name: filename, size: expectedSize, role: "primary"}],
+    }
+    const capabilities = await this.getGalleryCapabilities()
+    galleryTransferLedger.ensureCapture(capture, capabilities?.api_version || 1)
+    galleryTransferLedger.transition(captureId, "TRANSFERRING")
+    try {
+      await this.downloadResumableCaptureFile(
+        captureId,
+        capture.files[0],
+        localFilePath,
+        (bytes) => onProgress?.(Math.min(100, Math.round((bytes / expectedSize) * 100))),
+        abortSignal,
+      )
+      await validateDownloadedMediaFile({
+        path: localFilePath,
+        name: filename,
+        expectedSize,
+        mediaKind: isVideo ? "video" : "photo",
+      })
+      galleryTransferLedger.transition(captureId, "VERIFIED")
+      return {
+        filePath: localFilePath,
+        mime_type: isVideo
+          ? "video/mp4"
+          : lowerName.endsWith(".png")
+            ? "image/png"
+            : lowerName.endsWith(".avif")
+              ? "image/avif"
+              : "image/jpeg",
+      }
+    } catch (error) {
+      galleryTransferLedger.recordFailure(captureId, error)
+      throw error
+    }
+  }
+
+  private async downloadFileLegacyUnsafe(
     filename: string,
     includeThumbnail: boolean = false,
     onProgress?: (progress: number) => void,
@@ -1181,7 +1665,9 @@ export class AsgCameraApiClient {
         }
       } else {
         console.log(
-          `[ASG Camera API] Skipping thumbnail download - includeThumbnail: ${includeThumbnail}, filename: ${filename}, is video extension: ${filename.toLowerCase().match(/\.(mp4|mov|avi|mkv|webm)$/) ? "yes" : "no"}`,
+          `[ASG Camera API] Skipping thumbnail download - includeThumbnail: ${includeThumbnail}, filename: ${filename}, is video extension: ${
+            filename.toLowerCase().match(/\.(mp4|mov|avi|mkv|webm)$/) ? "yes" : "no"
+          }`,
         )
       }
 

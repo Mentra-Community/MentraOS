@@ -28,6 +28,12 @@ public interface FileManager extends FileOperations, FileMetadataOperations, Pac
      */
     String SDK_PENDING_DIR_NAME = "_sdk_pending";
 
+    /** Hidden recoverable trash; never expose acknowledged captures to gallery clients. */
+    String GALLERY_TRASH_DIR_NAME = "_gallery_trash";
+
+    /** Cached hashes and other derived transfer metadata; never user-visible media. */
+    String GALLERY_METADATA_DIR_NAME = "_gallery_metadata";
+
     /**
      * File operation result containing success status and metadata
      */
@@ -117,4 +123,4 @@ public interface FileManager extends FileOperations, FileMetadataOperations, Pac
      * @return ThumbnailManager instance
      */
     ThumbnailManager getThumbnailManager();
-} 
+}

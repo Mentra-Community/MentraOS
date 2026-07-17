@@ -17,9 +17,7 @@ declare class CrustModule extends NativeModule<CrustModuleEvents> {
    * Pass `[]` to restore default behavior. Android: no-op (Android has no
    * per-app equivalent; system gestures are configured at the OS level).
    */
-  setDeferredSystemGestures(
-    edges: Array<"top" | "bottom" | "left" | "right" | "all">,
-  ): Promise<void>
+  setDeferredSystemGestures(edges: Array<"top" | "bottom" | "left" | "right" | "all">): Promise<void>
 
   // MentraOS Notification Commands
   setNotificationConfig(enabled: boolean, blocklist: string[]): Promise<void>
@@ -82,6 +80,7 @@ declare class CrustModule extends NativeModule<CrustModuleEvents> {
     success: boolean
     uri?: string
     identifier?: string
+    existing?: boolean
     error?: string
   }>
 

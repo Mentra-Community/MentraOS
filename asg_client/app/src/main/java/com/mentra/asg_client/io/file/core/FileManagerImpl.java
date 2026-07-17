@@ -342,8 +342,13 @@ public class FileManagerImpl implements FileManager {
                 } else if (item.isDirectory()) {
                     // Skip the transient holding area for SDK no-save photos — those files are
                     // mid-upload and must never appear in gallery counts or Wi-Fi sync listings.
-                    if (FileManager.SDK_PENDING_DIR_NAME.equals(item.getName())) {
-                        Log.d(TAG, "⏭️ Skipping SDK pending dir from listing: " + item.getAbsolutePath());
+                    if (FileManager.SDK_PENDING_DIR_NAME.equals(item.getName())
+                            || FileManager.GALLERY_TRASH_DIR_NAME.equals(item.getName())
+                            || FileManager.GALLERY_METADATA_DIR_NAME.equals(item.getName())) {
+                        Log.d(
+                                TAG,
+                                "⏭️ Skipping internal media dir from listing: "
+                                        + item.getAbsolutePath());
                         continue;
                     }
                     // Recursively scan subdirectory
@@ -753,4 +758,4 @@ public class FileManagerImpl implements FileManager {
             logger.error(TAG, "Error cleaning up orphaned captures", e);
         }
     }
-} 
+}

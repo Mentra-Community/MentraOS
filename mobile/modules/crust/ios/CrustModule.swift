@@ -418,41 +418,48 @@ public class CrustModule: Module {
                 return ["success": false, "error": "File does not exist"]
             }
 
+            let pathExtension = fileURL.pathExtension.lowercased()
+            let isVideo = ["mp4", "mov", "avi", "m4v"].contains(pathExtension)
+            let assetFileName = displayName?.isEmpty == false
+                ? displayName!
+                : fileURL.lastPathComponent
+            let captureDate = captureTimeMillis.map {
+                Date(timeIntervalSince1970: TimeInterval($0) / 1000.0)
+            }
+
+            // The JS ledger normally supplies the previous PhotoKit receipt. If the app was
+            // terminated after Photos committed but before that receipt was persisted, reconcile
+            // by our stable capture filename/date before creating another asset.
+            if let existingIdentifier = self.findExistingGalleryAssetIdentifier(
+                fileName: assetFileName,
+                captureDate: captureDate,
+                isVideo: isVideo
+            ) {
+                NSLog("CrustModule: Reusing existing gallery asset")
+                return [
+                    "success": true,
+                    "identifier": existingIdentifier,
+                    "existing": true,
+                ]
+            }
+
             var assetIdentifier: String?
             let semaphore = DispatchSemaphore(value: 0)
             var resultError: Error?
+            var resultSucceeded = false
             var creationFailed = false
 
             PHPhotoLibrary.shared().performChanges {
-                let pathExtension = fileURL.pathExtension.lowercased()
+                let creationRequest = PHAssetCreationRequest.forAsset()
+                let resourceOptions = PHAssetResourceCreationOptions()
+                resourceOptions.originalFilename = assetFileName
+                creationRequest.addResource(
+                    with: isVideo ? .video : .photo,
+                    fileURL: fileURL,
+                    options: resourceOptions
+                )
 
-                let creationRequest: PHAssetChangeRequest
-                if ["mp4", "mov", "avi", "m4v"].contains(pathExtension) {
-                    guard let req = PHAssetChangeRequest.creationRequestForAssetFromVideo(
-                        atFileURL: fileURL
-                    )
-                    else {
-                        NSLog("CrustModule: Failed to create video asset request for: \(filePath)")
-                        creationFailed = true
-                        return
-                    }
-                    creationRequest = req
-                } else {
-                    guard let req = PHAssetChangeRequest.creationRequestForAssetFromImage(
-                        atFileURL: fileURL
-                    )
-                    else {
-                        NSLog("CrustModule: Failed to create image asset request for: \(filePath)")
-                        creationFailed = true
-                        return
-                    }
-                    creationRequest = req
-                }
-
-                if let captureMillis = captureTimeMillis {
-                    let captureDate = Date(
-                        timeIntervalSince1970: TimeInterval(captureMillis) / 1000.0
-                    )
+                if let captureDate {
                     creationRequest.creationDate = captureDate
                     NSLog("CrustModule: Setting creation date to: \(captureDate)")
                 }
@@ -491,15 +498,21 @@ public class CrustModule: Module {
                         "CrustModule: Mentra album exists but is not writable; asset saved to library only"
                     )
                 }
-            } completionHandler: { _, error in
+            } completionHandler: { success, error in
+                resultSucceeded = success
                 resultError = error
                 semaphore.signal()
             }
 
-            semaphore.wait()
+            if semaphore.wait(timeout: .now() + 120) == .timedOut {
+                return [
+                    "success": false,
+                    "error": "Photo library save timed out; retry will reconcile the result",
+                ]
+            }
 
             if creationFailed {
-                return ["success": false, "error": "Failed to create asset request - file may be corrupted or unsupported"]
+                return ["success": false, "error": "Failed to create PhotoKit asset placeholder"]
             }
 
             if let error = resultError {
@@ -507,10 +520,47 @@ public class CrustModule: Module {
                 return ["success": false, "error": error.localizedDescription]
             }
 
+            guard resultSucceeded else {
+                return ["success": false, "error": "Photo library did not commit the asset"]
+            }
+
             NSLog("CrustModule: Successfully saved to gallery with proper creation date")
             return ["success": true, "identifier": assetIdentifier ?? ""]
         }
+    }
 
+    private func findExistingGalleryAssetIdentifier(
+        fileName: String,
+        captureDate: Date?,
+        isVideo: Bool
+    ) -> String? {
+        let options = PHFetchOptions()
+        let mediaType = isVideo ? PHAssetMediaType.video : PHAssetMediaType.image
+        if let captureDate {
+            options.predicate = NSPredicate(
+                format: "mediaType == %d AND creationDate >= %@ AND creationDate <= %@",
+                mediaType.rawValue,
+                captureDate.addingTimeInterval(-1) as NSDate,
+                captureDate.addingTimeInterval(1) as NSDate
+            )
+        } else {
+            options.predicate = NSPredicate(format: "mediaType == %d", mediaType.rawValue)
+            options.fetchLimit = 200
+        }
+        options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
+
+        let assets = PHAsset.fetchAssets(with: options)
+        var identifier: String?
+        assets.enumerateObjects { asset, _, stop in
+            let matches = PHAssetResource.assetResources(for: asset).contains {
+                $0.originalFilename == fileName
+            }
+            if matches {
+                identifier = asset.localIdentifier
+                stop.pointee = true
+            }
+        }
+        return identifier
     }
 }
 
