@@ -29,18 +29,18 @@ name: Release Mentra Engine
 #   workflow: engine-release.yml
 #   allowed action: npm stage publish
 
+# No paths filter, deliberately: detection is registry-state ("publish when
+# the derived version is absent from npm"), so the trigger must be too — a
+# promotion merge often doesn't touch the engine tree at all, and the engine
+# regularly needs a later, unrelated push to retry (e.g. after its peers'
+# staged versions get approved). Every push reconciles; the detect job is a
+# few seconds and no-ops when nothing is missing.
 on:
   push:
     branches:
       - dev
       - staging
       - main
-    paths:
-      - ".github/scripts/engine-release-info.mjs"
-      - ".github/scripts/npm-channel.mjs"
-      - ".github/scripts/stamp-channel-manifests.mjs"
-      - ".github/workflows/engine-release.yml"
-      - "mobile/modules/engine/**"
   workflow_dispatch:
     inputs:
       dry_run:

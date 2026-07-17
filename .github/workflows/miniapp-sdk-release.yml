@@ -31,25 +31,15 @@ name: Release Miniapp SDK
 # Requires repo secret NPM_TOKEN: an npm *automation* token (bypasses 2FA) for
 # an account with publish rights on the @mentra org. See sdk/PUBLISHING.md.
 
+# No paths filter, deliberately: detection is registry-state ("publish when
+# the derived version is absent from npm"), so the trigger must be too — a
+# promotion merge doesn't necessarily touch any package tree, and missing
+# versions (e.g. after a failed or gated run) should heal on the next push.
+# Every push reconciles; the detect job is a few seconds and no-ops when
+# nothing is missing.
 on:
   push:
     branches: [main, staging, dev]
-    paths:
-      - "mobile/modules/miniapp/**"
-      - "mobile/modules/jspolyfill/**"
-      - "mobile/modules/crust/**"
-      - "cloud-v2/packages/protocol/**"
-      - "cloud-v2/packages/cloud-client/**"
-      - "sdk/miniapp-cli/**"
-      - "sdk/create-mentra-miniapp/**"
-      - "cloud-v2/packages/auth/**"
-      - "cloud-v2/packages/cli/**"
-      - ".github/scripts/miniapp-sdk-release-info.mjs"
-      - ".github/scripts/npm-channel.mjs"
-      - ".github/scripts/stamp-channel-manifests.mjs"
-      - ".github/scripts/rewrite-file-deps.mjs"
-      - ".github/scripts/stamp-template-versions.mjs"
-      - ".github/workflows/miniapp-sdk-release.yml"
   workflow_dispatch:
     inputs:
       dry_run:
