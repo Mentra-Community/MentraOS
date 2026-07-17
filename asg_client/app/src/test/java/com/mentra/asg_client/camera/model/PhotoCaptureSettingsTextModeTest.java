@@ -19,8 +19,8 @@ public class PhotoCaptureSettingsTextModeTest {
         assertEquals(
                 Integer.valueOf(AsgConstants.TEXT_MODE_AE_EXPOSURE_DIVISOR),
                 tuned.aeExposureDivisor);
-        assertFalse(tuned.zslMfnrEnabled());
-        assertEquals(Boolean.FALSE, tuned.zslMfnr);
+        assertFalse(tuned.zslEnabled());
+        assertFalse(tuned.mfnrEnabled());
         assertEquals(Boolean.FALSE, tuned.mfnr);
         assertEquals(Boolean.FALSE, tuned.zsl);
     }
@@ -30,14 +30,14 @@ public class PhotoCaptureSettingsTextModeTest {
         PhotoCaptureSettings request =
                 new PhotoCaptureSettings.Builder()
                         .isoCap(800)
-                        .zslMfnr(true)
+                        .zsl(true)
+                        .mfnr(true)
                         .edgeEnhancement(false)
                         .build();
 
         PhotoCaptureSettings tuned = PhotoCaptureSettings.applyTextModeExposure(request);
 
         assertEquals(Integer.valueOf(800), tuned.isoCap);
-        assertEquals(Boolean.FALSE, tuned.zslMfnr);
         assertEquals(Boolean.FALSE, tuned.mfnr);
         assertEquals(Boolean.FALSE, tuned.zsl);
         assertEquals(Boolean.FALSE, tuned.edgeEnhancement);
@@ -46,14 +46,14 @@ public class PhotoCaptureSettingsTextModeTest {
     @Test
     public void textModeDefaultsOverrideStoredGlobalZslMfnr() {
         AsgSettings stored = mock(AsgSettings.class);
-        when(stored.isZslMfnrEnabled()).thenReturn(true);
+        when(stored.isZslEnabled()).thenReturn(true);
+        when(stored.isMfnrEnabled()).thenReturn(true);
 
         PhotoCaptureSettings textDefaults =
                 PhotoCaptureSettings.applyTextModeExposure(PhotoCaptureSettings.EMPTY);
         PhotoCaptureSettings merged =
                 PhotoCaptureSettings.mergeForSdkRequest(textDefaults, stored);
 
-        assertEquals(Boolean.FALSE, merged.zslMfnr);
         assertEquals(Boolean.FALSE, merged.mfnr);
         assertEquals(Boolean.FALSE, merged.zsl);
     }
