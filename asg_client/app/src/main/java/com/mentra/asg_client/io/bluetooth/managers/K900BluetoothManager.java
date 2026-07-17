@@ -51,9 +51,12 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     private final ChunkedMessageProtocolStrategy inboundBinaryStrategy =
             new ChunkedMessageProtocolStrategy(inboundBinaryReassembler);
     private boolean wireV2HandshakeSent = false;
-    // A FLAG_WAKE fragment arrived and its message is still reassembling; on completion the
-    // wake window is granted again so follow-up work gets the full window (see above).
-    private boolean pendingBinaryWake = false;
+    // Message ids whose FLAG_WAKE fragment arrived and are still reassembling; on THAT
+    // message's completion the wake window is granted again so follow-up work gets the
+    // full window (see handleInboundBinaryFrame). Keyed by msgId because the reassembler
+    // interleaves messages. Bounded: abandoned reassemblies would leak entries, so the set
+    // is cleared when it exceeds a size no legitimate interleave reaches.
+    private final java.util.Set<Integer> pendingBinaryWakeMsgIds = new java.util.HashSet<>();
     private volatile boolean besWireCapsK900Le = false;
     private volatile boolean besWireCapsBinary = false;
     private volatile boolean besWireCapsFilePayloadV2 = false;
@@ -597,7 +600,10 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         // work needs its full window from completion, not from the first fragment (a slow
         // multi-fragment reassembly must not eat into it). Extend-only merges the grants.
         if ((header.flags & BesWireFormat.FLAG_WAKE) != 0) {
-            pendingBinaryWake = true;
+            if (pendingBinaryWakeMsgIds.size() > 16) {
+                pendingBinaryWakeMsgIds.clear();
+            }
+            pendingBinaryWakeMsgIds.add(header.msgId);
             WakeLockManager.acquireCpu(
                     context, WakeLockManager.WakeOwner.PHONE_COMMAND, AsgConstants.PHONE_WAKE_COMMAND_WINDOW_MS);
         }
@@ -607,8 +613,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             return true;
         }
 
-        if (pendingBinaryWake) {
-            pendingBinaryWake = false;
+        if (pendingBinaryWakeMsgIds.remove(header.msgId)) {
             WakeLockManager.acquireCpu(
                     context, WakeLockManager.WakeOwner.PHONE_COMMAND, AsgConstants.PHONE_WAKE_COMMAND_WINDOW_MS);
         }
