@@ -506,17 +506,11 @@ public final class MentraBluetoothSDK {
                 if let size = settings.size {
                     DeviceStore.shared.set(ObservableStore.bluetoothCategory, "button_photo_size", size.rawValue)
                 }
-                if let resolvedZslMfnr = settings.resolvedZslMfnr() {
-                    DeviceStore.shared.set(ObservableStore.bluetoothCategory, "button_photo_zsl_mfnr", resolvedZslMfnr)
-                    DeviceStore.shared.set(ObservableStore.bluetoothCategory, "button_photo_mfnr", resolvedZslMfnr)
-                    DeviceStore.shared.set(ObservableStore.bluetoothCategory, "button_photo_zsl", resolvedZslMfnr)
-                } else {
-                    if let mfnr = settings.mfnr {
-                        DeviceStore.shared.set(ObservableStore.bluetoothCategory, "button_photo_mfnr", mfnr)
-                    }
-                    if let zsl = settings.zsl {
-                        DeviceStore.shared.set(ObservableStore.bluetoothCategory, "button_photo_zsl", zsl)
-                    }
+                if let mfnr = settings.mfnr {
+                    DeviceStore.shared.set(ObservableStore.bluetoothCategory, "button_photo_mfnr", mfnr)
+                }
+                if let zsl = settings.zsl {
+                    DeviceStore.shared.set(ObservableStore.bluetoothCategory, "button_photo_zsl", zsl)
                 }
                 if let noiseReduction = settings.noiseReduction {
                     DeviceStore.shared.set(ObservableStore.bluetoothCategory, "button_photo_noise_reduction", noiseReduction)
