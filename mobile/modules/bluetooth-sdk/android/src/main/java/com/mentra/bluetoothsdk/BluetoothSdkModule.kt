@@ -87,6 +87,45 @@ private inline fun <reified R> ModuleDefinitionBuilder.SdkCoroutineFunction(
     crossinline body: suspend () -> R,
 ) = AsyncFunction(name) Coroutine { -> withExpoSdkErrorSuspend { body() } }
 
+private inline fun <reified R, reified P0> ModuleDefinitionBuilder.SdkCoroutineFunction(
+    name: String,
+    crossinline body: suspend (P0) -> R,
+) = AsyncFunction(name) Coroutine { p0: P0 -> withExpoSdkErrorSuspend { body(p0) } }
+
+private inline fun <reified R, reified P0, reified P1> ModuleDefinitionBuilder.SdkCoroutineFunction(
+    name: String,
+    crossinline body: suspend (P0, P1) -> R,
+) = AsyncFunction(name) Coroutine { p0: P0, p1: P1 -> withExpoSdkErrorSuspend { body(p0, p1) } }
+
+private inline fun <reified R, reified P0, reified P1, reified P2> ModuleDefinitionBuilder.SdkCoroutineFunction(
+    name: String,
+    crossinline body: suspend (P0, P1, P2) -> R,
+) = AsyncFunction(name) Coroutine { p0: P0, p1: P1, p2: P2 -> withExpoSdkErrorSuspend { body(p0, p1, p2) } }
+
+private inline fun <reified R, reified P0, reified P1, reified P2, reified P3>
+    ModuleDefinitionBuilder.SdkCoroutineFunction(
+        name: String,
+        crossinline body: suspend (P0, P1, P2, P3) -> R,
+    ) = AsyncFunction(name) Coroutine { p0: P0, p1: P1, p2: P2, p3: P3 ->
+        withExpoSdkErrorSuspend { body(p0, p1, p2, p3) }
+    }
+
+private inline fun <
+    reified R,
+    reified P0,
+    reified P1,
+    reified P2,
+    reified P3,
+    reified P4,
+    reified P5,
+    reified P6,
+> ModuleDefinitionBuilder.SdkCoroutineFunction(
+    name: String,
+    crossinline body: suspend (P0, P1, P2, P3, P4, P5, P6) -> R,
+) = AsyncFunction(name) Coroutine { p0: P0, p1: P1, p2: P2, p3: P3, p4: P4, p5: P5, p6: P6 ->
+    withExpoSdkErrorSuspend { body(p0, p1, p2, p3, p4, p5, p6) }
+}
+
 class BluetoothSdkModule : Module() {
     private var sdk: MentraBluetoothSdk? = null
     private var deviceManager: DeviceManager? = null
@@ -496,17 +535,17 @@ class BluetoothSdkModule : Module() {
 
         // MARK: - WiFi Commands
 
-        SdkAsyncFunction("requestWifiScan") { -> requireSdk().requestWifiScan().map { it.toMap() } }
+        SdkCoroutineFunction("requestWifiScan") { -> requireSdk().requestWifiScan().map { it.toMap() } }
 
-        SdkAsyncFunction("sendWifiCredentials") { ssid: String, password: String ->
+        SdkCoroutineFunction("sendWifiCredentials") { ssid: String, password: String ->
             requireSdk().sendWifiCredentials(ssid, password).values
         }
 
-        SdkAsyncFunction("forgetWifiNetwork") { ssid: String ->
+        SdkCoroutineFunction("forgetWifiNetwork") { ssid: String ->
             requireSdk().forgetWifiNetwork(ssid).values
         }
 
-        SdkAsyncFunction("setHotspotState") { enabled: Boolean ->
+        SdkCoroutineFunction("setHotspotState") { enabled: Boolean ->
             requireSdk().setHotspotState(enabled).values
         }
 
@@ -516,7 +555,7 @@ class BluetoothSdkModule : Module() {
 
         // MARK: - Gallery Commands
 
-        SdkAsyncFunction("setGalleryModeEnabled") { enabled: Boolean ->
+        SdkCoroutineFunction("setGalleryModeEnabled") { enabled: Boolean ->
             requireSdk().setGalleryModeEnabled(enabled).values
         }
 
@@ -525,19 +564,19 @@ class BluetoothSdkModule : Module() {
         }
 
         @Suppress("DEPRECATION")
-        SdkAsyncFunction("setPhotoCaptureDefaults") { params: Map<String, Any?> ->
+        SdkCoroutineFunction("setPhotoCaptureDefaults") { params: Map<String, Any?> ->
             requireSdk().setPhotoCaptureDefaults(params.toPhotoCaptureDefaults()).values
         }
 
-        SdkAsyncFunction("setVideoRecordingDefaults") { width: Int, height: Int, fps: Int ->
+        SdkCoroutineFunction("setVideoRecordingDefaults") { width: Int, height: Int, fps: Int ->
             requireSdk().setVideoRecordingDefaults(VideoRecordingDefaults(width, height, fps)).values
         }
 
-        SdkAsyncFunction("setMaxVideoRecordingDuration") { minutes: Int ->
+        SdkCoroutineFunction("setMaxVideoRecordingDuration") { minutes: Int ->
             requireSdk().setMaxVideoRecordingDuration(minutes).values
         }
 
-        SdkAsyncFunction("setCameraFov") { fov: Map<String, Any> ->
+        SdkCoroutineFunction("setCameraFov") { fov: Map<String, Any> ->
             val value = (fov["fov"] as? Number)?.toInt() ?: CameraFov.DEFAULT_FOV
             val roiPosition = CameraRoiPosition.fromValue(
                 (fov["roiPosition"] as? Number)?.toInt()
@@ -546,13 +585,13 @@ class BluetoothSdkModule : Module() {
             requireSdk().setCameraFov(CameraFov(value, roiPosition)).values
         }
 
-        SdkAsyncFunction("setCameraTuningConfig") { anrOn: Boolean, gainOn: Boolean ->
+        SdkCoroutineFunction("setCameraTuningConfig") { anrOn: Boolean, gainOn: Boolean ->
             requireSdk().setCameraTuningConfig(anrOn, gainOn).values
         }
 
-        SdkAsyncFunction("queryGalleryStatus") { -> requireSdk().queryGalleryStatus().values }
+        SdkCoroutineFunction("queryGalleryStatus") { -> requireSdk().queryGalleryStatus().values }
 
-        SdkAsyncFunction("requestPhoto") { params: Map<String, Any?> ->
+        SdkCoroutineFunction("requestPhoto") { params: Map<String, Any?> ->
             // JS may pass null for optional fields; Map<String, Any> rejects null values at the bridge.
             val sanitized =
                     params.mapNotNull { (key, value) ->
@@ -565,7 +604,7 @@ class BluetoothSdkModule : Module() {
             requireSdk().requestPhoto(req).values
         }
 
-        SdkAsyncFunction("warmUpCamera") { params: Map<String, Any?> ->
+        SdkCoroutineFunction("warmUpCamera") { params: Map<String, Any?> ->
             val requestId = params["requestId"] as? String
             val size = PhotoSize.fromValue(params["size"] as? String)
             val exposureRaw = (params["exposureTimeNs"] as? Number)?.toDouble()
@@ -586,11 +625,11 @@ class BluetoothSdkModule : Module() {
 
         // Runs on Dispatchers.IO, not the shared Expo AsyncFunctionQueue:
         // manifest fetches and version waits can block for several seconds.
-        SdkCoroutineFunction("checkForOtaUpdate") {
+        SdkCoroutineFunction("checkForOtaUpdate") { ->
             withContext(Dispatchers.IO) { requireSdk().checkForOtaUpdate() }
         }
 
-        SdkAsyncFunction("startOtaUpdate") { otaVersionUrl: String? ->
+        SdkCoroutineFunction("startOtaUpdate") { otaVersionUrl: String? ->
             val sdk = requireSdk()
             if (otaVersionUrl.isNullOrBlank()) {
                 sdk.startOtaUpdate().values
@@ -599,11 +638,11 @@ class BluetoothSdkModule : Module() {
             }
         }
 
-        SdkAsyncFunction("sendOtaQueryStatus") { -> requireSdk().sendOtaQueryStatus().values }
+        SdkCoroutineFunction("sendOtaQueryStatus") { -> requireSdk().sendOtaQueryStatus().values }
 
         // MARK: - Version Info Commands
 
-        SdkAsyncFunction("requestVersionInfo") { -> requireSdk().requestVersionInfo().toMap() }
+        SdkCoroutineFunction("requestVersionInfo") { -> requireSdk().requestVersionInfo().toMap() }
 
         // MARK: - Power Control Commands
 
@@ -613,7 +652,7 @@ class BluetoothSdkModule : Module() {
 
         // MARK: - Video Recording Commands
 
-        SdkAsyncFunction("startVideoRecording") {
+        SdkCoroutineFunction("startVideoRecording") {
                 requestId: String,
                 save: Boolean,
                 sound: Boolean,
@@ -637,7 +676,7 @@ class BluetoothSdkModule : Module() {
 
         // webhookUrl/authToken are supplied at stop (not start) so the token is
         // fresh when the upload runs. Empty/null webhook = keep on device.
-        SdkAsyncFunction("stopVideoRecording") {
+        SdkCoroutineFunction("stopVideoRecording") {
                 requestId: String,
                 webhookUrl: String?,
                 authToken: String? ->
@@ -646,15 +685,15 @@ class BluetoothSdkModule : Module() {
 
         // MARK: - Stream Commands
 
-        SdkAsyncFunction("startStream") { params: Map<String, Any> ->
+        SdkCoroutineFunction("startStream") { params: Map<String, Any> ->
             requireSdk().startStream(StreamRequest.fromMap(params)).values
         }
 
-        SdkAsyncFunction("startExternallyManagedStream") { params: Map<String, Any> ->
+        SdkCoroutineFunction("startExternallyManagedStream") { params: Map<String, Any> ->
             requireSdk().startExternallyManagedStream(StreamRequest.fromMap(params)).values
         }
 
-        SdkAsyncFunction("stopStream") { -> requireSdk().stopStream().values }
+        SdkCoroutineFunction("stopStream") { -> requireSdk().stopStream().values }
 
         SdkAsyncFunction("sendExternallyManagedStreamKeepAlive") { params: Map<String, Any> ->
             sdk?.sendExternallyManagedStreamKeepAlive(StreamKeepAliveRequest.fromMap(params))
@@ -703,7 +742,7 @@ class BluetoothSdkModule : Module() {
 
         // MARK: - RGB LED Control
 
-        SdkAsyncFunction("rgbLedControl") {
+        SdkCoroutineFunction("rgbLedControl") {
                 requestId: String,
                 packageName: String?,
                 action: String,
