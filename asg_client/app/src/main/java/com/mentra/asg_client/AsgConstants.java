@@ -57,6 +57,16 @@ public class AsgConstants {
      */
     public static final long BES_OTA_SEGMENT_LEASE_WINDOW_MS = 120000;
 
+    /**
+     * Dead-man window for the BES OTA transfer. The transfer is response-driven (every BES
+     * response triggers the next send, there is no wait loop), so one lost response stalls
+     * it silently forever. If no OTA response arrives within this window the transfer is
+     * aborted through the normal failure path - the BES stays on its current firmware and
+     * the phone retries the whole OTA. Kept well below the phone's 120s stall watchdog so
+     * the glasses clean up first; normal inter-response gaps are under a second.
+     */
+    public static final long BES_OTA_RESPONSE_TIMEOUT_MS = 30000;
+
     // RGB LED Control Constants (Glasses BES Chipset - Remote Control via Bluetooth)
     // NOTE: These are different from the local MTK recording LED
 

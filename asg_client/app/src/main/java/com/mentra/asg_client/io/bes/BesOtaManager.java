@@ -3,6 +3,7 @@ package com.mentra.asg_client.io.bes;
 import android.content.Context;
 import android.util.Log;
 import com.mentra.asg_client.io.bes.events.BesOtaProgressEvent;
+import com.mentra.asg_client.logging.BleTraceLogger;
 import com.mentra.asg_client.io.bes.protocol.*;
 import com.mentra.asg_client.io.bes.util.BesOtaUtil;
 import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.SerialPortBridge;
@@ -16,6 +17,7 @@ import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import org.greenrobot.eventbus.EventBus;
+import org.json.JSONObject;
 
 /**
  * Manages BES2700 firmware OTA updates Handles file loading, packet transmission, state tracking,
@@ -40,6 +42,30 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
     private long operationStartTime = 0;
     private android.os.Handler authTimeoutHandler;
     private Runnable authTimeoutRunnable;
+
+    // Dead-man watchdog for the response-driven transfer: every inbound OTA response
+    // re-arms it. If it fires, the transfer is aborted through the normal failure path
+    // (createFailed + cleanup) - no resume, no retry: an aborted transfer leaves the BES
+    // on its current firmware and the phone re-runs the whole OTA. Without this, a single
+    // lost response (device slept mid-transfer, BES crash, UART drop) stalls the state
+    // machine silently forever (2026-07-08 incident: frozen at 80%, no further log line).
+    // Serializes the watchdog's decide+abort with receive processing: both run inside
+    // this monitor, so either the timeout aborts BEFORE a response enters the state
+    // machine (the response then sees the transfer inactive and stops), or the response
+    // wins, re-arms, and the already-dispatched timeout callback re-checks the deadline
+    // under the same monitor and stands down. The interleaving "callback reads expired
+    // deadline, response re-arms and continues, callback still aborts mid-processing"
+    // is structurally impossible.
+    private final Object mTransferGate = new Object();
+
+    private android.os.Handler responseWatchdogHandler;
+    private Runnable responseWatchdogRunnable;
+    // Absolute deadline (elapsedRealtime) of the current watchdog window. The re-arm from
+    // the UART receive thread cannot removeCallbacks() a callback that has ALREADY been
+    // dispatched on the main looper; the dispatched callback re-checks this deadline and
+    // aborts only if no response re-armed it in the meantime, so a response racing the
+    // timeout can never produce a false failure while its handler is mid-flight.
+    private volatile long responseWatchdogDeadlineMs;
 
     private String filePath;
     private boolean bInit = false;
@@ -326,12 +352,31 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
 
     /** Cleanup and reset state */
     private void cleanup() {
+        // Every terminal path funnels here, gated or not (watchdog and receive dispatch
+        // hold mTransferGate; abortIfInProgress and the auth failure paths do not).
+        // Taking the gate here - reentrant for the former - serializes ALL cleanups with
+        // receive processing and the watchdog re-arm, so no caller can tear the watchdog
+        // state down mid-rearm on another thread.
+        synchronized (mTransferGate) {
+            cleanupLocked();
+        }
+    }
+
+    private void cleanupLocked() {
         // Cancel authorization timeout if pending
         if (authTimeoutHandler != null && authTimeoutRunnable != null) {
             authTimeoutHandler.removeCallbacks(authTimeoutRunnable);
             authTimeoutHandler = null;
             authTimeoutRunnable = null;
         }
+
+        // Cancel the response watchdog; cleanup is the single funnel for every terminal
+        // path (apply success, CRC failure, watchdog abort), so no timer outlives the run.
+        if (responseWatchdogHandler != null && responseWatchdogRunnable != null) {
+            responseWatchdogHandler.removeCallbacks(responseWatchdogRunnable);
+            responseWatchdogRunnable = null;
+        }
+        responseWatchdogDeadlineMs = 0;
 
         operationStartTime = 0;
 
@@ -366,6 +411,7 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
 
         Log.i(TAG, "BES OTA authorization GRANTED - starting protocol");
         isWaitingForAuthorization = false;
+        rearmResponseWatchdog();
 
         // Cancel authorization timeout
         if (authTimeoutHandler != null && authTimeoutRunnable != null) {
@@ -761,7 +807,65 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
 
     // ========== Protocol State Machine ==========
 
+    /**
+     * (Re-)arm the response watchdog; called on transfer start and on every OTA response.
+     * Package-private for the deterministic race tests in BesOtaResponseWatchdogTest.
+     */
+    void rearmResponseWatchdog() {
+        if (!isBesOtaInProgress && !isWaitingForAuthorization) {
+            return; // no stray timers after cleanup()
+        }
+        responseWatchdogDeadlineMs =
+                android.os.SystemClock.elapsedRealtime() + AsgConstants.BES_OTA_RESPONSE_TIMEOUT_MS;
+        if (responseWatchdogHandler == null) {
+            responseWatchdogHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+        }
+        if (responseWatchdogRunnable != null) {
+            responseWatchdogHandler.removeCallbacks(responseWatchdogRunnable);
+        }
+        Runnable watchdog = () -> {
+          synchronized (mTransferGate) {
+            if (!isBesOtaInProgress) {
+                return;
+            }
+            if (android.os.SystemClock.elapsedRealtime() < responseWatchdogDeadlineMs) {
+                return; // a response re-armed the window after this callback was dispatched
+            }
+            Log.e(TAG, "No BES OTA response for " + AsgConstants.BES_OTA_RESPONSE_TIMEOUT_MS
+                    + "ms - aborting transfer (sentPos=" + sentPos + "/" + fileLen
+                    + ", confirmedSegments=" + confirmTimes + ")");
+            try {
+                JSONObject extra = new JSONObject();
+                extra.put("sentPos", sentPos);
+                extra.put("fileLen", fileLen);
+                extra.put("confirmedSegments", confirmTimes);
+                BleTraceLogger.logLifecycle(mContext, "BesOtaManager", "bes_ota_response_timeout", extra);
+            } catch (Exception ignored) {
+                // Trace logging must never affect the abort itself.
+            }
+            EventBus.getDefault().post(BesOtaProgressEvent.createFailed(
+                    "No response from BES for "
+                            + (AsgConstants.BES_OTA_RESPONSE_TIMEOUT_MS / 1000) + "s"));
+            cleanup();
+          }
+        };
+        // Post the local reference: the field is only bookkeeping for removeCallbacks, so
+        // a concurrent teardown nulling it can never turn this into postDelayed(null).
+        responseWatchdogRunnable = watchdog;
+        responseWatchdogHandler.postDelayed(watchdog, AsgConstants.BES_OTA_RESPONSE_TIMEOUT_MS);
+    }
+
     private void dealOtaRecvCmd(BesOtaMessage msg) {
+      synchronized (mTransferGate) {
+        if (!isBesOtaInProgress && !isWaitingForAuthorization) {
+            return; // the watchdog (or an abort) won the gate first - this response is stale
+        }
+        rearmResponseWatchdog();
+        dealOtaRecvCmdLocked(msg);
+      }
+    }
+
+    private void dealOtaRecvCmdLocked(BesOtaMessage msg) {
         if (msg == null) return;
 
         // Total operation timeout guard
