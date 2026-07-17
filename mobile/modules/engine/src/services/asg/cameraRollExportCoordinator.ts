@@ -158,9 +158,12 @@ class CameraRollExportCoordinator {
   /** Source deletion waits on this barrier; historical work never blocks a glasses sync. */
   async exportForSource(file: DownloadedFile, captureId?: string): Promise<GalleryAssetReceipt> {
     await this.initialize()
-    if (!this.enabled) throw new Error("Automatic camera-roll saving is disabled")
-    const entry = await this.recordIndexed(file, true, "SOURCE_BARRIER", captureId)
+    // A durable receipt proves this generation is already safe regardless of the current
+    // preference. Return it before enforcing disabled state so recovery can still ack the
+    // glasses after a previously-started export committed.
+    const entry = await this.recordIndexed(file, this.enabled, "SOURCE_BARRIER", captureId)
     if (entry.receipt) return entry.receipt
+    if (!this.enabled) throw new Error("Automatic camera-roll saving is disabled")
     return new Promise<GalleryAssetReceipt>((resolve, reject) => {
       const current = cameraRollExportLedger.get(entry.id)
       if (current?.receipt) {

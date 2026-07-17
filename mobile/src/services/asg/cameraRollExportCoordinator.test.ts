@@ -140,6 +140,18 @@ describe("cameraRollExportCoordinator", () => {
     expect(cameraRollExportCoordinator.getSummary()).toMatchObject({exported: 1, pending: 0})
   })
 
+  it("returns a durable source receipt even when automatic saving is disabled", async () => {
+    const file = legacyFile("IMG_exported_before_disable")
+    file.assetReceipt = {platform: "ios", identifier: "existing", exportedAt: Date.now()}
+    mockFiles[file.name] = file
+    mockAutoSaveEnabled = false
+
+    await expect(cameraRollExportCoordinator.exportForSource(file, file.name)).resolves.toMatchObject({
+      identifier: "existing",
+    })
+    expect(MediaLibraryPermissions.saveToLibraryWithReceipt).not.toHaveBeenCalled()
+  })
+
   it("keeps denied exports durable and blocked instead of dropping them", async () => {
     const file = legacyFile()
     mockFiles[file.name] = file
