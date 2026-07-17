@@ -47,6 +47,16 @@ public class AsgConstants {
      */
     public static final long PHONE_WAKE_COMMAND_WINDOW_MS = 15000;
 
+    /**
+     * Rolling wake-lease window re-armed on confirmed BES OTA segments. The BES UART
+     * transfer dies when the vendor display-sleep hook fires mid-flight even with a CPU
+     * lock held (2026-07-08 incident: frozen between segments at 80% with 4:40 left on
+     * the lock), so the transfer holds BOTH cpu and screen leases and re-arms them while
+     * segments keep confirming: progress keeps the device awake, a wedged transfer lets
+     * it sleep within this window (aligned with the phone's 120s stall watchdog).
+     */
+    public static final long BES_OTA_SEGMENT_LEASE_WINDOW_MS = 120000;
+
     // RGB LED Control Constants (Glasses BES Chipset - Remote Control via Bluetooth)
     // NOTE: These are different from the local MTK recording LED
 
