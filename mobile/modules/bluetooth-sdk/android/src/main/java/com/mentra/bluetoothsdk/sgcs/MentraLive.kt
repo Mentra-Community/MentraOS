@@ -5459,7 +5459,7 @@ class MentraLive : SGCManager() {
             json.put("bleImgId", bleImgId)
 
             // Use auto mode by default - glasses try WiFi direct upload, BLE fallback via bleImgId
-            json.put("transferMethod", "ble")
+            json.put("transferMethod", "auto")
 
             // Always prepare for potential BLE transfer
             if (webhookUrl != null && !webhookUrl.isEmpty()) {
