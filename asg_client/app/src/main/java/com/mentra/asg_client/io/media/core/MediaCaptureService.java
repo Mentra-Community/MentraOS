@@ -4856,6 +4856,7 @@ public class MediaCaptureService {
                         () -> {
                             long compressThreadStart = System.currentTimeMillis();
                             boolean bleTransferStarted = false;
+                            android.graphics.Rect detectedTextRoi = null;
                             CompressStageTimer stage = new CompressStageTimer();
                             recordTiming(requestId, "ble_compress_start");
                             logBlePhotoStep(
@@ -5002,6 +5003,7 @@ public class MediaCaptureService {
                                                             : null,
                                                     originalPath);
                                     roi = detection.roi;
+                                    detectedTextRoi = roi;
                                     textCropConfidence = detection.confidence;
                                     textCropReason = detection.reason;
                                     textCropOutcome = detection.outcome;
@@ -5492,7 +5494,10 @@ public class MediaCaptureService {
                                         && Boolean.TRUE.equals(photoSaveFlags.get(requestId))
                                         && !new File(originalPath).exists()) {
                                     persistTextModeSelectionFromMemory(
-                                            capturedPhoto, originalPath, requestId, null);
+                                            capturedPhoto,
+                                            originalPath,
+                                            requestId,
+                                            detectedTextRoi);
                                 }
                                 Log.e(TAG, "Error compressing photo for BLE", e);
                                 dumpTimings(requestId);
