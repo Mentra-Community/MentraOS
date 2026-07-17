@@ -6216,7 +6216,6 @@ class MentraLive : SGCManager() {
             null,
             null,
             null,
-            null,
             false,
         )
     }
@@ -6224,7 +6223,6 @@ class MentraLive : SGCManager() {
     fun sendButtonPhotoSettings(
         requestId: String?,
         size: String?,
-        zslMfnr: Boolean?,
         mfnr: Boolean?,
         zsl: Boolean?,
         noiseReduction: Boolean?,
@@ -6246,19 +6244,11 @@ class MentraLive : SGCManager() {
             if (size != null) {
                 command.put("size", size)
             }
-            val resolvedZslMfnr =
-                zslMfnr ?: if (mfnr != null || zsl != null) (mfnr == true && zsl == true) else null
-            if (resolvedZslMfnr != null) {
-                command.put("zslMfnr", resolvedZslMfnr)
-                command.put("mfnr", resolvedZslMfnr)
-                command.put("zsl", resolvedZslMfnr)
-            } else {
-                if (mfnr != null) {
-                    command.put("mfnr", mfnr)
-                }
-                if (zsl != null) {
-                    command.put("zsl", zsl)
-                }
+            if (mfnr != null) {
+                command.put("mfnr", mfnr)
+            }
+            if (zsl != null) {
+                command.put("zsl", zsl)
             }
             if (noiseReduction != null) {
                 command.put("noiseReduction", noiseReduction)
@@ -8815,10 +8805,23 @@ class MentraLive : SGCManager() {
         }
     }
 
+    /** One-time migration from coupled {@code button_photo_zsl_mfnr} into independent keys. */
+    private fun migrateButtonPhotoZslMfnrIfNeeded() {
+        val category = ObservableStore.BLUETOOTH_CATEGORY
+        val legacy = DeviceStore.get(category, "button_photo_zsl_mfnr") as? Boolean ?: return
+        if (DeviceStore.get(category, "button_photo_mfnr") == null) {
+            DeviceStore.set(category, "button_photo_mfnr", legacy)
+        }
+        if (DeviceStore.get(category, "button_photo_zsl") == null) {
+            DeviceStore.set(category, "button_photo_zsl", legacy)
+        }
+        DeviceStore.store.remove(category, "button_photo_zsl_mfnr")
+    }
+
     /** Send button photo settings to glasses, replaying all stored scan-tuning fields. */
     override fun sendButtonPhotoSettings() {
+        migrateButtonPhotoZslMfnrIfNeeded()
         val size = DeviceStore.get(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_size") as String?
-        val zslMfnr = DeviceStore.get(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_zsl_mfnr") as Boolean?
         val mfnr = DeviceStore.get(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_mfnr") as Boolean?
         val zsl = DeviceStore.get(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_zsl") as Boolean?
         val noiseReduction = DeviceStore.get(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_noise_reduction") as Boolean?
@@ -8830,7 +8833,7 @@ class MentraLive : SGCManager() {
         val compress = DeviceStore.get(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_compress") as String?
         val sound = DeviceStore.get(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_sound") as Boolean?
         sendButtonPhotoSettings(
-            null, size, zslMfnr, mfnr, zsl, noiseReduction, edgeEnhancement,
+            null, size, mfnr, zsl, noiseReduction, edgeEnhancement,
             ispDigitalGain, ispAnalogGain, aeExposureDivisor, isoCap, compress, sound, false,
         )
     }
