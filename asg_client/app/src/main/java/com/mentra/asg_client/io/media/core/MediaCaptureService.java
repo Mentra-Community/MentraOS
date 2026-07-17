@@ -2663,6 +2663,9 @@ public class MediaCaptureService {
                                         filePath, requestId, webhookUrl, authToken, compress);
                             } else {
                                 // No webhook → no upload phase to run. Job ends here.
+                                if (!save) {
+                                    cleanupPhotoArtifacts(requestId, filePath, false);
+                                }
                                 sendPhotoSuccessResponse(requestId, "");
                                 clearPhotoTracking(requestId);
                                 releasePhotoJob(requestId);
