@@ -59,12 +59,17 @@ Two of our functions collide on that thread:
 While (1) holds the thread, every (2) call queues behind it. When the latch
 releases, the queue drains in order: exactly the observed gap + burst.
 
-`MentraBluetoothSdk.kt` has **12 blocking `pending.await()` sites** (lines
-468, 701, 724, 747, 773, 797, 816, 872, 926, 977, 1042, 1071 as of
-`origin/dev` e8f7e7936): photo, camera warm-up, gallery status, hotspot
-state, video, and friends. Any of them freezes all miniapp event delivery
-app-wide for its duration. Photo capture is just the most frequent and
-longest-running offender.
+`MentraBluetoothSdk.kt` has **17 blocking `PendingResponse.await(...)` sites
+across 16 functions** (lines 468, 659, 665, 701, 724, 747, 773, 797, 816,
+845, 872, 895, 926, 958, 977, 1042, 1071 as of `origin/dev` e8f7e7936):
+settings commands, WiFi scan/connect/forget, hotspot, photo, camera warm-up,
+gallery status, stream start/stop, RGB LED, video recording start/stop,
+version info, and the OTA query/start pair. (An earlier revision of this doc
+listed only the 12 zero-arg `pending.await()` sites; the `await(timeoutMs)`
+variants in `requestWifiScan`, `startStream`, `stopStream`, and
+`stopVideoRecording` block the same thread and are in scope.) Any of them
+freezes all miniapp event delivery app-wide for its duration. Photo capture
+is just the most frequent and longest-running offender.
 
 ### Why iOS is fine
 
@@ -103,7 +108,7 @@ Preferred shape, keeping the public JS API identical:
    Callers that resolve from BLE listener threads are unchanged
    (`complete*` is thread-safe).
 
-2. **Convert the blocking SDK entry points to `suspend fun`** (all 12
+2. **Convert the blocking SDK entry points to `suspend fun`** (all 17
    `pending.await()` call sites listed above). Kotlin will force the
    transitive callers in `BluetoothSdkModule.kt` to adapt, which is the
    audit mechanism.
