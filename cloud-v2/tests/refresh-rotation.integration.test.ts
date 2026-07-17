@@ -115,12 +115,38 @@ describe("refresh rotation recovery (OS-1703)", () => {
     expect(recovery.refresh_token).toBeTruthy();
     expect(recovery.access_token).toBeTruthy();
 
-    // The never-delivered successor was orphaned by the recovery: no two
-    // live tokens ever coexist.
-    await expectInvalidGrant(b);
-
-    // The recovered pair is fully functional.
+    // The recovered pair is fully functional. This confirmed use collapses
+    // every other outstanding token: the original a AND the displaced
+    // sibling b (which was honored until now, see the concurrent-duplicate
+    // test) both die here.
     const next = await refreshSession({ refreshToken: recovery.refresh_token });
+    expect(next.refresh_token).toBeTruthy();
+    await expectInvalidGrant(a);
+    await expectInvalidGrant(b);
+  });
+
+  test("concurrent duplicate: the displaced response stays valid until any confirmed use", async () => {
+    const a = "token-A-" + crypto.randomBytes(16).toString("base64url");
+    await seedSession(a);
+
+    // Two refreshes race with the same token. The winner's response carries
+    // b; the loser recovers via the predecessor path and its response
+    // carries c, displacing b. Which one the client persists depends on
+    // response arrival order, so BOTH must keep working until one is used.
+    const { refresh_token: b } = await refreshSession({ refreshToken: a });
+    const { refresh_token: c } = await refreshSession({ refreshToken: a });
+
+    // Client persisted the displaced winner b (reorder case). Before this
+    // fix, b was orphaned by c's recovery rotation: invalid_grant, logout.
+    const viaSibling = await refreshSession({ refreshToken: b });
+    expect(viaSibling.refresh_token).toBeTruthy();
+
+    // The confirmed use of b collapses the others.
+    await expectInvalidGrant(a);
+    await expectInvalidGrant(c);
+
+    // The surviving chain rotates normally.
+    const next = await refreshSession({ refreshToken: viaSibling.refresh_token });
     expect(next.refresh_token).toBeTruthy();
   });
 

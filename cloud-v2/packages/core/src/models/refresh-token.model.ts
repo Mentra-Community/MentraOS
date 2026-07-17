@@ -54,6 +54,18 @@ const RefreshTokenSchema = new Schema(
      */
     prevTokenHash: { type: String },
 
+    /**
+     * Hash of a live successor displaced by a predecessor-path recovery
+     * rotation, still honored until any token is confirmed-used. Closes the
+     * concurrent-duplicate race: when two refreshes present the same token,
+     * the winner's response token would otherwise be orphaned by the loser's
+     * recovery rotation, and a client that persisted the winner's response
+     * (network reordering) would brick on its next refresh. Cleared the
+     * moment the live token or this sibling is used, so at most one
+     * unconfirmed sibling exists per session.
+     */
+    altTokenHash: { type: String },
+
     /** Whose session this is. Matches `users.mentraUserId`. */
     mentraUserId: { type: String, required: true },
 
@@ -75,6 +87,11 @@ RefreshTokenSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 // Recovery lookup: refresh presented with the immediately-superseded token
 // (OS-1703). Sparse — brand-new sessions have no predecessor.
 RefreshTokenSchema.index({ prevTokenHash: 1 }, { sparse: true });
+
+// Displaced-sibling lookup: refresh presented with a successor that a
+// recovery rotation overwrote (concurrent-duplicate race). Sparse — the
+// field only exists between a recovery rotation and the next confirmed use.
+RefreshTokenSchema.index({ altTokenHash: 1 }, { sparse: true });
 
 // Revocation queries: "kill every session belonging to this user / OEM."
 RefreshTokenSchema.index({ mentraUserId: 1, tenantId: 1 });
