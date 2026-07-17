@@ -2578,9 +2578,6 @@ public class MediaCaptureService {
                             }
 
                             Log.d(TAG, "Photo captured successfully at: " + filePath);
-                            if (!textModeRequested) {
-                                prepareTextModePhotoPath(filePath, requestId);
-                            }
                             sendPhotoStatus(
                                     requestId,
                                     "captured",

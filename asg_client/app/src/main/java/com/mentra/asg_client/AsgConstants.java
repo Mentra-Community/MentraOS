@@ -76,12 +76,6 @@ public class AsgConstants {
     public static final boolean ENABLE_TEXT_REGION_CROP = false;
 
     /**
-     * Dump text-detect intermediates to {@code textdetect_debug/} on every detection run. Adds
-     * per-photo I/O overhead; keep false in production.
-     */
-    public static final boolean SAVE_TEXT_DETECT_DEBUG_ARTIFACTS = false;
-
-    /**
      * Emit {@code ⏱️ [BLE PHOTO]} timing logs for the full take_photo → AVIF/JPEG compress → BLE
      * transfer pipeline. Filter logcat on tag {@code BlePhotoTiming} or prefix {@code ⏱️ [BLE
      * PHOTO]}. Keep false in production.
