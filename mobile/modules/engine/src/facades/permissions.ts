@@ -84,7 +84,9 @@ function androidPerms(feature: string): AndroidPermission[] {
     case PermissionFeatures.CAMERA:
       return [ANDROID.CAMERA]
     case PermissionFeatures.CALENDAR:
-      return [ANDROID.READ_CALENDAR]
+      // Expo Calendar requires both grants on Android, including for read APIs.
+      // The miniapp-facing calendar API remains read-only.
+      return [ANDROID.READ_CALENDAR, ANDROID.WRITE_CALENDAR]
     case PermissionFeatures.LOCATION:
     case PermissionFeatures.BACKGROUND_LOCATION:
       return [ANDROID.ACCESS_FINE_LOCATION]
@@ -108,7 +110,7 @@ export const permissions = {
       const perms = androidPerms(feature)
       if (perms.length === 0) return true // nothing to ask on this OS/version
       // Every permission in the group must be granted (e.g. bluetooth =
-      // scan+connect+advertise) — matches the iOS branch.
+      // scan+connect+advertise, calendar = read+write) — matches the iOS branch.
       return areAndroidPermissionsGranted(perms)
     }
     const perms = iosPerms(feature)

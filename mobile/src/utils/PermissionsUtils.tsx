@@ -101,7 +101,8 @@ const PERMISSION_CONFIG: Record<string, PermissionConfig> = {
     name: "Calendar",
     description: "Allows miniapps to read your calendar events",
     ios: [PERMISSIONS.IOS.CALENDARS],
-    android: [PermissionsAndroid.PERMISSIONS.READ_CALENDAR],
+    // Expo Calendar requires both Android grants even when only calling read APIs.
+    android: [PermissionsAndroid.PERMISSIONS.READ_CALENDAR, PermissionsAndroid.PERMISSIONS.WRITE_CALENDAR],
     critical: false,
   },
   [PermissionFeatures.LOCATION]: {

@@ -122,11 +122,15 @@ describe("permissions facade", () => {
     expect(androidRequest).not.toHaveBeenCalled()
   })
 
-  test("requests read-only Android calendar access", async () => {
+  test("requests both Android calendar grants required by Expo Calendar", async () => {
     permissionRequestResults.set("android.permission.READ_CALENDAR", "granted")
+    permissionRequestResults.set("android.permission.WRITE_CALENDAR", "granted")
 
     await expect(permissions.request(PermissionFeatures.CALENDAR)).resolves.toBe(true)
 
-    expect(androidRequestMultiple).toHaveBeenCalledWith(["android.permission.READ_CALENDAR"])
+    expect(androidRequestMultiple).toHaveBeenCalledWith([
+      "android.permission.READ_CALENDAR",
+      "android.permission.WRITE_CALENDAR",
+    ])
   })
 })
