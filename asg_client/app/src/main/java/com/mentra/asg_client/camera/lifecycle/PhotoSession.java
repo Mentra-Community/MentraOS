@@ -388,6 +388,7 @@ public final class PhotoSession {
                 case CameraConstants.SIZE_HIGH:
                     return CameraConstants.SDK_JPEG_QUALITY_LARGE;
                 case CameraConstants.SIZE_MAX:
+                case CameraConstants.SIZE_TEXT:
                     return CameraConstants.SDK_JPEG_QUALITY_MAX;
                 case CameraConstants.SIZE_MEDIUM:
                 default:
@@ -466,11 +467,20 @@ public final class PhotoSession {
                 }
                 queue.attachRegistryCallback(firstRequest);
                 if (needsReconfigurationForQueued(firstRequest)) {
+                    ConfiguredCameraConfig baseline = configuredCameraConfig;
                     Log.d(
                             TAG,
                             "Configured camera needs reconfiguration for "
                                     + firstRequest.requestId
                                     + " — routing through setupCameraForQueuedRequest");
+                    recordCaptureSessionForTiming(
+                            false,
+                            firstRequest.size,
+                            warmSessionReasonMismatch(baseline, firstRequest));
+                    Log.d(
+                            TAG,
+                            "warm/capture config mismatch: "
+                                    + describeConfigMismatch(baseline, firstRequest));
                     setupCameraForQueuedRequest(firstRequest);
                     return;
                 }
@@ -480,6 +490,7 @@ public final class PhotoSession {
                     return;
                 }
                 Log.d(TAG, "Dispatching queued photo with configured camera: " + request.requestId);
+                recordCaptureSessionForTiming(true, request.size, null);
                 hooks.cancelKeepAliveTimer();
                 activateQueuedRequest(request);
                 notifyCurrentPhotoConfigured();
@@ -503,6 +514,8 @@ public final class PhotoSession {
             QueuedPhotoRequest firstRequest = queue.peek();
             if (firstRequest != null) {
                 Log.d(TAG, "Opening camera for queued photo request: " + firstRequest.requestId);
+                // Do not stamp "cold open" here — setupCameraForQueuedRequest decides whether the
+                // keep-alive lease is still holding a reusable session.
                 queue.attachRegistryCallback(firstRequest);
                 setupCameraForQueuedRequest(firstRequest);
             }
@@ -514,6 +527,8 @@ public final class PhotoSession {
 
         Log.i(TAG, "📸 PHOTO E2E: Starting photo request " + request.requestId);
 
+        // Snapshot before activateQueuedRequest overwrites the warm baseline.
+        ConfiguredCameraConfig priorConfig = configuredCameraConfig;
         boolean needsReopen = needsReconfigurationForQueued(request);
 
         activateQueuedRequest(request);
@@ -523,11 +538,20 @@ public final class PhotoSession {
 
             if (needsReopen) {
                 Log.d(TAG, "Camera config changed (reconfiguration required), reopening camera");
+                recordCaptureSessionForTiming(
+                        false,
+                        request.size,
+                        warmSessionReasonMismatch(priorConfig, request));
+                Log.d(
+                        TAG,
+                        "warm/capture config mismatch (reopen): "
+                                + describeConfigMismatch(priorConfig, request));
                 hooks.cancelKeepAliveTimer();
                 hooks.closeCamera();
                 hooks.openCameraInternal(request.filePath, false);
             } else {
                 Log.d(TAG, "Camera config unchanged, taking photo immediately");
+                recordCaptureSessionForTiming(true, request.size, null);
                 hooks.cancelKeepAliveTimer();
 
                 notifyCurrentPhotoConfigured();
@@ -543,7 +567,28 @@ public final class PhotoSession {
                 }
             }
         } else {
-            Log.d(TAG, "Opening camera for photo capture");
+            boolean keptAlive = hooks.coordinator().isCameraKeptAlive();
+            boolean deviceGone = hooks.coordinator().device() == null;
+            boolean sessionGone = hooks.coordinator().session() == null;
+            // No HAL to reuse: either warm-up never ran, or the warm lease already closed.
+            String coldReason =
+                    priorConfig != null
+                            ? BlePhotoTimingLog.WarmSessionReason.LEASE_EXPIRED
+                            : BlePhotoTimingLog.WarmSessionReason.NO_WARMUP;
+            Log.d(
+                    TAG,
+                    "Opening camera for photo capture ("
+                            + coldReason
+                            + " deviceGone="
+                            + deviceGone
+                            + " sessionGone="
+                            + sessionGone
+                            + " keepAliveFlag="
+                            + keptAlive
+                            + " priorTier="
+                            + (priorConfig != null ? priorConfig.size : "none")
+                            + ")");
+            recordCaptureSessionForTiming(false, request.size, coldReason);
             hooks.wakeUpScreen();
             hooks.openCameraInternal(request.filePath, false);
         }
@@ -2018,6 +2063,59 @@ public final class PhotoSession {
         String warmFilePath() {
             return "warmup_" + System.currentTimeMillis() + ".jpg";
         }
+    }
+
+    private void recordCaptureSessionForTiming(
+            boolean reusedWarmSession, @Nullable String sizeTier, @Nullable String note) {
+        Size size = jpegSize;
+        BlePhotoTimingLog.captureSession(
+                reusedWarmSession,
+                sizeTier,
+                size != null ? size.getWidth() : 0,
+                size != null ? size.getHeight() : 0,
+                note);
+    }
+
+    /** Short PHASE SUMMARY reason when warm and capture camera configs differ. */
+    private static String warmSessionReasonMismatch(
+            @Nullable ConfiguredCameraConfig baseline, QueuedPhotoRequest request) {
+        if (baseline == null) {
+            return BlePhotoTimingLog.WarmSessionReason.NO_WARMUP;
+        }
+        if (!Objects.equals(baseline.size, request.size)) {
+            return BlePhotoTimingLog.WarmSessionReason.mismatchSize(
+                    baseline.size, request.size);
+        }
+        if (baseline.isFromSdk != request.isFromSdk) {
+            return BlePhotoTimingLog.WarmSessionReason.MISMATCH_SDK;
+        }
+        if (!Objects.equals(baseline.exposureTimeNs, request.exposureTimeNs)) {
+            return BlePhotoTimingLog.WarmSessionReason.MISMATCH_EXPOSURE;
+        }
+        return BlePhotoTimingLog.WarmSessionReason.MISMATCH;
+    }
+
+    /**
+     * Detailed mismatch dump for Log.d only — the PHASE SUMMARY uses the short reason codes from
+     * {@link #warmSessionReasonMismatch}.
+     */
+    private static String describeConfigMismatch(
+            @Nullable ConfiguredCameraConfig baseline, QueuedPhotoRequest request) {
+        if (baseline == null) {
+            return "warmTier=none captureTier=" + request.size;
+        }
+        return "warmTier="
+                + baseline.size
+                + " captureTier="
+                + request.size
+                + " warmIsFromSdk="
+                + baseline.isFromSdk
+                + " captureIsFromSdk="
+                + request.isFromSdk
+                + " warmExposureNs="
+                + baseline.exposureTimeNs
+                + " captureExposureNs="
+                + request.exposureTimeNs;
     }
 
     /** Immutable snapshot of camera pipeline parameters for burst reuse decisions. */
