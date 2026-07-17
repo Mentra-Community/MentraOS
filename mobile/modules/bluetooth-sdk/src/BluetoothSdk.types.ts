@@ -106,16 +106,7 @@ export type LogEvent = {
   message: string
 }
 
-/**
- * `error` is the glasses-reported provisioning failure reason (e.g. "connect_timeout",
- * "connected_to_other_network") when the status is the verdict of a failed connect
- * attempt; absent on routine link-state updates. Requires ASG client v40+ — older
- * glasses never send it. Note "connected_to_other_network" arrives on a *connected*
- * status (joined a different SSID than requested).
- */
-export type WifiStatus =
-  | {state: "disconnected"; error?: string}
-  | {state: "connected"; ssid: string; localIp?: string; error?: string}
+export type WifiStatus = {state: "disconnected"} | {state: "connected"; ssid: string; localIp?: string}
 
 export type ConnectedWifiStatus = Extract<WifiStatus, {state: "connected"}>
 
@@ -125,6 +116,16 @@ export function isConnectedWifiStatus(status: WifiStatus): status is ConnectedWi
 
 export type WifiStatusChangeEvent = WifiStatus & {
   type: "wifi_status_change"
+  /**
+   * Glasses-reported provisioning failure reason when THIS event is the verdict of a
+   * failed connect attempt; absent on routine link-state updates. An attempt property,
+   * not a link property — which is why it lives on the event, not on WifiStatus:
+   * "connect_timeout" arrives on a disconnected status (never associated), while
+   * "connected_to_other_network" arrives on a *connected* status (the attempt failed
+   * and the glasses ended up on / fell back to a different SSID than requested).
+   * Requires ASG client v40+ — older glasses never send it.
+   */
+  error?: string
 }
 
 export type HotspotStatus = {state: "disabled"} | {state: "enabled"; ssid: string; password: string; localIp: string}
