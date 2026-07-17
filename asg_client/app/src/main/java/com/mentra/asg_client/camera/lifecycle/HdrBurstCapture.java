@@ -76,8 +76,11 @@ public final class HdrBurstCapture {
             HdrBurstBuilder.configureBracket(StillCaptureBuilder.wrap(builder), ev,
                     selectedFpsRange, hasAutoFocus, jpegQuality, jpegOrientation);
 
-            if (cameraSettings != null && cameraSettings.mAsgSettings.isZslMfnrEnabled()) {
-                cameraSettings.configureCaptureBuilder(builder, true);
+            if (cameraSettings != null) {
+                cameraSettings.configureCaptureBuilder(
+                        builder,
+                        cameraSettings.mAsgSettings.isZslEnabled(),
+                        cameraSettings.mAsgSettings.isMfnrEnabled());
             }
 
             burstRequests.add(builder.build());
