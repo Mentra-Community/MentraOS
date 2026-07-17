@@ -98,6 +98,24 @@ public class MlKitTextRoiDetectorTest {
     }
 
     @Test
+    public void timedOutWarmupRemainsRegisteredWhileStillRunning() throws Exception {
+        TextRecognizer recognizer = mock(TextRecognizer.class);
+        MlKitTextRoiDetector detector = new MlKitTextRoiDetector(1280, recognizer);
+        TaskCompletionSource<Text> pending = new TaskCompletionSource<>();
+        Field warmupTask = MlKitTextRoiDetector.class.getDeclaredField("warmupTask");
+        warmupTask.setAccessible(true);
+        @SuppressWarnings("unchecked")
+        AtomicReference<Task<Text>> warmupTaskReference =
+                (AtomicReference<Task<Text>>) warmupTask.get(detector);
+        warmupTaskReference.set(pending.getTask());
+
+        detector.handleWarmupAwaitFailure(pending.getTask());
+
+        assertThat(warmupTaskReference.get()).isSameAs(pending.getTask());
+        detector.close();
+    }
+
+    @Test
     public void pendingDetectionTaskDefersBitmapRecycleUntilCompletion() {
         Bitmap decoded = Bitmap.createBitmap(32, 24, Bitmap.Config.ARGB_8888);
         Bitmap analysis = Bitmap.createBitmap(16, 12, Bitmap.Config.ARGB_8888);

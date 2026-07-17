@@ -40,6 +40,7 @@ public final class MlKitTextRoiDetector implements AutoCloseable {
     private final int analysisLongEdge;
 
     private final AtomicReference<Task<Text>> warmupTask = new AtomicReference<>();
+    private final AtomicReference<Task<Text>> activeRecognizerTask = new AtomicReference<>();
     private volatile boolean closed;
 
     public MlKitTextRoiDetector() {
@@ -68,9 +69,14 @@ public final class MlKitTextRoiDetector implements AutoCloseable {
             Bitmap blank = Bitmap.createBitmap(64, 64, Bitmap.Config.ARGB_8888);
             blank.eraseColor(Color.WHITE);
             long startMs = SystemClock.elapsedRealtime();
-            Task<Text> task = recognizer.process(InputImage.fromBitmap(blank, 0));
+            Task<Text> task = tryStartRecognizerProcess(InputImage.fromBitmap(blank, 0));
+            if (task == null) {
+                blank.recycle();
+                return;
+            }
             warmupTask.set(task);
             task.addOnCompleteListener(
+                    DIRECT_EXECUTOR,
                     completedTask -> {
                         blank.recycle();
                         handleWarmupCompletion(completedTask);
@@ -81,6 +87,25 @@ public final class MlKitTextRoiDetector implements AutoCloseable {
                                         + "ms success="
                                         + completedTask.isSuccessful());
                     });
+        }
+    }
+
+    @Nullable
+    private Task<Text> tryStartRecognizerProcess(InputImage image) {
+        synchronized (activeRecognizerTask) {
+            Task<Text> activeTask = activeRecognizerTask.get();
+            if (activeTask != null && !activeTask.isComplete()) {
+                return null;
+            }
+            if (activeTask != null) {
+                activeRecognizerTask.compareAndSet(activeTask, null);
+            }
+            Task<Text> newTask = recognizer.process(image);
+            activeRecognizerTask.set(newTask);
+            newTask.addOnCompleteListener(
+                    DIRECT_EXECUTOR,
+                    completedTask -> activeRecognizerTask.compareAndSet(completedTask, null));
+            return newTask;
         }
     }
 
@@ -126,9 +151,9 @@ public final class MlKitTextRoiDetector implements AutoCloseable {
                             TimeUnit.MILLISECONDS);
                 } catch (Throwable warmupError) {
                     // A transient model-init failure or timeout must not poison every later text
-                    // capture. Only clear the task we actually awaited; an older completion must
-                    // never clear a newer retry.
-                    warmupTask.compareAndSet(taskToAwait, null);
+                    // capture. A timed-out task is still using the recognizer, so keep it until its
+                    // completion listener runs rather than starting overlapping work.
+                    handleWarmupAwaitFailure(taskToAwait);
                     throw warmupError;
                 }
             }
@@ -158,7 +183,14 @@ public final class MlKitTextRoiDetector implements AutoCloseable {
             }
 
             analysis = scaleLongEdge(decoded, analysisLongEdge);
-            detectionTask = recognizer.process(InputImage.fromBitmap(analysis, 0));
+            detectionTask = tryStartRecognizerProcess(InputImage.fromBitmap(analysis, 0));
+            if (detectionTask == null) {
+                return Detection.fullFrame(
+                        "mlkit_busy",
+                        SystemClock.elapsedRealtime() - startMs,
+                        sourceWidth,
+                        sourceHeight);
+            }
             Text text =
                     Tasks.await(
                             detectionTask,
@@ -189,6 +221,13 @@ public final class MlKitTextRoiDetector implements AutoCloseable {
                     0);
         } finally {
             recycleBitmapsAfterTask(detectionTask, analysis, decoded);
+        }
+    }
+
+    /** Keeps timed-out work registered until ML Kit actually completes it. */
+    void handleWarmupAwaitFailure(Task<Text> awaitedTask) {
+        if (awaitedTask.isComplete()) {
+            warmupTask.compareAndSet(awaitedTask, null);
         }
     }
 

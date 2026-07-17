@@ -2236,6 +2236,7 @@ public class MediaCaptureService {
                             if (textModeRequested) {
                                 if (capturedPhoto == null) {
                                     try {
+                                        clearPhotoTracking(requestId);
                                         sendPhotoErrorResponse(
                                                 requestId,
                                                 "PHOTO_SAVE_FAILED",
@@ -2258,6 +2259,7 @@ public class MediaCaptureService {
                                                             filePath,
                                                             requestId,
                                                             detection.roi)) {
+                                                        clearPhotoTracking(requestId);
                                                         sendPhotoErrorResponse(
                                                                 requestId,
                                                                 "PHOTO_SAVE_FAILED",
@@ -2270,12 +2272,24 @@ public class MediaCaptureService {
                                                             captureId,
                                                             filePath,
                                                             captureMetadata);
+                                                } catch (RuntimeException processingError) {
+                                                    Log.e(
+                                                            TAG,
+                                                            "Local text-mode processing failed for "
+                                                            + requestId,
+                                                            processingError);
+                                                    clearPhotoTracking(requestId);
+                                                    sendPhotoErrorResponse(
+                                                            requestId,
+                                                            "PHOTO_SAVE_FAILED",
+                                                            "Could not save final text-mode output");
                                                 } finally {
                                                     releasePhotoJob(requestId);
                                                 }
                                             });
                                 } catch (RejectedExecutionException executorClosed) {
                                     try {
+                                        clearPhotoTracking(requestId);
                                         sendPhotoErrorResponse(
                                                 requestId,
                                                 "PHOTO_SAVE_FAILED",
@@ -2312,6 +2326,7 @@ public class MediaCaptureService {
                                 }
                             } finally {
                                 if (textModeRequested) {
+                                    clearPhotoTracking(requestId);
                                     releasePhotoJob(requestId);
                                 }
                             }
@@ -2327,6 +2342,7 @@ public class MediaCaptureService {
                         "Error taking photo: " + e.getMessage());
             } finally {
                 if (textModeRequested) {
+                    clearPhotoTracking(requestId);
                     releasePhotoJob(requestId);
                 }
             }
