@@ -1725,6 +1725,26 @@ class MentraBluetoothSdk private constructor(
 
     private fun handleWifiStatusForRequests(event: WifiStatusEvent) {
         val request = synchronized(oneShotLock) { pendingWifiStatus } ?: return
+        // A wifi_status carrying the explicit error field is the glasses' failure
+        // verdict for the in-flight connect: reject now instead of running out the
+        // request timeout. Only the error field counts as failure — the glasses'
+        // connect sequence emits a debounced bare connected=false ~1-2s after
+        // credentials while association is still in progress, and rejecting on that
+        // would kill every connect attempt early.
+        if (request.operation == WifiStatusOperation.CONNECT && event.error != null) {
+            synchronized(oneShotLock) {
+                if (pendingWifiStatus === request) {
+                    pendingWifiStatus = null
+                }
+            }
+            request.pending.reject(
+                BluetoothSdkException(
+                    event.error,
+                    "Glasses failed to join \"${request.ssid}\": ${event.error}",
+                )
+            )
+            return
+        }
         if (!wifiStatusMatches(event.status, request)) return
         synchronized(oneShotLock) {
             if (pendingWifiStatus === request) {

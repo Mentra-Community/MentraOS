@@ -3137,7 +3137,12 @@ class MentraLive : SGCManager() {
                     DeviceStore.apply("glasses", "wifiError", "")
                 }
 
-                updateWifiStatus(wifiConnectedStatus, ssid, localIp)
+                updateWifiStatus(
+                        wifiConnectedStatus,
+                        ssid,
+                        localIp,
+                        wifiError.takeIf { it.isNotEmpty() }
+                )
             }
             "hotspot_status_update" -> {
                 // Process hotspot status information (same pattern as "wifi_status")
@@ -4702,7 +4707,12 @@ class MentraLive : SGCManager() {
     /**
      * Update WiFi status and notify listeners Matches iOS MentraLive.swift updateWifiStatus pattern
      */
-    private fun updateWifiStatus(connected: Boolean, ssid: String, localIp: String) {
+    private fun updateWifiStatus(
+            connected: Boolean,
+            ssid: String,
+            localIp: String,
+            error: String? = null
+    ) {
         Bridge.log("LIVE: 🌐 Updating WiFi status - connected: " + connected + ", SSID: " + ssid)
 
         // Update parent SGCManager fields
@@ -4711,7 +4721,7 @@ class MentraLive : SGCManager() {
         DeviceStore.apply("glasses", "wifiLocalIp", localIp)
 
         // Send event to bridge for cloud communication
-        Bridge.sendWifiStatusChange(connected, ssid, localIp)
+        Bridge.sendWifiStatusChange(connected, ssid, localIp, error)
     }
 
     /**
