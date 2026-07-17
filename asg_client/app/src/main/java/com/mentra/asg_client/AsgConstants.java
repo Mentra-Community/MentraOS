@@ -89,21 +89,22 @@ public class AsgConstants {
     public static final boolean ENABLE_PHOTO_TIMING_LOGS = true;
 
     /**
-     * Coupled ZSL preview buffering + MFNR still capture. Disable only as an emergency kill
-     * switch; normal photo capture uses this path by default.
+     * ZSL preview/capture buffering kill switch. Disable only as an emergency; normal photo
+     * capture uses ZSL by default.
      */
-    public static final boolean ENABLE_ZSL_MFNR = true;
+    public static final boolean ENABLE_ZSL = true;
 
-    /** Default for photo requests and physical camera-button captures when not explicitly opted out. */
-    public static final boolean DEFAULT_ZSL_MFNR = true;
+    /**
+     * Vendor MFNR (multi-frame noise reduction) kill switch. Disable only as an emergency; normal
+     * photo capture uses MFNR by default.
+     */
+    public static final boolean ENABLE_MFNR = true;
 
-    /** @deprecated Use {@link #ENABLE_ZSL_MFNR}. */
-    @Deprecated
-    public static final boolean ENABLE_ZSL = ENABLE_ZSL_MFNR;
+    /** Default for photo requests when {@code zsl} is omitted. */
+    public static final boolean DEFAULT_ZSL = true;
 
-    /** @deprecated Use {@link #ENABLE_ZSL_MFNR}. */
-    @Deprecated
-    public static final boolean ENABLE_MFNR = ENABLE_ZSL_MFNR;
+    /** Default for photo requests when {@code mfnr} is omitted. */
+    public static final boolean DEFAULT_MFNR = true;
 
     /** After AE meters in text mode, divide exposure time by this factor (shorter shutter). */
     public static final int TEXT_MODE_AE_EXPOSURE_DIVISOR = 3;
