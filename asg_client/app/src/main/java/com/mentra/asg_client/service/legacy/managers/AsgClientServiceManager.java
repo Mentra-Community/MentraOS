@@ -269,13 +269,17 @@ public class AsgClientServiceManager {
         try {
             asgSettings = new AsgSettings(context);
 
-            Log.d(TAG, "ZSL/MFNR enabled: " + asgSettings.isZslMfnrEnabled());
+            Log.d(
+                    TAG,
+                    "ZSL enabled: "
+                            + asgSettings.isZslEnabled()
+                            + "; MFNR enabled: "
+                            + asgSettings.isMfnrEnabled());
 
             // Seed factory defaults only on first install — never clobber phone button_photo_setting.
-            if (!asgSettings.hasZslMfnrPreference()
-                    && !asgSettings.hasMfnrPreference()
-                    && !asgSettings.hasZslPreference()) {
-                asgSettings.setZslMfnrEnabled(AsgConstants.ENABLE_ZSL_MFNR);
+            if (!asgSettings.hasZslPreference() && !asgSettings.hasMfnrPreference()) {
+                asgSettings.setZslEnabled(AsgConstants.ENABLE_ZSL && AsgConstants.DEFAULT_ZSL);
+                asgSettings.setMfnrEnabled(AsgConstants.ENABLE_MFNR && AsgConstants.DEFAULT_MFNR);
             }
             Log.d(TAG, "✅ Settings initialized successfully");
         } catch (Exception e) {
