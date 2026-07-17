@@ -87,8 +87,8 @@ public class AsgClientService extends Service implements NetworkStateListener, T
     @Inject Provider<ICompanionTransport> companionTransportProvider;
 
     /**
-     * Provider for the device-appropriate network manager, deferred for the same reason as
-     * {@link #companionTransportProvider}.
+     * Provider for the device-appropriate network manager, deferred for the same reason as {@link
+     * #companionTransportProvider}.
      */
     @Inject Provider<INetworkManager> networkManagerProvider;
 
@@ -1399,6 +1399,35 @@ public class AsgClientService extends Service implements NetworkStateListener, T
                         Log.i(TAG, "✅ BLE file transfer started successfully for: " + filePath);
                     } else {
                         Log.e(TAG, "❌ Failed to start BLE file transfer for: " + filePath);
+                    }
+                    return started;
+                } else {
+                    Log.w(TAG, "⚠️ Bluetooth manager is null - cannot send file");
+                    return false;
+                }
+            }
+
+            @Override
+            public boolean sendFileViaBluetooth(byte[] data, String fileName) {
+                Log.d(
+                        TAG,
+                        "📁 sendFileViaBluetooth(byte[]) called - "
+                                + (data != null ? data.length : 0)
+                                + " bytes as "
+                                + fileName);
+
+                if (serviceInitializer.getServiceManager().getBluetoothManager() != null) {
+                    boolean started =
+                            serviceInitializer
+                                    .getServiceManager()
+                                    .getBluetoothManager()
+                                    .sendFile(data, fileName);
+                    if (started) {
+                        Log.i(TAG, "✅ In-memory BLE file transfer started for: " + fileName);
+                    } else {
+                        Log.e(
+                                TAG,
+                                "❌ Failed to start in-memory BLE file transfer for: " + fileName);
                     }
                     return started;
                 } else {

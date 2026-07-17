@@ -13,6 +13,7 @@ import com.mentra.asg_client.audio.AudioAssets;
 import com.mentra.asg_client.camera.CameraNeoService;
 import com.mentra.asg_client.camera.lifecycle.PhotoExifMetadataWriter;
 import com.mentra.asg_client.camera.model.CameraOperationError;
+import com.mentra.asg_client.camera.model.CapturedPhoto;
 import com.mentra.asg_client.camera.model.PhotoCaptureSettings;
 import com.mentra.asg_client.camera.policy.PhotoMode;
 import com.mentra.asg_client.camera.policy.PhotoSizeTier;
@@ -20,9 +21,9 @@ import com.mentra.asg_client.io.file.core.FileManager;
 import com.mentra.asg_client.io.hardware.core.HardwareManagerFactory;
 import com.mentra.asg_client.io.hardware.interfaces.IHardwareManager;
 import com.mentra.asg_client.io.hardware.interfaces.RgbLedConstants;
+import com.mentra.asg_client.io.media.core.textdetect.CropRect;
 import com.mentra.asg_client.io.media.core.textdetect.DetectionResult;
 import com.mentra.asg_client.io.media.core.textdetect.TextDetectConfig;
-import com.mentra.asg_client.io.media.core.textdetect.TextDetectDebugWriter;
 import com.mentra.asg_client.io.media.core.textdetect.roi.AndroidAssetModelSource;
 import com.mentra.asg_client.io.media.core.textdetect.roi.DetectionInput;
 import com.mentra.asg_client.io.media.core.textdetect.roi.TextCropModel;
@@ -89,6 +90,14 @@ public class MediaCaptureService {
     private MediaCaptureListener mMediaCaptureListener;
     private ServiceCallbackInterface mServiceCallback;
     private final IHardwareManager hardwareManager;
+
+    /**
+     * Cached, lazily initialized text-ROI detector for text-mode BLE crops. Selected once per
+     * service lifecycle via {@link AsgConstants#ENABLE_MODEL_TEXT_CROP} / {@link
+     * AsgConstants#TEXT_CROP_MODEL} (default {@link TextCropModel#ML_KIT}); an unavailable/failed
+     * model falls back to the classical detector. Never construct a new detector per photo - ML Kit
+     * and ONNX sessions are expensive to initialize.
+     */
     @Nullable private volatile TextRoiDetector textRoiDetector;
 
     // Track current video recording
@@ -219,89 +228,15 @@ public class MediaCaptureService {
                 AsgConstants.TEXT_MODE_AVIF_QUALITY);
     }
 
-    /**
-     * Classifies whether a {@code TextRegionDetector} result represents a genuine detected text
-     * region, or one of the detector's own safety-net fallbacks (see {@code TextRegionDetector} and
-     * {@code TextDetectConfig} for the exact reason strings). Purely for logging/diagnostics - does
-     * not affect which ROI is actually used.
-     */
-    private static String classifyTextCropOutcome(
-            DetectionResult.Confidence confidence,
-            String fallbackReason,
-            int acceptedComponentCount,
-            int lineCount) {
-        boolean isCenterFallback =
-                fallbackReason != null
-                        && (fallbackReason.contains("untrustworthy_detection_center_fallback")
-                                || fallbackReason.contains("no_valid_polarity"));
-
-        if (confidence == DetectionResult.Confidence.NONE) {
-            return "FAILED (no valid polarity detected - crop is a generous center box, not"
-                    + " text-based)";
-        }
-        if (isCenterFallback) {
-            return "FALLBACK (detector rejected its own candidate crop as untrustworthy -"
-                    + " using a 75% center-crop safety net, NOT a real text detection)";
-        }
-        if (confidence == DetectionResult.Confidence.HIGH) {
-            return "SUCCESS (high confidence, "
-                    + acceptedComponentCount
-                    + " components across "
-                    + lineCount
-                    + " line(s))";
-        }
-        if (confidence == DetectionResult.Confidence.MEDIUM) {
-            return "SUCCESS (medium confidence, "
-                    + acceptedComponentCount
-                    + " components across "
-                    + lineCount
-                    + " line(s), extra padding applied)";
-        }
-        // LOW confidence but not a center-fallback: a real (weak) detection - e.g. low score or
-        // polarity disagreement - still text-based, just less trustworthy than HIGH/MEDIUM.
-        return "DEGRADED (low confidence, reason="
-                + fallbackReason
-                + ", "
-                + acceptedComponentCount
-                + " components across "
-                + lineCount
-                + " line(s) - real detection, but weak)";
-    }
-
-    // Monotonic per-process counter appended to every text-detect debug folder name so repeated
-    // detection runs never collide, even when the upstream capture reuses the same originalPath
-    // or requestId (observed on emulators/test harnesses that replay a cached capture request).
-    private static final java.util.concurrent.atomic.AtomicLong TEXT_DETECT_DEBUG_SEQUENCE =
-            new java.util.concurrent.atomic.AtomicLong();
-
-    /**
-     * Resolves an adb-pullable directory for {@link TextDetectDebugWriter} output for a given
-     * detection run: {@code <externalFilesDir>/textdetect_debug/<capture-name>_<millis>_<seq>/}.
-     *
-     * <p>The capture request's own directory name (the parent of {@code originalPath}, e.g. {@code
-     * IMG_20260713_070810_747_124_photo-1783926490251}) is included for correlation with the
-     * original JPEG, but is <em>not</em> relied on for uniqueness - a wall-clock timestamp plus a
-     * monotonic sequence number are appended so every call gets its own folder even if the same
-     * originalPath/requestId is reused for multiple detection runs.
-     */
-    private File resolveTextDetectDebugDir(String originalPath) {
-        File parent = new File(originalPath).getParentFile();
-        String captureName = parent != null ? parent.getName() : "unknown_capture";
-        String uniqueSuffix =
-                System.currentTimeMillis() + "_" + TEXT_DETECT_DEBUG_SEQUENCE.incrementAndGet();
-        File base = new File(mContext.getExternalFilesDir(null), "textdetect_debug");
-        return new File(base, captureName + "_" + uniqueSuffix);
-    }
-
     private static final class TextRegionDetection {
         @Nullable final android.graphics.Rect roi;
-        @Nullable final DetectionResult.Confidence confidence;
+        @Nullable final String confidence;
         @Nullable final String reason;
         final String outcome;
 
         TextRegionDetection(
                 @Nullable android.graphics.Rect roi,
-                @Nullable DetectionResult.Confidence confidence,
+                @Nullable String confidence,
                 @Nullable String reason,
                 String outcome) {
             this.roi = roi;
@@ -312,22 +247,8 @@ public class MediaCaptureService {
     }
 
     /**
-     * allowSingleComponentLines + cropFromTopLineOnly: a short, tightly-kerned word (e.g. a single
-     * price tag or label) commonly fuses into one connected component via morphological closing and
-     * can never satisfy minComponentsPerLine on its own; without these, such text is silently
-     * dropped while unrelated multi-blob clutter elsewhere in frame (cable loops, device corners)
-     * wins by default and/or drags the crop away from the real text via the union-of-all-lines
-     * bounds.
-     *
-     * <p>enableStructureFilter: periodic non-text patterns (spiral notebook binding holes, speaker
-     * grilles, perforated metal) satisfy the line-scoring formula's
-     * height-consistency/spacing-regularity terms extremely well and can out-score real text on
-     * component count alone; round/radially-symmetric blobs have gradient magnitude spread across
-     * all orientation bins (unlike glyph strokes) so this filters them out before they ever form a
-     * line.
-     *
-     * <p>See {@code TextRegionDetectorSyntheticTest}'s {@code detect_fusedWordVsNoiseCluster_*} and
-     * {@code detect_fusedWordVsPeriodicDotRow_*} tests.
+     * Builds classical/ONNX detector tunables from production {@code AsgConstants} flags. Only
+     * consulted when the selected detector actually needs them (ML Kit ignores this config).
      */
     private TextDetectConfig buildTextDetectConfig() {
         return TextDetectConfig.defaults().toBuilder()
@@ -340,6 +261,10 @@ public class MediaCaptureService {
                 .build();
     }
 
+    /**
+     * Returns the cached text-ROI detector, creating it on first use. Selected once per service
+     * lifecycle - never construct a new detector (ML Kit recognizer / ONNX session) per photo.
+     */
     private TextRoiDetector getTextRoiDetector() {
         TextRoiDetector current = textRoiDetector;
         if (current != null) {
@@ -364,52 +289,76 @@ public class MediaCaptureService {
 
     @Nullable
     private TextRegionDetection runTextRegionDetection(String originalPath) {
+        return runTextRegionDetection(null, originalPath);
+    }
+
+    /** Runs detection from the in-memory JPEG when available, else from {@code originalPath}. */
+    @Nullable
+    private TextRegionDetection runTextRegionDetection(
+            @Nullable byte[] jpegBytes, String originalPath) {
+        TextRoiDetector detector = getTextRoiDetector();
         try {
-            TextDetectConfig detectConfig = buildTextDetectConfig();
-            GrayscaleBleProcessor.DetectionLuma input =
-                    GrayscaleBleProcessor.extractDetectionLuma(
-                            originalPath, detectConfig.analysisWidth);
-            TextRoiDetector detector = getTextRoiDetector();
-            DetectionResult result =
-                    detector.detect(new DetectionInput(input.luma, input.width, input.height));
-            android.graphics.Rect roi = GrayscaleBleProcessor.scaleDetectionRoi(result.roi, input);
+            GrayscaleBleProcessor.DetectionLuma luma =
+                    jpegBytes != null
+                            ? GrayscaleBleProcessor.extractDetectionLuma(
+                                    jpegBytes, AsgConstants.TEXT_MODE_MLKIT_ANALYSIS_LONG_EDGE)
+                            : GrayscaleBleProcessor.extractDetectionLuma(
+                                    originalPath, AsgConstants.TEXT_MODE_MLKIT_ANALYSIS_LONG_EDGE);
+            DetectionInput input =
+                    new DetectionInput(luma.luma, luma.width, luma.height, jpegBytes);
+            DetectionResult result = detector.detect(input);
+
+            android.graphics.Rect scaledRoi =
+                    detector.returnsNativeCoordinates()
+                            ? toAndroidRect(result.roi)
+                            : GrayscaleBleProcessor.scaleDetectionRoi(result.roi, luma);
+            // A DetectionResult always carries a non-null CropRect, but a full-frame result (e.g.
+            // ML Kit's "no text found, preserve everything" fallback) means no crop is actually
+            // warranted. Treat that as no ROI so downstream skips the wasted re-decode/crop/
+            // re-encode round trip and forwards the original bytes directly, same as before.
+            boolean isFullFrame =
+                    scaledRoi.left <= 0
+                            && scaledRoi.top <= 0
+                            && scaledRoi.width() >= luma.srcWidth
+                            && scaledRoi.height() >= luma.srcHeight;
+            android.graphics.Rect roi = isFullFrame ? null : scaledRoi;
+            boolean isFallback = result.fallbackReason != null;
             String outcome =
-                    classifyTextCropOutcome(
-                            result.confidence,
-                            result.fallbackReason,
-                            result.acceptedComponentCount,
-                            result.lineCount);
-            Log.d(
+                    !isFallback
+                            ? "SUCCESS ("
+                                    + detector.id()
+                                    + " localized "
+                                    + result.acceptedComponentCount
+                                    + " region(s) in "
+                                    + result.detectionTimeMs
+                                    + "ms)"
+                            : "FULL_FRAME ("
+                                    + detector.id()
+                                    + " reason="
+                                    + result.fallbackReason
+                                    + ", "
+                                    + result.detectionTimeMs
+                                    + "ms)";
+            Log.i(
                     TAG,
-                    "TextRegionDetector: detector="
-                            + detector.id()
-                            + " confidence="
-                            + result.confidence
-                            + " reason="
-                            + result.fallbackReason
-                            + " ms="
-                            + result.detectionTimeMs
-                            + " components="
-                            + result.acceptedComponentCount
-                            + " lines="
-                            + result.lineCount
-                            + " crop="
-                            + java.util.Arrays.toString(
-                                    roi != null
-                                            ? new int[] {roi.left, roi.top, roi.right, roi.bottom}
-                                            : null));
-            Log.i(TAG, "✂️ CROP OUTCOME: " + outcome);
-            if (AsgConstants.SAVE_TEXT_DETECT_DEBUG_ARTIFACTS) {
-                File debugDir = resolveTextDetectDebugDir(originalPath);
-                TextDetectDebugWriter.save(debugDir, result, outcome);
-            }
-            return new TextRegionDetection(roi, result.confidence, result.fallbackReason, outcome);
-        } catch (Throwable t) {
-            Log.w(TAG, "TextRegionDetector failed, falling back to full-frame ROI", t);
-            String outcome = "FAILED (exception: " + t + ")";
-            Log.i(TAG, "✂️ CROP OUTCOME: " + outcome);
-            return new TextRegionDetection(null, null, null, outcome);
+                    "✂️ TEXT ROI CROP OUTCOME: "
+                            + outcome
+                            + " roi="
+                            + (roi != null ? roi.toShortString() : "full"));
+            return new TextRegionDetection(
+                    roi, result.confidence.name(), result.fallbackReason, outcome);
+        } catch (Exception e) {
+            Log.w(TAG, "Text-region detection failed, preserving full frame", e);
+            return new TextRegionDetection(
+                    null,
+                    "NONE",
+                    "detection_exception:" + e.getClass().getSimpleName(),
+                    "FULL_FRAME (detection threw: " + e + ")");
         }
+    }
+
+    private static android.graphics.Rect toAndroidRect(CropRect rect) {
+        return new android.graphics.Rect(rect.left, rect.top, rect.right, rect.bottom);
     }
 
     private android.graphics.Bitmap cropBitmapToDetectedRoi(
@@ -501,8 +450,9 @@ public class MediaCaptureService {
         } finally {
             if (cropped != original) {
                 cropped.recycle();
+            } else {
+                original.recycle();
             }
-            original.recycle();
         }
         PhotoExifMetadataWriter.copyImuMetadata(originalPath, croppedPath);
         return croppedPath;
@@ -529,6 +479,119 @@ public class MediaCaptureService {
             Log.w(TAG, "Text-mode crop failed, transferring original frame: " + e.getMessage(), e);
         }
         return photoFilePath;
+    }
+
+    /**
+     * Persists the final text-mode selection without first writing the sensor JPEG. A successful
+     * detection writes only the full-resolution ROI. Detection/crop failure is the one case that
+     * writes the retained sensor JPEG as the safe full-frame fallback.
+     */
+    private boolean persistTextModeSelectionFromMemory(
+            CapturedPhoto capturedPhoto,
+            String canonicalPath,
+            String requestId,
+            @Nullable android.graphics.Rect roi) {
+        return persistTextModeSelectionFromMemory(
+                capturedPhoto, canonicalPath, canonicalPath, requestId, roi, true);
+    }
+
+    private boolean persistTextModeSelectionFromMemory(
+            CapturedPhoto capturedPhoto,
+            String canonicalPath,
+            String intendedCapturePath,
+            String requestId,
+            @Nullable android.graphics.Rect roi,
+            boolean writeSidecar) {
+        String preparedPath = canonicalPath.replace(".jpg", "_textselected_" + requestId + ".jpg");
+        File preparedFile = new File(preparedPath);
+        File parent = preparedFile.getParentFile();
+        if (parent != null && !parent.exists() && !parent.mkdirs()) {
+            Log.e(TAG, "Could not create text-mode gallery directory: " + parent);
+            return false;
+        }
+
+        boolean wroteCrop = false;
+        android.graphics.Bitmap selected = null;
+        if (roi != null) {
+            try {
+                android.graphics.BitmapFactory.Options bounds =
+                        new android.graphics.BitmapFactory.Options();
+                bounds.inJustDecodeBounds = true;
+                android.graphics.BitmapFactory.decodeByteArray(
+                        capturedPhoto.jpegBytes, 0, capturedPhoto.jpegBytes.length, bounds);
+                if (bounds.outWidth > 0 && bounds.outHeight > 0) {
+                    android.graphics.Rect sourceRegion =
+                            clampRoiToBounds(roi, bounds.outWidth, bounds.outHeight);
+                    selected =
+                            decodeJpegRegion(
+                                    capturedPhoto.jpegBytes,
+                                    canonicalPath,
+                                    sourceRegion,
+                                    new android.graphics.BitmapFactory.Options());
+                }
+                if (selected != null) {
+                    try (FileOutputStream output = new FileOutputStream(preparedFile)) {
+                        wroteCrop =
+                                selected.compress(
+                                        android.graphics.Bitmap.CompressFormat.JPEG,
+                                        AsgConstants.TEXT_MODE_BLE_JPEG_QUALITY,
+                                        output);
+                    }
+                }
+            } catch (Exception error) {
+                Log.w(TAG, "Could not persist text ROI; saving full-frame fallback", error);
+            } finally {
+                if (selected != null) {
+                    selected.recycle();
+                }
+            }
+        }
+
+        try {
+            if (!wroteCrop) {
+                try (FileOutputStream output = new FileOutputStream(preparedFile)) {
+                    output.write(capturedPhoto.jpegBytes);
+                }
+                Log.w(
+                        TAG,
+                        "Text mode saved retained full frame because no usable ROI was available");
+            }
+
+            // Metadata is best-effort; failure must not discard an otherwise valid selected image.
+            PhotoExifMetadataWriter.writeCaptureIdFromPath(preparedPath, intendedCapturePath);
+            if (capturedPhoto.imuPayload != null) {
+                try {
+                    PhotoExifMetadataWriter.writeImuPayload(preparedPath, capturedPhoto.imuPayload);
+                } catch (java.io.IOException metadataError) {
+                    Log.w(TAG, "Could not embed IMU metadata in text-mode photo", metadataError);
+                }
+            }
+
+            PhotoArtifactFiles.promoteToCanonical(canonicalPath, preparedPath);
+            if (writeSidecar && capturedPhoto.imuPayload != null && parent != null) {
+                File sidecar = new File(parent, "imu.json");
+                try (FileOutputStream output = new FileOutputStream(sidecar)) {
+                    output.write(
+                            capturedPhoto
+                                    .imuPayload
+                                    .toString()
+                                    .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                } catch (java.io.IOException sidecarError) {
+                    Log.w(TAG, "Could not persist text-mode IMU sidecar", sidecarError);
+                }
+            }
+            photoTextCropPrepared.put(requestId, true);
+            Log.i(
+                    TAG,
+                    wroteCrop
+                            ? "Text mode persisted cropped gallery output: " + canonicalPath
+                            : "Text mode persisted full-frame fallback: " + canonicalPath);
+            return true;
+        } catch (java.io.IOException error) {
+            Log.e(TAG, "Could not persist final text-mode photo", error);
+            PhotoArtifactFiles.deleteTransportTemporary(canonicalPath, preparedPath);
+            return false;
+        }
     }
 
     // Track which photos should be saved to gallery
@@ -620,6 +683,20 @@ public class MediaCaptureService {
                         t.setPriority(Thread.NORM_PRIORITY - 1);
                         return t;
                     });
+
+    /**
+     * Keeps ML Kit and final-crop persistence off CameraNeo's shared callback executor. A single
+     * worker preserves burst ordering and avoids running multiple memory-heavy full-resolution
+     * crops at once.
+     */
+    private final ExecutorService textModeProcessingExecutor =
+            Executors.newSingleThreadExecutor(
+                    r -> {
+                        Thread t = new Thread(r, "TextModeProcessing");
+                        t.setPriority(Thread.NORM_PRIORITY - 1);
+                        return t;
+                    });
+
     // Safety timeout covers the full job (capture + upload/BLE-handoff). Sized to outlast a
     // slow webhook upload on flaky WiFi so we don't prematurely free the flag while the upload
     // is still grinding. Force-resets isPhotoJobInFlight if no terminal callback fires.
@@ -865,7 +942,8 @@ public class MediaCaptureService {
             hardwareManager.setRgbLedSolidWhite(1800000, brightness); // 30 minute solid white LED
             Log.i(
                     TAG,
-                    "🎥 Video recording LED (solid white) triggered via hardware manager at brightness "
+                    "🎥 Video recording LED (solid white) triggered via hardware manager at"
+                            + " brightness "
                             + brightness);
         } else {
             Log.w(TAG, "⚠️ RGB LED not supported on this device");
@@ -1262,7 +1340,8 @@ public class MediaCaptureService {
                                                                 TAG,
                                                                 "⏱️ Max recording time reached ("
                                                                         + maxRecordingTimeMinutes
-                                                                        + " minutes), stopping recording");
+                                                                        + " minutes), stopping"
+                                                                        + " recording");
                                                         stopVideoRecording(
                                                                 StopReason.MAX_DURATION); // ← USE
                                                         // REASON
@@ -1365,7 +1444,8 @@ public class MediaCaptureService {
                             if (isCleaningUp.get()) {
                                 Log.w(
                                         TAG,
-                                        "Skipping video integrity check because cleanup is already in progress");
+                                        "Skipping video integrity check because cleanup is already"
+                                                + " in progress");
                                 sendGalleryStatusUpdate();
                                 return;
                             }
@@ -1416,21 +1496,41 @@ public class MediaCaptureService {
                                                                             && !bad.delete()) {
                                                                         Log.w(
                                                                                 TAG,
-                                                                                "Could not delete failed video file: "
+                                                                                "Could not delete"
+                                                                                        + " failed"
+                                                                                        + " video file:"
+                                                                                        + " "
                                                                                         + filePath);
                                                                     }
                                                                 } else {
                                                                     Log.w(
                                                                             TAG,
-                                                                            "Skipping failed video deletion because cleanup is in progress");
+                                                                            "Skipping failed video"
+                                                                                    + " deletion"
+                                                                                    + " because cleanup"
+                                                                                    + " is in"
+                                                                                    + " progress");
                                                                 }
                                                                 if (mMediaCaptureListener != null) {
                                                                     mMediaCaptureListener
                                                                             .onMediaError(
                                                                                     pendingRequestId,
                                                                                     cleaningUp
-                                                                                            ? "Video integrity check aborted during cleanup; file preserved"
-                                                                                            : "Video file failed integrity check and was removed",
+                                                                                            ? "Video"
+                                                                                                    + " integrity"
+                                                                                                    + " check"
+                                                                                                    + " aborted"
+                                                                                                    + " during"
+                                                                                                    + " cleanup;"
+                                                                                                    + " file"
+                                                                                                    + " preserved"
+                                                                                            : "Video"
+                                                                                                    + " file"
+                                                                                                    + " failed"
+                                                                                                    + " integrity"
+                                                                                                    + " check"
+                                                                                                    + " and was"
+                                                                                                    + " removed",
                                                                                     MediaUploadQueueManager
                                                                                             .MEDIA_TYPE_VIDEO);
                                                                 }
@@ -1440,7 +1540,8 @@ public class MediaCaptureService {
                                             } catch (Throwable t) {
                                                 Log.e(
                                                         TAG,
-                                                        "Unexpected error during video integrity check",
+                                                        "Unexpected error during video integrity"
+                                                                + " check",
                                                         t);
                                                 mainHandler.post(
                                                         () -> {
@@ -1449,7 +1550,8 @@ public class MediaCaptureService {
                                                             if (mMediaCaptureListener != null) {
                                                                 mMediaCaptureListener.onMediaError(
                                                                         pendingRequestId,
-                                                                        "Video integrity check error: "
+                                                                        "Video integrity check"
+                                                                                + " error: "
                                                                                 + t.getMessage(),
                                                                         MediaUploadQueueManager
                                                                                 .MEDIA_TYPE_VIDEO);
@@ -1461,7 +1563,8 @@ public class MediaCaptureService {
                             } catch (RejectedExecutionException e) {
                                 Log.w(
                                         TAG,
-                                        "Video integrity check rejected because cleanup is in progress",
+                                        "Video integrity check rejected because cleanup is in"
+                                                + " progress",
                                         e);
                                 videoCaptureIdsPendingIntegrityCheck.remove(captureId);
                                 mainHandler.post(
@@ -1469,7 +1572,8 @@ public class MediaCaptureService {
                                             if (mMediaCaptureListener != null) {
                                                 mMediaCaptureListener.onMediaError(
                                                         pendingRequestId,
-                                                        "Video integrity check unavailable during cleanup",
+                                                        "Video integrity check unavailable during"
+                                                                + " cleanup",
                                                         MediaUploadQueueManager.MEDIA_TYPE_VIDEO);
                                             }
                                             sendGalleryStatusUpdate();
@@ -2068,11 +2172,11 @@ public class MediaCaptureService {
 
     /**
      * Capture a photo that is only saved to the gallery: an SDK take_photo with save=true and no
-     * upload target. There is no delivery leg (no webhook upload, no BLE transfer), so this
-     * bypasses the single-flight photo-job gate and enqueues straight into the camera queue,
-     * exactly like button photos — rapid bursts serialize at the camera instead of failing
-     * CAMERA_BUSY. The terminal photo_response carries the captureId (the requestId-stamped capture
-     * directory name) for sync-time correlation.
+     * upload target. Ordinary photos bypass the single-flight photo-job gate and enqueue straight
+     * into the camera queue, exactly like button photos. Text mode remains single-flight through
+     * detection and final persistence so bursts cannot retain an unbounded queue of sensor JPEGs.
+     * The terminal photo_response carries the captureId (the requestId-stamped capture directory
+     * name) for sync-time correlation.
      */
     public boolean takePhotoForLocalSave(
             String photoFilePath,
@@ -2087,6 +2191,7 @@ public class MediaCaptureService {
         if (captureSettings == null) {
             captureSettings = PhotoCaptureSettings.EMPTY;
         }
+        final boolean textModeRequested = PhotoMode.TEXT.equals(mode);
         String captureSize = PhotoMode.TEXT.equals(mode) ? PhotoSizeTier.normalize("max") : size;
 
         // Photos cannot interrupt streams
@@ -2113,6 +2218,16 @@ public class MediaCaptureService {
                     "INSUFFICIENT_STORAGE",
                     "Insufficient storage space for photo capture");
             return false;
+        }
+
+        if (textModeRequested && !acquirePhotoJob(requestId)) {
+            Log.w(TAG, "Text-mode local-save job already in flight: " + requestId);
+            sendPhotoErrorResponse(requestId, "CAMERA_BUSY", "Another photo job is in progress");
+            return false;
+        }
+        if (textModeRequested) {
+            startCaptureSafetyTimeout(requestId);
+            getTextRoiDetector().warmUp();
         }
 
         Log.i(
@@ -2154,6 +2269,8 @@ public class MediaCaptureService {
                     exposureTimeNs,
                     iso,
                     captureSettings,
+                    textModeRequested,
+                    !textModeRequested,
                     new CameraNeoService.PhotoCaptureCallback() {
                         @Override
                         public void onPhotoConfigured(JSONObject resolvedConfig) {
@@ -2186,23 +2303,69 @@ public class MediaCaptureService {
 
                         @Override
                         public void onPhotoCaptured(String filePath, JSONObject captureMetadata) {
-                            Log.d(TAG, "Local-save photo captured: " + filePath);
-                            sendPhotoStatus(
-                                    requestId,
-                                    "captured",
-                                    null,
-                                    null,
-                                    null,
-                                    null,
-                                    null,
-                                    captureMetadata);
+                            onPhotoCaptured(filePath, captureMetadata, null);
+                        }
 
-                            if (mMediaCaptureListener != null) {
-                                mMediaCaptureListener.onPhotoCaptured(requestId, filePath);
+                        @Override
+                        public void onPhotoCaptured(
+                                String filePath,
+                                JSONObject captureMetadata,
+                                CapturedPhoto capturedPhoto) {
+                            if (textModeRequested) {
+                                if (capturedPhoto == null) {
+                                    try {
+                                        sendPhotoErrorResponse(
+                                                requestId,
+                                                "PHOTO_SAVE_FAILED",
+                                                "Text-mode capture was not available in memory");
+                                    } finally {
+                                        releasePhotoJob(requestId);
+                                    }
+                                    return;
+                                }
+                                try {
+                                    textModeProcessingExecutor.execute(
+                                            () -> {
+                                                try {
+                                                    TextRegionDetection detection =
+                                                            runTextRegionDetection(
+                                                                    capturedPhoto.jpegBytes,
+                                                                    filePath);
+                                                    if (!persistTextModeSelectionFromMemory(
+                                                            capturedPhoto,
+                                                            filePath,
+                                                            requestId,
+                                                            detection.roi)) {
+                                                        sendPhotoErrorResponse(
+                                                                requestId,
+                                                                "PHOTO_SAVE_FAILED",
+                                                                "Could not save final text-mode"
+                                                                        + " output");
+                                                        return;
+                                                    }
+                                                    finishLocalSavePhoto(
+                                                            requestId,
+                                                            captureId,
+                                                            filePath,
+                                                            captureMetadata);
+                                                } finally {
+                                                    releasePhotoJob(requestId);
+                                                }
+                                            });
+                                } catch (RejectedExecutionException executorClosed) {
+                                    try {
+                                        sendPhotoErrorResponse(
+                                                requestId,
+                                                "PHOTO_SAVE_FAILED",
+                                                "Text-mode processing stopped during service"
+                                                        + " cleanup");
+                                    } finally {
+                                        releasePhotoJob(requestId);
+                                    }
+                                }
+                                return;
                             }
-
-                            sendLocalSaveSuccessResponse(requestId, captureId);
-                            sendGalleryStatusUpdate();
+                            finishLocalSavePhoto(requestId, captureId, filePath, captureMetadata);
                         }
 
                         @Override
@@ -2212,23 +2375,56 @@ public class MediaCaptureService {
 
                         @Override
                         public void onPhotoError(CameraOperationError error) {
-                            Log.e(TAG, "Failed to capture local-save photo: " + error.message());
-                            sendPhotoErrorResponse(requestId, error.code(), error.message());
+                            try {
+                                Log.e(
+                                        TAG,
+                                        "Failed to capture local-save photo: " + error.message());
+                                sendPhotoErrorResponse(requestId, error.code(), error.message());
 
-                            if (mMediaCaptureListener != null) {
-                                mMediaCaptureListener.onMediaError(
-                                        requestId,
-                                        error.message(),
-                                        MediaUploadQueueManager.MEDIA_TYPE_PHOTO);
+                                if (mMediaCaptureListener != null) {
+                                    mMediaCaptureListener.onMediaError(
+                                            requestId,
+                                            error.message(),
+                                            MediaUploadQueueManager.MEDIA_TYPE_PHOTO);
+                                }
+                            } finally {
+                                if (textModeRequested) {
+                                    releasePhotoJob(requestId);
+                                }
                             }
                         }
                     });
             return true;
         } catch (Exception e) {
-            Log.e(TAG, "Error taking local-save photo", e);
-            sendPhotoErrorResponse(
-                    requestId, "CAMERA_CAPTURE_FAILED", "Error taking photo: " + e.getMessage());
+            try {
+                Log.e(TAG, "Error taking local-save photo", e);
+                sendPhotoErrorResponse(
+                        requestId,
+                        "CAMERA_CAPTURE_FAILED",
+                        "Error taking photo: " + e.getMessage());
+            } finally {
+                if (textModeRequested) {
+                    releasePhotoJob(requestId);
+                }
+            }
             return false;
+        }
+    }
+
+    private void finishLocalSavePhoto(
+            String requestId, String captureId, String filePath, JSONObject captureMetadata) {
+        try {
+            Log.d(TAG, "Local-save photo captured: " + filePath);
+            sendPhotoStatus(requestId, "captured", null, null, null, null, null, captureMetadata);
+
+            if (mMediaCaptureListener != null) {
+                mMediaCaptureListener.onPhotoCaptured(requestId, filePath);
+            }
+
+            sendLocalSaveSuccessResponse(requestId, captureId);
+            sendGalleryStatusUpdate();
+        } finally {
+            clearPhotoRequestTracking(requestId);
         }
     }
 
@@ -2294,7 +2490,11 @@ public class MediaCaptureService {
         if (captureSettings == null) {
             captureSettings = PhotoCaptureSettings.EMPTY;
         }
-        String captureSize = PhotoMode.TEXT.equals(mode) ? PhotoSizeTier.normalize("max") : size;
+        final boolean textModeRequested = PhotoMode.TEXT.equals(mode);
+        if (textModeRequested) {
+            getTextRoiDetector().warmUp();
+        }
+        String captureSize = textModeRequested ? PhotoSizeTier.normalize("max") : size;
         // Start timing for end-to-end photo capture performance measurement
         final long requestStartTimeMs = System.currentTimeMillis();
         recordTiming(requestId, "request_start");
@@ -2438,13 +2638,16 @@ public class MediaCaptureService {
                     exposureTimeNs,
                     iso,
                     captureSettings,
+                    textModeRequested,
+                    !textModeRequested,
                     new CameraNeoService.PhotoCaptureCallback() {
                         @Override
                         public void onPhotoConfigured(JSONObject resolvedConfig) {
                             logBlePhotoStep(
                                     requestId,
                                     "capture_configured",
-                                    "camera configuration resolved for the requested size and exposure");
+                                    "camera configuration resolved for the requested size and"
+                                            + " exposure");
                             sendPhotoStatus(
                                     requestId,
                                     "configuring",
@@ -2502,7 +2705,6 @@ public class MediaCaptureService {
                             }
 
                             Log.d(TAG, "Photo captured successfully at: " + filePath);
-                            prepareTextModePhotoPath(filePath, requestId);
                             sendPhotoStatus(
                                     requestId,
                                     "captured",
@@ -2533,6 +2735,67 @@ public class MediaCaptureService {
                                 sendPhotoSuccessResponse(requestId, "");
                                 clearPhotoTracking(requestId);
                                 releasePhotoJob(requestId);
+                            }
+                        }
+
+                        @Override
+                        public void onPhotoCaptured(
+                                String filePath,
+                                JSONObject captureMetadata,
+                                CapturedPhoto capturedPhoto) {
+                            if (!textModeRequested) {
+                                onPhotoCaptured(filePath, captureMetadata);
+                                return;
+                            }
+                            if (capturedPhoto == null) {
+                                cleanupPhotoArtifacts(requestId, filePath, false);
+                                clearPhotoTracking(requestId);
+                                releasePhotoJob(requestId);
+                                sendPhotoErrorResponse(
+                                        requestId,
+                                        "PHOTO_SAVE_FAILED",
+                                        "Text-mode capture was not available in memory");
+                                return;
+                            }
+                            try {
+                                textModeProcessingExecutor.execute(
+                                        () -> {
+                                            TextRegionDetection detection =
+                                                    runTextRegionDetection(
+                                                            capturedPhoto.jpegBytes, filePath);
+                                            String outputPath =
+                                                    save
+                                                            ? filePath
+                                                            : transientTextUploadPath(filePath);
+                                            if (!persistTextModeSelectionFromMemory(
+                                                    capturedPhoto,
+                                                    outputPath,
+                                                    filePath,
+                                                    requestId,
+                                                    detection.roi,
+                                                    save)) {
+                                                cleanupPhotoArtifacts(requestId, filePath, false);
+                                                clearPhotoTracking(requestId);
+                                                releasePhotoJob(requestId);
+                                                sendPhotoErrorResponse(
+                                                        requestId,
+                                                        "PHOTO_SAVE_FAILED",
+                                                        "Could not prepare text-mode upload");
+                                                return;
+                                            }
+                                            if (!save) {
+                                                photoOriginalPaths.put(requestId, outputPath);
+                                            }
+                                            onPhotoCaptured(outputPath, captureMetadata);
+                                        });
+                            } catch (RejectedExecutionException executorClosed) {
+                                cleanupPhotoArtifacts(requestId, filePath, false);
+                                clearPhotoTracking(requestId);
+                                releasePhotoJob(requestId);
+                                sendPhotoErrorResponse(
+                                        requestId,
+                                        "PHOTO_SAVE_FAILED",
+                                        "Text-mode processing stopped during service cleanup");
                             }
                         }
 
@@ -2580,6 +2843,16 @@ public class MediaCaptureService {
             }
             return false;
         }
+    }
+
+    private String transientTextUploadPath(String intendedCapturePath) {
+        File cacheDir = new File(mContext.getCacheDir(), "text_mode_uploads");
+        if (!cacheDir.exists() && !cacheDir.mkdirs()) {
+            Log.w(TAG, "Could not create text-mode upload cache: " + cacheDir);
+        }
+        File captureDir = new File(intendedCapturePath).getParentFile();
+        String captureId = captureDir != null ? captureDir.getName() : "capture";
+        return new File(cacheDir, captureId + ".jpg").getAbsolutePath();
     }
 
     /**
@@ -2838,18 +3111,62 @@ public class MediaCaptureService {
 
     /**
      * Largest power-of-two JPEG subsampling factor that still keeps the decoded region at or above
-     * the BLE target box, so the follow-up {@code createScaledBitmap} only ever shrinks. Decoding
-     * 4032x3024 at inSampleSize=2 cuts the ARGB working set 4x with no quality cost at a 1920px
-     * output cap.
+     * the aspect-fitted BLE output, so the follow-up {@code createScaledBitmap} only ever shrinks.
+     * The configured dimensions are caps, not the literal output dimensions. Decoding 4032x3024 at
+     * inSampleSize=2 cuts the ARGB working set 4x with no quality cost at a 1920px output cap.
      */
-    private static int computeBleDecodeSampleSize(
+    static int computeBleDecodeSampleSize(
             int regionWidth, int regionHeight, int targetWidth, int targetHeight) {
+        float outputScale =
+                Math.min(
+                        1f,
+                        Math.min(
+                                targetWidth / (float) regionWidth,
+                                targetHeight / (float) regionHeight));
+        int outputWidth = Math.max(1, Math.round(regionWidth * outputScale));
+        int outputHeight = Math.max(1, Math.round(regionHeight * outputScale));
         int sample = 1;
-        while ((regionWidth / (sample * 2)) >= targetWidth
-                && (regionHeight / (sample * 2)) >= targetHeight) {
+        while ((regionWidth / (sample * 2)) >= outputWidth
+                && (regionHeight / (sample * 2)) >= outputHeight) {
             sample *= 2;
         }
         return sample;
+    }
+
+    private static android.graphics.Rect clampRoiToBounds(
+            android.graphics.Rect roi, int width, int height) {
+        android.graphics.Rect clamped = new android.graphics.Rect(roi);
+        if (!clamped.intersect(0, 0, width, height)
+                || clamped.width() <= 0
+                || clamped.height() <= 0) {
+            return new android.graphics.Rect(0, 0, width, height);
+        }
+        return clamped;
+    }
+
+    /** Decodes only the selected JPEG region; returns null so the caller can fall back safely. */
+    @Nullable
+    private static android.graphics.Bitmap decodeJpegRegion(
+            @Nullable byte[] jpegBytes,
+            String jpegPath,
+            android.graphics.Rect sourceRegion,
+            android.graphics.BitmapFactory.Options options) {
+        android.graphics.BitmapRegionDecoder decoder = null;
+        try {
+            decoder =
+                    jpegBytes != null
+                            ? android.graphics.BitmapRegionDecoder.newInstance(
+                                    jpegBytes, 0, jpegBytes.length, false)
+                            : android.graphics.BitmapRegionDecoder.newInstance(jpegPath, false);
+            return decoder.decodeRegion(sourceRegion, options);
+        } catch (Exception error) {
+            Log.w(TAG, "JPEG region decode failed; falling back to full sampled decode", error);
+            return null;
+        } finally {
+            if (decoder != null) {
+                decoder.recycle();
+            }
+        }
     }
 
     /** Maps a source-pixel ROI onto the subsampled decode's coordinate space. */
@@ -3517,7 +3834,8 @@ public class MediaCaptureService {
                                     if (bleImgId != null) {
                                         Log.d(
                                                 TAG,
-                                                "📱 Webhook upload failed, attempting BLE fallback");
+                                                "📱 Webhook upload failed, attempting BLE"
+                                                        + " fallback");
                                         Log.d(TAG, "🔄 BLE Image ID: " + bleImgId);
                                         tracePhotoUploadFallback(
                                                 requestId,
@@ -3565,7 +3883,8 @@ public class MediaCaptureService {
                                             requestId, "UPLOAD_FAILED", errorMessage);
                                     Log.d(
                                             TAG,
-                                            "❌ No BLE fallback available, handling as normal failure");
+                                            "❌ No BLE fallback available, handling as normal"
+                                                    + " failure");
 
                                     cleanupPhotoArtifacts(
                                             requestId,
@@ -3800,7 +4119,8 @@ public class MediaCaptureService {
                                     requestBuilder.header("Authorization", "Bearer " + authToken);
                                     Log.d(
                                             TAG,
-                                            "🔐 Adding Authorization header to video webhook request");
+                                            "🔐 Adding Authorization header to video webhook"
+                                                    + " request");
                                 } else {
                                     Log.d(
                                             TAG,
@@ -3832,7 +4152,8 @@ public class MediaCaptureService {
                                             if (videoFile.delete()) {
                                                 Log.d(
                                                         TAG,
-                                                        "🗑️ Deleted video file after successful upload");
+                                                        "🗑️ Deleted video file after successful"
+                                                                + " upload");
                                             } else {
                                                 Log.w(TAG, "⚠️ Failed to delete video file");
                                             }
@@ -4164,6 +4485,9 @@ public class MediaCaptureService {
             Long exposureTimeNs,
             Integer iso,
             PhotoCaptureSettings captureSettings) {
+        if (PhotoMode.TEXT.equals(mode)) {
+            getTextRoiDetector().warmUp();
+        }
         // Check if camera HAL is restarting after FOV change
         if (CameraRestartCooldown.isActive()) {
             Log.w(TAG, "Cannot take photo - camera HAL restarting after FOV change");
@@ -4262,6 +4586,9 @@ public class MediaCaptureService {
         if (captureSettings == null) {
             captureSettings = PhotoCaptureSettings.EMPTY;
         }
+        if (PhotoMode.TEXT.equals(mode)) {
+            getTextRoiDetector().warmUp();
+        }
         String captureSize = PhotoMode.TEXT.equals(mode) ? PhotoSizeTier.normalize("max") : size;
         Log.i(
                 TAG,
@@ -4324,11 +4651,16 @@ public class MediaCaptureService {
             Log.w(TAG, "⚠️ StateManager not initialized - skipping battery check for BLE transfer");
         }
 
-        // STORAGE CHECK: Reject if insufficient storage
+        // A save=false BLE capture keeps the large JPEG in RAM, so low persistent storage is
+        // irrelevant (the small IMU recorder scratch file remains unchanged).
         logBlePhotoStep(
-                requestId, "storage_check", "checking storage required for the captured JPEG");
+                requestId,
+                "storage_check",
+                save
+                        ? "checking storage required for the saved sensor JPEG"
+                        : "skipped for RAM-only JPEG capture");
         StorageManager storageManager = StorageManager.getInstance(mContext);
-        if (!storageManager.canTakePhoto()) {
+        if (save && !storageManager.canTakePhoto()) {
             Log.w(TAG, "🚫 Photo rejected - insufficient storage");
             playStorageFullSound();
             sendPhotoErrorResponse(
@@ -4418,13 +4750,19 @@ public class MediaCaptureService {
                     exposureTimeNs,
                     iso,
                     captureSettings,
+                    // RAM-first: the callback receives the JPEG bytes in memory. Text mode never
+                    // persists the sensor JPEG up front;
+                    // save=true writes only the selected crop, or the full-frame fallback.
+                    true,
+                    save && !PhotoMode.TEXT.equals(mode),
                     new CameraNeoService.PhotoCaptureCallback() {
                         @Override
                         public void onPhotoConfigured(JSONObject resolvedConfig) {
                             logBlePhotoStep(
                                     requestId,
                                     "capture_configured",
-                                    "camera configuration resolved for the requested size and exposure");
+                                    "camera configuration resolved for the requested size and"
+                                            + " exposure");
                             sendPhotoStatus(
                                     requestId,
                                     "configuring",
@@ -4458,11 +4796,25 @@ public class MediaCaptureService {
 
                         @Override
                         public void onPhotoCaptured(String filePath, JSONObject captureMetadata) {
+                            onPhotoCaptured(filePath, captureMetadata, null);
+                        }
+
+                        @Override
+                        public void onPhotoCaptured(
+                                String filePath,
+                                JSONObject captureMetadata,
+                                CapturedPhoto capturedPhoto) {
                             // NOTE: do NOT clear isPhotoJobInFlight here — the job continues
                             // through BLE compression + handoff. Flag is cleared in
                             // compressAndSendViaBle's finally block.
                             BlePhotoTimingLog.unbindPhaseSink(capturePhaseSink);
-                            long capturedBytes = new File(filePath).length();
+                            // The in-memory capture (JPEG bytes + IMU payload + optional
+                            // persistence future). For save=false the file intentionally does not
+                            // exist.
+                            long capturedBytes =
+                                    capturedPhoto != null
+                                            ? capturedPhoto.jpegBytes.length
+                                            : new File(filePath).length();
                             if (capturedBytes > 0) {
                                 bleOriginalBytes.put(requestId, capturedBytes);
                             }
@@ -4481,7 +4833,6 @@ public class MediaCaptureService {
                                             + "KB)");
 
                             Log.d(TAG, "Photo captured successfully for BLE transfer: " + filePath);
-                            prepareTextModePhotoPath(filePath, requestId);
                             sendPhotoStatus(
                                     requestId,
                                     "captured",
@@ -4502,7 +4853,8 @@ public class MediaCaptureService {
 
                             // Compress and send via BLE
                             logBlePhotoStep(requestId, "start_compress_for_ble");
-                            compressAndSendViaBle(filePath, requestId, bleImgId);
+                            compressAndSendViaBle(
+                                    filePath, requestId, bleImgId, false, capturedPhoto);
                         }
 
                         @Override
@@ -4593,16 +4945,29 @@ public class MediaCaptureService {
     }
 
     /** Compress photo and send via BLE */
-    private void compressAndSendViaBle(String originalPath, String requestId, String bleImgId) {
-        compressAndSendViaBle(originalPath, requestId, bleImgId, false);
-    }
-
-    /** Compress photo and send via BLE */
     private void compressAndSendViaBle(
             String originalPath, String requestId, String bleImgId, boolean isWifiFallback) {
+        compressAndSendViaBle(originalPath, requestId, bleImgId, isWifiFallback, null);
+    }
+
+    /**
+     * Compress photo and send via BLE.
+     *
+     * @param capturedPhoto in-memory capture (JPEG bytes + IMU payload + persistence future) for
+     *     RAM-first captures; {@code null} for file-based flows (WiFi-fallback reuse), which read
+     *     {@code originalPath} from disk as before
+     */
+    private void compressAndSendViaBle(
+            String originalPath,
+            String requestId,
+            String bleImgId,
+            boolean isWifiFallback,
+            @Nullable CapturedPhoto capturedPhoto) {
         new Thread(
                         () -> {
                             long compressThreadStart = System.currentTimeMillis();
+                            boolean bleTransferStarted = false;
+                            android.graphics.Rect detectedTextRoi = null;
                             CompressStageTimer stage = new CompressStageTimer();
                             recordTiming(requestId, "ble_compress_start");
                             logBlePhotoStep(
@@ -4618,6 +4983,10 @@ public class MediaCaptureService {
                                         requestId,
                                         PhotoCaptureTestHooks.getErrorCode(),
                                         PhotoCaptureTestHooks.getErrorMessage());
+                                if (capturedPhoto != null) {
+                                    // Never let cleanup race the background write.
+                                    capturedPhoto.awaitPersistenceCompletion();
+                                }
                                 cleanupPhotoArtifacts(
                                         requestId,
                                         originalPath,
@@ -4642,7 +5011,12 @@ public class MediaCaptureService {
                                 String requestedMode =
                                         PhotoMode.normalize(photoRequestedModes.get(requestId));
                                 boolean textModeRequested = PhotoMode.TEXT.equals(requestedMode);
-                                if (textModeRequested) {
+                                if (textModeRequested && capturedPhoto == null) {
+                                    // File-based flow (WiFi fallback): prepare the canonical
+                                    // cropped JPEG up front as before. RAM-first captures crop
+                                    // from the detection ROI in-memory below and only write the
+                                    // canonical crop for gallery-saved photos, after the BLE
+                                    // handoff.
                                     prepareTextModePhotoPath(originalPath, requestId);
                                 }
                                 boolean textCropAlreadyPrepared =
@@ -4708,14 +5082,13 @@ public class MediaCaptureService {
                                                 + requestId);
 
                                 android.graphics.Bitmap resized;
-                                DetectionResult.Confidence textCropConfidence = null;
+                                String textCropConfidence = null;
                                 String textCropReason = null;
                                 // 2a. Text-region ROI detection. Independent of the grayscale
                                 // flag: it only decides WHERE to crop, not how the pixels are
                                 // processed afterwards.
-                                // Human-readable verdict for whether the ROI below represents a
-                                // genuine detected text region vs. a safety-net fallback. See
-                                // classifyTextCropOutcome() for the exact rules.
+                                // Human-readable verdict for whether ML Kit found a usable text
+                                // region or the transfer is preserving the full frame.
                                 String textCropOutcome =
                                         textCropAlreadyPrepared
                                                 ? "PREPARED_CANONICAL_CROP"
@@ -4734,8 +5107,13 @@ public class MediaCaptureService {
                                     stage.start("text-region detection");
                                     logBlePhotoStep(requestId, "text_region_detection_start");
                                     TextRegionDetection detection =
-                                            runTextRegionDetection(originalPath);
+                                            runTextRegionDetection(
+                                                    capturedPhoto != null
+                                                            ? capturedPhoto.jpegBytes
+                                                            : null,
+                                                    originalPath);
                                     roi = detection.roi;
+                                    detectedTextRoi = roi;
                                     textCropConfidence = detection.confidence;
                                     textCropReason = detection.reason;
                                     textCropOutcome = detection.outcome;
@@ -4762,13 +5140,20 @@ public class MediaCaptureService {
                                     logBlePhotoStep(
                                             requestId,
                                             "grayscale_process_start",
-                                            "processing luma pixels through crop, resize, and sharpen");
+                                            "processing luma pixels through crop, resize, and"
+                                                    + " sharpen");
                                     resized =
-                                            GrayscaleBleProcessor.process(
-                                                    originalPath,
-                                                    roi,
-                                                    bleParams.targetWidth,
-                                                    bleParams.targetHeight);
+                                            capturedPhoto != null
+                                                    ? GrayscaleBleProcessor.process(
+                                                            capturedPhoto.jpegBytes,
+                                                            roi,
+                                                            bleParams.targetWidth,
+                                                            bleParams.targetHeight)
+                                                    : GrayscaleBleProcessor.process(
+                                                            originalPath,
+                                                            roi,
+                                                            bleParams.targetWidth,
+                                                            bleParams.targetHeight);
                                     stage.finish(
                                             "grayscale decode+crop+resize+sharpen",
                                             "output "
@@ -4791,11 +5176,21 @@ public class MediaCaptureService {
                                     logBlePhotoStep(
                                             requestId,
                                             "input_decode_start",
-                                            "decoding the captured JPEG with a memory-saving sample size");
+                                            "decoding the captured JPEG with a memory-saving sample"
+                                                    + " size");
                                     android.graphics.BitmapFactory.Options bounds =
                                             new android.graphics.BitmapFactory.Options();
                                     bounds.inJustDecodeBounds = true;
-                                    android.graphics.BitmapFactory.decodeFile(originalPath, bounds);
+                                    if (capturedPhoto != null) {
+                                        android.graphics.BitmapFactory.decodeByteArray(
+                                                capturedPhoto.jpegBytes,
+                                                0,
+                                                capturedPhoto.jpegBytes.length,
+                                                bounds);
+                                    } else {
+                                        android.graphics.BitmapFactory.decodeFile(
+                                                originalPath, bounds);
+                                    }
                                     int srcWidth = bounds.outWidth;
                                     int srcHeight = bounds.outHeight;
                                     if (srcWidth <= 0 || srcHeight <= 0) {
@@ -4817,9 +5212,35 @@ public class MediaCaptureService {
                                     android.graphics.BitmapFactory.Options decodeOpts =
                                             new android.graphics.BitmapFactory.Options();
                                     decodeOpts.inSampleSize = sampleSize;
-                                    android.graphics.Bitmap original =
-                                            android.graphics.BitmapFactory.decodeFile(
-                                                    originalPath, decodeOpts);
+                                    android.graphics.Bitmap original = null;
+                                    boolean regionDecoded = false;
+                                    if (roi != null) {
+                                        android.graphics.Rect sourceRegion =
+                                                clampRoiToBounds(roi, srcWidth, srcHeight);
+                                        original =
+                                                decodeJpegRegion(
+                                                        capturedPhoto != null
+                                                                ? capturedPhoto.jpegBytes
+                                                                : null,
+                                                        originalPath,
+                                                        sourceRegion,
+                                                        decodeOpts);
+                                        regionDecoded = original != null;
+                                    }
+                                    if (original == null) {
+                                        original =
+                                                capturedPhoto != null
+                                                        ? android.graphics.BitmapFactory
+                                                                .decodeByteArray(
+                                                                        capturedPhoto.jpegBytes,
+                                                                        0,
+                                                                        capturedPhoto
+                                                                                .jpegBytes
+                                                                                .length,
+                                                                        decodeOpts)
+                                                        : android.graphics.BitmapFactory.decodeFile(
+                                                                originalPath, decodeOpts);
+                                    }
                                     if (original == null) {
                                         throw new Exception("Failed to decode image file");
                                     }
@@ -4835,6 +5256,8 @@ public class MediaCaptureService {
                                                     + original.getHeight()
                                                     + " (inSampleSize="
                                                     + sampleSize
+                                                    + ", regionDecoded="
+                                                    + regionDecoded
                                                     + ")");
                                     logBlePhotoStep(
                                             requestId,
@@ -4861,10 +5284,12 @@ public class MediaCaptureService {
                                                             ? roi.toShortString()
                                                             : "full image"));
                                     android.graphics.Bitmap cropped =
-                                            cropBitmapToDetectedRoi(
-                                                    original,
-                                                    scaleRoiToDecoded(roi, sampleSize),
-                                                    textCropOutcome);
+                                            regionDecoded
+                                                    ? original
+                                                    : cropBitmapToDetectedRoi(
+                                                            original,
+                                                            scaleRoiToDecoded(roi, sampleSize),
+                                                            textCropOutcome);
                                     stage.finish(
                                             "crop",
                                             "cropped "
@@ -4879,15 +5304,25 @@ public class MediaCaptureService {
                                                     + "x"
                                                     + cropped.getHeight());
 
-                                    int targetWidth = bleParams.targetWidth;
-                                    int targetHeight = bleParams.targetHeight;
-                                    float aspectRatio =
-                                            (float) cropped.getWidth() / cropped.getHeight();
-                                    if (aspectRatio > targetWidth / (float) targetHeight) {
-                                        targetHeight = (int) (targetWidth / aspectRatio);
-                                    } else {
-                                        targetWidth = (int) (targetHeight * aspectRatio);
-                                    }
+                                    // The configured dimensions are caps, not a request to enlarge
+                                    // a small ROI. Upscaling cannot recover text detail and wastes
+                                    // both CPU and BLE bytes.
+                                    float resizeScale =
+                                            Math.min(
+                                                    1f,
+                                                    Math.min(
+                                                            bleParams.targetWidth
+                                                                    / (float) cropped.getWidth(),
+                                                            bleParams.targetHeight
+                                                                    / (float) cropped.getHeight()));
+                                    int targetWidth =
+                                            Math.max(
+                                                    1,
+                                                    Math.round(cropped.getWidth() * resizeScale));
+                                    int targetHeight =
+                                            Math.max(
+                                                    1,
+                                                    Math.round(cropped.getHeight() * resizeScale));
 
                                     logBlePhotoStep(
                                             requestId,
@@ -4949,7 +5384,8 @@ public class MediaCaptureService {
 
                                 // 3. Encode with the policy-selected BLE codec. Text mode and
                                 // ordinary size-tier photos share this exact codec/quality
-                                // resolution — there is no per-mode branch here by design.
+                                // resolution. RAM-first captures pass their in-memory IMU payload
+                                // to the selected encoder instead of consulting a source file.
                                 int encodeQuality =
                                         codec == BleCodec.AVIF
                                                 ? bleParams.avifQuality
@@ -4963,8 +5399,10 @@ public class MediaCaptureService {
                                                 + " quality="
                                                 + encodeQuality
                                                 + " hasImuMetadata="
-                                                + PhotoExifMetadataWriter.hasImuMetadata(
-                                                        originalPath));
+                                                + (capturedPhoto != null
+                                                        ? capturedPhoto.imuPayload != null
+                                                        : PhotoExifMetadataWriter.hasImuMetadata(
+                                                                originalPath)));
                                 // Verification instrumentation: confirm exactly one encoder runs
                                 // per request. A count > 1 here would mean the old dual
                                 // JPEG+AVIF encode path regressed back in, silently doubling
@@ -4991,7 +5429,14 @@ public class MediaCaptureService {
                                                     + " for this request)");
                                     encodeResult =
                                             BlePhotoEncoders.encode(
-                                                    resized, codec, encodeQuality, originalPath);
+                                                    resized,
+                                                    codec,
+                                                    encodeQuality,
+                                                    capturedPhoto != null ? null : originalPath,
+                                                    capturedPhoto != null
+                                                            ? capturedPhoto.imuPayload
+                                                            : null,
+                                                    originalPath);
                                     long cumulativeEncodeMs =
                                             bleEncodeTotalMs.merge(
                                                     requestId, encodeResult.encodeMs, Long::sum);
@@ -5052,8 +5497,10 @@ public class MediaCaptureService {
 
                                 long compressionTime =
                                         System.currentTimeMillis() - compressThreadStart;
-                                File originalFileForSize = new File(originalPath);
-                                long originalSizeBytes = originalFileForSize.length();
+                                long originalSizeBytes =
+                                        capturedPhoto != null
+                                                ? capturedPhoto.jpegBytes.length
+                                                : new File(originalPath).length();
                                 double originalSizeKb = originalSizeBytes / 1024.0;
                                 double compressedSizeKb = compressedData.length / 1024.0;
                                 logBlePhotoStep(
@@ -5068,17 +5515,6 @@ public class MediaCaptureService {
                                                 compressionTime));
                                 recordTiming(requestId, "ble_compress_done");
 
-                                // 5. Save compressed data to temporary file with bleImgId as name
-                                // (no extension in filename due to 16-char limit)
-                                String compressedPath =
-                                        fileManager.getDefaultMediaDirectory() + "/" + bleImgId;
-                                stage.start("payload file write");
-                                logBlePhotoStep(requestId, "write_compressed_file_start");
-                                try (java.io.FileOutputStream fos =
-                                        new java.io.FileOutputStream(compressedPath)) {
-                                    fos.write(compressedData);
-                                }
-                                stage.finish("payload file write", compressedPath);
                                 if (AsgConstants.ENABLE_PHOTO_TIMING_LOGS) {
                                     Log.i(
                                             TAG,
@@ -5094,11 +5530,10 @@ public class MediaCaptureService {
                                 }
                                 logBlePhotoStep(
                                         requestId,
-                                        "write_compressed_file_done",
-                                        "saved "
+                                        "ble_payload_ready",
+                                        "retained "
                                                 + compressedData.length
-                                                + " bytes to "
-                                                + compressedPath);
+                                                + " encoded bytes in memory");
                                 bleCompressedBytes.put(requestId, (long) compressedData.length);
                                 if (originalSizeBytes > 0) {
                                     bleOriginalBytes.put(requestId, originalSizeBytes);
@@ -5109,7 +5544,7 @@ public class MediaCaptureService {
 
                                 Log.i(
                                         TAG,
-                                        "📤➡️📱 Sending photo to phone (BLE): "
+                                        "📦 BLE photo payload ready: "
                                                 + bleResizedWidth
                                                 + "x"
                                                 + bleResizedHeight
@@ -5121,29 +5556,90 @@ public class MediaCaptureService {
                                                 + requestId
                                                 + ")");
 
-                                // 6. Send via BLE using K900BluetoothManager
+                                // 5. A requested gallery save is part of this operation's success
+                                // contract. Resolve it before notifying the phone that BLE transfer
+                                // has started, so one request can never report both transfer
+                                // success
+                                // and a later save failure.
+                                boolean savePhotoRequested =
+                                        Boolean.TRUE.equals(photoSaveFlags.get(requestId));
+                                if (capturedPhoto != null && savePhotoRequested) {
+                                    boolean persisted =
+                                            textModeRequested
+                                                    ? persistTextModeSelectionFromMemory(
+                                                            capturedPhoto,
+                                                            originalPath,
+                                                            requestId,
+                                                            roi)
+                                                    : capturedPhoto.awaitPersistenceCompletion();
+                                    if (!persisted) {
+                                        sendPhotoErrorResponse(
+                                                requestId,
+                                                "PHOTO_SAVE_FAILED",
+                                                textModeRequested
+                                                        ? "Could not save final text-mode output"
+                                                        : "Could not save captured photo");
+                                        return;
+                                    }
+                                }
+
+                                // 6. Hand the compressed payload straight to the BLE transport.
+                                // The K900 packet pump streams from an in-memory buffer (including
+                                // retries), so no transport artifact is written to disk. bleImgId
+                                // is the wire name (16-char protocol cap, no extension).
                                 recordTiming(requestId, "ble_send_start");
-                                sendCompressedPhotoViaBle(
-                                        compressedPath, bleImgId, requestId, compressThreadStart);
+                                bleTransferStarted =
+                                        sendCompressedPhotoViaBle(
+                                                compressedData,
+                                                bleImgId,
+                                                requestId,
+                                                compressThreadStart);
 
                             } catch (Exception e) {
+                                if (capturedPhoto != null
+                                        && PhotoMode.TEXT.equals(
+                                                PhotoMode.normalize(
+                                                        photoRequestedModes.get(requestId)))
+                                        && Boolean.TRUE.equals(photoSaveFlags.get(requestId))
+                                        && !new File(originalPath).exists()) {
+                                    persistTextModeSelectionFromMemory(
+                                            capturedPhoto,
+                                            originalPath,
+                                            requestId,
+                                            detectedTextRoi);
+                                }
                                 Log.e(TAG, "Error compressing photo for BLE", e);
                                 dumpTimings(requestId);
                                 clearBlePhotoPipelineTracking(requestId, bleImgId);
                                 sendPhotoErrorResponse(
                                         requestId, "BLE_TRANSFER_FAILED", e.getMessage());
                             } finally {
-                                cleanupPhotoArtifacts(
-                                        requestId,
-                                        originalPath,
-                                        Boolean.TRUE.equals(photoSaveFlags.get(requestId)));
                                 logBlePhotoStep(
                                         requestId,
                                         "cleanup_start",
                                         "cleaning up local capture and request state");
-                                // The BLE transport owns the file after a successful handoff. Keep
-                                // timing state alive until transfer_complete; every failed handoff
-                                // clears it inside sendCompressedPhotoViaBle().
+                                boolean savePhoto =
+                                        Boolean.TRUE.equals(photoSaveFlags.get(requestId));
+                                if (capturedPhoto != null) {
+                                    // Non-text save=true captures may still have a background
+                                    // sensor-JPEG write. Text mode uses a completed no-persistence
+                                    // future and writes only its final selection above.
+                                    if (!(!savePhoto && capturedPhoto.cancelPersistence())) {
+                                        if (savePhoto) {
+                                            capturedPhoto.awaitPersistenceCompletion();
+                                        } else {
+                                            capturedPhoto.awaitPersistence(
+                                                    AsgConstants
+                                                            .BLE_PHOTO_PERSISTENCE_AWAIT_TIMEOUT_MS);
+                                        }
+                                    }
+                                }
+                                cleanupPhotoArtifacts(requestId, originalPath, savePhoto);
+                                // Keep timing state only when the BLE transport actually accepted
+                                // the payload; transfer_complete owns it from that point forward.
+                                if (!bleTransferStarted) {
+                                    clearBlePhotoPipelineTracking(requestId, bleImgId);
+                                }
                                 clearPhotoRequestTracking(requestId);
                                 // BLE compress + handoff (or its failure) ends our authority over
                                 // the photo
@@ -5154,21 +5650,31 @@ public class MediaCaptureService {
                                 logBlePhotoStep(
                                         requestId,
                                         "cleanup_done",
-                                        "photo job released after BLE handoff");
+                                        bleTransferStarted
+                                                ? "photo job released after BLE handoff"
+                                                : "photo job released without BLE handoff");
                                 Log.d(
                                         TAG,
-                                        "📡 BLE handoff complete - photo job released: "
+                                        "📡 Photo pipeline complete (BLE started="
+                                                + bleTransferStarted
+                                                + ") - photo job released: "
                                                 + requestId);
                             }
                         })
                 .start();
     }
 
-    /** Send compressed photo via BLE */
-    private void sendCompressedPhotoViaBle(
-            String compressedPath, String bleImgId, String requestId, long transferStartTime) {
+    /** Send compressed photo via BLE, streaming the payload directly from memory. */
+    private boolean sendCompressedPhotoViaBle(
+            byte[] compressedData, String bleImgId, String requestId, long transferStartTime) {
         logBlePhotoStep(
-                requestId, "ble_send_start", "bleImgId=" + bleImgId + ", file=" + compressedPath);
+                requestId,
+                "ble_send_start",
+                "bleImgId="
+                        + bleImgId
+                        + ", payload="
+                        + compressedData.length
+                        + " bytes (in-memory)");
 
         // TESTING: Check for fake BLE transfer failure
         if (PhotoCaptureTestHooks.shouldFail("BLE_TRANSFER")) {
@@ -5178,7 +5684,7 @@ public class MediaCaptureService {
                     PhotoCaptureTestHooks.getErrorCode(),
                     PhotoCaptureTestHooks.getErrorMessage());
             clearBlePhotoPipelineTracking(requestId, bleImgId);
-            return;
+            return false;
         }
 
         // TESTING: Add fake delay for BLE transfer
@@ -5195,7 +5701,8 @@ public class MediaCaptureService {
                 if (mServiceCallback.isBleTransferInProgress()) {
                     Log.e(
                             TAG,
-                            "❌ BLE transfer already in progress - queuing error message to avoid BES2700 overload");
+                            "❌ BLE transfer already in progress - queuing error message to avoid"
+                                    + " BES2700 overload");
 
                     // Send error response immediately
                     sendPhotoErrorResponse(
@@ -5211,7 +5718,7 @@ public class MediaCaptureService {
                                 "BLE transfer busy - another transfer in progress",
                                 MediaUploadQueueManager.MEDIA_TYPE_PHOTO);
                     }
-                    return;
+                    return false;
                 }
 
                 // BLE is available - send the ready message first (phone expects this for timing
@@ -5220,7 +5727,7 @@ public class MediaCaptureService {
                         requestId,
                         "ble_ready_msg",
                         "notified phone that compressed photo is ready");
-                sendBlePhotoReadyMsg(compressedPath, bleImgId, requestId, transferStartTime);
+                sendBlePhotoReadyMsg(bleImgId, requestId, transferStartTime);
 
                 // Brief delay so the ble_photo_ready JSON drains ahead of file packets.
                 // Was 200ms; the firmware TX window now queues both in order (and the
@@ -5240,7 +5747,7 @@ public class MediaCaptureService {
 
                 // Then try to start the file transfer
                 logBlePhotoStep(requestId, "ble_file_transfer_start", "starting UART packet pump");
-                transferStarted = mServiceCallback.sendFileViaBluetooth(compressedPath);
+                transferStarted = mServiceCallback.sendFileViaBluetooth(compressedData, bleImgId);
 
                 if (transferStarted) {
                     logBlePhotoStep(
@@ -5264,31 +5771,17 @@ public class MediaCaptureService {
                         requestId, "BLE_TRANSFER_FAILED", "Service callback not available");
             }
         } finally {
-            // Critical: Clean up compressed file if transfer didn't start
+            // The payload only ever lived in RAM - nothing to clean up on disk. Just clear
+            // pipeline tracking if the transfer never started.
             if (!transferStarted) {
                 clearBlePhotoPipelineTracking(requestId, bleImgId);
-                try {
-                    File compressedFile = new File(compressedPath);
-                    if (compressedFile.exists()) {
-                        if (compressedFile.delete()) {
-                            Log.d(
-                                    TAG,
-                                    "🗑️ Deleted compressed file after BLE transfer failure: "
-                                            + compressedPath);
-                        } else {
-                            Log.w(TAG, "⚠️ Failed to delete compressed file: " + compressedPath);
-                        }
-                    }
-                } catch (Exception e) {
-                    Log.e(TAG, "Error deleting compressed file: " + compressedPath, e);
-                }
             }
         }
+        return transferStarted;
     }
 
     /** Request BLE file transfer through AsgClientService */
-    private void sendBlePhotoReadyMsg(
-            String filePath, String bleImgId, String requestId, long transferStartTime) {
+    private void sendBlePhotoReadyMsg(String bleImgId, String requestId, long transferStartTime) {
         try {
             // Calculate compression duration on glasses side
             long compressionDuration = System.currentTimeMillis() - transferStartTime;
@@ -5738,7 +6231,8 @@ public class MediaCaptureService {
         if (mStateManager == null) {
             Log.w(
                     TAG,
-                    "⚠️ StateManager not set - cannot start battery monitoring (will retry if StateManager becomes available)");
+                    "⚠️ StateManager not set - cannot start battery monitoring (will retry if"
+                            + " StateManager becomes available)");
             // Note: We don't return here because the runnable will check again later
             // This allows monitoring to start even if StateManager is set after recording begins
         }
@@ -5759,7 +6253,8 @@ public class MediaCaptureService {
                             if (hardwareManager == null) {
                                 Log.w(
                                         TAG,
-                                        "⚠️ HardwareManager not available during battery monitoring - skipping check");
+                                        "⚠️ HardwareManager not available during battery monitoring"
+                                                + " - skipping check");
                                 if (isRecordingVideo && mBatteryMonitorHandler != null) {
                                     mBatteryMonitorHandler.postDelayed(
                                             this, BatteryConstants.BATTERY_CHECK_INTERVAL_MS);
@@ -5836,12 +6331,6 @@ public class MediaCaptureService {
                 mBatteryMonitorHandler = null;
             }
 
-            TextRoiDetector detector = textRoiDetector;
-            textRoiDetector = null;
-            if (detector != null) {
-                detector.close();
-            }
-
             videoIntegrityExecutor.shutdown();
             try {
                 if (!videoIntegrityExecutor.awaitTermination(3, TimeUnit.SECONDS)) {
@@ -5851,11 +6340,25 @@ public class MediaCaptureService {
                 videoIntegrityExecutor.shutdownNow();
                 Thread.currentThread().interrupt();
             }
+            textModeProcessingExecutor.shutdown();
+            try {
+                if (!textModeProcessingExecutor.awaitTermination(3, TimeUnit.SECONDS)) {
+                    textModeProcessingExecutor.shutdownNow();
+                }
+            } catch (InterruptedException e) {
+                textModeProcessingExecutor.shutdownNow();
+                Thread.currentThread().interrupt();
+            }
             videoCaptureIdsInFlight.clear();
             videoCaptureIdsPendingIntegrityCheck.clear();
             // Defensive: drop any pending upload targets so no auth token survives teardown and the
             // map can't grow without bound if a terminal path ever failed to consume its entry.
             uploadTargetsByCaptureId.clear();
+            TextRoiDetector detector = textRoiDetector;
+            textRoiDetector = null;
+            if (detector != null) {
+                detector.close();
+            }
 
             Log.d(TAG, "✅ MediaCaptureService cleanup complete");
 

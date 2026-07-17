@@ -81,7 +81,39 @@ public class AsgConstants {
     public static final boolean ENABLE_MODEL_TEXT_CROP = false;
 
     /** Text-region detector selected when {@link #ENABLE_MODEL_TEXT_CROP} is enabled. */
-    public static final TextCropModel TEXT_CROP_MODEL = TextCropModel.PPOCR_V5_MOBILE_DET;
+    public static final TextCropModel TEXT_CROP_MODEL = TextCropModel.ML_KIT;
+
+    /** Long-edge size used for on-glasses ML Kit text localization. */
+    // 1280 is the smallest tested size that consistently retained stylized/low-contrast label
+    // text on real 4032x3024 Mentra Live captures while remaining below the 1s detector budget.
+    public static final int TEXT_MODE_MLKIT_ANALYSIS_LONG_EDGE = 1280;
+
+    /** Minimum source-pixel padding around the union of ML Kit text lines. */
+    public static final int TEXT_MODE_MLKIT_MIN_PADDING_PX = 32;
+
+    /** Horizontal padding relative to the detected text-union width. */
+    public static final float TEXT_MODE_MLKIT_PADDING_X_FRACTION = 0.12f;
+
+    /** Vertical padding relative to the detected text-union height. */
+    public static final float TEXT_MODE_MLKIT_PADDING_Y_FRACTION = 0.25f;
+
+    // A lone OCR line is weak evidence for the complete text-bearing object. Keep generous
+    // surrounding context so a small conventional label can pull in nearby stylized text that
+    // the recognizer did not box (validated on curved product labels).
+    public static final float TEXT_MODE_MLKIT_SINGLE_LINE_PADDING_X_HEIGHTS = 3f;
+    public static final float TEXT_MODE_MLKIT_SINGLE_LINE_PADDING_TOP_HEIGHTS = 4f;
+    public static final float TEXT_MODE_MLKIT_SINGLE_LINE_PADDING_BOTTOM_HEIGHTS = 11f;
+
+    /** Hard timeout for one local ML Kit request; failure preserves the full frame. */
+    public static final long TEXT_MODE_MLKIT_TIMEOUT_MS = 5000L;
+
+    /**
+     * Max wait for the deferred background photo write ({@code CapturedPhoto.persistence}) when a
+     * BLE photo consumer needs the file on disk (gallery save, text-mode canonical crop, cleanup).
+     * Generous: the write runs concurrently with capture-to-transfer work and normally finishes
+     * long before anyone awaits it.
+     */
+    public static final long BLE_PHOTO_PERSISTENCE_AWAIT_TIMEOUT_MS = 10_000;
 
     /**
      * Dump text-detect intermediates to {@code textdetect_debug/} on every detection run. Adds

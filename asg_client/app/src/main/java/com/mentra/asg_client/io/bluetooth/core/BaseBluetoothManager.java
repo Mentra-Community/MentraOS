@@ -2,14 +2,10 @@ package com.mentra.asg_client.io.bluetooth.core;
 
 import android.content.Context;
 import android.util.Log;
-
 import com.mentra.asg_client.io.bluetooth.interfaces.ICompanionTransport;
 import com.mentra.asg_client.io.bluetooth.interfaces.TransportListener;
 import com.mentra.asg_client.logging.BleTraceLogger;
 import com.mentra.asg_client.receiver.IntentResponseBroadcaster;
-
-import org.json.JSONObject;
-
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -19,10 +15,11 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.RejectedExecutionException;
-import java.util.concurrent.TimeoutException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicLong;
+import org.json.JSONObject;
 
 /**
  * Base implementation of the IBluetoothManager interface. Provides common functionality for all
@@ -306,8 +303,7 @@ public abstract class BaseBluetoothManager implements ICompanionTransport {
         }
     }
 
-    private static void notifySendMessageCallback(
-            SendMessageCallback callback, boolean success) {
+    private static void notifySendMessageCallback(SendMessageCallback callback, boolean success) {
         if (callback == null) {
             return;
         }
@@ -556,16 +552,35 @@ public abstract class BaseBluetoothManager implements ICompanionTransport {
         if (path == null || path.isEmpty()) {
             return false;
         }
+        return startFileTransfer(() -> sendFileInternal(path));
+    }
 
+    /**
+     * Send an in-memory payload using the file-transfer protocol without requiring it to exist on
+     * disk. Same outbound-worker serialization and start-timeout semantics as the path-based {@link
+     * #sendFile(String)}.
+     */
+    @Override
+    public final boolean sendFile(byte[] data, String fileName) {
+        if (data == null || data.length == 0 || fileName == null || fileName.isEmpty()) {
+            return false;
+        }
+        return startFileTransfer(() -> sendFileInternal(data, fileName));
+    }
+
+    private boolean startFileTransfer(Callable<Boolean> startAction) {
         if (Boolean.TRUE.equals(outboundBleWorkerThread.get())) {
-            return sendFileInternal(path);
+            try {
+                return startAction.call();
+            } catch (Exception e) {
+                Log.e(TAG, "Outbound BLE file transfer start failed on worker", e);
+                return false;
+            }
         }
 
         Future<Boolean> future = null;
         try {
-            future =
-                    outboundBleExecutor.submit(
-                            () -> callOnOutboundBleWorker(() -> sendFileInternal(path)));
+            future = outboundBleExecutor.submit(() -> callOnOutboundBleWorker(startAction));
             return future.get(OUTBOUND_FILE_START_TIMEOUT_MS, TimeUnit.MILLISECONDS);
         } catch (RejectedExecutionException e) {
             Log.e(TAG, "Rejected outbound BLE file transfer start", e);
@@ -619,6 +634,11 @@ public abstract class BaseBluetoothManager implements ICompanionTransport {
 
     protected boolean sendFileInternal(String path) {
         Log.w(TAG, "sendFile not implemented in " + getClass().getSimpleName());
+        return false;
+    }
+
+    protected boolean sendFileInternal(byte[] data, String fileName) {
+        Log.w(TAG, "sendFile(byte[]) not implemented in " + getClass().getSimpleName());
         return false;
     }
 }

@@ -2,7 +2,6 @@ package com.mentra.asg_client.io.bluetooth.managers;
 
 import android.content.Context;
 import android.util.Log;
-
 import com.mentra.asg_client.io.bluetooth.core.BaseBluetoothManager;
 import com.mentra.asg_client.io.bluetooth.interfaces.SerialListener;
 import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.BesMessageParser;
@@ -17,9 +16,6 @@ import com.mentra.asg_client.reporting.domains.BluetoothReporting;
 import com.mentra.asg_client.service.core.AsgClientService;
 import com.mentra.asg_client.service.core.processors.ChunkReassembler;
 import com.mentra.asg_client.service.core.processors.ChunkedMessageProtocolStrategy;
-
-import org.json.JSONObject;
-
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
@@ -31,6 +27,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+import org.json.JSONObject;
 
 /**
  * Implementation of IBluetoothManager for K900 devices. Uses the K900's serial port to communicate
@@ -115,6 +112,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     private int effectiveUartPackSize() {
         return BesWireFormat.getFilePackSize();
     }
+
     private static final long SIGNIFICANT_CHUNK_TRACE_DURATION_MS = 250;
     private static final long SIGNIFICANT_CHUNK_SEND_DURATION_MS = 250;
     private static final long SIGNIFICANT_CHUNK_SPACING_MS = PACING_DELAY_MS + 150;
@@ -130,10 +128,11 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     /** Feature switch for the runtime UART baud upgrade. */
     private static final boolean UART_BAUD_SWITCH_ENABLED = true;
 
-    /** Baud rate to upgrade the BES UART link to. 1152000 is the measured hardware
-     * ceiling: 1.5M/2M/3M all negotiated fine but carried zero data (probe silent,
-     * both sides auto-reverted) - without flow control the clocking above 1.152M
-     * doesn't survive the wire. Tested 2026-07-05. */
+    /**
+     * Baud rate to upgrade the BES UART link to. 1152000 is the measured hardware ceiling:
+     * 1.5M/2M/3M all negotiated fine but carried zero data (probe silent, both sides auto-reverted)
+     * - without flow control the clocking above 1.152M doesn't survive the wire. Tested 2026-07-05.
+     */
     private static final int TARGET_UART_BAUD = 1152000;
 
     /** Minimum BES firmware version (sr_syvr "dpj" dotted string) that supports cs_baud. */
@@ -1163,9 +1162,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             if (payloadSize > BesWireFormat.FILE_PACK_SIZE_LEGACY) {
                 phoneSupportsFilePayloadV2 = true;
             }
-            if ("coc".equals(transport)
-                    && besWireCapsFilePayloadV2
-                    && phoneSupportsFilePayloadV2) {
+            if ("coc".equals(transport) && besWireCapsFilePayloadV2 && phoneSupportsFilePayloadV2) {
                 if (fileTransportCoc
                         && currentFileTransfer != null
                         && currentFileTransfer.packSize > payloadSize) {
@@ -1339,9 +1336,9 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
     /**
      * Compare two dotted version strings numerically, component by component. Missing components
-     * count as 0. Each component is read as its leading numeric prefix so hotfix-suffixed
-     * firmware strings (e.g. "17.26.7.5-fix1") compare as their base version instead of
-     * throwing and silently disabling the transport feature gates.
+     * count as 0. Each component is read as its leading numeric prefix so hotfix-suffixed firmware
+     * strings (e.g. "17.26.7.5-fix1") compare as their base version instead of throwing and
+     * silently disabling the transport feature gates.
      *
      * @return negative if a &lt; b, 0 if equal, positive if a &gt; b
      */
@@ -1409,8 +1406,8 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     }
 
     /**
-     * Handle sr_baud response from the BES. Called early in the serial read pipeline (same place
-     * as sr_syvr) since the negotiation lives entirely in this class.
+     * Handle sr_baud response from the BES. Called early in the serial read pipeline (same place as
+     * sr_syvr) since the negotiation lives entirely in this class.
      *
      * @param payload The JSON payload bytes
      * @return true if this was an sr_baud response and was consumed, false otherwise
@@ -1469,9 +1466,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                             + BAUD_REOPEN_DELAY_MS
                             + "ms");
             baudSwitchExecutor.schedule(
-                    this::reopenAtTargetBaudAndProbe,
-                    BAUD_REOPEN_DELAY_MS,
-                    TimeUnit.MILLISECONDS);
+                    this::reopenAtTargetBaudAndProbe, BAUD_REOPEN_DELAY_MS, TimeUnit.MILLISECONDS);
             return true;
         } catch (Exception e) {
             Log.e(BAUD_TAG, "Error parsing sr_baud response", e);
@@ -1583,8 +1578,13 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                             + (besSupportsBatchedAcks ? "ENABLED" : "disabled")
                             + ", big packs "
                             + (besSupportsBigPacks ? "ENABLED" : "disabled")
-                            + " (fw " + version + ", window " + effectivePushWindow()
-                            + ", packSize " + effectiveUartPackSize() + ")");
+                            + " (fw "
+                            + version
+                            + ", window "
+                            + effectivePushWindow()
+                            + ", packSize "
+                            + effectiveUartPackSize()
+                            + ")");
         } catch (Exception e) {
             besSupportsBatchedAcks = false;
         }
@@ -1859,8 +1859,51 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             return false;
         }
 
-        // Create file transfer session
-        String fileName = file.getName();
+        return startFileTransferSession(filePath, file.getName(), fileData);
+    }
+
+    /**
+     * Send an in-memory payload over the K900 file-transfer protocol without a backing file.
+     * Everything after session creation (packet pump, acks, retries) already operates on the
+     * in-memory {@code fileData} buffer, so no disk artifact is required.
+     *
+     * @param data payload bytes
+     * @param fileName wire name for the transfer (truncated to the 16-char protocol cap)
+     * @return true if transfer started successfully
+     */
+    @Override
+    protected boolean sendFileInternal(byte[] data, String fileName) {
+        if (!isSerialOpen) {
+            Log.e(TAG, "Cannot send in-memory file - serial port not open");
+            BluetoothReporting.reportFileTransferFailure(
+                    context, memoryReportPath(fileName), "send_file", "serial_port_not_open", null);
+            return false;
+        }
+
+        if (currentFileTransfer != null && currentFileTransfer.isActive) {
+            Log.e(TAG, "File transfer already in progress");
+            BluetoothReporting.reportFileTransferFailure(
+                    context,
+                    memoryReportPath(fileName),
+                    "send_file",
+                    "transfer_already_in_progress",
+                    null);
+            return false;
+        }
+
+        return startFileTransferSession(null, fileName, data);
+    }
+
+    /** Synthetic identifier for Sentry reports on transfers that never touch disk. */
+    private static String memoryReportPath(String fileName) {
+        return "mem:" + fileName;
+    }
+
+    /**
+     * Create the transfer session and start the packet pump. {@code filePath} is {@code null} for
+     * in-memory transfers; it is only used for post-transfer cleanup and failure reporting.
+     */
+    private boolean startFileTransferSession(String filePath, String fileName, byte[] fileData) {
         if (fileName.length() > 16) {
             fileName = fileName.substring(0, 16); // Truncate to 16 chars max
         }
@@ -1885,7 +1928,9 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                         + fileData.length
                         + " bytes, "
                         + currentFileTransfer.totalPackets
-                        + " packets)");
+                        + " packets, "
+                        + (filePath != null ? "disk-backed" : "in-memory")
+                        + ")");
 
         notificationManager.showDebugNotification(
                 "File Transfer",
@@ -1905,9 +1950,9 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     }
 
     /**
-     * Pump file packets in push mode: stream up to FILE_PUSH_WINDOW packets ahead of the
-     * highest BES ack instead of waiting one ack round trip per packet. Completion fires
-     * once the acks (not the sends) have covered every packet.
+     * Pump file packets in push mode: stream up to FILE_PUSH_WINDOW packets ahead of the highest
+     * BES ack instead of waiting one ack round trip per packet. Completion fires once the acks (not
+     * the sends) have covered every packet.
      */
     private void sendNextFilePacket() {
         if (currentFileTransfer == null || !currentFileTransfer.isActive) {
@@ -1918,9 +1963,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             // All packets sent and ACKed by MCU
             long transferDuration = System.currentTimeMillis() - currentFileTransfer.startTime;
             BlePhotoTimingLog.recordUartTransfer(
-                    currentFileTransfer.fileName,
-                    currentFileTransfer.fileSize,
-                    transferDuration);
+                    currentFileTransfer.fileName, currentFileTransfer.fileSize, transferDuration);
             int rateKbps =
                     transferDuration > 0
                             ? (int) (currentFileTransfer.fileSize * 1000L / transferDuration / 1024)
@@ -2028,7 +2071,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         if (!sent) {
             Log.e(TAG, "Failed to write file packet " + packetIndex + " to UART");
             BluetoothReporting.reportFileTransferFailure(
-                    context, currentFileTransfer.filePath, "send_file", "uart_write_failed", null);
+                    context, transferReportPath(), "send_file", "uart_write_failed", null);
             notificationManager.showDebugNotification(
                     "File Transfer Failed", "UART write failed at packet " + packetIndex);
             notifyTransferFailedToPhone("uart_write_failed");
@@ -2099,7 +2142,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
                 // Report file transfer failure
                 BluetoothReporting.reportFileTransferFailure(
-                        context, currentFileTransfer.filePath, "send_file", "packet_timeout", null);
+                        context, transferReportPath(), "send_file", "packet_timeout", null);
 
                 notificationManager.showDebugNotification(
                         "File Transfer Failed", "Packet " + packetIndex + " timeout");
@@ -2158,7 +2201,9 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         phoneSupportsFilePayloadV2 = false;
         fileTransportCoc = false;
         resetPhoneWireProtocolState();
-        Log.i(TAG, "📦 Transport reset - file pack size and wire protocol state restored to defaults");
+        Log.i(
+                TAG,
+                "📦 Transport reset - file pack size and wire protocol state restored to defaults");
     }
 
     @Override
@@ -2223,8 +2268,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
             // Reset consecutive failure counter on success
             consecutiveFailures = 0;
-            if (pendingFailureRetryIndex >= 0
-                    && ackedPacketIndex >= pendingFailureRetryIndex) {
+            if (pendingFailureRetryIndex >= 0 && ackedPacketIndex >= pendingFailureRetryIndex) {
                 pendingFailureRetryIndex = -1;
                 failureRetryScheduled = false;
             }
@@ -2277,7 +2321,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                 // Report the failure
                 BluetoothReporting.reportFileTransferFailure(
                         context,
-                        currentFileTransfer.filePath,
+                        transferReportPath(),
                         "send_file",
                         "ble_tx_stuck_consecutive_failures",
                         null);
@@ -2563,9 +2607,23 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         }
     }
 
+    /** Identifier for failure reports on the active transfer (synthetic for in-memory sends). */
+    private String transferReportPath() {
+        if (currentFileTransfer == null) {
+            return "mem:unknown";
+        }
+        return currentFileTransfer.filePath != null
+                ? currentFileTransfer.filePath
+                : memoryReportPath(currentFileTransfer.fileName);
+    }
+
     /** Delete file after successful transfer */
     private void deleteFileAfterSuccess() {
         if (currentFileTransfer == null) {
+            return;
+        }
+        if (currentFileTransfer.filePath == null) {
+            // In-memory transfer - nothing was ever written to disk.
             return;
         }
 

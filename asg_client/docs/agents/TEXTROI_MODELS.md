@@ -20,6 +20,7 @@ The stable detector ids are:
 | `classical` | Existing OpenCV pipeline | None |
 | `swt` | Stroke Width Transform / classical | None |
 | `mser_only` | MSER / classical | None |
+| `ml_kit` | Bundled/offline Google ML Kit text recognizer | None (bundled model, no asset) |
 | `ppocr_v6_tiny_det` | PaddleOCR DBNet | `ppocr_v6_tiny_det.onnx` |
 | `ppocr_v5_mobile_det` | PaddleOCR DBNet | `ppocr_v5_mobile_det.onnx` |
 | `ppocr_v6_small_det` | PaddleOCR DBNet | `ppocr_v6_small_det.onnx` |
@@ -28,9 +29,20 @@ The stable detector ids are:
 | `east_lite` | EAST | `east_lite.onnx` |
 | `yolo_nano_text` | YOLO | `yolo_nano_text.onnx` |
 
-Only the code adapters and runners ship in this repository. Model `.onnx` files
-are intentionally **not committed**. For an Android/device build, place the
-needed files, with the exact names above, under:
+`ml_kit` requires no model file: it uses Google's bundled/offline ML Kit text
+recognizer (`com.google.mlkit:text-recognition`), which ships its model inside
+the app and needs no Play Services or network access. It decodes and analyzes
+the original sensor JPEG bytes itself (see `MlKitTextRoiDetector` and its
+`roi/MlKitRoiDetector` adapter) rather than pre-extracted luma, and its
+crop is already in source-pixel coordinates
+(`TextRoiDetector#returnsNativeCoordinates()` returns `true`), unlike the
+classical/ONNX detectors, which analyze a subsampled luma buffer and need the
+caller to scale their result back up.
+
+Only the code adapters and runners for the ONNX-based models ship in this
+repository. Model `.onnx` files are intentionally **not committed**. For an
+Android/device build, place the needed files, with the exact names above,
+under:
 
 ```text
 app/src/main/assets/textroi/
@@ -101,9 +113,12 @@ To compare neural models and estimate transfer time at a measured BLE rate:
   --input "/path/to/text photos" \
   --output "/tmp/textroi results" \
   --model-dir "/path/to/onnx models" \
-  --detectors classical,ppocr_v5_mobile_det,fast_tiny,east_lite,yolo_nano_text \
+  --detectors classical,ml_kit,ppocr_v5_mobile_det,fast_tiny,east_lite,yolo_nano_text \
   --ble-bytes-per-second 30000
 ```
+
+`ml_kit` needs no `--model-dir` entry - it runs from the bundled model as soon
+as it is included in `--detectors`.
 
 The wrapper runs:
 
@@ -125,16 +140,17 @@ crop correctness.
 
 `AsgConstants.ENABLE_MODEL_TEXT_CROP` controls whether
 `AsgConstants.TEXT_CROP_MODEL` is selected. When the flag is `false`, the
-service uses `classical` regardless of `TEXT_CROP_MODEL`. When a requested ONNX
-model cannot be loaded or initialized, the detector falls back to the classical
-pipeline and reports that explicitly:
+service uses `classical` regardless of `TEXT_CROP_MODEL`. When `true` (the
+default in production), `TEXT_CROP_MODEL` currently selects `ml_kit`. When a
+requested ML Kit or ONNX model cannot be loaded or initialized, the detector
+falls back to the classical pipeline and reports that explicitly:
 
 ```text
 <requested-model-id>->classical
 ```
 
-Treat the arrow in a reported detector id as a failed neural-model run, not as
-performance from the requested model.
+Treat the arrow in a reported detector id as a failed model run, not as
+performance from the requested detector.
 
 The service lazily creates and caches its detector, including the ONNX Runtime
 session, for the `MediaCaptureService` lifetime. Cleanup closes the detector and

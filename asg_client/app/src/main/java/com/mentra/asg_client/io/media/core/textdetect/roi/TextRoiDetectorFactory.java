@@ -31,8 +31,21 @@ public final class TextRoiDetectorFactory {
                 return new SwtRoiDetector(config);
             case MSER_ONLY:
                 return new MserOnlyRoiDetector(config);
+            case ML_KIT:
+                return createMlKitOrFallback(config);
             default:
                 return createOnnxOrFallback(model, config, source);
+        }
+    }
+
+    private static TextRoiDetector createMlKitOrFallback(TextDetectConfig config) {
+        try {
+            MlKitRoiDetector detector = new MlKitRoiDetector();
+            detector.warmUp();
+            return detector;
+        } catch (Exception | LinkageError exception) {
+            return new ClassicalFallbackDetector(
+                    TextCropModel.ML_KIT.id(), new ClassicalRoiDetector(config));
         }
     }
 

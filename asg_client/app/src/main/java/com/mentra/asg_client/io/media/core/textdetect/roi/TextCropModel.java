@@ -5,6 +5,7 @@ public enum TextCropModel {
     CLASSICAL("classical", "classical", null, 0, 0),
     SWT("swt", "classical", null, 0, 0),
     MSER_ONLY("mser_only", "classical", null, 0, 0),
+    ML_KIT("ml_kit", "ml_kit", null, 0, 0),
     PPOCR_V6_TINY_DET("ppocr_v6_tiny_det", "dbnet", "ppocr_v6_tiny_det.onnx", 640, 640),
     PPOCR_V5_MOBILE_DET("ppocr_v5_mobile_det", "dbnet", "ppocr_v5_mobile_det.onnx", 640, 640),
     PPOCR_V6_SMALL_DET("ppocr_v6_small_det", "dbnet", "ppocr_v6_small_det.onnx", 640, 640),

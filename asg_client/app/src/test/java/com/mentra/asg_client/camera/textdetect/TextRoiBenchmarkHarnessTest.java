@@ -141,9 +141,13 @@ public class TextRoiBenchmarkHarnessTest {
             }
             int width = color.cols();
             int height = color.rows();
-            DetectionInput input = new DetectionInput(toLuma(color), width, height);
+            // ML Kit decodes the original sensor JPEG bytes directly rather than pre-extracted
+            // luma, so the harness also reads the file's raw bytes for detectors that need them.
+            byte[] jpegBytes = requested == TextCropModel.ML_KIT ? Files.readAllBytes(image) : null;
+            DetectionInput input = new DetectionInput(toLuma(color), width, height, jpegBytes);
 
-            if (requested.assetFilename() != null && detector.id().equals(requested.id())) {
+            if ((requested.assetFilename() != null || requested == TextCropModel.ML_KIT)
+                    && detector.id().equals(requested.id())) {
                 DetectionResult warmup = detector.detect(input);
                 releaseDebug(warmup);
             }
