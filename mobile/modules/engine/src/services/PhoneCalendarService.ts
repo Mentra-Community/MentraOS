@@ -3,6 +3,7 @@ import * as Calendar from "expo-calendar"
 import {MiniappErrorCode, type CalendarListResult} from "@mentra/miniapp"
 
 import {
+  calendarEventOverlapsWindow,
   type CalendarListRequest,
   normalizeCalendarEvent,
   PhoneCalendarError,
@@ -31,6 +32,7 @@ export async function listPhoneCalendarEvents(request: CalendarListRequest): Pro
   )
   const events = rawEvents
     .map(normalizeCalendarEvent)
+    .filter((event) => calendarEventOverlapsWindow(event, startsAt, endsAt))
     .sort((a, b) => a.startsAt.localeCompare(b.startsAt) || a.endsAt.localeCompare(b.endsAt))
 
   return {

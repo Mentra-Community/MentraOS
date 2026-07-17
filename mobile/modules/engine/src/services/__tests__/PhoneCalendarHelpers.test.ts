@@ -5,6 +5,7 @@ import {describe, expect, test} from "bun:test"
 import {MiniappErrorCode} from "@mentra/miniapp"
 
 import {
+  calendarEventOverlapsWindow,
   extractHttpsLinks,
   normalizeCalendarEvent,
   PhoneCalendarError,
@@ -65,5 +66,29 @@ describe("PhoneCalendarService", () => {
       endsAt: "2026-07-17T10:30:00.000Z",
       links: ["https://teams.microsoft.com/l/meetup-join/example"],
     })
+  })
+
+  test("enforces a half-open calendar window", () => {
+    const startsAt = new Date("2026-07-17T10:00:00.000Z")
+    const endsAt = new Date("2026-07-17T11:00:00.000Z")
+    const event = (eventStartsAt: string, eventEndsAt: string) => ({
+      id: "event",
+      calendarId: "calendar",
+      title: "Meeting",
+      startsAt: eventStartsAt,
+      endsAt: eventEndsAt,
+      allDay: false,
+      links: [],
+    })
+
+    expect(
+      calendarEventOverlapsWindow(event("2026-07-17T09:30:00.000Z", "2026-07-17T10:30:00.000Z"), startsAt, endsAt),
+    ).toBe(true)
+    expect(
+      calendarEventOverlapsWindow(event("2026-07-17T11:00:00.000Z", "2026-07-17T11:30:00.000Z"), startsAt, endsAt),
+    ).toBe(false)
+    expect(
+      calendarEventOverlapsWindow(event("2026-07-17T09:30:00.000Z", "2026-07-17T10:00:00.000Z"), startsAt, endsAt),
+    ).toBe(false)
   })
 })

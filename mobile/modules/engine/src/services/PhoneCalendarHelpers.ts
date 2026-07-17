@@ -101,3 +101,7 @@ export function normalizeCalendarEvent(event: RawCalendarEvent): CalendarEvent {
     links: extractHttpsLinks(event.url, event.location, event.notes),
   }
 }
+
+export function calendarEventOverlapsWindow(event: CalendarEvent, startsAt: Date, endsAt: Date): boolean {
+  return Date.parse(event.endsAt) > startsAt.getTime() && Date.parse(event.startsAt) < endsAt.getTime()
+}
