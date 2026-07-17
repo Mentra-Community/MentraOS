@@ -20,6 +20,7 @@ import com.mentra.asg_client.AsgConstants;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -33,6 +34,7 @@ import java.util.concurrent.atomic.AtomicReference;
  */
 public final class MlKitTextRoiDetector implements AutoCloseable {
     private static final String TAG = "MlKitTextRoi";
+    private static final Executor DIRECT_EXECUTOR = Runnable::run;
 
     private final TextRecognizer recognizer;
     private final int analysisLongEdge;
@@ -110,6 +112,7 @@ public final class MlKitTextRoiDetector implements AutoCloseable {
 
         Bitmap decoded = null;
         Bitmap analysis = null;
+        Task<Text> detectionTask = null;
         try {
             warmUp();
             Task<Text> taskToAwait = warmupTask.get();
@@ -153,9 +156,10 @@ public final class MlKitTextRoiDetector implements AutoCloseable {
             }
 
             analysis = scaleLongEdge(decoded, analysisLongEdge);
+            detectionTask = recognizer.process(InputImage.fromBitmap(analysis, 0));
             Text text =
                     Tasks.await(
-                            recognizer.process(InputImage.fromBitmap(analysis, 0)),
+                            detectionTask,
                             AsgConstants.TEXT_MODE_MLKIT_TIMEOUT_MS,
                             TimeUnit.MILLISECONDS);
 
@@ -182,12 +186,27 @@ public final class MlKitTextRoiDetector implements AutoCloseable {
                     0,
                     0);
         } finally {
-            if (analysis != null && analysis != decoded) {
-                analysis.recycle();
-            }
-            if (decoded != null) {
-                decoded.recycle();
-            }
+            recycleBitmapsAfterTask(detectionTask, analysis, decoded);
+        }
+    }
+
+    /** Defers recycling when a timed-out ML Kit task may still be reading its input bitmap. */
+    static void recycleBitmapsAfterTask(
+            @Nullable Task<?> task, @Nullable Bitmap analysis, @Nullable Bitmap decoded) {
+        if (task != null && !task.isComplete()) {
+            task.addOnCompleteListener(
+                    DIRECT_EXECUTOR, ignored -> recycleBitmaps(analysis, decoded));
+            return;
+        }
+        recycleBitmaps(analysis, decoded);
+    }
+
+    private static void recycleBitmaps(@Nullable Bitmap analysis, @Nullable Bitmap decoded) {
+        if (analysis != null && analysis != decoded) {
+            analysis.recycle();
+        }
+        if (decoded != null) {
+            decoded.recycle();
         }
     }
 

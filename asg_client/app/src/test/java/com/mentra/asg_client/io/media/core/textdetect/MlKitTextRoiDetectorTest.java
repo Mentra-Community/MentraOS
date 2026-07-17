@@ -4,9 +4,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import android.graphics.Bitmap;
 import android.graphics.Rect;
 
 import com.google.android.gms.tasks.Task;
+import com.google.android.gms.tasks.TaskCompletionSource;
 import com.google.mlkit.vision.text.Text;
 import com.google.mlkit.vision.text.TextRecognizer;
 
@@ -88,5 +90,35 @@ public class MlKitTextRoiDetectorTest {
         handleCompletion.invoke(detector, currentTask);
         assertThat(warmupTaskReference.get()).isNull();
         detector.close();
+    }
+
+    @Test
+    public void pendingDetectionTaskDefersBitmapRecycleUntilCompletion() {
+        Bitmap decoded = Bitmap.createBitmap(32, 24, Bitmap.Config.ARGB_8888);
+        Bitmap analysis = Bitmap.createBitmap(16, 12, Bitmap.Config.ARGB_8888);
+        TaskCompletionSource<Text> pending = new TaskCompletionSource<>();
+
+        MlKitTextRoiDetector.recycleBitmapsAfterTask(
+                pending.getTask(), analysis, decoded);
+
+        assertThat(analysis.isRecycled()).isFalse();
+        assertThat(decoded.isRecycled()).isFalse();
+
+        pending.setResult(mock(Text.class));
+
+        assertThat(analysis.isRecycled()).isTrue();
+        assertThat(decoded.isRecycled()).isTrue();
+    }
+
+    @Test
+    public void completedDetectionTaskRecyclesBitmapsImmediately() {
+        Bitmap decoded = Bitmap.createBitmap(32, 24, Bitmap.Config.ARGB_8888);
+        TaskCompletionSource<Text> completed = new TaskCompletionSource<>();
+        completed.setResult(mock(Text.class));
+
+        MlKitTextRoiDetector.recycleBitmapsAfterTask(
+                completed.getTask(), decoded, decoded);
+
+        assertThat(decoded.isRecycled()).isTrue();
     }
 }
