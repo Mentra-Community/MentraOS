@@ -62,17 +62,13 @@ import {
 } from "../runtime/config"
 import {getAnalytics, getUiSeams} from "../runtime/bootstrap"
 import {normalizeStreamAudioConfig, normalizeStreamVideoConfig} from "../runtime/streamConfig"
-import type {
-  AudioSubscription,
-  LanguageSource,
-  TranscriptionData,
-  TranslationData,
-} from "@mentra/cloud-protocol"
+import type {AudioSubscription, LanguageSource, TranscriptionData, TranslationData} from "@mentra/cloud-protocol"
 import ttsModelManager from "./TTSModelManager"
 import {NavigationHandlers} from "./NavigationHandlers"
 import type {ClientApp} from "../types/applet"
 import {useAppStatusStore} from "../stores/apps"
 import {DEV_APP_PACKAGE_NAME, getDevAppSourcePackage} from "./AppRegistry"
+import {listPhoneCalendarEvents, PhoneCalendarError} from "./PhoneCalendarService"
 
 // =============================================================================
 // Types
@@ -649,10 +645,7 @@ class LocalMiniappRuntime {
       if (existingSpeakerStreamId) {
         existing.activeSpeakerStreamId = undefined
         void audioPlaybackService.abortStream(existingSpeakerStreamId).catch((error) => {
-          console.warn(
-            `${LOG_TAG}: failed to abort speaker stream while replacing ${packageName}`,
-            error,
-          )
+          console.warn(`${LOG_TAG}: failed to abort speaker stream while replacing ${packageName}`, error)
         })
       }
       if (existing.authRefreshTimerId !== null) {
@@ -983,6 +976,9 @@ class LocalMiniappRuntime {
         break
       case MiniappRequestType.LOCATION_POLL:
         this.handleLocationPoll(packageName, requestId)
+        break
+      case MiniappRequestType.CALENDAR_LIST_EVENTS:
+        void this.handleCalendarListEvents(packageName, payload, requestId)
         break
       case MiniappRequestType.NAVIGATION_START:
         this.navigationHandlers.handleStart(packageName, payload, requestId)
@@ -1469,7 +1465,6 @@ class LocalMiniappRuntime {
       if (s === "location_update") return "LOCATION"
       if (s === "phone_notification") return "READ_NOTIFICATIONS"
       if (s === "phone_notification_dismissed") return "READ_NOTIFICATIONS"
-      if (s === "calendar_event") return "CALENDAR"
       return null
     }
 
@@ -1525,6 +1520,37 @@ class LocalMiniappRuntime {
     // Fire initial snapshot values for stateful streams so miniapps don't have
     // to wait for the first change event.
     this.emitInitialSnapshots(packageName, streams)
+  }
+
+  private async handleCalendarListEvents(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    const app = this.connectedApps.get(packageName)
+    const declared = app?.installedManifest?.permissions?.some(
+      (permission) => permission.type?.toUpperCase() === "CALENDAR",
+    )
+    if (!declared) {
+      logPermissionNotDeclared(packageName, "CALENDAR", "to list calendar events", '{"type": "CALENDAR"}')
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.PERMISSION_NOT_DECLARED,
+        message: 'CALENDAR permission not declared in miniapp.json. Add {"type": "CALENDAR"} to the permissions array.',
+        permission: "CALENDAR",
+      })
+      return
+    }
+
+    try {
+      const result = await listPhoneCalendarEvents(payload)
+      this.sendResult(packageName, requestId, true, result)
+    } catch (error) {
+      const known = error instanceof PhoneCalendarError
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: known ? error.code : MiniappErrorCode.INTERNAL,
+        message: error instanceof Error ? error.message : "Failed to read phone calendar events",
+      })
+    }
   }
 
   /**
@@ -3060,9 +3086,8 @@ class LocalMiniappRuntime {
     let transcriptionLang: string | null = null
     for (const [stream, subscribers] of this.streamSubscribers) {
       if (subscribers.size === 0) continue
-      // Only transcription / translation need cloud delivery. Location,
-      // notifications, and calendar events are sourced natively on the phone
-      // and forwarded to miniapps directly via MantleManager — no cloud hop.
+      // Only transcription / translation need cloud delivery. Location and
+      // notifications are sourced natively on the phone — no cloud hop.
       if (stream.startsWith("transcription:") || stream.startsWith("translation:")) {
         cloudStreams.add(stream)
       }

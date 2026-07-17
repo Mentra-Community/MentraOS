@@ -57,7 +57,7 @@ const API_ROWS: Row[] = [
   {emoji: "📍", title: "session.location", subtitle: "GPS updates", path: "/tester/location"},
   {emoji: "↕️", title: "session.imu", subtitle: "head position", path: "/tester/imu"},
   {emoji: "👓", title: "session.glasses", subtitle: "battery, connection", path: "/tester/glasses"},
-  {emoji: "📱", title: "session.phone", subtitle: "battery, notifications, calendar", path: "/tester/phone"},
+  {emoji: "📱", title: "session.phone", subtitle: "battery, notifications, calendar snapshots", path: "/tester/phone"},
   {emoji: "🔗", title: "session.system", subtitle: "share, open URL, clipboard", path: "/tester/system"},
   {
     emoji: "💡",

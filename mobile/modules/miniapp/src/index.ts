@@ -71,7 +71,6 @@ export type {
   AudioChunkData,
   BatteryData,
   ButtonPressData,
-  CalendarEventData,
   ConnectionData,
   HeadingData,
   HeadPositionData,
@@ -85,6 +84,7 @@ export type {
   VadData,
   WifiData,
 } from "./modules/events"
+export type {CalendarEvent, CalendarListOptions, CalendarListResult} from "./modules/phone"
 export type {
   PlayAudioOptions,
   SpeakOptions,

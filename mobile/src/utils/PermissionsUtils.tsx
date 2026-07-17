@@ -99,9 +99,9 @@ const PERMISSION_CONFIG: Record<string, PermissionConfig> = {
   },
   [PermissionFeatures.CALENDAR]: {
     name: "Calendar",
-    description: "Used to display your events on your glasses",
+    description: "Allows miniapps to read your calendar events",
     ios: [PERMISSIONS.IOS.CALENDARS],
-    android: [PermissionsAndroid.PERMISSIONS.READ_CALENDAR, PermissionsAndroid.PERMISSIONS.WRITE_CALENDAR],
+    android: [PermissionsAndroid.PERMISSIONS.READ_CALENDAR],
     critical: false,
   },
   [PermissionFeatures.LOCATION]: {
@@ -871,10 +871,7 @@ async function readLocationServicesEnabled(): Promise<boolean> {
   const locationServicesEnabled = await Promise.race([
     CrustModule.isLocationServicesEnabled(),
     new Promise<boolean>((_, reject) => {
-      setTimeout(
-        () => reject(new Error("Location services check timed out")),
-        LOCATION_SERVICES_CHECK_TIMEOUT_MS,
-      )
+      setTimeout(() => reject(new Error("Location services check timed out")), LOCATION_SERVICES_CHECK_TIMEOUT_MS)
     }),
   ])
   console.log("Location services enabled (native check):", locationServicesEnabled)
