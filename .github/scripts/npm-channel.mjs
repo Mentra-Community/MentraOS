@@ -43,27 +43,33 @@ const CHANNELS = {
   dev: {label: "dev", tag: "dev"},
   staging: {label: "beta", tag: "beta"},
   main: {label: null, tag: "latest"},
-  // The Bluetooth SDK's production channel: prod releases of the SDK trigger
-  // independently of the monorepo's main promotions (merge staging into
-  // main-bluetooth-sdk when the SDK should go public).
+};
+
+// The Bluetooth SDK promotes through its OWN prod branch instead of main, so
+// SDK public releases trigger independently of the monorepo's main promotions.
+// A separate map (not an extra entry in CHANNELS) so the miniapp/engine
+// pipelines keep REJECTING a stray dispatch on main-bluetooth-sdk — and the
+// SDK pipeline rejects one on main.
+export const BLUETOOTH_SDK_CHANNELS = {
+  dev: CHANNELS.dev,
+  staging: CHANNELS.staging,
   "main-bluetooth-sdk": {label: null, tag: "latest"},
 };
 
 const BASE_RE = /^(\d+\.\d+\.\d+)-[0-9a-z]+\.(\d+)$/i;
 
-export function channelFor(branch) {
-  const channel = CHANNELS[branch];
+export function channelFor(branch, channels = CHANNELS) {
+  const channel = channels[branch];
   if (!channel) {
     throw new Error(
-      `No npm release channel for branch "${branch}" — releases ship from dev (dev tag), ` +
-        `staging (beta tag) or main (latest tag).`,
+      `No npm release channel for branch "${branch}" — this pipeline releases from: ${Object.keys(channels).join(", ")}.`,
     );
   }
   return channel;
 }
 
 // 0.1.0-dev.3 on staging -> 0.1.0-beta.3; on main -> 0.1.0.
-export function deriveVersion(baseVersion, branch) {
+export function deriveVersion(baseVersion, branch, channels = CHANNELS) {
   const match = BASE_RE.exec(baseVersion);
   if (!match) {
     throw new Error(
@@ -72,7 +78,7 @@ export function deriveVersion(baseVersion, branch) {
     );
   }
   const [, core, n] = match;
-  const {label} = channelFor(branch);
+  const {label} = channelFor(branch, channels);
   return label ? `${core}-${label}.${n}` : core;
 }
 
@@ -81,8 +87,8 @@ export function deriveVersion(baseVersion, branch) {
 // (^0.1.0); on prerelease channels it pins the exact tuple (prerelease carets
 // only match their own patch tuple), which is what makes the published set
 // self-consistent.
-export function deriveRange(baseVersion, branch) {
-  return `^${deriveVersion(baseVersion, branch)}`;
+export function deriveRange(baseVersion, branch, channels = CHANNELS) {
+  return `^${deriveVersion(baseVersion, branch, channels)}`;
 }
 
 // Registry state, E404-strict: a 404 is the ONLY signal that a package is

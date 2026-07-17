@@ -19,7 +19,7 @@
 // network failure fails the run rather than being read as "absent".
 import {readFileSync, appendFileSync} from 'node:fs';
 import {execFileSync} from 'node:child_process';
-import {channelFor, deriveVersion, publishedVersions} from './npm-channel.mjs';
+import {channelFor, deriveVersion, publishedVersions, BLUETOOTH_SDK_CHANNELS} from './npm-channel.mjs';
 
 const packagePath = 'mobile/modules/bluetooth-sdk/package.json';
 const SWIFTPM_REPO = 'https://github.com/Mentra-Community/mentra-bluetooth-sdk-ios.git';
@@ -42,8 +42,8 @@ const currentPackage = JSON.parse(readFileSync(packagePath, 'utf8'));
 if (!currentPackage.name) throw new Error(`Missing name in ${packagePath}`);
 if (!currentPackage.version) throw new Error(`Missing version in ${packagePath}`);
 
-const {tag} = channelFor(branch); // throws on non-channel branches
-const derived = deriveVersion(currentPackage.version, branch); // validates the base is a prerelease
+const {tag} = channelFor(branch, BLUETOOTH_SDK_CHANNELS); // throws on non-channel branches (including main)
+const derived = deriveVersion(currentPackage.version, branch, BLUETOOTH_SDK_CHANNELS); // validates the base is a prerelease
 
 // npm: E404-strict via the shared helper.
 const npmVersions = publishedVersions(currentPackage.name);
