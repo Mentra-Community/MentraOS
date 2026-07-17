@@ -589,7 +589,8 @@ class CrustModule : Module() {
                         mediaDisplayName,
                         file.length(),
                         captureTimeMillis,
-        )
+                        relativePath,
+                )
         if (existingUri != null) {
           android.util.Log.d("CrustModule", "Reusing existing gallery asset")
           return@AsyncFunction mapOf(
@@ -900,7 +901,9 @@ class CrustModule : Module() {
   /**
    * Find a completed export from a previous attempt. A crash can happen after MediaStore commits
    * but before JavaScript persists the URI receipt; the stable capture display name, size, and
-   * capture time let the retry return that receipt instead of inserting a duplicate.
+   * capture time, and Mentra album path let the retry return that receipt instead of inserting a
+   * duplicate. Scoping by album is also important before deleting interrupted pending rows: a
+   * same-named asset owned by another album must never be treated as ours.
    */
   private fun findExistingGalleryAsset(
           resolver: android.content.ContentResolver,
@@ -908,6 +911,7 @@ class CrustModule : Module() {
           displayName: String,
           size: Long,
           captureTimeMillis: Long?,
+          relativePath: String?,
   ): android.net.Uri? {
     val dateColumn = android.provider.MediaStore.Images.ImageColumns.DATE_TAKEN
     val selectionParts =
@@ -918,6 +922,20 @@ class CrustModule : Module() {
     if (captureTimeMillis != null) {
       selectionParts.add("$dateColumn = ?")
       selectionArgs.add(captureTimeMillis.toString())
+    }
+    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q &&
+                    relativePath != null
+    ) {
+      val pathWithoutTrailingSlash = relativePath.trimEnd('/')
+      selectionParts.add(
+              "(${android.provider.MediaStore.MediaColumns.RELATIVE_PATH} = ? OR " +
+                      "${android.provider.MediaStore.MediaColumns.RELATIVE_PATH} = ?)"
+      )
+      // MediaProvider normally canonicalizes RELATIVE_PATH with a trailing slash. Accept the
+      // caller's original representation too so exports created by older Android builds remain
+      // reconcilable, while still requiring an exact Mentra album match.
+      selectionArgs.add(pathWithoutTrailingSlash)
+      selectionArgs.add("$pathWithoutTrailingSlash/")
     }
     val projection =
             mutableListOf(
