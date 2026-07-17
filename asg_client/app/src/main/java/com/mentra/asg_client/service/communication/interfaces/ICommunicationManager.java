@@ -33,15 +33,19 @@ public interface ICommunicationManager {
     /**
      * Send WiFi scan results over Bluetooth
      * @param networks List of available networks (legacy format)
+     * @param scanId Correlation id of the scan that produced these results, echoed in
+     *               every chunk; null when the request carried none
      */
-    void sendWifiScanResultsOverBle(java.util.List<String> networks);
-    
+    void sendWifiScanResultsOverBle(java.util.List<String> networks, String scanId);
+
     /**
      * Send enhanced WiFi scan results over Bluetooth with security and signal info
      * @param networks List of NetworkInfo objects with enhanced data
      * @param scanComplete Whether this payload is the terminal scan response
+     * @param scanId Correlation id of the scan that produced these results, echoed in
+     *               every chunk; null when the request carried none
      */
-    void sendWifiScanResultsOverBleEnhanced(java.util.List<NetworkInfo> networks, boolean scanComplete);
+    void sendWifiScanResultsOverBleEnhanced(java.util.List<NetworkInfo> networks, boolean scanComplete, String scanId);
     
     /**
      * Send acknowledgment response

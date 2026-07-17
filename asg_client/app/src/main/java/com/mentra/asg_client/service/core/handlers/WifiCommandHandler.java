@@ -66,7 +66,7 @@ public class WifiCommandHandler implements ICommandHandler {
                 case "request_wifi_status":
                     return handleRequestWifiStatus();
                 case "request_wifi_scan":
-                    return handleRequestWifiScan();
+                    return handleRequestWifiScan(data);
                 case "set_hotspot_state":
                     return handleSetHotspotState(data);
                 case "disconnect_wifi":
@@ -265,8 +265,13 @@ public class WifiCommandHandler implements ICommandHandler {
     /**
      * Handle request WiFi scan command
      */
-    public boolean handleRequestWifiScan() {
+    public boolean handleRequestWifiScan(JSONObject data) {
         try {
+            // Optional correlation id echoed in every wifi_scan_result chunk so the
+            // phone can tie results to this scan. Captured per request so overlapping
+            // scans each stamp their own chunks.
+            String requestedScanId = data.optString("scanId", "");
+            String scanId = requestedScanId.isEmpty() ? null : requestedScanId;
             INetworkManager networkManager = serviceManager.getNetworkManager();
             if (networkManager != null) {
                 new Thread(() -> {
@@ -277,30 +282,33 @@ public class WifiCommandHandler implements ICommandHandler {
                             public void onNetworksFoundEnhanced(List<NetworkInfo> networks) {
                                 Log.d(TAG, "📡 Streaming " + networks.size() + " enhanced WiFi networks to phone");
                                 // Send each batch of networks immediately as they're found
-                                communicationManager.sendWifiScanResultsOverBleEnhanced(networks, false);
+                                communicationManager.sendWifiScanResultsOverBleEnhanced(networks, false, scanId);
                             }
 
                             @Override
                             public void onScanComplete(int totalNetworksFound) {
                                 Log.d(TAG, "📡 WiFi scan completed, total networks found: " + totalNetworksFound);
-                                communicationManager.sendWifiScanResultsOverBleEnhanced(new ArrayList<>(), true);
+                                communicationManager.sendWifiScanResultsOverBleEnhanced(new ArrayList<>(), true, scanId);
                             }
 
                             @Override
                             public void onScanError(String error) {
                                 Log.e(TAG, "📡 WiFi scan error: " + error);
                                 // Send empty list on error to indicate scan failure
-                                communicationManager.sendWifiScanResultsOverBleEnhanced(new ArrayList<>(), true);
+                                communicationManager.sendWifiScanResultsOverBleEnhanced(new ArrayList<>(), true, scanId);
                             }
                         });
                     } catch (Exception e) {
                         Log.e(TAG, "Error scanning for WiFi networks", e);
-                        communicationManager.sendWifiScanResultsOverBleEnhanced(new ArrayList<>(), true);
+                        communicationManager.sendWifiScanResultsOverBleEnhanced(new ArrayList<>(), true, scanId);
                     }
                 }).start();
                 return true;
             } else {
                 Log.e(TAG, "Network manager not available for WiFi scan");
+                // Terminal empty result so the phone fails fast instead of waiting
+                // out its scan timeout.
+                communicationManager.sendWifiScanResultsOverBleEnhanced(new ArrayList<>(), true, scanId);
                 return false;
             }
         } catch (Exception e) {
