@@ -4874,8 +4874,7 @@ public class MediaCaptureService {
                                         PhotoCaptureTestHooks.getErrorMessage());
                                 if (capturedPhoto != null) {
                                     // Never let cleanup race the background write.
-                                    capturedPhoto.awaitPersistence(
-                                            AsgConstants.BLE_PHOTO_PERSISTENCE_AWAIT_TIMEOUT_MS);
+                                    capturedPhoto.awaitPersistenceCompletion();
                                 }
                                 cleanupPhotoArtifacts(
                                         requestId,
@@ -5460,9 +5459,7 @@ public class MediaCaptureService {
                                                             originalPath,
                                                             requestId,
                                                             roi)
-                                                    : capturedPhoto.awaitPersistence(
-                                                            AsgConstants
-                                                                    .BLE_PHOTO_PERSISTENCE_AWAIT_TIMEOUT_MS);
+                                                    : capturedPhoto.awaitPersistenceCompletion();
                                     if (!persisted) {
                                         sendPhotoErrorResponse(
                                                 requestId,
@@ -5516,9 +5513,13 @@ public class MediaCaptureService {
                                     // sensor-JPEG write. Text mode uses a completed no-persistence
                                     // future and writes only its final selection above.
                                     if (!(!savePhoto && capturedPhoto.cancelPersistence())) {
-                                        capturedPhoto.awaitPersistence(
-                                                AsgConstants
-                                                        .BLE_PHOTO_PERSISTENCE_AWAIT_TIMEOUT_MS);
+                                        if (savePhoto) {
+                                            capturedPhoto.awaitPersistenceCompletion();
+                                        } else {
+                                            capturedPhoto.awaitPersistence(
+                                                    AsgConstants
+                                                            .BLE_PHOTO_PERSISTENCE_AWAIT_TIMEOUT_MS);
+                                        }
                                     }
                                 }
                                 cleanupPhotoArtifacts(requestId, originalPath, savePhoto);

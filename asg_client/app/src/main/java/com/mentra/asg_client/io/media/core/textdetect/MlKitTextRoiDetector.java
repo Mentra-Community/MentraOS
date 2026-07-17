@@ -40,7 +40,7 @@ public final class MlKitTextRoiDetector implements AutoCloseable {
     private final int analysisLongEdge;
 
     private final AtomicReference<Task<Text>> warmupTask = new AtomicReference<>();
-    private boolean closed;
+    private volatile boolean closed;
 
     public MlKitTextRoiDetector() {
         this(AsgConstants.TEXT_MODE_MLKIT_ANALYSIS_LONG_EDGE);
@@ -60,26 +60,28 @@ public final class MlKitTextRoiDetector implements AutoCloseable {
     }
 
     /** Starts model initialization while the camera is capturing. Safe to call repeatedly. */
-    public synchronized void warmUp() {
-        if (closed || warmupTask.get() != null) {
-            return;
+    public void warmUp() {
+        synchronized (warmupTask) {
+            if (closed || warmupTask.get() != null) {
+                return;
+            }
+            Bitmap blank = Bitmap.createBitmap(64, 64, Bitmap.Config.ARGB_8888);
+            blank.eraseColor(Color.WHITE);
+            long startMs = SystemClock.elapsedRealtime();
+            Task<Text> task = recognizer.process(InputImage.fromBitmap(blank, 0));
+            warmupTask.set(task);
+            task.addOnCompleteListener(
+                    completedTask -> {
+                        blank.recycle();
+                        handleWarmupCompletion(completedTask);
+                        Log.i(
+                                TAG,
+                                "ML Kit warmup finished in "
+                                        + (SystemClock.elapsedRealtime() - startMs)
+                                        + "ms success="
+                                        + completedTask.isSuccessful());
+                    });
         }
-        Bitmap blank = Bitmap.createBitmap(64, 64, Bitmap.Config.ARGB_8888);
-        blank.eraseColor(Color.WHITE);
-        long startMs = SystemClock.elapsedRealtime();
-        Task<Text> task = recognizer.process(InputImage.fromBitmap(blank, 0));
-        warmupTask.set(task);
-        task.addOnCompleteListener(
-                completedTask -> {
-                    blank.recycle();
-                    handleWarmupCompletion(completedTask);
-                    Log.i(
-                            TAG,
-                            "ML Kit warmup finished in "
-                                    + (SystemClock.elapsedRealtime() - startMs)
-                                    + "ms success="
-                                    + completedTask.isSuccessful());
-                });
     }
 
     private void handleWarmupCompletion(Task<Text> completedTask) {
@@ -332,9 +334,11 @@ public final class MlKitTextRoiDetector implements AutoCloseable {
 
     @Override
     public synchronized void close() {
-        if (!closed) {
-            closed = true;
-            recognizer.close();
+        synchronized (warmupTask) {
+            if (!closed) {
+                closed = true;
+                recognizer.close();
+            }
         }
     }
 

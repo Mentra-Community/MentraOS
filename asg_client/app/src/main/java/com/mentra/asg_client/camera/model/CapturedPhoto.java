@@ -59,6 +59,30 @@ public final class CapturedPhoto {
     }
 
     /**
+     * Waits for a required gallery write to reach a terminal result. Interrupts are restored after
+     * the write resolves so callers never report a save failure while the same write is still able
+     * to publish the file.
+     */
+    public boolean awaitPersistenceCompletion() {
+        boolean interrupted = false;
+        try {
+            while (true) {
+                try {
+                    return Boolean.TRUE.equals(persistence.get());
+                } catch (InterruptedException e) {
+                    interrupted = true;
+                } catch (ExecutionException | CancellationException e) {
+                    return false;
+                }
+            }
+        } finally {
+            if (interrupted) {
+                Thread.currentThread().interrupt();
+            }
+        }
+    }
+
+    /**
      * Try to cancel the background write for photos that will never be kept (save=false). Returns
      * true when the write was cancelled before starting — nothing was or will be written. When
      * cancellation loses the race, the caller must await and clean the file up as usual.
