@@ -447,6 +447,9 @@ public class MediaCaptureService {
                                     canonicalPath,
                                     sourceRegion,
                                     new android.graphics.BitmapFactory.Options());
+                    if (selected == null) {
+                        selected = decodeFullJpegAndCrop(capturedPhoto.jpegBytes, sourceRegion);
+                    }
                 }
                 if (selected != null) {
                     try (FileOutputStream output = new FileOutputStream(preparedFile)) {
@@ -2688,33 +2691,53 @@ public class MediaCaptureService {
                             try {
                                 textModeProcessingExecutor.execute(
                                         () -> {
-                                            TextRegionDetection detection =
-                                                    runTextRegionDetection(
-                                                            capturedPhoto.jpegBytes, filePath);
-                                            String outputPath =
-                                                    save
-                                                            ? filePath
-                                                            : transientTextUploadPath(filePath);
-                                            if (!persistTextModeSelectionFromMemory(
-                                                    capturedPhoto,
-                                                    outputPath,
-                                                    filePath,
-                                                    requestId,
-                                                    detection.roi,
-                                                    save)) {
-                                                cleanupPhotoArtifacts(requestId, filePath, false);
-                                                clearPhotoTracking(requestId);
-                                                releasePhotoJob(requestId);
-                                                sendPhotoErrorResponse(
+                                            try {
+                                                TextRegionDetection detection =
+                                                        runTextRegionDetection(
+                                                                capturedPhoto.jpegBytes, filePath);
+                                                String outputPath =
+                                                        save
+                                                                ? filePath
+                                                                : transientTextUploadPath(filePath);
+                                                if (!persistTextModeSelectionFromMemory(
+                                                        capturedPhoto,
+                                                        outputPath,
+                                                        filePath,
                                                         requestId,
-                                                        "PHOTO_SAVE_FAILED",
-                                                        "Could not prepare text-mode upload");
-                                                return;
+                                                        detection.roi,
+                                                        save)) {
+                                                    cleanupPhotoArtifacts(
+                                                            requestId, filePath, false);
+                                                    clearPhotoTracking(requestId);
+                                                    releasePhotoJob(requestId);
+                                                    sendPhotoErrorResponse(
+                                                            requestId,
+                                                            "PHOTO_SAVE_FAILED",
+                                                            "Could not prepare text-mode upload");
+                                                    return;
+                                                }
+                                                if (!save) {
+                                                    photoOriginalPaths.put(requestId, outputPath);
+                                                }
+                                                onPhotoCaptured(outputPath, captureMetadata);
+                                            } catch (RuntimeException processingError) {
+                                                Log.e(
+                                                        TAG,
+                                                        "Text-mode processing failed for "
+                                                                + requestId,
+                                                        processingError);
+                                                try {
+                                                    cleanupPhotoArtifacts(
+                                                            requestId, filePath, false);
+                                                    clearPhotoTracking(requestId);
+                                                    sendPhotoErrorResponse(
+                                                            requestId,
+                                                            "PHOTO_SAVE_FAILED",
+                                                            "Could not prepare text-mode upload");
+                                                } finally {
+                                                    releasePhotoJob(requestId);
+                                                }
                                             }
-                                            if (!save) {
-                                                photoOriginalPaths.put(requestId, outputPath);
-                                            }
-                                            onPhotoCaptured(outputPath, captureMetadata);
                                         });
                             } catch (RejectedExecutionException executorClosed) {
                                 cleanupPhotoArtifacts(requestId, filePath, false);
@@ -3094,6 +3117,39 @@ public class MediaCaptureService {
             if (decoder != null) {
                 decoder.recycle();
             }
+        }
+    }
+
+    /** Full-decode fallback for devices or JPEGs that reject region decoding. */
+    @Nullable
+    static android.graphics.Bitmap decodeFullJpegAndCrop(
+            byte[] jpegBytes, android.graphics.Rect sourceRegion) {
+        android.graphics.Bitmap fullFrame = null;
+        try {
+            fullFrame =
+                    android.graphics.BitmapFactory.decodeByteArray(jpegBytes, 0, jpegBytes.length);
+            if (fullFrame == null) {
+                return null;
+            }
+            android.graphics.Rect clamped =
+                    clampRoiToBounds(sourceRegion, fullFrame.getWidth(), fullFrame.getHeight());
+            android.graphics.Bitmap cropped =
+                    android.graphics.Bitmap.createBitmap(
+                            fullFrame,
+                            clamped.left,
+                            clamped.top,
+                            clamped.width(),
+                            clamped.height());
+            if (cropped != fullFrame) {
+                fullFrame.recycle();
+            }
+            return cropped;
+        } catch (RuntimeException error) {
+            Log.w(TAG, "Full JPEG decode-and-crop fallback failed", error);
+            if (fullFrame != null && !fullFrame.isRecycled()) {
+                fullFrame.recycle();
+            }
+            return null;
         }
     }
 
