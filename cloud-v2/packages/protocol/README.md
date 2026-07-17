@@ -24,7 +24,10 @@ npm install @mentra/cloud-protocol@dev
 ## Usage
 
 ```ts
-import {parseEnvelope} from "@mentra/cloud-protocol";
+import {envelopeSchema, PROTOCOL_MAJOR, type Envelope} from "@mentra/cloud-protocol";
+
+const message: Envelope = envelopeSchema.parse(JSON.parse(raw));
+
 // or per-module subpaths:
 import {normalizePhotoSizeTier} from "@mentra/cloud-protocol/camera";
 ```

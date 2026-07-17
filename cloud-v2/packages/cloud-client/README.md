@@ -22,7 +22,7 @@ npm install @mentra/cloud-client@dev
 
 | Import | Use |
 | --- | --- |
-| `@mentra/cloud-client` | platform-neutral core (client, modules, protocol re-exports) |
+| `@mentra/cloud-client` | platform-neutral core: `CloudClient` plus the public config, transport, and error types (wire-protocol types are deliberately *not* re-exported — import those from `@mentra/cloud-protocol`) |
 | `@mentra/cloud-client/react-native` | React Native transport bindings (used by the engine) |
 | `@mentra/cloud-client/node` | Node transport bindings — requires the optional [`ws`](https://www.npmjs.com/package/ws) peer (`npm i ws`) |
 

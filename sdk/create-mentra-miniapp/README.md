@@ -24,7 +24,7 @@ TypeScript setup. Dependency pins are stamped at publish time to the exact
 SDK versions this scaffolder shipped with, so a generated project installs
 on any release channel.
 
-To publish a finished miniapp to the Mentra store, see
+To publish a finished miniapp to the Mentra Miniapp Store, see
 [`@mentra/cli`](https://www.npmjs.com/package/@mentra/cli) (`mentra login` /
 `mentra publish`).
 
