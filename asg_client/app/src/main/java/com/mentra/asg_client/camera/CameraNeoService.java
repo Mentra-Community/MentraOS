@@ -1372,7 +1372,7 @@ public class CameraNeoService extends LifecycleService {
                     photoSession.previewJpegQuality(),
                     jpegOrientation,
                     mCameraSettings,
-                    forVideo ? false : photoSession.previewZslEnabled());
+                    forVideo ? false : photoSession.previewZslMfnrEnabled());
 
             CameraCaptureSession.StateCallback sessionStateCallback =
                     new CameraCaptureSession.StateCallback() {
