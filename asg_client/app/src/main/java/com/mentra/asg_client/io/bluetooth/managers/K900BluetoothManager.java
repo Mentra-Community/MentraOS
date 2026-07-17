@@ -444,6 +444,9 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     public void resetPhoneWireProtocolState() {
         BesWireFormat.resetBinaryProtocol();
         inboundBinaryReassembler.clear();
+        // Pending wake grants die with the reassemblies they belong to: a new session
+        // reusing an old msgId must not inherit a stale completion-time wake grant.
+        pendingBinaryWakeMsgIds.clear();
         wireV2HandshakeSent = false;
     }
 
