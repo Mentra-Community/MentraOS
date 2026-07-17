@@ -661,7 +661,7 @@ public class CrustModule: Module {
         options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
 
         let assets = PHAsset.fetchAssets(with: options)
-        var stableIdentifiers: [String] = []
+        var stableCandidates: [PHAsset] = []
         var legacyCandidates: [PHAsset] = []
         assets.enumerateObjects { asset, _, _ in
             let resources = PHAssetResource.assetResources(for: asset)
@@ -669,7 +669,7 @@ public class CrustModule: Module {
                 resources.contains { $0.originalFilename == stableName }
             } ?? false
             if stableMatch {
-                stableIdentifiers.append(asset.localIdentifier)
+                stableCandidates.append(asset)
                 return
             }
             let legacyNameMatch = resources.contains {
@@ -680,13 +680,17 @@ public class CrustModule: Module {
             }
             if legacyNameMatch { legacyCandidates.append(asset) }
         }
-        // Capture-derived names are stable. If an older retry already created duplicates,
-        // reuse the newest completed asset instead of inserting another.
-        if let stableIdentifier = stableIdentifiers.first { return stableIdentifier }
-
-        // PhotoKit's original-resource lookups are asynchronous. Resolve legacy candidates
-        // after enumeration so the fetch callback never blocks the Photos framework.
         guard let expectedFileSize else { return nil }
+        // PhotoKit's original-resource lookups are asynchronous. Resolve candidates after
+        // enumeration so the fetch callback never blocks the Photos framework. Stable names
+        // may repeat across a restored/older library; require the generation's exact byte size
+        // and reuse the newest matching completed asset.
+        for asset in stableCandidates {
+            if await self.assetOriginalFile(asset, matchesByteCount: expectedFileSize) {
+                return asset.localIdentifier
+            }
+        }
+
         var legacyIdentifiers: [String] = []
         for asset in legacyCandidates {
             if await self.assetOriginalFile(asset, matchesByteCount: expectedFileSize) {

@@ -120,7 +120,7 @@ export function GalleryCameraRollSetting() {
   }
 
   const status = getStatusText(summary, enabled)
-  const needsAction = summary.blockedPermission > 0 || summary.failed > 0
+  const needsAction = summary.blockedPermission > 0 || summary.failed > 0 || summary.missing > 0
 
   return (
     <View>

@@ -138,7 +138,9 @@ class CameraRollExportCoordinator {
 
   private nextEligibleState(current?: CameraRollExportEntry["state"]): CameraRollExportEntry["state"] {
     if (!this.enabled) return "NOT_REQUESTED"
-    if (current === "FAILED_PERMANENT" || current === "MISSING_LOCAL") return current
+    // Reconciliation only calls this for files that are present in the durable local index.
+    // A previous filesystem miss was transient if that same generation is visible again.
+    if (current === "FAILED_PERMANENT") return current
     return "QUEUED"
   }
 
@@ -302,8 +304,12 @@ class CameraRollExportCoordinator {
 
   retryNow(): void {
     for (const entry of cameraRollExportLedger.list()) {
-      if (entry.state === "FAILED_RETRYABLE" || entry.state === "BLOCKED_PERMISSION") {
-        cameraRollExportLedger.update(entry.id, {state: "QUEUED", nextRetryAt: undefined})
+      if (
+        entry.state === "FAILED_RETRYABLE" ||
+        entry.state === "BLOCKED_PERMISSION" ||
+        entry.state === "MISSING_LOCAL"
+      ) {
+        cameraRollExportLedger.update(entry.id, {state: "QUEUED", nextRetryAt: undefined, lastError: undefined})
       }
     }
     void this.resume("manual retry")

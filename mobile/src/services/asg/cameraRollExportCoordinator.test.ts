@@ -166,6 +166,40 @@ describe("cameraRollExportCoordinator", () => {
     expect(cameraRollExportLedger.list()[0].state).toBe("BLOCKED_PERMISSION")
   })
 
+  it("retries an item after a transient local filesystem miss", async () => {
+    const file = legacyFile("IMG_transient_missing")
+    mockFiles[file.name] = file
+    ;(RNFS.exists as jest.Mock).mockResolvedValue(false)
+
+    await cameraRollExportCoordinator.initialize()
+    await cameraRollExportCoordinator.resume("missing")
+    expect(cameraRollExportLedger.list()[0].state).toBe("MISSING_LOCAL")
+    ;(RNFS.exists as jest.Mock).mockResolvedValue(true)
+    cameraRollExportCoordinator.retryNow()
+    await cameraRollExportCoordinator.resume("file restored")
+
+    expect(MediaLibraryPermissions.saveToLibraryWithReceipt).toHaveBeenCalledWith(file.filePath, file.modified)
+    expect(cameraRollExportCoordinator.getSummary()).toMatchObject({exported: 1, missing: 0})
+  })
+
+  it("requeues a previously missing generation when restart reconciliation sees it again", async () => {
+    const file = legacyFile("IMG_missing_at_restart")
+    mockFiles[file.name] = file
+    ;(RNFS.exists as jest.Mock).mockResolvedValue(false)
+
+    await cameraRollExportCoordinator.initialize()
+    await cameraRollExportCoordinator.resume("missing")
+    expect(cameraRollExportLedger.list()[0].state).toBe("MISSING_LOCAL")
+
+    cameraRollExportCoordinator.cleanup()
+    ;(RNFS.exists as jest.Mock).mockResolvedValue(true)
+    await cameraRollExportCoordinator.initialize()
+    await cameraRollExportCoordinator.resume("restart")
+
+    expect(MediaLibraryPermissions.saveToLibraryWithReceipt).toHaveBeenCalledWith(file.filePath, file.modified)
+    expect(cameraRollExportCoordinator.getSummary()).toMatchObject({exported: 1, missing: 0})
+  })
+
   it("does not duplicate an unreceipted legacy export under limited iOS access", async () => {
     const file = legacyFile()
     mockFiles[file.name] = file
