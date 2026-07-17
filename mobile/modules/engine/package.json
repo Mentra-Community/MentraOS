@@ -97,6 +97,7 @@
     "expo-battery": "*",
     "expo-audio": "*",
     "expo-clipboard": "*",
+    "expo-calendar": "*",
     "expo-constants": "*",
     "expo-location": "*",
     "expo-task-manager": "*",

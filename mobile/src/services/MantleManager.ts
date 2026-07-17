@@ -11,7 +11,7 @@ import {BUNDLED_MINIAPPS} from "@/generated/bundledMiniapps"
 import {CHINA_HIDDEN_APPS, isChinaBuild} from "@/constants/miniapps"
 import {migrate} from "@/services/Migrations"
 import {cloudConfigValues} from "@/services/cloudClient"
-import {engine, BgTimer} from "@mentra/engine"
+import {engine, BgTimer, SETTINGS} from "@mentra/engine"
 import {
   appRegistry,
   displayProcessor,
@@ -24,7 +24,6 @@ import {
   micStateCoordinator,
   offlineSpeechModelService,
 } from "@mentra/engine/internal"
-import {SETTINGS} from "@mentra/engine"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 import {useDebugStore} from "@/stores/debug"
 import {checkFeaturePermissions, PermissionFeatures} from "@/utils/PermissionsUtils"
@@ -348,9 +347,12 @@ class MantleManager {
   private async setupPeriodicTasks() {
     this.sendCalendarEvents()
     // Calendar sync every hour
-    this.calendarSyncTimer = BgTimer.setInterval(() => {
-      this.sendCalendarEvents()
-    }, 60 * 60 * 1000) // 1 hour
+    this.calendarSyncTimer = BgTimer.setInterval(
+      () => {
+        this.sendCalendarEvents()
+      },
+      60 * 60 * 1000,
+    ) // 1 hour
 
     try {
       // only start location updates if we have the location permission (host UI gate);
@@ -660,23 +662,6 @@ class MantleManager {
         await BluetoothSdk.setCalendarEvents(shapedEvents)
       } catch (error) {
         console.warn("MANTLE: Failed to sync calendar events to glasses", error)
-      }
-
-      // Direct forward to local miniapps. Emit one event per calendar entry
-      // so miniapps can treat them as a stream rather than a digest.
-      // Gated by CALENDAR in miniapp.json at subscribe time.
-      for (const ev of events) {
-        localMiniappRuntime.forwardEvent("calendar_event", {
-          eventId: ev.id,
-          title: ev.title,
-          dtStart: ev.startDate,
-          dtEnd: ev.endDate,
-          timezone: ev.timeZone ?? "",
-          allDay: !!ev.allDay,
-          location: ev.location ?? "",
-          notes: ev.notes ?? "",
-          calendarId: ev.calendarId,
-        })
       }
     } catch (error) {
       // it's fine if this fails

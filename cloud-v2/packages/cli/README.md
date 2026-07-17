@@ -13,14 +13,14 @@ It wraps [`@mentra/miniapp-cli`](https://www.npmjs.com/package/@mentra/miniapp-c
 ## Install
 
 ```bash
-bun add -g @mentra/cli@alpha
+bun add -g @mentra/cli@dev
 mentra --help
 ```
 
 Or run without installing:
 
 ```bash
-bunx @mentra/cli@alpha --help
+bunx @mentra/cli@dev --help
 ```
 
 ## Common commands

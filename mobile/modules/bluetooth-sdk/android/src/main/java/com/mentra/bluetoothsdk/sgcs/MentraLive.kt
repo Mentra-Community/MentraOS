@@ -3137,7 +3137,12 @@ class MentraLive : SGCManager() {
                     DeviceStore.apply("glasses", "wifiError", "")
                 }
 
-                updateWifiStatus(wifiConnectedStatus, ssid, localIp)
+                updateWifiStatus(
+                        wifiConnectedStatus,
+                        ssid,
+                        localIp,
+                        wifiError.takeIf { it.isNotEmpty() }
+                )
             }
             "hotspot_status_update" -> {
                 // Process hotspot status information (same pattern as "wifi_status")
@@ -4458,7 +4463,20 @@ class MentraLive : SGCManager() {
 
                         val syntheticStatus: String
                         if ("FINISHED" == besOtaStatus) {
-                            syntheticStatus = "step_complete"
+                            // The glasses power-cycle right after the final BES tick, so a
+                            // session whose BES step is the LAST step never gets a follow-up
+                            // ota_status from the glasses — consumers mapping on this synthetic
+                            // status would otherwise never see a terminal state. Emit "complete"
+                            // for the final step; mid-session BES steps keep "step_complete" so
+                            // session-level trackers advance normally. Unknown sessions
+                            // (cachedOtaTotalSteps == 0, e.g. legacy glasses that never sent an
+                            // ota_status) conservatively keep "step_complete".
+                            syntheticStatus =
+                                    if (cachedOtaTotalSteps > 0 &&
+                                                    cachedOtaCurrentStep >= cachedOtaTotalSteps
+                                    )
+                                            "complete"
+                                    else "step_complete"
                         } else if ("FAILED" == besOtaStatus) {
                             syntheticStatus = "failed"
                         } else {
@@ -4702,7 +4720,12 @@ class MentraLive : SGCManager() {
     /**
      * Update WiFi status and notify listeners Matches iOS MentraLive.swift updateWifiStatus pattern
      */
-    private fun updateWifiStatus(connected: Boolean, ssid: String, localIp: String) {
+    private fun updateWifiStatus(
+            connected: Boolean,
+            ssid: String,
+            localIp: String,
+            error: String? = null
+    ) {
         Bridge.log("LIVE: 🌐 Updating WiFi status - connected: " + connected + ", SSID: " + ssid)
 
         // Update parent SGCManager fields
@@ -4711,7 +4734,7 @@ class MentraLive : SGCManager() {
         DeviceStore.apply("glasses", "wifiLocalIp", localIp)
 
         // Send event to bridge for cloud communication
-        Bridge.sendWifiStatusChange(connected, ssid, localIp)
+        Bridge.sendWifiStatusChange(connected, ssid, localIp, error)
     }
 
     /**

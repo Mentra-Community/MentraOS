@@ -157,8 +157,8 @@ public abstract class BaseMediaCommandHandler implements ICommandHandler {
      * subdirectory. Use this for captures the caller does NOT want saved to the gallery
      * (e.g. SDK photo requests with {@code save=false}): the file is invisible to
      * {@link FileManager#listFiles(String)} so it cannot leak into the gallery count or the
-     * Wi-Fi sync server's listing while the upload is in flight, and the existing periodic
-     * {@code cleanupOldFiles} sweep still age-cleans any orphans left by a crash.
+     * Wi-Fi sync server's listing while the upload is in flight, and the periodic
+     * {@code cleanupOldSdkPendingFiles} sweep still age-cleans any orphans left by a crash.
      */
     protected String generateTransientCaptureFilePath(
             String packageName, String prefix, String extension, String requestId) {
@@ -204,4 +204,4 @@ public abstract class BaseMediaCommandHandler implements ICommandHandler {
             Log.e(TAG, commandType + " command failed: " + errorMessage);
         }
     }
-} 
+}

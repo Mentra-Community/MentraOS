@@ -140,7 +140,8 @@ public abstract class AsgServer extends NanoHTTPD {
         logger.debug(getTag(), "🔍 =========================================");
 
         // Rate limiting
-        if (!rateLimiter.isAllowed(clientIp)) {
+        boolean rateLimitedRequest = shouldRateLimit(session);
+        if (rateLimitedRequest && !rateLimiter.isAllowed(clientIp)) {
             logger.warn(getTag(), "🚫 Rate limit exceeded for IP: " + clientIp);
             return newFixedLengthResponse(
                 Response.Status.TOO_MANY_REQUESTS, 
@@ -150,7 +151,9 @@ public abstract class AsgServer extends NanoHTTPD {
         }
         
         // Record the request for rate limiting
-        rateLimiter.recordRequest(clientIp);
+        if (rateLimitedRequest) {
+            rateLimiter.recordRequest(clientIp);
+        }
 
         // CORS headers for cross-origin requests
         Map<String, String> headers = new HashMap<>();
@@ -178,6 +181,11 @@ public abstract class AsgServer extends NanoHTTPD {
                 "Internal server error: " + e.getMessage()
             );
         }
+    }
+
+    /** Allow specialized local servers to exempt safe, high-volume transfer requests. */
+    protected boolean shouldRateLimit(IHTTPSession session) {
+        return true;
     }
 
     /**
@@ -284,4 +292,4 @@ public abstract class AsgServer extends NanoHTTPD {
         // This would need to be set when server starts
         return System.currentTimeMillis() - 1000; // Placeholder
     }
-} 
+}

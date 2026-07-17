@@ -310,6 +310,7 @@
         "expo": "*",
         "expo-audio": "*",
         "expo-battery": "*",
+        "expo-calendar": "*",
         "expo-clipboard": "*",
         "expo-constants": "*",
         "expo-file-system": "*",

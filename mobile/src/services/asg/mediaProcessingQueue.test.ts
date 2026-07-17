@@ -3,8 +3,15 @@ import * as RNFS from "@dr.pogodin/react-native-fs"
 import {localStorageService} from "../../../modules/engine/src/services/asg/localStorageService"
 import {reportInvalidGalleryMedia} from "../../../modules/engine/src/services/asg/GalleryMediaIntegrityReportService"
 import {useGallerySyncStore} from "../../../modules/engine/src/stores/gallerySync"
+import {asgCameraApi} from "../../../modules/engine/src/services/asg/asgCameraApi"
+// The durable ledger is engine-internal; this host test exercises restart recovery directly.
+import {galleryTransferLedger} from "../../../modules/engine/src/services/asg/galleryTransferLedger"
+import {MediaLibraryPermissions} from "../../../modules/engine/src/utils/permissions/MediaLibraryPermissions"
+
+import {mediaProcessingQueue} from "../../../modules/engine/src/services/asg/mediaProcessingQueue"
 
 jest.mock("@dr.pogodin/react-native-fs", () => ({
+  DocumentDirectoryPath: "/tmp",
   exists: jest.fn(),
   stat: jest.fn(),
   read: jest.fn(),
@@ -19,7 +26,9 @@ jest.mock("@mentra/crust", () => ({
 
 jest.mock("../../../modules/engine/src/services/asg/asgCameraApi", () => ({
   asgCameraApi: {
-    deleteFilesFromServer: jest.fn(),
+    deleteFilesFromServer: jest.fn((files: string[]) => Promise.resolve({deleted: files, failed: []})),
+    acknowledgeCapture: jest.fn(() => Promise.resolve()),
+    restoreCapture: jest.fn(() => Promise.resolve()),
   },
 }))
 
@@ -37,10 +46,9 @@ jest.mock("../../../modules/engine/src/services/asg/GalleryMediaIntegrityReportS
 jest.mock("../../../modules/engine/src/utils/permissions/MediaLibraryPermissions", () => ({
   MediaLibraryPermissions: {
     saveToLibrary: jest.fn(),
+    saveToLibraryWithReceipt: jest.fn(() => Promise.resolve({success: true, platform: "ios", identifier: "asset"})),
   },
 }))
-
-import {mediaProcessingQueue} from "../../../modules/engine/src/services/asg/mediaProcessingQueue"
 
 describe("mediaProcessingQueue", () => {
   beforeEach(() => {
@@ -80,7 +88,9 @@ describe("mediaProcessingQueue", () => {
   it("does not compare processed output size against capture total size", async () => {
     ;(RNFS.exists as jest.Mock).mockResolvedValue(true)
     ;(RNFS.stat as jest.Mock).mockResolvedValue({size: 100})
-    ;(RNFS.read as jest.Mock).mockResolvedValue(Buffer.from([0xff, 0xd8, 0x76, 0x61, 0x6c, 0x69, 0x64]).toString("base64"))
+    ;(RNFS.read as jest.Mock).mockResolvedValue(
+      Buffer.from([0xff, 0xd8, 0x76, 0x61, 0x6c, 0x69, 0x64]).toString("base64"),
+    )
 
     mediaProcessingQueue.reset()
     mediaProcessingQueue.enqueue({
@@ -96,5 +106,115 @@ describe("mediaProcessingQueue", () => {
 
     expect(localStorageService.saveDownloadedFile).toHaveBeenCalled()
     expect(useGallerySyncStore.getState().failedFiles).not.toContain("IMG_with_sidecar")
+  })
+
+  it("never acknowledges the glasses when camera-roll export fails", async () => {
+    ;(RNFS.exists as jest.Mock).mockResolvedValue(true)
+    ;(RNFS.stat as jest.Mock).mockResolvedValue({size: 100})
+    ;(RNFS.read as jest.Mock).mockResolvedValue(
+      Buffer.from([0xff, 0xd8, 0x76, 0x61, 0x6c, 0x69, 0x64]).toString("base64"),
+    )
+    ;(MediaLibraryPermissions.saveToLibraryWithReceipt as jest.Mock).mockResolvedValueOnce({
+      success: false,
+      platform: "ios",
+      error: "PhotoKit unavailable",
+    })
+
+    mediaProcessingQueue.reset()
+    mediaProcessingQueue.enqueue({
+      id: "IMG_export_failure",
+      type: "photo",
+      primaryPath: "/tmp/IMG_export_failure/base.jpg",
+      totalSize: 100,
+      shouldProcess: false,
+      shouldAutoSave: true,
+      deleteFromGlasses: ["IMG_export_failure"],
+      protocolVersion: 3,
+    })
+
+    await expect(mediaProcessingQueue.waitUntilDrained(5000)).resolves.toBeUndefined()
+
+    expect(asgCameraApi.acknowledgeCapture).not.toHaveBeenCalled()
+    expect(asgCameraApi.deleteFilesFromServer).not.toHaveBeenCalled()
+    expect(useGallerySyncStore.getState().failedFiles).toContain("IMG_export_failure")
+  })
+
+  it("retains both copies and reports failure when the local index cannot be saved", async () => {
+    ;(RNFS.exists as jest.Mock).mockResolvedValue(true)
+    ;(RNFS.stat as jest.Mock).mockResolvedValue({size: 100})
+    ;(RNFS.read as jest.Mock).mockResolvedValue(
+      Buffer.from([0xff, 0xd8, 0x76, 0x61, 0x6c, 0x69, 0x64]).toString("base64"),
+    )
+    ;(localStorageService.saveDownloadedFile as jest.Mock).mockRejectedValueOnce(new Error("MMKV write failed"))
+
+    mediaProcessingQueue.reset()
+    mediaProcessingQueue.enqueue({
+      id: "IMG_metadata_failure",
+      type: "photo",
+      primaryPath: "/tmp/IMG_metadata_failure/base.jpg",
+      totalSize: 100,
+      shouldProcess: false,
+      shouldAutoSave: false,
+      deleteFromGlasses: ["IMG_metadata_failure"],
+      protocolVersion: 3,
+    })
+
+    await expect(mediaProcessingQueue.waitUntilDrained(5000)).resolves.toBeUndefined()
+
+    expect(asgCameraApi.acknowledgeCapture).not.toHaveBeenCalled()
+    expect(asgCameraApi.deleteFilesFromServer).not.toHaveBeenCalled()
+    expect(useGallerySyncStore.getState().failedFiles).toContain("IMG_metadata_failure")
+  })
+
+  it("retries acknowledgement from an export receipt without inserting another asset", async () => {
+    ;(RNFS.exists as jest.Mock).mockResolvedValue(true)
+    ;(RNFS.stat as jest.Mock).mockResolvedValue({size: 100})
+    const capture = {
+      capture_id: "IMG_exported_before_restart",
+      type: "photo" as const,
+      timestamp: 1000,
+      total_size: 100,
+      files: [{name: "IMG_exported_before_restart/base.jpg", size: 100, role: "primary" as const}],
+    }
+    galleryTransferLedger.ensureCapture(capture, 3)
+    const entry = galleryTransferLedger.transition(capture.capture_id, "EXPORTED", {
+      finalPath: "/tmp/IMG_exported_before_restart/base.jpg",
+      shouldAutoSave: true,
+      assetReceipt: {platform: "ios", identifier: "asset-existing", exportedAt: Date.now()},
+    })
+    const recoverySpy = jest.spyOn(galleryTransferLedger, "pendingRecovery").mockReturnValue([entry])
+
+    await expect(mediaProcessingQueue.retryPending()).resolves.toEqual({retried: 1, failed: 0})
+
+    expect(MediaLibraryPermissions.saveToLibraryWithReceipt).not.toHaveBeenCalled()
+    expect(asgCameraApi.acknowledgeCapture).toHaveBeenCalledWith(capture.capture_id, entry.ackId)
+    expect(galleryTransferLedger.get(capture.capture_id)?.state).toBe("TRASHED")
+    recoverySpy.mockRestore()
+  })
+
+  it("attempts restore for a v2-negotiated capture when committed local media disappears", async () => {
+    const capture = {
+      capture_id: "IMG_restore_missing",
+      type: "photo" as const,
+      timestamp: 1000,
+      total_size: 100,
+      files: [{name: "IMG_restore_missing/base.jpg", size: 100, role: "primary" as const}],
+    }
+    // A transient v3 capability probe failure can negotiate v2 against new glasses firmware.
+    // Recovery must still try the additive restore endpoint instead of silently losing the source.
+    galleryTransferLedger.ensureCapture(capture, 2)
+    galleryTransferLedger.transition(capture.capture_id, "TRASHED", {
+      finalPath: "/tmp/IMG_restore_missing/base.jpg",
+    })
+    galleryTransferLedger.releaseMissingLocalCommit(capture.capture_id, true)
+    const recoveryEntry = galleryTransferLedger.get(capture.capture_id)!
+    const recoverySpy = jest.spyOn(galleryTransferLedger, "pendingRecovery").mockReturnValue([recoveryEntry])
+
+    await expect(mediaProcessingQueue.retryPending()).resolves.toEqual({retried: 1, failed: 0})
+
+    expect(asgCameraApi.restoreCapture).toHaveBeenCalledWith(capture.capture_id)
+    expect(asgCameraApi.acknowledgeCapture).not.toHaveBeenCalled()
+    expect(galleryTransferLedger.get(capture.capture_id)?.state).toBe("DISCOVERED")
+    recoverySpy.mockRestore()
   })
 })

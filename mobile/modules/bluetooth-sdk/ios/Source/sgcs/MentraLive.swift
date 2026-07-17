@@ -2357,7 +2357,7 @@ class MentraLive: NSObject, SGCManager {
             } else if connected {
                 DeviceStore.shared.apply("glasses", "wifiError", "")
             }
-            updateWifiStatus(connected: connected, ssid: ssid, ip: ip)
+            updateWifiStatus(connected: connected, ssid: ssid, ip: ip, error: wifiError.isEmpty ? nil : wifiError)
 
         case "hotspot_status_update":
             let enabled = json["hotspot_enabled"] as? Bool ?? false
@@ -2887,7 +2887,17 @@ class MentraLive: NSObject, SGCManager {
 
                 let syntheticStatus: String
                 if besOtaStatus == "FINISHED" {
-                    syntheticStatus = "step_complete"
+                    // The glasses power-cycle right after the final BES tick, so a session
+                    // whose BES step is the LAST step never gets a follow-up ota_status from
+                    // the glasses — consumers mapping on this synthetic status would otherwise
+                    // never see a terminal state. Emit "complete" for the final step;
+                    // mid-session BES steps keep "step_complete" so session-level trackers
+                    // advance normally. Unknown sessions (cachedOtaTotalSteps == 0, e.g.
+                    // legacy glasses that never sent an ota_status) conservatively keep
+                    // "step_complete".
+                    syntheticStatus = (cachedOtaTotalSteps > 0 && cachedOtaCurrentStep >= cachedOtaTotalSteps)
+                        ? "complete"
+                        : "step_complete"
                 } else if besOtaStatus == "FAILED" {
                     syntheticStatus = "failed"
                 } else {
@@ -4626,12 +4636,12 @@ class MentraLive: NSObject, SGCManager {
         }
     }
 
-    private func updateWifiStatus(connected: Bool, ssid: String, ip: String) {
+    private func updateWifiStatus(connected: Bool, ssid: String, ip: String, error: String? = nil) {
         Bridge.log("LIVE: 🌐 Updating WiFi status - connected: \(connected), ssid: \(ssid)")
         DeviceStore.shared.apply("glasses", "wifiConnected", connected)
         DeviceStore.shared.apply("glasses", "wifiSsid", ssid)
         DeviceStore.shared.apply("glasses", "wifiLocalIp", ip)
-        emitWifiStatusChange()
+        emitWifiStatusChange(error: error)
     }
 
     private func updateHotspotStatus(enabled: Bool, ssid: String, password: String, ip: String) {
@@ -4925,8 +4935,8 @@ class MentraLive: NSObject, SGCManager {
     //   emitEvent("BatteryLevelEvent", body: eventBody)
     // }
 
-    private func emitWifiStatusChange() {
-        Bridge.sendWifiStatusChange(connected: wifiConnected, ssid: wifiSsid, localIp: wifiLocalIp)
+    private func emitWifiStatusChange(error: String? = nil) {
+        Bridge.sendWifiStatusChange(connected: wifiConnected, ssid: wifiSsid, localIp: wifiLocalIp, error: error)
     }
 
     private func emitHotspotStatusChange() {
