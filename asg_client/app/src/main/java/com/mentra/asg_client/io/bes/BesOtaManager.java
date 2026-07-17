@@ -31,7 +31,9 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
 
     // Wakelock timeout for BES OTA to prevent CPU sleep during firmware transfer
     private static final long WAKELOCK_TIMEOUT_MS = 300000; // 5 minutes
-    private static final long BES_TOTAL_TIMEOUT_MS = 300000; // 5 minutes total operation timeout
+    // Intentional hard cap: a healthy BES OTA must finish within 5 minutes. If it runs
+    // longer, treat the transfer as failed rather than extending the operation timeout.
+    private static final long BES_TOTAL_TIMEOUT_MS = 300000;
     private static final long BES_AUTH_TIMEOUT_MS = 30000; // 30 seconds authorization timeout
     private Context mContext;
 
