@@ -125,10 +125,12 @@ public class PhotoSessionTest {
     }
 
     @Test
-    public void dispatchNextPhotoRequest_configuredCamera_zslMfnrChange_reopens() throws Exception {
+    public void dispatchNextPhotoRequest_configuredCamera_zslChange_reopens() throws Exception {
         PhotoSession.Hooks hooks = mockConfiguredCameraHooks();
-        PhotoCaptureSettings zslOn = new PhotoCaptureSettings.Builder().zslMfnr(true).build();
-        PhotoCaptureSettings zslOff = new PhotoCaptureSettings.Builder().zslMfnr(false).build();
+        PhotoCaptureSettings zslOn =
+                new PhotoCaptureSettings.Builder().zsl(true).mfnr(false).build();
+        PhotoCaptureSettings zslOff =
+                new PhotoCaptureSettings.Builder().zsl(false).mfnr(false).build();
         QueuedPhotoRequest prior =
                 new QueuedPhotoRequest(
                         "/tmp/zsl-on.jpg", "large", false, true, null, null, zslOn, null);
@@ -153,6 +155,39 @@ public class PhotoSessionTest {
         verify(hooks).cancelKeepAliveTimer();
         verify(hooks).closeCamera();
         verify(hooks).openCameraInternal("/tmp/zsl-off.jpg", false);
+    }
+
+    @Test
+    public void dispatchNextPhotoRequest_configuredCamera_mfnrChange_reopens() throws Exception {
+        PhotoSession.Hooks hooks = mockConfiguredCameraHooks();
+        PhotoCaptureSettings mfnrOn =
+                new PhotoCaptureSettings.Builder().zsl(true).mfnr(true).build();
+        PhotoCaptureSettings mfnrOff =
+                new PhotoCaptureSettings.Builder().zsl(true).mfnr(false).build();
+        QueuedPhotoRequest prior =
+                new QueuedPhotoRequest(
+                        "/tmp/mfnr-on.jpg", "large", false, true, null, null, mfnrOn, null);
+        PhotoSession session = new PhotoSession(hooks);
+        activateQueuedRequest(session, prior);
+        clearActiveCapture(session);
+
+        QueuedPhotoRequestQueue.getInstance()
+                .offer(
+                        new QueuedPhotoRequest(
+                                "/tmp/mfnr-off.jpg",
+                                "large",
+                                false,
+                                true,
+                                null,
+                                null,
+                                mfnrOff,
+                                null));
+
+        session.dispatchNextPhotoRequest();
+
+        verify(hooks).cancelKeepAliveTimer();
+        verify(hooks).closeCamera();
+        verify(hooks).openCameraInternal("/tmp/mfnr-off.jpg", false);
     }
 
     @Test
@@ -481,21 +516,25 @@ public class PhotoSessionTest {
                         PhotoCaptureSettings.EMPTY,
                         null));
 
-        assertThat(session.previewZslMfnrEnabled()).isTrue();
-        Method resolve =
-                PhotoSession.class.getDeclaredMethod(
-                        "resolveZslMfnrForCapture", boolean.class);
-        resolve.setAccessible(true);
-        assertThat(resolve.invoke(session, false)).isEqualTo(true);
-        assertThat(resolve.invoke(session, true)).isEqualTo(false);
+        assertThat(session.previewZslEnabled()).isTrue();
+        Method resolveZsl =
+                PhotoSession.class.getDeclaredMethod("resolveZslForCapture", boolean.class);
+        resolveZsl.setAccessible(true);
+        Method resolveMfnr =
+                PhotoSession.class.getDeclaredMethod("resolveMfnrForCapture", boolean.class);
+        resolveMfnr.setAccessible(true);
+        assertThat(resolveZsl.invoke(session, false)).isEqualTo(true);
+        assertThat(resolveMfnr.invoke(session, false)).isEqualTo(true);
+        assertThat(resolveZsl.invoke(session, true)).isEqualTo(false);
+        assertThat(resolveMfnr.invoke(session, true)).isEqualTo(false);
     }
 
     @Test
-    public void resolveZslMfnrForCapture_manualExposureForcesOffWhenRequestEnabled()
+    public void resolveZslAndMfnrForCapture_manualExposureForcesOffWhenRequestEnabled()
             throws Exception {
         PhotoSession.Hooks hooks = mockConfiguredCameraHooks();
         PhotoCaptureSettings enabled =
-                new PhotoCaptureSettings.Builder().zslMfnr(true).build();
+                new PhotoCaptureSettings.Builder().zsl(true).mfnr(true).build();
         PhotoSession session = new PhotoSession(hooks);
         activateQueuedRequest(
                 session,
@@ -509,31 +548,38 @@ public class PhotoSessionTest {
                         enabled,
                         null));
 
-        Method resolve =
-                PhotoSession.class.getDeclaredMethod(
-                        "resolveZslMfnrForCapture", boolean.class);
-        resolve.setAccessible(true);
-        assertThat(resolve.invoke(session, true)).isEqualTo(false);
-        assertThat(resolve.invoke(session, false)).isEqualTo(true);
+        Method resolveZsl =
+                PhotoSession.class.getDeclaredMethod("resolveZslForCapture", boolean.class);
+        resolveZsl.setAccessible(true);
+        Method resolveMfnr =
+                PhotoSession.class.getDeclaredMethod("resolveMfnrForCapture", boolean.class);
+        resolveMfnr.setAccessible(true);
+        assertThat(resolveZsl.invoke(session, true)).isEqualTo(false);
+        assertThat(resolveMfnr.invoke(session, true)).isEqualTo(false);
+        assertThat(resolveZsl.invoke(session, false)).isEqualTo(true);
+        assertThat(resolveMfnr.invoke(session, false)).isEqualTo(true);
     }
 
     @Test
-    public void resolveZslMfnrForRequest_keepsEnabledWhenManualRequestedButUnsupported()
+    public void resolveZslAndMfnrForRequest_keepsEnabledWhenManualRequestedButUnsupported()
             throws Exception {
         // hooks.capabilities() is null in mockConfiguredCameraHooks — same as still capture
         // falling back to auto when MANUAL_SENSOR is unavailable.
         PhotoSession.Hooks hooks = mockConfiguredCameraHooks();
         PhotoCaptureSettings enabled =
-                new PhotoCaptureSettings.Builder().zslMfnr(true).build();
+                new PhotoCaptureSettings.Builder().zsl(true).mfnr(true).build();
         PhotoSession session = new PhotoSession(hooks);
 
-        Method resolve =
+        Method resolveZsl =
                 PhotoSession.class.getDeclaredMethod(
-                        "resolveZslMfnrForRequest",
-                        PhotoCaptureSettings.class,
-                        Long.class);
-        resolve.setAccessible(true);
-        assertThat(resolve.invoke(session, enabled, 10_000_000L)).isEqualTo(true);
+                        "resolveZslForRequest", PhotoCaptureSettings.class, Long.class);
+        resolveZsl.setAccessible(true);
+        Method resolveMfnr =
+                PhotoSession.class.getDeclaredMethod(
+                        "resolveMfnrForRequest", PhotoCaptureSettings.class, Long.class);
+        resolveMfnr.setAccessible(true);
+        assertThat(resolveZsl.invoke(session, enabled, 10_000_000L)).isEqualTo(true);
+        assertThat(resolveMfnr.invoke(session, enabled, 10_000_000L)).isEqualTo(true);
         assertThat(session.willReuseConfiguredCamera("medium", true, 10_000_000L, enabled))
                 .isFalse(); // no baseline yet
     }
