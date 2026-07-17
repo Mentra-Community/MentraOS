@@ -195,7 +195,9 @@ jobs:
           fi
 
       - name: Dry-run npm package
-        if: steps.npm-registry.outputs.version_exists != 'true'
+        # Also on dry-run dispatches whose derived version already exists —
+        # the tarball preview is the whole point of a dry run.
+        if: steps.npm-registry.outputs.version_exists != 'true' || needs.detect.outputs.dry_run == 'true'
         working-directory: ${{ env.ENGINE_PACKAGE_DIR }}
         run: npm pack --dry-run
 
