@@ -86,9 +86,19 @@ describe("CameraModule", () => {
       {
         type: MiniappRequestType.CAMERA_WARM_UP,
         size: "high",
+        mode: "photo",
         exposureTimeNs: undefined,
         durationMs: 20_000,
       },
     ])
+  })
+
+  test("warmUp passes text mode without forcing public max quality", async () => {
+    const {session, requestCalls} = mockSession(undefined)
+    const camera = new CameraModule(session)
+
+    await camera.warmUp({size: "low", mode: "text"})
+
+    expect(requestCalls[0]).toMatchObject({size: "low", mode: "text"})
   })
 })

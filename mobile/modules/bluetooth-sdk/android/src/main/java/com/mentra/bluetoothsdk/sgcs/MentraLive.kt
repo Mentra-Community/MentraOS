@@ -34,6 +34,7 @@ import com.mentra.bluetoothsdk.Bridge
 import com.mentra.bluetoothsdk.DeviceManager
 import com.mentra.bluetoothsdk.PhotoRequest
 import com.mentra.bluetoothsdk.PhotoSize
+import com.mentra.bluetoothsdk.PhotoMode
 import com.mentra.bluetoothsdk.DeviceStore
 import com.mentra.bluetoothsdk.ObservableStore
 import com.mentra.bluetoothsdk.debug.BleTraceLogger
@@ -5488,6 +5489,7 @@ class MentraLive : SGCManager() {
     fun warmUpCamera(
         requestId: String,
         size: PhotoSize,
+        mode: PhotoMode = PhotoMode.PHOTO,
         exposureTimeNs: Long?,
         durationMs: Int,
     ) {
@@ -5496,6 +5498,8 @@ class MentraLive : SGCManager() {
                         requestId +
                         ", size=" +
                         size.value +
+                        ", mode=" +
+                        mode.value +
                         ", durationMs=" +
                         durationMs
         )
@@ -5506,6 +5510,7 @@ class MentraLive : SGCManager() {
             json.put("requestId", requestId)
             val sizeValue = size.value
             json.put("size", if (sizeValue.isNotEmpty()) sizeValue else "medium")
+            json.put("mode", mode.value)
             if (exposureTimeNs != null && exposureTimeNs > 0L) {
                 json.put("exposureTimeNs", exposureTimeNs)
             }

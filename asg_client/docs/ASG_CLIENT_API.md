@@ -88,11 +88,11 @@ Capture a still photo. The handler routes through `transferMethod` to one of thr
 | `bleImgId`       | string  | ""                  | Required for `ble` and `auto` transfer methods              |
 | `save`           | boolean | `false`             | Also save the photo to local gallery                        |
 | `size`               | string  | `"medium"`          | `low`, `medium`, `high`, or `max` (legacy `small`→`low`, `large`→`high`, `full`→`max`) |
-| `mode`               | string  | `"photo"`           | `photo` for normal capture, or `text` to capture at maximum sensor quality and enable text-aware BLE processing |
+| `mode`               | string  | `"photo"`           | `photo` for normal capture, or `text` for ASG text-sensor constants + text-aware BLE processing |
 
 **Text mode behavior**
 
-- Forces max sensor capture quality regardless of the requested `size` tier.
+- Captures at ASG-owned sensor dimensions (`TEXT_MODE_SENSOR_CAPTURE_*`, currently 3840×2160 — Mentra Live's max 16:9 still) via an internal resolution tier — not the public `max` quality tier. Requested `size` is ignored for sensor resolution.
 - Applies shorter auto-exposure (unless `exposureTimeNs` is set manually).
 - Runs text-region detection and crops to the detected/fallback ROI before BLE transfer.
 - Uses dedicated text BLE downscale/encode targets (1920 px long edge, AVIF q55).
@@ -111,8 +111,10 @@ Capture a still photo. The handler routes through `transferMethod` to one of thr
 | `ispDigitalGain`     | number  | absent              | Parsed; warn-only if unsupported                            |
 | `ispAnalogGain`      | string  | absent              | Parsed; warn-only if unsupported                            |
 
-In `text` mode, Mentra Live always captures the source JPEG at the camera's maximum
-resolution and JPEG quality. For auto-exposure captures (no `exposureTimeNs`), the glasses also
+In `text` mode, Mentra Live captures the source JPEG using ASG text-mode sensor constants
+(`TEXT_MODE_SENSOR_CAPTURE_WIDTH` × `TEXT_MODE_SENSOR_CAPTURE_HEIGHT`, currently 3840×2160),
+selecting an exact Camera2 JPEG size match when available or the closest supported size otherwise.
+For auto-exposure captures (no `exposureTimeNs`), the glasses also
 divide the metered shutter time by 3 (`aeExposureDivisor: 3`) to reduce motion blur on text.
 Text-region detection and crop run on both WiFi upload and BLE transfer. On BLE, the crop
 happens before downscale. Text mode always uses the max-tier BLE downscale cap (1920 px),

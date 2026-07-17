@@ -807,6 +807,7 @@ public final class MentraBluetoothSDK {
     public func warmUpCamera(
         requestId: String? = nil,
         size: PhotoSize,
+        mode: PhotoMode = .photo,
         exposureTimeNs: Double?,
         durationMs: Int
     ) async throws -> CameraStatusEvent {
@@ -818,6 +819,7 @@ public final class MentraBluetoothSDK {
             try DeviceManager.shared.warmUpCamera(
                 requestId: effectiveRequestId,
                 size: size,
+                mode: mode,
                 exposureTimeNs: exposureTimeNs,
                 durationMs: durationMs
             )

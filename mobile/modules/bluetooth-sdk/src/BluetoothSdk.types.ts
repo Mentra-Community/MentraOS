@@ -575,6 +575,7 @@ export type PhotoRequestParams = {
 export type WarmUpCameraParams = {
   requestId?: string
   size: PhotoSize
+  mode?: PhotoMode
   exposureTimeNs?: number | null
   durationMs?: number
 }

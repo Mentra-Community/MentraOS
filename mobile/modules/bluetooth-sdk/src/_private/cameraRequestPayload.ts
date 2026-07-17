@@ -12,6 +12,7 @@ export function warmUpCameraParamsForNative(
 ): Record<string, string | number> {
   const payload: Record<string, string | number> = {
     size: normalizePhotoSizeTier(params.size),
+    mode: params.mode ?? "photo",
   }
   const requestId = nonBlankString(params.requestId)
   if (requestId != null) {

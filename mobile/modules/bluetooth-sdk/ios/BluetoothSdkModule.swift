@@ -377,6 +377,7 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             let requestId = params["requestId"] as? String
             let sizeRaw = params["size"] as? String ?? "medium"
             let size = PhotoSize(normalizedRawValue: sizeRaw)
+            let mode = PhotoMode(normalizedRawValue: params["mode"] as? String)
             let exposureTimeNs: Double?
             switch params["exposureTimeNs"] {
             case let value as Double:
@@ -396,6 +397,7 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             return try await sdk.warmUpCamera(
                 requestId: requestId,
                 size: size,
+                mode: mode,
                 exposureTimeNs: exposureTimeNs,
                 durationMs: durationMs
             ).values

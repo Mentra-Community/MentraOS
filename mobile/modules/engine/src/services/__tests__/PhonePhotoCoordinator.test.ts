@@ -170,10 +170,11 @@ describe("PhonePhotoCoordinator", () => {
       expect(requestPhotoNative.mock.calls[0]![0]).toMatchObject({exposureTimeNs: 12_000_000})
     })
 
-    test("passes text mode through to the native take_photo command", async () => {
+    test("passes text mode through without forcing public max quality", async () => {
       const coord = new PhonePhotoCoordinator()
-      await coord.takePhoto("com.a", {mode: "text"})
-      expect(requestPhotoNative.mock.calls[0]![0]).toMatchObject({mode: "text"})
+      await coord.takePhoto("com.a", {mode: "text", size: "low"})
+      expect(startManagedPhoto).toHaveBeenCalledWith({size: "max"})
+      expect(requestPhotoNative.mock.calls[0]![0]).toMatchObject({mode: "text", size: "low"})
     })
 
     test("normalizes legacy size 'full' to 'max' for the native take_photo command", async () => {
@@ -347,6 +348,7 @@ describe("PhonePhotoCoordinator", () => {
       expect(warmUpCameraNative).toHaveBeenCalledTimes(1)
       expect(warmUpCameraNative.mock.calls[0]![0]).toEqual({
         size: "medium",
+        mode: "photo",
         exposureTimeNs: null,
         durationMs: 15000,
       })
@@ -357,8 +359,20 @@ describe("PhonePhotoCoordinator", () => {
       await coord.warmUpCamera("com.a", {size: "high", exposureTimeNs: 5_000_000, durationMs: 20_000})
       expect(warmUpCameraNative.mock.calls[0]![0]).toEqual({
         size: "high",
+        mode: "photo",
         exposureTimeNs: 5_000_000,
         durationMs: 20_000,
+      })
+    })
+
+    test("text mode warms with mode=text without forcing public max quality", async () => {
+      const coord = new PhonePhotoCoordinator()
+      await coord.warmUpCamera("com.a", {size: "low", mode: "text"})
+      expect(warmUpCameraNative.mock.calls[0]![0]).toEqual({
+        size: "low",
+        mode: "text",
+        exposureTimeNs: null,
+        durationMs: 15000,
       })
     })
 
