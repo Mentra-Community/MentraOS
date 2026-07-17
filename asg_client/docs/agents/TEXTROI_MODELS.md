@@ -156,6 +156,39 @@ The service lazily creates and caches its detector, including the ONNX Runtime
 session, for the `MediaCaptureService` lifetime. Cleanup closes the detector and
 its session. Do not create a new ONNX session for every photo.
 
+## ONNX Runtime is excluded from the default build
+
+`app/build.gradle` declares the Android ONNX Runtime artifact as `compileOnly`,
+not `implementation`. This keeps `ai.onnxruntime.*` resolvable so the ONNX
+detector classes always compile, but its native libraries (`libonnxruntime.so`,
+`libonnxruntime4j_jni.so`, tens of MB per ABI) are **not packaged** into a
+default APK/AAB, since the shipped text-crop path uses the classical detector
+or bundled ML Kit, neither of which needs ONNX Runtime, and no `.onnx` model is
+committed to this repo.
+
+Enable packaging only for a build that will actually exercise an ONNX
+detector:
+
+```bash
+./gradlew assembleDebug -PenableTextRoiOnnx=true
+# or
+ENABLE_TEXT_ROI_ONNX=true ./gradlew assembleDebug
+```
+
+Measured on this repo's debug build: a default `assembleDebug` packages no
+`libonnxruntime*.so` at all; `assembleDebug -PenableTextRoiOnnx=true` adds
+about 46 MB (`arm64-v8a` + `armeabi-v7a` combined) versus the default build.
+Because a debug APK is unstripped and uncompressed, a release AAB's per-ABI
+download size will differ; re-measure with `assembleRelease` /
+`bundleRelease` before relying on a specific number.
+
+If a build without `enableTextRoiOnnx` ever selects an ONNX `TextCropModel`
+(e.g. a misconfigured `AsgConstants.TEXT_CROP_MODEL`), `OrtEnvironment`/
+`OrtSession` construction throws `NoClassDefFoundError` (a `LinkageError`)
+because the real classes were never packaged; `TextRoiDetectorFactory` already
+catches `Exception | LinkageError` and falls back to the classical detector,
+so this is safe by construction, not just by convention.
+
 ## MT8766 physical-device validation
 
 Before enabling a model for Mentra Live, validate a representative photo set on

@@ -74,6 +74,25 @@ def asgVersionNameValue = (
 ).toString()
 
 /**
+ * Whether to package the ONNX Runtime Android native libraries (used only by the optional
+ * PP-OCR/FAST/EAST/YOLO text-ROI detectors) into this build's APK. Off by default: the shipped
+ * text-crop path uses the classical detector or bundled ML Kit, neither of which needs ONNX
+ * Runtime, and no .onnx model is committed to this repo (see docs/agents/TEXTROI_MODELS.md).
+ * Bundling ONNX Runtime's native libraries unconditionally would grow every default APK/AAB by
+ * its full multi-ABI native-library size for a code path that never executes.
+ *
+ * Enable only for local/CI builds that actually exercise an ONNX detector, e.g.:
+ *   ./gradlew assembleDebug -PenableTextRoiOnnx=true
+ * or with ENABLE_TEXT_ROI_ONNX=true in the environment.
+ */
+def enableTextRoiOnnx = (
+        project.findProperty("enableTextRoiOnnx") ?: System.getenv("ENABLE_TEXT_ROI_ONNX")
+)?.toString()?.toBoolean() ?: false
+logger.lifecycle(
+        "Text-ROI ONNX Runtime native libraries: "
+                + (enableTextRoiOnnx ? "INCLUDED (-PenableTextRoiOnnx=true)" : "excluded (default)"))
+
+/**
  * Release signing credentials from environment variables
  */
 def asgStorePassword = project.hasProperty("ASG_STORE_PASSWORD") ? project.property("ASG_STORE_PASSWORD") : ""
@@ -405,8 +424,17 @@ dependencies {
     
     // OpenCV for BLE text-region detection (adaptive threshold, morphology, connected components)
     implementation 'org.opencv:opencv:4.13.0'
+
     // Detection-only text models used before BLE encoding. Sessions are cached for service life.
-    implementation 'com.microsoft.onnxruntime:onnxruntime-android:1.27.0'
+    // compileOnly always makes the ai.onnxruntime API resolvable so the ONNX detector classes
+    // compile in every build; it does NOT package the native libraries. Only the opt-in
+    // enableTextRoiOnnx build additionally packages the real runtime. TextRoiDetectorFactory
+    // already catches LinkageError/NoClassDefFoundError and falls back to the classical
+    // detector, so a build without the real runtime present is safe by construction.
+    compileOnly 'com.microsoft.onnxruntime:onnxruntime-android:1.27.0'
+    if (enableTextRoiOnnx) {
+        implementation 'com.microsoft.onnxruntime:onnxruntime-android:1.27.0'
+    }
 
     // AVIF encoding/decoding support
     implementation 'com.github.awxkee:avif-coder:1.7.3'
