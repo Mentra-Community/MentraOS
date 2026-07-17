@@ -22,6 +22,7 @@ const EMPTY_SUMMARY: CameraRollExportSummary = {
   pending: 0,
   failed: 0,
   blockedPermission: 0,
+  fullAccessRequired: 0,
   missing: 0,
   bytesPending: 0,
   isRunning: false,
@@ -148,6 +149,11 @@ export function GalleryCameraRollSetting() {
 
 function getStatusText(summary: CameraRollExportSummary, enabled: boolean): string {
   if (!enabled) return "Automatic saving is off. Unsaved items will remain in the Mentra App."
+  if (summary.fullAccessRequired > 0) {
+    return `${summary.fullAccessRequired} legacy ${
+      summary.fullAccessRequired === 1 ? "item needs" : "items need"
+    } Full Photos Access to avoid duplicate copies.`
+  }
   if (summary.blockedPermission > 0) {
     return `${summary.blockedPermission} ${
       summary.blockedPermission === 1 ? "item needs" : "items need"

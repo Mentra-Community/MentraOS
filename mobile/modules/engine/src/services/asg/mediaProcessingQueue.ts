@@ -131,8 +131,7 @@ class MediaProcessingQueue {
           throw new Error(`Recovery file is missing for ${entry.captureId}`)
         }
         if (entry.state === "EXPORT_PENDING" || (entry.state === "INDEXED" && entry.shouldAutoSave)) {
-          const downloadedFile = await localStorageService.getDownloadedFile(entry.captureId)
-          if (!downloadedFile) throw new Error(`Local gallery index is missing for ${entry.captureId}`)
+          const downloadedFile = await this.recoverDownloadedFile(entry)
           const receipt = await cameraRollExportCoordinator.exportForSource(downloadedFile, entry.captureId)
           entry = galleryTransferLedger.transition(entry.captureId, "EXPORTED", {
             assetReceipt: receipt,
@@ -365,7 +364,13 @@ class MediaProcessingQueue {
     // 7. Export is a durable, receipted step. Failure leaves EXPORT_PENDING and blocks ack.
     if (item.shouldAutoSave) {
       galleryTransferLedger.transition(item.id, "EXPORT_PENDING")
-      const receipt = await cameraRollExportCoordinator.exportForSource(downloadedFile, item.id)
+      let receipt
+      try {
+        receipt = await cameraRollExportCoordinator.exportForSource(downloadedFile, item.id)
+      } catch (error) {
+        galleryTransferLedger.recordFailure(item.id, error)
+        throw error
+      }
       ledgerEntry = galleryTransferLedger.transition(item.id, "EXPORTED", {
         assetReceipt: receipt,
       })
@@ -426,6 +431,33 @@ class MediaProcessingQueue {
 
     const elapsed = Date.now() - startTime
     console.log(`${TAG} ✅ Finished ${item.id} in ${elapsed}ms`)
+  }
+
+  /** Rebuild a missing app-local index row from the durable transfer ledger. */
+  private async recoverDownloadedFile(entry: GalleryTransferEntry) {
+    const indexed = await localStorageService.getDownloadedFile(entry.captureId)
+    if (indexed) return indexed
+    if (!entry.finalPath) throw new Error(`Recovery file is missing for ${entry.captureId}`)
+
+    const stat = await RNFS.stat(entry.finalPath)
+    const recovered = localStorageService.convertToDownloadedFile(
+      {
+        name: entry.captureId,
+        url: "",
+        download: "",
+        size: Number(stat.size) || entry.totalSize,
+        modified: entry.timestamp,
+        mime_type: entry.captureType === "video" ? "video/mp4" : "image/jpeg",
+        is_video: entry.captureType === "video",
+        filePath: entry.finalPath,
+      },
+      entry.finalPath,
+      entry.thumbnailPath,
+    )
+    recovered.capture_id = entry.captureId
+    recovered.assetReceipt = entry.assetReceipt
+    await localStorageService.saveDownloadedFile(recovered)
+    return recovered
   }
 }
 

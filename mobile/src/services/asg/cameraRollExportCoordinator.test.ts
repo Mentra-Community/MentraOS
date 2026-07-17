@@ -55,6 +55,7 @@ jest.mock("../../../modules/engine/src/services/asg/galleryTransferLedger", () =
 jest.mock("../../../modules/engine/src/utils/permissions/MediaLibraryPermissions", () => ({
   MediaLibraryPermissions: {
     checkPermission: jest.fn(() => Promise.resolve(true)),
+    hasLimitedAccess: jest.fn(() => Promise.resolve(false)),
     saveToLibraryWithReceipt: jest.fn(() => Promise.resolve({success: true, platform: "ios", identifier: "asset-1"})),
   },
 }))
@@ -81,6 +82,7 @@ describe("cameraRollExportCoordinator", () => {
     ;(RNFS.exists as jest.Mock).mockResolvedValue(true)
     ;(RNFS.getFSInfo as jest.Mock).mockResolvedValue({freeSpace: 10 * 1024 * 1024 * 1024})
     ;(MediaLibraryPermissions.checkPermission as jest.Mock).mockResolvedValue(true)
+    ;(MediaLibraryPermissions.hasLimitedAccess as jest.Mock).mockResolvedValue(false)
     ;(MediaLibraryPermissions.saveToLibraryWithReceipt as jest.Mock).mockResolvedValue({
       success: true,
       platform: "ios",
@@ -130,6 +132,36 @@ describe("cameraRollExportCoordinator", () => {
     expect(cameraRollExportLedger.list()[0].state).toBe("BLOCKED_PERMISSION")
   })
 
+  it("does not duplicate an unreceipted legacy export under limited iOS access", async () => {
+    const file = legacyFile()
+    mockFiles[file.name] = file
+    ;(MediaLibraryPermissions.hasLimitedAccess as jest.Mock).mockResolvedValue(true)
+
+    await cameraRollExportCoordinator.initialize()
+    await cameraRollExportCoordinator.resume("limited")
+
+    expect(MediaLibraryPermissions.saveToLibraryWithReceipt).not.toHaveBeenCalled()
+    expect(cameraRollExportLedger.list()[0]).toMatchObject({
+      state: "BLOCKED_PERMISSION",
+      requiresFullLibraryReconciliation: true,
+    })
+  })
+
+  it("still exports newly indexed media under limited iOS access", async () => {
+    const file = legacyFile("IMG_new")
+    ;(MediaLibraryPermissions.hasLimitedAccess as jest.Mock).mockResolvedValue(true)
+    await cameraRollExportCoordinator.initialize()
+    mockFiles[file.name] = file
+
+    const receipt = await cameraRollExportCoordinator.exportForSource(file, file.name)
+
+    expect(receipt.identifier).toBe("asset-1")
+    expect(cameraRollExportLedger.list()[0]).toMatchObject({
+      state: "EXPORTED",
+      requiresFullLibraryReconciliation: false,
+    })
+  })
+
   it("queues all still-local unsaved items when automatic saving is re-enabled", async () => {
     const file = legacyFile()
     mockFiles[file.name] = file
@@ -174,7 +206,6 @@ describe("cameraRollExportCoordinator", () => {
 
   it("waits for an in-flight native export before deleting its local source", async () => {
     const file = legacyFile()
-    mockFiles[file.name] = file
     let finishExport!: (receipt: {success: true; platform: "ios"; identifier: string}) => void
     ;(MediaLibraryPermissions.saveToLibraryWithReceipt as jest.Mock).mockImplementationOnce(
       () =>
@@ -184,7 +215,8 @@ describe("cameraRollExportCoordinator", () => {
     )
 
     await cameraRollExportCoordinator.initialize()
-    const drain = cameraRollExportCoordinator.resume("test")
+    mockFiles[file.name] = file
+    const exportForSource = cameraRollExportCoordinator.exportForSource(file, file.name)
     for (let i = 0; i < 10 && !finishExport; i += 1) await Promise.resolve()
     expect(finishExport).toBeDefined()
 
@@ -193,7 +225,7 @@ describe("cameraRollExportCoordinator", () => {
     expect(localStorageService.deleteDownloadedFile).not.toHaveBeenCalled()
 
     finishExport({success: true, platform: "ios", identifier: "asset-1"})
-    await drain
+    await expect(exportForSource).resolves.toMatchObject({identifier: "asset-1"})
     await deletion
 
     expect(localStorageService.deleteDownloadedFile).toHaveBeenCalledWith(file.name)

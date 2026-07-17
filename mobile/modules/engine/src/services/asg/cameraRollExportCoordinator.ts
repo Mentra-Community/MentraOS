@@ -24,6 +24,7 @@ export interface CameraRollExportSummary {
   pending: number
   failed: number
   blockedPermission: number
+  fullAccessRequired: number
   missing: number
   bytesPending: number
   isRunning: boolean
@@ -102,6 +103,7 @@ class CameraRollExportCoordinator {
         }),
         filePath: file.filePath,
         receipt,
+        requiresFullLibraryReconciliation: current?.requiresFullLibraryReconciliation ?? (!current && !receipt),
         state: receipt ? "EXPORTED" : this.nextEligibleState(current?.state),
       })
     }
@@ -142,6 +144,7 @@ class CameraRollExportCoordinator {
       modified: file.modified,
       isVideo: file.is_video,
       captureId: captureId || file.capture_id || current?.captureId,
+      requiresFullLibraryReconciliation: current?.requiresFullLibraryReconciliation ?? false,
       priority,
       receipt: file.assetReceipt || current?.receipt,
       state: file.assetReceipt || current?.receipt ? "EXPORTED" : shouldAutoSave ? "QUEUED" : "NOT_REQUESTED",
@@ -192,9 +195,10 @@ class CameraRollExportCoordinator {
     console.log(`${TAG} Resume requested: ${reason}`)
     if (cameraRollExportLedger.list().some((entry) => entry.state === "BLOCKED_PERMISSION")) {
       const hasPermission = await MediaLibraryPermissions.checkPermission()
+      const hasLimitedAccess = hasPermission && (await MediaLibraryPermissions.hasLimitedAccess())
       if (hasPermission) {
         for (const entry of cameraRollExportLedger.list()) {
-          if (entry.state === "BLOCKED_PERMISSION") {
+          if (entry.state === "BLOCKED_PERMISSION" && !(entry.requiresFullLibraryReconciliation && hasLimitedAccess)) {
             cameraRollExportLedger.update(entry.id, {state: "QUEUED", lastError: undefined})
           }
         }
@@ -263,6 +267,9 @@ class CameraRollExportCoordinator {
       failed: entries.filter((entry) => entry.state === "FAILED_RETRYABLE" || entry.state === "FAILED_PERMANENT")
         .length,
       blockedPermission: entries.filter((entry) => entry.state === "BLOCKED_PERMISSION").length,
+      fullAccessRequired: entries.filter(
+        (entry) => entry.state === "BLOCKED_PERMISSION" && entry.requiresFullLibraryReconciliation,
+      ).length,
       missing: entries.filter((entry) => entry.state === "MISSING_LOCAL").length,
       bytesPending: entries
         .filter((entry) => pendingStates.has(entry.state))
@@ -283,13 +290,14 @@ class CameraRollExportCoordinator {
   /** Serialize local deletion against an in-flight native copy of the same item. */
   async deleteLocalMedia(mediaName: string): Promise<boolean> {
     this.deletingMediaNames.add(mediaName)
-    const entries = cameraRollExportLedger.list().filter((entry) => entry.mediaName === mediaName)
-    for (const entry of entries) {
-      this.rejectSourceWaiters(entry.id, new Error("Local media was deleted before camera-roll export"))
-    }
     try {
       while (this.activeEntryId && cameraRollExportLedger.get(this.activeEntryId)?.mediaName === mediaName) {
         await new Promise<void>((resolve) => BgTimer.setTimeout(resolve, 25))
+      }
+      // An already-running export gets to finish and resolve its source barrier. Queued work
+      // cannot start while the name is in deletingMediaNames, so reject only what remains.
+      for (const entry of cameraRollExportLedger.list().filter((candidate) => candidate.mediaName === mediaName)) {
+        this.rejectSourceWaiters(entry.id, new Error("Local media was deleted before camera-roll export"))
       }
       const deleted = await localStorageService.deleteDownloadedFile(mediaName)
       if (deleted) cameraRollExportLedger.removeForMedia(mediaName)
@@ -304,12 +312,13 @@ class CameraRollExportCoordinator {
   /** Stop scheduling exports, finish the current native copy, then atomically clear app media + receipts. */
   async clearLocalMedia(): Promise<void> {
     this.clearInProgress = true
-    for (const entry of cameraRollExportLedger.list()) {
-      this.rejectSourceWaiters(entry.id, new Error("Local media was deleted before camera-roll export"))
-    }
     try {
       while (this.activeEntryId) {
         await new Promise<void>((resolve) => BgTimer.setTimeout(resolve, 25))
+      }
+      // Let the active native copy deliver its receipt before rejecting queued barriers.
+      for (const entry of cameraRollExportLedger.list()) {
+        this.rejectSourceWaiters(entry.id, new Error("Local media was deleted before camera-roll export"))
       }
       await localStorageService.clearAllFiles()
       cameraRollExportLedger.clear()
@@ -353,6 +362,13 @@ class CameraRollExportCoordinator {
         })
         throw new Error("Camera-roll permission is required")
       }
+      if (entry.requiresFullLibraryReconciliation && (await MediaLibraryPermissions.hasLimitedAccess())) {
+        cameraRollExportLedger.update(entry.id, {
+          state: "BLOCKED_PERMISSION",
+          lastError: "Full photo-library access is required to reconcile this legacy export safely",
+        })
+        throw new Error("Full photo-library access is required to reconcile this legacy export safely")
+      }
       const fsInfo = await RNFS.getFSInfo()
       if (fsInfo.freeSpace < entry.size + MIN_FREE_SPACE_BYTES) {
         throw new Error("Insufficient free space for camera-roll export")
@@ -371,6 +387,7 @@ class CameraRollExportCoordinator {
       entry = cameraRollExportLedger.update(entry.id, {
         state: "EXPORTED",
         receipt,
+        requiresFullLibraryReconciliation: false,
         attempts: entry.attempts + 1,
         nextRetryAt: undefined,
         lastError: undefined,

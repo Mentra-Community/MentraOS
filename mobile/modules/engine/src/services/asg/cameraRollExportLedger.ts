@@ -26,6 +26,8 @@ export interface CameraRollExportEntry {
   modified: number
   isVideo: boolean
   captureId?: string
+  /** True when an older client may already have exported this file without persisting a receipt. */
+  requiresFullLibraryReconciliation?: boolean
   state: CameraRollExportState
   priority: CameraRollExportPriority
   receipt?: GalleryAssetReceipt

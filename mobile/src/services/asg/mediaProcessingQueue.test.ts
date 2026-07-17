@@ -142,6 +142,11 @@ describe("mediaProcessingQueue", () => {
     expect(asgCameraApi.acknowledgeCapture).not.toHaveBeenCalled()
     expect(asgCameraApi.deleteFilesFromServer).not.toHaveBeenCalled()
     expect(useGallerySyncStore.getState().failedFiles).toContain("IMG_export_failure")
+    expect(galleryTransferLedger.get("IMG_export_failure")).toMatchObject({
+      state: "EXPORT_PENDING",
+      retryCount: 1,
+      lastError: "PhotoKit unavailable",
+    })
   })
 
   it("retains both copies and reports failure when the local index cannot be saved", async () => {
@@ -193,6 +198,42 @@ describe("mediaProcessingQueue", () => {
 
     expect(cameraRollExportCoordinator.exportForSource).not.toHaveBeenCalled()
     expect(asgCameraApi.acknowledgeCapture).toHaveBeenCalledWith(capture.capture_id, entry.ackId)
+    expect(galleryTransferLedger.get(capture.capture_id)?.state).toBe("TRASHED")
+    recoverySpy.mockRestore()
+  })
+
+  it("rebuilds a missing local index before retrying a durable export", async () => {
+    ;(RNFS.exists as jest.Mock).mockResolvedValue(true)
+    ;(RNFS.stat as jest.Mock).mockResolvedValue({size: 100})
+    ;(localStorageService.getDownloadedFile as jest.Mock).mockResolvedValueOnce(null)
+    const capture = {
+      capture_id: "IMG_recover_index",
+      type: "photo" as const,
+      timestamp: 1000,
+      total_size: 100,
+      files: [{name: "IMG_recover_index/base.jpg", size: 100, role: "primary" as const}],
+    }
+    galleryTransferLedger.ensureCapture(capture, 3)
+    const entry = galleryTransferLedger.transition(capture.capture_id, "EXPORT_PENDING", {
+      finalPath: "/tmp/IMG_recover_index/base.jpg",
+      thumbnailPath: "/tmp/IMG_recover_index/thumb.jpg",
+      shouldAutoSave: true,
+    })
+    const recoverySpy = jest.spyOn(galleryTransferLedger, "pendingRecovery").mockReturnValue([entry])
+
+    await expect(mediaProcessingQueue.retryPending()).resolves.toEqual({retried: 1, failed: 0})
+
+    expect(localStorageService.saveDownloadedFile).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: capture.capture_id,
+        filePath: entry.finalPath,
+        capture_id: capture.capture_id,
+      }),
+    )
+    expect(cameraRollExportCoordinator.exportForSource).toHaveBeenCalledWith(
+      expect.objectContaining({capture_id: capture.capture_id}),
+      capture.capture_id,
+    )
     expect(galleryTransferLedger.get(capture.capture_id)?.state).toBe("TRASHED")
     recoverySpy.mockRestore()
   })
