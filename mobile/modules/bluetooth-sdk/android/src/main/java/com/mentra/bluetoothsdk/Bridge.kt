@@ -542,7 +542,11 @@ public class Bridge private constructor() {
 
         /** Send WiFi scan results */
         @JvmStatic
-        fun updateWifiScanResults(networks: List<Map<String, Any>>, scanComplete: Boolean) {
+        fun updateWifiScanResults(
+                networks: List<Map<String, Any>>,
+                scanComplete: Boolean,
+                scanId: String? = null
+        ) {
             var storedNetworks: List<Map<String, Any>> =
                     DeviceStore.get("bluetooth", "wifiScanResults") as? List<Map<String, Any>>
                             ?: emptyList()
@@ -557,6 +561,9 @@ public class Bridge private constructor() {
             val body = HashMap<String, Any>()
             body["networks"] = updatedNetworks
             body["scanComplete"] = scanComplete
+            if (scanId != null) {
+                body["scanId"] = scanId
+            }
             sendTypedMessage("wifi_scan_result", body)
         }
 
