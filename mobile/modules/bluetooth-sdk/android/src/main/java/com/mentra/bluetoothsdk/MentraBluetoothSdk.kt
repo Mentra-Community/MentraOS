@@ -114,6 +114,11 @@ class MentraBluetoothSdk private constructor(
     private data class PendingStreamStart(
         val seq: Long,
         val pending: PendingResponse<StreamStatusEvent>,
+        // Set when an id-carrying error arrives: a fatal publisher error never
+        // reaches the reconnect machinery and winds down with a streamId-less
+        // stopped, so the stash both attributes that stopped to this start and
+        // preserves the real error details for the rejection.
+        var lastError: StreamStatusEvent? = null,
     )
 
     private data class PendingStreamStop(
@@ -1560,11 +1565,27 @@ class MentraBluetoothSdk private constructor(
                     pendingStreamStarts.remove(streamId, start)
                     start.pending.resolve(event)
                 }
-                StreamState.ERROR,
                 StreamState.RECONNECT_FAILED,
                 StreamState.STOPPED -> {
                     pendingStreamStarts.remove(streamId, start)
-                    start.pending.reject(streamStatusException(event, "stream_start_failed"))
+                    start.pending.reject(
+                        streamStatusException(start.lastError ?: event, "stream_start_failed")
+                    )
+                }
+                StreamState.ERROR -> {
+                    if (event.streamId.isNullOrBlank()) {
+                        // An id-less error is the glasses' command-level rejection
+                        // (missing URL, low battery, no WiFi), emitted before any
+                        // publisher starts; nothing further follows for this start.
+                        pendingStreamStarts.remove(streamId, start)
+                        start.pending.reject(streamStatusException(event, "stream_start_failed"))
+                    } else {
+                        // The glasses publisher automatically retries transient transport
+                        // errors, so keep the start pending for a later `streaming`.
+                        // Stash the details for the streamId-less `stopped` that a fatal
+                        // publisher error winds down with instead.
+                        start.lastError = event
+                    }
                 }
                 else -> Unit
             }
@@ -1621,15 +1642,19 @@ class MentraBluetoothSdk private constructor(
             return streamId to start
         }
         if (pendingStreamStarts.size == 1) {
+            val entry = pendingStreamStarts.entries.first()
             // A streamId-less STOPPED is the glasses' stop-ack for a PREVIOUS
             // stream (their stop ack carries no streamId), not a verdict on the
             // pending start — a start_stream that replaces a running publisher
             // emits exactly this sequence (stopped -> initializing -> streaming).
             // Attributing it here would reject a start that is about to succeed.
-            if (event.state == StreamState.STOPPED) {
+            // After an id-carrying error for the pending start, though, the
+            // stopped is a fatal publisher's wind-down (the stop-ack always
+            // precedes any status for the new start), so it is that start's
+            // verdict.
+            if (event.state == StreamState.STOPPED && entry.value.lastError == null) {
                 return null
             }
-            val entry = pendingStreamStarts.entries.first()
             return entry.key to entry.value
         }
         return null
