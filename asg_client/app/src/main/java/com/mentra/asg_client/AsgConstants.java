@@ -85,6 +85,19 @@ public class AsgConstants {
     /** After AE meters in text mode, divide exposure time by this factor (shorter shutter). */
     public static final int TEXT_MODE_AE_EXPOSURE_DIVISOR = 3;
 
+    /**
+     * Requested sensor JPEG width for text-mode capture (and matching warm-up). Mentra Live's
+     * maximum supported 16:9 still size is 3840×2160 (4K UHD); the full sensor max is 4032×3024
+     * (4:3). Camera2 selects an exact match when available, otherwise the closest supported size.
+     */
+    public static final int TEXT_MODE_SENSOR_CAPTURE_WIDTH = 3840;
+
+    /**
+     * Requested sensor JPEG height for text-mode capture (and matching warm-up). Paired with {@link
+     * #TEXT_MODE_SENSOR_CAPTURE_WIDTH} for Mentra Live's max 16:9 still size.
+     */
+    public static final int TEXT_MODE_SENSOR_CAPTURE_HEIGHT = 2160;
+
     /** Long-edge cap for text-mode BLE downscale after crop (aspect ratio preserved). */
     public static final int TEXT_MODE_BLE_TARGET_WIDTH = 1920;
 
@@ -94,7 +107,7 @@ public class AsgConstants {
     public static final int TEXT_MODE_AVIF_QUALITY = 55;
 
     /** JPEG quality for the canonical text-mode crop written to disk (gallery/WiFi upload). */
-    public static final int TEXT_MODE_BLE_JPEG_QUALITY = 95;
+    public static final int TEXT_MODE_BLE_JPEG_QUALITY = 80;
 
     /** Long-edge size used for on-glasses ML Kit text localization. */
     // 1280 is the smallest tested size that consistently retained stylized/low-contrast label
