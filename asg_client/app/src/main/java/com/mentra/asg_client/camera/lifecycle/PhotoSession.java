@@ -105,7 +105,10 @@ public final class PhotoSession {
     private volatile long mStillShutterSubmittedElapsedNs;
     private volatile long mStillRequestedExposureNs;
     private volatile int mStillRequestedNrMode = -1;
+    private volatile boolean mStillZslRequested;
     private volatile boolean mStillMfnrRequested;
+    private volatile boolean mStillPreviewZslEnabled;
+    @Nullable private volatile Boolean mStillControlEnableZsl;
     private volatile boolean mStillHalStartedLogged;
     private volatile long mStillHalStartedWallMs;
     /**
@@ -188,7 +191,7 @@ public final class PhotoSession {
                                                 hooks.backgroundHandler(),
                                                 hooks.cameraSettings(),
                                                 aeStateMachine,
-                                                previewZslMfnrEnabled());
+                                                previewZslEnabled());
                                 if (lockRequested) {
                                     shotState = AeStateMachine.ShotState.WAITING_AE_LOCK;
                                 } else {
@@ -332,28 +335,45 @@ public final class PhotoSession {
     }
 
     /**
-     * Resolved coupled ZSL/MFNR for the active request. Manual and scan exposure force the pair
-     * off because they conflict with the vendor multi-frame path. When the request omits
-     * {@code zslMfnr}, inherit the global default so EMPTY/unmerged settings stay default-on.
+     * Resolved ZSL for the active request. Manual and scan exposure force ZSL off. When the
+     * request omits {@code zsl}, inherit the global default so EMPTY/unmerged settings stay
+     * default-on.
      */
-    private boolean resolveZslMfnrForCapture(boolean useManualExposure) {
+    private boolean resolveZslForCapture(boolean useManualExposure) {
         if (useManualExposure) {
             return false;
         }
         PhotoCaptureSettings settings = currentCaptureSettings();
-        if (settings != null && settings.zslMfnr != null) {
-            return settings.zslMfnrEnabled();
+        if (settings != null && settings.zsl != null) {
+            return settings.zslEnabled();
         }
         return hooks.cameraSettings() != null
-                && hooks.cameraSettings().mAsgSettings.isZslMfnrEnabled();
+                && hooks.cameraSettings().mAsgSettings.isZslEnabled();
     }
 
     /**
-     * Preview buffer should match the pending capture's resolved ZSL/MFNR value, including
-     * forcing the pair off during manual/scan exposure.
+     * Resolved MFNR for the active request. Manual and scan exposure force MFNR off. When the
+     * request omits {@code mfnr}, inherit the global default.
      */
-    public boolean previewZslMfnrEnabled() {
-        return resolveZslMfnrForCapture(shouldUseManualExposure());
+    private boolean resolveMfnrForCapture(boolean useManualExposure) {
+        if (useManualExposure) {
+            return false;
+        }
+        PhotoCaptureSettings settings = currentCaptureSettings();
+        if (settings != null && settings.mfnr != null) {
+            return settings.mfnrEnabled();
+        }
+        return hooks.cameraSettings() != null
+                && hooks.cameraSettings().mAsgSettings.isMfnrEnabled();
+    }
+
+    /**
+     * Preview ZSL buffering should match the pending capture: arm when either ZSL or MFNR is
+     * resolved on (MFNR needs the circular buffer). Forced off during manual/scan exposure.
+     */
+    public boolean previewZslEnabled() {
+        boolean useManual = shouldUseManualExposure();
+        return resolveZslForCapture(useManual) || resolveMfnrForCapture(useManual);
     }
 
     private long currentStartTimeMs() {
@@ -395,7 +415,8 @@ public final class PhotoSession {
                 request.size,
                 request.isFromSdk,
                 request.exposureTimeNs,
-                resolveZslMfnrForRequest(request.captureSettings, request.exposureTimeNs));
+                resolveZslForRequest(request.captureSettings, request.exposureTimeNs),
+                resolveMfnrForRequest(request.captureSettings, request.exposureTimeNs));
     }
 
     private ConfiguredCameraConfig configFrom(ActivePhotoCapture request) {
@@ -403,25 +424,42 @@ public final class PhotoSession {
                 request.size,
                 request.isFromSdk,
                 request.exposureTimeNs,
-                resolveZslMfnrForRequest(request.captureSettings, request.exposureTimeNs));
+                resolveZslForRequest(request.captureSettings, request.exposureTimeNs),
+                resolveMfnrForRequest(request.captureSettings, request.exposureTimeNs));
     }
 
     /**
-     * Resolved coupled ZSL/MFNR for a request shape (queue / warm prediction). Matches {@link
-     * #resolveZslMfnrForCapture(boolean)} for the same settings: only force the pair off when
-     * manual exposure would actually engage (same capability gates as {@link
-     * #shouldUseManualExposure()}), not merely because a shutter value was requested.
+     * Resolved ZSL for a request shape (queue / warm prediction). Only forces off when manual
+     * exposure would actually engage (same capability gates as {@link #shouldUseManualExposure()});
+     * omitted {@code zsl} inherits the global default.
      */
-    private boolean resolveZslMfnrForRequest(
+    private boolean resolveZslForRequest(
             @Nullable PhotoCaptureSettings settings, @Nullable Long exposureTimeNs) {
         if (wouldUseManualExposure(exposureTimeNs)) {
             return false;
         }
-        if (settings != null && settings.zslMfnr != null) {
-            return settings.zslMfnrEnabled();
+        if (settings != null && settings.zsl != null) {
+            return settings.zslEnabled();
         }
         return hooks.cameraSettings() != null
-                && hooks.cameraSettings().mAsgSettings.isZslMfnrEnabled();
+                && hooks.cameraSettings().mAsgSettings.isZslEnabled();
+    }
+
+    /**
+     * Resolved MFNR for a request shape (queue / warm prediction). Only forces off when manual
+     * exposure would actually engage (same capability gates as {@link #shouldUseManualExposure()});
+     * omitted {@code mfnr} inherits the global default.
+     */
+    private boolean resolveMfnrForRequest(
+            @Nullable PhotoCaptureSettings settings, @Nullable Long exposureTimeNs) {
+        if (wouldUseManualExposure(exposureTimeNs)) {
+            return false;
+        }
+        if (settings != null && settings.mfnr != null) {
+            return settings.mfnrEnabled();
+        }
+        return hooks.cameraSettings() != null
+                && hooks.cameraSettings().mAsgSettings.isMfnrEnabled();
     }
 
     /**
@@ -486,8 +524,8 @@ public final class PhotoSession {
 
     /**
      * Compares {@code request} to the active session camera config (size, SDK flag, exposure,
-     * resolved zslMfnr). Uses {@link #configuredCameraConfig} when {@link #activeCapture} was
-     * cleared after a shot. Must be called before {@link #activateQueuedRequest(QueuedPhotoRequest)}
+     * resolved zsl, resolved mfnr). Uses {@link #configuredCameraConfig} when {@link #activeCapture}
+     * was cleared after a shot. Must be called before {@link #activateQueuedRequest(QueuedPhotoRequest)}
      * mutates current state.
      */
     private boolean needsReconfigurationForQueued(QueuedPhotoRequest request) {
@@ -505,7 +543,8 @@ public final class PhotoSession {
                 request.size,
                 request.isFromSdk,
                 request.exposureTimeNs,
-                resolveZslMfnrForRequest(request.captureSettings, request.exposureTimeNs));
+                resolveZslForRequest(request.captureSettings, request.exposureTimeNs),
+                resolveMfnrForRequest(request.captureSettings, request.exposureTimeNs));
     }
 
     /**
@@ -513,12 +552,12 @@ public final class PhotoSession {
      * session (a "warm" capture) instead of triggering a close + reopen reconfiguration.
      *
      * <p>The camera is reconfigured (and therefore effectively cold) when the requested size, SDK
-     * flag, manual exposure, or resolved {@code zslMfnr} differs from the open session — see {@link
-     * #needsReconfigurationForQueued}. When there is no configured baseline (camera never opened or
-     * already torn down) this returns {@code false}: a fresh open is a cold start.
+     * flag, manual exposure, or resolved {@code zsl}/{@code mfnr} differs from the open session —
+     * see {@link #needsReconfigurationForQueued}. When there is no configured baseline (camera never
+     * opened or already torn down) this returns {@code false}: a fresh open is a cold start.
      *
-     * <p>When {@code captureSettings} is omitted, {@code zslMfnr} is resolved from the global
-     * default (same as {@link PhotoCaptureSettings#EMPTY}).
+     * <p>When {@code captureSettings} is omitted, {@code zsl}/{@code mfnr} are resolved from the
+     * global defaults (same as {@link PhotoCaptureSettings#EMPTY}).
      *
      * @return true if a capture with these params would reuse the open session, false otherwise.
      */
@@ -543,7 +582,8 @@ public final class PhotoSession {
                 size,
                 isFromSdk,
                 exposureTimeNs,
-                resolveZslMfnrForRequest(captureSettings, exposureTimeNs));
+                resolveZslForRequest(captureSettings, exposureTimeNs),
+                resolveMfnrForRequest(captureSettings, exposureTimeNs));
     }
 
     public void dispatchNextPhotoRequest() {
@@ -1025,8 +1065,9 @@ public final class PhotoSession {
                     "still_sensor_exposure_end",
                     String.format(
                             java.util.Locale.US,
-                            "ESTIMATED shutter closed; exposure_budget=%dms; mfnr_req=%s nr=%d",
+                            "ESTIMATED shutter closed; exposure_budget=%dms; zsl_req=%s mfnr_req=%s nr=%d",
                             exposureBudgetMs,
+                            mStillZslRequested,
                             mStillMfnrRequested,
                             mStillRequestedNrMode),
                     exposureEndWall);
@@ -1064,7 +1105,10 @@ public final class PhotoSession {
                         sinceSensorStartMs,
                         halStarted && halCompleted && !estimated,
                         estimated,
+                        mStillZslRequested,
                         mStillMfnrRequested,
+                        mStillPreviewZslEnabled,
+                        mStillControlEnableZsl,
                         mStillRequestedNrMode,
                         note);
         BlePhotoTimingLog.recordStillCaptureBreakdown(breakdown);
@@ -1073,7 +1117,7 @@ public final class PhotoSession {
         return String.format(
                 java.util.Locale.US,
                 "%ssubmit→ImageReader=%dms = queue=%dms + exposure=%dms + ISP/MFNR/JPEG=%dms"
-                        + " (sensor→app=%dms); hal_complete→image=%s; mfnr_req=%s nr=%d; %s;"
+                        + " (sensor→app=%dms); hal_complete→image=%s; zsl_req=%s mfnr_req=%s nr=%d; %s;"
                         + " starting buffer extraction",
                 sizePrefix,
                 shutterToImageMs,
@@ -1082,6 +1126,7 @@ public final class PhotoSession {
                 ispJpegMs,
                 sinceSensorStartMs,
                 halCompleteToImageMs >= 0 ? halCompleteToImageMs + "ms" : "n/a",
+                mStillZslRequested,
                 mStillMfnrRequested,
                 mStillRequestedNrMode,
                 estimated ? "ESTIMATED" : "HAL-measured");
@@ -1587,13 +1632,14 @@ public final class PhotoSession {
 
             aeStateMachine.beginWaitingForAe();
 
-            boolean zslMfnrEnabled =
+            boolean zslEnabled =
                     hooks.cameraSettings() != null
                             && hooks.cameraSettings().isZslSupported()
-                            && resolveZslMfnrForCapture(shouldUseManualExposure());
+                            && previewZslEnabled();
+            boolean mfnrEnabled = resolveMfnrForCapture(shouldUseManualExposure());
 
-            Log.d(TAG, "🔍 DIAGNOSTIC: startPrecaptureSequence() called");
-            Log.d(TAG, "🔍 ZSL/MFNR enabled: " + zslMfnrEnabled);
+            Log.d(TAG, "DIAGNOSTIC: startPrecaptureSequence() called");
+            Log.d(TAG, "ZSL enabled (preview): " + zslEnabled + "; MFNR enabled: " + mfnrEnabled);
             Log.d(TAG, "🔍 Current shot state: " + shotState);
             Log.d(
                     TAG,
@@ -1637,7 +1683,7 @@ public final class PhotoSession {
                 hooks.cameraSettings(),
                 aeStateMachine,
                 clearAeWait,
-                previewZslMfnrEnabled());
+                previewZslEnabled());
     }
 
     private boolean shouldUseManualExposure() {
@@ -1867,27 +1913,48 @@ public final class PhotoSession {
                             + " for display orientation: "
                             + displayOrientation);
 
-            boolean zslMfnr = resolveZslMfnrForCapture(useManual);
+            boolean zsl = resolveZslForCapture(useManual);
+            boolean mfnr = resolveMfnrForCapture(useManual);
+            String appliedSource =
+                    useManual
+                            ? "forced-off-manual"
+                            : (captureSettings != null
+                                            && (captureSettings.zsl != null
+                                                    || captureSettings.mfnr != null)
+                                    ? "request"
+                                    : "global");
             if (hooks.cameraSettings() != null) {
-                hooks.cameraSettings().configureCaptureBuilder(stillBuilder, zslMfnr);
+                hooks.cameraSettings().configureCaptureBuilder(stillBuilder, zsl, mfnr);
             }
+            BlePhotoTimingLog.capturePhase(
+                    "still_vendor_config_applied",
+                    "ZSL="
+                            + (zsl ? "on" : "off")
+                            + " MFNR="
+                            + (mfnr ? "on" : "off")
+                            + " (source="
+                            + appliedSource
+                            + ")");
 
             CaptureRequest captureRequest = stillBuilder.build();
 
             Boolean zslInCapture = captureRequest.get(CaptureRequest.CONTROL_ENABLE_ZSL);
             if (zslInCapture != null && zslInCapture) {
-                Log.d(TAG, "✓ ZSL verified in capture request: CONTROL_ENABLE_ZSL = true");
+                Log.d(TAG, "ZSL verified in capture request: CONTROL_ENABLE_ZSL = true");
             } else {
                 Log.w(
                         TAG,
-                        "⚠ ZSL NOT enabled in capture request (CONTROL_ENABLE_ZSL = "
+                        "ZSL NOT enabled in capture request (CONTROL_ENABLE_ZSL = "
                                 + zslInCapture
                                 + ")");
             }
 
-            boolean globalZslMfnr =
+            boolean globalZsl =
                     hooks.cameraSettings() != null
-                            && hooks.cameraSettings().mAsgSettings.isZslMfnrEnabled();
+                            && hooks.cameraSettings().mAsgSettings.isZslEnabled();
+            boolean globalMfnr =
+                    hooks.cameraSettings() != null
+                            && hooks.cameraSettings().mAsgSettings.isMfnrEnabled();
             PhotoCaptureSettings.logAppliedAtCapture(
                     currentFilePath() != null ? currentFilePath() : "unknown",
                     captureSettings,
@@ -1899,7 +1966,8 @@ public final class PhotoSession {
                     useManual
                             ? manualIso
                             : captureRequest.get(CaptureRequest.SENSOR_SENSITIVITY),
-                    globalZslMfnr);
+                    globalZsl,
+                    globalMfnr);
 
             if (useManual) {
                 Log.i(
@@ -1976,7 +2044,23 @@ public final class PhotoSession {
                 mStillRequestedExposureNs = 10_000_000L; // 10ms fallback
             }
             mStillRequestedNrMode = reqNr != null ? reqNr : -1;
-            mStillMfnrRequested = zslMfnr;
+            mStillZslRequested = zsl;
+            mStillMfnrRequested = mfnr;
+            mStillPreviewZslEnabled = previewZslEnabled();
+            mStillControlEnableZsl = reqZsl;
+            // #region agent log
+            Log.i(
+                    TAG,
+                    "ZSL_AB shutter flags: zsl_req="
+                            + (zsl ? "on" : "off")
+                            + " mfnr_req="
+                            + (mfnr ? "on" : "off")
+                            + " preview_zsl="
+                            + (mStillPreviewZslEnabled ? "on" : "off")
+                            + " CONTROL_ENABLE_ZSL="
+                            + reqZsl
+                            + " (hypotheses A/B/E)");
+            // #endregion
             int jpegQ = getJpegQualityForSize();
             String sizeLabel =
                     jpegSize != null
@@ -1994,7 +2078,7 @@ public final class PhotoSession {
                     "still_shutter_submitted",
                     String.format(
                             java.util.Locale.US,
-                            "%s jpegQ=%d mode=%s req_exp=%s req_iso=%s zsl=%s nr=%s zslMfnr=%s — waiting for HAL onCaptureStarted",
+                            "%s jpegQ=%d mode=%s req_exp=%s req_iso=%s zsl=%s nr=%s mfnr=%s — waiting for HAL onCaptureStarted",
                             sizeLabel,
                             jpegQ,
                             useManual ? "MANUAL" : "AUTO",
@@ -2223,25 +2307,30 @@ public final class PhotoSession {
         @Nullable final String size;
         final boolean isFromSdk;
         @Nullable final Long exposureTimeNs;
-        /** Resolved coupled ZSL/MFNR applied to the open preview/still path. */
-        final boolean zslMfnr;
+        /** Resolved ZSL applied to the open preview/still path. */
+        final boolean zsl;
+        /** Resolved MFNR applied to the open still path. */
+        final boolean mfnr;
 
         ConfiguredCameraConfig(
                 @Nullable String size,
                 boolean isFromSdk,
                 @Nullable Long exposureTimeNs,
-                boolean zslMfnr) {
+                boolean zsl,
+                boolean mfnr) {
             this.size = size;
             this.isFromSdk = isFromSdk;
             this.exposureTimeNs = exposureTimeNs;
-            this.zslMfnr = zslMfnr;
+            this.zsl = zsl;
+            this.mfnr = mfnr;
         }
 
         boolean differsFrom(
                 @Nullable String otherSize,
                 boolean otherIsFromSdk,
                 @Nullable Long otherExposureTimeNs,
-                boolean otherZslMfnr) {
+                boolean otherZsl,
+                boolean otherMfnr) {
             if (!Objects.equals(size, otherSize)) {
                 return true;
             }
@@ -2251,7 +2340,10 @@ public final class PhotoSession {
             if (!Objects.equals(exposureTimeNs, otherExposureTimeNs)) {
                 return true;
             }
-            return zslMfnr != otherZslMfnr;
+            if (zsl != otherZsl) {
+                return true;
+            }
+            return mfnr != otherMfnr;
         }
     }
 
