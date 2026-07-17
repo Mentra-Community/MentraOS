@@ -432,6 +432,11 @@ public class CrustModule: Module {
             }
             let candidateFileNames = [assetFileName, fileURL.lastPathComponent]
                 .filter { !$0.isEmpty }
+            let stableFileName = assetFileName.hasPrefix("IMG_") || assetFileName.hasPrefix("VID_")
+                ? assetFileName
+                : nil
+            let fileAttributes = try? FileManager.default.attributesOfItem(atPath: filePath)
+            let expectedFileSize = (fileAttributes?[.size] as? NSNumber)?.int64Value
             let authorizationStatus: PHAuthorizationStatus
             if #available(iOS 14, *) {
                 authorizationStatus = PHPhotoLibrary.authorizationStatus(for: .readWrite)
@@ -450,6 +455,8 @@ public class CrustModule: Module {
             // by our stable capture filename/date before creating another asset.
             if let existingIdentifier = self.findExistingGalleryAssetIdentifier(
                 fileNames: candidateFileNames,
+                stableFileName: stableFileName,
+                expectedFileSize: expectedFileSize,
                 captureDate: captureDate,
                 isVideo: isVideo
             ) {
@@ -554,6 +561,8 @@ public class CrustModule: Module {
 
     private func findExistingGalleryAssetIdentifier(
         fileNames: [String],
+        stableFileName: String?,
+        expectedFileSize: Int64?,
         captureDate: Date?,
         isVideo: Bool
     ) -> String? {
@@ -577,7 +586,13 @@ public class CrustModule: Module {
         var identifiers: [String] = []
         assets.enumerateObjects { asset, _, _ in
             let matches = PHAssetResource.assetResources(for: asset).contains {
-                fileNames.contains($0.originalFilename)
+                guard fileNames.contains($0.originalFilename) else { return false }
+                if $0.originalFilename == stableFileName {
+                    // Capture-derived names are stable and unique across Mentra exports.
+                    return true
+                }
+                guard let expectedFileSize else { return false }
+                return self.assetResource($0, matchesByteCount: expectedFileSize)
             }
             if matches {
                 identifiers.append(asset.localIdentifier)
@@ -586,6 +601,42 @@ public class CrustModule: Module {
         // Legacy base filenames were shared by every capture. Only reuse one when
         // filename + capture time + media type identify a single accessible asset.
         return identifiers.count == 1 ? identifiers[0] : nil
+    }
+
+    /// PhotoKit does not expose resource byte size on the deployment targets we support.
+    /// Stream a narrowed legacy candidate locally to verify it before reusing its receipt.
+    /// Network access stays disabled: if the original is only in iCloud, reconciliation fails
+    /// closed and the caller creates a fresh local-library asset instead of risking data loss.
+    private func assetResource(
+        _ resource: PHAssetResource,
+        matchesByteCount expectedByteCount: Int64
+    ) -> Bool {
+        let options = PHAssetResourceRequestOptions()
+        options.isNetworkAccessAllowed = false
+        let manager = PHAssetResourceManager.default()
+        let semaphore = DispatchSemaphore(value: 0)
+        var receivedByteCount: Int64 = 0
+        var resultError: Error?
+
+        let requestID = manager.requestData(
+            for: resource,
+            options: options,
+            dataReceivedHandler: { data in
+                // Once a candidate exceeds the expected size it cannot match. Keep the
+                // counter bounded even though PhotoKit may deliver the remaining chunks.
+                receivedByteCount = min(expectedByteCount + 1, receivedByteCount + Int64(data.count))
+            },
+            completionHandler: { error in
+                resultError = error
+                semaphore.signal()
+            }
+        )
+
+        if semaphore.wait(timeout: .now() + 30) == .timedOut {
+            manager.cancelDataRequest(requestID)
+            return false
+        }
+        return resultError == nil && receivedByteCount == expectedByteCount
     }
 }
 
