@@ -770,7 +770,18 @@ class MentraBluetoothSdk private constructor(
             "NATIVE: PHOTO PIPELINE [3b/6] MentraBluetoothSdk.requestPhoto requestId=${routedRequest.requestId}"
         )
         val pending = PendingResponse<PhotoResponseEvent>("photo request ${routedRequest.requestId}")
-        pendingPhotoRequests[routedRequest.requestId] = pending
+        // Reject duplicate in-flight requestIds instead of blind-overwriting
+        // (mirrors warmUpCamera): with suspending callers two overlapping
+        // requests sharing an id would otherwise clobber each other's pending
+        // entry and resolve the wrong deferred. Reachable in practice: the
+        // coordinator's 4-hex BLE correlation ids wrap and callers may supply
+        // their own ids.
+        if (pendingPhotoRequests.putIfAbsent(routedRequest.requestId, pending) != null) {
+            throw BluetoothSdkException(
+                "request_in_flight",
+                "A photo request with this requestId is already waiting for a glasses response.",
+            )
+        }
         try {
             cameraCommandMutex.withLock {
                 deviceManager.requestPhoto(routedRequest)
