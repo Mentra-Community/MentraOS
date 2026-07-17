@@ -950,7 +950,7 @@ public class SrtStreamingService extends Service {
   public static boolean resetStreamTimeout(String streamId) {
     if (sInstance != null) {
       if (sInstance.mCurrentStreamId != null && sInstance.mCurrentStreamId.equals(streamId) && sInstance.mIsStreamingActive) {
-        WakeLockManager.acquireFullWakeLockAndBringToForeground(sInstance.getApplicationContext(), 2180000, 5000);
+        WakeLockManager.acquireFullWakeLockAndBringToForeground(sInstance.getApplicationContext(), WakeLockManager.WakeOwner.STREAMING, 2180000, 5000);
         sInstance.scheduleStreamTimeout(streamId);
         return true;
       }
@@ -1000,11 +1000,11 @@ public class SrtStreamingService extends Service {
   }
 
   private void wakeUpScreen() {
-    WakeLockManager.acquireFullWakeLockAndBringToForeground(this, 2180000, 5000);
+    WakeLockManager.acquireFullWakeLockAndBringToForeground(this, WakeLockManager.WakeOwner.STREAMING, 2180000, 5000);
   }
 
   private void releaseWakeLocks() {
-    WakeLockManager.releaseAllWakeLocks();
+    WakeLockManager.release(WakeLockManager.WakeOwner.STREAMING);
   }
 
   private static String formatDuration(long durationMs) {

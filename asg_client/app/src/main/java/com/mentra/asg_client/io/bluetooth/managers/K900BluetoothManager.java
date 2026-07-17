@@ -591,8 +591,8 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         // path gets the same grant from CommandProcessor via the "W":1 wrapper field, which
         // binary frames do not carry.
         if ((header.flags & BesWireFormat.FLAG_WAKE) != 0) {
-            WakeLockManager.acquireCpuWakeLock(
-                    context, AsgConstants.PHONE_WAKE_COMMAND_WINDOW_MS);
+            WakeLockManager.acquireCpu(
+                    context, WakeLockManager.WakeOwner.PHONE_COMMAND, AsgConstants.PHONE_WAKE_COMMAND_WINDOW_MS);
         }
 
         byte[] reassembled = inboundBinaryStrategy.processBinaryWireFrame(message);

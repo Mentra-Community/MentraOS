@@ -1632,14 +1632,14 @@ public class CameraNeoService extends LifecycleService {
     /** Release wake locks to avoid battery drain */
     private void releaseWakeLocks() {
         // Use the WakeLockManager to release all wake locks
-        WakeLockManager.releaseAllWakeLocks();
+        WakeLockManager.release(WakeLockManager.WakeOwner.CAMERA);
     }
 
     /** Force the screen to turn on so camera can be accessed */
     private void wakeUpScreen() {
         Log.d(TAG, "Waking up screen for camera access");
         // Use the WakeLockManager to acquire both CPU and screen wake locks
-        WakeLockManager.acquireFullWakeLockAndBringToForeground(this, 180000, 5000);
+        WakeLockManager.acquireFullWakeLockAndBringToForeground(this, WakeLockManager.WakeOwner.CAMERA, 180000, 5000);
     }
 
     /** Attempt to restart the camera service with different parameters if needed */

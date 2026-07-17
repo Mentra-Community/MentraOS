@@ -255,7 +255,7 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
         }
 
         // Acquire wakelock to prevent CPU sleep during firmware transfer
-        WakeLockManager.acquireCpuWakeLock(mContext, WAKELOCK_TIMEOUT_MS);
+        WakeLockManager.acquireCpu(mContext, WakeLockManager.WakeOwner.BES_OTA, WAKELOCK_TIMEOUT_MS);
         Log.i(TAG, "BES OTA wakelock acquired for " + WAKELOCK_TIMEOUT_MS + "ms");
 
         // Set waiting for authorization flag (NOT in OTA mode yet!)
@@ -327,7 +327,7 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
         operationStartTime = 0;
 
         // Release wakelock
-        WakeLockManager.releaseCpuWakeLock();
+        WakeLockManager.release(WakeLockManager.WakeOwner.BES_OTA);
         Log.i(TAG, "BES OTA wakelock released");
 
         isBesOtaInProgress = false;

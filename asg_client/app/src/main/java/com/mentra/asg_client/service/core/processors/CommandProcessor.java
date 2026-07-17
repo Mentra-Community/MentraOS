@@ -187,8 +187,8 @@ public class CommandProcessor {
             // Extend-only: never shortens a longer-lived lock (BES/MTK OTA). Binary wire-v2
             // frames carry the same flag in the frame header; K900BluetoothManager grants it.
             if (json.optInt("W", 0) == 1) {
-                WakeLockManager.acquireCpuWakeLock(
-                        context, AsgConstants.PHONE_WAKE_COMMAND_WINDOW_MS);
+                WakeLockManager.acquireCpu(
+                        context, WakeLockManager.WakeOwner.PHONE_COMMAND, AsgConstants.PHONE_WAKE_COMMAND_WINDOW_MS);
             }
 
             // Check for ACK first (from phone acknowledging our sent messages)

@@ -1618,7 +1618,7 @@ public class RtmpStreamingService extends Service {
                 Log.d(TAG, "Resetting stream timeout for streamId: " + streamId +
                         ", active: " + sInstance.mIsStreamingActive +
                         ", state: " + sInstance.mStreamState);
-                WakeLockManager.acquireFullWakeLockAndBringToForeground(sInstance.getApplicationContext(), 2180000, 5000); // 3 min CPU, 5 sec screen
+                WakeLockManager.acquireFullWakeLockAndBringToForeground(sInstance.getApplicationContext(), WakeLockManager.WakeOwner.STREAMING, 2180000, 5000); // 36 min CPU, 5 sec screen
                 sInstance.scheduleStreamTimeout(streamId); // Reschedule with fresh timeout
                 return true;
             } else {
@@ -1763,14 +1763,14 @@ public class RtmpStreamingService extends Service {
         // Use the WakeLockManager to acquire both CPU and screen wake locks AND bring app to foreground
         // This prevents "Camera disabled by policy" errors when app is backgrounded
         // For streaming we use longer timeout for CPU wake lock than for photo capture
-        WakeLockManager.acquireFullWakeLockAndBringToForeground(this, 2180000, 5000); // 3 min CPU, 5 sec screen
+        WakeLockManager.acquireFullWakeLockAndBringToForeground(this, WakeLockManager.WakeOwner.STREAMING, 2180000, 5000); // 36 min CPU, 5 sec screen
     }
 
     /**
      * Release any held wake locks
      */
     private void releaseWakeLocks() {
-        WakeLockManager.releaseAllWakeLocks();
+        WakeLockManager.release(WakeLockManager.WakeOwner.STREAMING);
     }
 
     /**
