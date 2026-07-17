@@ -66,4 +66,38 @@ describe("galleryTransferLedger", () => {
     expect(changed.state).toBe("DISCOVERED")
     expect(changed.ackId).not.toBe(initial.ackId)
   })
+
+  it("queues source restore for a trashed v2 entry when local media is quarantined", () => {
+    const captureId = `IMG_v2_restore_${Date.now()}`
+    galleryTransferLedger.ensureCapture(
+      {
+        capture_id: captureId,
+        type: "photo",
+        timestamp: 1000,
+        total_size: 100,
+        files: [{name: `${captureId}/base.jpg`, size: 100, role: "primary"}],
+      },
+      2,
+    )
+    galleryTransferLedger.transition(captureId, "TRASHED", {
+      finalPath: "/current/Documents/MentraPhotos/v2/base.jpg",
+      thumbnailPath: "/current/Documents/MentraPhotos/v2/thumb.jpg",
+      files: [
+        {
+          name: `${captureId}/base.jpg`,
+          size: 100,
+          role: "primary",
+          completedSegments: [0],
+        },
+      ],
+    })
+
+    galleryTransferLedger.releaseMissingLocalCommit(captureId, true)
+
+    const pending = galleryTransferLedger.get(captureId)!
+    expect(pending.state).toBe("RESTORE_PENDING")
+    expect(pending.finalPath).toBeUndefined()
+    expect(pending.thumbnailPath).toBeUndefined()
+    expect(pending.files[0].completedSegments).toEqual([])
+  })
 })

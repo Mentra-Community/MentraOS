@@ -263,7 +263,7 @@ class GalleryTransferLedger {
     const entry = this.get(captureId)
     if (!entry || entry.state === "GARBAGE_COLLECTED") return
     if (entry.state === "TRASHED") {
-      if (recoverAcknowledged && entry.protocolVersion >= 3) {
+      if (recoverAcknowledged) {
         this.update(captureId, {
           state: "RESTORE_PENDING",
           finalPath: undefined,

@@ -192,7 +192,7 @@ describe("mediaProcessingQueue", () => {
     recoverySpy.mockRestore()
   })
 
-  it("restores recoverable glasses trash when committed local media unexpectedly disappears", async () => {
+  it("attempts restore for a v2-negotiated capture when committed local media disappears", async () => {
     const capture = {
       capture_id: "IMG_restore_missing",
       type: "photo" as const,
@@ -200,7 +200,9 @@ describe("mediaProcessingQueue", () => {
       total_size: 100,
       files: [{name: "IMG_restore_missing/base.jpg", size: 100, role: "primary" as const}],
     }
-    galleryTransferLedger.ensureCapture(capture, 3)
+    // A transient v3 capability probe failure can negotiate v2 against new glasses firmware.
+    // Recovery must still try the additive restore endpoint instead of silently losing the source.
+    galleryTransferLedger.ensureCapture(capture, 2)
     galleryTransferLedger.transition(capture.capture_id, "TRASHED", {
       finalPath: "/tmp/IMG_restore_missing/base.jpg",
     })
