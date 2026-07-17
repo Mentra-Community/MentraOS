@@ -3,6 +3,7 @@ package com.mentra.asg_client.io.bes;
 import android.content.Context;
 import android.util.Log;
 import com.mentra.asg_client.io.bes.events.BesOtaProgressEvent;
+import com.mentra.asg_client.logging.BleTraceLogger;
 import com.mentra.asg_client.io.bes.protocol.*;
 import com.mentra.asg_client.io.bes.util.BesOtaUtil;
 import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.SerialPortBridge;
@@ -16,6 +17,7 @@ import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import org.greenrobot.eventbus.EventBus;
+import org.json.JSONObject;
 
 /**
  * Manages BES2700 firmware OTA updates Handles file loading, packet transmission, state tracking,
@@ -40,6 +42,15 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
     private long operationStartTime = 0;
     private android.os.Handler authTimeoutHandler;
     private Runnable authTimeoutRunnable;
+
+    // Dead-man watchdog for the response-driven transfer: every inbound OTA response
+    // re-arms it. If it fires, the transfer is aborted through the normal failure path
+    // (createFailed + cleanup) - no resume, no retry: an aborted transfer leaves the BES
+    // on its current firmware and the phone re-runs the whole OTA. Without this, a single
+    // lost response (device slept mid-transfer, BES crash, UART drop) stalls the state
+    // machine silently forever (2026-07-08 incident: frozen at 80%, no further log line).
+    private android.os.Handler responseWatchdogHandler;
+    private Runnable responseWatchdogRunnable;
 
     private String filePath;
     private boolean bInit = false;
@@ -333,6 +344,13 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
             authTimeoutRunnable = null;
         }
 
+        // Cancel the response watchdog; cleanup is the single funnel for every terminal
+        // path (apply success, CRC failure, watchdog abort), so no timer outlives the run.
+        if (responseWatchdogHandler != null && responseWatchdogRunnable != null) {
+            responseWatchdogHandler.removeCallbacks(responseWatchdogRunnable);
+            responseWatchdogRunnable = null;
+        }
+
         operationStartTime = 0;
 
         // Flag-clear and lease release are one atomic step against the segment-confirm
@@ -366,6 +384,7 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
 
         Log.i(TAG, "BES OTA authorization GRANTED - starting protocol");
         isWaitingForAuthorization = false;
+        rearmResponseWatchdog();
 
         // Cancel authorization timeout
         if (authTimeoutHandler != null && authTimeoutRunnable != null) {
@@ -761,7 +780,41 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
 
     // ========== Protocol State Machine ==========
 
+    /** (Re-)arm the response watchdog; called on transfer start and on every OTA response. */
+    private void rearmResponseWatchdog() {
+        if (responseWatchdogHandler == null) {
+            responseWatchdogHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+        }
+        if (responseWatchdogRunnable != null) {
+            responseWatchdogHandler.removeCallbacks(responseWatchdogRunnable);
+        }
+        responseWatchdogRunnable = () -> {
+            if (!isBesOtaInProgress) {
+                return;
+            }
+            Log.e(TAG, "No BES OTA response for " + AsgConstants.BES_OTA_RESPONSE_TIMEOUT_MS
+                    + "ms - aborting transfer (sentPos=" + sentPos + "/" + fileLen
+                    + ", confirmedSegments=" + confirmTimes + ")");
+            try {
+                JSONObject extra = new JSONObject();
+                extra.put("sentPos", sentPos);
+                extra.put("fileLen", fileLen);
+                extra.put("confirmedSegments", confirmTimes);
+                BleTraceLogger.logLifecycle(mContext, "BesOtaManager", "bes_ota_response_timeout", extra);
+            } catch (Exception ignored) {
+                // Trace logging must never affect the abort itself.
+            }
+            EventBus.getDefault().post(BesOtaProgressEvent.createFailed(
+                    "No response from BES for "
+                            + (AsgConstants.BES_OTA_RESPONSE_TIMEOUT_MS / 1000) + "s"));
+            cleanup();
+        };
+        responseWatchdogHandler.postDelayed(
+                responseWatchdogRunnable, AsgConstants.BES_OTA_RESPONSE_TIMEOUT_MS);
+    }
+
     private void dealOtaRecvCmd(BesOtaMessage msg) {
+        rearmResponseWatchdog();
         if (msg == null) return;
 
         // Total operation timeout guard
