@@ -19,11 +19,13 @@
 // manifest stamp so version derivation can never drift between them.
 import {execFileSync} from "node:child_process";
 
-// Every npm-published package that follows the channel scheme, name -> manifest
-// path. EXPLICIT list, not a glob: the workspace also holds private packages
-// (cloud-runtime, cloud-shared) and packages on other release models
-// (@mentra/bluetooth-sdk ships plain versions from its own pipeline) that must
-// never be channel-derived.
+// Every package the miniapp/engine pipelines publish under the channel scheme,
+// name -> manifest path. EXPLICIT list, not a glob: the workspace also holds
+// private packages (cloud-runtime, cloud-shared) that must never be
+// channel-derived. @mentra/bluetooth-sdk follows the same channel derivation
+// but through its OWN pipeline (bluetooth-sdk-release.yml, prod branch
+// main-bluetooth-sdk) and nothing here ranges on it (the engine peers it at
+// "*"), so it stays out of this map.
 export const CHANNEL_MANIFESTS = {
   "@mentra/miniapp": "mobile/modules/miniapp/package.json",
   "@mentra/miniapp-cli": "sdk/miniapp-cli/package.json",
@@ -41,6 +43,10 @@ const CHANNELS = {
   dev: {label: "dev", tag: "dev"},
   staging: {label: "beta", tag: "beta"},
   main: {label: null, tag: "latest"},
+  // The Bluetooth SDK's production channel: prod releases of the SDK trigger
+  // independently of the monorepo's main promotions (merge staging into
+  // main-bluetooth-sdk when the SDK should go public).
+  "main-bluetooth-sdk": {label: null, tag: "latest"},
 };
 
 const BASE_RE = /^(\d+\.\d+\.\d+)-[0-9a-z]+\.(\d+)$/i;
