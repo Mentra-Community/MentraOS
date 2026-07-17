@@ -335,11 +335,13 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
 
         operationStartTime = 0;
 
-        // Release wakelock
-        WakeLockManager.release(WakeLockManager.WakeOwner.BES_OTA);
+        // Flag-clear and lease release are one atomic step against the segment-confirm
+        // re-arm (see mLeaseGate): after this block no stale confirm can re-acquire.
+        synchronized (mLeaseGate) {
+            isBesOtaInProgress = false;
+            WakeLockManager.release(WakeLockManager.WakeOwner.BES_OTA);
+        }
         Log.i(TAG, "BES OTA wakelock released");
-
-        isBesOtaInProgress = false;
         isWaitingForAuthorization = false;
         if (comManager != null) {
             comManager.setOtaUpdating(false);
@@ -495,6 +497,11 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
     // every half window to avoid per-segment lock churn and wake_extend trace spam.
     private long lastLeaseArmMs = 0;
 
+    // Serializes the transfer's lease lifecycle: a UART segment-confirm that passed the
+    // isBesOtaInProgress check must not interleave with cleanup() releasing the leases,
+    // or it would re-acquire protection nothing will ever release.
+    private final Object mLeaseGate = new Object();
+
     public void crc32ConfirmSuccess() {
         confirmTimes++;
         confirmSentPos = sentPos;
@@ -505,12 +512,14 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
         // segment-verify arriving after cleanup() cannot re-acquire leases nothing will
         // ever release.
         long nowMs = android.os.SystemClock.elapsedRealtime();
-        if (isBesOtaInProgress
-                && nowMs - lastLeaseArmMs > AsgConstants.BES_OTA_SEGMENT_LEASE_WINDOW_MS / 2) {
-            lastLeaseArmMs = nowMs;
-            WakeLockManager.acquireFull(mContext, WakeLockManager.WakeOwner.BES_OTA,
-                    AsgConstants.BES_OTA_SEGMENT_LEASE_WINDOW_MS,
-                    AsgConstants.BES_OTA_SEGMENT_LEASE_WINDOW_MS);
+        synchronized (mLeaseGate) {
+            if (isBesOtaInProgress
+                    && nowMs - lastLeaseArmMs > AsgConstants.BES_OTA_SEGMENT_LEASE_WINDOW_MS / 2) {
+                lastLeaseArmMs = nowMs;
+                WakeLockManager.acquireFull(mContext, WakeLockManager.WakeOwner.BES_OTA,
+                        AsgConstants.BES_OTA_SEGMENT_LEASE_WINDOW_MS,
+                        AsgConstants.BES_OTA_SEGMENT_LEASE_WINDOW_MS);
+            }
         }
         Log.i(
                 TAG,

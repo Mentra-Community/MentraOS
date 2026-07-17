@@ -56,7 +56,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     // full window (see handleInboundBinaryFrame). Keyed by msgId because the reassembler
     // interleaves messages. Bounded: abandoned reassemblies would leak entries, so the set
     // is cleared when it exceeds a size no legitimate interleave reaches.
-    private final java.util.Set<Integer> pendingBinaryWakeMsgIds = new java.util.HashSet<>();
+    private final java.util.Set<Integer> pendingBinaryWakeMsgIds = new java.util.LinkedHashSet<>();
     private volatile boolean besWireCapsK900Le = false;
     private volatile boolean besWireCapsBinary = false;
     private volatile boolean besWireCapsFilePayloadV2 = false;
@@ -601,7 +601,12 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         // multi-fragment reassembly must not eat into it). Extend-only merges the grants.
         if ((header.flags & BesWireFormat.FLAG_WAKE) != 0) {
             if (pendingBinaryWakeMsgIds.size() > 16) {
-                pendingBinaryWakeMsgIds.clear();
+                // Evict only the OLDEST entry (insertion order): it belongs to the most
+                // stale abandoned reassembly, while newer in-flight wake messages keep
+                // their completion-time grant.
+                java.util.Iterator<Integer> eldest = pendingBinaryWakeMsgIds.iterator();
+                eldest.next();
+                eldest.remove();
             }
             pendingBinaryWakeMsgIds.add(header.msgId);
             WakeLockManager.acquireCpu(

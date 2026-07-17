@@ -219,6 +219,12 @@ public class WakeLockManager {
         }
     }
 
+    // OBSERVATIONAL ONLY: if the expiring CPU lease was the last partial wake lock, the
+    // device can suspend right at the kernel deadline and this main-looper callback runs
+    // only on the next wake (lateMs in the event shows the gap), or not at all if a
+    // re-acquire lands first. The authoritative expiry moment is the deadlineWallMs
+    // advertised in the wake_acquire / wake_extend event; treat wake_expire as a
+    // best-effort confirmation, never as the primary signal.
     private static void scheduleExpiryCheck(WakeOwner owner, boolean screen, long deadlineMs) {
         long delayMs = Math.max(0, deadlineMs - SystemClock.elapsedRealtime()) + 250;
         sExpiryHandler.postDelayed(() -> {
@@ -229,7 +235,12 @@ public class WakeLockManager {
                 // re-schedules its own watcher and this stale one must stay silent.
                 if (lease != null && lease.deadlineMs == deadlineMs && !lease.lock.isHeld()) {
                     leases.remove(owner);
-                    traceLease("wake_expire", owner, screen, 0);
+                    traceLease(
+                            "wake_expire",
+                            owner,
+                            screen,
+                            0,
+                            SystemClock.elapsedRealtime() - deadlineMs);
                 }
             }
         }, delayMs);
@@ -237,11 +248,24 @@ public class WakeLockManager {
 
     /** Emit a lease transition on the lifecycle trace channel. Never throws. */
     private static void traceLease(String event, WakeOwner owner, boolean screen, long timeoutOrRemainingMs) {
+        traceLease(event, owner, screen, timeoutOrRemainingMs, null);
+    }
+
+    private static void traceLease(
+            String event, WakeOwner owner, boolean screen, long timeoutOrRemainingMs, Long lateMs) {
         try {
             JSONObject extra = new JSONObject();
             extra.put("owner", owner.name());
             extra.put("kind", kind(screen));
             extra.put("ms", timeoutOrRemainingMs);
+            if ("wake_acquire".equals(event) || "wake_extend".equals(event)) {
+                // Authoritative expiry moment for this lease; wake_expire is observational
+                // (may fire late across a suspend, or be absorbed by a re-acquire).
+                extra.put("deadlineWallMs", System.currentTimeMillis() + timeoutOrRemainingMs);
+            }
+            if (lateMs != null) {
+                extra.put("lateMs", lateMs);
+            }
             extra.put("held", heldLeasesLocked());
             BleTraceLogger.logLifecycle(sAppContext, "WakeLockManager", event, extra);
         } catch (Exception e) {
