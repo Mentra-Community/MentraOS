@@ -152,20 +152,23 @@ export default function SelectGlassesBluetoothScreen() {
     return newName
   }
 
+  const getAr99ResultDisplayName = (device: Device) => getAr99DisplayName(device.projectName ?? ar99ProjectName)
+
   const formatAr99Subtitle = (device: Device) => {
     const rawName = filterDeviceName(device.name)
     const normalizedProjectName = normalizeProjectName(device.projectName ?? ar99ProjectName)
+    const deviceDisplayName = getAr99ResultDisplayName(device)
 
     if (normalizedProjectName === "AR99" || normalizedProjectName === "AF99") {
       const serial = rawName.replace(/^SN:\s*/i, "").trim()
-      return `${selectedDisplayName}-${serial || rawName}`
+      return `${deviceDisplayName}-${serial || rawName}`
     }
 
     if (normalizedProjectName === "HVXM" || normalizedProjectName === "HVXF") {
       const fallbackMac = rawName.startsWith("MAC:") ? rawName.replace(/^MAC:\s*/i, "").trim() : ""
       const macSource = (device.address || fallbackMac).trim()
       const lastFour = macSource.replace(/[^A-Fa-f0-9]/g, "").slice(-4).toUpperCase()
-      return `${selectedDisplayName}-${lastFour || rawName}`
+      return `${deviceDisplayName}-${lastFour || rawName}`
     }
 
     return rawName
@@ -209,12 +212,13 @@ export default function SelectGlassesBluetoothScreen() {
             <ScrollView className="max-h-[300px] -mr-4 pr-4" contentContainerClassName="my-4">
               <Group>
                 {visibleResults.map((res: Device) => {
+                  const deviceTitle = deviceModel === DeviceTypes.AR99 ? getAr99ResultDisplayName(res) : selectedDisplayName
                   const deviceSubtitle = deviceModel === DeviceTypes.AR99 ? formatAr99Subtitle(res) : filterDeviceName(res.name)
                   return (
                     <View key={res.id} className="flex-row items-center justify-between px-4 py-3 bg-primary-foreground">
                       <TouchableOpacity className="flex-1" onPress={() => triggerGlassesPairingGuide(res)}>
                         <View className="flex-1 px-2.5 flex-col">
-                          <Text text={selectedDisplayName} className="flex-wrap text-sm font-semibold" numberOfLines={2} />
+                          <Text text={deviceTitle} className="flex-wrap text-sm font-semibold" numberOfLines={2} />
                           <Text text={deviceSubtitle} className="text-xs text-muted-foreground" numberOfLines={1} />
                         </View>
                       </TouchableOpacity>
