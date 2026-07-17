@@ -311,6 +311,20 @@ public class PhotoSessionTest {
                 .onPhotoCaptured(eq("/tmp/ram.jpg"), (JSONObject) isNull(), eq(capturedPhoto));
     }
 
+    @Test
+    public void copyJsonPayload_isolatesRamCallbackFromPersistencePayload() throws Exception {
+        JSONObject persistencePayload = new JSONObject().put("sampleCount", 2);
+        Method copy =
+                PhotoSession.class.getDeclaredMethod("copyJsonPayload", JSONObject.class);
+        copy.setAccessible(true);
+
+        JSONObject callbackPayload = (JSONObject) copy.invoke(null, persistencePayload);
+        persistencePayload.put("sampleCount", 99);
+
+        assertThat(callbackPayload).isNotSameAs(persistencePayload);
+        assertThat(callbackPayload.optInt("sampleCount")).isEqualTo(2);
+    }
+
     private static PhotoSession.Hooks mockConfiguredCameraHooks() {
         PhotoSession.Hooks hooks = mock(PhotoSession.Hooks.class);
         doReturn(new Object()).when(hooks).serviceLock();

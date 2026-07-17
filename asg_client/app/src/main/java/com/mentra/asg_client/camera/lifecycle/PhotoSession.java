@@ -878,6 +878,7 @@ public final class PhotoSession {
             payload = null;
         }
         final JSONObject imuPayload = payload;
+        final JSONObject callbackImuPayload = copyJsonPayload(imuPayload);
         Future<Boolean> persistence;
         if (persistToDisk) {
             persistence =
@@ -902,7 +903,21 @@ public final class PhotoSession {
             persistence = CompletableFuture.completedFuture(false);
             Log.d(TAG, "RAM-only photo capture; persistence skipped: " + targetPath);
         }
-        notifyPhotoCaptured(targetPath, new CapturedPhoto(bytes, imuPayload, persistence));
+        notifyPhotoCaptured(targetPath, new CapturedPhoto(bytes, callbackImuPayload, persistence));
+    }
+
+    /** Isolates the callback/encoder from the mutable payload used by background persistence. */
+    @Nullable
+    private static JSONObject copyJsonPayload(@Nullable JSONObject payload) {
+        if (payload == null) {
+            return null;
+        }
+        try {
+            return new JSONObject(payload.toString());
+        } catch (org.json.JSONException error) {
+            Log.w(TAG, "Could not copy IMU payload for RAM-first callback", error);
+            return null;
+        }
     }
 
     private ExecutorService persistenceExecutor() {
