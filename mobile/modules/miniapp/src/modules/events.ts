@@ -9,7 +9,7 @@
  *   - session.imu.onHeadPosition(...)
  *   - session.location.onUpdate(...)
  *   - session.glasses.onBattery(...) / onConnection(...)
- *   - session.phone.onNotification(...) / onCalendarEvent(...) / onBattery(...)
+ *   - session.phone.notifications.on(...) / session.phone.onBattery(...)
  *
  * This module's only public method is `subscribe(rawStreamType, handler)` —
  * a forward-compat escape hatch for new event types not yet wrapped on a
@@ -133,20 +133,6 @@ export interface NotificationDismissedData {
   packageName?: string
   /** Unix ms timestamp of the dismissal. */
   timestamp: number
-}
-
-export interface CalendarEventData {
-  eventId: string
-  title: string
-  /** ISO 8601 start time. */
-  dtStart: string
-  /** ISO 8601 end time. */
-  dtEnd: string
-  timezone: string
-  allDay: boolean
-  location: string
-  notes: string
-  calendarId: string
 }
 
 export interface VadData {

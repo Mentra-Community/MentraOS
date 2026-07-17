@@ -182,7 +182,10 @@ describe("v3 alignment — session.transcription", () => {
     transport.sent.length = 0
     session.transcription.configure({languageHints: ["en"], vocabulary: ["MentraOS"], diarization: true})
     const env = parseEnvelope(transport.sent[0]!)
-    const payload = env!.payload as {type: string; config: {languageHints: string[]; vocabulary: string[]; diarization: boolean}}
+    const payload = env!.payload as {
+      type: string
+      config: {languageHints: string[]; vocabulary: string[]; diarization: boolean}
+    }
     expect(payload.type).toBe(MiniappRequestType.TRANSCRIPTION_CONFIG)
     expect(payload.config.languageHints).toEqual(["en"])
     expect(payload.config.vocabulary).toEqual(["MentraOS"])
@@ -253,13 +256,30 @@ describe("v3 alignment — phone sub-namespacing", () => {
     expect(payload.subscriptions).toContain(MiniappStreamType.PHONE_NOTIFICATION)
   })
 
-  test("phone.calendar.on() subscribes to calendar_event stream", async () => {
+  test("phone.calendar.listEvents() sends a bounded snapshot request", async () => {
     const {session, transport} = await connectedSession()
     transport.sent.length = 0
-    session.phone.calendar.on(() => {})
+    const request = session.phone.calendar.listEvents({
+      startsAt: new Date("2026-07-16T12:00:00.000Z"),
+      endsAt: "2026-07-17T12:00:00.000Z",
+      limit: 20,
+    })
     const env = parseEnvelope(transport.sent[0]!)
-    const payload = env!.payload as {subscriptions: string[]}
-    expect(payload.subscriptions).toContain(MiniappStreamType.CALENDAR_EVENT)
+    expect(env!.payload).toEqual({
+      type: MiniappRequestType.CALENDAR_LIST_EVENTS,
+      startsAt: "2026-07-16T12:00:00.000Z",
+      endsAt: "2026-07-17T12:00:00.000Z",
+      limit: 20,
+    })
+    transport.deliverFromPhone(
+      {
+        type: MiniappResponseType.REQUEST_RESULT,
+        ok: true,
+        data: {events: [], truncated: false},
+      },
+      env!.requestId,
+    )
+    await expect(request).resolves.toEqual({events: [], truncated: false})
   })
 
   test("phone.notifications.stop() tears down all notification subs", async () => {

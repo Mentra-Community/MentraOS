@@ -99,8 +99,9 @@ const PERMISSION_CONFIG: Record<string, PermissionConfig> = {
   },
   [PermissionFeatures.CALENDAR]: {
     name: "Calendar",
-    description: "Used to display your events on your glasses",
+    description: "Allows miniapps to read your calendar events",
     ios: [PERMISSIONS.IOS.CALENDARS],
+    // Expo Calendar requires both Android grants even when only calling read APIs.
     android: [PermissionsAndroid.PERMISSIONS.READ_CALENDAR, PermissionsAndroid.PERMISSIONS.WRITE_CALENDAR],
     critical: false,
   },
@@ -871,10 +872,7 @@ async function readLocationServicesEnabled(): Promise<boolean> {
   const locationServicesEnabled = await Promise.race([
     CrustModule.isLocationServicesEnabled(),
     new Promise<boolean>((_, reject) => {
-      setTimeout(
-        () => reject(new Error("Location services check timed out")),
-        LOCATION_SERVICES_CHECK_TIMEOUT_MS,
-      )
+      setTimeout(() => reject(new Error("Location services check timed out")), LOCATION_SERVICES_CHECK_TIMEOUT_MS)
     }),
   ])
   console.log("Location services enabled (native check):", locationServicesEnabled)

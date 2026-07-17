@@ -84,6 +84,13 @@ export class TesterController {
       }),
     )
 
+    this.unsubs.push(
+      ui.handle("tester:calendar-list", async (payload) => {
+        const {startsAt, endsAt, limit} = payload as {startsAt: string; endsAt: string; limit?: number}
+        return await this.session.phone.calendar.listEvents({startsAt, endsAt, limit})
+      }),
+    )
+
     // speaker.createStream E2E: generate a sine tone background-side and pump
     // it through the live PCM stream. Runs here (not tester:invoke) because
     // the SpeakerStreamWriter can't cross the bridge — only a summary returns.
