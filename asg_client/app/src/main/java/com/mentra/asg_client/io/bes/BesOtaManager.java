@@ -51,6 +51,12 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
     // machine silently forever (2026-07-08 incident: frozen at 80%, no further log line).
     private android.os.Handler responseWatchdogHandler;
     private Runnable responseWatchdogRunnable;
+    // Absolute deadline (elapsedRealtime) of the current watchdog window. The re-arm from
+    // the UART receive thread cannot removeCallbacks() a callback that has ALREADY been
+    // dispatched on the main looper; the dispatched callback re-checks this deadline and
+    // aborts only if no response re-armed it in the meantime, so a response racing the
+    // timeout can never produce a false failure while its handler is mid-flight.
+    private volatile long responseWatchdogDeadlineMs;
 
     private String filePath;
     private boolean bInit = false;
@@ -350,6 +356,7 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
             responseWatchdogHandler.removeCallbacks(responseWatchdogRunnable);
             responseWatchdogRunnable = null;
         }
+        responseWatchdogDeadlineMs = 0;
 
         operationStartTime = 0;
 
@@ -782,6 +789,11 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
 
     /** (Re-)arm the response watchdog; called on transfer start and on every OTA response. */
     private void rearmResponseWatchdog() {
+        if (!isBesOtaInProgress && !isWaitingForAuthorization) {
+            return; // no stray timers after cleanup()
+        }
+        responseWatchdogDeadlineMs =
+                android.os.SystemClock.elapsedRealtime() + AsgConstants.BES_OTA_RESPONSE_TIMEOUT_MS;
         if (responseWatchdogHandler == null) {
             responseWatchdogHandler = new android.os.Handler(android.os.Looper.getMainLooper());
         }
@@ -791,6 +803,9 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
         responseWatchdogRunnable = () -> {
             if (!isBesOtaInProgress) {
                 return;
+            }
+            if (android.os.SystemClock.elapsedRealtime() < responseWatchdogDeadlineMs) {
+                return; // a response re-armed the window after this callback was dispatched
             }
             Log.e(TAG, "No BES OTA response for " + AsgConstants.BES_OTA_RESPONSE_TIMEOUT_MS
                     + "ms - aborting transfer (sentPos=" + sentPos + "/" + fileLen
