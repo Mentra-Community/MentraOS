@@ -33,8 +33,7 @@ import java.util.concurrent.TimeUnit;
 public final class MlKitTextRoiDetector implements AutoCloseable {
     private static final String TAG = "MlKitTextRoi";
 
-    private final TextRecognizer recognizer =
-            TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS);
+    private final TextRecognizer recognizer;
     private final int analysisLongEdge;
 
     @Nullable private Task<Text> warmupTask;
@@ -46,7 +45,15 @@ public final class MlKitTextRoiDetector implements AutoCloseable {
 
     /** Visible for the on-device benchmark harness. */
     MlKitTextRoiDetector(int analysisLongEdge) {
+        this(
+                analysisLongEdge,
+                TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS));
+    }
+
+    /** Visible for unit tests that exercise recognizer lifecycle failures. */
+    MlKitTextRoiDetector(int analysisLongEdge, TextRecognizer recognizer) {
         this.analysisLongEdge = analysisLongEdge;
+        this.recognizer = recognizer;
     }
 
     /** Starts model initialization while the camera is capturing. Safe to call repeatedly. */
@@ -57,17 +64,25 @@ public final class MlKitTextRoiDetector implements AutoCloseable {
         Bitmap blank = Bitmap.createBitmap(64, 64, Bitmap.Config.ARGB_8888);
         blank.eraseColor(Color.WHITE);
         long startMs = SystemClock.elapsedRealtime();
-        warmupTask = recognizer.process(InputImage.fromBitmap(blank, 0));
-        warmupTask.addOnCompleteListener(
-                task -> {
+        Task<Text> task = recognizer.process(InputImage.fromBitmap(blank, 0));
+        warmupTask = task;
+        task.addOnCompleteListener(
+                completedTask -> {
                     blank.recycle();
+                    handleWarmupCompletion(completedTask);
                     Log.i(
                             TAG,
                             "ML Kit warmup finished in "
                                     + (SystemClock.elapsedRealtime() - startMs)
                                     + "ms success="
-                                    + task.isSuccessful());
+                                    + completedTask.isSuccessful());
                 });
+    }
+
+    private synchronized void handleWarmupCompletion(Task<Text> completedTask) {
+        if (warmupTask == completedTask && !completedTask.isSuccessful()) {
+            warmupTask = null;
+        }
     }
 
     /** Detects a padded source-pixel ROI from an in-memory JPEG. */
@@ -96,9 +111,22 @@ public final class MlKitTextRoiDetector implements AutoCloseable {
         Bitmap analysis = null;
         try {
             warmUp();
-            if (warmupTask != null) {
-                Tasks.await(
-                        warmupTask, AsgConstants.TEXT_MODE_MLKIT_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+            Task<Text> taskToAwait = warmupTask;
+            if (taskToAwait != null) {
+                try {
+                    Tasks.await(
+                            taskToAwait,
+                            AsgConstants.TEXT_MODE_MLKIT_TIMEOUT_MS,
+                            TimeUnit.MILLISECONDS);
+                } catch (Throwable warmupError) {
+                    // A transient model-init failure or timeout must not poison every later text
+                    // capture. Only clear the task we actually awaited; an older completion must
+                    // never clear a newer retry.
+                    if (warmupTask == taskToAwait) {
+                        warmupTask = null;
+                    }
+                    throw warmupError;
+                }
             }
 
             BitmapFactory.Options bounds = new BitmapFactory.Options();

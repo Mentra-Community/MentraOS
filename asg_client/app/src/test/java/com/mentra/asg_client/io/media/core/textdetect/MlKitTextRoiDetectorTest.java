@@ -1,13 +1,21 @@
 package com.mentra.asg_client.io.media.core.textdetect;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import android.graphics.Rect;
+
+import com.google.android.gms.tasks.Task;
+import com.google.mlkit.vision.text.Text;
+import com.google.mlkit.vision.text.TextRecognizer;
 
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
 
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.util.Arrays;
 import java.util.Collections;
 
@@ -53,5 +61,28 @@ public class MlKitTextRoiDetectorTest {
                         MlKitTextRoiDetector.buildPaddedUnion(
                                 Collections.singletonList(new Rect(20, 20, 20, 40)), 100, 100))
                 .isNull();
+    }
+
+    @Test
+    public void failedWarmupCompletionClearsOnlyCurrentTask() throws Exception {
+        TextRecognizer recognizer = mock(TextRecognizer.class);
+        MlKitTextRoiDetector detector = new MlKitTextRoiDetector(1280, recognizer);
+        Task<Text> currentTask = mock(Task.class);
+        Task<Text> staleTask = mock(Task.class);
+        when(currentTask.isSuccessful()).thenReturn(false);
+        when(staleTask.isSuccessful()).thenReturn(false);
+        Field warmupTask = MlKitTextRoiDetector.class.getDeclaredField("warmupTask");
+        warmupTask.setAccessible(true);
+        Method handleCompletion =
+                MlKitTextRoiDetector.class.getDeclaredMethod("handleWarmupCompletion", Task.class);
+        handleCompletion.setAccessible(true);
+        warmupTask.set(detector, currentTask);
+
+        handleCompletion.invoke(detector, staleTask);
+        assertThat(warmupTask.get(detector)).isSameAs(currentTask);
+
+        handleCompletion.invoke(detector, currentTask);
+        assertThat(warmupTask.get(detector)).isNull();
+        detector.close();
     }
 }
