@@ -237,6 +237,15 @@ public class BaseHardwareManager implements IHardwareManager {
     }
 
     @Override
+    public boolean setCameraFov(int fov, int roiPosition) {
+        Log.d(
+                TAG,
+                String.format(
+                        "setCameraFov(%d, %d) called - no-op on base hardware", fov, roiPosition));
+        return false;
+    }
+
+    @Override
     public void shutdown() {
         Log.d(TAG, "Shutting down BaseHardwareManager");
         isInitialized = false;

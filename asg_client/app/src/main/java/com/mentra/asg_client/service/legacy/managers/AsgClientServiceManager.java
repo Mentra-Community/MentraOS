@@ -67,8 +67,12 @@ public class AsgClientServiceManager {
     // StateManager for battery monitoring (set after construction)
     private IStateManager stateManager;
 
-    /** Set before {@link #initialize(K900CommandHandler)} so BES OTA can be constructed with it. */
+    /** Set before {@link #initialize()} so BES OTA can be constructed with it. */
     private K900CommandHandler besOtaK900CommandHandler;
+
+    public void setBesOtaCommandHandler(K900CommandHandler k900CommandHandler) {
+        this.besOtaK900CommandHandler = k900CommandHandler;
+    }
 
     public AsgClientServiceManager(
             Context context,
@@ -103,13 +107,10 @@ public class AsgClientServiceManager {
     }
 
     /**
-     * Initialize all service components.
-     *
-     * @param k900CommandHandler Required on K900 for {@link BesOtaManager}; may be null on generic
-     *     devices
+     * Initialize all service components. Call {@link #setBesOtaCommandHandler(K900CommandHandler)}
+     * first on K900 devices so {@link BesOtaManager} can be constructed.
      */
-    public void initialize(K900CommandHandler k900CommandHandler) {
-        this.besOtaK900CommandHandler = k900CommandHandler;
+    public void initialize() {
         Log.d(
                 TAG,
                 "🚀 initialize() called - Current state: "

@@ -4,8 +4,8 @@ import android.content.Context;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
-import com.dev.api.DevApi;
 import com.mentra.asg_client.camera.policy.PhotoSizeTier;
+import com.mentra.asg_client.io.hardware.interfaces.IHardwareManager;
 import com.mentra.asg_client.service.communication.interfaces.ICommunicationManager;
 import com.mentra.asg_client.service.communication.interfaces.IResponseBuilder;
 import com.mentra.asg_client.service.core.CameraRestartCooldown;
@@ -30,14 +30,17 @@ public class SettingsCommandHandler implements ICommandHandler {
     private final AsgClientServiceManager serviceManager;
     private final ICommunicationManager communicationManager;
     private final IResponseBuilder responseBuilder;
+    private final IHardwareManager hardwareManager;
 
     public SettingsCommandHandler(
             AsgClientServiceManager serviceManager,
             ICommunicationManager communicationManager,
-            IResponseBuilder responseBuilder) {
+            IResponseBuilder responseBuilder,
+            IHardwareManager hardwareManager) {
         this.serviceManager = serviceManager;
         this.communicationManager = communicationManager;
         this.responseBuilder = responseBuilder;
+        this.hardwareManager = hardwareManager;
     }
 
     @Override
@@ -434,8 +437,7 @@ public class SettingsCommandHandler implements ICommandHandler {
                 sendSettingsAck(requestId, "camera_fov", STATUS_APPLIED, values);
                 return true;
             }
-            try {
-                DevApi.setCameraFov(fov, roiPosition);
+            if (hardwareManager.setCameraFov(fov, roiPosition)) {
                 SystemControllerFactory.get(context).restartCameraHal();
                 CameraRestartCooldown.setCooldown();
                 Log.d(TAG, "Camera FOV applied to hardware and HAL restarted");
@@ -467,8 +469,8 @@ public class SettingsCommandHandler implements ICommandHandler {
                                     }
                                 },
                                 CameraRestartCooldown.DEFAULT_COOLDOWN_DURATION_MS + 500L);
-            } catch (UnsatisfiedLinkError e) {
-                Log.w(TAG, "libxydev not available (non-K900?), FOV persisted but not applied", e);
+            } else {
+                Log.w(TAG, "Camera FOV not applied to hardware (unsupported or libxydev unavailable)");
                 JSONObject values = new JSONObject();
                 values.put("fov", fov);
                 values.put("roi_position", roiPosition);

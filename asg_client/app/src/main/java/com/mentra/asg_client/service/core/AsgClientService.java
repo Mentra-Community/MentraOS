@@ -17,7 +17,6 @@ import android.os.IBinder;
 import android.os.Looper;
 import android.util.Log;
 import android.util.Size;
-import com.dev.api.DevApi;
 import com.mentra.asg_client.camera.UvcStreamingState;
 import com.mentra.asg_client.io.bluetooth.interfaces.ICompanionTransport;
 import com.mentra.asg_client.io.bluetooth.interfaces.TransportListener;
@@ -758,8 +757,7 @@ public class AsgClientService extends Service implements NetworkStateListener, T
             }
             int fov = asgSettings.getCameraFov();
             int roiPosition = asgSettings.getCameraRoiPosition();
-            try {
-                DevApi.setCameraFov(fov, roiPosition);
+            if (hardwareManager.setCameraFov(fov, roiPosition)) {
                 SystemControllerFactory.get(this).restartCameraHal();
                 CameraRestartCooldown.setCooldown();
                 Log.d(
@@ -768,8 +766,8 @@ public class AsgClientService extends Service implements NetworkStateListener, T
                                 + fov
                                 + ", roi_position="
                                 + roiPosition);
-            } catch (UnsatisfiedLinkError e) {
-                Log.d(TAG, "libxydev not available (non-K900?), skipping apply saved FOV");
+            } else {
+                Log.d(TAG, "Camera FOV not applied on start (unsupported or libxydev unavailable)");
             }
         } catch (Exception e) {
             Log.w(TAG, "Could not apply saved camera FOV on start", e);

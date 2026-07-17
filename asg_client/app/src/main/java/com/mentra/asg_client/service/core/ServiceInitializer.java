@@ -3,6 +3,7 @@ package com.mentra.asg_client.service.core;
 import android.util.Log;
 import androidx.annotation.NonNull;
 import com.mentra.asg_client.io.bluetooth.interfaces.ICompanionTransport;
+import com.mentra.asg_client.io.bes.log.BesTracePoller;
 import com.mentra.asg_client.io.file.core.FileManager;
 import com.mentra.asg_client.io.hardware.interfaces.IHardwareManager;
 import com.mentra.asg_client.io.network.interfaces.INetworkManager;
@@ -14,6 +15,7 @@ import com.mentra.asg_client.service.communication.interfaces.ICommunicationMana
 import com.mentra.asg_client.service.communication.interfaces.IResponseBuilder;
 import com.mentra.asg_client.service.communication.managers.CommunicationManager;
 import com.mentra.asg_client.service.communication.managers.ResponseBuilder;
+import com.mentra.asg_client.service.core.handlers.K900CommandHandler;
 import com.mentra.asg_client.service.core.handlers.OtaCommandHandler;
 import com.mentra.asg_client.service.core.handlers.RgbLedCommandHandler;
 import com.mentra.asg_client.service.core.handlers.subscribers.BatteryEventSubscriber;
@@ -113,6 +115,12 @@ public final class ServiceInitializer {
         peripheralBus.subscribe(new SwipeVolumeEventSubscriber(serviceManager));
         peripheralBus.subscribe(new VoiceActivityEventSubscriber());
 
+        K900CommandHandler k900CommandHandler =
+                new K900CommandHandler(
+                        serviceManager, stateManager, communicationManager, peripheralBus);
+        BesTracePoller besTracePoller = new BesTracePoller();
+        serviceManager.setBesOtaCommandHandler(k900CommandHandler);
+
         this.commandProcessor =
                 new CommandProcessor(
                         context,
@@ -126,7 +134,10 @@ public final class ServiceInitializer {
                         rgbLedHandler,
                         otaCommandHandler,
                         peripheralBus,
-                        protocolStrategies);
+                        protocolStrategies,
+                        k900CommandHandler,
+                        besTracePoller,
+                        hardwareManager);
 
         this.lifecycleManager =
                 new ServiceLifecycleManager(
