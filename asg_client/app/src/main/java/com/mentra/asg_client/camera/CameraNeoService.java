@@ -41,6 +41,7 @@ import com.mentra.asg_client.camera.policy.AeStateMachine;
 import com.mentra.asg_client.camera.policy.CameraCapabilities;
 import com.mentra.asg_client.camera.policy.FpsRangePolicy;
 import com.mentra.asg_client.camera.policy.JpegOrientationResolver;
+import com.mentra.asg_client.camera.policy.PhotoMode;
 import com.mentra.asg_client.camera.request.PreviewRequestConfigurator;
 import com.mentra.asg_client.io.hardware.core.HardwareManagerFactory;
 import com.mentra.asg_client.io.hardware.interfaces.IHardwareManager;
@@ -153,6 +154,7 @@ public class CameraNeoService extends LifecycleService {
             "com.augmentos.camera.EXTRA_WARM_UP_DURATION_MS";
     private static final String EXTRA_WARM_UP_EXPOSURE_NS =
             "com.augmentos.camera.EXTRA_WARM_UP_EXPOSURE_NS";
+    private static final String EXTRA_WARM_UP_MODE = "com.augmentos.camera.EXTRA_WARM_UP_MODE";
     public static final String EXTRA_VIDEO_FILE_PATH = "com.augmentos.camera.EXTRA_VIDEO_FILE_PATH";
     public static final String EXTRA_VIDEO_ID = "com.augmentos.camera.EXTRA_VIDEO_ID";
     public static final String EXTRA_VIDEO_SETTINGS = "com.augmentos.camera.EXTRA_VIDEO_SETTINGS";
@@ -772,6 +774,8 @@ public class CameraNeoService extends LifecycleService {
      * @param size requested resolution tier ("low"/"medium"/"high"/"max")
      * @param exposureTimeNs optional manual shutter in nanoseconds; {@code null} = auto
      * @param durationMs keep-alive TTL in ms; {@code <= 0} uses {@link #DEFAULT_WARM_UP_MS}
+     * @param mode capture mode ("photo"/"text"); text mode applies the same scan-exposure AE
+     *     preset {@code take_photo} uses, so the warmed preview matches the eventual capture
      * @param callback warm-up lifecycle callback (ready / stopped / error)
      */
     public static void warmUpCamera(
@@ -779,6 +783,7 @@ public class CameraNeoService extends LifecycleService {
             String size,
             Long exposureTimeNs,
             long durationMs,
+            String mode,
             CameraWarmUpCallback callback) {
         CameraWarmUpCallback rejectBusy = null;
         synchronized (SERVICE_LOCK) {
@@ -836,6 +841,7 @@ public class CameraNeoService extends LifecycleService {
                 intent.setAction(ACTION_WARM_UP_CAMERA);
                 intent.putExtra(EXTRA_WARM_UP_SIZE, size);
                 intent.putExtra(EXTRA_WARM_UP_DURATION_MS, ttl);
+                intent.putExtra(EXTRA_WARM_UP_MODE, mode);
                 if (exposureTimeNs != null) {
                     intent.putExtra(EXTRA_WARM_UP_EXPOSURE_NS, exposureTimeNs.longValue());
                 }
@@ -979,7 +985,8 @@ public class CameraNeoService extends LifecycleService {
                                 intent.hasExtra(EXTRA_WARM_UP_EXPOSURE_NS)
                                         ? intent.getLongExtra(EXTRA_WARM_UP_EXPOSURE_NS, 0L)
                                         : null;
-                        performWarmUp(warmSize, warmExposureNs, warmDuration);
+                        String warmMode = intent.getStringExtra(EXTRA_WARM_UP_MODE);
+                        performWarmUp(warmSize, warmExposureNs, warmDuration, warmMode);
                         break;
                     }
             }
@@ -997,7 +1004,15 @@ public class CameraNeoService extends LifecycleService {
      * emitted once preview is running and {@code error} on any open/configure failure. Keep-alive
      * expiry emits {@code stopped} (see {@link #startWarmKeepAliveTimer}).
      */
-    private void performWarmUp(String size, Long exposureTimeNs, long durationMs) {
+    private void performWarmUp(String size, Long exposureTimeNs, long durationMs, String mode) {
+        // Mirror take_photo's text-mode AE preset (see PhotoCommandHandler.handleTakePhoto) so the
+        // warmed preview's exposure mode matches the eventual capture exactly — otherwise the
+        // still shot would flip auto→manual scan exposure on the same session, which is harmless
+        // for reuse but leaves the preview metering under the wrong AE regime while warm.
+        PhotoCaptureSettings warmCaptureSettings =
+                (PhotoMode.TEXT.equals(PhotoMode.normalize(mode)) && exposureTimeNs == null)
+                        ? PhotoCaptureSettings.applyTextModeExposure(PhotoCaptureSettings.EMPTY)
+                        : PhotoCaptureSettings.EMPTY;
         // Bind the pending callback(s) AND drive setupWarmUp under one continuous SERVICE_LOCK
         // hold,
         // so warmUpRequest is set before the lock is released. Splitting them lets a second
@@ -1012,7 +1027,7 @@ public class CameraNeoService extends LifecycleService {
             photoSession.setupWarmUp(
                     size,
                     exposureTimeNs,
-                    PhotoCaptureSettings.EMPTY,
+                    warmCaptureSettings,
                     durationMs,
                     this::fireWarmReady,
                     this::fireWarmError);
