@@ -80,11 +80,16 @@ describe("warmUpCameraParamsForNative", () => {
 
     expect(payload).not.toHaveProperty("requestId")
     expect(payload.size).toBe("high")
+    expect(payload.mode).toBe("photo")
     expect(payload.exposureTimeNs).toBe(8_333_333)
     expect(payload.durationMs).toBe(12_346)
   })
 
   it("preserves explicit warm-up requestId", () => {
     expect(warmUpCameraParamsForNative({requestId: "warm-1", size: "medium"}).requestId).toBe("warm-1")
+  })
+
+  it("preserves text warm-up mode for ASG sensor-constant resolution", () => {
+    expect(warmUpCameraParamsForNative({size: "low", mode: "text"}).mode).toBe("text")
   })
 })
