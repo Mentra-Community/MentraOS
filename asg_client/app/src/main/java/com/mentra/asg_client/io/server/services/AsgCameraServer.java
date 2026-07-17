@@ -1502,6 +1502,9 @@ public class AsgCameraServer extends AsgServer {
             JSONObject request = readJsonBody(session);
             String captureId = request.getString("capture_id");
             String ackId = request.getString("ack_id");
+            if (captureId.trim().isEmpty() || ackId.trim().isEmpty()) {
+                throw new IllegalArgumentException("Capture and acknowledgement IDs are required");
+            }
             GalleryTrashManager.Result result = galleryTrashManager.trashCapture(captureId, ackId);
             Map<String, Object> data = trashResultData(result);
             data.put("ack_id", ackId);

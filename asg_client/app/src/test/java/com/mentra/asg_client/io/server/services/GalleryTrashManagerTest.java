@@ -82,6 +82,23 @@ public class GalleryTrashManagerTest {
     }
 
     @Test
+    public void rejectsInvalidAcknowledgementBeforeMovingCapture() throws Exception {
+        File capture = new File(packageDirectory, "IMG_invalid_ack");
+        assertTrue(capture.mkdir());
+        write(new File(capture, "base.jpg"), "photo");
+
+        try {
+            manager.trashCapture("IMG_invalid_ack", "  \n  ");
+            throw new AssertionError("Expected invalid acknowledgement to be rejected");
+        } catch (IllegalArgumentException expected) {
+            assertEquals("Invalid acknowledgement ID", expected.getMessage());
+        }
+
+        assertTrue(new File(capture, "base.jpg").isFile());
+        assertFalse(new File(packageDirectory, "_gallery_trash/IMG_invalid_ack").exists());
+    }
+
+    @Test
     public void garbageCollectionOnlyRemovesTrash() throws Exception {
         write(new File(packageDirectory, "IMG_live.jpg"), "live");
         write(new File(packageDirectory, "IMG_old.jpg"), "old");

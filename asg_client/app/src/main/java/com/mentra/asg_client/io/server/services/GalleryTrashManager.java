@@ -70,6 +70,7 @@ final class GalleryTrashManager {
 
     synchronized Result trashCapture(String requestedId, String ackId) throws IOException {
         String captureId = validateCaptureId(requestedId);
+        String validatedAckId = validateAckId(ackId);
         File destination = child(trashDirectory, captureId);
         if (destination.exists()) {
             // A process/power loss can interrupt the multi-file legacy layout after some files
@@ -78,7 +79,7 @@ final class GalleryTrashManager {
             if (new File(destination, FLAT_LAYOUT_FILE).exists()) {
                 moveFlatFiles(findFlatCaptureFiles(captureId), destination, false);
             }
-            appendAck(destination, ackId);
+            appendAck(destination, validatedAckId);
             Counts counts = countMedia(destination);
             touch(destination);
             return new Result(
@@ -97,7 +98,7 @@ final class GalleryTrashManager {
             if (!liveDirectory.renameTo(destination)) {
                 throw new IOException("Unable to move capture directory to recoverable trash");
             }
-            appendAck(destination, ackId);
+            appendAck(destination, validatedAckId);
             touch(destination);
             return new Result(
                     true,
@@ -116,7 +117,7 @@ final class GalleryTrashManager {
         ensureDirectory(destination);
         writeMarker(new File(destination, FLAT_LAYOUT_FILE), "flat");
         Counts moved = moveFlatFiles(flatFiles, destination, true);
-        appendAck(destination, ackId);
+        appendAck(destination, validatedAckId);
         touch(destination);
         return new Result(
                 true,
@@ -245,12 +246,20 @@ final class GalleryTrashManager {
         return captureId;
     }
 
-    private static void appendAck(File destination, String ackId) throws IOException {
-        if (ackId == null || ackId.trim().isEmpty()) {
-            return;
+    private static String validateAckId(String ackId) {
+        if (ackId == null) {
+            throw new IllegalArgumentException("Acknowledgement ID is required");
         }
+        String value = ackId.trim();
+        if (value.isEmpty() || value.contains("\n") || value.contains("\r")) {
+            throw new IllegalArgumentException("Invalid acknowledgement ID");
+        }
+        return value;
+    }
+
+    private static void appendAck(File destination, String ackId) throws IOException {
         File marker = new File(destination, ACKS_FILE);
-        String value = ackId.trim() + "\n";
+        String value = validateAckId(ackId) + "\n";
         try (FileOutputStream output = new FileOutputStream(marker, true)) {
             output.write(value.getBytes(StandardCharsets.UTF_8));
             output.getFD().sync();
