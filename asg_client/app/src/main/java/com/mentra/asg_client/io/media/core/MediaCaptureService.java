@@ -760,8 +760,13 @@ public class MediaCaptureService {
      * @param size requested photo size for the upcoming capture (nullable)
      * @param isFromSdk whether the upcoming capture is an SDK request (vs. a button photo)
      * @param exposureTimeNs requested manual exposure for the upcoming capture, or null for auto
+     * @param captureSettings per-request tuning (including resolved {@code zslMfnr}) for warmth
      */
-    private void playShutterSound(String size, boolean isFromSdk, Long exposureTimeNs) {
+    private void playShutterSound(
+            String size,
+            boolean isFromSdk,
+            Long exposureTimeNs,
+            @Nullable PhotoCaptureSettings captureSettings) {
         if (hardwareManager == null) {
             Log.w(TAG, "⚠️ hardwareManager is null, cannot play shutter sound");
             return;
@@ -775,7 +780,8 @@ public class MediaCaptureService {
         // A warm capture reuses the open camera (including queuing behind an in-flight shot), so a
         // short "hot" sound matches the quick capture. A cold capture needs a longer "cold" sound
         // that spans the camera/ISP warmup so the user keeps still until the photo actually lands.
-        boolean cameraWarm = CameraNeoService.isCameraWarm(size, isFromSdk, exposureTimeNs);
+        boolean cameraWarm =
+                CameraNeoService.isCameraWarm(size, isFromSdk, exposureTimeNs, captureSettings);
         String shutterAsset =
                 cameraWarm ? AudioAssets.TAKE_PHOTO_HOT : AudioAssets.TAKE_PHOTO_COLD;
         Log.d(TAG, "📸 Playing " + (cameraWarm ? "HOT (short)" : "COLD (long)") + " shutter sound");
@@ -1918,7 +1924,7 @@ public class MediaCaptureService {
             if (effectiveSound) {
                 // Button photo: isFromSdk=false, auto exposure (null) — matches the
                 // enqueuePhotoRequest call below so the warm/cold prediction lines up.
-                playShutterSound(size, false, null);
+                playShutterSound(size, false, null, captureSettings);
             }
             if (enableFlash) {
                 flashPrivacyLedForPhoto(); // Flash privacy LED
@@ -2109,7 +2115,7 @@ public class MediaCaptureService {
             triggerPhotoFlashLed();
             if (enableSound) {
                 // Local-save SDK photo: isFromSdk=true, matching the enqueue below.
-                playShutterSound(captureSize, true, exposureTimeNs);
+                playShutterSound(captureSize, true, exposureTimeNs, captureSettings);
             }
             if (enableFlash) {
                 flashPrivacyLedForPhoto();
@@ -2381,7 +2387,7 @@ public class MediaCaptureService {
                 if (enableSound) {
                     // SDK photo: isFromSdk=true; size and exposure match the enqueuePhotoRequest
                     // call below so the warm/cold prediction lines up.
-                    playShutterSound(captureSize, true, exposureTimeNs);
+                    playShutterSound(captureSize, true, exposureTimeNs, captureSettings);
                 }
                 if (enableFlash) {
                     flashPrivacyLedForPhoto();
@@ -4448,7 +4454,7 @@ public class MediaCaptureService {
             if (enableSound) {
                 // BLE-transfer SDK photo: isFromSdk=true; size and exposure match the
                 // enqueuePhotoRequest call below so the warm/cold prediction lines up.
-                playShutterSound(captureSize, true, exposureTimeNs);
+                playShutterSound(captureSize, true, exposureTimeNs, captureSettings);
             }
             if (enableFlash) {
                 flashPrivacyLedForPhoto();

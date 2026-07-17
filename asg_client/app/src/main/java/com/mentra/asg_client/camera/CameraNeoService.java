@@ -424,9 +424,15 @@ public class CameraNeoService extends LifecycleService {
      * @param size requested photo size for the upcoming capture (nullable)
      * @param isFromSdk whether the upcoming capture is an SDK request (vs. a button photo)
      * @param exposureTimeNs requested manual exposure for the upcoming capture, or null for auto
+     * @param captureSettings per-request tuning used for resolved {@code zslMfnr} (nullable /
+     *     {@link PhotoCaptureSettings#EMPTY} inherits the global default)
      * @return true if the upcoming capture would reuse the open camera; false otherwise.
      */
-    public static boolean isCameraWarm(String size, boolean isFromSdk, Long exposureTimeNs) {
+    public static boolean isCameraWarm(
+            String size,
+            boolean isFromSdk,
+            Long exposureTimeNs,
+            @Nullable PhotoCaptureSettings captureSettings) {
         // Read the open-session state under SERVICE_LOCK — the same lock enqueuePhotoRequest()
         // holds — so this prediction is consistent with the state that request will actually see.
         // Without it, a keep-alive expiry / closeCamera() on the background thread could tear down
@@ -436,8 +442,14 @@ public class CameraNeoService extends LifecycleService {
             return sInstance != null
                     && sInstance.cameraCoordinator.hasConfiguredCamera()
                     && sInstance.photoSession.willReuseConfiguredCamera(
-                            size, isFromSdk, exposureTimeNs);
+                            size, isFromSdk, exposureTimeNs, captureSettings);
         }
+    }
+
+    /** @deprecated Prefer {@link #isCameraWarm(String, boolean, Long, PhotoCaptureSettings)}. */
+    @Deprecated
+    public static boolean isCameraWarm(String size, boolean isFromSdk, Long exposureTimeNs) {
+        return isCameraWarm(size, isFromSdk, exposureTimeNs, null);
     }
 
     /**
@@ -1360,7 +1372,7 @@ public class CameraNeoService extends LifecycleService {
                     photoSession.previewJpegQuality(),
                     jpegOrientation,
                     mCameraSettings,
-                    forVideo ? false : photoSession.previewZslMfnrEnabled());
+                    forVideo ? false : photoSession.previewZslEnabled());
 
             CameraCaptureSession.StateCallback sessionStateCallback =
                     new CameraCaptureSession.StateCallback() {
