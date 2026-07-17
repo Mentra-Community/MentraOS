@@ -10,6 +10,7 @@ import java.util.Collections
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
@@ -38,7 +39,9 @@ class MentraBluetoothSdk private constructor(
         ConcurrentHashMap<String, PendingVideoRecordingRequest>()
     private val pendingRgbLedRequests = ConcurrentHashMap<String, PendingResponse<RgbLedControlResponseEvent>>()
     private val pendingSettingsRequests = ConcurrentHashMap<String, PendingResponse<SettingsAckEvent>>()
-    private val pendingStreamStarts = ConcurrentHashMap<String, PendingResponse<StreamStatusEvent>>()
+    private val pendingStreamStarts = ConcurrentHashMap<String, PendingStreamStart>()
+    private val streamStartSeq = AtomicLong()
+    private val streamStartOrderLock = Any()
     private val oneShotLock = Any()
     private var pendingGalleryStatus: PendingResponse<GalleryStatusEvent>? = null
     private var pendingOtaQuery: PendingResponse<OtaQueryResult>? = null
@@ -103,6 +106,14 @@ class MentraBluetoothSdk private constructor(
         // slow startup (glasses can't ACK until they reach starting/streaming) can't trip a
         // false keep-alive timeout before the stream is ever up.
         var armed: Boolean = false,
+    )
+
+    // seq records send order (assigned and handed to the BLE queue under
+    // streamStartOrderLock) so that an id-carrying status for a newer start can
+    // identify which older in-flight starts it preempted.
+    private data class PendingStreamStart(
+        val seq: Long,
+        val pending: PendingResponse<StreamStatusEvent>,
     )
 
     private data class PendingStreamStop(
@@ -853,17 +864,25 @@ class MentraBluetoothSdk private constructor(
                 ?: "sdk-${UUID.randomUUID()}"
         message["streamId"] = streamId
         val pending = PendingResponse<StreamStatusEvent>("start stream $streamId")
-        pendingStreamStarts[streamId] = pending
-        stopStreamKeepAliveMonitor()
+        var start: PendingStreamStart? = null
         try {
-            deviceManager.startStream(message)
+            // seq assignment and the BLE hand-off must be one critical section:
+            // rejectPreemptedStreamStarts only works if seq order equals the
+            // order the commands reach the glasses' FIFO.
+            synchronized(streamStartOrderLock) {
+                val registered = PendingStreamStart(streamStartSeq.incrementAndGet(), pending)
+                pendingStreamStarts[streamId] = registered
+                start = registered
+                stopStreamKeepAliveMonitor()
+                deviceManager.startStream(message)
+            }
             val event = pending.await(STREAM_START_TIMEOUT_MS)
             if (startSdkKeepAlive) {
                 startStreamKeepAliveMonitor(streamId, DEFAULT_STREAM_KEEP_ALIVE_INTERVAL_SECONDS)
             }
             return event
         } finally {
-            pendingStreamStarts.remove(streamId, pending)
+            start?.let { pendingStreamStarts.remove(streamId, it) }
         }
     }
 
@@ -1532,17 +1551,20 @@ class MentraBluetoothSdk private constructor(
     private fun handleStreamStatusForRequests(event: StreamStatusEvent) {
         val startMatch = matchingStreamStart(event)
         if (startMatch != null) {
-            val (streamId, pending) = startMatch
+            val (streamId, start) = startMatch
+            if (!event.streamId.isNullOrBlank()) {
+                rejectPreemptedStreamStarts(start.seq)
+            }
             when (event.state) {
                 StreamState.STREAMING -> {
-                    pendingStreamStarts.remove(streamId, pending)
-                    pending.resolve(event)
+                    pendingStreamStarts.remove(streamId, start)
+                    start.pending.resolve(event)
                 }
                 StreamState.ERROR,
                 StreamState.RECONNECT_FAILED,
                 StreamState.STOPPED -> {
-                    pendingStreamStarts.remove(streamId, pending)
-                    pending.reject(streamStatusException(event, "stream_start_failed"))
+                    pendingStreamStarts.remove(streamId, start)
+                    start.pending.reject(streamStatusException(event, "stream_start_failed"))
                 }
                 else -> Unit
             }
@@ -1572,11 +1594,31 @@ class MentraBluetoothSdk private constructor(
         }
     }
 
-    private fun matchingStreamStart(event: StreamStatusEvent): Pair<String, PendingResponse<StreamStatusEvent>>? {
+    // The glasses process BLE commands FIFO and every start_stream begins by
+    // stopping whatever runs, so an id-carrying status for start X (any state)
+    // proves every lower-seq start has already been preempted. Their
+    // only verdict on current firmware is a streamId-less stopped, which the
+    // id-less heuristic deliberately ignores — without this they would run out
+    // the 30s timeout instead of failing fast.
+    private fun rejectPreemptedStreamStarts(winnerSeq: Long) {
+        for ((streamId, start) in pendingStreamStarts) {
+            if (start.seq < winnerSeq && pendingStreamStarts.remove(streamId, start)) {
+                start.pending.reject(
+                    BluetoothSdkException(
+                        "stream_preempted",
+                        "start stream $streamId was preempted by a newer start_stream; " +
+                            "the glasses run a single stream and the last request wins.",
+                    )
+                )
+            }
+        }
+    }
+
+    private fun matchingStreamStart(event: StreamStatusEvent): Pair<String, PendingStreamStart>? {
         val streamId = event.streamId
         if (!streamId.isNullOrBlank()) {
-            val pending = pendingStreamStarts[streamId] ?: return null
-            return streamId to pending
+            val start = pendingStreamStarts[streamId] ?: return null
+            return streamId to start
         }
         if (pendingStreamStarts.size == 1) {
             // A streamId-less STOPPED is the glasses' stop-ack for a PREVIOUS
