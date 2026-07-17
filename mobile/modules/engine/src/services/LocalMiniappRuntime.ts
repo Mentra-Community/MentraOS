@@ -2753,6 +2753,7 @@ class LocalMiniappRuntime {
     try {
       await phonePhotoCoordinator.warmUpCamera(packageName, {
         size: payload.size as "low" | "medium" | "high" | "max" | undefined,
+        mode: payload.mode as "photo" | "text" | undefined,
         exposureTimeNs: payload.exposureTimeNs as number | undefined,
         durationMs: payload.durationMs as number | undefined,
       })
