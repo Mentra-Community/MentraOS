@@ -30,6 +30,7 @@ import {localStorageService} from "./localStorageService"
 import {mediaProcessingQueue} from "./mediaProcessingQueue"
 import {validateCaptureMetadataForDownload} from "./galleryMediaValidation"
 import {emitGalleryNotice} from "./galleryNotices"
+import {galleryTransferLedger} from "./galleryTransferLedger"
 
 // Timing constants
 const TIMING = {
@@ -960,9 +961,9 @@ class GallerySyncService {
                 lastSeenSSID = currentSSID || "null"
 
                 console.log(
-                  `[GallerySyncService] 🍎 Verify poll ${i + 1}/${maxVerifyAttempts}: Current="${currentSSID}", Target="${
-                    hotspotInfo.ssid
-                  }"`,
+                  `[GallerySyncService] 🍎 Verify poll ${
+                    i + 1
+                  }/${maxVerifyAttempts}: Current="${currentSSID}", Target="${hotspotInfo.ssid}"`,
                 )
 
                 if (currentSSID === hotspotInfo.ssid) {
@@ -1258,8 +1259,30 @@ class GallerySyncService {
   }
 
   private async fetchSyncManifest(clientId: string, lastSyncTime: number): Promise<SyncManifestData> {
-    const syncResponse = await asgCameraApi.syncWithServer(clientId, lastSyncTime, true)
-    return (syncResponse.data || syncResponse) as SyncManifestData
+    const v3 = typeof asgCameraApi.getV3Manifest === "function" ? await asgCameraApi.getV3Manifest() : null
+    if (v3) {
+      return {
+        api_version: 3,
+        client_id: clientId,
+        captures: v3.captures.filter((capture) => !galleryTransferLedger.isLocallyCommitted(capture.capture_id)),
+        changed_files: [],
+        deleted_files: [],
+        server_time: v3.server_time,
+        total_changed: v3.captures.length,
+        total_size: v3.captures.reduce((total, capture) => total + capture.total_size, 0),
+      }
+    }
+    // Old firmware remains on the exact v2 endpoint/schema. Avoid expensive inline thumbnails;
+    // the UI can request them lazily after the primary transfer is safe.
+    const syncResponse = await asgCameraApi.syncWithServer(clientId, lastSyncTime, false)
+    const data = (syncResponse.data || syncResponse) as SyncManifestData
+    if (data.captures) {
+      data.captures = data.captures.filter((capture) => !galleryTransferLedger.isLocallyCommitted(capture.capture_id))
+    }
+    data.changed_files = (data.changed_files || []).filter(
+      (file) => !galleryTransferLedger.isFileLocallyCommitted(file.name),
+    )
+    return data
   }
 
   /**
@@ -1328,6 +1351,13 @@ class GallerySyncService {
       asgCameraApi.setServer(hotspotInfo.ip, 8089)
       console.log("[GallerySyncService]   ✅ API client configured")
 
+      const recovery = await mediaProcessingQueue.retryPending()
+      if (recovery.retried > 0 || recovery.failed > 0) {
+        console.log(
+          `[GallerySyncService]   ♻️ Recovery: ${recovery.retried} completed, ${recovery.failed} still pending`,
+        )
+      }
+
       // Get sync state and files to download
       // IMPORTANT: This creates a SNAPSHOT of files at this moment based on last_sync_time.
       // Any photos taken AFTER this call (during the sync) will NOT be included in this sync.
@@ -1367,18 +1397,24 @@ class GallerySyncService {
 
       if (isSyncManifestEmpty(syncData)) {
         console.log("[GallerySyncService]   ✅ No new files to sync - already up to date!")
-        store.setSyncComplete()
+        if (galleryTransferLedger.hasPendingRecovery()) {
+          store.setSyncError("Gallery export or acknowledgement needs retry")
+        } else {
+          store.setSyncComplete()
+        }
         await this.onSyncComplete(0, 0)
         return
       }
 
       // Detect API version and route to appropriate download path
-      const useCaptures = syncData.api_version === 2 && syncData.captures && syncData.captures.length > 0
+      const useCaptures = (syncData.api_version || 0) >= 2 && syncData.captures && syncData.captures.length > 0
 
       if (useCaptures) {
         // New capture-aware sync path
         const captures: CaptureGroup[] = syncData.captures!
-        console.log(`[GallerySyncService]   📊 Found ${captures.length} captures to download (api_version=2)`)
+        console.log(
+          `[GallerySyncService]   📊 Found ${captures.length} captures to download (api_version=${syncData.api_version})`,
+        )
 
         captures.slice(0, 5).forEach((c: CaptureGroup, idx: number) => {
           console.log(
@@ -1597,6 +1633,7 @@ class GallerySyncService {
                   shouldAutoSave: !!shouldAutoSave,
                   thumbnailPath: downloadedFile.thumbnailPath,
                   deleteFromGlasses: [downloadedFile.name],
+                  protocolVersion: 1,
                 })
               }
             }
@@ -1634,25 +1671,6 @@ class GallerySyncService {
         }
       }
 
-      // Save downloaded files metadata (skip auxiliary files from gallery entries)
-      for (const photoInfo of downloadResult.downloaded) {
-        // Skip HDR brackets and IMU sidecars — they shouldn't appear as separate gallery items
-        const isAuxiliary =
-          photoInfo.name?.match(/_ev-?\d+\.(jpg|jpeg)$/i) ||
-          photoInfo.name?.match(/\.imu\.json$/i) ||
-          photoInfo.name?.match(/\/ev-?\d+\.jpe?g$/i) ||
-          photoInfo.name?.match(/\/imu\.json$/i)
-        if (isAuxiliary) continue
-
-        const downloadedFile = localStorageService.convertToDownloadedFile(
-          photoInfo,
-          photoInfo.filePath || "",
-          photoInfo.thumbnailPath,
-          defaultWearable,
-        )
-        await localStorageService.saveDownloadedFile(downloadedFile)
-      }
-
       // Update queue index to final position
       await localStorageService.updateSyncQueueIndex(files.length)
 
@@ -1666,6 +1684,17 @@ class GallerySyncService {
       console.log("[GallerySyncService]   ⏳ Waiting for processing queue to drain...")
       await mediaProcessingQueue.waitUntilDrained()
       console.log("[GallerySyncService]   ✅ Processing queue drained")
+
+      // Download success is not destination success. Export, validation, metadata, and
+      // acknowledgement failures are reported asynchronously by the processing queue; fold them
+      // back into the legacy result so its timestamp watermark cannot skip the source forever.
+      const processingFailures = new Set(useGallerySyncStore.getState().failedFiles)
+      for (const file of files) {
+        if (processingFailures.has(file.name) && !downloadResult.failed.includes(file.name)) {
+          downloadResult.failed.push(file.name)
+        }
+      }
+      failedCount = downloadResult.failed.length
 
       // Update sync state — only advance watermark if files were downloaded.
       // If any failed, set it before the oldest failure so they get retried.
@@ -1730,8 +1759,11 @@ class GallerySyncService {
         ).toFixed(2)} MB`,
       )
 
-      // Complete
-      store.setSyncComplete()
+      if (failedCount > 0 || galleryTransferLedger.hasPendingRecovery()) {
+        store.setSyncError(`${failedCount || "Some"} gallery items need retry`)
+      } else {
+        store.setSyncComplete()
+      }
       await this.onSyncComplete(downloadedCount, failedCount)
     } catch (error: any) {
       mediaProcessingQueue.abort()
@@ -1795,7 +1827,9 @@ class GallerySyncService {
 
         try {
           console.log(
-            `[GallerySyncService]   📦 Downloading capture ${i + 1}/${captures.length}: ${capture.capture_id} (${capture.files.length} files)`,
+            `[GallerySyncService]   📦 Downloading capture ${i + 1}/${captures.length}: ${capture.capture_id} (${
+              capture.files.length
+            } files)`,
           )
 
           validateCaptureMetadataForDownload(capture)
@@ -1841,6 +1875,7 @@ class GallerySyncService {
             shouldProcess: !!shouldProcessImages,
             shouldAutoSave: !!shouldAutoSave,
             deleteFromGlasses: [capture.capture_id],
+            protocolVersion: capture.files.some((file) => !!file.etag) ? 3 : 2,
           })
         } catch (captureError: any) {
           if (captureError?.message === "Sync cancelled") throw captureError
@@ -1929,7 +1964,11 @@ class GallerySyncService {
         })
       }
 
-      store.setSyncComplete()
+      if (failedCount > 0 || galleryTransferLedger.hasPendingRecovery()) {
+        store.setSyncError(`${failedCount || "Some"} gallery items need retry`)
+      } else {
+        store.setSyncComplete()
+      }
       await this.onSyncComplete(downloadedCount, failedCount)
     } catch (error: any) {
       mediaProcessingQueue.abort()
@@ -1993,13 +2032,25 @@ class GallerySyncService {
     //   console.error(`[GallerySyncService] Failed to get post-sync inventory:`, error)
     // }
 
-    // Clear the queue
-    console.log("[GallerySyncService]   🧹 Clearing sync queue...")
-    await localStorageService.clearSyncQueue()
+    const hasPendingRecovery = galleryTransferLedger.hasPendingRecovery()
+    if (!hasPendingRecovery && failedCount === 0) {
+      console.log("[GallerySyncService]   🧹 Clearing completed sync queue...")
+      await localStorageService.clearSyncQueue()
+    } else {
+      console.log("[GallerySyncService]   ♻️ Keeping recovery state for unfinished export/ack work")
+    }
 
-    // Show completion notification
-    console.log("[GallerySyncService]   📱 Showing completion notification...")
-    await gallerySyncNotifications.showSyncComplete(downloadedCount, failedCount)
+    if (hasPendingRecovery || failedCount > 0) {
+      console.log("[GallerySyncService]   📱 Showing retry-required notification...")
+      await gallerySyncNotifications.showSyncError(
+        failedCount > 0
+          ? `${failedCount} gallery item${failedCount === 1 ? "" : "s"} will be retried`
+          : "Gallery export or acknowledgement will be retried",
+      )
+    } else {
+      console.log("[GallerySyncService]   📱 Showing completion notification...")
+      await gallerySyncNotifications.showSyncComplete(downloadedCount, 0)
+    }
 
     // Close hotspot if we opened it
     const store = useGallerySyncStore.getState()
@@ -2013,8 +2064,10 @@ class GallerySyncService {
     // Clear glasses gallery count immediately after successful sync
     // This ensures UI shows 0 items remaining right away
     // The subsequent query will update this if new photos were taken during sync
-    console.log("[GallerySyncService]   🔄 Clearing glasses gallery count (synced all items)")
-    store.clearGlassesGalleryStatus()
+    if (!hasPendingRecovery && failedCount === 0) {
+      console.log("[GallerySyncService]   🔄 Clearing glasses gallery count (synced all items)")
+      store.clearGlassesGalleryStatus()
+    }
 
     // Auto-reset to idle after 4 seconds to clear "Sync complete!" message,
     // then query glasses for any new content taken during the sync.
