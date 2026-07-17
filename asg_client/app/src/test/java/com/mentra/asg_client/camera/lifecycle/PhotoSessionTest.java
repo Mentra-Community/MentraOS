@@ -518,6 +518,27 @@ public class PhotoSessionTest {
     }
 
     @Test
+    public void resolveZslMfnrForRequest_keepsEnabledWhenManualRequestedButUnsupported()
+            throws Exception {
+        // hooks.capabilities() is null in mockConfiguredCameraHooks — same as still capture
+        // falling back to auto when MANUAL_SENSOR is unavailable.
+        PhotoSession.Hooks hooks = mockConfiguredCameraHooks();
+        PhotoCaptureSettings enabled =
+                new PhotoCaptureSettings.Builder().zslMfnr(true).build();
+        PhotoSession session = new PhotoSession(hooks);
+
+        Method resolve =
+                PhotoSession.class.getDeclaredMethod(
+                        "resolveZslMfnrForRequest",
+                        PhotoCaptureSettings.class,
+                        Long.class);
+        resolve.setAccessible(true);
+        assertThat(resolve.invoke(session, enabled, 10_000_000L)).isEqualTo(true);
+        assertThat(session.willReuseConfiguredCamera("medium", true, 10_000_000L, enabled))
+                .isFalse(); // no baseline yet
+    }
+
+    @Test
     public void onCameraClosed_quitsStillCaptureCallbackThread() throws Exception {
         PhotoSession session = new PhotoSession(mockConfiguredCameraHooks());
         Method handlerMethod =

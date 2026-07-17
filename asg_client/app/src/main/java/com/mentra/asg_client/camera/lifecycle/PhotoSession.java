@@ -407,13 +407,14 @@ public final class PhotoSession {
     }
 
     /**
-     * Resolved coupled ZSL/MFNR for a request shape (queue / warm prediction), matching the preview
-     * + still policy used once that request becomes active. Explicit manual shutter forces the pair
-     * off; omitted {@code zslMfnr} inherits the global default.
+     * Resolved coupled ZSL/MFNR for a request shape (queue / warm prediction). Matches {@link
+     * #resolveZslMfnrForCapture(boolean)} for the same settings: only force the pair off when
+     * manual exposure would actually engage (same capability gates as {@link
+     * #shouldUseManualExposure()}), not merely because a shutter value was requested.
      */
     private boolean resolveZslMfnrForRequest(
             @Nullable PhotoCaptureSettings settings, @Nullable Long exposureTimeNs) {
-        if (exposureTimeNs != null && exposureTimeNs > 0) {
+        if (wouldUseManualExposure(exposureTimeNs)) {
             return false;
         }
         if (settings != null && settings.zslMfnr != null) {
@@ -421,6 +422,22 @@ public final class PhotoSession {
         }
         return hooks.cameraSettings() != null
                 && hooks.cameraSettings().mAsgSettings.isZslMfnrEnabled();
+    }
+
+    /**
+     * Whether a request with {@code exposureTimeNs} would take the manual still path under current
+     * camera capabilities. Mirrors {@link #shouldUseManualExposure()} excluding scan exposure,
+     * which only arms after AE metering for the active shot.
+     */
+    private boolean wouldUseManualExposure(@Nullable Long exposureTimeNs) {
+        if (exposureTimeNs == null || exposureTimeNs <= 0) {
+            return false;
+        }
+        CameraCapabilities caps = hooks.capabilities();
+        if (caps == null || !caps.manualSensorSupported) {
+            return false;
+        }
+        return caps.sensorExposureTimeRange != null && caps.sensorSensitivityRange != null;
     }
 
     /** Clears the configured-camera snapshot when the HAL session is torn down. */
