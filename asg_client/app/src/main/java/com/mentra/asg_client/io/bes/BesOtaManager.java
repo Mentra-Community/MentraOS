@@ -49,6 +49,15 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
     // on its current firmware and the phone re-runs the whole OTA. Without this, a single
     // lost response (device slept mid-transfer, BES crash, UART drop) stalls the state
     // machine silently forever (2026-07-08 incident: frozen at 80%, no further log line).
+    // Serializes the watchdog's decide+abort with receive processing: both run inside
+    // this monitor, so either the timeout aborts BEFORE a response enters the state
+    // machine (the response then sees the transfer inactive and stops), or the response
+    // wins, re-arms, and the already-dispatched timeout callback re-checks the deadline
+    // under the same monitor and stands down. The interleaving "callback reads expired
+    // deadline, response re-arms and continues, callback still aborts mid-processing"
+    // is structurally impossible.
+    private final Object mTransferGate = new Object();
+
     private android.os.Handler responseWatchdogHandler;
     private Runnable responseWatchdogRunnable;
     // Absolute deadline (elapsedRealtime) of the current watchdog window. The re-arm from
@@ -787,8 +796,11 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
 
     // ========== Protocol State Machine ==========
 
-    /** (Re-)arm the response watchdog; called on transfer start and on every OTA response. */
-    private void rearmResponseWatchdog() {
+    /**
+     * (Re-)arm the response watchdog; called on transfer start and on every OTA response.
+     * Package-private for the deterministic race tests in BesOtaResponseWatchdogTest.
+     */
+    void rearmResponseWatchdog() {
         if (!isBesOtaInProgress && !isWaitingForAuthorization) {
             return; // no stray timers after cleanup()
         }
@@ -801,6 +813,7 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
             responseWatchdogHandler.removeCallbacks(responseWatchdogRunnable);
         }
         responseWatchdogRunnable = () -> {
+          synchronized (mTransferGate) {
             if (!isBesOtaInProgress) {
                 return;
             }
@@ -823,13 +836,23 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
                     "No response from BES for "
                             + (AsgConstants.BES_OTA_RESPONSE_TIMEOUT_MS / 1000) + "s"));
             cleanup();
+          }
         };
         responseWatchdogHandler.postDelayed(
                 responseWatchdogRunnable, AsgConstants.BES_OTA_RESPONSE_TIMEOUT_MS);
     }
 
     private void dealOtaRecvCmd(BesOtaMessage msg) {
+      synchronized (mTransferGate) {
+        if (!isBesOtaInProgress && !isWaitingForAuthorization) {
+            return; // the watchdog (or an abort) won the gate first - this response is stale
+        }
         rearmResponseWatchdog();
+        dealOtaRecvCmdLocked(msg);
+      }
+    }
+
+    private void dealOtaRecvCmdLocked(BesOtaMessage msg) {
         if (msg == null) return;
 
         // Total operation timeout guard
