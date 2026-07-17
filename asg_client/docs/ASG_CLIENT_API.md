@@ -107,9 +107,8 @@ Capture a still photo. The handler routes through `transferMethod` to one of thr
 | `isoCap`             | number  | absent              | Cap ISO after AE metering (scan tuning)                     |
 | `noiseReduction`     | boolean | absent              | Parsed; warn-only if unsupported (`not_implemented` in metadata) |
 | `edgeEnhancement`    | boolean | absent              | `false` disables edge enhancement on still capture          |
-| `zslMfnr`            | boolean | absent              | Coupled ZSL preview buffering + MFNR still capture. Enabled by default; pass `false` for the single-frame pipeline. Forced off for text/scan/manual exposure. |
-| `mfnr`               | boolean | absent              | **Deprecated.** Legacy wire input; both `mfnr` and `zsl` must be `true` to enable the pair. Ignored when `zslMfnr` is present. |
-| `zsl`                | boolean | absent              | **Deprecated.** Legacy wire input; both `mfnr` and `zsl` must be `true` to enable the pair. Ignored when `zslMfnr` is present. |
+| `zsl`                | boolean | absent              | ZSL preview/capture buffering. Enabled by default; pass `false` to disable. Forced off for text/scan/manual exposure. |
+| `mfnr`               | boolean | absent              | Vendor multi-frame noise reduction on still capture. Enabled by default; pass `false` for the single-frame pipeline. Forced off for text/scan/manual exposure. MFNR arms ZSL buffering in preview even when `zsl` is false. |
 | `ispDigitalGain`     | number  | absent              | Parsed; warn-only if unsupported                            |
 | `ispAnalogGain`      | string  | absent              | Parsed; warn-only if unsupported                            |
 
