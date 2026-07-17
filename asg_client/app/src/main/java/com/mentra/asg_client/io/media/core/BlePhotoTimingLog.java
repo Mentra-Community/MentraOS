@@ -14,6 +14,12 @@ public final class BlePhotoTimingLog {
             new ConcurrentHashMap<>();
     private static final Object STILL_BREAKDOWN_LOCK = new Object();
     @Nullable private static StillCaptureBreakdown pendingStillBreakdown;
+    /** Last still timings for each ZSL×MFNR combo (capture-speed A/B). */
+    @Nullable private static StillCaptureBreakdown lastZslOnMfnrOn;
+
+    @Nullable private static StillCaptureBreakdown lastZslOnMfnrOff;
+    @Nullable private static StillCaptureBreakdown lastZslOffMfnrOn;
+    @Nullable private static StillCaptureBreakdown lastZslOffMfnrOff;
 
     /**
      * Optional sink that folds camera-side capture/storage checkpoints into the same request-scoped
@@ -83,7 +89,146 @@ public final class BlePhotoTimingLog {
     public static void recordStillCaptureBreakdown(@Nullable StillCaptureBreakdown breakdown) {
         synchronized (STILL_BREAKDOWN_LOCK) {
             pendingStillBreakdown = breakdown;
+            // #region agent log
+            if (breakdown != null) {
+                storeComboBreakdown(breakdown);
+            }
+            // #endregion
         }
+        // #region agent log
+        logZslMfnrAbComparison(breakdown);
+        // #endregion
+    }
+
+    // #region agent log
+    private static void storeComboBreakdown(StillCaptureBreakdown breakdown) {
+        if (breakdown.zslRequested && breakdown.mfnrRequested) {
+            lastZslOnMfnrOn = breakdown;
+        } else if (breakdown.zslRequested) {
+            lastZslOnMfnrOff = breakdown;
+        } else if (breakdown.mfnrRequested) {
+            lastZslOffMfnrOn = breakdown;
+        } else {
+            lastZslOffMfnrOff = breakdown;
+        }
+    }
+
+    /**
+     * Capture-speed A/B across all 4 ZSL×MFNR combos. Search logcat for {@code ZSL_AB}.
+     *
+     * <p>Metric is shutter submit → ImageReader (not phone E2E / BLE / camera-open).
+     */
+    private static void logZslMfnrAbComparison(@Nullable StillCaptureBreakdown current) {
+        if (!enabled() || current == null) {
+            return;
+        }
+        StillCaptureBreakdown zslOnMfnrOn;
+        StillCaptureBreakdown zslOnMfnrOff;
+        StillCaptureBreakdown zslOffMfnrOn;
+        StillCaptureBreakdown zslOffMfnrOff;
+        synchronized (STILL_BREAKDOWN_LOCK) {
+            zslOnMfnrOn = lastZslOnMfnrOn;
+            zslOnMfnrOff = lastZslOnMfnrOff;
+            zslOffMfnrOn = lastZslOffMfnrOn;
+            zslOffMfnrOff = lastZslOffMfnrOff;
+        }
+
+        Log.i(
+                TAG,
+                String.format(
+                        Locale.US,
+                        "⏱️ [BLE PHOTO] ZSL_AB CURRENT: zsl=%s mfnr=%s preview_zsl=%s"
+                                + " CONTROL_ENABLE_ZSL=%s | submit→ImageReader=%dms queue=%dms"
+                                + " exposure=%dms ISP/JPEG=%dms (%s)",
+                        current.zslRequested ? "on" : "off",
+                        current.mfnrRequested ? "on" : "off",
+                        current.previewZslEnabled ? "on" : "off",
+                        controlEnableZslLabel(current.controlEnableZsl),
+                        current.shutterToImageMs,
+                        current.queueMs,
+                        current.exposureBudgetMs,
+                        current.ispJpegMs,
+                        current.estimated ? "ESTIMATED" : "HAL-measured"));
+
+        int have =
+                (zslOnMfnrOn != null ? 1 : 0)
+                        + (zslOnMfnrOff != null ? 1 : 0)
+                        + (zslOffMfnrOn != null ? 1 : 0)
+                        + (zslOffMfnrOff != null ? 1 : 0);
+        if (have < 2) {
+            Log.i(
+                    TAG,
+                    "⏱️ [BLE PHOTO] ZSL_AB: need ≥2 of 4 combos before compare — shoot the other"
+                            + " ZSL/MFNR toggles next (have "
+                            + have
+                            + "/4)");
+            return;
+        }
+
+        long bestMs = Long.MAX_VALUE;
+        String bestLabel = null;
+        if (zslOnMfnrOn != null && zslOnMfnrOn.shutterToImageMs < bestMs) {
+            bestMs = zslOnMfnrOn.shutterToImageMs;
+            bestLabel = "ZSL on  MFNR on ";
+        }
+        if (zslOnMfnrOff != null && zslOnMfnrOff.shutterToImageMs < bestMs) {
+            bestMs = zslOnMfnrOff.shutterToImageMs;
+            bestLabel = "ZSL on  MFNR off";
+        }
+        if (zslOffMfnrOn != null && zslOffMfnrOn.shutterToImageMs < bestMs) {
+            bestMs = zslOffMfnrOn.shutterToImageMs;
+            bestLabel = "ZSL off MFNR on ";
+        }
+        if (zslOffMfnrOff != null && zslOffMfnrOff.shutterToImageMs < bestMs) {
+            bestMs = zslOffMfnrOff.shutterToImageMs;
+            bestLabel = "ZSL off MFNR off";
+        }
+
+        Log.i(
+                TAG,
+                String.format(
+                        Locale.US,
+                        "⏱️ [BLE PHOTO] ZSL_AB COMPARE (4-way, shutter→ImageReader):\n"
+                                + "%s\n"
+                                + "%s\n"
+                                + "%s\n"
+                                + "%s\n"
+                                + "  FASTEST: %s @ %dms (Δ = ms slower than fastest; missing=—)",
+                        formatComboRow("ZSL on  MFNR on ", zslOnMfnrOn, bestMs),
+                        formatComboRow("ZSL on  MFNR off", zslOnMfnrOff, bestMs),
+                        formatComboRow("ZSL off MFNR on ", zslOffMfnrOn, bestMs),
+                        formatComboRow("ZSL off MFNR off", zslOffMfnrOff, bestMs),
+                        bestLabel,
+                        bestMs));
+    }
+
+    private static String formatComboRow(
+            String label, @Nullable StillCaptureBreakdown b, long bestMs) {
+        if (b == null) {
+            return String.format(Locale.US, "  %s: — (not captured yet)", label);
+        }
+        long delta = b.shutterToImageMs - bestMs;
+        return String.format(
+                Locale.US,
+                "  %s: submit→IR=%dms queue=%dms ISP/JPEG=%dms Δ=%+dms"
+                        + " preview_zsl=%s CONTROL_ENABLE_ZSL=%s (%s)",
+                label,
+                b.shutterToImageMs,
+                b.queueMs,
+                b.ispJpegMs,
+                delta,
+                b.previewZslEnabled ? "on" : "off",
+                controlEnableZslLabel(b.controlEnableZsl),
+                b.estimated ? "EST" : "HAL");
+    }
+
+    // #endregion
+
+    private static String controlEnableZslLabel(@Nullable Boolean value) {
+        if (value == null) {
+            return "null";
+        }
+        return value ? "true" : "false";
     }
 
     @Nullable
@@ -107,7 +252,10 @@ public final class BlePhotoTimingLog {
         public final long sinceSensorStartMs;
         public final boolean fromHalCallbacks;
         public final boolean estimated;
+        public final boolean zslRequested;
         public final boolean mfnrRequested;
+        public final boolean previewZslEnabled;
+        @Nullable public final Boolean controlEnableZsl;
         public final int noiseReductionMode;
         @Nullable public final String note;
 
@@ -119,7 +267,10 @@ public final class BlePhotoTimingLog {
                 long sinceSensorStartMs,
                 boolean fromHalCallbacks,
                 boolean estimated,
+                boolean zslRequested,
                 boolean mfnrRequested,
+                boolean previewZslEnabled,
+                @Nullable Boolean controlEnableZsl,
                 int noiseReductionMode,
                 @Nullable String note) {
             this.shutterToImageMs = shutterToImageMs;
@@ -129,7 +280,10 @@ public final class BlePhotoTimingLog {
             this.sinceSensorStartMs = sinceSensorStartMs;
             this.fromHalCallbacks = fromHalCallbacks;
             this.estimated = estimated;
+            this.zslRequested = zslRequested;
             this.mfnrRequested = mfnrRequested;
+            this.previewZslEnabled = previewZslEnabled;
+            this.controlEnableZsl = controlEnableZsl;
             this.noiseReductionMode = noiseReductionMode;
             this.note = note;
         }
@@ -527,6 +681,7 @@ public final class BlePhotoTimingLog {
             case "capture_configured":
             case "capture_started":
             case "still_shutter_submitted":
+            case "still_vendor_config_applied":
             case "still_hal_started":
             case "still_hal_completed":
             case "still_sensor_exposure_end":
@@ -653,6 +808,16 @@ public final class BlePhotoTimingLog {
         if (stillBreakdown != null && stillBreakdown.note != null && !stillBreakdown.note.isEmpty()) {
             sb.append("  note: ").append(stillBreakdown.note).append('\n');
         }
+        if (stillBreakdown != null) {
+            sb.append(
+                    String.format(
+                            Locale.US,
+                            "  applied ZSL=%s MFNR=%s preview_zsl=%s CONTROL_ENABLE_ZSL=%s%n",
+                            stillBreakdown.zslRequested ? "on" : "off",
+                            stillBreakdown.mfnrRequested ? "on" : "off",
+                            stillBreakdown.previewZslEnabled ? "on" : "off",
+                            controlEnableZslLabel(stillBreakdown.controlEnableZsl)));
+        }
         sb.append(String.format(Locale.US, "  %8s  %s%n", "DURATION", "SEGMENT"));
         sb.append(String.format(Locale.US, "  %8s  %s%n", "--------", "-------"));
 
@@ -673,7 +838,11 @@ public final class BlePhotoTimingLog {
             String ispDetail =
                     "exposure end → ImageReader (ISP"
                             + (stillBreakdown.mfnrRequested ? "+MFNR" : "")
-                            + "+JPEG encode/delivery; nr="
+                            + "+JPEG encode/delivery; zsl="
+                            + stillBreakdown.zslRequested
+                            + " mfnr="
+                            + stillBreakdown.mfnrRequested
+                            + " nr="
                             + stillBreakdown.noiseReductionMode
                             + ")";
             appendBottleneckLine(
@@ -779,6 +948,8 @@ public final class BlePhotoTimingLog {
                 return "CAPTURE: app notified capturing (shutter about to submit)";
             case "still_shutter_submitted":
                 return "CAPTURE: still capture request submitted to camera HAL";
+            case "still_vendor_config_applied":
+                return "CAPTURE: applied vendor config";
             case "still_hal_started":
                 return "CAPTURE: HAL began sensor exposure (onCaptureStarted)";
             case "still_sensor_exposure_end":
