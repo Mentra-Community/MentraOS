@@ -226,7 +226,7 @@ export default function CameraPage() {
                   warming…
                 </span>
               ) : (
-                `warmUp({ mode: "${mode}"${mode === "photo" ? `, size: "${size}"` : ""}, durationMs: ${warmupDurationMs} })`
+                "warmUp()"
               )}
             </Button>
             <Button onClick={takePhoto} disabled={busy} className="sm:flex-1">
