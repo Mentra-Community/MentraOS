@@ -1,6 +1,8 @@
 # Miniapp event delivery freezes behind blocking Expo AsyncFunctions (OS-1714)
 
-**Status:** root cause confirmed on device, fix design proposed, not yet implemented.
+**Status:** root cause confirmed on device; Android fix implemented in PR #3474
+and verified on device 2026-07-17 (transcripts flowed through a live photo
+window, 20 events, max gap 657ms, no burst).
 **Platforms:** Android only. iOS is not affected (see "Why iOS is fine").
 **Ticket:** OS-1714 (sub-issue of OS-1687). Related: OS-1701, OS-1712, the BGCAP
 "captions fall behind then flood in waves" investigation in
@@ -12,9 +14,14 @@ While a `camera.takePhoto()` request is in flight, ALL pushed events
 (transcription, request results, everything delivered into a miniapp's
 background JS context) stop arriving for the exact lifetime of the capture,
 then flush in a single FIFO burst the moment the photo response lands. No
-data is lost; delivery is delayed by the full capture duration (about 4s for
-a warm WiFi-direct capture, tens of seconds for a BLE-fallback transfer, and
-up to the native 15s request timeout when the glasses never respond).
+data is lost; delivery is delayed by the full duration of whatever blocking
+call is in flight. For photo capture that is about 4s for a warm WiFi-direct
+capture, bounded by the 15s default request timeout when the glasses never
+respond (BLE-fallback transfers finish under that bound or time out at it).
+Other blocking calls wait far longer: WiFi scan 20s, stream start 30s, and
+`stopVideoRecording()` with webhook upload up to 10 minutes
+(`VIDEO_UPLOAD_STOP_TIMEOUT_MS`), so the worst-case app-wide delivery freeze
+is 10 minutes, not 15s.
 
 ## On-device proof (2026-07-16, Pixel 8 + Mentra Live, dev build)
 
@@ -69,7 +76,9 @@ listed only the 12 zero-arg `pending.await()` sites; the `await(timeoutMs)`
 variants in `requestWifiScan`, `startStream`, `stopStream`, and
 `stopVideoRecording` block the same thread and are in scope.) Any of them
 freezes all miniapp event delivery app-wide for its duration. Photo capture
-is just the most frequent and longest-running offender.
+is the most frequent offender; the longest-running are `stopVideoRecording`
+with upload (10 minutes), stream start (30s), and WiFi scan (20s), all well
+past photo's 15s default timeout.
 
 ### Why iOS is fine
 
@@ -127,6 +136,52 @@ Preferred shape, keeping the public JS API identical:
    `Crust.mentraJsDispatchToJs` itself is already non-blocking (it submits
    to the per-context executor and returns); it is the victim here, not the
    culprit.
+
+### Concurrency after the conversion
+
+The blocked single-threaded queue used to serialize every SDK call as a side
+effect. Once the entry points suspend, calls from different callers can
+genuinely overlap and reach the glasses concurrently. That is intentional,
+not a race to guard against on the phone:
+
+- The glasses firmware owns a photo request queue and decides wait vs
+  camera_busy itself (Philippe's review on PR #3474). The SDK must NOT add
+  client-side serialization (no camera mutex) on top of that; it would
+  re-implement firmware policy at the wrong layer.
+- Request ids are assumed unique at the SDK interface (they are mostly
+  timestamp-derived). That assumption is accepted to keep complexity in
+  check, so the SDK does not add duplicate-id rejection either. (An earlier
+  revision of PR #3474 added both guards in response to bot review; both
+  were reverted per the above.)
+- Open question: `startStream` correlation. `matchingStreamStart()` only
+  routes an id-less stream status when exactly one start is pending, so two
+  concurrent starts can both time out. Whether the fix is routing-only or
+  the glasses also arbitrate overlapping starts is pending Philippe's
+  answer on the PR #3474 thread.
+
+Suspending awaits are also cancellation-aware where the old latch waits were
+not, which surfaced two rules (both applied in PR #3474):
+
+- Broad `catch (Throwable)` fallbacks must rethrow `CancellationException`,
+  or a cancelled caller can continue into side effects (the OTA start path
+  did exactly this).
+- A pending that multiple callers join (WiFi scan) must not be rejected by
+  one waiter's cancellation; cancellation detaches only that waiter, and
+  the last waiter out clears the shared entry.
+
+### Public Android SDK impact
+
+`MentraBluetoothSdk` ships as the published Maven artifact
+`com.mentraglass:bluetooth-sdk`. Converting the entry points to
+`suspend fun` keeps the public JS API identical, but for native Android
+consumers it is a source- and binary-incompatible change for Kotlin callers
+and removes the Java-callable signatures (a suspend method exposes only a
+Continuation-shaped JVM signature). Shipping this requires a major version
+bump of the artifact plus a migration note, and the Android examples in
+`mintlify-docs/` (quickstart, mentra-live/android, camera-streaming) must be
+updated to call these methods from a coroutine scope. That docs/migration
+work is tracked as a follow-up to PR #3474 and is not part of this doc's
+scope beyond flagging it.
 
 Verification plan (same rig as the OS-1714 evidence): continuous TTS
 markers, fire a visual query, confirm the miniapp `[TRANSCRIPT]` console
