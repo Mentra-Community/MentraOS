@@ -447,6 +447,34 @@ public final class BlePhotoTimingLog {
         }
     }
 
+    /** camera-open→AE-ready gap at/above this is a cold start; below is a warm/already-open camera. */
+    private static final long COLD_START_THRESHOLD_MS = 400;
+
+    /**
+     * Prints whether this capture paid the cold camera-open + AE-convergence cost. Measured as
+     * {@code still_vendor_config_applied - enqueue_camera}: the time from "start opening camera"
+     * to "AE converged, about to build the still request" — entirely before ZSL/MFNR vendor keys
+     * are applied, so a big number here is a cold-open/AE cost, not a ZSL/MFNR cost.
+     */
+    private static void appendCameraWarmStateSummary(StringBuilder sb, Map<String, Long> timings) {
+        long enqueue = phaseMs(timings, "enqueue_camera");
+        long vendorApplied = phaseMs(timings, "still_vendor_config_applied");
+        if (enqueue <= 0 || vendorApplied <= 0 || vendorApplied <= enqueue) {
+            return;
+        }
+        long openToReadyMs = vendorApplied - enqueue;
+        boolean cold = openToReadyMs >= COLD_START_THRESHOLD_MS;
+        sb.append(
+                String.format(
+                        Locale.US,
+                        "  CAMERA STATE: %s — camera-open→AE-ready took %dms (%s)%n%n",
+                        cold ? "COLD START" : "WARM",
+                        openToReadyMs,
+                        cold
+                                ? "cold camera open + AE convergence; unrelated to ZSL/MFNR"
+                                : "camera already open/converged"));
+    }
+
     private static long phaseMs(Map<String, Long> phases, String key) {
         if (phases == null) {
             return 0L;
@@ -551,6 +579,7 @@ public final class BlePhotoTimingLog {
                         "",
                         "END-TO-END"));
         sb.append('\n');
+        appendCameraWarmStateSummary(sb, timings);
         appendCaptureBottleneckSummary(sb, timings, takeStillCaptureBreakdown());
         sb.append("  PHASE SUMMARY (how long each major phase took)\n");
         sb.append(String.format(Locale.US, "  %8s  %s%n", "DURATION", "PHASE"));
