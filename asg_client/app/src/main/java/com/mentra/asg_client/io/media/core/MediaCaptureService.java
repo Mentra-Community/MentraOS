@@ -651,6 +651,14 @@ public class MediaCaptureService {
     /** Compressed BLE payload size (bytes) per request. */
     private final Map<String, Long> bleCompressedBytes = new ConcurrentHashMap<>();
 
+    /** Source/crop/encode geometry used to attribute payload savings in BLE timing logs. */
+    private final Map<String, BlePhotoTimingLog.PayloadReductionStats> blePayloadReductionStats =
+            new ConcurrentHashMap<>();
+
+    /** Warm-session reuse + sensor JPEG size for the end-of-pipeline PHASE SUMMARY. */
+    private final Map<String, BlePhotoTimingLog.CaptureSessionStats> bleCaptureSessionStats =
+            new ConcurrentHashMap<>();
+
     private final FileManager fileManager;
 
     /** Interface for listening to media capture and upload events */
@@ -2113,7 +2121,7 @@ public class MediaCaptureService {
             captureSettings = PhotoCaptureSettings.EMPTY;
         }
         final boolean textModeRequested = PhotoMode.TEXT.equals(mode);
-        String captureSize = PhotoMode.TEXT.equals(mode) ? PhotoSizeTier.normalize("max") : size;
+        String captureSize = PhotoMode.captureSize(mode, size);
 
         // Photos cannot interrupt streams
         if (RtmpStreamingService.isStreaming()
@@ -2441,7 +2449,7 @@ public class MediaCaptureService {
         if (textModeRequested) {
             textRoiDetector.warmUp();
         }
-        String captureSize = textModeRequested ? PhotoSizeTier.normalize("max") : size;
+        String captureSize = PhotoMode.captureSize(mode, size);
         // Start timing for end-to-end photo capture performance measurement
         final long requestStartTimeMs = System.currentTimeMillis();
         recordTiming(requestId, "request_start");
@@ -2938,6 +2946,10 @@ public class MediaCaptureService {
         long encodeTotalMs = bleEncodeTotalMs.getOrDefault(requestId, 0L);
         long originalBytes = bleOriginalBytes.getOrDefault(requestId, 0L);
         long compressedBytes = bleCompressedBytes.getOrDefault(requestId, 0L);
+        BlePhotoTimingLog.PayloadReductionStats reduction =
+                blePayloadReductionStats.get(requestId);
+        BlePhotoTimingLog.CaptureSessionStats captureSession =
+                bleCaptureSessionStats.get(requestId);
         BlePhotoTimingLog.UartTransferStats uart = BlePhotoTimingLog.takeUartTransfer(bleImgId);
         BlePhotoTimingLog.pipelineDone(
                 requestId,
@@ -2949,8 +2961,9 @@ public class MediaCaptureService {
                 encodeTotalMs,
                 originalBytes,
                 compressedBytes,
-                uart);
-        dumpTimings(requestId, originalBytes, compressedBytes, uart);
+                uart,
+                reduction);
+        dumpTimings(requestId, originalBytes, compressedBytes, uart, reduction, captureSession);
     }
 
     private void clearBlePhotoPipelineTracking(String requestId, String bleImgId) {
@@ -2961,6 +2974,8 @@ public class MediaCaptureService {
             bleEncodeTotalMs.remove(requestId);
             bleOriginalBytes.remove(requestId);
             bleCompressedBytes.remove(requestId);
+            blePayloadReductionStats.remove(requestId);
+            bleCaptureSessionStats.remove(requestId);
         }
         if (bleImgId != null) {
             bleImgIdToRequestId.remove(bleImgId);
@@ -3016,7 +3031,9 @@ public class MediaCaptureService {
             String requestId,
             long originalBytes,
             long compressedBytes,
-            @Nullable BlePhotoTimingLog.UartTransferStats uart) {
+            @Nullable BlePhotoTimingLog.UartTransferStats uart,
+            @Nullable BlePhotoTimingLog.PayloadReductionStats reduction,
+            @Nullable BlePhotoTimingLog.CaptureSessionStats captureSession) {
         if (!AsgConstants.ENABLE_PHOTO_TIMING_LOGS) return;
         Map<String, Long> timings = photoTimings.remove(requestId);
         if (timings == null || timings.isEmpty()) return;
@@ -3027,7 +3044,15 @@ public class MediaCaptureService {
         Log.i(
                 BlePhotoTimingLog.TAG,
                 BlePhotoTimingLog.formatPhaseBreakdown(
-                        requestId, snapshot, originalBytes, compressedBytes, uart));
+                        requestId,
+                        snapshot,
+                        originalBytes,
+                        compressedBytes,
+                        uart,
+                        reduction,
+                        captureSession));
+        blePayloadReductionStats.remove(requestId);
+        bleCaptureSessionStats.remove(requestId);
     }
 
     private void dumpTimings(String requestId) {
@@ -3035,7 +3060,9 @@ public class MediaCaptureService {
                 requestId,
                 bleOriginalBytes.getOrDefault(requestId, 0L),
                 bleCompressedBytes.getOrDefault(requestId, 0L),
-                null);
+                null,
+                blePayloadReductionStats.get(requestId),
+                bleCaptureSessionStats.get(requestId));
     }
 
     /**
@@ -3101,6 +3128,96 @@ public class MediaCaptureService {
             sample *= 2;
         }
         return sample;
+    }
+
+    /**
+     * Debug-only ground truth for the crop tradeoff report: re-runs the exact no-crop BLE pipeline
+     * (subsampled decode → aspect-fit resize → sharpen → JPEG encode at the same quality) on the
+     * full captured frame and records the measured payload size and processing time on {@code
+     * stats}. Runs on a background thread while the (smaller) cropped payload is already in
+     * flight, so it never delays the real transfer.
+     */
+    private void measureNoCropBleBaseline(
+            @Nullable byte[] jpegBytes,
+            String jpegPath,
+            int targetWidth,
+            int targetHeight,
+            int jpegQuality,
+            BlePhotoTimingLog.PayloadReductionStats stats) {
+        long startMs = System.currentTimeMillis();
+        android.graphics.Bitmap decoded = null;
+        android.graphics.Bitmap scaled = null;
+        android.graphics.Bitmap sharpened = null;
+        try {
+            android.graphics.BitmapFactory.Options bounds =
+                    new android.graphics.BitmapFactory.Options();
+            bounds.inJustDecodeBounds = true;
+            if (jpegBytes != null) {
+                android.graphics.BitmapFactory.decodeByteArray(
+                        jpegBytes, 0, jpegBytes.length, bounds);
+            } else {
+                android.graphics.BitmapFactory.decodeFile(jpegPath, bounds);
+            }
+            int srcWidth = bounds.outWidth;
+            int srcHeight = bounds.outHeight;
+            if (srcWidth <= 0 || srcHeight <= 0) {
+                return;
+            }
+            android.graphics.BitmapFactory.Options opts =
+                    new android.graphics.BitmapFactory.Options();
+            opts.inSampleSize =
+                    computeBleDecodeSampleSize(srcWidth, srcHeight, targetWidth, targetHeight);
+            decoded =
+                    jpegBytes != null
+                            ? android.graphics.BitmapFactory.decodeByteArray(
+                                    jpegBytes, 0, jpegBytes.length, opts)
+                            : android.graphics.BitmapFactory.decodeFile(jpegPath, opts);
+            if (decoded == null) {
+                return;
+            }
+            float scale =
+                    Math.min(
+                            1f,
+                            Math.min(
+                                    targetWidth / (float) decoded.getWidth(),
+                                    targetHeight / (float) decoded.getHeight()));
+            int outWidth = Math.max(1, Math.round(decoded.getWidth() * scale));
+            int outHeight = Math.max(1, Math.round(decoded.getHeight() * scale));
+            scaled = android.graphics.Bitmap.createScaledBitmap(decoded, outWidth, outHeight, true);
+            sharpened = BleImageSharpener.sharpen(mContext, scaled);
+            java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream(512 * 1024);
+            if (!sharpened.compress(
+                    android.graphics.Bitmap.CompressFormat.JPEG, jpegQuality, out)) {
+                return;
+            }
+            long elapsedMs = System.currentTimeMillis() - startMs;
+            stats.setMeasuredFullFrameBaseline(out.size(), elapsedMs);
+            Log.i(
+                    TAG,
+                    "📏 No-crop BLE baseline measured: "
+                            + String.format(Locale.US, "%.1fKB", out.size() / 1024.0)
+                            + " at "
+                            + outWidth
+                            + "x"
+                            + outHeight
+                            + " (quality="
+                            + jpegQuality
+                            + ") in "
+                            + elapsedMs
+                            + "ms");
+        } catch (Throwable t) {
+            Log.w(TAG, "No-crop BLE baseline measurement failed", t);
+        } finally {
+            if (sharpened != null && sharpened != scaled) {
+                sharpened.recycle();
+            }
+            if (scaled != null && scaled != decoded) {
+                scaled.recycle();
+            }
+            if (decoded != null) {
+                decoded.recycle();
+            }
+        }
     }
 
     private static android.graphics.Rect clampRoiToBounds(
@@ -4592,7 +4709,7 @@ public class MediaCaptureService {
         if (PhotoMode.TEXT.equals(mode)) {
             textRoiDetector.warmUp();
         }
-        String captureSize = PhotoMode.TEXT.equals(mode) ? PhotoSizeTier.normalize("max") : size;
+        String captureSize = PhotoMode.captureSize(mode, size);
         Log.i(
                 TAG,
                 "📸 Mentra Live BLE capture mode="
@@ -4742,7 +4859,18 @@ public class MediaCaptureService {
             // Use CameraNeoService for photo capture
             logBlePhotoStep(requestId, "enqueue_camera");
             final BlePhotoTimingLog.PhaseSink capturePhaseSink =
-                    (step, detail) -> logBlePhotoStep(requestId, step, detail);
+                    new BlePhotoTimingLog.PhaseSink() {
+                        @Override
+                        public void onPhase(String step, @Nullable String detail) {
+                            logBlePhotoStep(requestId, step, detail);
+                        }
+
+                        @Override
+                        public void onCaptureSession(
+                                BlePhotoTimingLog.CaptureSessionStats stats) {
+                            bleCaptureSessionStats.put(requestId, stats);
+                        }
+                    };
             BlePhotoTimingLog.bindPhaseSink(capturePhaseSink);
             CameraNeoService.enqueuePhotoRequest(
                     mContext,
@@ -5106,9 +5234,19 @@ public class MediaCaptureService {
                                                                 + ")";
 
                                 android.graphics.Rect roi = null;
-                                if (shouldCrop && !textCropAlreadyPrepared) {
+                                long cropPhaseStartMs = 0L;
+                                long cropPhaseEndMs = 0L;
+                                boolean cropAttempted = shouldCrop && !textCropAlreadyPrepared;
+                                if (cropAttempted) {
                                     stage.start("text-region detection");
-                                    logBlePhotoStep(requestId, "text_region_detection_start");
+                                    cropPhaseStartMs = System.currentTimeMillis();
+                                    logBlePhotoStep(
+                                            requestId,
+                                            "text_region_detection_start",
+                                            "ML Kit localization at "
+                                                    + AsgConstants
+                                                            .TEXT_MODE_MLKIT_ANALYSIS_LONG_EDGE
+                                                    + "px long edge");
                                     TextRegionDetection detection =
                                             runTextRegionDetection(
                                                     capturedPhoto != null
@@ -5121,10 +5259,65 @@ public class MediaCaptureService {
                                     textCropReason = detection.reason;
                                     textCropOutcome = detection.outcome;
                                     stage.finish("text-region detection");
-                                    logBlePhotoStep(requestId, "text_region_detection_done");
+                                    logBlePhotoStep(
+                                            requestId,
+                                            "text_region_detection_done",
+                                            textCropOutcome
+                                                    + (roi != null
+                                                            ? " roi=" + roi.toShortString()
+                                                            : " roi=full-frame"));
                                 }
 
-                                logBlePhotoStep(requestId, "image_process_start");
+                                int sourceWidth = 0;
+                                int sourceHeight = 0;
+                                int cropWidth = 0;
+                                int cropHeight = 0;
+                                boolean cropApplied = false;
+                                android.graphics.BitmapFactory.Options sourceBounds =
+                                        new android.graphics.BitmapFactory.Options();
+                                sourceBounds.inJustDecodeBounds = true;
+                                if (capturedPhoto != null) {
+                                    android.graphics.BitmapFactory.decodeByteArray(
+                                            capturedPhoto.jpegBytes,
+                                            0,
+                                            capturedPhoto.jpegBytes.length,
+                                            sourceBounds);
+                                } else {
+                                    android.graphics.BitmapFactory.decodeFile(
+                                            originalPath, sourceBounds);
+                                }
+                                sourceWidth = sourceBounds.outWidth;
+                                sourceHeight = sourceBounds.outHeight;
+                                if (roi != null && sourceWidth > 0 && sourceHeight > 0) {
+                                    android.graphics.Rect clampedRoi =
+                                            clampRoiToBounds(roi, sourceWidth, sourceHeight);
+                                    cropWidth = clampedRoi.width();
+                                    cropHeight = clampedRoi.height();
+                                    cropApplied =
+                                            cropWidth < sourceWidth || cropHeight < sourceHeight;
+                                }
+                                if (!cropApplied) {
+                                    cropWidth = sourceWidth;
+                                    cropHeight = sourceHeight;
+                                }
+
+                                if (cropAttempted && AsgConstants.ENABLE_GRAYSCALE_BLE_PHOTOS) {
+                                    // Detection is the timed CROP phase on the grayscale path;
+                                    // the fused luma crop/resize lives under COMPRESS below.
+                                    cropPhaseEndMs = System.currentTimeMillis();
+                                    logBlePhotoStep(
+                                            requestId,
+                                            "crop_phase_done",
+                                            String.format(
+                                                    Locale.US,
+                                                    "detect=%dms roi=%s (bitmap crop fused into"
+                                                            + " grayscale compress path)",
+                                                    cropPhaseEndMs - cropPhaseStartMs,
+                                                    roi != null
+                                                            ? roi.toShortString()
+                                                            : "full-frame"));
+                                }
+
                                 if (AsgConstants.ENABLE_GRAYSCALE_BLE_PHOTOS) {
                                     // 2b. Decode straight to a grayscale luma pipeline (crop +
                                     // contrast + unsharp all happen on 1-byte/pixel buffers) and
@@ -5139,6 +5332,7 @@ public class MediaCaptureService {
                                                     + (roi != null ? roi.toShortString() : "null")
                                                     + " - see GrayscaleBleProcessor log line"
                                                     + " below for original->crop->out dims");
+                                    logBlePhotoStep(requestId, "image_process_start");
                                     stage.start("grayscale decode+crop+resize+sharpen");
                                     logBlePhotoStep(
                                             requestId,
@@ -5171,31 +5365,20 @@ public class MediaCaptureService {
                                                     + "x"
                                                     + resized.getHeight());
                                 } else {
-                                    // Legacy full-color path. When a text-region ROI was detected
-                                    // above, crop to it (still in color) before the existing
-                                    // scale+sharpen chain - this keeps color for viewing while
-                                    // still spending the BLE byte budget on the text region.
+                                    // Full-color path: finish the entire CROP phase (decode + crop)
+                                    // before any COMPRESS steps (resize/sharpen/encode).
                                     stage.start("input decode");
+                                    String decodeStepStart =
+                                            cropAttempted ? "crop_decode_start" : "input_decode_start";
+                                    String decodeStepDone =
+                                            cropAttempted ? "crop_decode_done" : "input_decode_done";
                                     logBlePhotoStep(
                                             requestId,
-                                            "input_decode_start",
+                                            decodeStepStart,
                                             "decoding the captured JPEG with a memory-saving sample"
                                                     + " size");
-                                    android.graphics.BitmapFactory.Options bounds =
-                                            new android.graphics.BitmapFactory.Options();
-                                    bounds.inJustDecodeBounds = true;
-                                    if (capturedPhoto != null) {
-                                        android.graphics.BitmapFactory.decodeByteArray(
-                                                capturedPhoto.jpegBytes,
-                                                0,
-                                                capturedPhoto.jpegBytes.length,
-                                                bounds);
-                                    } else {
-                                        android.graphics.BitmapFactory.decodeFile(
-                                                originalPath, bounds);
-                                    }
-                                    int srcWidth = bounds.outWidth;
-                                    int srcHeight = bounds.outHeight;
+                                    int srcWidth = sourceWidth;
+                                    int srcHeight = sourceHeight;
                                     if (srcWidth <= 0 || srcHeight <= 0) {
                                         throw new Exception("Failed to read image bounds");
                                     }
@@ -5204,8 +5387,8 @@ public class MediaCaptureService {
                                     // ARGB frame when the output is capped at 1920px anyway.
                                     // The ROI (source-pixel coordinates) is mapped onto the
                                     // subsampled space so the crop lands on the same region.
-                                    int regionWidth = roi != null ? roi.width() : srcWidth;
-                                    int regionHeight = roi != null ? roi.height() : srcHeight;
+                                    int regionWidth = cropWidth > 0 ? cropWidth : srcWidth;
+                                    int regionHeight = cropHeight > 0 ? cropHeight : srcHeight;
                                     int sampleSize =
                                             computeBleDecodeSampleSize(
                                                     regionWidth,
@@ -5264,7 +5447,7 @@ public class MediaCaptureService {
                                                     + ")");
                                     logBlePhotoStep(
                                             requestId,
-                                            "input_decode_done",
+                                            decodeStepDone,
                                             "decoded "
                                                     + original.getWidth()
                                                     + "x"
@@ -5279,33 +5462,66 @@ public class MediaCaptureService {
                                                     + " roi="
                                                     + (roi != null ? roi.toShortString() : "null"));
 
-                                    logBlePhotoStep(
-                                            requestId,
-                                            "crop_start",
-                                            "cropping to "
-                                                    + (roi != null
-                                                            ? roi.toShortString()
-                                                            : "full image"));
-                                    android.graphics.Bitmap cropped =
-                                            regionDecoded
-                                                    ? original
-                                                    : cropBitmapToDetectedRoi(
-                                                            original,
-                                                            scaleRoiToDecoded(roi, sampleSize),
-                                                            textCropOutcome);
-                                    stage.finish(
-                                            "crop",
-                                            "cropped "
-                                                    + cropped.getWidth()
-                                                    + "x"
-                                                    + cropped.getHeight());
-                                    logBlePhotoStep(
-                                            requestId,
-                                            "crop_done",
-                                            "crop output "
-                                                    + cropped.getWidth()
-                                                    + "x"
-                                                    + cropped.getHeight());
+                                    android.graphics.Bitmap cropped;
+                                    if (cropAttempted) {
+                                        logBlePhotoStep(
+                                                requestId,
+                                                "crop_start",
+                                                regionDecoded
+                                                        ? "ROI already decoded from JPEG region "
+                                                                + (roi != null
+                                                                        ? roi.toShortString()
+                                                                        : "full")
+                                                        : "cropping decoded bitmap to "
+                                                                + (roi != null
+                                                                        ? roi.toShortString()
+                                                                        : "full image"));
+                                        cropped =
+                                                regionDecoded
+                                                        ? original
+                                                        : cropBitmapToDetectedRoi(
+                                                                original,
+                                                                scaleRoiToDecoded(roi, sampleSize),
+                                                                textCropOutcome);
+                                        stage.finish(
+                                                "crop",
+                                                "cropped "
+                                                        + cropped.getWidth()
+                                                        + "x"
+                                                        + cropped.getHeight());
+                                        cropPhaseEndMs = System.currentTimeMillis();
+                                        long cropPhaseMs = cropPhaseEndMs - cropPhaseStartMs;
+                                        logBlePhotoStep(
+                                                requestId,
+                                                "crop_done",
+                                                "crop output "
+                                                        + cropped.getWidth()
+                                                        + "x"
+                                                        + cropped.getHeight()
+                                                        + (regionDecoded
+                                                                ? " (region-decoded)"
+                                                                : ""));
+                                        logBlePhotoStep(
+                                                requestId,
+                                                "crop_phase_done",
+                                                String.format(
+                                                        Locale.US,
+                                                        "detect+decode+crop=%dms output=%dx%d"
+                                                                + " sourceROI=%s applied=%s",
+                                                        cropPhaseMs,
+                                                        cropped.getWidth(),
+                                                        cropped.getHeight(),
+                                                        roi != null
+                                                                ? roi.toShortString()
+                                                                : "full-frame",
+                                                        cropApplied));
+                                    } else {
+                                        cropped = original;
+                                    }
+
+                                    // COMPRESS phase begins only after crop (or immediately when
+                                    // cropping was not requested).
+                                    logBlePhotoStep(requestId, "image_process_start");
 
                                     // The configured dimensions are caps, not a request to enlarge
                                     // a small ROI. Upscaling cannot recover text detail and wastes
@@ -5506,16 +5722,92 @@ public class MediaCaptureService {
                                                 : new File(originalPath).length();
                                 double originalSizeKb = originalSizeBytes / 1024.0;
                                 double compressedSizeKb = compressedData.length / 1024.0;
+                                long cropDurationMs =
+                                        cropAttempted && cropPhaseStartMs > 0
+                                                ? Math.max(
+                                                        0L,
+                                                        (cropPhaseEndMs > 0
+                                                                        ? cropPhaseEndMs
+                                                                        : System
+                                                                                .currentTimeMillis())
+                                                                - cropPhaseStartMs)
+                                                : 0L;
+                                BlePhotoTimingLog.PayloadReductionStats reductionStats =
+                                        new BlePhotoTimingLog.PayloadReductionStats(
+                                                sourceWidth,
+                                                sourceHeight,
+                                                cropWidth,
+                                                cropHeight,
+                                                bleResizedWidth,
+                                                bleResizedHeight,
+                                                bleParams.targetWidth,
+                                                bleParams.targetHeight,
+                                                cropApplied,
+                                                cropDurationMs,
+                                                cropAttempted);
+                                blePayloadReductionStats.put(requestId, reductionStats);
+                                if (AsgConstants.ENABLE_PHOTO_TIMING_LOGS
+                                        && cropApplied
+                                        && encodeResult.codecUsed == BleCodec.JPEG_FAST) {
+                                    // Measure the true no-crop baseline (same decode/resize/
+                                    // sharpen/encode path, same quality) off the critical path
+                                    // while the BLE transfer runs, so the crop tradeoff report
+                                    // compares against real bytes instead of an area estimate.
+                                    final byte[] baselineJpeg =
+                                            capturedPhoto != null
+                                                    ? capturedPhoto.jpegBytes
+                                                    : null;
+                                    final String baselinePath = originalPath;
+                                    final int baselineTargetW = bleParams.targetWidth;
+                                    final int baselineTargetH = bleParams.targetHeight;
+                                    final int baselineQuality = encodeQuality;
+                                    final BlePhotoTimingLog.PayloadReductionStats baselineStats =
+                                            reductionStats;
+                                    new Thread(
+                                                    () ->
+                                                            measureNoCropBleBaseline(
+                                                                    baselineJpeg,
+                                                                    baselinePath,
+                                                                    baselineTargetW,
+                                                                    baselineTargetH,
+                                                                    baselineQuality,
+                                                                    baselineStats),
+                                                    "BleNoCropBaseline")
+                                            .start();
+                                }
+                                long estFullFrameBleBytes =
+                                        BlePhotoTimingLog.estimateFullFrameBlePayloadBytes(
+                                                compressedData.length, reductionStats);
+                                long cropSavedVsFullBleBytes =
+                                        Math.max(
+                                                0L,
+                                                estFullFrameBleBytes - compressedData.length);
+                                long sensorToPayloadSavedBytes =
+                                        Math.max(0L, originalSizeBytes - compressedData.length);
                                 logBlePhotoStep(
                                         requestId,
                                         "ble_compress_done",
                                         String.format(
                                                 Locale.US,
-                                                "%s %.1fKB → %.1fKB in %dms",
+                                                "%s %.1fKB → %.1fKB in %dms"
+                                                        + " | crop_saved_vs_full_ble_est=%.1fKB"
+                                                        + " | est_full_ble=%.1fKB"
+                                                        + " | sensor_to_payload_saved=%.1fKB"
+                                                        + " | crop=%dx%d of %dx%d"
+                                                        + " | encode=%dx%d",
                                                 bleEncodedFormat,
                                                 originalSizeKb,
                                                 compressedSizeKb,
-                                                compressionTime));
+                                                compressionTime,
+                                                cropSavedVsFullBleBytes / 1024.0,
+                                                estFullFrameBleBytes / 1024.0,
+                                                sensorToPayloadSavedBytes / 1024.0,
+                                                cropWidth,
+                                                cropHeight,
+                                                sourceWidth,
+                                                sourceHeight,
+                                                bleResizedWidth,
+                                                bleResizedHeight));
                                 recordTiming(requestId, "ble_compress_done");
 
                                 if (AsgConstants.ENABLE_PHOTO_TIMING_LOGS) {
@@ -5529,7 +5821,17 @@ public class MediaCaptureService {
                                                     + encodeResult.encodeMs
                                                     + "ms, output="
                                                     + compressedData.length
-                                                    + " bytes");
+                                                    + " bytes"
+                                                    + ", crop_saved_vs_full_ble_est="
+                                                    + String.format(
+                                                            Locale.US,
+                                                            "%.1fKB",
+                                                            cropSavedVsFullBleBytes / 1024.0)
+                                                    + ", est_full_ble="
+                                                    + String.format(
+                                                            Locale.US,
+                                                            "%.1fKB",
+                                                            estFullFrameBleBytes / 1024.0));
                                 }
                                 logBlePhotoStep(
                                         requestId,
@@ -5557,6 +5859,16 @@ public class MediaCaptureService {
                                                 + bleEncodedFormat
                                                 + ", requestId="
                                                 + requestId
+                                                + ", crop_saved_vs_full_ble_est="
+                                                + String.format(
+                                                        Locale.US,
+                                                        "%.1fKB",
+                                                        cropSavedVsFullBleBytes / 1024.0)
+                                                + ", est_full_ble="
+                                                + String.format(
+                                                        Locale.US,
+                                                        "%.1fKB",
+                                                        estFullFrameBleBytes / 1024.0)
                                                 + ")");
 
                                 // 5. A requested gallery save is part of this operation's success
@@ -5858,10 +6170,12 @@ public class MediaCaptureService {
      * @param size resolution tier matching the warmed config ("low"/"medium"/"high"/"max")
      * @param exposureTimeNs optional manual shutter in ns; {@code null} = auto
      * @param durationMs keep-alive TTL in ms; {@code <= 0} uses the default warm-up hold
+     * @param mode capture mode ("photo"/"text"); forwarded so the warmed preview applies the same
+     *     text-mode AE preset the eventual {@code take_photo} will use
      * @return true if the warm-up was accepted (or the camera was already warm), false otherwise
      */
     public boolean warmUpCamera(
-            String requestId, String size, Long exposureTimeNs, long durationMs) {
+            String requestId, String size, Long exposureTimeNs, long durationMs, String mode) {
         if (requestId == null || requestId.isEmpty()) {
             Log.w(TAG, "camera_warm_up rejected - missing requestId");
             return false;
@@ -5928,6 +6242,7 @@ public class MediaCaptureService {
                 size,
                 exposureTimeNs,
                 durationMs,
+                mode,
                 new CameraNeoService.CameraWarmUpCallback() {
                     @Override
                     public void onWarming() {
