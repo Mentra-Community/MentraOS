@@ -179,8 +179,6 @@ export async function refreshSession(args: {
   // The predecessor stays honored until the successor is first USED: once a
   // successor is presented it becomes `prevTokenHash` itself, and anything
   // older matches nothing and fails exactly as before.
-  // Third slot: a displaced sibling from a recovery rotation (see the
-  // rotation below) is honored too until any confirmed use clears it.
   let oldDoc = await RefreshTokenModel.findOne({
     refreshTokenHash: presentedHash,
     expiresAt: { $gt: now },
@@ -188,12 +186,6 @@ export async function refreshSession(args: {
   if (!oldDoc) {
     oldDoc = await RefreshTokenModel.findOne({
       prevTokenHash: presentedHash,
-      expiresAt: { $gt: now },
-    }).lean();
-  }
-  if (!oldDoc) {
-    oldDoc = await RefreshTokenModel.findOne({
-      altTokenHash: presentedHash,
       expiresAt: { $gt: now },
     }).lean();
   }
@@ -219,66 +211,37 @@ export async function refreshSession(args: {
   });
   const nextRefresh = mintRefreshToken();
 
-  // Single-use guarantee with one-step recovery. Three accepted slots:
-  //   - live (`refreshTokenHash`): normal rotation. The presented hash
-  //     becomes `prevTokenHash` (retiring the grandparent) and any displaced
-  //     sibling is cleared — a confirmed use of the live chain proves the
-  //     client holds it, so nothing else needs honoring.
-  //   - predecessor (`prevTokenHash`): the client never received the
-  //     successor (lost response), or lost a concurrent-duplicate race. It
-  //     stays `prevTokenHash` (so recovery works repeatedly), and the live
-  //     hash this rotation displaces moves to `altTokenHash` instead of
-  //     being orphaned: if the OTHER concurrent response is the one the
-  //     client persisted (network reordering), that token must keep working.
-  //   - displaced sibling (`altTokenHash`): the client persisted the
-  //     response a recovery rotation displaced. Confirmed use — same
-  //     treatment as the live path.
-  // Only one concurrent request can win each findOneAndUpdate; every token a
-  // client could have persisted stays in one of the three slots until a
-  // confirmed use collapses them.
-  const confirmedRotation = {
+  // Single-use guarantee with one-step recovery. The same $set serves both
+  // paths: on a normal rotation the presented hash becomes `prevTokenHash`,
+  // retiring the grandparent; on a recovery rotation the presented hash
+  // already IS `prevTokenHash` (so it stays put, and the client can recover
+  // repeatedly if it keeps losing responses) while the never-delivered
+  // successor's hash is overwritten — orphaned, dead. Only one concurrent
+  // request can win each findOneAndUpdate; a loser on the live-hash path
+  // retries once via the predecessor path, so a concurrent duplicate gets a
+  // valid pair instead of a spurious invalid_grant.
+  const rotation = {
     $set: {
       refreshTokenHash: nextRefresh.hash,
       prevTokenHash: presentedHash,
-      issuedAt: now,
+      issuedAt: new Date(),
       expiresAt: nextRefresh.expiresAt,
     },
-    $unset: { altTokenHash: "" },
   };
   let rotated = await RefreshTokenModel.findOneAndUpdate(
     {
       refreshTokenHash: presentedHash,
-      expiresAt: { $gt: now },
+      expiresAt: { $gt: new Date() },
     },
-    confirmedRotation,
+    rotation,
   ).lean();
   if (!rotated) {
-    // Recovery path. Aggregation-pipeline update so the displaced live hash
-    // can be captured into `altTokenHash` atomically with the rotation.
     rotated = await RefreshTokenModel.findOneAndUpdate(
       {
         prevTokenHash: presentedHash,
-        expiresAt: { $gt: now },
+        expiresAt: { $gt: new Date() },
       },
-      [
-        {
-          $set: {
-            altTokenHash: "$refreshTokenHash",
-            refreshTokenHash: nextRefresh.hash,
-            issuedAt: now,
-            expiresAt: nextRefresh.expiresAt,
-          },
-        },
-      ],
-    ).lean();
-  }
-  if (!rotated) {
-    rotated = await RefreshTokenModel.findOneAndUpdate(
-      {
-        altTokenHash: presentedHash,
-        expiresAt: { $gt: now },
-      },
-      confirmedRotation,
+      rotation,
     ).lean();
   }
   if (!rotated) {
