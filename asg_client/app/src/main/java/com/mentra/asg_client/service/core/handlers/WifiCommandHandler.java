@@ -158,7 +158,12 @@ public class WifiCommandHandler implements ICommandHandler {
                     if ((isConnected && currentSsid.equals(targetSsid)) || i == 3) {
                         boolean connectedToTarget = isConnected && currentSsid.equals(targetSsid);
                         // Surface why provisioning failed instead of a bare connected=false —
-                        // "never associates, no error shown" was a field complaint.
+                        // "never associates, no error shown" was a field complaint. The error is
+                        // an ATTEMPT verdict riding on a truthful LINK snapshot, so
+                        // connected_to_other_network is deliberately sent with connected=true:
+                        // the join failed and auto-join left the glasses on (or returned them
+                        // to) a different SSID, so the link is genuinely up while the request
+                        // genuinely failed.
                         String error = null;
                         if (!connectedToTarget) {
                             error = isConnected ? "connected_to_other_network" : "connect_timeout";
