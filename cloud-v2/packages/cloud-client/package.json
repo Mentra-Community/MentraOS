@@ -42,5 +42,17 @@
     "type": "git",
     "url": "git+https://github.com/Mentra-Community/MentraOS.git",
     "directory": "cloud-v2/packages/cloud-client"
+  },
+  "description": "MentraOS cloud client — handshake, envelopes and module message flows over the cloud wire protocol",
+  "keywords": [
+    "mentra",
+    "mentraos",
+    "cloud",
+    "client",
+    "websocket"
+  ],
+  "homepage": "https://github.com/Mentra-Community/MentraOS/tree/dev/cloud-v2/packages/cloud-client#readme",
+  "bugs": {
+    "url": "https://github.com/Mentra-Community/MentraOS/issues"
   }
 }
