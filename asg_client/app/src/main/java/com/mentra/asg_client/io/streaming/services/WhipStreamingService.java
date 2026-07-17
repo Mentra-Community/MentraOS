@@ -897,7 +897,13 @@ public class WhipStreamingService extends Service {
   }
 
   private void notifyStopped() {
-    if (sStatusCallback != null) mMainHandler.post(() -> sStatusCallback.onStreamStopped(mCurrentStreamId));
+    StreamingStatusCallback callback = sStatusCallback;
+    if (callback != null) {
+      // Capture now: by the time the posted runnable runs, a newer start may
+      // already have overwritten mCurrentStreamId.
+      String streamId = mCurrentStreamId;
+      mMainHandler.post(() -> callback.onStreamStopped(streamId));
+    }
   }
 
   private void notifyReconnecting(int attempt, int maxAttempts, String reason) {

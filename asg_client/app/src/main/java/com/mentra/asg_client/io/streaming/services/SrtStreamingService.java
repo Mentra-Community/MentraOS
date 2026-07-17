@@ -632,6 +632,14 @@ public class SrtStreamingService extends Service {
   private void forceStopStreamingInternal(boolean preserveSession) {
     Log.d(TAG, "Force stopping SRT stream (preserveSession=" + preserveSession + ")");
 
+    // Capture the id up front - cancelStreamTimeout() and the state reset below
+    // both clear it, and the stopped callback must identify the stream being
+    // stopped.
+    final String stoppedStreamId;
+    synchronized (mStateLock) {
+      stoppedStreamId = mCurrentStreamId;
+    }
+
     if (!preserveSession) stopBatteryMonitoring();
 
     mReconnectionSequence++;
@@ -696,7 +704,7 @@ public class SrtStreamingService extends Service {
     }
 
     if (!preserveSession) {
-      if (sStatusCallback != null) sStatusCallback.onStreamStopped(mCurrentStreamId);
+      if (sStatusCallback != null) sStatusCallback.onStreamStopped(stoppedStreamId);
       EventBus.getDefault().post(new StreamingEvent.Stopped());
       Log.i(TAG, "SRT streaming stopped");
     }
