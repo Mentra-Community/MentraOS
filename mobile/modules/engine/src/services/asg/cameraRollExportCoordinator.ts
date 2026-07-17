@@ -157,6 +157,8 @@ class CameraRollExportCoordinator {
 
   /** Source deletion waits on this barrier; historical work never blocks a glasses sync. */
   async exportForSource(file: DownloadedFile, captureId?: string): Promise<GalleryAssetReceipt> {
+    await this.initialize()
+    if (!this.enabled) throw new Error("Automatic camera-roll saving is disabled")
     const entry = await this.recordIndexed(file, true, "SOURCE_BARRIER", captureId)
     if (entry.receipt) return entry.receipt
     return new Promise<GalleryAssetReceipt>((resolve, reject) => {
@@ -173,10 +175,15 @@ class CameraRollExportCoordinator {
     await gallerySettingsService.setAutoSaveToCameraRoll(enabled)
     try {
       this.enabled = enabled
+      if (!enabled && this.retryTimer != null) {
+        BgTimer.clearTimeout(this.retryTimer)
+        this.retryTimer = null
+      }
       for (const entry of cameraRollExportLedger.list()) {
         if (entry.receipt || entry.state === "EXPORTED" || entry.state === "MISSING_LOCAL") continue
-        if (!enabled && entry.priority === "HISTORICAL_BACKFILL") {
+        if (!enabled && entry.id !== this.activeEntryId) {
           cameraRollExportLedger.update(entry.id, {state: "NOT_REQUESTED", nextRetryAt: undefined})
+          this.rejectSourceWaiters(entry.id, new Error("Automatic camera-roll saving was disabled"))
         } else if (enabled) {
           cameraRollExportLedger.update(entry.id, {state: "QUEUED", nextRetryAt: undefined, lastError: undefined})
         }
@@ -294,13 +301,16 @@ class CameraRollExportCoordinator {
       while (this.activeEntryId && cameraRollExportLedger.get(this.activeEntryId)?.mediaName === mediaName) {
         await new Promise<void>((resolve) => BgTimer.setTimeout(resolve, 25))
       }
-      // An already-running export gets to finish and resolve its source barrier. Queued work
-      // cannot start while the name is in deletingMediaNames, so reject only what remains.
-      for (const entry of cameraRollExportLedger.list().filter((candidate) => candidate.mediaName === mediaName)) {
-        this.rejectSourceWaiters(entry.id, new Error("Local media was deleted before camera-roll export"))
-      }
       const deleted = await localStorageService.deleteDownloadedFile(mediaName)
-      if (deleted) cameraRollExportLedger.removeForMedia(mediaName)
+      if (deleted) {
+        // An already-running export gets to finish and resolve its source barrier. Queued work
+        // cannot start while the name is in deletingMediaNames, so reject only after deletion
+        // is confirmed. A failed delete leaves the barrier intact and eligible for retry.
+        for (const entry of cameraRollExportLedger.list().filter((candidate) => candidate.mediaName === mediaName)) {
+          this.rejectSourceWaiters(entry.id, new Error("Local media was deleted before camera-roll export"))
+        }
+        cameraRollExportLedger.removeForMedia(mediaName)
+      }
       return deleted
     } finally {
       this.deletingMediaNames.delete(mediaName)
@@ -316,15 +326,18 @@ class CameraRollExportCoordinator {
       while (this.activeEntryId) {
         await new Promise<void>((resolve) => BgTimer.setTimeout(resolve, 25))
       }
-      // Let the active native copy deliver its receipt before rejecting queued barriers.
+      await localStorageService.clearAllFiles()
+      // Let the active native copy deliver its receipt before rejecting queued barriers, and
+      // reject them only after the app media clear is confirmed. If clear fails, the durable
+      // work and its waiters remain eligible for retry.
       for (const entry of cameraRollExportLedger.list()) {
         this.rejectSourceWaiters(entry.id, new Error("Local media was deleted before camera-roll export"))
       }
-      await localStorageService.clearAllFiles()
       cameraRollExportLedger.clear()
     } finally {
       this.clearInProgress = false
       this.emitSummary()
+      if (this.enabled) void this.resume("local clear finished")
     }
   }
 
@@ -335,10 +348,10 @@ class CameraRollExportCoordinator {
       .filter((entry) => {
         if (this.clearInProgress || this.deletingMediaNames.has(entry.mediaName)) return false
         if (entry.receipt || entry.state === "EXPORTED" || entry.state === "MISSING_LOCAL") return false
-        if (!this.enabled && entry.priority !== "SOURCE_BARRIER") return false
+        if (!this.enabled) return false
         if (entry.state === "BLOCKED_PERMISSION" || entry.state === "FAILED_PERMANENT") return false
         if (entry.state === "FAILED_RETRYABLE" && (entry.nextRetryAt || 0) > now) return false
-        return entry.state !== "NOT_REQUESTED" || entry.priority === "SOURCE_BARRIER"
+        return entry.state !== "NOT_REQUESTED"
       })
       .sort((a, b) => {
         if (a.priority !== b.priority) return a.priority === "SOURCE_BARRIER" ? -1 : 1
@@ -350,6 +363,11 @@ class CameraRollExportCoordinator {
     let entry = original
     this.activeEntryId = entry.id
     try {
+      if (!this.enabled) {
+        cameraRollExportLedger.update(entry.id, {state: "NOT_REQUESTED", nextRetryAt: undefined})
+        this.rejectSourceWaiters(entry.id, new Error("Automatic camera-roll saving was disabled"))
+        return
+      }
       if (!(await RNFS.exists(entry.filePath))) {
         cameraRollExportLedger.update(entry.id, {state: "MISSING_LOCAL", lastError: "Local media is missing"})
         throw new Error("Local media is missing")
@@ -372,6 +390,14 @@ class CameraRollExportCoordinator {
       const fsInfo = await RNFS.getFSInfo()
       if (fsInfo.freeSpace < entry.size + MIN_FREE_SPACE_BYTES) {
         throw new Error("Insufficient free space for camera-roll export")
+      }
+      // A setting change can land while the filesystem and permission checks are in flight.
+      // Once the native save starts it must finish atomically, but do not begin a new save
+      // after the user has disabled automatic camera-roll exports.
+      if (!this.enabled) {
+        cameraRollExportLedger.update(entry.id, {state: "NOT_REQUESTED", nextRetryAt: undefined})
+        this.rejectSourceWaiters(entry.id, new Error("Automatic camera-roll saving was disabled"))
+        return
       }
 
       entry = cameraRollExportLedger.update(entry.id, {state: "RECONCILING", lastError: undefined})

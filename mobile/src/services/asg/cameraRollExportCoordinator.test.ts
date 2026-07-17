@@ -178,6 +178,46 @@ describe("cameraRollExportCoordinator", () => {
     expect(cameraRollExportCoordinator.getSummary().exported).toBe(1)
   })
 
+  it("pauses queued source barriers when automatic saving is disabled", async () => {
+    const file = legacyFile("IMG_source_paused")
+    await cameraRollExportCoordinator.initialize()
+    mockFiles[file.name] = file
+    await cameraRollExportCoordinator.recordIndexed(file, true, "SOURCE_BARRIER", file.name)
+
+    await cameraRollExportCoordinator.setEnabled(false)
+    await cameraRollExportCoordinator.resume("disabled foreground")
+
+    expect(MediaLibraryPermissions.saveToLibraryWithReceipt).not.toHaveBeenCalled()
+    expect(cameraRollExportLedger.list()[0]).toMatchObject({
+      priority: "SOURCE_BARRIER",
+      state: "NOT_REQUESTED",
+    })
+  })
+
+  it("does not start a native save after an active source barrier is disabled", async () => {
+    const file = legacyFile("IMG_source_disabled_during_checks")
+    let finishExists!: (exists: boolean) => void
+    ;(RNFS.exists as jest.Mock).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishExists = resolve
+        }),
+    )
+
+    await cameraRollExportCoordinator.initialize()
+    mockFiles[file.name] = file
+    const sourceExport = cameraRollExportCoordinator.exportForSource(file, file.name)
+    for (let i = 0; i < 10 && !finishExists; i += 1) await Promise.resolve()
+    expect(finishExists).toBeDefined()
+
+    await cameraRollExportCoordinator.setEnabled(false)
+    finishExists(true)
+
+    await expect(sourceExport).rejects.toThrow("disabled")
+    expect(MediaLibraryPermissions.saveToLibraryWithReceipt).not.toHaveBeenCalled()
+    expect(cameraRollExportLedger.list()[0].state).toBe("NOT_REQUESTED")
+  })
+
   it("uses the same durable path for a source-deletion barrier", async () => {
     const file = legacyFile("IMG_source")
     mockFiles[file.name] = file
@@ -230,5 +270,72 @@ describe("cameraRollExportCoordinator", () => {
 
     expect(localStorageService.deleteDownloadedFile).toHaveBeenCalledWith(file.name)
     expect(cameraRollExportLedger.list()).toEqual([])
+  })
+
+  it("keeps a source barrier alive when local deletion fails", async () => {
+    const activeFile = legacyFile("IMG_active")
+    const queuedFile = legacyFile("IMG_delete_failed")
+    let finishActiveExport!: (receipt: {success: true; platform: "ios"; identifier: string}) => void
+    ;(MediaLibraryPermissions.saveToLibraryWithReceipt as jest.Mock)
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finishActiveExport = resolve
+          }),
+      )
+      .mockResolvedValueOnce({success: true, platform: "ios", identifier: "asset-2"})
+    ;(localStorageService.deleteDownloadedFile as jest.Mock).mockResolvedValueOnce(false)
+
+    await cameraRollExportCoordinator.initialize()
+    mockFiles[activeFile.name] = activeFile
+    mockFiles[queuedFile.name] = queuedFile
+    const activeExport = cameraRollExportCoordinator.exportForSource(activeFile, activeFile.name)
+    for (let i = 0; i < 10 && !finishActiveExport; i += 1) await Promise.resolve()
+    expect(finishActiveExport).toBeDefined()
+    const queuedExport = cameraRollExportCoordinator.exportForSource(queuedFile, queuedFile.name)
+    for (let i = 0; i < 10 && cameraRollExportLedger.list().length < 2; i += 1) await Promise.resolve()
+
+    await expect(cameraRollExportCoordinator.deleteLocalMedia(queuedFile.name)).resolves.toBe(false)
+    finishActiveExport({success: true, platform: "ios", identifier: "asset-1"})
+
+    await expect(activeExport).resolves.toMatchObject({identifier: "asset-1"})
+    await expect(queuedExport).resolves.toMatchObject({identifier: "asset-2"})
+    expect(cameraRollExportLedger.list().find((entry) => entry.mediaName === queuedFile.name)).toMatchObject({
+      state: "EXPORTED",
+    })
+  })
+
+  it("keeps queued barriers alive when clearing local media fails", async () => {
+    const activeFile = legacyFile("IMG_active_clear")
+    const queuedFile = legacyFile("IMG_clear_failed")
+    let finishActiveExport!: (receipt: {success: true; platform: "ios"; identifier: string}) => void
+    ;(MediaLibraryPermissions.saveToLibraryWithReceipt as jest.Mock)
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finishActiveExport = resolve
+          }),
+      )
+      .mockResolvedValueOnce({success: true, platform: "ios", identifier: "asset-2"})
+    ;(localStorageService.clearAllFiles as jest.Mock).mockRejectedValueOnce(new Error("clear failed"))
+
+    await cameraRollExportCoordinator.initialize()
+    mockFiles[activeFile.name] = activeFile
+    mockFiles[queuedFile.name] = queuedFile
+    const activeExport = cameraRollExportCoordinator.exportForSource(activeFile, activeFile.name)
+    for (let i = 0; i < 10 && !finishActiveExport; i += 1) await Promise.resolve()
+    expect(finishActiveExport).toBeDefined()
+    const queuedExport = cameraRollExportCoordinator.exportForSource(queuedFile, queuedFile.name)
+    for (let i = 0; i < 10 && cameraRollExportLedger.list().length < 2; i += 1) await Promise.resolve()
+
+    const clearing = cameraRollExportCoordinator.clearLocalMedia()
+    finishActiveExport({success: true, platform: "ios", identifier: "asset-1"})
+
+    await expect(activeExport).resolves.toMatchObject({identifier: "asset-1"})
+    await expect(clearing).rejects.toThrow("clear failed")
+    await expect(queuedExport).resolves.toMatchObject({identifier: "asset-2"})
+    expect(cameraRollExportLedger.list().find((entry) => entry.mediaName === queuedFile.name)).toMatchObject({
+      state: "EXPORTED",
+    })
   })
 })
