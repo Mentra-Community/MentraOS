@@ -8,6 +8,59 @@ private enum MentraSyncedMediaAlbum {
     static let localizedTitle = "Mentra"
 }
 
+/// Serializes callback and timeout delivery for PhotoKit APIs that may call back more than once.
+private final class CheckedContinuationGate<Value>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Value, Never>?
+
+    init(_ continuation: CheckedContinuation<Value, Never>) {
+        self.continuation = continuation
+    }
+
+    func resume(returning value: Value) {
+        lock.lock()
+        guard let continuation else {
+            lock.unlock()
+            return
+        }
+        self.continuation = nil
+        lock.unlock()
+        continuation.resume(returning: value)
+    }
+}
+
+private final class PhotoLibrarySaveState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var assetIdentifier: String?
+    private var creationFailed = false
+
+    func setAssetIdentifier(_ identifier: String) {
+        lock.lock()
+        assetIdentifier = identifier
+        lock.unlock()
+    }
+
+    func markCreationFailed() {
+        lock.lock()
+        creationFailed = true
+        lock.unlock()
+    }
+
+    func snapshot() -> (assetIdentifier: String?, creationFailed: Bool) {
+        lock.lock()
+        defer { lock.unlock() }
+        return (assetIdentifier, creationFailed)
+    }
+}
+
+private struct PhotoLibrarySaveResult {
+    let succeeded: Bool
+    let assetIdentifier: String?
+    let creationFailed: Bool
+    let errorMessage: String?
+    let timedOut: Bool
+}
+
 public class CrustModule: Module {
     public func definition() -> ModuleDefinition {
         Name("Crust")
@@ -468,76 +521,119 @@ public class CrustModule: Module {
                 ]
             }
 
-            var assetIdentifier: String?
-            var creationFailed = false
-
-            do {
-                try await PHPhotoLibrary.shared().performChanges {
-                    let creationRequest = PHAssetCreationRequest.forAsset()
-                    let resourceOptions = PHAssetResourceCreationOptions()
-                    resourceOptions.originalFilename = assetFileName
-                    creationRequest.addResource(
-                        with: isVideo ? .video : .photo,
-                        fileURL: fileURL,
-                        options: resourceOptions
-                    )
-
-                    if let captureDate {
-                        creationRequest.creationDate = captureDate
-                        NSLog("CrustModule: Setting creation date to: \(captureDate)")
-                    }
-
-                    guard let assetPlaceholder = creationRequest.placeholderForCreatedAsset else {
-                        NSLog("CrustModule: Missing placeholder for created asset")
-                        creationFailed = true
-                        return
-                    }
-
-                    assetIdentifier = assetPlaceholder.localIdentifier
-
-                    // Limited-library access permits creating an asset, but does not reliably
-                    // permit enumerating or mutating arbitrary user albums. Save to the camera
-                    // roll and skip Mentra album mutation in that mode.
-                    guard !hasLimitedAccess else { return }
-
-                    let albumFetch = PHFetchOptions()
-                    albumFetch.predicate = NSPredicate(
-                        format: "localizedTitle == %@", MentraSyncedMediaAlbum.localizedTitle
-                    )
-                    albumFetch.fetchLimit = 1
-
-                    let existingAlbums = PHAssetCollection.fetchAssetCollections(
-                        with: .album,
-                        subtype: .albumRegular,
-                        options: albumFetch
-                    )
-
-                    if let album = existingAlbums.firstObject,
-                       let albumChange = PHAssetCollectionChangeRequest(for: album)
-                    {
-                        albumChange.addAssets([assetPlaceholder] as NSArray)
-                    } else if existingAlbums.firstObject == nil {
-                        let newAlbumChange = PHAssetCollectionChangeRequest.creationRequestForAssetCollection(
-                            withTitle: MentraSyncedMediaAlbum.localizedTitle
-                        )
-                        newAlbumChange.addAssets([assetPlaceholder] as NSArray)
-                    } else {
-                        NSLog(
-                            "CrustModule: Mentra album exists but is not writable; asset saved to library only"
-                        )
-                    }
-                }
-            } catch {
-                NSLog("CrustModule: Error saving to gallery: \(error.localizedDescription)")
-                return ["success": false, "error": error.localizedDescription]
+            let saveResult = await self.createGalleryAsset(
+                fileURL: fileURL,
+                assetFileName: assetFileName,
+                captureDate: captureDate,
+                isVideo: isVideo,
+                hasLimitedAccess: hasLimitedAccess
+            )
+            if saveResult.timedOut {
+                return [
+                    "success": false,
+                    "error": "Photo library save timed out; retry will reconcile the result",
+                ]
             }
-
-            if creationFailed {
+            if saveResult.creationFailed {
                 return ["success": false, "error": "Failed to create PhotoKit asset placeholder"]
+            }
+            if let errorMessage = saveResult.errorMessage {
+                NSLog("CrustModule: Error saving to gallery: \(errorMessage)")
+                return ["success": false, "error": errorMessage]
+            }
+            guard saveResult.succeeded else {
+                return ["success": false, "error": "Photo library did not commit the asset"]
             }
 
             NSLog("CrustModule: Successfully saved to gallery with proper creation date")
-            return ["success": true, "identifier": assetIdentifier ?? ""]
+            return ["success": true, "identifier": saveResult.assetIdentifier ?? ""]
+        }
+    }
+
+    private func createGalleryAsset(
+        fileURL: URL,
+        assetFileName: String,
+        captureDate: Date?,
+        isVideo: Bool,
+        hasLimitedAccess: Bool
+    ) async -> PhotoLibrarySaveResult {
+        await withCheckedContinuation { continuation in
+            let gate = CheckedContinuationGate(continuation)
+            let state = PhotoLibrarySaveState()
+
+            PHPhotoLibrary.shared().performChanges {
+                let creationRequest = PHAssetCreationRequest.forAsset()
+                let resourceOptions = PHAssetResourceCreationOptions()
+                resourceOptions.originalFilename = assetFileName
+                creationRequest.addResource(
+                    with: isVideo ? .video : .photo,
+                    fileURL: fileURL,
+                    options: resourceOptions
+                )
+
+                if let captureDate {
+                    creationRequest.creationDate = captureDate
+                    NSLog("CrustModule: Setting creation date to: \(captureDate)")
+                }
+
+                guard let assetPlaceholder = creationRequest.placeholderForCreatedAsset else {
+                    NSLog("CrustModule: Missing placeholder for created asset")
+                    state.markCreationFailed()
+                    return
+                }
+                state.setAssetIdentifier(assetPlaceholder.localIdentifier)
+
+                // Limited-library access permits creating an asset, but does not reliably
+                // permit enumerating or mutating arbitrary user albums. Save to the camera
+                // roll and skip Mentra album mutation in that mode.
+                guard !hasLimitedAccess else { return }
+
+                let albumFetch = PHFetchOptions()
+                albumFetch.predicate = NSPredicate(
+                    format: "localizedTitle == %@", MentraSyncedMediaAlbum.localizedTitle
+                )
+                albumFetch.fetchLimit = 1
+                let existingAlbums = PHAssetCollection.fetchAssetCollections(
+                    with: .album,
+                    subtype: .albumRegular,
+                    options: albumFetch
+                )
+
+                if let album = existingAlbums.firstObject,
+                   let albumChange = PHAssetCollectionChangeRequest(for: album)
+                {
+                    albumChange.addAssets([assetPlaceholder] as NSArray)
+                } else if existingAlbums.firstObject == nil {
+                    let newAlbumChange = PHAssetCollectionChangeRequest.creationRequestForAssetCollection(
+                        withTitle: MentraSyncedMediaAlbum.localizedTitle
+                    )
+                    newAlbumChange.addAssets([assetPlaceholder] as NSArray)
+                } else {
+                    NSLog(
+                        "CrustModule: Mentra album exists but is not writable; asset saved to library only"
+                    )
+                }
+            } completionHandler: { succeeded, error in
+                let snapshot = state.snapshot()
+                gate.resume(returning: PhotoLibrarySaveResult(
+                    succeeded: succeeded,
+                    assetIdentifier: snapshot.assetIdentifier,
+                    creationFailed: snapshot.creationFailed,
+                    errorMessage: error?.localizedDescription,
+                    timedOut: false
+                ))
+            }
+
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 120) {
+                let snapshot = state.snapshot()
+                gate.resume(returning: PhotoLibrarySaveResult(
+                    succeeded: false,
+                    assetIdentifier: snapshot.assetIdentifier,
+                    creationFailed: snapshot.creationFailed,
+                    errorMessage: nil,
+                    timedOut: true
+                ))
+            }
         }
     }
 
@@ -616,14 +712,19 @@ public class CrustModule: Module {
             options.isNetworkAccessAllowed = false
             options.version = .original
             return await withCheckedContinuation { continuation in
-                manager.requestAVAsset(forVideo: asset, options: options) { avAsset, _, _ in
+                let gate = CheckedContinuationGate(continuation)
+                let requestID = manager.requestAVAsset(forVideo: asset, options: options) { avAsset, _, _ in
                     guard let originalURL = (avAsset as? AVURLAsset)?.url,
                           let attributes = try? FileManager.default.attributesOfItem(atPath: originalURL.path),
                           let byteCount = attributes[.size] as? NSNumber else {
-                        continuation.resume(returning: false)
+                        gate.resume(returning: false)
                         return
                     }
-                    continuation.resume(returning: byteCount.int64Value == expectedByteCount)
+                    gate.resume(returning: byteCount.int64Value == expectedByteCount)
+                }
+                DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 30) {
+                    manager.cancelImageRequest(requestID)
+                    gate.resume(returning: false)
                 }
             }
         }
@@ -633,8 +734,14 @@ public class CrustModule: Module {
         options.version = .original
         options.deliveryMode = .highQualityFormat
         return await withCheckedContinuation { continuation in
-            manager.requestImageDataAndOrientation(for: asset, options: options) { data, _, _, _ in
-                continuation.resume(returning: data.map { Int64($0.count) == expectedByteCount } ?? false)
+            let gate = CheckedContinuationGate(continuation)
+            let requestID = manager.requestImageDataAndOrientation(for: asset, options: options) { data, _, _, info in
+                if info?[PHImageResultIsDegradedKey] as? Bool == true { return }
+                gate.resume(returning: data.map { Int64($0.count) == expectedByteCount } ?? false)
+            }
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 30) {
+                manager.cancelImageRequest(requestID)
+                gate.resume(returning: false)
             }
         }
     }

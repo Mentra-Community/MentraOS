@@ -313,7 +313,8 @@ class CameraRollExportCoordinator {
     }
   }
 
-  countNotExported(mediaNames: string[]): number {
+  async countNotExported(mediaNames: string[]): Promise<number> {
+    await this.initialize()
     const entries = cameraRollExportLedger.list()
     return new Set(mediaNames).size === 0
       ? 0

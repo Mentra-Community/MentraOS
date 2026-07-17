@@ -616,7 +616,7 @@ export function GalleryScreen() {
 
     const selectedCount = selectedPhotos.size
     const itemText = selectedCount === 1 ? "item" : "items"
-    const notExportedCount = cameraRollExportCoordinator.countNotExported(Array.from(selectedPhotos))
+    const notExportedCount = await cameraRollExportCoordinator.countNotExported(Array.from(selectedPhotos))
     const exportWarning =
       notExportedCount > 0
         ? ` ${notExportedCount} ${

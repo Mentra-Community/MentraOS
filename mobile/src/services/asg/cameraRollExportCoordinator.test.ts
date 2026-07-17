@@ -104,6 +104,15 @@ describe("cameraRollExportCoordinator", () => {
     unsubscribe()
   })
 
+  it("reconciles durable receipts before reporting delete-loss warnings", async () => {
+    const file = legacyFile("IMG_already_exported")
+    file.assetReceipt = {platform: "ios", identifier: "existing", exportedAt: Date.now()}
+    mockFiles[file.name] = file
+
+    await expect(cameraRollExportCoordinator.countNotExported([file.name])).resolves.toBe(0)
+    expect(cameraRollExportCoordinator.getSummary()).toMatchObject({exported: 1, pending: 0})
+  })
+
   it("backfills a legacy item and reconciles its old basename before inserting", async () => {
     const file = legacyFile()
     mockFiles[file.name] = file

@@ -77,7 +77,7 @@ export default function GallerySettingsScreen() {
     }
 
     const itemText = totalLocalMedia === 1 ? "item" : "items"
-    const notExportedCount = cameraRollExportCoordinator.countNotExported(
+    const notExportedCount = await cameraRollExportCoordinator.countNotExported(
       Object.keys(await localStorageService.getDownloadedFiles()),
     )
     const exportWarning =
