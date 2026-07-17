@@ -1,8 +1,12 @@
 // This test targets the engine source directly because the ledger is intentionally internal.
 import {galleryTransferLedger} from "../../../modules/engine/src/services/asg/galleryTransferLedger"
+import {localStorageService} from "../../../modules/engine/src/services/asg/localStorageService"
+import {storage} from "../../../modules/engine/src/utils/storage"
 
 jest.mock("@dr.pogodin/react-native-fs", () => ({
   DocumentDirectoryPath: "/current/Documents",
+  exists: jest.fn().mockResolvedValue(true),
+  mkdir: jest.fn().mockResolvedValue(undefined),
 }))
 
 describe("galleryTransferLedger", () => {
@@ -99,5 +103,52 @@ describe("galleryTransferLedger", () => {
     expect(pending.finalPath).toBeUndefined()
     expect(pending.thumbnailPath).toBeUndefined()
     expect(pending.files[0].completedSegments).toEqual([])
+  })
+
+  it("releases every committed entry when local gallery metadata was not restored", () => {
+    const captureId = `IMG_missing_local_metadata_${Date.now()}`
+    galleryTransferLedger.ensureCapture(
+      {
+        capture_id: captureId,
+        type: "photo",
+        timestamp: 1000,
+        total_size: 100,
+        files: [{name: `${captureId}/base.jpg`, size: 100, role: "primary"}],
+      },
+      3,
+    )
+    galleryTransferLedger.transition(captureId, "TRASHED", {
+      finalPath: `/current/Documents/MentraPhotos/${captureId}/base.jpg`,
+    })
+
+    galleryTransferLedger.releaseAllMissingLocalCommits(true)
+
+    const released = galleryTransferLedger.get(captureId)!
+    expect(released.state).toBe("RESTORE_PENDING")
+    expect(released.finalPath).toBeUndefined()
+    expect(released.files[0].completedSegments).toEqual([])
+  })
+
+  it("releases a stale committed ledger when a remote capture is missing from the local index", async () => {
+    const captureId = `IMG_empty_restored_index_${Date.now()}`
+    galleryTransferLedger.ensureCapture(
+      {
+        capture_id: captureId,
+        type: "photo",
+        timestamp: 1000,
+        total_size: 100,
+        files: [{name: `${captureId}/base.jpg`, size: 100, role: "primary"}],
+      },
+      3,
+    )
+    galleryTransferLedger.transition(captureId, "TRASHED", {
+      finalPath: `/current/Documents/MentraPhotos/${captureId}/base.jpg`,
+    })
+    storage.save("asg_downloaded_files", {})
+
+    const released = await localStorageService.reconcileRemoteCaptures([captureId])
+
+    expect(released).toBe(1)
+    expect(galleryTransferLedger.get(captureId)?.state).toBe("RESTORE_PENDING")
   })
 })

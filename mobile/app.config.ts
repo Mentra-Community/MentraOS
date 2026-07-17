@@ -114,6 +114,7 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
       allowBackup: false,
       permissions: [
         "ACCESS_FINE_LOCATION",
+        "NEARBY_WIFI_DEVICES",
         "ACCESS_WIFI_STATE",
         "ACCESS_NETWORK_STATE",
         "CHANGE_WIFI_STATE",

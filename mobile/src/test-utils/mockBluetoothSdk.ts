@@ -23,6 +23,27 @@ const addListener = jest.fn((eventName: string, listener: Listener) => {
   }
 })
 
+const localNetworkListeners = new Map<string, Set<Listener>>()
+
+export const mentraLocalNetworkMock = {
+  addListener: jest.fn((eventName: string, listener: Listener) => {
+    if (!localNetworkListeners.has(eventName)) localNetworkListeners.set(eventName, new Set())
+    localNetworkListeners.get(eventName)!.add(listener)
+    return {remove: () => localNetworkListeners.get(eventName)?.delete(listener)}
+  }),
+  cancel: jest.fn(() => Promise.resolve()),
+  connect: jest.fn((ssid: string) => Promise.resolve({connected: true, ssid})),
+  disconnect: jest.fn(() => Promise.resolve()),
+  download: jest.fn(() => Promise.resolve({statusCode: 200, bytesWritten: 3, headers: {}})),
+  request: jest.fn(() =>
+    Promise.resolve({
+      status: 200,
+      headers: {"content-type": "application/json"},
+      bodyBase64: Buffer.from('{"ok":true}').toString("base64"),
+    }),
+  ),
+}
+
 export const bluetoothSdkMock = {
   addListener,
   isConnectedGlassesConnectionStatus,
@@ -102,7 +123,9 @@ export const bluetoothSdkMock = {
   ping: jest.fn(() => Promise.resolve()),
   sendIncidentId: jest.fn(() => Promise.resolve()),
   requestWifiScan: jest.fn(() => Promise.resolve([])),
-  sendWifiCredentials: jest.fn((ssid: string) => Promise.resolve({type: "wifi_status_change", state: "connected", ssid})),
+  sendWifiCredentials: jest.fn((ssid: string) =>
+    Promise.resolve({type: "wifi_status_change", state: "connected", ssid}),
+  ),
   forgetWifiNetwork: jest.fn(() => Promise.resolve({type: "wifi_status_change", state: "disconnected"})),
   setHotspotState: jest.fn((enabled: boolean) =>
     Promise.resolve(

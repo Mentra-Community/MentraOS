@@ -65,7 +65,7 @@ jest.mock("../../../modules/engine/src/facades/permissions", () => ({
     request: jest.fn(() => Promise.resolve(true)),
     openSettings: jest.fn(() => Promise.resolve()),
   },
-  PermissionFeatures: {LOCATION: "location"},
+  PermissionFeatures: {LOCATION: "location", LOCAL_WIFI: "local_wifi"},
 }))
 
 jest.mock("../../../modules/engine/src/utils/permissions/MediaLibraryPermissions", () => ({
@@ -101,6 +101,8 @@ jest.mock("../../../modules/engine/src/services/asg/localStorageService", () => 
     clearSyncQueue: jest.fn(() => Promise.resolve()),
     convertToDownloadedFile: jest.fn((file: any) => file),
     saveDownloadedFile: jest.fn(() => Promise.resolve()),
+    getDownloadedFiles: jest.fn(() => Promise.resolve({})),
+    reconcileRemoteCaptures: jest.fn(() => Promise.resolve(0)),
   },
 }))
 
@@ -125,6 +127,8 @@ jest.mock("../../../modules/engine/src/services/asg/asgCameraApi", () => ({
 }))
 
 const mockGetSyncState = localStorageService.getSyncState as jest.Mock
+const mockGetDownloadedFiles = localStorageService.getDownloadedFiles as jest.Mock
+const mockGetV3Manifest = asgCameraApi.getV3Manifest as jest.Mock
 const mockSyncWithServer = asgCameraApi.syncWithServer as jest.Mock
 const mockSetServer = asgCameraApi.setServer as jest.Mock
 
@@ -557,6 +561,7 @@ describe("GallerySyncService", () => {
       (gallerySyncService as any).resolveSyncManifest(clientId, lastSyncTime)
 
     beforeEach(() => {
+      mockGetV3Manifest.mockResolvedValue(null)
       mockSyncWithServer.mockReset()
     })
 
@@ -647,6 +652,27 @@ describe("GallerySyncService", () => {
 
       expect(result).not.toBeNull()
       expect(result?.syncData.changed_files).toHaveLength(0)
+    })
+  })
+
+  describe("v3 manifest reconciliation", () => {
+    it("does not suppress a remote capture when its committed ledger row has no local gallery record", async () => {
+      mockGetV3Manifest.mockResolvedValue({
+        api_version: 3,
+        captures: [FAKE_CAPTURE],
+        has_more: false,
+        next_cursor: null,
+        total_count: 1,
+        server_time: Date.now(),
+      })
+      mockGetDownloadedFiles.mockResolvedValue({})
+      const committedSpy = jest.spyOn(galleryTransferLedger, "isLocallyCommitted").mockReturnValue(true)
+
+      const result = await (gallerySyncService as any).fetchSyncManifest("c1", 0)
+
+      expect(result.captures).toEqual([FAKE_CAPTURE])
+      expect(localStorageService.reconcileRemoteCaptures).toHaveBeenCalledWith([FAKE_CAPTURE.capture_id], {})
+      committedSpy.mockRestore()
     })
   })
 })

@@ -293,6 +293,31 @@ export class LocalStorageService {
   }
 
   /**
+   * Reconcile the remote manifest against the app-local gallery index before ledger filtering.
+   * Android backup/restore and data-preserving reinstalls can restore MMKV ledger rows without
+   * restoring app-private media. Only captures currently advertised by the glasses are released,
+   * so acknowledged captures that remain in glasses trash are not resurrected unnecessarily.
+   */
+  async reconcileRemoteCaptures(
+    captureIds: string[],
+    downloadedFiles?: Record<string, DownloadedFile>,
+  ): Promise<number> {
+    const localFiles = downloadedFiles || (await this.getDownloadedFiles())
+    let released = 0
+    for (const captureId of captureIds) {
+      if (localFiles[captureId]) continue
+      const entry = galleryTransferLedger.get(captureId)
+      if (!entry || !galleryTransferLedger.isLocallyCommitted(captureId)) continue
+      galleryTransferLedger.releaseMissingLocalCommit(captureId, true)
+      released++
+    }
+    if (released > 0) {
+      console.warn(`[LocalStorage] Released ${released} stale gallery ledger commit(s) missing local media`)
+    }
+    return released
+  }
+
+  /**
    * Get downloaded file by name
    */
   async getDownloadedFile(fileName: string): Promise<DownloadedFile | null> {
