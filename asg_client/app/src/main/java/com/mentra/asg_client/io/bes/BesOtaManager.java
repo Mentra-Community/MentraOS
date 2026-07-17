@@ -352,6 +352,17 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
 
     /** Cleanup and reset state */
     private void cleanup() {
+        // Every terminal path funnels here, gated or not (watchdog and receive dispatch
+        // hold mTransferGate; abortIfInProgress and the auth failure paths do not).
+        // Taking the gate here - reentrant for the former - serializes ALL cleanups with
+        // receive processing and the watchdog re-arm, so no caller can tear the watchdog
+        // state down mid-rearm on another thread.
+        synchronized (mTransferGate) {
+            cleanupLocked();
+        }
+    }
+
+    private void cleanupLocked() {
         // Cancel authorization timeout if pending
         if (authTimeoutHandler != null && authTimeoutRunnable != null) {
             authTimeoutHandler.removeCallbacks(authTimeoutRunnable);
@@ -812,7 +823,7 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
         if (responseWatchdogRunnable != null) {
             responseWatchdogHandler.removeCallbacks(responseWatchdogRunnable);
         }
-        responseWatchdogRunnable = () -> {
+        Runnable watchdog = () -> {
           synchronized (mTransferGate) {
             if (!isBesOtaInProgress) {
                 return;
@@ -838,8 +849,10 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
             cleanup();
           }
         };
-        responseWatchdogHandler.postDelayed(
-                responseWatchdogRunnable, AsgConstants.BES_OTA_RESPONSE_TIMEOUT_MS);
+        // Post the local reference: the field is only bookkeeping for removeCallbacks, so
+        // a concurrent teardown nulling it can never turn this into postDelayed(null).
+        responseWatchdogRunnable = watchdog;
+        responseWatchdogHandler.postDelayed(watchdog, AsgConstants.BES_OTA_RESPONSE_TIMEOUT_MS);
     }
 
     private void dealOtaRecvCmd(BesOtaMessage msg) {
