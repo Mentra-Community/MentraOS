@@ -17,6 +17,13 @@ describe("MiniappRequestType wire values", () => {
   test("PLAY_AUDIO", () => expect(MiniappRequestType.PLAY_AUDIO).toBe("miniapp_play_audio"))
   test("STOP_AUDIO", () => expect(MiniappRequestType.STOP_AUDIO).toBe("miniapp_stop_audio"))
   test("SPEAK", () => expect(MiniappRequestType.SPEAK).toBe("miniapp_speak"))
+  test("SPEAKER_STREAM_OPEN", () => expect(MiniappRequestType.SPEAKER_STREAM_OPEN).toBe("miniapp_speaker_stream_open"))
+  test("SPEAKER_STREAM_WRITE", () =>
+    expect(MiniappRequestType.SPEAKER_STREAM_WRITE).toBe("miniapp_speaker_stream_write"))
+  test("SPEAKER_STREAM_CLOSE", () =>
+    expect(MiniappRequestType.SPEAKER_STREAM_CLOSE).toBe("miniapp_speaker_stream_close"))
+  test("SPEAKER_STREAM_ABORT", () =>
+    expect(MiniappRequestType.SPEAKER_STREAM_ABORT).toBe("miniapp_speaker_stream_abort"))
   test("RGB_LED", () => expect(MiniappRequestType.RGB_LED).toBe("miniapp_rgb_led"))
   test("LOCATION_POLL", () => expect(MiniappRequestType.LOCATION_POLL).toBe("miniapp_location_poll"))
   test("STORAGE_GET", () => expect(MiniappRequestType.STORAGE_GET).toBe("miniapp_storage_get"))
@@ -32,8 +39,7 @@ describe("MiniappRequestType wire values", () => {
   test("STREAM_STOP", () => expect(MiniappRequestType.STREAM_STOP).toBe("miniapp_stream_stop"))
   test("MANAGED_STREAM_START", () =>
     expect(MiniappRequestType.MANAGED_STREAM_START).toBe("miniapp_managed_stream_start"))
-  test("MANAGED_STREAM_STOP", () =>
-    expect(MiniappRequestType.MANAGED_STREAM_STOP).toBe("miniapp_managed_stream_stop"))
+  test("MANAGED_STREAM_STOP", () => expect(MiniappRequestType.MANAGED_STREAM_STOP).toBe("miniapp_managed_stream_stop"))
   test("SHARE", () => expect(MiniappRequestType.SHARE).toBe("miniapp_share"))
   test("OPEN_URL", () => expect(MiniappRequestType.OPEN_URL).toBe("miniapp_open_url"))
   test("COPY_CLIPBOARD", () => expect(MiniappRequestType.COPY_CLIPBOARD).toBe("miniapp_copy_clipboard"))
@@ -44,10 +50,8 @@ describe("MiniappResponseType wire values", () => {
   test("CONNECT_ACK", () => expect(MiniappResponseType.CONNECT_ACK).toBe("miniapp_connect_ack"))
   test("EVENT", () => expect(MiniappResponseType.EVENT).toBe("miniapp_event"))
   test("REQUEST_RESULT", () => expect(MiniappResponseType.REQUEST_RESULT).toBe("miniapp_request_result"))
-  test("CAPABILITIES_UPDATE", () =>
-    expect(MiniappResponseType.CAPABILITIES_UPDATE).toBe("miniapp_capabilities_update"))
-  test("VISIBILITY_CHANGE", () =>
-    expect(MiniappResponseType.VISIBILITY_CHANGE).toBe("miniapp_visibility_change"))
+  test("CAPABILITIES_UPDATE", () => expect(MiniappResponseType.CAPABILITIES_UPDATE).toBe("miniapp_capabilities_update"))
+  test("VISIBILITY_CHANGE", () => expect(MiniappResponseType.VISIBILITY_CHANGE).toBe("miniapp_visibility_change"))
   test("PONG", () => expect(MiniappResponseType.PONG).toBe("miniapp_pong"))
   test("ERROR", () => expect(MiniappResponseType.ERROR).toBe("miniapp_error"))
 })
@@ -72,6 +76,7 @@ describe("MiniappStreamType wire values", () => {
 })
 
 describe("MiniappErrorCode wire values", () => {
+  test("INVALID_ARGUMENT", () => expect(MiniappErrorCode.INVALID_ARGUMENT).toBe("INVALID_ARGUMENT"))
   test("PERMISSION_NOT_DECLARED", () =>
     expect(MiniappErrorCode.PERMISSION_NOT_DECLARED).toBe("PERMISSION_NOT_DECLARED"))
   test("NOT_IMPLEMENTED", () => expect(MiniappErrorCode.NOT_IMPLEMENTED).toBe("NOT_IMPLEMENTED"))
