@@ -333,24 +333,27 @@ public final class PhotoSession {
 
     /**
      * Resolved coupled ZSL/MFNR for the active request. Manual and scan exposure force the pair
-     * off because they conflict with the vendor multi-frame path.
+     * off because they conflict with the vendor multi-frame path. When the request omits
+     * {@code zslMfnr}, inherit the global default so EMPTY/unmerged settings stay default-on.
      */
     private boolean resolveZslMfnrForCapture(boolean useManualExposure) {
         if (useManualExposure) {
             return false;
         }
         PhotoCaptureSettings settings = currentCaptureSettings();
-        return settings != null && settings.zslMfnrEnabled();
-    }
-
-    /** Preview buffer should match the pending capture's resolved ZSL/MFNR value. */
-    public boolean previewZslMfnrEnabled() {
-        PhotoCaptureSettings settings = currentCaptureSettings();
         if (settings != null && settings.zslMfnr != null) {
             return settings.zslMfnrEnabled();
         }
         return hooks.cameraSettings() != null
                 && hooks.cameraSettings().mAsgSettings.isZslMfnrEnabled();
+    }
+
+    /**
+     * Preview buffer should match the pending capture's resolved ZSL/MFNR value, including
+     * forcing the pair off during manual/scan exposure.
+     */
+    public boolean previewZslMfnrEnabled() {
+        return resolveZslMfnrForCapture(shouldUseManualExposure());
     }
 
     private long currentStartTimeMs() {
@@ -390,6 +393,17 @@ public final class PhotoSession {
     /** Clears the configured-camera snapshot when the HAL session is torn down. */
     public void onCameraClosed() {
         configuredCameraConfig = null;
+        quitStillCaptureCallbackThread();
+    }
+
+    /** Releases the dedicated still-capture callback thread; safe to call repeatedly. */
+    private void quitStillCaptureCallbackThread() {
+        HandlerThread thread = stillCaptureCallbackThread;
+        stillCaptureCallbackThread = null;
+        stillCaptureCallbackHandler = null;
+        if (thread != null) {
+            thread.quitSafely();
+        }
     }
 
     private int getJpegQualityForSize() {
