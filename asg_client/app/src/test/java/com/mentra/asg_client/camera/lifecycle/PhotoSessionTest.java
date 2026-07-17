@@ -16,6 +16,7 @@ import android.hardware.camera2.CameraDevice;
 import android.hardware.camera2.CaptureRequest;
 import android.os.Handler;
 import com.mentra.asg_client.camera.CameraNeoService;
+import com.mentra.asg_client.camera.CameraSettings;
 import com.mentra.asg_client.camera.model.CameraOperationError;
 import com.mentra.asg_client.camera.model.PhotoCaptureSettings;
 import com.mentra.asg_client.camera.model.QueuedPhotoRequest;
@@ -31,6 +32,7 @@ import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
+import org.robolectric.RuntimeEnvironment;
 import org.robolectric.annotation.Config;
 
 @RunWith(RobolectricTestRunner.class)
@@ -427,5 +429,86 @@ public class PhotoSessionTest {
         session.capturePhoto();
 
         verify(hooks, never()).ensureImuRecorder();
+    }
+
+    @Test
+    public void previewAndCaptureZsl_emptySettings_inheritGlobalDefault() throws Exception {
+        PhotoSession.Hooks hooks = mockConfiguredCameraHooks();
+        CameraSettings cameraSettings = new CameraSettings(RuntimeEnvironment.getApplication());
+        when(hooks.cameraSettings()).thenReturn(cameraSettings);
+
+        PhotoSession session = new PhotoSession(hooks);
+        activateQueuedRequest(
+                session,
+                new QueuedPhotoRequest(
+                        "/tmp/empty-zsl.jpg",
+                        "medium",
+                        false,
+                        true,
+                        null,
+                        null,
+                        PhotoCaptureSettings.EMPTY,
+                        null));
+
+        assertThat(session.previewZslMfnrEnabled()).isTrue();
+        Method resolve =
+                PhotoSession.class.getDeclaredMethod(
+                        "resolveZslMfnrForCapture", boolean.class);
+        resolve.setAccessible(true);
+        assertThat(resolve.invoke(session, false)).isEqualTo(true);
+        assertThat(resolve.invoke(session, true)).isEqualTo(false);
+    }
+
+    @Test
+    public void resolveZslMfnrForCapture_manualExposureForcesOffWhenRequestEnabled()
+            throws Exception {
+        PhotoSession.Hooks hooks = mockConfiguredCameraHooks();
+        PhotoCaptureSettings enabled =
+                new PhotoCaptureSettings.Builder().zslMfnr(true).build();
+        PhotoSession session = new PhotoSession(hooks);
+        activateQueuedRequest(
+                session,
+                new QueuedPhotoRequest(
+                        "/tmp/manual-zsl.jpg",
+                        "medium",
+                        false,
+                        true,
+                        10_000_000L,
+                        100,
+                        enabled,
+                        null));
+
+        Method resolve =
+                PhotoSession.class.getDeclaredMethod(
+                        "resolveZslMfnrForCapture", boolean.class);
+        resolve.setAccessible(true);
+        assertThat(resolve.invoke(session, true)).isEqualTo(false);
+        assertThat(resolve.invoke(session, false)).isEqualTo(true);
+    }
+
+    @Test
+    public void onCameraClosed_quitsStillCaptureCallbackThread() throws Exception {
+        PhotoSession session = new PhotoSession(mockConfiguredCameraHooks());
+        Method handlerMethod =
+                PhotoSession.class.getDeclaredMethod("stillCaptureCallbackHandler");
+        handlerMethod.setAccessible(true);
+        handlerMethod.invoke(session);
+
+        Field threadField = PhotoSession.class.getDeclaredField("stillCaptureCallbackThread");
+        threadField.setAccessible(true);
+        android.os.HandlerThread thread =
+                (android.os.HandlerThread) threadField.get(session);
+        assertThat(thread).isNotNull();
+        assertThat(thread.isAlive()).isTrue();
+
+        session.onCameraClosed();
+
+        assertThat(threadField.get(session)).isNull();
+        Field handlerField =
+                PhotoSession.class.getDeclaredField("stillCaptureCallbackHandler");
+        handlerField.setAccessible(true);
+        assertThat(handlerField.get(session)).isNull();
+        thread.join(2000);
+        assertThat(thread.isAlive()).isFalse();
     }
 }
