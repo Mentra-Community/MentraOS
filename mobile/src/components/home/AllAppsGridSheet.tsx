@@ -64,11 +64,14 @@ export default function AllAppsGridSheet({bottomSheetRef}: {bottomSheetRef: Reac
   // (Home button, app switcher) while the search field is still focused and the
   // sheet never closes, the ReactEditText keeps the IME's served view — Android
   // then re-shows the keyboard over whatever screen is on top on the next
-  // resume. Blur + dismiss on any non-active AppState transition closes that
-  // gap regardless of how the app left the foreground.
+  // resume. Blur + dismiss on the background AppState transition closes that
+  // gap regardless of how the app left the foreground. Only "background"
+  // qualifies: iOS also emits "inactive" for transient interruptions
+  // (Notification Center, app switcher peek, incoming calls) where dropping
+  // focus would wrongly hide the keyboard on return.
   useEffect(() => {
     const sub = AppState.addEventListener("change", (state) => {
-      if (state !== "active") {
+      if (state === "background") {
         searchInputRef.current?.blur()
         Keyboard.dismiss()
       }
