@@ -1,12 +1,15 @@
 package com.mentra.asg_client.io.bluetooth.interfaces;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 
 import org.junit.Test;
 
 /**
- * Proves the four transport-level hooks on {@link IBluetoothManager} are safe no-ops by default,
- * so non-K900 transports (e.g. {@code StandardBluetoothManager}) need no changes.
+ * Proves the transport-level default hooks on {@link IBluetoothManager} are safe by default, so
+ * non-K900 transports (e.g. {@code StandardBluetoothManager}) need no changes. Covers the four
+ * lifecycle no-ops plus the in-memory {@link IBluetoothManager#sendFile(byte[], String)} default,
+ * which must decline the transfer for transports without file-transfer support.
  */
 public class IBluetoothManagerDefaultsTest {
 
@@ -79,5 +82,12 @@ public class IBluetoothManagerDefaultsTest {
                             transport.onFileTransferAck(1, 7);
                         })
                 .doesNotThrowAnyException();
+    }
+
+    @Test
+    public void defaultInMemorySendFile_declinesTransfer() {
+        ICompanionTransport transport = new MinimalTransport();
+
+        assertThat(transport.sendFile(new byte[] {1, 2, 3}, "photo.jpg")).isFalse();
     }
 }
