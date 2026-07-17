@@ -21,6 +21,7 @@ import com.mentra.asg_client.AsgConstants;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Bundled, offline ML Kit text localizer for Mentra Live text-mode photos.
@@ -36,7 +37,7 @@ public final class MlKitTextRoiDetector implements AutoCloseable {
     private final TextRecognizer recognizer;
     private final int analysisLongEdge;
 
-    @Nullable private Task<Text> warmupTask;
+    private final AtomicReference<Task<Text>> warmupTask = new AtomicReference<>();
     private boolean closed;
 
     public MlKitTextRoiDetector() {
@@ -58,14 +59,14 @@ public final class MlKitTextRoiDetector implements AutoCloseable {
 
     /** Starts model initialization while the camera is capturing. Safe to call repeatedly. */
     public synchronized void warmUp() {
-        if (closed || warmupTask != null) {
+        if (closed || warmupTask.get() != null) {
             return;
         }
         Bitmap blank = Bitmap.createBitmap(64, 64, Bitmap.Config.ARGB_8888);
         blank.eraseColor(Color.WHITE);
         long startMs = SystemClock.elapsedRealtime();
         Task<Text> task = recognizer.process(InputImage.fromBitmap(blank, 0));
-        warmupTask = task;
+        warmupTask.set(task);
         task.addOnCompleteListener(
                 completedTask -> {
                     blank.recycle();
@@ -79,9 +80,9 @@ public final class MlKitTextRoiDetector implements AutoCloseable {
                 });
     }
 
-    private synchronized void handleWarmupCompletion(Task<Text> completedTask) {
-        if (warmupTask == completedTask && !completedTask.isSuccessful()) {
-            warmupTask = null;
+    private void handleWarmupCompletion(Task<Text> completedTask) {
+        if (!completedTask.isSuccessful()) {
+            warmupTask.compareAndSet(completedTask, null);
         }
     }
 
@@ -111,7 +112,7 @@ public final class MlKitTextRoiDetector implements AutoCloseable {
         Bitmap analysis = null;
         try {
             warmUp();
-            Task<Text> taskToAwait = warmupTask;
+            Task<Text> taskToAwait = warmupTask.get();
             if (taskToAwait != null) {
                 try {
                     Tasks.await(
@@ -122,9 +123,7 @@ public final class MlKitTextRoiDetector implements AutoCloseable {
                     // A transient model-init failure or timeout must not poison every later text
                     // capture. Only clear the task we actually awaited; an older completion must
                     // never clear a newer retry.
-                    if (warmupTask == taskToAwait) {
-                        warmupTask = null;
-                    }
+                    warmupTask.compareAndSet(taskToAwait, null);
                     throw warmupError;
                 }
             }

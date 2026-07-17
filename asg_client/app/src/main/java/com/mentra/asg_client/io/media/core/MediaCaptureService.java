@@ -596,10 +596,10 @@ public class MediaCaptureService {
      * worker preserves burst ordering and avoids running multiple memory-heavy full-resolution
      * crops at once.
      */
-    private final ExecutorService textModeLocalSaveExecutor =
+    private final ExecutorService textModeProcessingExecutor =
             Executors.newSingleThreadExecutor(
                     r -> {
-                        Thread t = new Thread(r, "TextModeLocalSave");
+                        Thread t = new Thread(r, "TextModeProcessing");
                         t.setPriority(Thread.NORM_PRIORITY - 1);
                         return t;
                     });
@@ -2219,7 +2219,7 @@ public class MediaCaptureService {
                                     return;
                                 }
                                 try {
-                                    textModeLocalSaveExecutor.execute(
+                                    textModeProcessingExecutor.execute(
                                             () -> {
                                                 TextRegionDetection detection =
                                                         runTextRegionDetection(
@@ -2363,10 +2363,11 @@ public class MediaCaptureService {
         if (captureSettings == null) {
             captureSettings = PhotoCaptureSettings.EMPTY;
         }
-        if (PhotoMode.TEXT.equals(mode)) {
+        final boolean textModeRequested = PhotoMode.TEXT.equals(mode);
+        if (textModeRequested) {
             textRoiDetector.warmUp();
         }
-        String captureSize = PhotoMode.TEXT.equals(mode) ? PhotoSizeTier.normalize("max") : size;
+        String captureSize = textModeRequested ? PhotoSizeTier.normalize("max") : size;
         // Start timing for end-to-end photo capture performance measurement
         final long requestStartTimeMs = System.currentTimeMillis();
         recordTiming(requestId, "request_start");
@@ -2510,6 +2511,8 @@ public class MediaCaptureService {
                     exposureTimeNs,
                     iso,
                     captureSettings,
+                    textModeRequested,
+                    !textModeRequested,
                     new CameraNeoService.PhotoCaptureCallback() {
                         @Override
                         public void onPhotoConfigured(JSONObject resolvedConfig) {
@@ -2575,7 +2578,9 @@ public class MediaCaptureService {
                             }
 
                             Log.d(TAG, "Photo captured successfully at: " + filePath);
-                            prepareTextModePhotoPath(filePath, requestId);
+                            if (!textModeRequested) {
+                                prepareTextModePhotoPath(filePath, requestId);
+                            }
                             sendPhotoStatus(
                                     requestId,
                                     "captured",
@@ -2606,6 +2611,58 @@ public class MediaCaptureService {
                                 sendPhotoSuccessResponse(requestId, "");
                                 clearPhotoTracking(requestId);
                                 releasePhotoJob(requestId);
+                            }
+                        }
+
+                        @Override
+                        public void onPhotoCaptured(
+                                String filePath,
+                                JSONObject captureMetadata,
+                                CapturedPhoto capturedPhoto) {
+                            if (!textModeRequested) {
+                                onPhotoCaptured(filePath, captureMetadata);
+                                return;
+                            }
+                            if (capturedPhoto == null) {
+                                cleanupPhotoArtifacts(requestId, filePath, false);
+                                clearPhotoTracking(requestId);
+                                releasePhotoJob(requestId);
+                                sendPhotoErrorResponse(
+                                        requestId,
+                                        "PHOTO_SAVE_FAILED",
+                                        "Text-mode capture was not available in memory");
+                                return;
+                            }
+                            try {
+                                textModeProcessingExecutor.execute(
+                                        () -> {
+                                            TextRegionDetection detection =
+                                                    runTextRegionDetection(
+                                                            capturedPhoto.jpegBytes, filePath);
+                                            if (!persistTextModeSelectionFromMemory(
+                                                    capturedPhoto,
+                                                    filePath,
+                                                    requestId,
+                                                    detection.roi)) {
+                                                cleanupPhotoArtifacts(requestId, filePath, false);
+                                                clearPhotoTracking(requestId);
+                                                releasePhotoJob(requestId);
+                                                sendPhotoErrorResponse(
+                                                        requestId,
+                                                        "PHOTO_SAVE_FAILED",
+                                                        "Could not prepare text-mode upload");
+                                                return;
+                                            }
+                                            onPhotoCaptured(filePath, captureMetadata);
+                                        });
+                            } catch (RejectedExecutionException executorClosed) {
+                                cleanupPhotoArtifacts(requestId, filePath, false);
+                                clearPhotoTracking(requestId);
+                                releasePhotoJob(requestId);
+                                sendPhotoErrorResponse(
+                                        requestId,
+                                        "PHOTO_SAVE_FAILED",
+                                        "Text-mode processing stopped during service cleanup");
                             }
                         }
 
@@ -6125,13 +6182,13 @@ public class MediaCaptureService {
                 videoIntegrityExecutor.shutdownNow();
                 Thread.currentThread().interrupt();
             }
-            textModeLocalSaveExecutor.shutdown();
+            textModeProcessingExecutor.shutdown();
             try {
-                if (!textModeLocalSaveExecutor.awaitTermination(3, TimeUnit.SECONDS)) {
-                    textModeLocalSaveExecutor.shutdownNow();
+                if (!textModeProcessingExecutor.awaitTermination(3, TimeUnit.SECONDS)) {
+                    textModeProcessingExecutor.shutdownNow();
                 }
             } catch (InterruptedException e) {
-                textModeLocalSaveExecutor.shutdownNow();
+                textModeProcessingExecutor.shutdownNow();
                 Thread.currentThread().interrupt();
             }
             videoCaptureIdsInFlight.clear();

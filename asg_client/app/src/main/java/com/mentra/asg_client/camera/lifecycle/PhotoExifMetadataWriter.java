@@ -267,7 +267,7 @@ public final class PhotoExifMetadataWriter {
                         + (payload != null)
                         + " quality="
                         + quality);
-        return encodeAvifForBle(bitmap, quality, payload);
+        return encodeAvifForBle(bitmap, quality, payload, sourceJpegPath);
     }
 
     /**

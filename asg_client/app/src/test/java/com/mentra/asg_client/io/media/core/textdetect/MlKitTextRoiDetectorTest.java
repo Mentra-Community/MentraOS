@@ -18,6 +18,7 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.concurrent.atomic.AtomicReference;
 
 @RunWith(RobolectricTestRunner.class)
 public class MlKitTextRoiDetectorTest {
@@ -76,13 +77,16 @@ public class MlKitTextRoiDetectorTest {
         Method handleCompletion =
                 MlKitTextRoiDetector.class.getDeclaredMethod("handleWarmupCompletion", Task.class);
         handleCompletion.setAccessible(true);
-        warmupTask.set(detector, currentTask);
+        @SuppressWarnings("unchecked")
+        AtomicReference<Task<Text>> warmupTaskReference =
+                (AtomicReference<Task<Text>>) warmupTask.get(detector);
+        warmupTaskReference.set(currentTask);
 
         handleCompletion.invoke(detector, staleTask);
-        assertThat(warmupTask.get(detector)).isSameAs(currentTask);
+        assertThat(warmupTaskReference.get()).isSameAs(currentTask);
 
         handleCompletion.invoke(detector, currentTask);
-        assertThat(warmupTask.get(detector)).isNull();
+        assertThat(warmupTaskReference.get()).isNull();
         detector.close();
     }
 }
