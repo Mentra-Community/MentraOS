@@ -499,9 +499,6 @@ class GallerySyncService {
       hotspotEnabled: glassesHotspot !== null,
     })
 
-    // Reset processing queue only after pre-flight passes — avoids clobbering an active session
-    mediaProcessingQueue.reset()
-
     // Request all permissions upfront so user isn't interrupted during WiFi/download
     console.log("[GallerySyncService] 🔐 Step 1/6: Requesting permissions...")
 
@@ -747,6 +744,10 @@ class GallerySyncService {
       console.log("[GallerySyncService]   ℹ️ Glasses hotspot not currently enabled")
       console.log("[GallerySyncService]   ➡️ Will request hotspot activation")
     }
+
+    // Every fallible pre-flight gate has passed. It is now safe to replace the previous
+    // in-memory queue; startFileDownload immediately recovers its durable ledger work.
+    mediaProcessingQueue.reset()
 
     if (isAlreadyConnected && currentGlassesHotspot) {
       console.log("[GallerySyncService] 🚀 Skipping hotspot request - already connected!")

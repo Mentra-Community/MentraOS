@@ -103,7 +103,8 @@ class CameraRollExportCoordinator {
         }),
         filePath: file.filePath,
         receipt,
-        requiresFullLibraryReconciliation: current?.requiresFullLibraryReconciliation ?? (!current && !receipt),
+        requiresFullLibraryReconciliation:
+          current?.requiresFullLibraryReconciliation ?? (!current && !receipt && !transfer),
         state: receipt ? "EXPORTED" : this.nextEligibleState(current?.state),
       })
     }

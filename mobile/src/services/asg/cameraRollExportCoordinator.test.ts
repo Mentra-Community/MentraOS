@@ -3,6 +3,7 @@ import * as RNFS from "@dr.pogodin/react-native-fs"
 
 import {cameraRollExportCoordinator} from "../../../modules/engine/src/services/asg/cameraRollExportCoordinator"
 import {cameraRollExportLedger} from "../../../modules/engine/src/services/asg/cameraRollExportLedger"
+import {galleryTransferLedger} from "../../../modules/engine/src/services/asg/galleryTransferLedger"
 import {localStorageService, type DownloadedFile} from "../../../modules/engine/src/services/asg/localStorageService"
 import {MediaLibraryPermissions} from "../../../modules/engine/src/utils/permissions/MediaLibraryPermissions"
 import {storage} from "../../../modules/engine/src/utils/storage"
@@ -189,6 +190,22 @@ describe("cameraRollExportCoordinator", () => {
     const receipt = await cameraRollExportCoordinator.exportForSource(file, file.name)
 
     expect(receipt.identifier).toBe("asset-1")
+    expect(cameraRollExportLedger.list()[0]).toMatchObject({
+      state: "EXPORTED",
+      requiresFullLibraryReconciliation: false,
+    })
+  })
+
+  it("does not misclassify a new-pipeline transfer as an ambiguous legacy export", async () => {
+    const file = legacyFile("IMG_new_pipeline_recovery")
+    mockFiles[file.name] = file
+    ;(galleryTransferLedger.get as jest.Mock).mockReturnValue({captureId: file.name})
+    ;(MediaLibraryPermissions.hasLimitedAccess as jest.Mock).mockResolvedValue(true)
+
+    await cameraRollExportCoordinator.initialize()
+    await cameraRollExportCoordinator.resume("new pipeline recovery")
+
+    expect(MediaLibraryPermissions.saveToLibraryWithReceipt).toHaveBeenCalledWith(file.filePath, file.modified)
     expect(cameraRollExportLedger.list()[0]).toMatchObject({
       state: "EXPORTED",
       requiresFullLibraryReconciliation: false,

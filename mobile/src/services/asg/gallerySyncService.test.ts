@@ -248,6 +248,7 @@ describe("GallerySyncService", () => {
     expect(notices).toContain("camera_roll_permission_required")
     expect(useGallerySyncStore.getState().syncState).toBe("error")
     expect(BluetoothSdk.setHotspotState).not.toHaveBeenCalled()
+    expect(mediaProcessingQueue.reset).not.toHaveBeenCalled()
   })
 
   it("aborts pre-flight quietly when glasses disconnect during any pre-flight await", async () => {
