@@ -47,7 +47,7 @@ import {
   stopWorkerPool,
 } from "./services/audio/workers/pool";
 import { transcriptToStreamMessage } from "./services/audio/result";
-import { PROTOCOL_MAJOR } from "./protocol/envelope";
+import { PROTOCOL_MAJOR } from "@mentra/cloud-protocol/envelope";
 
 const logger = createLogger("runtime");
 

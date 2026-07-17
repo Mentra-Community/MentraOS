@@ -11,6 +11,9 @@
   --foreground: oklch(0.145 0 0);
   --primary: #16a34a;
   --primary-foreground: #ffffff;
+  --primary-text: #15803d;
+  --header-from: #22c55e;
+  --header-to: #15803d;
   --border: oklch(0.922 0 0);
   --ring: oklch(0.708 0 0);
 
@@ -30,8 +33,11 @@
 .dark {
   --background: oklch(0.145 0 0);
   --foreground: oklch(0.985 0 0);
-  --primary: #22c55e;
-  --primary-foreground: #06210f;
+  --primary: #166534;
+  --primary-foreground: #ffffff;
+  --primary-text: #4ade80;
+  --header-from: #166534;
+  --header-to: #14532d;
   --border: oklch(1 0 0 / 12%);
   --ring: oklch(0.556 0 0);
 }
