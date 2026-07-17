@@ -253,16 +253,15 @@ public class AsgSettings {
     /**
      * Coupled ZSL preview buffering + MFNR still capture.
      *
-     * @return true when both features should be enabled (default: true)
+     * @return true when both features should be enabled (default: {@link
+     *     AsgConstants#DEFAULT_ZSL_MFNR})
      */
     public boolean isZslMfnrEnabled() {
         if (!AsgConstants.ENABLE_ZSL_MFNR) {
             return false;
         }
-        // This is intentionally a product default rather than a button-photo preference. A
-        // request can still explicitly opt out with zslMfnr=false, while physical button photos
-        // always use the default unless they are text/scan/manual captures.
-        boolean enabled = AsgConstants.DEFAULT_ZSL_MFNR;
+        boolean enabled =
+                prefs.getBoolean(KEY_ZSL_MFNR_ENABLED, AsgConstants.DEFAULT_ZSL_MFNR);
         Log.d(TAG, "Retrieved ZSL/MFNR enabled setting: " + enabled);
         return enabled;
     }
@@ -531,6 +530,7 @@ public class AsgSettings {
     /** Clears scan/button-photo tuning prefs and restores global ZSL/MFNR defaults. */
     public void clearButtonPhotoCaptureTuning() {
         Log.d(TAG, "Clearing button photo capture tuning and restoring ZSL/MFNR defaults");
+        boolean defaultZslMfnr = AsgConstants.DEFAULT_ZSL_MFNR;
         prefs.edit()
                 .remove(KEY_BUTTON_PHOTO_NOISE_REDUCTION)
                 .remove(KEY_BUTTON_PHOTO_EDGE_ENHANCEMENT)
@@ -543,9 +543,9 @@ public class AsgSettings {
                 .remove(KEY_BUTTON_PHOTO_MFNR)
                 .remove(KEY_BUTTON_PHOTO_ZSL)
                 .remove(KEY_BUTTON_PHOTO_ZSL_MFNR)
-                .putBoolean(KEY_ZSL_MFNR_ENABLED, false)
-                .putBoolean(KEY_MFNR_ENABLED, false)
-                .putBoolean(KEY_ZSL_ENABLED, false)
+                .putBoolean(KEY_ZSL_MFNR_ENABLED, defaultZslMfnr)
+                .putBoolean(KEY_MFNR_ENABLED, defaultZslMfnr)
+                .putBoolean(KEY_ZSL_ENABLED, defaultZslMfnr)
                 .commit();
     }
 
