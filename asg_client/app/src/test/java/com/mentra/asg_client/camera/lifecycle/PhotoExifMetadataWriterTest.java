@@ -63,6 +63,23 @@ public class PhotoExifMetadataWriterTest {
     }
 
     @Test
+    public void writeCaptureIdCanUseIntendedCapturePathForCachedJpeg() throws Exception {
+        File cacheDir = tempFolder.newFolder("text_mode_uploads");
+        File cachedJpeg = new File(cacheDir, "transient.jpg");
+        File captureDir = tempFolder.newFolder("IMG_20260709_120000_123_456_cachedReq");
+        File intendedJpeg = new File(captureDir, "base.jpg");
+        PhotoExifMetadataWriter.writeMinimalJpegForTest(cachedJpeg);
+
+        PhotoExifMetadataWriter.writeCaptureIdFromPath(
+                cachedJpeg.getAbsolutePath(), intendedJpeg.getAbsolutePath());
+
+        androidx.exifinterface.media.ExifInterface exif =
+                new androidx.exifinterface.media.ExifInterface(cachedJpeg.getAbsolutePath());
+        assertThat(exif.getAttribute(androidx.exifinterface.media.ExifInterface.TAG_IMAGE_UNIQUE_ID))
+                .isEqualTo("IMG_20260709_120000_123_456_cachedReq");
+    }
+
+    @Test
     public void writeCaptureIdIsNoOpOutsideCaptureDirectories() throws Exception {
         File jpeg = tempFolder.newFile("loose.jpg");
         PhotoExifMetadataWriter.writeMinimalJpegForTest(jpeg);

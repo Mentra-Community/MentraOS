@@ -75,8 +75,13 @@ public final class PhotoExifMetadataWriter {
      * live in a capture directory. Best-effort: a capture must never fail over metadata.
      */
     public static void writeCaptureIdFromPath(String jpegPath) {
+        writeCaptureIdFromPath(jpegPath, jpegPath);
+    }
+
+    /** Writes capture correlation from an intended gallery path onto another JPEG. */
+    public static void writeCaptureIdFromPath(String jpegPath, String intendedCapturePath) {
         try {
-            File parent = new File(jpegPath).getParentFile();
+            File parent = new File(intendedCapturePath).getParentFile();
             String captureId = parent != null ? parent.getName() : null;
             if (captureId == null
                     || !(captureId.startsWith("IMG_") || captureId.startsWith("VID_"))) {

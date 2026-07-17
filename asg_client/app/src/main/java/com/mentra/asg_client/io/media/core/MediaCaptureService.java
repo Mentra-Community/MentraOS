@@ -369,8 +369,9 @@ public class MediaCaptureService {
         } finally {
             if (cropped != original) {
                 cropped.recycle();
+            } else {
+                original.recycle();
             }
-            original.recycle();
         }
         PhotoExifMetadataWriter.copyImuMetadata(originalPath, croppedPath);
         return croppedPath;
@@ -409,6 +410,17 @@ public class MediaCaptureService {
             String canonicalPath,
             String requestId,
             @Nullable android.graphics.Rect roi) {
+        return persistTextModeSelectionFromMemory(
+                capturedPhoto, canonicalPath, canonicalPath, requestId, roi, true);
+    }
+
+    private boolean persistTextModeSelectionFromMemory(
+            CapturedPhoto capturedPhoto,
+            String canonicalPath,
+            String intendedCapturePath,
+            String requestId,
+            @Nullable android.graphics.Rect roi,
+            boolean writeSidecar) {
         String preparedPath = canonicalPath.replace(".jpg", "_textselected_" + requestId + ".jpg");
         File preparedFile = new File(preparedPath);
         File parent = preparedFile.getParentFile();
@@ -465,7 +477,7 @@ public class MediaCaptureService {
             }
 
             // Metadata is best-effort; failure must not discard an otherwise valid selected image.
-            PhotoExifMetadataWriter.writeCaptureIdFromPath(preparedPath);
+            PhotoExifMetadataWriter.writeCaptureIdFromPath(preparedPath, intendedCapturePath);
             if (capturedPhoto.imuPayload != null) {
                 try {
                     PhotoExifMetadataWriter.writeImuPayload(preparedPath, capturedPhoto.imuPayload);
@@ -475,7 +487,7 @@ public class MediaCaptureService {
             }
 
             PhotoArtifactFiles.promoteToCanonical(canonicalPath, preparedPath);
-            if (capturedPhoto.imuPayload != null && parent != null) {
+            if (writeSidecar && capturedPhoto.imuPayload != null && parent != null) {
                 File sidecar = new File(parent, "imu.json");
                 try (FileOutputStream output = new FileOutputStream(sidecar)) {
                     output.write(
@@ -2640,11 +2652,17 @@ public class MediaCaptureService {
                                             TextRegionDetection detection =
                                                     runTextRegionDetection(
                                                             capturedPhoto.jpegBytes, filePath);
+                                            String outputPath =
+                                                    save
+                                                            ? filePath
+                                                            : transientTextUploadPath(filePath);
                                             if (!persistTextModeSelectionFromMemory(
                                                     capturedPhoto,
+                                                    outputPath,
                                                     filePath,
                                                     requestId,
-                                                    detection.roi)) {
+                                                    detection.roi,
+                                                    save)) {
                                                 cleanupPhotoArtifacts(requestId, filePath, false);
                                                 clearPhotoTracking(requestId);
                                                 releasePhotoJob(requestId);
@@ -2654,7 +2672,10 @@ public class MediaCaptureService {
                                                         "Could not prepare text-mode upload");
                                                 return;
                                             }
-                                            onPhotoCaptured(filePath, captureMetadata);
+                                            if (!save) {
+                                                photoOriginalPaths.put(requestId, outputPath);
+                                            }
+                                            onPhotoCaptured(outputPath, captureMetadata);
                                         });
                             } catch (RejectedExecutionException executorClosed) {
                                 cleanupPhotoArtifacts(requestId, filePath, false);
@@ -2711,6 +2732,16 @@ public class MediaCaptureService {
             }
             return false;
         }
+    }
+
+    private String transientTextUploadPath(String intendedCapturePath) {
+        File cacheDir = new File(mContext.getCacheDir(), "text_mode_uploads");
+        if (!cacheDir.exists() && !cacheDir.mkdirs()) {
+            Log.w(TAG, "Could not create text-mode upload cache: " + cacheDir);
+        }
+        File captureDir = new File(intendedCapturePath).getParentFile();
+        String captureId = captureDir != null ? captureDir.getName() : "capture";
+        return new File(cacheDir, captureId + ".jpg").getAbsolutePath();
     }
 
     /**
