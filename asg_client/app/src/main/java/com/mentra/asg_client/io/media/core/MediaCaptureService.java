@@ -2282,23 +2282,27 @@ public class MediaCaptureService {
 
     private void finishLocalSavePhoto(
             String requestId, String captureId, String filePath, JSONObject captureMetadata) {
-        Log.d(TAG, "Local-save photo captured: " + filePath);
-        sendPhotoStatus(
-                requestId,
-                "captured",
-                null,
-                null,
-                null,
-                null,
-                null,
-                captureMetadata);
+        try {
+            Log.d(TAG, "Local-save photo captured: " + filePath);
+            sendPhotoStatus(
+                    requestId,
+                    "captured",
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    captureMetadata);
 
-        if (mMediaCaptureListener != null) {
-            mMediaCaptureListener.onPhotoCaptured(requestId, filePath);
+            if (mMediaCaptureListener != null) {
+                mMediaCaptureListener.onPhotoCaptured(requestId, filePath);
+            }
+
+            sendLocalSaveSuccessResponse(requestId, captureId);
+            sendGalleryStatusUpdate();
+        } finally {
+            clearPhotoRequestTracking(requestId);
         }
-
-        sendLocalSaveSuccessResponse(requestId, captureId);
-        sendGalleryStatusUpdate();
     }
 
     /**
