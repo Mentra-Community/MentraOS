@@ -364,7 +364,7 @@ dependencies {
     implementation("org.greenrobot:eventbus:3.3.1")
 
     //location services
-    implementation 'com.google.android.gms:play-services-location:21.3.0'
+    implementation 'com.google.android.gms:play-services-location:18.0.0'
 
     // Bundled/offline text localization for Mentra Live text-mode photos.
     implementation 'com.google.mlkit:text-recognition:16.0.1'

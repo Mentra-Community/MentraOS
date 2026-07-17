@@ -17,9 +17,9 @@ import java.util.concurrent.TimeoutException;
  * fallback); save=false also uses a completed false future.
  *
  * <p>Produced by {@code PhotoSession} for captures enqueued with {@code deferDiskWrite=true} and
- * retrieved via {@link CapturedPhotoStore}. The {@link #persistence} future tracks the background
- * optional JPEG + EXIF + IMU-sidecar write; any consumer that needs the file on disk must gate on
- * {@link #awaitPersistence} instead of touching the path directly, so it can never race the write.
+ * delivered directly through {@code PhotoCaptureCallback}. The {@link #persistence} future tracks
+ * the background optional JPEG + EXIF + IMU-sidecar write; any consumer that needs the file on disk
+ * must gate on {@link #awaitPersistence} instead of touching the path directly.
  */
 public final class CapturedPhoto {
 

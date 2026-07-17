@@ -20,7 +20,6 @@ import com.mentra.asg_client.camera.diagnostics.CameraDiagnosticsLog;
 import com.mentra.asg_client.camera.model.ActivePhotoCapture;
 import com.mentra.asg_client.camera.model.CameraOperationError;
 import com.mentra.asg_client.camera.model.CapturedPhoto;
-import com.mentra.asg_client.camera.model.CapturedPhotoStore;
 import com.mentra.asg_client.camera.model.PhotoCaptureSettings;
 import com.mentra.asg_client.camera.model.QueuedPhotoRequest;
 import com.mentra.asg_client.camera.model.QueuedPhotoRequestQueue;
@@ -119,6 +118,7 @@ public final class PhotoSession {
     @Nullable private JSONObject pendingStillCaptureMetadata;
     @Nullable private String pendingCapturedFilePath;
     @Nullable private CameraNeoService.PhotoCaptureCallback pendingCapturedCallback;
+    @Nullable private CapturedPhoto pendingCapturedPhoto;
     private long pendingCapturedStartTimeMs;
     @Nullable private Runnable pendingCaptureMetadataTimeout;
     private boolean photoCapturedCallbackSent;
@@ -866,10 +866,9 @@ public final class PhotoSession {
 
     /**
      * Deferred-persistence capture ({@link ActivePhotoCapture#deferDiskWrite}): stop the IMU
-     * recorder and assemble its payload in memory, publish the full in-memory capture through
-     * {@link CapturedPhotoStore}, and fire {@code onPhotoCaptured} immediately. When persistence is
-     * requested, the JPEG + EXIF + IMU-sidecar write runs on the background executor; otherwise no
-     * capture artifact is created. The BLE pipeline always consumes the published bytes.
+     * recorder and assemble its payload in memory, then fire {@code onPhotoCaptured} with the
+     * complete capture attached. When persistence is requested, the JPEG + EXIF + IMU-sidecar write
+     * runs on the background executor; otherwise no capture artifact is created.
      */
     private void handleDeferredPersistenceCapture(
             byte[] bytes, String targetPath, boolean persistToDisk) {
@@ -903,8 +902,7 @@ public final class PhotoSession {
             persistence = CompletableFuture.completedFuture(false);
             Log.d(TAG, "RAM-only photo capture; persistence skipped: " + targetPath);
         }
-        CapturedPhotoStore.put(targetPath, new CapturedPhoto(bytes, imuPayload, persistence));
-        notifyPhotoCaptured(targetPath);
+        notifyPhotoCaptured(targetPath, new CapturedPhoto(bytes, imuPayload, persistence));
     }
 
     private ExecutorService persistenceExecutor() {
@@ -990,6 +988,7 @@ public final class PhotoSession {
             pendingStillCaptureMetadata = null;
             pendingCapturedFilePath = null;
             pendingCapturedCallback = null;
+            pendingCapturedPhoto = null;
             pendingCapturedStartTimeMs = 0L;
             pendingCaptureMetadataTimeout = null;
             photoCapturedCallbackSent = false;
@@ -1006,6 +1005,7 @@ public final class PhotoSession {
     private void emitPhotoCaptured(
             String filePath,
             @Nullable JSONObject captureMetadata,
+            @Nullable CapturedPhoto capturedPhoto,
             @Nullable CameraNeoService.PhotoCaptureCallback callback,
             long startMs) {
         long e2eTimeMs = (startMs > 0) ? (System.currentTimeMillis() - startMs) : -1L;
@@ -1017,7 +1017,11 @@ public final class PhotoSession {
                         + filePath);
 
         if (callback != null) {
-            hooks.executor().execute(() -> callback.onPhotoCaptured(filePath, captureMetadata));
+            hooks.executor()
+                    .execute(
+                            () ->
+                                    callback.onPhotoCaptured(
+                                            filePath, captureMetadata, capturedPhoto));
         }
         finishSuccessfulPhotoCapture();
     }
@@ -1036,7 +1040,11 @@ public final class PhotoSession {
     }
 
     private void notifyPhotoCaptured(String filePath) {
-        notifyPhotoCaptured(filePath, true);
+        notifyPhotoCaptured(filePath, null, true);
+    }
+
+    private void notifyPhotoCaptured(String filePath, CapturedPhoto capturedPhoto) {
+        notifyPhotoCaptured(filePath, capturedPhoto, true);
     }
 
     /**
@@ -1047,6 +1055,13 @@ public final class PhotoSession {
      *     timeout.
      */
     private void notifyPhotoCaptured(String filePath, boolean waitForStillMetadata) {
+        notifyPhotoCaptured(filePath, null, waitForStillMetadata);
+    }
+
+    private void notifyPhotoCaptured(
+            String filePath,
+            @Nullable CapturedPhoto capturedPhoto,
+            boolean waitForStillMetadata) {
         long startMs = currentStartTimeMs();
         CameraNeoService.PhotoCaptureCallback callback =
                 activeCapture != null ? activeCapture.callback : null;
@@ -1072,6 +1087,7 @@ public final class PhotoSession {
                     }
                     pendingCapturedFilePath = filePath;
                     pendingCapturedCallback = callback;
+                    pendingCapturedPhoto = capturedPhoto;
                     pendingCapturedStartTimeMs = startMs;
                     scheduleCaptureMetadataTimeoutLocked(filePath);
                     return;
@@ -1083,7 +1099,7 @@ public final class PhotoSession {
                 photoCapturedCallbackSent = true;
             }
         }
-        emitPhotoCaptured(filePath, metadataToSend, callback, startMs);
+        emitPhotoCaptured(filePath, metadataToSend, capturedPhoto, callback, startMs);
     }
 
     private void scheduleCaptureMetadataTimeoutLocked(String filePath) {
@@ -1093,6 +1109,7 @@ public final class PhotoSession {
         Runnable timeout =
                 () -> {
                     CameraNeoService.PhotoCaptureCallback callback;
+                    CapturedPhoto capturedPhoto;
                     long startMs;
                     synchronized (captureMetadataLock) {
                         if (!Objects.equals(pendingCapturedFilePath, filePath)
@@ -1100,9 +1117,11 @@ public final class PhotoSession {
                             return;
                         }
                         callback = pendingCapturedCallback;
+                        capturedPhoto = pendingCapturedPhoto;
                         startMs = pendingCapturedStartTimeMs;
                         pendingCapturedFilePath = null;
                         pendingCapturedCallback = null;
+                        pendingCapturedPhoto = null;
                         pendingCapturedStartTimeMs = 0L;
                         pendingCaptureMetadataTimeout = null;
                         photoCapturedCallbackSent = true;
@@ -1112,7 +1131,7 @@ public final class PhotoSession {
                             "Still capture metadata was not available within "
                                     + CAPTURE_METADATA_WAIT_TIMEOUT_MS
                                     + "ms; emitting captured status without captureMetadata");
-                    emitPhotoCaptured(filePath, null, callback, startMs);
+                    emitPhotoCaptured(filePath, null, capturedPhoto, callback, startMs);
                 };
         pendingCaptureMetadataTimeout = timeout;
 
@@ -1127,6 +1146,7 @@ public final class PhotoSession {
     private void recordStillCaptureMetadata(long captureGeneration, JSONObject captureMetadata) {
         String filePathToNotify = null;
         CameraNeoService.PhotoCaptureCallback callback = null;
+        CapturedPhoto capturedPhoto = null;
         long startMs = 0L;
         Runnable timeoutToCancel = null;
 
@@ -1151,10 +1171,12 @@ public final class PhotoSession {
             }
             filePathToNotify = pendingCapturedFilePath;
             callback = pendingCapturedCallback;
+            capturedPhoto = pendingCapturedPhoto;
             startMs = pendingCapturedStartTimeMs;
             timeoutToCancel = pendingCaptureMetadataTimeout;
             pendingCapturedFilePath = null;
             pendingCapturedCallback = null;
+            pendingCapturedPhoto = null;
             pendingCapturedStartTimeMs = 0L;
             pendingCaptureMetadataTimeout = null;
             pendingStillCaptureMetadata = null;
@@ -1167,7 +1189,7 @@ public final class PhotoSession {
                 h.removeCallbacks(timeoutToCancel);
             }
         }
-        emitPhotoCaptured(filePathToNotify, captureMetadata, callback, startMs);
+        emitPhotoCaptured(filePathToNotify, captureMetadata, capturedPhoto, callback, startMs);
     }
 
     private void notifyPhotoError(String errorMessage) {

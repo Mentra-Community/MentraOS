@@ -33,19 +33,24 @@ final class JpegFastBleEncoder implements BlePhotoEncoder {
     @Override
     public EncodeResult encode(Bitmap bitmap, int quality, String sourceJpegPath)
             throws IOException {
-        return encodeInternal(bitmap, quality, sourceJpegPath, null);
+        return encodeInternal(bitmap, quality, sourceJpegPath, null, null);
     }
 
-    EncodeResult encode(Bitmap bitmap, int quality, @Nullable JSONObject imuPayload)
+    EncodeResult encode(
+            Bitmap bitmap,
+            int quality,
+            @Nullable JSONObject imuPayload,
+            @Nullable String intendedCapturePath)
             throws IOException {
-        return encodeInternal(bitmap, quality, null, imuPayload);
+        return encodeInternal(bitmap, quality, null, imuPayload, intendedCapturePath);
     }
 
     private EncodeResult encodeInternal(
             Bitmap bitmap,
             int quality,
             @Nullable String sourceJpegPath,
-            @Nullable JSONObject imuPayload)
+            @Nullable JSONObject imuPayload,
+            @Nullable String intendedCapturePath)
             throws IOException {
         long start = System.currentTimeMillis();
         // Bitmap.compress caps its own output; 1/4 byte per pixel comfortably covers q75-q95
@@ -55,7 +60,9 @@ final class JpegFastBleEncoder implements BlePhotoEncoder {
         if (!bitmap.compress(Bitmap.CompressFormat.JPEG, quality, baos)) {
             throw new IOException("Bitmap JPEG compress failed");
         }
-        byte[] jpeg = spliceCaptureExif(baos.toByteArray(), sourceJpegPath, imuPayload);
+        byte[] jpeg =
+                spliceCaptureExif(
+                        baos.toByteArray(), sourceJpegPath, imuPayload, intendedCapturePath);
         long encodeMs = System.currentTimeMillis() - start;
         Log.d(
                 TAG,
@@ -79,15 +86,19 @@ final class JpegFastBleEncoder implements BlePhotoEncoder {
      * - the payload must never be lost over metadata.
      */
     private static byte[] spliceCaptureExif(
-            byte[] jpeg, @Nullable String sourceJpegPath, @Nullable JSONObject imuPayload) {
-        if (sourceJpegPath == null && imuPayload == null) {
+            byte[] jpeg,
+            @Nullable String sourceJpegPath,
+            @Nullable JSONObject imuPayload,
+            @Nullable String intendedCapturePath) {
+        if (sourceJpegPath == null && imuPayload == null && intendedCapturePath == null) {
             return jpeg;
         }
         try {
             byte[] app1 =
-                    imuPayload != null
-                            ? PhotoExifMetadataWriter.buildExifApp1Segment(imuPayload)
-                            : PhotoExifMetadataWriter.buildCaptureExifApp1Segment(sourceJpegPath);
+                    sourceJpegPath != null
+                            ? PhotoExifMetadataWriter.buildCaptureExifApp1Segment(sourceJpegPath)
+                            : PhotoExifMetadataWriter.buildCaptureExifApp1Segment(
+                                    imuPayload, intendedCapturePath);
             if (app1 == null
                     || jpeg.length < SOI_LENGTH
                     || (jpeg[0] & 0xFF) != 0xFF

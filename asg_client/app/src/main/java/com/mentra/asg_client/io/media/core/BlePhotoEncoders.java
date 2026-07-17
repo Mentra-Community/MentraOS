@@ -20,33 +20,25 @@ final class BlePhotoEncoders {
         return codec == BleCodec.JPEG_FAST ? JPEG_FAST : AVIF;
     }
 
-    /** Encode {@code bitmap} with the selected codec without silently switching codecs. */
-    static BlePhotoEncoder.EncodeResult encode(
-            Bitmap bitmap, BleCodec codec, int quality, String sourceJpegPath) throws Exception {
-        if (codec == BleCodec.JPEG_FAST) {
-            return JPEG_FAST.encode(bitmap, quality, sourceJpegPath);
-        }
-        return AVIF.encode(bitmap, quality, sourceJpegPath);
-    }
-
     /** Encode a RAM-first capture without consulting the source JPEG path for IMU metadata. */
     static BlePhotoEncoder.EncodeResult encode(
             Bitmap bitmap,
             BleCodec codec,
             int quality,
             @Nullable String sourceJpegPath,
-            @Nullable JSONObject imuPayload)
+            @Nullable JSONObject imuPayload,
+            @Nullable String intendedCapturePath)
             throws Exception {
         // A null source path explicitly identifies a RAM-first capture, including the valid case
         // where the IMU recorder produced no samples. Never probe a path that was intentionally
         // not persisted.
         if (codec == BleCodec.JPEG_FAST) {
             return sourceJpegPath == null
-                    ? JPEG_FAST.encode(bitmap, quality, imuPayload)
+                    ? JPEG_FAST.encode(bitmap, quality, imuPayload, intendedCapturePath)
                     : JPEG_FAST.encode(bitmap, quality, sourceJpegPath);
         }
         return sourceJpegPath == null
-                ? AVIF.encode(bitmap, quality, imuPayload)
+                ? AVIF.encode(bitmap, quality, imuPayload, intendedCapturePath)
                 : AVIF.encode(bitmap, quality, sourceJpegPath);
     }
 }

@@ -33,6 +33,7 @@ import com.mentra.asg_client.camera.lifecycle.ImageReaderTwin;
 import com.mentra.asg_client.camera.lifecycle.PhotoSession;
 import com.mentra.asg_client.camera.lifecycle.VideoRecordingSession;
 import com.mentra.asg_client.camera.model.CameraOperationError;
+import com.mentra.asg_client.camera.model.CapturedPhoto;
 import com.mentra.asg_client.camera.model.PhotoCaptureSettings;
 import com.mentra.asg_client.camera.model.QueuedPhotoRequest;
 import com.mentra.asg_client.camera.model.QueuedPhotoRequestQueue;
@@ -172,6 +173,18 @@ public class CameraNeoService extends LifecycleService {
         }
 
         void onPhotoCaptured(String filePath, @Nullable JSONObject captureMetadata);
+
+        /**
+         * RAM-first result delivery. Classic file-backed callbacks keep using the two-argument
+         * overload; consumers that request deferred persistence receive the capture directly so
+         * queued callbacks cannot lose it through a process-global side channel.
+         */
+        default void onPhotoCaptured(
+                String filePath,
+                @Nullable JSONObject captureMetadata,
+                @Nullable CapturedPhoto capturedPhoto) {
+            onPhotoCaptured(filePath, captureMetadata);
+        }
 
         void onPhotoError(String errorMessage);
 
@@ -623,11 +636,10 @@ public class CameraNeoService extends LifecycleService {
     }
 
     /**
-     * @param deferDiskWrite when {@code true}, {@code onPhotoCaptured} fires as soon as the JPEG
-     *     bytes are in memory (published via {@link
-     *     com.mentra.asg_client.camera.model.CapturedPhotoStore}); the disk write runs in the
-     *     background. Callers MUST consume the store entry and gate file access on its persistence
-     *     future. See {@link QueuedPhotoRequest#deferDiskWrite}.
+     * @param deferDiskWrite when {@code true}, {@code onPhotoCaptured} receives a {@link
+     *     CapturedPhoto} as soon as the JPEG bytes are in memory; the disk write runs in the
+     *     background. Callers that need the file MUST gate access on its persistence future. See
+     *     {@link QueuedPhotoRequest#deferDiskWrite}.
      */
     public static void enqueuePhotoRequest(
             Context context,

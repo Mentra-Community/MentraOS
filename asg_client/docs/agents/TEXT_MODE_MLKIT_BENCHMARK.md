@@ -30,9 +30,9 @@ reward a small crop that simply omitted text.
 The camera still produces a full-resolution JPEG-encoded buffer. "Retain the JPEG" means retaining
 that `byte[]` in memory until detection, crop, encoding, and BLE handoff finish.
 
-- `save=false`: the JPEG is never persisted. It is copied out of `ImageReader`, published through
-  `CapturedPhotoStore`, consumed by the BLE worker, and released. The final encoded BLE payload is
-  also transferred from a `byte[]`; there is no payload temp file.
+- `save=false`: the JPEG is never persisted. It is copied out of `ImageReader`, delivered directly
+  to the capture callback, consumed by the BLE worker, and released. The final encoded BLE payload
+  is also transferred from a `byte[]`; there is no payload temp file.
 - `save=true`: the sensor JPEG remains RAM-only while localization runs. A successful detection
   persists only the full-resolution cropped JPEG; if detection/cropping fails, the retained sensor
   JPEG is persisted as the safe full-frame fallback. EXIF and the IMU sidecar are attached to that
@@ -307,7 +307,7 @@ cd asg_client
 ./gradlew :app:compileDebugJavaWithJavac \
   :app:testDebugUnitTest \
   --tests '*MlKitTextRoiDetectorTest' \
-  --tests '*CapturedPhotoStoreTest' \
+  --tests '*CapturedPhotoTest' \
   --no-daemon
 ```
 

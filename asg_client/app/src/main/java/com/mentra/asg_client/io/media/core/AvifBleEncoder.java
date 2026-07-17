@@ -27,10 +27,16 @@ final class AvifBleEncoder implements BlePhotoEncoder {
         return new EncodeResult(avif, BleCodec.AVIF, System.currentTimeMillis() - start);
     }
 
-    EncodeResult encode(Bitmap bitmap, int quality, @Nullable JSONObject imuPayload)
+    EncodeResult encode(
+            Bitmap bitmap,
+            int quality,
+            @Nullable JSONObject imuPayload,
+            @Nullable String intendedCapturePath)
             throws Exception {
         long start = System.currentTimeMillis();
-        byte[] avif = PhotoExifMetadataWriter.encodeAvifForBle(bitmap, quality, imuPayload);
+        byte[] avif =
+                PhotoExifMetadataWriter.encodeAvifForBle(
+                        bitmap, quality, imuPayload, intendedCapturePath);
         return new EncodeResult(avif, BleCodec.AVIF, System.currentTimeMillis() - start);
     }
 }

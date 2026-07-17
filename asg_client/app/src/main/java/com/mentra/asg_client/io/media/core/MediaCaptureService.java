@@ -16,7 +16,6 @@ import com.mentra.asg_client.camera.CameraNeoService;
 import com.mentra.asg_client.camera.lifecycle.PhotoExifMetadataWriter;
 import com.mentra.asg_client.camera.model.CameraOperationError;
 import com.mentra.asg_client.camera.model.CapturedPhoto;
-import com.mentra.asg_client.camera.model.CapturedPhotoStore;
 import com.mentra.asg_client.camera.model.PhotoCaptureSettings;
 import com.mentra.asg_client.camera.policy.PhotoMode;
 import com.mentra.asg_client.camera.policy.PhotoSizeTier;
@@ -2190,8 +2189,15 @@ public class MediaCaptureService {
 
                         @Override
                         public void onPhotoCaptured(String filePath, JSONObject captureMetadata) {
+                            onPhotoCaptured(filePath, captureMetadata, null);
+                        }
+
+                        @Override
+                        public void onPhotoCaptured(
+                                String filePath,
+                                JSONObject captureMetadata,
+                                CapturedPhoto capturedPhoto) {
                             if (textModeRequested) {
-                                CapturedPhoto capturedPhoto = CapturedPhotoStore.take(filePath);
                                 if (capturedPhoto == null) {
                                     sendPhotoErrorResponse(
                                             requestId,
@@ -4497,8 +4503,8 @@ public class MediaCaptureService {
                     exposureTimeNs,
                     iso,
                     captureSettings,
-                    // RAM-first: the callback fires with the JPEG bytes in memory
-                    // (CapturedPhotoStore). Text mode never persists the sensor JPEG up front;
+                    // RAM-first: the callback receives the JPEG bytes in memory. Text mode never
+                    // persists the sensor JPEG up front;
                     // save=true writes only the selected crop, or the full-frame fallback.
                     true,
                     save && !PhotoMode.TEXT.equals(mode),
@@ -4543,6 +4549,14 @@ public class MediaCaptureService {
 
                         @Override
                         public void onPhotoCaptured(String filePath, JSONObject captureMetadata) {
+                            onPhotoCaptured(filePath, captureMetadata, null);
+                        }
+
+                        @Override
+                        public void onPhotoCaptured(
+                                String filePath,
+                                JSONObject captureMetadata,
+                                CapturedPhoto capturedPhoto) {
                             // NOTE: do NOT clear isPhotoJobInFlight here — the job continues
                             // through BLE compression + handoff. Flag is cleared in
                             // compressAndSendViaBle's finally block.
@@ -4550,7 +4564,6 @@ public class MediaCaptureService {
                             // The in-memory capture (JPEG bytes + IMU payload + optional
                             // persistence future). For save=false the file intentionally does not
                             // exist.
-                            CapturedPhoto capturedPhoto = CapturedPhotoStore.take(filePath);
                             long capturedBytes =
                                     capturedPhoto != null
                                             ? capturedPhoto.jpegBytes.length
@@ -4706,6 +4719,7 @@ public class MediaCaptureService {
         new Thread(
                         () -> {
                             long compressThreadStart = System.currentTimeMillis();
+                            boolean bleTransferStarted = false;
                             CompressStageTimer stage = new CompressStageTimer();
                             recordTiming(requestId, "ble_compress_start");
                             logBlePhotoStep(
@@ -5173,7 +5187,8 @@ public class MediaCaptureService {
                                                     capturedPhoto != null ? null : originalPath,
                                                     capturedPhoto != null
                                                             ? capturedPhoto.imuPayload
-                                                            : null);
+                                                            : null,
+                                                    originalPath);
                                     long cumulativeEncodeMs =
                                             bleEncodeTotalMs.merge(
                                                     requestId, encodeResult.encodeMs, Long::sum);
@@ -5281,7 +5296,7 @@ public class MediaCaptureService {
 
                                 Log.i(
                                         TAG,
-                                        "📤➡️📱 Sending photo to phone (BLE): "
+                                        "📦 BLE photo payload ready: "
                                                 + bleResizedWidth
                                                 + "x"
                                                 + bleResizedHeight
@@ -5293,28 +5308,45 @@ public class MediaCaptureService {
                                                 + requestId
                                                 + ")");
 
-                                // 5. Hand the compressed payload straight to the BLE transport.
+                                // 5. A requested gallery save is part of this operation's success
+                                // contract. Resolve it before notifying the phone that BLE transfer
+                                // has started, so one request can never report both transfer success
+                                // and a later save failure.
+                                boolean savePhotoRequested =
+                                        Boolean.TRUE.equals(photoSaveFlags.get(requestId));
+                                if (capturedPhoto != null && savePhotoRequested) {
+                                    boolean persisted =
+                                            textModeRequested
+                                                    ? persistTextModeSelectionFromMemory(
+                                                            capturedPhoto,
+                                                            originalPath,
+                                                            requestId,
+                                                            roi)
+                                                    : capturedPhoto.awaitPersistence(
+                                                            AsgConstants
+                                                                    .BLE_PHOTO_PERSISTENCE_AWAIT_TIMEOUT_MS);
+                                    if (!persisted) {
+                                        sendPhotoErrorResponse(
+                                                requestId,
+                                                "PHOTO_SAVE_FAILED",
+                                                textModeRequested
+                                                        ? "Could not save final text-mode output"
+                                                        : "Could not save captured photo");
+                                        return;
+                                    }
+                                }
+
+                                // 6. Hand the compressed payload straight to the BLE transport.
                                 // The K900 packet pump streams from an in-memory buffer (including
                                 // retries), so no transport artifact is written to disk. bleImgId
                                 // is the wire name (16-char protocol cap, no extension).
                                 recordTiming(requestId, "ble_send_start");
-                                sendCompressedPhotoViaBle(
-                                        compressedData, bleImgId, requestId, compressThreadStart);
-
-                                // 6. Persist only the final text-mode selection. The sensor JPEG
-                                // remains RAM-only unless detection/cropping failed, in which case
-                                // it is the safe full-frame fallback.
-                                if (capturedPhoto != null
-                                        && textModeRequested
-                                        && Boolean.TRUE.equals(photoSaveFlags.get(requestId))) {
-                                    if (!persistTextModeSelectionFromMemory(
-                                            capturedPhoto, originalPath, requestId, roi)) {
-                                        sendPhotoErrorResponse(
+                                bleTransferStarted =
+                                        sendCompressedPhotoViaBle(
+                                                compressedData,
+                                                bleImgId,
                                                 requestId,
-                                                "PHOTO_SAVE_FAILED",
-                                                "Could not save final text-mode output");
-                                    }
-                                }
+                                                compressThreadStart);
 
                             } catch (Exception e) {
                                 if (capturedPhoto != null
@@ -5349,9 +5381,11 @@ public class MediaCaptureService {
                                     }
                                 }
                                 cleanupPhotoArtifacts(requestId, originalPath, savePhoto);
-                                // The BLE transport owns the file after a successful handoff. Keep
-                                // timing state alive until transfer_complete; every failed handoff
-                                // clears it inside sendCompressedPhotoViaBle().
+                                // Keep timing state only when the BLE transport actually accepted
+                                // the payload; transfer_complete owns it from that point forward.
+                                if (!bleTransferStarted) {
+                                    clearBlePhotoPipelineTracking(requestId, bleImgId);
+                                }
                                 clearPhotoRequestTracking(requestId);
                                 // BLE compress + handoff (or its failure) ends our authority over
                                 // the photo
@@ -5362,10 +5396,14 @@ public class MediaCaptureService {
                                 logBlePhotoStep(
                                         requestId,
                                         "cleanup_done",
-                                        "photo job released after BLE handoff");
+                                        bleTransferStarted
+                                                ? "photo job released after BLE handoff"
+                                                : "photo job released without BLE handoff");
                                 Log.d(
                                         TAG,
-                                        "📡 BLE handoff complete - photo job released: "
+                                        "📡 Photo pipeline complete (BLE started="
+                                                + bleTransferStarted
+                                                + ") - photo job released: "
                                                 + requestId);
                             }
                         })
@@ -5373,7 +5411,7 @@ public class MediaCaptureService {
     }
 
     /** Send compressed photo via BLE, streaming the payload directly from memory. */
-    private void sendCompressedPhotoViaBle(
+    private boolean sendCompressedPhotoViaBle(
             byte[] compressedData, String bleImgId, String requestId, long transferStartTime) {
         logBlePhotoStep(
                 requestId,
@@ -5392,7 +5430,7 @@ public class MediaCaptureService {
                     PhotoCaptureTestHooks.getErrorCode(),
                     PhotoCaptureTestHooks.getErrorMessage());
             clearBlePhotoPipelineTracking(requestId, bleImgId);
-            return;
+            return false;
         }
 
         // TESTING: Add fake delay for BLE transfer
@@ -5426,7 +5464,7 @@ public class MediaCaptureService {
                                 "BLE transfer busy - another transfer in progress",
                                 MediaUploadQueueManager.MEDIA_TYPE_PHOTO);
                     }
-                    return;
+                    return false;
                 }
 
                 // BLE is available - send the ready message first (phone expects this for timing
@@ -5485,6 +5523,7 @@ public class MediaCaptureService {
                 clearBlePhotoPipelineTracking(requestId, bleImgId);
             }
         }
+        return transferStarted;
     }
 
     /** Request BLE file transfer through AsgClientService */
