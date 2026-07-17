@@ -2887,7 +2887,17 @@ class MentraLive: NSObject, SGCManager {
 
                 let syntheticStatus: String
                 if besOtaStatus == "FINISHED" {
-                    syntheticStatus = "step_complete"
+                    // The glasses power-cycle right after the final BES tick, so a session
+                    // whose BES step is the LAST step never gets a follow-up ota_status from
+                    // the glasses — consumers mapping on this synthetic status would otherwise
+                    // never see a terminal state. Emit "complete" for the final step;
+                    // mid-session BES steps keep "step_complete" so session-level trackers
+                    // advance normally. Unknown sessions (cachedOtaTotalSteps == 0, e.g.
+                    // legacy glasses that never sent an ota_status) conservatively keep
+                    // "step_complete".
+                    syntheticStatus = (cachedOtaTotalSteps > 0 && cachedOtaCurrentStep >= cachedOtaTotalSteps)
+                        ? "complete"
+                        : "step_complete"
                 } else if besOtaStatus == "FAILED" {
                     syntheticStatus = "failed"
                 } else {
