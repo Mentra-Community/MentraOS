@@ -12,6 +12,8 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 
 class MentraBluetoothSdk private constructor(
@@ -39,6 +41,12 @@ class MentraBluetoothSdk private constructor(
     private val pendingSettingsRequests = ConcurrentHashMap<String, PendingResponse<SettingsAckEvent>>()
     private val pendingStreamStarts = ConcurrentHashMap<String, PendingResponse<StreamStatusEvent>>()
     private val oneShotLock = Any()
+    // Serializes camera commands (photo capture + warm-up) toward the glasses.
+    // The old CountDownLatch awaits accidentally serialized these through the
+    // shared Expo AsyncFunctionQueue thread; with suspending awaits (OS-1714)
+    // two miniapps' captures could otherwise reach the glasses concurrently
+    // and the second would hit a busy camera instead of queueing FIFO.
+    private val cameraCommandMutex = Mutex()
     private var pendingGalleryStatus: PendingResponse<GalleryStatusEvent>? = null
     private var pendingOtaQuery: PendingResponse<OtaQueryResult>? = null
     private var pendingOtaStart: PendingResponse<OtaStartAckEvent>? = null
@@ -764,8 +772,10 @@ class MentraBluetoothSdk private constructor(
         val pending = PendingResponse<PhotoResponseEvent>("photo request ${routedRequest.requestId}")
         pendingPhotoRequests[routedRequest.requestId] = pending
         try {
-            deviceManager.requestPhoto(routedRequest)
-            return pending.await()
+            cameraCommandMutex.withLock {
+                deviceManager.requestPhoto(routedRequest)
+                return pending.await()
+            }
         } finally {
             pendingPhotoRequests.remove(routedRequest.requestId, pending)
         }
@@ -788,8 +798,10 @@ class MentraBluetoothSdk private constructor(
             )
         }
         try {
-            deviceManager.warmUpCamera(effectiveRequestId, size, exposureTimeNs, durationMs)
-            return pending.await()
+            cameraCommandMutex.withLock {
+                deviceManager.warmUpCamera(effectiveRequestId, size, exposureTimeNs, durationMs)
+                return pending.await()
+            }
         } finally {
             pendingCameraStatusRequests.remove(effectiveRequestId, pending)
         }
