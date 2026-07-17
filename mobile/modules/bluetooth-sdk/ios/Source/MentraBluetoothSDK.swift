@@ -93,8 +93,12 @@ private final class PendingVideoRecordingRequest {
     }
 }
 
+// seq records send order (assigned and handed to the BLE queue in a single
+// MainActor turn) so that an id-carrying status for a newer start can
+// identify which older in-flight starts it preempted.
 @MainActor
 private final class PendingStreamStart {
+    let seq: Int
     let pending: PendingResponse<StreamStatusEvent>
     // Set when an id-carrying error arrives: a fatal publisher error never
     // reaches the reconnect machinery and winds down with a streamId-less
@@ -102,7 +106,8 @@ private final class PendingStreamStart {
     // preserves the real error details for the rejection.
     var lastError: StreamStatusEvent?
 
-    init(pending: PendingResponse<StreamStatusEvent>) {
+    init(seq: Int, pending: PendingResponse<StreamStatusEvent>) {
+        self.seq = seq
         self.pending = pending
     }
 }
@@ -190,6 +195,7 @@ public final class MentraBluetoothSDK {
     private var pendingRgbLedRequests: [String: PendingResponse<RgbLedControlResponseEvent>] = [:]
     private var pendingSettingsRequests: [String: PendingResponse<SettingsAckEvent>] = [:]
     private var pendingStreamStarts: [String: PendingStreamStart] = [:]
+    private var streamStartSeq = 0
     private var pendingStreamStop: (streamId: String?, pending: PendingResponse<StreamStatusEvent>)?
     private var pendingGalleryStatus: PendingResponse<GalleryStatusEvent>?
     private var pendingOtaQuery: PendingResponse<OtaQueryResult>?
@@ -883,7 +889,12 @@ public final class MentraBluetoothSDK {
         let streamId = stringValue(values, "streamId").flatMap { $0.isEmpty ? nil : $0 } ?? "sdk-\(UUID().uuidString)"
         values["streamId"] = streamId
         let pending = PendingResponse<StreamStatusEvent>(operation: "start stream \(streamId)")
-        pendingStreamStarts[streamId] = PendingStreamStart(pending: pending)
+        // seq assignment through the BLE hand-off must stay await-free so this
+        // MainActor turn is one critical section: rejectPreemptedStreamStarts
+        // only works if seq order equals the order the commands reach the
+        // glasses' FIFO.
+        streamStartSeq += 1
+        pendingStreamStarts[streamId] = PendingStreamStart(seq: streamStartSeq, pending: pending)
         stopStreamKeepAliveMonitor()
         DeviceManager.shared.startStream(values)
         do {
@@ -1428,6 +1439,9 @@ public final class MentraBluetoothSDK {
 
     private func handleStreamStatusForRequests(_ event: StreamStatusEvent) {
         if let (streamId, start) = matchingStreamStart(for: event) {
+            if let eventStreamId = event.streamId, !eventStreamId.isEmpty {
+                rejectPreemptedStreamStarts(winnerSeq: start.seq)
+            }
             switch event.state {
             case .streaming:
                 pendingStreamStarts.removeValue(forKey: streamId)
@@ -1466,6 +1480,25 @@ public final class MentraBluetoothSDK {
                 }
                 stop.pending.reject(streamStatusError(event, code: "stream_stop_failed"))
             }
+        }
+    }
+
+    // The glasses process BLE commands FIFO and every start_stream begins by
+    // stopping whatever runs, so an id-carrying status for start X (any state)
+    // proves every lower-seq start has already been preempted. Their
+    // only verdict on current firmware is a streamId-less stopped, which the
+    // id-less heuristic deliberately ignores — without this they would run out
+    // the 30s timeout instead of failing fast.
+    private func rejectPreemptedStreamStarts(winnerSeq: Int) {
+        for (streamId, start) in pendingStreamStarts where start.seq < winnerSeq {
+            pendingStreamStarts.removeValue(forKey: streamId)
+            start.pending.reject(
+                BluetoothSdkError(
+                    code: "stream_preempted",
+                    message: "start stream \(streamId) was preempted by a newer start_stream; "
+                        + "the glasses run a single stream and the last request wins."
+                )
+            )
         }
     }
 
