@@ -65,7 +65,6 @@ enum class PhotoCompression(val value: String) {
 
 data class PhotoCaptureDefaults(
     val size: PhotoSize? = null,
-    val zslMfnr: Boolean? = null,
     val mfnr: Boolean? = null,
     val zsl: Boolean? = null,
     val noiseReduction: Boolean? = null,
@@ -77,14 +76,7 @@ data class PhotoCaptureDefaults(
     val compress: String? = null,
     val sound: Boolean? = null,
     val resetCaptureTuning: Boolean = false,
-) {
-    /** Resolved coupled flag: {@code zslMfnr} wins; else both legacy flags must be true. */
-    fun resolvedZslMfnr(): Boolean? {
-        if (zslMfnr != null) return zslMfnr
-        if (mfnr != null || zsl != null) return mfnr == true && zsl == true
-        return null
-    }
-}
+)
 
 data class VideoRecordingDefaults(
     val width: Int,
@@ -202,7 +194,6 @@ data class PhotoRequest @JvmOverloads constructor(
     val isoCap: Int? = null,
     val noiseReduction: Boolean? = null,
     val edgeEnhancement: Boolean? = null,
-    val zslMfnr: Boolean? = null,
     val mfnr: Boolean? = null,
     val zsl: Boolean? = null,
     val ispDigitalGain: Int? = null,
@@ -253,7 +244,6 @@ data class PhotoRequest @JvmOverloads constructor(
                 isoCap = isoCap,
                 noiseReduction = boolValue(values, "noiseReduction"),
                 edgeEnhancement = boolValue(values, "edgeEnhancement"),
-                zslMfnr = boolValue(values, "zslMfnr"),
                 mfnr = boolValue(values, "mfnr"),
                 zsl = boolValue(values, "zsl"),
                 ispDigitalGain = ispDigitalGain,
@@ -271,15 +261,8 @@ data class PhotoRequest @JvmOverloads constructor(
             request.isoCap?.let { json.put("isoCap", it) }
             request.noiseReduction?.let { json.put("noiseReduction", it) }
             request.edgeEnhancement?.let { json.put("edgeEnhancement", it) }
-            if (request.zslMfnr != null) {
-                json.put("zslMfnr", request.zslMfnr)
-                // Emit legacy pair alongside for older glasses firmware.
-                json.put("mfnr", request.zslMfnr)
-                json.put("zsl", request.zslMfnr)
-            } else {
-                request.mfnr?.let { json.put("mfnr", it) }
-                request.zsl?.let { json.put("zsl", it) }
-            }
+            request.mfnr?.let { json.put("mfnr", it) }
+            request.zsl?.let { json.put("zsl", it) }
             request.ispDigitalGain?.let { json.put("ispDigitalGain", it) }
             request.ispAnalogGain?.let { json.put("ispAnalogGain", it) }
         }
