@@ -1789,6 +1789,13 @@ class MentraLive: NSObject, SGCManager {
         sendJson(json, wakeUp: true)
     }
 
+    func stopCameraWarmUp(requestId: String) {
+        sendJson(
+            ["type": "camera_warm_up_stop", "requestId": requestId],
+            wakeUp: true
+        )
+    }
+
     func startStream(_ message: [String: Any]) {
         Bridge.log("Starting stream")
         var json = message
@@ -6103,8 +6110,8 @@ extension MentraLive {
     }
 
     func sendCameraFovSetting() {
-        let settings = DeviceStore.shared.get("bluetooth", "camera_fov") as? [String: Any] ?? ["fov": 118, "roi_position": 0]
-        let fov = settings["fov"] as? Int ?? 118
+        let settings = DeviceStore.shared.get("bluetooth", "camera_fov") as? [String: Any] ?? ["fov": 102, "roi_position": 0]
+        let fov = settings["fov"] as? Int ?? 102
         let roiPosition = settings["roi_position"] as? Int ?? 0
         sendCameraFovSetting(requestId: nil, fov: fov, roiPosition: roiPosition)
     }
@@ -6128,6 +6135,39 @@ extension MentraLive {
             json["request_id"] = requestId
         }
         sendJson(json, wakeUp: true)
+    }
+
+    func sendCameraFovOverride(
+        requestId: String,
+        leaseId: String,
+        fov: Int,
+        roiPosition: Int,
+        ttlMs: Int
+    ) {
+        sendJson(
+            [
+                "type": "camera_fov_override",
+                "request_id": requestId,
+                "params": [
+                    "lease_id": leaseId,
+                    "fov": fov,
+                    "roi_position": roiPosition,
+                    "ttl_ms": ttlMs,
+                ],
+            ],
+            wakeUp: true
+        )
+    }
+
+    func releaseCameraFovOverride(requestId: String, leaseId: String) {
+        sendJson(
+            [
+                "type": "camera_fov_override_release",
+                "request_id": requestId,
+                "params": ["lease_id": leaseId],
+            ],
+            wakeUp: true
+        )
     }
 
     func sendCameraTuningConfig(requestId: String?, anrOn: Bool, gainOn: Bool) {

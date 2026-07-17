@@ -615,6 +615,30 @@ class MentraBluetoothSdk private constructor(
         return result
     }
 
+    suspend fun setCameraFovOverride(leaseId: String, fov: CameraFov, ttlMs: Int): CameraFovResult {
+        val ack = performSettingsCommand(
+            setting = "camera_fov_override",
+            updateStore = { _ -> },
+            send = { requestId ->
+                deviceManager.sendCameraFovOverride(
+                    requestId,
+                    leaseId,
+                    fov.fov,
+                    fov.roiPosition.value,
+                    ttlMs,
+                )
+            },
+        )
+        return CameraFovResult.fromAck(ack, fov)
+    }
+
+    suspend fun releaseCameraFovOverride(leaseId: String): SettingsAckEvent =
+        performSettingsCommand(
+            setting = "camera_fov_override",
+            updateStore = { _ -> },
+            send = { requestId -> deviceManager.releaseCameraFovOverride(requestId, leaseId) },
+        )
+
     /**
      * Configure camera HAL tuning on Mentra Live glasses.
      *
@@ -856,6 +880,12 @@ class MentraBluetoothSdk private constructor(
         } finally {
             pendingCameraStatusRequests.remove(effectiveRequestId, pending)
         }
+    }
+
+    fun stopCameraWarmUp(requestId: String) {
+        val effectiveRequestId = nonBlankRequestId(requestId)
+            ?: throw BluetoothSdkException("invalid_request", "A warm-up request ID is required.")
+        deviceManager.stopCameraWarmUp(effectiveRequestId)
     }
 
     suspend fun queryGalleryStatus(): GalleryStatusEvent {

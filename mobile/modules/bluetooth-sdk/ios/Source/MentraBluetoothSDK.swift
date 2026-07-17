@@ -652,6 +652,40 @@ public final class MentraBluetoothSDK {
         return result
     }
 
+    public func setCameraFovOverride(
+        leaseId: String,
+        fov: CameraFov,
+        ttlMs: Int
+    ) async throws -> CameraFovResult {
+        let ack = try await performSettingsCommand(
+            setting: "camera_fov_override",
+            updateStore: { _ in },
+            send: { requestId in
+                try DeviceManager.shared.sendCameraFovOverride(
+                    requestId: requestId,
+                    leaseId: leaseId,
+                    fov: fov.fov,
+                    roiPosition: fov.roiPosition.rawValue,
+                    ttlMs: ttlMs
+                )
+            }
+        )
+        return try CameraFovResult.from(ack: ack, fallback: fov)
+    }
+
+    public func releaseCameraFovOverride(leaseId: String) async throws -> SettingsAckEvent {
+        try await performSettingsCommand(
+            setting: "camera_fov_override",
+            updateStore: { _ in },
+            send: { requestId in
+                try DeviceManager.shared.releaseCameraFovOverride(
+                    requestId: requestId,
+                    leaseId: leaseId
+                )
+            }
+        )
+    }
+
     public func setCameraTuningConfig(anrOn: Bool, gainOn: Bool) async throws -> SettingsAckEvent {
         return try await performSettingsCommand(
             setting: "camera_tuning",
@@ -880,6 +914,15 @@ public final class MentraBluetoothSDK {
             pendingCameraStatusRequests.removeValue(forKey: effectiveRequestId)
             throw error
         }
+    }
+
+    public func stopCameraWarmUp(requestId: String) throws {
+        guard let effectiveRequestId = nonBlankRequestId(requestId) else {
+            throw BluetoothSdkError(
+                code: "invalid_request", message: "A warm-up request ID is required."
+            )
+        }
+        try DeviceManager.shared.stopCameraWarmUp(requestId: effectiveRequestId)
     }
 
     public func queryGalleryStatus() async throws -> GalleryStatusEvent {

@@ -45,6 +45,7 @@ import localSttFallbackCoordinator from "./LocalSttFallbackCoordinator"
 import micStateCoordinator from "./MicStateCoordinator"
 import {BlobStore} from "./BlobStore"
 import {CloudAudioSubscriptionSync} from "./CloudAudioSubscriptionSync"
+import {phoneCameraFovCoordinator} from "./PhoneCameraFovCoordinator"
 import {phonePhotoCoordinator} from "./PhonePhotoCoordinator"
 import {phoneStreamCoordinator} from "./PhoneStreamCoordinator"
 import {phoneVideoCoordinator} from "./PhoneVideoCoordinator"
@@ -259,7 +260,6 @@ const CAMERA_FOV_MAX = 118
 const CAMERA_FOV_DEFAULT = 102
 const CAMERA_FOV_PRESETS: Record<CameraFovPreset, number> = {narrow: 82, standard: CAMERA_FOV_DEFAULT, wide: 118}
 const CAMERA_ROI_POSITION_BY_NAME: Record<string, CameraRoiPosition> = {center: "center", bottom: "bottom", top: "top"}
-const CAMERA_ROI_POSITION_VALUES: Record<CameraRoiPosition, 0 | 1 | 2> = {center: 0, bottom: 1, top: 2}
 
 // =============================================================================
 // Declared-permission record helper (for CONNECT_ACK / PERMISSIONS_UPDATE)
@@ -798,6 +798,15 @@ class LocalMiniappRuntime {
     // the early-return so it runs even if the connectedApps entry is already gone.
     this.handshookApps.delete(packageName)
     this.flushConnectWaiters(packageName, new Error(`${packageName} unregistered before connect`))
+
+    // Warm-up is a request-owned camera lease. Cancel it even if the app record was already
+    // removed so a close racing the camera-open promise cannot leave the sensor running.
+    void phonePhotoCoordinator.stopWarmUpForApp(packageName).catch((error) => {
+      console.warn(`${LOG_TAG}: failed to stop camera warm-up for ${packageName} on unregister`, error)
+    })
+    void phoneCameraFovCoordinator.releaseForApp(packageName).catch((error) => {
+      console.warn(`${LOG_TAG}: failed to release camera FOV override for ${packageName} on unregister`, error)
+    })
     const app = this.connectedApps.get(packageName)
     if (!app) return
 
@@ -2550,17 +2559,7 @@ class LocalMiniappRuntime {
         "preset" in request ? `preset=${request.preset}` : `fov=${request.fov} roi=${request.roiPosition ?? "center"}`
       console.log(`${LOG_TAG}: camera_fov_set ${description}`)
 
-      // Camera FOV is a direct btsdk call now (was the host-injected `cameraSettings`
-      // runtime hook — a pure BluetoothSdk.setCameraFov passthrough with no host coupling).
-      const result = await BluetoothSdk.setCameraFov(request)
-
-      useSettingsStore
-        .getState()
-        .setSetting(
-          ISLAND_SETTINGS_KEYS.cameraFov,
-          {fov: result.fov, roi_position: CAMERA_ROI_POSITION_VALUES[result.roiPosition]},
-          false,
-        )
+      const result = await phoneCameraFovCoordinator.setOverride(packageName, request)
       this.sendResult(packageName, requestId, true, result)
     } catch (err) {
       console.error(`${LOG_TAG}: camera_fov error:`, err)

@@ -209,6 +209,21 @@ public class PhotoSessionTest {
     }
 
     @Test
+    public void cancelWarmUp_clearsOpeningRequestIdempotently() {
+        PhotoSession.Hooks hooks = mockConfiguredCameraHooks();
+        when(hooks.coordinator().isCameraKeptAlive()).thenReturn(false);
+        PhotoSession session = new PhotoSession(hooks);
+        session.setupWarmUp(
+                "large", null, PhotoCaptureSettings.EMPTY, 30_000, () -> {}, error -> {});
+
+        assertThat(session.isWarmingUp()).isTrue();
+        assertThat(session.cancelWarmUp()).isTrue();
+        assertThat(session.isWarmingUp()).isFalse();
+        assertThat(session.cancelWarmUp()).isFalse();
+        assertThat(session.shotState()).isEqualTo(AeStateMachine.ShotState.IDLE);
+    }
+
+    @Test
     public void notifyPhotoCaptured_duplicateWhileMetadataPending_keepsTimeoutCompletingQueue()
             throws Exception {
         PhotoSession.Hooks hooks = mockConfiguredCameraHooks();

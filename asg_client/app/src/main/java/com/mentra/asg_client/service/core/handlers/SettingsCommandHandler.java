@@ -5,6 +5,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
 import com.dev.api.DevApi;
+import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.camera.policy.PhotoSizeTier;
 import com.mentra.asg_client.service.communication.interfaces.ICommunicationManager;
 import com.mentra.asg_client.service.communication.interfaces.IResponseBuilder;
@@ -30,6 +31,12 @@ public class SettingsCommandHandler implements ICommandHandler {
     private final AsgClientServiceManager serviceManager;
     private final ICommunicationManager communicationManager;
     private final IResponseBuilder responseBuilder;
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
+
+    private String cameraFovOverrideLeaseId;
+    private int cameraFovOverrideValue;
+    private int cameraFovOverrideRoi;
+    private Runnable cameraFovOverrideExpiry;
 
     public SettingsCommandHandler(
             AsgClientServiceManager serviceManager,
@@ -49,6 +56,8 @@ public class SettingsCommandHandler implements ICommandHandler {
                 "button_photo_setting",
                 "button_mode_setting",
                 "camera_fov_setting",
+                "camera_fov_override",
+                "camera_fov_override_release",
                 "camera_tuning_config");
     }
 
@@ -68,6 +77,10 @@ public class SettingsCommandHandler implements ICommandHandler {
                     return handleButtonModeSetting(data);
                 case "camera_fov_setting":
                     return handleCameraFovSetting(data);
+                case "camera_fov_override":
+                    return handleCameraFovOverride(data);
+                case "camera_fov_override_release":
+                    return handleCameraFovOverrideRelease(data);
                 case "camera_tuning_config":
                     return handleCameraTuningConfig(data);
                 default:
@@ -395,7 +408,7 @@ public class SettingsCommandHandler implements ICommandHandler {
      * Handle camera FOV setting command (K900). Persists FOV and ROI, applies to hardware, restarts
      * camera HAL.
      */
-    private boolean handleCameraFovSetting(JSONObject data) {
+    private synchronized boolean handleCameraFovSetting(JSONObject data) {
         try {
             String requestId = getRequestId(data);
             JSONObject params = data.optJSONObject("params");
@@ -404,8 +417,10 @@ public class SettingsCommandHandler implements ICommandHandler {
                 sendSettingsError(requestId, "camera_fov", "missing_params", "Missing camera FOV params.");
                 return false;
             }
-            int fov = params.optInt("fov", 118);
-            int roiPosition = params.optInt("roi_position", 0);
+            int fov = params.optInt("fov", AsgConstants.CAMERA_FOV_DEFAULT);
+            int roiPosition =
+                    params.optInt(
+                            "roi_position", AsgConstants.CAMERA_ROI_POSITION_DEFAULT);
 
             AsgSettings asgSettings = serviceManager.getAsgSettings();
             if (asgSettings == null) {
@@ -423,6 +438,18 @@ public class SettingsCommandHandler implements ICommandHandler {
             fov = asgSettings.getCameraFov();
             roiPosition = asgSettings.getCameraRoiPosition();
             Log.d(TAG, "Camera FOV saved: fov=" + fov + ", roi_position=" + roiPosition);
+
+            // A miniapp override is the current effective crop. Update the persistent base without
+            // interrupting that owner; release/expiry will restore this newly saved value.
+            if (cameraFovOverrideLeaseId != null) {
+                JSONObject values = new JSONObject();
+                values.put("fov", fov);
+                values.put("roi_position", roiPosition);
+                values.put("hardware_applied", false);
+                values.put("deferred_by_override", true);
+                sendSettingsAck(requestId, "camera_fov", STATUS_APPLIED, values);
+                return true;
+            }
 
             Context context = serviceManager.getContext();
             if (context == null) {
@@ -482,6 +509,217 @@ public class SettingsCommandHandler implements ICommandHandler {
         }
     }
 
+    /** Apply/refresh a memory-only miniapp crop lease without touching persistent user prefs. */
+    private synchronized boolean handleCameraFovOverride(JSONObject data) {
+        String requestId = getRequestId(data);
+        try {
+            JSONObject params = data.optJSONObject("params");
+            if (params == null) {
+                sendSettingsError(
+                        requestId,
+                        "camera_fov_override",
+                        "missing_params",
+                        "Missing camera FOV override params.");
+                return false;
+            }
+            String leaseId = params.optString("lease_id", "");
+            if (leaseId.isEmpty()) {
+                sendSettingsError(
+                        requestId,
+                        "camera_fov_override",
+                        "missing_lease_id",
+                        "Missing camera FOV override lease ID.");
+                return false;
+            }
+
+            int fov =
+                    Math.max(
+                            62,
+                            Math.min(
+                                    118,
+                                    params.optInt(
+                                            "fov", AsgConstants.CAMERA_FOV_DEFAULT)));
+            int roi =
+                    Math.max(
+                            0,
+                            Math.min(
+                                    2,
+                                    params.optInt(
+                                            "roi_position",
+                                            AsgConstants.CAMERA_ROI_POSITION_DEFAULT)));
+            long ttlMs = params.optLong("ttl_ms", 0L);
+            if (ttlMs <= 0) {
+                ttlMs = AsgConstants.CAMERA_FOV_OVERRIDE_DEFAULT_TTL_MS;
+            }
+            ttlMs = Math.min(ttlMs, AsgConstants.CAMERA_FOV_OVERRIDE_MAX_TTL_MS);
+
+            boolean refresh =
+                    leaseId.equals(cameraFovOverrideLeaseId)
+                            && fov == cameraFovOverrideValue
+                            && roi == cameraFovOverrideRoi;
+            cameraFovOverrideLeaseId = leaseId;
+            cameraFovOverrideValue = fov;
+            cameraFovOverrideRoi = roi;
+            scheduleCameraFovOverrideExpiry(
+                    leaseId,
+                    ttlMs + (refresh ? 0L : CameraRestartCooldown.DEFAULT_COOLDOWN_DURATION_MS));
+
+            if (refresh) {
+                JSONObject values = cameraFovValues(fov, roi, true);
+                values.put("lease_id", leaseId);
+                values.put("refreshed", true);
+                sendSettingsAck(requestId, "camera_fov_override", STATUS_READY, values);
+                return true;
+            }
+
+            return applyEffectiveCameraFov(
+                    requestId, "camera_fov_override", fov, roi, leaseId);
+        } catch (Exception e) {
+            Log.e(TAG, "Error handling camera_fov_override", e);
+            sendSettingsError(
+                    requestId,
+                    "camera_fov_override",
+                    "internal_error",
+                    "Unexpected error applying camera FOV override.");
+            return false;
+        }
+    }
+
+    /** Release only the currently effective lease; delayed stale releases are safe no-ops. */
+    private synchronized boolean handleCameraFovOverrideRelease(JSONObject data) {
+        String requestId = getRequestId(data);
+        try {
+            JSONObject params = data.optJSONObject("params");
+            String leaseId = params != null ? params.optString("lease_id", "") : "";
+            if (leaseId.isEmpty()) {
+                sendSettingsError(
+                        requestId,
+                        "camera_fov_override",
+                        "missing_lease_id",
+                        "Missing camera FOV override lease ID.");
+                return false;
+            }
+
+            if (!leaseId.equals(cameraFovOverrideLeaseId)) {
+                JSONObject values = new JSONObject();
+                values.put("lease_id", leaseId);
+                values.put("released", false);
+                values.put("stale", true);
+                sendSettingsAck(requestId, "camera_fov_override", STATUS_READY, values);
+                return true;
+            }
+
+            clearCameraFovOverride();
+            AsgSettings settings = serviceManager.getAsgSettings();
+            int fov =
+                    settings != null
+                            ? settings.getCameraFov()
+                            : AsgConstants.CAMERA_FOV_DEFAULT;
+            int roi =
+                    settings != null
+                            ? settings.getCameraRoiPosition()
+                            : AsgConstants.CAMERA_ROI_POSITION_DEFAULT;
+            return applyEffectiveCameraFov(
+                    requestId, "camera_fov_override", fov, roi, leaseId);
+        } catch (Exception e) {
+            Log.e(TAG, "Error releasing camera_fov_override", e);
+            sendSettingsError(
+                    requestId,
+                    "camera_fov_override",
+                    "internal_error",
+                    "Unexpected error releasing camera FOV override.");
+            return false;
+        }
+    }
+
+    private void scheduleCameraFovOverrideExpiry(String leaseId, long delayMs) {
+        if (cameraFovOverrideExpiry != null) {
+            mainHandler.removeCallbacks(cameraFovOverrideExpiry);
+        }
+        cameraFovOverrideExpiry =
+                () -> {
+                    synchronized (SettingsCommandHandler.this) {
+                        if (!leaseId.equals(cameraFovOverrideLeaseId)) {
+                            return;
+                        }
+                        Log.i(TAG, "Camera FOV override lease expired: " + leaseId);
+                        clearCameraFovOverride();
+                        AsgSettings settings = serviceManager.getAsgSettings();
+                        int fov =
+                                settings != null
+                                        ? settings.getCameraFov()
+                                        : AsgConstants.CAMERA_FOV_DEFAULT;
+                        int roi =
+                                settings != null
+                                        ? settings.getCameraRoiPosition()
+                                        : AsgConstants.CAMERA_ROI_POSITION_DEFAULT;
+                        applyEffectiveCameraFov(null, "camera_fov_override", fov, roi, leaseId);
+                    }
+                };
+        mainHandler.postDelayed(cameraFovOverrideExpiry, delayMs);
+    }
+
+    private void clearCameraFovOverride() {
+        if (cameraFovOverrideExpiry != null) {
+            mainHandler.removeCallbacks(cameraFovOverrideExpiry);
+            cameraFovOverrideExpiry = null;
+        }
+        cameraFovOverrideLeaseId = null;
+    }
+
+    private boolean applyEffectiveCameraFov(
+            String requestId, String setting, int fov, int roiPosition, String leaseId) {
+        Context context = serviceManager.getContext();
+        if (context == null) {
+            JSONObject values = cameraFovValues(fov, roiPosition, false);
+            sendSettingsAck(requestId, setting, STATUS_APPLIED, values);
+            return true;
+        }
+        try {
+            DevApi.setCameraFov(fov, roiPosition);
+            SystemControllerFactory.get(context).restartCameraHal();
+            CameraRestartCooldown.setCooldown();
+            sendCameraFovReadyAck(requestId, setting, fov, roiPosition, leaseId);
+            reapplyCameraTuningAfterRestart(context);
+        } catch (UnsatisfiedLinkError e) {
+            Log.w(TAG, "libxydev not available (non-K900?), FOV not applied", e);
+            JSONObject values = cameraFovValues(fov, roiPosition, false);
+            sendSettingsAck(requestId, setting, STATUS_APPLIED, values);
+        }
+        return true;
+    }
+
+    private JSONObject cameraFovValues(int fov, int roiPosition, boolean hardwareApplied) {
+        JSONObject values = new JSONObject();
+        try {
+            values.put("fov", fov);
+            values.put("roi_position", roiPosition);
+            values.put("hardware_applied", hardwareApplied);
+        } catch (Exception ignored) {
+            // JSONObject backed by primitive values cannot fail in practice.
+        }
+        return values;
+    }
+
+    private void reapplyCameraTuningAfterRestart(Context context) {
+        AsgSettings settings = serviceManager.getAsgSettings();
+        if (settings == null) {
+            return;
+        }
+        mainHandler.postDelayed(
+                () -> {
+                    try {
+                        SystemControllerFactory.get(context)
+                                .setCameraTuningConfig(
+                                        settings.isCameraAnrEnabled(),
+                                        settings.isCameraGainEnabled());
+                    } catch (Exception e) {
+                        Log.w(TAG, "Failed to re-apply camera tuning after FOV restart", e);
+                    }
+                },
+                CameraRestartCooldown.DEFAULT_COOLDOWN_DURATION_MS + 500L);
+    }
+
     private String getRequestId(JSONObject data) {
         String requestId = data.optString("requestId", "");
         if (requestId == null || requestId.isEmpty()) {
@@ -491,18 +729,29 @@ public class SettingsCommandHandler implements ICommandHandler {
     }
 
     private void sendCameraFovReadyAck(String requestId, int fov, int roiPosition) {
+        sendCameraFovReadyAck(requestId, "camera_fov", fov, roiPosition, null);
+    }
+
+    private void sendCameraFovReadyAck(
+            String requestId,
+            String setting,
+            int fov,
+            int roiPosition,
+            String leaseId) {
         if (requestId == null || requestId.isEmpty()) {
             return;
         }
-        new Handler(Looper.getMainLooper())
-                .postDelayed(
+        mainHandler.postDelayed(
                         () -> {
                             try {
                                 JSONObject values = new JSONObject();
                                 values.put("fov", fov);
                                 values.put("roi_position", roiPosition);
                                 values.put("hardware_applied", true);
-                                sendSettingsAck(requestId, "camera_fov", STATUS_READY, values);
+                                if (leaseId != null) {
+                                    values.put("lease_id", leaseId);
+                                }
+                                sendSettingsAck(requestId, setting, STATUS_READY, values);
                             } catch (Exception e) {
                                 Log.e(TAG, "Failed to send delayed camera FOV ready ack", e);
                             }

@@ -132,7 +132,7 @@ All event subscribers return an `UnsubscribeFn`. Subscriptions are ref-counted: 
 
 ### Camera FOV
 
-`await session.camera.setFov({fov, roiPosition})` applies camera FOV/ROI on the glasses and resolves with `CameraFovResult` after the ASG client reports the setting was applied to camera hardware after the restart cooldown. `roiPosition` accepts `"center"`, `"bottom"`, or `"top"` and defaults to `"center"`. You can also call `setFov({preset: "narrow" | "standard" | "wide"})`; presets map to 82, 102, and 118 degrees with center ROI. The call requires `CAMERA` in `miniapp.json` because it controls glasses camera hardware, and rejects with `MiniappRequestError` if the host cannot apply the setting, the glasses only persist it without hardware application, or the glasses report an error.
+`await session.camera.setFov({fov, roiPosition})` applies a temporary, miniapp-owned FOV/ROI override and resolves with `CameraFovResult` after the ASG client reports the setting was applied following the camera restart cooldown. The host restores the previous live miniapp override—or the persistent 102-degree centered base—when this miniapp closes. `roiPosition` accepts `"center"`, `"bottom"`, or `"top"` and defaults to `"center"`. You can also call `setFov({preset: "narrow" | "standard" | "wide"})`; presets map to 82, 102, and 118 degrees with center ROI. The call requires `CAMERA` in `miniapp.json` and rejects with `MiniappRequestError` if the host or glasses cannot apply it.
 
 ### Camera Photos
 

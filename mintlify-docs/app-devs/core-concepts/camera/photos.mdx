@@ -61,10 +61,12 @@ The result is a `PhotoTaken`:
 
 ## Field of view
 
-`setFov` applies a camera FOV/ROI setting on the glasses and resolves after the
-ASG client reports it was applied. It applies to all captures (photos and video),
-and takes a single request object: either a named preset, or an explicit FOV plus
-optional region.
+`setFov` applies a temporary FOV/ROI override owned by the calling miniapp and
+resolves after the ASG client reports it was applied. It applies to all captures
+(photos and video) while that miniapp is active. When the miniapp closes, the host
+restores the previous live miniapp override or the persistent base setting. The
+factory/missing base is the centered `standard` preset (102 degrees); existing
+saved user values are preserved.
 
 ```typescript
 // A named preset. The simplest option, always center ROI.

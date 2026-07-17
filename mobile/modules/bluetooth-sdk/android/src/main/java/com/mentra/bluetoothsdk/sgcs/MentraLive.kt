@@ -5568,6 +5568,16 @@ class MentraLive : SGCManager() {
         }
     }
 
+    fun stopCameraWarmUp(requestId: String) {
+        if (!isConnected) {
+            throw IllegalStateException("not_connected")
+        }
+        val json = JSONObject()
+        json.put("type", "camera_warm_up_stop")
+        json.put("requestId", requestId)
+        sendJson(json, true)
+    }
+
     override fun startStream(message: MutableMap<String, Any>) {
         Bridge.log("LIVE: Starting RTMP stream")
 
@@ -8937,7 +8947,7 @@ class MentraLive : SGCManager() {
 
     /** Send camera FOV setting to glasses (K900 / Mentra Live). */
     override fun sendCameraFovSetting() {
-        var fov = 118
+        var fov = 102
         var roiPosition = 0
         try {
             val raw = DeviceStore.get("bluetooth", "camera_fov")
@@ -8977,6 +8987,35 @@ class MentraLive : SGCManager() {
         } catch (e: JSONException) {
             Log.e(TAG, "Error creating camera FOV setting message", e)
         }
+    }
+
+    fun sendCameraFovOverride(
+        requestId: String,
+        leaseId: String,
+        fov: Int,
+        roiPosition: Int,
+        ttlMs: Int,
+    ) {
+        val json = JSONObject()
+        json.put("type", "camera_fov_override")
+        json.put("request_id", requestId)
+        json.put(
+            "params",
+            JSONObject()
+                .put("lease_id", leaseId)
+                .put("fov", fov)
+                .put("roi_position", roiPosition)
+                .put("ttl_ms", ttlMs),
+        )
+        sendJson(json, true)
+    }
+
+    fun releaseCameraFovOverride(requestId: String, leaseId: String) {
+        val json = JSONObject()
+        json.put("type", "camera_fov_override_release")
+        json.put("request_id", requestId)
+        json.put("params", JSONObject().put("lease_id", leaseId))
+        sendJson(json, true)
     }
 
     /**

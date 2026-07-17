@@ -353,6 +353,28 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             return try await sdk.setCameraFov(CameraFov(fov: value, roiPosition: roiPosition)).values
         }
 
+        AsyncFunction("setCameraFovOverride") { (params: [String: Any]) in
+            guard let leaseId = params["leaseId"] as? String, !leaseId.isEmpty else {
+                throw BluetoothSdkError(code: "invalid_request", message: "leaseId is required")
+            }
+            let value = intValue(params["fov"]) ?? CameraFov.defaultFov
+            let roiPosition = CameraRoiPosition.from(
+                rawValue: intValue(params["roiPosition"]) ?? intValue(params["roi_position"])
+            )
+            let ttlMs = intValue(params["ttlMs"]) ?? 300_000
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            return try await sdk.setCameraFovOverride(
+                leaseId: leaseId,
+                fov: CameraFov(fov: value, roiPosition: roiPosition),
+                ttlMs: ttlMs
+            ).values
+        }
+
+        AsyncFunction("releaseCameraFovOverride") { (leaseId: String) in
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            return try await sdk.releaseCameraFovOverride(leaseId: leaseId).values
+        }
+
         AsyncFunction("setCameraTuningConfig") { (anrOn: Bool, gainOn: Bool) in
             let sdk = await MainActor.run { self.bluetoothSdk() }
             return try await sdk.setCameraTuningConfig(anrOn: anrOn, gainOn: gainOn).values
@@ -401,6 +423,11 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
                 exposureTimeNs: exposureTimeNs,
                 durationMs: durationMs
             ).values
+        }
+
+        AsyncFunction("stopCameraWarmUp") { (requestId: String) in
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            try sdk.stopCameraWarmUp(requestId: requestId)
         }
 
         // MARK: - OTA Commands

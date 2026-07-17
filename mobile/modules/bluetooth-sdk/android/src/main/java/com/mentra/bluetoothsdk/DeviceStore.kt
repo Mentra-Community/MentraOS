@@ -128,7 +128,7 @@ object DeviceStore {
         store.set("bluetooth", "screen_disabled", false)
         store.set("bluetooth", "button_photo_size", "max")
         store.set("bluetooth", "button_max_recording_time", 10)
-        store.set("bluetooth", "camera_fov", mapOf("fov" to 118, "roi_position" to 0))
+        store.set("bluetooth", "camera_fov", mapOf("fov" to 102, "roi_position" to 0))
         store.set("bluetooth", "button_video_width", 1280)
         store.set("bluetooth", "button_video_height", 720)
         store.set("bluetooth", "button_video_fps", 30)

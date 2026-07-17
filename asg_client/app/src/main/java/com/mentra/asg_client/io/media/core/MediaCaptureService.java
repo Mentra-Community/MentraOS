@@ -6278,9 +6278,20 @@ public class MediaCaptureService {
                     public String getRequestId() {
                         return requestId;
                     }
+
+                    @Override
+                    public long getDurationMs() {
+                        return Math.min(
+                                durationMs, AsgConstants.CAMERA_WARM_UP_MAX_DURATION_MS);
+                    }
                 });
         warmUpDispatching.set(false);
         return !rejectedSynchronously.get();
+    }
+
+    /** Cancel a request-owned warm-up lease. Missing/already-expired request IDs are no-ops. */
+    public void stopCameraWarmUp(String requestId) {
+        CameraNeoService.stopCameraWarmUp(requestId);
     }
 
     /**
