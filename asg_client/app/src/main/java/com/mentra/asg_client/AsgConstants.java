@@ -36,6 +36,27 @@ public class AsgConstants {
     public static final String ACTION_GLASSES_BATTERY_STATUS =
             "com.mentra.recovery.ACTION_GLASSES_BATTERY_STATUS";
 
+    /**
+     * Awake window granted per wake-flagged phone command ("W":1 string wrapper or FLAG_WAKE
+     * binary frame). The BES only pulses the MTK power key for these when the SoC is already
+     * asleep, so a command landing mid-awake-window gets no extra time — this window is the
+     * in-band equivalent. Must outlive the longest command follow-up that runs on
+     * suspend-frozen clocks: the wifi credentials flow sends its failure verdict at ~12.4s
+     * (3s + 3x3s status polls), so 15s covers it with margin. Acquired extend-only, so it
+     * never shortens a longer-lived lock (BES/MTK OTA).
+     */
+    public static final long PHONE_WAKE_COMMAND_WINDOW_MS = 15000;
+
+    /**
+     * Rolling wake-lease window re-armed on confirmed BES OTA segments. The BES UART
+     * transfer dies when the vendor display-sleep hook fires mid-flight even with a CPU
+     * lock held (2026-07-08 incident: frozen between segments at 80% with 4:40 left on
+     * the lock), so the transfer holds BOTH cpu and screen leases and re-arms them while
+     * segments keep confirming: progress keeps the device awake, a wedged transfer lets
+     * it sleep within this window (aligned with the phone's 120s stall watchdog).
+     */
+    public static final long BES_OTA_SEGMENT_LEASE_WINDOW_MS = 120000;
+
     // RGB LED Control Constants (Glasses BES Chipset - Remote Control via Bluetooth)
     // NOTE: These are different from the local MTK recording LED
 

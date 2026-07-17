@@ -9,6 +9,7 @@ import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.SerialPor
 import com.mentra.asg_client.io.bluetooth.utils.ByteUtil;
 import com.mentra.asg_client.io.ota.interfaces.IBesOtaController;
 import com.mentra.asg_client.service.core.handlers.K900CommandHandler;
+import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.utils.WakeLockManager;
 import java.io.File;
 import java.io.FileInputStream;
@@ -30,7 +31,9 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
 
     // Wakelock timeout for BES OTA to prevent CPU sleep during firmware transfer
     private static final long WAKELOCK_TIMEOUT_MS = 300000; // 5 minutes
-    private static final long BES_TOTAL_TIMEOUT_MS = 300000; // 5 minutes total operation timeout
+    // Intentional hard cap: a healthy BES OTA must finish within 5 minutes. If it runs
+    // longer, treat the transfer as failed rather than extending the operation timeout.
+    private static final long BES_TOTAL_TIMEOUT_MS = 300000;
     private static final long BES_AUTH_TIMEOUT_MS = 30000; // 30 seconds authorization timeout
     private Context mContext;
 
@@ -254,9 +257,15 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
             return false;
         }
 
-        // Acquire wakelock to prevent CPU sleep during firmware transfer
-        WakeLockManager.acquireCpuWakeLock(mContext, WAKELOCK_TIMEOUT_MS);
-        Log.i(TAG, "BES OTA wakelock acquired for " + WAKELOCK_TIMEOUT_MS + "ms");
+        // The transfer needs the vendor "screen on" state, not just CPU: the display-sleep
+        // hook wedges the UART transfer state machine mid-flight even with a CPU lock held
+        // (2026-07-08 incident, frozen between segments at 80%). Hold BOTH leases; the
+        // initial window covers authorization + handshake, then confirmed segments re-arm
+        // them (see crc32ConfirmSuccess).
+        WakeLockManager.acquireFull(mContext, WakeLockManager.WakeOwner.BES_OTA,
+                WAKELOCK_TIMEOUT_MS, WAKELOCK_TIMEOUT_MS);
+        lastLeaseArmMs = android.os.SystemClock.elapsedRealtime();
+        Log.i(TAG, "BES OTA cpu+screen leases acquired for " + WAKELOCK_TIMEOUT_MS + "ms");
 
         // Set waiting for authorization flag (NOT in OTA mode yet!)
         isWaitingForAuthorization = true;
@@ -326,11 +335,13 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
 
         operationStartTime = 0;
 
-        // Release wakelock
-        WakeLockManager.releaseCpuWakeLock();
+        // Flag-clear and lease release are one atomic step against the segment-confirm
+        // re-arm (see mLeaseGate): after this block no stale confirm can re-acquire.
+        synchronized (mLeaseGate) {
+            isBesOtaInProgress = false;
+            WakeLockManager.release(WakeLockManager.WakeOwner.BES_OTA);
+        }
         Log.i(TAG, "BES OTA wakelock released");
-
-        isBesOtaInProgress = false;
         isWaitingForAuthorization = false;
         if (comManager != null) {
             comManager.setOtaUpdating(false);
@@ -482,10 +493,34 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
         sentPos += size;
     }
 
+    // Deadline of the last lease re-arm; segment confirms arrive ~1/s, so re-arm at most
+    // every half window to avoid per-segment lock churn and wake_extend trace spam.
+    private long lastLeaseArmMs = 0;
+
+    // Serializes the transfer's lease lifecycle: a UART segment-confirm that passed the
+    // isBesOtaInProgress check must not interleave with cleanup() releasing the leases,
+    // or it would re-acquire protection nothing will ever release.
+    private final Object mLeaseGate = new Object();
+
     public void crc32ConfirmSuccess() {
         confirmTimes++;
         confirmSentPos = sentPos;
         bWait4Confirm = false;
+        // Progress-coupled lease: while segments keep confirming, the transfer's wake
+        // protection never expires; a wedged transfer stops re-arming and the device may
+        // sleep once the window runs out. Gated on isBesOtaInProgress so a late UART
+        // segment-verify arriving after cleanup() cannot re-acquire leases nothing will
+        // ever release.
+        long nowMs = android.os.SystemClock.elapsedRealtime();
+        synchronized (mLeaseGate) {
+            if (isBesOtaInProgress
+                    && nowMs - lastLeaseArmMs > AsgConstants.BES_OTA_SEGMENT_LEASE_WINDOW_MS / 2) {
+                lastLeaseArmMs = nowMs;
+                WakeLockManager.acquireFull(mContext, WakeLockManager.WakeOwner.BES_OTA,
+                        AsgConstants.BES_OTA_SEGMENT_LEASE_WINDOW_MS,
+                        AsgConstants.BES_OTA_SEGMENT_LEASE_WINDOW_MS);
+            }
+        }
         Log.i(
                 TAG,
                 "✅ CRC32 verification successful - confirmTimes="
