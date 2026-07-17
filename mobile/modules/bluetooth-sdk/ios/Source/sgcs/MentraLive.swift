@@ -3902,8 +3902,12 @@ class MentraLive: NSObject, SGCManager {
 
     func queueSend(_ data: Data, id: String, trace: BleWriteTrace?) {
         let significantQueueSize = SIGNIFICANT_BLE_TRACE_QUEUE_SIZE
+        // Capture the epoch at enqueue-request time: the Task body may run after a
+        // session reset, and a pre-reset payload stamped with the new generation would
+        // defeat the stale-write guard in the drain loop.
+        let generation = wireSessionGeneration
         Task {
-            let queueSize = await commandQueue.enqueue(PendingMessage(data: data, id: id, retries: 0, trace: trace, generation: wireSessionGeneration))
+            let queueSize = await commandQueue.enqueue(PendingMessage(data: data, id: id, retries: 0, trace: trace, generation: generation))
             guard trace != nil, queueSize >= significantQueueSize else {
                 return
             }
