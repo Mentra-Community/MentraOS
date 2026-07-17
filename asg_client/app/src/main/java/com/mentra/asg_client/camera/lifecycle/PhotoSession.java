@@ -96,6 +96,14 @@ public final class PhotoSession {
      */
     @Nullable private volatile WarmUpRequest warmUpRequest;
 
+    /**
+     * Set when a photo is dispatched: {@code true} if the open HAL session was reused (kept-alive /
+     * warm-up lease / prior shot) without close+reopen; {@code false} if this request paid a cold
+     * open or reconfiguration. Logged at shutter so warm/cold is visible at the actual capture
+     * moment, not only at BLE accept time.
+     */
+    private volatile boolean mCaptureDispatchedAsWarmReuse;
+
     private volatile Integer mLastMeteredIso;
     private volatile Long mLastMeteredExposureNs;
     private volatile Long mLastStillSensorTimestampNs;
@@ -201,7 +209,7 @@ public final class PhotoSession {
 
                             @Override
                             public void capturePhoto() {
-                                PhotoSession.this.capturePhoto();
+                                PhotoSession.this.onAeReadyForActiveRequest();
                             }
 
                             @Override
@@ -524,9 +532,13 @@ public final class PhotoSession {
 
     /**
      * Compares {@code request} to the active session camera config (size, SDK flag, exposure,
-     * resolved zsl, resolved mfnr). Uses {@link #configuredCameraConfig} when {@link #activeCapture}
+     * preview-ZSL buffering need). Uses {@link #configuredCameraConfig} when {@link #activeCapture}
      * was cleared after a shot. Must be called before {@link #activateQueuedRequest(QueuedPhotoRequest)}
      * mutates current state.
+     *
+     * <p>Still ZSL/MFNR flags are applied per capture on the still builder; only the preview
+     * circular buffer ({@code zsl || mfnr}) requires a session reopen when the request needs it and
+     * the open session does not have it.
      */
     private boolean needsReconfigurationForQueued(QueuedPhotoRequest request) {
         if (request == null) {
@@ -539,12 +551,47 @@ public final class PhotoSession {
         if (baseline == null) {
             return false;
         }
-        return baseline.differsFrom(
-                request.size,
-                request.isFromSdk,
-                request.exposureTimeNs,
-                resolveZslForRequest(request.captureSettings, request.exposureTimeNs),
-                resolveMfnrForRequest(request.captureSettings, request.exposureTimeNs));
+        boolean reqZsl = resolveZslForRequest(request.captureSettings, request.exposureTimeNs);
+        boolean reqMfnr = resolveMfnrForRequest(request.captureSettings, request.exposureTimeNs);
+        boolean differs =
+                baseline.differsFrom(
+                        request.size,
+                        request.isFromSdk,
+                        request.exposureTimeNs,
+                        reqZsl,
+                        reqMfnr);
+        if (differs) {
+            // #region agent log
+            Log.i(
+                    TAG,
+                    "🔥 CAM_WARMTH MISMATCH baseline={size="
+                            + baseline.size
+                            + " sdk="
+                            + baseline.isFromSdk
+                            + " exp="
+                            + baseline.exposureTimeNs
+                            + " zsl="
+                            + baseline.zsl
+                            + " mfnr="
+                            + baseline.mfnr
+                            + " previewZsl="
+                            + (baseline.zsl || baseline.mfnr)
+                            + "} request={size="
+                            + request.size
+                            + " sdk="
+                            + request.isFromSdk
+                            + " exp="
+                            + request.exposureTimeNs
+                            + " zsl="
+                            + reqZsl
+                            + " mfnr="
+                            + reqMfnr
+                            + " previewZsl="
+                            + (reqZsl || reqMfnr)
+                            + "}");
+            // #endregion
+        }
+        return differs;
     }
 
     /**
@@ -552,8 +599,10 @@ public final class PhotoSession {
      * session (a "warm" capture) instead of triggering a close + reopen reconfiguration.
      *
      * <p>The camera is reconfigured (and therefore effectively cold) when the requested size, SDK
-     * flag, manual exposure, or resolved {@code zsl}/{@code mfnr} differs from the open session —
-     * see {@link #needsReconfigurationForQueued}. When there is no configured baseline (camera never
+     * flag, or manual exposure differs, or when the request needs preview-ZSL buffering
+     * ({@code zsl || mfnr}) that the open session does not have — see
+     * {@link #needsReconfigurationForQueued}. Per-shot ZSL/MFNR toggles that keep the same preview
+     * buffering do <em>not</em> force a reopen. When there is no configured baseline (camera never
      * opened or already torn down) this returns {@code false}: a fresh open is a cold start.
      *
      * <p>When {@code captureSettings} is omitted, {@code zsl}/{@code mfnr} are resolved from the
@@ -623,7 +672,15 @@ public final class PhotoSession {
                     hooks.startKeepAliveTimer();
                     return;
                 }
+                mCaptureDispatchedAsWarmReuse = true;
                 Log.d(TAG, "Dispatching queued photo with configured camera: " + request.requestId);
+                // #region agent log
+                Log.i(
+                        TAG,
+                        "🔥 CAM_WARMTH DISPATCH requestId="
+                                + request.requestId
+                                + " path=WARM (configured camera reuse, no reopen)");
+                // #endregion
                 hooks.cancelKeepAliveTimer();
                 activateQueuedRequest(request);
                 notifyCurrentPhotoConfigured();
@@ -666,12 +723,28 @@ public final class PhotoSession {
             Log.d(TAG, "Camera already open, checking if reconfiguration needed");
 
             if (needsReopen) {
+                mCaptureDispatchedAsWarmReuse = false;
                 Log.d(TAG, "Camera config changed (reconfiguration required), reopening camera");
+                // #region agent log
+                Log.i(
+                        TAG,
+                        "🔥 CAM_WARMTH DISPATCH requestId="
+                                + request.requestId
+                                + " path=COLD (config mismatch — close+reopen)");
+                // #endregion
                 hooks.cancelKeepAliveTimer();
                 hooks.closeCamera();
                 hooks.openCameraInternal(request.filePath, false);
             } else {
+                mCaptureDispatchedAsWarmReuse = true;
                 Log.d(TAG, "Camera config unchanged, taking photo immediately");
+                // #region agent log
+                Log.i(
+                        TAG,
+                        "🔥 CAM_WARMTH DISPATCH requestId="
+                                + request.requestId
+                                + " path=WARM (kept-alive, config match)");
+                // #endregion
                 hooks.cancelKeepAliveTimer();
 
                 notifyCurrentPhotoConfigured();
@@ -687,7 +760,15 @@ public final class PhotoSession {
                 }
             }
         } else {
+            mCaptureDispatchedAsWarmReuse = false;
             Log.d(TAG, "Opening camera for photo capture");
+            // #region agent log
+            Log.i(
+                    TAG,
+                    "🔥 CAM_WARMTH DISPATCH requestId="
+                            + request.requestId
+                            + " path=COLD (camera was closed — full open)");
+            // #endregion
             hooks.wakeUpScreen();
             hooks.openCameraInternal(request.filePath, false);
         }
@@ -789,13 +870,27 @@ public final class PhotoSession {
     }
 
     /**
-     * Called from {@link #startPreviewWithAeMonitoring()} (warm branch) once the repeating preview
-     * is running. Parks the session at IDLE under the warm keep-alive timer and reports {@code
-     * ready}; no precapture/capture is started.
+     * Dispatched once the AE-convergence wait ends (converged/stable, locked, or the
+     * {@link AeStateMachine#AE_WAIT_MAX_NS} worst-case timeout) for whichever request is active —
+     * a real photo, or a {@code camera_warm_up} lease. Warm-up finishes here instead of capturing,
+     * so its {@code onReady} callback only fires once AE has actually settled.
+     */
+    private void onAeReadyForActiveRequest() {
+        if (warmUpRequest != null) {
+            finishWarmUpReady();
+            return;
+        }
+        capturePhoto();
+    }
+
+    /**
+     * Called once AE convergence finishes for an active {@code camera_warm_up} lease (see
+     * {@link #onAeReadyForActiveRequest()}). Parks the session at IDLE under the warm keep-alive
+     * timer and reports {@code ready}; no capture is started.
      */
     private void finishWarmUpReady() {
         WarmUpRequest req = warmUpRequest;
-        // Preview is running and AE is settling, but no capture is in flight.
+        // AE has settled (or hit the worst-case timeout) — no capture is in flight.
         shotState = AeStateMachine.ShotState.IDLE;
         hooks.startWarmKeepAliveTimer(req != null ? req.durationMs : 0L);
         // The warm request is consumed once the camera is parked; the configured-camera baseline
@@ -1584,12 +1679,13 @@ public final class PhotoSession {
 
             activeSession.setRepeatingRequest(previewRequest, aeCallback, backgroundHandler);
 
+            // Warm-up shares the normal AE-convergence wait (startPrecaptureSequence /
+            // onAeReadyForActiveRequest) instead of reporting ready immediately: firing "ready"
+            // before AE has physically settled defeats the point of warming up, because a
+            // take_photo sent right after would still pay the full convergence wait. Capped at the
+            // same AeStateMachine#AE_WAIT_MAX_NS worst case as a real capture.
             if (warmUpRequest != null) {
-                // Warm-up: the repeating preview now powers the ISP/sensor and AE is settling.
-                // Park at IDLE under the warm keep-alive timer — do NOT enter precapture/capture.
-                Log.d(TAG, "camera_warm_up: preview running, parking camera warm (no capture)");
-                finishWarmUpReady();
-                return;
+                Log.d(TAG, "camera_warm_up: preview running, waiting for AE to settle before ready");
             }
 
             startPrecaptureSequence();
@@ -1620,7 +1716,7 @@ public final class PhotoSession {
                                 + currentExposureTimeNs()
                                 + "): skipping AE convergence");
                 aeStateMachine.skipAeForManualCapture();
-                Runnable runCapture = this::capturePhoto;
+                Runnable runCapture = this::onAeReadyForActiveRequest;
                 Handler h = hooks.backgroundHandler();
                 if (h != null) {
                     h.post(runCapture);
@@ -2087,6 +2183,29 @@ public final class PhotoSession {
                             String.valueOf(reqZsl),
                             reqNr != null ? reqNr.toString() : "?",
                             mStillMfnrRequested));
+            // #region agent log
+            boolean keptAlive = hooks.coordinator().isCameraKeptAlive();
+            boolean hasConfigured = hooks.coordinator().hasConfiguredCamera();
+            long msSinceActivate =
+                    activeCapture != null
+                            ? Math.max(0L, System.currentTimeMillis() - activeCapture.startTimeMs)
+                            : -1L;
+            Log.i(
+                    TAG,
+                    "🔥 CAM_WARMTH PRE_SHOT path="
+                            + (currentFilePath() != null ? currentFilePath() : "unknown")
+                            + " camera="
+                            + (mCaptureDispatchedAsWarmReuse ? "WARM" : "COLD")
+                            + " (dispatchedAsWarmReuse="
+                            + mCaptureDispatchedAsWarmReuse
+                            + " keptAlive="
+                            + keptAlive
+                            + " hasConfigured="
+                            + hasConfigured
+                            + " msSinceActivate="
+                            + msSinceActivate
+                            + ") — submitting still capture now");
+            // #endregion
             activeSession.capture(
                     captureRequest,
                     new StillCaptureCallback(
@@ -2325,6 +2444,14 @@ public final class PhotoSession {
             this.mfnr = mfnr;
         }
 
+        /**
+         * Session reopen is required for size/SDK/exposure changes, or when the request needs
+         * preview-ZSL buffering ({@code otherZsl || otherMfnr}) that this baseline does not have.
+         * Turning MFNR/ZSL off (or swapping which of the two is on) while preview buffering stays
+         * available is applied on the still CaptureRequest and must not cold-start the camera —
+         * that was breaking {@code camera_warm_up} (global defaults) → {@code take_photo}
+         * (per-request zsl/mfnr).
+         */
         boolean differsFrom(
                 @Nullable String otherSize,
                 boolean otherIsFromSdk,
@@ -2340,10 +2467,11 @@ public final class PhotoSession {
             if (!Objects.equals(exposureTimeNs, otherExposureTimeNs)) {
                 return true;
             }
-            if (zsl != otherZsl) {
-                return true;
-            }
-            return mfnr != otherMfnr;
+            boolean baselinePreviewZsl = zsl || mfnr;
+            boolean requestPreviewZsl = otherZsl || otherMfnr;
+            // Need a buffer we don't have → reopen. Already buffered when request doesn't need it
+            // (or only changes still-side MFNR/ZSL) → reuse.
+            return requestPreviewZsl && !baselinePreviewZsl;
         }
     }
 
