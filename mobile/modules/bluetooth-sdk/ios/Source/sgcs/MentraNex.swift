@@ -376,7 +376,7 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
     func dbg1() {}
     func dbg2() {}
 
-    func requestWifiScan() {}
+    func requestWifiScan(scanId _: String?) {}
 
     func sendWifiCredentials(_: String, _: String) {}
 

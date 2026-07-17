@@ -418,9 +418,17 @@ class Bridge {
         Bridge.sendTypedMessage("wifi_status_change", body: body)
     }
 
-    static func updateWifiScanResults(_ networks: [[String: Any]], scanComplete: Bool) {
-        Task {
-            await MainActor.run {
+    static func updateWifiScanResults(
+        _ networks: [[String: Any]],
+        scanComplete: Bool,
+        scanId: String? = nil
+    ) {
+        // Correlated scans accumulate chunks until the terminal scan_complete, so
+        // chunks must reach the SDK in receive order. A Task per message can reach
+        // the MainActor out of creation order; DispatchQueue.main keeps the FIFO
+        // order of the serial bluetooth queue that delivers these.
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated {
                 var storedNetworks: [[String: Any]] =
                     DeviceStore.shared.get("bluetooth", "wifiScanResults") as? [[String: Any]] ?? []
                 // add the networks to the storedNetworks array, removing duplicates by ssid
@@ -432,10 +440,11 @@ class Bridge {
                     }
                 }
                 DeviceStore.shared.apply("bluetooth", "wifiScanResults", storedNetworks)
-                Bridge.sendTypedMessage(
-                    "wifi_scan_result",
-                    body: ["networks": storedNetworks, "scanComplete": scanComplete]
-                )
+                var body: [String: Any] = ["networks": storedNetworks, "scanComplete": scanComplete]
+                if let scanId {
+                    body["scanId"] = scanId
+                }
+                Bridge.sendTypedMessage("wifi_scan_result", body: body)
             }
         }
     }

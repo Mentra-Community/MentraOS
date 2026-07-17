@@ -2947,9 +2947,12 @@ class MentraLive: NSObject, SGCManager {
 
     // commands to send to the glasses:
 
-    func requestWifiScan() {
+    func requestWifiScan(scanId: String?) {
         Bridge.log("LIVE: Requesting WiFi scan from glasses")
-        let json: [String: Any] = ["type": "request_wifi_scan"]
+        var json: [String: Any] = ["type": "request_wifi_scan"]
+        if let scanId, !scanId.isEmpty {
+            json["scanId"] = scanId
+        }
         sendJson(json, wakeUp: true)
     }
 
@@ -3189,7 +3192,8 @@ class MentraLive: NSObject, SGCManager {
         }
 
         let scanComplete = json["scan_complete"] as? Bool ?? json["scanComplete"] as? Bool ?? false
-        Bridge.updateWifiScanResults(networks, scanComplete: scanComplete)
+        let scanId = (json["scanId"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        Bridge.updateWifiScanResults(networks, scanComplete: scanComplete, scanId: scanId)
     }
 
     private func handleButtonPress(_ json: [String: Any]) {
