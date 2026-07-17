@@ -788,16 +788,12 @@ class MentraLive : SGCManager() {
         val isEqual = state == connectionState
         if (isEqual) {
             if (state == ConnTypes.DISCONNECTED) {
-                incomingChunkReassembler.clear()
-                peerWireProtocolVersion = 0
-                useBinaryWireProtocol = false
-                wireHandshakeQueued = false
-                wireHandshakeAttempts = 0
-                wireSessionGeneration++
-                peerK900Le = false
-                peerWireCapsBinary = false
-                peerFilePayloadV2 = false
-                BleJsonCompact.resetSession()
+                resetWireNegotiationState()
+                // Queued writes are session-bound: transmitting them into the NEXT session
+                // (e.g. a stale handshake whose reply activates v2 before the new session
+                // negotiated) is the bug class this clear removes. Higher layers re-send
+                // what still matters via their own ACK/retry tracking.
+                sendQueue.clear()
             }
             return
         }
@@ -825,16 +821,9 @@ class MentraLive : SGCManager() {
             DeviceStore.apply("glasses", "connected", false)
             DeviceStore.apply("glasses", "signalStrength", -1)
             DeviceStore.apply("glasses", "signalStrengthUpdatedAt", 0L)
-            incomingChunkReassembler.clear()
-            peerWireProtocolVersion = 0
-            useBinaryWireProtocol = false
-            wireHandshakeQueued = false
-            wireHandshakeAttempts = 0
-            wireSessionGeneration++
-            peerK900Le = false
-            peerWireCapsBinary = false
-            peerFilePayloadV2 = false
-            BleJsonCompact.resetSession()
+            resetWireNegotiationState()
+            sendQueue.clear() // see the disconnect reset above: stale writes die with the session
+
             // Drop OTA caches when fully disconnected — avoids leaking session/step state
             // from a previous pairing into the next one.
             resetOtaCache()
@@ -3504,10 +3493,12 @@ class MentraLive : SGCManager() {
                 // Glasses SOC has booted and is ready for communication
                 Bridge.log("LIVE: 🎉 Received glasses_ready message - SOC is booted and ready!")
 
-                // Negotiate wire capabilities advertised in the glasses_ready handshake.
-                // Also attempt the v2 handshake here: when the glasses' service restarts
-                // mid-session (OTA install, crash restart) the build number is already
-                // known, and glasses_ready is the message that re-advertises the caps.
+                // glasses_ready is a REMOTE wire-session reset: the glasses ran
+                // onTransportReset() before sending it, so their side is back on legacy
+                // framing regardless of what this side negotiated earlier. Start a fresh
+                // wire epoch (clears v2-active state that would otherwise gate the
+                // handshake off), then negotiate from the caps this message advertises.
+                resetWireNegotiationState()
                 parsePeerWireCaps(json)
                 maybeSendWireHandshake()
 
@@ -7186,6 +7177,27 @@ class MentraLive : SGCManager() {
      * negotiated per-link endianness and binary support. Missing wire_caps leaves the legacy
      * defaults (BE, no binary) untouched so older glasses keep working.
      */
+    /**
+     * Drop every negotiated wire-session artifact and bump the session generation so
+     * scheduled callbacks from the old session stand down. Called on BLE disconnect and on
+     * glasses_ready: the glasses run onTransportReset() before sending glasses_ready, so a
+     * mid-link ASG restart (no BLE disconnect) resets THEIR side to legacy framing - the
+     * phone must treat every glasses_ready as a new wire epoch and renegotiate (bounded by
+     * the per-session handshake attempt cap) instead of trusting stale v2-active state.
+     */
+    private fun resetWireNegotiationState() {
+        incomingChunkReassembler.clear()
+        peerWireProtocolVersion = 0
+        useBinaryWireProtocol = false
+        wireHandshakeQueued = false
+        wireHandshakeAttempts = 0
+        wireSessionGeneration++
+        peerK900Le = false
+        peerWireCapsBinary = false
+        peerFilePayloadV2 = false
+        BleJsonCompact.resetSession()
+    }
+
     private fun parsePeerWireCaps(json: JSONObject) {
         val caps = json.optJSONObject("wire_caps") ?: return
         if (caps.optBoolean("k900_le", false)) {

@@ -1267,16 +1267,11 @@ class MentraLive: NSObject, SGCManager {
         // a previous pairing into the next one (would otherwise surface as wrong overall_percent
         // or stale lastBesOtaProgress on the next OTA).
         if state == ConnTypes.DISCONNECTED {
-            incomingChunkReassembler.clear()
-            peerWireProtocolVersion = 0
-            useBinaryWireProtocol = false
-            wireHandshakeQueued = false
-            wireHandshakeAttempts = 0
-            wireSessionGeneration += 1
-            peerK900Le = false
-            peerWireCapsBinary = false
-            peerFilePayloadV2 = false
-            BleJsonCompact.resetSession()
+            resetWireNegotiationState()
+            // Queued writes are session-bound: transmitting them into the NEXT session
+            // (e.g. a stale handshake whose reply activates v2 before the new session
+            // negotiated) is the bug class this clear removes.
+            Task { await commandQueue.removeAll() }
             stopSignalStrengthPolling()
             DeviceStore.shared.apply("glasses", "signalStrength", -1)
             DeviceStore.shared.apply("glasses", "signalStrengthUpdatedAt", 0)
@@ -1885,6 +1880,10 @@ class MentraLive: NSObject, SGCManager {
             guard !commands.isEmpty else { return nil }
             return commands.removeFirst()
         }
+
+        func removeAll() {
+            commands.removeAll()
+        }
     }
 
     private func setupCommandQueue() {
@@ -2330,10 +2329,12 @@ class MentraLive: NSObject, SGCManager {
 
         switch type {
         case "glasses_ready":
-            // Negotiate wire capabilities advertised in the glasses_ready handshake.
-            // Also attempt the v2 handshake here: when the glasses' service restarts
-            // mid-session (OTA install, crash restart) the build number is already
-            // known, and glasses_ready is the message that re-advertises the caps.
+            // glasses_ready is a REMOTE wire-session reset: the glasses ran
+            // onTransportReset() before sending it, so their side is back on legacy
+            // framing regardless of what this side negotiated earlier. Start a fresh
+            // wire epoch (clears v2-active state that would otherwise gate the
+            // handshake off), then negotiate from the caps this message advertises.
+            resetWireNegotiationState()
             parsePeerWireCaps(json)
             maybeSendWireHandshake()
             handleGlassesReady()
@@ -5052,16 +5053,8 @@ class MentraLive: NSObject, SGCManager {
 
         // Stop all timers
         stopAllTimers()
-        incomingChunkReassembler.clear()
-        peerWireProtocolVersion = 0
-        useBinaryWireProtocol = false
-        wireHandshakeQueued = false
-        wireHandshakeAttempts = 0
-        wireSessionGeneration += 1
-        peerK900Le = false
-        peerWireCapsBinary = false
-        peerFilePayloadV2 = false
-        BleJsonCompact.resetSession()
+        resetWireNegotiationState()
+        Task { await commandQueue.removeAll() } // stale writes die with the session
         closeL2capFileChannel()
 
         // Disconnect BLE
@@ -5154,6 +5147,25 @@ extension MentraLive {
      * per-link endianness and binary support. Missing wire_caps leaves the legacy defaults (BE, no
      * binary) untouched so older glasses keep working.
      */
+    /// Drop every negotiated wire-session artifact and bump the session generation so
+    /// scheduled callbacks from the old session stand down. Called on BLE disconnect and on
+    /// glasses_ready: the glasses run onTransportReset() before sending glasses_ready, so a
+    /// mid-link ASG restart (no BLE disconnect) resets THEIR side to legacy framing - the
+    /// phone must treat every glasses_ready as a new wire epoch and renegotiate (bounded by
+    /// the per-session handshake attempt cap) instead of trusting stale v2-active state.
+    private func resetWireNegotiationState() {
+        incomingChunkReassembler.clear()
+        peerWireProtocolVersion = 0
+        useBinaryWireProtocol = false
+        wireHandshakeQueued = false
+        wireHandshakeAttempts = 0
+        wireSessionGeneration += 1
+        peerK900Le = false
+        peerWireCapsBinary = false
+        peerFilePayloadV2 = false
+        BleJsonCompact.resetSession()
+    }
+
     private func parsePeerWireCaps(_ json: [String: Any]) {
         guard let caps = json["wire_caps"] as? [String: Any] else { return }
         if (caps["k900_le"] as? Bool) == true {
