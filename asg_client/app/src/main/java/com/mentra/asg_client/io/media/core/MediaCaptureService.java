@@ -590,6 +590,19 @@ public class MediaCaptureService {
                         t.setPriority(Thread.NORM_PRIORITY - 1);
                         return t;
                     });
+
+    /**
+     * Keeps ML Kit and final-crop persistence off CameraNeo's shared callback executor. A single
+     * worker preserves burst ordering and avoids running multiple memory-heavy full-resolution
+     * crops at once.
+     */
+    private final ExecutorService textModeLocalSaveExecutor =
+            Executors.newSingleThreadExecutor(
+                    r -> {
+                        Thread t = new Thread(r, "TextModeLocalSave");
+                        t.setPriority(Thread.NORM_PRIORITY - 1);
+                        return t;
+                    });
     // Safety timeout covers the full job (capture + upload/BLE-handoff). Sized to outlast a
     // slow webhook upload on flaky WiFi so we don't prematurely free the flag while the upload
     // is still grinding. Force-resets isPhotoJobInFlight if no terminal callback fires.
@@ -2205,34 +2218,39 @@ public class MediaCaptureService {
                                             "Text-mode capture was not available in memory");
                                     return;
                                 }
-                                TextRegionDetection detection =
-                                        runTextRegionDetection(capturedPhoto.jpegBytes, filePath);
-                                if (!persistTextModeSelectionFromMemory(
-                                        capturedPhoto, filePath, requestId, detection.roi)) {
+                                try {
+                                    textModeLocalSaveExecutor.execute(
+                                            () -> {
+                                                TextRegionDetection detection =
+                                                        runTextRegionDetection(
+                                                                capturedPhoto.jpegBytes, filePath);
+                                                if (!persistTextModeSelectionFromMemory(
+                                                        capturedPhoto,
+                                                        filePath,
+                                                        requestId,
+                                                        detection.roi)) {
+                                                    sendPhotoErrorResponse(
+                                                            requestId,
+                                                            "PHOTO_SAVE_FAILED",
+                                                            "Could not save final text-mode output");
+                                                    return;
+                                                }
+                                                finishLocalSavePhoto(
+                                                        requestId,
+                                                        captureId,
+                                                        filePath,
+                                                        captureMetadata);
+                                            });
+                                } catch (RejectedExecutionException executorClosed) {
                                     sendPhotoErrorResponse(
                                             requestId,
                                             "PHOTO_SAVE_FAILED",
-                                            "Could not save final text-mode output");
-                                    return;
+                                            "Text-mode processing stopped during service cleanup");
                                 }
+                                return;
                             }
-                            Log.d(TAG, "Local-save photo captured: " + filePath);
-                            sendPhotoStatus(
-                                    requestId,
-                                    "captured",
-                                    null,
-                                    null,
-                                    null,
-                                    null,
-                                    null,
-                                    captureMetadata);
-
-                            if (mMediaCaptureListener != null) {
-                                mMediaCaptureListener.onPhotoCaptured(requestId, filePath);
-                            }
-
-                            sendLocalSaveSuccessResponse(requestId, captureId);
-                            sendGalleryStatusUpdate();
+                            finishLocalSavePhoto(
+                                    requestId, captureId, filePath, captureMetadata);
                         }
 
                         @Override
@@ -2260,6 +2278,27 @@ public class MediaCaptureService {
                     requestId, "CAMERA_CAPTURE_FAILED", "Error taking photo: " + e.getMessage());
             return false;
         }
+    }
+
+    private void finishLocalSavePhoto(
+            String requestId, String captureId, String filePath, JSONObject captureMetadata) {
+        Log.d(TAG, "Local-save photo captured: " + filePath);
+        sendPhotoStatus(
+                requestId,
+                "captured",
+                null,
+                null,
+                null,
+                null,
+                null,
+                captureMetadata);
+
+        if (mMediaCaptureListener != null) {
+            mMediaCaptureListener.onPhotoCaptured(requestId, filePath);
+        }
+
+        sendLocalSaveSuccessResponse(requestId, captureId);
+        sendGalleryStatusUpdate();
     }
 
     /**
@@ -6084,6 +6123,15 @@ public class MediaCaptureService {
                 }
             } catch (InterruptedException e) {
                 videoIntegrityExecutor.shutdownNow();
+                Thread.currentThread().interrupt();
+            }
+            textModeLocalSaveExecutor.shutdown();
+            try {
+                if (!textModeLocalSaveExecutor.awaitTermination(3, TimeUnit.SECONDS)) {
+                    textModeLocalSaveExecutor.shutdownNow();
+                }
+            } catch (InterruptedException e) {
+                textModeLocalSaveExecutor.shutdownNow();
                 Thread.currentThread().interrupt();
             }
             videoCaptureIdsInFlight.clear();
