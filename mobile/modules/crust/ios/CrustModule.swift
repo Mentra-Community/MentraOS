@@ -583,24 +583,32 @@ public class CrustModule: Module {
         options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
 
         let assets = PHAsset.fetchAssets(with: options)
-        var identifiers: [String] = []
+        var stableIdentifiers: [String] = []
+        var legacyIdentifiers: [String] = []
         assets.enumerateObjects { asset, _, _ in
-            let matches = PHAssetResource.assetResources(for: asset).contains {
-                guard fileNames.contains($0.originalFilename) else { return false }
-                if $0.originalFilename == stableFileName {
-                    // Capture-derived names are stable and unique across Mentra exports.
-                    return true
+            let resources = PHAssetResource.assetResources(for: asset)
+            let stableMatch = stableFileName.map { stableName in
+                resources.contains { $0.originalFilename == stableName }
+            } ?? false
+            if stableMatch {
+                stableIdentifiers.append(asset.localIdentifier)
+                return
+            }
+            let legacyMatch = resources.contains {
+                guard fileNames.contains($0.originalFilename), $0.originalFilename != stableFileName else {
+                    return false
                 }
                 guard let expectedFileSize else { return false }
                 return self.assetResource($0, matchesByteCount: expectedFileSize)
             }
-            if matches {
-                identifiers.append(asset.localIdentifier)
+            if legacyMatch {
+                legacyIdentifiers.append(asset.localIdentifier)
             }
         }
-        // Legacy base filenames were shared by every capture. Only reuse one when
-        // filename + capture time + media type identify a single accessible asset.
-        return identifiers.count == 1 ? identifiers[0] : nil
+        // Capture-derived names are stable. If an older retry already created duplicates,
+        // reuse the newest completed asset instead of inserting another. Legacy base names
+        // remain safe only when name + capture time + media type + size identify one asset.
+        return stableIdentifiers.first ?? (legacyIdentifiers.count == 1 ? legacyIdentifiers[0] : nil)
     }
 
     /// PhotoKit does not expose resource byte size on the deployment targets we support.
