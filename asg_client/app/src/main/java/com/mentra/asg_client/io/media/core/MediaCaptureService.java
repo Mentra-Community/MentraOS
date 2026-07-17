@@ -3000,15 +3000,23 @@ public class MediaCaptureService {
 
     /**
      * Largest power-of-two JPEG subsampling factor that still keeps the decoded region at or above
-     * the BLE target box, so the follow-up {@code createScaledBitmap} only ever shrinks. Decoding
-     * 4032x3024 at inSampleSize=2 cuts the ARGB working set 4x with no quality cost at a 1920px
-     * output cap.
+     * the aspect-fitted BLE output, so the follow-up {@code createScaledBitmap} only ever shrinks.
+     * The configured dimensions are caps, not the literal output dimensions. Decoding 4032x3024 at
+     * inSampleSize=2 cuts the ARGB working set 4x with no quality cost at a 1920px output cap.
      */
-    private static int computeBleDecodeSampleSize(
+    static int computeBleDecodeSampleSize(
             int regionWidth, int regionHeight, int targetWidth, int targetHeight) {
+        float outputScale =
+                Math.min(
+                        1f,
+                        Math.min(
+                                targetWidth / (float) regionWidth,
+                                targetHeight / (float) regionHeight));
+        int outputWidth = Math.max(1, Math.round(regionWidth * outputScale));
+        int outputHeight = Math.max(1, Math.round(regionHeight * outputScale));
         int sample = 1;
-        while ((regionWidth / (sample * 2)) >= targetWidth
-                && (regionHeight / (sample * 2)) >= targetHeight) {
+        while ((regionWidth / (sample * 2)) >= outputWidth
+                && (regionHeight / (sample * 2)) >= outputHeight) {
             sample *= 2;
         }
         return sample;
