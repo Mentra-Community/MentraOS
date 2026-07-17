@@ -417,15 +417,15 @@ public class CameraNeoService extends LifecycleService {
      *       enqueuePhotoRequest}) and runs without a cold ISP start, so we must NOT gate on the
      *       shot state being idle.
      *   <li>The open session won't be reconfigured for this request. A differing size, SDK flag,
-     *       manual exposure, or resolved {@code zslMfnr} forces a close + reopen (see {@code
+     *       manual exposure, or resolved {@code zsl}/{@code mfnr} forces a close + reopen (see {@code
      *       PhotoSession#willReuseConfiguredCamera}), which is effectively a cold start.
      * </ul>
      *
      * @param size requested photo size for the upcoming capture (nullable)
      * @param isFromSdk whether the upcoming capture is an SDK request (vs. a button photo)
      * @param exposureTimeNs requested manual exposure for the upcoming capture, or null for auto
-     * @param captureSettings per-request tuning used for resolved {@code zslMfnr} (nullable /
-     *     {@link PhotoCaptureSettings#EMPTY} inherits the global default)
+     * @param captureSettings per-request tuning used for resolved {@code zsl}/{@code mfnr} (nullable /
+     *     {@link PhotoCaptureSettings#EMPTY} inherits the global defaults)
      * @return true if the upcoming capture would reuse the open camera; false otherwise.
      */
     public static boolean isCameraWarm(
@@ -1372,7 +1372,7 @@ public class CameraNeoService extends LifecycleService {
                     photoSession.previewJpegQuality(),
                     jpegOrientation,
                     mCameraSettings,
-                    forVideo ? false : photoSession.previewZslMfnrEnabled());
+                    forVideo ? false : photoSession.previewZslEnabled());
 
             CameraCaptureSession.StateCallback sessionStateCallback =
                     new CameraCaptureSession.StateCallback() {
