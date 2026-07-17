@@ -570,12 +570,13 @@ class BluetoothSdkModule : Module() {
         SdkAsyncFunction("warmUpCamera") { params: Map<String, Any?> ->
             val requestId = params["requestId"] as? String
             val size = PhotoSize.fromValue(params["size"] as? String)
+            val mode = PhotoMode.fromValue(params["mode"] as? String)
             val exposureRaw = (params["exposureTimeNs"] as? Number)?.toDouble()
             val exposureTimeNs =
                 if (exposureRaw != null && exposureRaw.isFinite() && exposureRaw > 0) exposureRaw.toLong() else null
             val durationRaw = (params["durationMs"] as? Number)?.toInt() ?: 0
             val durationMs = if (durationRaw > 0) durationRaw else 15000
-            requireSdk().warmUpCamera(requestId, size, exposureTimeNs, durationMs).values
+            requireSdk().warmUpCamera(requestId, size, mode, exposureTimeNs, durationMs).values
         }
 
         // MARK: - OTA Commands
