@@ -346,15 +346,7 @@ public enum StreamStatus: CustomStringConvertible, Equatable {
     )
     case reconnected(streamId: String?, attempt: Int, timestamp: Int?, resolvedConfig: StreamResolvedConfig?)
     case reconnectFailed(streamId: String?, maxAttempts: Int, timestamp: Int?, resolvedConfig: StreamResolvedConfig?)
-    // `willRetry` is true when the glasses will retry the failed publisher
-    // themselves (emitting side lands in PR #3488); absent on older firmware.
-    case error(
-        streamId: String?,
-        errorDetails: String,
-        willRetry: Bool?,
-        timestamp: Int?,
-        resolvedConfig: StreamResolvedConfig?
-    )
+    case error(streamId: String?, errorDetails: String, timestamp: Int?, resolvedConfig: StreamResolvedConfig?)
     case snapshot(
         state: StreamState,
         streaming: Bool,
@@ -401,7 +393,6 @@ public enum StreamStatus: CustomStringConvertible, Equatable {
             self = .error(
                 streamId: streamId,
                 errorDetails: rawState.map { "Unknown stream status: \($0)" } ?? "Missing stream status",
-                willRetry: nil,
                 timestamp: timestamp,
                 resolvedConfig: resolvedConfig
             )
@@ -437,7 +428,6 @@ public enum StreamStatus: CustomStringConvertible, Equatable {
                 streamId: streamId,
                 errorDetails: stringValue(values, "errorDetails")
                     ?? (rawState == "error_not_streaming" ? "not_streaming" : "Unknown stream error"),
-                willRetry: boolValue(values, "willRetry"),
                 timestamp: timestamp,
                 resolvedConfig: resolvedConfig
             )
@@ -487,7 +477,7 @@ public enum StreamStatus: CustomStringConvertible, Equatable {
              let .reconnecting(streamId, _, _, _, _, _),
              let .reconnected(streamId, _, _, _),
              let .reconnectFailed(streamId, _, _, _),
-             let .error(streamId, _, _, _, _),
+             let .error(streamId, _, _, _),
              let .snapshot(_, _, _, streamId, _, _, _):
             streamId
         }
@@ -499,7 +489,7 @@ public enum StreamStatus: CustomStringConvertible, Equatable {
              let .reconnecting(_, _, _, _, timestamp, _),
              let .reconnected(_, _, timestamp, _),
              let .reconnectFailed(_, _, timestamp, _),
-             let .error(_, _, _, timestamp, _),
+             let .error(_, _, timestamp, _),
              let .snapshot(_, _, _, _, _, timestamp, _):
             timestamp
         }
@@ -511,7 +501,7 @@ public enum StreamStatus: CustomStringConvertible, Equatable {
              let .reconnecting(_, _, _, _, _, resolvedConfig),
              let .reconnected(_, _, _, resolvedConfig),
              let .reconnectFailed(_, _, _, resolvedConfig),
-             let .error(_, _, _, _, resolvedConfig),
+             let .error(_, _, _, resolvedConfig),
              let .snapshot(_, _, _, _, _, _, resolvedConfig):
             resolvedConfig
         }
@@ -543,11 +533,8 @@ public enum StreamStatus: CustomStringConvertible, Equatable {
             values["attempt"] = attempt
         case let .reconnectFailed(_, maxAttempts, _, _):
             values["maxAttempts"] = maxAttempts
-        case let .error(_, errorDetails, willRetry, _, _):
+        case let .error(_, errorDetails, _, _):
             values["errorDetails"] = errorDetails
-            if let willRetry {
-                values["willRetry"] = willRetry
-            }
         case let .snapshot(_, streaming, reconnecting, _, attempt, _, _):
             values["streaming"] = streaming
             values["reconnecting"] = reconnecting
@@ -566,6 +553,11 @@ public enum StreamStatus: CustomStringConvertible, Equatable {
 
 public struct StreamStatusEvent: CustomStringConvertible {
     public let status: StreamStatus
+    // True when the glasses will retry the failed publisher themselves
+    // (emitting side lands in PR #3488); absent on older firmware and on
+    // events not parsed from a glasses status map. Carried here instead of
+    // as an `.error` associated value so the public case stays unchanged.
+    public private(set) var willRetry: Bool?
 
     public init(status: StreamStatus) {
         self.status = status
@@ -573,6 +565,7 @@ public struct StreamStatusEvent: CustomStringConvertible {
 
     public init(values: [String: Any]) {
         status = StreamStatus(values: values)
+        willRetry = boolValue(values, "willRetry")
     }
 
     public var state: StreamState {
@@ -590,6 +583,9 @@ public struct StreamStatusEvent: CustomStringConvertible {
     public var values: [String: Any] {
         var values = status.values
         values["type"] = "stream_status"
+        if let willRetry {
+            values["willRetry"] = willRetry
+        }
         return values
     }
 

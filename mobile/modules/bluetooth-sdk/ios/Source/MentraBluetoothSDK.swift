@@ -1377,7 +1377,6 @@ public final class MentraBluetoothSDK {
                     status: .error(
                         streamId: tracker.streamId,
                         errorDetails: "Stream keep-alive timed out after \(tracker.missedAckCount) missed ACKs",
-                        willRetry: nil,
                         timestamp: Int(Date().timeIntervalSince1970 * 1000),
                         resolvedConfig: nil
                     )
@@ -1454,8 +1453,7 @@ public final class MentraBluetoothSDK {
                 pendingStreamStarts.removeValue(forKey: streamId)
                 start.pending.reject(streamStatusError(start.lastError ?? event, code: "stream_start_failed"))
             case .error:
-                if let eventStreamId = event.streamId, !eventStreamId.isEmpty,
-                   case let .error(_, _, willRetry, _, _) = event.status, willRetry == true {
+                if let eventStreamId = event.streamId, !eventStreamId.isEmpty, event.willRetry == true {
                     // The glasses flag errors their publisher will retry with
                     // `willRetry` (emitting side lands in PR #3488), so keep the
                     // start pending for the retry's verdict — `reconnected` or
@@ -1545,7 +1543,7 @@ public final class MentraBluetoothSDK {
         if event.state == .stopped {
             return true
         }
-        guard case let .error(_, errorDetails, _, _, _) = event.status else {
+        guard case let .error(_, errorDetails, _, _) = event.status else {
             return false
         }
         return ["not_streaming", "already_stopped", "not streaming"].contains(errorDetails.lowercased())
@@ -1564,7 +1562,7 @@ public final class MentraBluetoothSDK {
 
     private func streamStatusError(_ event: StreamStatusEvent, code: String) -> BluetoothSdkError {
         let message: String
-        if case let .error(_, errorDetails, _, _, _) = event.status {
+        if case let .error(_, errorDetails, _, _) = event.status {
             message = errorDetails
         } else {
             message = "Stream status \(event.state.rawValue)"

@@ -280,10 +280,7 @@ sealed interface StreamStatus {
             }
             is Reconnected -> values["attempt"] = attempt
             is ReconnectFailed -> values["maxAttempts"] = maxAttempts
-            is Error -> {
-                values["errorDetails"] = errorDetails
-                willRetry?.let { values["willRetry"] = it }
-            }
+            is Error -> values["errorDetails"] = errorDetails
             is Snapshot -> {
                 values["streaming"] = streaming
                 values["reconnecting"] = reconnecting
@@ -340,9 +337,6 @@ sealed interface StreamStatus {
     data class Error(
         override val streamId: String?,
         val errorDetails: String,
-        // True when the glasses will retry the failed publisher themselves
-        // (emitting side lands in PR #3488); absent on older firmware.
-        val willRetry: Boolean? = null,
         override val timestamp: Long?,
         override val resolvedConfig: StreamResolvedConfig?,
     ) : StreamStatus {
@@ -425,7 +419,6 @@ sealed interface StreamStatus {
                     streamId = streamId,
                     errorDetails = stringValue(values, "errorDetails")
                         ?: if (rawState == "error_not_streaming") "not_streaming" else "Unknown stream error",
-                    willRetry = boolValue(values, "willRetry"),
                     timestamp = timestamp,
                     resolvedConfig = resolvedConfig,
                 )
@@ -443,12 +436,25 @@ sealed interface StreamStatus {
 data class StreamStatusEvent(
     val status: StreamStatus,
 ) {
-    constructor(values: Map<String, Any>) : this(StreamStatus.fromMap(values))
+    // True when the glasses will retry the failed publisher themselves
+    // (emitting side lands in PR #3488); absent on older firmware and on
+    // events not parsed from a glasses status map. Carried here instead of
+    // on StreamStatus.Error so the public Error shape stays unchanged.
+    var willRetry: Boolean? = null
+        private set
+
+    constructor(values: Map<String, Any>) : this(StreamStatus.fromMap(values)) {
+        willRetry = boolValue(values, "willRetry")
+    }
 
     val state: StreamState get() = status.state
     val streamId: String? get() = status.streamId
     val resolvedConfig: StreamResolvedConfig? get() = status.resolvedConfig
-    val values: Map<String, Any> get() = status.toEventMap()
+    val values: Map<String, Any>
+        get() = buildMap {
+            putAll(status.toEventMap())
+            willRetry?.let { put("willRetry", it) }
+        }
 }
 
 data class KeepAliveAckEvent(

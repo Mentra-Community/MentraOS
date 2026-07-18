@@ -1577,9 +1577,7 @@ class MentraBluetoothSdk private constructor(
                     )
                 }
                 StreamState.ERROR -> {
-                    if (!event.streamId.isNullOrBlank() &&
-                        (event.status as? StreamStatus.Error)?.willRetry == true
-                    ) {
+                    if (!event.streamId.isNullOrBlank() && event.willRetry == true) {
                         // The glasses flag errors their publisher will retry with
                         // `willRetry` (emitting side lands in PR #3488), so keep the
                         // start pending for the retry's verdict — `reconnected` or
