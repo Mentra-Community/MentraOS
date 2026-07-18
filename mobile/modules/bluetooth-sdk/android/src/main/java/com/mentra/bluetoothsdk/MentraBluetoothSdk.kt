@@ -1577,18 +1577,25 @@ class MentraBluetoothSdk private constructor(
                     )
                 }
                 StreamState.ERROR -> {
-                    if (event.streamId.isNullOrBlank()) {
+                    if (!event.streamId.isNullOrBlank() &&
+                        (event.status as? StreamStatus.Error)?.willRetry == true
+                    ) {
+                        // The glasses flag errors their publisher will retry with
+                        // `willRetry` (emitting side lands in PR #3488), so keep the
+                        // start pending for the retry's verdict — `reconnected` or
+                        // `streaming` on success, `reconnect_failed` or the
+                        // streamId-less `stopped` wind-down (which reports these
+                        // stashed details) on failure.
+                        start.lastError = event
+                    } else {
                         // An id-less error is the glasses' command-level rejection
-                        // (missing URL, low battery, no WiFi), emitted before any
-                        // publisher starts; nothing further follows for this start.
+                        // (missing URL, low battery, no WiFi) emitted before any
+                        // publisher starts; an id-carrying error without `willRetry`
+                        // is terminal (`camera_busy` emits an error and nothing else).
+                        // Old firmware never sends `willRetry`, so its errors always
+                        // fail fast here — the shipped pre-#3487 Android behavior.
                         pendingStreamStarts.remove(streamId, start)
                         start.pending.reject(streamStatusException(event, "stream_start_failed"))
-                    } else {
-                        // The glasses publisher automatically retries transient transport
-                        // errors, so keep the start pending for a later `streaming`.
-                        // Stash the details for the streamId-less `stopped` that a fatal
-                        // publisher error winds down with instead.
-                        start.lastError = event
                     }
                 }
                 else -> Unit
@@ -1652,10 +1659,10 @@ class MentraBluetoothSdk private constructor(
             // pending start — a start_stream that replaces a running publisher
             // emits exactly this sequence (stopped -> initializing -> streaming).
             // Attributing it here would reject a start that is about to succeed.
-            // After an id-carrying error for the pending start, though, the
-            // stopped is a fatal publisher's wind-down (the stop-ack always
-            // precedes any status for the new start), so it is that start's
-            // verdict.
+            // After a stashed `willRetry` error for the pending start, though,
+            // the stopped is the retrying publisher's wind-down (the stop-ack
+            // always precedes any status for the new start), so it is that
+            // start's verdict.
             if (event.state == StreamState.STOPPED && entry.value.lastError == null) {
                 return null
             }

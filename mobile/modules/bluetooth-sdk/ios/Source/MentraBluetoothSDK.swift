@@ -1377,6 +1377,7 @@ public final class MentraBluetoothSDK {
                     status: .error(
                         streamId: tracker.streamId,
                         errorDetails: "Stream keep-alive timed out after \(tracker.missedAckCount) missed ACKs",
+                        willRetry: nil,
                         timestamp: Int(Date().timeIntervalSince1970 * 1000),
                         resolvedConfig: nil
                     )
@@ -1453,16 +1454,22 @@ public final class MentraBluetoothSDK {
                 pendingStreamStarts.removeValue(forKey: streamId)
                 start.pending.reject(streamStatusError(start.lastError ?? event, code: "stream_start_failed"))
             case .error:
-                if let eventStreamId = event.streamId, !eventStreamId.isEmpty {
-                    // The glasses publisher automatically retries transient transport
-                    // errors, so keep the start pending for a later `streaming`.
-                    // Stash the details for the streamId-less `stopped` that a fatal
-                    // publisher error winds down with instead.
+                if let eventStreamId = event.streamId, !eventStreamId.isEmpty,
+                   case let .error(_, _, willRetry, _, _) = event.status, willRetry == true {
+                    // The glasses flag errors their publisher will retry with
+                    // `willRetry` (emitting side lands in PR #3488), so keep the
+                    // start pending for the retry's verdict — `reconnected` or
+                    // `streaming` on success, `reconnect_failed` or the
+                    // streamId-less `stopped` wind-down (which reports these
+                    // stashed details) on failure.
                     start.lastError = event
                 } else {
                     // An id-less error is the glasses' command-level rejection
-                    // (missing URL, low battery, no WiFi), emitted before any
-                    // publisher starts; nothing further follows for this start.
+                    // (missing URL, low battery, no WiFi) emitted before any
+                    // publisher starts; an id-carrying error without `willRetry`
+                    // is terminal (`camera_busy` emits an error and nothing else).
+                    // Old firmware never sends `willRetry`, so its errors always
+                    // fail fast here — the shipped pre-#3487 Android behavior.
                     pendingStreamStarts.removeValue(forKey: streamId)
                     start.pending.reject(streamStatusError(event, code: "stream_start_failed"))
                 }
@@ -1516,10 +1523,10 @@ public final class MentraBluetoothSDK {
             // pending start — a start_stream that replaces a running publisher
             // emits exactly this sequence (stopped -> initializing -> streaming).
             // Attributing it here would reject a start that is about to succeed.
-            // After an id-carrying error for the pending start, though, the
-            // stopped is a fatal publisher's wind-down (the stop-ack always
-            // precedes any status for the new start), so it is that start's
-            // verdict.
+            // After a stashed `willRetry` error for the pending start, though,
+            // the stopped is the retrying publisher's wind-down (the stop-ack
+            // always precedes any status for the new start), so it is that
+            // start's verdict.
             if event.state == .stopped, entry.value.lastError == nil {
                 return nil
             }
@@ -1538,7 +1545,7 @@ public final class MentraBluetoothSDK {
         if event.state == .stopped {
             return true
         }
-        guard case let .error(_, errorDetails, _, _) = event.status else {
+        guard case let .error(_, errorDetails, _, _, _) = event.status else {
             return false
         }
         return ["not_streaming", "already_stopped", "not streaming"].contains(errorDetails.lowercased())
@@ -1557,7 +1564,7 @@ public final class MentraBluetoothSDK {
 
     private func streamStatusError(_ event: StreamStatusEvent, code: String) -> BluetoothSdkError {
         let message: String
-        if case let .error(_, errorDetails, _, _) = event.status {
+        if case let .error(_, errorDetails, _, _, _) = event.status {
             message = errorDetails
         } else {
             message = "Stream status \(event.state.rawValue)"

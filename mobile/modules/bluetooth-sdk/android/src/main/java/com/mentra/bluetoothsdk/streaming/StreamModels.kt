@@ -280,7 +280,10 @@ sealed interface StreamStatus {
             }
             is Reconnected -> values["attempt"] = attempt
             is ReconnectFailed -> values["maxAttempts"] = maxAttempts
-            is Error -> values["errorDetails"] = errorDetails
+            is Error -> {
+                values["errorDetails"] = errorDetails
+                willRetry?.let { values["willRetry"] = it }
+            }
             is Snapshot -> {
                 values["streaming"] = streaming
                 values["reconnecting"] = reconnecting
@@ -337,6 +340,9 @@ sealed interface StreamStatus {
     data class Error(
         override val streamId: String?,
         val errorDetails: String,
+        // True when the glasses will retry the failed publisher themselves
+        // (emitting side lands in PR #3488); absent on older firmware.
+        val willRetry: Boolean? = null,
         override val timestamp: Long?,
         override val resolvedConfig: StreamResolvedConfig?,
     ) : StreamStatus {
@@ -419,6 +425,7 @@ sealed interface StreamStatus {
                     streamId = streamId,
                     errorDetails = stringValue(values, "errorDetails")
                         ?: if (rawState == "error_not_streaming") "not_streaming" else "Unknown stream error",
+                    willRetry = boolValue(values, "willRetry"),
                     timestamp = timestamp,
                     resolvedConfig = resolvedConfig,
                 )
