@@ -18,6 +18,7 @@ export type AudioGuidanceInput = {
   maneuverType: string | null
   instruction: string | null
   distanceMeters: number | null
+  offRoute: boolean
   destinationName: string | null
   arrivalSide: "left" | "right" | null
   travelMode: AudioTravelMode
@@ -62,8 +63,10 @@ export class AudioGuidanceManager {
   private mode: VoiceGuidanceMode = "off"
   private tripActive = false
   private tripConfirmed = false
+  private allowImplicitResume = true
   private latestUnconfirmedInput: AudioGuidanceInput | null = null
   private lastStatus: NavStatus = "idle"
+  private lastOffRoute = false
   private currentManeuverKey: string | null = null
   private currentPivotIndex: number | null = null
   private currentRepeatPhrase: string | null = null
@@ -99,8 +102,10 @@ export class AudioGuidanceManager {
     this.stopSpeech()
     this.tripActive = true
     this.tripConfirmed = false
+    this.allowImplicitResume = false
     this.latestUnconfirmedInput = null
     this.lastStatus = "navigating"
+    this.lastOffRoute = false
     this.resetManeuverState()
   }
 
@@ -133,9 +138,14 @@ export class AudioGuidanceManager {
     // Keep the manager usable for an already-running session restored by the
     // host, where beginTrip()/confirmTripStarted() did not occur in this JS
     // lifetime. Explicit new trips still enter the unconfirmed path below.
-    if (!this.tripActive && input.running && input.status === "navigating") {
+    if (this.allowImplicitResume && !this.tripActive && input.running && input.status === "navigating") {
       this.tripActive = true
       this.tripConfirmed = true
+      this.allowImplicitResume = false
+    }
+    if (!this.tripActive) {
+      this.lastStatus = input.status
+      return
     }
 
     // The native engine can emit its first maneuver before navigation.start()
@@ -160,11 +170,32 @@ export class AudioGuidanceManager {
       this.currentRepeatPhrase = phrase
       this.enqueue({text: phrase, priority: 110, expiresAt: Date.now() + 20_000})
       this.tripActive = false
+      this.allowImplicitResume = false
+      this.lastOffRoute = false
     }
 
     this.lastStatus = input.status
     if (!input.running || input.status !== "navigating") return
     this.tripActive = true
+
+    if (input.offRoute) {
+      if (!this.lastOffRoute) {
+        const phrase = "You are off route. Go back to the route."
+        this.discardStaleManeuverPrompts()
+        this.currentManeuverKey = null
+        this.currentRepeatPhrase = phrase
+        this.enqueue({text: phrase, priority: 100, expiresAt: Date.now() + 12_000})
+      }
+      this.lastOffRoute = true
+      return
+    }
+    if (this.lastOffRoute) {
+      // Returning to the route should evaluate the current maneuver afresh;
+      // stages spoken before the deviation no longer describe the live spot.
+      this.currentManeuverKey = null
+      this.currentPivotIndex = null
+    }
+    this.lastOffRoute = false
 
     const instruction = cleanSpokenText(input.instruction)
     const maneuverType = input.maneuverType?.toUpperCase() ?? null
@@ -183,7 +214,9 @@ export class AudioGuidanceManager {
       distance != null &&
       this.lastDistance != null &&
       (distance > this.lastDistance + Math.max(25, thresholds.prepareMeters / 2) ||
-        (previousNowSpoken && distance > this.lastDistance + 5))
+        (previousNowSpoken &&
+          distance > thresholds.nowMeters &&
+          distance > this.lastDistance + Math.max(10, thresholds.nowMeters / 2)))
 
     const pivotChanged =
       this.currentPivotIndex != null && input.pivotIndex != null && input.pivotIndex !== this.currentPivotIndex
@@ -258,6 +291,7 @@ export class AudioGuidanceManager {
       distance != null &&
       distance <= thresholds.prepareMeters &&
       distance > thresholds.nowMeters &&
+      !this.spokenStages.has(nowStage) &&
       !this.spokenStages.has(prepareStage)
     ) {
       this.spokenStages.add(prepareStage)
@@ -284,8 +318,10 @@ export class AudioGuidanceManager {
   endTrip(): void {
     this.tripActive = false
     this.tripConfirmed = false
+    this.allowImplicitResume = false
     this.latestUnconfirmedInput = null
     this.lastStatus = "idle"
+    this.lastOffRoute = false
     this.currentRepeatPhrase = null
     this.resetManeuverState()
     this.stopSpeech()

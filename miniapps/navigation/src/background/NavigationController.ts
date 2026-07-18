@@ -1507,6 +1507,7 @@ export class NavigationController {
         maneuver?.distanceMeters,
         md?.distanceMeters,
       ),
+      offRoute: this.offRouteAdvisory,
       destinationName: activeDestinationName,
       arrivalSide,
       travelMode: this.lastStartOpts?.mode ?? "walking",
