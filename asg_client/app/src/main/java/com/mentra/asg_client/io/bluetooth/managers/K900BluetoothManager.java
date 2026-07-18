@@ -359,12 +359,21 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     /** The alternate-rate boot probe is safe only after this installation saw capable firmware. */
     private boolean cachedBesSupportsBaudSwitch() {
         try {
-            String cachedVersion = new AsgSettings(context).getBesFirmwareVersion();
-            return shouldProbeAlternateBaud(cachedVersion);
+            AsgSettings settings = new AsgSettings(context);
+            return shouldProbeAlternateBaud(
+                    settings.getBesBaudSwitchVersion(), settings.getBesFirmwareVersion());
         } catch (Exception e) {
             Log.w(BAUD_TAG, "Could not read cached BES version; staying at rendezvous baud", e);
             return false;
         }
+    }
+
+    /** Prefer the exact capability-gate field; the display version is a migration fallback. */
+    static boolean shouldProbeAlternateBaud(String cachedGateVersion, String cachedDisplayVersion) {
+        if (cachedGateVersion != null && !cachedGateVersion.trim().isEmpty()) {
+            return shouldProbeAlternateBaud(cachedGateVersion);
+        }
+        return shouldProbeAlternateBaud(cachedDisplayVersion);
     }
 
     /** Pure compatibility gate for the boot-only alternate-baud probe. */
@@ -1270,6 +1279,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             } else {
                 bData = new org.json.JSONObject(bFieldStr);
             }
+            cacheBesBaudSwitchVersion(bData);
             cacheBesVersionFromSyvrBField(bData);
 
             // Runtime UART baud switch: sr_syvr either confirms our post-reopen probe or,
@@ -1415,6 +1425,13 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         }
         if (!v.isEmpty()) {
             cacheBesFirmwareVersion(v);
+        }
+    }
+
+    private void cacheBesBaudSwitchVersion(JSONObject bData) {
+        String version = extractBaudSwitchVersion(bData);
+        if (!version.isEmpty()) {
+            new AsgSettings(context).setBesBaudSwitchVersion(version);
         }
     }
 
