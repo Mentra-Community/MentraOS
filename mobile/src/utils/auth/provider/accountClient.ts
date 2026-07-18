@@ -134,6 +134,7 @@ export class AccountAuthProvider extends AuthClient {
       // would make the caller clearTokens() out from under it.
       const current = loadTokens()
       if (current && current.refresh !== refresh) return current
+      console.log(`MENTRA AUTH: refresh grant rejected (HTTP ${res.status}), session is dead`)
       return null
     }
     if (!res.ok) throw new Error(`refresh failed transiently: HTTP ${res.status}`)
@@ -161,6 +162,7 @@ export class AccountAuthProvider extends AuthClient {
     if (!AccountAuthProvider.tokenRejected(probe.status)) return tokens.access
     const refreshed = await this.refreshTokens(tokens.refresh)
     if (!refreshed) {
+      console.log(`MENTRA AUTH: clearing tokens, refresh rejected after /me probe (HTTP ${probe.status})`)
       clearTokens()
       throw new Error("session expired")
     }
@@ -192,6 +194,11 @@ export class AccountAuthProvider extends AuthClient {
             headers: {authorization: `Bearer ${access}`},
           }).catch(() => null)
         } else if (!offline) {
+          // getSession() runs on cold boot but also from deeplink auth checks
+          // and reset-password, so don't claim "boot" here.
+          console.log(
+            `MENTRA AUTH: getSession clearing tokens, /me rejected (HTTP ${meRes?.status}) and refresh grant rejected`,
+          )
           clearTokens()
           return {token: undefined}
         }
