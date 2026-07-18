@@ -44,9 +44,7 @@ function input(partial: Partial<AudioGuidanceInput> = {}): AudioGuidanceInput {
 }
 
 async function settleSpeech(): Promise<void> {
-  await Promise.resolve()
-  await Promise.resolve()
-  await Promise.resolve()
+  for (let i = 0; i < 6; i += 1) await Promise.resolve()
 }
 
 afterEach(() => {
@@ -94,6 +92,34 @@ describe("AudioGuidanceManager", () => {
     await settleSpeech()
 
     expect(spoken).toHaveLength(3)
+  })
+
+  test("binding a late pivot does not replay the same maneuver", async () => {
+    const {manager, spoken} = createHarness()
+    manager.setMode("full")
+
+    manager.observe(input({distanceMeters: 50, pivotIndex: null}))
+    await settleSpeech()
+    manager.observe(input({distanceMeters: 48, pivotIndex: 0}))
+    await settleSpeech()
+
+    expect(spoken).toEqual(["In 50 meters, turn left onto Market Street."])
+  })
+
+  test("start confirmation leads a maneuver received during startup", async () => {
+    jest.useFakeTimers({now: 100_000})
+    const {manager, spoken} = createHarness()
+    manager.setMode("full")
+    manager.beginTrip()
+
+    manager.observe(input({distanceMeters: 50}))
+    expect(spoken).toEqual([])
+    manager.confirmTripStarted(null)
+    await settleSpeech()
+    jest.advanceTimersByTime(4_000)
+    await settleSpeech()
+
+    expect(spoken).toEqual(["Navigation started.", "In 50 meters, turn left onto Market Street."])
   })
 
   test("rerouting and arrival are each announced once", async () => {

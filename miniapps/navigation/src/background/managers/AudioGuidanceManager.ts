@@ -61,8 +61,11 @@ export class AudioGuidanceManager {
   private available = false
   private mode: VoiceGuidanceMode = "off"
   private tripActive = false
+  private tripConfirmed = false
+  private latestUnconfirmedInput: AudioGuidanceInput | null = null
   private lastStatus: NavStatus = "idle"
   private currentManeuverKey: string | null = null
+  private currentPivotIndex: number | null = null
   private currentRepeatPhrase: string | null = null
   private lastSignature = ""
   private lastDistance: number | null = null
@@ -70,6 +73,7 @@ export class AudioGuidanceManager {
   private spokenStages = new Set<string>()
   private speakingGeneration = 0
   private speaking = false
+  private speakingPriority = 0
   private pending: Prompt | null = null
   private pendingTimer: ReturnType<typeof setTimeout> | null = null
   private lastPromptStartedAt = 0
@@ -91,19 +95,29 @@ export class AudioGuidanceManager {
   }
 
   beginTrip(): void {
+    this.stopSpeech()
     this.tripActive = true
+    this.tripConfirmed = false
+    this.latestUnconfirmedInput = null
     this.lastStatus = "navigating"
     this.resetManeuverState()
   }
 
   confirmTripStarted(destinationName: string | null): void {
-    if (!this.canSpeak()) return
-    const destination = cleanSpokenText(destinationName)
-    this.enqueue({
-      text: destination ? `Navigation started to ${destination}.` : "Navigation started.",
-      priority: 50,
-      expiresAt: Date.now() + 12_000,
-    })
+    if (!this.tripActive) return
+    this.tripConfirmed = true
+    if (this.canSpeak()) {
+      const destination = cleanSpokenText(destinationName)
+      this.enqueue({
+        text: destination ? `Navigation started to ${destination}.` : "Navigation started.",
+        // Lead the first maneuver cue, but still allow arrival to interrupt.
+        priority: 100,
+        expiresAt: Date.now() + 12_000,
+      })
+    }
+    const latest = this.latestUnconfirmedInput
+    this.latestUnconfirmedInput = null
+    if (latest) this.observe(latest)
   }
 
   observe(input: AudioGuidanceInput): void {
@@ -112,6 +126,22 @@ export class AudioGuidanceManager {
     if (!input.running && input.status === "idle") {
       if (this.tripActive) this.endTrip()
       this.lastStatus = input.status
+      return
+    }
+
+    // Keep the manager usable for an already-running session restored by the
+    // host, where beginTrip()/confirmTripStarted() did not occur in this JS
+    // lifetime. Explicit new trips still enter the unconfirmed path below.
+    if (!this.tripActive && input.running && input.status === "navigating") {
+      this.tripActive = true
+      this.tripConfirmed = true
+    }
+
+    // The native engine can emit its first maneuver before navigation.start()
+    // resolves. Keep only the freshest update and replay it after the start
+    // confirmation so spoken guidance never leads with a turn instruction.
+    if (this.tripActive && !this.tripConfirmed) {
+      this.latestUnconfirmedInput = input
       return
     }
 
@@ -142,26 +172,33 @@ export class AudioGuidanceManager {
 
     const signature = `${input.routeRevision}|${maneuverType}|${instruction.toLowerCase()}`
     const thresholds = THRESHOLDS[input.travelMode]
-    if (
+    // Consecutive identical turns without pivot metadata advance by jumping
+    // from a near-zero distance to the next turn's much larger distance.
+    const distanceRebounded =
       input.pivotIndex == null &&
       signature === this.lastSignature &&
       distance != null &&
       this.lastDistance != null &&
       distance > this.lastDistance + Math.max(25, thresholds.prepareMeters / 2)
-    ) {
-      // Consecutive identical turns without pivot metadata: the native engine
-      // advances by jumping from a near-zero distance to the next turn's much
-      // larger distance. Treat that rebound as a new semantic maneuver.
+
+    const pivotChanged =
+      this.currentPivotIndex != null && input.pivotIndex != null && input.pivotIndex !== this.currentPivotIndex
+    const newSemanticManeuver =
+      this.currentManeuverKey == null || signature !== this.lastSignature || pivotChanged || distanceRebounded
+    if (newSemanticManeuver) {
       this.syntheticSequence += 1
+      this.currentManeuverKey = `${signature}|semantic-${this.syntheticSequence}`
+      this.currentPivotIndex = input.pivotIndex
+      this.pending = this.pending?.maneuverKey ? null : this.pending
+    } else if (this.currentPivotIndex == null && input.pivotIndex != null) {
+      // The same maneuver first arrived before PivotEngine bound metadata.
+      // Attach the pivot without changing its identity or replaying stages.
+      this.currentPivotIndex = input.pivotIndex
     }
     this.lastSignature = signature
     this.lastDistance = distance
-
-    const maneuverKey = `${signature}|${input.pivotIndex ?? `synthetic-${this.syntheticSequence}`}`
-    if (maneuverKey !== this.currentManeuverKey) {
-      this.currentManeuverKey = maneuverKey
-      this.pending = this.pending?.maneuverKey ? null : this.pending
-    }
+    const maneuverKey = this.currentManeuverKey
+    if (!maneuverKey) return
 
     const preparePhrase = buildPreparationPhrase(instruction, distance, input.unitSystem)
     const nowPhrase = buildNowPhrase(instruction, maneuverType)
@@ -218,6 +255,8 @@ export class AudioGuidanceManager {
 
   endTrip(): void {
     this.tripActive = false
+    this.tripConfirmed = false
+    this.latestUnconfirmedInput = null
     this.lastStatus = "idle"
     this.currentRepeatPhrase = null
     this.resetManeuverState()
@@ -235,6 +274,7 @@ export class AudioGuidanceManager {
 
   private resetManeuverState(): void {
     this.currentManeuverKey = null
+    this.currentPivotIndex = null
     this.currentRepeatPhrase = null
     this.lastSignature = ""
     this.lastDistance = null
@@ -252,7 +292,7 @@ export class AudioGuidanceManager {
       // after "turn now", when it is both stale and actively confusing.
       this.pending = null
       this.clearPendingTimer()
-      if (this.speaking) {
+      if (this.speaking && prompt.priority >= this.speakingPriority) {
         this.speaker.stop()
         this.startPrompt(prompt)
         return
@@ -283,6 +323,7 @@ export class AudioGuidanceManager {
     if (!this.isPromptValid(prompt)) return
     const generation = ++this.speakingGeneration
     this.speaking = true
+    this.speakingPriority = prompt.priority
     this.lastPromptStartedAt = Date.now()
     this.log(`VOICE ${prompt.text}`)
     void this.speaker
@@ -298,6 +339,7 @@ export class AudioGuidanceManager {
       .finally(() => {
         if (generation !== this.speakingGeneration) return
         this.speaking = false
+        this.speakingPriority = 0
         this.drainPending()
       })
   }
@@ -321,6 +363,7 @@ export class AudioGuidanceManager {
     this.speakingGeneration += 1
     if (this.speaking) this.speaker.stop()
     this.speaking = false
+    this.speakingPriority = 0
   }
 
   private clearPendingTimer(): void {
