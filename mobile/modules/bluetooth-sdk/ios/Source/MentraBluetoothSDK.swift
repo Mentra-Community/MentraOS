@@ -1448,8 +1448,20 @@ public final class MentraBluetoothSDK {
 
     private func handleStreamStatusForRequests(_ event: StreamStatusEvent) {
         if let (streamId, start) = matchingStreamStart(for: event) {
+            // Preemption is only proven by statuses the start path emits after
+            // the glasses' stopAllServices has run: initializing, reconnecting,
+            // reconnected, streaming. An id-stamped `error` can be a
+            // command-level preflight rejection (#3488 firmware) emitted
+            // synchronously before stopAllServices, and `stopped` is a
+            // stop-ack for a previous stream — treating either as a winner
+            // could reject an older start that is still healthy.
             if let eventStreamId = event.streamId, !eventStreamId.isEmpty {
-                rejectPreemptedStreamStarts(winnerSeq: start.seq)
+                switch event.state {
+                case .initializing, .reconnecting, .reconnected, .streaming:
+                    rejectPreemptedStreamStarts(winnerSeq: start.seq)
+                default:
+                    break
+                }
             }
             switch event.state {
             // `reconnected` also proves the stream is live: when an async start
@@ -1502,11 +1514,12 @@ public final class MentraBluetoothSDK {
     }
 
     // The glasses process BLE commands FIFO and every start_stream begins by
-    // stopping whatever runs, so an id-carrying status for start X (any state)
-    // proves every lower-seq start has already been preempted. Their
-    // only verdict on current firmware is a streamId-less stopped, which the
-    // id-less heuristic deliberately ignores — without this they would run out
-    // the 30s timeout instead of failing fast.
+    // stopping whatever runs, so an id-carrying status proving start X's
+    // start path ran on the glasses also proves every lower-seq start has
+    // already been preempted. Their only verdict on current firmware is a
+    // streamId-less stopped, which the id-less heuristic deliberately
+    // ignores — without this they would run out the 30s timeout instead of
+    // failing fast.
     private func rejectPreemptedStreamStarts(winnerSeq: Int) {
         for (streamId, start) in pendingStreamStarts where start.seq < winnerSeq {
             pendingStreamStarts.removeValue(forKey: streamId)
