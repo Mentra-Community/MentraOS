@@ -594,7 +594,7 @@ public class SrtStreamingService extends Service {
               Log.e(TAG, "Error starting SRT stream", (Throwable) o);
               mStreamState = StreamState.IDLE;
               mIsStreaming = false;
-              if (sStatusCallback != null) sStatusCallback.onStreamError(errorMsg, mCurrentStreamId);
+              if (sStatusCallback != null) sStatusCallback.onStreamError(errorMsg, mCurrentStreamId, true);
               StreamingReporting.reportStreamStartFailure(SrtStreamingService.this, mSrtUrl, ((Throwable) o).getMessage(), (Throwable) o);
               scheduleReconnect("start_error");
             } else {
@@ -614,7 +614,7 @@ public class SrtStreamingService extends Service {
       String errorMsg = "Failed to start SRT streaming: " + e.getMessage();
       Log.e(TAG, errorMsg, e);
       synchronized (mStateLock) { mStreamState = StreamState.IDLE; mIsStreaming = false; }
-      if (sStatusCallback != null) sStatusCallback.onStreamError(errorMsg, mCurrentStreamId);
+      if (sStatusCallback != null) sStatusCallback.onStreamError(errorMsg, mCurrentStreamId, true);
       StreamingReporting.reportStreamStartFailure(SrtStreamingService.this, mSrtUrl, e.getMessage(), e);
       scheduleReconnect("start_exception");
     }

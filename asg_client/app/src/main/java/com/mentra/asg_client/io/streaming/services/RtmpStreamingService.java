@@ -887,7 +887,7 @@ public class RtmpStreamingService extends Service {
                             mIsStreaming = false;
                             EventBus.getDefault().post(new StreamingEvent.Error(errorMsg));
                             if (sStatusCallback != null) {
-                                sStatusCallback.onStreamError(errorMsg, mCurrentStreamId);
+                                sStatusCallback.onStreamError(errorMsg, mCurrentStreamId, true);
                             }
 
                             // Report stream start failure
@@ -949,7 +949,7 @@ public class RtmpStreamingService extends Service {
             }
             EventBus.getDefault().post(new StreamingEvent.Error(errorMsg));
             if (sStatusCallback != null) {
-                sStatusCallback.onStreamError(errorMsg, mCurrentStreamId);
+                sStatusCallback.onStreamError(errorMsg, mCurrentStreamId, true);
             }
 
             // Report stream start failure

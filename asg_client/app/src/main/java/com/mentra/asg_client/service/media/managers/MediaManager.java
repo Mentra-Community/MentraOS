@@ -375,14 +375,17 @@ public class MediaManager implements IMediaManager {
             }
 
             @Override
-            public void onStreamError(String error, String streamId) {
-                Log.e(TAG, "Stream error: " + error);
+            public void onStreamError(String error, String streamId, boolean willRetry) {
+                Log.e(TAG, "Stream error: " + error + (willRetry ? " (will retry)" : ""));
                 try {
                     JSONObject status = new JSONObject();
                     status.put("type", "stream_status");
                     status.put("status", "error");
                     status.put("errorDetails", error);
                     if (streamId != null && !streamId.isEmpty()) status.put("streamId", streamId);
+                    // Additive field: the phone treats an id-carrying error as terminal
+                    // unless the glasses flag that a reconnect is already scheduled.
+                    if (willRetry) status.put("willRetry", true);
                     sendStreamStatusResponse(false, status);
                 } catch (JSONException e) {
                     Log.e(TAG, "Error creating stream error status", e);
