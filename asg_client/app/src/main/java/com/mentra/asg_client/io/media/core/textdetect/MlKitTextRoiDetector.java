@@ -1,16 +1,20 @@
 package com.mentra.asg_client.io.media.core.textdetect;
 
+import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.graphics.Rect;
+import android.os.Build;
 import android.os.SystemClock;
+import android.os.UserManager;
 import android.util.Log;
 
 import androidx.annotation.Nullable;
 
 import com.google.android.gms.tasks.Task;
 import com.google.android.gms.tasks.Tasks;
+import com.google.mlkit.common.MlKit;
 import com.google.mlkit.vision.common.InputImage;
 import com.google.mlkit.vision.text.Text;
 import com.google.mlkit.vision.text.TextRecognition;
@@ -36,26 +40,29 @@ public final class MlKitTextRoiDetector implements AutoCloseable {
     private static final String TAG = "MlKitTextRoi";
     private static final Executor DIRECT_EXECUTOR = Runnable::run;
 
-    private final TextRecognizer recognizer;
+    @Nullable private final Context context;
     private final int analysisLongEdge;
+    private final Object recognizerLock = new Object();
+
+    @Nullable private TextRecognizer recognizer;
 
     private final AtomicReference<Task<Text>> warmupTask = new AtomicReference<>();
     private final AtomicReference<Task<Text>> activeRecognizerTask = new AtomicReference<>();
     private volatile boolean closed;
 
-    public MlKitTextRoiDetector() {
-        this(AsgConstants.TEXT_MODE_MLKIT_ANALYSIS_LONG_EDGE);
+    public MlKitTextRoiDetector(Context context) {
+        this(context, AsgConstants.TEXT_MODE_MLKIT_ANALYSIS_LONG_EDGE);
     }
 
     /** Visible for the on-device benchmark harness. */
-    MlKitTextRoiDetector(int analysisLongEdge) {
-        this(
-                analysisLongEdge,
-                TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS));
+    MlKitTextRoiDetector(Context context, int analysisLongEdge) {
+        this.context = context.getApplicationContext();
+        this.analysisLongEdge = analysisLongEdge;
     }
 
     /** Visible for unit tests that exercise recognizer lifecycle failures. */
     MlKitTextRoiDetector(int analysisLongEdge, TextRecognizer recognizer) {
+        this.context = null;
         this.analysisLongEdge = analysisLongEdge;
         this.recognizer = recognizer;
     }
@@ -92,6 +99,10 @@ public final class MlKitTextRoiDetector implements AutoCloseable {
 
     @Nullable
     private Task<Text> tryStartRecognizerProcess(InputImage image) {
+        TextRecognizer availableRecognizer = getOrCreateRecognizer();
+        if (availableRecognizer == null) {
+            return null;
+        }
         synchronized (activeRecognizerTask) {
             Task<Text> activeTask = activeRecognizerTask.get();
             if (activeTask != null && !activeTask.isComplete()) {
@@ -100,13 +111,60 @@ public final class MlKitTextRoiDetector implements AutoCloseable {
             if (activeTask != null) {
                 activeRecognizerTask.compareAndSet(activeTask, null);
             }
-            Task<Text> newTask = recognizer.process(image);
-            activeRecognizerTask.set(newTask);
-            newTask.addOnCompleteListener(
-                    DIRECT_EXECUTOR,
-                    completedTask -> activeRecognizerTask.compareAndSet(completedTask, null));
-            return newTask;
+            try {
+                Task<Text> newTask = availableRecognizer.process(image);
+                activeRecognizerTask.set(newTask);
+                newTask.addOnCompleteListener(
+                        DIRECT_EXECUTOR,
+                        completedTask -> activeRecognizerTask.compareAndSet(completedTask, null));
+                return newTask;
+            } catch (RuntimeException error) {
+                Log.w(TAG, "Unable to start ML Kit recognition; preserving full frame", error);
+                return null;
+            }
         }
+    }
+
+    /**
+     * Initializes ML Kit on first use rather than during direct-boot service construction.
+     *
+     * <p>ML Kit's manifest provider is not direct-boot-aware. Mentra Live starts this process from
+     * {@code LOCKED_BOOT_COMPLETED}, so the provider is skipped and is not rerun when the same
+     * process later unlocks. The public initialization API repairs that state once credential
+     * storage is available.
+     */
+    @Nullable
+    private TextRecognizer getOrCreateRecognizer() {
+        synchronized (recognizerLock) {
+            if (closed) {
+                return null;
+            }
+            if (recognizer != null) {
+                return recognizer;
+            }
+            if (context == null || !isUserUnlocked(context)) {
+                return null;
+            }
+            try {
+                MlKit.initialize(context);
+                recognizer =
+                        TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS);
+                return recognizer;
+            } catch (RuntimeException error) {
+                // Do not permanently disable detection: a later capture may run after Android has
+                // finished unlocking or after another transient initialization failure clears.
+                Log.w(TAG, "ML Kit is not ready; preserving full frame", error);
+                return null;
+            }
+        }
+    }
+
+    private static boolean isUserUnlocked(Context context) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
+            return true;
+        }
+        UserManager userManager = context.getSystemService(UserManager.class);
+        return userManager == null || userManager.isUserUnlocked();
     }
 
     private void handleWarmupCompletion(Task<Text> completedTask) {
@@ -376,7 +434,12 @@ public final class MlKitTextRoiDetector implements AutoCloseable {
         synchronized (warmupTask) {
             if (!closed) {
                 closed = true;
-                recognizer.close();
+                synchronized (recognizerLock) {
+                    if (recognizer != null) {
+                        recognizer.close();
+                        recognizer = null;
+                    }
+                }
             }
         }
     }
