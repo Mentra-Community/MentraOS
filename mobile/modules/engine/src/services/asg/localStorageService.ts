@@ -305,9 +305,11 @@ export class LocalStorageService {
     const localFiles = downloadedFiles || (await this.getDownloadedFiles())
     let released = 0
     for (const captureId of captureIds) {
-      if (localFiles[captureId]) continue
       const entry = galleryTransferLedger.get(captureId)
       if (!entry || !galleryTransferLedger.isLocallyCommitted(captureId)) continue
+      const localFile = localFiles[captureId]
+      const localFileExists = localFile?.filePath ? await RNFS.exists(localFile.filePath).catch(() => false) : false
+      if (localFileExists) continue
       galleryTransferLedger.releaseMissingLocalCommit(captureId, true)
       released++
     }

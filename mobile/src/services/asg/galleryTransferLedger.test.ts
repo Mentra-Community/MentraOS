@@ -1,7 +1,11 @@
 // This test targets the engine source directly because the ledger is intentionally internal.
+import * as RNFS from "@dr.pogodin/react-native-fs"
+
 import {galleryTransferLedger} from "../../../modules/engine/src/services/asg/galleryTransferLedger"
 import {localStorageService} from "../../../modules/engine/src/services/asg/localStorageService"
 import {storage} from "../../../modules/engine/src/utils/storage"
+
+const mockExists = RNFS.exists as jest.Mock
 
 jest.mock("@dr.pogodin/react-native-fs", () => ({
   DocumentDirectoryPath: "/current/Documents",
@@ -10,6 +14,10 @@ jest.mock("@dr.pogodin/react-native-fs", () => ({
 }))
 
 describe("galleryTransferLedger", () => {
+  beforeEach(() => {
+    mockExists.mockResolvedValue(true)
+  })
+
   it("resets a committed entry when v3 introduces a different source generation", () => {
     const captureId = `IMG_generation_${Date.now()}`
     const legacyCapture = {
@@ -148,6 +156,41 @@ describe("galleryTransferLedger", () => {
 
     const released = await localStorageService.reconcileRemoteCaptures([captureId])
 
+    expect(released).toBe(1)
+    expect(galleryTransferLedger.get(captureId)?.state).toBe("RESTORE_PENDING")
+  })
+
+  it("releases a restored local record when its media file is missing", async () => {
+    const captureId = `IMG_missing_restored_file_${Date.now()}`
+    const filePath = `/current/Documents/MentraPhotos/${captureId}/base.jpg`
+    galleryTransferLedger.ensureCapture(
+      {
+        capture_id: captureId,
+        type: "photo",
+        timestamp: 1000,
+        total_size: 100,
+        files: [{name: `${captureId}/base.jpg`, size: 100, role: "primary"}],
+      },
+      3,
+    )
+    galleryTransferLedger.transition(captureId, "TRASHED", {finalPath: filePath})
+    storage.save("asg_downloaded_files", {
+      [captureId]: {
+        name: captureId,
+        filePath: `MentraPhotos/${captureId}/base.jpg`,
+        size: 100,
+        modified: 1000,
+        mime_type: "image/jpeg",
+        is_video: false,
+        downloaded_at: 1000,
+        capture_id: captureId,
+      },
+    })
+    mockExists.mockResolvedValue(false)
+
+    const released = await localStorageService.reconcileRemoteCaptures([captureId])
+
+    expect(mockExists).toHaveBeenCalledWith(filePath)
     expect(released).toBe(1)
     expect(galleryTransferLedger.get(captureId)?.state).toBe("RESTORE_PENDING")
   })
