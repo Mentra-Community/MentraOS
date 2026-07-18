@@ -42,6 +42,16 @@ export interface TakePhotoOptions {
    * manual exposure; ignored otherwise.
    */
   exposureTimeNs?: number
+  /**
+   * Override the SDK's default 60s request timeout for this capture only.
+   * Leave unset for a normal user-triggered capture (the full 60s ceiling is
+   * appropriate there). Callers that speculatively fire a capture and may
+   * abandon it if the result isn't needed (e.g. a short-lived non-visual
+   * assistant turn racing a capture against a ~1s latency cap) should pass a
+   * short value here so the abandoned `takePhoto()` promise settles quickly
+   * instead of sitting on the default 60s ceiling.
+   */
+  timeoutMs?: number
 }
 
 export interface PhotoTaken {
@@ -124,15 +134,18 @@ export class CameraModule {
    * `session.capabilities.hasCamera` before calling.
    */
   async takePhoto(options: TakePhotoOptions = {}): Promise<PhotoTaken> {
-    return this.session.sendRequest<PhotoTaken>({
-      type: MiniappRequestType.PHOTO,
-      size: options.size ?? "medium",
-      mode: options.mode ?? "photo",
-      compress: options.compress ?? "none",
-      sound: options.sound ?? true,
-      saveToGallery: options.saveToGallery ?? false,
-      exposureTimeNs: options.exposureTimeNs,
-    })
+    return this.session.sendRequest<PhotoTaken>(
+      {
+        type: MiniappRequestType.PHOTO,
+        size: options.size ?? "medium",
+        mode: options.mode ?? "photo",
+        compress: options.compress ?? "none",
+        sound: options.sound ?? true,
+        saveToGallery: options.saveToGallery ?? false,
+        exposureTimeNs: options.exposureTimeNs,
+      },
+      options.timeoutMs != null ? {timeoutMs: options.timeoutMs} : undefined,
+    )
   }
 
   /**
