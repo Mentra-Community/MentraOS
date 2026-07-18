@@ -196,7 +196,10 @@ public final class MentraBluetoothSDK {
     private var pendingSettingsRequests: [String: PendingResponse<SettingsAckEvent>] = [:]
     private var pendingStreamStarts: [String: PendingStreamStart] = [:]
     private var streamStartSeq = 0
-    private var pendingStreamStop: (streamId: String?, pending: PendingResponse<StreamStatusEvent>)?
+    // seq is the stop's slot in the shared streamStartSeq order (drawn in the
+    // same await-free MainActor turn that sends the command): every pending
+    // start with a lower seq reached the glasses' FIFO before this stop.
+    private var pendingStreamStop: (streamId: String?, seq: Int, pending: PendingResponse<StreamStatusEvent>)?
     private var pendingGalleryStatus: PendingResponse<GalleryStatusEvent>?
     private var pendingOtaQuery: PendingResponse<OtaQueryResult>?
     private var pendingOtaStart: PendingResponse<OtaStartAckEvent>?
@@ -947,7 +950,13 @@ public final class MentraBluetoothSDK {
             )
         }
         let pending = PendingResponse<StreamStatusEvent>(operation: "stop stream")
-        pendingStreamStop = (streamId: activeStreamKeepAlive?.streamId, pending: pending)
+        // The seq draw and the BLE hand-off stay in this single await-free
+        // MainActor turn, sharing startStream's ordering critical section:
+        // the stop takes its own slot in the send order, so its ack can
+        // separate the pending starts the glasses consumed before it (lower
+        // seq) from starts sent after it (higher seq).
+        streamStartSeq += 1
+        pendingStreamStop = (streamId: activeStreamKeepAlive?.streamId, seq: streamStartSeq, pending: pending)
         stopStreamKeepAliveMonitor()
         DeviceManager.shared.stopStream()
         do {
@@ -1481,6 +1490,7 @@ public final class MentraBluetoothSDK {
                 if pendingStreamStop?.pending === stop.pending {
                     pendingStreamStop = nil
                 }
+                rejectStreamStartsSuperseded(byStopSeq: stop.seq)
                 stop.pending.resolve(stoppedStreamEvent(from: event, fallbackStreamId: stop.streamId))
             } else if event.state == .error || event.state == .reconnectFailed {
                 if pendingStreamStop?.pending === stop.pending {
@@ -1505,6 +1515,23 @@ public final class MentraBluetoothSDK {
                     code: "stream_preempted",
                     message: "start stream \(streamId) was preempted by a newer start_stream; "
                         + "the glasses run a single stream and the last request wins."
+                )
+            )
+        }
+    }
+
+    // The glasses process BLE commands FIFO, so this stop's ack also settles
+    // every start sent before it: whatever those starts brought up (or would
+    // have brought up) has been stopped, and no further status will arrive
+    // for them. Without this they would run out the 30s start timeout.
+    // Starts sent after the stop keep waiting for their own statuses.
+    private func rejectStreamStartsSuperseded(byStopSeq stopSeq: Int) {
+        for (streamId, start) in pendingStreamStarts where start.seq < stopSeq {
+            pendingStreamStarts.removeValue(forKey: streamId)
+            start.pending.reject(
+                BluetoothSdkError(
+                    code: "stream_stopped",
+                    message: "start stream \(streamId) was superseded by a stop_stream issued after it."
                 )
             )
         }

@@ -123,6 +123,10 @@ class MentraBluetoothSdk private constructor(
 
     private data class PendingStreamStop(
         val streamId: String?,
+        // The stop's slot in the shared streamStartSeq order (drawn inside
+        // streamStartOrderLock at send time): every pending start with a
+        // lower seq reached the glasses' FIFO before this stop.
+        val seq: Long,
         val pending: PendingResponse<StreamStatusEvent>,
     )
 
@@ -919,18 +923,25 @@ class MentraBluetoothSdk private constructor(
         val targetStreamId = synchronized(streamKeepAliveLock) {
             activeStreamKeepAlive?.streamId
         }
-        synchronized(oneShotLock) {
-            if (pendingStreamStop != null) {
-                throw BluetoothSdkException(
-                    "request_in_flight",
-                    "A stream stop command is already waiting for a glasses response.",
-                )
-            }
-            pendingStreamStop = PendingStreamStop(targetStreamId, pending)
-        }
-        stopStreamKeepAliveMonitor()
         try {
-            deviceManager.stopStream()
+            // The seq draw and the BLE hand-off share startStream's ordering
+            // critical section: the stop takes its own slot in the send order,
+            // so its ack can separate the pending starts the glasses consumed
+            // before it (lower seq) from starts sent after it (higher seq).
+            synchronized(streamStartOrderLock) {
+                synchronized(oneShotLock) {
+                    if (pendingStreamStop != null) {
+                        throw BluetoothSdkException(
+                            "request_in_flight",
+                            "A stream stop command is already waiting for a glasses response.",
+                        )
+                    }
+                    pendingStreamStop =
+                        PendingStreamStop(targetStreamId, streamStartSeq.incrementAndGet(), pending)
+                }
+                stopStreamKeepAliveMonitor()
+                deviceManager.stopStream()
+            }
             return pending.await(STREAM_STOP_TIMEOUT_MS)
         } finally {
             synchronized(oneShotLock) {
@@ -1609,6 +1620,7 @@ class MentraBluetoothSdk private constructor(
                             pendingStreamStop = null
                         }
                     }
+                    rejectStreamStartsSupersededByStop(stop.seq)
                     stop.pending.resolve(stoppedStreamEvent(event, stop.streamId))
                 }
                 event.state == StreamState.ERROR || event.state == StreamState.RECONNECT_FAILED -> {
@@ -1638,6 +1650,24 @@ class MentraBluetoothSdk private constructor(
                         "stream_preempted",
                         "start stream $streamId was preempted by a newer start_stream; " +
                             "the glasses run a single stream and the last request wins.",
+                    )
+                )
+            }
+        }
+    }
+
+    // The glasses process BLE commands FIFO, so this stop's ack also settles
+    // every start sent before it: whatever those starts brought up (or would
+    // have brought up) has been stopped, and no further status will arrive
+    // for them. Without this they would run out the 30s start timeout.
+    // Starts sent after the stop keep waiting for their own statuses.
+    private fun rejectStreamStartsSupersededByStop(stopSeq: Long) {
+        for ((streamId, start) in pendingStreamStarts) {
+            if (start.seq < stopSeq && pendingStreamStarts.remove(streamId, start)) {
+                start.pending.reject(
+                    BluetoothSdkException(
+                        "stream_stopped",
+                        "start stream $streamId was superseded by a stop_stream issued after it.",
                     )
                 )
             }
