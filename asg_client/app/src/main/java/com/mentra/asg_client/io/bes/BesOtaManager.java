@@ -1122,6 +1122,9 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
             if (msg.len == 1 && msg.body != null && msg.body[0] == 1) {
                 Log.i(TAG, "BES firmware update SUCCESS! BES will reboot.");
                 EventBus.getDefault().post(BesOtaProgressEvent.createFinished());
+                if (comManager != null) {
+                    comManager.notifyBesOtaApplied();
+                }
             } else {
                 Log.e(TAG, "Apply firmware error");
                 EventBus.getDefault()
