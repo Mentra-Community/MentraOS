@@ -287,6 +287,50 @@ describe("mediaProcessingQueue", () => {
     recoverySpy.mockRestore()
   })
 
+  it("repairs a stale local index from the durable transfer path before retrying export", async () => {
+    ;(RNFS.exists as jest.Mock).mockResolvedValue(true)
+    ;(RNFS.stat as jest.Mock).mockResolvedValue({size: 75})
+    ;(localStorageService.getDownloadedFile as jest.Mock).mockResolvedValueOnce({
+      name: "IMG_recover_stale_index",
+      filePath: "/tmp/old-generation/base.jpg",
+      capture_id: "IMG_recover_stale_index",
+      size: 100,
+      modified: 500,
+    })
+    ;(cameraRollExportCoordinator.isAutoSaveEnabled as jest.Mock).mockResolvedValueOnce(true)
+    const capture = {
+      capture_id: "IMG_recover_stale_index",
+      type: "photo" as const,
+      timestamp: 1000,
+      total_size: 100,
+      files: [{name: "IMG_recover_stale_index/base.jpg", size: 100, role: "primary" as const}],
+    }
+    galleryTransferLedger.ensureCapture(capture, 3)
+    const entry = galleryTransferLedger.transition(capture.capture_id, "EXPORT_PENDING", {
+      finalPath: "/tmp/current-generation/base.jpg",
+      thumbnailPath: "/tmp/current-generation/thumb.jpg",
+      shouldAutoSave: true,
+    })
+    const recoverySpy = jest.spyOn(galleryTransferLedger, "pendingRecovery").mockReturnValue([entry])
+
+    await expect(mediaProcessingQueue.retryPending()).resolves.toEqual({retried: 1, failed: 0})
+
+    expect(localStorageService.saveDownloadedFile).toHaveBeenCalledWith(
+      expect.objectContaining({
+        filePath: entry.finalPath,
+        capture_id: capture.capture_id,
+        size: 75,
+        modified: capture.timestamp,
+      }),
+    )
+    expect(cameraRollExportCoordinator.exportForSource).toHaveBeenCalledWith(
+      expect.objectContaining({filePath: entry.finalPath, size: 75, modified: capture.timestamp}),
+      capture.capture_id,
+    )
+    expect(galleryTransferLedger.get(capture.capture_id)?.state).toBe("TRASHED")
+    recoverySpy.mockRestore()
+  })
+
   it("acks recovered EXPORT_PENDING media when automatic saving is now disabled", async () => {
     ;(RNFS.exists as jest.Mock).mockResolvedValue(true)
     ;(RNFS.stat as jest.Mock).mockResolvedValue({size: 100})

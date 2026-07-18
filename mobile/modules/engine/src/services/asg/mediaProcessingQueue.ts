@@ -466,23 +466,46 @@ class MediaProcessingQueue {
 
   /** Rebuild a missing app-local index row from the durable transfer ledger. */
   private async recoverDownloadedFile(entry: GalleryTransferEntry) {
-    const indexed = await localStorageService.getDownloadedFile(entry.captureId)
-    if (indexed) return indexed
     if (!entry.finalPath) throw new Error(`Recovery file is missing for ${entry.captureId}`)
 
-    const stat = await RNFS.stat(entry.finalPath)
+    // The transfer ledger is the durable source of truth for a committed generation. A local
+    // index row can survive an interrupted replacement and still point at an older/missing path,
+    // or contain the pre-processing size. Only reuse it when its path and identity still match the
+    // ledger's committed file; otherwise rebuild the row before export or source acknowledgement.
+    const finalPath = entry.finalPath.replace(/^file:\/\//, "")
+    const indexed = await localStorageService.getDownloadedFile(entry.captureId)
+    if (indexed) {
+      try {
+        const indexedPath = indexed.filePath?.replace(/^file:\/\//, "")
+        if (indexedPath === finalPath && (await RNFS.exists(indexedPath))) {
+          const indexedStat = await RNFS.stat(indexedPath)
+          const indexedSize = Number(indexedStat.size)
+          if (indexedSize > 0 && indexed.size === indexedSize && indexed.modified === entry.timestamp) {
+            return indexed
+          }
+        }
+      } catch (error) {
+        console.warn(`${TAG} Ignoring stale local index for ${entry.captureId}:`, error)
+      }
+    }
+
+    const stat = await RNFS.stat(finalPath)
+    const finalSize = Number(stat.size)
+    if (!Number.isFinite(finalSize) || finalSize <= 0) {
+      throw new Error(`Recovery file is missing or empty for ${entry.captureId}`)
+    }
     const recovered = localStorageService.convertToDownloadedFile(
       {
         name: entry.captureId,
         url: "",
         download: "",
-        size: Number(stat.size) || entry.totalSize,
+        size: finalSize,
         modified: entry.timestamp,
         mime_type: entry.captureType === "video" ? "video/mp4" : "image/jpeg",
         is_video: entry.captureType === "video",
-        filePath: entry.finalPath,
+        filePath: finalPath,
       },
-      entry.finalPath,
+      finalPath,
       entry.thumbnailPath,
     )
     recovered.capture_id = entry.captureId

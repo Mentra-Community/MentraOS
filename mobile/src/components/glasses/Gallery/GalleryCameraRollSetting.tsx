@@ -137,7 +137,11 @@ export function GalleryCameraRollSetting() {
           <Pressable
             onPress={() => {
               if (summary.blockedPermission > 0) void SettingsNavigationUtils.openAppSettings()
-              else cameraRollExportCoordinator.retryNow()
+              else {
+                void cameraRollExportCoordinator.retryNow().catch((error) => {
+                  console.warn("[GallerySettings] Failed to retry camera-roll exports:", error)
+                })
+              }
             }}>
             <Text text={summary.blockedPermission > 0 ? "Open Settings" : "Retry"} style={themed($actionText)} />
           </Pressable>
