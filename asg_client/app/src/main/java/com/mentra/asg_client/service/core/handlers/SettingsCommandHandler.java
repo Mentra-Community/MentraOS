@@ -27,6 +27,7 @@ public class SettingsCommandHandler implements ICommandHandler {
     private static final String STATUS_APPLIED = "applied";
     private static final String STATUS_READY = "ready";
     private static final String STATUS_ERROR = "error";
+    private static final long CAMERA_FOV_RESTORE_RETRY_DELAY_MS = 5_000L;
 
     private final AsgClientServiceManager serviceManager;
     private final ICommunicationManager communicationManager;
@@ -658,7 +659,6 @@ public class SettingsCommandHandler implements ICommandHandler {
                             return;
                         }
                         Log.i(TAG, "Camera FOV override lease expired: " + leaseId);
-                        clearCameraFovOverride();
                         AsgSettings settings = serviceManager.getAsgSettings();
                         int fov =
                                 settings != null
@@ -668,7 +668,16 @@ public class SettingsCommandHandler implements ICommandHandler {
                                 settings != null
                                         ? settings.getCameraRoiPosition()
                                         : AsgConstants.CAMERA_ROI_POSITION_DEFAULT;
-                        applyEffectiveCameraFov(null, "camera_fov_override", fov, roi, leaseId);
+                        if (applyEffectiveCameraFov(
+                                null, "camera_fov_override", fov, roi, leaseId)) {
+                            clearCameraFovOverride();
+                        } else {
+                            // A missing service context is transient during ASG lifecycle changes.
+                            // Keep ownership until the base crop is actually restored so the
+                            // glasses never retain an untracked miniapp override.
+                            scheduleCameraFovOverrideExpiry(
+                                    leaseId, CAMERA_FOV_RESTORE_RETRY_DELAY_MS);
+                        }
                     }
                 };
         mainHandler.postDelayed(cameraFovOverrideExpiry, delayMs);
@@ -686,9 +695,13 @@ public class SettingsCommandHandler implements ICommandHandler {
             String requestId, String setting, int fov, int roiPosition, String leaseId) {
         Context context = serviceManager.getContext();
         if (context == null) {
-            JSONObject values = cameraFovValues(fov, roiPosition, false);
-            sendSettingsAck(requestId, setting, STATUS_APPLIED, values);
-            return true;
+            Log.w(TAG, "Context unavailable; camera FOV was not applied");
+            sendSettingsError(
+                    requestId,
+                    setting,
+                    "camera_unavailable",
+                    "Camera service is unavailable; retry when the glasses are ready.");
+            return false;
         }
         try {
             DevApi.setCameraFov(fov, roiPosition);
