@@ -108,13 +108,22 @@ describe("mediaProcessingQueue", () => {
       type: "photo",
       primaryPath: "/tmp/IMG_with_sidecar/base.jpg",
       totalSize: 200,
+      timestamp: 1234,
       shouldProcess: false,
       shouldAutoSave: false,
     })
 
     await expect(mediaProcessingQueue.waitUntilDrained(5000)).resolves.toBeUndefined()
 
-    expect(localStorageService.saveDownloadedFile).toHaveBeenCalled()
+    expect(localStorageService.saveDownloadedFile).toHaveBeenCalledWith(
+      expect.objectContaining({size: 100, modified: 1234}),
+    )
+    expect(cameraRollExportCoordinator.recordIndexed).toHaveBeenCalledWith(
+      expect.objectContaining({size: 100, modified: 1234}),
+      false,
+      "HISTORICAL_BACKFILL",
+      "IMG_with_sidecar",
+    )
     expect(useGallerySyncStore.getState().failedFiles).not.toContain("IMG_with_sidecar")
   })
 
@@ -241,7 +250,7 @@ describe("mediaProcessingQueue", () => {
 
   it("rebuilds a missing local index before retrying a durable export", async () => {
     ;(RNFS.exists as jest.Mock).mockResolvedValue(true)
-    ;(RNFS.stat as jest.Mock).mockResolvedValue({size: 100})
+    ;(RNFS.stat as jest.Mock).mockResolvedValue({size: 75})
     ;(localStorageService.getDownloadedFile as jest.Mock).mockResolvedValueOnce(null)
     ;(cameraRollExportCoordinator.isAutoSaveEnabled as jest.Mock).mockResolvedValueOnce(true)
     const capture = {
@@ -266,6 +275,8 @@ describe("mediaProcessingQueue", () => {
         name: capture.capture_id,
         filePath: entry.finalPath,
         capture_id: capture.capture_id,
+        size: 75,
+        modified: capture.timestamp,
       }),
     )
     expect(cameraRollExportCoordinator.exportForSource).toHaveBeenCalledWith(

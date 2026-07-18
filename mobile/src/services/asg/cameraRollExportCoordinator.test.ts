@@ -169,6 +169,27 @@ describe("cameraRollExportCoordinator", () => {
     })
   })
 
+  it("reports an unexported missing row and retries it after the local index is recovered", async () => {
+    const file = legacyFile("IMG_missing_backfill")
+    mockAutoSaveEnabled = false
+    mockFiles[file.name] = file
+    await cameraRollExportCoordinator.initialize()
+
+    cameraRollExportCoordinator.cleanup()
+    mockAutoSaveEnabled = true
+    mockFiles = {}
+    await cameraRollExportCoordinator.initialize()
+
+    expect(cameraRollExportCoordinator.getSummary()).toMatchObject({total: 1, exported: 0, missing: 1})
+    expect(MediaLibraryPermissions.saveToLibraryWithReceipt).not.toHaveBeenCalled()
+
+    mockFiles[file.name] = file
+    await cameraRollExportCoordinator.retryNow()
+
+    expect(MediaLibraryPermissions.saveToLibraryWithReceipt).toHaveBeenCalledWith(file.filePath, file.modified)
+    expect(cameraRollExportCoordinator.getSummary()).toMatchObject({exported: 1, missing: 0})
+  })
+
   it("does not let an older receipt confirm a replacement generation with the same name", async () => {
     const original = legacyFile("IMG_replaced")
     original.assetReceipt = {platform: "ios", identifier: "old-generation", exportedAt: Date.now()}
@@ -232,8 +253,7 @@ describe("cameraRollExportCoordinator", () => {
     await cameraRollExportCoordinator.resume("missing")
     expect(cameraRollExportLedger.list()[0].state).toBe("MISSING_LOCAL")
     ;(RNFS.exists as jest.Mock).mockResolvedValue(true)
-    cameraRollExportCoordinator.retryNow()
-    await cameraRollExportCoordinator.resume("file restored")
+    await cameraRollExportCoordinator.retryNow()
 
     expect(MediaLibraryPermissions.saveToLibraryWithReceipt).toHaveBeenCalledWith(file.filePath, file.modified)
     expect(cameraRollExportCoordinator.getSummary()).toMatchObject({exported: 1, missing: 0})

@@ -339,15 +339,19 @@ class MediaProcessingQueue {
       throw new Error(reason)
     }
 
-    // 6. Commit the app-local index before any export or source acknowledgement.
+    // 6. Commit the app-local index before any export or source acknowledgement. Use the final
+    // on-disk output metadata for camera-roll identity: processing can change byte size, while
+    // recovery reconstructs this row from the same file and the transfer ledger timestamp.
     const isVideo = item.type === "video"
+    const finalFileStat = await RNFS.stat(filePathToSave)
+    const finalFileSize = Number(finalFileStat.size)
     const downloadedFile = localStorageService.convertToDownloadedFile(
       {
         name: item.id,
         url: "",
         download: "",
-        size: item.totalSize,
-        modified: item.timestamp || Date.now(),
+        size: finalFileSize,
+        modified: ledgerEntry.timestamp,
         is_video: isVideo,
         thumbnail_data: item.thumbnailData,
         duration: item.duration,
@@ -428,8 +432,8 @@ class MediaProcessingQueue {
       name: item.id,
       url: localFileUrl,
       download: localFileUrl,
-      size: item.totalSize,
-      modified: item.timestamp || Date.now(),
+      size: finalFileSize,
+      modified: ledgerEntry.timestamp,
       is_video: isVideo,
       filePath: filePathToSave,
       mime_type: isVideo ? "video/mp4" : "image/jpeg",

@@ -337,7 +337,18 @@ class CameraRollExportCoordinator {
     }
   }
 
-  retryNow(): void {
+  async retryNow(): Promise<void> {
+    const generation = this.lifecycleGeneration
+    await this.initialize()
+    // A recovered transfer may have rebuilt a missing local-index row since the last lifecycle
+    // reconciliation. Refresh before retrying so the same camera-roll generation becomes
+    // eligible again; never rewrite entry state underneath an active native insert.
+    while (this.running) {
+      await new Promise<void>((resolve) => BgTimer.setTimeout(resolve, 25))
+    }
+    if (generation !== this.lifecycleGeneration) return
+    await this.reconcileLocalIndex()
+    if (generation !== this.lifecycleGeneration) return
     for (const entry of cameraRollExportLedger.list()) {
       if (
         entry.state === "FAILED_RETRYABLE" ||
@@ -347,7 +358,7 @@ class CameraRollExportCoordinator {
         cameraRollExportLedger.update(entry.id, {state: "QUEUED", nextRetryAt: undefined, lastError: undefined})
       }
     }
-    void this.resume("manual retry")
+    await this.resume("manual retry")
   }
 
   subscribe(listener: SummaryListener): () => void {
@@ -359,7 +370,12 @@ class CameraRollExportCoordinator {
   }
 
   getSummary(): CameraRollExportSummary {
-    const entries = cameraRollExportLedger.list().filter((entry) => entry.localPresent !== false)
+    const entries = cameraRollExportLedger
+      .list()
+      // Exported receipts with no local row are hidden deduplication tombstones. Unexported
+      // missing generations remain user-visible so data that can no longer be backfilled is
+      // never reported as successfully saved.
+      .filter((entry) => entry.localPresent !== false || entry.state === "MISSING_LOCAL")
     const pendingStates = new Set([
       "LEGACY_UNKNOWN",
       "QUEUED",
