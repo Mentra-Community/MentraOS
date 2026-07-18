@@ -168,18 +168,21 @@ export class AudioGuidanceManager {
     const instruction = cleanSpokenText(input.instruction)
     const maneuverType = input.maneuverType?.toUpperCase() ?? null
     const distance = validDistance(input.distanceMeters)
-    if (!instruction || !maneuverType || maneuverType === "ARRIVE") return
+    if (!instruction || !maneuverType) return
 
     const signature = `${input.routeRevision}|${maneuverType}|${instruction.toLowerCase()}`
     const thresholds = THRESHOLDS[input.travelMode]
     // Consecutive identical turns without pivot metadata advance by jumping
     // from a near-zero distance to the next turn's much larger distance.
+    const previousNowSpoken =
+      this.currentManeuverKey != null && this.spokenStages.has(`${this.currentManeuverKey}|now`)
     const distanceRebounded =
       input.pivotIndex == null &&
       signature === this.lastSignature &&
       distance != null &&
       this.lastDistance != null &&
-      distance > this.lastDistance + Math.max(25, thresholds.prepareMeters / 2)
+      (distance > this.lastDistance + Math.max(25, thresholds.prepareMeters / 2) ||
+        (previousNowSpoken && distance > this.lastDistance + 5))
 
     const pivotChanged =
       this.currentPivotIndex != null && input.pivotIndex != null && input.pivotIndex !== this.currentPivotIndex
@@ -202,6 +205,30 @@ export class AudioGuidanceManager {
 
     const preparePhrase = buildPreparationPhrase(instruction, distance, input.unitSystem)
     const nowPhrase = buildNowPhrase(instruction, maneuverType)
+
+    if (maneuverType === "ARRIVE") {
+      const approachPhrase =
+        distance == null ? "Approaching your destination." : `Destination in ${formatSpokenDistance(distance, input.unitSystem)}.`
+      this.currentRepeatPhrase = approachPhrase
+      const approachStage = `${maneuverKey}|prepare`
+      if (
+        this.canSpeak() &&
+        this.mode === "full" &&
+        distance != null &&
+        distance <= thresholds.prepareMeters &&
+        !this.spokenStages.has(approachStage)
+      ) {
+        this.spokenStages.add(approachStage)
+        this.enqueue({
+          text: approachPhrase,
+          priority: 30,
+          expiresAt: Date.now() + 15_000,
+          maneuverKey,
+        })
+      }
+      return
+    }
+
     this.currentRepeatPhrase =
       distance != null && distance <= thresholds.nowMeters && TURN_TYPES.has(maneuverType) ? nowPhrase : preparePhrase
 

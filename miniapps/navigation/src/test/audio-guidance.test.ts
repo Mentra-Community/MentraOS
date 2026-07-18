@@ -106,6 +106,36 @@ describe("AudioGuidanceManager", () => {
     expect(spoken).toEqual(["In 50 meters, turn left onto Market Street."])
   })
 
+  test("pivotless identical short turns receive distinct action cues", async () => {
+    const {manager, spoken} = createHarness()
+    manager.setMode("essential")
+
+    manager.observe(input({distanceMeters: 9, pivotIndex: null}))
+    await settleSpeech()
+    manager.observe(input({distanceMeters: 20, pivotIndex: null}))
+    await settleSpeech()
+    manager.observe(input({distanceMeters: 9, pivotIndex: null}))
+    await settleSpeech()
+
+    expect(spoken).toEqual(["Turn left onto Market Street now.", "Turn left onto Market Street now."])
+  })
+
+  test("full guidance announces the final approach once", async () => {
+    const {manager, spoken} = createHarness()
+    manager.setMode("full")
+
+    manager.observe(
+      input({maneuverType: "ARRIVE", instruction: "Arriving", distanceMeters: 50, pivotIndex: null}),
+    )
+    await settleSpeech()
+    manager.observe(
+      input({maneuverType: "ARRIVE", instruction: "Arriving", distanceMeters: 30, pivotIndex: null}),
+    )
+    await settleSpeech()
+
+    expect(spoken).toEqual(["Destination in 50 meters."])
+  })
+
   test("start confirmation leads a maneuver received during startup", async () => {
     jest.useFakeTimers({now: 100_000})
     const {manager, spoken} = createHarness()
