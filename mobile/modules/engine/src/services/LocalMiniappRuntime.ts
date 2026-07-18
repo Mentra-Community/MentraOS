@@ -125,6 +125,7 @@ interface ConnectedMiniapp {
 interface SpeechRun {
   id: string
   cancelled: boolean
+  playbackRequestId?: string
   onCancelled?: () => void
 }
 
@@ -2060,16 +2061,20 @@ class LocalMiniappRuntime {
             synthesize: (sentence) => ttsModelManager.synthesizeToFile(sentence, {languageCode, speed}),
             play: (audio, index) =>
               new Promise((resolve) => {
+                const sentenceRequestId = `${audioRequestId}_sentence_${index}`
+                run.playbackRequestId = sentenceRequestId
                 audioPlaybackService.play(
                   {
-                    requestId: `${audioRequestId}_sentence_${index}`,
+                    requestId: sentenceRequestId,
                     audioUrl: audio.audioUrl,
                     appId: packageName,
                     volume,
                     stopOtherAudio,
                   },
-                  (_responseId, success, error, duration, completionReason) =>
-                    resolve({success, completed: completionReason === "completed", error, duration}),
+                  (_responseId, success, error, duration, completionReason) => {
+                    if (run.playbackRequestId === sentenceRequestId) run.playbackRequestId = undefined
+                    resolve({success, completed: completionReason === "completed", error, duration})
+                  },
                 )
               }),
             onCleanupError: (cleanupError) => {
@@ -2105,9 +2110,11 @@ class LocalMiniappRuntime {
           await Promise.resolve(generated.cleanup?.())
           return true
         }
+        run.playbackRequestId = audioRequestId
         audioPlaybackService.play(
           {requestId: audioRequestId, audioUrl: generated.audioUrl, appId: packageName, volume, stopOtherAudio},
           (_respId, success, error, duration, completionReason) => {
+            if (run.playbackRequestId === audioRequestId) run.playbackRequestId = undefined
             void Promise.resolve(generated.cleanup?.()).catch((cleanupError) => {
               console.warn(`${LOG_TAG}: offline TTS cleanup failed`, cleanupError)
             })
@@ -2148,10 +2155,12 @@ class LocalMiniappRuntime {
 
         if (run.cancelled) return true
 
+        run.playbackRequestId = audioRequestId
         await Promise.resolve(
           audioPlaybackService.play(
             {requestId: audioRequestId, audioUrl: source.audioUrl, appId: packageName, volume, stopOtherAudio},
             (_respId, success, error, duration, completionReason) => {
+              if (run.playbackRequestId === audioRequestId) run.playbackRequestId = undefined
               if (!success && fallbackToOffline) {
                 void playOfflineTts("cloud tts playback failed").then((started) => {
                   if (!started) {
@@ -2208,6 +2217,7 @@ class LocalMiniappRuntime {
     if (!run) return
     run.cancelled = true
     this.speechRuns.delete(packageName)
+    if (run.playbackRequestId) audioPlaybackService.cancelPlayback(run.playbackRequestId)
     run.onCancelled?.()
   }
 

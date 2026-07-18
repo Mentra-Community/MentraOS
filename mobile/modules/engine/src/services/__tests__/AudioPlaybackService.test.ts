@@ -7,6 +7,7 @@ const pcmStreamWrite = mock(async () => ({bufferedMs: 120}))
 const pcmStreamClose = mock(async () => ({durationMs: 1_500}))
 const pcmStreamAbort = mock(async () => {})
 const setOwnAppAudioPlaying = mock(async () => {})
+const setAudioModeAsync = mock(async () => {})
 
 mock.module("@mentra/bluetooth-sdk/internal", () => ({
   __esModule: true,
@@ -32,7 +33,7 @@ const audioPlayer = {
 
 mock.module("expo-audio", () => ({
   createAudioPlayer: () => audioPlayer,
-  setAudioModeAsync: mock(async () => {}),
+  setAudioModeAsync,
 }))
 
 mock.module("../../utils/timers", () => ({
@@ -52,6 +53,11 @@ describe("AudioPlaybackService live PCM streams", () => {
     pcmStreamOpen.mockClear()
     pcmStreamWrite.mockClear()
     setOwnAppAudioPlaying.mockClear()
+    setAudioModeAsync.mockClear()
+    setAudioModeAsync.mockImplementation(async () => {})
+    audioPlayer.pause.mockClear()
+    audioPlayer.play.mockClear()
+    audioPlayer.replace.mockClear()
   })
 
   afterEach(async () => {
@@ -165,5 +171,43 @@ describe("AudioPlaybackService live PCM streams", () => {
 
     expect(firstComplete).toHaveBeenCalledTimes(1)
     expect(firstComplete).toHaveBeenCalledWith("first-url", true, null, expect.any(Number), "interrupted")
+  })
+
+  test("cancels active URL playback immediately by request id", async () => {
+    const onComplete = mock(() => {})
+    await audioPlaybackService.play(
+      {requestId: "active-tts", audioUrl: "file://speech.wav", appId: "app-one"},
+      onComplete,
+    )
+
+    audioPlaybackService.cancelPlayback("active-tts")
+
+    expect(audioPlayer.pause).toHaveBeenCalledTimes(1)
+    expect(onComplete).toHaveBeenCalledWith("active-tts", true, null, expect.any(Number), "interrupted")
+    expect(audioPlaybackService.isPlaying()).toBe(false)
+  })
+
+  test("prevents a cancelled pending URL request from starting", async () => {
+    let finishAudioSetup: (() => void) | undefined
+    setAudioModeAsync.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finishAudioSetup = resolve
+        }),
+    )
+    const onComplete = mock(() => {})
+    const playPromise = audioPlaybackService.play(
+      {requestId: "pending-tts", audioUrl: "file://speech.wav", appId: "app-one"},
+      onComplete,
+    )
+
+    audioPlaybackService.cancelPlayback("pending-tts")
+    finishAudioSetup?.()
+    await playPromise
+
+    expect(audioPlayer.replace).not.toHaveBeenCalled()
+    expect(audioPlayer.play).not.toHaveBeenCalled()
+    expect(onComplete).toHaveBeenCalledWith("pending-tts", true, null, 0, "interrupted")
+    expect(audioPlaybackService.isPlaying()).toBe(false)
   })
 })

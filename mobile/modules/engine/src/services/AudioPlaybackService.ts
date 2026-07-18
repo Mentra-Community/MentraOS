@@ -30,6 +30,10 @@ interface PlaybackState {
   onComplete: AudioPlaybackCompletion
 }
 
+interface PendingPlaybackState {
+  cancelled: boolean
+}
+
 /** Open request for a live PCM output stream (miniapp speaker.createStream). */
 export interface AudioStreamOpenRequest {
   streamId: string
@@ -62,6 +66,10 @@ class AudioPlaybackService {
   // Creating new ExoPlayer instances per request leads to -12 ENOMEM errors
   private player: AudioPlayer | null = null
   private currentPlayback: PlaybackState | null = null
+  // Requests that entered play() but have not yet reached the native player.
+  // Keeping these addressable prevents a cancelled request from starting after
+  // an async audio-mode or stream-cleanup step finishes.
+  private pendingPlaybacks = new Map<string, PendingPlaybackState>()
   // Live PCM streams (speaker.createStream), keyed by streamId. The runtime
   // enforces one per app; stopOtherAudio interrupts across apps.
   private streams = new Map<string, StreamState>()
@@ -257,12 +265,18 @@ class AudioPlaybackService {
    */
   public async play(request: AudioPlayRequest, onComplete: AudioPlaybackCompletion): Promise<void> {
     const {requestId, audioUrl, appId, volume = 1.0, stopOtherAudio = true} = request
+    const pending: PendingPlaybackState = {cancelled: false}
+    this.pendingPlaybacks.set(requestId, pending)
 
     console.log(`AUDIO: Play request ${requestId}${appId ? ` from ${appId}` : ""}: ${audioUrl}`)
 
     try {
       // Ensure audio mode is configured for background playback
       await this.ensureAudioModeConfigured()
+      if (pending.cancelled) {
+        onComplete(requestId, true, null, 0, "interrupted")
+        return
+      }
 
       // URL playback reuses one native player, so replacing its source always
       // interrupts the previous URL even when stopOtherAudio is false. Notify
@@ -275,6 +289,10 @@ class AudioPlaybackService {
       // Live PCM streams count as "other audio" too.
       if (stopOtherAudio) {
         await this.abortAllStreams()
+      }
+      if (pending.cancelled) {
+        onComplete(requestId, true, null, 0, "interrupted")
+        return
       }
 
       // Get or create the reusable player
@@ -292,6 +310,7 @@ class AudioPlaybackService {
         onComplete,
       }
       this.currentPlayback = playback
+      this.pendingPlaybacks.delete(requestId)
 
       // Replace the source and play
       // Using replace() reuses the existing ExoPlayer/AudioTrack instead of creating new ones
@@ -317,10 +336,32 @@ class AudioPlaybackService {
 
       console.log(`AUDIO: Started playback for ${requestId}`)
     } catch (error) {
+      if (pending.cancelled) {
+        onComplete(requestId, true, null, 0, "interrupted")
+        return
+      }
       const errorMessage = error instanceof Error ? error.message : "Unknown error loading audio"
       console.error(`AUDIO: Failed to play ${requestId}:`, errorMessage)
       void this.restoreGlassesMediaVolume()
       onComplete(requestId, false, errorMessage, null, "error")
+    } finally {
+      if (this.pendingPlaybacks.get(requestId) === pending) {
+        this.pendingPlaybacks.delete(requestId)
+      }
+    }
+  }
+
+  /**
+   * Cancel one URL playback without touching audio owned by another request.
+   * Pending requests are prevented from reaching the native player; active
+   * requests are paused synchronously before their completion callback fires.
+   */
+  public cancelPlayback(requestId: string): void {
+    const pending = this.pendingPlaybacks.get(requestId)
+    if (pending) pending.cancelled = true
+
+    if (this.currentPlayback?.requestId === requestId && !this.currentPlayback.completed) {
+      this.interruptCurrentPlayback()
     }
   }
 
