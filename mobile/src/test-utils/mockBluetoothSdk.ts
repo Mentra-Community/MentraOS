@@ -25,6 +25,10 @@ const addListener = jest.fn((eventName: string, listener: Listener) => {
 
 const localNetworkListeners = new Map<string, Set<Listener>>()
 
+export const emitLocalNetworkEvent = (eventName: string, payload: any) => {
+  localNetworkListeners.get(eventName)?.forEach((listener) => listener(payload))
+}
+
 export const mentraLocalNetworkMock = {
   addListener: jest.fn((eventName: string, listener: Listener) => {
     if (!localNetworkListeners.has(eventName)) localNetworkListeners.set(eventName, new Set())

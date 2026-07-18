@@ -16,6 +16,8 @@ export type LocalNetworkDownloadProgress = {
   requestId: string
   bytesWritten: number
   contentLength: number
+  statusCode?: number
+  headers?: Record<string, string>
 }
 
 type LocalNetworkEvents = {

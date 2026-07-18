@@ -108,9 +108,9 @@ export const localNetworkTransport = {
         began = true
         options.begin?.({
           jobId,
-          statusCode: 200,
+          statusCode: event.statusCode || 200,
           contentLength: event.contentLength,
-          headers: {},
+          headers: event.headers || {},
         })
       }
       options.progress?.({

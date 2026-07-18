@@ -14,7 +14,10 @@ import {
   localNetworkTransport,
   shouldUseScopedLocalNetwork,
 } from "../../../modules/engine/src/services/asg/localNetworkTransport"
-import {mentraLocalNetworkMock as mockNativeModule} from "../../test-utils/mockBluetoothSdk"
+import {
+  emitLocalNetworkEvent,
+  mentraLocalNetworkMock as mockNativeModule,
+} from "../../test-utils/mockBluetoothSdk"
 
 describe("localNetworkTransport", () => {
   beforeEach(async () => {
@@ -78,6 +81,42 @@ describe("localNetworkTransport", () => {
 
     await expect(handle.promise).rejects.toThrow("Sync cancelled")
     expect(mockNativeModule.cancel).toHaveBeenCalledWith(expect.stringMatching(/^download_/))
+  })
+
+  it("forwards native response metadata before download progress", async () => {
+    let resolveDownload: (result: {statusCode: number; bytesWritten: number; headers: Record<string, string>}) => void =
+      () => {}
+    mockNativeModule.download.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveDownload = resolve
+        }),
+    )
+    await localNetworkTransport.connect("AndroidShare_test", "password")
+    const begin = jest.fn()
+
+    const handle = localNetworkTransport.downloadFile({
+      fromUrl: "http://192.168.43.1:8089/api/download?file=photo.jpg",
+      toFile: "/tmp/photo.jpg",
+      begin,
+    })
+    const requestId = (mockNativeModule.download as jest.Mock).mock.calls[0][0]
+    emitLocalNetworkEvent("downloadProgress", {
+      requestId,
+      bytesWritten: 0,
+      contentLength: 4,
+      statusCode: 206,
+      headers: {"Content-Range": "bytes 0-3/4"},
+    })
+
+    expect(begin).toHaveBeenCalledWith({
+      jobId: handle.jobId,
+      statusCode: 206,
+      contentLength: 4,
+      headers: {"Content-Range": "bytes 0-3/4"},
+    })
+    resolveDownload({statusCode: 206, bytesWritten: 4, headers: {"Content-Range": "bytes 0-3/4"}})
+    await expect(handle.promise).resolves.toMatchObject({statusCode: 206, bytesWritten: 4})
   })
 
   it("keeps Android 9 on the legacy transport", () => {

@@ -215,6 +215,21 @@ class MentraLocalNetworkModule : Module() {
             headers.forEach(connection::setRequestProperty)
             val status = connection.responseCode
             if (status !in 200..299) throw IllegalStateException("HTTP $status")
+            val contentLength = connection.contentLengthLong
+            val responseHeaders = responseHeaders(connection)
+
+            // Match RNFS's begin callback contract before the first response byte. Gallery
+            // resumable downloads need the real status and Content-Range to validate segments.
+            sendEvent(
+                "downloadProgress",
+                mapOf(
+                    "requestId" to requestId,
+                    "bytesWritten" to 0L,
+                    "contentLength" to contentLength,
+                    "statusCode" to status,
+                    "headers" to responseHeaders,
+                ),
+            )
 
             val destinationFile = File(destination)
             destinationFile.parentFile?.mkdirs()
@@ -232,7 +247,7 @@ class MentraLocalNetworkModule : Module() {
                             mapOf(
                                 "requestId" to requestId,
                                 "bytesWritten" to bytesWritten,
-                                "contentLength" to connection.contentLengthLong,
+                                "contentLength" to contentLength,
                             ),
                         )
                     }
@@ -242,7 +257,7 @@ class MentraLocalNetworkModule : Module() {
                 mapOf(
                     "statusCode" to status,
                     "bytesWritten" to bytesWritten,
-                    "headers" to responseHeaders(connection),
+                    "headers" to responseHeaders,
                 ),
             )
         } catch (error: Exception) {
