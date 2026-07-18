@@ -249,6 +249,7 @@ export class NavigationController {
   }
   private voiceGuidanceMode: VoiceGuidanceMode = "off"
   private voiceGuidancePreferenceLoaded = false
+  private voiceGuidancePreferenceExplicit = false
   private routeRevision = 0
 
   // Cached raw Google `navigationInstruction.instructions` strings, in
@@ -316,7 +317,7 @@ export class NavigationController {
     const previous = this.capabilities
     this.capabilities = this.readCapabilities(raw)
     this.audioGuidance.setAvailable(this.capabilities.hasSpeaker)
-    if (!this.voiceGuidancePreferenceLoaded) {
+    if (!this.voiceGuidancePreferenceExplicit) {
       this.voiceGuidanceMode = this.defaultVoiceGuidanceMode()
       this.audioGuidance.setMode(this.voiceGuidanceMode)
     }
@@ -332,6 +333,11 @@ export class NavigationController {
   }
 
   private wireCapabilityChanges(): void {
+    // registerMiniapp invokes start() before connect(), so the initial read
+    // above sees null. CONNECT_ACK populates session.capabilities and emits
+    // "ready" (not a capabilities-change event); refresh from the session once
+    // that handshake lands so speaker-only glasses work on first launch.
+    this.unsubs.push(this.session.on("ready", () => this.applyCapabilities(this.session.capabilities)))
     this.unsubs.push(this.session.onCapabilitiesChange((capabilities) => this.applyCapabilities(capabilities)))
   }
 
@@ -346,12 +352,17 @@ export class NavigationController {
     this.storage
       .getVoiceGuidanceMode()
       .then((stored) => {
+        // A user choice made while the read was in flight wins over the stale
+        // stored value that was captured before that choice was persisted.
+        if (this.voiceGuidancePreferenceLoaded) return
         this.voiceGuidancePreferenceLoaded = true
+        this.voiceGuidancePreferenceExplicit = stored != null
         this.voiceGuidanceMode = stored ?? this.defaultVoiceGuidanceMode()
         this.audioGuidance.setMode(this.voiceGuidanceMode)
         this.broadcastVoiceGuidanceState()
       })
       .catch((err) => {
+        if (this.voiceGuidancePreferenceLoaded) return
         this.voiceGuidancePreferenceLoaded = true
         this.appendLog(`voice-guidance load failed: ${err instanceof Error ? err.message : String(err)}`)
       })
@@ -1137,6 +1148,7 @@ export class NavigationController {
       this.ui.on("nav:set-voice-guidance", ({mode}) => {
         if (mode === this.voiceGuidanceMode) return
         this.voiceGuidancePreferenceLoaded = true
+        this.voiceGuidancePreferenceExplicit = true
         this.voiceGuidanceMode = mode
         this.audioGuidance.setMode(mode)
         this.storage.setVoiceGuidanceMode(mode).catch((err) => {
@@ -1574,7 +1586,11 @@ export class NavigationController {
       pivotIndex: this.upcomingPivot?.index ?? null,
       maneuverType: md?.kind ?? null,
       instruction: md?.instruction ?? null,
-      distanceMeters: liveDist ?? md?.distanceMeters ?? null,
+      // Keep the threshold distance from the same native maneuver event as
+      // its type/instruction. liveDist may already target the following step
+      // at a turn boundary, which is useful for the visual countdown but can
+      // make a spoken cue describe the wrong turn.
+      distanceMeters: maneuver?.distanceMeters ?? null,
       destinationName: activeDestinationName,
       arrivalSide,
       travelMode: this.lastStartOpts?.mode ?? "walking",
