@@ -908,8 +908,12 @@ export const useSettingsStore = create<SettingsState>()(
           let value = res.value
           // res.value IS the stored value; logging value.value printed
           // "undefined" for every loaded setting and disguised present
-          // values as missing. Redact token-bearing keys.
-          const printable = setting.key.includes("token") ? "<redacted>" : JSON.stringify(value)
+          // values as missing. Redact token- and email-bearing keys: console
+          // logs are uploaded in bug-report artifacts (same keys
+          // diagnosticContext's SENSITIVE_SETTINGS_KEYS strips, minus an
+          // import that would cycle stores <-> utils).
+          const printable =
+            setting.key.includes("token") || setting.key.includes("email") ? "<redacted>" : JSON.stringify(value)
           console.log(`SETTINGS: LOAD: ${setting.key} = ${printable}`)
           loadedSettings[setting.key] = value
         }

@@ -194,8 +194,10 @@ export class AccountAuthProvider extends AuthClient {
             headers: {authorization: `Bearer ${access}`},
           }).catch(() => null)
         } else if (!offline) {
+          // getSession() runs on cold boot but also from deeplink auth checks
+          // and reset-password, so don't claim "boot" here.
           console.log(
-            `MENTRA AUTH: clearing tokens on boot, /me rejected (HTTP ${meRes?.status}) and refresh grant rejected`,
+            `MENTRA AUTH: getSession clearing tokens, /me rejected (HTTP ${meRes?.status}) and refresh grant rejected`,
           )
           clearTokens()
           return {token: undefined}
