@@ -16,6 +16,9 @@ public class AsgConstants {
     /** Maximum wait for the LocalOnlyHotspot gateway interface to become ready. */
     public static final long LOCAL_HOTSPOT_READINESS_TIMEOUT_MS = 12_000L;
 
+    /** Delay after enabling the WiFi radio before requesting a LocalOnlyHotspot. */
+    public static final long LOCAL_HOTSPOT_WIFI_ENABLE_DELAY_MS = 500L;
+
     /** Current Mentra Live Android hotspot gateway when interface discovery is unavailable. */
     public static final String DEFAULT_HOTSPOT_GATEWAY_IP = "192.168.43.1";
 

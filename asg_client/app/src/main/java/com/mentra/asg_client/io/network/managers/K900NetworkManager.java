@@ -204,9 +204,38 @@ public class K900NetworkManager extends BaseNetworkManager {
             generation = ++localHotspotGeneration;
         }
 
+        requestLocalOnlyHotspot(generation);
+    }
+
+    private void requestLocalOnlyHotspot(int generation) {
+        synchronized (localHotspotLock) {
+            if (generation != localHotspotGeneration || !localHotspotStarting) {
+                Log.d(TAG, "🔥 Ignoring hotspot request from a stale generation");
+                return;
+            }
+        }
+
         try {
             if (wifiManager == null) {
                 failLocalHotspotStartup(generation, "WifiManager is unavailable");
+                return;
+            }
+            if (!wifiManager.isWifiEnabled()) {
+                Log.i(TAG, "🔥 WiFi radio is off; enabling it before LocalOnlyHotspot startup");
+                if (!wifiManager.setWifiEnabled(true)) {
+                    failLocalHotspotStartup(generation, "Failed to enable WiFi for local hotspot");
+                    return;
+                }
+                localHotspotHandler.postDelayed(
+                        () -> {
+                            if (!wifiManager.isWifiEnabled()) {
+                                failLocalHotspotStartup(
+                                        generation, "WiFi did not become ready for local hotspot");
+                                return;
+                            }
+                            requestLocalOnlyHotspot(generation);
+                        },
+                        AsgConstants.LOCAL_HOTSPOT_WIFI_ENABLE_DELAY_MS);
                 return;
             }
             wifiManager.startLocalOnlyHotspot(
