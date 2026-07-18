@@ -761,11 +761,16 @@ class GallerySyncService {
     }
 
     if (isAlreadyConnected && currentGlassesHotspot) {
-      console.log("[GallerySyncService] 🚀 Skipping hotspot request - already connected!")
       const hotspotInfo: HotspotInfo = currentGlassesHotspot
       store.setHotspotInfo(hotspotInfo)
       store.setSyncState("connecting_wifi")
-      await this.startFileDownload(hotspotInfo)
+      if (localNetworkTransport.supportsScopedConnection() && !localNetworkTransport.isScopedConnectionActive()) {
+        console.log("[GallerySyncService] 📡 System SSID matches; establishing scoped glasses transport")
+        await this.connectToHotspotWifi(hotspotInfo)
+      } else {
+        console.log("[GallerySyncService] 🚀 Skipping hotspot request - already connected!")
+        await this.startFileDownload(hotspotInfo)
+      }
       return
     }
 

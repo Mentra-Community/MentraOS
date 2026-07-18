@@ -8,6 +8,7 @@ import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
 import {asgCameraApi} from "../../../modules/engine/src/services/asg/asgCameraApi"
 import {gallerySyncNotifications} from "../../../modules/engine/src/services/asg/gallerySyncNotifications"
 import {galleryTransferLedger} from "../../../modules/engine/src/services/asg/galleryTransferLedger"
+import {localNetworkTransport} from "../../../modules/engine/src/services/asg/localNetworkTransport"
 import {localStorageService} from "../../../modules/engine/src/services/asg/localStorageService"
 import {mediaProcessingQueue} from "../../../modules/engine/src/services/asg/mediaProcessingQueue"
 import {gallerySyncService} from "../../../modules/engine/src/services/asg/gallerySyncService"
@@ -15,6 +16,7 @@ import {useGallerySyncStore} from "../../../modules/engine/src/stores/gallerySyn
 import {useGlassesStore} from "../../../modules/engine/src/stores/glasses"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 import type {CaptureGroup} from "@/types/asg"
+import WifiManager from "react-native-wifi-reborn"
 
 jest.mock("@mentra/bluetooth-sdk", () => {
   const {bluetoothSdkMock} = require("@/test-utils/mockBluetoothSdk")
@@ -42,6 +44,7 @@ jest.mock("@react-native-community/netinfo", () => ({
 }))
 
 jest.mock("react-native-wifi-reborn", () => ({
+  getCurrentWifiSSID: jest.fn(() => Promise.resolve("")),
   isEnabled: jest.fn(() => Promise.resolve(true)),
 }))
 
@@ -131,6 +134,7 @@ const mockGetDownloadedFiles = localStorageService.getDownloadedFiles as jest.Mo
 const mockGetV3Manifest = asgCameraApi.getV3Manifest as jest.Mock
 const mockSyncWithServer = asgCameraApi.syncWithServer as jest.Mock
 const mockSetServer = asgCameraApi.setServer as jest.Mock
+const mockGetCurrentWifiSSID = WifiManager.getCurrentWifiSSID as jest.Mock
 
 const EMPTY_SYNC_RESPONSE = {
   data: {
@@ -172,12 +176,14 @@ describe("GallerySyncService", () => {
     // in tests that don't explicitly want to trigger clock-skew recovery.
     jest.useFakeTimers({now: 2000})
     jest.clearAllMocks()
+    mockGetCurrentWifiSSID.mockResolvedValue("")
     useGallerySyncStore.getState().reset()
     useGlassesStore.getState().reset()
     gallerySyncService.cleanup()
   })
 
   afterEach(() => {
+    jest.restoreAllMocks()
     gallerySyncService.cleanup()
     jest.clearAllTimers()
     jest.useRealTimers()
@@ -224,6 +230,27 @@ describe("GallerySyncService", () => {
     expect(useGallerySyncStore.getState().syncState).toBe("requesting_hotspot")
     expect(useGallerySyncStore.getState().syncServiceOpenedHotspot).toBe(true)
     expect(BluetoothSdk.setHotspotState).toHaveBeenCalledWith(true)
+  })
+
+  it("establishes scoped routing when the system SSID already matches the hotspot", async () => {
+    useGlassesStore.getState().setGlassesInfo({
+      connection: {state: "connected", fullyBooted: true},
+      hotspotEnabled: true,
+      hotspotSsid: HOTSPOT_INFO.ssid,
+      hotspotPassword: HOTSPOT_INFO.password,
+      hotspotGatewayIp: HOTSPOT_INFO.ip,
+    })
+    mockGetCurrentWifiSSID.mockResolvedValue(HOTSPOT_INFO.ssid)
+    jest.spyOn(localNetworkTransport, "supportsScopedConnection").mockReturnValue(true)
+    jest.spyOn(localNetworkTransport, "isScopedConnectionActive").mockReturnValue(false)
+    const connectSpy = jest.spyOn(gallerySyncService as any, "connectToHotspotWifi").mockResolvedValue(undefined)
+    const downloadSpy = jest.spyOn(gallerySyncService as any, "startFileDownload").mockResolvedValue(undefined)
+
+    await gallerySyncService.startSync()
+
+    expect(connectSpy).toHaveBeenCalledWith(HOTSPOT_INFO)
+    expect(downloadSpy).not.toHaveBeenCalled()
+    expect(BluetoothSdk.setHotspotState).not.toHaveBeenCalled()
   })
 
   it("aborts pre-flight quietly when glasses disconnect during any pre-flight await", async () => {
