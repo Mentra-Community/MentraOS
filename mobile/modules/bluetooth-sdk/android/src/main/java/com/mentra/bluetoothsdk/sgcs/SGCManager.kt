@@ -301,7 +301,7 @@ abstract class SGCManager {
     abstract fun forgetWifiNetwork(ssid: String)
     abstract fun sendHotspotState(enabled: Boolean)
 
-    /** Set glasses system clock (Mentra Live only; no-op on other devices). */
+    /** Set glasses system clock (Mentra Live and G2; no-op on other devices). */
     open fun sendSetSystemTime(timestampMs: Long) {
         Bridge.log("SGC: sendSetSystemTime not supported on $type")
     }

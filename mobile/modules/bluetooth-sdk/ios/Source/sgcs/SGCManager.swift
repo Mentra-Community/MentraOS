@@ -362,7 +362,7 @@ extension SGCManager {
 
     func sendVoiceActivityDetectionSetting() {}
 
-    /// Default no-op; Mentra Live overrides when phone detects clock skew during gallery sync.
+    /// Default no-op; Mentra Live and G2 override to handle phone-detected clock skew.
     func sendSetSystemTime(_: Int64) {
         Bridge.log("SGC: sendSetSystemTime not supported")
     }
