@@ -44,6 +44,24 @@ public class WifiCommandHandler implements ICommandHandler {
     // auth-failure broadcast can never produce more than one wrong_password verdict.
     private final AtomicReference<ConnectAttempt> activeConnectAttempt = new AtomicReference<>();
 
+    /**
+     * One in-flight WiFi scan run. The scanId it stamps on emissions is mutable:
+     * a request that arrives while a run is active adopts the run by swapping in
+     * its own id (see {@link #handleRequestWifiScan}). Guarded by {@link #scanLock}
+     * because the swap happens on the command thread while the stamping callbacks
+     * fire on the scan thread.
+     */
+    private static final class ScanRun {
+        String scanId;
+
+        ScanRun(String scanId) {
+            this.scanId = scanId;
+        }
+    }
+
+    private final Object scanLock = new Object();
+    private ScanRun activeScanRun; // guarded by scanLock
+
     public WifiCommandHandler(AsgClientServiceManager serviceManager,
                               ICommunicationManager communicationManager,
                               IStateManager stateManager) {
@@ -268,52 +286,92 @@ public class WifiCommandHandler implements ICommandHandler {
     public boolean handleRequestWifiScan(JSONObject data) {
         try {
             // Optional correlation id echoed in every wifi_scan_result chunk so the
-            // phone can tie results to this scan. Captured per request so overlapping
-            // scans each stamp their own chunks.
+            // phone can tie results to this scan.
             String requestedScanId = data.optString("scanId", "");
             String scanId = requestedScanId.isEmpty() ? null : requestedScanId;
             INetworkManager networkManager = serviceManager.getNetworkManager();
-            if (networkManager != null) {
-                new Thread(() -> {
-                    try {
-                        // Use streaming WiFi scan with callback for immediate results
-                        networkManager.scanWifiNetworks(new IWifiScanCallback() {
-                            @Override
-                            public void onNetworksFoundEnhanced(List<NetworkInfo> networks) {
-                                Log.d(TAG, "📡 Streaming " + networks.size() + " enhanced WiFi networks to phone");
-                                // Send each batch of networks immediately as they're found
-                                communicationManager.sendWifiScanResultsOverBleEnhanced(networks, false, scanId);
-                            }
-
-                            @Override
-                            public void onScanComplete(int totalNetworksFound) {
-                                Log.d(TAG, "📡 WiFi scan completed, total networks found: " + totalNetworksFound);
-                                communicationManager.sendWifiScanResultsOverBleEnhanced(new ArrayList<>(), true, scanId);
-                            }
-
-                            @Override
-                            public void onScanError(String error) {
-                                Log.e(TAG, "📡 WiFi scan error: " + error);
-                                // Send empty list on error to indicate scan failure
-                                communicationManager.sendWifiScanResultsOverBleEnhanced(new ArrayList<>(), true, scanId);
-                            }
-                        });
-                    } catch (Exception e) {
-                        Log.e(TAG, "Error scanning for WiFi networks", e);
-                        communicationManager.sendWifiScanResultsOverBleEnhanced(new ArrayList<>(), true, scanId);
-                    }
-                }).start();
-                return true;
-            } else {
+            if (networkManager == null) {
                 Log.e(TAG, "Network manager not available for WiFi scan");
                 // Terminal empty result so the phone fails fast instead of waiting
                 // out its scan timeout.
                 communicationManager.sendWifiScanResultsOverBleEnhanced(new ArrayList<>(), true, scanId);
                 return false;
             }
+            final ScanRun run;
+            synchronized (scanLock) {
+                if (activeScanRun != null) {
+                    // Single-flight: the system scan is global (every run's receiver
+                    // gets the same SCAN_RESULTS_AVAILABLE broadcast), so a second
+                    // concurrent run would stamp the same results with a second id
+                    // and could strand this request. Adopt the running scan instead:
+                    // the phone joins concurrent scan requests under one scanId, so
+                    // a second, DIFFERENT id implies the older phone request was
+                    // abandoned (cancelled/timed out) — swapping the newest id onto
+                    // all subsequent emissions (chunks + terminal) serves the only
+                    // live requester without double-sending chunks.
+                    if (scanId != null) {
+                        activeScanRun.scanId = scanId;
+                    }
+                    return true;
+                }
+                run = new ScanRun(scanId);
+                activeScanRun = run;
+            }
+            new Thread(() -> {
+                try {
+                    // Use streaming WiFi scan with callback for immediate results
+                    networkManager.scanWifiNetworks(new IWifiScanCallback() {
+                        @Override
+                        public void onNetworksFoundEnhanced(List<NetworkInfo> networks) {
+                            Log.d(TAG, "📡 Streaming " + networks.size() + " enhanced WiFi networks to phone");
+                            // Send each batch of networks immediately as they're found
+                            communicationManager.sendWifiScanResultsOverBleEnhanced(networks, false, scanRunId(run));
+                        }
+
+                        @Override
+                        public void onScanComplete(int totalNetworksFound) {
+                            Log.d(TAG, "📡 WiFi scan completed, total networks found: " + totalNetworksFound);
+                            communicationManager.sendWifiScanResultsOverBleEnhanced(new ArrayList<>(), true, finishScanRun(run));
+                        }
+
+                        @Override
+                        public void onScanError(String error) {
+                            Log.e(TAG, "📡 WiFi scan error: " + error);
+                            // Send empty list on error to indicate scan failure
+                            communicationManager.sendWifiScanResultsOverBleEnhanced(new ArrayList<>(), true, finishScanRun(run));
+                        }
+                    });
+                } catch (Exception e) {
+                    Log.e(TAG, "Error scanning for WiFi networks", e);
+                    communicationManager.sendWifiScanResultsOverBleEnhanced(new ArrayList<>(), true, finishScanRun(run));
+                }
+            }).start();
+            return true;
         } catch (Exception e) {
             Log.e(TAG, "Error handling WiFi scan request", e);
             return false;
+        }
+    }
+
+    /** Read the run's current (possibly adopted) id to stamp on an emission. */
+    private String scanRunId(ScanRun run) {
+        synchronized (scanLock) {
+            return run.scanId;
+        }
+    }
+
+    /**
+     * Read the id for the run's terminal emission and release the single-flight
+     * slot, atomically: a request that arrives before the release adopts this run
+     * and its id rides on the terminal; one that arrives after starts a fresh
+     * scan. Idempotent so a late failure path can't clobber a newer run.
+     */
+    private String finishScanRun(ScanRun run) {
+        synchronized (scanLock) {
+            if (activeScanRun == run) {
+                activeScanRun = null;
+            }
+            return run.scanId;
         }
     }
 
