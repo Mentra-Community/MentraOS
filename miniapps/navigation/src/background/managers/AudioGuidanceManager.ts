@@ -74,6 +74,7 @@ export class AudioGuidanceManager {
   private speakingGeneration = 0
   private speaking = false
   private speakingPriority = 0
+  private speakingManeuverKey: string | null = null
   private pending: Prompt | null = null
   private pendingTimer: ReturnType<typeof setTimeout> | null = null
   private lastPromptStartedAt = 0
@@ -189,10 +190,10 @@ export class AudioGuidanceManager {
     const newSemanticManeuver =
       this.currentManeuverKey == null || signature !== this.lastSignature || pivotChanged || distanceRebounded
     if (newSemanticManeuver) {
+      this.discardStaleManeuverPrompts()
       this.syntheticSequence += 1
       this.currentManeuverKey = `${signature}|semantic-${this.syntheticSequence}`
       this.currentPivotIndex = input.pivotIndex
-      this.pending = this.pending?.maneuverKey ? null : this.pending
     } else if (this.currentPivotIndex == null && input.pivotIndex != null) {
       // The same maneuver first arrived before PivotEngine bound metadata.
       // Attach the pivot without changing its identity or replaying stages.
@@ -351,6 +352,7 @@ export class AudioGuidanceManager {
     const generation = ++this.speakingGeneration
     this.speaking = true
     this.speakingPriority = prompt.priority
+    this.speakingManeuverKey = prompt.maneuverKey ?? null
     this.lastPromptStartedAt = Date.now()
     this.log(`VOICE ${prompt.text}`)
     void this.speaker
@@ -367,6 +369,7 @@ export class AudioGuidanceManager {
         if (generation !== this.speakingGeneration) return
         this.speaking = false
         this.speakingPriority = 0
+        this.speakingManeuverKey = null
         this.drainPending()
       })
   }
@@ -384,6 +387,23 @@ export class AudioGuidanceManager {
     return !prompt.maneuverKey || prompt.maneuverKey === this.currentManeuverKey
   }
 
+  private discardStaleManeuverPrompts(): void {
+    if (this.pending?.maneuverKey) {
+      this.pending = null
+      this.clearPendingTimer()
+    }
+    if (!this.speaking || !this.speakingManeuverKey) return
+
+    // A route/pivot change invalidates even an utterance that has already
+    // started. Interrupt only maneuver-bound speech; lifecycle cues such as
+    // "Navigation started" deliberately have no maneuver key and continue.
+    this.speakingGeneration += 1
+    this.speaker.stop()
+    this.speaking = false
+    this.speakingPriority = 0
+    this.speakingManeuverKey = null
+  }
+
   private stopSpeech(): void {
     this.pending = null
     this.clearPendingTimer()
@@ -391,6 +411,7 @@ export class AudioGuidanceManager {
     if (this.speaking) this.speaker.stop()
     this.speaking = false
     this.speakingPriority = 0
+    this.speakingManeuverKey = null
   }
 
   private clearPendingTimer(): void {
@@ -398,6 +419,20 @@ export class AudioGuidanceManager {
     clearTimeout(this.pendingTimer)
     this.pendingTimer = null
   }
+}
+
+/**
+ * Arrival guidance follows the live destination countdown, while turn cues
+ * stay paired with the native event that supplied their type and instruction.
+ */
+export function selectAudioGuidanceDistance(
+  maneuverType: string | null | undefined,
+  eventDistanceMeters: number | null | undefined,
+  liveDisplayDistanceMeters: number | null | undefined,
+): number | null {
+  const eventDistance = validDistance(eventDistanceMeters ?? null)
+  if (maneuverType?.toUpperCase() !== "ARRIVE") return eventDistance
+  return validDistance(liveDisplayDistanceMeters ?? null) ?? eventDistance
 }
 
 function validDistance(value: number | null): number | null {

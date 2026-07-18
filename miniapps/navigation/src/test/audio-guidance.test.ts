@@ -2,7 +2,11 @@
 
 import {afterEach, describe, expect, jest, test} from "bun:test"
 
-import {AudioGuidanceManager, type AudioGuidanceInput} from "../background/managers/AudioGuidanceManager"
+import {
+  AudioGuidanceManager,
+  selectAudioGuidanceDistance,
+  type AudioGuidanceInput,
+} from "../background/managers/AudioGuidanceManager"
 
 function createHarness() {
   const spoken: string[] = []
@@ -134,6 +138,42 @@ describe("AudioGuidanceManager", () => {
     await settleSpeech()
 
     expect(spoken).toEqual(["Destination in 50 meters."])
+  })
+
+  test("arrival guidance uses live distance without detaching turn cues from their event", () => {
+    expect(selectAudioGuidanceDistance("ARRIVE", 120, 35)).toBe(35)
+    expect(selectAudioGuidanceDistance("ARRIVE", 120, null)).toBe(120)
+    expect(selectAudioGuidanceDistance("TURN_LEFT", 12, 80)).toBe(12)
+  })
+
+  test("a new semantic maneuver stops an in-progress maneuver prompt", async () => {
+    const spoken: string[] = []
+    let stops = 0
+    const manager = new AudioGuidanceManager({
+      speak: (text) => {
+        spoken.push(text)
+        return new Promise(() => {})
+      },
+      stop: () => {
+        stops += 1
+      },
+    })
+    manager.setAvailable(true)
+    manager.setMode("full")
+
+    manager.observe(input({distanceMeters: 50, pivotIndex: 0}))
+    manager.observe(
+      input({
+        maneuverType: "TURN_RIGHT",
+        instruction: "Turn right onto Valencia Street",
+        distanceMeters: 45,
+        pivotIndex: 1,
+      }),
+    )
+    await settleSpeech()
+
+    expect(spoken).toEqual(["In 50 meters, turn left onto Market Street."])
+    expect(stops).toBe(1)
   })
 
   test("start confirmation leads a maneuver received during startup", async () => {

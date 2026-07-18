@@ -31,7 +31,7 @@ import type {
 } from "../shared/types"
 import {deriveManeuverDisplay, liveDistanceToNextTurn} from "../shared/maneuverDisplay"
 
-import {AudioGuidanceManager} from "./managers/AudioGuidanceManager"
+import {AudioGuidanceManager, selectAudioGuidanceDistance} from "./managers/AudioGuidanceManager"
 import {CompassManager} from "./managers/CompassManager"
 import {DisplayManager} from "./managers/DisplayManager"
 import {LocationManager} from "./managers/LocationManager"
@@ -1499,11 +1499,14 @@ export class NavigationController {
       pivotIndex: this.upcomingPivot?.index ?? null,
       maneuverType: md?.kind ?? null,
       instruction: md?.instruction ?? null,
-      // Keep the threshold distance from the same native maneuver event as
-      // its type/instruction. liveDist may already target the following step
-      // at a turn boundary, which is useful for the visual countdown but can
-      // make a spoken cue describe the wrong turn.
-      distanceMeters: maneuver?.distanceMeters ?? null,
+      // Turn thresholds stay paired with the native event that supplied the
+      // type/instruction. ARRIVE is different: md carries the live remaining
+      // route distance, so its spoken destination countdown stays current.
+      distanceMeters: selectAudioGuidanceDistance(
+        maneuver?.maneuverType,
+        maneuver?.distanceMeters,
+        md?.distanceMeters,
+      ),
       destinationName: activeDestinationName,
       arrivalSide,
       travelMode: this.lastStartOpts?.mode ?? "walking",
