@@ -280,14 +280,51 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         comManager.registerListener(this);
         comManager.start();
 
-        // Boot-time baud recovery: if a previous asg run switched the BES to a high
-        // baud and asg restarted, we come up at 460800 against a fast BES and the
-        // link is silent. Hunt candidate rates until sr_syvr answers.
+        // Retry discovery at the rendezvous baud before considering the alternate. This observes
+        // the wire instead of guessing whether Android, BES, or only this process restarted.
+        synchronized (baudSwitchLock) {
+            bootRecoveryFuture =
+                    baudSwitchExecutor.schedule(
+                            this::startupRendezvousProbe,
+                            AsgConstants.UART_BOOT_RECOVERY_INITIAL_DELAY_MS,
+                            TimeUnit.MILLISECONDS);
+        }
+    }
+
+    /** Retry the known-safe baud first, then let alternate recovery run only if still unanswered. */
+    private void startupRendezvousProbe() {
+        if (lastSrSyvrTime > 0) {
+            return;
+        }
+        int generation;
+        synchronized (baudSwitchLock) {
+            bootRecoveryFuture = null;
+            if (baudProbePending || baudSwitchWaitingSrBaud || comManager.isOtaUpdating()) {
+                bootRecoveryFuture =
+                        baudSwitchExecutor.schedule(
+                                this::startupRendezvousProbe,
+                                AsgConstants.UART_BOOT_RECOVERY_RETRY_DELAY_MS,
+                                TimeUnit.MILLISECONDS);
+                return;
+            }
+            generation = ++recoveryProbeGeneration;
+        }
+        Log.i(
+                BAUD_TAG,
+                "Startup recovery: retrying BES discovery at rendezvous baud "
+                        + SerialPortBridge.DEFAULT_BAUDRATE);
+        scheduleVersionProbeBurst(
+                SerialPortBridge.DEFAULT_BAUDRATE,
+                generation,
+                () -> lastSrSyvrTime == 0,
+                "startup_rendezvous");
         synchronized (baudSwitchLock) {
             bootRecoveryFuture =
                     baudSwitchExecutor.schedule(
                             this::bootBaudRecoveryTick,
-                            AsgConstants.UART_BOOT_RECOVERY_INITIAL_DELAY_MS,
+                            AsgConstants.UART_RECOVERY_PROBES_PER_BURST
+                                            * AsgConstants.UART_RECOVERY_PROBE_SPACING_MS
+                                    + AsgConstants.UART_RECOVERY_PROBE_SPACING_MS,
                             TimeUnit.MILLISECONDS);
         }
     }
