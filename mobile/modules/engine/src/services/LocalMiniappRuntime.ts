@@ -49,7 +49,7 @@ import {phonePhotoCoordinator} from "./PhonePhotoCoordinator"
 import {phoneStreamCoordinator} from "./PhoneStreamCoordinator"
 import {phoneVideoCoordinator} from "./PhoneVideoCoordinator"
 import {runSentenceTtsPipeline, segmentTextForOfflineTts} from "./SentenceTtsPipeline"
-import {shouldDeliverTranscription, summarizeTranscriptionRoutes} from "./TranscriptionRouting"
+import {summarizeTranscriptionRoutes, transcriptionDeliveryRoute} from "./TranscriptionRouting"
 import {cloudClientService} from "./CloudClientService"
 import {miniappLauncher} from "./MiniappLauncher"
 import {
@@ -90,6 +90,8 @@ interface ConnectedMiniapp {
   subscriptions: Set<string>
   /** Transcription streams this app explicitly requires to stay on-device. */
   forceLocalTranscriptionStreams: Set<string>
+  /** Transcription streams with at least one listener using the default/cloud route. */
+  cloudTranscriptionStreams: Set<string>
   sendMessage: (raw: string) => void
   lastPongAt: number
   installedManifest?: InstalledMiniappManifest
@@ -616,6 +618,7 @@ class LocalMiniappRuntime {
     this.connectedApps.set(packageName, {
       subscriptions: new Set(),
       forceLocalTranscriptionStreams: new Set(),
+      cloudTranscriptionStreams: new Set(),
       sendMessage: sendFn,
       lastPongAt: Date.now(),
       installedManifest,
@@ -1360,7 +1363,7 @@ class LocalMiniappRuntime {
     if (!app) return
 
     const rawStreams = (payload.subscriptions ?? payload.streams) as
-      | (string | {stream: string; rate?: string; forceLocal?: boolean})[]
+      | (string | {stream: string; rate?: string; forceLocal?: boolean; includeCloud?: boolean})[]
       | undefined
     // Normalize: objects like {stream: "location_stream", rate: "realtime"} → extract stream name
     // "location_stream" is the rate-bearing alias for "location_update".
@@ -1368,6 +1371,7 @@ class LocalMiniappRuntime {
     // in one SUBSCRIBE — the same rule we apply across apps.
     let requestedLocationRate: string | null = null
     const forceLocalTranscriptionStreams = new Set<string>()
+    const cloudTranscriptionStreams = new Set<string>()
     const streams = rawStreams?.map((s) => {
       if (typeof s === "object" && s !== null) {
         if (s.stream === "location_stream") {
@@ -1379,8 +1383,12 @@ class LocalMiniappRuntime {
         if (s.forceLocal === true && s.stream.startsWith("transcription:")) {
           forceLocalTranscriptionStreams.add(s.stream)
         }
+        if (s.stream.startsWith("transcription:") && (s.forceLocal !== true || s.includeCloud === true)) {
+          cloudTranscriptionStreams.add(s.stream)
+        }
         return s.stream
       }
+      if (s.startsWith("transcription:")) cloudTranscriptionStreams.add(s)
       return s
     }) as string[] | undefined
     if (!Array.isArray(streams)) {
@@ -1438,6 +1446,9 @@ class LocalMiniappRuntime {
     app.subscriptions = new Set(streams)
     app.forceLocalTranscriptionStreams = new Set(
       [...forceLocalTranscriptionStreams].filter((stream) => app.subscriptions.has(stream)),
+    )
+    app.cloudTranscriptionStreams = new Set(
+      [...cloudTranscriptionStreams].filter((stream) => app.subscriptions.has(stream)),
     )
     for (const stream of streams) {
       let subs = this.streamSubscribers.get(stream)
@@ -3097,6 +3108,7 @@ class LocalMiniappRuntime {
     // Add new subscriptions
     app.subscriptions = new Set(streams)
     app.forceLocalTranscriptionStreams.clear()
+    app.cloudTranscriptionStreams = new Set(streams.filter((stream) => stream.startsWith("transcription:")))
     for (const stream of streams) {
       let subs = this.streamSubscribers.get(stream)
       if (!subs) {
@@ -3150,7 +3162,7 @@ class LocalMiniappRuntime {
         if (transcriptionLang === null) transcriptionLang = language
 
         const routes = summarizeTranscriptionRoutes(subscribers, (packageName) =>
-          this.appForcesLocalTranscription(packageName, stream),
+          this.appTranscriptionRoutesForSubscription(packageName, stream),
         )
         if (routes.hasForceLocalSubscriber) {
           hasForceLocalTranscription = true
@@ -3438,9 +3450,12 @@ class LocalMiniappRuntime {
     if (matchedSubs.size === 0 && !perGestureStream) return
 
     for (const packageName of matchedSubs) {
+      let transcriptionRoute: "default" | "forceLocal" | "all" | undefined
       if (normalizedStream.startsWith("transcription:") && transcriptionSource) {
-        const forceLocal = this.appForcesLocalTranscription(packageName, normalizedStream)
-        if (!shouldDeliverTranscription(transcriptionSource, forceLocal, cloudClientService.isConnected())) continue
+        const routes = this.appTranscriptionRoutesForEvent(packageName, normalizedStream)
+        transcriptionRoute =
+          transcriptionDeliveryRoute(transcriptionSource, routes, cloudClientService.isConnected()) ?? undefined
+        if (!transcriptionRoute) continue
       }
       if (TRANSCRIPT_TIMING_TELEMETRY && normalizedStream.startsWith("transcription:")) {
         const transcript = data as {text?: string; isFinal?: boolean; __hostReceivedAt?: number} | null
@@ -3463,6 +3478,7 @@ class LocalMiniappRuntime {
         type: MiniappResponseType.EVENT,
         streamType: normalizedStream,
         data: outboundData,
+        ...(transcriptionRoute ? {transcriptionRoute} : {}),
       })
     }
 
@@ -3482,9 +3498,36 @@ class LocalMiniappRuntime {
     }
   }
 
-  private appForcesLocalTranscription(packageName: string, stream: string): boolean {
-    const forced = this.connectedApps.get(packageName)?.forceLocalTranscriptionStreams
-    return forced?.has(stream) === true || forced?.has(`${MiniappStreamType.TRANSCRIPTION}:auto`) === true
+  private appTranscriptionRoutesForSubscription(
+    packageName: string,
+    stream: string,
+  ): {
+    cloud: boolean
+    forceLocal: boolean
+  } {
+    const app = this.connectedApps.get(packageName)
+    return {
+      cloud: app?.cloudTranscriptionStreams.has(stream) === true,
+      forceLocal: app?.forceLocalTranscriptionStreams.has(stream) === true,
+    }
+  }
+
+  private appTranscriptionRoutesForEvent(
+    packageName: string,
+    stream: string,
+  ): {
+    cloud: boolean
+    forceLocal: boolean
+  } {
+    const app = this.connectedApps.get(packageName)
+    const autoStream = `${MiniappStreamType.TRANSCRIPTION}:auto`
+    return {
+      cloud:
+        app?.cloudTranscriptionStreams.has(stream) === true || app?.cloudTranscriptionStreams.has(autoStream) === true,
+      forceLocal:
+        app?.forceLocalTranscriptionStreams.has(stream) === true ||
+        app?.forceLocalTranscriptionStreams.has(autoStream) === true,
+    }
   }
 
   /**

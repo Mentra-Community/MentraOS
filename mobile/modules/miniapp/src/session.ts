@@ -24,7 +24,7 @@ import {AuthModule} from "./modules/auth"
 import {CloudModule} from "./modules/cloud"
 import {DashboardAPI} from "./modules/dashboard"
 import {DisplayManager} from "./modules/display"
-import {EventManager, type UnsubscribeFn} from "./modules/events"
+import {EventManager, type TranscriptionEventRoute, type UnsubscribeFn} from "./modules/events"
 import {GlassesModule} from "./modules/glasses"
 import {HeadingModule} from "./modules/heading"
 import {ImuModule} from "./modules/imu"
@@ -681,7 +681,11 @@ export class MiniappSession {
       case MiniappResponseType.EVENT: {
         const streamType = payload.streamType as string | undefined
         if (!streamType) return
-        this.events._forwardEvent(streamType, payload.data)
+        this.events._forwardEvent(
+          streamType,
+          payload.data,
+          payload.transcriptionRoute as TranscriptionEventRoute | undefined,
+        )
         return
       }
 

@@ -3,24 +3,35 @@ export interface TranscriptionRouteSummary {
   hasForceLocalSubscriber: boolean
 }
 
+export interface TranscriptionSubscriberRoutes {
+  cloud: boolean
+  forceLocal: boolean
+}
+
+export type TranscriptionDeliveryRoute = "default" | "forceLocal" | "all"
+
 export function summarizeTranscriptionRoutes<T>(
   subscribers: Iterable<T>,
-  forcesLocal: (subscriber: T) => boolean,
+  routesFor: (subscriber: T) => TranscriptionSubscriberRoutes,
 ): TranscriptionRouteSummary {
   let hasCloudSubscriber = false
   let hasForceLocalSubscriber = false
   for (const subscriber of subscribers) {
-    if (forcesLocal(subscriber)) hasForceLocalSubscriber = true
-    else hasCloudSubscriber = true
+    const routes = routesFor(subscriber)
+    if (routes.cloud) hasCloudSubscriber = true
+    if (routes.forceLocal) hasForceLocalSubscriber = true
   }
   return {hasCloudSubscriber, hasForceLocalSubscriber}
 }
 
-export function shouldDeliverTranscription(
+export function transcriptionDeliveryRoute(
   source: "cloud" | "local",
-  forceLocal: boolean,
+  routes: TranscriptionSubscriberRoutes,
   cloudConnected: boolean,
-): boolean {
-  if (source === "cloud") return !forceLocal
-  return forceLocal || !cloudConnected
+): TranscriptionDeliveryRoute | null {
+  if (source === "cloud") return routes.cloud ? "default" : null
+  if (cloudConnected) return routes.forceLocal ? "forceLocal" : null
+  if (routes.cloud && routes.forceLocal) return "all"
+  if (routes.forceLocal) return "forceLocal"
+  return routes.cloud ? "default" : null
 }

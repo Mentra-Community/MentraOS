@@ -140,7 +140,7 @@ All event subscribers return an `UnsubscribeFn`. Subscriptions are ref-counted: 
 
 ### Transcription language convention
 
-Transcription/translation streams use a colon-suffixed wire format: `transcription:en-US`, `translation:en-US:fr-FR`. `session.transcription.on(handler)` subscribes to `transcription:auto` (cloud auto-detects). The detected language is in the payload. A handler on `transcription:auto` receives any `transcription:<lang>` event — wildcard fan-out — so "give me transcripts in whatever language" works without manual wiring. Use `session.transcription.forLanguage(lang | [langs], handler)` to pin specific languages. Pass `{forceLocal: true}` as the final argument to either method to require on-device transcription and suppress cloud results for that subscription.
+Transcription/translation streams use a colon-suffixed wire format: `transcription:en-US`, `translation:en-US:fr-FR`. `session.transcription.on(handler)` subscribes to `transcription:auto` (cloud auto-detects). The detected language is in the payload. A handler on `transcription:auto` receives any `transcription:<lang>` event — wildcard fan-out — so "give me transcripts in whatever language" works without manual wiring. Use `session.transcription.forLanguage(lang | [langs], handler)` to pin specific languages. Pass `{forceLocal: true}` as the final argument to either method to require on-device transcription and suppress cloud results for that subscription. Routing is per listener, so a default listener on the same stream can continue receiving cloud transcription.
 
 ### Permissions semantics
 

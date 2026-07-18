@@ -59,7 +59,8 @@ session.transcription.forLanguage("en-US", handler, {forceLocal: true});
 
 This requires a downloaded local STT model. Cloud transcripts are suppressed
 for the local-only subscription, even while other miniapps continue using cloud
-transcription.
+transcription. Routing is per listener, so a default listener on the same stream
+can continue receiving cloud transcription.
 
 ## Configuring
 

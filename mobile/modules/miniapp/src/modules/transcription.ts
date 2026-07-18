@@ -34,8 +34,9 @@ export interface TranscriptionConfig {
 
 export interface TranscriptionOptions {
   /**
-   * Use only on-device STT for this stream; never deliver cloud transcripts.
-   * Requires a downloaded local STT model.
+   * Use only on-device STT for this listener; never deliver cloud transcripts.
+   * Other listeners on the same stream keep their own routing choice. Requires
+   * a downloaded local STT model.
    */
   forceLocal?: boolean
 }
