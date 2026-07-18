@@ -95,8 +95,8 @@ functions keep executing. Only the Kotlin side blocks a real thread.
   speculative captures) settle the JS promise early, but the NATIVE latch
   keeps blocking the queue until photo_response or the 15s native timeout,
   so event delivery still freezes for the capture's full duration.
-- Live captions freezing during any visual query (worst case: BLE-fallback
-  photo transfers, which take tens of seconds).
+- Live captions freezing during any visual query (worst case: a BLE-fallback
+  photo capture approaches the 15s native request timeout before failing).
 - Plausibly part of the BGCAP "captions flood in waves" reports whenever a
   capture or another blocking SDK call overlaps captioning (distinct from
   the OS-level background-throttle hypothesis BGCAP was instrumented for,
@@ -153,11 +153,12 @@ not a race to guard against on the phone:
   check, so the SDK does not add duplicate-id rejection either. (An earlier
   revision of PR #3474 added both guards in response to bot review; both
   were reverted per the above.)
-- Open question: `startStream` correlation. `matchingStreamStart()` only
-  routes an id-less stream status when exactly one start is pending, so two
-  concurrent starts can both time out. Whether the fix is routing-only or
-  the glasses also arbitrate overlapping starts is pending Philippe's
-  answer on the PR #3474 thread.
+- `startStream` is last-request-wins on the glasses: every new start stops the
+  previous stream. Pending starts carry a sequence assigned in the same
+  critical section as the BLE hand-off, so an id-bearing status for a newer
+  start proves every earlier pending start was preempted. Those earlier
+  callers now reject immediately with `stream_preempted` instead of waiting
+  for the 30s timeout; the newest start resolves through its echoed stream id.
 
 Suspending awaits are also cancellation-aware where the old latch waits were
 not, which surfaced two rules (both applied in PR #3474):
