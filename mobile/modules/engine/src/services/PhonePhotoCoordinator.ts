@@ -53,6 +53,15 @@ export interface PhotoOpts {
   sound?: boolean
   saveToGallery?: boolean
   exposureTimeNs?: number
+  iso?: number | null
+  aeExposureDivisor?: number
+  isoCap?: number
+  noiseReduction?: boolean
+  edgeEnhancement?: boolean
+  mfnr?: boolean
+  zsl?: boolean
+  ispDigitalGain?: number
+  ispAnalogGain?: string
 }
 
 export interface PhotoTaken {
@@ -233,12 +242,21 @@ export class PhonePhotoCoordinator {
         save: opts.saveToGallery ?? false,
         sound: opts.sound ?? true,
         exposureTimeNs: opts.exposureTimeNs ?? null,
+        iso: opts.iso,
+        aeExposureDivisor: opts.aeExposureDivisor,
+        isoCap: opts.isoCap,
+        noiseReduction: opts.noiseReduction,
+        edgeEnhancement: opts.edgeEnhancement,
+        mfnr: opts.mfnr,
+        zsl: opts.zsl,
+        ispDigitalGain: opts.ispDigitalGain,
+        ispAnalogGain: opts.ispAnalogGain,
       }).catch((err) => {
-        const e = this.activeRequests.get(requestId)
-        if (!e) return
-        e.abort.abort()
-        e.reject(this.toPhotoError(err, "BLE_SEND_FAILED", "command", "ble"))
-      })
+          const e = this.activeRequests.get(requestId)
+          if (!e) return
+          e.abort.abort()
+          e.reject(this.toPhotoError(err, "BLE_SEND_FAILED", "command", "ble"))
+        })
     } catch (err) {
       this.activeRequests.delete(requestId)
       this.bleIdToCloud.delete(bleRequestId)
@@ -264,7 +282,9 @@ export class PhonePhotoCoordinator {
       const result = await outcome
       if (typeof __DEV__ !== "undefined" && __DEV__) {
         console.debug(
-          `[PhonePhotoCoordinator] takePhoto complete ${Math.round(performance.now() - flowStarted)}ms requestId=${requestId}`,
+          `[PhonePhotoCoordinator] takePhoto complete ${Math.round(
+            performance.now() - flowStarted,
+          )}ms requestId=${requestId}`,
         )
       }
       return {
@@ -373,12 +393,7 @@ export class PhonePhotoCoordinator {
     // cloud-v2 pending photo requests TTL out on their own; nothing to free.
   }
 
-  private toPhotoError(
-    err: unknown,
-    fallbackCode: string,
-    stage?: PhotoStage,
-    transport?: PhotoTransport,
-  ): PhotoError {
+  private toPhotoError(err: unknown, fallbackCode: string, stage?: PhotoStage, transport?: PhotoTransport): PhotoError {
     if (err instanceof PhotoError) return err
     const code = (err as {code?: string})?.code
     const message = err instanceof Error ? err.message : String(err)

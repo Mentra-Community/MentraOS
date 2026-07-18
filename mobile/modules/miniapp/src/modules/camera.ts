@@ -40,8 +40,26 @@ export interface TakePhotoOptions {
    * Manual shutter / exposure time in nanoseconds. Omit (or pass undefined)
    * to let the glasses auto-expose. Honored only on cameras that support
    * manual exposure; ignored otherwise.
-   */
+  */
   exposureTimeNs?: number
+  /** Sensor ISO for this capture only. Only used when `exposureTimeNs` enables manual exposure. */
+  iso?: number | null
+  /** After AE convergence, divide the metered exposure by this factor (scan mode). */
+  aeExposureDivisor?: number
+  /** Cap ISO after AE metering (scan mode). */
+  isoCap?: number
+  /** Request per-capture noise reduction. Sent on the wire; glasses may log `not_implemented`. */
+  noiseReduction?: boolean
+  /** Request per-capture edge enhancement. Sent on the wire; glasses may log `not_implemented`. */
+  edgeEnhancement?: boolean
+  /** Multi-frame noise reduction preference. */
+  mfnr?: boolean
+  /** Zero-shutter-lag preference. */
+  zsl?: boolean
+  /** ISP digital gain hint. */
+  ispDigitalGain?: number
+  /** ISP analog gain hint. */
+  ispAnalogGain?: string
   /**
    * Override the SDK's default 60s request timeout for this capture only.
    * Leave unset for a normal user-triggered capture (the full 60s ceiling is
@@ -134,7 +152,7 @@ export class CameraModule {
    * (~30 minute) signed download URL. If the glasses don't have a camera,
    * the phone-side handler rejects with an error. Check
    * `session.capabilities.hasCamera` before calling.
-   */
+  */
   async takePhoto(options: TakePhotoOptions = {}): Promise<PhotoTaken> {
     return this.session.sendRequest<PhotoTaken>(
       {
@@ -145,6 +163,15 @@ export class CameraModule {
         sound: options.sound ?? true,
         saveToGallery: options.saveToGallery ?? false,
         exposureTimeNs: options.exposureTimeNs,
+        iso: options.iso,
+        aeExposureDivisor: options.aeExposureDivisor,
+        isoCap: options.isoCap,
+        noiseReduction: options.noiseReduction,
+        edgeEnhancement: options.edgeEnhancement,
+        mfnr: options.mfnr,
+        zsl: options.zsl,
+        ispDigitalGain: options.ispDigitalGain,
+        ispAnalogGain: options.ispAnalogGain,
       },
       options.timeoutMs != null ? {timeoutMs: options.timeoutMs} : undefined,
     )

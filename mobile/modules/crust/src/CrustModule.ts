@@ -6,6 +6,12 @@ declare class CrustModule extends NativeModule<CrustModuleEvents> {
   PI: number
   hello(): string
   setValueAsync(value: string): Promise<void>
+  nativeHttpRequest(
+    method: string,
+    url: string,
+    headers: Record<string, string>,
+    body?: string | null,
+  ): Promise<{status: number; statusText: string; headers: Record<string, string>; body: string}>
   showAVRoutePicker(tintColor?: string | null): void
 
   /**

@@ -50,6 +50,12 @@ export interface SpeakOptions {
   voice_settings?: Record<string, unknown>
   volume?: number
   stopOtherAudio?: boolean
+  /**
+   * Force this call to use on-device offline TTS, skipping cloud TTS
+   * entirely — even when cloud is connected. Rejects with `TTS_LOCAL_UNAVAILABLE`
+   * if the offline model isn't ready instead of falling back to cloud.
+   */
+  forceLocal?: boolean
 }
 
 export interface SpeakResult {
@@ -257,6 +263,7 @@ export class SpeakerModule {
           voice_settings: options.voice_settings,
           volume: options.volume,
           stopOtherAudio: options.stopOtherAudio ?? false,
+          forceLocal: options.forceLocal ?? false,
         },
         {timeoutMs: 0},
       )

@@ -13,12 +13,14 @@
  * The local-miniapp path drives the cloud's transcription/translation through
  * this service.
  */
-import {CloudClient, setNativeUdp, setSecureStorage} from "@mentra/cloud-client/react-native"
+import {CloudClient, setNativeHttp, setNativeUdp, setSecureStorage} from "@mentra/cloud-client/react-native"
 import type {PreinstalledMiniappRegistry, RuntimeSnapshot} from "@mentra/cloud-client/react-native"
 import type {SubjectTokenType} from "@mentra/cloud-client"
+import {Platform} from "react-native"
 import type {AudioSubscription, TranscriptionData, TranslationData} from "@mentra/cloud-protocol"
 
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
+import CrustModule from "@mentra/crust"
 import {getAuth, getConfigValues} from "../runtime/bootstrap"
 import {useSettingsStore, SETTINGS} from "../stores/settings"
 import {type CloudClientStatusSnapshot, type MiniappAuthToken} from "../runtime/config"
@@ -28,6 +30,7 @@ import {useCloudClientStatusStore} from "../stores/cloudClientStatus"
 import {islandNotifications} from "./NotificationsEmitter"
 import {BgTimer} from "../utils/timers"
 import {logCloudV2TranscriptMetric} from "./CloudTranscriptE2EMetrics"
+import {nativeHttpResponseBody} from "./NativeHttpResponse"
 
 const LOG_TAG = "cloudClient"
 type CloudCore = NonNullable<CloudClient["core"]>
@@ -322,6 +325,24 @@ function ensureTransports(): void {
   transportsReady = true
   setNativeUdp(() => createCloudUdpSocket())
   setSecureStorage(cloudSecureStore)
+  if (Platform.OS !== "android") return
+  setNativeHttp(async (input, init) => {
+    if (typeof input !== "string" || (init?.body != null && typeof init.body !== "string")) {
+      return globalThis.fetch(input, init)
+    }
+    const headers = Object.fromEntries(new Headers(init?.headers).entries())
+    const result = await CrustModule.nativeHttpRequest(
+      init?.method ?? "GET",
+      input,
+      headers,
+      (init?.body as string | undefined) ?? null,
+    )
+    return new Response(nativeHttpResponseBody(result.status, result.body), {
+      status: result.status,
+      statusText: result.statusText,
+      headers: result.headers,
+    })
+  })
 }
 
 function clearRuntimeEventSubscriptions(): void {

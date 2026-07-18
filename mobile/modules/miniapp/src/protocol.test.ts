@@ -87,5 +87,6 @@ describe("MiniappErrorCode wire values", () => {
   test("TTS_TEXT_TOO_LONG", () => expect(MiniappErrorCode.TTS_TEXT_TOO_LONG).toBe("TTS_TEXT_TOO_LONG"))
   test("TTS_INVALID_VOICE", () => expect(MiniappErrorCode.TTS_INVALID_VOICE).toBe("TTS_INVALID_VOICE"))
   test("TTS_UPSTREAM_ERROR", () => expect(MiniappErrorCode.TTS_UPSTREAM_ERROR).toBe("TTS_UPSTREAM_ERROR"))
+  test("TTS_LOCAL_UNAVAILABLE", () => expect(MiniappErrorCode.TTS_LOCAL_UNAVAILABLE).toBe("TTS_LOCAL_UNAVAILABLE"))
   test("NOT_CONNECTED", () => expect(MiniappErrorCode.NOT_CONNECTED).toBe("NOT_CONNECTED"))
 })
