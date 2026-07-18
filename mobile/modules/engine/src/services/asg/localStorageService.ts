@@ -310,6 +310,41 @@ export class LocalStorageService {
       const localFile = localFiles[captureId]
       const localFileExists = localFile?.filePath ? await RNFS.exists(localFile.filePath).catch(() => false) : false
       if (localFileExists) continue
+
+      // The transfer ledger and gallery index are persisted independently. A crash can leave the
+      // committed media in place after its index write was lost, so repair the index from the
+      // ledger before deciding that the capture needs to be restored from the glasses.
+      const committedPath = entry.finalPath?.replace(/^file:\/\//, "")
+      const committedFileExists = committedPath ? await RNFS.exists(committedPath).catch(() => false) : false
+      if (committedPath && committedFileExists) {
+        try {
+          const stat = await RNFS.stat(committedPath)
+          const size = Number(stat.size)
+          if (Number.isFinite(size) && size > 0) {
+            const recovered = this.convertToDownloadedFile(
+              {
+                name: captureId,
+                url: "",
+                download: "",
+                size,
+                modified: entry.timestamp,
+                mime_type: entry.captureType === "video" ? "video/mp4" : "image/jpeg",
+                is_video: entry.captureType === "video",
+                filePath: committedPath,
+              },
+              committedPath,
+              entry.thumbnailPath,
+            )
+            recovered.capture_id = captureId
+            recovered.assetReceipt = entry.assetReceipt
+            await this.saveDownloadedFile(recovered)
+            localFiles[captureId] = recovered
+            continue
+          }
+        } catch (error) {
+          console.warn(`[LocalStorage] Could not recover gallery index for ${captureId}:`, error)
+        }
+      }
       galleryTransferLedger.releaseMissingLocalCommit(captureId, true)
       released++
     }
@@ -431,15 +466,15 @@ export class LocalStorageService {
     const fileUrl = downloadedFile.filePath.startsWith("file://")
       ? downloadedFile.filePath
       : downloadedFile.filePath.startsWith("/")
-        ? `file://${downloadedFile.filePath}` // Path already has leading slash
-        : `file:///${downloadedFile.filePath}` // Path needs leading slash
+      ? `file://${downloadedFile.filePath}` // Path already has leading slash
+      : `file:///${downloadedFile.filePath}` // Path needs leading slash
 
     const thumbnailUrl = downloadedFile.thumbnailPath
       ? downloadedFile.thumbnailPath.startsWith("file://")
         ? downloadedFile.thumbnailPath
         : downloadedFile.thumbnailPath.startsWith("/")
-          ? `file://${downloadedFile.thumbnailPath}` // Path already has leading slash
-          : `file:///${downloadedFile.thumbnailPath}` // Path needs leading slash
+        ? `file://${downloadedFile.thumbnailPath}` // Path already has leading slash
+        : `file:///${downloadedFile.thumbnailPath}` // Path needs leading slash
       : undefined
 
     return {

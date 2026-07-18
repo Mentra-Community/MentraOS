@@ -6,16 +6,19 @@ import {localStorageService} from "../../../modules/engine/src/services/asg/loca
 import {storage} from "../../../modules/engine/src/utils/storage"
 
 const mockExists = RNFS.exists as jest.Mock
+const mockStat = RNFS.stat as jest.Mock
 
 jest.mock("@dr.pogodin/react-native-fs", () => ({
   DocumentDirectoryPath: "/current/Documents",
   exists: jest.fn().mockResolvedValue(true),
+  stat: jest.fn().mockResolvedValue({size: 100}),
   mkdir: jest.fn().mockResolvedValue(undefined),
 }))
 
 describe("galleryTransferLedger", () => {
   beforeEach(() => {
     mockExists.mockResolvedValue(true)
+    mockStat.mockResolvedValue({size: 100})
   })
 
   it("resets a committed entry when v3 introduces a different source generation", () => {
@@ -153,11 +156,44 @@ describe("galleryTransferLedger", () => {
       finalPath: `/current/Documents/MentraPhotos/${captureId}/base.jpg`,
     })
     storage.save("asg_downloaded_files", {})
+    mockExists.mockResolvedValue(false)
 
     const released = await localStorageService.reconcileRemoteCaptures([captureId])
 
     expect(released).toBe(1)
     expect(galleryTransferLedger.get(captureId)?.state).toBe("RESTORE_PENDING")
+  })
+
+  it("rebuilds a missing local index from committed media on disk", async () => {
+    const captureId = `IMG_missing_index_${Date.now()}`
+    const filePath = `/current/Documents/MentraPhotos/${captureId}/base.jpg`
+    galleryTransferLedger.ensureCapture(
+      {
+        capture_id: captureId,
+        type: "photo",
+        timestamp: 1000,
+        total_size: 100,
+        files: [{name: `${captureId}/base.jpg`, size: 100, role: "primary"}],
+      },
+      3,
+    )
+    galleryTransferLedger.transition(captureId, "TRASHED", {finalPath: filePath})
+    storage.save("asg_downloaded_files", {})
+
+    const downloadedFiles = {}
+    const released = await localStorageService.reconcileRemoteCaptures([captureId], downloadedFiles)
+
+    expect(mockStat).toHaveBeenCalledWith(filePath)
+    expect(released).toBe(0)
+    expect(downloadedFiles).toEqual(
+      expect.objectContaining({
+        [captureId]: expect.objectContaining({capture_id: captureId, filePath}),
+      }),
+    )
+    expect(await localStorageService.getDownloadedFile(captureId)).toEqual(
+      expect.objectContaining({capture_id: captureId, filePath}),
+    )
+    expect(galleryTransferLedger.get(captureId)?.state).toBe("TRASHED")
   })
 
   it("releases a restored local record when its media file is missing", async () => {
