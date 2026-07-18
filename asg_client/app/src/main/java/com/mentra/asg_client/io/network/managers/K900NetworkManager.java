@@ -333,19 +333,53 @@ public class K900NetworkManager extends BaseNetworkManager {
     private String findLocalHotspotGatewayIp() {
         try {
             NetworkInterface interfaceInfo = NetworkInterface.getByName("ap0");
-            if (interfaceInfo != null && interfaceInfo.isUp()) {
-                Enumeration<InetAddress> addrs = interfaceInfo.getInetAddresses();
-                while (addrs.hasMoreElements()) {
-                    InetAddress address = addrs.nextElement();
-                    if (address instanceof Inet4Address && !address.isLoopbackAddress()) {
-                        return address.getHostAddress();
-                    }
+            String gatewayIp = findLocalHotspotGatewayIp(interfaceInfo, true);
+            if (!gatewayIp.isEmpty()) {
+                return gatewayIp;
+            }
+
+            Enumeration<NetworkInterface> interfaces = NetworkInterface.getNetworkInterfaces();
+            while (interfaces != null && interfaces.hasMoreElements()) {
+                NetworkInterface candidate = interfaces.nextElement();
+                if ("ap0".equals(candidate.getName())) {
+                    continue;
+                }
+                gatewayIp = findLocalHotspotGatewayIp(candidate, false);
+                if (!gatewayIp.isEmpty()) {
+                    Log.i(TAG, "🔥 Local hotspot gateway found on " + candidate.getName());
+                    return gatewayIp;
                 }
             }
         } catch (Exception e) {
             Log.w(TAG, "🔥 Error reading local hotspot gateway", e);
         }
         return "";
+    }
+
+    private String findLocalHotspotGatewayIp(
+            NetworkInterface interfaceInfo, boolean knownHotspotInterface) throws Exception {
+        if (interfaceInfo == null || !interfaceInfo.isUp()) {
+            return "";
+        }
+        Enumeration<InetAddress> addrs = interfaceInfo.getInetAddresses();
+        while (addrs.hasMoreElements()) {
+            InetAddress address = addrs.nextElement();
+            if (address instanceof Inet4Address
+                    && !address.isLoopbackAddress()
+                    && (knownHotspotInterface
+                            || isLocalHotspotAddress(
+                                    interfaceInfo.getName(), address.getHostAddress()))) {
+                return address.getHostAddress();
+            }
+        }
+        return "";
+    }
+
+    static boolean isLocalHotspotAddress(String interfaceName, String address) {
+        // Never mistake wlan0's station address for the hotspot. Alternate AP interface names
+        // remain eligible, as does the gateway address used by current K900 firmware.
+        return (interfaceName != null && interfaceName.startsWith("ap"))
+                || AsgConstants.DEFAULT_HOTSPOT_GATEWAY_IP.equals(address);
     }
 
     private void failLocalHotspotStartup(int generation, String errorMessage) {
