@@ -3782,7 +3782,7 @@ class G2 : SGCManager() {
 
     // ---------- SGCManager: Network (G2 has no WiFi) ----------
 
-    override fun requestWifiScan() {}
+    override fun requestWifiScan(scanId: String?) {}
     override fun sendWifiCredentials(ssid: String, password: String) {}
     override fun forgetWifiNetwork(ssid: String) {}
     override fun sendHotspotState(enabled: Boolean) {}

@@ -300,7 +300,7 @@ class G1: NSObject, SGCManager {
 
     func setSilentMode(_: Bool) {}
 
-    func requestWifiScan() {}
+    func requestWifiScan(scanId _: String?) {}
 
     func sendWifiCredentials(_: String, _: String) {}
 

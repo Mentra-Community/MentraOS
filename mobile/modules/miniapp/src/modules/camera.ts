@@ -40,7 +40,7 @@ export interface TakePhotoOptions {
    * Manual shutter / exposure time in nanoseconds. Omit (or pass undefined)
    * to let the glasses auto-expose. Honored only on cameras that support
    * manual exposure; ignored otherwise.
-   */
+  */
   exposureTimeNs?: number
   /** Sensor ISO for this capture only. Only used when `exposureTimeNs` enables manual exposure. */
   iso?: number | null
@@ -60,6 +60,16 @@ export interface TakePhotoOptions {
   ispDigitalGain?: number
   /** ISP analog gain hint. */
   ispAnalogGain?: string
+  /**
+   * Override the SDK's default 60s request timeout for this capture only.
+   * Leave unset for a normal user-triggered capture (the full 60s ceiling is
+   * appropriate there). Callers that speculatively fire a capture and may
+   * abandon it if the result isn't needed (e.g. a short-lived non-visual
+   * assistant turn racing a capture against a ~1s latency cap) should pass a
+   * short value here so the abandoned `takePhoto()` promise settles quickly
+   * instead of sitting on the default 60s ceiling.
+   */
+  timeoutMs?: number
 }
 
 export interface PhotoTaken {
@@ -140,26 +150,29 @@ export class CameraModule {
    * (~30 minute) signed download URL. If the glasses don't have a camera,
    * the phone-side handler rejects with an error. Check
    * `session.capabilities.hasCamera` before calling.
-   */
+  */
   async takePhoto(options: TakePhotoOptions = {}): Promise<PhotoTaken> {
-    return this.session.sendRequest<PhotoTaken>({
-      type: MiniappRequestType.PHOTO,
-      size: options.size ?? "medium",
-      mode: options.mode ?? "photo",
-      compress: options.compress ?? "none",
-      sound: options.sound ?? true,
-      saveToGallery: options.saveToGallery ?? false,
-      exposureTimeNs: options.exposureTimeNs,
-      iso: options.iso,
-      aeExposureDivisor: options.aeExposureDivisor,
-      isoCap: options.isoCap,
-      noiseReduction: options.noiseReduction,
-      edgeEnhancement: options.edgeEnhancement,
-      mfnr: options.mfnr,
-      zsl: options.zsl,
-      ispDigitalGain: options.ispDigitalGain,
-      ispAnalogGain: options.ispAnalogGain,
-    })
+    return this.session.sendRequest<PhotoTaken>(
+      {
+        type: MiniappRequestType.PHOTO,
+        size: options.size ?? "medium",
+        mode: options.mode ?? "photo",
+        compress: options.compress ?? "none",
+        sound: options.sound ?? true,
+        saveToGallery: options.saveToGallery ?? false,
+        exposureTimeNs: options.exposureTimeNs,
+        iso: options.iso,
+        aeExposureDivisor: options.aeExposureDivisor,
+        isoCap: options.isoCap,
+        noiseReduction: options.noiseReduction,
+        edgeEnhancement: options.edgeEnhancement,
+        mfnr: options.mfnr,
+        zsl: options.zsl,
+        ispDigitalGain: options.ispDigitalGain,
+        ispAnalogGain: options.ispAnalogGain,
+      },
+      options.timeoutMs != null ? {timeoutMs: options.timeoutMs} : undefined,
+    )
   }
 
   /**
