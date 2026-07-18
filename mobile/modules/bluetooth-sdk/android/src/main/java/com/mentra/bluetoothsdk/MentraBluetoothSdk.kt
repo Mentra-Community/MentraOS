@@ -69,7 +69,7 @@ class MentraBluetoothSdk private constructor(
         private const val DEFAULT_REQUEST_TIMEOUT_MS = 15_000L
         // A photo response is terminal only after capture, encoding, transport, and upload.
         // Max-quality BLE fallback can legitimately exceed the generic command deadline.
-        private const val PHOTO_REQUEST_TIMEOUT_MS = 45_000L
+        private const val PHOTO_REQUEST_TIMEOUT_MS = 30_000L
         private const val WIFI_SCAN_TIMEOUT_MS = 20_000L
         private const val VIDEO_UPLOAD_STOP_TIMEOUT_MS = 10 * 60 * 1000L
         private const val STREAM_START_TIMEOUT_MS = 30_000L
