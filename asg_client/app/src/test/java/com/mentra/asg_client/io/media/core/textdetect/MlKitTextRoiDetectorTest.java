@@ -7,6 +7,8 @@ import static org.mockito.Mockito.when;
 import android.graphics.Bitmap;
 import android.graphics.Rect;
 
+import androidx.test.core.app.ApplicationProvider;
+
 import com.google.android.gms.tasks.Task;
 import com.google.android.gms.tasks.TaskCompletionSource;
 import com.google.mlkit.vision.text.Text;
@@ -29,6 +31,14 @@ import java.util.concurrent.atomic.AtomicReference;
 
 @RunWith(RobolectricTestRunner.class)
 public class MlKitTextRoiDetectorTest {
+
+    @Test
+    public void constructionDoesNotRequireMlKitProviderInitialization() {
+        MlKitTextRoiDetector detector =
+                new MlKitTextRoiDetector(ApplicationProvider.getApplicationContext());
+
+        detector.close();
+    }
 
     @Test
     public void paddedUnionCombinesLinesAndKeepsContext() {
