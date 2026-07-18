@@ -1561,7 +1561,11 @@ class MentraBluetoothSdk private constructor(
                 rejectPreemptedStreamStarts(start.seq)
             }
             when (event.state) {
-                StreamState.STREAMING -> {
+                // `reconnected` also proves the stream is live: when an async start
+                // failure triggers the glasses' publisher retry, a successful retry
+                // reports `reconnected` instead of `streaming`.
+                StreamState.STREAMING,
+                StreamState.RECONNECTED -> {
                     pendingStreamStarts.remove(streamId, start)
                     start.pending.resolve(event)
                 }
