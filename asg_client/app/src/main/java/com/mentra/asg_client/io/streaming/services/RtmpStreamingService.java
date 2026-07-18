@@ -1038,9 +1038,13 @@ public class RtmpStreamingService extends Service {
                     StreamingReporting.reportStreamStopFailure(RtmpStreamingService.this,
                         "stream_stop_error", (Throwable) o);
 
-                    // Notify TPA developer of cleanup failure
+                    // Notify TPA developer of cleanup failure. Use the id captured
+                    // before cleanup: this continuation can resume after the state
+                    // reset cleared mCurrentStreamId or a replacement stream
+                    // overwrote it, and the failure belongs to the stream being
+                    // stopped.
                     if (sStatusCallback != null) {
-                        sStatusCallback.onStreamError("Failed to stop stream: " + ((Throwable) o).getMessage(), mCurrentStreamId);
+                        sStatusCallback.onStreamError("Failed to stop stream: " + ((Throwable) o).getMessage(), stoppedStreamId);
                     }
                 }
                 Log.d(TAG, "Stream stop completed");

@@ -658,7 +658,10 @@ public class SrtStreamingService extends Service {
         if (o instanceof Throwable) {
           Log.e(TAG, "Error during SRT stream stop", (Throwable) o);
           StreamingReporting.reportStreamStopFailure(SrtStreamingService.this, "stream_stop_error", (Throwable) o);
-          if (sStatusCallback != null) sStatusCallback.onStreamError("Failed to stop SRT stream: " + ((Throwable) o).getMessage(), mCurrentStreamId);
+          // Use the id captured before cleanup: this continuation can resume after
+          // the state reset cleared mCurrentStreamId or a replacement stream
+          // overwrote it, and the failure belongs to the stream being stopped.
+          if (sStatusCallback != null) sStatusCallback.onStreamError("Failed to stop SRT stream: " + ((Throwable) o).getMessage(), stoppedStreamId);
         }
         Log.d(TAG, "SRT stream stop completed");
       }
