@@ -293,6 +293,68 @@ export class LocalStorageService {
   }
 
   /**
+   * Reconcile the remote manifest against the app-local gallery index before ledger filtering.
+   * Android backup/restore and data-preserving reinstalls can restore MMKV ledger rows without
+   * restoring app-private media. Only captures currently advertised by the glasses are released,
+   * so acknowledged captures that remain in glasses trash are not resurrected unnecessarily.
+   */
+  async reconcileRemoteCaptures(
+    captureIds: string[],
+    downloadedFiles?: Record<string, DownloadedFile>,
+  ): Promise<number> {
+    const localFiles = downloadedFiles || (await this.getDownloadedFiles())
+    let released = 0
+    for (const captureId of captureIds) {
+      const entry = galleryTransferLedger.get(captureId)
+      if (!entry || !galleryTransferLedger.isLocallyCommitted(captureId)) continue
+      const localFile = localFiles[captureId]
+      const localFileExists = localFile?.filePath ? await RNFS.exists(localFile.filePath).catch(() => false) : false
+      if (localFileExists) continue
+
+      // The transfer ledger and gallery index are persisted independently. A crash can leave the
+      // committed media in place after its index write was lost, so repair the index from the
+      // ledger before deciding that the capture needs to be restored from the glasses.
+      const committedPath = entry.finalPath?.replace(/^file:\/\//, "")
+      const committedFileExists = committedPath ? await RNFS.exists(committedPath).catch(() => false) : false
+      if (committedPath && committedFileExists) {
+        try {
+          const stat = await RNFS.stat(committedPath)
+          const size = Number(stat.size)
+          if (Number.isFinite(size) && size > 0) {
+            const recovered = this.convertToDownloadedFile(
+              {
+                name: captureId,
+                url: "",
+                download: "",
+                size,
+                modified: entry.timestamp,
+                mime_type: entry.captureType === "video" ? "video/mp4" : "image/jpeg",
+                is_video: entry.captureType === "video",
+                filePath: committedPath,
+              },
+              committedPath,
+              entry.thumbnailPath,
+            )
+            recovered.capture_id = captureId
+            recovered.assetReceipt = entry.assetReceipt
+            await this.saveDownloadedFile(recovered)
+            localFiles[captureId] = recovered
+            continue
+          }
+        } catch (error) {
+          console.warn(`[LocalStorage] Could not recover gallery index for ${captureId}:`, error)
+        }
+      }
+      galleryTransferLedger.releaseMissingLocalCommit(captureId, true)
+      released++
+    }
+    if (released > 0) {
+      console.warn(`[LocalStorage] Released ${released} stale gallery ledger commit(s) missing local media`)
+    }
+    return released
+  }
+
+  /**
    * Get downloaded file by name
    */
   async getDownloadedFile(fileName: string): Promise<DownloadedFile | null> {
@@ -404,15 +466,15 @@ export class LocalStorageService {
     const fileUrl = downloadedFile.filePath.startsWith("file://")
       ? downloadedFile.filePath
       : downloadedFile.filePath.startsWith("/")
-        ? `file://${downloadedFile.filePath}` // Path already has leading slash
-        : `file:///${downloadedFile.filePath}` // Path needs leading slash
+      ? `file://${downloadedFile.filePath}` // Path already has leading slash
+      : `file:///${downloadedFile.filePath}` // Path needs leading slash
 
     const thumbnailUrl = downloadedFile.thumbnailPath
       ? downloadedFile.thumbnailPath.startsWith("file://")
         ? downloadedFile.thumbnailPath
         : downloadedFile.thumbnailPath.startsWith("/")
-          ? `file://${downloadedFile.thumbnailPath}` // Path already has leading slash
-          : `file:///${downloadedFile.thumbnailPath}` // Path needs leading slash
+        ? `file://${downloadedFile.thumbnailPath}` // Path already has leading slash
+        : `file:///${downloadedFile.thumbnailPath}` // Path needs leading slash
       : undefined
 
     return {

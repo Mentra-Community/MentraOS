@@ -261,8 +261,8 @@ class GalleryTransferLedger {
 
   releaseMissingLocalCommit(captureId: string, recoverAcknowledged: boolean = false): void {
     const entry = this.get(captureId)
-    if (!entry || entry.state === "GARBAGE_COLLECTED") return
-    if (entry.state === "TRASHED") {
+    if (!entry) return
+    if (entry.state === "TRASHED" || entry.state === "GARBAGE_COLLECTED") {
       if (recoverAcknowledged) {
         this.update(captureId, {
           state: "RESTORE_PENDING",
@@ -285,8 +285,10 @@ class GalleryTransferLedger {
     })
   }
 
-  releaseAllMissingLocalCommits(): void {
-    for (const entry of this.list()) this.releaseMissingLocalCommit(entry.captureId)
+  releaseAllMissingLocalCommits(recoverAcknowledged: boolean = false): void {
+    for (const entry of this.list()) {
+      this.releaseMissingLocalCommit(entry.captureId, recoverAcknowledged)
+    }
   }
 
   private toStoredPath(path: string): string {

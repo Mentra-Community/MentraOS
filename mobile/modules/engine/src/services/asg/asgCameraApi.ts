@@ -12,6 +12,7 @@ import {localStorageService} from "./localStorageService"
 import {validateDownloadedMediaFile} from "./galleryMediaValidation"
 import {reportInvalidGalleryMedia} from "./GalleryMediaIntegrityReportService"
 import {galleryTransferLedger} from "./galleryTransferLedger"
+import {localNetworkTransport} from "./localNetworkTransport"
 
 export interface GalleryCapabilities {
   api_version: number
@@ -148,7 +149,7 @@ export class AsgCameraApiClient {
       console.log(`[ASG Camera API] Headers being sent:`, headers)
 
       // N4: Add 30s timeout to all fetch calls in makeRequest
-      const response = await fetch(url, {
+      const response = await localNetworkTransport.fetch(url, {
         headers,
         ...options,
         signal: options?.signal || this.createTimeoutSignal(30000),
@@ -287,7 +288,7 @@ export class AsgCameraApiClient {
     // Use browser-like headers since we know the browser works
     try {
       console.log(`[ASG Camera API] Making direct fetch to gallery endpoint`)
-      const response = await fetch(galleryUrl, {
+      const response = await localNetworkTransport.fetch(galleryUrl, {
         method: "GET",
         headers: {
           "Accept": "application/json",
@@ -427,7 +428,7 @@ export class AsgCameraApiClient {
     for (const endpoint of testEndpoints) {
       try {
         console.log(`[ASG Camera API] Testing endpoint: ${endpoint}`)
-        const response = await fetch(`${this.baseUrl}${endpoint}`, {
+        const response = await localNetworkTransport.fetch(`${this.baseUrl}${endpoint}`, {
           method: "HEAD",
           headers: {
             "Accept": "*/*",
@@ -448,7 +449,7 @@ export class AsgCameraApiClient {
         if (endpoint === "/api/gallery") {
           try {
             console.log(`[ASG Camera API] Trying GET request for /api/gallery...`)
-            const getResponse = await fetch(`${this.baseUrl}${endpoint}`, {
+            const getResponse = await localNetworkTransport.fetch(`${this.baseUrl}${endpoint}`, {
               method: "GET",
               headers: {
                 "Accept": "application/json",
@@ -552,7 +553,7 @@ export class AsgCameraApiClient {
       const controller = new AbortController()
       const timeoutId = BgTimer.setTimeout(() => controller.abort(), 3000) // 3 second timeout
 
-      const response = await fetch(`${this.baseUrl}/api/health`, {
+      const response = await localNetworkTransport.fetch(`${this.baseUrl}/api/health`, {
         method: "HEAD",
         signal: controller.signal,
       })
@@ -643,7 +644,7 @@ export class AsgCameraApiClient {
   async getGalleryCapabilities(): Promise<GalleryCapabilities | null> {
     if (this.galleryCapabilities !== undefined) return this.galleryCapabilities
     try {
-      const response = await fetch(`${this.baseUrl}/api/v3/capabilities`, {
+      const response = await localNetworkTransport.fetch(`${this.baseUrl}/api/v3/capabilities`, {
         headers: {"Accept": "application/json", "User-Agent": "MentraOS-Mobile/1.0"},
         signal: this.createTimeoutSignal(5000),
       })
@@ -694,10 +695,14 @@ export class AsgCameraApiClient {
   }
 
   async getV3FileHash(fileName: string): Promise<{sha256: string; etag: string; size: number}> {
-    const response = await fetch(`${this.baseUrl}/api/v3/hash?file=${encodeURIComponent(fileName)}`, {
-      headers: {"Accept": "application/json", "User-Agent": "MentraOS-Mobile/1.0"},
-      signal: this.createTimeoutSignal(10 * 60 * 1000),
-    })
+    const response = await localNetworkTransport.fetch(
+      `${this.baseUrl}/api/v3/hash?file=${encodeURIComponent(fileName)}`,
+      {
+        headers: {"Accept": "application/json", "User-Agent": "MentraOS-Mobile/1.0"},
+        signal: this.createTimeoutSignal(10 * 60 * 1000),
+      },
+      10 * 60 * 1000,
+    )
     if (!response.ok) throw new Error(`Hash request failed: HTTP ${response.status}`)
     const payload = await response.json()
     return (payload.data || payload) as {sha256: string; etag: string; size: number}
@@ -915,7 +920,7 @@ export class AsgCameraApiClient {
         await RNFS.unlink(partPath(index)).catch(() => {})
         const end = start + expectedLength - 1
         let responseHeaders: Record<string, string> = {}
-        const {jobId, promise} = RNFS.downloadFile({
+        const {jobId, promise} = localNetworkTransport.downloadFile({
           fromUrl: `${this.baseUrl}/api/download?file=${encodeURIComponent(file.name)}`,
           toFile: partPath(index),
           headers: {
@@ -938,7 +943,7 @@ export class AsgCameraApiClient {
         let abortPollTimer: number | undefined
         if (abortSignal) {
           abortPollTimer = BgTimer.setInterval(() => {
-            if (abortSignal.aborted) RNFS.stopDownload(jobId)
+            if (abortSignal.aborted) localNetworkTransport.stopDownload(jobId)
           }, 500)
         }
 
@@ -1186,7 +1191,7 @@ export class AsgCameraApiClient {
       try {
         // Throttle progress: only fire when bytesWritten changes meaningfully
         let lastReportedBytes = -1
-        const {jobId, promise: dlPromise} = RNFS.downloadFile({
+        const {jobId, promise: dlPromise} = localNetworkTransport.downloadFile({
           fromUrl: downloadUrl,
           toFile: localFilePath,
           headers: {
@@ -1211,12 +1216,12 @@ export class AsgCameraApiClient {
         let abortPollTimer: number | undefined
         if (abortSignal) {
           if (abortSignal.aborted) {
-            RNFS.stopDownload(jobId)
+            localNetworkTransport.stopDownload(jobId)
             throw new Error("Sync cancelled")
           }
           abortPollTimer = BgTimer.setInterval(() => {
             if (abortSignal.aborted) {
-              RNFS.stopDownload(jobId)
+              localNetworkTransport.stopDownload(jobId)
             }
           }, 500)
         }
@@ -1421,10 +1426,10 @@ export class AsgCameraApiClient {
         mime_type: isVideo
           ? "video/mp4"
           : lowerName.endsWith(".png")
-            ? "image/png"
-            : lowerName.endsWith(".avif")
-              ? "image/avif"
-              : "image/jpeg",
+          ? "image/png"
+          : lowerName.endsWith(".avif")
+          ? "image/avif"
+          : "image/jpeg",
       }
     } catch (error) {
       galleryTransferLedger.recordFailure(captureId, error)
@@ -1475,7 +1480,7 @@ export class AsgCameraApiClient {
       // Throttle progress: only call onProgress when percentage actually changes
       let lastReportedProgress = -1
 
-      const {jobId, promise: downloadPromise} = RNFS.downloadFile({
+      const {jobId, promise: downloadPromise} = localNetworkTransport.downloadFile({
         fromUrl: downloadUrl,
         toFile: localFilePath,
         headers: {
@@ -1520,12 +1525,12 @@ export class AsgCameraApiClient {
       let abortPollTimer: number | undefined
       if (abortSignal) {
         if (abortSignal.aborted) {
-          RNFS.stopDownload(jobId)
+          localNetworkTransport.stopDownload(jobId)
           throw new Error("Sync cancelled")
         }
         abortPollTimer = BgTimer.setInterval(() => {
           if (abortSignal.aborted) {
-            RNFS.stopDownload(jobId)
+            localNetworkTransport.stopDownload(jobId)
           }
         }, 500)
       }
@@ -1625,7 +1630,7 @@ export class AsgCameraApiClient {
 
           // The server's /api/photo endpoint serves thumbnails for video files
           // It detects video files and automatically generates/serves thumbnails instead of the full video
-          const thumbResult = await RNFS.downloadFile({
+          const thumbResult = await localNetworkTransport.downloadFile({
             fromUrl: `${this.baseUrl}/api/photo?file=${encodeURIComponent(filename)}`,
             toFile: localThumbnailPath as string,
             headers: {

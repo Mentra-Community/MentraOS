@@ -1,6 +1,27 @@
 package com.mentra.asg_client;
 
 public class AsgConstants {
+    /** Mentra Live hotspot idle timeout after the last local HTTP activity. */
+    public static final long HOTSPOT_INACTIVITY_TIMEOUT_MS = 120_000L;
+
+    /** Frequency for checking whether an active hotspot has become idle. */
+    public static final long HOTSPOT_INACTIVITY_CHECK_INTERVAL_MS = 10_000L;
+
+    /** Maximum interval between activity updates while a response body is streaming. */
+    public static final long HTTP_ACTIVITY_STREAM_UPDATE_INTERVAL_MS = 5_000L;
+
+    /** How often Mentra Live checks for the LocalOnlyHotspot gateway interface. */
+    public static final long LOCAL_HOTSPOT_READINESS_POLL_MS = 200L;
+
+    /** Maximum wait for the LocalOnlyHotspot gateway interface to become ready. */
+    public static final long LOCAL_HOTSPOT_READINESS_TIMEOUT_MS = 12_000L;
+
+    /** Delay after enabling the WiFi radio before requesting a LocalOnlyHotspot. */
+    public static final long LOCAL_HOTSPOT_WIFI_ENABLE_DELAY_MS = 500L;
+
+    /** Current Mentra Live Android hotspot gateway when interface discovery is unavailable. */
+    public static final String DEFAULT_HOTSPOT_GATEWAY_IP = "192.168.43.1";
+
     public static String appName = "AugmentOS ASG Client";
     public static int augmentOsSdkVerion = 1;
     public static int asgServiceNotificationId = 3540;

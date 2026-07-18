@@ -165,15 +165,15 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
     // Boot-time baud recovery: if asg restarts after a previous baud switch, the BES
     // is still at the high rate while we reopen at the 460800 default - the link is
-    // silent until something hunts for the right rate. Cycle candidates until an
-    // sr_syvr answers.
-    private static final int[] BOOT_BAUD_CANDIDATES = {
-        SerialPortBridge.DEFAULT_BAUDRATE, TARGET_UART_BAUD, 1152000
-    };
+    // silent until something hunts for the right rate. The default rate has already
+    // had the initial-delay window to answer, so probe the only alternate rate once.
+    // If the firmware does not implement cs_syvr, return to the default instead of
+    // rotating rates forever and corrupting otherwise healthy phone traffic.
+    private static final int[] BOOT_BAUD_CANDIDATES = {TARGET_UART_BAUD};
     private static final int BOOT_RECOVERY_INITIAL_DELAY_MS = 8000;
     private static final int BOOT_RECOVERY_STEP_MS = 3000;
     private volatile long lastSrSyvrTime = 0;
-    private int bootRecoveryIdx = 0;
+    private int bootRecoveryAttempts = 0;
     private java.util.concurrent.ScheduledFuture<?> bootRecoveryFuture;
 
     /** True between reopening at TARGET_UART_BAUD and the sr_syvr probe answer. */
@@ -290,24 +290,35 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         }
     }
 
-    /** No sr_syvr since boot: cycle through candidate bauds until the BES answers. */
+    /** No sr_syvr since boot: probe alternate bauds once, then settle at the default. */
     private void bootBaudRecoveryTick() {
         if (lastSrSyvrTime > 0) {
             return; // Link is alive; nothing to recover.
         }
+        Integer candidate = null;
+        boolean settleAtDefault = false;
         synchronized (baudSwitchLock) {
             if (baudProbePending || comManager.mbOtaUpdating) {
+                bootRecoveryFuture = null;
                 return; // A switch/OTA is mid-flight; stay out of its way.
             }
+            if (bootRecoveryAttempts >= BOOT_BAUD_CANDIDATES.length) {
+                bootRecoveryFuture = null;
+                settleAtDefault = true;
+            } else {
+                candidate = BOOT_BAUD_CANDIDATES[bootRecoveryAttempts++];
+            }
         }
-        bootRecoveryIdx = (bootRecoveryIdx + 1) % BOOT_BAUD_CANDIDATES.length;
-        int candidate = BOOT_BAUD_CANDIDATES[bootRecoveryIdx];
+        if (settleAtDefault) {
+            settleBootRecoveryAtDefaultBaud();
+            return;
+        }
         Log.w(
                 BAUD_TAG,
                 "Boot recovery: no sr_syvr yet - trying "
                         + candidate
                         + " baud (candidate "
-                        + (bootRecoveryIdx + 1)
+                        + bootRecoveryAttempts
                         + "/"
                         + BOOT_BAUD_CANDIDATES.length
                         + ")");
@@ -325,6 +336,34 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                                 BOOT_RECOVERY_STEP_MS,
                                 TimeUnit.MILLISECONDS);
             }
+        }
+    }
+
+    /** Finish a failed boot probe at the known-safe baud without scheduling another hunt. */
+    private void settleBootRecoveryAtDefaultBaud() {
+        if (lastSrSyvrTime > 0) {
+            return;
+        }
+        int defaultBaud = SerialPortBridge.DEFAULT_BAUDRATE;
+        if (comManager.getCurrentBaud() == defaultBaud) {
+            Log.w(BAUD_TAG, "Boot recovery exhausted; remaining at " + defaultBaud + " baud");
+            return;
+        }
+        try {
+            boolean reopened = comManager.reopen(defaultBaud);
+            if (reopened) {
+                Log.w(
+                        BAUD_TAG,
+                        "Boot recovery exhausted without sr_syvr; settled at "
+                                + defaultBaud
+                                + " baud and stopped probing");
+            } else {
+                Log.e(
+                        BAUD_TAG,
+                        "Boot recovery could not reopen the default " + defaultBaud + " baud");
+            }
+        } catch (Exception e) {
+            Log.e(BAUD_TAG, "Boot recovery failed to restore default " + defaultBaud + " baud", e);
         }
     }
 
