@@ -201,8 +201,24 @@ public final class MentraBluetoothSDK {
             }
         }
         bridgeEventSinkId = Bridge.addEventSink { [weak self] eventName, data in
-            Task { @MainActor [weak self] in
-                self?.dispatchBridgeEvent(eventName, data)
+            // Bridge.dispatchEvent always invokes sinks on the main thread, in the
+            // FIFO order events were dispatched (correlated WiFi-scan chunks rely
+            // on that order). A fresh Task per event can reach the MainActor out
+            // of creation order and reorder chunks, so consume synchronously
+            // while still on main.
+            if Thread.isMainThread {
+                MainActor.assumeIsolated {
+                    self?.dispatchBridgeEvent(eventName, data)
+                }
+            } else {
+                // Defensive fallback only — Bridge.dispatchEvent should never take
+                // this path. A serial main-queue hop still preserves FIFO order,
+                // unlike an unstructured Task.
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        self?.dispatchBridgeEvent(eventName, data)
+                    }
+                }
             }
         }
         storeListenerId = DeviceStore.shared.store.addListener { [weak self] category, changes in
