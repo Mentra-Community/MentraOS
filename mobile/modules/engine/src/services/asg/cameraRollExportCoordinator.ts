@@ -97,9 +97,11 @@ class CameraRollExportCoordinator {
   private async reconcileLocalIndex(): Promise<void> {
     const files = await localStorageService.getDownloadedFiles()
     const liveIds = new Set<string>()
+    const liveGenerationByMediaName = new Map<string, string>()
     for (const file of Object.values(files)) {
       const id = cameraRollEntryId(file.name, file.size, file.modified)
       liveIds.add(id)
+      liveGenerationByMediaName.set(file.name, id)
       const current = cameraRollExportLedger.get(id)
       const transfer = file.capture_id
         ? galleryTransferLedger.get(file.capture_id)
@@ -123,6 +125,7 @@ class CameraRollExportCoordinator {
           state: "LEGACY_UNKNOWN" as const,
         }),
         filePath: file.filePath,
+        localPresent: true,
         receipt,
         requiresFullLibraryReconciliation:
           current?.requiresFullLibraryReconciliation ?? (!current && !receipt && !transfer),
@@ -130,9 +133,28 @@ class CameraRollExportCoordinator {
       })
     }
 
-    // Do not let stale generations recreate media after the user replaced/deleted local files.
+    // Explicit app deletion removes receipts through deleteLocalMedia/clearLocalMedia. An index
+    // miss here is not proof of deletion: recovery may not have rebuilt the row yet, and a load
+    // failure is represented as an empty index. Preserve exported receipts as hidden tombstones;
+    // they are the authoritative proof that prevents a duplicate native-library insert.
     for (const entry of cameraRollExportLedger.list()) {
-      if (!liveIds.has(entry.id)) cameraRollExportLedger.remove(entry.id)
+      if (liveIds.has(entry.id)) continue
+      if (entry.receipt) {
+        cameraRollExportLedger.update(entry.id, {state: "EXPORTED", localPresent: false})
+        continue
+      }
+      // A different live generation with the same display name supersedes an unexported stale
+      // row. Never let its old path export the replacement's bytes under the wrong fingerprint.
+      if (liveGenerationByMediaName.has(entry.mediaName)) {
+        cameraRollExportLedger.remove(entry.id)
+        continue
+      }
+      cameraRollExportLedger.update(entry.id, {
+        state: "MISSING_LOCAL",
+        localPresent: false,
+        lastError: "Local media is missing",
+        nextRetryAt: undefined,
+      })
     }
   }
 
@@ -168,6 +190,7 @@ class CameraRollExportCoordinator {
       modified: file.modified,
       isVideo: file.is_video,
       captureId: captureId || file.capture_id || current?.captureId,
+      localPresent: true,
       requiresFullLibraryReconciliation: current?.requiresFullLibraryReconciliation ?? false,
       priority,
       receipt: file.assetReceipt || current?.receipt,
@@ -307,7 +330,7 @@ class CameraRollExportCoordinator {
       if (
         entry.state === "FAILED_RETRYABLE" ||
         entry.state === "BLOCKED_PERMISSION" ||
-        entry.state === "MISSING_LOCAL"
+        (entry.state === "MISSING_LOCAL" && entry.localPresent !== false)
       ) {
         cameraRollExportLedger.update(entry.id, {state: "QUEUED", nextRetryAt: undefined, lastError: undefined})
       }
@@ -324,7 +347,7 @@ class CameraRollExportCoordinator {
   }
 
   getSummary(): CameraRollExportSummary {
-    const entries = cameraRollExportLedger.list()
+    const entries = cameraRollExportLedger.list().filter((entry) => entry.localPresent !== false)
     const pendingStates = new Set([
       "LEGACY_UNKNOWN",
       "QUEUED",
@@ -354,12 +377,15 @@ class CameraRollExportCoordinator {
 
   async countNotExported(mediaNames: string[]): Promise<number> {
     await this.initialize()
-    const entries = cameraRollExportLedger.list()
-    return new Set(mediaNames).size === 0
-      ? 0
-      : [...new Set(mediaNames)].filter(
-          (name) => !entries.some((entry) => entry.mediaName === name && entry.state === "EXPORTED"),
-        ).length
+    const uniqueNames = [...new Set(mediaNames)]
+    if (uniqueNames.length === 0) return 0
+    const files = await localStorageService.getDownloadedFiles()
+    return uniqueNames.filter((name) => {
+      const file = files[name]
+      if (!file) return true
+      const entry = cameraRollExportLedger.get(cameraRollEntryId(file.name, file.size, file.modified))
+      return entry?.state !== "EXPORTED"
+    }).length
   }
 
   /** Serialize local deletion against an in-flight native copy of the same item. */
@@ -414,6 +440,7 @@ class CameraRollExportCoordinator {
     return cameraRollExportLedger
       .list()
       .filter((entry) => {
+        if (entry.localPresent === false) return false
         if (this.clearInProgress || this.deletingMediaNames.has(entry.mediaName)) return false
         if (entry.receipt || entry.state === "EXPORTED" || entry.state === "MISSING_LOCAL") return false
         if (!this.enabled) return false

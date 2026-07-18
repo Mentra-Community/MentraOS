@@ -141,6 +141,53 @@ describe("cameraRollExportCoordinator", () => {
     expect(cameraRollExportCoordinator.getSummary()).toMatchObject({exported: 1, pending: 0})
   })
 
+  it("retains a hidden export receipt until its missing local index row is recovered", async () => {
+    const file = legacyFile("IMG_receipt_recovery")
+    file.assetReceipt = {platform: "ios", identifier: "durable-receipt", exportedAt: Date.now()}
+    mockFiles[file.name] = file
+
+    await cameraRollExportCoordinator.initialize()
+    cameraRollExportCoordinator.cleanup()
+    mockFiles = {}
+    await cameraRollExportCoordinator.initialize()
+
+    expect(cameraRollExportLedger.list()).toEqual([
+      expect.objectContaining({state: "EXPORTED", localPresent: false, receipt: file.assetReceipt}),
+    ])
+    expect(cameraRollExportCoordinator.getSummary()).toMatchObject({total: 0, exported: 0})
+
+    cameraRollExportCoordinator.cleanup()
+    mockFiles[file.name] = {...file, assetReceipt: undefined}
+    await cameraRollExportCoordinator.initialize()
+    await cameraRollExportCoordinator.resume("recovered index")
+
+    expect(MediaLibraryPermissions.saveToLibraryWithReceipt).not.toHaveBeenCalled()
+    expect(cameraRollExportLedger.list()[0]).toMatchObject({
+      state: "EXPORTED",
+      localPresent: true,
+      receipt: file.assetReceipt,
+    })
+  })
+
+  it("does not let an older receipt confirm a replacement generation with the same name", async () => {
+    const original = legacyFile("IMG_replaced")
+    original.assetReceipt = {platform: "ios", identifier: "old-generation", exportedAt: Date.now()}
+    mockFiles[original.name] = original
+    await cameraRollExportCoordinator.initialize()
+
+    cameraRollExportCoordinator.cleanup()
+    mockAutoSaveEnabled = false
+    mockFiles[original.name] = {
+      ...original,
+      size: original.size + 1,
+      modified: original.modified + 1,
+      assetReceipt: undefined,
+    }
+    await cameraRollExportCoordinator.initialize()
+
+    await expect(cameraRollExportCoordinator.countNotExported([original.name])).resolves.toBe(1)
+  })
+
   it("returns a durable source receipt even when automatic saving is disabled", async () => {
     const file = legacyFile("IMG_exported_before_disable")
     file.assetReceipt = {platform: "ios", identifier: "existing", exportedAt: Date.now()}

@@ -26,6 +26,8 @@ export interface CameraRollExportEntry {
   modified: number
   isVideo: boolean
   captureId?: string
+  /** False while this generation is absent from the local index; exported receipts remain as hidden tombstones. */
+  localPresent?: boolean
   /** True when an older client may already have exported this file without persisting a receipt. */
   requiresFullLibraryReconciliation?: boolean
   state: CameraRollExportState
