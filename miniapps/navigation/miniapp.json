@@ -1,9 +1,9 @@
 {
   "$schema": "./node_modules/@mentra/miniapp-cli/schema/miniapp.schema.json",
   "packageName": "com.mentra.navigation",
-  "version": "1.1.18",
+  "version": "1.1.19",
   "name": "Mentra Maps",
-  "description": "Turn-by-turn walking navigation with compass and Google Maps.",
+  "description": "Turn-by-turn navigation with visual or spoken directions.",
   "icon": "icon.png",
   "type": "standard",
   "sdkVersion": "0.3.0",
@@ -25,14 +25,19 @@
   "hardwareRequirements": [
     {
       "type": "DISPLAY",
-      "level": "REQUIRED",
+      "level": "OPTIONAL",
       "description": "Shows next maneuver and distance on glasses"
+    },
+    {
+      "type": "SPEAKER",
+      "level": "OPTIONAL",
+      "description": "Speaks turn-by-turn directions on audio glasses"
     }
   ],
   "actions": [
     {
       "id": "start_navigation",
-      "description": "Start turn-by-turn navigation to a destination and show directions on the glasses. Use when the user wants to go somewhere \u2014 e.g. 'navigate to Blue Bottle Coffee', 'directions to the airport', 'take me home'. Give the destination as a place name or address in `query` (it gets looked up near the user's current location); only pass latitude/longitude instead if you already have exact coordinates. Defaults to walking directions.",
+      "description": "Start turn-by-turn navigation to a destination and provide visual or spoken directions on the glasses. Use when the user wants to go somewhere \u2014 e.g. 'navigate to Blue Bottle Coffee', 'directions to the airport', 'take me home'. Give the destination as a place name or address in `query` (it gets looked up near the user's current location); only pass latitude/longitude instead if you already have exact coordinates. Defaults to walking directions.",
       "parameters": {
         "type": "object",
         "properties": {

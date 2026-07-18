@@ -2,7 +2,7 @@ import type {ReactNode} from "react"
 import {motion} from "motion/react"
 
 import "@/shared/channels"
-import type {UnitSystem} from "@/shared/types"
+import type {UnitSystem, VoiceGuidanceMode} from "@/shared/types"
 import {useNavStore} from "@/ui/store/navStore"
 import {appVersion} from "@/ui/lib/env"
 import {safeHeadingAddPlaces} from "@/ui/components/SafeHeading/SafeHeading"
@@ -21,6 +21,8 @@ type Props = {
  */
 export function SettingsPage({onClose}: Props) {
   const unitSystem = useNavStore((s) => s.unitSystem)
+  const voiceGuidanceMode = useNavStore((s) => s.voiceGuidanceMode)
+  const capabilities = useNavStore((s) => s.capabilities)
   const toast = useToast()
 
   // Tap the version number to toggle the dev override (reveals the
@@ -36,6 +38,12 @@ export function SettingsPage({onClose}: Props) {
     // echoes nav:units-update which lands on the same value.
     useNavStore.getState().applyUnitSystem(next)
     mentra.send("nav:set-units", {unitSystem: next})
+  }
+
+  function setVoiceGuidance(next: VoiceGuidanceMode) {
+    if (!capabilities.hasSpeaker || next === voiceGuidanceMode) return
+    useNavStore.getState().applyVoiceGuidance(next)
+    mentra.send("nav:set-voice-guidance", {mode: next})
   }
 
   return (
@@ -66,6 +74,26 @@ export function SettingsPage({onClose}: Props) {
           <div className="flex items-center h-13 px-4 gap-3">
             <div className="grow tracking-[-0.01em] font-sans text-[#1A1A1A] dark:text-zinc-50 text-sm/4.5">Distance</div>
             <UnitsToggle value={unitSystem} onChange={setUnits} />
+          </div>
+        </Section>
+
+        <Section title="VOICE GUIDANCE">
+          <div className="flex flex-col px-4 py-3 gap-2.5">
+            <div className="flex items-center gap-3">
+              <div className="grow tracking-[-0.01em] font-sans text-[#1A1A1A] dark:text-zinc-50 text-sm/4.5">
+                Spoken directions
+              </div>
+              <VoiceGuidanceToggle
+                value={voiceGuidanceMode}
+                disabled={!capabilities.hasSpeaker}
+                onChange={setVoiceGuidance}
+              />
+            </div>
+            <div className="font-sans text-[#0000008C] dark:text-zinc-400 text-xs/4.5">
+              {capabilities.hasSpeaker
+                ? "Essential announces turns, rerouting, and arrival. Full also gives advance notice. Tap Repeat or short-press the glasses button during a trip."
+                : "The connected glasses do not have a speaker."}
+            </div>
           </div>
         </Section>
 
@@ -121,6 +149,50 @@ function UnitsToggle({value, onChange}: {value: UnitSystem; onChange: (u: UnitSy
             }`}>
             <span
               className={`inline-block font-sans text-sm/4.5 ${
+                active ? "font-semibold text-white" : "font-medium text-[#0000008C] dark:text-zinc-400"
+              }`}>
+              {opt.label}
+            </span>
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+function VoiceGuidanceToggle({
+  value,
+  disabled,
+  onChange,
+}: {
+  value: VoiceGuidanceMode
+  disabled: boolean
+  onChange: (mode: VoiceGuidanceMode) => void
+}) {
+  const options: Array<{id: VoiceGuidanceMode; label: string}> = [
+    {id: "off", label: "Off"},
+    {id: "essential", label: "Essential"},
+    {id: "full", label: "Full"},
+  ]
+  return (
+    <div
+      className={`flex items-center shrink-0 rounded-[10px] p-0.5 gap-0.5 bg-[#0000000F] dark:bg-[#FFFFFF1A] ${
+        disabled ? "opacity-45" : ""
+      }`}>
+      {options.map((opt) => {
+        const active = value === opt.id
+        return (
+          <button
+            key={opt.id}
+            type="button"
+            disabled={disabled}
+            onClick={() => onChange(opt.id)}
+            aria-pressed={active}
+            className={`flex items-center justify-center h-7.5 rounded-lg shrink-0 px-2 transition-colors ${
+              active ? "[box-shadow:#0000002E_0px_1px_3px] bg-[#1A1A1A] dark:bg-zinc-600" : ""
+            }`}>
+            <span
+              className={`inline-block font-sans text-xs/4.5 ${
                 active ? "font-semibold text-white" : "font-medium text-[#0000008C] dark:text-zinc-400"
               }`}>
               {opt.label}
