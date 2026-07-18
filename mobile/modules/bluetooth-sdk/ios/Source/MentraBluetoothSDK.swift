@@ -149,6 +149,9 @@ private final class PendingResponse<T> {
 @MainActor
 public final class MentraBluetoothSDK {
     private static let wifiScanTimeoutMs = 20_000
+    // A photo response is terminal only after capture, encoding, transport, and upload.
+    // Max-quality BLE fallback can legitimately exceed the generic command deadline.
+    private static let photoRequestTimeoutMs = 30_000
     private static let otaBesVersionWaitMs = 5_000
     private static let otaMtkVersionWaitMs = 2_000
     private static let otaVersionPollMs = 100
@@ -795,7 +798,7 @@ public final class MentraBluetoothSDK {
         pendingPhotoRequests[routedRequest.requestId] = pending
         DeviceManager.shared.requestPhoto(routedRequest)
         do {
-            let event = try await pending.wait()
+            let event = try await pending.wait(timeoutMs: MentraBluetoothSDK.photoRequestTimeoutMs)
             pendingPhotoRequests.removeValue(forKey: routedRequest.requestId)
             return event
         } catch {
