@@ -67,6 +67,7 @@ export interface WarmUpCameraOptions {
   /** Match the upcoming capture mode so warm-up and capture share one ASG camera session. */
   mode?: "photo" | "text"
   exposureTimeNs?: number
+  /** Ready-state hold in milliseconds. Defaults to 15 seconds and is capped at 60 seconds. */
   durationMs?: number
 }
 
@@ -112,10 +113,11 @@ export class CameraModule {
   }
 
   /**
-   * Apply camera FOV/ROI settings on the glasses.
+   * Apply a session-owned camera FOV/ROI override on the glasses.
    *
    * Resolves after the ASG client reports that the setting was applied to camera
-   * hardware after the restart cooldown. Requires CAMERA permission declared in miniapp.json.
+   * hardware after the restart cooldown. The host restores the prior override or persistent base
+   * when this miniapp closes. Requires CAMERA permission declared in miniapp.json.
    */
   async setFov(request: CameraFovRequest): Promise<CameraFovResult> {
     return this.session.sendRequest<CameraFovResult>({
@@ -150,10 +152,11 @@ export class CameraModule {
 
   /**
    * Pre-warm the glasses camera so the next takePhoto() is near-instant.
-   * The camera stays warm for ~durationMs (default 15s); call warmUp() again to
+   * The camera stays warm for ~durationMs (default 15s, maximum 60s); call warmUp() again to
    * extend it. Warm with the same `size` you'll capture with — a mismatched size
    * forces the camera to reconfigure and loses the speedup. Requires CAMERA
-   * permission in miniapp.json. Resolves once the camera reports ready.
+   * permission in miniapp.json. Resolves once the camera reports ready. The host automatically
+   * releases this miniapp's request-owned lease when the miniapp closes.
    *
    * Warm-ups are serialized: only one runs at a time and none may start while a
    * photo is being captured. If the camera is busy (a capture is in flight, or

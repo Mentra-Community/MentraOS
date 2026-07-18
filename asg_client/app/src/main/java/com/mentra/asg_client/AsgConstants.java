@@ -22,6 +22,18 @@ public class AsgConstants {
     /** Current Mentra Live Android hotspot gateway when interface discovery is unavailable. */
     public static final String DEFAULT_HOTSPOT_GATEWAY_IP = "192.168.43.1";
 
+    /** Canonical camera crop defaults shared with the phone and Bluetooth SDK. */
+    public static final int CAMERA_FOV_DEFAULT = 102;
+    public static final int CAMERA_ROI_POSITION_DEFAULT = 0;
+
+    /** Warm-up leases are intentionally short-lived to bound idle camera power use. */
+    public static final long CAMERA_WARM_UP_DEFAULT_DURATION_MS = 15_000L;
+    public static final long CAMERA_WARM_UP_MAX_DURATION_MS = 60_000L;
+
+    /** Safety lease for a miniapp-owned transient FOV override. */
+    public static final long CAMERA_FOV_OVERRIDE_DEFAULT_TTL_MS = 300_000L;
+    public static final long CAMERA_FOV_OVERRIDE_MAX_TTL_MS = 600_000L;
+
     public static String appName = "AugmentOS ASG Client";
     public static int augmentOsSdkVerion = 1;
     public static int asgServiceNotificationId = 3540;

@@ -605,6 +605,22 @@ public final class PhotoSession {
     }
 
     /**
+     * Drop an opening warm-up after its last owner cancels. CameraNeoService owns the terminal
+     * callback and camera close so this method only clears PhotoSession state.
+     */
+    public boolean cancelWarmUp() {
+        synchronized (hooks.serviceLock()) {
+            if (warmUpRequest == null) {
+                return false;
+            }
+            warmUpRequest = null;
+            clearActiveCapture();
+            shotState = AeStateMachine.ShotState.IDLE;
+            return true;
+        }
+    }
+
+    /**
      * Prepare and hold the camera "warm" for {@code durationMs} without capturing a photo. The
      * session is opened/reused and configured with the SAME parameters a same-size SDK photo would
      * use ({@code isFromSdk=true}, the requested {@code size}, optional {@code exposureTimeNs}), so
