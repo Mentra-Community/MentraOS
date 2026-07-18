@@ -65,7 +65,7 @@ export const localNetworkTransport = {
     nativeJobs.clear()
   },
 
-  async fetch(url: string | URL | Request, init?: RequestInit): Promise<Response> {
+  async fetch(url: string | URL | Request, init?: RequestInit, timeoutMs = 30_000): Promise<Response> {
     if (!scopedConnectionActive || !MentraLocalNetwork || typeof url !== "string") {
       return globalThis.fetch(url, init)
     }
@@ -83,7 +83,7 @@ export const localNetworkTransport = {
         init?.method || "GET",
         normalizeHeaders(init?.headers),
         typeof init?.body === "string" ? init.body : null,
-        30_000,
+        timeoutMs,
       )
       const bytes = Buffer.from(result.bodyBase64, "base64")
       return new Response(bytes as unknown as BodyInit, {

@@ -42,6 +42,21 @@ describe("localNetworkTransport", () => {
     await expect(response.json()).resolves.toEqual({ok: true})
   })
 
+  it("forwards caller-specific timeouts to scoped HTTP requests", async () => {
+    await localNetworkTransport.connect("AndroidShare_test", "password")
+
+    await localNetworkTransport.fetch("http://192.168.43.1:8089/api/v3/hash", undefined, 10 * 60 * 1000)
+
+    expect(mockNativeModule.request).toHaveBeenCalledWith(
+      expect.stringMatching(/^request_/),
+      "http://192.168.43.1:8089/api/v3/hash",
+      "GET",
+      {},
+      null,
+      10 * 60 * 1000,
+    )
+  })
+
   it("releases the scoped connection during cleanup", async () => {
     await localNetworkTransport.connect("AndroidShare_test", "password")
     await localNetworkTransport.disconnect()

@@ -701,6 +701,7 @@ export class AsgCameraApiClient {
         headers: {"Accept": "application/json", "User-Agent": "MentraOS-Mobile/1.0"},
         signal: this.createTimeoutSignal(10 * 60 * 1000),
       },
+      10 * 60 * 1000,
     )
     if (!response.ok) throw new Error(`Hash request failed: HTTP ${response.status}`)
     const payload = await response.json()
