@@ -118,6 +118,9 @@ public class AsgConstants {
     /** Time allowed for BES to reboot at the rendezvous baud after applying an OTA image. */
     public static final long BES_OTA_RECONNECT_DELAY_MS = 2500;
 
+    /** Bounded rendezvous attempts after BES OTA while the controller finishes rebooting. */
+    public static final int BES_OTA_RECONNECT_ATTEMPTS = 6;
+
     // RGB LED Control Constants (Glasses BES Chipset - Remote Control via Bluetooth)
     // NOTE: These are different from the local MTK recording LED
 

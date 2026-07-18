@@ -49,6 +49,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     // Keep normal K900 messages contiguous on the shared ASG-to-BES UART stream.
     private final Object outboundSendLock = new Object();
     private BesMessageParser messageParser;
+    private final Object messageParserLock = new Object();
     private final ChunkReassembler inboundBinaryReassembler = new ChunkReassembler();
     private final ChunkedMessageProtocolStrategy inboundBinaryStrategy =
             new ChunkedMessageProtocolStrategy(inboundBinaryReassembler);
@@ -332,7 +333,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                         + BOOT_BAUD_CANDIDATES.length
                         + ")");
         try {
-            messageParser.clear();
+            clearMessageParser();
             boolean reopened = comManager.reopen(candidate);
             if (reopened) {
                 int generation;
@@ -395,7 +396,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             return;
         }
         try {
-            messageParser.clear();
+            clearMessageParser();
             boolean reopened = comManager.reopen(defaultBaud);
             if (reopened) {
                 Log.w(
@@ -1704,7 +1705,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
      */
     private void reopenAtTargetBaudAndProbe() {
         try {
-            messageParser.clear();
+            clearMessageParser();
             boolean reopened = comManager.reopen(TARGET_UART_BAUD);
             if (!reopened) {
                 Log.e(
@@ -1767,7 +1768,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             cancelBaudProbeTimeoutLocked();
         }
         try {
-            messageParser.clear();
+            clearMessageParser();
             boolean ok = comManager.reopen(SerialPortBridge.DEFAULT_BAUDRATE);
             Log.e(
                     BAUD_TAG,
@@ -1908,72 +1909,76 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             // Hex dump suppressed to prevent logcat overflow
             // Enable only when debugging specific issues
 
-            // Add the data to our message parser
-            if (messageParser != null && messageParser.addData(dataCopy, size)) {
-                // Try to extract complete messages
-                List<byte[]> completeMessages = messageParser.parseMessages();
-                if (completeMessages != null && !completeMessages.isEmpty()) {
-                    Log.d(TAG, "📥 Extracted " + completeMessages.size() + " complete messages");
-                    // Process each complete message
-                    for (byte[] message : completeMessages) {
-                        BleTraceLogger.logK900Frame("bes_to_asg", "asg_uart_input", message);
-
-                        // Check for file transfer acknowledgments first
-                        processReceivedMessage(message);
-
-                        // Extract payload from K900 protocol message for listeners
-                        if (BesWireFormat.isBinaryWireFrame(message)) {
-                            handleInboundBinaryFrame(message);
-                        } else if (BesWireFormat.isK900ProtocolFormat(message)) {
-                            // Auto-detect the length endianness so we parse frames from both legacy
-                            // big-endian and wire-v2 little-endian BES firmware (fixes the
-                            // "Extracted length=9472" misframe against old firmware).
-                            K900LengthCodec.Detected detected =
-                                    K900LengthCodec.detectLength(message);
-                            if (detected != null) {
-                                uartToBesEndian = detected.endian;
-                            }
-                            byte[] payload = BesWireFormat.extractPayloadAuto(message);
-
-                            if (payload != null && payload.length > 0) {
-                                // Notify listeners with the clean payload (JSON data without
-                                // markers)
-                                String payloadPreview =
-                                        new String(payload, 0, Math.min(payload.length, 200));
-                                Log.d(
-                                        TAG,
-                                        "📥 Extracted K900 payload ("
-                                                + payload.length
-                                                + " bytes): "
-                                                + payloadPreview);
-
-                                // Check if this is a sr_syvr response (BES system version)
-                                // or an sr_baud response (UART baud switch ack).
-                                // Handle them directly here to avoid timing issues with
-                                // CommandProcessor initialization
-                                if (!handleSrSyvrResponse(payload)
-                                        && !handleSrBaudResponse(payload)
-                                        && !handleFileTransportResponse(payload)) {
-                                    // Not a sr_syvr/sr_baud response, forward to listeners
-                                    notifyDataReceived(payload);
-                                }
-                            } else {
-                                Log.w(TAG, "📥 Failed to extract payload from K900 message");
-                            }
-                        } else {
-                            // Not a K900 protocol message, pass as-is
-                            Log.d(TAG, "📥 Non-K900 message, passing as-is");
-                            notifyDataReceived(message);
-                        }
+            boolean parserAcceptedData = false;
+            List<byte[]> completeMessages = null;
+            synchronized (messageParserLock) {
+                if (messageParser != null) {
+                    parserAcceptedData = messageParser.addData(dataCopy, size);
+                    if (parserAcceptedData) {
+                        completeMessages = messageParser.parseMessages();
                     }
-                } else {
-                    // No complete messages yet, just accumulating data
-                    Log.d(TAG, "📥 Data added to parser, waiting for complete message");
                 }
-            } else {
+            }
+
+            if (!parserAcceptedData) {
                 // If parser is not available or data couldn't be added, send raw data
                 Log.d(TAG, "📥 📤 Parser unavailable, notifying listeners of raw data...");
                 notifyDataReceived(dataCopy);
+            } else if (completeMessages == null || completeMessages.isEmpty()) {
+                // No complete messages yet, just accumulating data
+                Log.d(TAG, "📥 Data added to parser, waiting for complete message");
+            } else {
+                Log.d(TAG, "📥 Extracted " + completeMessages.size() + " complete messages");
+                // Process each complete message outside the parser lock.
+                for (byte[] message : completeMessages) {
+                    BleTraceLogger.logK900Frame("bes_to_asg", "asg_uart_input", message);
+
+                    // Check for file transfer acknowledgments first
+                    processReceivedMessage(message);
+
+                    // Extract payload from K900 protocol message for listeners
+                    if (BesWireFormat.isBinaryWireFrame(message)) {
+                        handleInboundBinaryFrame(message);
+                    } else if (BesWireFormat.isK900ProtocolFormat(message)) {
+                        // Auto-detect the length endianness so we parse frames from both legacy
+                        // big-endian and wire-v2 little-endian BES firmware (fixes the
+                        // "Extracted length=9472" misframe against old firmware).
+                        K900LengthCodec.Detected detected = K900LengthCodec.detectLength(message);
+                        if (detected != null) {
+                            uartToBesEndian = detected.endian;
+                        }
+                        byte[] payload = BesWireFormat.extractPayloadAuto(message);
+
+                        if (payload != null && payload.length > 0) {
+                            // Notify listeners with the clean payload (JSON data without markers)
+                            String payloadPreview =
+                                    new String(payload, 0, Math.min(payload.length, 200));
+                            Log.d(
+                                    TAG,
+                                    "📥 Extracted K900 payload ("
+                                            + payload.length
+                                            + " bytes): "
+                                            + payloadPreview);
+
+                            // Check if this is a sr_syvr response (BES system version)
+                            // or an sr_baud response (UART baud switch ack).
+                            // Handle them directly here to avoid timing issues with
+                            // CommandProcessor initialization
+                            if (!handleSrSyvrResponse(payload)
+                                    && !handleSrBaudResponse(payload)
+                                    && !handleFileTransportResponse(payload)) {
+                                // Not a sr_syvr/sr_baud response, forward to listeners
+                                notifyDataReceived(payload);
+                            }
+                        } else {
+                            Log.w(TAG, "📥 Failed to extract payload from K900 message");
+                        }
+                    } else {
+                        // Not a K900 protocol message, pass as-is
+                        Log.d(TAG, "📥 Non-K900 message, passing as-is");
+                        notifyDataReceived(message);
+                    }
+                }
             }
             // Data processing complete
         } else {
@@ -2009,8 +2014,9 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     @Override
     public void onBesOtaApplied() {
         Log.i(BAUD_TAG, "BES OTA applied; scheduling reconnect at rendezvous baud");
+        int generation;
         synchronized (baudSwitchLock) {
-            recoveryProbeGeneration++;
+            generation = ++recoveryProbeGeneration;
             lastSrSyvrTime = 0;
             baudSwitchAttempted = false;
             baudSwitchWaitingSrBaud = false;
@@ -2022,39 +2028,82 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                 bootRecoveryFuture = null;
             }
         }
-        baudSwitchExecutor.schedule(
-                this::reconnectAfterBesOta,
+        scheduleBesOtaReconnect(
+                generation,
+                1,
                 AsgConstants.BES_OTA_RECONNECT_DELAY_MS,
+                "initial reboot wait");
+    }
+
+    private void scheduleBesOtaReconnect(
+            int generation, int attempt, long delayMs, String reason) {
+        baudSwitchExecutor.schedule(
+                () -> reconnectAfterBesOta(generation, attempt, reason),
+                delayMs,
                 TimeUnit.MILLISECONDS);
     }
 
     /** BES reboots at 460800 after OTA; rediscover there and negotiate again if supported. */
-    private void reconnectAfterBesOta() {
+    private void reconnectAfterBesOta(int generation, int attempt, String previousReason) {
+        synchronized (baudSwitchLock) {
+            if (generation != recoveryProbeGeneration || lastSrSyvrTime > 0) {
+                return;
+            }
+        }
+        if (attempt > AsgConstants.BES_OTA_RECONNECT_ATTEMPTS) {
+            Log.e(
+                    BAUD_TAG,
+                    "BES OTA reconnect exhausted after "
+                            + AsgConstants.BES_OTA_RECONNECT_ATTEMPTS
+                            + " attempts (last reason="
+                            + previousReason
+                            + ")");
+            return;
+        }
         if (comManager.isOtaUpdating()) {
-            baudSwitchExecutor.schedule(
-                    this::reconnectAfterBesOta,
+            scheduleBesOtaReconnect(
+                    generation,
+                    attempt + 1,
                     AsgConstants.UART_BOOT_RECOVERY_RETRY_DELAY_MS,
-                    TimeUnit.MILLISECONDS);
+                    "OTA still owns UART");
             return;
         }
         try {
-            messageParser.clear();
+            clearMessageParser();
             boolean reopened = comManager.reopen(SerialPortBridge.DEFAULT_BAUDRATE);
             if (!reopened) {
-                Log.e(BAUD_TAG, "Could not reopen rendezvous baud after BES OTA");
+                scheduleBesOtaReconnect(
+                        generation,
+                        attempt + 1,
+                        AsgConstants.UART_BOOT_RECOVERY_RETRY_DELAY_MS,
+                        "rendezvous reopen failed");
                 return;
-            }
-            int generation;
-            synchronized (baudSwitchLock) {
-                generation = ++recoveryProbeGeneration;
             }
             scheduleVersionProbeBurst(
                     SerialPortBridge.DEFAULT_BAUDRATE,
                     generation,
                     () -> lastSrSyvrTime == 0,
                     "bes_ota_reconnect");
+            scheduleBesOtaReconnect(
+                    generation,
+                    attempt + 1,
+                    AsgConstants.UART_BOOT_RECOVERY_RETRY_DELAY_MS,
+                    "no version response");
         } catch (Exception e) {
             Log.e(BAUD_TAG, "Failed to reconnect after BES OTA", e);
+            scheduleBesOtaReconnect(
+                    generation,
+                    attempt + 1,
+                    AsgConstants.UART_BOOT_RECOVERY_RETRY_DELAY_MS,
+                    "reconnect exception");
+        }
+    }
+
+    private void clearMessageParser() {
+        synchronized (messageParserLock) {
+            if (messageParser != null) {
+                messageParser.clear();
+            }
         }
     }
 
