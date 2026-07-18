@@ -68,11 +68,13 @@ export default function AllAppsGridSheet({bottomSheetRef}: {bottomSheetRef: Reac
   // gap regardless of how the app left the foreground. Only "background"
   // qualifies: iOS also emits "inactive" for transient interruptions
   // (Notification Center, app switcher peek, incoming calls) where dropping
-  // focus would wrongly hide the keyboard on return.
+  // focus would wrongly hide the keyboard on return. Check this field's focus
+  // before the global dismiss so a still-mounted sheet cannot blur an input in
+  // another screen or foregrounded miniapp.
   useEffect(() => {
     const sub = AppState.addEventListener("change", (state) => {
-      if (state === "background") {
-        searchInputRef.current?.blur()
+      if (state === "background" && searchInputRef.current?.isFocused()) {
+        searchInputRef.current.blur()
         Keyboard.dismiss()
       }
     })
