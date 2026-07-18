@@ -117,10 +117,19 @@ class MentraBluetoothSdk private constructor(
     private data class PendingStreamStart(
         val seq: Long,
         val pending: PendingResponse<StreamStatusEvent>,
+        // Set when an id-carrying error arrives: a fatal publisher error never
+        // reaches the reconnect machinery and winds down with a streamId-less
+        // stopped, so the stash both attributes that stopped to this start and
+        // preserves the real error details for the rejection.
+        var lastError: StreamStatusEvent? = null,
     )
 
     private data class PendingStreamStop(
         val streamId: String?,
+        // The stop's slot in the shared streamStartSeq order (drawn inside
+        // streamStartOrderLock at send time): every pending start with a
+        // lower seq reached the glasses' FIFO before this stop.
+        val seq: Long,
         val pending: PendingResponse<StreamStatusEvent>,
     )
 
@@ -917,18 +926,25 @@ class MentraBluetoothSdk private constructor(
         val targetStreamId = synchronized(streamKeepAliveLock) {
             activeStreamKeepAlive?.streamId
         }
-        synchronized(oneShotLock) {
-            if (pendingStreamStop != null) {
-                throw BluetoothSdkException(
-                    "request_in_flight",
-                    "A stream stop command is already waiting for a glasses response.",
-                )
-            }
-            pendingStreamStop = PendingStreamStop(targetStreamId, pending)
-        }
-        stopStreamKeepAliveMonitor()
         try {
-            deviceManager.stopStream()
+            // The seq draw and the BLE hand-off share startStream's ordering
+            // critical section: the stop takes its own slot in the send order,
+            // so its ack can separate the pending starts the glasses consumed
+            // before it (lower seq) from starts sent after it (higher seq).
+            synchronized(streamStartOrderLock) {
+                synchronized(oneShotLock) {
+                    if (pendingStreamStop != null) {
+                        throw BluetoothSdkException(
+                            "request_in_flight",
+                            "A stream stop command is already waiting for a glasses response.",
+                        )
+                    }
+                    pendingStreamStop =
+                        PendingStreamStop(targetStreamId, streamStartSeq.incrementAndGet(), pending)
+                }
+                stopStreamKeepAliveMonitor()
+                deviceManager.stopStream()
+            }
             return pending.await(STREAM_STOP_TIMEOUT_MS)
         } finally {
             synchronized(oneShotLock) {
@@ -1559,15 +1575,40 @@ class MentraBluetoothSdk private constructor(
                 rejectPreemptedStreamStarts(start.seq)
             }
             when (event.state) {
-                StreamState.STREAMING -> {
+                // `reconnected` also proves the stream is live: when an async start
+                // failure triggers the glasses' publisher retry, a successful retry
+                // reports `reconnected` instead of `streaming`.
+                StreamState.STREAMING,
+                StreamState.RECONNECTED -> {
                     pendingStreamStarts.remove(streamId, start)
                     start.pending.resolve(event)
                 }
-                StreamState.ERROR,
                 StreamState.RECONNECT_FAILED,
                 StreamState.STOPPED -> {
                     pendingStreamStarts.remove(streamId, start)
-                    start.pending.reject(streamStatusException(event, "stream_start_failed"))
+                    start.pending.reject(
+                        streamStatusException(start.lastError ?: event, "stream_start_failed")
+                    )
+                }
+                StreamState.ERROR -> {
+                    if (!event.streamId.isNullOrBlank() && event.willRetry == true) {
+                        // The glasses flag errors their publisher will retry with
+                        // `willRetry` (emitting side lands in PR #3488), so keep the
+                        // start pending for the retry's verdict — `reconnected` or
+                        // `streaming` on success, `reconnect_failed` or the
+                        // streamId-less `stopped` wind-down (which reports these
+                        // stashed details) on failure.
+                        start.lastError = event
+                    } else {
+                        // An id-less error is the glasses' command-level rejection
+                        // (missing URL, low battery, no WiFi) emitted before any
+                        // publisher starts; an id-carrying error without `willRetry`
+                        // is terminal (`camera_busy` emits an error and nothing else).
+                        // Old firmware never sends `willRetry`, so its errors always
+                        // fail fast here — the shipped pre-#3487 Android behavior.
+                        pendingStreamStarts.remove(streamId, start)
+                        start.pending.reject(streamStatusException(event, "stream_start_failed"))
+                    }
                 }
                 else -> Unit
             }
@@ -1582,6 +1623,7 @@ class MentraBluetoothSdk private constructor(
                             pendingStreamStop = null
                         }
                     }
+                    rejectStreamStartsSupersededByStop(stop.seq)
                     stop.pending.resolve(stoppedStreamEvent(event, stop.streamId))
                 }
                 event.state == StreamState.ERROR || event.state == StreamState.RECONNECT_FAILED -> {
@@ -1617,22 +1659,59 @@ class MentraBluetoothSdk private constructor(
         }
     }
 
+    // The glasses process BLE commands FIFO, so this stop's ack also settles
+    // every start sent before it: whatever those starts brought up (or would
+    // have brought up) has been stopped, and no further status will arrive
+    // for them. Without this they would run out the 30s start timeout.
+    // Starts sent after the stop keep waiting for their own statuses.
+    private fun rejectStreamStartsSupersededByStop(stopSeq: Long) {
+        for ((streamId, start) in pendingStreamStarts) {
+            if (start.seq < stopSeq && pendingStreamStarts.remove(streamId, start)) {
+                start.pending.reject(
+                    BluetoothSdkException(
+                        "stream_stopped",
+                        "start stream $streamId was superseded by a stop_stream issued after it.",
+                    )
+                )
+            }
+        }
+    }
+
     private fun matchingStreamStart(event: StreamStatusEvent): Pair<String, PendingStreamStart>? {
         val streamId = event.streamId
         if (!streamId.isNullOrBlank()) {
             val start = pendingStreamStarts[streamId] ?: return null
             return streamId to start
         }
+        if (event.state == StreamState.ERROR) {
+            // An id-less error is a command-level preflight rejection (missing
+            // URL, low battery, no WiFi) emitted synchronously, while lifecycle
+            // statuses arrive async — so with overlapping starts the wire is
+            // genuinely ambiguous about which start it answers. Attribute it to
+            // the newest pending start: the common case is a later start
+            // failing preflight while an earlier one is already emitting
+            // lifecycle statuses, and at worst this swaps which start carries
+            // the error instead of letting both time out.
+            val entry = pendingStreamStarts.entries.maxByOrNull { it.value.seq } ?: return null
+            return entry.key to entry.value
+        }
         if (pendingStreamStarts.size == 1) {
+            // firstOrNull: timeouts and other handler threads mutate the
+            // ConcurrentHashMap concurrently, so the map can empty between the
+            // size check and this read; bail out instead of throwing.
+            val entry = pendingStreamStarts.entries.firstOrNull() ?: return null
             // A streamId-less STOPPED is the glasses' stop-ack for a PREVIOUS
             // stream (their stop ack carries no streamId), not a verdict on the
             // pending start — a start_stream that replaces a running publisher
             // emits exactly this sequence (stopped -> initializing -> streaming).
             // Attributing it here would reject a start that is about to succeed.
-            if (event.state == StreamState.STOPPED) {
+            // After a stashed `willRetry` error for the pending start, though,
+            // the stopped is the retrying publisher's wind-down (the stop-ack
+            // always precedes any status for the new start), so it is that
+            // start's verdict.
+            if (event.state == StreamState.STOPPED && entry.value.lastError == null) {
                 return null
             }
-            val entry = pendingStreamStarts.entries.first()
             return entry.key to entry.value
         }
         return null
