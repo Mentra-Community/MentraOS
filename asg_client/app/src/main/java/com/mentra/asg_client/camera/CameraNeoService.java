@@ -829,7 +829,7 @@ public class CameraNeoService extends LifecycleService {
                 // Already configured + idle for these params — just re-arm the keep-alive.
                 Log.d(TAG, "camera_warm_up: camera already warm, restarting keep-alive");
                 if (callback != null) {
-                    sInstance.addWarmLease(callback, ttl);
+                    sInstance.addWarmLease(callback, ttl, mode);
                 }
                 sInstance.armWarmLeaseTimer();
                 if (callback != null) {
@@ -1172,9 +1172,8 @@ public class CameraNeoService extends LifecycleService {
             ready = new ArrayList<>(warmCallbacks);
             warmCallbacks.clear();
             for (CameraWarmUpCallback callback : ready) {
-                addWarmLease(callback, callback.getDurationMs());
+                addWarmLease(callback, callback.getDurationMs(), openingWarmMode);
             }
-            warmLeaseMode = openingWarmMode;
             openingWarmMode = null;
             armWarmLeaseTimer();
         }
@@ -1197,7 +1196,10 @@ public class CameraNeoService extends LifecycleService {
     }
 
     /** Register or refresh one ready request-owned lease. Caller holds {@code SERVICE_LOCK}. */
-    private void addWarmLease(CameraWarmUpCallback callback, long durationMs) {
+    private void addWarmLease(CameraWarmUpCallback callback, long durationMs, String mode) {
+        if (warmLeases.isEmpty()) {
+            warmLeaseMode = PhotoMode.normalize(mode);
+        }
         String requestId = warmLeaseKey(callback);
         long deadline = System.currentTimeMillis() + clampWarmUpDuration(durationMs);
         warmReadyRequestIds.remove(requestId);
