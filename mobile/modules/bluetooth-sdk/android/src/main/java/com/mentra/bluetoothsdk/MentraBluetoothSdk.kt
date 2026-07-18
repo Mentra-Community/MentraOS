@@ -687,6 +687,10 @@ class MentraBluetoothSdk private constructor(
             }
         }
         try {
+            // Claim the scan-results store for this scan before the command goes
+            // out, so a delayed chunk from an older, abandoned scan can no longer
+            // mutate it.
+            Bridge.claimWifiScanResults(request.scanId)
             deviceManager.requestWifiScan(request.scanId)
             // The glasses wait up to 15s for scan-results broadcasts before sending
             // scan_complete, so give them longer than that before falling back.

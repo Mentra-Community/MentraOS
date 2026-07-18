@@ -540,6 +540,18 @@ public class Bridge private constructor() {
             sendTypedMessage("wifi_status_change", payload)
         }
 
+        /**
+         * Claim the WiFi scan-results store for a newly requested scan. Called by the
+         * SDK when it generates the scanId, BEFORE the scan command goes out: store
+         * ownership is decided at request time, not by whichever chunk arrives first,
+         * so a delayed chunk from an older, abandoned scan can never reset or clobber
+         * the current scan's accumulator.
+         */
+        @JvmStatic
+        fun claimWifiScanResults(scanId: String) {
+            DeviceStore.apply("bluetooth", "wifiScanActiveScanId", scanId)
+        }
+
         /** Send WiFi scan results */
         @JvmStatic
         fun updateWifiScanResults(
@@ -547,24 +559,34 @@ public class Bridge private constructor() {
                 scanComplete: Boolean,
                 scanId: String? = null
         ) {
-            var storedNetworks: List<Map<String, Any>> =
-                    DeviceStore.get("bluetooth", "wifiScanResults") as? List<Map<String, Any>>
-                            ?: emptyList()
-            val lastScanId = DeviceStore.get("bluetooth", "wifiScanResultsScanId")
-            if (scanId != null && scanId != lastScanId) {
-                // First chunk of a new scan: drop networks accumulated for a previous scan
-                // so stale entries never carry over into this scan's store.
-                storedNetworks = emptyList()
-                DeviceStore.apply("bluetooth", "wifiScanResultsScanId", scanId)
-            }
-            // add the networks to the storedNetworks array, removing duplicates by ssid
-            val updatedNetworks = storedNetworks.toMutableList()
-            for (network in networks) {
-                if (!updatedNetworks.any { it["ssid"] as? String == network["ssid"] as? String }) {
-                    updatedNetworks.add(network)
+            // Only chunks echoing the active scanId claimed at request time may mutate
+            // the store; foreign chunks are still forwarded to the SDK sink, which
+            // drops stale ids itself. Scan-id-less chunks (old firmware) keep the
+            // legacy accumulate-forever store behavior.
+            val ownsStore =
+                    scanId == null || scanId == DeviceStore.get("bluetooth", "wifiScanActiveScanId")
+            var updatedNetworks: List<Map<String, Any>> = networks
+            if (ownsStore) {
+                var storedNetworks: List<Map<String, Any>> =
+                        DeviceStore.get("bluetooth", "wifiScanResults") as? List<Map<String, Any>>
+                                ?: emptyList()
+                val lastScanId = DeviceStore.get("bluetooth", "wifiScanResultsScanId")
+                if (scanId != null && scanId != lastScanId) {
+                    // First chunk of a new scan: drop networks accumulated for a previous scan
+                    // so stale entries never carry over into this scan's store.
+                    storedNetworks = emptyList()
+                    DeviceStore.apply("bluetooth", "wifiScanResultsScanId", scanId)
                 }
+                // add the networks to the storedNetworks array, removing duplicates by ssid
+                val merged = storedNetworks.toMutableList()
+                for (network in networks) {
+                    if (!merged.any { it["ssid"] as? String == network["ssid"] as? String }) {
+                        merged.add(network)
+                    }
+                }
+                DeviceStore.apply("bluetooth", "wifiScanResults", merged)
+                updatedNetworks = merged
             }
-            DeviceStore.apply("bluetooth", "wifiScanResults", updatedNetworks)
             val body = HashMap<String, Any>()
             // Correlated scans: the SDK accumulates and dedupes chunks per scanId itself,
             // so forward only this chunk; the merged store list is for UI consumers.

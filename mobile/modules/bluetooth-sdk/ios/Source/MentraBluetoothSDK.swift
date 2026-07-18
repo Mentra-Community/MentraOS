@@ -686,6 +686,9 @@ public final class MentraBluetoothSDK {
         let pending = PendingResponse<[WifiScanResult]>(operation: "WiFi scan request")
         let request = PendingWifiScan(pending: pending, scanId: "scan-\(UUID().uuidString)")
         pendingWifiScan = request
+        // Claim the scan-results store for this scan before the command goes out,
+        // so a delayed chunk from an older, abandoned scan can no longer mutate it.
+        Bridge.claimWifiScanResults(scanId: request.scanId)
         DeviceManager.shared.requestWifiScan(scanId: request.scanId)
         let task = Task { @MainActor [weak self] () async throws -> [WifiScanResult] in
             defer {
