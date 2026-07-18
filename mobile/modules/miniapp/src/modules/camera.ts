@@ -42,6 +42,24 @@ export interface TakePhotoOptions {
    * manual exposure; ignored otherwise.
    */
   exposureTimeNs?: number
+  /** Sensor ISO for this capture only. Only used when `exposureTimeNs` enables manual exposure. */
+  iso?: number | null
+  /** After AE convergence, divide the metered exposure by this factor (scan mode). */
+  aeExposureDivisor?: number
+  /** Cap ISO after AE metering (scan mode). */
+  isoCap?: number
+  /** Request per-capture noise reduction. Sent on the wire; glasses may log `not_implemented`. */
+  noiseReduction?: boolean
+  /** Request per-capture edge enhancement. Sent on the wire; glasses may log `not_implemented`. */
+  edgeEnhancement?: boolean
+  /** Multi-frame noise reduction preference. */
+  mfnr?: boolean
+  /** Zero-shutter-lag preference. */
+  zsl?: boolean
+  /** ISP digital gain hint. */
+  ispDigitalGain?: number
+  /** ISP analog gain hint. */
+  ispAnalogGain?: string
 }
 
 export interface PhotoTaken {
@@ -130,6 +148,15 @@ export class CameraModule {
       sound: options.sound ?? true,
       saveToGallery: options.saveToGallery ?? false,
       exposureTimeNs: options.exposureTimeNs,
+      iso: options.iso,
+      aeExposureDivisor: options.aeExposureDivisor,
+      isoCap: options.isoCap,
+      noiseReduction: options.noiseReduction,
+      edgeEnhancement: options.edgeEnhancement,
+      mfnr: options.mfnr,
+      zsl: options.zsl,
+      ispDigitalGain: options.ispDigitalGain,
+      ispAnalogGain: options.ispAnalogGain,
     })
   }
 

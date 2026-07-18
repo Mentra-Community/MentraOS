@@ -233,6 +233,7 @@ function syntheticDataFor(requestId: string, requestType: string, requestPayload
       return {keys: []}
 
     case MiniappRequestType.SPEAK:
+    case MiniappRequestType.SPEAK_SENTENCES:
       return {audioUrl: null, durationMs: 0}
 
     case MiniappRequestType.SHARE:

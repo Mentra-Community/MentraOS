@@ -111,7 +111,7 @@ All event subscribers return an `UnsubscribeFn`. Subscriptions are ref-counted: 
 | Module                        | Methods                                                                                                                                  |
 | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
 | `session.display`             | `render(elements, opts?)` — scene API: diffed frames, stable-id in-place updates, `render([])` clears               |
-| `session.speaker`             | `play({audioUrl})`, `speak(text, {voice_id?, …})` (cloud streaming when connected, offline fallback), `stop()`, `onStateChange(handler)` |
+| `session.speaker`             | `play({audioUrl})`, `speak(text, {voice_id?, …})`, `speakSentences(sentences, {voice_id?, …})`, `stop()`, `onStateChange(handler)` |
 | `session.mic`                 | `onAudioChunk(handler)`, `onVoiceActivity(handler)`, `stop()`, `hasPermission`                                                           |
 | `session.transcription`       | `on(handler)`, `forLanguage(lang \| [langs], handler)`, `configure({languageHints, vocabulary, diarization})`, `stop()`, `hasPermission` |
 | `session.translation`         | `forLanguagePair(from, to, handler)`, `stop()`, `hasPermission`                                                                          |

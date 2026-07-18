@@ -17,6 +17,7 @@ describe("MiniappRequestType wire values", () => {
   test("PLAY_AUDIO", () => expect(MiniappRequestType.PLAY_AUDIO).toBe("miniapp_play_audio"))
   test("STOP_AUDIO", () => expect(MiniappRequestType.STOP_AUDIO).toBe("miniapp_stop_audio"))
   test("SPEAK", () => expect(MiniappRequestType.SPEAK).toBe("miniapp_speak"))
+  test("SPEAK_SENTENCES", () => expect(MiniappRequestType.SPEAK_SENTENCES).toBe("miniapp_speak_sentences"))
   test("RGB_LED", () => expect(MiniappRequestType.RGB_LED).toBe("miniapp_rgb_led"))
   test("LOCATION_POLL", () => expect(MiniappRequestType.LOCATION_POLL).toBe("miniapp_location_poll"))
   test("STORAGE_GET", () => expect(MiniappRequestType.STORAGE_GET).toBe("miniapp_storage_get"))

@@ -48,6 +48,7 @@ import {CloudAudioSubscriptionSync} from "./CloudAudioSubscriptionSync"
 import {phonePhotoCoordinator} from "./PhonePhotoCoordinator"
 import {phoneStreamCoordinator} from "./PhoneStreamCoordinator"
 import {phoneVideoCoordinator} from "./PhoneVideoCoordinator"
+import {runSentenceTtsPipeline} from "./SentenceTtsPipeline"
 import {cloudClientService} from "./CloudClientService"
 import {miniappLauncher} from "./MiniappLauncher"
 import {
@@ -92,8 +93,6 @@ interface ConnectedMiniapp {
   subscriptions: Set<string>
   sendMessage: (raw: string) => void
   lastPongAt: number
-  /** BGCAP diagnostic: wall-clock of the most recent PING send, for PONG RTT. */
-  bgcapLastPingSentAt?: number
   installedManifest?: InstalledMiniappManifest
   authRefreshTimerId: number | null
   /**
@@ -187,72 +186,7 @@ const REQUEST_WIFI_SETUP_TYPE = "miniapp_request_wifi_setup"
 // comes back automatically — this threshold only bounds how long that takes.
 const PING_TIMEOUT_THRESHOLD = 6 // ~30s
 
-// ===========================================================================
-// BGCAP: temporary background-caption telemetry (DIAGNOSTIC — remove after the
-// "captions fall behind then flood in waves" investigation lands a fix).
-//
-// Captions now run as a local miniapp inside the per-context JS engine
-// (Crust: QuickJS on Android / JSC on iOS), driven off a single serial
-// queue/executor with NO background awareness. The hypothesis is that the OS
-// starves/freezes that queue when the screen is off (iOS app suspension /
-// Android Doze), so inbound transcript deliveries pile up and drain in a burst
-// on resume. These logs measure exactly that. All lines are prefixed "BGCAP:"
-// so they're trivial to grep in incident logs and to delete. Cross-platform —
-// host-side only, no native changes.
-// ===========================================================================
-const BGCAP_TELEMETRY = false
 const TRANSCRIPT_TIMING_TELEMETRY = (globalThis as {__DEV__?: boolean}).__DEV__ === true
-let bgcapHbTimer: ReturnType<typeof setInterval> | null = null
-let bgcapHbLast = 0
-let bgcapTxCount = 0
-let bgcapTxLastFinalAt = 0
-let bgcapTxLastLogAt = 0
-
-function bgcapStartHeartbeat(): void {
-  if (!BGCAP_TELEMETRY || bgcapHbTimer !== null) return
-  bgcapHbLast = Date.now()
-  // PLAIN setInterval (NOT BgTimer): a plain JS timer only fires when the RN
-  // JS thread is actually executing. A gap >> 1s between ticks therefore proves
-  // the JS thread was suspended/throttled (iOS suspend / Android Doze) for that
-  // long — the smoking gun for the freeze. Silent when healthy; logs the stall
-  // duration when it happens. Pair with the "App state changed to:" lines.
-  bgcapHbTimer = setInterval(() => {
-    const now = Date.now()
-    const gap = now - bgcapHbLast
-    bgcapHbLast = now
-    if (gap > 2000) {
-      console.log(`BGCAP: host-js stall — no tick for ${gap}ms (RN JS thread frozen/throttled)`)
-    }
-  }, 1000)
-}
-
-function bgcapStopHeartbeat(): void {
-  if (bgcapHbTimer !== null) {
-    clearInterval(bgcapHbTimer)
-    bgcapHbTimer = null
-  }
-}
-
-// Rate-limited (1/s) summary of transcripts being FORWARDED to miniapps. Shows
-// whether transcripts keep arriving + being handed to the captions miniapp
-// during background. Compare its rate against the native "MAN: displayEvent"
-// (render) rate: fwd keeps flowing but render lags => miniapp executor is
-// starved; fwd itself stops => upstream (cloud delivery / RN thread) is the gap.
-function bgcapNoteTranscriptForward(isFinal: boolean): void {
-  if (!BGCAP_TELEMETRY) return
-  bgcapTxCount++
-  if (isFinal) bgcapTxLastFinalAt = Date.now()
-  const now = Date.now()
-  if (now - bgcapTxLastLogAt >= 1000) {
-    console.log(
-      `BGCAP: tx forwarded=${bgcapTxCount} in last ${now - bgcapTxLastLogAt}ms (lastFinal ${
-        bgcapTxLastFinalAt ? now - bgcapTxLastFinalAt : -1
-      }ms ago)`,
-    )
-    bgcapTxCount = 0
-    bgcapTxLastLogAt = now
-  }
-}
 
 const RGB_LED_ACTIONS = new Set<RgbLedAction>(["on", "off"])
 const RGB_LED_COLORS = new Set<RgbLedColor>(["red", "green", "blue", "orange", "white"])
@@ -425,6 +359,7 @@ class LocalMiniappRuntime {
 
   /** Pending cloud requests: requestId → packageName that originated the request. */
   private pendingCloudRequests: Map<string, {packageName: string; envelopeRequestId?: string}> = new Map()
+  private sentenceSpeechRuns = new Map<string, {id: string; cancelled: boolean}>()
 
   // Browser fallback token auth — HMAC-signed blob with a phone-local
   // secret. Both issuer and verifier are the same process, so the
@@ -949,6 +884,9 @@ class LocalMiniappRuntime {
       case MiniappRequestType.SPEAK:
         this.handleSpeak(packageName, payload, requestId)
         break
+      case MiniappRequestType.SPEAK_SENTENCES:
+        this.handleSpeakSentences(packageName, payload, requestId)
+        break
       case MiniappRequestType.RGB_LED:
         void this.handleRgbLed(packageName, payload, requestId)
         break
@@ -1031,23 +969,6 @@ class LocalMiniappRuntime {
       case MiniappResponseType.PONG: {
         // Liveness already touched above for every inbound message; the
         // PONG carries no other action.
-        // BGCAP: measure PING→PONG round-trip ONLY here (a real pong), not in
-        // handlePong (which fires for every inbound envelope). RTT = how long
-        // the miniapp's own JS engine (Crust serial queue) took to answer — a
-        // large value means that queue was starved (the transcript→display
-        // layer). bgcapLastPingSentAt holds the OLDEST outstanding ping (see
-        // doPingRound), so a multi-round background stall reports its full
-        // duration on the first pong after resume.
-        if (BGCAP_TELEMETRY) {
-          const app = this.connectedApps.get(packageName)
-          if (app?.bgcapLastPingSentAt != null) {
-            const rtt = Date.now() - app.bgcapLastPingSentAt
-            if (rtt > 1500) {
-              console.log(`BGCAP: ${packageName} pong rtt=${rtt}ms (miniapp JS engine was starved)`)
-            }
-            app.bgcapLastPingSentAt = undefined
-          }
-        }
         break
       }
 
@@ -1349,7 +1270,9 @@ class LocalMiniappRuntime {
       })
       .catch((err) => {
         console.warn(
-          `${LOG_TAG}: miniapp auth mint failed for ${packageName} (attempt ${attempt}): ${(err as Error)?.message ?? err}`,
+          `${LOG_TAG}: miniapp auth mint failed for ${packageName} (attempt ${attempt}): ${
+            (err as Error)?.message ?? err
+          }`,
         )
         this.scheduleInitialMiniappAuthRetry(packageName, attempt)
       })
@@ -1694,6 +1617,7 @@ class LocalMiniappRuntime {
     const volume = typeof payload.volume === "number" ? payload.volume : 1.0
     const stopOtherAudio = payload.stopOtherAudio !== false
 
+    this.cancelSentenceSpeech(packageName)
     this.setSpeakerState(packageName, "loading")
     audioPlaybackService.play(
       {requestId: audioRequestId, audioUrl, appId: packageName, volume, stopOtherAudio},
@@ -1729,6 +1653,7 @@ class LocalMiniappRuntime {
   }
 
   private handleStopAudio(packageName: string, _payload: Record<string, unknown>, requestId?: string): void {
+    this.cancelSentenceSpeech(packageName)
     audioPlaybackService.stopForApp(packageName)
     this.setSpeakerState(packageName, "stopped")
     this.sendResult(packageName, requestId, true)
@@ -1745,6 +1670,7 @@ class LocalMiniappRuntime {
     }
 
     try {
+      this.cancelSentenceSpeech(packageName)
       const voice = ((payload.voice_id ?? payload.voice) as string) || "default"
       const audioRequestId = requestId || `tts_${Date.now()}`
       const volume = typeof payload.volume === "number" ? payload.volume : 1.0
@@ -1754,6 +1680,11 @@ class LocalMiniappRuntime {
           ? (payload.voice_settings as Record<string, unknown>)
           : undefined
       const speed = typeof voiceSettings?.speed === "number" ? voiceSettings.speed : undefined
+      const offlineSentences = Array.isArray(payload._sentences)
+        ? payload._sentences.filter(
+            (sentence): sentence is string => typeof sentence === "string" && Boolean(sentence.trim()),
+          )
+        : undefined
 
       this.setSpeakerState(packageName, "loading")
 
@@ -1762,9 +1693,10 @@ class LocalMiniappRuntime {
         !voiceExplicit || voice === "default" || ttsModelManager.getAvailableLanguages().some((l) => l.code === voice)
 
       const modelId = typeof payload.model_id === "string" ? payload.model_id : undefined
+      const forceLocal = payload.forceLocal === true
       const cloudConnected = cloudClientService.isConnected()
       console.log(
-        `${LOG_TAG}: TTS decision for ${packageName}: cloudConnected=${cloudConnected}, runtimeTts=yes, offlineVoice=${offlineSupportsVoice}`,
+        `${LOG_TAG}: TTS decision for ${packageName}: cloudConnected=${cloudConnected}, runtimeTts=yes, offlineVoice=${offlineSupportsVoice}, forceLocal=${forceLocal}`,
       )
 
       let terminalSent = false
@@ -1804,10 +1736,64 @@ class LocalMiniappRuntime {
           return false
         }
 
+        const languageCode = ttsModelManager.getAvailableLanguages().some((l) => l.code === voice) ? voice : undefined
+
+        if (offlineSentences?.length) {
+          const run = {id: audioRequestId, cancelled: false}
+          this.sentenceSpeechRuns.set(packageName, run)
+          let firstSentence: TtsSynthesisResult
+          try {
+            firstSentence = await ttsModelManager.synthesizeToFile(offlineSentences[0], {languageCode, speed})
+          } catch (offlineErr) {
+            if (this.sentenceSpeechRuns.get(packageName) === run) {
+              this.sentenceSpeechRuns.delete(packageName)
+            }
+            console.warn(
+              `${LOG_TAG}: offline sentence TTS synthesize failed${reason ? ` after ${reason}` : ""}:`,
+              offlineErr,
+            )
+            return false
+          }
+
+          if (run.cancelled) {
+            await Promise.resolve(firstSentence.cleanup?.())
+            sendPlaybackResult(true, null, 0, "offline sentence tts playback stopped")
+            return true
+          }
+          void runSentenceTtsPipeline({
+            sentences: offlineSentences,
+            firstAudio: firstSentence,
+            run,
+            synthesize: (sentence) => ttsModelManager.synthesizeToFile(sentence, {languageCode, speed}),
+            play: (audio, index) =>
+              new Promise((resolve) => {
+                audioPlaybackService.play(
+                  {
+                    requestId: `${audioRequestId}_sentence_${index}`,
+                    audioUrl: audio.audioUrl,
+                    appId: packageName,
+                    volume,
+                    stopOtherAudio: true,
+                  },
+                  (_responseId, success, error, duration) => resolve({success, error, duration}),
+                )
+              }),
+            onCleanupError: (cleanupError) => {
+              console.warn(`${LOG_TAG}: sentence TTS cleanup failed`, cleanupError)
+            },
+          }).then(({success, error, duration}) => {
+            if (this.sentenceSpeechRuns.get(packageName) === run) {
+              this.sentenceSpeechRuns.delete(packageName)
+            }
+            sendPlaybackResult(success, error, duration, "offline sentence tts playback failed")
+          })
+          queueMicrotask(() => this.setSpeakerState(packageName, "playing"))
+          return true
+        }
+
         let offlineGenerated: TtsSynthesisResult | undefined
 
         try {
-          const languageCode = ttsModelManager.getAvailableLanguages().some((l) => l.code === voice) ? voice : undefined
           offlineGenerated = await ttsModelManager.synthesizeToFile(text, {languageCode, speed})
         } catch (offlineErr) {
           console.warn(`${LOG_TAG}: offline TTS synthesize failed${reason ? ` after ${reason}` : ""}:`, offlineErr)
@@ -1866,6 +1852,22 @@ class LocalMiniappRuntime {
         return true
       }
 
+      if (forceLocal) {
+        if (await playOfflineTts()) {
+          return
+        }
+        const message = "tts unavailable: forceLocal requested but offline TTS model is not available"
+        this.setSpeakerState(packageName, "error", {
+          errorCode: MiniappErrorCode.TTS_LOCAL_UNAVAILABLE,
+          errorMessage: message,
+        })
+        this.sendResult(packageName, requestId, false, undefined, {
+          code: MiniappErrorCode.TTS_LOCAL_UNAVAILABLE,
+          message,
+        })
+        return
+      }
+
       if (cloudConnected && (await playCloudTts(true))) {
         return
       }
@@ -1901,6 +1903,40 @@ class LocalMiniappRuntime {
         message,
       })
     }
+  }
+
+  private cancelSentenceSpeech(packageName: string): void {
+    const run = this.sentenceSpeechRuns.get(packageName)
+    if (!run) return
+    run.cancelled = true
+    this.sentenceSpeechRuns.delete(packageName)
+  }
+
+  private async handleSpeakSentences(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    const sentences = Array.isArray(payload.sentences)
+      ? payload.sentences.filter((sentence): sentence is string => typeof sentence === "string")
+      : []
+    const text = sentences
+      .map((sentence) => sentence.trim())
+      .filter(Boolean)
+      .join(" ")
+
+    if (!text) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: "speakSentences requires at least one sentence",
+      })
+      return
+    }
+
+    // Preserve the original cloud/local routing. Cloud TTS receives one joined
+    // utterance; local Supertonic receives the sentence boundaries for its
+    // one-sentence lookahead pipeline.
+    await this.handleSpeak(packageName, {...payload, text, _sentences: sentences}, requestId)
   }
 
   private async handleRgbLed(packageName: string, payload: Record<string, unknown>, requestId?: string): Promise<void> {
@@ -2489,6 +2525,15 @@ class LocalMiniappRuntime {
         sound: payload.sound as boolean | undefined,
         saveToGallery: payload.saveToGallery as boolean | undefined,
         exposureTimeNs: payload.exposureTimeNs as number | undefined,
+        iso: payload.iso as number | null | undefined,
+        aeExposureDivisor: payload.aeExposureDivisor as number | undefined,
+        isoCap: payload.isoCap as number | undefined,
+        noiseReduction: payload.noiseReduction as boolean | undefined,
+        edgeEnhancement: payload.edgeEnhancement as boolean | undefined,
+        mfnr: payload.mfnr as boolean | undefined,
+        zsl: payload.zsl as boolean | undefined,
+        ispDigitalGain: payload.ispDigitalGain as number | undefined,
+        ispAnalogGain: payload.ispAnalogGain as string | undefined,
       })
       this.sendResult(packageName, requestId, true, result)
     } catch (err) {
@@ -2933,7 +2978,9 @@ class LocalMiniappRuntime {
       const receivedAt = Date.now()
       if (TRANSCRIPT_TIMING_TELEMETRY) {
         console.log(
-          `${LOG_TAG}: transcript cloud_recv t=${receivedAt} final=${d.isFinal} lang=${d.resolvedLanguage} text="${d.text.slice(0, 48)}"`,
+          `${LOG_TAG}: transcript cloud_recv t=${receivedAt} final=${d.isFinal} lang=${
+            d.resolvedLanguage
+          } text="${d.text.slice(0, 48)}"`,
         )
       }
       this.forwardEvent(`transcription:${d.resolvedLanguage}`, {
@@ -3107,15 +3154,6 @@ class LocalMiniappRuntime {
     }
 
     if (matchedSubs.size === 0 && !perGestureStream) return
-
-    // BGCAP: count transcripts only once we know they're actually being handed
-    // to a subscriber. If the captions miniapp is unregistered/respawning (or
-    // hasn't subscribed yet) the cloud may still push transcripts that match no
-    // one — counting those would falsely show "forwarded" during the exact gap
-    // the diagnostic is meant to expose.
-    if (BGCAP_TELEMETRY && normalizedStream.startsWith("transcription:")) {
-      bgcapNoteTranscriptForward(!!(data as {isFinal?: boolean} | null)?.isFinal)
-    }
 
     for (const packageName of matchedSubs) {
       if (TRANSCRIPT_TIMING_TELEMETRY && normalizedStream.startsWith("transcription:")) {
@@ -3702,7 +3740,6 @@ class LocalMiniappRuntime {
   // ===========================================================================
 
   private ensurePingLoop(): void {
-    bgcapStartHeartbeat() // BGCAP diagnostic
     if (this.pingIntervalId !== null) return
 
     this.pingIntervalId = BgTimer.setInterval(() => {
@@ -3711,7 +3748,6 @@ class LocalMiniappRuntime {
   }
 
   private stopPingLoop(): void {
-    bgcapStopHeartbeat() // BGCAP diagnostic
     if (this.pingIntervalId !== null) {
       BgTimer.clearInterval(this.pingIntervalId)
       this.pingIntervalId = null
@@ -3732,10 +3768,6 @@ class LocalMiniappRuntime {
       }
 
       // Send PING — SDK auto-replies with PONG
-      // BGCAP: stamp the OLDEST outstanding ping only — don't overwrite, or a
-      // background stall (pings keep firing on the native BgTimer while the
-      // miniapp engine is frozen) would reset the clock and hide its duration.
-      if (BGCAP_TELEMETRY && app.bgcapLastPingSentAt == null) app.bgcapLastPingSentAt = now
       this.sendToMiniapp(packageName, {
         type: MiniappRequestType.PING,
       })

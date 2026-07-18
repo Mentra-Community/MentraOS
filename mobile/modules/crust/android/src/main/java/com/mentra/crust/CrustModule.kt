@@ -129,6 +129,17 @@ class CrustModule : Module() {
       sendEvent("onChange", mapOf("value" to value))
     }
 
+    AsyncFunction("nativeHttpRequest") {
+      method: String, url: String, headers: Map<String, String>, body: String? ->
+      val result = JSCPolyfillBridge.executeHttp(method, url, headers, body)
+      mapOf(
+        "status" to result.status,
+        "statusText" to result.statusText,
+        "headers" to result.headers,
+        "body" to result.body,
+      )
+    }
+
     Function("showAVRoutePicker") { _: String? ->
       // iOS-only; Android uses system Bluetooth settings / Crust where appropriate.
     }

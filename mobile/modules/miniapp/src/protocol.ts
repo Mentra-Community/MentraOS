@@ -43,6 +43,9 @@ export enum MiniappRequestType {
   /** Speak text via cloud TTS — phone constructs the URL. */
   SPEAK = "miniapp_speak",
 
+  /** Speak a sentence list as one continuous TTS request. */
+  SPEAK_SENTENCES = "miniapp_speak_sentences",
+
   /** Control the glasses RGB LED. */
   RGB_LED = "miniapp_rgb_led",
 
@@ -317,6 +320,9 @@ export enum MiniappErrorCode {
   TTS_TEXT_TOO_LONG = "TTS_TEXT_TOO_LONG",
   TTS_INVALID_VOICE = "TTS_INVALID_VOICE",
   TTS_UPSTREAM_ERROR = "TTS_UPSTREAM_ERROR",
+
+  /** `speak({forceLocal: true})` but the on-device offline TTS model isn't downloaded/ready. */
+  TTS_LOCAL_UNAVAILABLE = "TTS_LOCAL_UNAVAILABLE",
 
   /** Not connected / pre-ACK and transport closed. */
   NOT_CONNECTED = "NOT_CONNECTED",

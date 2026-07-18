@@ -43,6 +43,12 @@ export interface SpeakOptions {
   voice_settings?: Record<string, unknown>
   volume?: number
   stopOtherAudio?: boolean
+  /**
+   * Force this call to use on-device offline TTS, skipping cloud TTS
+   * entirely — even when cloud is connected. Rejects with `TTS_LOCAL_UNAVAILABLE`
+   * if the offline model isn't ready instead of falling back to cloud.
+   */
+  forceLocal?: boolean
 }
 
 export interface SpeakResult {
@@ -114,6 +120,7 @@ export class SpeakerModule {
           voice_settings: options.voice_settings,
           volume: options.volume,
           stopOtherAudio: options.stopOtherAudio ?? false,
+          forceLocal: options.forceLocal ?? false,
         },
         {timeoutMs: 0},
       )
@@ -123,6 +130,39 @@ export class SpeakerModule {
       if (err && typeof err === "object" && "code" in err) {
         throw err
       }
+      throw {code: MiniappErrorCode.INTERNAL, message: String(err)}
+    }
+  }
+
+  /**
+   * Speak multiple sentences as one continuous request.
+   *
+   * The host owns TTS routing and playback, so callers avoid issuing separate
+   * bridge requests that could interrupt one another. The original `speak()`
+   * API remains available for a single text value.
+   */
+  async speakSentences(sentences: string[], options: SpeakOptions = {}): Promise<SpeakResult> {
+    const normalized = sentences.map((sentence) => sentence.trim()).filter(Boolean)
+    if (normalized.length === 0) {
+      throw {code: MiniappErrorCode.INTERNAL, message: "speakSentences requires at least one sentence"}
+    }
+
+    try {
+      const result = await this.session.sendRequest<SpeakResult | null>(
+        {
+          type: MiniappRequestType.SPEAK_SENTENCES,
+          sentences: normalized,
+          voice_id: options.voice_id,
+          voice_settings: options.voice_settings,
+          volume: options.volume,
+          stopOtherAudio: options.stopOtherAudio ?? false,
+          forceLocal: options.forceLocal ?? false,
+        },
+        {timeoutMs: 0},
+      )
+      return result ?? {completed: true}
+    } catch (err) {
+      if (err && typeof err === "object" && "code" in err) throw err
       throw {code: MiniappErrorCode.INTERNAL, message: String(err)}
     }
   }
