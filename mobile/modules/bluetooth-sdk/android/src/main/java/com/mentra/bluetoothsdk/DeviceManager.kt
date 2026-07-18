@@ -1556,10 +1556,10 @@ class DeviceManager {
         sgc?.sendStreamKeepAlive(message)
     }
 
-    fun requestWifiScan() {
+    fun requestWifiScan(scanId: String? = null) {
         Bridge.log("MAN: Requesting wifi scan")
         DeviceStore.apply("bluetooth", "wifiScanResults", emptyList<Any>())
-        sgc?.requestWifiScan()
+        sgc?.requestWifiScan(scanId)
     }
 
     fun sendIncidentId(incidentId: String, apiBaseUrl: String? = null) {

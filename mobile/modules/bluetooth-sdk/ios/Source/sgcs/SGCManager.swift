@@ -184,7 +184,7 @@ protocol SGCManager {
 
     // MARK: - Network Management
 
-    func requestWifiScan()
+    func requestWifiScan(scanId: String?)
     func sendWifiCredentials(_ ssid: String, _ password: String)
     func forgetWifiNetwork(_ ssid: String)
     func sendHotspotState(_ enabled: Bool)

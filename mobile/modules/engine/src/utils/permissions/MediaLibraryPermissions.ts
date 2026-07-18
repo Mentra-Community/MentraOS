@@ -22,6 +22,18 @@ export interface MediaLibrarySaveReceipt {
  * - Android 9-: Uses WRITE_EXTERNAL_STORAGE (legacy)
  */
 export class MediaLibraryPermissions {
+  /** Limited iOS access cannot see historical, unselected assets for duplicate reconciliation. */
+  static async hasLimitedAccess(): Promise<boolean> {
+    if (Platform.OS !== "ios") return false
+    try {
+      return (await check(PERMISSIONS.IOS.PHOTO_LIBRARY)) === RESULTS.LIMITED
+    } catch (error) {
+      console.error("[MediaLibrary] Error checking limited-library access:", error)
+      // Conservatively block legacy reconciliation when the scope cannot be verified.
+      return true
+    }
+  }
+
   /**
    * Check if we have permission to save to the camera roll
    * Note: On Android 10+, this always returns true since no permission is needed

@@ -3251,7 +3251,8 @@ class MentraLive : SGCManager() {
 
                 val scanComplete =
                         json.optBoolean("scan_complete", json.optBoolean("scanComplete", false))
-                Bridge.updateWifiScanResults(networks, scanComplete)
+                val scanId = json.optString("scanId", "").ifEmpty { null }
+                Bridge.updateWifiScanResults(networks, scanComplete, scanId)
             }
             "token_status" -> {
                 // Process coreToken acknowledgment
@@ -4828,10 +4829,13 @@ class MentraLive : SGCManager() {
     /**
      * Request WiFi scan from the glasses This will ask the glasses to scan for available networks
      */
-    override fun requestWifiScan() {
+    override fun requestWifiScan(scanId: String?) {
         try {
             val json = JSONObject()
             json.put("type", "request_wifi_scan")
+            if (!scanId.isNullOrEmpty()) {
+                json.put("scanId", scanId)
+            }
             sendJson(json, true)
             Bridge.log("LIVE: Sending WiFi scan request to glasses")
         } catch (e: JSONException) {
@@ -8054,7 +8058,7 @@ class MentraLive : SGCManager() {
             val type = json.optString("type", "")
 
             when (type) {
-                "request_wifi_scan" -> requestWifiScan()
+                "request_wifi_scan" -> requestWifiScan(null)
                 "rgb_led_control_on", "rgb_led_control_off" -> {
                     // Forward LED control commands directly to glasses via BLE
                     Log.d(TAG, "💡 Forwarding LED control command to glasses: " + type)

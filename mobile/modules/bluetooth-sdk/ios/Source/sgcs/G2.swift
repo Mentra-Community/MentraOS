@@ -3975,7 +3975,7 @@ class G2: NSObject, SGCManager {
 
     // MARK: - SGCManager: Network (G2 has no WiFi)
 
-    func requestWifiScan() {}
+    func requestWifiScan(scanId _: String?) {}
     func sendWifiCredentials(_: String, _: String) {}
     func forgetWifiNetwork(_: String) {}
     func sendHotspotState(_: Bool) {}

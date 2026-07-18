@@ -2,6 +2,7 @@ import {storage} from "../../utils/storage/storage"
 
 export interface GallerySettings {
   autoSaveToCameraRoll: boolean
+  autoSaveDisableWarningShown: boolean
   imageProcessingEnabled: boolean
 }
 
@@ -10,6 +11,7 @@ export class GallerySettingsService {
   private readonly SETTINGS_KEY = "gallery_settings"
   private readonly DEFAULT_SETTINGS: GallerySettings = {
     autoSaveToCameraRoll: true, // Default ON
+    autoSaveDisableWarningShown: false,
     imageProcessingEnabled: true, // Lens coefficients calibrated from chessboard photos
   }
 
@@ -39,6 +41,7 @@ export class GallerySettingsService {
     const res = await storage.save(this.SETTINGS_KEY, updated)
     if (res.is_error()) {
       console.error("[GallerySettings] Error saving settings:", res.error)
+      throw res.error
     }
     console.log("[GallerySettings] Settings updated:", updated)
   }

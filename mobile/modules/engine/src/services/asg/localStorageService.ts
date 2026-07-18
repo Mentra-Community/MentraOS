@@ -332,6 +332,14 @@ export class LocalStorageService {
     }
   }
 
+  /** Persist a durable camera-roll receipt without replacing the local-file generation. */
+  async updateDownloadedFileAssetReceipt(fileName: string, assetReceipt: GalleryAssetReceipt): Promise<void> {
+    const files = await this.getDownloadedFiles()
+    const file = files[fileName]
+    if (!file) throw new Error(`Downloaded file is missing: ${fileName}`)
+    await this.saveDownloadedFile({...file, assetReceipt})
+  }
+
   /**
    * Delete downloaded file (both metadata and actual files)
    */

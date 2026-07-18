@@ -334,7 +334,7 @@ class MentraNex : SGCManager() {
     }
 
     // Network Management
-    override fun requestWifiScan () { Bridge.log("Nex: requestWifiScan operation not supported") }
+    override fun requestWifiScan (scanId: String?) { Bridge.log("Nex: requestWifiScan operation not supported") }
     override fun sendWifiCredentials(ssid: String, password: String) { Bridge.log("Nex: sendWifiCredentials operation not supported") }
     override fun forgetWifiNetwork(ssid: String) { }
     override fun sendHotspotState(enabled: Boolean) { Bridge.log("Nex: sendHotspotState operation not supported") }
