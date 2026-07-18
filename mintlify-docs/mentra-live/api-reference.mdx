@@ -466,7 +466,7 @@ Use the boolean check result for update prompts and keep `ota_status` listeners/
 
 OTA requires Mentra Live glasses firmware that supports the ASG OTA protocol and network access from the glasses. During install, normal BLE traffic can be interrupted and the glasses may restart; keep the app connected and avoid sending unrelated commands until `ota_status.status` is `complete` or `failed`.
 
-Treat `complete` as terminal even though the connection may drop immediately after it: when the final step of an update is the BES firmware, the glasses power-cycle right after emitting `complete`, so no further `ota_status` follows. A transfer that stalls on the glasses side aborts itself after about 30 seconds and surfaces as `failed`; the glasses stay on their current software, and retrying the whole update from the app is the intended recovery.
+Treat `complete` as terminal even though the connection may drop immediately after it: when the final step of an update is the BES firmware, the glasses power-cycle right after emitting `complete`, so no further `ota_status` follows. If the BES firmware transfer step stalls on the glasses side, it aborts itself after about 30 seconds and surfaces as `failed`; the APK and MTK steps use their own timeout paths. On such an abort the BES stays on its current firmware — earlier APK or MTK steps of the same update may already have completed — and retrying the whole update from the app is the intended recovery.
 
 ## Events
 
