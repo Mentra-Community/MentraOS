@@ -82,6 +82,18 @@ class MentraBluetoothSdk private constructor(
         private const val DEFAULT_STREAM_KEEP_ALIVE_INTERVAL_SECONDS = 5
         private const val MAX_MISSED_STREAM_KEEP_ALIVE_ACKS = 3
 
+        // Stream states the glasses only reach after start_stream has run past
+        // stopAllServices() — the point where every older start is actually
+        // preempted. ERROR and STOPPED are deliberately absent: an ERROR can be
+        // a command-level preflight rejection emitted before stopAllServices,
+        // and a STOPPED is a stop ack; neither proves older starts were killed.
+        private val PREEMPTION_PROVEN_STATES = setOf(
+            StreamState.INITIALIZING,
+            StreamState.RECONNECTING,
+            StreamState.RECONNECTED,
+            StreamState.STREAMING,
+        )
+
         @JvmStatic
         fun create(
             context: Context,
@@ -1552,7 +1564,16 @@ class MentraBluetoothSdk private constructor(
         val startMatch = matchingStreamStart(event)
         if (startMatch != null) {
             val (streamId, start) = startMatch
-            if (!event.streamId.isNullOrBlank()) {
+            // Preemption may only be inferred from states the glasses emit AFTER
+            // start_stream has run stopAllServices() (see PREEMPTION_PROVEN_STATES).
+            // ERROR must not fire it: a command-level preflight rejection (missing
+            // URL, low battery, no WiFi) carries this start's streamId but is sent
+            // BEFORE stopAllServices, so older starts were not preempted — and
+            // rejecting one that already resolved and started its keep-alive
+            // monitor would strand a live stream without keep-alives. STOPPED
+            // must not fire it either: it is the stop-ack shape and proves
+            // nothing about the start path having run.
+            if (!event.streamId.isNullOrBlank() && event.state in PREEMPTION_PROVEN_STATES) {
                 rejectPreemptedStreamStarts(start.seq)
             }
             when (event.state) {
@@ -1595,11 +1616,11 @@ class MentraBluetoothSdk private constructor(
     }
 
     // The glasses process BLE commands FIFO and every start_stream begins by
-    // stopping whatever runs, so an id-carrying status for start X (any state)
-    // proves every lower-seq start has already been preempted. Their
-    // only verdict on current firmware is a streamId-less stopped, which the
-    // id-less heuristic deliberately ignores — without this they would run out
-    // the 30s timeout instead of failing fast.
+    // stopping whatever runs, so an id-carrying status for start X in one of
+    // these states proves every lower-seq start has already been preempted.
+    // Their only verdict on current firmware is a streamId-less stopped, which
+    // the id-less heuristic deliberately ignores — without this they would run
+    // out the 30s timeout instead of failing fast.
     private fun rejectPreemptedStreamStarts(winnerSeq: Long) {
         for ((streamId, start) in pendingStreamStarts) {
             if (start.seq < winnerSeq && pendingStreamStarts.remove(streamId, start)) {
