@@ -44,6 +44,7 @@ jest.mock("../../../modules/engine/src/services/asg/localStorageService", () => 
 jest.mock("../../../modules/engine/src/services/asg/cameraRollExportCoordinator", () => ({
   cameraRollExportCoordinator: {
     recordIndexed: jest.fn(() => Promise.resolve()),
+    isAutoSaveEnabled: jest.fn(() => Promise.resolve(false)),
     exportForSource: jest.fn(() => Promise.resolve({platform: "ios", identifier: "asset", exportedAt: Date.now()})),
   },
 }))
@@ -124,6 +125,7 @@ describe("mediaProcessingQueue", () => {
       Buffer.from([0xff, 0xd8, 0x76, 0x61, 0x6c, 0x69, 0x64]).toString("base64"),
     )
     ;(cameraRollExportCoordinator.exportForSource as jest.Mock).mockRejectedValueOnce(new Error("PhotoKit unavailable"))
+    ;(cameraRollExportCoordinator.isAutoSaveEnabled as jest.Mock).mockResolvedValueOnce(true)
 
     mediaProcessingQueue.reset()
     mediaProcessingQueue.enqueue({
@@ -146,6 +148,41 @@ describe("mediaProcessingQueue", () => {
       state: "EXPORT_PENDING",
       retryCount: 1,
       lastError: "PhotoKit unavailable",
+    })
+  })
+
+  it("acknowledges an app-local capture when automatic camera-roll saving was turned off", async () => {
+    ;(RNFS.exists as jest.Mock).mockResolvedValue(true)
+    ;(RNFS.stat as jest.Mock).mockResolvedValue({size: 100})
+    ;(RNFS.read as jest.Mock).mockResolvedValue(
+      Buffer.from([0xff, 0xd8, 0x76, 0x61, 0x6c, 0x69, 0x64]).toString("base64"),
+    )
+
+    mediaProcessingQueue.reset()
+    mediaProcessingQueue.enqueue({
+      id: "IMG_disabled_during_sync",
+      type: "photo",
+      primaryPath: "/tmp/IMG_disabled_during_sync/base.jpg",
+      totalSize: 100,
+      shouldProcess: false,
+      shouldAutoSave: true,
+      deleteFromGlasses: ["IMG_disabled_during_sync"],
+      protocolVersion: 3,
+    })
+
+    await expect(mediaProcessingQueue.waitUntilDrained(5000)).resolves.toBeUndefined()
+
+    expect(cameraRollExportCoordinator.exportForSource).not.toHaveBeenCalled()
+    expect(cameraRollExportCoordinator.recordIndexed).toHaveBeenCalledWith(
+      expect.objectContaining({capture_id: "IMG_disabled_during_sync"}),
+      false,
+      "HISTORICAL_BACKFILL",
+      "IMG_disabled_during_sync",
+    )
+    expect(asgCameraApi.acknowledgeCapture).toHaveBeenCalled()
+    expect(galleryTransferLedger.get("IMG_disabled_during_sync")).toMatchObject({
+      state: "TRASHED",
+      shouldAutoSave: false,
     })
   })
 
@@ -206,6 +243,7 @@ describe("mediaProcessingQueue", () => {
     ;(RNFS.exists as jest.Mock).mockResolvedValue(true)
     ;(RNFS.stat as jest.Mock).mockResolvedValue({size: 100})
     ;(localStorageService.getDownloadedFile as jest.Mock).mockResolvedValueOnce(null)
+    ;(cameraRollExportCoordinator.isAutoSaveEnabled as jest.Mock).mockResolvedValueOnce(true)
     const capture = {
       capture_id: "IMG_recover_index",
       type: "photo" as const,
@@ -235,6 +273,35 @@ describe("mediaProcessingQueue", () => {
       capture.capture_id,
     )
     expect(galleryTransferLedger.get(capture.capture_id)?.state).toBe("TRASHED")
+    recoverySpy.mockRestore()
+  })
+
+  it("acks recovered EXPORT_PENDING media when automatic saving is now disabled", async () => {
+    ;(RNFS.exists as jest.Mock).mockResolvedValue(true)
+    ;(RNFS.stat as jest.Mock).mockResolvedValue({size: 100})
+    ;(localStorageService.getDownloadedFile as jest.Mock).mockResolvedValueOnce({
+      name: "IMG_recover_disabled",
+      capture_id: "IMG_recover_disabled",
+    })
+    const capture = {
+      capture_id: "IMG_recover_disabled",
+      type: "photo" as const,
+      timestamp: 1000,
+      total_size: 100,
+      files: [{name: "IMG_recover_disabled/base.jpg", size: 100, role: "primary" as const}],
+    }
+    galleryTransferLedger.ensureCapture(capture, 3)
+    const entry = galleryTransferLedger.transition(capture.capture_id, "EXPORT_PENDING", {
+      finalPath: "/tmp/IMG_recover_disabled/base.jpg",
+      shouldAutoSave: true,
+    })
+    const recoverySpy = jest.spyOn(galleryTransferLedger, "pendingRecovery").mockReturnValue([entry])
+
+    await expect(mediaProcessingQueue.retryPending()).resolves.toEqual({retried: 1, failed: 0})
+
+    expect(cameraRollExportCoordinator.exportForSource).not.toHaveBeenCalled()
+    expect(asgCameraApi.acknowledgeCapture).toHaveBeenCalledWith(capture.capture_id, entry.ackId)
+    expect(galleryTransferLedger.get(capture.capture_id)).toMatchObject({state: "TRASHED", shouldAutoSave: false})
     recoverySpy.mockRestore()
   })
 

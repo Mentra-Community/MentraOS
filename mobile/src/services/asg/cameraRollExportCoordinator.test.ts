@@ -200,6 +200,16 @@ describe("cameraRollExportCoordinator", () => {
     expect(MediaLibraryPermissions.saveToLibraryWithReceipt).not.toHaveBeenCalled()
   })
 
+  it("keeps an unexported source app-local when automatic saving is disabled", async () => {
+    const file = legacyFile("IMG_disabled_source")
+    mockFiles[file.name] = file
+    mockAutoSaveEnabled = false
+
+    await expect(cameraRollExportCoordinator.exportForSource(file, file.name)).resolves.toBeUndefined()
+    expect(MediaLibraryPermissions.saveToLibraryWithReceipt).not.toHaveBeenCalled()
+    expect(cameraRollExportLedger.list()[0]).toMatchObject({state: "NOT_REQUESTED", localPresent: true})
+  })
+
   it("keeps denied exports durable and blocked instead of dropping them", async () => {
     const file = legacyFile()
     mockFiles[file.name] = file
@@ -270,7 +280,7 @@ describe("cameraRollExportCoordinator", () => {
 
     const receipt = await cameraRollExportCoordinator.exportForSource(file, file.name)
 
-    expect(receipt.identifier).toBe("asset-1")
+    expect(receipt?.identifier).toBe("asset-1")
     expect(cameraRollExportLedger.list()[0]).toMatchObject({
       state: "EXPORTED",
       requiresFullLibraryReconciliation: false,
@@ -344,7 +354,7 @@ describe("cameraRollExportCoordinator", () => {
     await cameraRollExportCoordinator.setEnabled(false)
     finishExists(true)
 
-    await expect(sourceExport).rejects.toThrow("disabled")
+    await expect(sourceExport).resolves.toBeUndefined()
     expect(MediaLibraryPermissions.saveToLibraryWithReceipt).not.toHaveBeenCalled()
     expect(cameraRollExportLedger.list()[0].state).toBe("NOT_REQUESTED")
   })
@@ -355,7 +365,7 @@ describe("cameraRollExportCoordinator", () => {
 
     const receipt = await cameraRollExportCoordinator.exportForSource(file, "IMG_source")
 
-    expect(receipt.identifier).toBe("asset-1")
+    expect(receipt?.identifier).toBe("asset-1")
     expect(cameraRollExportLedger.list()[0]).toMatchObject({
       priority: "SOURCE_BARRIER",
       state: "EXPORTED",

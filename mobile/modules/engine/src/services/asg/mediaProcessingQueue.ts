@@ -130,12 +130,29 @@ class MediaProcessingQueue {
         if (!entry.finalPath || !(await RNFS.exists(entry.finalPath))) {
           throw new Error(`Recovery file is missing for ${entry.captureId}`)
         }
-        if (entry.state === "EXPORT_PENDING" || (entry.state === "INDEXED" && entry.shouldAutoSave)) {
-          const downloadedFile = await this.recoverDownloadedFile(entry)
-          const receipt = await cameraRollExportCoordinator.exportForSource(downloadedFile, entry.captureId)
-          entry = galleryTransferLedger.transition(entry.captureId, "EXPORTED", {
-            assetReceipt: receipt,
-          })
+        // Rebuild a missing app index before any source acknowledgement, even when camera-roll
+        // saving is disabled or an export receipt was already committed before restart.
+        const downloadedFile = await this.recoverDownloadedFile(entry)
+        if (entry.state === "EXPORT_PENDING" || entry.state === "INDEXED") {
+          const shouldAutoSave = await cameraRollExportCoordinator.isAutoSaveEnabled()
+          entry = galleryTransferLedger.update(entry.captureId, {shouldAutoSave, lastError: undefined})
+          if (shouldAutoSave) {
+            if (entry.state !== "EXPORT_PENDING") {
+              entry = galleryTransferLedger.transition(entry.captureId, "EXPORT_PENDING")
+            }
+            const receipt = await cameraRollExportCoordinator.exportForSource(downloadedFile, entry.captureId)
+            entry = receipt
+              ? galleryTransferLedger.transition(entry.captureId, "EXPORTED", {assetReceipt: receipt})
+              : galleryTransferLedger.transition(entry.captureId, "INDEXED", {
+                  shouldAutoSave: false,
+                  lastError: undefined,
+                })
+          } else if (entry.state === "EXPORT_PENDING") {
+            entry = galleryTransferLedger.transition(entry.captureId, "INDEXED", {
+              shouldAutoSave: false,
+              lastError: undefined,
+            })
+          }
         }
         entry = galleryTransferLedger.transition(entry.captureId, "ACK_PENDING")
         await this.acknowledgeEntry(entry)
@@ -342,17 +359,18 @@ class MediaProcessingQueue {
       item.glassesModel,
     )
     downloadedFile.capture_id = item.id
+    const shouldAutoSave = await cameraRollExportCoordinator.isAutoSaveEnabled()
     try {
       await localStorageService.saveDownloadedFile(downloadedFile)
       ledgerEntry = galleryTransferLedger.transition(item.id, "INDEXED", {
         finalPath: filePathToSave,
         thumbnailPath: localThumbnailPath,
-        shouldAutoSave: item.shouldAutoSave,
+        shouldAutoSave,
       })
       await cameraRollExportCoordinator.recordIndexed(
         downloadedFile,
-        item.shouldAutoSave,
-        item.shouldAutoSave ? "SOURCE_BARRIER" : "HISTORICAL_BACKFILL",
+        shouldAutoSave,
+        shouldAutoSave ? "SOURCE_BARRIER" : "HISTORICAL_BACKFILL",
         item.id,
       )
     } catch (metadataError) {
@@ -361,8 +379,9 @@ class MediaProcessingQueue {
       throw metadataError
     }
 
-    // 7. Export is a durable, receipted step. Failure leaves EXPORT_PENDING and blocks ack.
-    if (item.shouldAutoSave) {
+    // 7. While enabled, export is a durable, receipted step whose failures block ack. Turning
+    // auto-save off safely falls back to the already-verified app-local copy and later backfill.
+    if (shouldAutoSave) {
       galleryTransferLedger.transition(item.id, "EXPORT_PENDING")
       let receipt
       try {
@@ -371,10 +390,18 @@ class MediaProcessingQueue {
         galleryTransferLedger.recordFailure(item.id, error)
         throw error
       }
-      ledgerEntry = galleryTransferLedger.transition(item.id, "EXPORTED", {
-        assetReceipt: receipt,
-      })
-      console.log(`${TAG} ✅ Saved to camera roll with receipt: ${item.id}`)
+      if (receipt) {
+        ledgerEntry = galleryTransferLedger.transition(item.id, "EXPORTED", {
+          assetReceipt: receipt,
+        })
+        console.log(`${TAG} ✅ Saved to camera roll with receipt: ${item.id}`)
+      } else {
+        ledgerEntry = galleryTransferLedger.transition(item.id, "INDEXED", {
+          shouldAutoSave: false,
+          lastError: undefined,
+        })
+        console.log(`${TAG} Automatic camera-roll saving was disabled; keeping app-local copy: ${item.id}`)
+      }
     }
 
     // S4: Clean up intermediate processing files

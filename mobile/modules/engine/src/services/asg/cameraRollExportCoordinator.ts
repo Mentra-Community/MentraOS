@@ -202,44 +202,56 @@ class CameraRollExportCoordinator {
     return entry
   }
 
-  /** Source deletion waits on this barrier; historical work never blocks a glasses sync. */
-  async exportForSource(file: DownloadedFile, captureId?: string): Promise<GalleryAssetReceipt> {
+  async isAutoSaveEnabled(): Promise<boolean> {
+    await this.initialize()
+    return this.enabled
+  }
+
+  /** Source deletion waits on this barrier while enabled; disabled exports remain safely app-local. */
+  async exportForSource(file: DownloadedFile, captureId?: string): Promise<GalleryAssetReceipt | undefined> {
     await this.initialize()
     // A durable receipt proves this generation is already safe regardless of the current
     // preference. Return it before enforcing disabled state so recovery can still ack the
     // glasses after a previously-started export committed.
     const entry = await this.recordIndexed(file, this.enabled, "SOURCE_BARRIER", captureId)
     if (entry.receipt) return entry.receipt
-    if (!this.enabled) throw new Error("Automatic camera-roll saving is disabled")
-    return new Promise<GalleryAssetReceipt>((resolve, reject) => {
-      const current = cameraRollExportLedger.get(entry.id)
-      if (current?.receipt) {
-        resolve(current.receipt)
-        return
-      }
-      if (!current) {
-        reject(new Error("Camera-roll export was removed before its source barrier registered"))
-        return
-      }
-      const waiters = this.sourceWaiters.get(entry.id) || []
-      waiters.push({resolve, reject})
-      this.sourceWaiters.set(entry.id, waiters)
-      // Re-read after registration so any future refactor that yields while installing a
-      // waiter still cannot miss a receipt committed by the active runner.
-      const registered = cameraRollExportLedger.get(entry.id)
-      if (registered?.receipt) {
-        this.resolveSourceWaiters(entry.id, registered.receipt)
-        return
-      }
-      if (!registered) {
-        this.rejectSourceWaiters(
-          entry.id,
-          new Error("Camera-roll export was removed before its source barrier registered"),
-        )
-        return
-      }
-      void this.resume("source barrier")
-    })
+    if (!this.enabled) return undefined
+    try {
+      return await new Promise<GalleryAssetReceipt>((resolve, reject) => {
+        const current = cameraRollExportLedger.get(entry.id)
+        if (current?.receipt) {
+          resolve(current.receipt)
+          return
+        }
+        if (!current) {
+          reject(new Error("Camera-roll export was removed before its source barrier registered"))
+          return
+        }
+        const waiters = this.sourceWaiters.get(entry.id) || []
+        waiters.push({resolve, reject})
+        this.sourceWaiters.set(entry.id, waiters)
+        // Re-read after registration so any future refactor that yields while installing a
+        // waiter still cannot miss a receipt committed by the active runner.
+        const registered = cameraRollExportLedger.get(entry.id)
+        if (registered?.receipt) {
+          this.resolveSourceWaiters(entry.id, registered.receipt)
+          return
+        }
+        if (!registered) {
+          this.rejectSourceWaiters(
+            entry.id,
+            new Error("Camera-roll export was removed before its source barrier registered"),
+          )
+          return
+        }
+        void this.resume("source barrier")
+      })
+    } catch (error) {
+      // Turning auto-save off makes the durable app-local commit the source-of-truth. A native
+      // insert already in progress still finishes and returns its receipt; queued work may stop.
+      if (!this.enabled) return undefined
+      throw error
+    }
   }
 
   async setEnabled(enabled: boolean): Promise<void> {
