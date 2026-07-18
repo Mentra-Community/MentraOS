@@ -550,6 +550,13 @@ public class Bridge private constructor() {
             var storedNetworks: List<Map<String, Any>> =
                     DeviceStore.get("bluetooth", "wifiScanResults") as? List<Map<String, Any>>
                             ?: emptyList()
+            val lastScanId = DeviceStore.get("bluetooth", "wifiScanResultsScanId")
+            if (scanId != null && scanId != lastScanId) {
+                // First chunk of a new scan: drop networks accumulated for a previous scan
+                // so stale entries never carry over into this scan's store.
+                storedNetworks = emptyList()
+                DeviceStore.apply("bluetooth", "wifiScanResultsScanId", scanId)
+            }
             // add the networks to the storedNetworks array, removing duplicates by ssid
             val updatedNetworks = storedNetworks.toMutableList()
             for (network in networks) {
@@ -559,7 +566,9 @@ public class Bridge private constructor() {
             }
             DeviceStore.apply("bluetooth", "wifiScanResults", updatedNetworks)
             val body = HashMap<String, Any>()
-            body["networks"] = updatedNetworks
+            // Correlated scans: the SDK accumulates and dedupes chunks per scanId itself,
+            // so forward only this chunk; the merged store list is for UI consumers.
+            body["networks"] = if (scanId != null) networks else updatedNetworks
             body["scanComplete"] = scanComplete
             if (scanId != null) {
                 body["scanId"] = scanId

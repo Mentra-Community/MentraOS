@@ -431,6 +431,14 @@ class Bridge {
             MainActor.assumeIsolated {
                 var storedNetworks: [[String: Any]] =
                     DeviceStore.shared.get("bluetooth", "wifiScanResults") as? [[String: Any]] ?? []
+                if let scanId,
+                   scanId != DeviceStore.shared.get("bluetooth", "wifiScanResultsScanId") as? String
+                {
+                    // First chunk of a new scan: drop networks accumulated for a previous scan
+                    // so stale entries never carry over into this scan's store.
+                    storedNetworks = []
+                    DeviceStore.shared.apply("bluetooth", "wifiScanResultsScanId", scanId)
+                }
                 // add the networks to the storedNetworks array, removing duplicates by ssid
                 for network in networks {
                     if !storedNetworks.contains(where: {
@@ -440,7 +448,12 @@ class Bridge {
                     }
                 }
                 DeviceStore.shared.apply("bluetooth", "wifiScanResults", storedNetworks)
-                var body: [String: Any] = ["networks": storedNetworks, "scanComplete": scanComplete]
+                // Correlated scans: the SDK accumulates and dedupes chunks per scanId itself,
+                // so forward only this chunk; the merged store list is for UI consumers.
+                var body: [String: Any] = [
+                    "networks": scanId != nil ? networks : storedNetworks,
+                    "scanComplete": scanComplete,
+                ]
                 if let scanId {
                     body["scanId"] = scanId
                 }
