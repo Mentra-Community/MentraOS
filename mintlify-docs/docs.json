@@ -55,7 +55,11 @@
           {
             "group": "Display",
             "icon": "display",
-            "pages": ["app-devs/core-concepts/display/layouts", "app-devs/core-concepts/led/overview"]
+            "pages": [
+              "app-devs/core-concepts/display/layouts",
+              "app-devs/core-concepts/display/dashboard",
+              "app-devs/core-concepts/led/overview"
+            ]
           },
           {
             "group": "Audio & Speech",
@@ -273,7 +277,7 @@
     {"source": "/app-devs/reference/index", "destination": "/app-devs/core-concepts/session"},
     {"source": "/app-devs/reference/app-server", "destination": "/app-devs/core-concepts/session"},
     {"source": "/app-devs/reference/app-session", "destination": "/app-devs/core-concepts/session"},
-    {"source": "/app-devs/reference/dashboard-api", "destination": "/app-devs/core-concepts/display/layouts"},
+    {"source": "/app-devs/reference/dashboard-api", "destination": "/app-devs/core-concepts/display/dashboard"},
     {"source": "/app-devs/reference/enums", "destination": "/app-devs/core-concepts/session"},
     {"source": "/app-devs/reference/token-utils", "destination": "/app-devs/core-concepts/auth"},
     {"source": "/app-devs/reference/utilities", "destination": "/app-devs/core-concepts/session"},
@@ -295,6 +299,7 @@
     {"source": "/app-devs/reference/interfaces/setting-types", "destination": "/app-devs/core-concepts/session"},
     {"source": "/app-devs/reference/interfaces/tool-types", "destination": "/app-devs/core-concepts/miniapp-interop"},
     {"source": "/app-devs/reference/interfaces/webhook-types", "destination": "/app-devs/core-concepts/session"},
+    {"source": "/app-devs/core-concepts/speakers/playing-audio-files", "destination": "/app-devs/core-concepts/speakers/text-to-speech"},
     {"source": "/cookbook/dashboard-note-app", "destination": "/app-devs/getting-started/overview"},
     {"source": "/os-devs/contributing/overview", "destination": "/contributing"},
     {"source": "/os-devs/contributing/mentraos-manager-guidelines", "destination": "/contributing"},

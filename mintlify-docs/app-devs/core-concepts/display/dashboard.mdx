@@ -1,0 +1,81 @@
+---
+title: "Dashboard"
+description: "Show persistent, glanceable status text in the glasses dashboard."
+icon: "gauge"
+---
+
+`session.dashboard` writes text to the glasses dashboard: the status view the
+user opens with a glasses-specific gesture. Use it for short-lived state that
+should remain available while the miniapp is running, such as a recording
+timer, connection state, or unread count.
+
+```typescript src/background/index.ts
+import {registerMiniapp} from "@mentra/miniapp/background"
+
+registerMiniapp((session) => {
+  session.dashboard.showText("Connected")
+})
+```
+
+Dashboard commands are fire-and-forget. They send immediately and do not wait
+for a delivery acknowledgement.
+
+## Methods
+
+| Method                        | Returns | Behavior                                                        |
+| ----------------------------- | ------- | --------------------------------------------------------------- |
+| `showText(text)`              | `void`  | Replace this miniapp's dashboard text.                           |
+| `clear()`                     | `void`  | Remove this miniapp's dashboard text.                            |
+
+`showText` accepts either one string or an array of pre-wrapped lines. Arrays
+are joined with newline characters before they are sent:
+
+```typescript
+session.dashboard.showText([
+  "Recording",
+  "Elapsed: 01:23",
+])
+```
+
+Call `clear()` when the status is no longer useful:
+
+```typescript
+session.dashboard.clear()
+```
+
+## Dashboard text or a rendered scene?
+
+Use `session.dashboard` for brief text-only status. Use
+[`session.display.render()`](/app-devs/core-concepts/display/layouts#dashboard-view)
+with `{view: "dashboard"}` when the dashboard needs positioned text, images,
+shapes, or an auto-clear duration.
+
+```typescript
+session.display.render(
+  [
+    {
+      type: "text",
+      id: "status",
+      box: {x: 12, y: 12, w: 300, h: 40},
+      text: "3 unread messages",
+    },
+  ],
+  {view: "dashboard"},
+)
+```
+
+Unlike `session.dashboard.showText()`, `session.display.render()` returns a
+promise whose result reports whether the scene was displayed, blocked, or
+degraded for the connected glasses.
+
+## Guidelines
+
+- Keep dashboard text brief and glanceable.
+- Update only when the displayed state changes.
+- Clear stale status when an operation finishes.
+- Use the main display view for content that needs the user's immediate
+  attention.
+
+Declare a `DISPLAY` hardware requirement in the
+[miniapp manifest](/app-devs/core-concepts/miniapp-manifest) when the dashboard
+is essential to the miniapp.
