@@ -1214,8 +1214,8 @@ public class CameraNeoService extends LifecycleService {
             if (!warmLeases.containsKey(requestId)) {
                 return;
             }
-            callback.onCameraReady();
             warmReadyRequestIds.add(requestId);
+            callback.onCameraReady();
         }
     }
 
