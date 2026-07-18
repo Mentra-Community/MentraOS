@@ -2,7 +2,7 @@
 
 import {describe, expect, mock, test} from "bun:test"
 
-import {runSentenceTtsPipeline, type SentenceAudio} from "../SentenceTtsPipeline"
+import {runSentenceTtsPipeline, segmentTextForOfflineTts, type SentenceAudio} from "../SentenceTtsPipeline"
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -14,13 +14,15 @@ function deferred<T>() {
 
 describe("runSentenceTtsPipeline", () => {
   test("synthesizes the next sentence while the current sentence is playing", async () => {
-    const firstPlayback = deferred<{success: boolean; error: null; duration: number}>()
+    const firstPlayback = deferred<{success: boolean; completed: boolean; error: null; duration: number}>()
     const cleanupFirst = mock(() => undefined)
     const cleanupSecond = mock(() => undefined)
     const second = {audioUrl: "file://second.wav", cleanup: cleanupSecond}
     const synthesize = mock(async () => second)
     const play = mock((_audio: SentenceAudio, index: number) =>
-      index === 0 ? firstPlayback.promise : Promise.resolve({success: true, error: null, duration: 800}),
+      index === 0
+        ? firstPlayback.promise
+        : Promise.resolve({success: true, completed: true, error: null, duration: 800}),
     )
 
     const resultPromise = runSentenceTtsPipeline({
@@ -35,15 +37,15 @@ describe("runSentenceTtsPipeline", () => {
     expect(synthesize).toHaveBeenCalledWith("Second.")
     expect(play).toHaveBeenCalledTimes(1)
 
-    firstPlayback.resolve({success: true, error: null, duration: 1000})
-    expect(await resultPromise).toEqual({success: true, error: null, duration: 1800})
+    firstPlayback.resolve({success: true, completed: true, error: null, duration: 1000})
+    expect(await resultPromise).toEqual({success: true, completed: true, error: null, duration: 1800})
     expect(play.mock.calls.map(([audio]) => audio.audioUrl)).toEqual(["file://first.wav", "file://second.wav"])
     expect(cleanupFirst).toHaveBeenCalledTimes(1)
     expect(cleanupSecond).toHaveBeenCalledTimes(1)
   })
 
   test("does not advance to the prefetched sentence after cancellation", async () => {
-    const firstPlayback = deferred<{success: boolean; error: null; duration: number}>()
+    const firstPlayback = deferred<{success: boolean; completed: boolean; error: null; duration: number}>()
     const cleanupSecond = mock(() => undefined)
     const run = {cancelled: false}
     const play = mock((_audio: SentenceAudio) => firstPlayback.promise)
@@ -58,11 +60,51 @@ describe("runSentenceTtsPipeline", () => {
 
     await Promise.resolve()
     run.cancelled = true
-    firstPlayback.resolve({success: true, error: null, duration: 250})
+    firstPlayback.resolve({success: true, completed: false, error: null, duration: 250})
 
-    expect(await resultPromise).toEqual({success: true, error: null, duration: 250})
+    expect(await resultPromise).toEqual({success: true, completed: false, error: null, duration: 250})
     await Promise.resolve()
     expect(play).toHaveBeenCalledTimes(1)
     expect(cleanupSecond).toHaveBeenCalledTimes(1)
+  })
+
+  test("does not advance after playback is interrupted without explicit cancellation", async () => {
+    const cleanupSecond = mock(() => undefined)
+    const play = mock(async () => ({success: true, completed: false, error: null, duration: 125}))
+
+    const result = await runSentenceTtsPipeline({
+      sentences: ["First.", "Second."],
+      firstAudio: {audioUrl: "file://first.wav"},
+      run: {cancelled: false},
+      synthesize: async () => ({audioUrl: "file://second.wav", cleanup: cleanupSecond}),
+      play,
+    })
+
+    expect(result).toEqual({success: true, completed: false, error: null, duration: 125})
+    expect(play).toHaveBeenCalledTimes(1)
+    await Promise.resolve()
+    expect(cleanupSecond).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe("segmentTextForOfflineTts", () => {
+  test("splits meaningful Latin and CJK sentences while preserving punctuation", () => {
+    expect(segmentTextForOfflineTts("Hello there! How are you? Fine.")).toEqual([
+      "Hello there!",
+      "How are you?",
+      "Fine.",
+    ])
+    expect(segmentTextForOfflineTts("最初です。次です！")).toEqual(["最初です。", "次です！"])
+  })
+
+  test("does not split common abbreviations or decimal values", () => {
+    expect(segmentTextForOfflineTts("Dr. Smith has version 2.0 ready. Ship it.")).toEqual([
+      "Dr. Smith has version 2.0 ready.",
+      "Ship it.",
+    ])
+  })
+
+  test("returns one item when there is no meaningful sentence boundary", () => {
+    expect(segmentTextForOfflineTts("A single unfinished thought")).toEqual(["A single unfinished thought"])
   })
 })

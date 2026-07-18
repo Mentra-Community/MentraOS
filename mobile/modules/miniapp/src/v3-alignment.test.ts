@@ -177,6 +177,29 @@ describe("v3 alignment — session.transcription", () => {
     expect(payload.subscriptions).toContain("transcription:es-ES")
   })
 
+  test("forceLocal transcription is encoded as subscription metadata", async () => {
+    const {session, transport} = await connectedSession()
+    transport.sent.length = 0
+    session.transcription.on(() => {}, {forceLocal: true})
+    const env = parseEnvelope(transport.sent[0]!)
+    const payload = env!.payload as {subscriptions: Array<string | {stream: string; forceLocal: boolean}>}
+    expect(payload.subscriptions).toContainEqual({stream: "transcription:auto", forceLocal: true})
+  })
+
+  test("removing the last forceLocal listener restores cloud transcription for the stream", async () => {
+    const {session, transport} = await connectedSession()
+    transport.sent.length = 0
+    session.transcription.on(() => {})
+    const stopLocal = session.transcription.on(() => {}, {forceLocal: true})
+
+    stopLocal()
+
+    const last = parseEnvelope(transport.sent[transport.sent.length - 1]!)
+    const payload = last!.payload as {subscriptions: Array<string | {stream: string; forceLocal: boolean}>}
+    expect(payload.subscriptions).toContain("transcription:auto")
+    expect(payload.subscriptions).not.toContainEqual({stream: "transcription:auto", forceLocal: true})
+  })
+
   test("configure() sends a TRANSCRIPTION_CONFIG envelope", async () => {
     const {session, transport} = await connectedSession()
     transport.sent.length = 0

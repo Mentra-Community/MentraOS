@@ -158,8 +158,10 @@ export interface AudioChunkData {
 
 export class EventManager {
   private readonly emitter = new EventEmitter()
-  /** Stream -> ref count. Outbound SUBSCRIBE is sent when refs transition 0↔1. */
+  /** Stream -> ref count. Outbound SUBSCRIBE tracks active streams and routing changes. */
   private readonly refCounts = new Map<string, number>()
+  /** Transcription stream -> refs that require on-device-only processing. */
+  private readonly forceLocalRefCounts = new Map<string, number>()
 
   constructor(private readonly session: MiniappSession) {}
 
@@ -175,13 +177,16 @@ export class EventManager {
    * via a separate envelope `type`; the EventManager only routes them
    * locally.
    */
-  subscribe(stream: string, handler: (data: unknown) => void): UnsubscribeFn {
+  subscribe(stream: string, handler: (data: unknown) => void, options: {forceLocal?: boolean} = {}): UnsubscribeFn {
     this.emitter.on(stream, handler)
     const isInternal = stream.startsWith("_")
+    const forceLocal = options.forceLocal === true && stream.startsWith(`${MiniappStreamType.TRANSCRIPTION}:`)
     if (!isInternal) {
       const before = this.refCounts.get(stream) ?? 0
       this.refCounts.set(stream, before + 1)
-      if (before === 0) {
+      const forceLocalBefore = this.forceLocalRefCounts.get(stream) ?? 0
+      if (forceLocal) this.forceLocalRefCounts.set(stream, forceLocalBefore + 1)
+      if (before === 0 || (forceLocal && forceLocalBefore === 0)) {
         this.sendSubscriptionUpdate()
       }
     }
@@ -189,12 +194,22 @@ export class EventManager {
       this.emitter.off(stream, handler)
       if (isInternal) return
       const current = this.refCounts.get(stream) ?? 0
+      let subscriptionChanged = current <= 1
       if (current <= 1) {
         this.refCounts.delete(stream)
-        this.sendSubscriptionUpdate()
       } else {
         this.refCounts.set(stream, current - 1)
       }
+      if (forceLocal) {
+        const forceLocalCurrent = this.forceLocalRefCounts.get(stream) ?? 0
+        if (forceLocalCurrent <= 1) {
+          this.forceLocalRefCounts.delete(stream)
+          subscriptionChanged = true
+        } else {
+          this.forceLocalRefCounts.set(stream, forceLocalCurrent - 1)
+        }
+      }
+      if (subscriptionChanged) this.sendSubscriptionUpdate()
     }
   }
 
@@ -202,6 +217,7 @@ export class EventManager {
   unsubscribeAll(): void {
     this.emitter.removeAllListeners()
     this.refCounts.clear()
+    this.forceLocalRefCounts.clear()
     this.sendSubscriptionUpdate()
   }
 
@@ -240,7 +256,11 @@ export class EventManager {
 
   private sendSubscriptionUpdate(): void {
     const subscriptions = Array.from(this.refCounts.keys()).map((stream) =>
-      stream === MiniappStreamType.LOCATION_UPDATE ? {stream: "location_stream", rate: "realtime"} : stream,
+      stream === MiniappStreamType.LOCATION_UPDATE
+        ? {stream: "location_stream", rate: "realtime"}
+        : (this.forceLocalRefCounts.get(stream) ?? 0) > 0
+          ? {stream, forceLocal: true}
+          : stream,
     )
     this.session.sendOneShot({
       type: MiniappRequestType.SUBSCRIBE,

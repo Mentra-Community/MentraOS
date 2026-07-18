@@ -392,8 +392,12 @@ export class MiniappSession {
    * session.transcription.on(...)
    * etc. instead."
    */
-  _subscribe(streamType: string, handler: (data: unknown) => void): UnsubscribeFn {
-    return this.events.subscribe(streamType, handler)
+  _subscribe(
+    streamType: string,
+    handler: (data: unknown) => void,
+    options: {forceLocal?: boolean} = {},
+  ): UnsubscribeFn {
+    return this.events.subscribe(streamType, handler, options)
   }
 
   // -------------------------------------------------------------------------

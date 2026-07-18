@@ -32,6 +32,14 @@ export interface TranscriptionConfig {
   diarization?: boolean
 }
 
+export interface TranscriptionOptions {
+  /**
+   * Use only on-device STT for this stream; never deliver cloud transcripts.
+   * Requires a downloaded local STT model.
+   */
+  forceLocal?: boolean
+}
+
 export class TranscriptionModule {
   private readonly unsubs = new Set<UnsubscribeFn>()
   private currentConfig: TranscriptionConfig | null = null
@@ -46,9 +54,9 @@ export class TranscriptionModule {
    * (handlers on `transcription:auto` receive any `transcription:<lang>`
    * event) preserves existing semantics.
    */
-  on(handler: (data: TranscriptionData) => void): UnsubscribeFn {
+  on(handler: (data: TranscriptionData) => void, options: TranscriptionOptions = {}): UnsubscribeFn {
     return this.track(
-      this.session._subscribe(`${MiniappStreamType.TRANSCRIPTION}:auto`, handler as (data: unknown) => void),
+      this.session._subscribe(`${MiniappStreamType.TRANSCRIPTION}:auto`, handler as (data: unknown) => void, options),
     )
   }
 
@@ -59,14 +67,22 @@ export class TranscriptionModule {
    * @param language - BCP-47 tag(s), e.g. `"en-US"` or `["en-US", "es-ES"]`.
    * @param handler  - Called for every event in any of the listed languages.
    */
-  forLanguage(language: string | string[], handler: (data: TranscriptionData) => void): UnsubscribeFn {
+  forLanguage(
+    language: string | string[],
+    handler: (data: TranscriptionData) => void,
+    options: TranscriptionOptions = {},
+  ): UnsubscribeFn {
     const langs = Array.isArray(language) ? language : [language]
     if (langs.length === 0) return () => {}
 
     const unsubs: UnsubscribeFn[] = []
     for (const lang of langs) {
       unsubs.push(
-        this.session._subscribe(`${MiniappStreamType.TRANSCRIPTION}:${lang}`, handler as (data: unknown) => void),
+        this.session._subscribe(
+          `${MiniappStreamType.TRANSCRIPTION}:${lang}`,
+          handler as (data: unknown) => void,
+          options,
+        ),
       )
     }
     const combined: UnsubscribeFn = () => {

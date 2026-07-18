@@ -150,4 +150,20 @@ describe("AudioPlaybackService live PCM streams", () => {
     expect(pcmStreamAbort).not.toHaveBeenCalledWith("two")
     expect(audioPlaybackService.getActiveAppIds()).toEqual(["app-two"])
   })
+
+  test("replacing URL playback reports an explicit interruption", async () => {
+    const firstComplete = mock(() => {})
+
+    await audioPlaybackService.play(
+      {requestId: "first-url", audioUrl: "file://first.wav", appId: "app-one", stopOtherAudio: false},
+      firstComplete,
+    )
+    await audioPlaybackService.play(
+      {requestId: "second-url", audioUrl: "file://second.wav", appId: "app-two", stopOtherAudio: false},
+      () => {},
+    )
+
+    expect(firstComplete).toHaveBeenCalledTimes(1)
+    expect(firstComplete).toHaveBeenCalledWith("first-url", true, null, expect.any(Number), "interrupted")
+  })
 })

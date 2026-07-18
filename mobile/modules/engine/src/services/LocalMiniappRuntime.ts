@@ -48,7 +48,8 @@ import {CloudAudioSubscriptionSync} from "./CloudAudioSubscriptionSync"
 import {phonePhotoCoordinator} from "./PhonePhotoCoordinator"
 import {phoneStreamCoordinator} from "./PhoneStreamCoordinator"
 import {phoneVideoCoordinator} from "./PhoneVideoCoordinator"
-import {runSentenceTtsPipeline} from "./SentenceTtsPipeline"
+import {runSentenceTtsPipeline, segmentTextForOfflineTts} from "./SentenceTtsPipeline"
+import {shouldDeliverTranscription, summarizeTranscriptionRoutes} from "./TranscriptionRouting"
 import {cloudClientService} from "./CloudClientService"
 import {miniappLauncher} from "./MiniappLauncher"
 import {
@@ -87,6 +88,8 @@ type SpeakerStateValue = "idle" | "loading" | "playing" | "stopped" | "error"
 
 interface ConnectedMiniapp {
   subscriptions: Set<string>
+  /** Transcription streams this app explicitly requires to stay on-device. */
+  forceLocalTranscriptionStreams: Set<string>
   sendMessage: (raw: string) => void
   lastPongAt: number
   installedManifest?: InstalledMiniappManifest
@@ -116,6 +119,14 @@ interface ConnectedMiniapp {
    */
   requestedLocationRate: string | null
 }
+
+interface SpeechRun {
+  id: string
+  cancelled: boolean
+  onCancelled?: () => void
+}
+
+type TranscriptionEventSource = "cloud" | "local"
 
 /**
  * Strictness ordering for `location_stream` rate values. Higher index =
@@ -357,7 +368,7 @@ class LocalMiniappRuntime {
 
   /** Pending cloud requests: requestId → packageName that originated the request. */
   private pendingCloudRequests: Map<string, {packageName: string; envelopeRequestId?: string}> = new Map()
-  private sentenceSpeechRuns = new Map<string, {id: string; cancelled: boolean}>()
+  private speechRuns = new Map<string, SpeechRun>()
 
   // Browser fallback token auth — HMAC-signed blob with a phone-local
   // secret. Both issuer and verifier are the same process, so the
@@ -571,6 +582,7 @@ class LocalMiniappRuntime {
     // dangling references. The WebView will re-subscribe after its CONNECT.
     if (this.connectedApps.has(packageName)) {
       const existing = this.connectedApps.get(packageName)!
+      this.cancelSpeech(packageName)
       // A crash respawn replaces the ConnectedMiniapp without going through
       // unregisterApp(). Abort the old incarnation's native PCM player before
       // its only stream id is lost. Target the exact stream rather than using
@@ -603,6 +615,7 @@ class LocalMiniappRuntime {
     }
     this.connectedApps.set(packageName, {
       subscriptions: new Set(),
+      forceLocalTranscriptionStreams: new Set(),
       sendMessage: sendFn,
       lastPongAt: Date.now(),
       installedManifest,
@@ -750,6 +763,10 @@ class LocalMiniappRuntime {
     // Reset per-session warning dedup so a relaunch surfaces issues again.
     resetPermissionWarnings(packageName)
 
+    // Cancel lookahead/in-flight synthesis before stopping the current file so
+    // an interrupted sentence cannot advance and reclaim playback.
+    this.cancelSpeech(packageName)
+
     // Stop audio for this app
     audioPlaybackService.stopForApp(packageName)
 
@@ -893,9 +910,6 @@ class LocalMiniappRuntime {
         break
       case MiniappRequestType.SPEAK:
         this.handleSpeak(packageName, payload, requestId)
-        break
-      case MiniappRequestType.SPEAK_SENTENCES:
-        this.handleSpeakSentences(packageName, payload, requestId)
         break
       case MiniappRequestType.SPEAKER_STREAM_OPEN:
         void this.handleSpeakerStreamOpen(packageName, payload, requestId)
@@ -1346,13 +1360,14 @@ class LocalMiniappRuntime {
     if (!app) return
 
     const rawStreams = (payload.subscriptions ?? payload.streams) as
-      | (string | {stream: string; rate?: string})[]
+      | (string | {stream: string; rate?: string; forceLocal?: boolean})[]
       | undefined
     // Normalize: objects like {stream: "location_stream", rate: "realtime"} → extract stream name
     // "location_stream" is the rate-bearing alias for "location_update".
     // The strictest rate wins when multiple `location_stream` entries appear
     // in one SUBSCRIBE — the same rule we apply across apps.
     let requestedLocationRate: string | null = null
+    const forceLocalTranscriptionStreams = new Set<string>()
     const streams = rawStreams?.map((s) => {
       if (typeof s === "object" && s !== null) {
         if (s.stream === "location_stream") {
@@ -1360,6 +1375,9 @@ class LocalMiniappRuntime {
             requestedLocationRate = s.rate
           }
           return "location_update"
+        }
+        if (s.forceLocal === true && s.stream.startsWith("transcription:")) {
+          forceLocalTranscriptionStreams.add(s.stream)
         }
         return s.stream
       }
@@ -1418,6 +1436,9 @@ class LocalMiniappRuntime {
 
     // Add new subscriptions
     app.subscriptions = new Set(streams)
+    app.forceLocalTranscriptionStreams = new Set(
+      [...forceLocalTranscriptionStreams].filter((stream) => app.subscriptions.has(stream)),
+    )
     for (const stream of streams) {
       let subs = this.streamSubscribers.get(stream)
       if (!subs) {
@@ -1672,7 +1693,7 @@ class LocalMiniappRuntime {
     const volume = typeof payload.volume === "number" ? payload.volume : 1.0
     const stopOtherAudio = payload.stopOtherAudio !== false
 
-    this.cancelSentenceSpeech(packageName)
+    this.cancelSpeech(packageName)
     this.setSpeakerState(packageName, "loading")
     audioPlaybackService.play(
       {requestId: audioRequestId, audioUrl, appId: packageName, volume, stopOtherAudio},
@@ -1708,7 +1729,7 @@ class LocalMiniappRuntime {
   }
 
   private handleStopAudio(packageName: string, _payload: Record<string, unknown>, requestId?: string): void {
-    this.cancelSentenceSpeech(packageName)
+    this.cancelSpeech(packageName)
     audioPlaybackService.stopForApp(packageName)
     this.setSpeakerState(packageName, "stopped")
     this.sendResult(packageName, requestId, true)
@@ -1923,25 +1944,66 @@ class LocalMiniappRuntime {
       return
     }
 
-    try {
-      this.cancelSentenceSpeech(packageName)
-      const voice = ((payload.voice_id ?? payload.voice) as string) || "default"
-      const audioRequestId = requestId || `tts_${Date.now()}`
-      const volume = typeof payload.volume === "number" ? payload.volume : 1.0
-      const stopOtherAudio = payload.stopOtherAudio !== false
-      const voiceSettings =
-        payload.voice_settings && typeof payload.voice_settings === "object"
-          ? (payload.voice_settings as Record<string, unknown>)
-          : undefined
-      const speed = typeof voiceSettings?.speed === "number" ? voiceSettings.speed : undefined
-      const offlineSentences = Array.isArray(payload._sentences)
-        ? payload._sentences.filter(
-            (sentence): sentence is string => typeof sentence === "string" && Boolean(sentence.trim()),
-          )
+    const voice = ((payload.voice_id ?? payload.voice) as string) || "default"
+    const audioRequestId = requestId || `tts_${Date.now()}`
+    const volume = typeof payload.volume === "number" ? payload.volume : 1.0
+    const stopOtherAudio = payload.stopOtherAudio !== false
+    const voiceSettings =
+      payload.voice_settings && typeof payload.voice_settings === "object"
+        ? (payload.voice_settings as Record<string, unknown>)
         : undefined
+    const speed = typeof voiceSettings?.speed === "number" ? voiceSettings.speed : undefined
+    const run: SpeechRun = {id: audioRequestId, cancelled: false}
 
-      this.setSpeakerState(packageName, "loading")
+    this.cancelSpeech(packageName)
+    this.speechRuns.set(packageName, run)
+    this.setSpeakerState(packageName, "loading")
 
+    let terminalSent = false
+    const sendPlaybackResult = (
+      success: boolean,
+      error: string | null,
+      duration: number | null,
+      fallbackErrorMessage: string,
+      completed = success,
+      errorCode: MiniappErrorCode = MiniappErrorCode.TTS_UPSTREAM_ERROR,
+    ) => {
+      if (terminalSent) return
+      terminalSent = true
+
+      // A superseded run still owns its bridge request, but it no longer owns
+      // the package's shared speaker state.
+      const ownsSpeakerState = this.speechRuns.get(packageName) === run
+      if (ownsSpeakerState) this.speechRuns.delete(packageName)
+
+      if (ownsSpeakerState) {
+        if (success) {
+          this.setSpeakerState(packageName, "stopped", {durationMs: duration ?? undefined})
+        } else {
+          this.setSpeakerState(packageName, "error", {
+            errorCode,
+            errorMessage: error ?? fallbackErrorMessage,
+            durationMs: duration ?? undefined,
+          })
+        }
+      }
+
+      this.sendResult(
+        packageName,
+        requestId,
+        success,
+        {completed, duration},
+        error
+          ? {
+              code: errorCode,
+              message: error,
+            }
+          : undefined,
+      )
+    }
+    run.onCancelled = () => sendPlaybackResult(true, null, null, "tts playback stopped", false)
+
+    try {
       const voiceExplicit = payload.voice_id !== undefined || payload.voice !== undefined
       const offlineSupportsVoice =
         !voiceExplicit || voice === "default" || ttsModelManager.getAvailableLanguages().some((l) => l.code === voice)
@@ -1953,55 +2015,22 @@ class LocalMiniappRuntime {
         `${LOG_TAG}: TTS decision for ${packageName}: cloudConnected=${cloudConnected}, runtimeTts=yes, offlineVoice=${offlineSupportsVoice}, forceLocal=${forceLocal}`,
       )
 
-      let terminalSent = false
-      const sendPlaybackResult = (
-        success: boolean,
-        error: string | null,
-        duration: number | null,
-        fallbackErrorMessage: string,
-      ) => {
-        if (terminalSent) return
-        terminalSent = true
-        if (success) {
-          this.setSpeakerState(packageName, "stopped", {durationMs: duration ?? undefined})
-        } else {
-          this.setSpeakerState(packageName, "error", {
-            errorCode: MiniappErrorCode.TTS_UPSTREAM_ERROR,
-            errorMessage: error ?? fallbackErrorMessage,
-            durationMs: duration ?? undefined,
-          })
-        }
-        this.sendResult(
-          packageName,
-          requestId,
-          success,
-          {completed: success, duration},
-          error
-            ? {
-                code: MiniappErrorCode.TTS_UPSTREAM_ERROR,
-                message: error,
-              }
-            : undefined,
-        )
-      }
-
       const playOfflineTts = async (reason?: string): Promise<boolean> => {
+        if (run.cancelled) return true
         if (!offlineSupportsVoice || !(await ttsModelManager.isModelAvailable())) {
           return false
         }
+        if (run.cancelled) return true
 
         const languageCode = ttsModelManager.getAvailableLanguages().some((l) => l.code === voice) ? voice : undefined
+        const offlineSentences = segmentTextForOfflineTts(text)
 
-        if (offlineSentences?.length) {
-          const run = {id: audioRequestId, cancelled: false}
-          this.sentenceSpeechRuns.set(packageName, run)
+        if (offlineSentences.length > 1) {
           let firstSentence: TtsSynthesisResult
           try {
             firstSentence = await ttsModelManager.synthesizeToFile(offlineSentences[0], {languageCode, speed})
           } catch (offlineErr) {
-            if (this.sentenceSpeechRuns.get(packageName) === run) {
-              this.sentenceSpeechRuns.delete(packageName)
-            }
+            if (run.cancelled) return true
             console.warn(
               `${LOG_TAG}: offline sentence TTS synthesize failed${reason ? ` after ${reason}` : ""}:`,
               offlineErr,
@@ -2011,7 +2040,6 @@ class LocalMiniappRuntime {
 
           if (run.cancelled) {
             await Promise.resolve(firstSentence.cleanup?.())
-            sendPlaybackResult(true, null, 0, "offline sentence tts playback stopped")
             return true
           }
           void runSentenceTtsPipeline({
@@ -2027,21 +2055,27 @@ class LocalMiniappRuntime {
                     audioUrl: audio.audioUrl,
                     appId: packageName,
                     volume,
-                    stopOtherAudio: true,
+                    stopOtherAudio,
                   },
-                  (_responseId, success, error, duration) => resolve({success, error, duration}),
+                  (_responseId, success, error, duration, completionReason) =>
+                    resolve({success, completed: completionReason === "completed", error, duration}),
                 )
               }),
             onCleanupError: (cleanupError) => {
               console.warn(`${LOG_TAG}: sentence TTS cleanup failed`, cleanupError)
             },
-          }).then(({success, error, duration}) => {
-            if (this.sentenceSpeechRuns.get(packageName) === run) {
-              this.sentenceSpeechRuns.delete(packageName)
-            }
-            sendPlaybackResult(success, error, duration, "offline sentence tts playback failed")
+          }).then(
+            ({success, completed, error, duration}) => {
+              sendPlaybackResult(success, error, duration, "offline sentence tts playback failed", completed)
+            },
+            (pipelineError: unknown) => {
+              const message = pipelineError instanceof Error ? pipelineError.message : String(pipelineError)
+              sendPlaybackResult(false, message, null, "offline sentence tts playback failed", false)
+            },
+          )
+          queueMicrotask(() => {
+            if (this.speechRuns.get(packageName) === run) this.setSpeakerState(packageName, "playing")
           })
-          queueMicrotask(() => this.setSpeakerState(packageName, "playing"))
           return true
         }
 
@@ -2050,25 +2084,39 @@ class LocalMiniappRuntime {
         try {
           offlineGenerated = await ttsModelManager.synthesizeToFile(text, {languageCode, speed})
         } catch (offlineErr) {
+          if (run.cancelled) return true
           console.warn(`${LOG_TAG}: offline TTS synthesize failed${reason ? ` after ${reason}` : ""}:`, offlineErr)
           return false
         }
 
         const generated = offlineGenerated
+        if (run.cancelled) {
+          await Promise.resolve(generated.cleanup?.())
+          return true
+        }
         audioPlaybackService.play(
           {requestId: audioRequestId, audioUrl: generated.audioUrl, appId: packageName, volume, stopOtherAudio},
-          (_respId, success, error, duration) => {
+          (_respId, success, error, duration, completionReason) => {
             void Promise.resolve(generated.cleanup?.()).catch((cleanupError) => {
               console.warn(`${LOG_TAG}: offline TTS cleanup failed`, cleanupError)
             })
-            sendPlaybackResult(success, error, duration, "offline tts playback failed")
+            sendPlaybackResult(
+              success,
+              error,
+              duration,
+              "offline tts playback failed",
+              completionReason === "completed",
+            )
           },
         )
-        queueMicrotask(() => this.setSpeakerState(packageName, "playing"))
+        queueMicrotask(() => {
+          if (this.speechRuns.get(packageName) === run) this.setSpeakerState(packageName, "playing")
+        })
         return true
       }
 
       const playCloudTts = async (fallbackToOffline: boolean): Promise<boolean> => {
+        if (run.cancelled) return true
         let source: Awaited<ReturnType<typeof cloudClientService.tts.speak>>
         try {
           source = await cloudClientService.tts.speak(text, {
@@ -2077,6 +2125,7 @@ class LocalMiniappRuntime {
             ...(voiceSettings ? {voice_settings: voiceSettings} : {}),
           })
         } catch (cloudErr) {
+          if (run.cancelled) return true
           const error = cloudErr instanceof Error ? cloudErr.message : String(cloudErr)
           console.warn(`${LOG_TAG}: cloud TTS source failed: ${error}`)
           if (fallbackToOffline && (await playOfflineTts("cloud tts source failed"))) {
@@ -2086,10 +2135,12 @@ class LocalMiniappRuntime {
           return true
         }
 
+        if (run.cancelled) return true
+
         await Promise.resolve(
           audioPlaybackService.play(
             {requestId: audioRequestId, audioUrl: source.audioUrl, appId: packageName, volume, stopOtherAudio},
-            (_respId, success, error, duration) => {
+            (_respId, success, error, duration, completionReason) => {
               if (!success && fallbackToOffline) {
                 void playOfflineTts("cloud tts playback failed").then((started) => {
                   if (!started) {
@@ -2098,11 +2149,13 @@ class LocalMiniappRuntime {
                 })
                 return
               }
-              sendPlaybackResult(success, error, duration, "tts failed")
+              sendPlaybackResult(success, error, duration, "tts failed", completionReason === "completed")
             },
           ),
         )
-        queueMicrotask(() => this.setSpeakerState(packageName, "playing"))
+        queueMicrotask(() => {
+          if (this.speechRuns.get(packageName) === run) this.setSpeakerState(packageName, "playing")
+        })
         return true
       }
 
@@ -2110,15 +2163,9 @@ class LocalMiniappRuntime {
         if (await playOfflineTts()) {
           return
         }
+        if (run.cancelled) return
         const message = "tts unavailable: forceLocal requested but offline TTS model is not available"
-        this.setSpeakerState(packageName, "error", {
-          errorCode: MiniappErrorCode.TTS_LOCAL_UNAVAILABLE,
-          errorMessage: message,
-        })
-        this.sendResult(packageName, requestId, false, undefined, {
-          code: MiniappErrorCode.TTS_LOCAL_UNAVAILABLE,
-          message,
-        })
+        sendPlaybackResult(false, message, null, message, false, MiniappErrorCode.TTS_LOCAL_UNAVAILABLE)
         return
       }
 
@@ -2137,60 +2184,20 @@ class LocalMiniappRuntime {
       }
 
       const message = "tts unavailable: no cloud TTS URL or offline TTS model"
-      this.setSpeakerState(packageName, "error", {
-        errorCode: MiniappErrorCode.TTS_UPSTREAM_ERROR,
-        errorMessage: message,
-      })
-      this.sendResult(packageName, requestId, false, undefined, {
-        code: MiniappErrorCode.TTS_UPSTREAM_ERROR,
-        message,
-      })
+      sendPlaybackResult(false, message, null, message, false)
     } catch (err) {
       console.error(`${LOG_TAG}: speak error:`, err)
       const message = err instanceof Error ? err.message : "TTS error"
-      this.setSpeakerState(packageName, "error", {
-        errorCode: MiniappErrorCode.TTS_UPSTREAM_ERROR,
-        errorMessage: message,
-      })
-      this.sendResult(packageName, requestId, false, undefined, {
-        code: MiniappErrorCode.TTS_UPSTREAM_ERROR,
-        message,
-      })
+      sendPlaybackResult(false, message, null, "TTS error", false)
     }
   }
 
-  private cancelSentenceSpeech(packageName: string): void {
-    const run = this.sentenceSpeechRuns.get(packageName)
+  private cancelSpeech(packageName: string): void {
+    const run = this.speechRuns.get(packageName)
     if (!run) return
     run.cancelled = true
-    this.sentenceSpeechRuns.delete(packageName)
-  }
-
-  private async handleSpeakSentences(
-    packageName: string,
-    payload: Record<string, unknown>,
-    requestId?: string,
-  ): Promise<void> {
-    const sentences = Array.isArray(payload.sentences)
-      ? payload.sentences.filter((sentence): sentence is string => typeof sentence === "string")
-      : []
-    const text = sentences
-      .map((sentence) => sentence.trim())
-      .filter(Boolean)
-      .join(" ")
-
-    if (!text) {
-      this.sendResult(packageName, requestId, false, undefined, {
-        code: MiniappErrorCode.INTERNAL,
-        message: "speakSentences requires at least one sentence",
-      })
-      return
-    }
-
-    // Preserve the original cloud/local routing. Cloud TTS receives one joined
-    // utterance; local Supertonic receives the sentence boundaries for its
-    // one-sentence lookahead pipeline.
-    await this.handleSpeak(packageName, {...payload, text, _sentences: sentences}, requestId)
+    this.speechRuns.delete(packageName)
+    run.onCancelled?.()
   }
 
   private async handleRgbLed(packageName: string, payload: Record<string, unknown>, requestId?: string): Promise<void> {
@@ -3089,6 +3096,7 @@ class LocalMiniappRuntime {
 
     // Add new subscriptions
     app.subscriptions = new Set(streams)
+    app.forceLocalTranscriptionStreams.clear()
     for (const stream of streams) {
       let subs = this.streamSubscribers.get(stream)
       if (!subs) {
@@ -3128,18 +3136,34 @@ class LocalMiniappRuntime {
   private updateCloudSubscriptions(): void {
     const cloudStreams = new Set<string>()
     let transcriptionLang: string | null = null
+    let forceLocalTranscriptionLang: string | null = null
+    let hasForceLocalTranscription = false
     for (const [stream, subscribers] of this.streamSubscribers) {
       if (subscribers.size === 0) continue
       // Only transcription / translation need cloud delivery. Location and
       // notifications are sourced natively on the phone — no cloud hop.
-      if (stream.startsWith("transcription:") || stream.startsWith("translation:")) {
+      if (stream.startsWith("translation:")) {
         cloudStreams.add(stream)
       }
-      if (stream.startsWith("transcription:") && transcriptionLang === null) {
-        transcriptionLang = stream.substring("transcription:".length)
+      if (stream.startsWith("transcription:")) {
+        const language = stream.substring("transcription:".length)
+        if (transcriptionLang === null) transcriptionLang = language
+
+        const routes = summarizeTranscriptionRoutes(subscribers, (packageName) =>
+          this.appForcesLocalTranscription(packageName, stream),
+        )
+        if (routes.hasForceLocalSubscriber) {
+          hasForceLocalTranscription = true
+          if (forceLocalTranscriptionLang === null) forceLocalTranscriptionLang = language
+        }
+        if (routes.hasCloudSubscriber) cloudStreams.add(stream)
       }
     }
-    localSttFallbackCoordinator.onSubscriptionChange(transcriptionLang !== null, transcriptionLang)
+    localSttFallbackCoordinator.onSubscriptionChange(
+      transcriptionLang !== null,
+      forceLocalTranscriptionLang ?? transcriptionLang,
+      hasForceLocalTranscription,
+    )
 
     // Mirror the same set as typed AudioSubscription[] and push it to the cloud
     // runtime.
@@ -3237,21 +3261,25 @@ class LocalMiniappRuntime {
           } text="${d.text.slice(0, 48)}"`,
         )
       }
-      this.forwardEvent(`transcription:${d.resolvedLanguage}`, {
-        type: "transcription",
-        text: d.text,
-        isFinal: d.isFinal,
-        utteranceId: d.utteranceId,
-        transcribeLanguage: d.resolvedLanguage,
-        detectedLanguage: d.languageDetected ? d.resolvedLanguage : undefined,
-        startTime: d.startMs,
-        endTime: d.endMs,
-        speakerId: d.speakerId,
-        duration: d.durationMs,
-        provider: d.provider,
-        confidence: d.confidence,
-        __hostReceivedAt: receivedAt,
-      })
+      this.forwardEvent(
+        `transcription:${d.resolvedLanguage}`,
+        {
+          type: "transcription",
+          text: d.text,
+          isFinal: d.isFinal,
+          utteranceId: d.utteranceId,
+          transcribeLanguage: d.resolvedLanguage,
+          detectedLanguage: d.languageDetected ? d.resolvedLanguage : undefined,
+          startTime: d.startMs,
+          endTime: d.endMs,
+          speakerId: d.speakerId,
+          duration: d.durationMs,
+          provider: d.provider,
+          confidence: d.confidence,
+          __hostReceivedAt: receivedAt,
+        },
+        "cloud",
+      )
     })
 
     cloudClientService.onTranslation((d: TranslationData) => {
@@ -3334,7 +3362,7 @@ class LocalMiniappRuntime {
    * - Cloud sends "head_up" → miniapp protocol uses "head_position" (HEAD_POSITION)
    * - Cloud sends "VAD" (uppercase) → miniapp protocol uses "vad" (lowercase)
    */
-  public forwardEvent(streamType: string, data: unknown): void {
+  public forwardEvent(streamType: string, data: unknown, transcriptionSource?: TranscriptionEventSource): void {
     // Translate cloud event names to miniapp protocol stream types
     const normalizedStream = this.normalizeStreamType(streamType)
 
@@ -3410,6 +3438,10 @@ class LocalMiniappRuntime {
     if (matchedSubs.size === 0 && !perGestureStream) return
 
     for (const packageName of matchedSubs) {
+      if (normalizedStream.startsWith("transcription:") && transcriptionSource) {
+        const forceLocal = this.appForcesLocalTranscription(packageName, normalizedStream)
+        if (!shouldDeliverTranscription(transcriptionSource, forceLocal, cloudClientService.isConnected())) continue
+      }
       if (TRANSCRIPT_TIMING_TELEMETRY && normalizedStream.startsWith("transcription:")) {
         const transcript = data as {text?: string; isFinal?: boolean; __hostReceivedAt?: number} | null
         const now = Date.now()
@@ -3448,6 +3480,11 @@ class LocalMiniappRuntime {
         }
       }
     }
+  }
+
+  private appForcesLocalTranscription(packageName: string, stream: string): boolean {
+    const forced = this.connectedApps.get(packageName)?.forceLocalTranscriptionStreams
+    return forced?.has(stream) === true || forced?.has(`${MiniappStreamType.TRANSCRIPTION}:auto`) === true
   }
 
   /**

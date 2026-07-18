@@ -17,7 +17,6 @@ describe("MiniappRequestType wire values", () => {
   test("PLAY_AUDIO", () => expect(MiniappRequestType.PLAY_AUDIO).toBe("miniapp_play_audio"))
   test("STOP_AUDIO", () => expect(MiniappRequestType.STOP_AUDIO).toBe("miniapp_stop_audio"))
   test("SPEAK", () => expect(MiniappRequestType.SPEAK).toBe("miniapp_speak"))
-  test("SPEAK_SENTENCES", () => expect(MiniappRequestType.SPEAK_SENTENCES).toBe("miniapp_speak_sentences"))
   test("SPEAKER_STREAM_OPEN", () => expect(MiniappRequestType.SPEAKER_STREAM_OPEN).toBe("miniapp_speaker_stream_open"))
   test("SPEAKER_STREAM_WRITE", () =>
     expect(MiniappRequestType.SPEAKER_STREAM_WRITE).toBe("miniapp_speaker_stream_write"))
@@ -88,5 +87,6 @@ describe("MiniappErrorCode wire values", () => {
   test("TTS_TEXT_TOO_LONG", () => expect(MiniappErrorCode.TTS_TEXT_TOO_LONG).toBe("TTS_TEXT_TOO_LONG"))
   test("TTS_INVALID_VOICE", () => expect(MiniappErrorCode.TTS_INVALID_VOICE).toBe("TTS_INVALID_VOICE"))
   test("TTS_UPSTREAM_ERROR", () => expect(MiniappErrorCode.TTS_UPSTREAM_ERROR).toBe("TTS_UPSTREAM_ERROR"))
+  test("TTS_LOCAL_UNAVAILABLE", () => expect(MiniappErrorCode.TTS_LOCAL_UNAVAILABLE).toBe("TTS_LOCAL_UNAVAILABLE"))
   test("NOT_CONNECTED", () => expect(MiniappErrorCode.NOT_CONNECTED).toBe("NOT_CONNECTED"))
 })
