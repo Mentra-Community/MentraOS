@@ -1,6 +1,6 @@
 /// <reference types="bun-types" />
 
-import {describe, expect, test} from "bun:test"
+import {afterEach, describe, expect, jest, test} from "bun:test"
 
 import {AudioGuidanceManager, type AudioGuidanceInput} from "../background/managers/AudioGuidanceManager"
 
@@ -48,6 +48,10 @@ async function settleSpeech(): Promise<void> {
   await Promise.resolve()
   await Promise.resolve()
 }
+
+afterEach(() => {
+  if (jest.isFakeTimers()) jest.useRealTimers()
+})
 
 describe("AudioGuidanceManager", () => {
   test("full guidance speaks at most one preparation and one now prompt per turn", async () => {
@@ -136,5 +140,24 @@ describe("AudioGuidanceManager", () => {
     harness.manager.setMode("off")
     expect(harness.manager.repeatCurrent()).toBe(false)
     expect(harness.spoken.at(-1)).toBe("In 40 meters, turn left onto Market Street.")
+  })
+
+  test("urgent turn cue cancels deferred advance notice", async () => {
+    jest.useFakeTimers({now: 100_000})
+    const {manager, spoken} = createHarness()
+    manager.setMode("full")
+    manager.beginTrip()
+    manager.confirmTripStarted(null)
+    await settleSpeech()
+
+    // This preparation prompt waits for the automatic gap after the start
+    // announcement. The urgent action cue must supersede it completely.
+    manager.observe(input({distanceMeters: 50}))
+    manager.observe(input({distanceMeters: 9}))
+    await settleSpeech()
+    jest.advanceTimersByTime(4_000)
+    await settleSpeech()
+
+    expect(spoken).toEqual(["Navigation started.", "Turn left onto Market Street now."])
   })
 })

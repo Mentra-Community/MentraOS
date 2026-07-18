@@ -245,12 +245,17 @@ export class AudioGuidanceManager {
 
   private enqueue(prompt: Prompt): void {
     if (!this.canSpeak() || !prompt.text) return
-    if (prompt.priority >= 90 && this.speaking) {
+    if (prompt.priority >= 90) {
+      // An action/repeat/lifecycle cue supersedes deferred advance notice.
+      // Otherwise a prepare prompt waiting out the automatic gap can fire
+      // after "turn now", when it is both stale and actively confusing.
       this.pending = null
       this.clearPendingTimer()
-      this.speaker.stop()
-      this.startPrompt(prompt)
-      return
+      if (this.speaking) {
+        this.speaker.stop()
+        this.startPrompt(prompt)
+        return
+      }
     }
 
     if (this.speaking) {
