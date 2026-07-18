@@ -235,6 +235,7 @@ export class AudioGuidanceManager {
 
   private resetManeuverState(): void {
     this.currentManeuverKey = null
+    this.currentRepeatPhrase = null
     this.lastSignature = ""
     this.lastDistance = null
     this.syntheticSequence = 0

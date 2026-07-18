@@ -160,4 +160,24 @@ describe("AudioGuidanceManager", () => {
 
     expect(spoken).toEqual(["Navigation started.", "Turn left onto Market Street now."])
   })
+
+  test("new trip clears the previous arrival repeat phrase", async () => {
+    const {manager} = createHarness()
+    manager.setMode("essential")
+    manager.beginTrip()
+    manager.observe(
+      input({
+        status: "arrived",
+        running: false,
+        maneuverType: null,
+        instruction: null,
+        distanceMeters: null,
+      }),
+    )
+    await settleSpeech()
+
+    manager.beginTrip()
+
+    expect(manager.repeatCurrent()).toBe(false)
+  })
 })
