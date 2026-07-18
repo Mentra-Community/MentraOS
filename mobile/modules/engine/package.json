@@ -1,6 +1,6 @@
 {
   "name": "@mentra/engine",
-  "version": "0.1.0",
+  "version": "0.1.0-dev.0",
   "description": "Mentra Engine — miniapp registry, WebView bridge, and miniapp store",
   "main": "build/index.js",
   "react-native": "src/index.ts",
@@ -72,7 +72,7 @@
   "devDependencies": {
     "@mentra/bluetooth-sdk": "workspace:*",
     "@mentra/cloud-client": "workspace:*",
-    "@mentra/cloud-runtime": "workspace:*",
+    "@mentra/cloud-protocol": "workspace:*",
     "@mentra/miniapp": "workspace:*",
     "@types/semver": "^7.7.1",
     "expo-module-scripts": "^55.0.2",
@@ -97,6 +97,7 @@
     "expo-battery": "*",
     "expo-audio": "*",
     "expo-clipboard": "*",
+    "expo-calendar": "*",
     "expo-constants": "*",
     "expo-location": "*",
     "expo-task-manager": "*",
@@ -111,9 +112,9 @@
     "@craftzdog/react-native-buffer": "*",
     "axios": "*",
     "@mentra/bluetooth-sdk": "*",
-    "@mentra/crust": "*",
-    "@mentra/cloud-client": "*",
-    "@mentra/cloud-runtime": "*",
-    "@mentra/miniapp": "*"
+    "@mentra/crust": "^0.1.0-dev.0",
+    "@mentra/cloud-client": "^0.1.0-dev.0",
+    "@mentra/miniapp": "^0.3.0-dev.0",
+    "@mentra/cloud-protocol": "^0.1.0-dev.0"
   }
 }

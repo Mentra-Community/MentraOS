@@ -1,11 +1,11 @@
 # `session.phone`
 
-Phone device-state event streams for miniapps — incoming notifications,
-calendar events, and phone battery. Sub-namespaced by concern:
+Phone device-state APIs for miniapps — incoming notifications, calendar
+snapshots, and phone battery. Sub-namespaced by concern:
 
 ```
 session.phone.notifications.{on, onDismissed, hasPermission, stop}
-session.phone.calendar.{on, hasPermission, stop}
+session.phone.calendar.{listEvents, hasPermission}
 session.phone.onBattery(...)                          // stays flat
 ```
 
@@ -39,9 +39,13 @@ const unsubDismissed = session.phone.notifications.onDismissed((data) => {
   console.log("dismissed:", data.notificationId)
 })
 
-const unsubCal = session.phone.calendar.on((event) => {
-  console.log(`${event.title} @ ${event.dtStart}`)
+const {events, truncated} = await session.phone.calendar.listEvents({
+  startsAt: new Date(),
+  endsAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+  limit: 50,
 })
+for (const event of events) console.log(`${event.title} @ ${event.startsAt}`)
+console.log({truncated})
 
 const unsubBattery = session.phone.onBattery((b) => {
   console.log(`phone: ${b.level}% ${b.charging ? "(charging)" : ""}`)
@@ -49,7 +53,6 @@ const unsubBattery = session.phone.onBattery((b) => {
 
 // teardown
 session.phone.notifications.stop()  // unsubs from notif + dismissed
-session.phone.calendar.stop()
 unsubBattery()
 ```
 
@@ -70,13 +73,16 @@ Manifest entries map onto canonical keys per `session.permissions`:
 
 ```json
 {
-  "permissions": ["READ_NOTIFICATIONS", "CALENDAR"]
+  "permissions": [
+    {"type": "READ_NOTIFICATIONS"},
+    {"type": "CALENDAR"}
+  ]
 }
 ```
 
-Subscriptions made without the matching manifest permission are rejected
-by the phone runtime with `PERMISSION_NOT_DECLARED` (delivered async via
-the session `"error"` event — see `session.permissions.onPermissionError`).
+Calls made without the matching manifest permission are rejected by the
+phone runtime with `PERMISSION_NOT_DECLARED`. Required permissions are
+requested by the Mentra App before opening the miniapp.
 
 ---
 
@@ -153,41 +159,47 @@ and `onDismissed()` registrations).
 
 ### `session.phone.calendar`
 
-Phone calendar event stream.
+Request a current snapshot of phone calendar events. This is an imperative
+read, not a subscription; call it again when the UI opens or the user refreshes.
 
 #### `hasPermission` — `boolean`
 
 True iff `CALENDAR` is declared in the miniapp's manifest. Synchronous;
 reads the cached manifest record populated at `CONNECT_ACK`.
 
-#### `on(handler)` — `UnsubscribeFn`
+#### `listEvents(options)` — `Promise<CalendarListResult>`
 
-Subscribe to calendar events delivered by the phone.
-
-**Handler signature:** `(data: CalendarEventData) => void`
+Lists events from all event calendars in the requested window. The window may
+not exceed 31 days. `limit` defaults to 50 and must be between 1 and 100.
 
 ```ts
-interface CalendarEventData {
-  eventId: string
-  title: string
-  /** ISO 8601 start time. */
-  dtStart: string
-  /** ISO 8601 end time. */
-  dtEnd: string
-  timezone: string
-  allDay: boolean
-  location: string
-  notes: string
+interface CalendarListOptions {
+  startsAt: string | Date
+  endsAt: string | Date
+  limit?: number
+}
+
+interface CalendarEvent {
+  /** Unique occurrence id, including recurring instances. */
+  id: string
   calendarId: string
+  title: string
+  startsAt: string
+  endsAt: string
+  timezone?: string
+  allDay: boolean
+  location?: string
+  notes?: string
+  url?: string
+  /** Deduplicated HTTPS links found in url, location, and notes. */
+  links: string[]
+}
+
+interface CalendarListResult {
+  events: CalendarEvent[]
+  truncated: boolean
 }
 ```
-
-**Returns:** `UnsubscribeFn` — also tracked by the module so `stop()` will
-clean it up.
-
-#### `stop()` — `void`
-
-Tear down every subscription owned by `phone.calendar`.
 
 ---
 
@@ -205,8 +217,8 @@ interface BatteryData {
 }
 ```
 
-**Returns:** `UnsubscribeFn`. Not tracked by `phone.notifications.stop()`
-/ `phone.calendar.stop()` — call the returned unsubscribe directly.
+**Returns:** `UnsubscribeFn`. Not tracked by `phone.notifications.stop()` —
+call the returned unsubscribe directly.
 
 ---
 
@@ -214,7 +226,9 @@ interface BatteryData {
 
 | Code | Where | Meaning |
 | --- | --- | --- |
-| `PERMISSION_NOT_DECLARED` | Phone runtime, surfaced via `session.on("error", ...)` / `session.permissions.onPermissionError(...)` | A subscription requires a manifest permission the miniapp's `manifest.json` does not declare (e.g. subscribing to `phone_notification` without `READ_NOTIFICATIONS`). |
+| `PERMISSION_NOT_DECLARED` | Phone runtime, surfaced via `session.on("error", ...)` / `session.permissions.onPermissionError(...)` | A subscription or request requires a permission the miniapp's `miniapp.json` does not declare. |
+| `PERMISSION_DENIED` | `calendar.listEvents()` rejection | Calendar access was revoked or is otherwise unavailable at request time. |
+| `INVALID_ARGUMENT` | `calendar.listEvents()` rejection | Dates, range, or limit are invalid. |
 
 Subscriptions on this module do not throw synchronously — rejections are
 async, delivered as session-level error events.
@@ -225,7 +239,7 @@ async, delivered as session-level error events.
 
 - **Android:** Full support for all sub-modules. `notifications.onDismissed`
   fires when the user clears or swipes a notification.
-- **iOS:** `notifications.on`, `calendar.on`, and `onBattery` all work.
+- **iOS:** `notifications.on`, `calendar.listEvents`, and `onBattery` all work.
   `notifications.onDismissed` accepts the subscription but never delivers
   events (Apple privacy restriction).
 
@@ -233,17 +247,21 @@ async, delivered as session-level error events.
 
 ## Wire-level reference
 
-This module emits no requests. It only subscribes to streams:
+Calendar reads use a request; notifications and battery use streams:
 
 | Subscribe | Stream type | Payload |
 | --- | --- | --- |
 | `notifications.on` | `PHONE_NOTIFICATION` | `PhoneNotificationData` |
 | `notifications.onDismissed` | `PHONE_NOTIFICATION_DISMISSED` | `NotificationDismissedData` |
-| `calendar.on` | `CALENDAR_EVENT` | `CalendarEventData` |
 | `onBattery` | `PHONE_BATTERY` | `BatteryData` |
+
+| Request | Wire type | Result |
+| --- | --- | --- |
+| `calendar.listEvents` | `miniapp_calendar_list_events` | `CalendarListResult` |
 
 ---
 
 ## Tests
 
-_No integration tests yet._
+Wire, mock transport, SDK request, validation, and link-extraction behavior
+have unit coverage in the Miniapp SDK and engine packages.

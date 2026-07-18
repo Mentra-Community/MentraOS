@@ -72,6 +72,8 @@ export interface PhotoTaken {
 
 export interface WarmUpCameraOptions {
   size?: "low" | "medium" | "high" | "max"
+  /** Match the upcoming capture mode so warm-up and capture share one ASG camera session. */
+  mode?: "photo" | "text"
   exposureTimeNs?: number
   durationMs?: number
 }
@@ -177,6 +179,7 @@ export class CameraModule {
     await this.session.sendRequest<void>({
       type: MiniappRequestType.CAMERA_WARM_UP,
       size: options.size ?? "medium",
+      mode: options.mode ?? "photo",
       exposureTimeNs: options.exposureTimeNs,
       durationMs: options.durationMs ?? 15000,
     })

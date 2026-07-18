@@ -146,6 +146,10 @@ export class PhonePhotoCoordinator {
       throw new PhotoError("GLASSES_NOT_CONNECTED", "Glasses are not connected", "command", "ble")
     }
 
+    // Text-mode sensor resolution is owned by ASG constants; keep cloud metadata on a stable
+    // high-capacity tier and let the glasses ignore the public size when mode=text.
+    const captureSize = opts.size ?? "medium"
+
     // 1) Presign via the cloud-v2 managed-photo service. Local miniapps use
     //    ONLY the cloud-v2 path: the runtime presigns upload+read URLs and the
     //    phone (as the device controller) delivers the bytes; the legacy
@@ -156,10 +160,14 @@ export class PhonePhotoCoordinator {
     const flowStarted = performance.now()
     try {
       const presignStarted = performance.now()
-      const r = await cloudClientService.startManagedPhoto({size: opts.size ?? "medium"})
+      const r = await cloudClientService.startManagedPhoto({
+        size: opts.mode === "text" ? "max" : captureSize,
+      })
       const presignMs = Math.round(performance.now() - presignStarted)
       if (typeof __DEV__ !== "undefined" && __DEV__) {
-        console.debug(`[PhonePhotoCoordinator] presign ${presignMs}ms size=${opts.size ?? "medium"}`)
+        console.debug(
+          `[PhonePhotoCoordinator] presign ${presignMs}ms size=${opts.mode === "text" ? "max" : captureSize} mode=${opts.mode ?? "photo"}`,
+        )
       }
       requestId = r.requestId
       uploadUrl = r.uploadUrl
@@ -219,7 +227,7 @@ export class PhonePhotoCoordinator {
       void BluetoothSdk.requestPhoto({
         requestId: bleRequestId,
         appId: packageName,
-        size: normalizePhotoSize(opts.size ?? "medium"),
+        size: normalizePhotoSize(captureSize),
         mode: opts.mode ?? "photo",
         webhookUrl: uploadUrl,
         authToken: null,
@@ -299,7 +307,12 @@ export class PhonePhotoCoordinator {
    */
   async warmUpCamera(
     packageName: string,
-    opts: {size?: "low" | "medium" | "high" | "max"; exposureTimeNs?: number; durationMs?: number},
+    opts: {
+      size?: "low" | "medium" | "high" | "max"
+      mode?: "photo" | "text"
+      exposureTimeNs?: number
+      durationMs?: number
+    },
   ): Promise<void> {
     // Pre-check: if glasses aren't connected, the BLE warm-up command would be
     // sent into the void. Fail fast with a typed error.
@@ -310,6 +323,7 @@ export class PhonePhotoCoordinator {
     try {
       await BluetoothSdk.warmUpCamera({
         size: normalizePhotoSize(opts.size ?? "medium"),
+        mode: opts.mode ?? "photo",
         exposureTimeNs: opts.exposureTimeNs ?? null,
         durationMs: opts.durationMs ?? 15000,
       })

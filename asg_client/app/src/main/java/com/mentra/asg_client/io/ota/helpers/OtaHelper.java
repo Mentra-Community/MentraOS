@@ -418,7 +418,7 @@ public class OtaHelper {
         }
 
         // Acquire wakelock to prevent CPU sleep during OTA download/install
-        WakeLockManager.acquireCpuWakeLock(context, OTA_WAKELOCK_TIMEOUT_MS);
+        WakeLockManager.acquireCpu(context, WakeLockManager.WakeOwner.MTK_OTA, OTA_WAKELOCK_TIMEOUT_MS);
         Log.i(TAG, "📱 OTA wakelock acquired for " + (OTA_WAKELOCK_TIMEOUT_MS / 1000) + " seconds");
 
         isPhoneInitiatedOta = true;

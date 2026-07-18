@@ -86,6 +86,7 @@ declare class CrustModule extends NativeModule<CrustModuleEvents> {
     success: boolean
     uri?: string
     identifier?: string
+    existing?: boolean
     error?: string
   }>
 

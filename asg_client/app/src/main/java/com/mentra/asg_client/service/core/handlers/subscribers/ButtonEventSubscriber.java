@@ -235,8 +235,8 @@ public final class ButtonEventSubscriber implements IPeripheralBus.McuEventListe
                 Log.d(
                         TAG,
                         "🔋 Device is asleep, acquiring short wake lock for battery announcement");
-                WakeLockManager.acquireScreenWakeLock(
-                        context, 5000); // 5 seconds for query + audio
+                WakeLockManager.acquireScreen(
+                        context, WakeLockManager.WakeOwner.BATTERY_ANNOUNCE, 5000); // 5 seconds for query + audio
             }
         }
 

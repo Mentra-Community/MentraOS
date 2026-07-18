@@ -1,17 +1,5 @@
-/**
- * @fileoverview `@mentra/cloud-runtime/protocol` public entrypoint.
- *
- * Pure, isomorphic transport types + zod validators for the Mentra Runtime
- * protocol. Zero server imports (no `node:*`, no service code) so the client
- * can import the contract without pulling in server code.
- *
- * See docs/issues/002-cloud-runtime/protocol.md.
- */
-export * from "./envelope";
-export * from "./handshake";
-export * from "./control";
-export * from "./errors";
-export * from "./messages";
-export * from "./audio";
-export * from "./camera";
-export * from "./maps";
+// Compatibility shim: the wire protocol moved to its own leaf package so
+// phone-side consumers (@mentra/cloud-client, @mentra/engine) don't drag the
+// server runtime's dependencies. Server code imports @mentra/cloud-protocol
+// directly; this keeps the package's "./protocol" entry working.
+export * from "@mentra/cloud-protocol"

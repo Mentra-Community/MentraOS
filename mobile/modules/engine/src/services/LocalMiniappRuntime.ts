@@ -63,17 +63,13 @@ import {
 } from "../runtime/config"
 import {getAnalytics, getUiSeams} from "../runtime/bootstrap"
 import {normalizeStreamAudioConfig, normalizeStreamVideoConfig} from "../runtime/streamConfig"
-import type {
-  AudioSubscription,
-  LanguageSource,
-  TranscriptionData,
-  TranslationData,
-} from "@mentra/cloud-runtime/protocol"
+import type {AudioSubscription, LanguageSource, TranscriptionData, TranslationData} from "@mentra/cloud-protocol"
 import ttsModelManager from "./TTSModelManager"
 import {NavigationHandlers} from "./NavigationHandlers"
 import type {ClientApp} from "../types/applet"
 import {useAppStatusStore} from "../stores/apps"
 import {DEV_APP_PACKAGE_NAME, getDevAppSourcePackage} from "./AppRegistry"
+import {listPhoneCalendarEvents, PhoneCalendarError} from "./PhoneCalendarService"
 
 // =============================================================================
 // Types
@@ -109,6 +105,8 @@ interface ConnectedMiniapp {
   authDelivered: boolean
   /** Last speaker state pushed to this app. Used to dedup SPEAKER_STATE pushes. */
   speakerState: SpeakerStateValue
+  /** Live PCM output stream this app has open (speaker.createStream), if any. */
+  activeSpeakerStreamId?: string
   /**
    * Location-tier rate this app is currently asking for via its
    * `location_stream` subscription, or null if it hasn't asked for
@@ -573,6 +571,18 @@ class LocalMiniappRuntime {
     // dangling references. The WebView will re-subscribe after its CONNECT.
     if (this.connectedApps.has(packageName)) {
       const existing = this.connectedApps.get(packageName)!
+      // A crash respawn replaces the ConnectedMiniapp without going through
+      // unregisterApp(). Abort the old incarnation's native PCM player before
+      // its only stream id is lost. Target the exact stream rather than using
+      // stopForApp(), whose async playback cleanup could race with audio the
+      // replacement app starts after it connects.
+      const existingSpeakerStreamId = existing.activeSpeakerStreamId
+      if (existingSpeakerStreamId) {
+        existing.activeSpeakerStreamId = undefined
+        void audioPlaybackService.abortStream(existingSpeakerStreamId).catch((error) => {
+          console.warn(`${LOG_TAG}: failed to abort speaker stream while replacing ${packageName}`, error)
+        })
+      }
       if (existing.authRefreshTimerId !== null) {
         BgTimer.clearTimeout(existing.authRefreshTimerId)
         existing.authRefreshTimerId = null
@@ -887,11 +897,26 @@ class LocalMiniappRuntime {
       case MiniappRequestType.SPEAK_SENTENCES:
         this.handleSpeakSentences(packageName, payload, requestId)
         break
+      case MiniappRequestType.SPEAKER_STREAM_OPEN:
+        void this.handleSpeakerStreamOpen(packageName, payload, requestId)
+        break
+      case MiniappRequestType.SPEAKER_STREAM_WRITE:
+        void this.handleSpeakerStreamWrite(packageName, payload, requestId)
+        break
+      case MiniappRequestType.SPEAKER_STREAM_CLOSE:
+        void this.handleSpeakerStreamClose(packageName, payload, requestId)
+        break
+      case MiniappRequestType.SPEAKER_STREAM_ABORT:
+        void this.handleSpeakerStreamAbort(packageName, payload, requestId)
+        break
       case MiniappRequestType.RGB_LED:
         void this.handleRgbLed(packageName, payload, requestId)
         break
       case MiniappRequestType.LOCATION_POLL:
         this.handleLocationPoll(packageName, requestId)
+        break
+      case MiniappRequestType.CALENDAR_LIST_EVENTS:
+        void this.handleCalendarListEvents(packageName, payload, requestId)
         break
       case MiniappRequestType.NAVIGATION_START:
         this.navigationHandlers.handleStart(packageName, payload, requestId)
@@ -1361,7 +1386,6 @@ class LocalMiniappRuntime {
       if (s === "location_update") return "LOCATION"
       if (s === "phone_notification") return "READ_NOTIFICATIONS"
       if (s === "phone_notification_dismissed") return "READ_NOTIFICATIONS"
-      if (s === "calendar_event") return "CALENDAR"
       return null
     }
 
@@ -1417,6 +1441,37 @@ class LocalMiniappRuntime {
     // Fire initial snapshot values for stateful streams so miniapps don't have
     // to wait for the first change event.
     this.emitInitialSnapshots(packageName, streams)
+  }
+
+  private async handleCalendarListEvents(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    const app = this.connectedApps.get(packageName)
+    const declared = app?.installedManifest?.permissions?.some(
+      (permission) => permission.type?.toUpperCase() === "CALENDAR",
+    )
+    if (!declared) {
+      logPermissionNotDeclared(packageName, "CALENDAR", "to list calendar events", '{"type": "CALENDAR"}')
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.PERMISSION_NOT_DECLARED,
+        message: 'CALENDAR permission not declared in miniapp.json. Add {"type": "CALENDAR"} to the permissions array.',
+        permission: "CALENDAR",
+      })
+      return
+    }
+
+    try {
+      const result = await listPhoneCalendarEvents(payload)
+      this.sendResult(packageName, requestId, true, result)
+    } catch (error) {
+      const known = error instanceof PhoneCalendarError
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: known ? error.code : MiniappErrorCode.INTERNAL,
+        message: error instanceof Error ? error.message : "Failed to read phone calendar events",
+      })
+    }
   }
 
   /**
@@ -1657,6 +1712,205 @@ class LocalMiniappRuntime {
     audioPlaybackService.stopForApp(packageName)
     this.setSpeakerState(packageName, "stopped")
     this.sendResult(packageName, requestId, true)
+  }
+
+  // ── speaker.createStream (live PCM output) ────────────────────────────────
+
+  /** Valid PCM sample rates for speaker streams. Mirrors the SDK contract. */
+  private static readonly SPEAKER_STREAM_SAMPLE_RATES = new Set([16000, 24000, 48000])
+  private static readonly SPEAKER_STREAM_MAX_BASE64_CHARS = Math.ceil((256 * 1024) / 3) * 4
+  private speakerStreamCounter = 0
+
+  private async handleSpeakerStreamOpen(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    const app = this.connectedApps.get(packageName)
+    if (!app) return
+
+    // One stream per miniapp: opening a second closes the first.
+    const previous = app.activeSpeakerStreamId
+    if (previous) {
+      app.activeSpeakerStreamId = undefined
+      await audioPlaybackService.abortStream(previous).catch((error) => {
+        console.warn(`${LOG_TAG}: failed to abort previous speaker stream for ${packageName}`, error)
+      })
+    }
+
+    const sampleRate = typeof payload.sampleRate === "number" ? payload.sampleRate : 16000
+    if (!LocalMiniappRuntime.SPEAKER_STREAM_SAMPLE_RATES.has(sampleRate)) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INVALID_ARGUMENT,
+        message: `unsupported sampleRate ${sampleRate} (use 16000, 24000, or 48000)`,
+      })
+      return
+    }
+    const channels = typeof payload.channels === "number" ? payload.channels : 1
+    if (channels !== 1) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INVALID_ARGUMENT,
+        message: "speaker streams currently support mono PCM only",
+      })
+      return
+    }
+    const volume = typeof payload.volume === "number" ? payload.volume : 1
+    if (!Number.isFinite(volume) || volume < 0 || volume > 1) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INVALID_ARGUMENT,
+        message: "speaker stream volume must be between 0 and 1",
+      })
+      return
+    }
+
+    const streamId = `spkstream_${Date.now()}_${++this.speakerStreamCounter}`
+    this.setSpeakerState(packageName, "loading")
+    try {
+      await audioPlaybackService.openStream({
+        streamId,
+        appId: packageName,
+        sampleRate,
+        channels,
+        volume,
+        stopOtherAudio: payload.stopOtherAudio !== false,
+        onEnded: (endedId, success, error, durationMs) => {
+          const current = this.connectedApps.get(packageName)
+          // Ignore completion from an app incarnation replaced by a crash
+          // respawn. Its abort may finish after the new app has registered and
+          // must not overwrite that app's speaker state.
+          if (current !== app) return
+          if (current.activeSpeakerStreamId === endedId) current.activeSpeakerStreamId = undefined
+          if (success) {
+            this.setSpeakerState(packageName, "stopped", {durationMs: durationMs ?? undefined})
+          } else {
+            this.setSpeakerState(packageName, "error", {
+              errorCode: MiniappErrorCode.INTERNAL,
+              errorMessage: error ?? "speaker stream failed",
+              durationMs: durationMs ?? undefined,
+            })
+          }
+        },
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      this.setSpeakerState(packageName, "error", {
+        errorCode: MiniappErrorCode.INTERNAL,
+        errorMessage: message,
+      })
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message,
+      })
+      return
+    }
+
+    // The native open can outlive a miniapp disconnect. Its ordinary teardown
+    // ran while no StreamState existed yet, so close this late result here
+    // instead of leaving an orphan AudioTrack/AVAudioEngine session.
+    if (this.connectedApps.get(packageName) !== app) {
+      await audioPlaybackService.abortStream(streamId)
+      return
+    }
+    app.activeSpeakerStreamId = streamId
+    // Optimistic "playing", same as play(): the chunk player starts as soon
+    // as the first write lands. Microtask so "loading" flushes first.
+    queueMicrotask(() => this.setSpeakerState(packageName, "playing"))
+    this.sendResult(packageName, requestId, true, {streamId})
+  }
+
+  /** Resolve + validate a stream id from a payload against the app's active stream. */
+  private activeSpeakerStream(packageName: string, payload: Record<string, unknown>): string | null {
+    const streamId = typeof payload.streamId === "string" ? payload.streamId : undefined
+    const app = this.connectedApps.get(packageName)
+    if (!streamId || !app || app.activeSpeakerStreamId !== streamId) return null
+    return streamId
+  }
+
+  private async handleSpeakerStreamWrite(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    const streamId = this.activeSpeakerStream(packageName, payload)
+    if (!streamId) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: "speaker stream is not open",
+      })
+      return
+    }
+    const base64 = typeof payload.base64 === "string" ? payload.base64 : ""
+    if (!base64 || base64.length % 4 !== 0) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INVALID_ARGUMENT,
+        message: "speaker stream write requires padded base64 PCM data",
+      })
+      return
+    }
+    if (base64.length > LocalMiniappRuntime.SPEAKER_STREAM_MAX_BASE64_CHARS) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.PAYLOAD_TOO_LARGE,
+        message: "speaker stream chunk exceeds the 256 KB raw PCM limit",
+      })
+      return
+    }
+    try {
+      const result = await audioPlaybackService.writeStreamChunk(streamId, base64)
+      this.sendResult(packageName, requestId, true, result)
+    } catch (error) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: error instanceof Error ? error.message : String(error),
+      })
+    }
+  }
+
+  private async handleSpeakerStreamClose(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    const streamId = this.activeSpeakerStream(packageName, payload)
+    if (!streamId) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: "speaker stream is not open",
+      })
+      return
+    }
+    try {
+      // Resolves once the buffered audio has drained; onEnded delivers the
+      // terminal SPEAKER_STATE ("stopped").
+      const result = await audioPlaybackService.closeStream(streamId)
+      this.sendResult(packageName, requestId, true, result)
+    } catch (error) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: error instanceof Error ? error.message : String(error),
+      })
+    }
+  }
+
+  private async handleSpeakerStreamAbort(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    const streamId = this.activeSpeakerStream(packageName, payload)
+    if (!streamId) {
+      // Aborting an already-gone stream is fine — abort() is idempotent.
+      this.sendResult(packageName, requestId, true)
+      return
+    }
+    try {
+      await audioPlaybackService.abortStream(streamId)
+      this.sendResult(packageName, requestId, true)
+    } catch (error) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: error instanceof Error ? error.message : String(error),
+      })
+    }
   }
 
   private async handleSpeak(packageName: string, payload: Record<string, unknown>, requestId?: string): Promise<void> {
@@ -2568,6 +2822,7 @@ class LocalMiniappRuntime {
     try {
       await phonePhotoCoordinator.warmUpCamera(packageName, {
         size: payload.size as "low" | "medium" | "high" | "max" | undefined,
+        mode: payload.mode as "photo" | "text" | undefined,
         exposureTimeNs: payload.exposureTimeNs as number | undefined,
         durationMs: payload.durationMs as number | undefined,
       })
@@ -2875,9 +3130,8 @@ class LocalMiniappRuntime {
     let transcriptionLang: string | null = null
     for (const [stream, subscribers] of this.streamSubscribers) {
       if (subscribers.size === 0) continue
-      // Only transcription / translation need cloud delivery. Location,
-      // notifications, and calendar events are sourced natively on the phone
-      // and forwarded to miniapps directly via MantleManager — no cloud hop.
+      // Only transcription / translation need cloud delivery. Location and
+      // notifications are sourced natively on the phone — no cloud hop.
       if (stream.startsWith("transcription:") || stream.startsWith("translation:")) {
         cloudStreams.add(stream)
       }

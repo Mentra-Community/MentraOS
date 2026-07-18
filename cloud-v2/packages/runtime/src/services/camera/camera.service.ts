@@ -27,13 +27,13 @@ import { getRedis } from "../../clients/redis.client";
 import { getStorageProvider } from "../storage/storage.service";
 import { getStreamProvider } from "../stream/stream.service";
 import { forwardToUserSessions } from "../../net/ws";
-import { PROTOCOL_MAJOR } from "../../protocol/envelope";
+import { PROTOCOL_MAJOR } from "@mentra/cloud-protocol/envelope";
 import type {
   PhotoOptions,
   StreamOptions,
   ManagedStream,
   StreamStatusResult,
-} from "../../protocol/camera";
+} from "@mentra/cloud-protocol/camera";
 
 const logger = createLogger("audio").child({ service: "camera.service" });
 

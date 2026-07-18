@@ -32,6 +32,7 @@ if (!session.capabilities.hasCamera) {
 
 const photo = await session.camera.takePhoto({
   size: "medium",
+  mode: "text",
   compress: "none",
   sound: true,
   saveToGallery: false,
@@ -105,7 +106,8 @@ error. Check `session.capabilities.hasCamera` before calling.
 
 ```ts
 interface TakePhotoOptions {
-  size?: "small" | "medium" | "large"
+  size?: "low" | "medium" | "high" | "max"
+  mode?: "photo" | "text"
   compress?: "none" | "low" | "medium" | "high"
   sound?: boolean
   saveToGallery?: boolean
@@ -117,6 +119,7 @@ Defaults (applied client-side before the request is sent):
 | Field | Default |
 | --- | --- |
 | `size` | `"medium"` |
+| `mode` | `"photo"` |
 | `compress` | `"none"` |
 | `sound` | `true` |
 | `saveToGallery` | `false` |
@@ -213,7 +216,7 @@ For host implementors — request/response message types this module emits:
 | Method | Request type | Response |
 | --- | --- | --- |
 | `setFov` | `CAMERA_FOV` (`{horizontal, vertical}`, one-shot) | — |
-| `takePhoto` | `PHOTO` (`{size, compress, sound, saveToGallery}`) | `REQUEST_RESULT` with `data: PhotoTaken` |
+| `takePhoto` | `PHOTO` (`{size, mode, compress, sound, saveToGallery}`) | `REQUEST_RESULT` with `data: PhotoTaken` |
 | `startVideoRecording` | `VIDEO_RECORDING_START` (`{width, height, fps, sound, save}`) | `REQUEST_RESULT` with `data: VideoRecordingStarted` |
 | `stopVideoRecording` | `VIDEO_RECORDING_STOP` (`{recordingId}`) | `REQUEST_RESULT` |
 

@@ -84,6 +84,8 @@ function androidPerms(feature: string): AndroidPermission[] {
     case PermissionFeatures.CAMERA:
       return [ANDROID.CAMERA]
     case PermissionFeatures.CALENDAR:
+      // Expo Calendar requires both grants on Android, including for read APIs.
+      // The miniapp-facing calendar API remains read-only.
       return [ANDROID.READ_CALENDAR, ANDROID.WRITE_CALENDAR]
     case PermissionFeatures.LOCATION:
     case PermissionFeatures.BACKGROUND_LOCATION:

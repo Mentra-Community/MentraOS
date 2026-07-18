@@ -35,7 +35,7 @@ import type {
   PlaceSuggestion,
   ReverseGeocodeResult,
   Route,
-} from "../../protocol/maps";
+} from "@mentra/cloud-protocol/maps";
 import { createMapboxProvider } from "./providers/mapbox.provider";
 import type { MapsProvider } from "./providers/provider";
 

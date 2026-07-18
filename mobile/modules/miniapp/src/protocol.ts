@@ -46,11 +46,25 @@ export enum MiniappRequestType {
   /** Speak a sentence list as one continuous TTS request. */
   SPEAK_SENTENCES = "miniapp_speak_sentences",
 
+  /**
+   * Live PCM output stream to the phone's audio playback service
+   * (speaker.createStream). OPEN provisions a native chunk player; WRITE
+   * appends base64 PCM (replies with {bufferedMs} for backpressure); CLOSE
+   * drains and finishes; ABORT drops immediately.
+   */
+  SPEAKER_STREAM_OPEN = "miniapp_speaker_stream_open",
+  SPEAKER_STREAM_WRITE = "miniapp_speaker_stream_write",
+  SPEAKER_STREAM_CLOSE = "miniapp_speaker_stream_close",
+  SPEAKER_STREAM_ABORT = "miniapp_speaker_stream_abort",
+
   /** Control the glasses RGB LED. */
   RGB_LED = "miniapp_rgb_led",
 
   /** One-shot location poll. */
   LOCATION_POLL = "miniapp_location_poll",
+
+  /** Read a bounded snapshot of phone calendar events. */
+  CALENDAR_LIST_EVENTS = "miniapp_calendar_list_events",
 
   /** Start a turn-by-turn navigation trip. Android only. */
   NAVIGATION_START = "miniapp_navigation_start",
@@ -292,8 +306,6 @@ export enum MiniappStreamType {
    * fire. See agents/miniapp-speaker-state-and-notif-dismissed-plan.md.
    */
   PHONE_NOTIFICATION_DISMISSED = "phone_notification_dismissed",
-  CALENDAR_EVENT = "calendar_event",
-
   // Photos, streaming
   PHOTO_TAKEN = "photo_taken",
   STREAM_STATUS = "stream_status",
@@ -304,8 +316,14 @@ export enum MiniappStreamType {
 // ============================================================================
 
 export enum MiniappErrorCode {
+  /** Request arguments failed host-side validation. */
+  INVALID_ARGUMENT = "INVALID_ARGUMENT",
+
   /** The miniapp subscribed to a stream whose required permission wasn't in its manifest. */
   PERMISSION_NOT_DECLARED = "PERMISSION_NOT_DECLARED",
+
+  /** The required phone OS permission is not currently granted. */
+  PERMISSION_DENIED = "PERMISSION_DENIED",
 
   /** Request routed to a method that isn't supported yet. */
   NOT_IMPLEMENTED = "NOT_IMPLEMENTED",

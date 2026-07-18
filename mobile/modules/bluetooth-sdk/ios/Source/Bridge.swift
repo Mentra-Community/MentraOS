@@ -400,7 +400,10 @@ class Bridge {
         Bridge.sendTypedMessage("glasses_serial_number", body: body)
     }
 
-    static func sendWifiStatusChange(connected: Bool, ssid: String?, localIp: String?) {
+    /// `error` is the glasses' provisioning failure reason (e.g. "connect_timeout",
+    /// "connected_to_other_network") when this status is the verdict of a failed
+    /// connect attempt; nil for routine link-state updates.
+    static func sendWifiStatusChange(connected: Bool, ssid: String?, localIp: String?, error: String? = nil) {
         guard let status = WifiStatus.fromStoreFields(
             connected: connected,
             ssid: ssid,
@@ -408,7 +411,11 @@ class Bridge {
         ) else {
             return
         }
-        Bridge.sendTypedMessage("wifi_status_change", body: status.values)
+        var body = status.values
+        if let error {
+            body["error"] = error
+        }
+        Bridge.sendTypedMessage("wifi_status_change", body: body)
     }
 
     static func updateWifiScanResults(_ networks: [[String: Any]], scanComplete: Bool) {

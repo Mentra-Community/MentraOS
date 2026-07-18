@@ -36,6 +36,37 @@ public class AsgConstants {
     public static final String ACTION_GLASSES_BATTERY_STATUS =
             "com.mentra.recovery.ACTION_GLASSES_BATTERY_STATUS";
 
+    /**
+     * Awake window granted per wake-flagged phone command ("W":1 string wrapper or FLAG_WAKE
+     * binary frame). The BES only pulses the MTK power key for these when the SoC is already
+     * asleep, so a command landing mid-awake-window gets no extra time — this window is the
+     * in-band equivalent. Must outlive the longest command follow-up that runs on
+     * suspend-frozen clocks: the wifi credentials flow sends its failure verdict at ~12.4s
+     * (3s + 3x3s status polls), so 15s covers it with margin. Acquired extend-only, so it
+     * never shortens a longer-lived lock (BES/MTK OTA).
+     */
+    public static final long PHONE_WAKE_COMMAND_WINDOW_MS = 15000;
+
+    /**
+     * Rolling wake-lease window re-armed on confirmed BES OTA segments. The BES UART
+     * transfer dies when the vendor display-sleep hook fires mid-flight even with a CPU
+     * lock held (2026-07-08 incident: frozen between segments at 80% with 4:40 left on
+     * the lock), so the transfer holds BOTH cpu and screen leases and re-arms them while
+     * segments keep confirming: progress keeps the device awake, a wedged transfer lets
+     * it sleep within this window (aligned with the phone's 120s stall watchdog).
+     */
+    public static final long BES_OTA_SEGMENT_LEASE_WINDOW_MS = 120000;
+
+    /**
+     * Dead-man window for the BES OTA transfer. The transfer is response-driven (every BES
+     * response triggers the next send, there is no wait loop), so one lost response stalls
+     * it silently forever. If no OTA response arrives within this window the transfer is
+     * aborted through the normal failure path - the BES stays on its current firmware and
+     * the phone retries the whole OTA. Kept well below the phone's 120s stall watchdog so
+     * the glasses clean up first; normal inter-response gaps are under a second.
+     */
+    public static final long BES_OTA_RESPONSE_TIMEOUT_MS = 30000;
+
     // RGB LED Control Constants (Glasses BES Chipset - Remote Control via Bluetooth)
     // NOTE: These are different from the local MTK recording LED
 
@@ -76,20 +107,27 @@ public class AsgConstants {
     public static final boolean ENABLE_TEXT_REGION_CROP = false;
 
     /**
-     * Dump text-detect intermediates to {@code textdetect_debug/} on every detection run. Adds
-     * per-photo I/O overhead; keep false in production.
-     */
-    public static final boolean SAVE_TEXT_DETECT_DEBUG_ARTIFACTS = false;
-
-    /**
      * Emit {@code ⏱️ [BLE PHOTO]} timing logs for the full take_photo → AVIF/JPEG compress → BLE
-     * transfer pipeline. Filter logcat on tag {@code BlePhotoTiming} or prefix {@code ⏱️ [BLE PHOTO]}.
-     * Keep false in production.
+     * transfer pipeline. Filter logcat on tag {@code BlePhotoTiming} or prefix {@code ⏱️ [BLE
+     * PHOTO]}. Keep false in production.
      */
     public static final boolean ENABLE_PHOTO_TIMING_LOGS = true;
 
     /** After AE meters in text mode, divide exposure time by this factor (shorter shutter). */
     public static final int TEXT_MODE_AE_EXPOSURE_DIVISOR = 3;
+
+    /**
+     * Requested sensor JPEG width for text-mode capture (and matching warm-up). Mentra Live's
+     * maximum supported 16:9 still size is 3840×2160 (4K UHD); the full sensor max is 4032×3024
+     * (4:3). Camera2 selects an exact match when available, otherwise the closest supported size.
+     */
+    public static final int TEXT_MODE_SENSOR_CAPTURE_WIDTH = 3840;
+
+    /**
+     * Requested sensor JPEG height for text-mode capture (and matching warm-up). Paired with {@link
+     * #TEXT_MODE_SENSOR_CAPTURE_WIDTH} for Mentra Live's max 16:9 still size.
+     */
+    public static final int TEXT_MODE_SENSOR_CAPTURE_HEIGHT = 2160;
 
     /** Long-edge cap for text-mode BLE downscale after crop (aspect ratio preserved). */
     public static final int TEXT_MODE_BLE_TARGET_WIDTH = 1920;
@@ -100,7 +138,31 @@ public class AsgConstants {
     public static final int TEXT_MODE_AVIF_QUALITY = 55;
 
     /** JPEG quality for the canonical text-mode crop written to disk (gallery/WiFi upload). */
-    public static final int TEXT_MODE_BLE_JPEG_QUALITY = 95;
+    public static final int TEXT_MODE_BLE_JPEG_QUALITY = 80;
+
+    /** Long-edge size used for on-glasses ML Kit text localization. */
+    // 1280 is the smallest tested size that consistently retained stylized/low-contrast label
+    // text on real 4032x3024 Mentra Live captures while remaining below the 1s detector budget.
+    public static final int TEXT_MODE_MLKIT_ANALYSIS_LONG_EDGE = 1280;
+
+    /** Minimum source-pixel padding around the union of ML Kit text lines. */
+    public static final int TEXT_MODE_MLKIT_MIN_PADDING_PX = 32;
+
+    /** Horizontal padding relative to the detected text-union width. */
+    public static final float TEXT_MODE_MLKIT_PADDING_X_FRACTION = 0.12f;
+
+    /** Vertical padding relative to the detected text-union height. */
+    public static final float TEXT_MODE_MLKIT_PADDING_Y_FRACTION = 0.25f;
+
+    // A lone OCR line is weak evidence for the complete text-bearing object. Keep generous
+    // surrounding context so a small conventional label can pull in nearby stylized text that
+    // the recognizer did not box (validated on curved product labels).
+    public static final float TEXT_MODE_MLKIT_SINGLE_LINE_PADDING_X_HEIGHTS = 3f;
+    public static final float TEXT_MODE_MLKIT_SINGLE_LINE_PADDING_TOP_HEIGHTS = 4f;
+    public static final float TEXT_MODE_MLKIT_SINGLE_LINE_PADDING_BOTTOM_HEIGHTS = 11f;
+
+    /** Hard timeout for one local ML Kit request; failure preserves the full frame. */
+    public static final long TEXT_MODE_MLKIT_TIMEOUT_MS = 5000L;
 
     /**
      * Codec for every BLE photo payload — text mode and ordinary size-tier photos alike. Change
@@ -108,8 +170,18 @@ public class AsgConstants {
      */
     public static final String BLE_PHOTO_CODEC = "JPEG_FAST";
 
-    /** JPEG quality for all BLE photo payloads when {@link #BLE_PHOTO_CODEC} is {@code JPEG_FAST}. */
+    /**
+     * JPEG quality for all BLE photo payloads when {@link #BLE_PHOTO_CODEC} is {@code JPEG_FAST}.
+     */
     public static final int BLE_PHOTO_JPEG_FAST_QUALITY = 80;
+
+    /**
+     * Max wait for the deferred background photo write ({@code CapturedPhoto.persistence}) when a
+     * BLE photo consumer needs the file on disk (gallery save, text-mode canonical crop, cleanup).
+     * Generous: the write runs concurrently with capture-to-transfer work and normally finishes
+     * long before anyone awaits it.
+     */
+    public static final long BLE_PHOTO_PERSISTENCE_AWAIT_TIMEOUT_MS = 10_000;
 
     // BLE size-tier downscale caps (long edge; aspect ratio preserved) and AVIF quality
     public static final int BLE_PHOTO_LOW_TARGET_PX = 800;
@@ -119,11 +191,4 @@ public class AsgConstants {
     public static final int BLE_PHOTO_HIGH_TARGET_PX = 1600;
     public static final int BLE_PHOTO_HIGH_AVIF_QUALITY = 48;
     public static final int BLE_PHOTO_MAX_TARGET_PX = 1920;
-
-    // Text-region detector production flags (see MediaCaptureService.buildTextDetectConfig)
-    public static final boolean TEXT_DETECT_ALLOW_SINGLE_COMPONENT_LINES = true;
-    public static final boolean TEXT_DETECT_CROP_FROM_TOP_LINE_ONLY = true;
-    public static final boolean TEXT_DETECT_ENABLE_STRUCTURE_FILTER = true;
-    public static final boolean TEXT_DETECT_IMPROVED_CROP_ACCURACY = true;
-    public static final float TEXT_DETECT_MIN_CROP_AREA_FRACTION = 0.004f;
 }

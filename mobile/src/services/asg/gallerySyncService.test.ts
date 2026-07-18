@@ -7,6 +7,7 @@ import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
 // real island instances the service uses — so store writes here are visible to it.
 import {asgCameraApi} from "../../../modules/engine/src/services/asg/asgCameraApi"
 import {gallerySyncNotifications} from "../../../modules/engine/src/services/asg/gallerySyncNotifications"
+import {galleryTransferLedger} from "../../../modules/engine/src/services/asg/galleryTransferLedger"
 import {localStorageService} from "../../../modules/engine/src/services/asg/localStorageService"
 import {mediaProcessingQueue} from "../../../modules/engine/src/services/asg/mediaProcessingQueue"
 import {gallerySyncService} from "../../../modules/engine/src/services/asg/gallerySyncService"
@@ -98,12 +99,15 @@ jest.mock("../../../modules/engine/src/services/asg/localStorageService", () => 
     updateSyncState: jest.fn(() => Promise.resolve()),
     saveSyncQueue: jest.fn(() => Promise.resolve()),
     clearSyncQueue: jest.fn(() => Promise.resolve()),
+    convertToDownloadedFile: jest.fn((file: any) => file),
+    saveDownloadedFile: jest.fn(() => Promise.resolve()),
   },
 }))
 
 jest.mock("../../../modules/engine/src/services/asg/mediaProcessingQueue", () => ({
   mediaProcessingQueue: {
     reset: jest.fn(),
+    retryPending: jest.fn(() => Promise.resolve({retried: 0, failed: 0})),
     enqueue: jest.fn(),
     waitUntilDrained: jest.fn(() => Promise.resolve()),
     abort: jest.fn(),
@@ -113,8 +117,10 @@ jest.mock("../../../modules/engine/src/services/asg/mediaProcessingQueue", () =>
 jest.mock("../../../modules/engine/src/services/asg/asgCameraApi", () => ({
   asgCameraApi: {
     setServer: jest.fn(),
+    getV3Manifest: jest.fn(() => Promise.resolve(null)),
     syncWithServer: jest.fn(),
     downloadCapture: jest.fn(),
+    batchSyncFiles: jest.fn(),
   },
 }))
 
@@ -347,6 +353,32 @@ describe("GallerySyncService", () => {
     })
   })
 
+  it("holds back the legacy watermark when processing fails after download", async () => {
+    const serverTime = 1_700_000_000_000
+    const failedTimestamp = serverTime - 20_000
+    const file = {
+      name: "IMG_legacy_failure.jpg",
+      size: 100,
+      modified: failedTimestamp,
+      is_video: false,
+      filePath: "/tmp/IMG_legacy_failure.jpg",
+    }
+    ;(asgCameraApi.batchSyncFiles as jest.Mock).mockResolvedValue({downloaded: [file], failed: [], total_size: 100})
+    ;(mediaProcessingQueue.waitUntilDrained as jest.Mock).mockImplementation(async () => {
+      useGallerySyncStore.getState().onFileFailed(file.name, "PhotoKit unavailable")
+    })
+
+    await (gallerySyncService as any).executeDownload([file], serverTime)
+
+    expect(localStorageService.updateSyncState).toHaveBeenCalledWith({
+      last_sync_time: failedTimestamp - 1,
+      total_downloaded: 1,
+      total_size: 100,
+    })
+    expect(useGallerySyncStore.getState().syncState).toBe("error")
+    expect(localStorageService.clearSyncQueue).not.toHaveBeenCalled()
+  })
+
   describe("startFileDownload /api/sync desync recovery", () => {
     let executeCaptureDownloadSpy: jest.SpyInstance
     let consoleWarnSpy: jest.SpyInstance
@@ -386,8 +418,8 @@ describe("GallerySyncService", () => {
       await startFileDownload()
 
       expect(mockSyncWithServer).toHaveBeenCalledTimes(2)
-      expect(mockSyncWithServer).toHaveBeenNthCalledWith(1, "test_client", 1500, true)
-      expect(mockSyncWithServer).toHaveBeenNthCalledWith(2, "test_client", 0, true)
+      expect(mockSyncWithServer).toHaveBeenNthCalledWith(1, "test_client", 1500, false)
+      expect(mockSyncWithServer).toHaveBeenNthCalledWith(2, "test_client", 0, false)
       expect(executeCaptureDownloadSpy).toHaveBeenCalledWith([FAKE_CAPTURE], 2000)
       expect(consoleLogSpy).toHaveBeenCalledWith(
         expect.stringContaining("Empty sync but glasses report content — retrying with last_sync_time=0"),
@@ -407,9 +439,34 @@ describe("GallerySyncService", () => {
       await startFileDownload()
 
       expect(mockSyncWithServer).toHaveBeenCalledTimes(1)
-      expect(mockSyncWithServer).toHaveBeenCalledWith("test_client", 1500, true)
+      expect(mockSyncWithServer).toHaveBeenCalledWith("test_client", 1500, false)
       expect(executeCaptureDownloadSpy).not.toHaveBeenCalled()
       expect(useGallerySyncStore.getState().syncState).toBe("complete")
+    })
+
+    it("does not report completion when durable recovery is still pending", async () => {
+      useGallerySyncStore.getState().setGlassesGalleryStatus(0, 0, 0, false)
+      mockGetSyncState.mockResolvedValue({
+        last_sync_time: 1500,
+        client_id: "test_client",
+        total_downloaded: 27,
+        total_size: 1000,
+      })
+      mockSyncWithServer.mockResolvedValue(EMPTY_SYNC_RESPONSE)
+      const pendingRecoverySpy = jest.spyOn(galleryTransferLedger, "hasPendingRecovery").mockReturnValue(true)
+
+      try {
+        await startFileDownload()
+      } finally {
+        pendingRecoverySpy.mockRestore()
+      }
+
+      expect(useGallerySyncStore.getState().syncState).toBe("error")
+      expect(gallerySyncNotifications.showSyncComplete).not.toHaveBeenCalled()
+      expect(gallerySyncNotifications.showSyncError).toHaveBeenCalledWith(
+        "Gallery export or acknowledgement will be retried",
+      )
+      expect(localStorageService.clearSyncQueue).not.toHaveBeenCalled()
     })
 
     it("does not retry on first sync when last_sync_time is 0", async () => {
@@ -424,7 +481,7 @@ describe("GallerySyncService", () => {
       await startFileDownload()
 
       expect(mockSyncWithServer).toHaveBeenCalledTimes(1)
-      expect(mockSyncWithServer).toHaveBeenCalledWith("test_client", 0, true)
+      expect(mockSyncWithServer).toHaveBeenCalledWith("test_client", 0, false)
       expect(consoleWarnSpy).not.toHaveBeenCalledWith(expect.stringContaining("Desync detected"))
     })
 
@@ -525,8 +582,8 @@ describe("GallerySyncService", () => {
       const result = await resultPromise
 
       expect(BluetoothSdk.setSystemTime).toHaveBeenCalledTimes(1)
-      expect(mockSyncWithServer).toHaveBeenNthCalledWith(1, "c1", futureWatermark, true)
-      expect(mockSyncWithServer).toHaveBeenNthCalledWith(2, "c1", 0, true)
+      expect(mockSyncWithServer).toHaveBeenNthCalledWith(1, "c1", futureWatermark, false)
+      expect(mockSyncWithServer).toHaveBeenNthCalledWith(2, "c1", 0, false)
       expect(result).not.toBeNull()
       expect(result?.syncData.changed_files).toHaveLength(1)
     })
@@ -561,7 +618,7 @@ describe("GallerySyncService", () => {
       const result = await resolveSyncManifest("c1", now - 5000)
 
       expect(BluetoothSdk.setSystemTime).not.toHaveBeenCalled()
-      expect(mockSyncWithServer).toHaveBeenNthCalledWith(2, "c1", 0, true)
+      expect(mockSyncWithServer).toHaveBeenNthCalledWith(2, "c1", 0, false)
       expect(result?.syncData.changed_files).toHaveLength(1)
     })
 

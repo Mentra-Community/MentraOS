@@ -25,6 +25,8 @@ import {
 
 export interface PhotoOptions {
   size?: "low" | "medium" | "high" | "max";
+  /** Capture normally, or localize and crop around readable text on supported glasses. */
+  mode?: "photo" | "text";
   compression?: "none" | "medium" | "heavy";
   saveToGallery?: boolean;
   sound?: boolean;
@@ -248,6 +250,7 @@ export class CameraManager {
         timestamp: new Date(),
         saveToGallery: opts?.saveToGallery ?? false,
         size: opts?.size ?? "medium",
+        mode: opts?.mode ?? "photo",
         compress: opts?.compression ?? "none",
         sound: opts?.sound,
         ...(includeExposure ? { exposureTimeNs: exposureNs } : {}),
@@ -259,6 +262,7 @@ export class CameraManager {
           {
             requestId,
             size: message.size,
+            mode: message.mode,
             compress: message.compress,
             saveToGallery: message.saveToGallery,
             exposureTimeNs: includeExposure ? exposureNs : undefined,

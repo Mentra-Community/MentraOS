@@ -149,6 +149,9 @@ private final class PendingResponse<T> {
 @MainActor
 public final class MentraBluetoothSDK {
     private static let wifiScanTimeoutMs = 20_000
+    // A photo response is terminal only after capture, encoding, transport, and upload.
+    // Max-quality BLE fallback can legitimately exceed the generic command deadline.
+    private static let photoRequestTimeoutMs = 30_000
     private static let otaBesVersionWaitMs = 5_000
     private static let otaMtkVersionWaitMs = 2_000
     private static let otaVersionPollMs = 100
@@ -795,7 +798,7 @@ public final class MentraBluetoothSDK {
         pendingPhotoRequests[routedRequest.requestId] = pending
         DeviceManager.shared.requestPhoto(routedRequest)
         do {
-            let event = try await pending.wait()
+            let event = try await pending.wait(timeoutMs: MentraBluetoothSDK.photoRequestTimeoutMs)
             pendingPhotoRequests.removeValue(forKey: routedRequest.requestId)
             return event
         } catch {
@@ -807,6 +810,7 @@ public final class MentraBluetoothSDK {
     public func warmUpCamera(
         requestId: String? = nil,
         size: PhotoSize,
+        mode: PhotoMode = .photo,
         exposureTimeNs: Double?,
         durationMs: Int
     ) async throws -> CameraStatusEvent {
@@ -818,6 +822,7 @@ public final class MentraBluetoothSDK {
             try DeviceManager.shared.warmUpCamera(
                 requestId: effectiveRequestId,
                 size: size,
+                mode: mode,
                 exposureTimeNs: exposureTimeNs,
                 durationMs: durationMs
             )
@@ -1617,6 +1622,24 @@ public final class MentraBluetoothSDK {
 
     private func handleWifiStatusForRequests(_ event: WifiStatusEvent) {
         guard let request = pendingWifiStatus else { return }
+        // A wifi_status carrying the explicit error field is the glasses' failure
+        // verdict for the in-flight connect: reject now instead of running out the
+        // request timeout. Only the error field counts as failure — the glasses'
+        // connect sequence emits a debounced bare connected=false ~1-2s after
+        // credentials while association is still in progress, and rejecting on that
+        // would kill every connect attempt early.
+        if request.operation == .connect, let error = event.error {
+            if pendingWifiStatus === request {
+                pendingWifiStatus = nil
+            }
+            request.pending.reject(
+                BluetoothSdkError(
+                    code: error,
+                    message: "Glasses failed to join \"\(request.ssid)\": \(error)"
+                )
+            )
+            return
+        }
         guard wifiStatusMatches(event.status, request: request) else { return }
         if pendingWifiStatus === request {
             pendingWifiStatus = nil

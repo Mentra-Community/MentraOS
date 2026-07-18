@@ -1,29 +1,32 @@
 #!/usr/bin/env node
-import {execFileSync} from "node:child_process"
-import {appendFileSync, readFileSync} from "node:fs"
+// Release decision for @mentra/engine under the channel-promotion scheme
+// (npm-channel.mjs): git holds a prerelease base version (only edited on dev),
+// and the branch decides what publishes — dev -> X.Y.Z-dev.N (dev tag),
+// staging -> X.Y.Z-beta.N (beta tag), main -> X.Y.Z (latest tag). Merging IS
+// promoting; no version edits ride the branches.
+//
+// The engine publishes when its DERIVED version for this branch is absent from
+// npm (registry-state detection — promotion merges don't change the version
+// field, so git-diff detection cannot see them). Fail-closed rules, same as
+// the miniapp pipeline:
+//   - E404 is the only "absent" signal (enforced in npm-channel.mjs); any
+//     other npm error fails the run.
+//   - The first-ever publish never fires off a push: the workflow's bootstrap
+//     gate requires a supervised workflow_dispatch with force_release=true.
+//   - beta/latest publishes land in npm's staging queue (see the workflow):
+//     a maintainer approves each version before it goes live, so merging to
+//     main IS the go signal and the approval is the only remaining gate.
+import {readFileSync, appendFileSync} from "node:fs"
+import {channelFor, deriveVersion, publishedVersions, CHANNEL_MANIFESTS} from "./npm-channel.mjs"
 
-const packagePath = "mobile/modules/engine/package.json"
+const packageName = "@mentra/engine"
+const packagePath = CHANNEL_MANIFESTS[packageName]
 
 const outputPath = process.env.GITHUB_OUTPUT
 const eventName = process.env.GITHUB_EVENT_NAME || ""
-const eventPath = process.env.GITHUB_EVENT_PATH
+const branch = process.env.GITHUB_REF_NAME || ""
 const forceRelease = process.env.FORCE_RELEASE === "true"
 const dryRun = process.env.DRY_RUN === "true"
-
-function git(args) {
-  return execFileSync("git", args, {
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-  }).trim()
-}
-
-function readJsonAt(ref, path) {
-  try {
-    return JSON.parse(git(["show", `${ref}:${path}`]))
-  } catch {
-    return null
-  }
-}
 
 function setOutput(name, value) {
   if (!outputPath) {
@@ -34,62 +37,70 @@ function setOutput(name, value) {
 }
 
 const currentPackage = JSON.parse(readFileSync(packagePath, "utf8"))
-const currentVersion = currentPackage.version
-
-if (!currentPackage.name) {
-  throw new Error(`Missing name in ${packagePath}`)
+if (currentPackage.name !== packageName) {
+  throw new Error(`${packagePath}: expected ${packageName}, found ${currentPackage.name}`)
 }
 
-if (!currentVersion) {
-  throw new Error(`Missing version in ${packagePath}`)
-}
+const {tag} = channelFor(branch) // throws on non-channel branches
+const derived = deriveVersion(currentPackage.version, branch) // validates the base is a prerelease
 
-let beforeSha = process.env.ENGINE_COMPARE_SHA || ""
-if (!beforeSha && eventPath) {
-  try {
-    const event = JSON.parse(readFileSync(eventPath, "utf8"))
-    beforeSha = event.before || ""
-  } catch {
-    beforeSha = ""
+const published = publishedVersions(packageName)
+const packageExists = published !== null
+const versionExists = packageExists && published.includes(derived)
+
+// Installability gate: every internal peer/dep the stamp will pin must be
+// LIVE on this channel before the engine ships — the engine and miniapp
+// pipelines run independently, so an engine-only push (or an engine job
+// outrunning the peer matrix) must not publish/stage an engine whose peer
+// ranges resolve to 404s. Note "live" means approved: staged-but-unapproved
+// versions are not in the registry, so on beta/latest the engine waits for
+// the peers' approvals (approve bottom-up, then re-run this workflow).
+const missingPeers = []
+for (const field of ["dependencies", "peerDependencies"]) {
+  for (const dep of Object.keys(currentPackage[field] || {})) {
+    if (!(dep in CHANNEL_MANIFESTS) || dep === packageName) continue
+    if (currentPackage.peerDependenciesMeta?.[dep]?.optional) continue
+    const depBase = JSON.parse(readFileSync(CHANNEL_MANIFESTS[dep], "utf8")).version
+    const depDerived = deriveVersion(depBase, branch)
+    if (!publishedVersions(dep)?.includes(depDerived)) missingPeers.push(`${dep}@${depDerived}`)
   }
 }
 
-if (/^0+$/.test(beforeSha)) {
-  beforeSha = ""
-}
-
-// The before-SHA may not exist in a shallow checkout (or at all, after a
-// force-push to dev): fetch just that commit, and treat any failure as
-// "previous state unknown".
-if (beforeSha) {
-  try {
-    git(["fetch", "--depth=1", "origin", beforeSha])
-  } catch {
-    // readJsonAt below returns null for an unresolvable ref; fail closed there.
+let runRelease = false
+let reason
+if (versionExists) {
+  reason = "already on npm"
+  if (branch === "main") {
+    console.log(
+      `::notice::${packageName}@${derived} is already on npm — to cut a new public release, ` +
+        `bump the base version on dev and merge it up.`,
+    )
   }
+} else if (missingPeers.length > 0 && !dryRun) {
+  reason = `waits for ${missingPeers.join(", ")} to be live on this channel`
+  console.log(`::notice::${packageName}@${derived} skipped: ${reason}. Publish/approve the peers, then re-run this workflow.`)
+} else {
+  // The absent-from-npm bootstrap case still reaches the npm job: its
+  // bootstrap gate skips with a notice unless this is a force_release
+  // dispatch (and the job also handles dry-run packs).
+  runRelease = true
+  reason = forceRelease ? "force_release" : "derived version absent from npm"
+}
+if (!runRelease && eventName === "workflow_dispatch" && dryRun) {
+  runRelease = true // dry-run dispatches always get a build+pack preview
+  reason = `dry run (${reason})`
 }
 
-const previousPackage = beforeSha ? readJsonAt(beforeSha, packagePath) : null
-const previousVersion = previousPackage?.version || ""
-// FAIL CLOSED (same gate as the bluetooth-sdk/miniapp siblings): a release only
-// auto-fires when the previous state is KNOWN and the version actually moved.
-// An unresolvable before-SHA, a git error, or the package being new all yield
-// hasPreviousVersion=false — no auto-publish. The first-ever publish is a
-// deliberate, supervised `workflow_dispatch` with force_release=true.
-const hasPreviousVersion = Boolean(previousPackage?.version)
-const versionChanged = hasPreviousVersion && previousVersion !== currentVersion
-const runRelease = versionChanged || forceRelease || (eventName === "workflow_dispatch" && dryRun)
-
-setOutput("package_name", currentPackage.name)
-setOutput("version", currentVersion)
+setOutput("package_name", packageName)
+setOutput("version", derived)
+setOutput("dist_tag", tag)
 setOutput("dry_run", String(dryRun))
 setOutput("run_release", String(runRelease))
+setOutput("force_release", String(forceRelease))
 
-console.log(`Mentra Engine package: ${currentPackage.name}`)
-console.log(`Current version: ${currentVersion}`)
-console.log(`Previous version: ${previousVersion || "(unknown — releases fail closed)"}`)
-console.log(`Compare SHA: ${beforeSha || "(unavailable)"}`)
-console.log(`Version changed: ${versionChanged}`)
-console.log(`Force release: ${forceRelease}`)
-console.log(`Dry run: ${dryRun}`)
-console.log(`Run release job: ${runRelease}`)
+console.log(`Mentra Engine package: ${packageName}`)
+console.log(`Base version: ${currentPackage.version}`)
+console.log(`Derived version for ${branch}: ${derived} (dist-tag ${tag})`)
+console.log(`On npm already: ${versionExists} (package exists: ${packageExists})`)
+console.log(`Run release job: ${runRelease} (${reason})`)
+console.log(`Force release: ${forceRelease}. Dry run: ${dryRun}.`)
