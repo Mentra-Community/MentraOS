@@ -1693,7 +1693,10 @@ class MentraBluetoothSdk private constructor(
             return entry.key to entry.value
         }
         if (pendingStreamStarts.size == 1) {
-            val entry = pendingStreamStarts.entries.first()
+            // firstOrNull: timeouts and other handler threads mutate the
+            // ConcurrentHashMap concurrently, so the map can empty between the
+            // size check and this read; bail out instead of throwing.
+            val entry = pendingStreamStarts.entries.firstOrNull() ?: return null
             // A streamId-less STOPPED is the glasses' stop-ack for a PREVIOUS
             // stream (their stop ack carries no streamId), not a verdict on the
             // pending start — a start_stream that replaces a running publisher
