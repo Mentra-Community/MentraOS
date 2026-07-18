@@ -296,7 +296,7 @@ abstract class SGCManager {
     abstract fun dbg2()
 
     // Network Management
-    abstract fun requestWifiScan()
+    abstract fun requestWifiScan(scanId: String?)
     abstract fun sendWifiCredentials(ssid: String, password: String)
     abstract fun forgetWifiNetwork(ssid: String)
     abstract fun sendHotspotState(enabled: Boolean)

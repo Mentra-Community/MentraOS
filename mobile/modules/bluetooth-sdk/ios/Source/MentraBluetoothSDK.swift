@@ -42,10 +42,15 @@ private final class ActiveScanSession {
 @MainActor
 private final class PendingWifiScan {
     let pending: PendingResponse<[WifiScanResult]>
+    let scanId: String
     var latestResults: [WifiScanResult] = []
+    // Chunks accumulated from scanId-echoing glasses, deduplicated by SSID;
+    // resolved only when the glasses flag the scan complete.
+    var accumulated: [WifiScanResult] = []
 
-    init(pending: PendingResponse<[WifiScanResult]>) {
+    init(pending: PendingResponse<[WifiScanResult]>, scanId: String) {
         self.pending = pending
+        self.scanId = scanId
     }
 }
 
@@ -222,8 +227,24 @@ public final class MentraBluetoothSDK {
             }
         }
         bridgeEventSinkId = Bridge.addEventSink { [weak self] eventName, data in
-            Task { @MainActor [weak self] in
-                self?.dispatchBridgeEvent(eventName, data)
+            // Bridge.dispatchEvent always invokes sinks on the main thread, in the
+            // FIFO order events were dispatched (correlated WiFi-scan chunks rely
+            // on that order). A fresh Task per event can reach the MainActor out
+            // of creation order and reorder chunks, so consume synchronously
+            // while still on main.
+            if Thread.isMainThread {
+                MainActor.assumeIsolated {
+                    self?.dispatchBridgeEvent(eventName, data)
+                }
+            } else {
+                // Defensive fallback only — Bridge.dispatchEvent should never take
+                // this path. A serial main-queue hop still preserves FIFO order,
+                // unlike an unstructured Task.
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        self?.dispatchBridgeEvent(eventName, data)
+                    }
+                }
             }
         }
         storeListenerId = DeviceStore.shared.store.addListener { [weak self] category, changes in
@@ -705,9 +726,12 @@ public final class MentraBluetoothSDK {
             return try await existing.value
         }
         let pending = PendingResponse<[WifiScanResult]>(operation: "WiFi scan request")
-        let request = PendingWifiScan(pending: pending)
+        let request = PendingWifiScan(pending: pending, scanId: "scan-\(UUID().uuidString)")
         pendingWifiScan = request
-        DeviceManager.shared.requestWifiScan()
+        // Claim the scan-results store for this scan before the command goes out,
+        // so a delayed chunk from an older, abandoned scan can no longer mutate it.
+        Bridge.claimWifiScanResults(scanId: request.scanId)
+        DeviceManager.shared.requestWifiScan(scanId: request.scanId)
         let task = Task { @MainActor [weak self] () async throws -> [WifiScanResult] in
             defer {
                 if let self {
@@ -1742,6 +1766,28 @@ public final class MentraBluetoothSDK {
         request.pending.resolve(results)
     }
 
+    // scanId-echoing glasses: results for another scan are ignored instead of
+    // resolving the pending request, and matching chunks accumulate until the
+    // glasses flag the scan complete.
+    private func handleCorrelatedWifiScanChunk(
+        scanId: String,
+        results: [WifiScanResult],
+        scanComplete: Bool
+    ) {
+        guard let request = pendingWifiScan, request.scanId == scanId else { return }
+        for network in results where !request.accumulated.contains(where: { $0.ssid == network.ssid }) {
+            request.accumulated.append(network)
+        }
+        if !request.accumulated.isEmpty {
+            request.latestResults = request.accumulated
+        }
+        guard scanComplete else { return }
+        if pendingWifiScan === request {
+            pendingWifiScan = nil
+        }
+        request.pending.resolve(request.accumulated)
+    }
+
     private func updateWifiScanLatestResults(_ results: [WifiScanResult]) {
         guard !results.isEmpty else { return }
         pendingWifiScan?.latestResults = results
@@ -1953,9 +1999,15 @@ public final class MentraBluetoothSDK {
             let networks = (data["networks"] as? [[String: Any]])?.map(WifiScanResult.init(values:)) ?? []
             let hasCompletionFlag = data.keys.contains("scanComplete") || data.keys.contains("scan_complete")
             let scanComplete = data["scanComplete"] as? Bool ?? data["scan_complete"] as? Bool ?? false
-            updateWifiScanLatestResults(networks)
-            if scanComplete || !hasCompletionFlag {
-                handleWifiScanResultsForRequests(networks)
+            let scanId = (data["scanId"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            if let scanId {
+                handleCorrelatedWifiScanChunk(scanId: scanId, results: networks, scanComplete: scanComplete)
+            } else {
+                // Old firmware: no correlation id, keep the pre-scanId heuristics.
+                updateWifiScanLatestResults(networks)
+                if scanComplete || !hasCompletionFlag {
+                    handleWifiScanResultsForRequests(networks)
+                }
             }
             delegate?.mentraBluetoothSDK(self, didReceive: .raw(name: "wifi_scan_result", values: data))
         case "hotspot_error":

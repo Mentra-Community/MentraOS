@@ -58,10 +58,22 @@ public interface StreamingStatusCallback {
     void onReconnectFailed(int maxAttempts, String streamId);
 
     /**
-     * Called when a streaming error occurs
+     * Called when a terminal streaming error occurs (no retry scheduled)
      *
      * @param error    Error message
      * @param streamId The stream ID, or null
      */
-    void onStreamError(String error, String streamId);
+    default void onStreamError(String error, String streamId) {
+        onStreamError(error, streamId, false);
+    }
+
+    /**
+     * Called when a streaming error occurs
+     *
+     * @param error     Error message
+     * @param streamId  The stream ID, or null
+     * @param willRetry True when the service has already scheduled a reconnect for
+     *                  this error, so the phone should not treat it as terminal
+     */
+    void onStreamError(String error, String streamId, boolean willRetry);
 }

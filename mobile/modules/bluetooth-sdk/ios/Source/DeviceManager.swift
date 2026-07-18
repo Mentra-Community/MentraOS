@@ -1276,10 +1276,10 @@ struct ViewState {
         sgc?.sendStreamKeepAlive(message)
     }
 
-    func requestWifiScan() {
+    func requestWifiScan(scanId: String? = nil) {
         Bridge.log("MAN: Requesting wifi scan")
         DeviceStore.shared.apply("bluetooth", "wifiScanResults", [])
-        sgc?.requestWifiScan()
+        sgc?.requestWifiScan(scanId: scanId)
     }
 
     func sendIncidentId(_ incidentId: String, apiBaseUrl: String? = nil) {
