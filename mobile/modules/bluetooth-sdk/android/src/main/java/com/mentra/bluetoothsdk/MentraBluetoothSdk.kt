@@ -1680,6 +1680,18 @@ class MentraBluetoothSdk private constructor(
             val start = pendingStreamStarts[streamId] ?: return null
             return streamId to start
         }
+        if (event.state == StreamState.ERROR) {
+            // An id-less error is a command-level preflight rejection (missing
+            // URL, low battery, no WiFi) emitted synchronously, while lifecycle
+            // statuses arrive async — so with overlapping starts the wire is
+            // genuinely ambiguous about which start it answers. Attribute it to
+            // the newest pending start: the common case is a later start
+            // failing preflight while an earlier one is already emitting
+            // lifecycle statuses, and at worst this swaps which start carries
+            // the error instead of letting both time out.
+            val entry = pendingStreamStarts.entries.maxByOrNull { it.value.seq } ?: return null
+            return entry.key to entry.value
+        }
         if (pendingStreamStarts.size == 1) {
             val entry = pendingStreamStarts.entries.first()
             // A streamId-less STOPPED is the glasses' stop-ack for a PREVIOUS

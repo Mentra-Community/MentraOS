@@ -1542,6 +1542,18 @@ public final class MentraBluetoothSDK {
             guard let start = pendingStreamStarts[streamId] else { return nil }
             return (streamId, start)
         }
+        if event.state == .error {
+            // An id-less error is a command-level preflight rejection (missing
+            // URL, low battery, no WiFi) emitted synchronously, while lifecycle
+            // statuses arrive async — so with overlapping starts the wire is
+            // genuinely ambiguous about which start it answers. Attribute it to
+            // the newest pending start: the common case is a later start
+            // failing preflight while an earlier one is already emitting
+            // lifecycle statuses, and at worst this swaps which start carries
+            // the error instead of letting both time out.
+            guard let entry = pendingStreamStarts.max(by: { $0.value.seq < $1.value.seq }) else { return nil }
+            return (entry.key, entry.value)
+        }
         if pendingStreamStarts.count == 1, let entry = pendingStreamStarts.first {
             // A streamId-less STOPPED is the glasses' stop-ack for a PREVIOUS
             // stream (their stop ack carries no streamId), not a verdict on the
