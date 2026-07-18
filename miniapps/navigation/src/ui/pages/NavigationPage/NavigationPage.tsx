@@ -35,7 +35,6 @@ const DEV_DESTINATION: PlaceDetails = {
   lat: 37.7955,
   lng: -122.3937,
 }
-
 // A previewed turn point: the road-name label for the dot, plus the
 // coarse turn direction ("Turn left"/"Turn right") as metadata — the
 // prompt we'd give the user within this dot's radius. `direction` is
@@ -197,6 +196,8 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
   const activeDestination = trip.activeDestination
   const activeDestinationName = trip.activeDestinationName
   const offRouteAt = trip.offRouteAt
+  const voiceGuidanceMode = useNavStore((s) => s.voiceGuidanceMode)
+  const capabilities = useNavStore((s) => s.capabilities)
 
   const computeRoute = useRpc<Channels, "nav:compute-route">("nav:compute-route")
 
@@ -1007,6 +1008,8 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
                 routeDistanceMeters={maneuver?.distanceToDestinationMeters ?? null}
                 routeDurationSeconds={maneuver?.timeToDestinationSeconds ?? null}
                 routePoints={running ? routePoints : null}
+                canRepeatDirection={capabilities.hasSpeaker && voiceGuidanceMode !== "off"}
+                onRepeatDirection={() => mentra.send("nav:repeat-direction", {})}
                 onStop={handleStop}
                 onClose={() => setDestination(null)}
               />

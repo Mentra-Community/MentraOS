@@ -17,6 +17,8 @@ type Props = {
   /** Active route polyline — used to compute a route-following distance
    *  fallback (matches the glasses) when the SDK value isn't in yet. */
   routePoints?: LatLng[] | null
+  canRepeatDirection: boolean
+  onRepeatDirection: () => void
   onStop: () => void
   onClose: () => void
 }
@@ -31,6 +33,8 @@ export function NavigationRunningDrawer({
   routeDistanceMeters,
   routeDurationSeconds,
   routePoints,
+  canRepeatDirection,
+  onRepeatDirection,
   onStop,
 }: Props) {
   const unitSystem = useNavStore((s) => s.unitSystem)
@@ -97,10 +101,18 @@ export function NavigationRunningDrawer({
                 {label: distanceLabel, sub: "Distance"},
               ]}
             />
+            {canRepeatDirection ? (
+              <button
+                type="button"
+                onClick={onRepeatDirection}
+                className="h-11 flex items-center justify-center rounded-[14px] px-3 bg-[#1A1A1A] dark:bg-zinc-700 shrink-0">
+                <div className="tracking-[0.04em] uppercase text-white font-sans font-semibold text-xs/4.5">Repeat</div>
+              </button>
+            ) : null}
             <button
               type="button"
               onClick={onStop}
-              className="h-11 flex items-center justify-center rounded-[14px] px-4.5 w-22.25 bg-[#C84A3D] shrink-0">
+              className="h-11 flex items-center justify-center rounded-[14px] px-3.5 bg-[#C84A3D] shrink-0">
               <div className="tracking-[0.04em] uppercase text-white font-sans font-semibold text-sm/4.5">
                 End
               </div>
