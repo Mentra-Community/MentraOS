@@ -2045,6 +2045,24 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                 bootRecoveryFuture = null;
             }
         }
+        baudSwitchExecutor.execute(() -> prepareRendezvousAfterBesOta(generation));
+    }
+
+    /** Leave the negotiated fast rate immediately; delay only BES readiness probes. */
+    private void prepareRendezvousAfterBesOta(int generation) {
+        synchronized (baudSwitchLock) {
+            if (generation != recoveryProbeGeneration) {
+                return;
+            }
+        }
+        try {
+            clearMessageParser();
+            if (!comManager.reopen(SerialPortBridge.DEFAULT_BAUDRATE)) {
+                Log.e(BAUD_TAG, "Initial rendezvous reopen failed after BES OTA");
+            }
+        } catch (Exception e) {
+            Log.e(BAUD_TAG, "Initial rendezvous reopen threw after BES OTA", e);
+        }
         scheduleBesOtaReconnect(
                 generation,
                 1,
