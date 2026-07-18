@@ -5,6 +5,7 @@ import static org.junit.Assert.assertNotNull;
 import android.util.Log;
 
 import androidx.test.ext.junit.runners.AndroidJUnit4;
+import androidx.test.platform.app.InstrumentationRegistry;
 
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -24,7 +25,10 @@ public class MlKitTextRoiDetectorBenchmarkTest {
         assertNotNull(jpeg);
 
         for (int longEdge : new int[] {480, 640, 800, 960, 1280}) {
-            try (MlKitTextRoiDetector detector = new MlKitTextRoiDetector(longEdge)) {
+            try (MlKitTextRoiDetector detector =
+                    new MlKitTextRoiDetector(
+                            InstrumentationRegistry.getInstrumentation().getTargetContext(),
+                            longEdge)) {
                 detector.warmUp();
                 for (int run = 1; run <= 3; run++) {
                     MlKitTextRoiDetector.Detection result = detector.detect(jpeg);

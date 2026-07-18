@@ -100,6 +100,27 @@ public class AsgConstants {
      */
     public static final long BES_OTA_RESPONSE_TIMEOUT_MS = 30000;
 
+    /** Delay before probing the alternate UART baud after ASG starts at the rendezvous rate. */
+    public static final long UART_BOOT_RECOVERY_INITIAL_DELAY_MS = 8000;
+
+    /** Delay before retrying boot recovery when baud negotiation or BES OTA temporarily owns UART. */
+    public static final long UART_BOOT_RECOVERY_RETRY_DELAY_MS = 3000;
+
+    /** Number of spaced system-version probes used to tolerate short BES UART restart windows. */
+    public static final int UART_RECOVERY_PROBES_PER_BURST = 5;
+
+    /** Spacing between UART recovery probes. */
+    public static final long UART_RECOVERY_PROBE_SPACING_MS = 400;
+
+    /** Maximum wait for the old-baud {@code sr_baud} acknowledgement before probing target baud. */
+    public static final long UART_BAUD_ACK_TIMEOUT_MS = 1000;
+
+    /** Time allowed for BES to reboot at the rendezvous baud after applying an OTA image. */
+    public static final long BES_OTA_RECONNECT_DELAY_MS = 2500;
+
+    /** Bounded rendezvous attempts after BES OTA while the controller finishes rebooting. */
+    public static final int BES_OTA_RECONNECT_ATTEMPTS = 6;
+
     // RGB LED Control Constants (Glasses BES Chipset - Remote Control via Bluetooth)
     // NOTE: These are different from the local MTK recording LED
 

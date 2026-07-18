@@ -5,5 +5,5 @@
   "stops": [{"lat": 37.7, "lng": -122.4}],
   "mode": "driving",
   "simulate": false,
-  "speedMultiplier": 5
+  "speedMultiplier": 1
 }

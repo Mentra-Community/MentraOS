@@ -36,6 +36,7 @@ public class AsgSettings {
     private static final String KEY_BUTTON_PHOTO_ZSL = "button_photo_zsl";
     private static final String KEY_HDR_BURST_ENABLED = "hdr_burst_enabled";
     private static final String KEY_MCU_FIRMWARE_VERSION = "mcu_firmware_version";
+    private static final String KEY_BES_BAUD_SWITCH_VERSION = "bes_baud_switch_version";
     private static final String KEY_CAMERA_FOV = "camera_fov";
     private static final String KEY_CAMERA_ROI_POSITION = "camera_roi_position";
     private static final String KEY_CAMERA_ANR_ENABLED = "camera_anr_enabled";
@@ -519,6 +520,19 @@ public class AsgSettings {
      */
     public void setBesFirmwareVersion(String version) {
         setMcuFirmwareVersion(version);
+    }
+
+    /** Return the exact BES version field last used to evaluate fast-UART capability. */
+    public String getBesBaudSwitchVersion() {
+        return prefs.getString(KEY_BES_BAUD_SWITCH_VERSION, "");
+    }
+
+    /** Persist the exact BES version field used to evaluate fast-UART capability. */
+    public void setBesBaudSwitchVersion(String version) {
+        if (version == null || version.isEmpty()) {
+            return;
+        }
+        prefs.edit().putString(KEY_BES_BAUD_SWITCH_VERSION, version).commit();
     }
 
     /**

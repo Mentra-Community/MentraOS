@@ -141,6 +141,8 @@ Mentra Live has multiple update surfaces:
 
 Update flows must preserve device recoverability, report progress where possible, and avoid interrupting active media operations without cleanup.
 
+The MTK↔BES UART always starts at 460800 baud. Firmware that supports the negotiated fast link may upgrade to 1152000 only after reporting a compatible current firmware version. At startup, `asg_client` retries discovery at 460800 before considering an alternate baud; only if those probes are unanswered and a cached compatible BES version makes it safe may it probe 1152000. This handles full-device, MTK-only, and app-only restarts without assuming which processors rebooted. After a successful BES OTA, BES reboots at 460800, so `asg_client` explicitly reopens the rendezvous baud, rediscovers the new firmware version, and negotiates again when supported. Older firmware on either side remains at 460800.
+
 ### Diagnostics and reporting
 
 `asg_client` includes logging, crash/error reporting, incident log buffering, and debug receivers for development and OTA testing. Production behavior should prioritize device stability and useful logs for support while avoiding secrets in logs.
