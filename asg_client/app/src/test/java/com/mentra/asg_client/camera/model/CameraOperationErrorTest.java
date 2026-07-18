@@ -123,4 +123,12 @@ public class CameraOperationErrorTest {
                 .isEqualTo(
                         "Camera service failed. Restart the glasses if the problem continues.");
     }
+
+    @Test
+    public void warmUpCancelled_isTerminalAndMachineReadable() {
+        CameraOperationError error = CameraOperationError.warmUpCancelled();
+
+        assertThat(error.code()).isEqualTo("camera_warm_up_cancelled");
+        assertThat(error.message()).contains("cancelled");
+    }
 }

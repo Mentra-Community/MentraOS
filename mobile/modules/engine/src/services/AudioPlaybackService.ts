@@ -12,12 +12,52 @@ interface AudioPlayRequest {
   stopOtherAudio?: boolean
 }
 
+export type AudioPlaybackCompletionReason = "completed" | "interrupted" | "error"
+
+type AudioPlaybackCompletion = (
+  requestId: string,
+  success: boolean,
+  error: string | null,
+  duration: number | null,
+  reason: AudioPlaybackCompletionReason,
+) => void
+
 interface PlaybackState {
   requestId: string
   appId?: string
   startTime: number
   completed: boolean // Guard against double callbacks
-  onComplete: (requestId: string, success: boolean, error: string | null, duration: number | null) => void
+  onComplete: AudioPlaybackCompletion
+}
+
+interface PendingPlaybackState {
+  cancelled: boolean
+}
+
+/** Open request for a live PCM output stream (miniapp speaker.createStream). */
+export interface AudioStreamOpenRequest {
+  streamId: string
+  appId: string
+  /** PCM sample rate in Hz (16000 / 24000 / 48000). */
+  sampleRate: number
+  /** Channel count. v1 is mono. */
+  channels: number
+  volume?: number
+  stopOtherAudio?: boolean
+  /**
+   * Called when the stream ends for any reason (drained after close, aborted,
+   * interrupted by other audio, or native error).
+   */
+  onEnded: (streamId: string, success: boolean, error: string | null, durationMs: number | null) => void
+}
+
+/** One live PCM stream session, backed by native streaming audio. */
+interface StreamState {
+  streamId: string
+  appId: string
+  startTime: number
+  ended: boolean // Guard against double onEnded
+  onEnded: AudioStreamOpenRequest["onEnded"]
 }
 
 class AudioPlaybackService {
@@ -26,6 +66,13 @@ class AudioPlaybackService {
   // Creating new ExoPlayer instances per request leads to -12 ENOMEM errors
   private player: AudioPlayer | null = null
   private currentPlayback: PlaybackState | null = null
+  // Requests that entered play() but have not yet reached the native player.
+  // Keeping these addressable prevents a cancelled request from starting after
+  // an async audio-mode or stream-cleanup step finishes.
+  private pendingPlaybacks = new Map<string, PendingPlaybackState>()
+  // Live PCM streams (speaker.createStream), keyed by streamId. The runtime
+  // enforces one per app; stopOtherAudio interrupts across apps.
+  private streams = new Map<string, StreamState>()
   private audioModeConfigured: boolean = false
   // Debounce timer for notifying native that audio stopped
   // Prevents mic toggle flicker when playing back-to-back audio
@@ -216,22 +263,36 @@ class AudioPlaybackService {
    * Play audio from a URL.
    * Returns a promise that resolves with playback result when audio finishes or errors.
    */
-  public async play(
-    request: AudioPlayRequest,
-    onComplete: (requestId: string, success: boolean, error: string | null, duration: number | null) => void,
-  ): Promise<void> {
+  public async play(request: AudioPlayRequest, onComplete: AudioPlaybackCompletion): Promise<void> {
     const {requestId, audioUrl, appId, volume = 1.0, stopOtherAudio = true} = request
+    const pending: PendingPlaybackState = {cancelled: false}
+    this.pendingPlaybacks.set(requestId, pending)
 
     console.log(`AUDIO: Play request ${requestId}${appId ? ` from ${appId}` : ""}: ${audioUrl}`)
 
     try {
       // Ensure audio mode is configured for background playback
       await this.ensureAudioModeConfigured()
+      if (pending.cancelled) {
+        onComplete(requestId, true, null, 0, "interrupted")
+        return
+      }
 
-      // Stop current playback if any (notify previous callback)
-      if (stopOtherAudio && this.currentPlayback && !this.currentPlayback.completed) {
-        console.log(`AUDIO: Interrupting current playback for new request`)
+      // URL playback reuses one native player, so replacing its source always
+      // interrupts the previous URL even when stopOtherAudio is false. Notify
+      // that request before replacing it so its promise cannot hang. The option
+      // still controls whether separate PCM streams are interrupted below.
+      if (this.currentPlayback && !this.currentPlayback.completed) {
+        console.log(`AUDIO: Interrupting current URL playback for new request`)
         this.interruptCurrentPlayback(true)
+      }
+      // Live PCM streams count as "other audio" too.
+      if (stopOtherAudio) {
+        await this.abortAllStreams()
+      }
+      if (pending.cancelled) {
+        onComplete(requestId, true, null, 0, "interrupted")
+        return
       }
 
       // Get or create the reusable player
@@ -249,6 +310,7 @@ class AudioPlaybackService {
         onComplete,
       }
       this.currentPlayback = playback
+      this.pendingPlaybacks.delete(requestId)
 
       // Replace the source and play
       // Using replace() reuses the existing ExoPlayer/AudioTrack instead of creating new ones
@@ -274,10 +336,32 @@ class AudioPlaybackService {
 
       console.log(`AUDIO: Started playback for ${requestId}`)
     } catch (error) {
+      if (pending.cancelled) {
+        onComplete(requestId, true, null, 0, "interrupted")
+        return
+      }
       const errorMessage = error instanceof Error ? error.message : "Unknown error loading audio"
       console.error(`AUDIO: Failed to play ${requestId}:`, errorMessage)
       void this.restoreGlassesMediaVolume()
-      onComplete(requestId, false, errorMessage, null)
+      onComplete(requestId, false, errorMessage, null, "error")
+    } finally {
+      if (this.pendingPlaybacks.get(requestId) === pending) {
+        this.pendingPlaybacks.delete(requestId)
+      }
+    }
+  }
+
+  /**
+   * Cancel one URL playback without touching audio owned by another request.
+   * Pending requests are prevented from reaching the native player; active
+   * requests are paused synchronously before their completion callback fires.
+   */
+  public cancelPlayback(requestId: string): void {
+    const pending = this.pendingPlaybacks.get(requestId)
+    if (pending) pending.cancelled = true
+
+    if (this.currentPlayback?.requestId === requestId && !this.currentPlayback.completed) {
+      this.interruptCurrentPlayback()
     }
   }
 
@@ -308,7 +392,7 @@ class AudioPlaybackService {
 
     // Notify that playback was interrupted
     const elapsedMs = Date.now() - playback.startTime
-    playback.onComplete(playback.requestId, true, null, elapsedMs)
+    playback.onComplete(playback.requestId, true, null, elapsedMs, "interrupted")
     console.log(`AUDIO: Interrupted ${playback.requestId} after ${elapsedMs}ms`)
   }
 
@@ -334,7 +418,7 @@ class AudioPlaybackService {
       // Mentra Live; defer cleanup unless another playback has started.
       this.pauseFinishedPlayerAfterTail(playback)
 
-      playback.onComplete(playback.requestId, true, null, durationMs)
+      playback.onComplete(playback.requestId, true, null, durationMs, "completed")
       this.currentPlayback = null
 
       // Notify native that our app stopped playing audio (debounced)
@@ -352,7 +436,7 @@ class AudioPlaybackService {
       if (elapsedMs > 1500) {
         console.error(`AUDIO: Playback failed for ${playback.requestId} (player went idle after ${elapsedMs}ms)`)
         playback.completed = true
-        playback.onComplete(playback.requestId, false, "Playback failed (player went idle)", null)
+        playback.onComplete(playback.requestId, false, "Playback failed (player went idle)", null, "error")
         this.currentPlayback = null
         this.notifyAudioStopDebounced()
         void this.restoreGlassesMediaVolume()
@@ -380,11 +464,145 @@ class AudioPlaybackService {
     }, AudioPlaybackService.AUDIO_STOP_DEBOUNCE_MS)
   }
 
+  // ── live PCM output streams (miniapp speaker.createStream) ────────────────
+
+  /**
+   * Open a live PCM stream session. Chunks are pushed with writeStreamChunk
+   * into native streaming audio (AudioTrack on Android, AVAudioEngine on iOS),
+   * following the media route such as A2DP to connected glasses.
+   */
+  public async openStream(request: AudioStreamOpenRequest): Promise<void> {
+    const {streamId, appId, sampleRate, channels, volume = 1.0, stopOtherAudio = true} = request
+    console.log(`AUDIO: Stream open ${streamId} from ${appId}: rate=${sampleRate} ch=${channels}`)
+
+    await this.ensureAudioModeConfigured()
+
+    if (stopOtherAudio) {
+      if (this.currentPlayback && !this.currentPlayback.completed) {
+        console.log("AUDIO: Interrupting current playback for new stream")
+        this.interruptCurrentPlayback(true)
+      }
+      await this.abortAllStreams(streamId)
+    }
+
+    await BluetoothSdk.pcmStreamOpen(streamId, sampleRate, channels, Math.max(0, Math.min(1, volume)))
+
+    const stream: StreamState = {streamId, appId, startTime: Date.now(), ended: false, onEnded: request.onEnded}
+    this.streams.set(streamId, stream)
+
+    // Same LC3-mic-suspend dance as play(): cancel any pending "stopped"
+    // notification and mark our app as playing audio.
+    if (this.audioStopDebounceTimer !== null) {
+      BgTimer.clearTimeout(this.audioStopDebounceTimer)
+      this.audioStopDebounceTimer = null
+    }
+    BluetoothSdk.setOwnAppAudioPlaying(true).catch((e) => {
+      console.warn("AUDIO: Failed to notify native of stream audio start:", e)
+    })
+
+    // Guarded against the stream ending mid-read, same as the play() path.
+    void this.ensureGlassesMediaVolumeForA2dpStream(stream)
+  }
+
+  /**
+   * Append base64 PCM to an open stream. Resolves with the host-side backlog
+   * in ms; the native write blocks while the backlog is above the
+   * backpressure ceiling, so awaited writes self-throttle to realtime.
+   */
+  public async writeStreamChunk(streamId: string, base64: string): Promise<{bufferedMs: number}> {
+    const stream = this.streams.get(streamId)
+    if (!stream || stream.ended) {
+      throw new Error(`stream ${streamId} is not open`)
+    }
+    try {
+      return await BluetoothSdk.pcmStreamWrite(streamId, base64)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      this.endStream(stream, false, message, Date.now() - stream.startTime)
+      throw error
+    }
+  }
+
+  /** Drain the backlog, then finish. Resolves with the total played duration. */
+  public async closeStream(streamId: string): Promise<{durationMs?: number}> {
+    const stream = this.streams.get(streamId)
+    if (!stream || stream.ended) {
+      throw new Error(`stream ${streamId} is not open`)
+    }
+    try {
+      const result = await BluetoothSdk.pcmStreamClose(streamId)
+      this.endStream(stream, true, null, result?.durationMs ?? Date.now() - stream.startTime)
+      return result ?? {}
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      this.endStream(stream, false, message, Date.now() - stream.startTime)
+      throw error
+    }
+  }
+
+  /** Stop immediately, dropping the backlog. Safe on unknown/ended ids. */
+  public async abortStream(streamId: string): Promise<void> {
+    const stream = this.streams.get(streamId)
+    await BluetoothSdk.pcmStreamAbort(streamId).catch((e) => {
+      console.warn(`AUDIO: Stream abort ${streamId} native call failed:`, e)
+    })
+    if (stream) {
+      this.endStream(stream, true, null, Date.now() - stream.startTime)
+    }
+  }
+
+  /** Abort every active stream (optionally sparing one about to replace them). */
+  private async abortAllStreams(exceptStreamId?: string): Promise<void> {
+    const streamIds = [...this.streams.values()]
+      .filter((stream) => stream.streamId !== exceptStreamId)
+      .map((stream) => stream.streamId)
+    await Promise.all(streamIds.map((streamId) => this.abortStream(streamId)))
+  }
+
+  /** Terminal bookkeeping for a stream: dedup, unregister, notify. */
+  private endStream(stream: StreamState, success: boolean, error: string | null, durationMs: number | null): void {
+    if (stream.ended) return
+    stream.ended = true
+    this.streams.delete(stream.streamId)
+    // Only signal "audio stopped" when nothing else is making noise.
+    if (this.streams.size === 0 && (!this.currentPlayback || this.currentPlayback.completed)) {
+      this.notifyAudioStopDebounced()
+      void this.restoreGlassesMediaVolume()
+    }
+    stream.onEnded(stream.streamId, success, error, durationMs)
+  }
+
+  /** Stream twin of ensureGlassesMediaVolumeForA2dp, guarded by stream.ended. */
+  private async ensureGlassesMediaVolumeForA2dpStream(stream: StreamState): Promise<void> {
+    if (this.glassesVolumeRestoreLevel !== null) return
+    try {
+      const raw = await this.getGlassesMediaVolumeWithTiming()
+      const level = Number(raw.level)
+      if (!Number.isFinite(level) || level > AudioPlaybackService.GLASSES_VOLUME_LOW_THRESHOLD) return
+      if (stream.ended) return
+      console.log(`AUDIO: Raising glasses media volume for stream (was ${level})`)
+      await this.setGlassesMediaVolumeWithTiming(AudioPlaybackService.GLASSES_VOLUME_FLOOR)
+      if (!stream.ended) {
+        this.glassesVolumeRestoreLevel = level
+      } else {
+        await this.setGlassesMediaVolumeWithTiming(level)
+      }
+    } catch (e) {
+      console.warn("AUDIO: Skipping glasses volume bump for stream:", e instanceof Error ? e.message : String(e))
+    }
+  }
+
   /**
    * Stop playback for a specific app.
    * If appId is not provided, stops all playback.
    */
   public async stopForApp(appId?: string): Promise<void> {
+    // Abort this app's live PCM streams too (miniapp stop/disconnect path).
+    const streamIds = [...this.streams.values()]
+      .filter((stream) => !appId || stream.appId === appId)
+      .map((stream) => stream.streamId)
+    await Promise.all(streamIds.map((streamId) => this.abortStream(streamId)))
+
     if (!this.currentPlayback || this.currentPlayback.completed) return
 
     if (!appId || this.currentPlayback.appId === appId) {
@@ -397,6 +615,7 @@ class AudioPlaybackService {
    * Stop all audio playback
    */
   public async stopAll(): Promise<void> {
+    await this.abortAllStreams()
     if (this.currentPlayback && !this.currentPlayback.completed) {
       console.log("AUDIO: Stopping all playback")
       this.interruptCurrentPlayback()
@@ -407,30 +626,33 @@ class AudioPlaybackService {
    * Check if audio is currently playing
    */
   public isPlaying(): boolean {
-    return this.currentPlayback !== null && !this.currentPlayback.completed
+    return (this.currentPlayback !== null && !this.currentPlayback.completed) || this.streams.size > 0
   }
 
   /**
    * Get current playback app IDs (all active)
    */
   public getActiveAppIds(): string[] {
+    const appIds = new Set<string>()
     if (this.currentPlayback && !this.currentPlayback.completed && this.currentPlayback.appId) {
-      return [this.currentPlayback.appId]
+      appIds.add(this.currentPlayback.appId)
     }
-    return []
+    for (const stream of this.streams.values()) appIds.add(stream.appId)
+    return [...appIds]
   }
 
   /**
    * Get number of active playbacks
    */
   public getActiveCount(): number {
-    return this.currentPlayback && !this.currentPlayback.completed ? 1 : 0
+    return (this.currentPlayback && !this.currentPlayback.completed ? 1 : 0) + this.streams.size
   }
 
   /**
    * Release the player entirely (call when app is shutting down)
    */
   public release(): void {
+    void this.abortAllStreams()
     if (this.currentPlayback && !this.currentPlayback.completed) {
       this.interruptCurrentPlayback()
     } else {

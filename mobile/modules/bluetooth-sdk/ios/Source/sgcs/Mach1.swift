@@ -55,7 +55,7 @@ class Mach1: UltraliteBaseViewController, SGCManager {
         )
     }
 
-    func requestWifiScan() {}
+    func requestWifiScan(scanId _: String?) {}
 
     func sendWifiCredentials(_: String, _: String) {}
 

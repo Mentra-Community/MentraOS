@@ -42,6 +42,8 @@ export async function runStartupMigrations(): Promise<void> {
   await dropLegacyUserIdentityIndex();
   await dedupeUserIdentityRows();
   await UserModel.createIndexes();
+  // prevTokenHash recovery-lookup index (OS-1703). Idempotent; sparse.
+  await RefreshTokenModel.createIndexes();
   await dropLegacyMembershipEmailIndex();
   await dedupeDeveloperOrgMemberships();
   // Build the unique index BEFORE any upserts so concurrent Core startups can't

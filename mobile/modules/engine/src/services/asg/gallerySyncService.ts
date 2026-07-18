@@ -26,10 +26,13 @@ import {permissions, PermissionFeatures} from "../../facades/permissions"
 import {asgCameraApi} from "./asgCameraApi"
 import {gallerySettingsService} from "./gallerySettingsService"
 import {gallerySyncNotifications} from "./gallerySyncNotifications"
+import {localNetworkTransport} from "./localNetworkTransport"
 import {localStorageService} from "./localStorageService"
 import {mediaProcessingQueue} from "./mediaProcessingQueue"
 import {validateCaptureMetadataForDownload} from "./galleryMediaValidation"
 import {emitGalleryNotice} from "./galleryNotices"
+import {galleryTransferLedger} from "./galleryTransferLedger"
+import {cameraRollExportCoordinator} from "./cameraRollExportCoordinator"
 
 // Timing constants
 const TIMING = {
@@ -111,6 +114,8 @@ class GallerySyncService {
     this.hotspotListenerRegistered = true
     this.isInitialized = true
 
+    void cameraRollExportCoordinator.initialize()
+
     // console.log("[GallerySyncService] Initialized")
 
     // Check for resumable sync on startup
@@ -121,6 +126,7 @@ class GallerySyncService {
    * Cleanup - remove event listeners
    */
   cleanup(): void {
+    void localNetworkTransport.disconnect()
     if (this.hotspotListenerRegistered) {
       GlobalEventEmitter.removeListener("hotspot_status_change", this.handleHotspotStatusChange)
       GlobalEventEmitter.removeListener("hotspot_error", this.handleHotspotError)
@@ -137,6 +143,7 @@ class GallerySyncService {
       this.appStateSubscription.remove()
       this.appStateSubscription = null
     }
+    cameraRollExportCoordinator.cleanup()
 
     if (this.hotspotConnectionTimeout) {
       BgTimer.clearTimeout(this.hotspotConnectionTimeout!)
@@ -191,6 +198,7 @@ class GallerySyncService {
     }
 
     gallerySyncNotifications.showSyncError("Glasses disconnected")
+    void localNetworkTransport.disconnect()
   }
 
   /**
@@ -201,6 +209,9 @@ class GallerySyncService {
     if (nextAppState !== "active") {
       return
     }
+
+    // Camera-roll backfill is phone-local and must resume independently of glasses/WiFi.
+    void cameraRollExportCoordinator.resume("app foreground")
 
     // Only auto-retry if we were waiting for WiFi
     if (!this.waitingForWifiRetry) {
@@ -491,9 +502,6 @@ class GallerySyncService {
       hotspotEnabled: glassesHotspot !== null,
     })
 
-    // Reset processing queue only after pre-flight passes — avoids clobbering an active session
-    mediaProcessingQueue.reset()
-
     // Request all permissions upfront so user isn't interrupted during WiFi/download
     console.log("[GallerySyncService] 🔐 Step 1/6: Requesting permissions...")
 
@@ -526,6 +534,23 @@ class GallerySyncService {
       return
     }
 
+    if (Platform.OS === "android") {
+      console.log("[GallerySyncService]   📡 Checking local WiFi permission...")
+      const hasLocalWifiPermission = await permissions.check(PermissionFeatures.LOCAL_WIFI)
+      if (!hasLocalWifiPermission) {
+        const granted = await permissions.request(PermissionFeatures.LOCAL_WIFI)
+        if (!granted) {
+          store.setSyncError("Local WiFi permission is required for gallery sync")
+          await gallerySyncNotifications.showSyncError("Allow WiFi access to connect to your glasses")
+          return
+        }
+      }
+      if (this.shouldAbortPreFlight()) {
+        console.log("[GallerySyncService] Pre-flight aborted after local WiFi permission")
+        return
+      }
+    }
+
     // 3. Camera roll permission (if auto-save is enabled)
     const shouldAutoSave = await gallerySettingsService.getAutoSaveToCameraRoll()
     console.log(`[GallerySyncService]   📸 Auto-save to camera roll: ${shouldAutoSave}`)
@@ -536,9 +561,10 @@ class GallerySyncService {
         console.log("[GallerySyncService]   ⚠️ Camera roll permission not granted - requesting...")
         const granted = await MediaLibraryPermissions.requestPermission()
         if (!granted) {
-          console.warn("[GallerySyncService]   ❌ Camera roll permission denied - photos will still sync to app")
-          // Don't block sync - photos will still be downloaded to app storage
-          // They just won't be saved to the camera roll
+          console.warn("[GallerySyncService]   ❌ Camera roll permission denied - auto-save sync cannot continue")
+          store.setSyncError("Camera-roll permission required while automatic saving is enabled")
+          emitGalleryNotice({code: "camera_roll_permission_required"})
+          return
         } else {
           console.log("[GallerySyncService]   ✅ Camera roll permission granted")
         }
@@ -739,12 +765,21 @@ class GallerySyncService {
       console.log("[GallerySyncService]   ➡️ Will request hotspot activation")
     }
 
+    // Every fallible pre-flight gate has passed. It is now safe to replace the previous
+    // in-memory queue; startFileDownload immediately recovers its durable ledger work.
+    mediaProcessingQueue.reset()
+
     if (isAlreadyConnected && currentGlassesHotspot) {
-      console.log("[GallerySyncService] 🚀 Skipping hotspot request - already connected!")
       const hotspotInfo: HotspotInfo = currentGlassesHotspot
       store.setHotspotInfo(hotspotInfo)
       store.setSyncState("connecting_wifi")
-      await this.startFileDownload(hotspotInfo)
+      if (localNetworkTransport.supportsScopedConnection() && !localNetworkTransport.isScopedConnectionActive()) {
+        console.log("[GallerySyncService] 📡 System SSID matches; establishing scoped glasses transport")
+        await this.connectToHotspotWifi(hotspotInfo)
+      } else {
+        console.log("[GallerySyncService] 🚀 Skipping hotspot request - already connected!")
+        await this.startFileDownload(hotspotInfo)
+      }
       return
     }
 
@@ -900,7 +935,7 @@ class GallerySyncService {
             console.log(`[GallerySyncService] 📡 Current WiFi SSID: "${preConnectSSID}"`)
 
             // Check if already connected (shouldn't happen, but good to verify)
-            if (preConnectSSID === hotspotInfo.ssid) {
+            if (!localNetworkTransport.supportsScopedConnection() && preConnectSSID === hotspotInfo.ssid) {
               console.log("[GallerySyncService] ✅ Already connected to target SSID! Proceeding to download.")
               appStateSubscription.remove()
 
@@ -919,8 +954,7 @@ class GallerySyncService {
             console.warn("[GallerySyncService] ⚠️ Error code:", preError?.code)
           }
 
-          // Use connectToProtectedSSID with joinOnce=false for persistent connection
-          console.log(`[GallerySyncService] 🔌 Calling WifiManager.connectToProtectedSSID...`)
+          console.log(`[GallerySyncService] 🔌 Connecting the glasses-local transport...`)
           console.log(`[GallerySyncService] 🔌 Parameters:`)
           console.log(`[GallerySyncService]    - SSID: "${hotspotInfo.ssid}"`)
           console.log(`[GallerySyncService]    - Password: ${"*".repeat(hotspotInfo.password.length)}`)
@@ -931,10 +965,10 @@ class GallerySyncService {
           appBackgrounded = false // Reset flag for this attempt
           appBackgroundTime = null
 
-          await WifiManager.connectToProtectedSSID(hotspotInfo.ssid, hotspotInfo.password, false, false)
+          await localNetworkTransport.connect(hotspotInfo.ssid, hotspotInfo.password)
 
           const connectCallDuration = Date.now() - connectCallStartTime
-          console.log(`[GallerySyncService] ✅ WifiManager.connectToProtectedSSID returned successfully`)
+          console.log(`[GallerySyncService] ✅ Glasses-local transport connected successfully`)
           console.log(`[GallerySyncService] ⏱️ Library call duration: ${connectCallDuration}ms`)
           console.log(`[GallerySyncService] 📱 App was backgrounded during call: ${appBackgrounded}`)
           if (appBackgrounded && appBackgroundTime) {
@@ -960,9 +994,9 @@ class GallerySyncService {
                 lastSeenSSID = currentSSID || "null"
 
                 console.log(
-                  `[GallerySyncService] 🍎 Verify poll ${i + 1}/${maxVerifyAttempts}: Current="${currentSSID}", Target="${
-                    hotspotInfo.ssid
-                  }"`,
+                  `[GallerySyncService] 🍎 Verify poll ${
+                    i + 1
+                  }/${maxVerifyAttempts}: Current="${currentSSID}", Target="${hotspotInfo.ssid}"`,
                 )
 
                 if (currentSSID === hotspotInfo.ssid) {
@@ -1014,7 +1048,9 @@ class GallerySyncService {
 
           // Final verification: Check SSID one more time before starting download
           try {
-            const finalSSID = await WifiManager.getCurrentWifiSSID()
+            const finalSSID = localNetworkTransport.isScopedConnectionActive()
+              ? hotspotInfo.ssid
+              : await WifiManager.getCurrentWifiSSID()
             console.log(`[GallerySyncService] 📶 Final SSID check before download: "${finalSSID}"`)
             if (Platform.OS === "android") {
               // Some local builds can have stale generated typings for the Bluetooth SDK module.
@@ -1050,7 +1086,7 @@ class GallerySyncService {
                 const probeTimeout = BgTimer.setTimeout(() => probeController.abort(), 1000) // 1 second timeout per probe
 
                 const probeStartTime = Date.now()
-                const probeResponse = await fetch(`http://${hotspotInfo.ip}:8089/api/health`, {
+                const probeResponse = await localNetworkTransport.fetch(`http://${hotspotInfo.ip}:8089/api/health`, {
                   method: "GET",
                   signal: probeController.signal,
                 })
@@ -1252,14 +1288,49 @@ class GallerySyncService {
         await this.closeHotspot()
       }
     } finally {
+      // Release the scoped Android Network on every terminal path. This is idempotent with
+      // closeHotspot(), and intentionally leaves Android 9/iOS legacy routing unchanged.
+      await localNetworkTransport.disconnect()
       // L2: Guarantee listener cleanup on all exit paths (cancel, success, error, exhaustion)
       appStateSubscription.remove()
     }
   }
 
   private async fetchSyncManifest(clientId: string, lastSyncTime: number): Promise<SyncManifestData> {
-    const syncResponse = await asgCameraApi.syncWithServer(clientId, lastSyncTime, true)
-    return (syncResponse.data || syncResponse) as SyncManifestData
+    const v3 = typeof asgCameraApi.getV3Manifest === "function" ? await asgCameraApi.getV3Manifest() : null
+    if (v3) {
+      const downloadedFiles = await localStorageService.getDownloadedFiles()
+      await localStorageService.reconcileRemoteCaptures(
+        v3.captures.map((capture) => capture.capture_id),
+        downloadedFiles,
+      )
+      return {
+        api_version: 3,
+        client_id: clientId,
+        // The ledger is a crash-recovery journal, not proof that app-private media survived an
+        // Android restore or reinstall. Suppress a remote capture only when both records agree.
+        captures: v3.captures.filter(
+          (capture) =>
+            !downloadedFiles[capture.capture_id] || !galleryTransferLedger.isLocallyCommitted(capture.capture_id),
+        ),
+        changed_files: [],
+        deleted_files: [],
+        server_time: v3.server_time,
+        total_changed: v3.captures.length,
+        total_size: v3.captures.reduce((total, capture) => total + capture.total_size, 0),
+      }
+    }
+    // Old firmware remains on the exact v2 endpoint/schema. Avoid expensive inline thumbnails;
+    // the UI can request them lazily after the primary transfer is safe.
+    const syncResponse = await asgCameraApi.syncWithServer(clientId, lastSyncTime, false)
+    const data = (syncResponse.data || syncResponse) as SyncManifestData
+    if (data.captures) {
+      data.captures = data.captures.filter((capture) => !galleryTransferLedger.isLocallyCommitted(capture.capture_id))
+    }
+    data.changed_files = (data.changed_files || []).filter(
+      (file) => !galleryTransferLedger.isFileLocallyCommitted(file.name),
+    )
+    return data
   }
 
   /**
@@ -1328,6 +1399,13 @@ class GallerySyncService {
       asgCameraApi.setServer(hotspotInfo.ip, 8089)
       console.log("[GallerySyncService]   ✅ API client configured")
 
+      const recovery = await mediaProcessingQueue.retryPending()
+      if (recovery.retried > 0 || recovery.failed > 0) {
+        console.log(
+          `[GallerySyncService]   ♻️ Recovery: ${recovery.retried} completed, ${recovery.failed} still pending`,
+        )
+      }
+
       // Get sync state and files to download
       // IMPORTANT: This creates a SNAPSHOT of files at this moment based on last_sync_time.
       // Any photos taken AFTER this call (during the sync) will NOT be included in this sync.
@@ -1367,18 +1445,24 @@ class GallerySyncService {
 
       if (isSyncManifestEmpty(syncData)) {
         console.log("[GallerySyncService]   ✅ No new files to sync - already up to date!")
-        store.setSyncComplete()
+        if (galleryTransferLedger.hasPendingRecovery()) {
+          store.setSyncError("Gallery export or acknowledgement needs retry")
+        } else {
+          store.setSyncComplete()
+        }
         await this.onSyncComplete(0, 0)
         return
       }
 
       // Detect API version and route to appropriate download path
-      const useCaptures = syncData.api_version === 2 && syncData.captures && syncData.captures.length > 0
+      const useCaptures = (syncData.api_version || 0) >= 2 && syncData.captures && syncData.captures.length > 0
 
       if (useCaptures) {
         // New capture-aware sync path
         const captures: CaptureGroup[] = syncData.captures!
-        console.log(`[GallerySyncService]   📊 Found ${captures.length} captures to download (api_version=2)`)
+        console.log(
+          `[GallerySyncService]   📊 Found ${captures.length} captures to download (api_version=${syncData.api_version})`,
+        )
 
         captures.slice(0, 5).forEach((c: CaptureGroup, idx: number) => {
           console.log(
@@ -1500,7 +1584,7 @@ class GallerySyncService {
         (current, total, fileName, fileProgress, downloadedFile) => {
           // CRITICAL: This callback MUST NOT throw!
           // RNFS progress callbacks run inside native bridge — throwing here causes
-          // EXC_BAD_ACCESS. Cancellation is handled via AbortSignal → RNFS.stopDownload.
+          // EXC_BAD_ACCESS. Cancellation is handled via AbortSignal → the active transport.
 
           // Check if cancelled — just return, abort signal will stop the download
           if (this.abortController?.signal.aborted) {
@@ -1597,6 +1681,7 @@ class GallerySyncService {
                   shouldAutoSave: !!shouldAutoSave,
                   thumbnailPath: downloadedFile.thumbnailPath,
                   deleteFromGlasses: [downloadedFile.name],
+                  protocolVersion: 1,
                 })
               }
             }
@@ -1634,25 +1719,6 @@ class GallerySyncService {
         }
       }
 
-      // Save downloaded files metadata (skip auxiliary files from gallery entries)
-      for (const photoInfo of downloadResult.downloaded) {
-        // Skip HDR brackets and IMU sidecars — they shouldn't appear as separate gallery items
-        const isAuxiliary =
-          photoInfo.name?.match(/_ev-?\d+\.(jpg|jpeg)$/i) ||
-          photoInfo.name?.match(/\.imu\.json$/i) ||
-          photoInfo.name?.match(/\/ev-?\d+\.jpe?g$/i) ||
-          photoInfo.name?.match(/\/imu\.json$/i)
-        if (isAuxiliary) continue
-
-        const downloadedFile = localStorageService.convertToDownloadedFile(
-          photoInfo,
-          photoInfo.filePath || "",
-          photoInfo.thumbnailPath,
-          defaultWearable,
-        )
-        await localStorageService.saveDownloadedFile(downloadedFile)
-      }
-
       // Update queue index to final position
       await localStorageService.updateSyncQueueIndex(files.length)
 
@@ -1666,6 +1732,17 @@ class GallerySyncService {
       console.log("[GallerySyncService]   ⏳ Waiting for processing queue to drain...")
       await mediaProcessingQueue.waitUntilDrained()
       console.log("[GallerySyncService]   ✅ Processing queue drained")
+
+      // Download success is not destination success. Export, validation, metadata, and
+      // acknowledgement failures are reported asynchronously by the processing queue; fold them
+      // back into the legacy result so its timestamp watermark cannot skip the source forever.
+      const processingFailures = new Set(useGallerySyncStore.getState().failedFiles)
+      for (const file of files) {
+        if (processingFailures.has(file.name) && !downloadResult.failed.includes(file.name)) {
+          downloadResult.failed.push(file.name)
+        }
+      }
+      failedCount = downloadResult.failed.length
 
       // Update sync state — only advance watermark if files were downloaded.
       // If any failed, set it before the oldest failure so they get retried.
@@ -1730,8 +1807,11 @@ class GallerySyncService {
         ).toFixed(2)} MB`,
       )
 
-      // Complete
-      store.setSyncComplete()
+      if (failedCount > 0 || galleryTransferLedger.hasPendingRecovery()) {
+        store.setSyncError(`${failedCount || "Some"} gallery items need retry`)
+      } else {
+        store.setSyncComplete()
+      }
       await this.onSyncComplete(downloadedCount, failedCount)
     } catch (error: any) {
       mediaProcessingQueue.abort()
@@ -1795,7 +1875,9 @@ class GallerySyncService {
 
         try {
           console.log(
-            `[GallerySyncService]   📦 Downloading capture ${i + 1}/${captures.length}: ${capture.capture_id} (${capture.files.length} files)`,
+            `[GallerySyncService]   📦 Downloading capture ${i + 1}/${captures.length}: ${capture.capture_id} (${
+              capture.files.length
+            } files)`,
           )
 
           validateCaptureMetadataForDownload(capture)
@@ -1841,6 +1923,7 @@ class GallerySyncService {
             shouldProcess: !!shouldProcessImages,
             shouldAutoSave: !!shouldAutoSave,
             deleteFromGlasses: [capture.capture_id],
+            protocolVersion: capture.files.some((file) => !!file.etag) ? 3 : 2,
           })
         } catch (captureError: any) {
           if (captureError?.message === "Sync cancelled") throw captureError
@@ -1929,7 +2012,11 @@ class GallerySyncService {
         })
       }
 
-      store.setSyncComplete()
+      if (failedCount > 0 || galleryTransferLedger.hasPendingRecovery()) {
+        store.setSyncError(`${failedCount || "Some"} gallery items need retry`)
+      } else {
+        store.setSyncComplete()
+      }
       await this.onSyncComplete(downloadedCount, failedCount)
     } catch (error: any) {
       mediaProcessingQueue.abort()
@@ -1993,13 +2080,25 @@ class GallerySyncService {
     //   console.error(`[GallerySyncService] Failed to get post-sync inventory:`, error)
     // }
 
-    // Clear the queue
-    console.log("[GallerySyncService]   🧹 Clearing sync queue...")
-    await localStorageService.clearSyncQueue()
+    const hasPendingRecovery = galleryTransferLedger.hasPendingRecovery()
+    if (!hasPendingRecovery && failedCount === 0) {
+      console.log("[GallerySyncService]   🧹 Clearing completed sync queue...")
+      await localStorageService.clearSyncQueue()
+    } else {
+      console.log("[GallerySyncService]   ♻️ Keeping recovery state for unfinished export/ack work")
+    }
 
-    // Show completion notification
-    console.log("[GallerySyncService]   📱 Showing completion notification...")
-    await gallerySyncNotifications.showSyncComplete(downloadedCount, failedCount)
+    if (hasPendingRecovery || failedCount > 0) {
+      console.log("[GallerySyncService]   📱 Showing retry-required notification...")
+      await gallerySyncNotifications.showSyncError(
+        failedCount > 0
+          ? `${failedCount} gallery item${failedCount === 1 ? "" : "s"} will be retried`
+          : "Gallery export or acknowledgement will be retried",
+      )
+    } else {
+      console.log("[GallerySyncService]   📱 Showing completion notification...")
+      await gallerySyncNotifications.showSyncComplete(downloadedCount, 0)
+    }
 
     // Close hotspot if we opened it
     const store = useGallerySyncStore.getState()
@@ -2013,8 +2112,10 @@ class GallerySyncService {
     // Clear glasses gallery count immediately after successful sync
     // This ensures UI shows 0 items remaining right away
     // The subsequent query will update this if new photos were taken during sync
-    console.log("[GallerySyncService]   🔄 Clearing glasses gallery count (synced all items)")
-    store.clearGlassesGalleryStatus()
+    if (!hasPendingRecovery && failedCount === 0) {
+      console.log("[GallerySyncService]   🔄 Clearing glasses gallery count (synced all items)")
+      store.clearGlassesGalleryStatus()
+    }
 
     // Auto-reset to idle after 4 seconds to clear "Sync complete!" message,
     // then query glasses for any new content taken during the sync.
@@ -2082,6 +2183,7 @@ class GallerySyncService {
 
     try {
       console.log("[GallerySyncService] Closing hotspot...")
+      await localNetworkTransport.disconnect()
       await BluetoothSdk.setHotspotState(false)
       store.setSyncServiceOpenedHotspot(false)
       store.setHotspotInfo(null)

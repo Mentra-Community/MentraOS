@@ -1556,10 +1556,10 @@ class DeviceManager {
         sgc?.sendStreamKeepAlive(message)
     }
 
-    fun requestWifiScan() {
+    fun requestWifiScan(scanId: String? = null) {
         Bridge.log("MAN: Requesting wifi scan")
         DeviceStore.apply("bluetooth", "wifiScanResults", emptyList<Any>())
-        sgc?.requestWifiScan()
+        sgc?.requestWifiScan(scanId)
     }
 
     fun sendIncidentId(incidentId: String, apiBaseUrl: String? = null) {
@@ -1649,6 +1649,22 @@ class DeviceManager {
         live.sendCameraFovSetting(requestId, fov, roiPosition)
     }
 
+    fun sendCameraFovOverride(
+        requestId: String,
+        leaseId: String,
+        fov: Int,
+        roiPosition: Int,
+        ttlMs: Int,
+    ) {
+        val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
+        live.sendCameraFovOverride(requestId, leaseId, fov, roiPosition, ttlMs)
+    }
+
+    fun releaseCameraFovOverride(requestId: String, leaseId: String) {
+        val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
+        live.releaseCameraFovOverride(requestId, leaseId)
+    }
+
     fun sendCameraTuningConfig(requestId: String, anrOn: Boolean, gainOn: Boolean) {
         val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
         live.sendCameraTuningConfig(requestId, anrOn, gainOn)
@@ -1657,6 +1673,7 @@ class DeviceManager {
     fun warmUpCamera(
         requestId: String,
         size: PhotoSize,
+        mode: PhotoMode = PhotoMode.PHOTO,
         exposureTimeNs: Long?,
         durationMs: Int,
     ) {
@@ -1668,7 +1685,12 @@ class DeviceManager {
                     "unsupported_device",
                     "This command requires Mentra Live glasses.",
                 )
-        live.warmUpCamera(requestId, size, exposureTimeNs, durationMs)
+        live.warmUpCamera(requestId, size, mode, exposureTimeNs, durationMs)
+    }
+
+    fun stopCameraWarmUp(requestId: String) {
+        val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
+        live.stopCameraWarmUp(requestId)
     }
 
     /**

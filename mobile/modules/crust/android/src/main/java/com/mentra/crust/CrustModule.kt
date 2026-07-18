@@ -129,6 +129,17 @@ class CrustModule : Module() {
       sendEvent("onChange", mapOf("value" to value))
     }
 
+    AsyncFunction("nativeHttpRequest") {
+      method: String, url: String, headers: Map<String, String>, body: String? ->
+      val result = JSCPolyfillBridge.executeHttp(method, url, headers, body)
+      mapOf(
+        "status" to result.status,
+        "statusText" to result.statusText,
+        "headers" to result.headers,
+        "body" to result.body,
+      )
+    }
+
     Function("showAVRoutePicker") { _: String? ->
       // iOS-only; Android uses system Bluetooth settings / Crust where appropriate.
     }
@@ -575,6 +586,55 @@ class CrustModule : Module() {
                           }
                         }
 
+        val relativePath =
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                  if (isVideo) "Movies/Mentra" else "Pictures/Mentra"
+                } else {
+                  null
+                }
+        val resolver = context.contentResolver
+        val stableDisplayName =
+                mediaDisplayName.takeIf {
+                  it.startsWith("IMG_") || it.startsWith("VID_")
+                }
+        val existingUri =
+                stableDisplayName?.let {
+                  findExistingGalleryAsset(
+                          resolver,
+                          collection,
+                          listOf(it),
+                          file.length(),
+                          captureTimeMillis,
+                          relativePath,
+                          context.packageName,
+                          requireUniqueMatch = false,
+                  )
+                }
+                        ?: findExistingGalleryAsset(
+                                resolver,
+                                collection,
+                                listOfNotNull(
+                                                mediaDisplayName.takeIf { stableDisplayName == null },
+                                                file.name.takeIf {
+                                                  it.isNotBlank() && it != stableDisplayName
+                                                },
+                                        )
+                                        .distinct(),
+                                file.length(),
+                                captureTimeMillis,
+                                relativePath,
+                                context.packageName,
+                                requireUniqueMatch = true,
+                        )
+        if (existingUri != null) {
+          android.util.Log.d("CrustModule", "Reusing existing gallery asset")
+          return@AsyncFunction mapOf(
+                  "success" to true,
+                  "uri" to existingUri.toString(),
+                  "existing" to true,
+          )
+        }
+
         val values =
                 android.content.ContentValues().apply {
                   put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, mediaDisplayName)
@@ -593,19 +653,12 @@ class CrustModule : Module() {
                     )
                   }
 
-                  if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
-                    val relativePath =
-                            if (isVideo) {
-                              "Movies/Mentra"
-                            } else {
-                              "Pictures/Mentra"
-                            }
+                  if (relativePath != null) {
                     put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, relativePath)
                     put(android.provider.MediaStore.MediaColumns.IS_PENDING, 1)
                   }
                 }
 
-        val resolver = context.contentResolver
         val uri =
                 resolver.insert(collection, values)
                         ?: throw IllegalStateException("Failed to create MediaStore entry")
@@ -877,6 +930,113 @@ class CrustModule : Module() {
     AsyncFunction("stopHeading") {
       HeadingManager.stop()
       mapOf("ok" to true)
+    }
+  }
+
+  /**
+   * Find a completed export from a previous attempt. A crash can happen after MediaStore commits
+   * but before JavaScript persists the URI receipt; the stable capture display name, size, and
+   * capture time, and Mentra album path let the retry return that receipt instead of inserting a
+   * duplicate. Scoping by album is also important before deleting interrupted pending rows: a
+   * same-named asset owned by another album must never be treated as ours.
+   */
+  private fun findExistingGalleryAsset(
+          resolver: android.content.ContentResolver,
+          collection: android.net.Uri,
+          displayNames: List<String>,
+          size: Long,
+          captureTimeMillis: Long?,
+          relativePath: String?,
+          ownerPackageName: String,
+          requireUniqueMatch: Boolean,
+  ): android.net.Uri? {
+    val dateColumn = android.provider.MediaStore.Images.ImageColumns.DATE_TAKEN
+    if (displayNames.isEmpty()) return null
+    val namePlaceholders = displayNames.joinToString(",") { "?" }
+    val selectionParts =
+            mutableListOf(
+                    "${android.provider.MediaStore.MediaColumns.DISPLAY_NAME} IN ($namePlaceholders)",
+            )
+    val selectionArgs = displayNames.toMutableList()
+    if (captureTimeMillis != null) {
+      selectionParts.add("$dateColumn = ?")
+      selectionArgs.add(captureTimeMillis.toString())
+    }
+    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q &&
+                    relativePath != null
+    ) {
+      val pathWithoutTrailingSlash = relativePath.trimEnd('/')
+      selectionParts.add(
+              "(${android.provider.MediaStore.MediaColumns.RELATIVE_PATH} = ? OR " +
+                      "${android.provider.MediaStore.MediaColumns.RELATIVE_PATH} = ?)"
+      )
+      // MediaProvider normally canonicalizes RELATIVE_PATH with a trailing slash. Accept the
+      // caller's original representation too so exports created by older Android builds remain
+      // reconcilable, while still requiring an exact Mentra album match.
+      selectionArgs.add(pathWithoutTrailingSlash)
+      selectionArgs.add("$pathWithoutTrailingSlash/")
+      // Never reconcile or delete another application's pending MediaStore row.
+      selectionParts.add("${android.provider.MediaStore.MediaColumns.OWNER_PACKAGE_NAME} = ?")
+      selectionArgs.add(ownerPackageName)
+    }
+    val projection =
+            mutableListOf(
+                            android.provider.BaseColumns._ID,
+                            android.provider.MediaStore.MediaColumns.SIZE,
+                    )
+                    .apply {
+              if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                add(android.provider.MediaStore.MediaColumns.IS_PENDING)
+              }
+            }
+
+    return try {
+      resolver
+              .query(
+                      collection,
+                      projection.toTypedArray(),
+                      selectionParts.joinToString(" AND "),
+                      selectionArgs.toTypedArray(),
+                      "${android.provider.BaseColumns._ID} DESC",
+              )
+              ?.use { cursor ->
+                val candidates = mutableListOf<android.net.Uri>()
+                val idColumn = cursor.getColumnIndexOrThrow(android.provider.BaseColumns._ID)
+                val sizeColumn =
+                        cursor.getColumnIndexOrThrow(android.provider.MediaStore.MediaColumns.SIZE)
+                val pendingColumn =
+                        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                          cursor.getColumnIndex(android.provider.MediaStore.MediaColumns.IS_PENDING)
+                        } else {
+                          -1
+                        }
+                while (cursor.moveToNext()) {
+                  val uri =
+                          android.content.ContentUris.withAppendedId(
+                                  collection,
+                                  cursor.getLong(idColumn),
+                          )
+                  if (pendingColumn >= 0 && cursor.getInt(pendingColumn) != 0) {
+                    // This app owns the row and it was never published. Remove the interrupted
+                    // placeholder before retrying the copy, even if it contains only a prefix.
+                    resolver.delete(uri, null, null)
+                    continue
+                  }
+                  if (cursor.getLong(sizeColumn) == size) candidates.add(uri)
+                }
+                if (requireUniqueMatch) {
+                  // A legacy `base.jpg`/`base.mp4` match is safe only when the complete
+                  // name/date/size/path/owner fingerprint identifies exactly one asset.
+                  candidates.singleOrNull()
+                } else {
+                  // Capture-derived display names are stable. If an older retry already made
+                  // duplicates, reuse the newest completed row instead of creating another.
+                  candidates.firstOrNull()
+                }
+              }
+    } catch (error: Exception) {
+      android.util.Log.w("CrustModule", "Unable to reconcile existing gallery asset", error)
+      null
     }
   }
 }

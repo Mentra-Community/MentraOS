@@ -553,6 +553,11 @@ public enum StreamStatus: CustomStringConvertible, Equatable {
 
 public struct StreamStatusEvent: CustomStringConvertible {
     public let status: StreamStatus
+    // True when the glasses will retry the failed publisher themselves
+    // (emitting side lands in PR #3488); absent on older firmware and on
+    // events not parsed from a glasses status map. Carried here instead of
+    // as an `.error` associated value so the public case stays unchanged.
+    public private(set) var willRetry: Bool?
 
     public init(status: StreamStatus) {
         self.status = status
@@ -560,6 +565,7 @@ public struct StreamStatusEvent: CustomStringConvertible {
 
     public init(values: [String: Any]) {
         status = StreamStatus(values: values)
+        willRetry = boolValue(values, "willRetry")
     }
 
     public var state: StreamState {
@@ -577,6 +583,9 @@ public struct StreamStatusEvent: CustomStringConvertible {
     public var values: [String: Any] {
         var values = status.values
         values["type"] = "stream_status"
+        if let willRetry {
+            values["willRetry"] = willRetry
+        }
         return values
     }
 

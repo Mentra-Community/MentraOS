@@ -13,6 +13,7 @@
     "test": "bun test"
   },
   "dependencies": {
+    "@mentra/cloud-protocol": "^0.1.0-dev.0",
     "@mentra/cloud-shared": "workspace:*",
     "@soniox/node": "^2.1.0",
     "hono": "^4.11.1",

@@ -129,6 +129,8 @@ Camera and streaming features must leave LEDs in a safe state on stop, error, se
 
 The phone can configure WiFi behavior through `asg_client`. Mentra Live-specific network managers should be used when platform APIs are required; generic Android fallbacks exist for non-K900 paths.
 
+When the phone requests the Mentra Live hotspot, `asg_client` creates an Android local-only hotspot rather than an internet-sharing tethered hotspot. Android generates the session SSID and password, which are returned to the phone over BLE. Credentials are scoped to the current reservation (and can change on every start), so clients must use the latest BLE status rather than save a fixed network. On current K900 builds the platform selects 2.4 GHz for this local-only AP. This keeps the glasses' `wlan0` station connection intact and lets a phone route glasses-local media traffic over WiFi while continuing to use cellular data for internet traffic. The hotspot remains active while the local HTTP server is receiving requests or streaming response data and automatically stops after 120 seconds of genuine HTTP inactivity.
+
 ### OTA and updates
 
 Mentra Live has multiple update surfaces:
@@ -138,6 +140,8 @@ Mentra Live has multiple update surfaces:
 - BES MCU firmware OTA over UART.
 
 Update flows must preserve device recoverability, report progress where possible, and avoid interrupting active media operations without cleanup.
+
+The MTK↔BES UART always starts at 460800 baud. Firmware that supports the negotiated fast link may upgrade to 1152000 only after reporting a compatible current firmware version. At startup, `asg_client` retries discovery at 460800 before considering an alternate baud; only if those probes are unanswered and a cached compatible BES version makes it safe may it probe 1152000. This handles full-device, MTK-only, and app-only restarts without assuming which processors rebooted. After a successful BES OTA, BES reboots at 460800, so `asg_client` explicitly reopens the rendezvous baud, rediscovers the new firmware version, and negotiates again when supported. Older firmware on either side remains at 460800.
 
 ### Diagnostics and reporting
 

@@ -17,7 +17,7 @@
  * and docs/issues/004-cloud-client/design.md ("Subscriptions").
  */
 import type { HttpClient } from "../../http";
-import type { AudioSubscription } from "@mentra/cloud-runtime/protocol";
+import type { AudioSubscription } from "@mentra/cloud-protocol";
 
 /** The REST path the cloud exposes for the full-replace subscription write. */
 const SUBSCRIPTIONS_PATH = "/api/audio/subscriptions";

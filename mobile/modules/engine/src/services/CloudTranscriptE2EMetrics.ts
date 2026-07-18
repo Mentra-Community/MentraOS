@@ -1,4 +1,4 @@
-import type {TranscriptionData} from "@mentra/cloud-runtime/protocol"
+import type {TranscriptionData} from "@mentra/cloud-protocol"
 
 import {buildE2EMetric, logE2EMetricPayload} from "../utils/e2eMetrics"
 

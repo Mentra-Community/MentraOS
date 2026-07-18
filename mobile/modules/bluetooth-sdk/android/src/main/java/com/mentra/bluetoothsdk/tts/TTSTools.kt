@@ -9,6 +9,9 @@ import com.k2fsa.sherpa.onnx.OfflineTtsModelConfig
 import com.k2fsa.sherpa.onnx.OfflineTtsSupertonicModelConfig
 import com.mentra.bluetoothsdk.Bridge
 import java.io.File
+import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledFuture
+import java.util.concurrent.TimeUnit
 
 /**
  * Utilities for offline Sherpa-ONNX Supertonic 3 TTS model management.
@@ -31,6 +34,21 @@ object TTSTools {
     private const val FILE_UNICODE_INDEXER = "unicode_indexer.bin"
     private const val FILE_VOICE_STYLE = "voice.bin"
 
+    /**
+     * Keep the native model warm briefly after use to reduce repeated TTS latency while
+     * still reclaiming its memory when speech has been idle for a while.
+     */
+    private const val MODEL_IDLE_TIMEOUT_MINUTES = 3L
+    private val modelLock = Any()
+    private val teardownExecutor =
+            Executors.newSingleThreadScheduledExecutor { runnable ->
+                Thread(runnable, "MentraTtsIdleTeardown").apply { isDaemon = true }
+            }
+    private var cachedTts: OfflineTts? = null
+    private var cachedModelPath: String? = null
+    private var teardownFuture: ScheduledFuture<*>? = null
+    private var teardownGeneration = 0L
+
     private val REQUIRED_FILES = listOf(
             FILE_DURATION_PREDICTOR,
             FILE_TEXT_ENCODER,
@@ -42,6 +60,11 @@ object TTSTools {
     )
 
     fun setTtsModelDetails(context: Context, path: String, languageCode: String) {
+        synchronized(modelLock) {
+            if (cachedModelPath != null && cachedModelPath != path) {
+                releaseCachedModelLocked("model path changed")
+            }
+        }
         val prefs = getPrefs(context)
         prefs.edit().apply {
             putString(KEY_TTS_MODEL_PATH, path)
@@ -118,59 +141,104 @@ object TTSTools {
             return false
         }
 
-        val modelDir = File(modelPath)
         val outputFile = File(outputPath)
         outputFile.parentFile?.mkdirs()
 
-        var tts: OfflineTts? = null
-        return try {
-            val supertonic = OfflineTtsSupertonicModelConfig(
-                    durationPredictor = File(modelDir, FILE_DURATION_PREDICTOR).absolutePath,
-                    textEncoder = File(modelDir, FILE_TEXT_ENCODER).absolutePath,
-                    vectorEstimator = File(modelDir, FILE_VECTOR_ESTIMATOR).absolutePath,
-                    vocoder = File(modelDir, FILE_VOCODER).absolutePath,
-                    ttsJson = File(modelDir, FILE_TTS_JSON).absolutePath,
-                    unicodeIndexer = File(modelDir, FILE_UNICODE_INDEXER).absolutePath,
-                    voiceStyle = File(modelDir, FILE_VOICE_STYLE).absolutePath,
-            )
-
-            val modelConfig = OfflineTtsModelConfig(
-                    supertonic = supertonic,
-                    numThreads = 2,
-                    provider = "cpu",
-            )
-
-            val config = OfflineTtsConfig(
-                    model = modelConfig,
-                    maxNumSentences = 1,
-                    silenceScale = 0.2f,
-            )
-
-            tts = OfflineTts(null, config)
-
-            // sid out of range falls back to F1 (sid 0); clamp 0..9.
-            val sid = speakerId.coerceIn(0, tts.numSpeakers() - 1)
-            val clampedSpeed = speed.coerceIn(0.5f, 2.0f)
-            val lang = languageTagToSupertonicLang(languageTag)
-            val genConfig = GenerationConfig(
-                    sid = sid,
-                    speed = clampedSpeed,
-                    extra = mapOf("lang" to lang),
-            )
-            val audio = tts.generateWithConfig(text = text, config = genConfig)
-            val saved = audio.save(outputFile.absolutePath)
-            Bridge.log("TTS generated ${outputFile.absolutePath}: saved=$saved sid=$sid lang=$lang")
-            saved
-        } catch (e: Exception) {
-            Bridge.log("TTS_ERROR: ${e.javaClass.simpleName}: ${e.message}")
-            e.printStackTrace()
-            false
-        } finally {
+        return synchronized(modelLock) {
             try {
-                tts?.release()
+                val tts = getOrCreateModelLocked(modelPath)
+
+                // sid out of range falls back to F1 (sid 0); clamp 0..9.
+                val sid = speakerId.coerceIn(0, tts.numSpeakers() - 1)
+                val clampedSpeed = speed.coerceIn(0.5f, 2.0f)
+                val lang = languageTagToSupertonicLang(languageTag)
+                val genConfig = GenerationConfig(
+                        sid = sid,
+                        speed = clampedSpeed,
+                        numSteps = 5,
+                        extra = mapOf("lang" to lang),
+                )
+                val audio = tts.generateWithConfig(text = text, config = genConfig)
+                val saved = audio.save(outputFile.absolutePath)
+                Bridge.log("TTS generated ${outputFile.absolutePath}: saved=$saved sid=$sid lang=$lang")
+                saved
             } catch (e: Exception) {
-                Bridge.log("TTS release failed: ${e.message}")
+                Bridge.log("TTS_ERROR: ${e.javaClass.simpleName}: ${e.message}")
+                e.printStackTrace()
+                false
+            } finally {
+                scheduleIdleTeardownLocked()
             }
+        }
+    }
+
+    private fun getOrCreateModelLocked(modelPath: String): OfflineTts {
+        cachedTts?.let { cached ->
+            if (cachedModelPath == modelPath) {
+                Bridge.log("TTS reusing cached model")
+                return cached
+            }
+            releaseCachedModelLocked("model path changed")
+        }
+
+        val modelDir = File(modelPath)
+        val supertonic = OfflineTtsSupertonicModelConfig(
+                durationPredictor = File(modelDir, FILE_DURATION_PREDICTOR).absolutePath,
+                textEncoder = File(modelDir, FILE_TEXT_ENCODER).absolutePath,
+                vectorEstimator = File(modelDir, FILE_VECTOR_ESTIMATOR).absolutePath,
+                vocoder = File(modelDir, FILE_VOCODER).absolutePath,
+                ttsJson = File(modelDir, FILE_TTS_JSON).absolutePath,
+                unicodeIndexer = File(modelDir, FILE_UNICODE_INDEXER).absolutePath,
+                voiceStyle = File(modelDir, FILE_VOICE_STYLE).absolutePath,
+        )
+        val modelConfig = OfflineTtsModelConfig(
+                supertonic = supertonic,
+                numThreads = 8,
+                provider = "cpu",
+        )
+        val config = OfflineTtsConfig(
+                model = modelConfig,
+                maxNumSentences = 1,
+                silenceScale = 0.2f,
+        )
+        return OfflineTts(null, config).also {
+            cachedTts = it
+            cachedModelPath = modelPath
+            Bridge.log("TTS loaded model; keeping it warm for $MODEL_IDLE_TIMEOUT_MINUTES minutes after use")
+        }
+    }
+
+    private fun scheduleIdleTeardownLocked() {
+        if (cachedTts == null) return
+        teardownFuture?.cancel(false)
+        val generation = ++teardownGeneration
+        teardownFuture =
+                teardownExecutor.schedule(
+                        {
+                            synchronized(modelLock) {
+                                if (generation == teardownGeneration) {
+                                    releaseCachedModelLocked("idle for $MODEL_IDLE_TIMEOUT_MINUTES minutes")
+                                }
+                            }
+                        },
+                        MODEL_IDLE_TIMEOUT_MINUTES,
+                        TimeUnit.MINUTES,
+                )
+    }
+
+    private fun releaseCachedModelLocked(reason: String) {
+        teardownFuture?.cancel(false)
+        teardownFuture = null
+        teardownGeneration++
+        val tts = cachedTts
+        cachedTts = null
+        cachedModelPath = null
+        if (tts == null) return
+        try {
+            tts.release()
+            Bridge.log("TTS released cached model: $reason")
+        } catch (e: Exception) {
+            Bridge.log("TTS release failed: ${e.message}")
         }
     }
 

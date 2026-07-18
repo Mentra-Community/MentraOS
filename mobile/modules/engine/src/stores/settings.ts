@@ -292,7 +292,7 @@ export const SETTINGS: Record<string, Setting> = {
   },
   theme_preference: {
     key: "theme_preference",
-    defaultValue: () => (__DEV__ ? "system" : "light"),
+    defaultValue: () => "light",
     // Force light mode - i mode is not complete yet
     // override: () => "light",
     writable: true,
@@ -522,7 +522,7 @@ export const SETTINGS: Record<string, Setting> = {
   },
   camera_fov: {
     key: "camera_fov",
-    defaultValue: () => ({fov: 118, roi_position: 0}),
+    defaultValue: () => ({fov: 102, roi_position: 0}),
     writable: true,
     saveOnServer: true,
     persist: true,
@@ -906,7 +906,15 @@ export const useSettingsStore = create<SettingsState>()(
           }
           // normal key:value pair:
           let value = res.value
-          console.log(`SETTINGS: LOAD: ${setting.key} = ${value.value}`)
+          // res.value IS the stored value; logging value.value printed
+          // "undefined" for every loaded setting and disguised present
+          // values as missing. Redact token- and email-bearing keys: console
+          // logs are uploaded in bug-report artifacts (same keys
+          // diagnosticContext's SENSITIVE_SETTINGS_KEYS strips, minus an
+          // import that would cycle stores <-> utils).
+          const printable =
+            setting.key.includes("token") || setting.key.includes("email") ? "<redacted>" : JSON.stringify(value)
+          console.log(`SETTINGS: LOAD: ${setting.key} = ${printable}`)
           loadedSettings[setting.key] = value
         }
 

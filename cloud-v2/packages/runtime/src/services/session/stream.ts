@@ -18,7 +18,7 @@
 
 import nacl from "tweetnacl";
 import { getRedis } from "../../clients/redis.client";
-import { UDP_LIVENESS_PROBE_PREFIX } from "../../protocol/audio";
+import { UDP_LIVENESS_PROBE_PREFIX } from "@mentra/cloud-protocol/audio";
 
 // === Stream constants ===
 

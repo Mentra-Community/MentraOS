@@ -14,7 +14,7 @@
     "@dr.pogodin/react-native-fs": "^2.37.0",
     "@mentra/bluetooth-sdk": "workspace:*",
     "@mentra/cloud-client": "workspace:*",
-    "@mentra/cloud-runtime": "workspace:*",
+    "@mentra/cloud-protocol": "workspace:*",
     "@mentra/crust": "workspace:*",
     "@mentra/engine": "workspace:*",
     "@mentra/jspolyfill": "workspace:*",

@@ -4,17 +4,23 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.net.wifi.WifiConfiguration;
 import android.net.wifi.WifiManager;
 import android.os.Handler;
 import android.os.Looper;
-import android.provider.Settings;
+import android.os.SystemClock;
 import android.util.Log;
+import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.io.network.core.BaseNetworkManager;
 import com.mentra.asg_client.io.network.utils.WifiSecurityChooser;
 import com.mentra.asg_client.io.network.interfaces.IWifiScanCallback;
 import com.mentra.asg_client.io.network.utils.DebugNotificationManager;
 import com.mentra.asg_client.service.system.core.SystemControllerFactory;
 import java.util.ArrayList;
+import java.net.Inet4Address;
+import java.net.InetAddress;
+import java.net.NetworkInterface;
+import java.util.Enumeration;
 import java.util.List;
 
 /**
@@ -28,32 +34,20 @@ public class K900NetworkManager extends BaseNetworkManager {
     private static final String K900_BROADCAST_ACTION = "com.xy.xsetting.action";
     private static final String K900_SYSTEM_UI_PACKAGE = "com.android.systemui";
 
-    // K900 hotspot constants
-    private static final String K900_HOTSPOT_PREFIX = "XySmart_";
-    private static final String K900_HOTSPOT_PASSWORD = "00001111";
-
     private final WifiManager wifiManager;
     private final DebugNotificationManager notificationManager;
     private BroadcastReceiver wifiStateReceiver;
     private final boolean isSystemApp;
 
-    // Hotspot readiness watch. The ap_start intent returns immediately and the SSID in
-    // Settings.Global persists across sessions, so neither proves the AP is up. The watch
-    // polls the real signals (framework AP state + gateway IP on the AP interface + SSID)
-    // and only then reports the hotspot as enabled — the phone treats that message as
-    // "safe to join", so sending it early causes iOS "Unable to Join" failures.
-    private static final int HOTSPOT_READINESS_POLL_MS = 200;
-    private static final int HOTSPOT_READINESS_TIMEOUT_MS = 12000;
-    private final Handler hotspotReadinessHandler = new Handler(Looper.getMainLooper());
-    private Runnable pendingHotspotReadinessRunnable = null;
-    private long hotspotReadinessStartMs = 0;
-    private long hotspotReadinessDeadlineMs = 0;
-
-    // Watch ticks run on the main looper but stopHotspot can run on a command-processing
-    // thread. The lock + stop flag prevent a mid-flight tick from reporting "enabled"
-    // after the user disabled the AP (removeCallbacks alone can't cancel a running tick).
-    private final Object hotspotWatchLock = new Object();
-    private boolean hotspotStopRequested = false;
+    private final Handler localHotspotHandler = new Handler(Looper.getMainLooper());
+    private final Object localHotspotLock = new Object();
+    private WifiManager.LocalOnlyHotspotReservation localHotspotReservation;
+    private Runnable pendingLocalHotspotReadiness;
+    private boolean localHotspotStarting;
+    private int localHotspotGeneration;
+    private long localHotspotReadinessDeadlineMs;
+    private String pendingLocalHotspotSsid = "";
+    private String pendingLocalHotspotPassword = "";
 
     /**
      * Create a new K900NetworkManager
@@ -115,6 +109,13 @@ public class K900NetworkManager extends BaseNetworkManager {
         }
 
         Log.d(TAG, "🌐 ✅ K900 Network Manager initialization complete");
+    }
+
+    @Override
+    protected boolean shouldMonitorTetheringBroadcasts() {
+        // LocalOnlyHotspot owns its lifecycle through LocalOnlyHotspotCallback. Treating its
+        // interface as a tethered AP can publish static credentials before the LOHS callback.
+        return false;
     }
 
     @Override
@@ -190,274 +191,269 @@ public class K900NetworkManager extends BaseNetworkManager {
     @Override
     public void startHotspot() {
         Log.d(TAG, "🔥 =========================================");
-        Log.d(TAG, "🔥 START K900 HOTSPOT (INTENT MODE)");
+        Log.d(TAG, "🔥 START K900 LOCAL-ONLY HOTSPOT");
         Log.d(TAG, "🔥 =========================================");
 
+        final int generation;
+        synchronized (localHotspotLock) {
+            if (isHotspotEnabled || localHotspotStarting || localHotspotReservation != null) {
+                Log.d(TAG, "🔥 Local-only hotspot is already active or starting");
+                return;
+            }
+            localHotspotStarting = true;
+            generation = ++localHotspotGeneration;
+        }
+
+        requestLocalOnlyHotspot(generation);
+    }
+
+    private void requestLocalOnlyHotspot(int generation) {
+        synchronized (localHotspotLock) {
+            if (generation != localHotspotGeneration || !localHotspotStarting) {
+                Log.d(TAG, "🔥 Ignoring hotspot request from a stale generation");
+                return;
+            }
+        }
+
         try {
-            // IMPORTANT: Hotspot requires WiFi radio to be enabled (even if not connected)
-            // Check and enable WiFi if needed before starting hotspot
+            if (wifiManager == null) {
+                failLocalHotspotStartup(generation, "WifiManager is unavailable");
+                return;
+            }
             if (!wifiManager.isWifiEnabled()) {
-                Log.d(TAG, "🔥 ⚠️ WiFi radio is OFF - enabling WiFi radio for hotspot...");
-                boolean enabled = wifiManager.setWifiEnabled(true);
-                if (enabled) {
-                    Log.d(TAG, "🔥 ✅ WiFi radio enabled successfully");
-                    // Give WiFi a moment to initialize
-                    try {
-                        Thread.sleep(500);
-                    } catch (InterruptedException e) {
-                        Log.w(TAG, "Sleep interrupted while waiting for WiFi radio", e);
-                    }
-                } else {
-                    Log.e(TAG, "🔥 ❌ Failed to enable WiFi radio - hotspot may not start");
+                Log.i(TAG, "🔥 WiFi radio is off; enabling it before LocalOnlyHotspot startup");
+                if (!wifiManager.setWifiEnabled(true)) {
+                    failLocalHotspotStartup(generation, "Failed to enable WiFi for local hotspot");
+                    return;
                 }
-            } else {
-                Log.d(TAG, "🔥 ✅ WiFi radio already enabled");
-            }
-
-            // Send K900 hotspot enable intent
-            Log.d(TAG, "🔥 📡 Sending K900 hotspot enable intent...");
-            Intent intent = new Intent();
-            intent.setAction("com.xy.xsetting.action");
-            intent.setPackage("com.android.systemui");
-            intent.putExtra("cmd", "ap_start");
-            intent.putExtra("enable", true);
-
-            context.sendBroadcast(intent);
-            Log.d(TAG, "🔥 ✅ K900 hotspot enable intent sent");
-
-            // Do NOT report the hotspot as enabled yet — wait until the AP is actually
-            // accepting clients. The watch notifies listeners (and thus the phone) only
-            // once AP state, gateway IP, and SSID are all confirmed.
-            beginHotspotReadinessWatch();
-
-            Log.i(TAG, "🔥 ✅ K900 hotspot start initiated (awaiting readiness)");
-        } catch (Exception e) {
-            Log.e(TAG, "🔥 💥 Error starting K900 hotspot", e);
-            clearHotspotState();
-            notificationManager.showDebugNotification(
-                    "Hotspot Error", "Failed to start: " + e.getMessage());
-        }
-    }
-
-    /**
-     * Starts (or restarts nothing if already running) the hotspot readiness watch. The watch
-     * polls until the framework reports the AP enabled, the AP interface holds the gateway IP,
-     * and the SSID is readable — only then are listeners told the hotspot is enabled. Measured
-     * on-device, readiness lands ~0.4-1.0s after the ap_start intent; the timeout is a
-     * generous multiple of that.
-     */
-    private void beginHotspotReadinessWatch() {
-        synchronized (hotspotWatchLock) {
-            hotspotStopRequested = false;
-            if (pendingHotspotReadinessRunnable != null) {
-                Log.d(TAG, "🔥 ⏳ Hotspot readiness watch already running");
+                localHotspotHandler.postDelayed(
+                        () -> {
+                            if (!wifiManager.isWifiEnabled()) {
+                                failLocalHotspotStartup(
+                                        generation, "WiFi did not become ready for local hotspot");
+                                return;
+                            }
+                            requestLocalOnlyHotspot(generation);
+                        },
+                        AsgConstants.LOCAL_HOTSPOT_WIFI_ENABLE_DELAY_MS);
                 return;
             }
-            hotspotReadinessStartMs = System.currentTimeMillis();
-            hotspotReadinessDeadlineMs = hotspotReadinessStartMs + HOTSPOT_READINESS_TIMEOUT_MS;
+            wifiManager.startLocalOnlyHotspot(
+                    new WifiManager.LocalOnlyHotspotCallback() {
+                        @Override
+                        public void onStarted(
+                                WifiManager.LocalOnlyHotspotReservation reservation) {
+                            handleLocalHotspotStarted(generation, reservation);
+                        }
+
+                        @Override
+                        public void onStopped() {
+                            handleLocalHotspotStopped(generation);
+                        }
+
+                        @Override
+                        public void onFailed(int reason) {
+                            failLocalHotspotStartup(
+                                    generation,
+                                    "Local-only hotspot failed with reason " + reason);
+                        }
+                    },
+                    localHotspotHandler);
+            Log.i(TAG, "🔥 Local-only hotspot start requested");
+        } catch (Exception e) {
+            Log.e(TAG, "🔥 Error requesting local-only hotspot", e);
+            failLocalHotspotStartup(generation, "Failed to start: " + e.getMessage());
         }
-        Log.d(TAG, "🔥 ⏳ Watching for hotspot readiness (AP state + gateway IP + SSID)...");
-        checkHotspotReadiness();
     }
 
-    /** One tick of the readiness watch; reschedules itself until ready, timeout, or cancel. */
-    private void checkHotspotReadiness() {
-        synchronized (hotspotWatchLock) {
-            pendingHotspotReadinessRunnable = null;
-            if (hotspotStopRequested) {
-                Log.d(TAG, "🔥 ⛔ Hotspot stopped - abandoning readiness check");
+    private void handleLocalHotspotStarted(
+            int generation, WifiManager.LocalOnlyHotspotReservation reservation) {
+        synchronized (localHotspotLock) {
+            if (generation != localHotspotGeneration || !localHotspotStarting) {
+                Log.d(TAG, "🔥 Closing hotspot that completed after a stop request");
+                reservation.close();
                 return;
             }
-            checkHotspotReadinessLocked();
+            localHotspotStarting = false;
+            localHotspotReservation = reservation;
         }
-    }
 
-    private void checkHotspotReadinessLocked() {
-        // Gate on the direct signal: the tethering state machine assigns the gateway IP to
-        // the AP interface only after hostapd reports AP-ENABLED, so gatewayUp implies the
-        // AP accepts clients. The framework AP state (reflection, hidden API) is logged as
-        // corroboration but not required — it is unavailable to non-system dev builds.
-        boolean apEnabled = isWifiTetheringActive();
-        boolean gatewayUp = hasHotspotGatewayIp();
-        String ssid = null;
-        try {
-            ssid = Settings.Global.getString(context.getContentResolver(), "xy_ssid");
-        } catch (Exception e) {
-            Log.w(TAG, "🔥 ⚠️ Error reading xy_ssid during readiness check", e);
-        }
-        boolean ssidReady = ssid != null && !ssid.isEmpty();
-
-        if (gatewayUp && ssidReady) {
-            long elapsedMs = System.currentTimeMillis() - hotspotReadinessStartMs;
-            Log.i(
-                    TAG,
-                    "🔥 ✅ K900 hotspot READY after "
-                            + elapsedMs
-                            + "ms (apEnabled="
-                            + apEnabled
-                            + "): "
-                            + ssid);
-
-            updateHotspotState(true, ssid, K900_HOTSPOT_PASSWORD);
-            notifyHotspotStateChanged(true);
-
-            notificationManager.showHotspotStateNotification(true);
-            notificationManager.showDebugNotification(
-                    "K900 Hotspot Active", ssid + " | " + K900_HOTSPOT_PASSWORD);
+        WifiConfiguration configuration = reservation.getWifiConfiguration();
+        String ssid = configuration != null ? unquote(configuration.SSID) : "";
+        String password = configuration != null ? unquote(configuration.preSharedKey) : "";
+        if (ssid.isEmpty() || password.isEmpty()) {
+            failLocalHotspotStartup(
+                    generation, "Local-only hotspot returned invalid credentials");
             return;
         }
 
-        if (System.currentTimeMillis() >= hotspotReadinessDeadlineMs) {
-            failHotspotStartup(
-                    "Hotspot did not become ready within "
-                            + HOTSPOT_READINESS_TIMEOUT_MS
-                            + "ms (apEnabled="
-                            + apEnabled
-                            + ", gatewayUp="
-                            + gatewayUp
-                            + ", ssidReady="
-                            + ssidReady
-                            + ")");
-            return;
+        synchronized (localHotspotLock) {
+            pendingLocalHotspotSsid = ssid;
+            pendingLocalHotspotPassword = password;
+            localHotspotReadinessDeadlineMs =
+                    SystemClock.elapsedRealtime()
+                            + AsgConstants.LOCAL_HOTSPOT_READINESS_TIMEOUT_MS;
         }
-
-        Log.d(
-                TAG,
-                "🔥 ⏳ Hotspot not ready yet (apEnabled="
-                        + apEnabled
-                        + ", gatewayUp="
-                        + gatewayUp
-                        + ", ssidReady="
-                        + ssidReady
-                        + "), rechecking in "
-                        + HOTSPOT_READINESS_POLL_MS
-                        + "ms");
-        pendingHotspotReadinessRunnable = this::checkHotspotReadiness;
-        hotspotReadinessHandler.postDelayed(
-                pendingHotspotReadinessRunnable, HOTSPOT_READINESS_POLL_MS);
+        checkLocalHotspotReadiness(generation);
     }
 
-    /** True when any up interface holds the hotspot gateway IP (192.168.43.1). */
-    private boolean hasHotspotGatewayIp() {
+    private void checkLocalHotspotReadiness(int generation) {
+        String gatewayIp = findLocalHotspotGatewayIp();
+        synchronized (localHotspotLock) {
+            pendingLocalHotspotReadiness = null;
+            if (generation != localHotspotGeneration || localHotspotReservation == null) {
+                return;
+            }
+            if (!gatewayIp.isEmpty()) {
+                onHotspotStarted(
+                        pendingLocalHotspotSsid, pendingLocalHotspotPassword, gatewayIp);
+                notificationManager.showHotspotStateNotification(true);
+                notificationManager.showDebugNotification(
+                        "Mentra Live Hotspot Active", pendingLocalHotspotSsid);
+                Log.i(
+                        TAG,
+                        "🔥 Local-only hotspot ready: "
+                                + pendingLocalHotspotSsid
+                                + " gateway="
+                                + gatewayIp);
+                return;
+            }
+            if (SystemClock.elapsedRealtime() >= localHotspotReadinessDeadlineMs) {
+                failLocalHotspotStartup(
+                        generation, "Local-only hotspot gateway did not become ready");
+                return;
+            }
+            pendingLocalHotspotReadiness = () -> checkLocalHotspotReadiness(generation);
+            localHotspotHandler.postDelayed(
+                    pendingLocalHotspotReadiness,
+                    AsgConstants.LOCAL_HOTSPOT_READINESS_POLL_MS);
+        }
+    }
+
+    private String findLocalHotspotGatewayIp() {
         try {
-            String gatewayIp = getHotspotGatewayIp();
-            java.util.Enumeration<java.net.NetworkInterface> ifaces =
-                    java.net.NetworkInterface.getNetworkInterfaces();
-            while (ifaces != null && ifaces.hasMoreElements()) {
-                java.net.NetworkInterface iface = ifaces.nextElement();
-                if (!iface.isUp()) {
+            NetworkInterface interfaceInfo = NetworkInterface.getByName("ap0");
+            String gatewayIp = findLocalHotspotGatewayIp(interfaceInfo, true);
+            if (!gatewayIp.isEmpty()) {
+                return gatewayIp;
+            }
+
+            Enumeration<NetworkInterface> interfaces = NetworkInterface.getNetworkInterfaces();
+            while (interfaces != null && interfaces.hasMoreElements()) {
+                NetworkInterface candidate = interfaces.nextElement();
+                if ("ap0".equals(candidate.getName())) {
                     continue;
                 }
-                java.util.Enumeration<java.net.InetAddress> addrs = iface.getInetAddresses();
-                while (addrs.hasMoreElements()) {
-                    if (gatewayIp.equals(addrs.nextElement().getHostAddress())) {
-                        return true;
-                    }
+                gatewayIp = findLocalHotspotGatewayIp(candidate, false);
+                if (!gatewayIp.isEmpty()) {
+                    Log.i(TAG, "🔥 Local hotspot gateway found on " + candidate.getName());
+                    return gatewayIp;
                 }
             }
         } catch (Exception e) {
-            Log.w(TAG, "🔥 ⚠️ Error checking hotspot gateway interface", e);
+            Log.w(TAG, "🔥 Error reading local hotspot gateway", e);
         }
-        return false;
+        return "";
     }
 
-    /** Cleans up a hotspot start that never became ready: disable AP, clear state, notify. */
-    private void failHotspotStartup(String errorMessage) {
-        Log.e(TAG, "🔥 ❌ " + errorMessage + " - disabling hotspot");
-
-        // This is a stop: the disable intent below produces its own teardown echo on the
-        // tethering broadcast, which must not restart the watch off lingering ssid/gateway.
-        // Runs under hotspotWatchLock (called from the watch tick).
-        hotspotStopRequested = true;
-
-        try {
-            Intent disableIntent = new Intent();
-            disableIntent.setAction("com.xy.xsetting.action");
-            disableIntent.setPackage("com.android.systemui");
-            disableIntent.putExtra("cmd", "ap_start");
-            disableIntent.putExtra("enable", false);
-            context.sendBroadcast(disableIntent);
-            Log.d(TAG, "🔥 📡 Sent disable intent to clean up failed hotspot");
-        } catch (Exception ex) {
-            Log.e(TAG, "🔥 💥 Error sending disable intent", ex);
+    private String findLocalHotspotGatewayIp(
+            NetworkInterface interfaceInfo, boolean knownHotspotInterface) throws Exception {
+        if (interfaceInfo == null || !interfaceInfo.isUp()) {
+            return "";
         }
+        Enumeration<InetAddress> addrs = interfaceInfo.getInetAddresses();
+        while (addrs.hasMoreElements()) {
+            InetAddress address = addrs.nextElement();
+            if (address instanceof Inet4Address
+                    && !address.isLoopbackAddress()
+                    && (knownHotspotInterface
+                            || isLocalHotspotAddress(
+                                    interfaceInfo.getName(), address.getHostAddress()))) {
+                return address.getHostAddress();
+            }
+        }
+        return "";
+    }
 
-        clearHotspotState();
-        notifyHotspotStateChanged(false);
+    static boolean isLocalHotspotAddress(String interfaceName, String address) {
+        // Never mistake wlan0's station address for the hotspot. Alternate AP interface names
+        // remain eligible, as does the gateway address used by current K900 firmware.
+        return (interfaceName != null && interfaceName.startsWith("ap"))
+                || AsgConstants.DEFAULT_HOTSPOT_GATEWAY_IP.equals(address);
+    }
+
+    private void failLocalHotspotStartup(int generation, String errorMessage) {
+        Log.e(TAG, "🔥 " + errorMessage);
+        WifiManager.LocalOnlyHotspotReservation reservation;
+        synchronized (localHotspotLock) {
+            if (generation != localHotspotGeneration) {
+                Log.d(TAG, "🔥 Ignoring failure from a stale hotspot generation");
+                return;
+            }
+            localHotspotStarting = false;
+            cancelLocalHotspotReadinessLocked();
+            reservation = localHotspotReservation;
+            localHotspotReservation = null;
+        }
+        if (reservation != null) {
+            reservation.close();
+        }
+        onHotspotStopped();
         notifyHotspotError(errorMessage);
         notificationManager.showDebugNotification("Hotspot Failed", errorMessage);
     }
 
-    @Override
-    protected void refreshHotspotCredentials() {
-        // Called from the tethering-state broadcast when the framework starts bringing the
-        // AP up (including hotspots enabled outside asg_client). That broadcast can precede
-        // the AP interface holding its gateway IP, so route through the readiness watch —
-        // listeners only hear "enabled" once clients can actually join.
-        synchronized (hotspotWatchLock) {
-            if (hotspotStopRequested) {
-                // Teardown echo: after a deliberate stop the framework AP can still look
-                // active for a beat, and this broadcast fires while xy_ssid and the gateway
-                // IP may linger. Restarting the watch here would clear the stop flag and
-                // re-announce "enabled" right after the user disabled the AP. Only a real
-                // startHotspot() re-arms the watch.
-                Log.d(TAG, "🔥 ⛔ Ignoring tethering-active echo after hotspot stop");
+    private void handleLocalHotspotStopped(int generation) {
+        synchronized (localHotspotLock) {
+            if (generation != localHotspotGeneration) {
+                Log.d(TAG, "🔥 Ignoring stop callback from a stale hotspot generation");
                 return;
             }
+            localHotspotStarting = false;
+            localHotspotReservation = null;
+            cancelLocalHotspotReadinessLocked();
         }
-        beginHotspotReadinessWatch();
+        onHotspotStopped();
+        notificationManager.showHotspotStateNotification(false);
+        Log.i(TAG, "🔥 Local-only hotspot stopped");
     }
 
-    /**
-     * Cancels any pending hotspot readiness checks. Called when the hotspot is stopped to
-     * prevent stale callbacks from firing.
-     */
-    private void cancelHotspotReadinessWatch() {
-        if (pendingHotspotReadinessRunnable != null) {
-            Log.d(TAG, "🔥 ⛔ Cancelling hotspot readiness watch");
-            hotspotReadinessHandler.removeCallbacks(pendingHotspotReadinessRunnable);
-            pendingHotspotReadinessRunnable = null;
+    private void cancelLocalHotspotReadinessLocked() {
+        if (pendingLocalHotspotReadiness != null) {
+            localHotspotHandler.removeCallbacks(pendingLocalHotspotReadiness);
+            pendingLocalHotspotReadiness = null;
         }
+    }
+
+    private String unquote(String value) {
+        if (value == null) {
+            return "";
+        }
+        if (value.length() >= 2 && value.startsWith("\"") && value.endsWith("\"")) {
+            return value.substring(1, value.length() - 1);
+        }
+        return value;
     }
 
     @Override
     public void stopHotspot() {
         Log.d(TAG, "🔥 =========================================");
-        Log.d(TAG, "🔥 STOP K900 HOTSPOT (INTENT MODE)");
+        Log.d(TAG, "🔥 STOP K900 LOCAL-ONLY HOTSPOT");
         Log.d(TAG, "🔥 =========================================");
 
-        try {
-            // Send K900 hotspot disable intent
-            Log.d(TAG, "🔥 📡 Sending K900 hotspot disable intent...");
-            Intent intent = new Intent();
-            intent.setAction("com.xy.xsetting.action");
-            intent.setPackage("com.android.systemui");
-            intent.putExtra("cmd", "ap_start");
-            intent.putExtra("enable", false);
-
-            context.sendBroadcast(intent);
-
-            // Clear hotspot state immediately
-            clearHotspotState();
-
-            // Cancel any pending readiness checks. The flag also stops a tick that is
-            // already executing on the main looper from reporting a late "enabled".
-            synchronized (hotspotWatchLock) {
-                hotspotStopRequested = true;
-                cancelHotspotReadinessWatch();
-            }
-
-            Log.d(TAG, "🔥 ✅ K900 hotspot disable intent sent");
-            notificationManager.showHotspotStateNotification(false);
-            notifyHotspotStateChanged(false);
-
-            Log.i(TAG, "🔥 ✅ K900 hotspot disabled");
-        } catch (Exception e) {
-            Log.e(TAG, "🔥 💥 Error stopping K900 hotspot", e);
-            clearHotspotState();
-            notificationManager.showDebugNotification(
-                    "Hotspot Error", "Failed to stop: " + e.getMessage());
+        WifiManager.LocalOnlyHotspotReservation reservation;
+        synchronized (localHotspotLock) {
+            localHotspotStarting = false;
+            localHotspotGeneration++;
+            cancelLocalHotspotReadinessLocked();
+            reservation = localHotspotReservation;
+            localHotspotReservation = null;
         }
+        if (reservation != null) {
+            reservation.close();
+        }
+        onHotspotStopped();
+        notificationManager.showHotspotStateNotification(false);
     }
 
     @Override
@@ -698,11 +694,6 @@ public class K900NetworkManager extends BaseNetworkManager {
                     notificationManager.showWifiStateNotification(isConnected);
                     notifyWifiStateChanged(isConnected);
                     break;
-                case "hotspot_state":
-                    boolean isEnabled = intent.getBooleanExtra("enabled", false);
-                    notificationManager.showHotspotStateNotification(isEnabled);
-                    notifyHotspotStateChanged(isEnabled);
-                    break;
             }
         }
     }
@@ -773,6 +764,7 @@ public class K900NetworkManager extends BaseNetworkManager {
     @Override
     public void shutdown() {
         Log.d(TAG, "Shutting down K900NetworkManager");
+        stopHotspot();
         unregisterWifiStateReceiver();
         super.shutdown();
     }

@@ -28,15 +28,21 @@
     },
     "../cloud-v2/packages/cloud-client": {
       "name": "@mentra/cloud-client",
-      "version": "0.0.0",
+      "version": "0.1.0-dev.0",
       "dependencies": {
-        "@mentra/cloud-runtime": "workspace:*",
+        "@mentra/cloud-protocol": "^0.1.0-dev.0",
         "tweetnacl": "^1.0.3",
       },
       "devDependencies": {
         "@types/ws": "^8.5.12",
         "ws": "^8.18.0",
       },
+      "peerDependencies": {
+        "ws": "^8.18.0",
+      },
+      "optionalPeers": [
+        "ws",
+      ],
     },
     "../cloud-v2/packages/core": {
       "name": "@mentra/cloud-core",
@@ -51,6 +57,13 @@
         "zod": "^3.24.1",
       },
     },
+    "../cloud-v2/packages/protocol": {
+      "name": "@mentra/cloud-protocol",
+      "version": "0.1.0-dev.0",
+      "dependencies": {
+        "zod": "^3.24.1",
+      },
+    },
     "../cloud-v2/packages/proxy": {
       "name": "@mentra/cloud-proxy",
       "version": "0.0.0",
@@ -62,6 +75,7 @@
       "name": "@mentra/cloud-runtime",
       "version": "0.0.0",
       "dependencies": {
+        "@mentra/cloud-protocol": "^0.1.0-dev.0",
         "@mentra/cloud-shared": "workspace:*",
         "@soniox/node": "^2.1.0",
         "hono": "^4.11.1",
@@ -249,7 +263,7 @@
     },
     "../mobile/modules/bluetooth-sdk": {
       "name": "@mentra/bluetooth-sdk",
-      "version": "0.1.19",
+      "version": "0.1.20",
       "devDependencies": {
         "@types/node": "^25.9.3",
         "expo-module-scripts": "^55.0.2",
@@ -265,9 +279,9 @@
     },
     "../mobile/modules/crust": {
       "name": "@mentra/crust",
-      "version": "0.1.0",
+      "version": "0.1.0-dev.0",
       "dependencies": {
-        "@mentra/jspolyfill": "workspace:*",
+        "@mentra/jspolyfill": "^0.1.0-dev.0",
       },
       "devDependencies": {
         "@expo/config-plugins": ">=8.0.0",
@@ -283,18 +297,19 @@
     },
     "../mobile/modules/engine": {
       "name": "@mentra/engine",
-      "version": "0.1.0",
+      "version": "0.1.0-dev.0",
       "dependencies": {
-        "@types/semver": "^7.7.1",
         "buffer": "^6.0.3",
         "events": "^3.3.0",
+        "semver": "^7.7.4",
         "typesafe-ts": "^1.7.1",
       },
       "devDependencies": {
         "@mentra/bluetooth-sdk": "workspace:*",
         "@mentra/cloud-client": "workspace:*",
-        "@mentra/cloud-runtime": "workspace:*",
+        "@mentra/cloud-protocol": "workspace:*",
         "@mentra/miniapp": "workspace:*",
+        "@types/semver": "^7.7.1",
         "expo-module-scripts": "^55.0.2",
         "expo-modules-core": "55.0.25",
         "react-native-nitro-modules": "^0.31.10",
@@ -304,16 +319,17 @@
         "@craftzdog/react-native-buffer": "*",
         "@dr.pogodin/react-native-fs": "*",
         "@mentra/bluetooth-sdk": "*",
-        "@mentra/cloud-client": "*",
-        "@mentra/cloud-runtime": "*",
-        "@mentra/crust": "*",
-        "@mentra/miniapp": "*",
+        "@mentra/cloud-client": "^0.1.0-dev.0",
+        "@mentra/cloud-protocol": "^0.1.0-dev.0",
+        "@mentra/crust": "^0.1.0-dev.0",
+        "@mentra/miniapp": "^0.3.0-dev.0",
         "@react-native-community/netinfo": "*",
         "@types/react": "*",
         "axios": "*",
         "expo": "*",
         "expo-audio": "*",
         "expo-battery": "*",
+        "expo-calendar": "*",
         "expo-clipboard": "*",
         "expo-constants": "*",
         "expo-file-system": "*",
@@ -334,13 +350,12 @@
         "react-native-udp": "*",
         "react-native-wifi-reborn": "*",
         "react-native-zip-archive": "*",
-        "semver": "*",
         "zustand": "*",
       },
     },
     "../mobile/modules/jspolyfill": {
       "name": "@mentra/jspolyfill",
-      "version": "0.1.0",
+      "version": "0.1.0-dev.0",
       "devDependencies": {
         "esbuild": "^0.23.0",
       },
@@ -385,7 +400,7 @@
         "@dr.pogodin/react-native-fs": "^2.37.0",
         "@mentra/bluetooth-sdk": "workspace:*",
         "@mentra/cloud-client": "workspace:*",
-        "@mentra/cloud-runtime": "workspace:*",
+        "@mentra/cloud-protocol": "workspace:*",
         "@mentra/crust": "workspace:*",
         "@mentra/engine": "workspace:*",
         "@mentra/jspolyfill": "workspace:*",
@@ -915,6 +930,8 @@
     "@mentra/cloud-client": ["@mentra/cloud-client@workspace:../cloud-v2/packages/cloud-client"],
 
     "@mentra/cloud-core": ["@mentra/cloud-core@workspace:../cloud-v2/packages/core"],
+
+    "@mentra/cloud-protocol": ["@mentra/cloud-protocol@workspace:../cloud-v2/packages/protocol"],
 
     "@mentra/cloud-proxy": ["@mentra/cloud-proxy@workspace:../cloud-v2/packages/proxy"],
 
@@ -1827,6 +1844,8 @@
     "expo-battery": ["expo-battery@55.0.14", "", { "peerDependencies": { "expo": "*", "react": "*" } }, "sha512-hw2LkrUhu2tYHubFD+T30WvNm4scFTne/stun6VkppsNa/0zIVpM+Rfi9j0V+eT2NfksFEGUKbYJjNkgXhmBZg=="],
 
     "expo-build-properties": ["expo-build-properties@55.0.15", "", { "dependencies": { "@expo/schema-utils": "^55.0.4", "resolve-from": "^5.0.0", "semver": "^7.6.0" }, "peerDependencies": { "expo": "*" } }, "sha512-mLCtpn/nBEg4lm7tQUhh/yT5l+8gqwHU/ONqs/zbeeqnNbvryjTuGE0krluueB7Tol4/epfgjiKL4hVEW2VAvA=="],
+
+    "expo-calendar": ["expo-calendar@57.0.1", "", { "peerDependencies": { "expo": "*", "react-native": "*" } }, "sha512-f07ZrBRfZ+J1r+b0pHlo8Qbg4o3E97q4nx7Ce/aW6XQNKgBEpV1oJS1zGnxtWVBFnSO49hb92+fZGrieYj1Yzg=="],
 
     "expo-clipboard": ["expo-clipboard@55.0.14", "", { "peerDependencies": { "expo": "*", "react": "*", "react-native": "*" } }, "sha512-PU0jIOV31nH1gr7yXWTP3PxAaTRraFYAglTGc+LAD54Kxtq/F6NDeNdrND6djqjsePXjnAaIV378b/O2LPTOXw=="],
 

@@ -18,7 +18,7 @@ import type {
   PlaceAutocompleteResult,
   PlaceDetailsResult,
   ReverseGeocodeResult,
-} from "@mentra/cloud-runtime/protocol";
+} from "@mentra/cloud-protocol";
 
 export type {
   DirectionsRequest,
@@ -33,7 +33,7 @@ export type {
   PlaceSuggestion,
   PlaceAutocompleteResult,
   PlaceDetailsResult,
-} from "@mentra/cloud-runtime/protocol";
+} from "@mentra/cloud-protocol";
 
 const DIRECTIONS_PATH = "/api/maps/directions";
 const REVERSE_GEOCODE_PATH = "/api/maps/reverse-geocode";

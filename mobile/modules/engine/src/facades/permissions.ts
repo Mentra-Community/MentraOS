@@ -17,6 +17,7 @@ export const PermissionFeatures = {
   CAMERA: "camera",
   CALENDAR: "calendar",
   LOCATION: "location",
+  LOCAL_WIFI: "local_wifi",
   BACKGROUND_LOCATION: "background_location",
   BLUETOOTH: "bluetooth",
   PHONE_STATE: "phone_state",
@@ -26,6 +27,13 @@ export const PermissionFeatures = {
 const ANDROID = PermissionsAndroid.PERMISSIONS
 const apiLevel = typeof Platform.Version === "number" ? Platform.Version : parseInt(String(Platform.Version), 10)
 const requiresSeparateAndroidBackgroundLocation = apiLevel >= 29
+
+export function localWifiPermissionForAndroid(
+  androidApiLevel: number,
+  androidPermissions: typeof PermissionsAndroid.PERMISSIONS = ANDROID,
+): AndroidPermission {
+  return androidApiLevel >= 33 ? androidPermissions.NEARBY_WIFI_DEVICES : androidPermissions.ACCESS_FINE_LOCATION
+}
 
 async function areAndroidPermissionsGranted(perms: AndroidPermission[]): Promise<boolean> {
   for (const p of perms) {
@@ -66,6 +74,8 @@ function iosPerms(feature: string): Permission[] {
       return [PERMISSIONS.IOS.CALENDARS]
     case PermissionFeatures.LOCATION:
       return [PERMISSIONS.IOS.LOCATION_WHEN_IN_USE]
+    case PermissionFeatures.LOCAL_WIFI:
+      return []
     case PermissionFeatures.BACKGROUND_LOCATION:
       // iOS won't grant ALWAYS without WHEN_IN_USE first — request both (matches
       // the host PermissionsUtils mapping), else a cold request can't escalate.
@@ -84,10 +94,14 @@ function androidPerms(feature: string): AndroidPermission[] {
     case PermissionFeatures.CAMERA:
       return [ANDROID.CAMERA]
     case PermissionFeatures.CALENDAR:
+      // Expo Calendar requires both grants on Android, including for read APIs.
+      // The miniapp-facing calendar API remains read-only.
       return [ANDROID.READ_CALENDAR, ANDROID.WRITE_CALENDAR]
     case PermissionFeatures.LOCATION:
     case PermissionFeatures.BACKGROUND_LOCATION:
       return [ANDROID.ACCESS_FINE_LOCATION]
+    case PermissionFeatures.LOCAL_WIFI:
+      return [localWifiPermissionForAndroid(apiLevel)]
     case PermissionFeatures.PHONE_STATE:
       return [ANDROID.READ_PHONE_STATE]
     case PermissionFeatures.BLUETOOTH:

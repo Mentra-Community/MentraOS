@@ -8,18 +8,20 @@ import {CameraModule, type CameraFovResult, type PhotoTaken} from "./camera"
 
 function mockSession<T>(result: T) {
   const requestCalls: object[] = []
+  const requestOptions: (object | undefined)[] = []
   const session = {
     _hasManifestPermission: () => true,
     sendOneShot: () => {
       throw new Error("setFov should use sendRequest")
     },
-    sendRequest: (payload: object) => {
+    sendRequest: (payload: object, options?: object) => {
       requestCalls.push(payload)
+      requestOptions.push(options)
       return Promise.resolve(result)
     },
   } as unknown as MiniappSession
 
-  return {session, requestCalls}
+  return {session, requestCalls, requestOptions}
 }
 
 describe("CameraModule", () => {
@@ -76,6 +78,24 @@ describe("CameraModule", () => {
     expect(requestCalls[0]).toMatchObject({mode: "text"})
   })
 
+  test("takePhoto forwards timeoutMs as the sendRequest options argument", async () => {
+    const {session, requestOptions} = mockSession({})
+    const camera = new CameraModule(session)
+
+    await camera.takePhoto({timeoutMs: 1_200})
+
+    expect(requestOptions).toEqual([{timeoutMs: 1_200}])
+  })
+
+  test("takePhoto omits the options argument when timeoutMs is unset", async () => {
+    const {session, requestOptions} = mockSession({})
+    const camera = new CameraModule(session)
+
+    await camera.takePhoto({})
+
+    expect(requestOptions).toEqual([undefined])
+  })
+
   test("warmUp forwards size and default duration", async () => {
     const {session, requestCalls} = mockSession(undefined)
     const camera = new CameraModule(session)
@@ -86,9 +106,19 @@ describe("CameraModule", () => {
       {
         type: MiniappRequestType.CAMERA_WARM_UP,
         size: "high",
+        mode: "photo",
         exposureTimeNs: undefined,
         durationMs: 20_000,
       },
     ])
+  })
+
+  test("warmUp passes text mode without forcing public max quality", async () => {
+    const {session, requestCalls} = mockSession(undefined)
+    const camera = new CameraModule(session)
+
+    await camera.warmUp({size: "low", mode: "text"})
+
+    expect(requestCalls[0]).toMatchObject({size: "low", mode: "text"})
   })
 })

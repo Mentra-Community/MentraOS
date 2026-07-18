@@ -1276,10 +1276,10 @@ struct ViewState {
         sgc?.sendStreamKeepAlive(message)
     }
 
-    func requestWifiScan() {
+    func requestWifiScan(scanId: String? = nil) {
         Bridge.log("MAN: Requesting wifi scan")
         DeviceStore.shared.apply("bluetooth", "wifiScanResults", [])
-        sgc?.requestWifiScan()
+        sgc?.requestWifiScan(scanId: scanId)
     }
 
     func sendIncidentId(_ incidentId: String, apiBaseUrl: String? = nil) {
@@ -1359,6 +1359,26 @@ struct ViewState {
         try liveSgc().sendCameraFovSetting(requestId: requestId, fov: fov, roiPosition: roiPosition)
     }
 
+    func sendCameraFovOverride(
+        requestId: String,
+        leaseId: String,
+        fov: Int,
+        roiPosition: Int,
+        ttlMs: Int
+    ) throws {
+        try liveSgc().sendCameraFovOverride(
+            requestId: requestId,
+            leaseId: leaseId,
+            fov: fov,
+            roiPosition: roiPosition,
+            ttlMs: ttlMs
+        )
+    }
+
+    func releaseCameraFovOverride(requestId: String, leaseId: String) throws {
+        try liveSgc().releaseCameraFovOverride(requestId: requestId, leaseId: leaseId)
+    }
+
     func sendCameraTuningConfig(requestId: String, anrOn: Bool, gainOn: Bool) throws {
         try liveSgc().sendCameraTuningConfig(requestId: requestId, anrOn: anrOn, gainOn: gainOn)
     }
@@ -1366,6 +1386,7 @@ struct ViewState {
     func warmUpCamera(
         requestId: String,
         size: PhotoSize,
+        mode: PhotoMode = .photo,
         exposureTimeNs: Double?,
         durationMs: Int
     ) throws {
@@ -1378,9 +1399,14 @@ struct ViewState {
         live.warmUpCamera(
             requestId: requestId,
             size: size,
+            mode: mode,
             exposureTimeNs: exposureTimeNs,
             durationMs: durationMs
         )
+    }
+
+    func stopCameraWarmUp(requestId: String) throws {
+        try liveSgc().stopCameraWarmUp(requestId: requestId)
     }
 
     /// Request version info from glasses.

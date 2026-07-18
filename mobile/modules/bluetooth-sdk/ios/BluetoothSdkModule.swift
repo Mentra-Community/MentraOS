@@ -77,6 +77,9 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
         }
 
         OnDestroy {
+            Task {
+                await PcmStreamManager.abortAll()
+            }
             Task { @MainActor [weak self] in
                 self?.sdk?.invalidate()
                 self?.sdk = nil
@@ -350,6 +353,28 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             return try await sdk.setCameraFov(CameraFov(fov: value, roiPosition: roiPosition)).values
         }
 
+        AsyncFunction("setCameraFovOverride") { (params: [String: Any]) in
+            guard let leaseId = params["leaseId"] as? String, !leaseId.isEmpty else {
+                throw BluetoothSdkError(code: "invalid_request", message: "leaseId is required")
+            }
+            let value = intValue(params["fov"]) ?? CameraFov.defaultFov
+            let roiPosition = CameraRoiPosition.from(
+                rawValue: intValue(params["roiPosition"]) ?? intValue(params["roi_position"])
+            )
+            let ttlMs = intValue(params["ttlMs"]) ?? 300_000
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            return try await sdk.setCameraFovOverride(
+                leaseId: leaseId,
+                fov: CameraFov(fov: value, roiPosition: roiPosition),
+                ttlMs: ttlMs
+            ).values
+        }
+
+        AsyncFunction("releaseCameraFovOverride") { (leaseId: String) in
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            return try await sdk.releaseCameraFovOverride(leaseId: leaseId).values
+        }
+
         AsyncFunction("setCameraTuningConfig") { (anrOn: Bool, gainOn: Bool) in
             let sdk = await MainActor.run { self.bluetoothSdk() }
             return try await sdk.setCameraTuningConfig(anrOn: anrOn, gainOn: gainOn).values
@@ -374,6 +399,7 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             let requestId = params["requestId"] as? String
             let sizeRaw = params["size"] as? String ?? "medium"
             let size = PhotoSize(normalizedRawValue: sizeRaw)
+            let mode = PhotoMode(normalizedRawValue: params["mode"] as? String)
             let exposureTimeNs: Double?
             switch params["exposureTimeNs"] {
             case let value as Double:
@@ -393,9 +419,15 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             return try await sdk.warmUpCamera(
                 requestId: requestId,
                 size: size,
+                mode: mode,
                 exposureTimeNs: exposureTimeNs,
                 durationMs: durationMs
             ).values
+        }
+
+        AsyncFunction("stopCameraWarmUp") { (requestId: String) in
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            try sdk.stopCameraWarmUp(requestId: requestId)
         }
 
         // MARK: - OTA Commands
@@ -512,6 +544,32 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             await MainActor.run {
                 self.bluetoothSdk().setOwnAppAudioPlaying(playing)
             }
+        }
+
+        // MARK: - Live PCM output stream (miniapp speaker.createStream)
+
+        AsyncFunction("pcmStreamOpen") {
+            (streamId: String, sampleRate: Int, channels: Int, volume: Double) async throws in
+            try PcmStreamManager.open(
+                streamId: streamId,
+                sampleRate: sampleRate,
+                channels: channels,
+                volume: Float(volume)
+            )
+        }
+
+        AsyncFunction("pcmStreamWrite") {
+            (streamId: String, base64: String) async throws -> [String: Int64] in
+            try ["bufferedMs": await PcmStreamManager.write(streamId: streamId, base64: base64)]
+        }
+
+        AsyncFunction("pcmStreamClose") {
+            (streamId: String) async throws -> [String: Int64] in
+            try ["durationMs": await PcmStreamManager.close(streamId: streamId)]
+        }
+
+        AsyncFunction("pcmStreamAbort") { (streamId: String) async in
+            await PcmStreamManager.abort(streamId: streamId)
         }
 
         AsyncFunction("getGlassesMediaVolume") { () async throws -> [String: Any] in

@@ -1,6 +1,12 @@
 import * as RNFS from "@dr.pogodin/react-native-fs"
 import {Buffer} from "@craftzdog/react-native-buffer"
-import {parse} from "exifr/dist/lite.esm.js"
+import {parse} from "exifr/src/bundles/nano.mjs"
+import "exifr/src/dicts/tiff-exif-keys.mjs"
+import "exifr/src/dicts/tiff-exif-values.mjs"
+import "exifr/src/dicts/tiff-gps-keys.mjs"
+import "exifr/src/dicts/tiff-ifd0-keys.mjs"
+import "exifr/src/dicts/tiff-ifd0-values.mjs"
+import "exifr/src/dicts/tiff-revivers.mjs"
 
 import {PhotoInfo} from "@/types/asg"
 
@@ -8,6 +14,11 @@ export interface LoadedMediaMetadata {
   actualSize?: number
   exif: Record<string, unknown> | null
 }
+
+// JPEG EXIF data lives in APP1 segments, whose payload is limited to 64 KiB.
+// Leave room for other leading JPEG segments without copying the entire image
+// into a base64 string and then into a second binary buffer.
+const MAX_METADATA_READ_BYTES = 512 * 1024
 
 function getLocalFilePath(photo: PhotoInfo): string | null {
   const uri = photo.filePath || photo.download || photo.url
@@ -34,7 +45,11 @@ export async function loadMediaMetadata(photo: PhotoInfo): Promise<LoadedMediaMe
   if (photo.is_video || photo.mime_type?.startsWith("video/")) return {actualSize, exif: null}
 
   try {
-    const base64 = await RNFS.readFile(path, "base64")
+    const bytesToRead = Math.min(
+      actualSize && actualSize > 0 ? actualSize : MAX_METADATA_READ_BYTES,
+      MAX_METADATA_READ_BYTES,
+    )
+    const base64 = await RNFS.read(path, bytesToRead, 0, "base64")
     const exif = await parse(Buffer.from(base64, "base64"))
     return {actualSize, exif: exif && typeof exif === "object" ? (exif as Record<string, unknown>) : null}
   } catch (error) {

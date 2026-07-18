@@ -23,7 +23,7 @@ import type {
   RouteStep,
   RouteAvoidances,
   TravelMode,
-} from "../../../protocol/maps";
+} from "@mentra/cloud-protocol/maps";
 import type { MapsProvider } from "./provider";
 
 const logger = createLogger("maps").child({ service: "mapbox.maps.provider" });

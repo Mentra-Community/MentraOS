@@ -34,6 +34,11 @@ public final class CameraOperationError {
         return new CameraOperationError(CAMERA_WARM_UP_FAILED, message);
     }
 
+    public static CameraOperationError warmUpCancelled() {
+        return new CameraOperationError(
+                "camera_warm_up_cancelled", "Camera warm-up was cancelled by its owner.");
+    }
+
     public static CameraOperationError cameraBusy() {
         return new CameraOperationError(
                 "camera_busy", "Camera is busy with another operation. Wait and try again.");

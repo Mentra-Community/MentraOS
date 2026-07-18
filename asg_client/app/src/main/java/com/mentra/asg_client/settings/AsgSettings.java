@@ -4,6 +4,7 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.util.Log;
 
+import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.camera.policy.PhotoSizeTier;
 
 import java.util.Arrays;
@@ -35,6 +36,7 @@ public class AsgSettings {
     private static final String KEY_BUTTON_PHOTO_ZSL = "button_photo_zsl";
     private static final String KEY_HDR_BURST_ENABLED = "hdr_burst_enabled";
     private static final String KEY_MCU_FIRMWARE_VERSION = "mcu_firmware_version";
+    private static final String KEY_BES_BAUD_SWITCH_VERSION = "bes_baud_switch_version";
     private static final String KEY_CAMERA_FOV = "camera_fov";
     private static final String KEY_CAMERA_ROI_POSITION = "camera_roi_position";
     private static final String KEY_CAMERA_ANR_ENABLED = "camera_anr_enabled";
@@ -43,8 +45,9 @@ public class AsgSettings {
     /** Supported FOV range for K900 camera, inclusive (118 = No ROI) */
     private static final int MIN_CAMERA_FOV = 62;
     private static final int MAX_CAMERA_FOV = 118;
-    private static final int DEFAULT_CAMERA_FOV = 118; // No ROI
-    private static final int DEFAULT_CAMERA_ROI_POSITION = 0; // ROI_POSITION_CENTER
+    private static final int DEFAULT_CAMERA_FOV = AsgConstants.CAMERA_FOV_DEFAULT;
+    private static final int DEFAULT_CAMERA_ROI_POSITION =
+            AsgConstants.CAMERA_ROI_POSITION_DEFAULT;
 
     private final SharedPreferences prefs;
     private final Context context;
@@ -154,7 +157,7 @@ public class AsgSettings {
     
     /**
      * Get the camera FOV setting (K900). Supported range: 62-118 inclusive (118 = No ROI).
-     * @return FOV in degrees (default 118 = No ROI)
+     * @return FOV in degrees (default 102)
      */
     public int getCameraFov() {
         int fov = prefs.getInt(KEY_CAMERA_FOV, DEFAULT_CAMERA_FOV);
@@ -174,7 +177,7 @@ public class AsgSettings {
 
     /**
      * Set the camera FOV and ROI position (K900). Caller should apply to hardware and restart camera HAL.
-     * @param fov FOV value from 62-118 inclusive (118 = No ROI; otherwise default 118 is used)
+     * @param fov FOV value from 62-118 inclusive (118 = No ROI; otherwise default 102 is used)
      * @param roiPosition 0=center, 1=bottom, 2=top (clamped to [0,2]; ignored by HAL when fov is 118)
      */
     public void setCameraFov(int fov, int roiPosition) {
@@ -517,6 +520,19 @@ public class AsgSettings {
      */
     public void setBesFirmwareVersion(String version) {
         setMcuFirmwareVersion(version);
+    }
+
+    /** Return the exact BES version field last used to evaluate fast-UART capability. */
+    public String getBesBaudSwitchVersion() {
+        return prefs.getString(KEY_BES_BAUD_SWITCH_VERSION, "");
+    }
+
+    /** Persist the exact BES version field used to evaluate fast-UART capability. */
+    public void setBesBaudSwitchVersion(String version) {
+        if (version == null || version.isEmpty()) {
+            return;
+        }
+        prefs.edit().putString(KEY_BES_BAUD_SWITCH_VERSION, version).commit();
     }
 
     /**

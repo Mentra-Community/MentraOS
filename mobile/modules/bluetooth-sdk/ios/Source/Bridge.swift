@@ -400,7 +400,10 @@ class Bridge {
         Bridge.sendTypedMessage("glasses_serial_number", body: body)
     }
 
-    static func sendWifiStatusChange(connected: Bool, ssid: String?, localIp: String?) {
+    /// `error` is the glasses' provisioning failure reason (e.g. "connect_timeout",
+    /// "connected_to_other_network") when this status is the verdict of a failed
+    /// connect attempt; nil for routine link-state updates.
+    static func sendWifiStatusChange(connected: Bool, ssid: String?, localIp: String?, error: String? = nil) {
         guard let status = WifiStatus.fromStoreFields(
             connected: connected,
             ssid: ssid,
@@ -408,27 +411,78 @@ class Bridge {
         ) else {
             return
         }
-        Bridge.sendTypedMessage("wifi_status_change", body: status.values)
+        var body = status.values
+        if let error {
+            body["error"] = error
+        }
+        Bridge.sendTypedMessage("wifi_status_change", body: body)
     }
 
-    static func updateWifiScanResults(_ networks: [[String: Any]], scanComplete: Bool) {
-        Task {
-            await MainActor.run {
-                var storedNetworks: [[String: Any]] =
-                    DeviceStore.shared.get("bluetooth", "wifiScanResults") as? [[String: Any]] ?? []
-                // add the networks to the storedNetworks array, removing duplicates by ssid
-                for network in networks {
-                    if !storedNetworks.contains(where: {
-                        $0["ssid"] as? String == network["ssid"] as? String
-                    }) {
-                        storedNetworks.append(network)
-                    }
+    /// Claim the WiFi scan-results store for a newly requested scan. Called by the
+    /// SDK when it generates the scanId, BEFORE the scan command goes out: store
+    /// ownership is decided at request time, not by whichever chunk arrives first,
+    /// so a delayed chunk from an older, abandoned scan can never reset or clobber
+    /// the current scan's accumulator.
+    @MainActor
+    static func claimWifiScanResults(scanId: String) {
+        DeviceStore.shared.apply("bluetooth", "wifiScanActiveScanId", scanId)
+    }
+
+    static func updateWifiScanResults(
+        _ networks: [[String: Any]],
+        scanComplete: Bool,
+        scanId: String? = nil
+    ) {
+        // Correlated scans accumulate chunks until the terminal scan_complete, so
+        // chunks must reach the SDK in receive order. A Task per message can reach
+        // the MainActor out of creation order; DispatchQueue.main keeps the FIFO
+        // order of the serial bluetooth queue that delivers these.
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated {
+                // Only chunks echoing the active scanId claimed at request time may
+                // mutate the store; foreign chunks are still forwarded to the SDK
+                // sink, which drops stale ids itself. Scan-id-less chunks (old
+                // firmware) keep the legacy accumulate-forever store behavior.
+                let ownsStore: Bool
+                if let scanId {
+                    ownsStore =
+                        scanId == DeviceStore.shared.get("bluetooth", "wifiScanActiveScanId") as? String
+                } else {
+                    ownsStore = true
                 }
-                DeviceStore.shared.apply("bluetooth", "wifiScanResults", storedNetworks)
-                Bridge.sendTypedMessage(
-                    "wifi_scan_result",
-                    body: ["networks": storedNetworks, "scanComplete": scanComplete]
-                )
+                var updatedNetworks: [[String: Any]] = networks
+                if ownsStore {
+                    var storedNetworks: [[String: Any]] =
+                        DeviceStore.shared.get("bluetooth", "wifiScanResults") as? [[String: Any]] ?? []
+                    if let scanId,
+                       scanId != DeviceStore.shared.get("bluetooth", "wifiScanResultsScanId") as? String
+                    {
+                        // First chunk of a new scan: drop networks accumulated for a previous scan
+                        // so stale entries never carry over into this scan's store.
+                        storedNetworks = []
+                        DeviceStore.shared.apply("bluetooth", "wifiScanResultsScanId", scanId)
+                    }
+                    // add the networks to the storedNetworks array, removing duplicates by ssid
+                    for network in networks {
+                        if !storedNetworks.contains(where: {
+                            $0["ssid"] as? String == network["ssid"] as? String
+                        }) {
+                            storedNetworks.append(network)
+                        }
+                    }
+                    DeviceStore.shared.apply("bluetooth", "wifiScanResults", storedNetworks)
+                    updatedNetworks = storedNetworks
+                }
+                // Correlated scans: the SDK accumulates and dedupes chunks per scanId itself,
+                // so forward only this chunk; the merged store list is for UI consumers.
+                var body: [String: Any] = [
+                    "networks": scanId != nil ? networks : updatedNetworks,
+                    "scanComplete": scanComplete,
+                ]
+                if let scanId {
+                    body["scanId"] = scanId
+                }
+                Bridge.sendTypedMessage("wifi_scan_result", body: body)
             }
         }
     }

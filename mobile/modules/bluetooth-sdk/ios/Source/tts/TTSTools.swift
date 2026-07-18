@@ -111,7 +111,7 @@ class TTSTools {
                 voiceStyle: (modelPath as NSString).appendingPathComponent(kFileVoiceStyle)
             )
             var modelConfig = sherpaOnnxOfflineTtsModelConfig(
-                numThreads: 2,
+                numThreads: 8,
                 supertonic: supertonic
             )
             var config = sherpaOnnxOfflineTtsConfig(model: modelConfig, maxNumSentences: 1)

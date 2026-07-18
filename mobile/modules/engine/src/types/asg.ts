@@ -11,6 +11,12 @@ export interface CaptureFile {
   name: string // "IMG_xxx/base.jpg" or "IMG_xxx.jpg" (legacy)
   size: number
   role: "primary" | "bracket" | "sidecar"
+  modified?: number
+  mime_type?: string
+  etag?: string
+  sha256?: string
+  download_url?: string
+  hash_url?: string
 }
 
 export interface CaptureGroup {
@@ -21,6 +27,7 @@ export interface CaptureGroup {
   total_size: number
   files: CaptureFile[]
   thumbnail_data?: string
+  thumbnail_url?: string
   duration?: number // video only
 }
 
