@@ -495,25 +495,26 @@ class MantleManager {
       // Android: Crust's NotificationListenerService reads notifications.
       this.subs.push((CrustModule.addListener as any)("phone_notification", forwardPhoneNotification))
 
-      // iOS: the phone can't read other apps' notifications, but connected
-      // glasses can (ANCS) — the G2 SGC reports the source app on its
-      // notification service and pipes it up as the SAME event (empty
-      // title/content; app identity only). Feeds the identical path.
-      this.subs.push(BluetoothSdk.addListener("phone_notification" as any, forwardPhoneNotification))
+      // iOS: connected glasses consume ANCS and relay notifications through
+      // the Bluetooth SDK, which feeds the identical local event path.
+      this.subs.push(BluetoothSdk.addListener("phone_notification", forwardPhoneNotification))
+
+      const forwardPhoneNotificationDismissed = async (event: any) => {
+        // Direct forward to local miniapps subscribed to
+        // phone_notification_dismissed. Gated by READ_NOTIFICATIONS at
+        // subscribe time.
+        localMiniappRuntime.forwardEvent("phone_notification_dismissed", {
+          notificationId: event.notificationId,
+          notificationKey: event.notificationKey,
+          packageName: event.packageName,
+          timestamp: event.timestamp ?? Date.now(),
+        })
+      }
 
       this.subs.push(
-        (CrustModule.addListener as any)("phone_notification_dismissed", async (event: any) => {
-          // Direct forward to local miniapps subscribed to
-          // phone_notification_dismissed (Android only — iOS never emits this).
-          // Gated by READ_NOTIFICATIONS at subscribe time.
-          localMiniappRuntime.forwardEvent("phone_notification_dismissed", {
-            notificationId: event.notificationId,
-            notificationKey: event.notificationKey,
-            packageName: event.packageName,
-            timestamp: Date.now(),
-          })
-        }),
+        (CrustModule.addListener as any)("phone_notification_dismissed", forwardPhoneNotificationDismissed),
       )
+      this.subs.push(BluetoothSdk.addListener("phone_notification_dismissed", forwardPhoneNotificationDismissed))
 
       this.subs.push(
         BluetoothSdk.addListener("audio_pairing_needed", (event) => {
