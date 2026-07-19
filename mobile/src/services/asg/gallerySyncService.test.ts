@@ -1,3 +1,4 @@
+/* eslint-disable no-restricted-imports */
 import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
 
 // gallerySyncService + its asg cluster moved into @mentra/engine; this CI-gated jest
@@ -8,13 +9,18 @@ import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
 import {asgCameraApi} from "../../../modules/engine/src/services/asg/asgCameraApi"
 import {gallerySyncNotifications} from "../../../modules/engine/src/services/asg/gallerySyncNotifications"
 import {galleryTransferLedger} from "../../../modules/engine/src/services/asg/galleryTransferLedger"
+import {gallerySettingsService} from "../../../modules/engine/src/services/asg/gallerySettingsService"
+import {onGalleryNotice} from "../../../modules/engine/src/services/asg/galleryNotices"
+import {localNetworkTransport} from "../../../modules/engine/src/services/asg/localNetworkTransport"
 import {localStorageService} from "../../../modules/engine/src/services/asg/localStorageService"
 import {mediaProcessingQueue} from "../../../modules/engine/src/services/asg/mediaProcessingQueue"
 import {gallerySyncService} from "../../../modules/engine/src/services/asg/gallerySyncService"
+import {MediaLibraryPermissions} from "../../../modules/engine/src/utils/permissions/MediaLibraryPermissions"
 import {useGallerySyncStore} from "../../../modules/engine/src/stores/gallerySync"
 import {useGlassesStore} from "../../../modules/engine/src/stores/glasses"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 import type {CaptureGroup} from "@/types/asg"
+import WifiManager from "react-native-wifi-reborn"
 
 jest.mock("@mentra/bluetooth-sdk", () => {
   const {bluetoothSdkMock} = require("@/test-utils/mockBluetoothSdk")
@@ -42,6 +48,7 @@ jest.mock("@react-native-community/netinfo", () => ({
 }))
 
 jest.mock("react-native-wifi-reborn", () => ({
+  getCurrentWifiSSID: jest.fn(() => Promise.resolve("")),
   isEnabled: jest.fn(() => Promise.resolve(true)),
 }))
 
@@ -65,7 +72,7 @@ jest.mock("../../../modules/engine/src/facades/permissions", () => ({
     request: jest.fn(() => Promise.resolve(true)),
     openSettings: jest.fn(() => Promise.resolve()),
   },
-  PermissionFeatures: {LOCATION: "location"},
+  PermissionFeatures: {LOCATION: "location", LOCAL_WIFI: "local_wifi"},
 }))
 
 jest.mock("../../../modules/engine/src/utils/permissions/MediaLibraryPermissions", () => ({
@@ -101,6 +108,16 @@ jest.mock("../../../modules/engine/src/services/asg/localStorageService", () => 
     clearSyncQueue: jest.fn(() => Promise.resolve()),
     convertToDownloadedFile: jest.fn((file: any) => file),
     saveDownloadedFile: jest.fn(() => Promise.resolve()),
+    getDownloadedFiles: jest.fn(() => Promise.resolve({})),
+    reconcileRemoteCaptures: jest.fn(() => Promise.resolve(0)),
+  },
+}))
+
+jest.mock("../../../modules/engine/src/services/asg/cameraRollExportCoordinator", () => ({
+  cameraRollExportCoordinator: {
+    initialize: jest.fn(() => Promise.resolve()),
+    cleanup: jest.fn(),
+    resume: jest.fn(() => Promise.resolve()),
   },
 }))
 
@@ -125,8 +142,11 @@ jest.mock("../../../modules/engine/src/services/asg/asgCameraApi", () => ({
 }))
 
 const mockGetSyncState = localStorageService.getSyncState as jest.Mock
+const mockGetDownloadedFiles = localStorageService.getDownloadedFiles as jest.Mock
+const mockGetV3Manifest = asgCameraApi.getV3Manifest as jest.Mock
 const mockSyncWithServer = asgCameraApi.syncWithServer as jest.Mock
 const mockSetServer = asgCameraApi.setServer as jest.Mock
+const mockGetCurrentWifiSSID = WifiManager.getCurrentWifiSSID as jest.Mock
 
 const EMPTY_SYNC_RESPONSE = {
   data: {
@@ -168,12 +188,14 @@ describe("GallerySyncService", () => {
     // in tests that don't explicitly want to trigger clock-skew recovery.
     jest.useFakeTimers({now: 2000})
     jest.clearAllMocks()
+    mockGetCurrentWifiSSID.mockResolvedValue("")
     useGallerySyncStore.getState().reset()
     useGlassesStore.getState().reset()
     gallerySyncService.cleanup()
   })
 
   afterEach(() => {
+    jest.restoreAllMocks()
     gallerySyncService.cleanup()
     jest.clearAllTimers()
     jest.useRealTimers()
@@ -220,6 +242,44 @@ describe("GallerySyncService", () => {
     expect(useGallerySyncStore.getState().syncState).toBe("requesting_hotspot")
     expect(useGallerySyncStore.getState().syncServiceOpenedHotspot).toBe(true)
     expect(BluetoothSdk.setHotspotState).toHaveBeenCalledWith(true)
+  })
+
+  it("establishes scoped routing when the system SSID already matches the hotspot", async () => {
+    useGlassesStore.getState().setGlassesInfo({
+      connection: {state: "connected", fullyBooted: true},
+      hotspotEnabled: true,
+      hotspotSsid: HOTSPOT_INFO.ssid,
+      hotspotPassword: HOTSPOT_INFO.password,
+      hotspotGatewayIp: HOTSPOT_INFO.ip,
+    })
+    mockGetCurrentWifiSSID.mockResolvedValue(HOTSPOT_INFO.ssid)
+    jest.spyOn(localNetworkTransport, "supportsScopedConnection").mockReturnValue(true)
+    jest.spyOn(localNetworkTransport, "isScopedConnectionActive").mockReturnValue(false)
+    const connectSpy = jest.spyOn(gallerySyncService as any, "connectToHotspotWifi").mockResolvedValue(undefined)
+    const downloadSpy = jest.spyOn(gallerySyncService as any, "startFileDownload").mockResolvedValue(undefined)
+
+    await gallerySyncService.startSync()
+
+    expect(connectSpy).toHaveBeenCalledWith(HOTSPOT_INFO)
+    expect(downloadSpy).not.toHaveBeenCalled()
+    expect(BluetoothSdk.setHotspotState).not.toHaveBeenCalled()
+  })
+
+  it("does not begin a source-destructive sync when camera-roll intent is on but permission is denied", async () => {
+    ;(gallerySettingsService.getAutoSaveToCameraRoll as jest.Mock).mockResolvedValueOnce(true)
+    ;(MediaLibraryPermissions.checkPermission as jest.Mock).mockResolvedValueOnce(false)
+    ;(MediaLibraryPermissions.requestPermission as jest.Mock).mockResolvedValueOnce(false)
+    const notices: string[] = []
+    const unsubscribe = onGalleryNotice((notice) => notices.push(notice.code))
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
+
+    await gallerySyncService.startSync()
+    unsubscribe()
+
+    expect(notices).toContain("camera_roll_permission_required")
+    expect(useGallerySyncStore.getState().syncState).toBe("error")
+    expect(BluetoothSdk.setHotspotState).not.toHaveBeenCalled()
+    expect(mediaProcessingQueue.reset).not.toHaveBeenCalled()
   })
 
   it("aborts pre-flight quietly when glasses disconnect during any pre-flight await", async () => {
@@ -557,6 +617,7 @@ describe("GallerySyncService", () => {
       (gallerySyncService as any).resolveSyncManifest(clientId, lastSyncTime)
 
     beforeEach(() => {
+      mockGetV3Manifest.mockResolvedValue(null)
       mockSyncWithServer.mockReset()
     })
 
@@ -647,6 +708,27 @@ describe("GallerySyncService", () => {
 
       expect(result).not.toBeNull()
       expect(result?.syncData.changed_files).toHaveLength(0)
+    })
+  })
+
+  describe("v3 manifest reconciliation", () => {
+    it("does not suppress a remote capture when its committed ledger row has no local gallery record", async () => {
+      mockGetV3Manifest.mockResolvedValue({
+        api_version: 3,
+        captures: [FAKE_CAPTURE],
+        has_more: false,
+        next_cursor: null,
+        total_count: 1,
+        server_time: Date.now(),
+      })
+      mockGetDownloadedFiles.mockResolvedValue({})
+      const committedSpy = jest.spyOn(galleryTransferLedger, "isLocallyCommitted").mockReturnValue(true)
+
+      const result = await (gallerySyncService as any).fetchSyncManifest("c1", 0)
+
+      expect(result.captures).toEqual([FAKE_CAPTURE])
+      expect(localStorageService.reconcileRemoteCaptures).toHaveBeenCalledWith([FAKE_CAPTURE.capture_id], {})
+      committedSpy.mockRestore()
     })
   })
 })

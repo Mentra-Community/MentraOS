@@ -1,6 +1,39 @@
 package com.mentra.asg_client;
 
 public class AsgConstants {
+    /** Mentra Live hotspot idle timeout after the last local HTTP activity. */
+    public static final long HOTSPOT_INACTIVITY_TIMEOUT_MS = 120_000L;
+
+    /** Frequency for checking whether an active hotspot has become idle. */
+    public static final long HOTSPOT_INACTIVITY_CHECK_INTERVAL_MS = 10_000L;
+
+    /** Maximum interval between activity updates while a response body is streaming. */
+    public static final long HTTP_ACTIVITY_STREAM_UPDATE_INTERVAL_MS = 5_000L;
+
+    /** How often Mentra Live checks for the LocalOnlyHotspot gateway interface. */
+    public static final long LOCAL_HOTSPOT_READINESS_POLL_MS = 200L;
+
+    /** Maximum wait for the LocalOnlyHotspot gateway interface to become ready. */
+    public static final long LOCAL_HOTSPOT_READINESS_TIMEOUT_MS = 12_000L;
+
+    /** Delay after enabling the WiFi radio before requesting a LocalOnlyHotspot. */
+    public static final long LOCAL_HOTSPOT_WIFI_ENABLE_DELAY_MS = 500L;
+
+    /** Current Mentra Live Android hotspot gateway when interface discovery is unavailable. */
+    public static final String DEFAULT_HOTSPOT_GATEWAY_IP = "192.168.43.1";
+
+    /** Canonical camera crop defaults shared with the phone and Bluetooth SDK. */
+    public static final int CAMERA_FOV_DEFAULT = 102;
+    public static final int CAMERA_ROI_POSITION_DEFAULT = 0;
+
+    /** Warm-up leases are intentionally short-lived to bound idle camera power use. */
+    public static final long CAMERA_WARM_UP_DEFAULT_DURATION_MS = 15_000L;
+    public static final long CAMERA_WARM_UP_MAX_DURATION_MS = 60_000L;
+
+    /** Safety lease for a miniapp-owned transient FOV override. */
+    public static final long CAMERA_FOV_OVERRIDE_DEFAULT_TTL_MS = 300_000L;
+    public static final long CAMERA_FOV_OVERRIDE_MAX_TTL_MS = 600_000L;
+
     public static String appName = "AugmentOS ASG Client";
     public static int augmentOsSdkVerion = 1;
     public static int asgServiceNotificationId = 3540;
@@ -66,6 +99,27 @@ public class AsgConstants {
      * the glasses clean up first; normal inter-response gaps are under a second.
      */
     public static final long BES_OTA_RESPONSE_TIMEOUT_MS = 30000;
+
+    /** Delay before probing the alternate UART baud after ASG starts at the rendezvous rate. */
+    public static final long UART_BOOT_RECOVERY_INITIAL_DELAY_MS = 8000;
+
+    /** Delay before retrying boot recovery when baud negotiation or BES OTA temporarily owns UART. */
+    public static final long UART_BOOT_RECOVERY_RETRY_DELAY_MS = 3000;
+
+    /** Number of spaced system-version probes used to tolerate short BES UART restart windows. */
+    public static final int UART_RECOVERY_PROBES_PER_BURST = 5;
+
+    /** Spacing between UART recovery probes. */
+    public static final long UART_RECOVERY_PROBE_SPACING_MS = 400;
+
+    /** Maximum wait for the old-baud {@code sr_baud} acknowledgement before probing target baud. */
+    public static final long UART_BAUD_ACK_TIMEOUT_MS = 1000;
+
+    /** Time allowed for BES to reboot at the rendezvous baud after applying an OTA image. */
+    public static final long BES_OTA_RECONNECT_DELAY_MS = 2500;
+
+    /** Bounded rendezvous attempts after BES OTA while the controller finishes rebooting. */
+    public static final int BES_OTA_RECONNECT_ATTEMPTS = 6;
 
     // RGB LED Control Constants (Glasses BES Chipset - Remote Control via Bluetooth)
     // NOTE: These are different from the local MTK recording LED

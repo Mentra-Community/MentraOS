@@ -587,6 +587,21 @@ class BluetoothSdkModule : Module() {
             requireSdk().setCameraFov(CameraFov(value, roiPosition)).values
         }
 
+        SdkCoroutineFunction("setCameraFovOverride") { params: Map<String, Any> ->
+            val leaseId = params["leaseId"] as? String ?: throw IllegalArgumentException("leaseId is required")
+            val value = (params["fov"] as? Number)?.toInt() ?: CameraFov.DEFAULT_FOV
+            val roiPosition = CameraRoiPosition.fromValue(
+                (params["roiPosition"] as? Number)?.toInt()
+                    ?: (params["roi_position"] as? Number)?.toInt(),
+            )
+            val ttlMs = (params["ttlMs"] as? Number)?.toInt() ?: 300000
+            requireSdk().setCameraFovOverride(leaseId, CameraFov(value, roiPosition), ttlMs).values
+        }
+
+        SdkCoroutineFunction("releaseCameraFovOverride") { leaseId: String ->
+            requireSdk().releaseCameraFovOverride(leaseId).values
+        }
+
         SdkCoroutineFunction("setCameraTuningConfig") { anrOn: Boolean, gainOn: Boolean ->
             requireSdk().setCameraTuningConfig(anrOn, gainOn).values
         }
@@ -616,6 +631,10 @@ class BluetoothSdkModule : Module() {
             val durationRaw = (params["durationMs"] as? Number)?.toInt() ?: 0
             val durationMs = if (durationRaw > 0) durationRaw else 15000
             requireSdk().warmUpCamera(requestId, size, mode, exposureTimeNs, durationMs).values
+        }
+
+        SdkAsyncFunction("stopCameraWarmUp") { requestId: String ->
+            requireSdk().stopCameraWarmUp(requestId)
         }
 
         // MARK: - OTA Commands

@@ -278,39 +278,6 @@ export class SpeakerModule {
   }
 
   /**
-   * Speak multiple sentences as one continuous request.
-   *
-   * The host owns TTS routing and playback, so callers avoid issuing separate
-   * bridge requests that could interrupt one another. The original `speak()`
-   * API remains available for a single text value.
-   */
-  async speakSentences(sentences: string[], options: SpeakOptions = {}): Promise<SpeakResult> {
-    const normalized = sentences.map((sentence) => sentence.trim()).filter(Boolean)
-    if (normalized.length === 0) {
-      throw {code: MiniappErrorCode.INTERNAL, message: "speakSentences requires at least one sentence"}
-    }
-
-    try {
-      const result = await this.session.sendRequest<SpeakResult | null>(
-        {
-          type: MiniappRequestType.SPEAK_SENTENCES,
-          sentences: normalized,
-          voice_id: options.voice_id,
-          voice_settings: options.voice_settings,
-          volume: options.volume,
-          stopOtherAudio: options.stopOtherAudio ?? false,
-          forceLocal: options.forceLocal ?? false,
-        },
-        {timeoutMs: 0},
-      )
-      return result ?? {completed: true}
-    } catch (err) {
-      if (err && typeof err === "object" && "code" in err) throw err
-      throw {code: MiniappErrorCode.INTERNAL, message: String(err)}
-    }
-  }
-
-  /**
    * Open a live PCM output stream (16-bit LE) to the phone's audio playback
    * service. Use from the background to play audio that arrives in chunks
    * (e.g. live meeting audio over a WebSocket) with low latency — unlike

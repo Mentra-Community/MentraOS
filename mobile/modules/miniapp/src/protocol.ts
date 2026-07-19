@@ -43,9 +43,6 @@ export enum MiniappRequestType {
   /** Speak text via cloud TTS — phone constructs the URL. */
   SPEAK = "miniapp_speak",
 
-  /** Speak a sentence list as one continuous TTS request. */
-  SPEAK_SENTENCES = "miniapp_speak_sentences",
-
   /**
    * Live PCM output stream to the phone's audio playback service
    * (speaker.createStream). OPEN provisions a native chunk player; WRITE

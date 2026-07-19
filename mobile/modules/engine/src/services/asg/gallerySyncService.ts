@@ -26,11 +26,13 @@ import {permissions, PermissionFeatures} from "../../facades/permissions"
 import {asgCameraApi} from "./asgCameraApi"
 import {gallerySettingsService} from "./gallerySettingsService"
 import {gallerySyncNotifications} from "./gallerySyncNotifications"
+import {localNetworkTransport} from "./localNetworkTransport"
 import {localStorageService} from "./localStorageService"
 import {mediaProcessingQueue} from "./mediaProcessingQueue"
 import {validateCaptureMetadataForDownload} from "./galleryMediaValidation"
 import {emitGalleryNotice} from "./galleryNotices"
 import {galleryTransferLedger} from "./galleryTransferLedger"
+import {cameraRollExportCoordinator} from "./cameraRollExportCoordinator"
 
 // Timing constants
 const TIMING = {
@@ -112,6 +114,8 @@ class GallerySyncService {
     this.hotspotListenerRegistered = true
     this.isInitialized = true
 
+    void cameraRollExportCoordinator.initialize()
+
     // console.log("[GallerySyncService] Initialized")
 
     // Check for resumable sync on startup
@@ -122,6 +126,7 @@ class GallerySyncService {
    * Cleanup - remove event listeners
    */
   cleanup(): void {
+    void localNetworkTransport.disconnect()
     if (this.hotspotListenerRegistered) {
       GlobalEventEmitter.removeListener("hotspot_status_change", this.handleHotspotStatusChange)
       GlobalEventEmitter.removeListener("hotspot_error", this.handleHotspotError)
@@ -138,6 +143,7 @@ class GallerySyncService {
       this.appStateSubscription.remove()
       this.appStateSubscription = null
     }
+    cameraRollExportCoordinator.cleanup()
 
     if (this.hotspotConnectionTimeout) {
       BgTimer.clearTimeout(this.hotspotConnectionTimeout!)
@@ -192,6 +198,7 @@ class GallerySyncService {
     }
 
     gallerySyncNotifications.showSyncError("Glasses disconnected")
+    void localNetworkTransport.disconnect()
   }
 
   /**
@@ -202,6 +209,9 @@ class GallerySyncService {
     if (nextAppState !== "active") {
       return
     }
+
+    // Camera-roll backfill is phone-local and must resume independently of glasses/WiFi.
+    void cameraRollExportCoordinator.resume("app foreground")
 
     // Only auto-retry if we were waiting for WiFi
     if (!this.waitingForWifiRetry) {
@@ -492,9 +502,6 @@ class GallerySyncService {
       hotspotEnabled: glassesHotspot !== null,
     })
 
-    // Reset processing queue only after pre-flight passes — avoids clobbering an active session
-    mediaProcessingQueue.reset()
-
     // Request all permissions upfront so user isn't interrupted during WiFi/download
     console.log("[GallerySyncService] 🔐 Step 1/6: Requesting permissions...")
 
@@ -527,6 +534,23 @@ class GallerySyncService {
       return
     }
 
+    if (Platform.OS === "android") {
+      console.log("[GallerySyncService]   📡 Checking local WiFi permission...")
+      const hasLocalWifiPermission = await permissions.check(PermissionFeatures.LOCAL_WIFI)
+      if (!hasLocalWifiPermission) {
+        const granted = await permissions.request(PermissionFeatures.LOCAL_WIFI)
+        if (!granted) {
+          store.setSyncError("Local WiFi permission is required for gallery sync")
+          await gallerySyncNotifications.showSyncError("Allow WiFi access to connect to your glasses")
+          return
+        }
+      }
+      if (this.shouldAbortPreFlight()) {
+        console.log("[GallerySyncService] Pre-flight aborted after local WiFi permission")
+        return
+      }
+    }
+
     // 3. Camera roll permission (if auto-save is enabled)
     const shouldAutoSave = await gallerySettingsService.getAutoSaveToCameraRoll()
     console.log(`[GallerySyncService]   📸 Auto-save to camera roll: ${shouldAutoSave}`)
@@ -537,9 +561,10 @@ class GallerySyncService {
         console.log("[GallerySyncService]   ⚠️ Camera roll permission not granted - requesting...")
         const granted = await MediaLibraryPermissions.requestPermission()
         if (!granted) {
-          console.warn("[GallerySyncService]   ❌ Camera roll permission denied - photos will still sync to app")
-          // Don't block sync - photos will still be downloaded to app storage
-          // They just won't be saved to the camera roll
+          console.warn("[GallerySyncService]   ❌ Camera roll permission denied - auto-save sync cannot continue")
+          store.setSyncError("Camera-roll permission required while automatic saving is enabled")
+          emitGalleryNotice({code: "camera_roll_permission_required"})
+          return
         } else {
           console.log("[GallerySyncService]   ✅ Camera roll permission granted")
         }
@@ -740,12 +765,21 @@ class GallerySyncService {
       console.log("[GallerySyncService]   ➡️ Will request hotspot activation")
     }
 
+    // Every fallible pre-flight gate has passed. It is now safe to replace the previous
+    // in-memory queue; startFileDownload immediately recovers its durable ledger work.
+    mediaProcessingQueue.reset()
+
     if (isAlreadyConnected && currentGlassesHotspot) {
-      console.log("[GallerySyncService] 🚀 Skipping hotspot request - already connected!")
       const hotspotInfo: HotspotInfo = currentGlassesHotspot
       store.setHotspotInfo(hotspotInfo)
       store.setSyncState("connecting_wifi")
-      await this.startFileDownload(hotspotInfo)
+      if (localNetworkTransport.supportsScopedConnection() && !localNetworkTransport.isScopedConnectionActive()) {
+        console.log("[GallerySyncService] 📡 System SSID matches; establishing scoped glasses transport")
+        await this.connectToHotspotWifi(hotspotInfo)
+      } else {
+        console.log("[GallerySyncService] 🚀 Skipping hotspot request - already connected!")
+        await this.startFileDownload(hotspotInfo)
+      }
       return
     }
 
@@ -901,7 +935,7 @@ class GallerySyncService {
             console.log(`[GallerySyncService] 📡 Current WiFi SSID: "${preConnectSSID}"`)
 
             // Check if already connected (shouldn't happen, but good to verify)
-            if (preConnectSSID === hotspotInfo.ssid) {
+            if (!localNetworkTransport.supportsScopedConnection() && preConnectSSID === hotspotInfo.ssid) {
               console.log("[GallerySyncService] ✅ Already connected to target SSID! Proceeding to download.")
               appStateSubscription.remove()
 
@@ -920,8 +954,7 @@ class GallerySyncService {
             console.warn("[GallerySyncService] ⚠️ Error code:", preError?.code)
           }
 
-          // Use connectToProtectedSSID with joinOnce=false for persistent connection
-          console.log(`[GallerySyncService] 🔌 Calling WifiManager.connectToProtectedSSID...`)
+          console.log(`[GallerySyncService] 🔌 Connecting the glasses-local transport...`)
           console.log(`[GallerySyncService] 🔌 Parameters:`)
           console.log(`[GallerySyncService]    - SSID: "${hotspotInfo.ssid}"`)
           console.log(`[GallerySyncService]    - Password: ${"*".repeat(hotspotInfo.password.length)}`)
@@ -932,10 +965,10 @@ class GallerySyncService {
           appBackgrounded = false // Reset flag for this attempt
           appBackgroundTime = null
 
-          await WifiManager.connectToProtectedSSID(hotspotInfo.ssid, hotspotInfo.password, false, false)
+          await localNetworkTransport.connect(hotspotInfo.ssid, hotspotInfo.password)
 
           const connectCallDuration = Date.now() - connectCallStartTime
-          console.log(`[GallerySyncService] ✅ WifiManager.connectToProtectedSSID returned successfully`)
+          console.log(`[GallerySyncService] ✅ Glasses-local transport connected successfully`)
           console.log(`[GallerySyncService] ⏱️ Library call duration: ${connectCallDuration}ms`)
           console.log(`[GallerySyncService] 📱 App was backgrounded during call: ${appBackgrounded}`)
           if (appBackgrounded && appBackgroundTime) {
@@ -1015,7 +1048,9 @@ class GallerySyncService {
 
           // Final verification: Check SSID one more time before starting download
           try {
-            const finalSSID = await WifiManager.getCurrentWifiSSID()
+            const finalSSID = localNetworkTransport.isScopedConnectionActive()
+              ? hotspotInfo.ssid
+              : await WifiManager.getCurrentWifiSSID()
             console.log(`[GallerySyncService] 📶 Final SSID check before download: "${finalSSID}"`)
             if (Platform.OS === "android") {
               // Some local builds can have stale generated typings for the Bluetooth SDK module.
@@ -1051,7 +1086,7 @@ class GallerySyncService {
                 const probeTimeout = BgTimer.setTimeout(() => probeController.abort(), 1000) // 1 second timeout per probe
 
                 const probeStartTime = Date.now()
-                const probeResponse = await fetch(`http://${hotspotInfo.ip}:8089/api/health`, {
+                const probeResponse = await localNetworkTransport.fetch(`http://${hotspotInfo.ip}:8089/api/health`, {
                   method: "GET",
                   signal: probeController.signal,
                 })
@@ -1253,6 +1288,9 @@ class GallerySyncService {
         await this.closeHotspot()
       }
     } finally {
+      // Release the scoped Android Network on every terminal path. This is idempotent with
+      // closeHotspot(), and intentionally leaves Android 9/iOS legacy routing unchanged.
+      await localNetworkTransport.disconnect()
       // L2: Guarantee listener cleanup on all exit paths (cancel, success, error, exhaustion)
       appStateSubscription.remove()
     }
@@ -1261,10 +1299,20 @@ class GallerySyncService {
   private async fetchSyncManifest(clientId: string, lastSyncTime: number): Promise<SyncManifestData> {
     const v3 = typeof asgCameraApi.getV3Manifest === "function" ? await asgCameraApi.getV3Manifest() : null
     if (v3) {
+      const downloadedFiles = await localStorageService.getDownloadedFiles()
+      await localStorageService.reconcileRemoteCaptures(
+        v3.captures.map((capture) => capture.capture_id),
+        downloadedFiles,
+      )
       return {
         api_version: 3,
         client_id: clientId,
-        captures: v3.captures.filter((capture) => !galleryTransferLedger.isLocallyCommitted(capture.capture_id)),
+        // The ledger is a crash-recovery journal, not proof that app-private media survived an
+        // Android restore or reinstall. Suppress a remote capture only when both records agree.
+        captures: v3.captures.filter(
+          (capture) =>
+            !downloadedFiles[capture.capture_id] || !galleryTransferLedger.isLocallyCommitted(capture.capture_id),
+        ),
         changed_files: [],
         deleted_files: [],
         server_time: v3.server_time,
@@ -1536,7 +1584,7 @@ class GallerySyncService {
         (current, total, fileName, fileProgress, downloadedFile) => {
           // CRITICAL: This callback MUST NOT throw!
           // RNFS progress callbacks run inside native bridge — throwing here causes
-          // EXC_BAD_ACCESS. Cancellation is handled via AbortSignal → RNFS.stopDownload.
+          // EXC_BAD_ACCESS. Cancellation is handled via AbortSignal → the active transport.
 
           // Check if cancelled — just return, abort signal will stop the download
           if (this.abortController?.signal.aborted) {
@@ -2135,6 +2183,7 @@ class GallerySyncService {
 
     try {
       console.log("[GallerySyncService] Closing hotspot...")
+      await localNetworkTransport.disconnect()
       await BluetoothSdk.setHotspotState(false)
       store.setSyncServiceOpenedHotspot(false)
       store.setHotspotInfo(null)

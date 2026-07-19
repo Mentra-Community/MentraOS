@@ -88,7 +88,7 @@ public class MediaCaptureService {
     private MediaCaptureListener mMediaCaptureListener;
     private ServiceCallbackInterface mServiceCallback;
     private final IHardwareManager hardwareManager;
-    private final MlKitTextRoiDetector textRoiDetector = new MlKitTextRoiDetector();
+    private final MlKitTextRoiDetector textRoiDetector;
 
     // Track current video recording
     private boolean isRecordingVideo = false;
@@ -702,6 +702,7 @@ public class MediaCaptureService {
         mMediaQueueManager = mediaQueueManager;
         this.fileManager = fileManager;
         this.mStateManager = stateManager;
+        textRoiDetector = new MlKitTextRoiDetector(mContext);
 
         // Initialize hardware manager
         hardwareManager = HardwareManagerFactory.getInstance(context);
@@ -6278,9 +6279,20 @@ public class MediaCaptureService {
                     public String getRequestId() {
                         return requestId;
                     }
+
+                    @Override
+                    public long getDurationMs() {
+                        return Math.min(
+                                durationMs, AsgConstants.CAMERA_WARM_UP_MAX_DURATION_MS);
+                    }
                 });
         warmUpDispatching.set(false);
         return !rejectedSynchronously.get();
+    }
+
+    /** Cancel a request-owned warm-up lease. Missing/already-expired request IDs are no-ops. */
+    public void stopCameraWarmUp(String requestId) {
+        CameraNeoService.stopCameraWarmUp(requestId);
     }
 
     /**

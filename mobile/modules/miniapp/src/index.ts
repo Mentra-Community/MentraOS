@@ -163,7 +163,7 @@ export type {
 } from "./modules/navigation"
 export type {PermissionsModule, PermissionErrorEvent} from "./modules/permissions"
 export type {PhoneModule, PhoneNotificationsModule, PhoneCalendarModule} from "./modules/phone"
-export type {TranscriptionModule, TranscriptionConfig} from "./modules/transcription"
+export type {TranscriptionModule, TranscriptionConfig, TranscriptionOptions} from "./modules/transcription"
 export type {TranslationModule} from "./modules/translation"
 export type {SpeakerModule} from "./modules/speaker"
 

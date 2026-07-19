@@ -106,6 +106,8 @@ interface ActiveRequest {
  * rejected successful captures while their upload was still in progress.
  */
 export const CAPTURE_PIPELINE_TIMEOUT_MS = 45_000
+export const CAMERA_WARM_UP_DEFAULT_DURATION_MS = 15_000
+export const CAMERA_WARM_UP_MAX_DURATION_MS = 60_000
 
 let bleRequestCounter = 0
 
@@ -129,6 +131,10 @@ export class PhonePhotoCoordinator {
   private readonly activeRequests = new Map<string, ActiveRequest>()
   /** Short BLE correlation id (4-char hex) → full cloud requestId. */
   private readonly bleIdToCloud = new Map<string, string>()
+  private readonly activeWarmUps = new Map<
+    string,
+    {requestId: string; durationMs: number; expiryTimer?: ReturnType<typeof setTimeout>}
+  >()
 
   async takePhoto(packageName: string, opts: PhotoOpts): Promise<PhotoTaken> {
     // Pre-check: if glasses aren't even connected, the BLE photo command
@@ -301,8 +307,8 @@ export class PhonePhotoCoordinator {
   /**
    * Pre-warm the glasses camera so the next takePhoto() is near-instant.
    *
-   * Pure BLE — NO cloud presign, NO upload, NO long-poll. The SDK mints the
-   * requestId, sends the warm-up command, and resolves when the camera reports
+   * Pure BLE — NO cloud presign, NO upload, NO long-poll. The phone mints and owns
+   * the requestId, sends the warm-up command, and resolves when the camera reports
    * ready (the native promise resolves on the ready status event).
    */
   async warmUpCamera(
@@ -320,15 +326,48 @@ export class PhonePhotoCoordinator {
       throw new PhotoError("GLASSES_NOT_CONNECTED", "Glasses are not connected", "command", "ble")
     }
 
+    let lease: {requestId: string; durationMs: number; expiryTimer?: ReturnType<typeof setTimeout>} | undefined
     try {
+      await this.stopWarmUpForApp(packageName)
+      const requestId = mintBleRequestId()
+      const requestedDuration =
+        typeof opts.durationMs === "number" && Number.isFinite(opts.durationMs) && opts.durationMs > 0
+          ? Math.round(opts.durationMs)
+          : CAMERA_WARM_UP_DEFAULT_DURATION_MS
+      const durationMs = Math.min(requestedDuration, CAMERA_WARM_UP_MAX_DURATION_MS)
+      lease = {requestId, durationMs}
+      this.activeWarmUps.set(packageName, lease)
       await BluetoothSdk.warmUpCamera({
+        requestId,
         size: normalizePhotoSize(opts.size ?? "medium"),
         mode: opts.mode ?? "photo",
         exposureTimeNs: opts.exposureTimeNs ?? null,
-        durationMs: opts.durationMs ?? 15000,
+        durationMs,
       })
+      if (this.activeWarmUps.get(packageName) === lease) {
+        lease.expiryTimer = setTimeout(() => {
+          if (this.activeWarmUps.get(packageName) === lease) {
+            this.activeWarmUps.delete(packageName)
+          }
+        }, durationMs)
+      }
     } catch (err) {
+      if (lease && this.activeWarmUps.get(packageName) === lease) {
+        if (lease.expiryTimer) clearTimeout(lease.expiryTimer)
+        this.activeWarmUps.delete(packageName)
+      }
       throw this.toPhotoError(err, "WARM_UP_FAILED", "command", "ble")
+    }
+  }
+
+  /** Release a miniapp's warm-up even if its original warmUpCamera promise is still opening. */
+  async stopWarmUpForApp(packageName: string): Promise<void> {
+    const active = this.activeWarmUps.get(packageName)
+    if (!active) return
+    await BluetoothSdk.stopCameraWarmUp(active.requestId)
+    if (this.activeWarmUps.get(packageName) === active) {
+      this.activeWarmUps.delete(packageName)
+      if (active.expiryTimer) clearTimeout(active.expiryTimer)
     }
   }
 

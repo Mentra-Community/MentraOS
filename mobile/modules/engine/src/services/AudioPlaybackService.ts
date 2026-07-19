@@ -13,12 +13,26 @@ interface AudioPlayRequest {
   stopOtherAudio?: boolean
 }
 
+export type AudioPlaybackCompletionReason = "completed" | "interrupted" | "error"
+
+type AudioPlaybackCompletion = (
+  requestId: string,
+  success: boolean,
+  error: string | null,
+  duration: number | null,
+  reason: AudioPlaybackCompletionReason,
+) => void
+
 interface PlaybackState {
   requestId: string
   appId?: string
   startTime: number
   completed: boolean // Guard against double callbacks
-  onComplete: (requestId: string, success: boolean, error: string | null, duration: number | null) => void
+  onComplete: AudioPlaybackCompletion
+}
+
+interface PendingPlaybackState {
+  cancelled: boolean
 }
 
 /** Open request for a live PCM output stream (miniapp speaker.createStream). */
@@ -53,6 +67,10 @@ class AudioPlaybackService {
   // Creating new ExoPlayer instances per request leads to -12 ENOMEM errors
   private player: AudioPlayer | null = null
   private currentPlayback: PlaybackState | null = null
+  // Requests that entered play() but have not yet reached the native player.
+  // Keeping these addressable prevents a cancelled request from starting after
+  // an async audio-mode or stream-cleanup step finishes.
+  private pendingPlaybacks = new Map<string, PendingPlaybackState>()
   // Live PCM streams (speaker.createStream), keyed by streamId. The runtime
   // enforces one per app; stopOtherAudio interrupts across apps.
   private streams = new Map<string, StreamState>()
@@ -310,27 +328,41 @@ class AudioPlaybackService {
    * Play audio from a URL.
    * Returns a promise that resolves with playback result when audio finishes or errors.
    */
-  public async play(
-    request: AudioPlayRequest,
-    onComplete: (requestId: string, success: boolean, error: string | null, duration: number | null) => void,
-  ): Promise<void> {
+  public async play(request: AudioPlayRequest, onComplete: AudioPlaybackCompletion): Promise<void> {
     const {requestId, audioUrl, appId, volume = 1.0, stopOtherAudio = true} = request
+    const pending: PendingPlaybackState = {cancelled: false}
+    this.pendingPlaybacks.set(requestId, pending)
 
     console.log(`AUDIO: Play request ${requestId}${appId ? ` from ${appId}` : ""}: ${audioUrl}`)
 
     try {
       // Ensure audio mode is configured for background playback
       await this.ensureAudioModeConfigured()
+      if (pending.cancelled) {
+        onComplete(requestId, true, null, 0, "interrupted")
+        return
+      }
       await this.prewarmAudioRouteIfCold()
+      if (pending.cancelled) {
+        onComplete(requestId, true, null, 0, "interrupted")
+        return
+      }
 
-      // Stop current playback if any (notify previous callback)
-      if (stopOtherAudio && this.currentPlayback && !this.currentPlayback.completed) {
-        console.log(`AUDIO: Interrupting current playback for new request`)
+      // URL playback reuses one native player, so replacing its source always
+      // interrupts the previous URL even when stopOtherAudio is false. Notify
+      // that request before replacing it so its promise cannot hang. The option
+      // still controls whether separate PCM streams are interrupted below.
+      if (this.currentPlayback && !this.currentPlayback.completed) {
+        console.log(`AUDIO: Interrupting current URL playback for new request`)
         this.interruptCurrentPlayback(true)
       }
       // Live PCM streams count as "other audio" too.
       if (stopOtherAudio) {
         await this.abortAllStreams()
+      }
+      if (pending.cancelled) {
+        onComplete(requestId, true, null, 0, "interrupted")
+        return
       }
 
       // Get or create the reusable player
@@ -348,6 +380,7 @@ class AudioPlaybackService {
         onComplete,
       }
       this.currentPlayback = playback
+      this.pendingPlaybacks.delete(requestId)
       this.markAudioRouteWarm()
 
       // Replace the source and play
@@ -374,10 +407,32 @@ class AudioPlaybackService {
 
       console.log(`AUDIO: Started playback for ${requestId}`)
     } catch (error) {
+      if (pending.cancelled) {
+        onComplete(requestId, true, null, 0, "interrupted")
+        return
+      }
       const errorMessage = error instanceof Error ? error.message : "Unknown error loading audio"
       console.error(`AUDIO: Failed to play ${requestId}:`, errorMessage)
       void this.restoreGlassesMediaVolume()
-      onComplete(requestId, false, errorMessage, null)
+      onComplete(requestId, false, errorMessage, null, "error")
+    } finally {
+      if (this.pendingPlaybacks.get(requestId) === pending) {
+        this.pendingPlaybacks.delete(requestId)
+      }
+    }
+  }
+
+  /**
+   * Cancel one URL playback without touching audio owned by another request.
+   * Pending requests are prevented from reaching the native player; active
+   * requests are paused synchronously before their completion callback fires.
+   */
+  public cancelPlayback(requestId: string): void {
+    const pending = this.pendingPlaybacks.get(requestId)
+    if (pending) pending.cancelled = true
+
+    if (this.currentPlayback?.requestId === requestId && !this.currentPlayback.completed) {
+      this.interruptCurrentPlayback()
     }
   }
 
@@ -409,7 +464,7 @@ class AudioPlaybackService {
 
     // Notify that playback was interrupted
     const elapsedMs = Date.now() - playback.startTime
-    playback.onComplete(playback.requestId, true, null, elapsedMs)
+    playback.onComplete(playback.requestId, true, null, elapsedMs, "interrupted")
     console.log(`AUDIO: Interrupted ${playback.requestId} after ${elapsedMs}ms`)
   }
 
@@ -435,7 +490,7 @@ class AudioPlaybackService {
       // Mentra Live; defer cleanup unless another playback has started.
       this.pauseFinishedPlayerAfterTail(playback)
 
-      playback.onComplete(playback.requestId, true, null, durationMs)
+      playback.onComplete(playback.requestId, true, null, durationMs, "completed")
       this.currentPlayback = null
       this.markAudioRouteWarm()
 
@@ -454,7 +509,7 @@ class AudioPlaybackService {
       if (elapsedMs > 1500) {
         console.error(`AUDIO: Playback failed for ${playback.requestId} (player went idle after ${elapsedMs}ms)`)
         playback.completed = true
-        playback.onComplete(playback.requestId, false, "Playback failed (player went idle)", null)
+        playback.onComplete(playback.requestId, false, "Playback failed (player went idle)", null, "error")
         this.currentPlayback = null
         this.markAudioRouteWarm()
         this.notifyAudioStopDebounced()

@@ -3253,7 +3253,8 @@ class MentraLive : SGCManager() {
 
                 val scanComplete =
                         json.optBoolean("scan_complete", json.optBoolean("scanComplete", false))
-                Bridge.updateWifiScanResults(networks, scanComplete)
+                val scanId = json.optString("scanId", "").ifEmpty { null }
+                Bridge.updateWifiScanResults(networks, scanComplete, scanId)
             }
             "token_status" -> {
                 // Process coreToken acknowledgment
@@ -4830,10 +4831,13 @@ class MentraLive : SGCManager() {
     /**
      * Request WiFi scan from the glasses This will ask the glasses to scan for available networks
      */
-    override fun requestWifiScan() {
+    override fun requestWifiScan(scanId: String?) {
         try {
             val json = JSONObject()
             json.put("type", "request_wifi_scan")
+            if (!scanId.isNullOrEmpty()) {
+                json.put("scanId", scanId)
+            }
             sendJson(json, true)
             Bridge.log("LIVE: Sending WiFi scan request to glasses")
         } catch (e: JSONException) {
@@ -5564,6 +5568,16 @@ class MentraLive : SGCManager() {
         } catch (e: JSONException) {
             Log.e(TAG, "Error creating camera warm up JSON", e)
         }
+    }
+
+    fun stopCameraWarmUp(requestId: String) {
+        if (!isConnected) {
+            throw IllegalStateException("not_connected")
+        }
+        val json = JSONObject()
+        json.put("type", "camera_warm_up_stop")
+        json.put("requestId", requestId)
+        sendJson(json, true)
     }
 
     override fun startStream(message: MutableMap<String, Any>) {
@@ -8056,7 +8070,7 @@ class MentraLive : SGCManager() {
             val type = json.optString("type", "")
 
             when (type) {
-                "request_wifi_scan" -> requestWifiScan()
+                "request_wifi_scan" -> requestWifiScan(null)
                 "rgb_led_control_on", "rgb_led_control_off" -> {
                     // Forward LED control commands directly to glasses via BLE
                     Log.d(TAG, "💡 Forwarding LED control command to glasses: " + type)
@@ -8935,7 +8949,7 @@ class MentraLive : SGCManager() {
 
     /** Send camera FOV setting to glasses (K900 / Mentra Live). */
     override fun sendCameraFovSetting() {
-        var fov = 118
+        var fov = 102
         var roiPosition = 0
         try {
             val raw = DeviceStore.get("bluetooth", "camera_fov")
@@ -8975,6 +8989,35 @@ class MentraLive : SGCManager() {
         } catch (e: JSONException) {
             Log.e(TAG, "Error creating camera FOV setting message", e)
         }
+    }
+
+    fun sendCameraFovOverride(
+        requestId: String,
+        leaseId: String,
+        fov: Int,
+        roiPosition: Int,
+        ttlMs: Int,
+    ) {
+        val json = JSONObject()
+        json.put("type", "camera_fov_override")
+        json.put("request_id", requestId)
+        json.put(
+            "params",
+            JSONObject()
+                .put("lease_id", leaseId)
+                .put("fov", fov)
+                .put("roi_position", roiPosition)
+                .put("ttl_ms", ttlMs),
+        )
+        sendJson(json, true)
+    }
+
+    fun releaseCameraFovOverride(requestId: String, leaseId: String) {
+        val json = JSONObject()
+        json.put("type", "camera_fov_override_release")
+        json.put("request_id", requestId)
+        json.put("params", JSONObject().put("lease_id", leaseId))
+        sendJson(json, true)
     }
 
     /**

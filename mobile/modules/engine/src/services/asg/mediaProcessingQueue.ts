@@ -14,8 +14,8 @@ import {INVALID_DOWNLOADED_MEDIA, validateDownloadedMediaFile} from "./galleryMe
 import {reportInvalidGalleryMedia} from "./GalleryMediaIntegrityReportService"
 import {useGallerySyncStore} from "../../stores/gallerySync"
 import {BgTimer} from "../../utils/timers"
-import {MediaLibraryPermissions} from "../../utils/permissions/MediaLibraryPermissions"
 import {galleryTransferLedger, GalleryTransferEntry} from "./galleryTransferLedger"
+import {cameraRollExportCoordinator} from "./cameraRollExportCoordinator"
 
 const TAG = "[MediaProcessingQueue]"
 
@@ -130,17 +130,29 @@ class MediaProcessingQueue {
         if (!entry.finalPath || !(await RNFS.exists(entry.finalPath))) {
           throw new Error(`Recovery file is missing for ${entry.captureId}`)
         }
-        if (entry.state === "EXPORT_PENDING" || (entry.state === "INDEXED" && entry.shouldAutoSave)) {
-          const receipt = await MediaLibraryPermissions.saveToLibraryWithReceipt(entry.finalPath, entry.timestamp)
-          if (!receipt.success) throw new Error(receipt.error || "camera roll save failed")
-          entry = galleryTransferLedger.transition(entry.captureId, "EXPORTED", {
-            assetReceipt: {
-              platform: receipt.platform,
-              uri: receipt.uri,
-              identifier: receipt.identifier,
-              exportedAt: Date.now(),
-            },
-          })
+        // Rebuild a missing app index before any source acknowledgement, even when camera-roll
+        // saving is disabled or an export receipt was already committed before restart.
+        const downloadedFile = await this.recoverDownloadedFile(entry)
+        if (entry.state === "EXPORT_PENDING" || entry.state === "INDEXED") {
+          const shouldAutoSave = await cameraRollExportCoordinator.isAutoSaveEnabled()
+          entry = galleryTransferLedger.update(entry.captureId, {shouldAutoSave, lastError: undefined})
+          if (shouldAutoSave) {
+            if (entry.state !== "EXPORT_PENDING") {
+              entry = galleryTransferLedger.transition(entry.captureId, "EXPORT_PENDING")
+            }
+            const receipt = await cameraRollExportCoordinator.exportForSource(downloadedFile, entry.captureId)
+            entry = receipt
+              ? galleryTransferLedger.transition(entry.captureId, "EXPORTED", {assetReceipt: receipt})
+              : galleryTransferLedger.transition(entry.captureId, "INDEXED", {
+                  shouldAutoSave: false,
+                  lastError: undefined,
+                })
+          } else if (entry.state === "EXPORT_PENDING") {
+            entry = galleryTransferLedger.transition(entry.captureId, "INDEXED", {
+              shouldAutoSave: false,
+              lastError: undefined,
+            })
+          }
         }
         entry = galleryTransferLedger.transition(entry.captureId, "ACK_PENDING")
         await this.acknowledgeEntry(entry)
@@ -327,15 +339,19 @@ class MediaProcessingQueue {
       throw new Error(reason)
     }
 
-    // 6. Commit the app-local index before any export or source acknowledgement.
+    // 6. Commit the app-local index before any export or source acknowledgement. Use the final
+    // on-disk output metadata for camera-roll identity: processing can change byte size, while
+    // recovery reconstructs this row from the same file and the transfer ledger timestamp.
     const isVideo = item.type === "video"
+    const finalFileStat = await RNFS.stat(filePathToSave)
+    const finalFileSize = Number(finalFileStat.size)
     const downloadedFile = localStorageService.convertToDownloadedFile(
       {
         name: item.id,
         url: "",
         download: "",
-        size: item.totalSize,
-        modified: item.timestamp || Date.now(),
+        size: finalFileSize,
+        modified: ledgerEntry.timestamp,
         is_video: isVideo,
         thumbnail_data: item.thumbnailData,
         duration: item.duration,
@@ -346,40 +362,50 @@ class MediaProcessingQueue {
       localThumbnailPath,
       item.glassesModel,
     )
+    downloadedFile.capture_id = item.id
+    const shouldAutoSave = await cameraRollExportCoordinator.isAutoSaveEnabled()
     try {
       await localStorageService.saveDownloadedFile(downloadedFile)
       ledgerEntry = galleryTransferLedger.transition(item.id, "INDEXED", {
         finalPath: filePathToSave,
         thumbnailPath: localThumbnailPath,
-        shouldAutoSave: item.shouldAutoSave,
+        shouldAutoSave,
       })
+      await cameraRollExportCoordinator.recordIndexed(
+        downloadedFile,
+        shouldAutoSave,
+        shouldAutoSave ? "SOURCE_BARRIER" : "HISTORICAL_BACKFILL",
+        item.id,
+      )
     } catch (metadataError) {
       console.error(`${TAG} Metadata save failed for ${item.id}; retaining local and glasses copies:`, metadataError)
       galleryTransferLedger.recordFailure(item.id, metadataError)
       throw metadataError
     }
 
-    // 7. Export is a durable, receipted step. Failure leaves EXPORT_PENDING and blocks ack.
-    if (item.shouldAutoSave) {
+    // 7. While enabled, export is a durable, receipted step whose failures block ack. Turning
+    // auto-save off safely falls back to the already-verified app-local copy and later backfill.
+    if (shouldAutoSave) {
       galleryTransferLedger.transition(item.id, "EXPORT_PENDING")
-      const receipt = await MediaLibraryPermissions.saveToLibraryWithReceipt(filePathToSave, item.timestamp)
-      if (!receipt.success) {
-        const error = new Error(receipt.error || "camera roll save failed")
+      let receipt
+      try {
+        receipt = await cameraRollExportCoordinator.exportForSource(downloadedFile, item.id)
+      } catch (error) {
         galleryTransferLedger.recordFailure(item.id, error)
-        useGallerySyncStore.getState().onFileFailed(item.id, error.message)
         throw error
       }
-      ledgerEntry = galleryTransferLedger.transition(item.id, "EXPORTED", {
-        assetReceipt: {
-          platform: receipt.platform,
-          uri: receipt.uri,
-          identifier: receipt.identifier,
-          exportedAt: Date.now(),
-        },
-      })
-      downloadedFile.assetReceipt = ledgerEntry.assetReceipt
-      await localStorageService.saveDownloadedFile(downloadedFile)
-      console.log(`${TAG} ✅ Saved to camera roll with receipt: ${item.id}`)
+      if (receipt) {
+        ledgerEntry = galleryTransferLedger.transition(item.id, "EXPORTED", {
+          assetReceipt: receipt,
+        })
+        console.log(`${TAG} ✅ Saved to camera roll with receipt: ${item.id}`)
+      } else {
+        ledgerEntry = galleryTransferLedger.transition(item.id, "INDEXED", {
+          shouldAutoSave: false,
+          lastError: undefined,
+        })
+        console.log(`${TAG} Automatic camera-roll saving was disabled; keeping app-local copy: ${item.id}`)
+      }
     }
 
     // S4: Clean up intermediate processing files
@@ -406,8 +432,8 @@ class MediaProcessingQueue {
       name: item.id,
       url: localFileUrl,
       download: localFileUrl,
-      size: item.totalSize,
-      modified: item.timestamp || Date.now(),
+      size: finalFileSize,
+      modified: ledgerEntry.timestamp,
       is_video: isVideo,
       filePath: filePathToSave,
       mime_type: isVideo ? "video/mp4" : "image/jpeg",
@@ -436,6 +462,56 @@ class MediaProcessingQueue {
 
     const elapsed = Date.now() - startTime
     console.log(`${TAG} ✅ Finished ${item.id} in ${elapsed}ms`)
+  }
+
+  /** Rebuild a missing app-local index row from the durable transfer ledger. */
+  private async recoverDownloadedFile(entry: GalleryTransferEntry) {
+    if (!entry.finalPath) throw new Error(`Recovery file is missing for ${entry.captureId}`)
+
+    // The transfer ledger is the durable source of truth for a committed generation. A local
+    // index row can survive an interrupted replacement and still point at an older/missing path,
+    // or contain the pre-processing size. Only reuse it when its path and identity still match the
+    // ledger's committed file; otherwise rebuild the row before export or source acknowledgement.
+    const finalPath = entry.finalPath.replace(/^file:\/\//, "")
+    const indexed = await localStorageService.getDownloadedFile(entry.captureId)
+    if (indexed) {
+      try {
+        const indexedPath = indexed.filePath?.replace(/^file:\/\//, "")
+        if (indexedPath === finalPath && (await RNFS.exists(indexedPath))) {
+          const indexedStat = await RNFS.stat(indexedPath)
+          const indexedSize = Number(indexedStat.size)
+          if (indexedSize > 0 && indexed.size === indexedSize && indexed.modified === entry.timestamp) {
+            return indexed
+          }
+        }
+      } catch (error) {
+        console.warn(`${TAG} Ignoring stale local index for ${entry.captureId}:`, error)
+      }
+    }
+
+    const stat = await RNFS.stat(finalPath)
+    const finalSize = Number(stat.size)
+    if (!Number.isFinite(finalSize) || finalSize <= 0) {
+      throw new Error(`Recovery file is missing or empty for ${entry.captureId}`)
+    }
+    const recovered = localStorageService.convertToDownloadedFile(
+      {
+        name: entry.captureId,
+        url: "",
+        download: "",
+        size: finalSize,
+        modified: entry.timestamp,
+        mime_type: entry.captureType === "video" ? "video/mp4" : "image/jpeg",
+        is_video: entry.captureType === "video",
+        filePath: finalPath,
+      },
+      finalPath,
+      entry.thumbnailPath,
+    )
+    recovered.capture_id = entry.captureId
+    recovered.assetReceipt = entry.assetReceipt
+    await localStorageService.saveDownloadedFile(recovered)
+    return recovered
   }
 }
 

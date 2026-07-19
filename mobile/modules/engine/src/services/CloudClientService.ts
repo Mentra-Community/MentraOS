@@ -30,6 +30,7 @@ import {useCloudClientStatusStore} from "../stores/cloudClientStatus"
 import {islandNotifications} from "./NotificationsEmitter"
 import {BgTimer} from "../utils/timers"
 import {logCloudV2TranscriptMetric} from "./CloudTranscriptE2EMetrics"
+import {nativeHttpResponseBody} from "./NativeHttpResponse"
 
 const LOG_TAG = "cloudClient"
 type CloudCore = NonNullable<CloudClient["core"]>
@@ -336,7 +337,7 @@ function ensureTransports(): void {
       headers,
       (init?.body as string | undefined) ?? null,
     )
-    return new Response(result.body, {
+    return new Response(nativeHttpResponseBody(result.status, result.body), {
       status: result.status,
       statusText: result.statusText,
       headers: result.headers,

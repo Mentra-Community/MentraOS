@@ -4,6 +4,7 @@ import {beforeEach, describe, expect, mock, test} from "bun:test"
 
 const FINE_LOCATION = "android.permission.ACCESS_FINE_LOCATION"
 const BACKGROUND_LOCATION = "android.permission.ACCESS_BACKGROUND_LOCATION"
+const NEARBY_WIFI_DEVICES = "android.permission.NEARBY_WIFI_DEVICES"
 
 const permissionChecks = new Map<string, boolean>()
 const permissionRequestResults = new Map<string, string>()
@@ -26,6 +27,7 @@ mock.module("react-native", () => ({
       BLUETOOTH_CONNECT: "android.permission.BLUETOOTH_CONNECT",
       BLUETOOTH_SCAN: "android.permission.BLUETOOTH_SCAN",
       CAMERA: "android.permission.CAMERA",
+      NEARBY_WIFI_DEVICES,
       POST_NOTIFICATIONS: "android.permission.POST_NOTIFICATIONS",
       READ_CALENDAR: "android.permission.READ_CALENDAR",
       READ_PHONE_STATE: "android.permission.READ_PHONE_STATE",
@@ -73,7 +75,7 @@ mock.module("../../services/AppRegistry", () => ({
   saveLocalAppRunningState: () => {},
 }))
 
-const {PermissionFeatures, permissions} = await import("../permissions")
+const {PermissionFeatures, localWifiPermissionForAndroid, permissions} = await import("../permissions")
 
 describe("permissions facade", () => {
   beforeEach(() => {
@@ -132,5 +134,22 @@ describe("permissions facade", () => {
       "android.permission.READ_CALENDAR",
       "android.permission.WRITE_CALENDAR",
     ])
+  })
+
+  test("uses location permission for local WiFi on Android 12 and earlier", async () => {
+    permissionRequestResults.set(FINE_LOCATION, "granted")
+
+    await expect(permissions.request(PermissionFeatures.LOCAL_WIFI)).resolves.toBe(true)
+
+    expect(androidRequestMultiple).toHaveBeenCalledWith([FINE_LOCATION])
+  })
+
+  test("uses nearby WiFi permission for local WiFi on Android 13 and newer", () => {
+    expect(
+      localWifiPermissionForAndroid(33, {
+        ACCESS_FINE_LOCATION: FINE_LOCATION,
+        NEARBY_WIFI_DEVICES,
+      } as any),
+    ).toBe(NEARBY_WIFI_DEVICES)
   })
 })

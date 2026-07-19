@@ -11,6 +11,7 @@ import {
   CAMERA_FOV_MIN,
   CameraFovPreset,
   CameraFovRequest,
+  CameraFovOverrideRequest,
   CameraFovResult,
   CameraFovSetting,
   CameraRoiPosition,
@@ -116,7 +117,7 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   sendWifiCredentials(ssid: string, password: string): Promise<WifiStatusChangeEvent>
   forgetWifiNetwork(ssid: string): Promise<WifiStatusChangeEvent>
   setHotspotState(enabled: boolean): Promise<HotspotStatusChangeEvent>
-  /** Set glasses system clock (Mentra Live only) when phone detects clock skew. */
+  /** Set the glasses system clock when phone detects clock skew (Mentra Live and G2). */
   setSystemTime(timestampMs: number): Promise<void>
   /** Logs current WiFi frequency (MHz) and 5 GHz band to Android logcat. */
   logCurrentWifiFrequency(): Promise<void>
@@ -132,6 +133,8 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   setVideoRecordingDefaults(width: number, height: number, fps: number): Promise<SettingsAckSuccessEvent>
   setMaxVideoRecordingDuration(minutes: number): Promise<SettingsAckSuccessEvent>
   setCameraFov(request: CameraFovRequest): Promise<CameraFovResult>
+  setCameraFovOverride(request: CameraFovOverrideRequest): Promise<CameraFovResult>
+  releaseCameraFovOverride(leaseId: string): Promise<SettingsAckSuccessEvent>
   /**
    * Configure camera HAL tuning (ANR / gain) on Mentra Live glasses.
    * Sends a {@code camera_tuning_config} BLE message; the ASG client relays it as a
@@ -144,6 +147,7 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   queryGalleryStatus(): Promise<GalleryStatusEvent>
   requestPhoto(params: PhotoRequestParams): Promise<PhotoSuccessResponseEvent>
   warmUpCamera(params: WarmUpCameraParams): Promise<CameraStatusEvent>
+  stopCameraWarmUp(requestId: string): Promise<void>
 
   // OTA Commands
   setOtaVersionUrl(otaVersionUrl: string): void
@@ -487,6 +491,24 @@ const nativeSetCameraFov = bindNativeMethod<(fov: CameraFovSetting) => MaybeProm
 NativeBluetoothSdkModule.setCameraFov = function (request: CameraFovRequest) {
   const setting = normalizeCameraFov(request)
   return Promise.resolve(nativeSetCameraFov(setting))
+}
+
+const nativeSetCameraFovOverride = bindNativeMethod<
+  (request: CameraFovSetting & {leaseId: string; ttlMs: number}) => MaybePromise<CameraFovResult>
+>(NativeBluetoothSdkModule as unknown as Record<string, unknown>, "setCameraFovOverride")
+NativeBluetoothSdkModule.setCameraFovOverride = function (request: CameraFovOverrideRequest) {
+  const setting = normalizeCameraFov(request)
+  const requestedTtl =
+    typeof request.ttlMs === "number" && Number.isFinite(request.ttlMs) && request.ttlMs > 0
+      ? Math.round(request.ttlMs)
+      : 300_000
+  return Promise.resolve(
+    nativeSetCameraFovOverride({
+      ...setting,
+      leaseId: request.leaseId,
+      ttlMs: Math.min(requestedTtl, 600_000),
+    }),
+  )
 }
 
 NativeBluetoothSdkModule.setMicState = function (

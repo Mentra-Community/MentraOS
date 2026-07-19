@@ -593,15 +593,39 @@ class CrustModule : Module() {
                   null
                 }
         val resolver = context.contentResolver
+        val stableDisplayName =
+                mediaDisplayName.takeIf {
+                  it.startsWith("IMG_") || it.startsWith("VID_")
+                }
         val existingUri =
-                findExistingGalleryAsset(
-                        resolver,
-                        collection,
-                        mediaDisplayName,
-                        file.length(),
-                        captureTimeMillis,
-                        relativePath,
-                )
+                stableDisplayName?.let {
+                  findExistingGalleryAsset(
+                          resolver,
+                          collection,
+                          listOf(it),
+                          file.length(),
+                          captureTimeMillis,
+                          relativePath,
+                          context.packageName,
+                          requireUniqueMatch = false,
+                  )
+                }
+                        ?: findExistingGalleryAsset(
+                                resolver,
+                                collection,
+                                listOfNotNull(
+                                                mediaDisplayName.takeIf { stableDisplayName == null },
+                                                file.name.takeIf {
+                                                  it.isNotBlank() && it != stableDisplayName
+                                                },
+                                        )
+                                        .distinct(),
+                                file.length(),
+                                captureTimeMillis,
+                                relativePath,
+                                context.packageName,
+                                requireUniqueMatch = true,
+                        )
         if (existingUri != null) {
           android.util.Log.d("CrustModule", "Reusing existing gallery asset")
           return@AsyncFunction mapOf(
@@ -919,17 +943,21 @@ class CrustModule : Module() {
   private fun findExistingGalleryAsset(
           resolver: android.content.ContentResolver,
           collection: android.net.Uri,
-          displayName: String,
+          displayNames: List<String>,
           size: Long,
           captureTimeMillis: Long?,
           relativePath: String?,
+          ownerPackageName: String,
+          requireUniqueMatch: Boolean,
   ): android.net.Uri? {
     val dateColumn = android.provider.MediaStore.Images.ImageColumns.DATE_TAKEN
+    if (displayNames.isEmpty()) return null
+    val namePlaceholders = displayNames.joinToString(",") { "?" }
     val selectionParts =
             mutableListOf(
-                    "${android.provider.MediaStore.MediaColumns.DISPLAY_NAME} = ?",
+                    "${android.provider.MediaStore.MediaColumns.DISPLAY_NAME} IN ($namePlaceholders)",
             )
-    val selectionArgs = mutableListOf(displayName)
+    val selectionArgs = displayNames.toMutableList()
     if (captureTimeMillis != null) {
       selectionParts.add("$dateColumn = ?")
       selectionArgs.add(captureTimeMillis.toString())
@@ -947,6 +975,9 @@ class CrustModule : Module() {
       // reconcilable, while still requiring an exact Mentra album match.
       selectionArgs.add(pathWithoutTrailingSlash)
       selectionArgs.add("$pathWithoutTrailingSlash/")
+      // Never reconcile or delete another application's pending MediaStore row.
+      selectionParts.add("${android.provider.MediaStore.MediaColumns.OWNER_PACKAGE_NAME} = ?")
+      selectionArgs.add(ownerPackageName)
     }
     val projection =
             mutableListOf(
@@ -969,6 +1000,7 @@ class CrustModule : Module() {
                       "${android.provider.BaseColumns._ID} DESC",
               )
               ?.use { cursor ->
+                val candidates = mutableListOf<android.net.Uri>()
                 val idColumn = cursor.getColumnIndexOrThrow(android.provider.BaseColumns._ID)
                 val sizeColumn =
                         cursor.getColumnIndexOrThrow(android.provider.MediaStore.MediaColumns.SIZE)
@@ -990,9 +1022,17 @@ class CrustModule : Module() {
                     resolver.delete(uri, null, null)
                     continue
                   }
-                  if (cursor.getLong(sizeColumn) == size) return@use uri
+                  if (cursor.getLong(sizeColumn) == size) candidates.add(uri)
                 }
-                null
+                if (requireUniqueMatch) {
+                  // A legacy `base.jpg`/`base.mp4` match is safe only when the complete
+                  // name/date/size/path/owner fingerprint identifies exactly one asset.
+                  candidates.singleOrNull()
+                } else {
+                  // Capture-derived display names are stable. If an older retry already made
+                  // duplicates, reuse the newest completed row instead of creating another.
+                  candidates.firstOrNull()
+                }
               }
     } catch (error: Exception) {
       android.util.Log.w("CrustModule", "Unable to reconcile existing gallery asset", error)

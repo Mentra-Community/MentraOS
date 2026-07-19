@@ -48,5 +48,15 @@ describe("gallerySyncClock", () => {
         }),
       ).toBe(false)
     })
+
+    it("returns false when captures are present in a newer manifest version", () => {
+      expect(
+        isSyncManifestEmpty({
+          api_version: 3,
+          captures: [{capture_id: "IMG_1"}],
+          changed_files: [],
+        }),
+      ).toBe(false)
+    })
   })
 })

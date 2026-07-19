@@ -85,6 +85,18 @@ class MentraBluetoothSdk private constructor(
         private const val DEFAULT_STREAM_KEEP_ALIVE_INTERVAL_SECONDS = 5
         private const val MAX_MISSED_STREAM_KEEP_ALIVE_ACKS = 3
 
+        // Stream states the glasses only reach after start_stream has run past
+        // stopAllServices() — the point where every older start is actually
+        // preempted. ERROR and STOPPED are deliberately absent: an ERROR can be
+        // a command-level preflight rejection emitted before stopAllServices,
+        // and a STOPPED is a stop ack; neither proves older starts were killed.
+        private val PREEMPTION_PROVEN_STATES = setOf(
+            StreamState.INITIALIZING,
+            StreamState.RECONNECTING,
+            StreamState.RECONNECTED,
+            StreamState.STREAMING,
+        )
+
         @JvmStatic
         fun create(
             context: Context,
@@ -117,10 +129,19 @@ class MentraBluetoothSdk private constructor(
     private data class PendingStreamStart(
         val seq: Long,
         val pending: PendingResponse<StreamStatusEvent>,
+        // Set when an id-carrying error arrives: a fatal publisher error never
+        // reaches the reconnect machinery and winds down with a streamId-less
+        // stopped, so the stash both attributes that stopped to this start and
+        // preserves the real error details for the rejection.
+        var lastError: StreamStatusEvent? = null,
     )
 
     private data class PendingStreamStop(
         val streamId: String?,
+        // The stop's slot in the shared streamStartSeq order (drawn inside
+        // streamStartOrderLock at send time): every pending start with a
+        // lower seq reached the glasses' FIFO before this stop.
+        val seq: Long,
         val pending: PendingResponse<StreamStatusEvent>,
     )
 
@@ -134,8 +155,12 @@ class MentraBluetoothSdk private constructor(
 
     private data class PendingWifiScan(
         val pending: PendingResponse<List<WifiScanResult>>,
+        val scanId: String,
         var latestResults: List<WifiScanResult> = emptyList(),
         var waiters: Int = 0,
+        // Chunks accumulated from scanId-echoing glasses, deduplicated by SSID;
+        // resolved only when the glasses flag the scan complete.
+        val accumulated: MutableList<WifiScanResult> = mutableListOf(),
     )
 
     private data class PendingWifiStatusRequest(
@@ -590,6 +615,30 @@ class MentraBluetoothSdk private constructor(
         return result
     }
 
+    suspend fun setCameraFovOverride(leaseId: String, fov: CameraFov, ttlMs: Int): CameraFovResult {
+        val ack = performSettingsCommand(
+            setting = "camera_fov_override",
+            updateStore = { _ -> },
+            send = { requestId ->
+                deviceManager.sendCameraFovOverride(
+                    requestId,
+                    leaseId,
+                    fov.fov,
+                    fov.roiPosition.value,
+                    ttlMs,
+                )
+            },
+        )
+        return CameraFovResult.fromAck(ack, fov)
+    }
+
+    suspend fun releaseCameraFovOverride(leaseId: String): SettingsAckEvent =
+        performSettingsCommand(
+            setting = "camera_fov_override",
+            updateStore = { _ -> },
+            send = { requestId -> deviceManager.releaseCameraFovOverride(requestId, leaseId) },
+        )
+
     /**
      * Configure camera HAL tuning on Mentra Live glasses.
      *
@@ -656,7 +705,7 @@ class MentraBluetoothSdk private constructor(
 
     suspend fun requestWifiScan(): List<WifiScanResult> {
         val pending = PendingResponse<List<WifiScanResult>>("WiFi scan request")
-        val request = PendingWifiScan(pending, waiters = 1)
+        val request = PendingWifiScan(pending, scanId = "scan-${UUID.randomUUID()}", waiters = 1)
         val existing =
             synchronized(oneShotLock) {
                 pendingWifiScan?.also { it.waiters++ } ?: run {
@@ -674,7 +723,11 @@ class MentraBluetoothSdk private constructor(
             }
         }
         try {
-            deviceManager.requestWifiScan()
+            // Claim the scan-results store for this scan before the command goes
+            // out, so a delayed chunk from an older, abandoned scan can no longer
+            // mutate it.
+            Bridge.claimWifiScanResults(request.scanId)
+            deviceManager.requestWifiScan(request.scanId)
             // The glasses wait up to 15s for scan-results broadcasts before sending
             // scan_complete, so give them longer than that before falling back.
             return pending.await(WIFI_SCAN_TIMEOUT_MS)
@@ -829,6 +882,12 @@ class MentraBluetoothSdk private constructor(
         }
     }
 
+    fun stopCameraWarmUp(requestId: String) {
+        val effectiveRequestId = nonBlankRequestId(requestId)
+            ?: throw BluetoothSdkException("invalid_request", "A warm-up request ID is required.")
+        deviceManager.stopCameraWarmUp(effectiveRequestId)
+    }
+
     suspend fun queryGalleryStatus(): GalleryStatusEvent {
         val pending = PendingResponse<GalleryStatusEvent>("gallery status query")
         synchronized(oneShotLock) {
@@ -917,18 +976,25 @@ class MentraBluetoothSdk private constructor(
         val targetStreamId = synchronized(streamKeepAliveLock) {
             activeStreamKeepAlive?.streamId
         }
-        synchronized(oneShotLock) {
-            if (pendingStreamStop != null) {
-                throw BluetoothSdkException(
-                    "request_in_flight",
-                    "A stream stop command is already waiting for a glasses response.",
-                )
-            }
-            pendingStreamStop = PendingStreamStop(targetStreamId, pending)
-        }
-        stopStreamKeepAliveMonitor()
         try {
-            deviceManager.stopStream()
+            // The seq draw and the BLE hand-off share startStream's ordering
+            // critical section: the stop takes its own slot in the send order,
+            // so its ack can separate the pending starts the glasses consumed
+            // before it (lower seq) from starts sent after it (higher seq).
+            synchronized(streamStartOrderLock) {
+                synchronized(oneShotLock) {
+                    if (pendingStreamStop != null) {
+                        throw BluetoothSdkException(
+                            "request_in_flight",
+                            "A stream stop command is already waiting for a glasses response.",
+                        )
+                    }
+                    pendingStreamStop =
+                        PendingStreamStop(targetStreamId, streamStartSeq.incrementAndGet(), pending)
+                }
+                stopStreamKeepAliveMonitor()
+                deviceManager.stopStream()
+            }
             return pending.await(STREAM_STOP_TIMEOUT_MS)
         } finally {
             synchronized(oneShotLock) {
@@ -1386,9 +1452,15 @@ class MentraBluetoothSdk private constructor(
                     data.containsKey("scanComplete") || data.containsKey("scan_complete")
                 val scanComplete =
                     (data["scanComplete"] as? Boolean) ?: (data["scan_complete"] as? Boolean) ?: false
-                updateWifiScanLatestResults(networks)
-                if (scanComplete || !hasCompletionFlag) {
-                    handleWifiScanResultsForRequests(networks)
+                val scanId = (data["scanId"] as? String)?.ifEmpty { null }
+                if (scanId != null) {
+                    handleCorrelatedWifiScanChunk(scanId, networks, scanComplete)
+                } else {
+                    // Old firmware: no correlation id, keep the pre-scanId heuristics.
+                    updateWifiScanLatestResults(networks)
+                    if (scanComplete || !hasCompletionFlag) {
+                        handleWifiScanResultsForRequests(networks)
+                    }
                 }
                 dispatchToListeners { it.onRawEvent(eventName, data) }
             }
@@ -1555,19 +1627,53 @@ class MentraBluetoothSdk private constructor(
         val startMatch = matchingStreamStart(event)
         if (startMatch != null) {
             val (streamId, start) = startMatch
-            if (!event.streamId.isNullOrBlank()) {
+            // Preemption may only be inferred from states the glasses emit AFTER
+            // start_stream has run stopAllServices() (see PREEMPTION_PROVEN_STATES).
+            // ERROR must not fire it: a command-level preflight rejection (missing
+            // URL, low battery, no WiFi) carries this start's streamId but is sent
+            // BEFORE stopAllServices, so older starts were not preempted — and
+            // rejecting one that already resolved and started its keep-alive
+            // monitor would strand a live stream without keep-alives. STOPPED
+            // must not fire it either: it is the stop-ack shape and proves
+            // nothing about the start path having run.
+            if (!event.streamId.isNullOrBlank() && event.state in PREEMPTION_PROVEN_STATES) {
                 rejectPreemptedStreamStarts(start.seq)
             }
             when (event.state) {
-                StreamState.STREAMING -> {
+                // `reconnected` also proves the stream is live: when an async start
+                // failure triggers the glasses' publisher retry, a successful retry
+                // reports `reconnected` instead of `streaming`.
+                StreamState.STREAMING,
+                StreamState.RECONNECTED -> {
                     pendingStreamStarts.remove(streamId, start)
                     start.pending.resolve(event)
                 }
-                StreamState.ERROR,
                 StreamState.RECONNECT_FAILED,
                 StreamState.STOPPED -> {
                     pendingStreamStarts.remove(streamId, start)
-                    start.pending.reject(streamStatusException(event, "stream_start_failed"))
+                    start.pending.reject(
+                        streamStatusException(start.lastError ?: event, "stream_start_failed")
+                    )
+                }
+                StreamState.ERROR -> {
+                    if (!event.streamId.isNullOrBlank() && event.willRetry == true) {
+                        // The glasses flag errors their publisher will retry with
+                        // `willRetry` (emitting side lands in PR #3488), so keep the
+                        // start pending for the retry's verdict — `reconnected` or
+                        // `streaming` on success, `reconnect_failed` or the
+                        // streamId-less `stopped` wind-down (which reports these
+                        // stashed details) on failure.
+                        start.lastError = event
+                    } else {
+                        // An id-less error is the glasses' command-level rejection
+                        // (missing URL, low battery, no WiFi) emitted before any
+                        // publisher starts; an id-carrying error without `willRetry`
+                        // is terminal (`camera_busy` emits an error and nothing else).
+                        // Old firmware never sends `willRetry`, so its errors always
+                        // fail fast here — the shipped pre-#3487 Android behavior.
+                        pendingStreamStarts.remove(streamId, start)
+                        start.pending.reject(streamStatusException(event, "stream_start_failed"))
+                    }
                 }
                 else -> Unit
             }
@@ -1582,6 +1688,7 @@ class MentraBluetoothSdk private constructor(
                             pendingStreamStop = null
                         }
                     }
+                    rejectStreamStartsSupersededByStop(stop.seq)
                     stop.pending.resolve(stoppedStreamEvent(event, stop.streamId))
                 }
                 event.state == StreamState.ERROR || event.state == StreamState.RECONNECT_FAILED -> {
@@ -1598,11 +1705,11 @@ class MentraBluetoothSdk private constructor(
     }
 
     // The glasses process BLE commands FIFO and every start_stream begins by
-    // stopping whatever runs, so an id-carrying status for start X (any state)
-    // proves every lower-seq start has already been preempted. Their
-    // only verdict on current firmware is a streamId-less stopped, which the
-    // id-less heuristic deliberately ignores — without this they would run out
-    // the 30s timeout instead of failing fast.
+    // stopping whatever runs, so an id-carrying status for start X in one of
+    // these states proves every lower-seq start has already been preempted.
+    // Their only verdict on current firmware is a streamId-less stopped, which
+    // the id-less heuristic deliberately ignores — without this they would run
+    // out the 30s timeout instead of failing fast.
     private fun rejectPreemptedStreamStarts(winnerSeq: Long) {
         for ((streamId, start) in pendingStreamStarts) {
             if (start.seq < winnerSeq && pendingStreamStarts.remove(streamId, start)) {
@@ -1617,22 +1724,59 @@ class MentraBluetoothSdk private constructor(
         }
     }
 
+    // The glasses process BLE commands FIFO, so this stop's ack also settles
+    // every start sent before it: whatever those starts brought up (or would
+    // have brought up) has been stopped, and no further status will arrive
+    // for them. Without this they would run out the 30s start timeout.
+    // Starts sent after the stop keep waiting for their own statuses.
+    private fun rejectStreamStartsSupersededByStop(stopSeq: Long) {
+        for ((streamId, start) in pendingStreamStarts) {
+            if (start.seq < stopSeq && pendingStreamStarts.remove(streamId, start)) {
+                start.pending.reject(
+                    BluetoothSdkException(
+                        "stream_stopped",
+                        "start stream $streamId was superseded by a stop_stream issued after it.",
+                    )
+                )
+            }
+        }
+    }
+
     private fun matchingStreamStart(event: StreamStatusEvent): Pair<String, PendingStreamStart>? {
         val streamId = event.streamId
         if (!streamId.isNullOrBlank()) {
             val start = pendingStreamStarts[streamId] ?: return null
             return streamId to start
         }
+        if (event.state == StreamState.ERROR) {
+            // An id-less error is a command-level preflight rejection (missing
+            // URL, low battery, no WiFi) emitted synchronously, while lifecycle
+            // statuses arrive async — so with overlapping starts the wire is
+            // genuinely ambiguous about which start it answers. Attribute it to
+            // the newest pending start: the common case is a later start
+            // failing preflight while an earlier one is already emitting
+            // lifecycle statuses, and at worst this swaps which start carries
+            // the error instead of letting both time out.
+            val entry = pendingStreamStarts.entries.maxByOrNull { it.value.seq } ?: return null
+            return entry.key to entry.value
+        }
         if (pendingStreamStarts.size == 1) {
+            // firstOrNull: timeouts and other handler threads mutate the
+            // ConcurrentHashMap concurrently, so the map can empty between the
+            // size check and this read; bail out instead of throwing.
+            val entry = pendingStreamStarts.entries.firstOrNull() ?: return null
             // A streamId-less STOPPED is the glasses' stop-ack for a PREVIOUS
             // stream (their stop ack carries no streamId), not a verdict on the
             // pending start — a start_stream that replaces a running publisher
             // emits exactly this sequence (stopped -> initializing -> streaming).
             // Attributing it here would reject a start that is about to succeed.
-            if (event.state == StreamState.STOPPED) {
+            // After a stashed `willRetry` error for the pending start, though,
+            // the stopped is the retrying publisher's wind-down (the stop-ack
+            // always precedes any status for the new start), so it is that
+            // start's verdict.
+            if (event.state == StreamState.STOPPED && entry.value.lastError == null) {
                 return null
             }
-            val entry = pendingStreamStarts.entries.first()
             return entry.key to entry.value
         }
         return null
@@ -1778,6 +1922,35 @@ class MentraBluetoothSdk private constructor(
             }
         }
         request.pending.resolve(results)
+    }
+
+    // scanId-echoing glasses: results for another scan are ignored instead of
+    // resolving the pending request, and matching chunks accumulate until the
+    // glasses flag the scan complete.
+    private fun handleCorrelatedWifiScanChunk(
+        scanId: String,
+        results: List<WifiScanResult>,
+        scanComplete: Boolean,
+    ) {
+        val request: PendingWifiScan
+        val accumulated: List<WifiScanResult>
+        synchronized(oneShotLock) {
+            request = pendingWifiScan?.takeIf { it.scanId == scanId } ?: return
+            for (network in results) {
+                if (request.accumulated.none { it.ssid == network.ssid }) {
+                    request.accumulated.add(network)
+                }
+            }
+            accumulated = request.accumulated.toList()
+            if (accumulated.isNotEmpty()) {
+                request.latestResults = accumulated
+            }
+            if (!scanComplete) return
+            if (pendingWifiScan === request) {
+                pendingWifiScan = null
+            }
+        }
+        request.pending.resolve(accumulated)
     }
 
     private fun updateWifiScanLatestResults(results: List<WifiScanResult>) {

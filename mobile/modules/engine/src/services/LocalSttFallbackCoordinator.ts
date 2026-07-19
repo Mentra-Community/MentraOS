@@ -6,22 +6,24 @@ import sttModelManager from "./STTModelManager"
 
 /**
  * Decides whether on-device Sherpa STT should produce transcripts for local
- * miniapps, instead of (or in addition to) cloud transcription. The chooser
- * is connection-state-driven: when the WebSocket to cloud is down AND a
- * local miniapp is subscribed to transcription, we activate on-device STT.
+ * miniapps, instead of (or in addition to) cloud transcription. Local STT is
+ * active when the cloud is unavailable or any subscription requires
+ * `forceLocal`.
  *
  * Activation flips `localSttFallbackActive` in the settings store, which
  * the bluetooth-sdk native side reads to decide whether to feed PCM into
  * the SherpaOnnxTranscriber. Local transcripts then flow back through the
  * `local_transcription` Bridge event; the host wires that event to
  * `localMiniappRuntime.forwardEvent`, with this coordinator providing the
- * subscription-active gate so we never publish transcripts to miniapps
- * that aren't asking for them.
+ * subscription-active gate so we never publish transcripts to miniapps that
+ * aren't asking for them. LocalMiniappRuntime filters mixed local/cloud
+ * delivery per miniapp.
  */
 class LocalSttFallbackCoordinator {
   private static instance: LocalSttFallbackCoordinator
 
   private hasTranscriptionSubscription = false
+  private hasForceLocalSubscription = false
   private activeLanguage: string | null = null
   /**
    * Default to "cloud is up" so we never accidentally activate local STT before
@@ -74,9 +76,10 @@ class LocalSttFallbackCoordinator {
     return this.activeLanguage
   }
 
-  onSubscriptionChange(hasTranscription: boolean, language: string | null): void {
-    this.log(`onSubscriptionChange(hasTx=${hasTranscription}, lang=${language})`)
+  onSubscriptionChange(hasTranscription: boolean, language: string | null, hasForceLocal = false): void {
+    this.log(`onSubscriptionChange(hasTx=${hasTranscription}, lang=${language}, forceLocal=${hasForceLocal})`)
     this.hasTranscriptionSubscription = hasTranscription
+    this.hasForceLocalSubscription = hasTranscription && hasForceLocal
     this.activeLanguage = hasTranscription ? language : null
     void this.reconcile()
   }
@@ -92,7 +95,7 @@ class LocalSttFallbackCoordinator {
 
   private async reconcile(): Promise<void> {
     this.attachCloudAdapterIfReady()
-    const shouldBeActive = this.hasTranscriptionSubscription && !this.cloudConnected
+    const shouldBeActive = this.shouldUseLocalStt()
     if (shouldBeActive && !this.localActive) {
       await this.startLocalStt()
     } else if (!shouldBeActive && this.localActive) {
@@ -107,8 +110,8 @@ class LocalSttFallbackCoordinator {
       this.log("local stt model is not available yet — skipping activation")
       return
     }
-    if (!this.hasTranscriptionSubscription || this.cloudConnected) {
-      this.log("local stt activation skipped: cloud recovered before start completed")
+    if (!this.shouldUseLocalStt()) {
+      this.log("local stt activation skipped: routing changed before start completed")
       return
     }
     try {
@@ -117,8 +120,8 @@ class LocalSttFallbackCoordinator {
     } catch (err) {
       this.log(`restartTranscriber failed: ${err}`)
     }
-    if (!this.hasTranscriptionSubscription || this.cloudConnected) {
-      this.log("local stt activation skipped: cloud recovered during transcriber restart")
+    if (!this.shouldUseLocalStt()) {
+      this.log("local stt activation skipped: routing changed during transcriber restart")
       return
     }
     useSettingsStore.getState().setSetting(ISLAND_SETTINGS_KEYS.localSttFallbackActive, true)
@@ -129,6 +132,10 @@ class LocalSttFallbackCoordinator {
     this.log(`stopping local stt: ${reason}`)
     useSettingsStore.getState().setSetting(ISLAND_SETTINGS_KEYS.localSttFallbackActive, false)
     this.localActive = false
+  }
+
+  private shouldUseLocalStt(): boolean {
+    return this.hasTranscriptionSubscription && (this.hasForceLocalSubscription || !this.cloudConnected)
   }
 
   private log(msg: string): void {

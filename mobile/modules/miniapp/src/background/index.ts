@@ -110,7 +110,7 @@ export type {
 export type {DashboardMode} from "../modules/dashboard"
 export type {PlayAudioOptions, SpeakOptions, SpeakResult, SpeakerState, SpeakerStateEvent} from "../modules/speaker"
 export type {ShareOptions, ShareResult, DownloadOptions, DownloadResult} from "../modules/system"
-export type {TranscriptionConfig} from "../modules/transcription"
+export type {TranscriptionConfig, TranscriptionOptions} from "../modules/transcription"
 export type {PermissionErrorEvent} from "../modules/permissions"
 export type {
   AuthUpdatePayload,

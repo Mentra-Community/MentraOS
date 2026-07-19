@@ -1467,6 +1467,7 @@ class MentraLive: NSObject, SGCManager {
     // big-endian; upgraded to little-endian only when the glasses advertise wire_caps.k900_le (or a
     // v2 binary handshake succeeds, which implies wire-v2 LE).
     private var peerK900Le = false
+    private var ancsAppIdentifiers: [UInt32: String] = [:]
     private var peerWireCapsBinary = false
     private var peerFilePayloadV2 = false
     private var globalMessageId = 0
@@ -1790,6 +1791,13 @@ class MentraLive: NSObject, SGCManager {
         sendJson(json, wakeUp: true)
     }
 
+    func stopCameraWarmUp(requestId: String) {
+        sendJson(
+            ["type": "camera_warm_up_stop", "requestId": requestId],
+            wakeUp: true
+        )
+    }
+
     func startStream(_ message: [String: Any]) {
         Bridge.log("Starting stream")
         var json = message
@@ -2083,7 +2091,13 @@ class MentraLive: NSObject, SGCManager {
         // Set connection timeout
         startConnectionTimeout()
 
-        centralManager?.connect(peripheral, options: nil)
+        // ANCS is hosted by iOS and is only exposed to authorized accessories.
+        // Requiring it at connect time lets the system complete that authorization
+        // flow before the glasses subscribe to the ANCS characteristics.
+        centralManager?.connect(
+            peripheral,
+            options: [CBConnectPeripheralOptionRequiresANCS: true]
+        )
     }
 
     private func handleReconnection() {
@@ -2773,6 +2787,11 @@ class MentraLive: NSObject, SGCManager {
         }
 
         switch command {
+        case "sr_ancs":
+            if let body = json["B"] as? [String: Any] {
+                processAncsRelay(body)
+            }
+
         case "sr_hrt":
             if let bodyObj = json["B"] as? [String: Any] {
                 let readyResponse = bodyObj["ready"] as? Int ?? 0
@@ -2987,11 +3006,87 @@ class MentraLive: NSObject, SGCManager {
         }
     }
 
+    /// Convert a Mentra Live firmware ANCS relay packet into the same native
+    /// events used by Android's NotificationListenerService.
+    private func processAncsRelay(_ body: [String: Any]) {
+        guard let event = body["event"] as? String,
+              let uid = (body["uid"] as? NSNumber)?.uint32Value
+        else {
+            Bridge.log("LIVE: Ignoring malformed ANCS relay packet")
+            return
+        }
+
+        let notificationId = "ancs-\(uid)"
+        let appIdentifier = body["appIdentifier"] as? String ?? ""
+
+        if event == "removed" {
+            let removedAppIdentifier = ancsAppIdentifiers.removeValue(forKey: uid) ?? appIdentifier
+            Bridge.sendTypedMessage(
+                "phone_notification_dismissed",
+                body: [
+                    "notificationId": notificationId,
+                    "notificationKey": notificationId,
+                    "packageName": removedAppIdentifier,
+                    "timestamp": Int64(Date().timeIntervalSince1970 * 1000),
+                ]
+            )
+            return
+        }
+
+        guard event == "added" || event == "modified" else {
+            Bridge.log("LIVE: Ignoring unknown ANCS event: \(event)")
+            return
+        }
+
+        let title = body["title"] as? String ?? ""
+        let subtitle = body["subtitle"] as? String ?? ""
+        let message = body["message"] as? String ?? ""
+        let content = [subtitle, message]
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n")
+        let flags = (body["flags"] as? NSNumber)?.uint8Value ?? 0
+        if !appIdentifier.isEmpty {
+            ancsAppIdentifiers[uid] = appIdentifier
+        }
+
+        Bridge.sendTypedMessage(
+            "phone_notification",
+            body: [
+                "notificationId": notificationId,
+                "app": appIdentifier,
+                "title": title,
+                "content": content,
+                "priority": (flags & 0x02) != 0 ? "1" : "0",
+                "timestamp": ancsTimestamp(body["date"] as? String),
+                "packageName": appIdentifier,
+            ]
+        )
+    }
+
+    private func ancsTimestamp(_ value: String?) -> Int64 {
+        guard let value, !value.isEmpty else {
+            return Int64(Date().timeIntervalSince1970 * 1000)
+        }
+
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.timeZone = .current
+        formatter.dateFormat = "yyyyMMdd'T'HHmmss"
+        guard let date = formatter.date(from: value) else {
+            return Int64(Date().timeIntervalSince1970 * 1000)
+        }
+        return Int64(date.timeIntervalSince1970 * 1000)
+    }
+
     // commands to send to the glasses:
 
-    func requestWifiScan() {
+    func requestWifiScan(scanId: String?) {
         Bridge.log("LIVE: Requesting WiFi scan from glasses")
-        let json: [String: Any] = ["type": "request_wifi_scan"]
+        var json: [String: Any] = ["type": "request_wifi_scan"]
+        if let scanId, !scanId.isEmpty {
+            json["scanId"] = scanId
+        }
         sendJson(json, wakeUp: true)
     }
 
@@ -3231,7 +3326,8 @@ class MentraLive: NSObject, SGCManager {
         }
 
         let scanComplete = json["scan_complete"] as? Bool ?? json["scanComplete"] as? Bool ?? false
-        Bridge.updateWifiScanResults(networks, scanComplete: scanComplete)
+        let scanId = (json["scanId"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        Bridge.updateWifiScanResults(networks, scanComplete: scanComplete, scanId: scanId)
     }
 
     private func handleButtonPress(_ json: [String: Any]) {
@@ -5193,6 +5289,7 @@ extension MentraLive {
     /// phone must treat every glasses_ready as a new wire epoch and renegotiate (bounded by
     /// the per-session handshake attempt cap) instead of trusting stale v2-active state.
     private func resetWireNegotiationState() {
+        ancsAppIdentifiers.removeAll()
         incomingChunkReassembler.clear()
         peerWireProtocolVersion = 0
         useBinaryWireProtocol = false
@@ -6100,8 +6197,8 @@ extension MentraLive {
     }
 
     func sendCameraFovSetting() {
-        let settings = DeviceStore.shared.get("bluetooth", "camera_fov") as? [String: Any] ?? ["fov": 118, "roi_position": 0]
-        let fov = settings["fov"] as? Int ?? 118
+        let settings = DeviceStore.shared.get("bluetooth", "camera_fov") as? [String: Any] ?? ["fov": 102, "roi_position": 0]
+        let fov = settings["fov"] as? Int ?? 102
         let roiPosition = settings["roi_position"] as? Int ?? 0
         sendCameraFovSetting(requestId: nil, fov: fov, roiPosition: roiPosition)
     }
@@ -6125,6 +6222,39 @@ extension MentraLive {
             json["request_id"] = requestId
         }
         sendJson(json, wakeUp: true)
+    }
+
+    func sendCameraFovOverride(
+        requestId: String,
+        leaseId: String,
+        fov: Int,
+        roiPosition: Int,
+        ttlMs: Int
+    ) {
+        sendJson(
+            [
+                "type": "camera_fov_override",
+                "request_id": requestId,
+                "params": [
+                    "lease_id": leaseId,
+                    "fov": fov,
+                    "roi_position": roiPosition,
+                    "ttl_ms": ttlMs,
+                ],
+            ],
+            wakeUp: true
+        )
+    }
+
+    func releaseCameraFovOverride(requestId: String, leaseId: String) {
+        sendJson(
+            [
+                "type": "camera_fov_override_release",
+                "request_id": requestId,
+                "params": ["lease_id": leaseId],
+            ],
+            wakeUp: true
+        )
     }
 
     func sendCameraTuningConfig(requestId: String?, anrOn: Bool, gainOn: Bool) {
