@@ -329,6 +329,11 @@ class DeviceManager {
             return
         }
 
+        if (sgc?.isMicSuspendedForAudio == true) {
+            Bridge.log("MAN: Glasses mic intentionally suspended for phone audio; skipping mic recovery")
+            return
+        }
+
         // When no frame has ever been received, treat elapsed as "forever" so we
         // actually attempt recovery (was 0 before, which made the watchdog a no-op).
         val timeSinceLastLc3Event = System.currentTimeMillis() - (lastLc3Event ?: 0L)

@@ -1,5 +1,6 @@
 import {createAudioPlayer, AudioPlayer, AudioStatus, setAudioModeAsync} from "expo-audio"
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
+import {Platform} from "react-native"
 import {BgTimer} from "../utils/timers"
 
 const RESTORE_GLASSES_VOLUME_AFTER_PLAYBACK = false
@@ -60,10 +61,24 @@ class AudioPlaybackService {
   // Prevents mic toggle flicker when playing back-to-back audio
   // Uses BgTimer to work reliably when app is backgrounded on Android
   private audioStopDebounceTimer: number | null = null
+  // Mentra Live's A2DP route may go idle between prompts. Keep a short warm
+  // window after actual audio so we only pre-roll the first sound after idle.
+  private audioRouteWarmUntil = 0
+  private audioRouteWarmupPromise: Promise<void> | null = null
   // Original glasses media volume captured before we bump it for A2DP playback.
   private glassesVolumeRestoreLevel: number | null = null
   private static readonly AUDIO_STOP_DEBOUNCE_MS = 1500
   private static readonly A2DP_TAIL_DRAIN_MS = 900
+  private static readonly AUDIO_ROUTE_WARM_WINDOW_MS = 1500
+  private static readonly AUDIO_ROUTE_PREWARM_MS = 200
+  private static readonly AUDIO_ROUTE_PREWARM_SAMPLE_RATE = 16_000
+  private static readonly AUDIO_ROUTE_PREWARM_PCM_BASE64 =
+    "AAAA".repeat(Math.floor(
+      (AudioPlaybackService.AUDIO_ROUTE_PREWARM_MS *
+        AudioPlaybackService.AUDIO_ROUTE_PREWARM_SAMPLE_RATE *
+        2) /
+        (1000 * 3),
+    )) + "AA=="
   /** If glasses report step volume at or below this, bump to FLOOR before A2DP playback. */
   private static readonly GLASSES_VOLUME_LOW_THRESHOLD = 2
   private static readonly GLASSES_VOLUME_FLOOR = 9
@@ -124,6 +139,56 @@ class AudioPlaybackService {
       })
     }
     return this.player
+  }
+
+  private markAudioRouteWarm(): void {
+    this.audioRouteWarmUntil = Date.now() + AudioPlaybackService.AUDIO_ROUTE_WARM_WINDOW_MS
+  }
+
+  private isAudioRouteWarm(): boolean {
+    return this.currentPlayback !== null || this.streams.size > 0 || Date.now() < this.audioRouteWarmUntil
+  }
+
+  /**
+   * Wake a cold Android A2DP route with silent PCM before a user-facing sound.
+   *
+   * Do not call pcmStreamClose here: some Bluetooth routes do not advance an
+   * idle AudioTrack playback head, so close waits for its drain timeout. After
+   * exactly 200ms of silence we abort the stream instead, which releases the
+   * pre-roll immediately and lets the real URL playback begin.
+   */
+  private async prewarmAudioRouteIfCold(): Promise<void> {
+    if (Platform.OS !== "android" || this.isAudioRouteWarm()) return
+    if (this.audioRouteWarmupPromise) return this.audioRouteWarmupPromise
+
+    const streamId = `audio-route-prewarm-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    const warmup = (async () => {
+      let opened = false
+      const startedAt = Date.now()
+      try {
+        console.log(`AUDIO: Cold route; prewarming with ${AudioPlaybackService.AUDIO_ROUTE_PREWARM_MS}ms silence`)
+        await BluetoothSdk.pcmStreamOpen(streamId, AudioPlaybackService.AUDIO_ROUTE_PREWARM_SAMPLE_RATE, 1, 1)
+        opened = true
+        await BluetoothSdk.pcmStreamWrite(streamId, AudioPlaybackService.AUDIO_ROUTE_PREWARM_PCM_BASE64)
+        await new Promise<void>((resolve) => {
+          BgTimer.setTimeout(resolve, AudioPlaybackService.AUDIO_ROUTE_PREWARM_MS)
+        })
+        await BluetoothSdk.pcmStreamAbort(streamId)
+        opened = false
+        this.markAudioRouteWarm()
+        console.log(`AUDIO: Cold-route prewarm completed in ${Date.now() - startedAt}ms`)
+      } catch (error) {
+        console.warn("AUDIO: Cold-route prewarm failed; continuing with requested audio:", error)
+      } finally {
+        if (opened) await BluetoothSdk.pcmStreamAbort(streamId).catch(() => {})
+      }
+    })()
+    this.audioRouteWarmupPromise = warmup
+    try {
+      await warmup
+    } finally {
+      if (this.audioRouteWarmupPromise === warmup) this.audioRouteWarmupPromise = null
+    }
   }
 
   private async getGlassesMediaVolumeWithTiming() {
@@ -256,6 +321,7 @@ class AudioPlaybackService {
     try {
       // Ensure audio mode is configured for background playback
       await this.ensureAudioModeConfigured()
+      await this.prewarmAudioRouteIfCold()
 
       // Stop current playback if any (notify previous callback)
       if (stopOtherAudio && this.currentPlayback && !this.currentPlayback.completed) {
@@ -282,6 +348,7 @@ class AudioPlaybackService {
         onComplete,
       }
       this.currentPlayback = playback
+      this.markAudioRouteWarm()
 
       // Replace the source and play
       // Using replace() reuses the existing ExoPlayer/AudioTrack instead of creating new ones
@@ -323,6 +390,7 @@ class AudioPlaybackService {
     const playback = this.currentPlayback
     playback.completed = true
     this.currentPlayback = null
+    this.markAudioRouteWarm()
 
     // Stop the player
     if (this.player) {
@@ -369,6 +437,7 @@ class AudioPlaybackService {
 
       playback.onComplete(playback.requestId, true, null, durationMs)
       this.currentPlayback = null
+      this.markAudioRouteWarm()
 
       // Notify native that our app stopped playing audio (debounced)
       this.notifyAudioStopDebounced()
@@ -387,6 +456,7 @@ class AudioPlaybackService {
         playback.completed = true
         playback.onComplete(playback.requestId, false, "Playback failed (player went idle)", null)
         this.currentPlayback = null
+        this.markAudioRouteWarm()
         this.notifyAudioStopDebounced()
         void this.restoreGlassesMediaVolume()
       }
@@ -438,6 +508,7 @@ class AudioPlaybackService {
 
     const stream: StreamState = {streamId, appId, startTime: Date.now(), ended: false, onEnded: request.onEnded}
     this.streams.set(streamId, stream)
+    this.markAudioRouteWarm()
 
     // Same LC3-mic-suspend dance as play(): cancel any pending "stopped"
     // notification and mark our app as playing audio.
@@ -513,6 +584,7 @@ class AudioPlaybackService {
     if (stream.ended) return
     stream.ended = true
     this.streams.delete(stream.streamId)
+    this.markAudioRouteWarm()
     // Only signal "audio stopped" when nothing else is making noise.
     if (this.streams.size === 0 && (!this.currentPlayback || this.currentPlayback.completed)) {
       this.notifyAudioStopDebounced()

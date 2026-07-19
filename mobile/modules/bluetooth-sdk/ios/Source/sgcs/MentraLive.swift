@@ -1407,6 +1407,7 @@ class MentraLive: NSObject, SGCManager {
     // So we temporarily suspend the LC3 mic during phone audio playback
     private var micIntentEnabled = false // User/system WANTS mic enabled
     private var micSuspendedForAudio = false // Mic temporarily suspended due to phone audio
+    var isMicSuspendedForAudio: Bool { micSuspendedForAudio }
     private var phoneAudioMonitor: PhoneAudioMonitor?
 
     // Timing Constants

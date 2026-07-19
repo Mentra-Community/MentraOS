@@ -35,10 +35,17 @@ mock.module("expo-audio", () => ({
   setAudioModeAsync: mock(async () => {}),
 }))
 
+mock.module("react-native", () => ({
+  Platform: {OS: "android"},
+}))
+
 mock.module("../../utils/timers", () => ({
   BgTimer: {
     clearTimeout: () => {},
-    setTimeout: () => 1,
+    setTimeout: (callback: () => void) => {
+      callback()
+      return 1
+    },
   },
 }))
 
@@ -52,10 +59,21 @@ describe("AudioPlaybackService live PCM streams", () => {
     pcmStreamOpen.mockClear()
     pcmStreamWrite.mockClear()
     setOwnAppAudioPlaying.mockClear()
+    audioPlayer.play.mockClear()
   })
 
   afterEach(async () => {
     await audioPlaybackService.stopAll()
+  })
+
+  test("prewarms a cold Android route by aborting silence before URL playback", async () => {
+    await audioPlaybackService.play({audioUrl: "https://example.test/click.wav", requestId: "click"}, () => {})
+
+    expect(pcmStreamOpen).toHaveBeenCalledTimes(1)
+    expect(pcmStreamWrite).toHaveBeenCalledTimes(1)
+    expect(pcmStreamAbort).toHaveBeenCalledTimes(1)
+    expect(pcmStreamClose).not.toHaveBeenCalled()
+    expect(audioPlayer.play).toHaveBeenCalledTimes(1)
   })
 
   test("opens, writes, drains, and reports active stream state", async () => {

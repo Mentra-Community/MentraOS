@@ -46,6 +46,8 @@ abstract class SGCManager {
 
     // Audio Control
     abstract fun setMicEnabled(enabled: Boolean)
+    open val isMicSuspendedForAudio: Boolean
+        get() = false
     abstract fun sortMicRanking(list: MutableList<String>): MutableList<String>
 
     // Camera & Media

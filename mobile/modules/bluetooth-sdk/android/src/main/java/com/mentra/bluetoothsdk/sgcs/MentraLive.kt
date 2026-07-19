@@ -327,6 +327,8 @@ class MentraLive : SGCManager() {
     // So we temporarily suspend the LC3 mic during phone audio playback
     private var micIntentEnabled = false // User/system WANTS mic enabled
     private var micSuspendedForAudio = false // Mic temporarily suspended due to phone audio
+    override val isMicSuspendedForAudio: Boolean
+        get() = micSuspendedForAudio
     private var phoneAudioMonitor: PhoneAudioMonitor? = null
     private var micOnCount = 0
     private var micOffCount = 0
