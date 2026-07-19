@@ -7,10 +7,18 @@ import MaskedView from "@react-native-masked-view/masked-view"
 import {CustomBackground} from "@/components/home/CustomBackground"
 import {AppsGrid} from "@/components/home/AppsGrid"
 import {PairGlassesCard} from "@/components/home/PairGlassesCard"
-import {Screen} from "@/components/ignite"
+import {Button, Screen, Text} from "@/components/ignite"
 import {Group} from "@/components/ui"
-import {BgTimer, engine, useRefresh} from "@mentra/engine"
-import {SETTINGS, useSetting} from "@mentra/engine"
+import {
+  BgTimer,
+  engine,
+  useApps,
+  useAppsInitialized,
+  useAppsRefreshError,
+  useRefresh,
+  SETTINGS,
+  useSetting,
+} from "@mentra/engine"
 import {appSwitcherProgress} from "@/stores/appSwitcher"
 import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import AppSwitcherButton from "@/components/home/AppSwitcherButtton"
@@ -24,6 +32,13 @@ import {BlurTargetView, BlurView} from "expo-blur"
 
 export default function Homepage() {
   const refreshApps = useRefresh()
+  const apps = useApps()
+  const appsInitialized = useAppsInitialized()
+  const appsRefreshError = useAppsRefreshError()
+  // Nothing to show yet and the last attempt failed: without this, a failed
+  // refresh() (e.g. a corrupted install record) left the user staring at an
+  // empty grid forever, with a full app reboot as the only recovery (#1222).
+  const appsLoadFailed = appsInitialized && apps.length === 0 && appsRefreshError !== null
   // Pairing-identity read-model: none | pending (chosen, never paired) | paired.
   const identity = useEngineSnapshot(engine.pairing.identity, (onChange) => engine.pairing.onIdentity(onChange))
   const pairedModel = identity.kind === "paired" ? identity.model : ""
@@ -71,7 +86,7 @@ export default function Homepage() {
           </Group>
           <View className="h-2" />
           <View className="flex-1" />
-          <AppsGrid />
+          {appsLoadFailed ? <AppsLoadRetry onRetry={refreshApps} /> : <AppsGrid showPlaceholders={!appsInitialized} />}
         </>
       )
     }
@@ -85,7 +100,7 @@ export default function Homepage() {
           <ControllerStatus />
         </Group>
         <View className="h-2" />
-        <AppsGrid />
+        {appsLoadFailed ? <AppsLoadRetry onRetry={refreshApps} /> : <AppsGrid showPlaceholders={!appsInitialized} />}
       </>
     )
   }
@@ -182,5 +197,14 @@ export default function Homepage() {
       </Screen>
       <AllAppsGridSheet bottomSheetRef={bottomSheetRef} />
     </>
+  )
+}
+
+function AppsLoadRetry({onRetry}: {onRetry: () => void}) {
+  return (
+    <View className="items-center py-8">
+      <Text tx="home:appsLoadFailed" className="text-foreground mb-3" />
+      <Button tx="home:appsLoadRetry" preset="secondary" onPress={onRetry} />
+    </View>
   )
 }
