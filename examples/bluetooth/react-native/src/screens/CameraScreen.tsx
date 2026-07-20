@@ -31,6 +31,7 @@ import {
   PHOTO_ISP_ANALOG_GAIN_OPTIONS,
   PHOTO_ISP_DIGITAL_GAIN_OPTIONS,
   PHOTO_SIZES,
+  PHOTO_TRANSFER_METHODS,
   PHOTO_TUNING_FLAG_OPTIONS,
   type BluetoothSdkExampleModel,
   type PhotoAeExposureDivisor,
@@ -40,6 +41,7 @@ import {
   type PhotoIspDigitalGain,
   type PhotoPreviewDetails,
   type PhotoSize,
+  type PhotoTransferMethod,
   type PhotoTuningFlag,
   type VideoPreviewDetails,
 } from '../useBluetoothSdkExample';
@@ -59,6 +61,7 @@ function tuningFlagLine(name: string, value: PhotoTuningFlag) {
 function photoSdkCall(
   size: PhotoSize,
   compression: PhotoCompression,
+  transferMethod: PhotoTransferMethod,
   useCloudServer: boolean,
   saveOnGlasses: boolean,
   aeExposureDivisor: PhotoAeExposureDivisor | null,
@@ -82,6 +85,7 @@ console.log(\`Camera FOV applied at \${cameraFov.fov}°\`);
   const requestFields = [
         `  size: "${size}",`,
         `  mode: "${textMode ? 'text' : 'photo'}",`,
+        `  transferMethod: "${transferMethod}",`,
         `  compress: "${compression}",`,
         '  sound: true,',
         exposureManual ? `  exposureTimeNs: ${exposureTimeNs},` : '  exposureTimeNs: null, // auto exposure',
@@ -192,6 +196,7 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
     : photoSdkCall(
         sdk.photoSize,
         sdk.photoCompression,
+        sdk.photoTransferMethod,
         sdk.photoCloudServerEnabled,
         sdk.photoGlassesStorageEnabled,
         sdk.photoAeExposureDivisor,
@@ -586,6 +591,16 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
               active={sdk.photoSize === size}
               value={size}
               onPress={() => sdk.setPhotoSize(size)}
+            />
+          ))}
+        </OptionGroup>
+        <OptionGroup label="transfer method">
+          {PHOTO_TRANSFER_METHODS.map((transferMethod) => (
+            <Chip
+              key={transferMethod}
+              active={sdk.photoTransferMethod === transferMethod}
+              value={transferMethod}
+              onPress={() => sdk.setPhotoTransferMethod(transferMethod)}
             />
           ))}
         </OptionGroup>

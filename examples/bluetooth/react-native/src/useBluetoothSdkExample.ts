@@ -290,6 +290,7 @@ type RgbLedAction = 'on' | 'off';
 export type LedColor = 'red' | 'green' | 'blue' | 'orange' | 'white';
 export type PhotoSize = 'low' | 'medium' | 'high' | 'max';
 export type PhotoCompression = 'none' | 'medium' | 'heavy';
+export type PhotoTransferMethod = 'auto' | 'ble';
 export type PhotoDestination = 'phone' | 'cloud' | 'glasses';
 export type PhotoAeExposureDivisor = 2 | 3 | 5;
 export type PhotoIsoCap = 400 | 800 | 1600;
@@ -322,6 +323,7 @@ type PersistedCloudUrls = {
 export const RGB_LED_COLORS: LedColor[] = ['red', 'green', 'blue', 'orange', 'white'];
 export const PHOTO_SIZES: PhotoSize[] = ['low', 'medium', 'high', 'max'];
 export const PHOTO_COMPRESSIONS: PhotoCompression[] = ['none', 'medium', 'heavy'];
+export const PHOTO_TRANSFER_METHODS: PhotoTransferMethod[] = ['auto', 'ble'];
 export const PHOTO_AE_EXPOSURE_DIVISOR_OPTIONS: PhotoAeExposureDivisor[] = [2, 3, 5];
 export const PHOTO_ISO_CAP_OPTIONS: PhotoIsoCap[] = [400, 800, 1600];
 export const PHOTO_ISP_DIGITAL_GAIN_OPTIONS: PhotoIspDigitalGain[] = [0, 1, 2, 4];
@@ -433,6 +435,7 @@ export type BluetoothSdkExampleState = {
   photoPreviewUrl: string | null;
   photoStatus: PhotoStatusEvent | null;
   photoSize: PhotoSize;
+  photoTransferMethod: PhotoTransferMethod;
   barcodeScanningEnabled: boolean;
   textMode: boolean;
   videoPreviewDetails: VideoPreviewDetails | null;
@@ -504,6 +507,7 @@ export type BluetoothSdkExampleActions = {
   setPhotoIso: (iso: number) => void;
   setPhotoExposureTimeNs: (exposureTimeNs: number) => void;
   setPhotoSize: (size: PhotoSize) => void;
+  setPhotoTransferMethod: (transferMethod: PhotoTransferMethod) => void;
   setBarcodeScanningEnabled: (enabled: boolean) => void;
   setTextMode: (enabled: boolean) => void;
   setCameraFov: (fov: number) => void;
@@ -600,6 +604,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   const [videoStatus, setVideoStatus] = useState<VideoRecordingStatusEvent | null>(null);
   const [photoSize, setPhotoSize] = useState<PhotoSize>('max');
   const [photoCompression, setPhotoCompression] = useState<PhotoCompression>('none');
+  const [photoTransferMethod, setPhotoTransferMethod] = useState<PhotoTransferMethod>('auto');
   const [barcodeScanningEnabled, setBarcodeScanningEnabled] = useState(false);
   const [textMode, setTextMode] = useState(false);
   const [photoAeExposureDivisor, setPhotoAeExposureDivisor] =
@@ -1590,6 +1595,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     return addRequestTuningFields({
       size: photoSize,
       mode: textModeEnabled ? 'text' : 'photo',
+      transferMethod: photoTransferMethod,
       compress: photoCompression,
       sound: true,
       exposureTimeNs: photoExposureManual ? photoExposureTimeNs : null,
@@ -4047,6 +4053,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     photoPreviewUrl,
     photoStatus,
     photoSize,
+    photoTransferMethod,
     barcodeScanningEnabled,
     textMode,
     videoPreviewDetails,
@@ -4080,6 +4087,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     setPhotoIso: setPhotoIsoAction,
     setPhotoExposureTimeNs: setPhotoExposureTimeNsAction,
     setPhotoSize: setPhotoSizeAction,
+    setPhotoTransferMethod,
     setBarcodeScanningEnabled: setBarcodeScanningEnabledAction,
     setTextMode: setTextModeAction,
     setCameraFov: setCameraFovAction,
