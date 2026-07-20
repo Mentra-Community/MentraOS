@@ -660,6 +660,64 @@ public class PhotoSessionTest {
     }
 
     @Test
+    public void wouldCaptureHdrBurst_skipsManualExposureButtonCapture() throws Exception {
+        PhotoSession.Hooks hooks = mockConfiguredCameraHooks();
+        CameraSettings cameraSettings = new CameraSettings(RuntimeEnvironment.getApplication());
+        cameraSettings.mAsgSettings.setHdrBurstEnabled(true);
+        when(hooks.cameraSettings()).thenReturn(cameraSettings);
+
+        com.mentra.asg_client.camera.policy.CameraCapabilities caps =
+                new com.mentra.asg_client.camera.policy.CameraCapabilities(
+                        new int[] {},
+                        false,
+                        0f,
+                        true,
+                        new android.util.Range<>(1_000L, 100_000_000L),
+                        null,
+                        new android.util.Range<>(100, 3200));
+        when(hooks.capabilities()).thenReturn(caps);
+
+        PhotoSession session = new PhotoSession(hooks);
+        // Button (non-SDK) capture with manual exposure — HDR must not fire.
+        activateQueuedRequest(
+                session,
+                new QueuedPhotoRequest(
+                        "/tmp/hdr-manual.jpg",
+                        "medium",
+                        false,
+                        false,
+                        10_000_000L,
+                        100,
+                        new PhotoCaptureSettings.Builder().zsl(true).mfnr(true).build(),
+                        null));
+        assertThat(session.wouldCaptureHdrBurst()).isFalse();
+
+        Method resolveZsl =
+                PhotoSession.class.getDeclaredMethod("resolveZslForCapture", boolean.class);
+        resolveZsl.setAccessible(true);
+        Method resolveMfnr =
+                PhotoSession.class.getDeclaredMethod("resolveMfnrForCapture", boolean.class);
+        resolveMfnr.setAccessible(true);
+        assertThat(resolveZsl.invoke(session, true)).isEqualTo(false);
+        assertThat(resolveMfnr.invoke(session, true)).isEqualTo(false);
+    }
+
+    @Test
+    public void wouldCaptureHdrBurst_allowsAutoExposureButtonCapture() throws Exception {
+        PhotoSession.Hooks hooks = mockConfiguredCameraHooks();
+        CameraSettings cameraSettings = new CameraSettings(RuntimeEnvironment.getApplication());
+        cameraSettings.mAsgSettings.setHdrBurstEnabled(true);
+        when(hooks.cameraSettings()).thenReturn(cameraSettings);
+
+        PhotoSession session = new PhotoSession(hooks);
+        activateQueuedRequest(
+                session,
+                new QueuedPhotoRequest(
+                        "/tmp/hdr-auto.jpg", "medium", false, false, null, null));
+        assertThat(session.wouldCaptureHdrBurst()).isTrue();
+    }
+
+    @Test
     public void onCameraClosed_quitsStillCaptureCallbackThread() throws Exception {
         PhotoSession session = new PhotoSession(mockConfiguredCameraHooks());
         Method handlerMethod =
