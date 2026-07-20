@@ -1654,6 +1654,12 @@ class DeviceManager {
         live.sendCameraFovSetting(requestId, fov, roiPosition)
     }
 
+    /** Sends the pre-lease FOV command used by ASG clients that do not send an acknowledgement. */
+    fun sendLegacyCameraFovSetting(fov: Int, roiPosition: Int) {
+        val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
+        live.sendCameraFovSetting(null, fov, roiPosition)
+    }
+
     fun sendCameraFovOverride(
         requestId: String,
         leaseId: String,

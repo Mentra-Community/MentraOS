@@ -8,6 +8,11 @@ const pcmStreamClose = mock(async () => ({durationMs: 1_500}))
 const pcmStreamAbort = mock(async () => {})
 const setOwnAppAudioPlaying = mock(async () => {})
 const setAudioModeAsync = mock(async () => {})
+const setAudioCloudUplinkSuppressed = mock(() => {})
+
+mock.module("../AudioCloudUplink", () => ({
+  setAudioCloudUplinkSuppressed,
+}))
 
 mock.module("@mentra/bluetooth-sdk/internal", () => ({
   __esModule: true,
@@ -60,6 +65,7 @@ describe("AudioPlaybackService live PCM streams", () => {
     pcmStreamOpen.mockClear()
     pcmStreamWrite.mockClear()
     setOwnAppAudioPlaying.mockClear()
+    setAudioCloudUplinkSuppressed.mockClear()
     setAudioModeAsync.mockClear()
     setAudioModeAsync.mockImplementation(async () => {})
     audioPlayer.pause.mockClear()
@@ -94,6 +100,7 @@ describe("AudioPlaybackService live PCM streams", () => {
     })
 
     expect(pcmStreamOpen).toHaveBeenCalledWith("stream-1", 24_000, 1, 0.75)
+    expect(setAudioCloudUplinkSuppressed).toHaveBeenCalledWith("stream:stream-1", true)
     expect(audioPlaybackService.isPlaying()).toBe(true)
     expect(audioPlaybackService.getActiveAppIds()).toEqual(["com.example.call"])
     expect(audioPlaybackService.getActiveCount()).toBe(1)
@@ -104,6 +111,7 @@ describe("AudioPlaybackService live PCM streams", () => {
     expect(pcmStreamWrite).toHaveBeenCalledWith("stream-1", "AAAA")
     expect(pcmStreamClose).toHaveBeenCalledWith("stream-1")
     expect(onEnded).toHaveBeenCalledWith("stream-1", true, null, 1_500)
+    expect(setAudioCloudUplinkSuppressed).toHaveBeenCalledWith("stream:stream-1", false)
     expect(audioPlaybackService.isPlaying()).toBe(false)
   })
 

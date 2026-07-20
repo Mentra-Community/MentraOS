@@ -9,15 +9,22 @@ const setCameraFovOverride = mock(async (request: Record<string, unknown>) => ({
   timestamp: 1,
 }))
 const releaseCameraFovOverride = mock(async (_leaseId: string) => ({ready: true}))
+const setLegacyCameraFov = mock(async (request: Record<string, unknown>) => ({
+  requestId: "legacy",
+  fov: request.fov,
+  roiPosition: request.roiPosition ?? "center",
+  timestamp: 1,
+}))
 
 mock.module("@mentra/bluetooth-sdk/internal", () => ({
-  default: {setCameraFovOverride, releaseCameraFovOverride},
+  default: {setCameraFovOverride, setLegacyCameraFov, releaseCameraFovOverride},
 }))
 
 const {PhoneCameraFovCoordinator} = await import("../PhoneCameraFovCoordinator")
 
 beforeEach(() => {
   setCameraFovOverride.mockClear()
+  setLegacyCameraFov.mockClear()
   releaseCameraFovOverride.mockClear()
 })
 
@@ -109,5 +116,20 @@ describe("PhoneCameraFovCoordinator", () => {
     await coordinator.releaseForApp("com.a")
 
     expect(releaseCameraFovOverride.mock.calls).toEqual([[leaseId], [leaseId]])
+  })
+
+  test("falls back to the acknowledgement-free staging command when override support is unavailable", async () => {
+    setCameraFovOverride.mockRejectedValueOnce(new Error("timed out waiting for glasses response"))
+    const coordinator = new PhoneCameraFovCoordinator()
+
+    await expect(coordinator.setOverride("com.a", {fov: 62, roiPosition: "center"})).resolves.toMatchObject({
+      fov: 62,
+      roiPosition: "center",
+    })
+    expect(setLegacyCameraFov).toHaveBeenCalledWith({fov: 62, roiPosition: "center"})
+
+    await coordinator.setOverride("com.a", {fov: 82})
+    expect(setCameraFovOverride).toHaveBeenCalledTimes(1)
+    expect(setLegacyCameraFov).toHaveBeenCalledTimes(2)
   })
 })

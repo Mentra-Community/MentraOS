@@ -2,6 +2,10 @@ import BluetoothSdk, {type CameraFovRequest, type CameraFovResult} from "@mentra
 
 export const CAMERA_FOV_OVERRIDE_TTL_MS = 300_000
 export const CAMERA_FOV_OVERRIDE_REFRESH_MS = 120_000
+// Legacy ASG clients restart the camera HAL for an FOV update but cannot acknowledge
+// when it is usable again. The ASG cooldown is 5s; retain a small settling margin so
+// miniapps cannot submit a photo against the stale camera service.
+const LEGACY_CAMERA_RESTART_SETTLE_MS = 7_000
 
 interface OverrideEntry {
   leaseId: string
@@ -17,6 +21,11 @@ function mintLeaseId(): string {
   return `fov-${leaseCounter.toString(16).padStart(4, "0")}`
 }
 
+function isLegacyFovCompatibilityError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return /timed out waiting for glasses response|has been rejected|not available|unknown method/i.test(message)
+}
+
 /**
  * Serializes miniapp-owned FOV/ROI overrides. The last live owner wins; releasing it applies the
  * previous owner or asks ASG to restore its persistent base. ASG refreshes are no-restart TTL
@@ -28,6 +37,7 @@ export class PhoneCameraFovCoordinator {
   private sequence = 0
   private queue: Promise<unknown> = Promise.resolve()
   private refreshTimer: ReturnType<typeof setTimeout> | undefined
+  private legacyMode = false
 
   setOverride(packageName: string, request: CameraFovRequest): Promise<CameraFovResult> {
     return this.enqueue(async () => {
@@ -35,6 +45,7 @@ export class PhoneCameraFovCoordinator {
       const leaseId = previous?.leaseId ?? mintLeaseId()
       const order = ++this.sequence
       try {
+        if (this.legacyMode) return this.setLegacyOverride(packageName, request, leaseId, order)
         const result = await BluetoothSdk.setCameraFovOverride({
           ...request,
           leaseId,
@@ -50,8 +61,10 @@ export class PhoneCameraFovCoordinator {
         this.scheduleRefresh()
         return result
       } catch (error) {
-        if (!previous) this.overrides.delete(packageName)
-        throw error
+        if (!isLegacyFovCompatibilityError(error)) throw error
+        console.warn("[PhoneCameraFovCoordinator] override unavailable; using legacy FOV command", error)
+        this.legacyMode = true
+        return this.setLegacyOverride(packageName, request, leaseId, order)
       }
     })
   }
@@ -69,6 +82,18 @@ export class PhoneCameraFovCoordinator {
         .filter(([candidatePackage]) => candidatePackage !== packageName)
         .map(([, entry]) => entry)
         .sort((a, b) => b.order - a.order)[0]
+      if (this.legacyMode) {
+        this.overrides.delete(packageName)
+        if (next) {
+          await this.setLegacyOverride("__restore__", {fov: next.fov, roiPosition: next.roiPosition}, next.leaseId, next.order)
+          this.overrides.delete("__restore__")
+          this.effectiveLeaseId = next.leaseId
+        } else {
+          this.clearRefresh()
+          this.effectiveLeaseId = undefined
+        }
+        return
+      }
       if (next) {
         await BluetoothSdk.setCameraFovOverride({
           leaseId: next.leaseId,
@@ -91,6 +116,7 @@ export class PhoneCameraFovCoordinator {
   }
 
   private scheduleRefresh(): void {
+    if (this.legacyMode) return
     this.clearRefresh()
     const leaseId = this.effectiveLeaseId
     if (!leaseId) return
@@ -113,6 +139,25 @@ export class PhoneCameraFovCoordinator {
   private clearRefresh(): void {
     if (this.refreshTimer) clearTimeout(this.refreshTimer)
     this.refreshTimer = undefined
+  }
+
+  private async setLegacyOverride(
+    packageName: string,
+    request: CameraFovRequest,
+    leaseId: string,
+    order: number,
+  ): Promise<CameraFovResult> {
+    const result = await BluetoothSdk.setLegacyCameraFov(request)
+    await new Promise<void>((resolve) => setTimeout(resolve, LEGACY_CAMERA_RESTART_SETTLE_MS))
+    this.overrides.set(packageName, {
+      leaseId,
+      fov: result.fov,
+      roiPosition: result.roiPosition,
+      order,
+    })
+    this.effectiveLeaseId = leaseId
+    this.clearRefresh()
+    return result
   }
 
   private enqueue<T>(operation: () => Promise<T>): Promise<T> {

@@ -615,6 +615,20 @@ class MentraBluetoothSdk private constructor(
         return result
     }
 
+    /**
+     * Compatibility path for ASG clients that support only the older one-way FOV command.
+     * It resolves once the setting is queued to BLE because those clients never acknowledge it.
+     */
+    fun setLegacyCameraFov(fov: CameraFov): CameraFovResult {
+        deviceManager.sendLegacyCameraFovSetting(fov.fov, fov.roiPosition.value)
+        DeviceStore.set(
+            ObservableStore.BLUETOOTH_CATEGORY,
+            "camera_fov",
+            mapOf("fov" to fov.fov, "roi_position" to fov.roiPosition.value),
+        )
+        return CameraFovResult("legacy", fov.fov, fov.roiPosition, System.currentTimeMillis())
+    }
+
     suspend fun setCameraFovOverride(leaseId: String, fov: CameraFov, ttlMs: Int): CameraFovResult {
         val ack = performSettingsCommand(
             setting = "camera_fov_override",
