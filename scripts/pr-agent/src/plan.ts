@@ -72,10 +72,18 @@ export async function runPlan(repoRoot: string): Promise<PlanOutput> {
   let state = loadedState;
 
   if (labelNames.includes('agent-resume')) {
+    // Grant a fresh budget window. Without resetting cycle/fixRound, a PR
+    // that already crossed maxOrchestratorCycles or maxFixRounds would
+    // immediately re-trigger budget_exhausted on its very next cycle, making
+    // agent-resume a near no-op for any long-lived PR. The finding ledger
+    // (openFindings/resolvedFindings/mutedFingerprints) is preserved as-is.
     state = {
       ...state,
       status: 'in_progress',
       consecutiveNoNewReviews: 0,
+      cycle: 0,
+      fixRound: 0,
+      stagnationFixRounds: 0,
     };
     await removeLabel(octokit, owner, repo, prNumber, 'agent-resume');
     await removeLabel(octokit, owner, repo, prNumber, 'ready-for-human-review');
