@@ -579,6 +579,7 @@ class AudioPlaybackService {
     console.log(`AUDIO: Stream open ${streamId} from ${appId}: rate=${sampleRate} ch=${channels}`)
 
     await this.ensureAudioModeConfigured()
+    await this.prewarmAudioRouteIfCold()
 
     if (stopOtherAudio) {
       if (this.currentPlayback && !this.currentPlayback.completed) {

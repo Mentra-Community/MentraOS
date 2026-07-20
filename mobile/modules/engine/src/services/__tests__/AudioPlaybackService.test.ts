@@ -1,6 +1,6 @@
 /// <reference types="bun-types" />
 
-import {afterEach, beforeEach, describe, expect, mock, test} from "bun:test"
+import {afterEach, beforeEach, describe, expect, mock, spyOn, test} from "bun:test"
 
 import {
   emitLc3Frame,
@@ -71,6 +71,29 @@ describe("AudioPlaybackService live PCM streams", () => {
     expect(pcmStreamAbort).toHaveBeenCalledTimes(1)
     expect(pcmStreamClose).not.toHaveBeenCalled()
     expect(audioPlayer.play).toHaveBeenCalledTimes(1)
+  })
+
+  test("prewarms a cold Android route before opening a live PCM stream", async () => {
+    const coldNow = Date.now() + 10_000
+    const dateNow = spyOn(Date, "now").mockReturnValue(coldNow)
+    try {
+      await audioPlaybackService.openStream({
+        appId: "com.example.call",
+        channels: 1,
+        onEnded: () => {},
+        sampleRate: 24_000,
+        streamId: "stream-cold",
+        volume: 0.75,
+      })
+    } finally {
+      dateNow.mockRestore()
+    }
+
+    expect(pcmStreamOpen).toHaveBeenCalledTimes(2)
+    expect(pcmStreamOpen).toHaveBeenNthCalledWith(1, expect.stringContaining("audio-route-prewarm-"), 16_000, 1, 1)
+    expect(pcmStreamWrite).toHaveBeenCalledTimes(1)
+    expect(pcmStreamAbort).toHaveBeenCalledTimes(1)
+    expect(pcmStreamOpen).toHaveBeenNthCalledWith(2, "stream-cold", 24_000, 1, 0.75)
   })
 
   test("opens, writes, drains, and reports active stream state", async () => {
