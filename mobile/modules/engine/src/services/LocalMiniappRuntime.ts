@@ -2092,6 +2092,7 @@ class LocalMiniappRuntime {
                     appId: packageName,
                     volume,
                     stopOtherAudio,
+                    suppressCloudUplink: true,
                   },
                   (_responseId, success, error, duration, completionReason) => {
                     if (run.playbackRequestId === sentenceRequestId) run.playbackRequestId = undefined
@@ -2134,7 +2135,14 @@ class LocalMiniappRuntime {
         }
         run.playbackRequestId = audioRequestId
         audioPlaybackService.play(
-          {requestId: audioRequestId, audioUrl: generated.audioUrl, appId: packageName, volume, stopOtherAudio},
+          {
+            requestId: audioRequestId,
+            audioUrl: generated.audioUrl,
+            appId: packageName,
+            volume,
+            stopOtherAudio,
+            suppressCloudUplink: true,
+          },
           (_respId, success, error, duration, completionReason) => {
             if (run.playbackRequestId === audioRequestId) run.playbackRequestId = undefined
             void Promise.resolve(generated.cleanup?.()).catch((cleanupError) => {
@@ -2180,7 +2188,14 @@ class LocalMiniappRuntime {
         run.playbackRequestId = audioRequestId
         await Promise.resolve(
           audioPlaybackService.play(
-            {requestId: audioRequestId, audioUrl: source.audioUrl, appId: packageName, volume, stopOtherAudio},
+            {
+              requestId: audioRequestId,
+              audioUrl: source.audioUrl,
+              appId: packageName,
+              volume,
+              stopOtherAudio,
+              suppressCloudUplink: true,
+            },
             (_respId, success, error, duration, completionReason) => {
               if (run.playbackRequestId === audioRequestId) run.playbackRequestId = undefined
               if (!success && fallbackToOffline) {

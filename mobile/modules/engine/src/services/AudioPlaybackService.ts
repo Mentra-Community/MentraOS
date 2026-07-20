@@ -12,6 +12,8 @@ interface AudioPlayRequest {
   appId?: string
   volume?: number
   stopOtherAudio?: boolean
+  /** Suppress microphone audio sent to cloud STT while this audio is audible. */
+  suppressCloudUplink?: boolean
 }
 
 export type AudioPlaybackCompletionReason = "completed" | "interrupted" | "error"
@@ -30,6 +32,7 @@ interface PlaybackState {
   appId?: string
   startTime: number
   completed: boolean // Guard against double callbacks
+  suppressCloudUplink: boolean
   onComplete: AudioPlaybackCompletion
 }
 
@@ -57,7 +60,6 @@ export interface AudioStreamOpenRequest {
 /** One live PCM stream session, backed by native streaming audio. */
 interface StreamState {
   streamId: string
-  uplinkSuppressionId: string
   appId: string
   startTime: number
   ended: boolean // Guard against double onEnded
@@ -317,7 +319,9 @@ class AudioPlaybackService {
       // ExoPlayer's completion event precedes the final A2DP audio reaching the
       // glasses. Keep cloud STT gated until that audible tail has drained, then
       // accept fresh microphone audio immediately without restarting LC3.
-      setAudioCloudUplinkSuppressed(playback.uplinkSuppressionId, false)
+      if (playback.suppressCloudUplink) {
+        setAudioCloudUplinkSuppressed(playback.uplinkSuppressionId, false)
+      }
       if (this.currentPlayback) return
       if (!this.player) return
       try {
@@ -336,7 +340,7 @@ class AudioPlaybackService {
    * Returns a promise that resolves with playback result when audio finishes or errors.
    */
   public async play(request: AudioPlayRequest, onComplete: AudioPlaybackCompletion): Promise<void> {
-    const {requestId, audioUrl, appId, volume = 1.0, stopOtherAudio = true} = request
+    const {requestId, audioUrl, appId, volume = 1.0, stopOtherAudio = true, suppressCloudUplink = false} = request
     const pending: PendingPlaybackState = {cancelled: false}
     this.pendingPlaybacks.set(requestId, pending)
 
@@ -385,12 +389,15 @@ class AudioPlaybackService {
         appId,
         startTime: Date.now(),
         completed: false,
+        suppressCloudUplink,
         onComplete,
       }
       this.currentPlayback = playback
       this.pendingPlaybacks.delete(requestId)
       this.markAudioRouteWarm()
-      setAudioCloudUplinkSuppressed(playback.uplinkSuppressionId, true)
+      if (playback.suppressCloudUplink) {
+        setAudioCloudUplinkSuppressed(playback.uplinkSuppressionId, true)
+      }
 
       // Replace the source and play
       // Using replace() reuses the existing ExoPlayer/AudioTrack instead of creating new ones
@@ -416,7 +423,9 @@ class AudioPlaybackService {
 
       console.log(`AUDIO: Started playback for ${requestId}`)
     } catch (error) {
-      setAudioCloudUplinkSuppressed(`url:${requestId}`, false)
+      if (suppressCloudUplink) {
+        setAudioCloudUplinkSuppressed(`url:${requestId}`, false)
+      }
       if (this.currentPlayback?.requestId === requestId) {
         this.currentPlayback.completed = true
         this.currentPlayback = null
@@ -459,7 +468,9 @@ class AudioPlaybackService {
     const playback = this.currentPlayback
     playback.completed = true
     this.currentPlayback = null
-    setAudioCloudUplinkSuppressed(playback.uplinkSuppressionId, false)
+    if (playback.suppressCloudUplink) {
+      setAudioCloudUplinkSuppressed(playback.uplinkSuppressionId, false)
+    }
     this.markAudioRouteWarm()
 
     // Stop the player
@@ -525,7 +536,9 @@ class AudioPlaybackService {
         console.error(`AUDIO: Playback failed for ${playback.requestId} (player went idle after ${elapsedMs}ms)`)
         playback.completed = true
         this.currentPlayback = null
-        setAudioCloudUplinkSuppressed(playback.uplinkSuppressionId, false)
+        if (playback.suppressCloudUplink) {
+          setAudioCloudUplinkSuppressed(playback.uplinkSuppressionId, false)
+        }
         playback.onComplete(playback.requestId, false, "Playback failed (player went idle)", null, "error")
         this.markAudioRouteWarm()
         this.notifyAudioStopDebounced()
@@ -579,7 +592,6 @@ class AudioPlaybackService {
 
     const stream: StreamState = {
       streamId,
-      uplinkSuppressionId: `stream:${streamId}`,
       appId,
       startTime: Date.now(),
       ended: false,
@@ -587,10 +599,9 @@ class AudioPlaybackService {
     }
     this.streams.set(streamId, stream)
     this.markAudioRouteWarm()
-    setAudioCloudUplinkSuppressed(stream.uplinkSuppressionId, true)
 
-    // Same LC3-mic-suspend dance as play(): cancel any pending "stopped"
-    // notification and mark our app as playing audio.
+    // Cancel any pending "stopped" notification and mark our app as playing
+    // audio. PCM streams intentionally do not suppress cloud STT.
     if (this.audioStopDebounceTimer !== null) {
       BgTimer.clearTimeout(this.audioStopDebounceTimer)
       this.audioStopDebounceTimer = null
@@ -663,7 +674,6 @@ class AudioPlaybackService {
     if (stream.ended) return
     stream.ended = true
     this.streams.delete(stream.streamId)
-    setAudioCloudUplinkSuppressed(stream.uplinkSuppressionId, false)
     this.markAudioRouteWarm()
     // Only signal "audio stopped" when nothing else is making noise.
     if (this.streams.size === 0 && (!this.currentPlayback || this.currentPlayback.completed)) {

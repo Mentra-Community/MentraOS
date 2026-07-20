@@ -21,10 +21,9 @@ let sub: {remove: () => void} | null = null
 const suppressionSources = new Set<string>()
 
 /**
- * Keep the glasses LC3 transport alive while preventing selected phone audio
- * playback from being ingested by cloud STT. Sources are reference-counted by
- * id so overlapping URL playback and PCM streams cannot reopen the uplink
- * until every active output has ended.
+ * Keep the glasses LC3 transport alive while preventing spoken TTS from being
+ * ingested by cloud STT. Sources are reference-counted by id so overlapping
+ * speech playback cannot reopen the uplink until every active prompt has ended.
  */
 export function setAudioCloudUplinkSuppressed(sourceId: string, suppressed: boolean): void {
   if (suppressed) suppressionSources.add(sourceId)

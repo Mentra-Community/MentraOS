@@ -100,7 +100,7 @@ describe("AudioPlaybackService live PCM streams", () => {
     })
 
     expect(pcmStreamOpen).toHaveBeenCalledWith("stream-1", 24_000, 1, 0.75)
-    expect(setAudioCloudUplinkSuppressed).toHaveBeenCalledWith("stream:stream-1", true)
+    expect(setAudioCloudUplinkSuppressed).not.toHaveBeenCalled()
     expect(audioPlaybackService.isPlaying()).toBe(true)
     expect(audioPlaybackService.getActiveAppIds()).toEqual(["com.example.call"])
     expect(audioPlaybackService.getActiveCount()).toBe(1)
@@ -111,7 +111,7 @@ describe("AudioPlaybackService live PCM streams", () => {
     expect(pcmStreamWrite).toHaveBeenCalledWith("stream-1", "AAAA")
     expect(pcmStreamClose).toHaveBeenCalledWith("stream-1")
     expect(onEnded).toHaveBeenCalledWith("stream-1", true, null, 1_500)
-    expect(setAudioCloudUplinkSuppressed).toHaveBeenCalledWith("stream:stream-1", false)
+    expect(setAudioCloudUplinkSuppressed).not.toHaveBeenCalled()
     expect(audioPlaybackService.isPlaying()).toBe(false)
   })
 
@@ -196,6 +196,31 @@ describe("AudioPlaybackService live PCM streams", () => {
 
     expect(firstComplete).toHaveBeenCalledTimes(1)
     expect(firstComplete).toHaveBeenCalledWith("first-url", true, null, expect.any(Number), "interrupted")
+  })
+
+  test("only suppresses cloud STT when the caller opts in", async () => {
+    await audioPlaybackService.play(
+      {requestId: "sound-effect", audioUrl: "file://click.wav", appId: "app-one"},
+      () => {},
+    )
+    expect(setAudioCloudUplinkSuppressed).not.toHaveBeenCalled()
+
+    audioPlaybackService.cancelPlayback("sound-effect")
+    setAudioCloudUplinkSuppressed.mockClear()
+
+    await audioPlaybackService.play(
+      {
+        requestId: "spoken-tts",
+        audioUrl: "file://speech.wav",
+        appId: "app-one",
+        suppressCloudUplink: true,
+      },
+      () => {},
+    )
+    expect(setAudioCloudUplinkSuppressed).toHaveBeenCalledWith("url:spoken-tts", true)
+
+    audioPlaybackService.cancelPlayback("spoken-tts")
+    expect(setAudioCloudUplinkSuppressed).toHaveBeenCalledWith("url:spoken-tts", false)
   })
 
   test("cancels active URL playback immediately by request id", async () => {
