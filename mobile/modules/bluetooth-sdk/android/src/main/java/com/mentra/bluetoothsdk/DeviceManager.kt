@@ -1194,6 +1194,10 @@ class DeviceManager {
                 }
             )
             nextTranscriber.initialize()
+            if (!nextTranscriber.isInitialized()) {
+                Bridge.log("SherpaOnnxTranscriber initialize() returned without becoming ready")
+                return false
+            }
             transcriber = nextTranscriber
             Bridge.log("SherpaOnnxTranscriber fully initialized")
             true
