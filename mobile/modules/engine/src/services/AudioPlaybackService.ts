@@ -88,6 +88,10 @@ class AudioPlaybackService {
   // window after actual audio so we only pre-roll the first sound after idle.
   private audioRouteWarmUntil = 0
   private audioRouteWarmupPromise: Promise<void> | null = null
+  // Spoken playback remains suppressed briefly while its A2DP tail drains.
+  // Track those completed sources so a new non-spoken sound can resume
+  // listening immediately instead of inheriting the previous TTS gate.
+  private tailUplinkSuppressions = new Set<string>()
   // Original glasses media volume captured before we bump it for A2DP playback.
   private glassesVolumeRestoreLevel: number | null = null
   private static readonly AUDIO_STOP_DEBOUNCE_MS = 1500
@@ -315,11 +319,14 @@ class AudioPlaybackService {
   }
 
   private pauseFinishedPlayerAfterTail(playback: PlaybackState): void {
+    if (playback.suppressCloudUplink) {
+      this.tailUplinkSuppressions.add(playback.uplinkSuppressionId)
+    }
     BgTimer.setTimeout(() => {
       // ExoPlayer's completion event precedes the final A2DP audio reaching the
       // glasses. Keep cloud STT gated until that audible tail has drained, then
       // accept fresh microphone audio immediately without restarting LC3.
-      if (playback.suppressCloudUplink) {
+      if (playback.suppressCloudUplink && this.tailUplinkSuppressions.delete(playback.uplinkSuppressionId)) {
         setAudioCloudUplinkSuppressed(playback.uplinkSuppressionId, false)
       }
       if (this.currentPlayback) return
@@ -333,6 +340,13 @@ class AudioPlaybackService {
         console.warn("AUDIO: Error pausing player after tail drain:", e)
       }
     }, AudioPlaybackService.A2DP_TAIL_DRAIN_MS)
+  }
+
+  private releaseTailUplinkSuppressions(): void {
+    for (const sourceId of this.tailUplinkSuppressions) {
+      setAudioCloudUplinkSuppressed(sourceId, false)
+    }
+    this.tailUplinkSuppressions.clear()
   }
 
   /**
@@ -374,6 +388,10 @@ class AudioPlaybackService {
       if (pending.cancelled) {
         onComplete(requestId, true, null, 0, "interrupted")
         return
+      }
+
+      if (!suppressCloudUplink) {
+        this.releaseTailUplinkSuppressions()
       }
 
       // Get or create the reusable player
@@ -590,6 +608,7 @@ class AudioPlaybackService {
     }
 
     await BluetoothSdk.pcmStreamOpen(streamId, sampleRate, channels, Math.max(0, Math.min(1, volume)))
+    this.releaseTailUplinkSuppressions()
 
     const stream: StreamState = {
       streamId,

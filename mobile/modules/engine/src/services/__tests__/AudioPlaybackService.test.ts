@@ -13,6 +13,7 @@ import {
 } from "./audioTestMocks"
 
 const setAudioModeAsync = mock(async () => {})
+const tailTimerCallbacks: Array<() => void> = []
 
 const audioPlayer = {
   addListener: mock(() => ({remove: () => {}})),
@@ -35,7 +36,11 @@ mock.module("react-native", () => ({
 mock.module("../../utils/timers", () => ({
   BgTimer: {
     clearTimeout: () => {},
-    setTimeout: (callback: () => void) => {
+    setTimeout: (callback: () => void, delayMs: number) => {
+      if (delayMs === 700) {
+        tailTimerCallbacks.push(callback)
+        return 1
+      }
       callback()
       return 1
     },
@@ -50,6 +55,7 @@ describe("AudioPlaybackService live PCM streams", () => {
     await audioPlaybackService.stopAll()
     stopAudioCloudUplink()
     resetAudioTestMocks()
+    tailTimerCallbacks.length = 0
     startAudioCloudUplink()
     setAudioModeAsync.mockClear()
     setAudioModeAsync.mockImplementation(async () => {})
@@ -234,6 +240,40 @@ describe("AudioPlaybackService live PCM streams", () => {
     audioPlaybackService.cancelPlayback("spoken-tts")
     emitLc3Frame([3])
     expect(sendAudioFrame).toHaveBeenCalledTimes(2)
+  })
+
+  test("releases a completed TTS tail gate when a live PCM cue starts", async () => {
+    const onComplete = mock(() => {})
+    await audioPlaybackService.play(
+      {
+        requestId: "spoken-tts",
+        audioUrl: "file://speech.wav",
+        appId: "app-one",
+        suppressCloudUplink: true,
+      },
+      onComplete,
+    )
+
+    const playbackStatusTarget = audioPlaybackService as unknown as {
+      onPlaybackStatusUpdate(status: {didJustFinish: boolean; duration: number}): void
+    }
+    playbackStatusTarget.onPlaybackStatusUpdate({didJustFinish: true, duration: 1})
+    expect(onComplete).toHaveBeenCalledWith("spoken-tts", true, null, 1_000, "completed")
+
+    emitLc3Frame([1])
+    expect(sendAudioFrame).toHaveBeenCalledTimes(0)
+
+    await audioPlaybackService.openStream({
+      appId: "app-one",
+      channels: 1,
+      onEnded: () => {},
+      sampleRate: 16_000,
+      streamId: "cue-stream",
+    })
+    emitLc3Frame([2])
+    expect(sendAudioFrame).toHaveBeenCalledTimes(1)
+
+    for (const callback of tailTimerCallbacks.splice(0)) callback()
   })
 
   test("cancels active URL playback immediately by request id", async () => {
