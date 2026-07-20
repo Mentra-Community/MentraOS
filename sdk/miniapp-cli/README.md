@@ -40,7 +40,14 @@ What it does:
 
 Default `port` is `3000`; override the starting point with a `"port": <n>` field in `miniapp.json`. If that port or its sidecar neighbor is busy, `dev` scans upward until it finds a free adjacent pair.
 
-**On the phone:** open the MentraOS app → **Settings → Developer settings → Mini App Development → Scan Mini App QR Code**. Phone and laptop must be on the same Wi-Fi.
+**On the phone:** open the Mentra App → **Settings → Developer settings → Mini App Development → Scan Mini App QR Code**. Phone and laptop must be on the same Wi-Fi.
+
+`dev` is live and temporary. Keep the CLI and computer running: the Mentra App
+loads the bundle, name, and icon from that LAN server. The Mentra App has one dev
+miniapp slot, so scanning another dev QR replaces the current dev miniapp. Use
+`bun run release` when you need an installed miniapp that persists across
+restarts, works without the computer, or can coexist with other installed
+miniapps.
 
 `Ctrl+C` stops the server, the sidecar, and the IP watcher.
 
@@ -71,7 +78,7 @@ Flow:
 
 `Ctrl+C` to stop the server.
 
-**On the phone:** the MentraOS app's QR scanner branches on `miniapp://release` and uses the dev composer to download + install the bundle. The miniapp lands in `lmas/<package>/<version>/` and behaves like any installed local miniapp — runs offline, persists across restarts, no laptop required after install.
+**On the phone:** the Mentra App's QR scanner branches on `miniapp://release` and uses the dev composer to download + install the bundle. The miniapp lands in `lmas/<package>/<version>/` and behaves like any installed local miniapp — runs offline, persists across restarts, no laptop required after install.
 
 > **Why "release" and not "install":** `install` collides with package managers (`bun run install` is reserved). Naming the action after the artifact you're producing avoids that collision and matches Android's `installRelease` mental model.
 

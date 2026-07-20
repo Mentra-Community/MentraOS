@@ -245,14 +245,22 @@ export async function dev(options: DevOptions = {}): Promise<void> {
 
   const printBanner = (): void => {
     console.log('\n╔══════════════════════════════════════════════════════════════╗');
-    console.log('║  To test your mini app on glasses:                           ║');
+    console.log('║  To test your miniapp on glasses:                            ║');
     console.log('║                                                              ║');
-    console.log('║    1. Open the Mentra app on your phone                      ║');
+    console.log('║    1. Open the Mentra App on your phone                      ║');
     console.log('║    2. Settings → Developer settings                          ║');
     console.log('║    3. Under "Mini App Development", tap                      ║');
     console.log('║       "Scan Mini App QR Code" and scan the QR below          ║');
     console.log('║                                                              ║');
     console.log('║  Your phone must be on the same Wi-Fi as this computer.      ║');
+    console.log('║                                                              ║');
+    console.log('║  Dev mode is live and temporary:                             ║');
+    console.log('║    • Keep this process and computer running.                 ║');
+    console.log('║    • The Mentra App keeps one dev miniapp at a time.         ║');
+    console.log('║      Scanning another dev QR replaces the current one.       ║');
+    console.log('║    • Its name and icon are served from this computer.        ║');
+    console.log('║                                                              ║');
+    console.log('║  For a persistent install, run: bun run release              ║');
     console.log('╚══════════════════════════════════════════════════════════════╝\n');
   };
 

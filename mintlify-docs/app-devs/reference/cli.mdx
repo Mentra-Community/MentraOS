@@ -48,6 +48,14 @@ its sidecar neighbor is busy, the CLI scans upward for a free adjacent pair.
 Development → Scan Mini App QR Code**. Phone and laptop must share Wi-Fi. `Ctrl+C`
 stops everything.
 
+<Warning>
+`dev` is live and temporary. Keep the CLI and computer running: the Mentra App
+loads the bundle, name, and icon from that LAN server. The Mentra App has one dev
+miniapp slot, so scanning another dev QR replaces the current dev miniapp. Use
+`bun run release` for an installed miniapp that persists across restarts, works
+without the computer, or coexists with other installed miniapps.
+</Warning>
+
 ## `release`
 
 ```bash
