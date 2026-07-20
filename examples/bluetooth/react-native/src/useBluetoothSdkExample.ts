@@ -1532,12 +1532,12 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   }
 
   function setBarcodeScanningEnabledAction(enabled: boolean) {
-    if (textModeRef.current) {
-      return;
-    }
     barcodeScanningEnabledRef.current = enabled;
     setBarcodeScanningEnabled(enabled);
-    if (!enabled) {
+    if (enabled) {
+      textModeRef.current = false;
+      setTextMode(false);
+    } else {
       resetBarcodeScan();
     }
   }

@@ -368,7 +368,6 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
             onEnabledChange={sdk.setTextMode}
           />
           <BarcodeScanningSettingsCard
-            disabled={sdk.textMode}
             enabled={sdk.barcodeScanningEnabled}
             onEnabledChange={sdk.setBarcodeScanningEnabled}
           />
@@ -1157,7 +1156,7 @@ function TextModeSettingsCard({
       </View>
       {enabled ? (
         <Text style={styles.settingDescription}>
-          Sends mode: &quot;text&quot; for max-resolution capture and text-region cropping on the glasses. Barcode scanning is disabled.
+          Sends mode: &quot;text&quot; for max-resolution capture and text-region cropping on the glasses. Barcode scanning is off.
         </Text>
       ) : (
         <Text style={styles.settingDescription}>
@@ -1169,29 +1168,22 @@ function TextModeSettingsCard({
 }
 
 function BarcodeScanningSettingsCard({
-  disabled,
   enabled,
   onEnabledChange,
 }: {
-  disabled: boolean;
   enabled: boolean;
   onEnabledChange: (enabled: boolean) => void;
 }) {
   return (
-    <View style={[styles.settingCard, disabled && styles.sliderDisabled]}>
+    <View style={styles.settingCard}>
       <View style={styles.settingHeader}>
         <View style={{ flex: 1 }}>
           <Text style={styles.settingLabel}>BARCODE SCANNING</Text>
           <Text style={styles.settingHint}>
-            {disabled
-              ? 'Unavailable in text capture mode'
-              : enabled
-                ? 'Scan delivered photo previews'
-                : 'Barcode scanning off'}
+            {enabled ? 'Scan delivered photo previews' : 'Barcode scanning off'}
           </Text>
         </View>
         <Switch
-          disabled={disabled}
           ios_backgroundColor="rgba(15,42,29,0.18)"
           onValueChange={onEnabledChange}
           thumbColor="#fff"
@@ -1200,9 +1192,7 @@ function BarcodeScanningSettingsCard({
         />
       </View>
       <Text style={styles.settingDescription}>
-        {disabled
-          ? 'Text capture output is not scanned for barcodes.'
-          : 'Uses the companion native barcode scanner on the delivered photo preview.'}
+        Uses the companion native barcode scanner on the delivered photo preview. Enabling it turns text capture mode off.
       </Text>
     </View>
   );
