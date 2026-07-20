@@ -1082,11 +1082,16 @@ function migrateLegacyDevSlot(): void {
   if (!existingTarget) storage.save(`${targetPackage}_dev_meta`, JSON.stringify(migrated))
 
   const legacyUrl = storage.load<string>(`${DEV_APP_PACKAGE_NAME}_dev_url`)
-  if (!existingTarget) {
+  const targetUrl = storage.load<string>(`${targetPackage}_dev_url`)
+  if (!targetUrl.is_ok()) {
     storage.save(`${targetPackage}_dev_url`, legacyUrl.is_ok() ? legacyUrl.value : migrated.devUrl)
   }
   const legacyPort = storage.load<number>(`${DEV_APP_PACKAGE_NAME}_dev_port`)
-  if (!existingTarget && legacyPort.is_ok()) storage.save(`${targetPackage}_dev_port`, legacyPort.value)
+  const targetPort = storage.load<number>(`${targetPackage}_dev_port`)
+  if (!targetPort.is_ok()) {
+    const port = migrated.devPort ?? (legacyPort.is_ok() ? legacyPort.value : undefined)
+    if (typeof port === "number" && Number.isFinite(port)) storage.save(`${targetPackage}_dev_port`, port)
+  }
 
   storage.remove(`${DEV_APP_PACKAGE_NAME}_dev_meta`)
   storage.remove(`${DEV_APP_PACKAGE_NAME}_dev_url`)
