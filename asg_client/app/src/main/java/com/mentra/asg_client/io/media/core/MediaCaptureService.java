@@ -6282,7 +6282,12 @@ public class MediaCaptureService {
      * @return true if the warm-up was accepted (or the camera was already warm), false otherwise
      */
     public boolean warmUpCamera(
-            String requestId, String size, Long exposureTimeNs, long durationMs, String mode) {
+            String requestId,
+            String size,
+            Long exposureTimeNs,
+            long durationMs,
+            String mode,
+            @Nullable PhotoCaptureSettings captureSettings) {
         if (requestId == null || requestId.isEmpty()) {
             Log.w(TAG, "camera_warm_up rejected - missing requestId");
             return false;
@@ -6327,6 +6332,9 @@ public class MediaCaptureService {
             return false;
         }
 
+        PhotoCaptureSettings warmSettings =
+                captureSettings != null ? captureSettings : PhotoCaptureSettings.EMPTY;
+
         // #region agent log
         Log.i(
                 TAG,
@@ -6338,8 +6346,12 @@ public class MediaCaptureService {
                         + exposureTimeNs
                         + " durationMs="
                         + durationMs
+                        + " zsl="
+                        + warmSettings.zsl
+                        + " mfnr="
+                        + warmSettings.mfnr
                         + " — already-warm(config match)="
-                        + CameraNeoService.isCameraWarm(size, true, exposureTimeNs, null));
+                        + CameraNeoService.isCameraWarm(size, true, exposureTimeNs, warmSettings));
         Log.i(
                 TAG,
                 "🔥 CAM_WARMTH ACCEPTED requestId="
@@ -6364,6 +6376,7 @@ public class MediaCaptureService {
                 exposureTimeNs,
                 durationMs,
                 mode,
+                warmSettings,
                 new CameraNeoService.CameraWarmUpCallback() {
                     @Override
                     public void onWarming() {
