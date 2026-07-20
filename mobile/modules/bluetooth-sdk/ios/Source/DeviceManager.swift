@@ -1388,7 +1388,9 @@ struct ViewState {
         size: PhotoSize,
         mode: PhotoMode = .photo,
         exposureTimeNs: Double?,
-        durationMs: Int
+        durationMs: Int,
+        zsl: Bool? = nil,
+        mfnr: Bool? = nil
     ) throws {
         guard let live = sgc as? MentraLive else {
             // Fail fast like other camera commands so the SDK promise rejects immediately instead
@@ -1401,7 +1403,9 @@ struct ViewState {
             size: size,
             mode: mode,
             exposureTimeNs: exposureTimeNs,
-            durationMs: durationMs
+            durationMs: durationMs,
+            zsl: zsl,
+            mfnr: mfnr
         )
     }
 
