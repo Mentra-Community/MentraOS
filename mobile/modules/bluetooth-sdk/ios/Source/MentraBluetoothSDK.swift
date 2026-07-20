@@ -893,7 +893,9 @@ public final class MentraBluetoothSDK {
         size: PhotoSize,
         mode: PhotoMode = .photo,
         exposureTimeNs: Double?,
-        durationMs: Int
+        durationMs: Int,
+        zsl: Bool? = nil,
+        mfnr: Bool? = nil
     ) async throws -> CameraStatusEvent {
         let effectiveRequestId = nonBlankRequestId(requestId) ?? generatedCameraRequestId("warm")
         let pending = PendingResponse<CameraStatusEvent>(operation: "camera warm up \(effectiveRequestId)")
@@ -905,7 +907,9 @@ public final class MentraBluetoothSDK {
                 size: size,
                 mode: mode,
                 exposureTimeNs: exposureTimeNs,
-                durationMs: durationMs
+                durationMs: durationMs,
+                zsl: zsl,
+                mfnr: mfnr
             )
             let event = try await pending.wait()
             pendingCameraStatusRequests.removeValue(forKey: effectiveRequestId)
