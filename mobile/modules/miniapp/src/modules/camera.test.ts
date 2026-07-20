@@ -132,4 +132,13 @@ describe("CameraModule", () => {
 
     expect(requestCalls[0]).toMatchObject({size: "low", mode: "text"})
   })
+
+  test("warmUp forwards zsl and mfnr when provided", async () => {
+    const {session, requestCalls} = mockSession(undefined)
+    const camera = new CameraModule(session)
+
+    await camera.warmUp({zsl: true, mfnr: false})
+
+    expect(requestCalls[0]).toMatchObject({zsl: true, mfnr: false})
+  })
 })
