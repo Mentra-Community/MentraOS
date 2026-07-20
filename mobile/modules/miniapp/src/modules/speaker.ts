@@ -253,8 +253,10 @@ export class SpeakerModule {
   async speak(text: string, options?: SpeakOptions): Promise<SpeakResult>
   async speak(sentences: string[], options?: SpeakOptions): Promise<SpeakResult>
   async speak(text: string | string[], options: SpeakOptions = {}): Promise<SpeakResult> {
-    const normalized = Array.isArray(text) ? text.map((sentence) => sentence.trim()).filter(Boolean) : text
-    if (Array.isArray(normalized) && normalized.length === 0) {
+    const normalized = Array.isArray(text)
+      ? text.map((sentence) => sentence.trim()).filter(Boolean)
+      : text.trim()
+    if ((Array.isArray(normalized) && normalized.length === 0) || normalized === "") {
       throw {code: MiniappErrorCode.INTERNAL, message: "speak requires at least one non-empty sentence"}
     }
     try {

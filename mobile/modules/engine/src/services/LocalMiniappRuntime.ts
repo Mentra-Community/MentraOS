@@ -1965,7 +1965,7 @@ class LocalMiniappRuntime {
     const rawText = payload.text
     const sentences =
       typeof rawText === "string"
-        ? [rawText]
+        ? [rawText.trim()].filter(Boolean)
         : Array.isArray(rawText)
           ? rawText.filter((sentence): sentence is string => typeof sentence === "string").map((sentence) => sentence.trim()).filter(Boolean)
           : []

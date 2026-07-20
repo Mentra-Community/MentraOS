@@ -71,6 +71,15 @@ describe("SpeakerModule.speak", () => {
     await expect(speaker.speak([])).rejects.toMatchObject({code: "INTERNAL"})
     expect(requestCalls).toEqual([])
   })
+
+  test("rejects empty or whitespace-only text", async () => {
+    const {session, requestCalls} = mockSession([])
+    const speaker = new SpeakerModule(session)
+
+    await expect(speaker.speak("")).rejects.toMatchObject({code: "INTERNAL"})
+    await expect(speaker.speak("   ")).rejects.toMatchObject({code: "INTERNAL"})
+    expect(requestCalls).toEqual([])
+  })
 })
 
 describe("SpeakerModule.createStream", () => {
