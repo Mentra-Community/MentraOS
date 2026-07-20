@@ -268,6 +268,40 @@ public class PhotoSessionTest {
     }
 
     @Test
+    public void willReuseConfiguredCamera_matchesWarmUpZslMfnrBaseline() throws Exception {
+        // Warm-up stores resolved zsl/mfnr in configuredCameraConfig; a later take_photo with the
+        // same size/SDK/exposure must reuse even when still-side MFNR toggles (preview buffer stays).
+        PhotoSession.Hooks hooks = mockConfiguredCameraHooks();
+        PhotoCaptureSettings warm =
+                new PhotoCaptureSettings.Builder().zsl(true).mfnr(false).build();
+        PhotoSession session = new PhotoSession(hooks);
+        activateQueuedRequest(
+                session,
+                new QueuedPhotoRequest(
+                        "/tmp/warmup.jpg", "medium", false, true, null, null, warm, null));
+        clearActiveCapture(session);
+
+        assertThat(session.willReuseConfiguredCamera("medium", true, null, warm)).isTrue();
+        assertThat(
+                        session.willReuseConfiguredCamera(
+                                "medium",
+                                true,
+                                null,
+                                new PhotoCaptureSettings.Builder().zsl(true).mfnr(true).build()))
+                .isTrue();
+        // Request needs no preview buffer while baseline has one — still reusable.
+        assertThat(
+                        session.willReuseConfiguredCamera(
+                                "medium",
+                                true,
+                                null,
+                                new PhotoCaptureSettings.Builder().zsl(false).mfnr(false).build()))
+                .isTrue();
+        // Size mismatch still forces reopen.
+        assertThat(session.willReuseConfiguredCamera("high", true, null, warm)).isFalse();
+    }
+
+    @Test
     public void notifyHostPhotoError_stringDuringWarmUp_usesWarmUpFailureCode() {
         PhotoSession.Hooks hooks = mockConfiguredCameraHooks();
         when(hooks.coordinator().isCameraKeptAlive()).thenReturn(false);
