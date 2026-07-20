@@ -320,6 +320,8 @@ export class PhonePhotoCoordinator {
       mode?: "photo" | "text"
       exposureTimeNs?: number
       durationMs?: number
+      zsl?: boolean
+      mfnr?: boolean
     },
   ): Promise<void> {
     // Pre-check: if glasses aren't connected, the BLE warm-up command would be
@@ -345,6 +347,8 @@ export class PhonePhotoCoordinator {
         mode: opts.mode ?? "photo",
         exposureTimeNs: opts.exposureTimeNs ?? null,
         durationMs,
+        ...(opts.zsl != null ? {zsl: opts.zsl} : {}),
+        ...(opts.mfnr != null ? {mfnr: opts.mfnr} : {}),
       })
       if (this.activeWarmUps.get(packageName) === lease) {
         lease.expiryTimer = setTimeout(() => {
