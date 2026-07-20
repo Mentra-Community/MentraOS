@@ -32,11 +32,11 @@ mock.module("../LocalMiniappRuntime", () => ({
   },
 }))
 // No dev url stored → released (file://) path; resolveDevPort also misses.
+// Because there's no dev url, decideDevLaunchRoute is never reached here, so we
+// deliberately do NOT mock.module("../../utils/devMiniappLaunch"): that mock is
+// process-global in Bun and would leak into devMiniappLaunch.test.ts.
 mock.module("../../utils/storage/storage", () => ({
   storage: {load: () => ({is_ok: () => false})},
-}))
-mock.module("../../utils/devMiniappLaunch", () => ({
-  decideDevLaunchRoute: async () => ({decision: "offline", manifest: null}),
 }))
 mock.module("expo-file-system", () => ({
   File: class {
