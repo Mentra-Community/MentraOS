@@ -250,7 +250,15 @@ export class SpeakerModule {
    * Rejects with a MiniappRequestError containing a `code` field on cloud-side
    * TTS failures: `TTS_TEXT_TOO_LONG`, `TTS_INVALID_VOICE`, `TTS_UPSTREAM_ERROR`.
    */
-  async speak(text: string, options: SpeakOptions = {}): Promise<SpeakResult> {
+  async speak(text: string, options?: SpeakOptions): Promise<SpeakResult>
+  async speak(sentences: string[], options?: SpeakOptions): Promise<SpeakResult>
+  async speak(text: string | string[], options: SpeakOptions = {}): Promise<SpeakResult> {
+    const normalized = Array.isArray(text)
+      ? text.map((sentence) => sentence.trim()).filter(Boolean)
+      : text.trim()
+    if ((Array.isArray(normalized) && normalized.length === 0) || normalized === "") {
+      throw {code: MiniappErrorCode.INTERNAL, message: "speak requires at least one non-empty sentence"}
+    }
     try {
       // Like play(): resolves only when TTS playback completes, so opt out of the
       // default request timeout (long text can outlast it). Settled by the host
@@ -258,7 +266,7 @@ export class SpeakerModule {
       const result = await this.session.sendRequest<SpeakResult | null>(
         {
           type: MiniappRequestType.SPEAK,
-          text,
+          text: normalized,
           voice_id: options.voice_id,
           voice_settings: options.voice_settings,
           volume: options.volume,

@@ -18,11 +18,26 @@ import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
 import {cloudClientService} from "./CloudClientService"
 
 let sub: {remove: () => void} | null = null
+const suppressionSources = new Set<string>()
+
+/**
+ * Keep the glasses LC3 transport alive while preventing spoken TTS from being
+ * ingested by cloud STT. Sources are reference-counted by id so overlapping
+ * speech playback cannot reopen the uplink until every active prompt has ended.
+ */
+export function setAudioCloudUplinkSuppressed(sourceId: string, suppressed: boolean): void {
+  if (suppressed) suppressionSources.add(sourceId)
+  else suppressionSources.delete(sourceId)
+}
 
 export function startAudioCloudUplink(): void {
   if (sub) return
   sub = BluetoothSdk.addListener("mic_lc3", (event) => {
-    if (cloudClientService.isConnected() && cloudClientService.hasAudioSubscriptions()) {
+    if (
+      suppressionSources.size === 0 &&
+      cloudClientService.isConnected() &&
+      cloudClientService.hasAudioSubscriptions()
+    ) {
       cloudClientService.sendAudioFrame(new Uint8Array(event.lc3))
     }
   })
@@ -31,4 +46,5 @@ export function startAudioCloudUplink(): void {
 export function stopAudioCloudUplink(): void {
   sub?.remove()
   sub = null
+  suppressionSources.clear()
 }

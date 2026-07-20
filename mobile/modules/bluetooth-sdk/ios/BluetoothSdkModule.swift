@@ -353,6 +353,20 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             return try await sdk.setCameraFov(CameraFov(fov: value, roiPosition: roiPosition)).values
         }
 
+        AsyncFunction("setLegacyCameraFov") { (fov: [String: Any]) in
+            let value = intValue(fov["fov"]) ?? CameraFov.defaultFov
+            let roiPosition = CameraRoiPosition.from(
+                rawValue: intValue(fov["roiPosition"]) ?? intValue(fov["roi_position"])
+            )
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            return try sdk.setLegacyCameraFov(CameraFov(fov: value, roiPosition: roiPosition)).values
+        }
+
+        AsyncFunction("restoreLegacyCameraFov") {
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            try sdk.restoreLegacyCameraFov()
+        }
+
         AsyncFunction("setCameraFovOverride") { (params: [String: Any]) in
             guard let leaseId = params["leaseId"] as? String, !leaseId.isEmpty else {
                 throw BluetoothSdkError(code: "invalid_request", message: "leaseId is required")

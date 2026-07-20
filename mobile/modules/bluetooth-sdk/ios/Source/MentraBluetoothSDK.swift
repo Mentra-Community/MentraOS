@@ -652,6 +652,25 @@ public final class MentraBluetoothSDK {
         return result
     }
 
+    /// Compatibility path for ASG clients that support only the older one-way FOV command.
+    public func setLegacyCameraFov(_ fov: CameraFov) throws -> CameraFovResult {
+        try DeviceManager.shared.sendLegacyCameraFovSetting(
+            fov: fov.fov,
+            roiPosition: fov.roiPosition.rawValue
+        )
+        return CameraFovResult(
+            requestId: "legacy",
+            fov: fov.fov,
+            roiPosition: fov.roiPosition,
+            timestamp: Int(Date().timeIntervalSince1970 * 1000)
+        )
+    }
+
+    /// Restores the persistent base FOV without requiring a settings acknowledgement.
+    public func restoreLegacyCameraFov() throws {
+        try DeviceManager.shared.restoreLegacyCameraFovSetting()
+    }
+
     public func setCameraFovOverride(
         leaseId: String,
         fov: CameraFov,

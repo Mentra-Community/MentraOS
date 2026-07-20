@@ -927,6 +927,18 @@ extension MentraLive: CBCentralManagerDelegate {
     }
 
     nonisolated func centralManager(
+        _: CBCentralManager, didUpdateANCSAuthorizationFor peripheral: CBPeripheral
+    ) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, peripheral === self.connectedPeripheral else { return }
+            Bridge.log(
+                "LIVE: ANCS authorization updated: \(peripheral.ancsAuthorized ? "authorized" : "not authorized")"
+            )
+            self.enableAncsRelayIfAuthorized()
+        }
+    }
+
+    nonisolated func centralManager(
         _: CBCentralManager, didDisconnectPeripheral _: CBPeripheral, error _: Error?
     ) {
         DispatchQueue.main.async { [weak self] in
@@ -1095,6 +1107,10 @@ extension MentraLive: CBPeripheralDelegate {
                     Bridge.log("LIVE: 🎤 Enabled LC3 audio notifications")
                 }
 
+                // Authorization may complete before or after service discovery.
+                // This covers the former; the central-manager callback covers the latter.
+                self.enableAncsRelayIfAuthorized()
+
                 // Start readiness check loop
                 self.startSignalStrengthPolling()
                 self.startReadinessCheckLoop()
@@ -1213,6 +1229,7 @@ extension MentraLive: CBPeripheralDelegate {
 
                 if uuid == self.RX_CHAR_UUID, isNotifying {
                     Bridge.log("LIVE: 🔔 Ready to receive data via notifications")
+                    self.enableAncsRelayIfAuthorized()
                 }
             }
         }
@@ -1268,6 +1285,7 @@ class MentraLive: NSObject, SGCManager {
         // or stale lastBesOtaProgress on the next OTA).
         if state == ConnTypes.DISCONNECTED {
             resetWireNegotiationState()
+            resetAncsRelayState()
             // Queued writes are session-bound: transmitting them into the NEXT session
             // (e.g. a stale handshake whose reply activates v2 before the new session
             // negotiated) is the bug class this clear removes.
@@ -1407,6 +1425,7 @@ class MentraLive: NSObject, SGCManager {
     // So we temporarily suspend the LC3 mic during phone audio playback
     private var micIntentEnabled = false // User/system WANTS mic enabled
     private var micSuspendedForAudio = false // Mic temporarily suspended due to phone audio
+    var isMicSuspendedForAudio: Bool { micSuspendedForAudio }
     private var phoneAudioMonitor: PhoneAudioMonitor?
 
     // Timing Constants
@@ -1467,6 +1486,7 @@ class MentraLive: NSObject, SGCManager {
     // v2 binary handshake succeeds, which implies wire-v2 LE).
     private var peerK900Le = false
     private var ancsAppIdentifiers: [UInt32: String] = [:]
+    private var ancsRelayEnableRequested = false
     private var peerWireCapsBinary = false
     private var peerFilePayloadV2 = false
     private var globalMessageId = 0
@@ -2099,6 +2119,29 @@ class MentraLive: NSObject, SGCManager {
             peripheral,
             options: [CBConnectPeripheralOptionRequiresANCS: true]
         )
+    }
+
+    /// Opt the firmware into ANCS only after iOS has authorized this accessory.
+    /// Old firmware safely ignores the command, while new firmware stays inert
+    /// for old mobile clients that never send it.
+    private func enableAncsRelayIfAuthorized() {
+        guard !ancsRelayEnableRequested,
+              let peripheral = connectedPeripheral,
+              txCharacteristic != nil,
+              rxCharacteristic?.isNotifying == true,
+              peripheral.ancsAuthorized
+        else {
+            return
+        }
+
+        let command: [String: Any] = [
+            "C": "cs_ancs",
+            "B": ["enabled": 1],
+        ]
+        if sendRawK900Command(command) {
+            ancsRelayEnableRequested = true
+            Bridge.log("LIVE: Requested ANCS relay from compatible firmware")
+        }
     }
 
     private func handleReconnection() {
@@ -2789,7 +2832,7 @@ class MentraLive: NSObject, SGCManager {
 
         switch command {
         case "sr_ancs":
-            if let body = json["B"] as? [String: Any] {
+            if let body = k900ParseBody(json["B"]) {
                 processAncsRelay(body)
             }
 
@@ -5290,7 +5333,6 @@ extension MentraLive {
     /// phone must treat every glasses_ready as a new wire epoch and renegotiate (bounded by
     /// the per-session handshake attempt cap) instead of trusting stale v2-active state.
     private func resetWireNegotiationState() {
-        ancsAppIdentifiers.removeAll()
         incomingChunkReassembler.clear()
         peerWireProtocolVersion = 0
         useBinaryWireProtocol = false
@@ -5302,6 +5344,14 @@ extension MentraLive {
         peerFilePayloadV2 = false
         BleJsonCompact.resetSession()
         wireHandshakeSentGeneration = -1
+    }
+
+    /// ANCS notification IDs live for the BLE link, not the wire epoch. A
+    /// glasses_ready message may reset wire negotiation without disconnecting,
+    /// so clear this state only when the BLE session itself ends.
+    private func resetAncsRelayState() {
+        ancsAppIdentifiers.removeAll()
+        ancsRelayEnableRequested = false
     }
 
     private func parsePeerWireCaps(_ json: [String: Any]) {

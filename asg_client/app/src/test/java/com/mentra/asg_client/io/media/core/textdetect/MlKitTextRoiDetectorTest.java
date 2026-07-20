@@ -41,6 +41,27 @@ public class MlKitTextRoiDetectorTest {
     }
 
     @Test
+    public void getOrCreateRecognizerPrefersGetClientWithoutMandatoryInitialize()
+            throws Exception {
+        // Regression for d2a270364 / 1b5cf6e3a: calling MlKit.initialize() before getClient()
+        // could throw and permanently disable text crop. First use must attempt getClient()
+        // the same way the pre-lazy-init path did.
+        MlKitTextRoiDetector detector =
+                new MlKitTextRoiDetector(ApplicationProvider.getApplicationContext());
+        Method getOrCreate =
+                MlKitTextRoiDetector.class.getDeclaredMethod("getOrCreateRecognizer");
+        getOrCreate.setAccessible(true);
+
+        TextRecognizer created = (TextRecognizer) getOrCreate.invoke(detector);
+
+        assertThat(created).isNotNull();
+        Field recognizerField = MlKitTextRoiDetector.class.getDeclaredField("recognizer");
+        recognizerField.setAccessible(true);
+        assertThat(recognizerField.get(detector)).isSameAs(created);
+        detector.close();
+    }
+
+    @Test
     public void paddedUnionCombinesLinesAndKeepsContext() {
         Rect roi =
                 MlKitTextRoiDetector.buildPaddedUnion(

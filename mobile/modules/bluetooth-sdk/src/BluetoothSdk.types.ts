@@ -1045,6 +1045,8 @@ export interface BluetoothSdkPublicModule {
   setVideoRecordingDefaults(settings: VideoRecordingDefaults): Promise<SettingsAckSuccessEvent>
   setMaxVideoRecordingDuration(minutes: number): Promise<SettingsAckSuccessEvent>
   setCameraFov(request: CameraFovRequest): Promise<CameraFovResult>
+  /** One-way FOV command for legacy ASG clients that do not send settings acknowledgements. */
+  setLegacyCameraFov(request: CameraFovRequest): Promise<CameraFovResult>
   setCameraFovOverride(request: CameraFovOverrideRequest): Promise<CameraFovResult>
   releaseCameraFovOverride(leaseId: string): Promise<SettingsAckSuccessEvent>
   /**
