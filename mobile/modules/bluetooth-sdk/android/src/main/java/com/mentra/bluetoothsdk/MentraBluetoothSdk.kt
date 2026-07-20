@@ -864,6 +864,8 @@ class MentraBluetoothSdk private constructor(
         mode: PhotoMode = PhotoMode.PHOTO,
         exposureTimeNs: Long?,
         durationMs: Int,
+        zsl: Boolean? = null,
+        mfnr: Boolean? = null,
     ): CameraStatusEvent {
         val effectiveRequestId = nonBlankRequestId(requestId) ?: generatedCameraRequestId("warm")
         val pending = PendingResponse<CameraStatusEvent>("camera warm up $effectiveRequestId")
@@ -876,7 +878,7 @@ class MentraBluetoothSdk private constructor(
             )
         }
         try {
-            deviceManager.warmUpCamera(effectiveRequestId, size, mode, exposureTimeNs, durationMs)
+            deviceManager.warmUpCamera(effectiveRequestId, size, mode, exposureTimeNs, durationMs, zsl, mfnr)
             return pending.await()
         } finally {
             pendingCameraStatusRequests.remove(effectiveRequestId, pending)
