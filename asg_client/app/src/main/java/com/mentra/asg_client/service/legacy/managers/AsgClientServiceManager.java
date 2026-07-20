@@ -621,6 +621,9 @@ public class AsgClientServiceManager {
                         });
                 Log.d(TAG, "📡 Picture request listener set");
 
+                cameraServer.setHttpActivityListener(networkManager::updateHttpActivity);
+                Log.d(TAG, "📡 HTTP activity listener set");
+
                 // Wire active recording provider so sync/download skip in-progress and
                 // not-yet-validated videos
                 if (mediaCaptureService != null) {

@@ -53,10 +53,17 @@ export interface PhotoOpts {
   sound?: boolean
   saveToGallery?: boolean
   exposureTimeNs?: number
+  iso?: number | null
+  aeExposureDivisor?: number
+  isoCap?: number
+  noiseReduction?: boolean
+  edgeEnhancement?: boolean
   /** ZSL preview buffering. */
   zsl?: boolean
   /** MFNR still capture. */
   mfnr?: boolean
+  ispDigitalGain?: number
+  ispAnalogGain?: string
 }
 
 export interface PhotoTaken {
@@ -101,6 +108,8 @@ interface ActiveRequest {
  * rejected successful captures while their upload was still in progress.
  */
 export const CAPTURE_PIPELINE_TIMEOUT_MS = 45_000
+export const CAMERA_WARM_UP_DEFAULT_DURATION_MS = 15_000
+export const CAMERA_WARM_UP_MAX_DURATION_MS = 60_000
 
 let bleRequestCounter = 0
 
@@ -124,6 +133,10 @@ export class PhonePhotoCoordinator {
   private readonly activeRequests = new Map<string, ActiveRequest>()
   /** Short BLE correlation id (4-char hex) → full cloud requestId. */
   private readonly bleIdToCloud = new Map<string, string>()
+  private readonly activeWarmUps = new Map<
+    string,
+    {requestId: string; durationMs: number; expiryTimer?: ReturnType<typeof setTimeout>}
+  >()
 
   async takePhoto(packageName: string, opts: PhotoOpts): Promise<PhotoTaken> {
     // Pre-check: if glasses aren't even connected, the BLE photo command
@@ -141,6 +154,10 @@ export class PhonePhotoCoordinator {
       throw new PhotoError("GLASSES_NOT_CONNECTED", "Glasses are not connected", "command", "ble")
     }
 
+    // Text-mode sensor resolution is owned by ASG constants; keep cloud metadata on a stable
+    // high-capacity tier and let the glasses ignore the public size when mode=text.
+    const captureSize = opts.size ?? "medium"
+
     // 1) Presign via the cloud-v2 managed-photo service. Local miniapps use
     //    ONLY the cloud-v2 path: the runtime presigns upload+read URLs and the
     //    phone (as the device controller) delivers the bytes; the legacy
@@ -151,10 +168,14 @@ export class PhonePhotoCoordinator {
     const flowStarted = performance.now()
     try {
       const presignStarted = performance.now()
-      const r = await cloudClientService.startManagedPhoto({size: opts.size ?? "medium"})
+      const r = await cloudClientService.startManagedPhoto({
+        size: opts.mode === "text" ? "max" : captureSize,
+      })
       const presignMs = Math.round(performance.now() - presignStarted)
       if (typeof __DEV__ !== "undefined" && __DEV__) {
-        console.debug(`[PhonePhotoCoordinator] presign ${presignMs}ms size=${opts.size ?? "medium"}`)
+        console.debug(
+          `[PhonePhotoCoordinator] presign ${presignMs}ms size=${opts.mode === "text" ? "max" : captureSize} mode=${opts.mode ?? "photo"}`,
+        )
       }
       requestId = r.requestId
       uploadUrl = r.uploadUrl
@@ -214,7 +235,7 @@ export class PhonePhotoCoordinator {
       void BluetoothSdk.requestPhoto({
         requestId: bleRequestId,
         appId: packageName,
-        size: normalizePhotoSize(opts.size ?? "medium"),
+        size: normalizePhotoSize(captureSize),
         mode: opts.mode ?? "photo",
         webhookUrl: uploadUrl,
         authToken: null,
@@ -223,14 +244,21 @@ export class PhonePhotoCoordinator {
         save: opts.saveToGallery ?? false,
         sound: opts.sound ?? true,
         exposureTimeNs: opts.exposureTimeNs ?? null,
-        ...(opts.zsl != null ? {zsl: opts.zsl} : {}),
-        ...(opts.mfnr != null ? {mfnr: opts.mfnr} : {}),
+        iso: opts.iso,
+        aeExposureDivisor: opts.aeExposureDivisor,
+        isoCap: opts.isoCap,
+        noiseReduction: opts.noiseReduction,
+        edgeEnhancement: opts.edgeEnhancement,
+        zsl: opts.zsl,
+        mfnr: opts.mfnr,
+        ispDigitalGain: opts.ispDigitalGain,
+        ispAnalogGain: opts.ispAnalogGain,
       }).catch((err) => {
-        const e = this.activeRequests.get(requestId)
-        if (!e) return
-        e.abort.abort()
-        e.reject(this.toPhotoError(err, "BLE_SEND_FAILED", "command", "ble"))
-      })
+          const e = this.activeRequests.get(requestId)
+          if (!e) return
+          e.abort.abort()
+          e.reject(this.toPhotoError(err, "BLE_SEND_FAILED", "command", "ble"))
+        })
     } catch (err) {
       this.activeRequests.delete(requestId)
       this.bleIdToCloud.delete(bleRequestId)
@@ -256,7 +284,9 @@ export class PhonePhotoCoordinator {
       const result = await outcome
       if (typeof __DEV__ !== "undefined" && __DEV__) {
         console.debug(
-          `[PhonePhotoCoordinator] takePhoto complete ${Math.round(performance.now() - flowStarted)}ms requestId=${requestId}`,
+          `[PhonePhotoCoordinator] takePhoto complete ${Math.round(
+            performance.now() - flowStarted,
+          )}ms requestId=${requestId}`,
         )
       }
       return {
@@ -279,13 +309,18 @@ export class PhonePhotoCoordinator {
   /**
    * Pre-warm the glasses camera so the next takePhoto() is near-instant.
    *
-   * Pure BLE — NO cloud presign, NO upload, NO long-poll. The SDK mints the
-   * requestId, sends the warm-up command, and resolves when the camera reports
+   * Pure BLE — NO cloud presign, NO upload, NO long-poll. The phone mints and owns
+   * the requestId, sends the warm-up command, and resolves when the camera reports
    * ready (the native promise resolves on the ready status event).
    */
   async warmUpCamera(
     packageName: string,
-    opts: {size?: "low" | "medium" | "high" | "max"; exposureTimeNs?: number; durationMs?: number},
+    opts: {
+      size?: "low" | "medium" | "high" | "max"
+      mode?: "photo" | "text"
+      exposureTimeNs?: number
+      durationMs?: number
+    },
   ): Promise<void> {
     // Pre-check: if glasses aren't connected, the BLE warm-up command would be
     // sent into the void. Fail fast with a typed error.
@@ -293,14 +328,48 @@ export class PhonePhotoCoordinator {
       throw new PhotoError("GLASSES_NOT_CONNECTED", "Glasses are not connected", "command", "ble")
     }
 
+    let lease: {requestId: string; durationMs: number; expiryTimer?: ReturnType<typeof setTimeout>} | undefined
     try {
+      await this.stopWarmUpForApp(packageName)
+      const requestId = mintBleRequestId()
+      const requestedDuration =
+        typeof opts.durationMs === "number" && Number.isFinite(opts.durationMs) && opts.durationMs > 0
+          ? Math.round(opts.durationMs)
+          : CAMERA_WARM_UP_DEFAULT_DURATION_MS
+      const durationMs = Math.min(requestedDuration, CAMERA_WARM_UP_MAX_DURATION_MS)
+      lease = {requestId, durationMs}
+      this.activeWarmUps.set(packageName, lease)
       await BluetoothSdk.warmUpCamera({
+        requestId,
         size: normalizePhotoSize(opts.size ?? "medium"),
+        mode: opts.mode ?? "photo",
         exposureTimeNs: opts.exposureTimeNs ?? null,
-        durationMs: opts.durationMs ?? 15000,
+        durationMs,
       })
+      if (this.activeWarmUps.get(packageName) === lease) {
+        lease.expiryTimer = setTimeout(() => {
+          if (this.activeWarmUps.get(packageName) === lease) {
+            this.activeWarmUps.delete(packageName)
+          }
+        }, durationMs)
+      }
     } catch (err) {
+      if (lease && this.activeWarmUps.get(packageName) === lease) {
+        if (lease.expiryTimer) clearTimeout(lease.expiryTimer)
+        this.activeWarmUps.delete(packageName)
+      }
       throw this.toPhotoError(err, "WARM_UP_FAILED", "command", "ble")
+    }
+  }
+
+  /** Release a miniapp's warm-up even if its original warmUpCamera promise is still opening. */
+  async stopWarmUpForApp(packageName: string): Promise<void> {
+    const active = this.activeWarmUps.get(packageName)
+    if (!active) return
+    await BluetoothSdk.stopCameraWarmUp(active.requestId)
+    if (this.activeWarmUps.get(packageName) === active) {
+      this.activeWarmUps.delete(packageName)
+      if (active.expiryTimer) clearTimeout(active.expiryTimer)
     }
   }
 
@@ -326,12 +395,7 @@ export class PhonePhotoCoordinator {
     // cloud-v2 pending photo requests TTL out on their own; nothing to free.
   }
 
-  private toPhotoError(
-    err: unknown,
-    fallbackCode: string,
-    stage?: PhotoStage,
-    transport?: PhotoTransport,
-  ): PhotoError {
+  private toPhotoError(err: unknown, fallbackCode: string, stage?: PhotoStage, transport?: PhotoTransport): PhotoError {
     if (err instanceof PhotoError) return err
     const code = (err as {code?: string})?.code
     const message = err instanceof Error ? err.message : String(err)

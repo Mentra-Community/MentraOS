@@ -116,6 +116,16 @@ export function isConnectedWifiStatus(status: WifiStatus): status is ConnectedWi
 
 export type WifiStatusChangeEvent = WifiStatus & {
   type: "wifi_status_change"
+  /**
+   * Glasses-reported provisioning failure reason when THIS event is the verdict of a
+   * failed connect attempt; absent on routine link-state updates. An attempt property,
+   * not a link property — which is why it lives on the event, not on WifiStatus:
+   * "connect_timeout" arrives on a disconnected status (never associated), while
+   * "connected_to_other_network" arrives on a *connected* status (the attempt failed
+   * and the glasses ended up on / fell back to a different SSID than requested).
+   * Requires ASG client v40+ — older glasses never send it.
+   */
+  error?: string
 }
 
 export type HotspotStatus = {state: "disabled"} | {state: "enabled"; ssid: string; password: string; localIp: string}
@@ -405,6 +415,7 @@ export type SettingsAckSetting =
   | "button_video_recording"
   | "button_max_recording_time"
   | "camera_fov"
+  | "camera_fov_override"
   | "camera_tuning"
 
 export type SettingsAckEvent = {
@@ -416,6 +427,7 @@ export type SettingsAckEvent = {
   fov?: number
   roiPosition?: CameraRoiPositionValue
   hardwareApplied?: boolean
+  leaseId?: string
   active?: boolean
   size?: ButtonPhotoSize | string
   width?: number
@@ -535,6 +547,13 @@ export type CameraFovResult = {
   timestamp: number
 }
 
+export type CameraFovOverrideRequest = CameraFovRequest & {
+  /** Phone-owned lease used to make delayed releases safe. */
+  leaseId: string
+  /** Safety TTL; refresh the same lease/configuration to extend without a HAL restart. */
+  ttlMs?: number
+}
+
 export type CameraFovSetting = {
   fov: number
   roiPosition: CameraRoiPositionValue
@@ -577,9 +596,12 @@ export type PhotoRequestParams = {
 }
 
 export type WarmUpCameraParams = {
+  /** Supply this when the owner needs to call stopCameraWarmUp during teardown. */
   requestId?: string
   size: PhotoSize
+  mode?: PhotoMode
   exposureTimeNs?: number | null
+  /** Ready-state hold; defaults to 15 seconds and is capped at 60 seconds by ASG. */
   durationMs?: number
 }
 
@@ -842,6 +864,8 @@ export type BluetoothSdkModuleEvents = {
   speaking_status: (event: SpeakingStatusEvent) => void
   battery_status: (event: BatteryStatusEvent) => void
   local_transcription: (event: LocalTranscriptionEvent) => void
+  phone_notification: (event: PhoneNotificationEvent) => void
+  phone_notification_dismissed: (event: PhoneNotificationDismissedEvent) => void
   wifi_status_change: (event: WifiStatusChangeEvent) => void
   wifi_scan_result: (event: WifiScanResultEvent) => void
   hotspot_status_change: (event: HotspotStatusChangeEvent) => void
@@ -886,6 +910,23 @@ export interface ExtractionProgressEvent {
   percentage: number
   bytesRead: number
   totalBytes: number
+}
+
+export interface PhoneNotificationEvent {
+  notificationId: string
+  app: string
+  title: string
+  content: string
+  priority: string
+  timestamp: number
+  packageName: string
+}
+
+export interface PhoneNotificationDismissedEvent {
+  notificationId: string
+  notificationKey: string
+  packageName: string
+  timestamp: number
 }
 
 export type PublicGlassesStatus = Omit<
@@ -1006,6 +1047,8 @@ export interface BluetoothSdkPublicModule {
   setVideoRecordingDefaults(settings: VideoRecordingDefaults): Promise<SettingsAckSuccessEvent>
   setMaxVideoRecordingDuration(minutes: number): Promise<SettingsAckSuccessEvent>
   setCameraFov(request: CameraFovRequest): Promise<CameraFovResult>
+  setCameraFovOverride(request: CameraFovOverrideRequest): Promise<CameraFovResult>
+  releaseCameraFovOverride(leaseId: string): Promise<SettingsAckSuccessEvent>
   /**
    * Configure camera HAL tuning (ANR / gain) on Mentra Live glasses.
    *
@@ -1023,6 +1066,8 @@ export interface BluetoothSdkPublicModule {
   queryGalleryStatus(): Promise<GalleryStatusEvent>
   requestPhoto(params: PhotoRequestParams): Promise<PhotoSuccessResponseEvent>
   warmUpCamera(params: WarmUpCameraParams): Promise<CameraStatusEvent>
+  /** Release one request-owned warm-up. Opening requests reject with camera_warm_up_cancelled. */
+  stopCameraWarmUp(requestId: string): Promise<void>
   startVideoRecording(
     requestId: string,
     save: boolean,

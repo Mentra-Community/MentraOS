@@ -18,12 +18,14 @@ import android.os.Handler;
 import com.mentra.asg_client.camera.CameraNeoService;
 import com.mentra.asg_client.camera.CameraSettings;
 import com.mentra.asg_client.camera.model.CameraOperationError;
+import com.mentra.asg_client.camera.model.CapturedPhoto;
 import com.mentra.asg_client.camera.model.PhotoCaptureSettings;
 import com.mentra.asg_client.camera.model.QueuedPhotoRequest;
 import com.mentra.asg_client.camera.model.QueuedPhotoRequestQueue;
 import com.mentra.asg_client.camera.policy.AeStateMachine;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicReference;
 import org.json.JSONObject;
@@ -282,6 +284,21 @@ public class PhotoSessionTest {
     }
 
     @Test
+    public void cancelWarmUp_clearsOpeningRequestIdempotently() {
+        PhotoSession.Hooks hooks = mockConfiguredCameraHooks();
+        when(hooks.coordinator().isCameraKeptAlive()).thenReturn(false);
+        PhotoSession session = new PhotoSession(hooks);
+        session.setupWarmUp(
+                "large", null, PhotoCaptureSettings.EMPTY, 30_000, () -> {}, error -> {});
+
+        assertThat(session.isWarmingUp()).isTrue();
+        assertThat(session.cancelWarmUp()).isTrue();
+        assertThat(session.isWarmingUp()).isFalse();
+        assertThat(session.cancelWarmUp()).isFalse();
+        assertThat(session.shotState()).isEqualTo(AeStateMachine.ShotState.IDLE);
+    }
+
+    @Test
     public void notifyPhotoCaptured_duplicateWhileMetadataPending_keepsTimeoutCompletingQueue()
             throws Exception {
         PhotoSession.Hooks hooks = mockConfiguredCameraHooks();
@@ -297,7 +314,9 @@ public class PhotoSessionTest {
         notifyPhotoCaptured(session, "/tmp/second.jpg");
         timeout.run();
 
-        verify(callback).onPhotoCaptured(eq("/tmp/first.jpg"), (JSONObject) isNull());
+        verify(callback)
+                .onPhotoCaptured(
+                        eq("/tmp/first.jpg"), (JSONObject) isNull(), (CapturedPhoto) isNull());
         assertThat(activeCapture(session)).isNull();
         assertThat(session.shotState()).isEqualTo(AeStateMachine.ShotState.IDLE);
         verify(hooks).startPostCaptureKeepAlive();
@@ -317,7 +336,9 @@ public class PhotoSessionTest {
         // HDR completion never records still metadata; it must not arm the wait timeout.
         notifyPhotoCaptured(session, "/tmp/hdr.jpg", false);
 
-        verify(callback).onPhotoCaptured(eq("/tmp/hdr.jpg"), (JSONObject) isNull());
+        verify(callback)
+                .onPhotoCaptured(
+                        eq("/tmp/hdr.jpg"), (JSONObject) isNull(), (CapturedPhoto) isNull());
         assertThat(pendingCaptureMetadataTimeout(session)).isNull();
         assertThat(activeCapture(session)).isNull();
         assertThat(session.shotState()).isEqualTo(AeStateMachine.ShotState.IDLE);
@@ -353,7 +374,45 @@ public class PhotoSessionTest {
         Runnable timeout = pendingCaptureMetadataTimeout(session);
         timeout.run();
 
-        verify(callback).onPhotoCaptured(eq("/tmp/second.jpg"), (JSONObject) isNull());
+        verify(callback)
+                .onPhotoCaptured(
+                        eq("/tmp/second.jpg"), (JSONObject) isNull(), (CapturedPhoto) isNull());
+    }
+
+    @Test
+    public void notifyPhotoCaptured_ramFirstCaptureSurvivesMetadataWait() throws Exception {
+        PhotoSession.Hooks hooks = mockConfiguredCameraHooks();
+        CameraNeoService.PhotoCaptureCallback callback =
+                mock(CameraNeoService.PhotoCaptureCallback.class);
+        QueuedPhotoRequest request =
+                new QueuedPhotoRequest("/tmp/ram.jpg", "large", false, true, null, callback);
+        PhotoSession session = new PhotoSession(hooks);
+        activateQueuedRequest(session, request);
+        CapturedPhoto capturedPhoto =
+                new CapturedPhoto(
+                        new byte[] {1, 2, 3},
+                        null,
+                        CompletableFuture.completedFuture(false));
+
+        notifyPhotoCaptured(session, "/tmp/ram.jpg", capturedPhoto);
+        pendingCaptureMetadataTimeout(session).run();
+
+        verify(callback)
+                .onPhotoCaptured(eq("/tmp/ram.jpg"), (JSONObject) isNull(), eq(capturedPhoto));
+    }
+
+    @Test
+    public void copyJsonPayload_isolatesRamCallbackFromPersistencePayload() throws Exception {
+        JSONObject persistencePayload = new JSONObject().put("sampleCount", 2);
+        Method copy =
+                PhotoSession.class.getDeclaredMethod("copyJsonPayload", JSONObject.class);
+        copy.setAccessible(true);
+
+        JSONObject callbackPayload = (JSONObject) copy.invoke(null, persistencePayload);
+        persistencePayload.put("sampleCount", 99);
+
+        assertThat(callbackPayload).isNotSameAs(persistencePayload);
+        assertThat(callbackPayload.optInt("sampleCount")).isEqualTo(2);
     }
 
     private static PhotoSession.Hooks mockConfiguredCameraHooks() {
@@ -393,6 +452,15 @@ public class PhotoSessionTest {
         Method notify = PhotoSession.class.getDeclaredMethod("notifyPhotoCaptured", String.class);
         notify.setAccessible(true);
         notify.invoke(session, filePath);
+    }
+
+    private static void notifyPhotoCaptured(
+            PhotoSession session, String filePath, CapturedPhoto capturedPhoto) throws Exception {
+        Method notify =
+                PhotoSession.class.getDeclaredMethod(
+                        "notifyPhotoCaptured", String.class, CapturedPhoto.class);
+        notify.setAccessible(true);
+        notify.invoke(session, filePath, capturedPhoto);
     }
 
     private static void notifyPhotoCaptured(

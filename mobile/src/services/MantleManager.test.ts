@@ -1,11 +1,9 @@
 import {waitFor} from "@testing-library/react-native"
 
 import mantle from "@/services/MantleManager"
-import {useCoreStore} from "@mentra/engine/internal"
-import {useDisplayStore} from "@mentra/engine/internal"
+import {localMiniappRuntime, useCoreStore, useDisplayStore, useSettingsStore} from "@mentra/engine/internal"
 import {isGlassesConnected, useGlassesStore} from "../../modules/engine/src/stores/glasses"
 import {engine, SETTINGS} from "@mentra/engine"
-import {useSettingsStore} from "@mentra/engine/internal"
 import {crustModuleMock, emitCrustEvent, resetCrustModuleMock} from "@/test-utils/mockCrustModule"
 import {
   bluetoothSdkMock,
@@ -287,7 +285,8 @@ describe("MantleManager", () => {
 
   it("routes notification events without the retired V1 upload", async () => {
     // The Cloud V1 REST upload is gone; the events still flow through the
-    // local-miniapp forward path without throwing.
+    // local-miniapp forward path without a server roundtrip.
+    const forwardEvent = jest.spyOn(localMiniappRuntime, "forwardEvent")
     emitCrustEvent("phone_notification", {
       notificationId: "n-1",
       app: "Calendar",
@@ -301,6 +300,37 @@ describe("MantleManager", () => {
       notificationId: "n-1",
       notificationKey: "key-1",
       packageName: "com.calendar",
+    })
+    emitBluetoothSdkEvent("phone_notification", {
+      notificationId: "ancs-42",
+      app: "com.apple.mobilemail",
+      title: "Build complete",
+      content: "The iOS relay is working",
+      priority: "1",
+      timestamp: 12345,
+      packageName: "com.apple.mobilemail",
+    })
+    emitBluetoothSdkEvent("phone_notification_dismissed", {
+      notificationId: "ancs-42",
+      notificationKey: "ancs-42",
+      packageName: "com.apple.mobilemail",
+      timestamp: 12346,
+    })
+
+    expect(forwardEvent).toHaveBeenCalledWith("phone_notification", {
+      notificationId: "ancs-42",
+      app: "com.apple.mobilemail",
+      title: "Build complete",
+      content: "The iOS relay is working",
+      priority: "1",
+      timestamp: 12345,
+      packageName: "com.apple.mobilemail",
+    })
+    expect(forwardEvent).toHaveBeenCalledWith("phone_notification_dismissed", {
+      notificationId: "ancs-42",
+      notificationKey: "ancs-42",
+      packageName: "com.apple.mobilemail",
+      timestamp: 12346,
     })
     await Promise.resolve()
   })

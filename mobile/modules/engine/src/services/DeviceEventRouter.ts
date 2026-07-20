@@ -201,17 +201,17 @@ export function startDeviceEventRouter(): void {
       localMiniappRuntime.forwardEvent("head_up", {position: event.up ? "up" : "down", timestamp: Date.now()})
     }),
   )
-  // On-device STT transcripts → local miniapps, but ONLY when local STT fallback is the
-  // active engine (cloud STT is down). When the cloud WS is up, cloud transcripts reach
-  // miniapps independently via the same forwardEvent, so gating on isActive() avoids
-  // double-delivery. forwardEvent is subscriber-gated — a no-op when no miniapp listens.
+  // On-device STT transcripts → local miniapps only while the local engine is
+  // active (cloud fallback or an explicit forceLocal subscription). The runtime
+  // filters mixed local/cloud delivery per miniapp to avoid double-delivery.
+  // forwardEvent is subscriber-gated — a no-op when no miniapp listens.
   // (Was MantleManager.handle_local_transcription; its offline-captions display branch
   // went away with the pseudo captions renderer.)
   subs.push(
     BluetoothSdk.addListener("local_transcription", (event) => {
       if (!localSttFallbackCoordinator.isActive()) return
       const lang = event.transcribeLanguage ?? localSttFallbackCoordinator.getActiveLanguage() ?? "en-US"
-      localMiniappRuntime.forwardEvent(`transcription:${lang}`, event)
+      localMiniappRuntime.forwardEvent(`transcription:${lang}`, event, "local")
     }),
   )
 

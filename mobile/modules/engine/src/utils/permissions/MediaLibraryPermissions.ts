@@ -5,6 +5,14 @@ import CrustModule from "@mentra/crust"
 
 import {deriveGalleryDisplayName} from "./galleryDisplayName"
 
+export interface MediaLibrarySaveReceipt {
+  success: boolean
+  platform: "ios" | "android" | "unknown"
+  uri?: string
+  identifier?: string
+  error?: string
+}
+
 /**
  * MediaLibraryPermissions - Handles save-only permissions for camera roll
  *
@@ -14,6 +22,18 @@ import {deriveGalleryDisplayName} from "./galleryDisplayName"
  * - Android 9-: Uses WRITE_EXTERNAL_STORAGE (legacy)
  */
 export class MediaLibraryPermissions {
+  /** Limited iOS access cannot see historical, unselected assets for duplicate reconciliation. */
+  static async hasLimitedAccess(): Promise<boolean> {
+    if (Platform.OS !== "ios") return false
+    try {
+      return (await check(PERMISSIONS.IOS.PHOTO_LIBRARY)) === RESULTS.LIMITED
+    } catch (error) {
+      console.error("[MediaLibrary] Error checking limited-library access:", error)
+      // Conservatively block legacy reconciliation when the scope cannot be verified.
+      return true
+    }
+  }
+
   /**
    * Check if we have permission to save to the camera roll
    * Note: On Android 10+, this always returns true since no permission is needed
@@ -85,6 +105,12 @@ export class MediaLibraryPermissions {
    * @param creationTime - Optional creation/capture time in milliseconds (Unix timestamp)
    */
   static async saveToLibrary(filePath: string, creationTime?: number): Promise<boolean> {
+    return (await this.saveToLibraryWithReceipt(filePath, creationTime)).success
+  }
+
+  /** Save and return the durable MediaStore/PhotoKit identifier used as the export receipt. */
+  static async saveToLibraryWithReceipt(filePath: string, creationTime?: number): Promise<MediaLibrarySaveReceipt> {
+    const platform = Platform.OS === "ios" || Platform.OS === "android" ? Platform.OS : "unknown"
     try {
       // On Android 10+, we can save without permission
       // On iOS and older Android, check permission first
@@ -95,7 +121,7 @@ export class MediaLibraryPermissions {
           const granted = await this.requestPermission()
           if (!granted) {
             console.warn("[MediaLibrary] No permission to save to library - photos saved to app storage only")
-            return false
+            return {success: false, platform, error: "permission denied"}
           }
         }
       }
@@ -117,14 +143,19 @@ export class MediaLibraryPermissions {
         } else {
           console.log(`[MediaLibrary] Saved to camera roll: ${cleanPath}`)
         }
-        return true
+        return {
+          success: true,
+          platform,
+          uri: result.uri,
+          identifier: result.identifier,
+        }
       } else {
         console.error(`[MediaLibrary] Failed to save to library: ${result.error}`)
-        return false
+        return {success: false, platform, error: result.error || "native export failed"}
       }
     } catch (error) {
       console.error("[MediaLibrary] Error saving to library:", error)
-      return false
+      return {success: false, platform, error: error instanceof Error ? error.message : String(error)}
     }
   }
 }

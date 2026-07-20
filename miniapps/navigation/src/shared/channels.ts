@@ -29,6 +29,7 @@ import type {
   SavedPlace,
   TripState,
   UnitSystem,
+  VoiceGuidanceMode,
 } from "./types"
 
 export interface Channels {
@@ -43,6 +44,7 @@ export interface Channels {
   "nav:log-clear": Record<string, never>
   "nav:dev-settings-update": DevSettings
   "nav:units-update": {unitSystem: UnitSystem}
+  "nav:voice-guidance-update": Pick<NavSnapshot, "voiceGuidanceMode" | "capabilities">
 
   // ── UI → background broadcasts (fire-and-forget) ───────────────────────
   "nav:start": StartNavigationOptions & {destinationName?: string}
@@ -55,6 +57,8 @@ export interface Channels {
   "nav:set-dev-settings": Partial<DevSettings>
   "nav:set-show-minimap": boolean
   "nav:set-units": {unitSystem: UnitSystem}
+  "nav:set-voice-guidance": {mode: VoiceGuidanceMode}
+  "nav:repeat-direction": Record<string, never>
 
   // ── UI → background RPC ────────────────────────────────────────────────
   "nav:compute-route": Rpc<ComputeRouteOptions, ComputeRouteResult>

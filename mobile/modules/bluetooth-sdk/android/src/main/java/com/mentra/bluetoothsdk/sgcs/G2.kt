@@ -575,16 +575,18 @@ private object DevSettingsProto {
     /// TimeSync submessage: f1 = (Unix seconds + TZ offset seconds) as Int32, no TZ field.
     /// Firmware appears to ignore the TZ field, so we pre-shift the timestamp itself
     /// to make UTC interpretation read as local. Empirically confirmed via probe variants in dbg1().
-    fun timeSync(magicRandom: Int): ByteArray {
+    fun timeSync(
+        magicRandom: Int,
+        timestampMs: Long = System.currentTimeMillis()
+    ): ByteArray {
         val w = ProtobufWriter()
         w.writeInt32Field(1, DevCfgCommandId.TIME_SYNC.value)
         w.writeInt32Field(2, magicRandom)
 
         val tsW = ProtobufWriter()
-        val nowMs = System.currentTimeMillis()
-        val nowSec = nowMs / 1000
-        val tzSec = (TimeZone.getDefault().getOffset(nowMs) / 1000).toLong()
-        tsW.writeInt32Field(1, (nowSec + tzSec).toInt())
+        val timestampSec = timestampMs / 1000
+        val tzSec = (TimeZone.getDefault().getOffset(timestampMs) / 1000).toLong()
+        tsW.writeInt32Field(1, (timestampSec + tzSec).toInt())
         w.writeMessageField(128, tsW.toByteArray())
         return w.toByteArray()
     }
@@ -1707,7 +1709,7 @@ class G2 : SGCManager() {
                 payload = payload,
                 reserveFlag = true
             )
-        sendToGlasses(packets)
+        sendToGlasses(packets, left = true, right = true)
     }
 
     // ---------- Authentication Sequence ----------
@@ -1732,7 +1734,7 @@ class G2 : SGCManager() {
 
         delay(200)
         val timeSync = DevSettingsProto.timeSync(sendManager.nextMagicRandom())
-        sendDevSettingsCommand(timeSync)
+        sendDevSettingsCommand(timeSync, left = true, right = true)
 
         // Skip onboarding on connect
         delay(200)
@@ -3763,7 +3765,12 @@ class G2 : SGCManager() {
     /// time-zone travel, or a long sleep where the glasses' clock has drifted.
     fun syncTime() {
         Bridge.log("G2: syncTime()")
-        val msg = DevSettingsProto.timeSync(sendManager.nextMagicRandom())
+        sendSetSystemTime(System.currentTimeMillis())
+    }
+
+    override fun sendSetSystemTime(timestampMs: Long) {
+        Bridge.log("G2: sendSetSystemTime()")
+        val msg = DevSettingsProto.timeSync(sendManager.nextMagicRandom(), timestampMs)
         sendDevSettingsCommand(msg, left = true, right = true)
     }
 
@@ -3782,7 +3789,7 @@ class G2 : SGCManager() {
 
     // ---------- SGCManager: Network (G2 has no WiFi) ----------
 
-    override fun requestWifiScan() {}
+    override fun requestWifiScan(scanId: String?) {}
     override fun sendWifiCredentials(ssid: String, password: String) {}
     override fun forgetWifiNetwork(ssid: String) {}
     override fun sendHotspotState(enabled: Boolean) {}

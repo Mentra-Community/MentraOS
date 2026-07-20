@@ -34,6 +34,7 @@ import com.mentra.bluetoothsdk.Bridge
 import com.mentra.bluetoothsdk.DeviceManager
 import com.mentra.bluetoothsdk.PhotoRequest
 import com.mentra.bluetoothsdk.PhotoSize
+import com.mentra.bluetoothsdk.PhotoMode
 import com.mentra.bluetoothsdk.DeviceStore
 import com.mentra.bluetoothsdk.ObservableStore
 import com.mentra.bluetoothsdk.debug.BleTraceLogger
@@ -146,6 +147,10 @@ class MentraLive : SGCManager() {
 
         // Heartbeat parameters
         private const val HEARTBEAT_INTERVAL_MS = 30000 // 30 seconds
+        // Grace period before an unanswered BLE wire v2 handshake is re-armed for retry,
+        // and the per-session cap on automatic retries (see sendWireHandshake).
+        private const val WIRE_HANDSHAKE_RETRY_GRACE_MS = 5000L
+        private const val WIRE_HANDSHAKE_MAX_ATTEMPTS = 3
         private const val BATTERY_REQUEST_EVERY_N_HEARTBEATS = 10 // Every 10 heartbeats (5 minutes)
         private const val RSSI_READ_INTERVAL_MS = 10000L // 10 seconds
 
@@ -213,6 +218,15 @@ class MentraLive : SGCManager() {
     private var peerWireProtocolVersion = 0
     private var useBinaryWireProtocol = false
     private var wireHandshakeQueued = false
+    private var wireHandshakeAttempts = 0
+    // Session generation in which the LAST outgoing v2 handshake was sent. A handshake
+    // reply only activates v2 when it answers a handshake from the CURRENT epoch - a
+    // stale handshake that survived in flight across an epoch reset must not flip the
+    // new session to v2 before it negotiated its own build and capabilities.
+    private var wireHandshakeSentGeneration = -1
+    // Bumped on every BLE session reset; scheduled handshake-retry callbacks capture it
+    // and no-op if the session changed, so a timer from a dead session can't poke a new one.
+    private var wireSessionGeneration = 0
     // Negotiated K900 STRING length endianness for the phone<->glasses BLE link. Defaults to
     // legacy big-endian; upgraded to little-endian only when the glasses advertise wire_caps.k900_le
     // (or a v2 binary handshake succeeds, which implies wire-v2 LE).
@@ -780,14 +794,12 @@ class MentraLive : SGCManager() {
         val isEqual = state == connectionState
         if (isEqual) {
             if (state == ConnTypes.DISCONNECTED) {
-                incomingChunkReassembler.clear()
-                peerWireProtocolVersion = 0
-                useBinaryWireProtocol = false
-                wireHandshakeQueued = false
-                peerK900Le = false
-                peerWireCapsBinary = false
-                peerFilePayloadV2 = false
-                BleJsonCompact.resetSession()
+                resetWireNegotiationState()
+                // Queued writes are session-bound: transmitting them into the NEXT session
+                // (e.g. a stale handshake whose reply activates v2 before the new session
+                // negotiated) is the bug class this clear removes. Higher layers re-send
+                // what still matters via their own ACK/retry tracking.
+                sendQueue.clear()
             }
             return
         }
@@ -815,14 +827,9 @@ class MentraLive : SGCManager() {
             DeviceStore.apply("glasses", "connected", false)
             DeviceStore.apply("glasses", "signalStrength", -1)
             DeviceStore.apply("glasses", "signalStrengthUpdatedAt", 0L)
-            incomingChunkReassembler.clear()
-            peerWireProtocolVersion = 0
-            useBinaryWireProtocol = false
-            wireHandshakeQueued = false
-            peerK900Le = false
-            peerWireCapsBinary = false
-            peerFilePayloadV2 = false
-            BleJsonCompact.resetSession()
+            resetWireNegotiationState()
+            sendQueue.clear() // see the disconnect reset above: stale writes die with the session
+
             // Drop OTA caches when fully disconnected — avoids leaking session/step state
             // from a previous pairing into the next one.
             resetOtaCache()
@@ -3136,7 +3143,12 @@ class MentraLive : SGCManager() {
                     DeviceStore.apply("glasses", "wifiError", "")
                 }
 
-                updateWifiStatus(wifiConnectedStatus, ssid, localIp)
+                updateWifiStatus(
+                        wifiConnectedStatus,
+                        ssid,
+                        localIp,
+                        wifiError.takeIf { it.isNotEmpty() }
+                )
             }
             "hotspot_status_update" -> {
                 // Process hotspot status information (same pattern as "wifi_status")
@@ -3239,7 +3251,8 @@ class MentraLive : SGCManager() {
 
                 val scanComplete =
                         json.optBoolean("scan_complete", json.optBoolean("scanComplete", false))
-                Bridge.updateWifiScanResults(networks, scanComplete)
+                val scanId = json.optString("scanId", "").ifEmpty { null }
+                Bridge.updateWifiScanResults(networks, scanComplete, scanId)
             }
             "token_status" -> {
                 // Process coreToken acknowledgment
@@ -3492,8 +3505,14 @@ class MentraLive : SGCManager() {
                 // Glasses SOC has booted and is ready for communication
                 Bridge.log("LIVE: 🎉 Received glasses_ready message - SOC is booted and ready!")
 
-                // Negotiate wire capabilities advertised in the glasses_ready handshake.
+                // glasses_ready is a REMOTE wire-session reset: the glasses ran
+                // onTransportReset() before sending it, so their side is back on legacy
+                // framing regardless of what this side negotiated earlier. Start a fresh
+                // wire epoch (clears v2-active state that would otherwise gate the
+                // handshake off), then negotiate from the caps this message advertises.
+                resetWireNegotiationState()
                 parsePeerWireCaps(json)
+                maybeSendWireHandshake()
 
                 // Set the ready flag to stop any future readiness checks
                 glassesReady = true
@@ -3884,8 +3903,6 @@ class MentraLive : SGCManager() {
                             val buildNumInt = Integer.parseInt(buildNum)
                             buildNumberInt = buildNumInt
                             Bridge.log("LIVE: Parsed build number as integer: " + buildNumInt)
-                            parsePeerWireCaps(json)
-                            maybeSendWireHandshake()
                         } catch (e: NumberFormatException) {
                             buildNumberInt = 0
                             Log.e(TAG, "Failed to parse build number as integer: " + buildNum)
@@ -3952,6 +3969,16 @@ class MentraLive : SGCManager() {
                             DeviceStore.apply("glasses", "systemTimeMs", v.toLong())
                         }
                     }
+
+                    // Negotiate wire caps from ANY version_info chunk, not only the one
+                    // carrying build_number: the glasses put wire_caps in version_info_3
+                    // (firmware chunk) while build_number travels in version_info_1, so
+                    // gating negotiation on build_number silently discards the caps.
+                    // parsePeerWireCaps no-ops without a wire_caps key and
+                    // maybeSendWireHandshake gates on caps + build + not-yet-queued, so
+                    // running them per chunk is safe.
+                    parsePeerWireCaps(json)
+                    maybeSendWireHandshake()
 
                     Bridge.log("LIVE: Processed version_info fields and sent to RN")
                     Bridge.sendVersionInfo(fields)
@@ -4457,7 +4484,20 @@ class MentraLive : SGCManager() {
 
                         val syntheticStatus: String
                         if ("FINISHED" == besOtaStatus) {
-                            syntheticStatus = "step_complete"
+                            // The glasses power-cycle right after the final BES tick, so a
+                            // session whose BES step is the LAST step never gets a follow-up
+                            // ota_status from the glasses — consumers mapping on this synthetic
+                            // status would otherwise never see a terminal state. Emit "complete"
+                            // for the final step; mid-session BES steps keep "step_complete" so
+                            // session-level trackers advance normally. Unknown sessions
+                            // (cachedOtaTotalSteps == 0, e.g. legacy glasses that never sent an
+                            // ota_status) conservatively keep "step_complete".
+                            syntheticStatus =
+                                    if (cachedOtaTotalSteps > 0 &&
+                                                    cachedOtaCurrentStep >= cachedOtaTotalSteps
+                                    )
+                                            "complete"
+                                    else "step_complete"
                         } else if ("FAILED" == besOtaStatus) {
                             syntheticStatus = "failed"
                         } else {
@@ -4701,7 +4741,12 @@ class MentraLive : SGCManager() {
     /**
      * Update WiFi status and notify listeners Matches iOS MentraLive.swift updateWifiStatus pattern
      */
-    private fun updateWifiStatus(connected: Boolean, ssid: String, localIp: String) {
+    private fun updateWifiStatus(
+            connected: Boolean,
+            ssid: String,
+            localIp: String,
+            error: String? = null
+    ) {
         Bridge.log("LIVE: 🌐 Updating WiFi status - connected: " + connected + ", SSID: " + ssid)
 
         // Update parent SGCManager fields
@@ -4710,7 +4755,7 @@ class MentraLive : SGCManager() {
         DeviceStore.apply("glasses", "wifiLocalIp", localIp)
 
         // Send event to bridge for cloud communication
-        Bridge.sendWifiStatusChange(connected, ssid, localIp)
+        Bridge.sendWifiStatusChange(connected, ssid, localIp, error)
     }
 
     /**
@@ -4784,10 +4829,13 @@ class MentraLive : SGCManager() {
     /**
      * Request WiFi scan from the glasses This will ask the glasses to scan for available networks
      */
-    override fun requestWifiScan() {
+    override fun requestWifiScan(scanId: String?) {
         try {
             val json = JSONObject()
             json.put("type", "request_wifi_scan")
+            if (!scanId.isNullOrEmpty()) {
+                json.put("scanId", scanId)
+            }
             sendJson(json, true)
             Bridge.log("LIVE: Sending WiFi scan request to glasses")
         } catch (e: JSONException) {
@@ -5488,6 +5536,7 @@ class MentraLive : SGCManager() {
     fun warmUpCamera(
         requestId: String,
         size: PhotoSize,
+        mode: PhotoMode = PhotoMode.PHOTO,
         exposureTimeNs: Long?,
         durationMs: Int,
     ) {
@@ -5496,6 +5545,8 @@ class MentraLive : SGCManager() {
                         requestId +
                         ", size=" +
                         size.value +
+                        ", mode=" +
+                        mode.value +
                         ", durationMs=" +
                         durationMs
         )
@@ -5506,6 +5557,7 @@ class MentraLive : SGCManager() {
             json.put("requestId", requestId)
             val sizeValue = size.value
             json.put("size", if (sizeValue.isNotEmpty()) sizeValue else "medium")
+            json.put("mode", mode.value)
             if (exposureTimeNs != null && exposureTimeNs > 0L) {
                 json.put("exposureTimeNs", exposureTimeNs)
             }
@@ -5514,6 +5566,16 @@ class MentraLive : SGCManager() {
         } catch (e: JSONException) {
             Log.e(TAG, "Error creating camera warm up JSON", e)
         }
+    }
+
+    fun stopCameraWarmUp(requestId: String) {
+        if (!isConnected) {
+            throw IllegalStateException("not_connected")
+        }
+        val json = JSONObject()
+        json.put("type", "camera_warm_up_stop")
+        json.put("requestId", requestId)
+        sendJson(json, true)
     }
 
     override fun startStream(message: MutableMap<String, Any>) {
@@ -7162,6 +7224,28 @@ class MentraLive : SGCManager() {
      * negotiated per-link endianness and binary support. Missing wire_caps leaves the legacy
      * defaults (BE, no binary) untouched so older glasses keep working.
      */
+    /**
+     * Drop every negotiated wire-session artifact and bump the session generation so
+     * scheduled callbacks from the old session stand down. Called on BLE disconnect and on
+     * glasses_ready: the glasses run onTransportReset() before sending glasses_ready, so a
+     * mid-link ASG restart (no BLE disconnect) resets THEIR side to legacy framing - the
+     * phone must treat every glasses_ready as a new wire epoch and renegotiate (bounded by
+     * the per-session handshake attempt cap) instead of trusting stale v2-active state.
+     */
+    private fun resetWireNegotiationState() {
+        incomingChunkReassembler.clear()
+        peerWireProtocolVersion = 0
+        useBinaryWireProtocol = false
+        wireHandshakeQueued = false
+        wireHandshakeAttempts = 0
+        wireSessionGeneration++
+        peerK900Le = false
+        peerWireCapsBinary = false
+        peerFilePayloadV2 = false
+        BleJsonCompact.resetSession()
+        wireHandshakeSentGeneration = -1
+    }
+
     private fun parsePeerWireCaps(json: JSONObject) {
         val caps = json.optJSONObject("wire_caps") ?: return
         if (caps.optBoolean("k900_le", false)) {
@@ -7233,7 +7317,39 @@ class MentraLive : SGCManager() {
                     )
             Bridge.log("LIVE: Sending BLE wire v2 handshake")
             wireHandshakeQueued = true
+            wireHandshakeSentGeneration = wireSessionGeneration
             queueData(packed, null)
+            // The handshake and its reply are fire-and-forget binary frames with no ACK
+            // tracking; if either is lost, wireHandshakeQueued would block every future
+            // attempt and the session would silently stay on the legacy string wire.
+            // Re-arm after a grace period so negotiation can retry, bounded per session
+            // so a peer that advertises binary but never answers doesn't get pinged
+            // forever (later caps/version triggers may still retry explicitly).
+            wireHandshakeAttempts++
+            val scheduledGeneration = wireSessionGeneration
+            handler.postDelayed(
+                    {
+                        if (scheduledGeneration == wireSessionGeneration &&
+                                        wireHandshakeQueued &&
+                                        peerWireProtocolVersion < BleWireProtocol.PROTOCOL_V2
+                        ) {
+                            Bridge.log(
+                                    "LIVE: BLE wire v2 handshake unanswered after " +
+                                            WIRE_HANDSHAKE_RETRY_GRACE_MS +
+                                            "ms (attempt " +
+                                            wireHandshakeAttempts +
+                                            "/" +
+                                            WIRE_HANDSHAKE_MAX_ATTEMPTS +
+                                            ") - re-arming"
+                            )
+                            wireHandshakeQueued = false
+                            if (wireHandshakeAttempts < WIRE_HANDSHAKE_MAX_ATTEMPTS) {
+                                maybeSendWireHandshake()
+                            }
+                        }
+                    },
+                    WIRE_HANDSHAKE_RETRY_GRACE_MS
+            )
         } catch (e: Exception) {
             Log.e(TAG, "Failed to send wire handshake", e)
         }
@@ -7243,12 +7359,17 @@ class MentraLive : SGCManager() {
         peerWireProtocolVersion = BleWireProtocol.PROTOCOL_V2
         useBinaryWireProtocol = true
         wireHandshakeQueued = false
+        wireHandshakeAttempts = 0
         peerK900Le = true
         BleJsonCompact.markSessionConnected(System.currentTimeMillis())
         Bridge.log(logMessage)
     }
 
     private fun handlePeerWireHandshake() {
+        if (wireHandshakeSentGeneration != wireSessionGeneration) {
+            Bridge.log("LIVE: Ignoring wire v2 handshake reply from a previous session epoch")
+            return
+        }
         activateBinaryWireV2Session("LIVE: Peer confirmed BLE wire protocol v2")
     }
 
@@ -7947,7 +8068,7 @@ class MentraLive : SGCManager() {
             val type = json.optString("type", "")
 
             when (type) {
-                "request_wifi_scan" -> requestWifiScan()
+                "request_wifi_scan" -> requestWifiScan(null)
                 "rgb_led_control_on", "rgb_led_control_off" -> {
                     // Forward LED control commands directly to glasses via BLE
                     Log.d(TAG, "💡 Forwarding LED control command to glasses: " + type)
@@ -8840,7 +8961,7 @@ class MentraLive : SGCManager() {
 
     /** Send camera FOV setting to glasses (K900 / Mentra Live). */
     override fun sendCameraFovSetting() {
-        var fov = 118
+        var fov = 102
         var roiPosition = 0
         try {
             val raw = DeviceStore.get("bluetooth", "camera_fov")
@@ -8880,6 +9001,35 @@ class MentraLive : SGCManager() {
         } catch (e: JSONException) {
             Log.e(TAG, "Error creating camera FOV setting message", e)
         }
+    }
+
+    fun sendCameraFovOverride(
+        requestId: String,
+        leaseId: String,
+        fov: Int,
+        roiPosition: Int,
+        ttlMs: Int,
+    ) {
+        val json = JSONObject()
+        json.put("type", "camera_fov_override")
+        json.put("request_id", requestId)
+        json.put(
+            "params",
+            JSONObject()
+                .put("lease_id", leaseId)
+                .put("fov", fov)
+                .put("roi_position", roiPosition)
+                .put("ttl_ms", ttlMs),
+        )
+        sendJson(json, true)
+    }
+
+    fun releaseCameraFovOverride(requestId: String, leaseId: String) {
+        val json = JSONObject()
+        json.put("type", "camera_fov_override_release")
+        json.put("request_id", requestId)
+        json.put("params", JSONObject().put("lease_id", leaseId))
+        sendJson(json, true)
     }
 
     /**

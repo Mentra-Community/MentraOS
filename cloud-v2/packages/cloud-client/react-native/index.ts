@@ -30,7 +30,7 @@ export class CloudClient extends Base {
 
 // The host wires the phone's native UDP and secure store through these before
 // constructing a client that uses UDP audio or token persistence.
-export { setNativeUdp, setSecureStorage } from "./transports";
+export { setNativeHttp, setNativeUdp, setSecureStorage } from "./transports";
 export type { NativeUdpFactory } from "./transports";
 
 // Re-export the public surface so a host can import everything (types, errors,

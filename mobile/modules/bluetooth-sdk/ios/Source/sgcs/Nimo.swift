@@ -1066,7 +1066,7 @@ class Nimo: NSObject, SGCManager {
 
     // MARK: - SGCManager: Network (no WiFi)
 
-    func requestWifiScan() {}
+    func requestWifiScan(scanId _: String?) {}
     func sendWifiCredentials(_: String, _: String) {}
     func forgetWifiNetwork(_: String) {}
     func sendHotspotState(_: Bool) {}

@@ -3,6 +3,8 @@ import {useSyncExternalStore} from "react"
 import {act, fireEvent, render, screen, waitFor} from "@testing-library/react"
 import {MemoryRouter} from "react-router-dom"
 
+import {DEFAULT_WARMUP_DURATION_MS} from "./cameraPageModel"
+
 const photoResult = {
   requestId: "photo-1",
   photoUrl: "https://example.com/photo.jpg",
@@ -74,7 +76,34 @@ describe("CameraPage", () => {
     fireEvent.click(screen.getByRole("button", {name: /warmUp\(/}))
 
     await waitFor(() => {
-      expect(cameraInvokeMock).toHaveBeenCalledWith("warmUp", [{size: "medium", durationMs: 20000}])
+      expect(cameraInvokeMock).toHaveBeenCalledWith("warmUp", [
+        {size: "medium", mode: "photo", durationMs: 20000},
+      ])
+    })
+  })
+
+  test("text mode hides quality and warms with mode=text", async () => {
+    render(
+      <MemoryRouter>
+        <CameraPage />
+      </MemoryRouter>,
+    )
+
+    fireEvent.click(screen.getByLabelText("mode"))
+    fireEvent.click(await screen.findByRole("option", {name: "text"}))
+
+    expect(screen.queryByLabelText("quality")).toBeNull()
+    fireEvent.click(screen.getByRole("button", {name: /warmUp\(/}))
+
+    await waitFor(() => {
+      expect(cameraInvokeMock).toHaveBeenCalledWith("warmUp", [
+        {size: "medium", mode: "text", durationMs: DEFAULT_WARMUP_DURATION_MS},
+      ])
+    })
+
+    fireEvent.click(screen.getByRole("button", {name: "takePhoto()"}))
+    await waitFor(() => {
+      expect(cameraInvokeMock).toHaveBeenCalledWith("takePhoto", [{size: "medium", mode: "text"}])
     })
   })
 

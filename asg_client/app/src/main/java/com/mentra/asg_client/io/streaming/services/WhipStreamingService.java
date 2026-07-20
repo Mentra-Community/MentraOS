@@ -278,7 +278,7 @@ public class WhipStreamingService extends Service {
 
     // Acquire wake lock to prevent device sleep during streaming
     WakeLockManager.acquireFullWakeLockAndBringToForeground(
-        getApplicationContext(), 2180000, 5000);
+        getApplicationContext(), WakeLockManager.WakeOwner.STREAMING, 2180000, 5000);
 
     if (!mIsReconnecting) {
       mReconnectAttempts = 0;
@@ -341,7 +341,7 @@ public class WhipStreamingService extends Service {
       }
       mIsReconnecting = false;
       mReconnectAttempts = 0;
-      WakeLockManager.releaseAllWakeLocks();
+      WakeLockManager.release(WakeLockManager.WakeOwner.STREAMING);
       resetState();
       notifyStopped();
       updateNotification("Stream stopped");
@@ -864,7 +864,7 @@ public class WhipStreamingService extends Service {
     }
     mIsReconnecting = false;
     mReconnectAttempts = 0;
-    WakeLockManager.releaseAllWakeLocks();
+    WakeLockManager.release(WakeLockManager.WakeOwner.STREAMING);
     resetState();
     updateNotification("Stream failed");
   }
@@ -897,7 +897,13 @@ public class WhipStreamingService extends Service {
   }
 
   private void notifyStopped() {
-    if (sStatusCallback != null) mMainHandler.post(() -> sStatusCallback.onStreamStopped(mCurrentStreamId));
+    StreamingStatusCallback callback = sStatusCallback;
+    if (callback != null) {
+      // Capture now: by the time the posted runnable runs, a newer start may
+      // already have overwritten mCurrentStreamId.
+      String streamId = mCurrentStreamId;
+      mMainHandler.post(() -> callback.onStreamStopped(streamId));
+    }
   }
 
   private void notifyReconnecting(int attempt, int maxAttempts, String reason) {
@@ -1174,7 +1180,7 @@ public class WhipStreamingService extends Service {
       sInstance.scheduleStreamTimeout(streamId);
       // Re-acquire wake lock on keep-alive
       WakeLockManager.acquireFullWakeLockAndBringToForeground(
-          sInstance.getApplicationContext(), 2180000, 5000);
+          sInstance.getApplicationContext(), WakeLockManager.WakeOwner.STREAMING, 2180000, 5000);
     }
     return matches;
   }

@@ -7,6 +7,7 @@ module.exports = {
     "^@/(.*)$": "<rootDir>/src/$1",
     "^@assets/(.*)$": "<rootDir>/assets/$1",
     "^@mentra/bluetooth-sdk-internal$": "<rootDir>/modules/bluetooth-sdk/src/_internal.ts",
+    "^@mentra/bluetooth-sdk/internal$": "<rootDir>/modules/bluetooth-sdk/src/_internal.ts",
     // Mirror metro: the @mentra/engine entry points resolve to SOURCE, not the
     // (stale) build/ output — tests must exercise the same code the app
     // bundles. jest.setup.js mocks all three entries.

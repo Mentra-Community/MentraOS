@@ -887,7 +887,7 @@ public class RtmpStreamingService extends Service {
                             mIsStreaming = false;
                             EventBus.getDefault().post(new StreamingEvent.Error(errorMsg));
                             if (sStatusCallback != null) {
-                                sStatusCallback.onStreamError(errorMsg, mCurrentStreamId);
+                                sStatusCallback.onStreamError(errorMsg, mCurrentStreamId, true);
                             }
 
                             // Report stream start failure
@@ -949,7 +949,7 @@ public class RtmpStreamingService extends Service {
             }
             EventBus.getDefault().post(new StreamingEvent.Error(errorMsg));
             if (sStatusCallback != null) {
-                sStatusCallback.onStreamError(errorMsg, mCurrentStreamId);
+                sStatusCallback.onStreamError(errorMsg, mCurrentStreamId, true);
             }
 
             // Report stream start failure
@@ -985,6 +985,14 @@ public class RtmpStreamingService extends Service {
      */
     private void forceStopStreamingInternal(boolean preserveSession) {
         Log.d(TAG, "Force stopping stream and cleaning up resources (preserveSession=" + preserveSession + ")");
+
+        // Capture the id up front - cancelStreamTimeout() and the state reset below
+        // both clear it, and the stopped callback must identify the stream being
+        // stopped.
+        final String stoppedStreamId;
+        synchronized (mStateLock) {
+            stoppedStreamId = mCurrentStreamId;
+        }
 
         // Stop battery monitoring if not preserving session
         if (!preserveSession) {
@@ -1030,9 +1038,13 @@ public class RtmpStreamingService extends Service {
                     StreamingReporting.reportStreamStopFailure(RtmpStreamingService.this,
                         "stream_stop_error", (Throwable) o);
 
-                    // Notify TPA developer of cleanup failure
+                    // Notify TPA developer of cleanup failure. Use the id captured
+                    // before cleanup: this continuation can resume after the state
+                    // reset cleared mCurrentStreamId or a replacement stream
+                    // overwrote it, and the failure belongs to the stream being
+                    // stopped.
                     if (sStatusCallback != null) {
-                        sStatusCallback.onStreamError("Failed to stop stream: " + ((Throwable) o).getMessage(), mCurrentStreamId);
+                        sStatusCallback.onStreamError("Failed to stop stream: " + ((Throwable) o).getMessage(), stoppedStreamId);
                     }
                 }
                 Log.d(TAG, "Stream stop completed");
@@ -1134,7 +1146,7 @@ public class RtmpStreamingService extends Service {
             Log.d(TAG, "Stream resources released for reconnection");
         } else {
             if (sStatusCallback != null) {
-                sStatusCallback.onStreamStopped(mCurrentStreamId);
+                sStatusCallback.onStreamStopped(stoppedStreamId);
             }
             EventBus.getDefault().post(new StreamingEvent.Stopped());
             Log.i(TAG, "Streaming stopped and cleaned up");
@@ -1618,7 +1630,7 @@ public class RtmpStreamingService extends Service {
                 Log.d(TAG, "Resetting stream timeout for streamId: " + streamId +
                         ", active: " + sInstance.mIsStreamingActive +
                         ", state: " + sInstance.mStreamState);
-                WakeLockManager.acquireFullWakeLockAndBringToForeground(sInstance.getApplicationContext(), 2180000, 5000); // 3 min CPU, 5 sec screen
+                WakeLockManager.acquireFullWakeLockAndBringToForeground(sInstance.getApplicationContext(), WakeLockManager.WakeOwner.STREAMING, 2180000, 5000); // 36 min CPU, 5 sec screen
                 sInstance.scheduleStreamTimeout(streamId); // Reschedule with fresh timeout
                 return true;
             } else {
@@ -1763,14 +1775,14 @@ public class RtmpStreamingService extends Service {
         // Use the WakeLockManager to acquire both CPU and screen wake locks AND bring app to foreground
         // This prevents "Camera disabled by policy" errors when app is backgrounded
         // For streaming we use longer timeout for CPU wake lock than for photo capture
-        WakeLockManager.acquireFullWakeLockAndBringToForeground(this, 2180000, 5000); // 3 min CPU, 5 sec screen
+        WakeLockManager.acquireFullWakeLockAndBringToForeground(this, WakeLockManager.WakeOwner.STREAMING, 2180000, 5000); // 36 min CPU, 5 sec screen
     }
 
     /**
      * Release any held wake locks
      */
     private void releaseWakeLocks() {
-        WakeLockManager.releaseAllWakeLocks();
+        WakeLockManager.release(WakeLockManager.WakeOwner.STREAMING);
     }
 
     /**

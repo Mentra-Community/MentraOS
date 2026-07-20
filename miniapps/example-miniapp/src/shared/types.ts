@@ -63,3 +63,22 @@ export interface TesterInvoke {
 /** Result of `tester:invoke`. Handlers return the raw call result; errors
  *  propagate via the RPC error path so callers see `MentraRpcError`. */
 export type TesterInvokeResult = unknown
+
+export interface CalendarSnapshotEvent {
+  id: string
+  calendarId: string
+  title: string
+  startsAt: string
+  endsAt: string
+  timezone?: string
+  allDay: boolean
+  location?: string
+  notes?: string
+  url?: string
+  links: string[]
+}
+
+export interface CalendarSnapshotResult {
+  events: CalendarSnapshotEvent[]
+  truncated: boolean
+}

@@ -87,7 +87,7 @@ describe("AudioPlaybackService", () => {
     statusListener({didJustFinish: true, duration: 2})
 
     expect(mockPlayer.pause).not.toHaveBeenCalled()
-    expect(onComplete).toHaveBeenCalledWith("audio-1", true, null, 2000)
+    expect(onComplete).toHaveBeenCalledWith("audio-1", true, null, 2000, "completed")
     expect(BluetoothSdk.setGlassesMediaVolume).toHaveBeenCalledTimes(1)
     expect(BluetoothSdk.setGlassesMediaVolume).toHaveBeenLastCalledWith(9)
 
@@ -108,14 +108,14 @@ describe("AudioPlaybackService", () => {
     await audioPlaybackService.play({requestId: "second", audioUrl: "https://example.com/two.mp3"}, secondComplete)
     await flushAsyncVolumeGuard()
 
-    expect(firstComplete).toHaveBeenCalledWith("first", true, null, expect.any(Number))
+    expect(firstComplete).toHaveBeenCalledWith("first", true, null, expect.any(Number), "interrupted")
     expect(BluetoothSdk.setGlassesMediaVolume).toHaveBeenCalledTimes(1)
     expect(createAudioPlayer).toHaveBeenCalledTimes(1)
 
     const statusListener = getLatestStatusListener()
     statusListener({didJustFinish: true, duration: 1})
 
-    expect(secondComplete).toHaveBeenCalledWith("second", true, null, 1000)
+    expect(secondComplete).toHaveBeenCalledWith("second", true, null, 1000, "completed")
     expect(BluetoothSdk.setGlassesMediaVolume).toHaveBeenCalledTimes(1)
     expect(BluetoothSdk.setGlassesMediaVolume).toHaveBeenLastCalledWith(9)
   })

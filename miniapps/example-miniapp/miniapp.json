@@ -31,7 +31,7 @@
     },
     {
       "type": "CALENDAR",
-      "description": "Exercised by the SDK Tester page"
+      "description": "Lists phone calendar events in the SDK Tester"
     }
   ],
   "hardwareRequirements": [

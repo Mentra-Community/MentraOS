@@ -1,16 +1,48 @@
 # Bluetooth SDK Release CI
 
 The Bluetooth SDK release workflow lives at
-`.github/workflows/bluetooth-sdk-release.yml`. During initial validation it runs
-on pushes to `dev` that touch the SDK package, the release workflow, or the
-SwiftPM export script. After the workflow has been proven end-to-end, switch the
-trigger and publish guard back to `staging` before using it as the durable SDK
-release path.
-A release is only attempted when the `version` field in
-`mobile/modules/bluetooth-sdk/package.json` changes compared with the previous
-`dev` commit.
+`.github/workflows/bluetooth-sdk-release.yml` and follows the same
+**channel-promotion scheme** as the miniapp/engine pipelines
+(`.github/scripts/npm-channel.mjs`): git holds one prerelease base version
+(`X.Y.Z-dev.N`, only ever edited on `dev`) and the branch derives what
+publishes — merging up the chain IS the promotion, no version edits ride the
+branches:
 
-The same version drives all public artifacts:
+| Branch | Publishes | npm dist-tag | Publish mode |
+| --- | --- | --- | --- |
+| `dev` | `X.Y.Z-dev.N` | `dev` | direct — no approval |
+| `staging` | `X.Y.Z-beta.N` | `beta` | staged — human approves per store |
+| `main-bluetooth-sdk` | `X.Y.Z` | `latest` | staged — human approves per store |
+
+The SDK's prod branch is **`main-bluetooth-sdk`, not `main`** — SDK prod
+releases trigger independently of the monorepo's main promotions. To go public,
+merge `staging` into `main-bluetooth-sdk` (create the branch from `staging` the
+first time). After a plain `X.Y.Z` has shipped, the base is spent: start the
+next cycle by bumping `dev` to `X.Y.(Z+1)-dev.0`.
+
+Detection is **registry-state across all three stores**: a release fires when
+the derived version is missing from any of npm, Maven Central, or the SwiftPM
+mirror's tags, and each store's job re-checks and skips itself when already
+complete — re-runs, re-merges, and partially-failed releases all heal. There is
+no paths filter; every push to a channel branch reconciles in seconds.
+
+The staged ("human approves") mode maps to each store's native mechanism:
+
+- **npm** — `npm stage publish --tag <channel>`: approve in npmjs.com's Staged
+  Packages tab (or `npm stage approve <stage-id>`).
+- **Maven Central** — the Sonatype upload uses `publishing_type=user_managed`:
+  publish the deployment at
+  <https://central.sonatype.com/publishing/deployments>. The `dev` channel
+  uploads with `publishing_type=automatic` instead (no approval).
+- **SwiftPM** — SPM resolves **tags only**, so the export+commit to the mirror
+  is invisible to consumers; the tag push is the release act and lives in a
+  separate job behind the `bluetooth-sdk-release-approval` GitHub environment.
+  Approve it in the workflow run's UI. **Configure required reviewers on that
+  environment once** (Settings → Environments) — until then the gate is a
+  no-op. The `dev` channel tags through the unprotected
+  `bluetooth-sdk-dev-release` environment without waiting.
+
+The same derived version drives all public artifacts:
 
 - ASG OTA manifest:
   `https://github.com/Mentra-Community/MentraOS/releases/download/bluetooth-sdk-ota/bluetooth-sdk-VERSION-version.json`
@@ -53,15 +85,21 @@ workflow for a real release:
 | `MAVEN_SIGNING_KEY` | Secret | ASCII-armored PGP private key used by Gradle in-memory signing. |
 | `MAVEN_SIGNING_PASSWORD` | Secret | Passphrase for `MAVEN_SIGNING_KEY`. |
 | `MENTRA_BLUETOOTH_SDK_IOS_PUSH_TOKEN` | Secret | GitHub token with write access to `Mentra-Community/mentra-bluetooth-sdk-ios` for pushing `main` and version tags. |
-| `SONATYPE_PUBLISHING_TYPE` | Variable | Sonatype Central upload mode; keep `user_managed` unless maintainers intentionally switch to an automatic release mode. |
+| `NPM_TOKEN` | Secret | npm automation token used for dev-channel direct publishes (staged beta/latest publishes use the OIDC Trusted Publisher). |
+
+The Sonatype publishing type is no longer a repository variable: the workflow
+derives it from the channel (`automatic` on `dev`, `user_managed` on
+`staging`/`main-bluetooth-sdk`).
 
 ## Flow
 
-1. The detector job reads `mobile/modules/bluetooth-sdk/package.json` at `HEAD`
-   and at the prior push SHA. If the version did not change, the workflow exits
-   after writing a summary. If GitHub does not provide a usable prior push SHA,
-   the detector fails closed; rerun with `workflow_dispatch` and
-   `force_release=true` after confirming the version should release.
+1. The detector job derives the channel version from the base in
+   `mobile/modules/bluetooth-sdk/package.json` and the branch, then checks all
+   three stores for it (npm E404-strict; both Maven poms — a partial pair is a
+   hard error; the SwiftPM tag via `ls-remote`). If every store already has the
+   derived version, the workflow exits after writing a summary. Publish jobs
+   stamp the derived version into the CI checkout's manifest before
+   building/packing (never committed) — the repo keeps the base version.
 2. The SDK OTA job builds the ASG client APK from the same release commit,
    generates a versioned manifest with ASG APK metadata plus the MTK and BES
    metadata from `asg_client/ota_manifests/firmware_live.json`, then uploads the
@@ -75,20 +113,25 @@ workflow for a real release:
    publishing starts. If the same SDK release is rerun after OTA publishing
    succeeded, existing APK or manifest assets are reused only when their content
    is byte-for-byte identical; mismatched assets fail hard.
-4. The npm job installs mobile workspace dependencies, builds the SDK package,
-   checks whether `@mentra/bluetooth-sdk@VERSION` already exists, runs
-   `npm pack --dry-run`, then submits the package with `npm stage publish` when
-   the workflow is not in dry-run mode. A maintainer must approve the staged
-   package before it becomes available on npm.
+4. The npm job installs mobile workspace dependencies, stamps the derived
+   version, builds the SDK package, re-checks the registry, runs
+   `npm pack --dry-run`, then publishes: **directly with `--tag dev`** on the
+   dev channel (NPM_TOKEN), or via **`npm stage publish --tag <beta|latest>`**
+   on staging/prod — a maintainer must approve the staged package before it
+   goes live.
 5. The Maven job installs the mobile workspace, runs Expo prebuild to create the
    generated `mobile/android` Gradle project, checks Maven Central for both
    Android artifacts, runs a public-mode `publishToMavenLocal`, then uploads the
    signed public-mode `lc3Lib` and `mentra-bluetooth-sdk` publications to
-   Sonatype Central.
-6. The iOS job checks out the SwiftPM mirror repository, refuses to overwrite an
-   existing version tag, exports the package with
-   `scripts/export-bluetooth-sdk-ios-spm.sh --verify`, then pushes `main` and
-   the version tag.
+   Sonatype Central — `publishing_type=automatic` on dev (goes live on its
+   own), `user_managed` on staging/prod (publish it in the Central Portal).
+6. The iOS export job checks out the SwiftPM mirror repository, refuses to
+   overwrite an existing version tag, stamps the derived version, exports the
+   package with `scripts/export-bluetooth-sdk-ios-spm.sh --verify`, and pushes
+   the commit to `main` — **without the tag**. A separate tag job then pushes
+   the version tag at the exported commit: immediately on dev, or after a
+   reviewer approves the `bluetooth-sdk-release-approval` environment gate on
+   staging/prod. The tag going live IS the SwiftPM release.
 
 ## Manual Steps That Remain
 

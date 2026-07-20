@@ -22,9 +22,6 @@ import org.json.JSONObject;
 public class PhotoCommandHandler extends BaseMediaCommandHandler {
     private static final String TAG = "PhotoCommandHandler";
 
-    /** Default warm-up hold (ms) when {@code camera_warm_up} omits/zeros {@code durationMs}. */
-    private static final long DEFAULT_WARM_UP_DURATION_MS = 15000;
-
     private final AsgClientServiceManager serviceManager;
     private final IStateManager stateManager;
 
@@ -40,7 +37,7 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
 
     @Override
     public Set<String> getSupportedCommandTypes() {
-        return Set.of("take_photo", "camera_warm_up");
+        return Set.of("take_photo", "camera_warm_up", "camera_warm_up_stop");
     }
 
     @Override
@@ -51,6 +48,8 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
                     return handleTakePhoto(data);
                 case "camera_warm_up":
                     return handleCameraWarmUp(data);
+                case "camera_warm_up_stop":
+                    return handleCameraWarmUpStop(data);
                 default:
                     Log.e(TAG, "Unsupported photo command: " + commandType);
                     return false;
@@ -79,12 +78,15 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
             }
 
             String requestId = data.optString("requestId", "");
-            String size = PhotoSizeTier.normalize(data.optString("size", "medium"));
+            String mode = PhotoMode.normalize(data.optString("mode", PhotoMode.PHOTO));
+            String requestedSize = PhotoSizeTier.normalize(data.optString("size", "medium"));
+            String size = PhotoMode.captureSize(mode, requestedSize);
             Long exposureTimeNs = PhotoExposureTimeNs.parse(data);
             long durationMs = data.optLong("durationMs", 0L);
             if (durationMs <= 0) {
-                durationMs = DEFAULT_WARM_UP_DURATION_MS;
+                durationMs = AsgConstants.CAMERA_WARM_UP_DEFAULT_DURATION_MS;
             }
+            durationMs = Math.min(durationMs, AsgConstants.CAMERA_WARM_UP_MAX_DURATION_MS);
 
             MediaCaptureService captureService = serviceManager.getMediaCaptureService();
             if (captureService == null) {
@@ -101,8 +103,11 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
                     TAG,
                     "🔥 CAM_WARMTH CMD_RECEIVED requestId="
                             + requestId
+                            + " mode="
+                            + mode
                             + " size="
                             + size
+                            + (size.equals(requestedSize) ? "" : " (from " + requestedSize + ")")
                             + " exposureTimeNs="
                             + exposureTimeNs
                             + " durationMs="
@@ -110,7 +115,7 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
             // #endregion
 
             boolean accepted =
-                    captureService.warmUpCamera(requestId, size, exposureTimeNs, durationMs);
+                    captureService.warmUpCamera(requestId, size, exposureTimeNs, durationMs, mode);
             logCommandResult("camera_warm_up", accepted, accepted ? null : "Warm-up rejected");
             return accepted;
         } catch (Exception e) {
@@ -125,6 +130,29 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
             }
             return false;
         }
+    }
+
+    /** Release one request-owned warm-up lease without disturbing compatible owners. */
+    private boolean handleCameraWarmUpStop(JSONObject data) {
+        String requestId = data.optString("requestId", "");
+        if (requestId.isEmpty()) {
+            requestId = data.optString("request_id", "");
+        }
+        if (requestId.isEmpty()) {
+            Log.w(TAG, "camera_warm_up_stop rejected - missing requestId");
+            return false;
+        }
+
+        MediaCaptureService captureService = serviceManager.getMediaCaptureService();
+        if (captureService == null) {
+            sendCameraWarmUpError(
+                    requestId,
+                    "media_capture_service_unavailable",
+                    "Media capture service not available");
+            return false;
+        }
+        captureService.stopCameraWarmUp(requestId);
+        return true;
     }
 
     private void sendCameraWarmUpError(String requestId, String errorCode, String errorMessage) {
@@ -180,8 +208,9 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
             String transferMethod = data.optString("transferMethod", "direct");
             String bleImgId = data.optString("bleImgId", "");
             boolean save = data.optBoolean("save", false);
-            String size = PhotoSizeTier.normalize(data.optString("size", "medium"));
             String mode = PhotoMode.normalize(data.optString("mode", PhotoMode.PHOTO));
+            String requestedSize = PhotoSizeTier.normalize(data.optString("size", "medium"));
+            String size = PhotoMode.captureSize(mode, requestedSize);
             if (!data.has("mode")) {
                 Log.w(
                         TAG,
@@ -189,6 +218,15 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
                                 + mode);
             }
             Log.i(TAG, "📸 Mentra Live take_photo mode: " + mode);
+            if (!size.equals(requestedSize)) {
+                Log.i(
+                        TAG,
+                        "📸 Text mode overriding capture size "
+                                + requestedSize
+                                + " → "
+                                + size
+                                + " (ASG text sensor constants)");
+            }
             PhotoCaptureSettings requestCaptureSettings =
                     PhotoCaptureSettings.fromTakePhotoJson(data);
             PhotoCaptureSettings.logIncomingTakePhotoFields(data, requestId);

@@ -12,6 +12,7 @@ package com.mentra.asg_client.camera;
  * - medium: Good balance of quality and speed (SDK default)
  * - high: High quality for detailed analysis
  * - max: Highest JPEG size reported by camera hardware (~4032×3024)
+ * - text: Internal text-mode sensor target from {@code AsgConstants} (not a public wire tier)
  */
 public final class CameraConstants {
 
@@ -87,6 +88,13 @@ public final class CameraConstants {
     public static final String SIZE_MEDIUM = "medium";
     public static final String SIZE_HIGH = "high";
     public static final String SIZE_MAX = "max";
+
+    /**
+     * Internal capture tier for text mode. Not accepted on the public {@code size} wire field —
+     * produced by {@link com.mentra.asg_client.camera.policy.PhotoMode#captureSize} when {@code
+     * mode=text}, and resolved via {@code AsgConstants.TEXT_MODE_SENSOR_CAPTURE_*}.
+     */
+    public static final String SIZE_TEXT = "text";
 
     // =========================================================================
     // EXPECTED FILE SIZES (approximate, for documentation)

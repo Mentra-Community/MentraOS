@@ -14,6 +14,7 @@
  */
 import { HttpError } from "./errors";
 import type { Logger } from "./logger";
+import type { HttpTransport } from "./transports";
 
 /**
  * Per-request options.
@@ -56,6 +57,7 @@ export interface CreateHttpClientDeps {
   // default Bearer source, usually cloud.auth.getRuntimeToken/getCoreToken
   getToken?: () => Promise<string>;
   logger: Logger;
+  fetch?: HttpTransport;
 }
 
 /** How many times to retry a transient failure on an idempotent call. */
@@ -82,6 +84,7 @@ function joinUrl(baseUrl: string, path: string): string {
 
 export function createHttpClient(deps: CreateHttpClientDeps): HttpClient {
   const { baseUrl, getToken, logger } = deps;
+  const executeFetch = deps.fetch ?? globalThis.fetch;
 
   /**
    * Resolve the Bearer to attach: a per-call override wins, otherwise the
@@ -124,7 +127,7 @@ export function createHttpClient(deps: CreateHttpClientDeps): HttpClient {
 
       let res: Response;
       try {
-        res = await fetch(url, { method, headers, body });
+        res = await executeFetch(url, { method, headers, body });
       } catch {
         // Transient network failure: let the loop retry.
         logger.warn("http network error", { method, path, attempt });
@@ -140,11 +143,7 @@ export function createHttpClient(deps: CreateHttpClientDeps): HttpClient {
     }
 
     // Exhausted retries on a transient failure.
-    throw new HttpError(
-      `Network request failed: ${method} ${path}`,
-      0,
-      "NETWORK_ERROR",
-    );
+    throw new HttpError(`Network request failed: ${method} ${path}`, 0, "NETWORK_ERROR");
   }
 
   async function requestRaw(
@@ -166,8 +165,7 @@ export function createHttpClient(deps: CreateHttpClientDeps): HttpClient {
 
     // GET and DELETE are idempotent by HTTP semantics, so safe to retry; other
     // verbs opt in via the flag.
-    const idempotent =
-      opts?.idempotent ?? (method === "GET" || method === "DELETE" || method === "HEAD");
+    const idempotent = opts?.idempotent ?? (method === "GET" || method === "DELETE" || method === "HEAD");
 
     return await fetchWithRetry({ method, path, headers, body: payload, idempotent });
   }
@@ -182,11 +180,7 @@ export function createHttpClient(deps: CreateHttpClientDeps): HttpClient {
     return await parseJson<T>(res);
   }
 
-  async function requestForm<T>(
-    path: string,
-    form: FormData,
-    opts?: ReqOpts,
-  ): Promise<T> {
+  async function requestForm<T>(path: string, form: FormData, opts?: ReqOpts): Promise<T> {
     const bearer = await resolveBearer(opts);
 
     // No Content-Type here: fetch/FormData must generate the multipart
@@ -210,11 +204,7 @@ export function createHttpClient(deps: CreateHttpClientDeps): HttpClient {
    * parse failure here because the status is the load-bearing signal and we do
    * not want a malformed error body to mask the real status.
    */
-  async function toHttpError(
-    res: Response,
-    method: string,
-    path: string,
-  ): Promise<HttpError> {
+  async function toHttpError(res: Response, method: string, path: string): Promise<HttpError> {
     let code: string | undefined;
     let detail = "";
     try {
@@ -230,11 +220,7 @@ export function createHttpClient(deps: CreateHttpClientDeps): HttpClient {
     } catch {
       // No JSON body, or unparseable: fall back to status alone.
     }
-    return new HttpError(
-      `HTTP ${res.status} on ${method} ${path}${detail}`,
-      res.status,
-      code,
-    );
+    return new HttpError(`HTTP ${res.status} on ${method} ${path}${detail}`, res.status, code);
   }
 
   /**

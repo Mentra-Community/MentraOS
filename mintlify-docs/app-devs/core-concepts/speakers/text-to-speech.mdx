@@ -56,7 +56,9 @@ await session.speaker.play({
 
 `speak` sends the text to the phone, which streams cloud TTS when connected and
 falls back to local offline TTS when the cloud is unavailable. It resolves when
-playback completes.
+playback completes. Offline playback may segment longer text internally to
+reduce latency; callers use the same `speak()` API and receive the same
+interruption behavior in either mode.
 
 ```typescript
 const result = await session.speaker.speak("Turn left in 200 meters", {
@@ -77,6 +79,7 @@ if (!result.completed) {
 | `voice_settings` | `Record<string, unknown>?` | Provider-specific voice tuning.              |
 | `volume`         | `number?`                  | Playback volume.                             |
 | `stopOtherAudio` | `boolean?`                 | Stop other audio first. Defaults to `false`. |
+| `forceLocal`     | `boolean?`                 | Require on-device TTS; never call cloud TTS. |
 
 `SpeakResult` has one field, `completed`: `true` if playback finished, `false`
 if it was interrupted.
@@ -153,12 +156,13 @@ try {
 }
 ```
 
-| Code                 | Meaning                                        |
-| -------------------- | ---------------------------------------------- |
-| `TTS_TEXT_TOO_LONG`  | The text exceeded the provider's length limit. |
-| `TTS_INVALID_VOICE`  | The `voice_id` isn't a known voice.            |
-| `TTS_UPSTREAM_ERROR` | The TTS provider returned an error.            |
-| `INTERNAL`           | Any other failure.                             |
+| Code                    | Meaning                                                 |
+| ----------------------- | ------------------------------------------------------- |
+| `TTS_TEXT_TOO_LONG`     | The text exceeded the provider's length limit.          |
+| `TTS_INVALID_VOICE`     | The `voice_id` isn't a known voice.                     |
+| `TTS_UPSTREAM_ERROR`    | The TTS provider returned an error.                     |
+| `TTS_LOCAL_UNAVAILABLE` | `forceLocal` was requested without a ready local model. |
+| `INTERNAL`              | Any other failure.                                      |
 
 ## State
 

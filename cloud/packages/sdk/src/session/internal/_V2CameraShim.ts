@@ -14,6 +14,8 @@ export interface _V2PhotoRequestOptions {
   customWebhookUrl?: string;
   authToken?: string;
   size?: "low" | "medium" | "high" | "max";
+  /** Capture normally, or localize and crop around readable text on supported glasses. */
+  mode?: "photo" | "text";
   compress?: "none" | "medium" | "heavy";
   sound?: boolean;
   /** Sensor exposure time for this request only (nanoseconds). Not persisted. */
@@ -103,6 +105,7 @@ export class _V2CameraShim {
         customWebhookUrl: options?.customWebhookUrl,
         authToken: options?.authToken,
         size: options?.size ?? "medium",
+        mode: options?.mode ?? "photo",
         compress: options?.compress ?? "none",
         sound: options?.sound,
         ...(includeExp ? { exposureTimeNs: expNs } : {}),

@@ -37,7 +37,7 @@ public class SerialPortBridge {
     protected volatile InputStream mIS;
     private Context mContext = null;
     private boolean mbRequestFast = false;
-    public boolean mbOtaUpdating = false;
+    private volatile boolean mbOtaUpdating = false;
 
     /** Baud rate the port is currently open at (DEFAULT_BAUDRATE until a reopen succeeds). */
     private volatile int mCurrentBaud = DEFAULT_BAUDRATE;
@@ -127,6 +127,19 @@ public class SerialPortBridge {
      */
     public int getCurrentBaud() {
         return mCurrentBaud;
+    }
+
+    /** Whether BES OTA currently owns UART receive routing. */
+    public boolean isOtaUpdating() {
+        return mbOtaUpdating;
+    }
+
+    /** Notify the normal UART owner that BES accepted an OTA image and is rebooting. */
+    public void notifyBesOtaApplied() {
+        SerialListener listener = mListener;
+        if (listener != null) {
+            listener.onBesOtaApplied();
+        }
     }
 
     /**

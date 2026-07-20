@@ -7,10 +7,11 @@ import {
   DEFAULT_WARMUP_DURATION_MS,
   formatByteSize,
   formatElapsedMs,
+  wirePhotoSize,
 } from "./cameraPageModel"
 
 describe("cameraPageModel", () => {
-  test("buildTakePhotoArgs forwards the example camera options", () => {
+  test("text mode sends mode without forcing a public max quality tier", () => {
     expect(
       buildTakePhotoArgs({
         size: "high",
@@ -20,7 +21,7 @@ describe("cameraPageModel", () => {
       }),
     ).toEqual([
       {
-        size: "high",
+        size: "medium",
         mode: "text",
         zsl: false,
         mfnr: false,
@@ -37,9 +38,20 @@ describe("cameraPageModel", () => {
     ])
   })
 
-  test("buildWarmUpArgs uses the selected size and default duration", () => {
-    expect(buildWarmUpArgs("low")).toEqual([{size: "low", durationMs: DEFAULT_WARMUP_DURATION_MS}])
-    expect(buildWarmUpArgs("max", 20_000)).toEqual([{size: "max", durationMs: 20_000}])
+  test("photo mode preserves its selected quality", () => {
+    expect(wirePhotoSize("high", "photo")).toBe("high")
+    expect(buildTakePhotoArgs({size: "low", mode: "photo", zsl: false, mfnr: false})).toEqual([
+      {size: "low", mode: "photo", zsl: false, mfnr: false},
+    ])
+  })
+
+  test("warm-up carries mode so ASG can apply text sensor constants", () => {
+    expect(buildWarmUpArgs("low", "photo")).toEqual([
+      {size: "low", mode: "photo", durationMs: DEFAULT_WARMUP_DURATION_MS},
+    ])
+    expect(buildWarmUpArgs("high", "text", 20_000)).toEqual([
+      {size: "medium", mode: "text", durationMs: 20_000},
+    ])
   })
 
   test("size matrix covers canonical sizes", () => {
@@ -52,5 +64,4 @@ describe("cameraPageModel", () => {
     expect(formatByteSize(2048)).toBe("2.0 KB")
     expect(formatByteSize(-1)).toBe("unknown")
   })
-
 })

@@ -9,20 +9,48 @@ import {base64ToBytes} from "./base64"
 
 function mockSession(results: unknown[] | ((payload: Record<string, unknown>) => unknown)) {
   const requestCalls: Record<string, unknown>[] = []
+  const requestOptions: unknown[] = []
   const resolveResult =
     typeof results === "function" ? results : () => (results.length > 1 ? results.shift() : results[0])
   const session = {
     sendOneShot: () => {
       throw new Error("stream requests should use sendRequest")
     },
-    sendRequest: (payload: Record<string, unknown>) => {
+    sendRequest: (payload: Record<string, unknown>, options?: unknown) => {
       requestCalls.push(payload)
+      requestOptions.push(options)
       return Promise.resolve(resolveResult(payload))
     },
   } as unknown as MiniappSession
 
-  return {session, requestCalls}
+  return {session, requestCalls, requestOptions}
 }
+
+describe("SpeakerModule.speak", () => {
+  test("uses one SPEAK request and forwards local routing and barge-in options", async () => {
+    const {session, requestCalls, requestOptions} = mockSession([{completed: false}])
+    const speaker = new SpeakerModule(session)
+
+    const result = await speaker.speak("First sentence. Second sentence.", {
+      forceLocal: true,
+      stopOtherAudio: false,
+    })
+
+    expect(result).toEqual({completed: false})
+    expect(requestCalls).toEqual([
+      {
+        type: MiniappRequestType.SPEAK,
+        text: "First sentence. Second sentence.",
+        voice_id: undefined,
+        voice_settings: undefined,
+        volume: undefined,
+        stopOtherAudio: false,
+        forceLocal: true,
+      },
+    ])
+    expect(requestOptions).toEqual([{timeoutMs: 0}])
+  })
+})
 
 describe("SpeakerModule.createStream", () => {
   test("sends SPEAKER_STREAM_OPEN with defaulted options and returns a writer", async () => {

@@ -12,7 +12,7 @@
 
 import type {MiniappSession} from "@mentra/miniapp"
 import type {PlaceDetails, SavedPlace} from "../lib/places"
-import type {UnitSystem} from "../../shared/types"
+import type {UnitSystem, VoiceGuidanceMode} from "../../shared/types"
 
 export class SimpleStorageManager {
   constructor(private readonly session: MiniappSession) {}
@@ -117,5 +117,17 @@ export class SimpleStorageManager {
   /** Persists the distance-unit preference. */
   async setUnitSystem(unit: UnitSystem): Promise<void> {
     await this.set(SimpleStorageManager.UNIT_SYSTEM_KEY, unit)
+  }
+
+  private static readonly VOICE_GUIDANCE_MODE_KEY = "voiceGuidanceMode"
+
+  /** Null means the user has never chosen, so hardware-aware defaults may apply. */
+  async getVoiceGuidanceMode(): Promise<VoiceGuidanceMode | null> {
+    const raw = await this.get(SimpleStorageManager.VOICE_GUIDANCE_MODE_KEY)
+    return raw === "off" || raw === "essential" || raw === "full" ? raw : null
+  }
+
+  async setVoiceGuidanceMode(mode: VoiceGuidanceMode): Promise<void> {
+    await this.set(SimpleStorageManager.VOICE_GUIDANCE_MODE_KEY, mode)
   }
 }

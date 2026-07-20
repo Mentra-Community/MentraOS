@@ -12,6 +12,7 @@ import type {
   CaptionsLiveTranscript,
   CaptionsSettings,
   CapabilitiesSnapshot,
+  CalendarSnapshotResult,
   ConnectionSnapshot,
   TesterEventPayload,
   TesterInvoke,
@@ -68,6 +69,9 @@ export interface Channels {
    * the `tester:event` stream). The new shape is plain async/await.
    */
   "tester:invoke": Rpc<TesterInvoke, TesterInvokeResult>
+
+  /** Demonstrates the nested session.phone.calendar.listEvents request API. */
+  "tester:calendar-list": Rpc<{startsAt: string; endsAt: string; limit?: number}, CalendarSnapshotResult>
 
   /**
    * speaker.createStream E2E: the background generates a sine tone and pumps

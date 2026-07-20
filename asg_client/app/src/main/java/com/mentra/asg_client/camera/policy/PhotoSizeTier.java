@@ -39,4 +39,13 @@ public final class PhotoSizeTier {
                 return CameraConstants.SIZE_MEDIUM;
         }
     }
+
+    /**
+     * Normalizes a size after {@link PhotoMode#captureSize} has resolved the capture mode. Unlike
+     * {@link #normalize}, this accepts the internal text-mode sensor tier; do not use it to parse a
+     * public {@code size} wire field.
+     */
+    public static String normalizeCaptureSize(String size) {
+        return CameraConstants.SIZE_TEXT.equals(size) ? size : normalize(size);
+    }
 }

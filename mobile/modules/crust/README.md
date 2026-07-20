@@ -1,35 +1,41 @@
-# crust
+# @mentra/crust
 
-Mentra Native Module
+The MentraOS native runtime layer: an [Expo module](https://docs.expo.dev/modules/overview/)
+providing the native capabilities the Mentra Engine's miniapp runtime sits on —
+per-miniapp JS contexts (QuickJS on Android, JavaScriptCore on iOS), the
+native side of the MentraJS bridge, navigation, and device utilities.
 
-# API documentation
+You don't call crust directly from app code: it's a **peer dependency of
+[`@mentra/engine`](https://www.npmjs.com/package/@mentra/engine)**. A host app
+embedding the engine installs crust alongside it and Expo autolinking picks it
+up.
 
-- [Documentation for the latest stable release](https://docs.expo.dev/versions/latest/sdk/crust/)
-- [Documentation for the main branch](https://docs.expo.dev/versions/unversioned/sdk/crust/)
+## Install
 
-# Installation in managed Expo projects
-
-For [managed](https://docs.expo.dev/archive/managed-vs-bare/) Expo projects, please follow the installation instructions in the [API documentation for the latest stable release](#api-documentation). If you follow the link and there is no documentation available then this library is not yet usable within managed projects &mdash; it is likely to be included in an upcoming Expo SDK release.
-
-# Installation in bare React Native projects
-
-For bare React Native projects, you must ensure that you have [installed and configured the `expo` package](https://docs.expo.dev/bare/installing-expo-modules/) before continuing.
-
-### Add the package to your npm dependencies
-
-```
-npm install crust
+```sh
+npm install @mentra/crust@dev
 ```
 
-### Configure for Android
+> Currently published on the `dev` dist-tag (prerelease channel).
 
+## Config plugin
 
+The package ships an Expo config plugin (`app.plugin.js`) that carries its
+Android build contract — Mapbox's maven repository, protobuf exclusions, and
+core-library desugaring. Add it to the host app's Expo config:
 
+```json
+{"expo": {"plugins": ["@mentra/crust"]}}
+```
 
-### Configure for iOS
+Building with the navigation feature requires a `MAPBOX_DOWNLOADS_TOKEN` in
+the Android build environment (Mapbox's SDK repository is authenticated).
 
-Run `npx pod-install` after installing the npm package.
+At build time the Android side also reads the MentraJS polyfill bundle from
+its [`@mentra/jspolyfill`](https://www.npmjs.com/package/@mentra/jspolyfill)
+sibling, which is declared as a dependency.
 
-# Contributing
+## Part of MentraOS
 
-Contributions are very welcome! Please refer to guidelines described in the [contributing guide]( https://github.com/expo/expo#contributing).
+Source lives in the [MentraOS monorepo](https://github.com/Mentra-Community/MentraOS)
+under `mobile/modules/crust`. Issues and contributions welcome there.

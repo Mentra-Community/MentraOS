@@ -60,6 +60,9 @@ export enum MiniappRequestType {
   /** One-shot location poll. */
   LOCATION_POLL = "miniapp_location_poll",
 
+  /** Read a bounded snapshot of phone calendar events. */
+  CALENDAR_LIST_EVENTS = "miniapp_calendar_list_events",
+
   /** Start a turn-by-turn navigation trip. Android only. */
   NAVIGATION_START = "miniapp_navigation_start",
   /** Stop the active navigation trip (if any). */
@@ -300,8 +303,6 @@ export enum MiniappStreamType {
    * fire. See agents/miniapp-speaker-state-and-notif-dismissed-plan.md.
    */
   PHONE_NOTIFICATION_DISMISSED = "phone_notification_dismissed",
-  CALENDAR_EVENT = "calendar_event",
-
   // Photos, streaming
   PHOTO_TAKEN = "photo_taken",
   STREAM_STATUS = "stream_status",
@@ -318,6 +319,9 @@ export enum MiniappErrorCode {
   /** The miniapp subscribed to a stream whose required permission wasn't in its manifest. */
   PERMISSION_NOT_DECLARED = "PERMISSION_NOT_DECLARED",
 
+  /** The required phone OS permission is not currently granted. */
+  PERMISSION_DENIED = "PERMISSION_DENIED",
+
   /** Request routed to a method that isn't supported yet. */
   NOT_IMPLEMENTED = "NOT_IMPLEMENTED",
 
@@ -331,6 +335,9 @@ export enum MiniappErrorCode {
   TTS_TEXT_TOO_LONG = "TTS_TEXT_TOO_LONG",
   TTS_INVALID_VOICE = "TTS_INVALID_VOICE",
   TTS_UPSTREAM_ERROR = "TTS_UPSTREAM_ERROR",
+
+  /** `speak({forceLocal: true})` but the on-device offline TTS model isn't downloaded/ready. */
+  TTS_LOCAL_UNAVAILABLE = "TTS_LOCAL_UNAVAILABLE",
 
   /** Not connected / pre-ACK and transport closed. */
   NOT_CONNECTED = "NOT_CONNECTED",

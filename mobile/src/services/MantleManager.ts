@@ -11,7 +11,7 @@ import {BUNDLED_MINIAPPS} from "@/generated/bundledMiniapps"
 import {CHINA_HIDDEN_APPS, isChinaBuild} from "@/constants/miniapps"
 import {migrate} from "@/services/Migrations"
 import {cloudConfigValues} from "@/services/cloudClient"
-import {engine, BgTimer} from "@mentra/engine"
+import {engine, BgTimer, SETTINGS} from "@mentra/engine"
 import {
   appRegistry,
   displayProcessor,
@@ -24,7 +24,6 @@ import {
   micStateCoordinator,
   offlineSpeechModelService,
 } from "@mentra/engine/internal"
-import {SETTINGS} from "@mentra/engine"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 import {useDebugStore} from "@/stores/debug"
 import {checkFeaturePermissions, PermissionFeatures} from "@/utils/PermissionsUtils"
@@ -348,9 +347,12 @@ class MantleManager {
   private async setupPeriodicTasks() {
     this.sendCalendarEvents()
     // Calendar sync every hour
-    this.calendarSyncTimer = BgTimer.setInterval(() => {
-      this.sendCalendarEvents()
-    }, 60 * 60 * 1000) // 1 hour
+    this.calendarSyncTimer = BgTimer.setInterval(
+      () => {
+        this.sendCalendarEvents()
+      },
+      60 * 60 * 1000,
+    ) // 1 hour
 
     try {
       // only start location updates if we have the location permission (host UI gate);
@@ -493,25 +495,26 @@ class MantleManager {
       // Android: Crust's NotificationListenerService reads notifications.
       this.subs.push((CrustModule.addListener as any)("phone_notification", forwardPhoneNotification))
 
-      // iOS: the phone can't read other apps' notifications, but connected
-      // glasses can (ANCS) — the G2 SGC reports the source app on its
-      // notification service and pipes it up as the SAME event (empty
-      // title/content; app identity only). Feeds the identical path.
-      this.subs.push(BluetoothSdk.addListener("phone_notification" as any, forwardPhoneNotification))
+      // iOS: connected glasses consume ANCS and relay notifications through
+      // the Bluetooth SDK, which feeds the identical local event path.
+      this.subs.push(BluetoothSdk.addListener("phone_notification", forwardPhoneNotification))
+
+      const forwardPhoneNotificationDismissed = async (event: any) => {
+        // Direct forward to local miniapps subscribed to
+        // phone_notification_dismissed. Gated by READ_NOTIFICATIONS at
+        // subscribe time.
+        localMiniappRuntime.forwardEvent("phone_notification_dismissed", {
+          notificationId: event.notificationId,
+          notificationKey: event.notificationKey,
+          packageName: event.packageName,
+          timestamp: event.timestamp ?? Date.now(),
+        })
+      }
 
       this.subs.push(
-        (CrustModule.addListener as any)("phone_notification_dismissed", async (event: any) => {
-          // Direct forward to local miniapps subscribed to
-          // phone_notification_dismissed (Android only — iOS never emits this).
-          // Gated by READ_NOTIFICATIONS at subscribe time.
-          localMiniappRuntime.forwardEvent("phone_notification_dismissed", {
-            notificationId: event.notificationId,
-            notificationKey: event.notificationKey,
-            packageName: event.packageName,
-            timestamp: Date.now(),
-          })
-        }),
+        (CrustModule.addListener as any)("phone_notification_dismissed", forwardPhoneNotificationDismissed),
       )
+      this.subs.push(BluetoothSdk.addListener("phone_notification_dismissed", forwardPhoneNotificationDismissed))
 
       this.subs.push(
         BluetoothSdk.addListener("audio_pairing_needed", (event) => {
@@ -660,23 +663,6 @@ class MantleManager {
         await BluetoothSdk.setCalendarEvents(shapedEvents)
       } catch (error) {
         console.warn("MANTLE: Failed to sync calendar events to glasses", error)
-      }
-
-      // Direct forward to local miniapps. Emit one event per calendar entry
-      // so miniapps can treat them as a stream rather than a digest.
-      // Gated by CALENDAR in miniapp.json at subscribe time.
-      for (const ev of events) {
-        localMiniappRuntime.forwardEvent("calendar_event", {
-          eventId: ev.id,
-          title: ev.title,
-          dtStart: ev.startDate,
-          dtEnd: ev.endDate,
-          timezone: ev.timeZone ?? "",
-          allDay: !!ev.allDay,
-          location: ev.location ?? "",
-          notes: ev.notes ?? "",
-          calendarId: ev.calendarId,
-        })
       }
     } catch (error) {
       // it's fine if this fails

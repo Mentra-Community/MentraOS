@@ -12,13 +12,16 @@ import android.os.SystemClock;
 import android.util.Log;
 import android.util.Range;
 import android.util.Size;
+
 import androidx.annotation.Nullable;
+
 import com.mentra.asg_client.camera.CameraConstants;
 import com.mentra.asg_client.camera.CameraNeoService;
 import com.mentra.asg_client.camera.CameraSettings;
 import com.mentra.asg_client.camera.diagnostics.CameraDiagnosticsLog;
 import com.mentra.asg_client.camera.model.ActivePhotoCapture;
 import com.mentra.asg_client.camera.model.CameraOperationError;
+import com.mentra.asg_client.camera.model.CapturedPhoto;
 import com.mentra.asg_client.camera.model.PhotoCaptureSettings;
 import com.mentra.asg_client.camera.model.QueuedPhotoRequest;
 import com.mentra.asg_client.camera.model.QueuedPhotoRequestQueue;
@@ -34,16 +37,20 @@ import com.mentra.asg_client.camera.request.StillCaptureBuilder;
 import com.mentra.asg_client.camera.request.StillCaptureCallback;
 import com.mentra.asg_client.io.media.core.BlePhotoTimingLog;
 import com.mentra.asg_client.sensors.ImuRecorder;
+
+import org.json.JSONException;
+import org.json.JSONObject;
+
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
-import org.json.JSONObject;
-
-import org.json.JSONException;
-import org.json.JSONObject;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 /**
  * Owns photo capture lifecycle: queue dispatch, AE precapture, still/HDR capture, image save, and
@@ -91,8 +98,8 @@ public final class PhotoSession {
     /**
      * When non-null, the open session is being held "warm" (ISP/sensor powered, preview running)
      * for a {@code camera_warm_up} request rather than captured. The session is configured exactly
-     * as a same-size SDK photo would be (so {@link #willReuseConfiguredCamera} returns true) but the
-     * precapture/still path is never run — the camera parks at IDLE under the keep-alive timer.
+     * as a same-size SDK photo would be (so {@link #willReuseConfiguredCamera} returns true) but
+     * the precapture/still path is never run — the camera parks at IDLE under the keep-alive timer.
      */
     @Nullable private volatile WarmUpRequest warmUpRequest;
 
@@ -129,23 +136,28 @@ public final class PhotoSession {
     @Nullable private Handler stillCaptureCallbackHandler;
 
     private final HdrBurstCapture hdrBurstCapture = new HdrBurstCapture();
+
+    /**
+     * Background writer for deferred-persistence captures ({@link
+     * ActivePhotoCapture#deferDiskWrite}). Single thread keeps writes ordered; daemon so it never
+     * blocks process exit. Created lazily — classic captures never spin it up.
+     */
+    @Nullable private volatile ExecutorService persistenceExecutor;
+
     private final Object captureMetadataLock = new Object();
-    @Nullable
-    private JSONObject pendingStillCaptureMetadata;
-    @Nullable
-    private String pendingCapturedFilePath;
-    @Nullable
-    private CameraNeoService.PhotoCaptureCallback pendingCapturedCallback;
+    @Nullable private JSONObject pendingStillCaptureMetadata;
+    @Nullable private String pendingCapturedFilePath;
+    @Nullable private CameraNeoService.PhotoCaptureCallback pendingCapturedCallback;
+    @Nullable private CapturedPhoto pendingCapturedPhoto;
     private long pendingCapturedStartTimeMs;
-    @Nullable
-    private Runnable pendingCaptureMetadataTimeout;
+    @Nullable private Runnable pendingCaptureMetadataTimeout;
     private boolean photoCapturedCallbackSent;
 
     /**
      * Bumped every time capture metadata state is reset (i.e. a new shot begins). A {@link
-     * StillCaptureCallback} captures the generation in flight when it is created; a late
-     * {@code onCaptureCompleted} from a previous shot is then dropped instead of being attached to
-     * the next photo's {@code captured} status/callback.
+     * StillCaptureCallback} captures the generation in flight when it is created; a late {@code
+     * onCaptureCompleted} from a previous shot is then dropped instead of being attached to the
+     * next photo's {@code captured} status/callback.
      */
     private long captureMetadataGeneration;
 
@@ -337,15 +349,14 @@ public final class PhotoSession {
     }
 
     private PhotoCaptureSettings currentCaptureSettings() {
-        return activeCapture != null
-                ? activeCapture.captureSettings
-                : PhotoCaptureSettings.EMPTY;
+        return activeCapture != null ? activeCapture.captureSettings : PhotoCaptureSettings.EMPTY;
     }
 
     /**
      * Resolved ZSL for the active request. Manual and scan exposure force ZSL off. When the
      * request omits {@code zsl}, inherit the global default so EMPTY/unmerged settings stay
-     * default-on.
+     * default-on. ZSL and MFNR are independent capabilities — ZSL being off should not be implied
+     * by MFNR being off, as ZSL reduces shutter lag regardless of multi-frame processing.
      */
     private boolean resolveZslForCapture(boolean useManualExposure) {
         if (useManualExposure) {
@@ -505,7 +516,7 @@ public final class PhotoSession {
     private int getJpegQualityForSize() {
         if (currentIsFromSdk()) {
             // Normalize so legacy tiers (small→low, large→high, full→max) map correctly.
-            String size = PhotoSizeTier.normalize(currentSize());
+            String size = PhotoSizeTier.normalizeCaptureSize(currentSize());
             if (size == null) {
                 return CameraConstants.SDK_JPEG_QUALITY_MEDIUM;
             }
@@ -518,6 +529,7 @@ public final class PhotoSession {
                 case CameraConstants.SIZE_HIGH:
                     return CameraConstants.SDK_JPEG_QUALITY_LARGE;
                 case CameraConstants.SIZE_MAX:
+                case CameraConstants.SIZE_TEXT:
                     return CameraConstants.SDK_JPEG_QUALITY_MAX;
                 case CameraConstants.SIZE_MEDIUM:
                 default:
@@ -659,11 +671,20 @@ public final class PhotoSession {
                 }
                 queue.attachRegistryCallback(firstRequest);
                 if (needsReconfigurationForQueued(firstRequest)) {
+                    ConfiguredCameraConfig baseline = configuredCameraConfig;
                     Log.d(
                             TAG,
                             "Configured camera needs reconfiguration for "
                                     + firstRequest.requestId
                                     + " — routing through setupCameraForQueuedRequest");
+                    recordCaptureSessionForTiming(
+                            false,
+                            firstRequest.size,
+                            warmSessionReasonMismatch(baseline, firstRequest));
+                    Log.d(
+                            TAG,
+                            "warm/capture config mismatch: "
+                                    + describeConfigMismatch(baseline, firstRequest));
                     setupCameraForQueuedRequest(firstRequest);
                     return;
                 }
@@ -681,6 +702,7 @@ public final class PhotoSession {
                                 + request.requestId
                                 + " path=WARM (configured camera reuse, no reopen)");
                 // #endregion
+                recordCaptureSessionForTiming(true, request.size, null);
                 hooks.cancelKeepAliveTimer();
                 activateQueuedRequest(request);
                 notifyCurrentPhotoConfigured();
@@ -704,6 +726,8 @@ public final class PhotoSession {
             QueuedPhotoRequest firstRequest = queue.peek();
             if (firstRequest != null) {
                 Log.d(TAG, "Opening camera for queued photo request: " + firstRequest.requestId);
+                // Do not stamp "cold open" here — setupCameraForQueuedRequest decides whether the
+                // keep-alive lease is still holding a reusable session.
                 queue.attachRegistryCallback(firstRequest);
                 setupCameraForQueuedRequest(firstRequest);
             }
@@ -715,6 +739,8 @@ public final class PhotoSession {
 
         Log.i(TAG, "📸 PHOTO E2E: Starting photo request " + request.requestId);
 
+        // Snapshot before activateQueuedRequest overwrites the warm baseline.
+        ConfiguredCameraConfig priorConfig = configuredCameraConfig;
         boolean needsReopen = needsReconfigurationForQueued(request);
 
         activateQueuedRequest(request);
@@ -732,6 +758,14 @@ public final class PhotoSession {
                                 + request.requestId
                                 + " path=COLD (config mismatch — close+reopen)");
                 // #endregion
+                recordCaptureSessionForTiming(
+                        false,
+                        request.size,
+                        warmSessionReasonMismatch(priorConfig, request));
+                Log.d(
+                        TAG,
+                        "warm/capture config mismatch (reopen): "
+                                + describeConfigMismatch(priorConfig, request));
                 hooks.cancelKeepAliveTimer();
                 hooks.closeCamera();
                 hooks.openCameraInternal(request.filePath, false);
@@ -745,6 +779,7 @@ public final class PhotoSession {
                                 + request.requestId
                                 + " path=WARM (kept-alive, config match)");
                 // #endregion
+                recordCaptureSessionForTiming(true, request.size, null);
                 hooks.cancelKeepAliveTimer();
 
                 notifyCurrentPhotoConfigured();
@@ -761,7 +796,27 @@ public final class PhotoSession {
             }
         } else {
             mCaptureDispatchedAsWarmReuse = false;
-            Log.d(TAG, "Opening camera for photo capture");
+            boolean keptAlive = hooks.coordinator().isCameraKeptAlive();
+            boolean deviceGone = hooks.coordinator().device() == null;
+            boolean sessionGone = hooks.coordinator().session() == null;
+            // No HAL to reuse: either warm-up never ran, or the warm lease already closed.
+            String coldReason =
+                    priorConfig != null
+                            ? BlePhotoTimingLog.WarmSessionReason.LEASE_EXPIRED
+                            : BlePhotoTimingLog.WarmSessionReason.NO_WARMUP;
+            Log.d(
+                    TAG,
+                    "Opening camera for photo capture ("
+                            + coldReason
+                            + " deviceGone="
+                            + deviceGone
+                            + " sessionGone="
+                            + sessionGone
+                            + " keepAliveFlag="
+                            + keptAlive
+                            + " priorTier="
+                            + (priorConfig != null ? priorConfig.size : "none")
+                            + ")");
             // #region agent log
             Log.i(
                     TAG,
@@ -769,6 +824,7 @@ public final class PhotoSession {
                             + request.requestId
                             + " path=COLD (camera was closed — full open)");
             // #endregion
+            recordCaptureSessionForTiming(false, request.size, coldReason);
             hooks.wakeUpScreen();
             hooks.openCameraInternal(request.filePath, false);
         }
@@ -785,14 +841,31 @@ public final class PhotoSession {
     }
 
     /**
+     * Drop an opening warm-up after its last owner cancels. CameraNeoService owns the terminal
+     * callback and camera close so this method only clears PhotoSession state.
+     */
+    public boolean cancelWarmUp() {
+        synchronized (hooks.serviceLock()) {
+            if (warmUpRequest == null) {
+                return false;
+            }
+            warmUpRequest = null;
+            clearActiveCapture();
+            shotState = AeStateMachine.ShotState.IDLE;
+            return true;
+        }
+    }
+
+    /**
      * Prepare and hold the camera "warm" for {@code durationMs} without capturing a photo. The
      * session is opened/reused and configured with the SAME parameters a same-size SDK photo would
-     * use ({@code isFromSdk=true}, the requested {@code size}, optional {@code exposureTimeNs}), so a
-     * later {@code take_photo} of that size reuses the configured session — see {@link
-     * #willReuseConfiguredCamera}. No precapture, still capture, shutter sound, or file is produced.
+     * use ({@code isFromSdk=true}, the requested {@code size}, optional {@code exposureTimeNs}), so
+     * a later {@code take_photo} of that size reuses the configured session — see {@link
+     * #willReuseConfiguredCamera}. No precapture, still capture, shutter sound, or file is
+     * produced.
      *
-     * <p>If the camera is already configured and idle for the same params, only the keep-alive timer
-     * is restarted (re-warming) and {@code onReady} fires immediately.
+     * <p>If the camera is already configured and idle for the same params, only the keep-alive
+     * timer is restarted (re-warming) and {@code onReady} fires immediately.
      *
      * @param size requested resolution tier (already normalized)
      * @param exposureTimeNs optional manual shutter (nanoseconds); {@code null} = auto
@@ -809,11 +882,14 @@ public final class PhotoSession {
             Runnable onReady,
             java.util.function.Consumer<CameraOperationError> onError) {
         synchronized (hooks.serviceLock()) {
-            // Serialize warm-ups: the camera is a single shared resource. If a capture is in flight,
+            // Serialize warm-ups: the camera is a single shared resource. If a capture is in
+            // flight,
             // or another warm-up is still opening, reject with a retryable busy error rather than
             // racing or deferring. The caller retries — and since the camera is about to be warm
-            // anyway, the retry usually hits the already-warm fast path. This keeps a single warm-up
-            // in flight at a time and avoids the concurrency hazards of overlapping/deferred starts.
+            // anyway, the retry usually hits the already-warm fast path. This keeps a single
+            // warm-up
+            // in flight at a time and avoids the concurrency hazards of overlapping/deferred
+            // starts.
             if (isWarmingUp() || shotState != AeStateMachine.ShotState.IDLE) {
                 Log.d(
                         TAG,
@@ -829,7 +905,8 @@ public final class PhotoSession {
             }
 
             WarmUpRequest req =
-                    new WarmUpRequest(size, exposureTimeNs, captureSettings, durationMs, onReady, onError);
+                    new WarmUpRequest(
+                            size, exposureTimeNs, captureSettings, durationMs, onReady, onError);
 
             // Build a synthetic queued request so the open/configure path and the
             // configured-camera baseline match a same-size SDK photo exactly.
@@ -901,7 +978,8 @@ public final class PhotoSession {
             hooks.executor().execute(req.onReady);
         }
         // A take_photo may have raced in while the camera was opening for warm-up; onConfigured
-        // skips the queue poll during warm-up so it isn't dropped. Take it now on the freshly warmed
+        // skips the queue poll during warm-up so it isn't dropped. Take it now on the freshly
+        // warmed
         // session instead of stranding it on the queue until the lease expires.
         if (!QueuedPhotoRequestQueue.getInstance().isEmpty()) {
             dispatchNextPhotoRequest();
@@ -1000,7 +1078,7 @@ public final class PhotoSession {
                             + String.format(java.util.Locale.US, "%.1f", bytes.length / 1024.0)
                             + "KB) copied in "
                             + (System.currentTimeMillis() - imageAvailableStartMs)
-                            + "ms; starting file write");
+                            + "ms; routing captured bytes");
 
             String currentPath = currentFilePath();
             String targetPath = (currentPath != null) ? currentPath : listenerFallbackPhotoPath;
@@ -1028,6 +1106,14 @@ public final class PhotoSession {
                             // from capture callbacks.
                         }
                     })) {
+                return;
+            }
+
+            ActivePhotoCapture capture = activeCapture;
+            if (capture != null && capture.deferDiskWrite) {
+                // RAM-first path: publish the bytes and fire the callback now. Saving, when
+                // requested, happens in the background; save=false never persists the JPEG.
+                handleDeferredPersistenceCapture(bytes, targetPath, capture.persistToDisk);
                 return;
             }
 
@@ -1253,6 +1339,12 @@ public final class PhotoSession {
                             + "ms");
             return;
         }
+        writeImuArtifacts(photoPath, payload, imu);
+    }
+
+    /** Writes IMU EXIF + sidecar for an already-assembled payload. Safe to run off-thread. */
+    private void writeImuArtifacts(String photoPath, JSONObject payload, ImuRecorder imu) {
+        long imuStartMs = System.currentTimeMillis();
         try {
             PhotoExifMetadataWriter.writeImuPayload(photoPath, payload);
             BlePhotoTimingLog.event(
@@ -1275,6 +1367,82 @@ public final class PhotoSession {
                         + "ms; total metadata finalization="
                         + (System.currentTimeMillis() - imuStartMs)
                         + "ms");
+    }
+
+    /**
+     * Deferred-persistence capture ({@link ActivePhotoCapture#deferDiskWrite}): stop the IMU
+     * recorder and assemble its payload in memory, then fire {@code onPhotoCaptured} with the
+     * complete capture attached. When persistence is requested, the JPEG + EXIF + IMU-sidecar write
+     * runs on the background executor; otherwise no capture artifact is created.
+     */
+    private void handleDeferredPersistenceCapture(
+            byte[] bytes, String targetPath, boolean persistToDisk) {
+        ImuRecorder imu = hooks.imuRecorderOrNull();
+        JSONObject payload = imu != null ? imu.stopRecordingAndBuildPayload() : null;
+        if (payload != null && payload.optInt("sampleCount", 0) <= 0) {
+            payload = null;
+        }
+        final JSONObject imuPayload = payload;
+        final JSONObject callbackImuPayload = copyJsonPayload(imuPayload);
+        Future<Boolean> persistence;
+        if (persistToDisk) {
+            persistence =
+                    persistenceExecutor()
+                            .submit(
+                                    () -> {
+                                        boolean ok = saveImageDataToFile(bytes, targetPath);
+                                        if (!ok) {
+                                            Log.e(
+                                                    TAG,
+                                                    "Deferred photo persistence failed: "
+                                                            + targetPath);
+                                            return false;
+                                        }
+                                        if (imuPayload != null && imu != null) {
+                                            writeImuArtifacts(targetPath, imuPayload, imu);
+                                        }
+                                        Log.d(TAG, "Deferred photo persisted: " + targetPath);
+                                        return true;
+                                    });
+        } else {
+            persistence = CompletableFuture.completedFuture(false);
+            Log.d(TAG, "RAM-only photo capture; persistence skipped: " + targetPath);
+        }
+        notifyPhotoCaptured(targetPath, new CapturedPhoto(bytes, callbackImuPayload, persistence));
+    }
+
+    /** Isolates the callback/encoder from the mutable payload used by background persistence. */
+    @Nullable
+    private static JSONObject copyJsonPayload(@Nullable JSONObject payload) {
+        if (payload == null) {
+            return null;
+        }
+        try {
+            return new JSONObject(payload.toString());
+        } catch (org.json.JSONException error) {
+            Log.w(TAG, "Could not copy IMU payload for RAM-first callback", error);
+            return null;
+        }
+    }
+
+    private ExecutorService persistenceExecutor() {
+        ExecutorService executor = persistenceExecutor;
+        if (executor == null) {
+            synchronized (this) {
+                executor = persistenceExecutor;
+                if (executor == null) {
+                    executor =
+                            Executors.newSingleThreadExecutor(
+                                    r -> {
+                                        Thread t = new Thread(r, "PhotoPersistence");
+                                        t.setDaemon(true);
+                                        return t;
+                                    });
+                    persistenceExecutor = executor;
+                }
+            }
+        }
+        return executor;
     }
 
     private boolean saveImageDataToFile(byte[] data, String filePath) {
@@ -1340,6 +1508,7 @@ public final class PhotoSession {
             pendingStillCaptureMetadata = null;
             pendingCapturedFilePath = null;
             pendingCapturedCallback = null;
+            pendingCapturedPhoto = null;
             pendingCapturedStartTimeMs = 0L;
             pendingCaptureMetadataTimeout = null;
             photoCapturedCallbackSent = false;
@@ -1356,18 +1525,23 @@ public final class PhotoSession {
     private void emitPhotoCaptured(
             String filePath,
             @Nullable JSONObject captureMetadata,
+            @Nullable CapturedPhoto capturedPhoto,
             @Nullable CameraNeoService.PhotoCaptureCallback callback,
             long startMs) {
         long e2eTimeMs = (startMs > 0) ? (System.currentTimeMillis() - startMs) : -1L;
         Log.i(
                 TAG,
-                "📸 PHOTO E2E: Photo captured and saved in "
+                "📸 PHOTO E2E: Photo capture completed in "
                         + e2eTimeMs
-                        + "ms (e2e) | Path: "
+                        + "ms (e2e) | Capture key: "
                         + filePath);
 
         if (callback != null) {
-            hooks.executor().execute(() -> callback.onPhotoCaptured(filePath, captureMetadata));
+            hooks.executor()
+                    .execute(
+                            () ->
+                                    callback.onPhotoCaptured(
+                                            filePath, captureMetadata, capturedPhoto));
         }
         finishSuccessfulPhotoCapture();
     }
@@ -1386,7 +1560,11 @@ public final class PhotoSession {
     }
 
     private void notifyPhotoCaptured(String filePath) {
-        notifyPhotoCaptured(filePath, true);
+        notifyPhotoCaptured(filePath, null, true);
+    }
+
+    private void notifyPhotoCaptured(String filePath, CapturedPhoto capturedPhoto) {
+        notifyPhotoCaptured(filePath, capturedPhoto, true);
     }
 
     /**
@@ -1397,6 +1575,13 @@ public final class PhotoSession {
      *     timeout.
      */
     private void notifyPhotoCaptured(String filePath, boolean waitForStillMetadata) {
+        notifyPhotoCaptured(filePath, null, waitForStillMetadata);
+    }
+
+    private void notifyPhotoCaptured(
+            String filePath,
+            @Nullable CapturedPhoto capturedPhoto,
+            boolean waitForStillMetadata) {
         long startMs = currentStartTimeMs();
         CameraNeoService.PhotoCaptureCallback callback =
                 activeCapture != null ? activeCapture.callback : null;
@@ -1422,6 +1607,7 @@ public final class PhotoSession {
                     }
                     pendingCapturedFilePath = filePath;
                     pendingCapturedCallback = callback;
+                    pendingCapturedPhoto = capturedPhoto;
                     pendingCapturedStartTimeMs = startMs;
                     scheduleCaptureMetadataTimeoutLocked(filePath);
                     return;
@@ -1433,36 +1619,40 @@ public final class PhotoSession {
                 photoCapturedCallbackSent = true;
             }
         }
-        emitPhotoCaptured(filePath, metadataToSend, callback, startMs);
+        emitPhotoCaptured(filePath, metadataToSend, capturedPhoto, callback, startMs);
     }
 
     private void scheduleCaptureMetadataTimeoutLocked(String filePath) {
         if (pendingCaptureMetadataTimeout != null) {
             return;
         }
-        Runnable timeout = () -> {
-            CameraNeoService.PhotoCaptureCallback callback;
-            long startMs;
-            synchronized (captureMetadataLock) {
-                if (!Objects.equals(pendingCapturedFilePath, filePath)
-                        || photoCapturedCallbackSent) {
-                    return;
-                }
-                callback = pendingCapturedCallback;
-                startMs = pendingCapturedStartTimeMs;
-                pendingCapturedFilePath = null;
-                pendingCapturedCallback = null;
-                pendingCapturedStartTimeMs = 0L;
-                pendingCaptureMetadataTimeout = null;
-                photoCapturedCallbackSent = true;
-            }
-            Log.w(
-                    TAG,
-                    "Still capture metadata was not available within "
-                            + CAPTURE_METADATA_WAIT_TIMEOUT_MS
-                            + "ms; emitting captured status without captureMetadata");
-            emitPhotoCaptured(filePath, null, callback, startMs);
-        };
+        Runnable timeout =
+                () -> {
+                    CameraNeoService.PhotoCaptureCallback callback;
+                    CapturedPhoto capturedPhoto;
+                    long startMs;
+                    synchronized (captureMetadataLock) {
+                        if (!Objects.equals(pendingCapturedFilePath, filePath)
+                                || photoCapturedCallbackSent) {
+                            return;
+                        }
+                        callback = pendingCapturedCallback;
+                        capturedPhoto = pendingCapturedPhoto;
+                        startMs = pendingCapturedStartTimeMs;
+                        pendingCapturedFilePath = null;
+                        pendingCapturedCallback = null;
+                        pendingCapturedPhoto = null;
+                        pendingCapturedStartTimeMs = 0L;
+                        pendingCaptureMetadataTimeout = null;
+                        photoCapturedCallbackSent = true;
+                    }
+                    Log.w(
+                            TAG,
+                            "Still capture metadata was not available within "
+                                    + CAPTURE_METADATA_WAIT_TIMEOUT_MS
+                                    + "ms; emitting captured status without captureMetadata");
+                    emitPhotoCaptured(filePath, null, capturedPhoto, callback, startMs);
+                };
         pendingCaptureMetadataTimeout = timeout;
 
         Handler h = hooks.backgroundHandler();
@@ -1476,6 +1666,7 @@ public final class PhotoSession {
     private void recordStillCaptureMetadata(long captureGeneration, JSONObject captureMetadata) {
         String filePathToNotify = null;
         CameraNeoService.PhotoCaptureCallback callback = null;
+        CapturedPhoto capturedPhoto = null;
         long startMs = 0L;
         Runnable timeoutToCancel = null;
 
@@ -1500,10 +1691,12 @@ public final class PhotoSession {
             }
             filePathToNotify = pendingCapturedFilePath;
             callback = pendingCapturedCallback;
+            capturedPhoto = pendingCapturedPhoto;
             startMs = pendingCapturedStartTimeMs;
             timeoutToCancel = pendingCaptureMetadataTimeout;
             pendingCapturedFilePath = null;
             pendingCapturedCallback = null;
+            pendingCapturedPhoto = null;
             pendingCapturedStartTimeMs = 0L;
             pendingCaptureMetadataTimeout = null;
             pendingStillCaptureMetadata = null;
@@ -1516,7 +1709,7 @@ public final class PhotoSession {
                 h.removeCallbacks(timeoutToCancel);
             }
         }
-        emitPhotoCaptured(filePathToNotify, captureMetadata, callback, startMs);
+        emitPhotoCaptured(filePathToNotify, captureMetadata, capturedPhoto, callback, startMs);
     }
 
     private void notifyPhotoError(String errorMessage) {
@@ -1532,7 +1725,8 @@ public final class PhotoSession {
         }
     }
 
-    private static void putIfNotNull(JSONObject json, String key, Object value) throws JSONException {
+    private static void putIfNotNull(JSONObject json, String key, Object value)
+            throws JSONException {
         if (value != null) {
             json.put(key, value);
         }
@@ -1555,31 +1749,45 @@ public final class PhotoSession {
         putIfNotNull(metered, "iso", mLastMeteredIso);
         putIfNotNull(metered, "exposureTimeNs", mLastMeteredExposureNs);
         if (mLastMeteredIso != null && mLastMeteredExposureNs != null) {
-            metered.put("totalLightProxy",
+            metered.put(
+                    "totalLightProxy",
                     (mLastMeteredExposureNs / 1_000_000.0) * mLastMeteredIso.doubleValue());
         }
         return metered.length() > 0 ? metered : null;
     }
 
     @Nullable
-    private JSONObject buildRequestedCaptureConfig(CaptureRequest captureRequest, boolean useManual) throws JSONException {
+    private JSONObject buildRequestedCaptureConfig(CaptureRequest captureRequest, boolean useManual)
+            throws JSONException {
         if (captureRequest == null) {
             return null;
         }
         JSONObject requested = new JSONObject();
         requested.put("manual", useManual);
-        putIfNotNull(requested, "exposureTimeNs", captureRequest.get(CaptureRequest.SENSOR_EXPOSURE_TIME));
+        putIfNotNull(
+                requested,
+                "exposureTimeNs",
+                captureRequest.get(CaptureRequest.SENSOR_EXPOSURE_TIME));
         putIfNotNull(requested, "iso", captureRequest.get(CaptureRequest.SENSOR_SENSITIVITY));
-        putIfNotNull(requested, "frameDurationNs", captureRequest.get(CaptureRequest.SENSOR_FRAME_DURATION));
+        putIfNotNull(
+                requested,
+                "frameDurationNs",
+                captureRequest.get(CaptureRequest.SENSOR_FRAME_DURATION));
         putIfNotNull(requested, "aeMode", captureRequest.get(CaptureRequest.CONTROL_AE_MODE));
         putIfNotNull(requested, "aeLock", captureRequest.get(CaptureRequest.CONTROL_AE_LOCK));
-        putIfNotNull(requested, "aeExposureCompensation",
+        putIfNotNull(
+                requested,
+                "aeExposureCompensation",
                 captureRequest.get(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION));
-        putIfNotNull(requested, "noiseReductionMode", captureRequest.get(CaptureRequest.NOISE_REDUCTION_MODE));
+        putIfNotNull(
+                requested,
+                "noiseReductionMode",
+                captureRequest.get(CaptureRequest.NOISE_REDUCTION_MODE));
         putIfNotNull(requested, "edgeMode", captureRequest.get(CaptureRequest.EDGE_MODE));
         putIfNotNull(requested, "afMode", captureRequest.get(CaptureRequest.CONTROL_AF_MODE));
         putIfNotNull(requested, "zsl", captureRequest.get(CaptureRequest.CONTROL_ENABLE_ZSL));
-        JSONObject fpsRange = rangeToJson(captureRequest.get(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE));
+        JSONObject fpsRange =
+                rangeToJson(captureRequest.get(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE));
         if (fpsRange != null) {
             requested.put("aeTargetFpsRange", fpsRange);
         }
@@ -1592,11 +1800,15 @@ public final class PhotoSession {
     }
 
     private void notifyPhotoCapturing(
-            @Nullable JSONObject requestedCaptureConfig,
-            @Nullable JSONObject meteredPreview) {
-        CameraNeoService.PhotoCaptureCallback callback = activeCapture != null ? activeCapture.callback : null;
+            @Nullable JSONObject requestedCaptureConfig, @Nullable JSONObject meteredPreview) {
+        CameraNeoService.PhotoCaptureCallback callback =
+                activeCapture != null ? activeCapture.callback : null;
         if (callback != null) {
-            hooks.executor().execute(() -> callback.onPhotoCapturing(requestedCaptureConfig, meteredPreview));
+            hooks.executor()
+                    .execute(
+                            () ->
+                                    callback.onPhotoCapturing(
+                                            requestedCaptureConfig, meteredPreview));
         }
     }
 
@@ -1608,7 +1820,8 @@ public final class PhotoSession {
     }
 
     public void notifyPhotoConfigured(Size size, int jpegQuality) {
-        CameraNeoService.PhotoCaptureCallback callback = activeCapture != null ? activeCapture.callback : null;
+        CameraNeoService.PhotoCaptureCallback callback =
+                activeCapture != null ? activeCapture.callback : null;
         if (callback == null || size == null) {
             return;
         }
@@ -1945,7 +2158,8 @@ public final class PhotoSession {
             shotState = AeStateMachine.ShotState.SHOOTING;
 
             ImuRecorder imu = hooks.ensureImuRecorder();
-            String imuStartPath = (currentFilePath() != null) ? currentFilePath() : listenerFallbackPhotoPath;
+            String imuStartPath =
+                    (currentFilePath() != null) ? currentFilePath() : listenerFallbackPhotoPath;
             imu.startRecording(imuStartPath);
 
             CaptureRequest.Builder stillBuilder =
@@ -2305,7 +2519,8 @@ public final class PhotoSession {
             shotState = AeStateMachine.ShotState.SHOOTING;
 
             ImuRecorder imu = hooks.ensureImuRecorder();
-            String imuStartPath = (currentFilePath() != null) ? currentFilePath() : listenerFallbackPhotoPath;
+            String imuStartPath =
+                    (currentFilePath() != null) ? currentFilePath() : listenerFallbackPhotoPath;
             imu.startRecording(imuStartPath);
 
             Log.i(
@@ -2415,10 +2630,65 @@ public final class PhotoSession {
             this.onError = onError;
         }
 
-        /** Transient placeholder path; warm-up never writes a file, but the open path expects one. */
+        /**
+         * Transient placeholder path; warm-up never writes a file, but the open path expects one.
+         */
         String warmFilePath() {
             return "warmup_" + System.currentTimeMillis() + ".jpg";
         }
+    }
+
+    private void recordCaptureSessionForTiming(
+            boolean reusedWarmSession, @Nullable String sizeTier, @Nullable String note) {
+        Size size = jpegSize;
+        BlePhotoTimingLog.captureSession(
+                reusedWarmSession,
+                sizeTier,
+                size != null ? size.getWidth() : 0,
+                size != null ? size.getHeight() : 0,
+                note);
+    }
+
+    /** Short PHASE SUMMARY reason when warm and capture camera configs differ. */
+    private static String warmSessionReasonMismatch(
+            @Nullable ConfiguredCameraConfig baseline, QueuedPhotoRequest request) {
+        if (baseline == null) {
+            return BlePhotoTimingLog.WarmSessionReason.NO_WARMUP;
+        }
+        if (!Objects.equals(baseline.size, request.size)) {
+            return BlePhotoTimingLog.WarmSessionReason.mismatchSize(
+                    baseline.size, request.size);
+        }
+        if (baseline.isFromSdk != request.isFromSdk) {
+            return BlePhotoTimingLog.WarmSessionReason.MISMATCH_SDK;
+        }
+        if (!Objects.equals(baseline.exposureTimeNs, request.exposureTimeNs)) {
+            return BlePhotoTimingLog.WarmSessionReason.MISMATCH_EXPOSURE;
+        }
+        return BlePhotoTimingLog.WarmSessionReason.MISMATCH;
+    }
+
+    /**
+     * Detailed mismatch dump for Log.d only — the PHASE SUMMARY uses the short reason codes from
+     * {@link #warmSessionReasonMismatch}.
+     */
+    private static String describeConfigMismatch(
+            @Nullable ConfiguredCameraConfig baseline, QueuedPhotoRequest request) {
+        if (baseline == null) {
+            return "warmTier=none captureTier=" + request.size;
+        }
+        return "warmTier="
+                + baseline.size
+                + " captureTier="
+                + request.size
+                + " warmIsFromSdk="
+                + baseline.isFromSdk
+                + " captureIsFromSdk="
+                + request.isFromSdk
+                + " warmExposureNs="
+                + baseline.exposureTimeNs
+                + " captureExposureNs="
+                + request.exposureTimeNs;
     }
 
     /** Immutable snapshot of camera pipeline parameters for burst reuse decisions. */

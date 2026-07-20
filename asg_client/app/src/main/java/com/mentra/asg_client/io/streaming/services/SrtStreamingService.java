@@ -594,7 +594,7 @@ public class SrtStreamingService extends Service {
               Log.e(TAG, "Error starting SRT stream", (Throwable) o);
               mStreamState = StreamState.IDLE;
               mIsStreaming = false;
-              if (sStatusCallback != null) sStatusCallback.onStreamError(errorMsg, mCurrentStreamId);
+              if (sStatusCallback != null) sStatusCallback.onStreamError(errorMsg, mCurrentStreamId, true);
               StreamingReporting.reportStreamStartFailure(SrtStreamingService.this, mSrtUrl, ((Throwable) o).getMessage(), (Throwable) o);
               scheduleReconnect("start_error");
             } else {
@@ -614,7 +614,7 @@ public class SrtStreamingService extends Service {
       String errorMsg = "Failed to start SRT streaming: " + e.getMessage();
       Log.e(TAG, errorMsg, e);
       synchronized (mStateLock) { mStreamState = StreamState.IDLE; mIsStreaming = false; }
-      if (sStatusCallback != null) sStatusCallback.onStreamError(errorMsg, mCurrentStreamId);
+      if (sStatusCallback != null) sStatusCallback.onStreamError(errorMsg, mCurrentStreamId, true);
       StreamingReporting.reportStreamStartFailure(SrtStreamingService.this, mSrtUrl, e.getMessage(), e);
       scheduleReconnect("start_exception");
     }
@@ -631,6 +631,14 @@ public class SrtStreamingService extends Service {
 
   private void forceStopStreamingInternal(boolean preserveSession) {
     Log.d(TAG, "Force stopping SRT stream (preserveSession=" + preserveSession + ")");
+
+    // Capture the id up front - cancelStreamTimeout() and the state reset below
+    // both clear it, and the stopped callback must identify the stream being
+    // stopped.
+    final String stoppedStreamId;
+    synchronized (mStateLock) {
+      stoppedStreamId = mCurrentStreamId;
+    }
 
     if (!preserveSession) stopBatteryMonitoring();
 
@@ -650,7 +658,10 @@ public class SrtStreamingService extends Service {
         if (o instanceof Throwable) {
           Log.e(TAG, "Error during SRT stream stop", (Throwable) o);
           StreamingReporting.reportStreamStopFailure(SrtStreamingService.this, "stream_stop_error", (Throwable) o);
-          if (sStatusCallback != null) sStatusCallback.onStreamError("Failed to stop SRT stream: " + ((Throwable) o).getMessage(), mCurrentStreamId);
+          // Use the id captured before cleanup: this continuation can resume after
+          // the state reset cleared mCurrentStreamId or a replacement stream
+          // overwrote it, and the failure belongs to the stream being stopped.
+          if (sStatusCallback != null) sStatusCallback.onStreamError("Failed to stop SRT stream: " + ((Throwable) o).getMessage(), stoppedStreamId);
         }
         Log.d(TAG, "SRT stream stop completed");
       }
@@ -696,7 +707,7 @@ public class SrtStreamingService extends Service {
     }
 
     if (!preserveSession) {
-      if (sStatusCallback != null) sStatusCallback.onStreamStopped(mCurrentStreamId);
+      if (sStatusCallback != null) sStatusCallback.onStreamStopped(stoppedStreamId);
       EventBus.getDefault().post(new StreamingEvent.Stopped());
       Log.i(TAG, "SRT streaming stopped");
     }
@@ -950,7 +961,7 @@ public class SrtStreamingService extends Service {
   public static boolean resetStreamTimeout(String streamId) {
     if (sInstance != null) {
       if (sInstance.mCurrentStreamId != null && sInstance.mCurrentStreamId.equals(streamId) && sInstance.mIsStreamingActive) {
-        WakeLockManager.acquireFullWakeLockAndBringToForeground(sInstance.getApplicationContext(), 2180000, 5000);
+        WakeLockManager.acquireFullWakeLockAndBringToForeground(sInstance.getApplicationContext(), WakeLockManager.WakeOwner.STREAMING, 2180000, 5000);
         sInstance.scheduleStreamTimeout(streamId);
         return true;
       }
@@ -1000,11 +1011,11 @@ public class SrtStreamingService extends Service {
   }
 
   private void wakeUpScreen() {
-    WakeLockManager.acquireFullWakeLockAndBringToForeground(this, 2180000, 5000);
+    WakeLockManager.acquireFullWakeLockAndBringToForeground(this, WakeLockManager.WakeOwner.STREAMING, 2180000, 5000);
   }
 
   private void releaseWakeLocks() {
-    WakeLockManager.releaseAllWakeLocks();
+    WakeLockManager.release(WakeLockManager.WakeOwner.STREAMING);
   }
 
   private static String formatDuration(long durationMs) {
