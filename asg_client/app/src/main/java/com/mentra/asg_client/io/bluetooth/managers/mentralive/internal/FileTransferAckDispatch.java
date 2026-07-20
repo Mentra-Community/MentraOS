@@ -94,8 +94,17 @@ public final class FileTransferAckDispatch {
     }
 
     /**
-     * Slow path mirror of today's production pipeline cost: JSON parse → {@link McuEventParser} →
-     * typed event → handler. Used by CI microbenchmarks to prove the fast path stays cheaper.
+     * Slow path mirror of the historical production pipeline that every {@code cs_flts} used to
+     * traverse before the Mentra fast path existed:
+     *
+     * <ul>
+     *   <li>{@code AsgClientService.onDataReceived}: UTF-8 decode + preview substring
+     *   <li>{@code CommandProcessor.processJsonCommand}: {@code json.toString()} log materialization
+     *   <li>{@link McuEventParser#parse} → typed event
+     *   <li>peripheral-bus style fan-out to a subscriber, then handler
+     * </ul>
+     *
+     * <p>Used by CI microbenchmarks to prove the Mentra-owned work we removed stays removed.
      *
      * @return true if the payload was a file ACK and was dispatched
      */
@@ -104,13 +113,25 @@ public final class FileTransferAckDispatch {
             return false;
         }
         try {
-            JSONObject json = new JSONObject(new String(payload, StandardCharsets.UTF_8));
+            // AsgClientService.onDataReceived preview cost
+            String incoming = new String(payload, StandardCharsets.UTF_8);
+            @SuppressWarnings("unused")
+            String preview = incoming.substring(0, Math.min(incoming.length(), 100));
+
+            // CommandProcessor.parseToJson + processJsonCommand logging cost
+            JSONObject json = new JSONObject(incoming);
+            @SuppressWarnings("unused")
+            String logged = json.toString();
+
             McuEvent event = McuEventParser.parse(json);
             if (!(event instanceof FileTransferAckEvent)) {
                 return false;
             }
-            FileTransferAckEvent ack = (FileTransferAckEvent) event;
-            handler.accept(ack.getState(), ack.getIndex());
+
+            // SimplePeripheralBus.publish fan-out (single subscriber)
+            FileTransferAckEvent ackEvent = (FileTransferAckEvent) event;
+            BiConsumer<Integer, Integer> subscriber = handler;
+            subscriber.accept(ackEvent.getState(), ackEvent.getIndex());
             return true;
         } catch (Exception e) {
             return false;

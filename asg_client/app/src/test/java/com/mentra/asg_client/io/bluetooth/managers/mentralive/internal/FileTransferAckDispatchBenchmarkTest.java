@@ -30,31 +30,30 @@ public class FileTransferAckDispatchBenchmarkTest {
                         .getBytes(StandardCharsets.UTF_8);
         AtomicInteger sink = new AtomicInteger();
 
-        // Warm up both paths (JIT / class loading).
+        // Warm up both paths (JIT / class loading), interleaved so neither gets a cold start.
         for (int i = 0; i < WARMUP; i++) {
-            FileTransferAckDispatch.dispatchFast(payload, (s, idx) -> sink.incrementAndGet());
             FileTransferAckDispatch.dispatchSlow(payload, (s, idx) -> sink.incrementAndGet());
+            FileTransferAckDispatch.dispatchFast(payload, (s, idx) -> sink.incrementAndGet());
         }
 
         long[] fastSamples = new long[ITERATIONS];
         long[] slowSamples = new long[ITERATIONS];
 
+        // Interleave measurement so GC / scheduling noise hits both similarly.
         for (int i = 0; i < ITERATIONS; i++) {
-            long start = System.nanoTime();
-            boolean ok =
-                    FileTransferAckDispatch.dispatchFast(
-                            payload, (s, idx) -> sink.incrementAndGet());
-            fastSamples[i] = System.nanoTime() - start;
-            assertThat(ok).isTrue();
-        }
-
-        for (int i = 0; i < ITERATIONS; i++) {
-            long start = System.nanoTime();
-            boolean ok =
+            long slowStart = System.nanoTime();
+            boolean slowOk =
                     FileTransferAckDispatch.dispatchSlow(
                             payload, (s, idx) -> sink.incrementAndGet());
-            slowSamples[i] = System.nanoTime() - start;
-            assertThat(ok).isTrue();
+            slowSamples[i] = System.nanoTime() - slowStart;
+            assertThat(slowOk).isTrue();
+
+            long fastStart = System.nanoTime();
+            boolean fastOk =
+                    FileTransferAckDispatch.dispatchFast(
+                            payload, (s, idx) -> sink.incrementAndGet());
+            fastSamples[i] = System.nanoTime() - fastStart;
+            assertThat(fastOk).isTrue();
         }
 
         long fastMedian = median(fastSamples);
@@ -71,11 +70,12 @@ public class FileTransferAckDispatchBenchmarkTest {
                         + String.format(java.util.Locale.US, "%.2f", ratio));
 
         // Durable check: Mentra-owned work removed by the fast path must stay removed.
+        // Slow path mirrors AsgClientService preview + json.toString() logging + McuEventParser.
         assertThat(fastMedian * 2)
                 .as(
                         "fast path should be at least 2x faster than slow path"
-                                + " (fast=%dns slow=%dns)",
-                        fastMedian, slowMedian)
+                                + " (fast=%dns slow=%dns ratio=%.2f)",
+                        fastMedian, slowMedian, ratio)
                 .isLessThan(slowMedian);
     }
 
