@@ -276,6 +276,42 @@ describe("AudioPlaybackService live PCM streams", () => {
     for (const callback of tailTimerCallbacks.splice(0)) callback()
   })
 
+  test("unloads a completed URL after its A2DP tail so media play cannot replay it", async () => {
+    await audioPlaybackService.play(
+      {requestId: "finished-tts", audioUrl: "file://speech.wav", appId: "app-one"},
+      () => {},
+    )
+
+    const playbackStatusTarget = audioPlaybackService as unknown as {
+      onPlaybackStatusUpdate(status: {didJustFinish: boolean; duration: number}): void
+    }
+    playbackStatusTarget.onPlaybackStatusUpdate({didJustFinish: true, duration: 1})
+
+    expect(audioPlayer.replace).toHaveBeenLastCalledWith({uri: "file://speech.wav"})
+    for (const callback of tailTimerCallbacks.splice(0)) callback()
+    expect(audioPlayer.replace).toHaveBeenLastCalledWith(null)
+  })
+
+  test("does not let an older tail timer unload a newer completed URL", async () => {
+    const playbackStatusTarget = audioPlaybackService as unknown as {
+      onPlaybackStatusUpdate(status: {didJustFinish: boolean; duration: number}): void
+    }
+
+    await audioPlaybackService.play({requestId: "first-tts", audioUrl: "file://first.wav"}, () => {})
+    playbackStatusTarget.onPlaybackStatusUpdate({didJustFinish: true, duration: 1})
+
+    await audioPlaybackService.play({requestId: "second-tts", audioUrl: "file://second.wav"}, () => {})
+    playbackStatusTarget.onPlaybackStatusUpdate({didJustFinish: true, duration: 1})
+
+    const firstTail = tailTimerCallbacks.shift()
+    firstTail?.()
+    expect(audioPlayer.replace).toHaveBeenLastCalledWith({uri: "file://second.wav"})
+
+    const secondTail = tailTimerCallbacks.shift()
+    secondTail?.()
+    expect(audioPlayer.replace).toHaveBeenLastCalledWith(null)
+  })
+
   test("cancels active URL playback immediately by request id", async () => {
     const onComplete = mock(() => {})
     await audioPlaybackService.play(

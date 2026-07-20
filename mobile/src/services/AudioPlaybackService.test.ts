@@ -93,6 +93,7 @@ describe("AudioPlaybackService", () => {
 
     jest.advanceTimersByTime(900)
     expect(mockPlayer.pause).toHaveBeenCalled()
+    expect(mockPlayer.replace).toHaveBeenLastCalledWith(null)
 
     jest.advanceTimersByTime(600)
     await Promise.resolve()
@@ -118,6 +119,22 @@ describe("AudioPlaybackService", () => {
     expect(secondComplete).toHaveBeenCalledWith("second", true, null, 1000, "completed")
     expect(BluetoothSdk.setGlassesMediaVolume).toHaveBeenCalledTimes(1)
     expect(BluetoothSdk.setGlassesMediaVolume).toHaveBeenLastCalledWith(9)
+  })
+
+  it("does not let an older tail timer unload a newer completed source", async () => {
+    await audioPlaybackService.play({requestId: "first", audioUrl: "https://example.com/one.mp3"}, jest.fn())
+    const statusListener = getLatestStatusListener()
+    statusListener({didJustFinish: true, duration: 1})
+
+    jest.advanceTimersByTime(300)
+    await audioPlaybackService.play({requestId: "second", audioUrl: "https://example.com/two.mp3"}, jest.fn())
+    statusListener({didJustFinish: true, duration: 1})
+
+    jest.advanceTimersByTime(400)
+    expect(mockPlayer.replace).toHaveBeenLastCalledWith({uri: "https://example.com/two.mp3"})
+
+    jest.advanceTimersByTime(300)
+    expect(mockPlayer.replace).toHaveBeenLastCalledWith(null)
   })
 
   it("starts playback without waiting for a slow glasses volume response", async () => {
