@@ -24,6 +24,7 @@ import com.mentra.asg_client.camera.model.PhotoCaptureSettings;
 import com.mentra.asg_client.camera.model.QueuedPhotoRequest;
 import com.mentra.asg_client.camera.model.QueuedPhotoRequestQueue;
 import com.mentra.asg_client.camera.policy.AeStateMachine;
+import com.mentra.asg_client.camera.request.StillCaptureBuilder;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.concurrent.CompletableFuture;
@@ -654,7 +655,7 @@ public class PhotoSessionTest {
     }
 
     @Test
-    public void resolveZslAndMfnrForCapture_honorsRequestWhenManualExposure() throws Exception {
+    public void resolveZslAndMfnrForCapture_preservesRequestBeforeManualPolicy() throws Exception {
         PhotoSession.Hooks hooks = mockConfiguredCameraHooks();
         PhotoCaptureSettings enabled =
                 new PhotoCaptureSettings.Builder().zsl(true).mfnr(true).build();
@@ -677,6 +678,7 @@ public class PhotoSessionTest {
         resolveMfnr.setAccessible(true);
         assertThat(resolveZsl.invoke(session)).isEqualTo(true);
         assertThat(resolveMfnr.invoke(session)).isEqualTo(true);
+        assertThat(StillCaptureBuilder.allowsVendorZslMfnr(true)).isFalse();
     }
 
     @Test

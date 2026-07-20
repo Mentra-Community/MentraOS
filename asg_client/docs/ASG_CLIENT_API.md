@@ -107,8 +107,8 @@ Capture a still photo. The handler routes through `transferMethod` to one of thr
 | `isoCap`             | number  | absent              | Cap ISO after AE metering (scan tuning)                     |
 | `noiseReduction`     | boolean | absent              | Parsed; warn-only if unsupported (`not_implemented` in metadata) |
 | `edgeEnhancement`    | boolean | absent              | `false` disables edge enhancement on still capture          |
-| `zsl`                | boolean | absent              | ZSL preview/capture buffering. Enabled by default; pass `false` to disable. Honored in text/scan/manual exposure modes. |
-| `mfnr`               | boolean | absent              | Vendor multi-frame noise reduction on still capture. Enabled by default; pass `false` for the single-frame pipeline. Honored in text/scan/manual exposure modes. MFNR arms ZSL buffering in preview even when `zsl` is false. |
+| `zsl`                | boolean | absent              | ZSL preview/capture buffering. Enabled by default; pass `false` to disable. Manual and scan exposure force it off on the still request because buffered capture conflicts with fixed sensor controls. |
+| `mfnr`               | boolean | absent              | Vendor multi-frame noise reduction on still capture. Enabled by default; pass `false` for the single-frame pipeline. Manual and scan exposure force it off because the vendor pipeline can override fixed sensor controls. MFNR arms ZSL buffering in preview even when `zsl` is false. |
 | `ispDigitalGain`     | number  | absent              | Parsed; warn-only if unsupported                            |
 | `ispAnalogGain`      | string  | absent              | Parsed; warn-only if unsupported                            |
 

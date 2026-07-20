@@ -2150,8 +2150,13 @@ public final class PhotoSession {
                             + " for display orientation: "
                             + displayOrientation);
 
-            boolean zsl = resolveZslForCapture();
-            boolean mfnr = resolveMfnrForCapture();
+            boolean requestedZsl = resolveZslForCapture();
+            boolean requestedMfnr = resolveMfnrForCapture();
+            // Fixed SENSOR_* controls and the MediaTek ZSL/MFNR pipeline are mutually exclusive:
+            // the vendor pipeline may select a buffered frame and replace the requested exposure.
+            // Manual and scan captures therefore take precedence over their resolved flags.
+            boolean zsl = !useManual && requestedZsl;
+            boolean mfnr = !useManual && requestedMfnr;
             String appliedSource =
                     captureSettings != null
                                     && (captureSettings.zsl != null || captureSettings.mfnr != null)
@@ -2165,7 +2170,11 @@ public final class PhotoSession {
                 stillBuilder.set(CaptureRequest.CONTROL_ENABLE_ZSL, false);
                 BlePhotoTimingLog.capturePhase(
                         "still_vendor_config_skipped",
-                        "manual SENSOR_* capture; ZSL/MFNR forced off for still request");
+                        "manual SENSOR_* capture; requested ZSL="
+                                + (requestedZsl ? "on" : "off")
+                                + " MFNR="
+                                + (requestedMfnr ? "on" : "off")
+                                + "; both forced off for still request");
             } else if (hooks.cameraSettings() != null) {
                 hooks.cameraSettings().configureCaptureBuilder(stillBuilder, zsl, mfnr);
                 BlePhotoTimingLog.capturePhase(

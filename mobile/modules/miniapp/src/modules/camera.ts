@@ -58,11 +58,11 @@ export interface TakePhotoOptions {
   /** Request per-capture edge enhancement. Sent on the wire; glasses may log `not_implemented`. */
   edgeEnhancement?: boolean
   /**
-   * ZSL preview buffering. Honored in text mode and when manual exposure is set.
+   * ZSL buffering. Manual and scan stills force it off because fixed sensor controls take priority.
    */
   zsl?: boolean
   /**
-   * MFNR still capture. Honored in text mode and when manual exposure is set.
+   * MFNR still capture. Manual and scan stills force it off because fixed sensor controls take priority.
    */
   mfnr?: boolean
   /** ISP digital gain hint. */
