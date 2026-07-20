@@ -1995,6 +1995,17 @@ public final class PhotoSession {
                 previewZslEnabled());
     }
 
+    /**
+     * Whether {@link #capturePhoto()} would dispatch to the HDR burst path. EV-bracket HDR needs
+     * AE, so manual/scan exposure (which also forces ZSL/MFNR off) disables HDR.
+     */
+    boolean wouldCaptureHdrBurst() {
+        return hooks.cameraSettings() != null
+                && hooks.cameraSettings().mAsgSettings.isHdrBurstEnabled()
+                && !currentIsFromSdk()
+                && !shouldUseManualExposure();
+    }
+
     private boolean shouldUseManualExposure() {
         if (shouldUseScanExposure()) {
             return true;
@@ -2137,12 +2148,7 @@ public final class PhotoSession {
             return;
         }
 
-        boolean hdrEnabled =
-                hooks.cameraSettings() != null
-                        && hooks.cameraSettings().mAsgSettings.isHdrBurstEnabled()
-                        && !currentIsFromSdk();
-
-        if (hdrEnabled) {
+        if (wouldCaptureHdrBurst()) {
             captureHdrBurst();
             return;
         }
@@ -2534,6 +2540,10 @@ public final class PhotoSession {
                             displayOrientation, JpegOrientationResolver.DEFAULT_JPEG_ORIENTATION);
             int jpegQuality = getJpegQualityForSize();
 
+            boolean useManual = shouldUseManualExposure();
+            boolean zsl = resolveZslForCapture(useManual);
+            boolean mfnr = resolveMfnrForCapture(useManual);
+
             hdrBurstCapture.start(
                     hooks.coordinator().session(),
                     hooks.coordinator().device(),
@@ -2544,6 +2554,8 @@ public final class PhotoSession {
                     jpegQuality,
                     jpegOrientation,
                     hooks.cameraSettings(),
+                    zsl,
+                    mfnr,
                     new HdrBurstCapture.Callback() {
                         @Override
                         public void onBurstComplete(String basePath) {
