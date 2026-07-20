@@ -955,7 +955,8 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             captureToGlassesStorage()
             return@runAction
         }
-        requireGlassesWifi("capture photos")
+        // Without glasses Wi-Fi the photo is delivered over the Bluetooth
+        // transfer path instead of the network upload.
         if (state.photoDestination == PhotoDestination.THIS_PHONE) {
             captureAndUploadToPhone()
             return@runAction

@@ -31,7 +31,7 @@ Read the first-party [Mentra Live Bluetooth SDK docs](https://docs.mentraglass.c
 
 Every commit on `main` publishes installable builds of the example apps to [GitHub Releases](https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit/releases), grouped by Bluetooth SDK version: the `sdk-<version>` release always carries the latest build of each example for that SDK version.
 
-From the release matching your SDK version (e.g. `sdk-0.1.17`), download:
+From the release matching your SDK version (e.g. `sdk-0.1.20`), download:
 
 - `mentra-example-android.apk` — native Android example
 - `mentra-example-react-native.apk` — React Native example

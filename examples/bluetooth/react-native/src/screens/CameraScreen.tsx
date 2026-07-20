@@ -18,7 +18,7 @@ import {
   CAMERA_FOV_MAX,
   CAMERA_FOV_MIN,
   CAMERA_ROI_POSITIONS,
-  PHOTO_BLE_FALLBACK_QUALITY_WARNING,
+  PHOTO_BLE_FALLBACK_TRANSFER_MESSAGE,
   PHOTO_AE_EXPOSURE_DIVISOR_OPTIONS,
   PHOTO_COMPRESSIONS,
   PHOTO_EXPOSURE_DEFAULT_NS,
@@ -144,7 +144,7 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
   const [videoDetailsExpanded, setVideoDetailsExpanded] = React.useState(false);
   const connected = isGlassesConnected(sdk.glasses);
   const glassesWifiConnected = isGlassesWifiConnected(sdk.glasses);
-  const wifiRequired =
+  const glassesWifiOff =
     connected && !glassesWifiConnected && !sdk.photoGlassesStorageEnabled;
   const videoActionBusy =
     sdk.activeAction === 'Start video recording' ||
@@ -162,7 +162,6 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
     connected && sdk.photoGlassesStorageEnabled && sdk.galleryServerReachable !== true;
   const photoControlsDisabled =
     !connected ||
-    (!glassesWifiConnected && !sdk.photoGlassesStorageEnabled) ||
     needsGlassesHotspotSetup ||
     sdk.activeAction === 'Capture & upload' ||
     sdk.activeAction === 'Capture text scan photo';
@@ -173,7 +172,7 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
   );
   const bleFallbackWarning = sdk.photoPreviewDetails?.bleFallbackUsed
     ? sdk.photoPreviewDetails.bleFallbackMessage ??
-      PHOTO_BLE_FALLBACK_QUALITY_WARNING
+      PHOTO_BLE_FALLBACK_TRANSFER_MESSAGE
     : null;
   const cloudSetupHint = localCameraSetupHint(sdk.webhookUrl, sdk.cameraStatus);
   const photoStateText = sdk.photoPreviewUrl
@@ -235,8 +234,8 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
       <Header title="Camera" />
       {!connected ? (
         <OfflineNotice />
-      ) : wifiRequired ? (
-        <OfflineNotice message="Connect the glasses to Wi-Fi from the System tab before capturing photos. Photos are uploaded over the glasses network connection." />
+      ) : glassesWifiOff ? (
+        <OfflineNotice message="Glasses Wi-Fi is off. Photos still work over Bluetooth but take longer to transfer. Connect Wi-Fi from the System tab for faster photos and for video." />
       ) : null}
       {sdk.cameraButtonNotice ? (
         <View pointerEvents="none" style={styles.cameraButtonNoticeWrap}>
@@ -356,8 +355,6 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
             <Text style={styles.captureText}>
               {!connected
                 ? 'Connect glasses first'
-                : !glassesWifiConnected && !sdk.photoGlassesStorageEnabled
-                  ? 'Connect glasses to Wi-Fi'
                 : needsGlassesHotspotSetup
                   ? sdk.galleryServerReachable === null
                     ? 'Preparing hotspot…'
@@ -1801,7 +1798,7 @@ function photoDetailsRows(details: PhotoPreviewDetails | null) {
     });
   }
   if (details.bleFallbackMessage) {
-    rows.push({label: 'Bluetooth fallback', value: details.bleFallbackMessage, tone: 'warning'});
+    rows.push({label: 'Bluetooth transfer', value: details.bleFallbackMessage, tone: 'warning'});
   }
   if (details.requestId) rows.push({label: 'Request ID', value: details.requestId});
   if (details.fileName) rows.push({label: 'Glasses filename', value: details.fileName});

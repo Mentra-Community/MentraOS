@@ -103,11 +103,10 @@ fun CameraScreen(controller: MentraExampleController) {
         state.photoPreviewDetails?.state == "saved"
     val needsGlassesHotspotSetup = connected && glassesStorageEnabled && state.galleryServerReachable != true
     val photoControlsEnabled = connected &&
-        (glassesStorageEnabled || glassesWifiConnected) &&
         !needsGlassesHotspotSetup &&
         state.activeAction != "Capture & upload" &&
         state.activeAction != "Capture scan photo"
-    val wifiRequired = connected && !glassesWifiConnected && !glassesStorageEnabled
+    val glassesWifiOff = connected && !glassesWifiConnected && !glassesStorageEnabled
     val videoActionBusy = state.activeAction == "Start video recording" || state.activeAction == "Stop & upload video"
     val videoControlsEnabled = connected &&
         glassesWifiConnected &&
@@ -152,9 +151,9 @@ fun CameraScreen(controller: MentraExampleController) {
         PageHeader("Camera")
         if (!connected) {
             OfflineNotice(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
-        } else if (wifiRequired) {
+        } else if (glassesWifiOff) {
             OfflineNotice(
-                message = "Connect the glasses to Wi-Fi from the System tab before capturing photos. Photos are uploaded over the glasses network connection.",
+                message = "Glasses Wi-Fi is off. Photos still work over Bluetooth but take longer to transfer. Connect Wi-Fi from the System tab for faster photos and for video.",
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
             )
         }
@@ -181,8 +180,6 @@ fun CameraScreen(controller: MentraExampleController) {
                         Text(
                             if (!connected) {
                                 "Connect glasses first"
-                            } else if (!glassesWifiConnected && !glassesStorageEnabled) {
-                                "Connect glasses to Wi-Fi"
                             } else if (state.activeAction == "Capture & upload" || state.activeAction == "Capture scan photo") {
                                 "Capturing..."
                             } else if (state.scanMode) {
@@ -281,8 +278,6 @@ fun CameraScreen(controller: MentraExampleController) {
                         Text(
                             if (!connected) {
                                 "Connect glasses first"
-                            } else if (!glassesWifiConnected && !glassesStorageEnabled) {
-                                "Connect glasses to Wi-Fi"
                             } else if (needsGlassesHotspotSetup) {
                                 if (state.galleryServerReachable == null) "Preparing hotspot..." else "Connect glasses hotspot"
                             } else if (state.activeAction == "Capture & upload" || state.activeAction == "Capture scan photo") {
