@@ -33,6 +33,11 @@ export interface TakePhotoOptions {
   size?: "low" | "medium" | "high" | "max"
   /** Capture at maximum source quality and optimize BLE delivery for readable text. */
   mode?: "photo" | "text"
+  /**
+   * Image delivery path. `auto` tries direct Wi-Fi upload and falls back to
+   * BLE; `ble` skips the Wi-Fi attempt and always relays through the phone.
+   */
+  transferMethod?: "auto" | "ble"
   compress?: "none" | "low" | "medium" | "high"
   sound?: boolean
   saveToGallery?: boolean
@@ -40,7 +45,7 @@ export interface TakePhotoOptions {
    * Manual shutter / exposure time in nanoseconds. Omit (or pass undefined)
    * to let the glasses auto-expose. Honored only on cameras that support
    * manual exposure; ignored otherwise.
-  */
+   */
   exposureTimeNs?: number
   /** Sensor ISO for this capture only. Only used when `exposureTimeNs` enables manual exposure. */
   iso?: number | null
@@ -152,13 +157,14 @@ export class CameraModule {
    * (~30 minute) signed download URL. If the glasses don't have a camera,
    * the phone-side handler rejects with an error. Check
    * `session.capabilities.hasCamera` before calling.
-  */
+   */
   async takePhoto(options: TakePhotoOptions = {}): Promise<PhotoTaken> {
     return this.session.sendRequest<PhotoTaken>(
       {
         type: MiniappRequestType.PHOTO,
         size: options.size ?? "medium",
         mode: options.mode ?? "photo",
+        ...(options.transferMethod ? {transferMethod: options.transferMethod} : {}),
         compress: options.compress ?? "none",
         sound: options.sound ?? true,
         saveToGallery: options.saveToGallery ?? false,

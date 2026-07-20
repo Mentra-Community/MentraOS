@@ -54,6 +54,7 @@ protocol SGCManager {
     // MARK: - Audio Control
 
     func setMicEnabled(_ enabled: Bool)
+    var isMicSuspendedForAudio: Bool { get }
     func sortMicRanking(list: [String]) -> [String]
 
     // MARK: - Messaging
@@ -217,6 +218,8 @@ protocol SGCManager {
 /// doesn't seem to work for concurrency reasons :(
 /// we can make read-only getters for convienence though:
 extension SGCManager {
+    var isMicSuspendedForAudio: Bool { false }
+
     /// Default: no-op. Only G2 renders positioned text containers; other glasses ignore it.
     func sendPositionedText(
         _: String, x _: Int32, y _: Int32, width _: Int32, height _: Int32,

@@ -50,6 +50,36 @@ describe("SpeakerModule.speak", () => {
     ])
     expect(requestOptions).toEqual([{timeoutMs: 0}])
   })
+
+  test("sends an explicit sentence list through the normal SPEAK request", async () => {
+    const {session, requestCalls} = mockSession([{completed: true}])
+    const speaker = new SpeakerModule(session)
+
+    await speaker.speak(["First sentence.", "Second sentence."], {forceLocal: true})
+
+    expect(requestCalls[0]).toMatchObject({
+      type: MiniappRequestType.SPEAK,
+      text: ["First sentence.", "Second sentence."],
+      forceLocal: true,
+    })
+  })
+
+  test("rejects an empty explicit sentence list", async () => {
+    const {session, requestCalls} = mockSession([])
+    const speaker = new SpeakerModule(session)
+
+    await expect(speaker.speak([])).rejects.toMatchObject({code: "INTERNAL"})
+    expect(requestCalls).toEqual([])
+  })
+
+  test("rejects empty or whitespace-only text", async () => {
+    const {session, requestCalls} = mockSession([])
+    const speaker = new SpeakerModule(session)
+
+    await expect(speaker.speak("")).rejects.toMatchObject({code: "INTERNAL"})
+    await expect(speaker.speak("   ")).rejects.toMatchObject({code: "INTERNAL"})
+    expect(requestCalls).toEqual([])
+  })
 })
 
 describe("SpeakerModule.createStream", () => {

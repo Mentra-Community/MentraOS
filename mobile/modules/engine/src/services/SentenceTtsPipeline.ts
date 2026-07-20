@@ -23,62 +23,6 @@ interface SentenceTtsPipelineOptions {
   onCleanupError?: (error: unknown) => void
 }
 
-const SENTENCE_TERMINATORS = new Set([".", "!", "?", "。", "！", "？"])
-const SENTENCE_CLOSERS = new Set(['"', "'", "”", "’", "»", ")", "]"])
-const NON_TERMINAL_ABBREVIATION = /(?:\b(?:mr|mrs|ms|dr|prof|sr|jr|st|vs|etc|e\.g|i\.e|u\.s|u\.k)\.|\b[A-Z]\.)$/i
-
-function hasMeaningfulText(value: string): boolean {
-  return value.replace(/[.!?。！？'"”’»\])\s]/g, "").length > 0
-}
-
-/**
- * Conservatively split text for offline TTS lookahead. Cloud TTS always gets
- * the original string; this helper is only used after local routing wins.
- */
-export function segmentTextForOfflineTts(text: string): string[] {
-  const input = text.trim()
-  if (!input) return []
-
-  const sentences: string[] = []
-  let start = 0
-  let index = 0
-
-  while (index < input.length) {
-    if (!SENTENCE_TERMINATORS.has(input[index])) {
-      index++
-      continue
-    }
-
-    const punctuationStart = index
-    while (index + 1 < input.length && SENTENCE_TERMINATORS.has(input[index + 1])) index++
-    while (index + 1 < input.length && SENTENCE_CLOSERS.has(input[index + 1])) index++
-
-    const next = input[index + 1]
-    const terminal = input[punctuationStart]
-    const boundaryWithoutWhitespace = terminal !== "." || (next !== undefined && /[A-Z]/.test(next))
-    if (next !== undefined && !/\s/.test(next) && !boundaryWithoutWhitespace) {
-      index++
-      continue
-    }
-
-    const candidate = input.slice(start, index + 1).trim()
-    const onlyPeriod = input.slice(punctuationStart, index + 1).replace(/["'”’»\])]/g, "") === "."
-    if (onlyPeriod && NON_TERMINAL_ABBREVIATION.test(candidate)) {
-      index++
-      continue
-    }
-
-    if (hasMeaningfulText(candidate)) sentences.push(candidate)
-    start = index + 1
-    while (start < input.length && /\s/.test(input[start])) start++
-    index = start
-  }
-
-  const remainder = input.slice(start).trim()
-  if (hasMeaningfulText(remainder)) sentences.push(remainder)
-  return sentences.length > 0 ? sentences : [input]
-}
-
 async function cleanupAudio(audio: SentenceAudio, onError?: (error: unknown) => void): Promise<void> {
   try {
     await Promise.resolve(audio.cleanup?.())

@@ -1,26 +1,19 @@
 /// <reference types="bun-types" />
 
-import {afterEach, beforeEach, describe, expect, mock, test} from "bun:test"
+import {afterEach, beforeEach, describe, expect, mock, spyOn, test} from "bun:test"
 
-const pcmStreamOpen = mock(async () => {})
-const pcmStreamWrite = mock(async () => ({bufferedMs: 120}))
-const pcmStreamClose = mock(async () => ({durationMs: 1_500}))
-const pcmStreamAbort = mock(async () => {})
-const setOwnAppAudioPlaying = mock(async () => {})
+import {
+  emitLc3Frame,
+  pcmStreamAbort,
+  pcmStreamClose,
+  pcmStreamOpen,
+  pcmStreamWrite,
+  resetAudioTestMocks,
+  sendAudioFrame,
+} from "./audioTestMocks"
+
 const setAudioModeAsync = mock(async () => {})
-
-mock.module("@mentra/bluetooth-sdk/internal", () => ({
-  __esModule: true,
-  default: {
-    getGlassesMediaVolume: mock(async () => ({level: 10, statusCode: 0})),
-    pcmStreamAbort,
-    pcmStreamClose,
-    pcmStreamOpen,
-    pcmStreamWrite,
-    setGlassesMediaVolume: mock(async () => ({level: 10, statusCode: 0})),
-    setOwnAppAudioPlaying,
-  },
-}))
+const tailTimerCallbacks: Array<() => void> = []
 
 const audioPlayer = {
   addListener: mock(() => ({remove: () => {}})),
@@ -36,23 +29,34 @@ mock.module("expo-audio", () => ({
   setAudioModeAsync,
 }))
 
+mock.module("react-native", () => ({
+  Platform: {OS: "android"},
+}))
+
 mock.module("../../utils/timers", () => ({
   BgTimer: {
     clearTimeout: () => {},
-    setTimeout: () => 1,
+    setTimeout: (callback: () => void, delayMs: number) => {
+      if (delayMs === 700) {
+        tailTimerCallbacks.push(callback)
+        return 1
+      }
+      callback()
+      return 1
+    },
   },
 }))
 
+const {startAudioCloudUplink, stopAudioCloudUplink} = require("../AudioCloudUplink")
 const audioPlaybackService = require("../AudioPlaybackService").default
 
 describe("AudioPlaybackService live PCM streams", () => {
   beforeEach(async () => {
     await audioPlaybackService.stopAll()
-    pcmStreamAbort.mockClear()
-    pcmStreamClose.mockClear()
-    pcmStreamOpen.mockClear()
-    pcmStreamWrite.mockClear()
-    setOwnAppAudioPlaying.mockClear()
+    stopAudioCloudUplink()
+    resetAudioTestMocks()
+    tailTimerCallbacks.length = 0
+    startAudioCloudUplink()
     setAudioModeAsync.mockClear()
     setAudioModeAsync.mockImplementation(async () => {})
     audioPlayer.pause.mockClear()
@@ -62,6 +66,40 @@ describe("AudioPlaybackService live PCM streams", () => {
 
   afterEach(async () => {
     await audioPlaybackService.stopAll()
+    stopAudioCloudUplink()
+  })
+
+  test("prewarms a cold Android route by aborting silence before URL playback", async () => {
+    await audioPlaybackService.play({audioUrl: "https://example.test/click.wav", requestId: "click"}, () => {})
+
+    expect(pcmStreamOpen).toHaveBeenCalledTimes(1)
+    expect(pcmStreamWrite).toHaveBeenCalledTimes(1)
+    expect(pcmStreamAbort).toHaveBeenCalledTimes(1)
+    expect(pcmStreamClose).not.toHaveBeenCalled()
+    expect(audioPlayer.play).toHaveBeenCalledTimes(1)
+  })
+
+  test("prewarms a cold Android route before opening a live PCM stream", async () => {
+    const coldNow = Date.now() + 10_000
+    const dateNow = spyOn(Date, "now").mockReturnValue(coldNow)
+    try {
+      await audioPlaybackService.openStream({
+        appId: "com.example.call",
+        channels: 1,
+        onEnded: () => {},
+        sampleRate: 24_000,
+        streamId: "stream-cold",
+        volume: 0.75,
+      })
+    } finally {
+      dateNow.mockRestore()
+    }
+
+    expect(pcmStreamOpen).toHaveBeenCalledTimes(2)
+    expect(pcmStreamOpen).toHaveBeenNthCalledWith(1, expect.stringContaining("audio-route-prewarm-"), 16_000, 1, 1)
+    expect(pcmStreamWrite).toHaveBeenCalledTimes(1)
+    expect(pcmStreamAbort).toHaveBeenCalledTimes(1)
+    expect(pcmStreamOpen).toHaveBeenNthCalledWith(2, "stream-cold", 24_000, 1, 0.75)
   })
 
   test("opens, writes, drains, and reports active stream state", async () => {
@@ -77,6 +115,8 @@ describe("AudioPlaybackService live PCM streams", () => {
     })
 
     expect(pcmStreamOpen).toHaveBeenCalledWith("stream-1", 24_000, 1, 0.75)
+    emitLc3Frame([1])
+    expect(sendAudioFrame).toHaveBeenCalledTimes(1)
     expect(audioPlaybackService.isPlaying()).toBe(true)
     expect(audioPlaybackService.getActiveAppIds()).toEqual(["com.example.call"])
     expect(audioPlaybackService.getActiveCount()).toBe(1)
@@ -87,6 +127,8 @@ describe("AudioPlaybackService live PCM streams", () => {
     expect(pcmStreamWrite).toHaveBeenCalledWith("stream-1", "AAAA")
     expect(pcmStreamClose).toHaveBeenCalledWith("stream-1")
     expect(onEnded).toHaveBeenCalledWith("stream-1", true, null, 1_500)
+    emitLc3Frame([2])
+    expect(sendAudioFrame).toHaveBeenCalledTimes(2)
     expect(audioPlaybackService.isPlaying()).toBe(false)
   })
 
@@ -171,6 +213,103 @@ describe("AudioPlaybackService live PCM streams", () => {
 
     expect(firstComplete).toHaveBeenCalledTimes(1)
     expect(firstComplete).toHaveBeenCalledWith("first-url", true, null, expect.any(Number), "interrupted")
+  })
+
+  test("only suppresses cloud STT when the caller opts in", async () => {
+    await audioPlaybackService.play(
+      {requestId: "sound-effect", audioUrl: "file://click.wav", appId: "app-one"},
+      () => {},
+    )
+    emitLc3Frame([1])
+    expect(sendAudioFrame).toHaveBeenCalledTimes(1)
+
+    audioPlaybackService.cancelPlayback("sound-effect")
+
+    await audioPlaybackService.play(
+      {
+        requestId: "spoken-tts",
+        audioUrl: "file://speech.wav",
+        appId: "app-one",
+        suppressCloudUplink: true,
+      },
+      () => {},
+    )
+    emitLc3Frame([2])
+    expect(sendAudioFrame).toHaveBeenCalledTimes(1)
+
+    audioPlaybackService.cancelPlayback("spoken-tts")
+    emitLc3Frame([3])
+    expect(sendAudioFrame).toHaveBeenCalledTimes(2)
+  })
+
+  test("releases a completed TTS tail gate when a live PCM cue starts", async () => {
+    const onComplete = mock(() => {})
+    await audioPlaybackService.play(
+      {
+        requestId: "spoken-tts",
+        audioUrl: "file://speech.wav",
+        appId: "app-one",
+        suppressCloudUplink: true,
+      },
+      onComplete,
+    )
+
+    const playbackStatusTarget = audioPlaybackService as unknown as {
+      onPlaybackStatusUpdate(status: {didJustFinish: boolean; duration: number}): void
+    }
+    playbackStatusTarget.onPlaybackStatusUpdate({didJustFinish: true, duration: 1})
+    expect(onComplete).toHaveBeenCalledWith("spoken-tts", true, null, 1_000, "completed")
+
+    emitLc3Frame([1])
+    expect(sendAudioFrame).toHaveBeenCalledTimes(0)
+
+    await audioPlaybackService.openStream({
+      appId: "app-one",
+      channels: 1,
+      onEnded: () => {},
+      sampleRate: 16_000,
+      streamId: "cue-stream",
+    })
+    emitLc3Frame([2])
+    expect(sendAudioFrame).toHaveBeenCalledTimes(1)
+
+    for (const callback of tailTimerCallbacks.splice(0)) callback()
+  })
+
+  test("unloads a completed URL after its A2DP tail so media play cannot replay it", async () => {
+    await audioPlaybackService.play(
+      {requestId: "finished-tts", audioUrl: "file://speech.wav", appId: "app-one"},
+      () => {},
+    )
+
+    const playbackStatusTarget = audioPlaybackService as unknown as {
+      onPlaybackStatusUpdate(status: {didJustFinish: boolean; duration: number}): void
+    }
+    playbackStatusTarget.onPlaybackStatusUpdate({didJustFinish: true, duration: 1})
+
+    expect(audioPlayer.replace).toHaveBeenLastCalledWith({uri: "file://speech.wav"})
+    for (const callback of tailTimerCallbacks.splice(0)) callback()
+    expect(audioPlayer.replace).toHaveBeenLastCalledWith(null)
+  })
+
+  test("does not let an older tail timer unload a newer completed URL", async () => {
+    const playbackStatusTarget = audioPlaybackService as unknown as {
+      onPlaybackStatusUpdate(status: {didJustFinish: boolean; duration: number}): void
+    }
+
+    await audioPlaybackService.play({requestId: "first-tts", audioUrl: "file://first.wav"}, () => {})
+    playbackStatusTarget.onPlaybackStatusUpdate({didJustFinish: true, duration: 1})
+
+    await audioPlaybackService.play({requestId: "second-tts", audioUrl: "file://second.wav"}, () => {})
+    playbackStatusTarget.onPlaybackStatusUpdate({didJustFinish: true, duration: 1})
+
+    const firstTail = tailTimerCallbacks.shift()
+    firstTail?.()
+    expect(audioPlayer.replace).toHaveBeenLastCalledWith({uri: "file://second.wav"})
+
+    const secondTail = tailTimerCallbacks.shift()
+    secondTail?.()
+    expect(audioPlayer.replace).toHaveBeenLastCalledWith(null)
   })
 
   test("cancels active URL playback immediately by request id", async () => {

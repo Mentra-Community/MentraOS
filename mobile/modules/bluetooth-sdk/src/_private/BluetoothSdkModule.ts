@@ -133,6 +133,8 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   setVideoRecordingDefaults(width: number, height: number, fps: number): Promise<SettingsAckSuccessEvent>
   setMaxVideoRecordingDuration(minutes: number): Promise<SettingsAckSuccessEvent>
   setCameraFov(request: CameraFovRequest): Promise<CameraFovResult>
+  setLegacyCameraFov(request: CameraFovRequest): Promise<CameraFovResult>
+  restoreLegacyCameraFov(): Promise<void>
   setCameraFovOverride(request: CameraFovOverrideRequest): Promise<CameraFovResult>
   releaseCameraFovOverride(leaseId: string): Promise<SettingsAckSuccessEvent>
   /**
@@ -491,6 +493,22 @@ const nativeSetCameraFov = bindNativeMethod<(fov: CameraFovSetting) => MaybeProm
 NativeBluetoothSdkModule.setCameraFov = function (request: CameraFovRequest) {
   const setting = normalizeCameraFov(request)
   return Promise.resolve(nativeSetCameraFov(setting))
+}
+
+const nativeSetLegacyCameraFov = bindNativeMethod<(fov: CameraFovSetting) => MaybePromise<CameraFovResult>>(
+  NativeBluetoothSdkModule as unknown as Record<string, unknown>,
+  "setLegacyCameraFov",
+)
+NativeBluetoothSdkModule.setLegacyCameraFov = function (request: CameraFovRequest) {
+  return Promise.resolve(nativeSetLegacyCameraFov(normalizeCameraFov(request)))
+}
+
+const nativeRestoreLegacyCameraFov = bindNativeMethod<() => MaybePromise<void>>(
+  NativeBluetoothSdkModule as unknown as Record<string, unknown>,
+  "restoreLegacyCameraFov",
+)
+NativeBluetoothSdkModule.restoreLegacyCameraFov = function () {
+  return Promise.resolve(nativeRestoreLegacyCameraFov())
 }
 
 const nativeSetCameraFovOverride = bindNativeMethod<

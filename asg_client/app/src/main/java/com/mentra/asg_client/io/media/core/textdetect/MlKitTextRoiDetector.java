@@ -50,6 +50,9 @@ public final class MlKitTextRoiDetector implements AutoCloseable {
     private final AtomicReference<Task<Text>> activeRecognizerTask = new AtomicReference<>();
     private volatile boolean closed;
 
+    /** Set by {@link #tryStartRecognizerProcess} when it returns null; consumed by detect. */
+    @Nullable private volatile String lastStartFailureReason;
+
     public MlKitTextRoiDetector(Context context) {
         this(context, AsgConstants.TEXT_MODE_MLKIT_ANALYSIS_LONG_EDGE);
     }
@@ -97,15 +100,23 @@ public final class MlKitTextRoiDetector implements AutoCloseable {
         }
     }
 
+    /**
+     * @return recognition task, or {@code null} when ML Kit is unavailable/busy. Use {@link
+     *     #lastStartFailureReason} for the caller-facing full-frame reason.
+     */
     @Nullable
     private Task<Text> tryStartRecognizerProcess(InputImage image) {
         TextRecognizer availableRecognizer = getOrCreateRecognizer();
         if (availableRecognizer == null) {
+            if (lastStartFailureReason == null) {
+                lastStartFailureReason = "mlkit_unavailable";
+            }
             return null;
         }
         synchronized (activeRecognizerTask) {
             Task<Text> activeTask = activeRecognizerTask.get();
             if (activeTask != null && !activeTask.isComplete()) {
+                lastStartFailureReason = "mlkit_busy";
                 return null;
             }
             if (activeTask != null) {
@@ -120,39 +131,68 @@ public final class MlKitTextRoiDetector implements AutoCloseable {
                 return newTask;
             } catch (RuntimeException error) {
                 Log.w(TAG, "Unable to start ML Kit recognition; preserving full frame", error);
+                lastStartFailureReason = "mlkit_process_error";
                 return null;
             }
         }
     }
 
     /**
-     * Initializes ML Kit on first use rather than during direct-boot service construction.
+     * Creates the text recognizer on first use rather than during direct-boot service construction.
      *
      * <p>ML Kit's manifest provider is not direct-boot-aware. Mentra Live starts this process from
-     * {@code LOCKED_BOOT_COMPLETED}, so the provider is skipped and is not rerun when the same
-     * process later unlocks. The public initialization API repairs that state once credential
-     * storage is available.
+     * {@code LOCKED_BOOT_COMPLETED}, so the provider may be skipped. Prefer the same {@code
+     * getClient()} path that worked before lazy init; only call {@link MlKit#initialize} when that
+     * fails and credential storage is available. Never hard-fail on {@code isUserUnlocked} before
+     * attempting {@code getClient()} — that gate permanently disabled text crop on devices where
+     * unlock reporting is unreliable but ML Kit still works.
      */
     @Nullable
     private TextRecognizer getOrCreateRecognizer() {
         synchronized (recognizerLock) {
             if (closed) {
+                lastStartFailureReason = "detector_closed";
                 return null;
             }
             if (recognizer != null) {
                 return recognizer;
             }
-            if (context == null || !isUserUnlocked(context)) {
+            if (context == null) {
+                lastStartFailureReason = "mlkit_no_context";
+                return null;
+            }
+            lastStartFailureReason = null;
+
+            // Path A: provider already ran (normal post-unlock / process restart). Matches the
+            // pre-d2a270364 behavior that successfully cropped text-mode photos.
+            try {
+                recognizer =
+                        TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS);
+                Log.i(TAG, "ML Kit text recognizer ready via getClient()");
+                return recognizer;
+            } catch (RuntimeException firstError) {
+                Log.i(
+                        TAG,
+                        "ML Kit getClient failed; trying explicit initialize after unlock",
+                        firstError);
+            }
+
+            // Path B: provider skipped during direct boot — repair once CE storage is available.
+            if (!isUserUnlocked(context)) {
+                lastStartFailureReason = "mlkit_user_locked";
+                Log.w(TAG, "ML Kit unavailable before user unlock; will retry on next capture");
                 return null;
             }
             try {
                 MlKit.initialize(context);
                 recognizer =
                         TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS);
+                Log.i(TAG, "ML Kit text recognizer ready via initialize()+getClient()");
                 return recognizer;
             } catch (RuntimeException error) {
                 // Do not permanently disable detection: a later capture may run after Android has
                 // finished unlocking or after another transient initialization failure clears.
+                lastStartFailureReason = "mlkit_init_error";
                 Log.w(TAG, "ML Kit is not ready; preserving full frame", error);
                 return null;
             }
@@ -243,8 +283,10 @@ public final class MlKitTextRoiDetector implements AutoCloseable {
             analysis = scaleLongEdge(decoded, analysisLongEdge);
             detectionTask = tryStartRecognizerProcess(InputImage.fromBitmap(analysis, 0));
             if (detectionTask == null) {
+                String reason =
+                        lastStartFailureReason != null ? lastStartFailureReason : "mlkit_busy";
                 return Detection.fullFrame(
-                        "mlkit_busy",
+                        reason,
                         SystemClock.elapsedRealtime() - startMs,
                         sourceWidth,
                         sourceHeight);

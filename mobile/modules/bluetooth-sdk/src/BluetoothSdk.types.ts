@@ -570,6 +570,8 @@ export type PhotoRequestParams = {
   appId?: string
   size: PhotoSize
   mode?: PhotoMode
+  /** `ble` skips direct upload and forces phone-relayed BLE image transfer. */
+  transferMethod?: "auto" | "ble"
   webhookUrl: string | null
   authToken: string | null
   compress: PhotoCompression
@@ -860,6 +862,8 @@ export type BluetoothSdkModuleEvents = {
   speaking_status: (event: SpeakingStatusEvent) => void
   battery_status: (event: BatteryStatusEvent) => void
   local_transcription: (event: LocalTranscriptionEvent) => void
+  phone_notification: (event: PhoneNotificationEvent) => void
+  phone_notification_dismissed: (event: PhoneNotificationDismissedEvent) => void
   wifi_status_change: (event: WifiStatusChangeEvent) => void
   wifi_scan_result: (event: WifiScanResultEvent) => void
   hotspot_status_change: (event: HotspotStatusChangeEvent) => void
@@ -904,6 +908,23 @@ export interface ExtractionProgressEvent {
   percentage: number
   bytesRead: number
   totalBytes: number
+}
+
+export interface PhoneNotificationEvent {
+  notificationId: string
+  app: string
+  title: string
+  content: string
+  priority: string
+  timestamp: number
+  packageName: string
+}
+
+export interface PhoneNotificationDismissedEvent {
+  notificationId: string
+  notificationKey: string
+  packageName: string
+  timestamp: number
 }
 
 export type PublicGlassesStatus = Omit<
@@ -1024,6 +1045,8 @@ export interface BluetoothSdkPublicModule {
   setVideoRecordingDefaults(settings: VideoRecordingDefaults): Promise<SettingsAckSuccessEvent>
   setMaxVideoRecordingDuration(minutes: number): Promise<SettingsAckSuccessEvent>
   setCameraFov(request: CameraFovRequest): Promise<CameraFovResult>
+  /** One-way FOV command for legacy ASG clients that do not send settings acknowledgements. */
+  setLegacyCameraFov(request: CameraFovRequest): Promise<CameraFovResult>
   setCameraFovOverride(request: CameraFovOverrideRequest): Promise<CameraFovResult>
   releaseCameraFovOverride(leaseId: string): Promise<SettingsAckSuccessEvent>
   /**

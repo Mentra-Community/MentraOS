@@ -1,6 +1,8 @@
 import {createAudioPlayer, AudioPlayer, AudioStatus, setAudioModeAsync} from "expo-audio"
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
+import {Platform} from "react-native"
 import {BgTimer} from "../utils/timers"
+import {setAudioCloudUplinkSuppressed} from "./AudioCloudUplink"
 
 const RESTORE_GLASSES_VOLUME_AFTER_PLAYBACK = false
 
@@ -10,6 +12,8 @@ interface AudioPlayRequest {
   appId?: string
   volume?: number
   stopOtherAudio?: boolean
+  /** Suppress microphone audio sent to cloud STT while this audio is audible. */
+  suppressCloudUplink?: boolean
 }
 
 export type AudioPlaybackCompletionReason = "completed" | "interrupted" | "error"
@@ -24,9 +28,11 @@ type AudioPlaybackCompletion = (
 
 interface PlaybackState {
   requestId: string
+  uplinkSuppressionId: string
   appId?: string
   startTime: number
   completed: boolean // Guard against double callbacks
+  suppressCloudUplink: boolean
   onComplete: AudioPlaybackCompletion
 }
 
@@ -65,6 +71,9 @@ class AudioPlaybackService {
   // Reuse a single AudioPlayer to avoid AudioTrack exhaustion
   // Creating new ExoPlayer instances per request leads to -12 ENOMEM errors
   private player: AudioPlayer | null = null
+  // The source currently loaded into the reusable player. Keep object identity
+  // so a delayed tail cleanup from an older request cannot unload a newer one.
+  private loadedPlayback: PlaybackState | null = null
   private currentPlayback: PlaybackState | null = null
   // Requests that entered play() but have not yet reached the native player.
   // Keeping these addressable prevents a cancelled request from starting after
@@ -78,10 +87,28 @@ class AudioPlaybackService {
   // Prevents mic toggle flicker when playing back-to-back audio
   // Uses BgTimer to work reliably when app is backgrounded on Android
   private audioStopDebounceTimer: number | null = null
+  // Mentra Live's A2DP route may go idle between prompts. Keep a short warm
+  // window after actual audio so we only pre-roll the first sound after idle.
+  private audioRouteWarmUntil = 0
+  private audioRouteWarmupPromise: Promise<void> | null = null
+  // Spoken playback remains suppressed briefly while its A2DP tail drains.
+  // Track those completed sources so a new non-spoken sound can resume
+  // listening immediately instead of inheriting the previous TTS gate.
+  private tailUplinkSuppressions = new Set<string>()
   // Original glasses media volume captured before we bump it for A2DP playback.
   private glassesVolumeRestoreLevel: number | null = null
   private static readonly AUDIO_STOP_DEBOUNCE_MS = 1500
-  private static readonly A2DP_TAIL_DRAIN_MS = 900
+  private static readonly A2DP_TAIL_DRAIN_MS = 700
+  private static readonly AUDIO_ROUTE_WARM_WINDOW_MS = 1500
+  private static readonly AUDIO_ROUTE_PREWARM_MS = 200
+  private static readonly AUDIO_ROUTE_PREWARM_SAMPLE_RATE = 16_000
+  private static readonly AUDIO_ROUTE_PREWARM_PCM_BASE64 =
+    "AAAA".repeat(Math.floor(
+      (AudioPlaybackService.AUDIO_ROUTE_PREWARM_MS *
+        AudioPlaybackService.AUDIO_ROUTE_PREWARM_SAMPLE_RATE *
+        2) /
+        (1000 * 3),
+    )) + "AA=="
   /** If glasses report step volume at or below this, bump to FLOOR before A2DP playback. */
   private static readonly GLASSES_VOLUME_LOW_THRESHOLD = 2
   private static readonly GLASSES_VOLUME_FLOOR = 9
@@ -142,6 +169,56 @@ class AudioPlaybackService {
       })
     }
     return this.player
+  }
+
+  private markAudioRouteWarm(): void {
+    this.audioRouteWarmUntil = Date.now() + AudioPlaybackService.AUDIO_ROUTE_WARM_WINDOW_MS
+  }
+
+  private isAudioRouteWarm(): boolean {
+    return this.currentPlayback !== null || this.streams.size > 0 || Date.now() < this.audioRouteWarmUntil
+  }
+
+  /**
+   * Wake a cold Android A2DP route with silent PCM before a user-facing sound.
+   *
+   * Do not call pcmStreamClose here: some Bluetooth routes do not advance an
+   * idle AudioTrack playback head, so close waits for its drain timeout. After
+   * exactly 200ms of silence we abort the stream instead, which releases the
+   * pre-roll immediately and lets the real URL playback begin.
+   */
+  private async prewarmAudioRouteIfCold(): Promise<void> {
+    if (Platform.OS !== "android" || this.isAudioRouteWarm()) return
+    if (this.audioRouteWarmupPromise) return this.audioRouteWarmupPromise
+
+    const streamId = `audio-route-prewarm-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    const warmup = (async () => {
+      let opened = false
+      const startedAt = Date.now()
+      try {
+        console.log(`AUDIO: Cold route; prewarming with ${AudioPlaybackService.AUDIO_ROUTE_PREWARM_MS}ms silence`)
+        await BluetoothSdk.pcmStreamOpen(streamId, AudioPlaybackService.AUDIO_ROUTE_PREWARM_SAMPLE_RATE, 1, 1)
+        opened = true
+        await BluetoothSdk.pcmStreamWrite(streamId, AudioPlaybackService.AUDIO_ROUTE_PREWARM_PCM_BASE64)
+        await new Promise<void>((resolve) => {
+          BgTimer.setTimeout(resolve, AudioPlaybackService.AUDIO_ROUTE_PREWARM_MS)
+        })
+        await BluetoothSdk.pcmStreamAbort(streamId)
+        opened = false
+        this.markAudioRouteWarm()
+        console.log(`AUDIO: Cold-route prewarm completed in ${Date.now() - startedAt}ms`)
+      } catch (error) {
+        console.warn("AUDIO: Cold-route prewarm failed; continuing with requested audio:", error)
+      } finally {
+        if (opened) await BluetoothSdk.pcmStreamAbort(streamId).catch(() => {})
+      }
+    })()
+    this.audioRouteWarmupPromise = warmup
+    try {
+      await warmup
+    } finally {
+      if (this.audioRouteWarmupPromise === warmup) this.audioRouteWarmupPromise = null
+    }
   }
 
   private async getGlassesMediaVolumeWithTiming() {
@@ -244,19 +321,37 @@ class AudioPlaybackService {
     }
   }
 
-  private pauseFinishedPlayerAfterTail(playback: PlaybackState): void {
+  private clearFinishedPlayerAfterTail(playback: PlaybackState): void {
+    if (playback.suppressCloudUplink) {
+      this.tailUplinkSuppressions.add(playback.uplinkSuppressionId)
+    }
     BgTimer.setTimeout(() => {
-      if (this.currentPlayback) return
+      // ExoPlayer's completion event precedes the final A2DP audio reaching the
+      // glasses. Keep cloud STT gated until that audible tail has drained, then
+      // accept fresh microphone audio immediately without restarting LC3.
+      if (playback.suppressCloudUplink && this.tailUplinkSuppressions.delete(playback.uplinkSuppressionId)) {
+        setAudioCloudUplinkSuppressed(playback.uplinkSuppressionId, false)
+      }
       if (!this.player) return
+      if (this.loadedPlayback !== playback) return
       try {
         this.player.pause()
+        this.player.replace(null)
+        this.loadedPlayback = null
         console.log(
-          `AUDIO: Paused finished player for ${playback.requestId} after ${AudioPlaybackService.A2DP_TAIL_DRAIN_MS}ms tail drain`,
+          `AUDIO: Cleared finished player for ${playback.requestId} after ${AudioPlaybackService.A2DP_TAIL_DRAIN_MS}ms tail drain`,
         )
       } catch (e) {
-        console.warn("AUDIO: Error pausing player after tail drain:", e)
+        console.warn("AUDIO: Error clearing player after tail drain:", e)
       }
     }, AudioPlaybackService.A2DP_TAIL_DRAIN_MS)
+  }
+
+  private releaseTailUplinkSuppressions(): void {
+    for (const sourceId of this.tailUplinkSuppressions) {
+      setAudioCloudUplinkSuppressed(sourceId, false)
+    }
+    this.tailUplinkSuppressions.clear()
   }
 
   /**
@@ -264,7 +359,7 @@ class AudioPlaybackService {
    * Returns a promise that resolves with playback result when audio finishes or errors.
    */
   public async play(request: AudioPlayRequest, onComplete: AudioPlaybackCompletion): Promise<void> {
-    const {requestId, audioUrl, appId, volume = 1.0, stopOtherAudio = true} = request
+    const {requestId, audioUrl, appId, volume = 1.0, stopOtherAudio = true, suppressCloudUplink = false} = request
     const pending: PendingPlaybackState = {cancelled: false}
     this.pendingPlaybacks.set(requestId, pending)
 
@@ -273,6 +368,11 @@ class AudioPlaybackService {
     try {
       // Ensure audio mode is configured for background playback
       await this.ensureAudioModeConfigured()
+      if (pending.cancelled) {
+        onComplete(requestId, true, null, 0, "interrupted")
+        return
+      }
+      await this.prewarmAudioRouteIfCold()
       if (pending.cancelled) {
         onComplete(requestId, true, null, 0, "interrupted")
         return
@@ -295,6 +395,10 @@ class AudioPlaybackService {
         return
       }
 
+      if (!suppressCloudUplink) {
+        this.releaseTailUplinkSuppressions()
+      }
+
       // Get or create the reusable player
       const player = this.ensurePlayer()
 
@@ -304,17 +408,24 @@ class AudioPlaybackService {
       // Store the new playback state
       const playback: PlaybackState = {
         requestId,
+        uplinkSuppressionId: `url:${requestId}`,
         appId,
         startTime: Date.now(),
         completed: false,
+        suppressCloudUplink,
         onComplete,
       }
       this.currentPlayback = playback
       this.pendingPlaybacks.delete(requestId)
+      this.markAudioRouteWarm()
+      if (playback.suppressCloudUplink) {
+        setAudioCloudUplinkSuppressed(playback.uplinkSuppressionId, true)
+      }
 
       // Replace the source and play
       // Using replace() reuses the existing ExoPlayer/AudioTrack instead of creating new ones
       player.replace({uri: audioUrl})
+      this.loadedPlayback = playback
       player.play()
 
       // Mentra Live volume reads can block up to 5s when the glasses don't
@@ -336,6 +447,13 @@ class AudioPlaybackService {
 
       console.log(`AUDIO: Started playback for ${requestId}`)
     } catch (error) {
+      if (suppressCloudUplink) {
+        setAudioCloudUplinkSuppressed(`url:${requestId}`, false)
+      }
+      if (this.currentPlayback?.requestId === requestId) {
+        this.currentPlayback.completed = true
+        this.currentPlayback = null
+      }
       if (pending.cancelled) {
         onComplete(requestId, true, null, 0, "interrupted")
         return
@@ -374,6 +492,10 @@ class AudioPlaybackService {
     const playback = this.currentPlayback
     playback.completed = true
     this.currentPlayback = null
+    if (playback.suppressCloudUplink) {
+      setAudioCloudUplinkSuppressed(playback.uplinkSuppressionId, false)
+    }
+    this.markAudioRouteWarm()
 
     // Stop the player
     if (this.player) {
@@ -415,11 +537,12 @@ class AudioPlaybackService {
 
       // ExoPlayer can report finished before an A2DP sink has audibly drained
       // the last buffered audio. Pausing immediately can clip the tail on
-      // Mentra Live; defer cleanup unless another playback has started.
-      this.pauseFinishedPlayerAfterTail(playback)
+      // Mentra Live; defer cleanup and guard it against a newer loaded source.
+      this.clearFinishedPlayerAfterTail(playback)
 
-      playback.onComplete(playback.requestId, true, null, durationMs, "completed")
       this.currentPlayback = null
+      playback.onComplete(playback.requestId, true, null, durationMs, "completed")
+      this.markAudioRouteWarm()
 
       // Notify native that our app stopped playing audio (debounced)
       this.notifyAudioStopDebounced()
@@ -436,8 +559,12 @@ class AudioPlaybackService {
       if (elapsedMs > 1500) {
         console.error(`AUDIO: Playback failed for ${playback.requestId} (player went idle after ${elapsedMs}ms)`)
         playback.completed = true
-        playback.onComplete(playback.requestId, false, "Playback failed (player went idle)", null, "error")
         this.currentPlayback = null
+        if (playback.suppressCloudUplink) {
+          setAudioCloudUplinkSuppressed(playback.uplinkSuppressionId, false)
+        }
+        playback.onComplete(playback.requestId, false, "Playback failed (player went idle)", null, "error")
+        this.markAudioRouteWarm()
         this.notifyAudioStopDebounced()
         void this.restoreGlassesMediaVolume()
       }
@@ -476,6 +603,7 @@ class AudioPlaybackService {
     console.log(`AUDIO: Stream open ${streamId} from ${appId}: rate=${sampleRate} ch=${channels}`)
 
     await this.ensureAudioModeConfigured()
+    await this.prewarmAudioRouteIfCold()
 
     if (stopOtherAudio) {
       if (this.currentPlayback && !this.currentPlayback.completed) {
@@ -486,12 +614,20 @@ class AudioPlaybackService {
     }
 
     await BluetoothSdk.pcmStreamOpen(streamId, sampleRate, channels, Math.max(0, Math.min(1, volume)))
+    this.releaseTailUplinkSuppressions()
 
-    const stream: StreamState = {streamId, appId, startTime: Date.now(), ended: false, onEnded: request.onEnded}
+    const stream: StreamState = {
+      streamId,
+      appId,
+      startTime: Date.now(),
+      ended: false,
+      onEnded: request.onEnded,
+    }
     this.streams.set(streamId, stream)
+    this.markAudioRouteWarm()
 
-    // Same LC3-mic-suspend dance as play(): cancel any pending "stopped"
-    // notification and mark our app as playing audio.
+    // Cancel any pending "stopped" notification and mark our app as playing
+    // audio. PCM streams intentionally do not suppress cloud STT.
     if (this.audioStopDebounceTimer !== null) {
       BgTimer.clearTimeout(this.audioStopDebounceTimer)
       this.audioStopDebounceTimer = null
@@ -564,6 +700,7 @@ class AudioPlaybackService {
     if (stream.ended) return
     stream.ended = true
     this.streams.delete(stream.streamId)
+    this.markAudioRouteWarm()
     // Only signal "audio stopped" when nothing else is making noise.
     if (this.streams.size === 0 && (!this.currentPlayback || this.currentPlayback.completed)) {
       this.notifyAudioStopDebounced()
@@ -667,6 +804,7 @@ class AudioPlaybackService {
         console.error("AUDIO: Error releasing player:", error)
       }
       this.player = null
+      this.loadedPlayback = null
     }
   }
 }

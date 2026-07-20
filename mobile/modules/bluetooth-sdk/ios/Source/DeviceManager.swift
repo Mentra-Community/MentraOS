@@ -799,6 +799,11 @@ struct ViewState {
             return
         }
 
+        if sgc?.isMicSuspendedForAudio == true {
+            Bridge.log("MAN: Glasses mic intentionally suspended for phone audio; skipping mic recovery")
+            return
+        }
+
         let timeSinceLastLc3Event = Date().timeIntervalSince(lastLc3Event ?? Date())
         if timeSinceLastLc3Event > 5 {
             Bridge.log("MAN: No audio activity in the last 5 seconds from glasses, reinitializing glasses mic")
@@ -1359,6 +1364,22 @@ struct ViewState {
         try liveSgc().sendCameraFovSetting(requestId: requestId, fov: fov, roiPosition: roiPosition)
     }
 
+    func sendLegacyCameraFovSetting(fov: Int, roiPosition: Int) throws {
+        let glassesConnected = DeviceStore.shared.get("glasses", "connected") as? Bool ?? false
+        guard glassesConnected else {
+            throw BluetoothSdkError(code: "not_connected", message: "Mentra Live glasses are not connected.")
+        }
+        try liveSgc().sendCameraFovSetting(requestId: nil, fov: fov, roiPosition: roiPosition)
+    }
+
+    func restoreLegacyCameraFovSetting() throws {
+        let glassesConnected = DeviceStore.shared.get("glasses", "connected") as? Bool ?? false
+        guard glassesConnected else {
+            throw BluetoothSdkError(code: "not_connected", message: "Mentra Live glasses are not connected.")
+        }
+        try liveSgc().sendCameraFovSetting()
+    }
+
     func sendCameraFovOverride(
         requestId: String,
         leaseId: String,
@@ -1532,7 +1553,8 @@ struct ViewState {
             zsl: request.zsl,
             ispDigitalGain: request.ispDigitalGain,
             ispAnalogGain: request.ispAnalogGain,
-            mode: request.mode
+            mode: request.mode,
+            transferMethod: request.transferMethod
         )
         Bridge.log(
             "MAN: PHOTO PIPELINE [4/6] DeviceManager.requestPhoto requestId=\(routed.requestId) webhookUrl=\(routed.webhookUrl ?? "nil") size=\(routed.size.rawValue) compress=\(routed.compress?.rawValue ?? "none") save=\(routed.save) sound=\(routed.sound) exposureTimeNs=\(manualExposureNs.map { String($0) } ?? "nil") iso=\(manualIso.map { String($0) } ?? "auto") aeDivisor=\(routed.aeExposureDivisor.map { String($0) } ?? "nil") isoCap=\(routed.isoCap.map { String($0) } ?? "nil") sgc=\(sgc != nil ? String(describing: type(of: sgc!)) : "null")"

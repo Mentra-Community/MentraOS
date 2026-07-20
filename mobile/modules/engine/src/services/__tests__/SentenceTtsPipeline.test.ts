@@ -2,7 +2,7 @@
 
 import {describe, expect, mock, test} from "bun:test"
 
-import {runSentenceTtsPipeline, segmentTextForOfflineTts, type SentenceAudio} from "../SentenceTtsPipeline"
+import {runSentenceTtsPipeline, type SentenceAudio} from "../SentenceTtsPipeline"
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -84,27 +84,5 @@ describe("runSentenceTtsPipeline", () => {
     expect(play).toHaveBeenCalledTimes(1)
     await Promise.resolve()
     expect(cleanupSecond).toHaveBeenCalledTimes(1)
-  })
-})
-
-describe("segmentTextForOfflineTts", () => {
-  test("splits meaningful Latin and CJK sentences while preserving punctuation", () => {
-    expect(segmentTextForOfflineTts("Hello there! How are you? Fine.")).toEqual([
-      "Hello there!",
-      "How are you?",
-      "Fine.",
-    ])
-    expect(segmentTextForOfflineTts("最初です。次です！")).toEqual(["最初です。", "次です！"])
-  })
-
-  test("does not split common abbreviations or decimal values", () => {
-    expect(segmentTextForOfflineTts("Dr. Smith has version 2.0 ready. Ship it.")).toEqual([
-      "Dr. Smith has version 2.0 ready.",
-      "Ship it.",
-    ])
-  })
-
-  test("returns one item when there is no meaningful sentence boundary", () => {
-    expect(segmentTextForOfflineTts("A single unfinished thought")).toEqual(["A single unfinished thought"])
   })
 })

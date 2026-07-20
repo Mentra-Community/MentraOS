@@ -17,11 +17,10 @@
  * honored until its successor is first USED (OS-1703): a client that sent a
  * refresh but never received the response (killed mid-rotation, dropped
  * connection) still holds the predecessor, and re-presenting it rotates again
- * instead of bricking the session — the never-delivered successor is orphaned
- * by that recovery rotation. Anything older than the immediate predecessor,
- * or a predecessor whose successor has already been used, yields
- * `invalid_grant`, surfacing token theft to the legitimate client on its next
- * refresh attempt exactly as before.
+ * instead of bricking the session. The displaced successor is retained as one
+ * bounded alternate so either response from a duplicate refresh remains
+ * usable until the client presents one branch. Anything older than the
+ * immediate predecessor still yields `invalid_grant`.
  *
  * **TTL.** A TTL index on `expiresAt` lets Mongo auto-delete expired
  * sessions; no background cleanup job needed.
@@ -54,6 +53,13 @@ const RefreshTokenSchema = new Schema(
      */
     prevTokenHash: { type: String },
 
+    /**
+     * Hash of a live successor displaced by a predecessor-path recovery
+     * rotation. Both responses from a duplicate refresh remain usable until
+     * the client proves which branch it persisted by presenting one of them.
+     */
+    altTokenHash: { type: String },
+
     /** Whose session this is. Matches `users.mentraUserId`. */
     mentraUserId: { type: String, required: true },
 
@@ -75,6 +81,10 @@ RefreshTokenSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 // Recovery lookup: refresh presented with the immediately-superseded token
 // (OS-1703). Sparse — brand-new sessions have no predecessor.
 RefreshTokenSchema.index({ prevTokenHash: 1 }, { sparse: true });
+
+// Displaced-sibling lookup for duplicate refresh responses. Sparse because a
+// normal session has no alternate branch.
+RefreshTokenSchema.index({ altTokenHash: 1 }, { sparse: true });
 
 // Revocation queries: "kill every session belonging to this user / OEM."
 RefreshTokenSchema.index({ mentraUserId: 1, tenantId: 1 });
