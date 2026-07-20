@@ -3,6 +3,7 @@ package com.mentra.asg_client.service.legacy.managers;
 import android.content.Context;
 import android.util.Log;
 import androidx.annotation.NonNull;
+import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.io.bes.BesOtaManager;
 import com.mentra.asg_client.io.bluetooth.core.BluetoothManagerFactory;
 import com.mentra.asg_client.io.bluetooth.interfaces.ICompanionTransport;
@@ -268,15 +269,17 @@ public class AsgClientServiceManager {
         try {
             asgSettings = new AsgSettings(context);
 
-            Log.d(TAG, "ZSL enabled: " + asgSettings.isZslEnabled());
-            Log.d(TAG, "MFNR enabled: " + asgSettings.isMfnrEnabled());
+            Log.d(
+                    TAG,
+                    "ZSL enabled: "
+                            + asgSettings.isZslEnabled()
+                            + "; MFNR enabled: "
+                            + asgSettings.isMfnrEnabled());
 
             // Seed factory defaults only on first install — never clobber phone button_photo_setting.
-            if (!asgSettings.hasZslPreference()) {
-                asgSettings.setZslEnabled(true);
-            }
-            if (!asgSettings.hasMfnrPreference()) {
-                asgSettings.setMfnrEnabled(true);
+            if (!asgSettings.hasZslPreference() && !asgSettings.hasMfnrPreference()) {
+                asgSettings.setZslEnabled(AsgConstants.ENABLE_ZSL && AsgConstants.DEFAULT_ZSL);
+                asgSettings.setMfnrEnabled(AsgConstants.ENABLE_MFNR && AsgConstants.DEFAULT_MFNR);
             }
             Log.d(TAG, "✅ Settings initialized successfully");
         } catch (Exception e) {

@@ -65,6 +65,23 @@ describe("photoRequestParamsForNative", () => {
     expect(payload.isoCap).toBe(800)
   })
 
+  it("includes zsl and mfnr independently when set", () => {
+    const payload = photoRequestParamsForNative({
+      ...baseParams,
+      mfnr: true,
+      zsl: false,
+    })
+
+    expect(payload.mfnr).toBe(true)
+    expect(payload.zsl).toBe(false)
+  })
+
+  it("omits zsl and mfnr when unset", () => {
+    const payload = photoRequestParamsForNative(baseParams)
+    expect(payload).not.toHaveProperty("zsl")
+    expect(payload).not.toHaveProperty("mfnr")
+  })
+
   it("preserves text capture mode", () => {
     expect(photoRequestParamsForNative({...baseParams, mode: "text"}).mode).toBe("text")
   })
@@ -96,5 +113,22 @@ describe("warmUpCameraParamsForNative", () => {
 
   it("preserves text warm-up mode for ASG sensor-constant resolution", () => {
     expect(warmUpCameraParamsForNative({size: "low", mode: "text"}).mode).toBe("text")
+  })
+
+  it("includes zsl and mfnr independently when set", () => {
+    const payload = warmUpCameraParamsForNative({
+      size: "medium",
+      zsl: false,
+      mfnr: true,
+    })
+
+    expect(payload.zsl).toBe(false)
+    expect(payload.mfnr).toBe(true)
+  })
+
+  it("omits zsl and mfnr when unset", () => {
+    const payload = warmUpCameraParamsForNative({size: "medium"})
+    expect(payload).not.toHaveProperty("zsl")
+    expect(payload).not.toHaveProperty("mfnr")
   })
 })

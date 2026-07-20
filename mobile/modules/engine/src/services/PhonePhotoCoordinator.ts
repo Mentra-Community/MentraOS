@@ -60,8 +60,10 @@ export interface PhotoOpts {
   isoCap?: number
   noiseReduction?: boolean
   edgeEnhancement?: boolean
-  mfnr?: boolean
+  /** ZSL preview buffering. */
   zsl?: boolean
+  /** MFNR still capture. */
+  mfnr?: boolean
   ispDigitalGain?: number
   ispAnalogGain?: string
 }
@@ -251,8 +253,8 @@ export class PhonePhotoCoordinator {
         isoCap: opts.isoCap,
         noiseReduction: opts.noiseReduction,
         edgeEnhancement: opts.edgeEnhancement,
-        mfnr: opts.mfnr,
-        zsl: opts.zsl,
+        ...(opts.zsl != null ? {zsl: opts.zsl} : {}),
+        ...(opts.mfnr != null ? {mfnr: opts.mfnr} : {}),
         ispDigitalGain: opts.ispDigitalGain,
         ispAnalogGain: opts.ispAnalogGain,
       }).catch((err) => {
@@ -322,6 +324,8 @@ export class PhonePhotoCoordinator {
       mode?: "photo" | "text"
       exposureTimeNs?: number
       durationMs?: number
+      zsl?: boolean
+      mfnr?: boolean
     },
   ): Promise<void> {
     // Pre-check: if glasses aren't connected, the BLE warm-up command would be
@@ -347,6 +351,8 @@ export class PhonePhotoCoordinator {
         mode: opts.mode ?? "photo",
         exposureTimeNs: opts.exposureTimeNs ?? null,
         durationMs,
+        ...(opts.zsl != null ? {zsl: opts.zsl} : {}),
+        ...(opts.mfnr != null ? {mfnr: opts.mfnr} : {}),
       })
       if (this.activeWarmUps.get(packageName) === lease) {
         lease.expiryTimer = setTimeout(() => {

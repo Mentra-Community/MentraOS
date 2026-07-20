@@ -167,8 +167,23 @@ public class AsgConstants {
      */
     public static final boolean ENABLE_PHOTO_TIMING_LOGS = true;
 
-    /** After AE meters in text mode, divide exposure time by this factor (shorter shutter). */
-    public static final int TEXT_MODE_AE_EXPOSURE_DIVISOR = 3;
+    /**
+     * ZSL preview/capture buffering kill switch. Disable only as an emergency; normal photo
+     * capture uses ZSL by default.
+     */
+    public static final boolean ENABLE_ZSL = true;
+
+    /**
+     * Vendor MFNR (multi-frame noise reduction) kill switch. Disable only as an emergency; normal
+     * photo capture uses MFNR by default.
+     */
+    public static final boolean ENABLE_MFNR = true;
+
+    /** Default for photo requests when {@code zsl} is omitted. */
+    public static final boolean DEFAULT_ZSL = true;
+
+    /** Default for photo requests when {@code mfnr} is omitted. */
+    public static final boolean DEFAULT_MFNR = true;
 
     /**
      * Requested sensor JPEG width for text-mode capture (and matching warm-up). Mentra Live's
@@ -228,6 +243,11 @@ public class AsgConstants {
      * JPEG quality for all BLE photo payloads when {@link #BLE_PHOTO_CODEC} is {@code JPEG_FAST}.
      */
     public static final int BLE_PHOTO_JPEG_FAST_QUALITY = 80;
+
+    /**
+     * Log UART file-transfer send progress every N packets. {@code 0} = off (start/end/errors only).
+     */
+    public static final int FILE_TRANSFER_PROGRESS_LOG_INTERVAL = 10;
 
     /**
      * Max wait for the deferred background photo write ({@code CapturedPhoto.persistence}) when a
