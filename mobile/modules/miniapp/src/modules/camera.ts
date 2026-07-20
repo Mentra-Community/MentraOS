@@ -91,6 +91,10 @@ export interface WarmUpCameraOptions {
   exposureTimeNs?: number
   /** Ready-state hold in milliseconds. Defaults to 15 seconds and is capped at 60 seconds. */
   durationMs?: number
+  /** ZSL preview buffering for the warm-up session. */
+  zsl?: boolean
+  /** MFNR still capture for the warm-up session. */
+  mfnr?: boolean
 }
 
 export interface StartVideoRecordingOptions {
@@ -202,6 +206,8 @@ export class CameraModule {
       mode: options.mode ?? "photo",
       exposureTimeNs: options.exposureTimeNs,
       durationMs: options.durationMs ?? 15000,
+      zsl: options.zsl,
+      mfnr: options.mfnr,
     })
   }
 
