@@ -144,14 +144,15 @@ public class BesMessageParser {
         // Remove the processed data from the circle buffer
         if (currentPos > 0) {
             mCircleBuffer.removeHead(currentPos);
-            // Keep this log as it's useful for monitoring circle buffer state
-            Log.d(
-                    TAG,
-                    "Removed "
-                            + currentPos
-                            + " bytes from buffer, "
-                            + mCircleBuffer.getDataLen()
-                            + " remaining");
+            if (Log.isLoggable(TAG, Log.VERBOSE)) {
+                Log.v(
+                        TAG,
+                        "Removed "
+                                + currentPos
+                                + " bytes from buffer, "
+                                + mCircleBuffer.getDataLen()
+                                + " remaining");
+            }
         }
 
         return completeMessages.isEmpty() ? null : completeMessages;

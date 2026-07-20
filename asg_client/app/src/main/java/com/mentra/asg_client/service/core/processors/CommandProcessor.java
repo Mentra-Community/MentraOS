@@ -179,7 +179,9 @@ public class CommandProcessor {
     public void processJsonCommand(JSONObject json) {
         // processJsonCommand() started
 
-        Log.d(TAG, "📊 processJsonCommand() started" + json.toString());
+        if (Log.isLoggable(TAG, Log.VERBOSE)) {
+            Log.v(TAG, "📊 processJsonCommand() started" + json.toString());
+        }
         try {
             // Wake-flagged command ("W":1): grant a fresh awake window so its follow-up work
             // survives the 12s screen timeout — the BES power-key pulse for W=1 only fires

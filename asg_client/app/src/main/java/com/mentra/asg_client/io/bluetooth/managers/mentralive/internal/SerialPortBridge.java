@@ -312,7 +312,9 @@ public class SerialPortBridge {
     public boolean send(byte[] data) {
         OutputStream os = mOS;
         if (mbStart && os != null && !mbOtaUpdating) {
-            Log.d(TAG, ">>> sending " + data.length + " bytes");
+            if (Log.isLoggable(TAG, Log.VERBOSE)) {
+                Log.v(TAG, ">>> sending " + data.length + " bytes");
+            }
             return writeAllToSerial(os, data, "data");
         } else {
             if (mbOtaUpdating) {
@@ -414,9 +416,19 @@ public class SerialPortBridge {
         @Override
         public void run() {
             int readSize;
+            // Prefer Os.poll so inbound ACKs are noticed immediately. liblhsserial opens
+            // /dev/ttyS1 O_NONBLOCK, so the old Thread.sleep(5/50) after every read added
+            // up to that much dead time before Mentra could turn an ACK around.
+            SerialReceiveWait receiveWait =
+                    SerialReceiveWait.forInputStream(mIS, () -> mbRequestFast);
+            InputStream waitBoundTo = mIS;
 
             while (!mbStop) {
                 InputStream is = mIS;
+                if (is != waitBoundTo) {
+                    receiveWait = SerialReceiveWait.forInputStream(is, () -> mbRequestFast);
+                    waitBoundTo = is;
+                }
                 if (is != null) {
                     try {
                         readSize = is.read(mReadBuf);
@@ -431,6 +443,8 @@ public class SerialPortBridge {
                                     mListener.onSerialRead(COM_PATH, mReadBuf, readSize);
                                 }
                             }
+                            // Data was available — loop immediately without sleeping.
+                            continue;
                         }
                     } catch (IOException e) {
                         Log.e(TAG, "Error reading from serial port", e);
@@ -438,10 +452,7 @@ public class SerialPortBridge {
                 }
 
                 try {
-                    // Use fast mode (5ms) for file transfers, normal mode (50ms) otherwise
-                    // Note: Original K900_server_sdk used 150ms, but K900Server_common uses
-                    // 50ms/5ms
-                    Thread.sleep(mbRequestFast ? 5 : 50);
+                    receiveWait.await();
                 } catch (InterruptedException e) {
                     Log.e(TAG, "RecvThread interrupted", e);
                     break;
