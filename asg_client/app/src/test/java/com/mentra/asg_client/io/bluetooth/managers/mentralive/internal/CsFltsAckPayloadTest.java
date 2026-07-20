@@ -107,4 +107,24 @@ public class CsFltsAckPayloadTest {
         assertThat(CsFltsAckPayload.parse(payload).kind)
                 .isEqualTo(CsFltsAckPayload.Kind.NOT_CS_FLTS);
     }
+
+    @Test
+    public void parse_csFltsWithInvalidJsonBody_isMalformed() {
+        // Valid outer JSON with C=cs_flts, but B is a non-JSON string that throws on re-parse.
+        // Once C is confirmed, the fast path must consume as MALFORMED (not NOT_CS_FLTS).
+        String json = "{\"C\":\"cs_flts\",\"B\":\"not-valid-json{\"}";
+        byte[] payload = json.getBytes(StandardCharsets.UTF_8);
+
+        assertThat(CsFltsAckPayload.parse(payload).kind)
+                .isEqualTo(CsFltsAckPayload.Kind.MALFORMED);
+    }
+
+    @Test
+    public void parse_invalidOuterJsonWithCsFltsProbe_isNotCsFlts() {
+        // Probe hits the substring but the outer payload is not valid JSON — cannot confirm C.
+        byte[] payload = "{\"C\":\"cs_flts\", broken".getBytes(StandardCharsets.UTF_8);
+
+        assertThat(CsFltsAckPayload.parse(payload).kind)
+                .isEqualTo(CsFltsAckPayload.Kind.NOT_CS_FLTS);
+    }
 }

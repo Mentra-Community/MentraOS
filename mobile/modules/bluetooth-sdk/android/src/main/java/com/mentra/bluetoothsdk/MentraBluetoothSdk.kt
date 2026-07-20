@@ -543,8 +543,13 @@ class MentraBluetoothSdk private constructor(
                 }
                 // Only update size if explicitly provided; omitted size = leave stored value unchanged
                 settings.size?.let { DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_size", it.value) }
-                settings.mfnr?.let { DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_mfnr", it) }
-                settings.zsl?.let { DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_zsl", it) }
+                // Button-photo ZSL/MFNR presets are no-ops (button captures use global defaults).
+                // Clear any stale phone-cache keys so reconnect sync does not re-send them.
+                if (settings.mfnr != null || settings.zsl != null) {
+                    DeviceStore.store.remove(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_mfnr")
+                    DeviceStore.store.remove(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_zsl")
+                    DeviceStore.store.remove(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_zsl_mfnr")
+                }
                 settings.noiseReduction?.let {
                     DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_noise_reduction", it)
                 }

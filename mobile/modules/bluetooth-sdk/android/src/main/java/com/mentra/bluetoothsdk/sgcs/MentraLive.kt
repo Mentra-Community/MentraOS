@@ -8934,25 +8934,18 @@ class MentraLive : SGCManager() {
         }
     }
 
-    /** One-time migration from coupled {@code button_photo_zsl_mfnr} into independent keys. */
-    private fun migrateButtonPhotoZslMfnrIfNeeded() {
+    /** Drop legacy/unused button-photo ZSL/MFNR phone-cache keys (capture ignores them). */
+    private fun clearUnusedButtonPhotoZslMfnrKeys() {
         val category = ObservableStore.BLUETOOTH_CATEGORY
-        val legacy = DeviceStore.get(category, "button_photo_zsl_mfnr") as? Boolean ?: return
-        if (DeviceStore.get(category, "button_photo_mfnr") == null) {
-            DeviceStore.set(category, "button_photo_mfnr", legacy)
-        }
-        if (DeviceStore.get(category, "button_photo_zsl") == null) {
-            DeviceStore.set(category, "button_photo_zsl", legacy)
-        }
         DeviceStore.store.remove(category, "button_photo_zsl_mfnr")
+        DeviceStore.store.remove(category, "button_photo_mfnr")
+        DeviceStore.store.remove(category, "button_photo_zsl")
     }
 
     /** Send button photo settings to glasses, replaying all stored scan-tuning fields. */
     override fun sendButtonPhotoSettings() {
-        migrateButtonPhotoZslMfnrIfNeeded()
+        clearUnusedButtonPhotoZslMfnrKeys()
         val size = DeviceStore.get(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_size") as String?
-        val mfnr = DeviceStore.get(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_mfnr") as Boolean?
-        val zsl = DeviceStore.get(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_zsl") as Boolean?
         val noiseReduction = DeviceStore.get(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_noise_reduction") as Boolean?
         val edgeEnhancement = DeviceStore.get(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_edge_enhancement") as Boolean?
         val ispDigitalGain = DeviceStore.get(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_isp_digital_gain") as Int?
@@ -8961,8 +8954,9 @@ class MentraLive : SGCManager() {
         val isoCap = DeviceStore.get(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_iso_cap") as Int?
         val compress = DeviceStore.get(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_compress") as String?
         val sound = DeviceStore.get(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_sound") as Boolean?
+        // Omit zsl/mfnr — button photos use global defaults; do not re-seed stale presets.
         sendButtonPhotoSettings(
-            null, size, mfnr, zsl, noiseReduction, edgeEnhancement,
+            null, size, /* mfnr= */ null, /* zsl= */ null, noiseReduction, edgeEnhancement,
             ispDigitalGain, ispAnalogGain, aeExposureDivisor, isoCap, compress, sound, false,
         )
     }

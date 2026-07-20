@@ -6082,27 +6082,19 @@ extension MentraLive {
         sendJson(json, wakeUp: true)
     }
 
-    private func migrateButtonPhotoZslMfnrIfNeeded() {
+    /** Drop legacy/unused button-photo ZSL/MFNR phone-cache keys (capture ignores them). */
+    private func clearUnusedButtonPhotoZslMfnrKeys() {
         let category = ObservableStore.bluetoothCategory
-        guard let legacy = DeviceStore.shared.get(category, "button_photo_zsl_mfnr") as? Bool else {
-            return
-        }
-        if DeviceStore.shared.get(category, "button_photo_mfnr") == nil {
-            DeviceStore.shared.set(category, "button_photo_mfnr", legacy)
-        }
-        if DeviceStore.shared.get(category, "button_photo_zsl") == nil {
-            DeviceStore.shared.set(category, "button_photo_zsl", legacy)
-        }
         DeviceStore.shared.remove(category, "button_photo_zsl_mfnr")
+        DeviceStore.shared.remove(category, "button_photo_mfnr")
+        DeviceStore.shared.remove(category, "button_photo_zsl")
     }
 
     func sendButtonPhotoSettings() {
-        migrateButtonPhotoZslMfnrIfNeeded()
+        clearUnusedButtonPhotoZslMfnrKeys()
         let size = (DeviceStore.shared.get("bluetooth", "button_photo_size") as? String).flatMap { rawSize in
             rawSize.isEmpty ? nil : PhotoSize(normalizedRawValue: rawSize)
         }
-        let mfnr = DeviceStore.shared.get("bluetooth", "button_photo_mfnr") as? Bool
-        let zsl = DeviceStore.shared.get("bluetooth", "button_photo_zsl") as? Bool
         let noiseReduction = DeviceStore.shared.get("bluetooth", "button_photo_noise_reduction") as? Bool
         let edgeEnhancement = DeviceStore.shared.get("bluetooth", "button_photo_edge_enhancement") as? Bool
         let ispDigitalGain = DeviceStore.shared.get("bluetooth", "button_photo_isp_digital_gain") as? Int
@@ -6112,10 +6104,11 @@ extension MentraLive {
         let compressStr = DeviceStore.shared.get("bluetooth", "button_photo_compress") as? String
         let sound = DeviceStore.shared.get("bluetooth", "button_photo_sound") as? Bool
 
+        // Omit zsl/mfnr — button photos use global defaults; do not re-seed stale presets.
         let settings = PhotoCaptureDefaults(
             size: size,
-            mfnr: mfnr,
-            zsl: zsl,
+            mfnr: nil,
+            zsl: nil,
             noiseReduction: noiseReduction,
             edgeEnhancement: edgeEnhancement,
             ispDigitalGain: ispDigitalGain,

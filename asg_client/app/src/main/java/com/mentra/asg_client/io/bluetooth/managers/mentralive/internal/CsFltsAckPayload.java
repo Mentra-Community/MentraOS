@@ -57,11 +57,20 @@ public final class CsFltsAckPayload {
         if (!probe.contains("cs_flts")) {
             return notCsFlts();
         }
+        JSONObject json;
         try {
-            JSONObject json = new JSONObject(new String(payload, StandardCharsets.UTF_8));
-            if (!"cs_flts".equals(json.optString("C", ""))) {
-                return notCsFlts();
-            }
+            json = new JSONObject(new String(payload, StandardCharsets.UTF_8));
+        } catch (Exception e) {
+            // Can't confirm this is even a cs_flts message — fall back to normal routing.
+            return notCsFlts();
+        }
+        if (!"cs_flts".equals(json.optString("C", ""))) {
+            return notCsFlts();
+        }
+        // "C":"cs_flts" is confirmed — any failure past this point is a malformed cs_flts ACK.
+        // Consume it (return MALFORMED) rather than NOT_CS_FLTS, which would skip the fast path
+        // and re-route the payload through CommandProcessor/BleTrace.
+        try {
             JSONObject body = json.optJSONObject("B");
             if (body == null) {
                 String bodyString = json.optString("B", "");
@@ -77,7 +86,7 @@ public final class CsFltsAckPayload {
             }
             return malformed();
         } catch (Exception e) {
-            return notCsFlts();
+            return malformed();
         }
     }
 }

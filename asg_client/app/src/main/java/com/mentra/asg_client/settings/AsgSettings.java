@@ -64,8 +64,8 @@ public class AsgSettings {
     }
 
     /**
-     * One-time migration from the coupled {@code zsl_mfnr_enabled} / button key into independent
-     * ZSL and MFNR preferences. Existing independent keys are never overwritten.
+     * One-time migration from the coupled {@code zsl_mfnr_enabled} key into independent ZSL/MFNR
+     * globals, and drops unused button-photo ZSL/MFNR presets (capture always uses globals).
      */
     private void migrateLegacyZslMfnrPreferences() {
         SharedPreferences.Editor editor = prefs.edit();
@@ -83,22 +83,22 @@ public class AsgSettings {
             editor.remove(KEY_ZSL_MFNR_ENABLED);
             changed = true;
         }
+        // Button-photo ZSL/MFNR presets are unused for capture — drop coupled + independent keys.
         if (prefs.contains(KEY_BUTTON_PHOTO_ZSL_MFNR)) {
-            boolean coupled = prefs.getBoolean(KEY_BUTTON_PHOTO_ZSL_MFNR, false);
-            if (!prefs.contains(KEY_BUTTON_PHOTO_ZSL)) {
-                editor.putBoolean(KEY_BUTTON_PHOTO_ZSL, coupled);
-                changed = true;
-            }
-            if (!prefs.contains(KEY_BUTTON_PHOTO_MFNR)) {
-                editor.putBoolean(KEY_BUTTON_PHOTO_MFNR, coupled);
-                changed = true;
-            }
             editor.remove(KEY_BUTTON_PHOTO_ZSL_MFNR);
+            changed = true;
+        }
+        if (prefs.contains(KEY_BUTTON_PHOTO_ZSL)) {
+            editor.remove(KEY_BUTTON_PHOTO_ZSL);
+            changed = true;
+        }
+        if (prefs.contains(KEY_BUTTON_PHOTO_MFNR)) {
+            editor.remove(KEY_BUTTON_PHOTO_MFNR);
             changed = true;
         }
         if (changed) {
             editor.commit();
-            Log.i(TAG, "Migrated coupled ZSL/MFNR preferences to independent settings");
+            Log.i(TAG, "Migrated coupled ZSL/MFNR preferences; cleared unused button ZSL/MFNR presets");
         }
     }
     
@@ -310,7 +310,14 @@ public class AsgSettings {
         return prefs.contains(KEY_MFNR_ENABLED);
     }
 
-    /** Stored phone preset for MFNR; {@code null} if unset. */
+    /**
+     * Legacy button-photo MFNR preset; {@code null} if unset.
+     *
+     * <p>Unused for capture: {@link
+     * com.mentra.asg_client.camera.model.PhotoCaptureSettings#mergeWithStoredDefaults} ignores this
+     * and uses {@link #isMfnrEnabled()}. Kept only so {@link #clearButtonPhotoCaptureTuning()} /
+     * settings handlers can clear stale prefs.
+     */
     public Boolean getButtonPhotoMfnr() {
         if (!prefs.contains(KEY_BUTTON_PHOTO_MFNR)) {
             return null;
@@ -318,16 +325,24 @@ public class AsgSettings {
         return prefs.getBoolean(KEY_BUTTON_PHOTO_MFNR, true);
     }
 
+    /** Persist or clear the legacy button-photo MFNR key (capture ignores it). */
     public void setButtonPhotoMfnr(Boolean enabled) {
         if (enabled == null) {
             prefs.edit().remove(KEY_BUTTON_PHOTO_MFNR).commit();
             return;
         }
-        Log.d(TAG, "Setting button photo MFNR to: " + enabled);
+        Log.d(TAG, "Setting button photo MFNR to: " + enabled + " (unused for capture)");
         prefs.edit().putBoolean(KEY_BUTTON_PHOTO_MFNR, enabled).commit();
     }
 
-    /** Stored phone preset for ZSL; {@code null} if unset. */
+    /**
+     * Legacy button-photo ZSL preset; {@code null} if unset.
+     *
+     * <p>Unused for capture: {@link
+     * com.mentra.asg_client.camera.model.PhotoCaptureSettings#mergeWithStoredDefaults} ignores this
+     * and uses {@link #isZslEnabled()}. Kept only so {@link #clearButtonPhotoCaptureTuning()} /
+     * settings handlers can clear stale prefs.
+     */
     public Boolean getButtonPhotoZsl() {
         if (!prefs.contains(KEY_BUTTON_PHOTO_ZSL)) {
             return null;
@@ -335,12 +350,13 @@ public class AsgSettings {
         return prefs.getBoolean(KEY_BUTTON_PHOTO_ZSL, true);
     }
 
+    /** Persist or clear the legacy button-photo ZSL key (capture ignores it). */
     public void setButtonPhotoZsl(Boolean enabled) {
         if (enabled == null) {
             prefs.edit().remove(KEY_BUTTON_PHOTO_ZSL).commit();
             return;
         }
-        Log.d(TAG, "Setting button photo ZSL to: " + enabled);
+        Log.d(TAG, "Setting button photo ZSL to: " + enabled + " (unused for capture)");
         prefs.edit().putBoolean(KEY_BUTTON_PHOTO_ZSL, enabled).commit();
     }
 

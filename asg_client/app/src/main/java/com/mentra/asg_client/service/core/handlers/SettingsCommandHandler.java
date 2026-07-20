@@ -291,14 +291,17 @@ public class SettingsCommandHandler implements ICommandHandler {
                 if (hasSize) {
                     asgSettings.setButtonPhotoSize(size);
                 }
-                if (hasZsl) {
-                    // Store as button-photo preset only; do NOT write the global
-                    // zsl_enabled device pref so unrelated SDK take_photo requests keep
-                    // their own default (mergeForSdkRequest falls back to that global).
-                    asgSettings.setButtonPhotoZsl(zsl);
-                }
-                if (hasMfnr) {
-                    asgSettings.setButtonPhotoMfnr(mfnr);
+                if (hasZsl || hasMfnr) {
+                    // Button-photo ZSL/MFNR presets are intentionally unused: physical
+                    // camera-button captures inherit the global ZSL/MFNR device defaults
+                    // (see PhotoCaptureSettings.mergeWithStoredDefaults). Clear any stale
+                    // button keys so settings UI / logs don't imply they still apply.
+                    asgSettings.setButtonPhotoZsl(null);
+                    asgSettings.setButtonPhotoMfnr(null);
+                    Log.i(
+                            TAG,
+                            "Ignoring button_photo_setting zsl/mfnr — button photos use global"
+                                    + " ZSL/MFNR defaults; cleared stale button presets");
                 }
                 if (hasNoiseReduction) {
                     asgSettings.setButtonPhotoNoiseReduction(noiseReduction);

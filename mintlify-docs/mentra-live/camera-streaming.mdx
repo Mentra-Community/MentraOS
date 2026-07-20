@@ -377,8 +377,8 @@ console.log('saved as', savedPhoto?.name, 'at', savedPhoto?.url);
 | Default field | Behavior |
 | --- | --- |
 | `size` | Action-button photo size tier: `low`, `medium`, `high`, or `max`. |
-| `zsl` | Ignored for physical camera-button photos, which use the global ZSL default. Per-request `zsl: false` still opts out for SDK captures. |
-| `mfnr` | Ignored for physical camera-button photos, which use the global MFNR default. Per-request `mfnr: false` still opts out for SDK captures. |
+| `zsl` | No-op for action-button presets. Physical camera-button photos always use the global ZSL default; these fields are not persisted. Use per-request `requestPhoto({ zsl })` instead. |
+| `mfnr` | No-op for action-button presets. Physical camera-button photos always use the global MFNR default; these fields are not persisted. Use per-request `requestPhoto({ mfnr })` instead. |
 | `noiseReduction` | Noise-reduction preference for action-button photos. |
 | `edgeEnhancement` | Edge-enhancement preference for action-button photos. |
 | `ispDigitalGain` | ISP digital gain hint for action-button photos. |
