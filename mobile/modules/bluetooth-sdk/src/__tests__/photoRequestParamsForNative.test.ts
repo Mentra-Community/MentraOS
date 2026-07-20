@@ -109,4 +109,21 @@ describe("warmUpCameraParamsForNative", () => {
   it("preserves text warm-up mode for ASG sensor-constant resolution", () => {
     expect(warmUpCameraParamsForNative({size: "low", mode: "text"}).mode).toBe("text")
   })
+
+  it("includes zsl and mfnr independently when set", () => {
+    const payload = warmUpCameraParamsForNative({
+      size: "medium",
+      zsl: false,
+      mfnr: true,
+    })
+
+    expect(payload.zsl).toBe(false)
+    expect(payload.mfnr).toBe(true)
+  })
+
+  it("omits zsl and mfnr when unset", () => {
+    const payload = warmUpCameraParamsForNative({size: "medium"})
+    expect(payload).not.toHaveProperty("zsl")
+    expect(payload).not.toHaveProperty("mfnr")
+  })
 })
