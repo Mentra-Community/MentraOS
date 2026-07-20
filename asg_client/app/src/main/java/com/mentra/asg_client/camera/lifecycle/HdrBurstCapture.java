@@ -60,12 +60,15 @@ public final class HdrBurstCapture {
                       int jpegQuality,
                       int jpegOrientation,
                       CameraSettings cameraSettings,
+                      boolean zsl,
+                      boolean mfnr,
                       Callback callback) throws CameraAccessException {
         active = true;
         framesReceived = 0;
 
         Log.i(TAG, "HDR: Starting burst capture with brackets "
-                + Arrays.toString(HdrBurstBuilder.HDR_EV_BRACKETS));
+                + Arrays.toString(HdrBurstBuilder.HDR_EV_BRACKETS)
+                + " zsl=" + zsl + " mfnr=" + mfnr);
 
         List<CaptureRequest> burstRequests = new ArrayList<>();
         for (int ev : HdrBurstBuilder.HDR_EV_BRACKETS) {
@@ -77,10 +80,9 @@ public final class HdrBurstCapture {
                     selectedFpsRange, hasAutoFocus, jpegQuality, jpegOrientation);
 
             if (cameraSettings != null) {
-                cameraSettings.configureCaptureBuilder(
-                        builder,
-                        cameraSettings.mAsgSettings.isZslEnabled(),
-                        cameraSettings.mAsgSettings.isMfnrEnabled());
+                // Use the active capture's resolved ZSL/MFNR (manual/scan force both off),
+                // not the global defaults — matching the single still path.
+                cameraSettings.configureCaptureBuilder(builder, zsl, mfnr);
             }
 
             burstRequests.add(builder.build());
