@@ -5539,6 +5539,8 @@ class MentraLive : SGCManager() {
         mode: PhotoMode = PhotoMode.PHOTO,
         exposureTimeNs: Long?,
         durationMs: Int,
+        zsl: Boolean? = null,
+        mfnr: Boolean? = null,
     ) {
         Bridge.log(
                 "LIVE: warmUpCamera() entry — requestId=" +
@@ -5560,6 +5562,12 @@ class MentraLive : SGCManager() {
             json.put("mode", mode.value)
             if (exposureTimeNs != null && exposureTimeNs > 0L) {
                 json.put("exposureTimeNs", exposureTimeNs)
+            }
+            if (mfnr != null) {
+                json.put("mfnr", mfnr)
+            }
+            if (zsl != null) {
+                json.put("zsl", zsl)
             }
             json.put("durationMs", if (durationMs > 0) durationMs else 15000)
             sendJson(json, true)
