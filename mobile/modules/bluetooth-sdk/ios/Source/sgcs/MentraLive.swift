@@ -1767,7 +1767,9 @@ class MentraLive: NSObject, SGCManager {
         size: PhotoSize,
         mode: PhotoMode = .photo,
         exposureTimeNs: Double?,
-        durationMs: Int
+        durationMs: Int,
+        zsl: Bool? = nil,
+        mfnr: Bool? = nil
     ) {
         Bridge.log(
             "LIVE: warmUpCamera() entry requestId=\(requestId) size=\(size.rawValue) mode=\(mode.rawValue) durationMs=\(durationMs)"
@@ -1785,6 +1787,12 @@ class MentraLive: NSObject, SGCManager {
 
         if let e = exposureTimeNs, e.isFinite, e > 0, e <= Double(Int64.max) {
             json["exposureTimeNs"] = Int64(e)
+        }
+        if let mfnr {
+            json["mfnr"] = mfnr
+        }
+        if let zsl {
+            json["zsl"] = zsl
         }
 
         sendJson(json, wakeUp: true)
