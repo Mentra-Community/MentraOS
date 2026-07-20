@@ -23,7 +23,7 @@ function mintLeaseId(): string {
 
 function isLegacyFovCompatibilityError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error)
-  return /timed out waiting for glasses response|has been rejected|not available|unknown method/i.test(message)
+  return /timed out waiting for glasses response|not available|unknown method/i.test(message)
 }
 
 /**
@@ -38,6 +38,8 @@ export class PhoneCameraFovCoordinator {
   private queue: Promise<unknown> = Promise.resolve()
   private refreshTimer: ReturnType<typeof setTimeout> | undefined
   private legacyMode = false
+
+  constructor(private readonly legacyRestartSettleMs = LEGACY_CAMERA_RESTART_SETTLE_MS) {}
 
   setOverride(packageName: string, request: CameraFovRequest): Promise<CameraFovResult> {
     return this.enqueue(async () => {
@@ -63,8 +65,12 @@ export class PhoneCameraFovCoordinator {
       } catch (error) {
         if (!isLegacyFovCompatibilityError(error)) throw error
         console.warn("[PhoneCameraFovCoordinator] override unavailable; using legacy FOV command", error)
+        const result = await this.setLegacyOverride(packageName, request, leaseId, order)
+        // Only cache compatibility mode after the fallback itself succeeds. A
+        // disconnect or missing native bridge must not permanently downgrade
+        // future requests on a healthy/newer glasses connection.
         this.legacyMode = true
-        return this.setLegacyOverride(packageName, request, leaseId, order)
+        return result
       }
     })
   }
@@ -83,14 +89,20 @@ export class PhoneCameraFovCoordinator {
         .map(([, entry]) => entry)
         .sort((a, b) => b.order - a.order)[0]
       if (this.legacyMode) {
-        this.overrides.delete(packageName)
         if (next) {
-          await this.setLegacyOverride("__restore__", {fov: next.fov, roiPosition: next.roiPosition}, next.leaseId, next.order)
-          this.overrides.delete("__restore__")
+          await this.applyLegacyFov({fov: next.fov, roiPosition: next.roiPosition})
+          this.overrides.delete(packageName)
           this.effectiveLeaseId = next.leaseId
         } else {
+          // Legacy commands are one-way and have no lease-release protocol.
+          // Ask native to replay its unchanged persistent base setting, then
+          // probe the modern override path again for the next ownership cycle.
+          await BluetoothSdk.restoreLegacyCameraFov()
+          await this.waitForLegacyCameraRestart()
+          this.overrides.delete(packageName)
           this.clearRefresh()
           this.effectiveLeaseId = undefined
+          this.legacyMode = false
         }
         return
       }
@@ -147,8 +159,7 @@ export class PhoneCameraFovCoordinator {
     leaseId: string,
     order: number,
   ): Promise<CameraFovResult> {
-    const result = await BluetoothSdk.setLegacyCameraFov(request)
-    await new Promise<void>((resolve) => setTimeout(resolve, LEGACY_CAMERA_RESTART_SETTLE_MS))
+    const result = await this.applyLegacyFov(request)
     this.overrides.set(packageName, {
       leaseId,
       fov: result.fov,
@@ -158,6 +169,17 @@ export class PhoneCameraFovCoordinator {
     this.effectiveLeaseId = leaseId
     this.clearRefresh()
     return result
+  }
+
+  private async applyLegacyFov(request: CameraFovRequest): Promise<CameraFovResult> {
+    const result = await BluetoothSdk.setLegacyCameraFov(request)
+    await this.waitForLegacyCameraRestart()
+    return result
+  }
+
+  private waitForLegacyCameraRestart(): Promise<void> {
+    if (this.legacyRestartSettleMs <= 0) return Promise.resolve()
+    return new Promise<void>((resolve) => setTimeout(resolve, this.legacyRestartSettleMs))
   }
 
   private enqueue<T>(operation: () => Promise<T>): Promise<T> {

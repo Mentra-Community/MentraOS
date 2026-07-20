@@ -596,6 +596,10 @@ class BluetoothSdkModule : Module() {
             requireSdk().setLegacyCameraFov(CameraFov(value, roiPosition)).values
         }
 
+        SdkCoroutineFunction("restoreLegacyCameraFov") { ->
+            requireSdk().restoreLegacyCameraFov()
+        }
+
         SdkCoroutineFunction("setCameraFovOverride") { params: Map<String, Any> ->
             val leaseId = params["leaseId"] as? String ?: throw IllegalArgumentException("leaseId is required")
             val value = (params["fov"] as? Number)?.toInt() ?: CameraFov.DEFAULT_FOV

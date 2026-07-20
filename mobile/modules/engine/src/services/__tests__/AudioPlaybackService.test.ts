@@ -2,30 +2,17 @@
 
 import {afterEach, beforeEach, describe, expect, mock, test} from "bun:test"
 
-const pcmStreamOpen = mock(async () => {})
-const pcmStreamWrite = mock(async () => ({bufferedMs: 120}))
-const pcmStreamClose = mock(async () => ({durationMs: 1_500}))
-const pcmStreamAbort = mock(async () => {})
-const setOwnAppAudioPlaying = mock(async () => {})
+import {
+  emitLc3Frame,
+  pcmStreamAbort,
+  pcmStreamClose,
+  pcmStreamOpen,
+  pcmStreamWrite,
+  resetAudioTestMocks,
+  sendAudioFrame,
+} from "./audioTestMocks"
+
 const setAudioModeAsync = mock(async () => {})
-const setAudioCloudUplinkSuppressed = mock(() => {})
-
-mock.module("../AudioCloudUplink", () => ({
-  setAudioCloudUplinkSuppressed,
-}))
-
-mock.module("@mentra/bluetooth-sdk/internal", () => ({
-  __esModule: true,
-  default: {
-    getGlassesMediaVolume: mock(async () => ({level: 10, statusCode: 0})),
-    pcmStreamAbort,
-    pcmStreamClose,
-    pcmStreamOpen,
-    pcmStreamWrite,
-    setGlassesMediaVolume: mock(async () => ({level: 10, statusCode: 0})),
-    setOwnAppAudioPlaying,
-  },
-}))
 
 const audioPlayer = {
   addListener: mock(() => ({remove: () => {}})),
@@ -55,17 +42,15 @@ mock.module("../../utils/timers", () => ({
   },
 }))
 
+const {startAudioCloudUplink, stopAudioCloudUplink} = require("../AudioCloudUplink")
 const audioPlaybackService = require("../AudioPlaybackService").default
 
 describe("AudioPlaybackService live PCM streams", () => {
   beforeEach(async () => {
     await audioPlaybackService.stopAll()
-    pcmStreamAbort.mockClear()
-    pcmStreamClose.mockClear()
-    pcmStreamOpen.mockClear()
-    pcmStreamWrite.mockClear()
-    setOwnAppAudioPlaying.mockClear()
-    setAudioCloudUplinkSuppressed.mockClear()
+    stopAudioCloudUplink()
+    resetAudioTestMocks()
+    startAudioCloudUplink()
     setAudioModeAsync.mockClear()
     setAudioModeAsync.mockImplementation(async () => {})
     audioPlayer.pause.mockClear()
@@ -75,6 +60,7 @@ describe("AudioPlaybackService live PCM streams", () => {
 
   afterEach(async () => {
     await audioPlaybackService.stopAll()
+    stopAudioCloudUplink()
   })
 
   test("prewarms a cold Android route by aborting silence before URL playback", async () => {
@@ -100,7 +86,8 @@ describe("AudioPlaybackService live PCM streams", () => {
     })
 
     expect(pcmStreamOpen).toHaveBeenCalledWith("stream-1", 24_000, 1, 0.75)
-    expect(setAudioCloudUplinkSuppressed).not.toHaveBeenCalled()
+    emitLc3Frame([1])
+    expect(sendAudioFrame).toHaveBeenCalledTimes(1)
     expect(audioPlaybackService.isPlaying()).toBe(true)
     expect(audioPlaybackService.getActiveAppIds()).toEqual(["com.example.call"])
     expect(audioPlaybackService.getActiveCount()).toBe(1)
@@ -111,7 +98,8 @@ describe("AudioPlaybackService live PCM streams", () => {
     expect(pcmStreamWrite).toHaveBeenCalledWith("stream-1", "AAAA")
     expect(pcmStreamClose).toHaveBeenCalledWith("stream-1")
     expect(onEnded).toHaveBeenCalledWith("stream-1", true, null, 1_500)
-    expect(setAudioCloudUplinkSuppressed).not.toHaveBeenCalled()
+    emitLc3Frame([2])
+    expect(sendAudioFrame).toHaveBeenCalledTimes(2)
     expect(audioPlaybackService.isPlaying()).toBe(false)
   })
 
@@ -203,10 +191,10 @@ describe("AudioPlaybackService live PCM streams", () => {
       {requestId: "sound-effect", audioUrl: "file://click.wav", appId: "app-one"},
       () => {},
     )
-    expect(setAudioCloudUplinkSuppressed).not.toHaveBeenCalled()
+    emitLc3Frame([1])
+    expect(sendAudioFrame).toHaveBeenCalledTimes(1)
 
     audioPlaybackService.cancelPlayback("sound-effect")
-    setAudioCloudUplinkSuppressed.mockClear()
 
     await audioPlaybackService.play(
       {
@@ -217,10 +205,12 @@ describe("AudioPlaybackService live PCM streams", () => {
       },
       () => {},
     )
-    expect(setAudioCloudUplinkSuppressed).toHaveBeenCalledWith("url:spoken-tts", true)
+    emitLc3Frame([2])
+    expect(sendAudioFrame).toHaveBeenCalledTimes(1)
 
     audioPlaybackService.cancelPlayback("spoken-tts")
-    expect(setAudioCloudUplinkSuppressed).toHaveBeenCalledWith("url:spoken-tts", false)
+    emitLc3Frame([3])
+    expect(sendAudioFrame).toHaveBeenCalledTimes(2)
   })
 
   test("cancels active URL playback immediately by request id", async () => {

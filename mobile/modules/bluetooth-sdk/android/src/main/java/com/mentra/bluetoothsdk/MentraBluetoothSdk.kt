@@ -621,12 +621,12 @@ class MentraBluetoothSdk private constructor(
      */
     fun setLegacyCameraFov(fov: CameraFov): CameraFovResult {
         deviceManager.sendLegacyCameraFovSetting(fov.fov, fov.roiPosition.value)
-        DeviceStore.set(
-            ObservableStore.BLUETOOTH_CATEGORY,
-            "camera_fov",
-            mapOf("fov" to fov.fov, "roi_position" to fov.roiPosition.value),
-        )
         return CameraFovResult("legacy", fov.fov, fov.roiPosition, System.currentTimeMillis())
+    }
+
+    /** Restores the persistent base FOV through the acknowledgement-free compatibility path. */
+    fun restoreLegacyCameraFov() {
+        deviceManager.restoreLegacyCameraFovSetting()
     }
 
     suspend fun setCameraFovOverride(leaseId: String, fov: CameraFov, ttlMs: Int): CameraFovResult {

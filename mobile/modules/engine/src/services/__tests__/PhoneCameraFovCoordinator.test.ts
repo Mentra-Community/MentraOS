@@ -1,31 +1,19 @@
 /// <reference types="bun-types" />
 
-import {beforeEach, describe, expect, mock, test} from "bun:test"
+import {beforeEach, describe, expect, test} from "bun:test"
 
-const setCameraFovOverride = mock(async (request: Record<string, unknown>) => ({
-  requestId: "ack-1",
-  fov: "preset" in request ? (request.preset === "wide" ? 118 : 102) : request.fov,
-  roiPosition: "preset" in request ? "center" : request.roiPosition ?? "center",
-  timestamp: 1,
-}))
-const releaseCameraFovOverride = mock(async (_leaseId: string) => ({ready: true}))
-const setLegacyCameraFov = mock(async (request: Record<string, unknown>) => ({
-  requestId: "legacy",
-  fov: request.fov,
-  roiPosition: request.roiPosition ?? "center",
-  timestamp: 1,
-}))
-
-mock.module("@mentra/bluetooth-sdk/internal", () => ({
-  default: {setCameraFovOverride, setLegacyCameraFov, releaseCameraFovOverride},
-}))
+import {
+  releaseCameraFovOverride,
+  resetAudioTestMocks,
+  restoreLegacyCameraFov,
+  setCameraFovOverride,
+  setLegacyCameraFov,
+} from "./audioTestMocks"
 
 const {PhoneCameraFovCoordinator} = await import("../PhoneCameraFovCoordinator")
 
 beforeEach(() => {
-  setCameraFovOverride.mockClear()
-  setLegacyCameraFov.mockClear()
-  releaseCameraFovOverride.mockClear()
+  resetAudioTestMocks()
 })
 
 describe("PhoneCameraFovCoordinator", () => {
@@ -120,7 +108,7 @@ describe("PhoneCameraFovCoordinator", () => {
 
   test("falls back to the acknowledgement-free staging command when override support is unavailable", async () => {
     setCameraFovOverride.mockRejectedValueOnce(new Error("timed out waiting for glasses response"))
-    const coordinator = new PhoneCameraFovCoordinator()
+    const coordinator = new PhoneCameraFovCoordinator(0)
 
     await expect(coordinator.setOverride("com.a", {fov: 62, roiPosition: "center"})).resolves.toMatchObject({
       fov: 62,
@@ -131,5 +119,36 @@ describe("PhoneCameraFovCoordinator", () => {
     await coordinator.setOverride("com.a", {fov: 82})
     expect(setCameraFovOverride).toHaveBeenCalledTimes(1)
     expect(setLegacyCameraFov).toHaveBeenCalledTimes(2)
+
+    await coordinator.releaseForApp("com.a")
+    expect(restoreLegacyCameraFov).toHaveBeenCalledTimes(1)
+
+    // A completed ownership cycle probes the modern lease path again, allowing
+    // recovery after a transient timeout or a glasses reconnect/upgrade.
+    await coordinator.setOverride("com.a", {fov: 102})
+    expect(setCameraFovOverride).toHaveBeenCalledTimes(2)
+    await coordinator.releaseForApp("com.a")
+  })
+
+  test("does not latch legacy mode when the fallback itself fails", async () => {
+    setCameraFovOverride.mockRejectedValueOnce(new Error("timed out waiting for glasses response"))
+    setLegacyCameraFov.mockRejectedValueOnce(new Error("not_connected"))
+    const coordinator = new PhoneCameraFovCoordinator(0)
+
+    await expect(coordinator.setOverride("com.a", {fov: 62})).rejects.toThrow("not_connected")
+    await coordinator.setOverride("com.a", {fov: 82})
+
+    expect(setCameraFovOverride).toHaveBeenCalledTimes(2)
+    expect(setLegacyCameraFov).toHaveBeenCalledTimes(1)
+    await coordinator.releaseForApp("com.a")
+  })
+
+  test("does not treat a generic native rejection as legacy compatibility", async () => {
+    setCameraFovOverride.mockRejectedValueOnce(new Error("native request has been rejected: camera busy"))
+    const coordinator = new PhoneCameraFovCoordinator(0)
+
+    await expect(coordinator.setOverride("com.a", {fov: 62})).rejects.toThrow("camera busy")
+
+    expect(setLegacyCameraFov).not.toHaveBeenCalled()
   })
 })

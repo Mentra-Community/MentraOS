@@ -1656,8 +1656,18 @@ class DeviceManager {
 
     /** Sends the pre-lease FOV command used by ASG clients that do not send an acknowledgement. */
     fun sendLegacyCameraFovSetting(fov: Int, roiPosition: Int) {
+        val glassesConnected = DeviceStore.get("glasses", "connected") as? Boolean ?: false
+        if (!glassesConnected) throw IllegalStateException("not_connected")
         val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
         live.sendCameraFovSetting(null, fov, roiPosition)
+    }
+
+    /** Replays the persistent base FOV without waiting for an acknowledgement. */
+    fun restoreLegacyCameraFovSetting() {
+        val glassesConnected = DeviceStore.get("glasses", "connected") as? Boolean ?: false
+        if (!glassesConnected) throw IllegalStateException("not_connected")
+        val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
+        live.sendCameraFovSetting()
     }
 
     fun sendCameraFovOverride(
