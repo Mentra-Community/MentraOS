@@ -603,6 +603,10 @@ export type WarmUpCameraParams = {
   exposureTimeNs?: number | null
   /** Ready-state hold; defaults to 15 seconds and is capped at 60 seconds by ASG. */
   durationMs?: number
+  /** ZSL preview buffering for the warm-up session. */
+  zsl?: boolean
+  /** MFNR still capture for the warm-up session. */
+  mfnr?: boolean
 }
 
 export type StreamVideoConfig = {
