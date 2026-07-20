@@ -1,0 +1,107 @@
+# BetterStack Logs Helm chart values for the cloud-v2 cluster (Porter 5692).
+#
+# Deploys Vector as a DaemonSet that tails container stdout, filters to
+# cloud-v2 app containers, flattens the pino JSON to top-level fields, and
+# ships to the MentraCloud V2 BetterStack source over HTTPS.
+#
+# Never ship logs in-process from the app (a pino HTTP transport buffers in
+# a worker thread and grows heap without bound under load). Pods write JSON
+# to stdout; Vector owns all network shipping.
+#
+# COST GUARD: the filter below is the only thing bounding ingest volume.
+# It matches ONLY the cloud-dev Porter app's containers. Adding an app or
+# env to shipping is a deliberate edit here (new starts_with clause routed
+# to that env's own source), never a wildcard.
+#
+# Install (requires an authenticated porter CLI):
+#   SOURCE_TOKEN=$(doppler secrets get BETTERSTACK_SOURCE_TOKEN --project cloud-v2 --config dev --plain)
+#   porter helm --cluster 5692 -- install betterstack-logs \
+#     betterstack-logs/betterstack-logs \
+#     --namespace betterstack \
+#     --create-namespace \
+#     --values cloud-v2/infra/betterstack-logs/values.yaml \
+#     --set "vector.customConfig.sinks.better_stack_http_sink.auth.token=$SOURCE_TOKEN" \
+#     --set "vector.customConfig.sinks.better_stack_http_sink.uri=https://s2616420.ap-sng-8.betterstackdata.com/" \
+#     --set "vector.customConfig.sinks.better_stack_http_metrics_sink.auth.token=$SOURCE_TOKEN" \
+#     --set "vector.customConfig.sinks.better_stack_http_metrics_sink.uri=https://s2616420.ap-sng-8.betterstackdata.com/metrics"
+#
+# Source: "MentraCloud V2 - Dev" (id 2616420, table mentracloud_v2_dev,
+# 30-day retention). Token lives in Doppler cloud-v2/dev as
+# BETTERSTACK_SOURCE_TOKEN.
+
+vector:
+  customConfig:
+    transforms:
+      # Filter to cloud-v2 app containers only. Drops kube-system,
+      # ingress, porter-agent, and every other tenant on the node.
+      cloudv2_only_filter:
+        type: "filter"
+        inputs: ["better_stack_kubernetes_parser"]
+        condition: >
+          starts_with(to_string!(.kubernetes.container_name), "cloud-dev-")
+
+      # Flatten the pino JSON so app fields (package, module, level, msg)
+      # are top-level and filterable in Live Tail.
+      flatten_pino:
+        type: "remap"
+        inputs: ["cloudv2_only_filter"]
+        source: |
+          kube_pod = to_string(.kubernetes.pod_name) ?? "unknown"
+          kube_container = to_string(.kubernetes.container_name) ?? "unknown"
+
+          pino_data = .message
+          if is_string(pino_data) {
+            parsed, err = parse_json(string!(pino_data))
+            if err == null {
+              pino_data = parsed
+            }
+          }
+          if is_object(pino_data) {
+            . = object!(pino_data)
+          }
+
+          # msg -> message, time -> dt, numeric level -> string, matching
+          # what BetterStack's UI and saved queries expect.
+          if exists(.msg) {
+            .message = del(.msg)
+          }
+          if exists(.time) {
+            .dt = del(.time)
+          }
+          if is_integer(.level) {
+            numeric_level = to_int!(.level)
+            if numeric_level >= 60 {
+              .level = "fatal"
+            } else if numeric_level >= 50 {
+              .level = "error"
+            } else if numeric_level >= 40 {
+              .level = "warn"
+            } else if numeric_level >= 30 {
+              .level = "info"
+            } else if numeric_level >= 20 {
+              .level = "debug"
+            } else {
+              .level = "trace"
+            }
+          }
+
+          ._meta.kubernetes_pod = kube_pod
+          ._meta.kubernetes_container = kube_container
+          ._meta.log_source = "vector"
+
+    sinks:
+      better_stack_http_sink:
+        inputs: ["flatten_pino"]
+        # Token + uri are injected at install time via --set; never commit them.
+        uri: "https://PLACEHOLDER_INGESTING_HOST/"
+        auth:
+          strategy: "bearer"
+          token: "PLACEHOLDER_SOURCE_TOKEN"
+      better_stack_http_metrics_sink:
+        uri: "https://PLACEHOLDER_INGESTING_HOST/metrics"
+        auth:
+          strategy: "bearer"
+          token: "PLACEHOLDER_SOURCE_TOKEN"
+
+metrics-server:
+  enabled: false
