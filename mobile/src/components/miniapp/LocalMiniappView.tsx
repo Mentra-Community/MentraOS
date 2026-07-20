@@ -8,7 +8,7 @@ import {getMentraJS} from "@/services/mentraJsBootstrap"
 import {useStressTestStore} from "@/stores/stressTest"
 import MiniappSplash from "@/components/miniapp/MiniappSplash"
 import {BgTimer, engine} from "@mentra/engine"
-import {buildMentraUiShim, buildMiniappGlobalsScript, DEV_APP_PACKAGE_NAME, miniappLauncher} from "@mentra/engine/internal"
+import {buildMentraUiShim, buildMiniappGlobalsScript, miniappLauncher} from "@mentra/engine/internal"
 import {devServerBridge} from "@mentra/engine/devtools"
 import {useNavigationStore} from "@/stores/navigation"
 import CapsuleMenu from "@/effects/CapsuleMenu"
@@ -75,7 +75,6 @@ function LocalMiniappView({
   const [webViewCanGoBack, setWebViewCanGoBack] = useState(false)
   const [uiUri, setUiUri] = useState<string | null>(null)
   const [uiBaseDir, setUiBaseDir] = useState<string | null>(null)
-  const [loadGatePassed, setLoadGatePassed] = useState(false)
   const [devMode] = useSetting(SETTINGS.dev_mode.key)
 
   // ----- Load-state tracking -------------------------------------------------
@@ -158,14 +157,6 @@ function LocalMiniappView({
   // terminal failure line (set by fail() or by the retry loop giving up).
   const [label, setLabel] = useState<string | undefined>(undefined)
   const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined)
-
-  useEffect(() => {
-    // if (Platform.OS !== "android") return
-    // delay loading the webview until the animation is complete
-    BgTimer.setTimeout(() => {
-      setLoadGatePassed(true)
-    }, 1000)
-  }, [])
 
   // WebView injections can be missed while Android/iOS is resuming or when the
   // host process thaws after a sleep/network interruption. The background
@@ -433,15 +424,7 @@ function LocalMiniappView({
     return <Text text="Missing required parameters" />
   }
 
-  if (!loadGatePassed) {
-    return (
-      <View className="flex-1">
-        <MiniappSplash iconUrl={iconUrl} bgColor={theme.colors.background} isLoaded={false} name={appName} />
-      </View>
-    )
-  }
-
-  const isDevApp = packageName == DEV_APP_PACKAGE_NAME
+  const isDevApp = !!devUrl
 
   if (!uiUri) {
     return (

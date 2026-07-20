@@ -14,7 +14,7 @@ describe("photoRequestParamsForNative", () => {
   it("produces only supported native payload keys", () => {
     const payload = photoRequestParamsForNative(baseParams)
     expect(Object.keys(payload).sort()).toEqual(
-      ["compress", "mode", "requestId", "size", "sound", "webhookUrl"].sort(),
+      ["compress", "mode", "requestId", "size", "sound", "transferMethod", "webhookUrl"].sort(),
     )
     expect(payload.mode).toBe("photo")
   })
@@ -67,6 +67,11 @@ describe("photoRequestParamsForNative", () => {
 
   it("preserves text capture mode", () => {
     expect(photoRequestParamsForNative({...baseParams, mode: "text"}).mode).toBe("text")
+  })
+
+  it("preserves a forced BLE transfer and defaults to auto", () => {
+    expect(photoRequestParamsForNative(baseParams).transferMethod).toBe("auto")
+    expect(photoRequestParamsForNative({...baseParams, transferMethod: "ble"}).transferMethod).toBe("ble")
   })
 })
 

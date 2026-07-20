@@ -71,7 +71,7 @@ const FADE_OUT_SCALE_TO = 0.4
 // right edge (push) and slides back out to the right (pop), mimicking the
 // native stack transition rather than the old fade+zoom. The slide distance is
 // the full screen width (set per-render below).
-const SLIDE_DURATION_MS = Platform.OS === "ios" ? 450 : 400
+const SLIDE_DURATION_MS = Platform.OS === "ios" ? 300 : 260
 // iOS liquid-glass warm-up for offline-hosted apps: the overlay mounts fully
 // opaque (parked off-screen to the right) for this long so the glass views
 // configure under an opaque ancestor before the real slide-in plays.

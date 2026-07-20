@@ -256,9 +256,9 @@ export async function dev(options: DevOptions = {}): Promise<void> {
     console.log('║                                                              ║');
     console.log('║  Dev mode is live and temporary:                             ║');
     console.log('║    • Keep this process and computer running.                 ║');
-    console.log('║    • The Mentra App keeps one dev miniapp at a time.         ║');
-    console.log('║      Scanning another dev QR replaces the current one.       ║');
-    console.log('║    • Its name and icon are served from this computer.        ║');
+    console.log('║    • Each package gets its own dev entry, so you can scan    ║');
+    console.log('║      and test multiple dev miniapps side by side.            ║');
+    console.log('║    • The Mentra App caches each miniapp name and icon.       ║');
     console.log('║                                                              ║');
     console.log('║  For a persistent install, run: bun run release              ║');
     console.log('╚══════════════════════════════════════════════════════════════╝\n');

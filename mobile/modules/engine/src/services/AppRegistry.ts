@@ -547,16 +547,10 @@ class AppRegistry {
     storage.remove(`${packageName}_dev_url`)
     storage.remove(`${packageName}_dev_port`)
     storage.remove(`${packageName}_dev_last_reachable`)
-    // Drop the single dev slot's home-tile metadata + dev URL/port keys (all stored under
-    // DEV_APP_PACKAGE_NAME, not `packageName`). Dev miniapps load over HTTP and aren't on disk,
-    // so without this the projected tile would reappear on the next getInstalledMiniapps() refresh.
-    //
-    // Only do this when we're actually touching the dev slot: either the dev package itself, or the
-    // real manifest package currently occupying the slot. Otherwise a release install/uninstall of
-    // an UNRELATED package would wipe the active dev tile.
-    if (packageName === DEV_APP_PACKAGE_NAME || packageName === getDevAppSourcePackage()) {
-      unregisterDevApp()
-    }
+    // HTTP-direct dev miniapps are indexed by their real package name. A
+    // release install/uninstall of that same package should remove only its
+    // dev tile; unrelated dev miniapps must remain available.
+    if (readDevAppRecord(packageName)) unregisterDevApp(packageName)
   }
 
   /**
@@ -699,24 +693,20 @@ class AppRegistry {
   }
 
   /**
-   * Read the lmas/ tree and return one ClientApp per installed package,
-   * picking each package's active version. The store/host overlays runtime
-   * state (loading, hidden, compatibility) on top of these.
-   *
-   * `running` reflects MiniappHost mount state via miniappRunningRegistry.
-   */
-  /**
    * Merge disk-derived apps with the projected dev + offline layers,
-   * de-duping by packageName. A real on-disk install (or offline app) wins
-   * over a dev tile of the same package — a dev record is just a launcher
-   * stub that an actual install supersedes.
+   * de-duping by packageName. An active dev registration wins over an older
+   * disk install of the same package; installing a release clears that dev
+   * registration in finalizeInstall. Native offline apps keep top priority.
    */
   private mergeProjectedApps(diskApps: ClientApp[]): ClientApp[] {
-    const seen = new Set(diskApps.map((a) => a.packageName))
     const offline = this.projectOfflineApps()
-    for (const a of offline) seen.add(a.packageName)
-    const dev = this.projectDevApps().filter((a) => !seen.has(a.packageName))
-    return [...diskApps, ...dev, ...offline]
+    const offlinePackages = new Set(offline.map((app) => app.packageName))
+    const dev = this.projectDevApps().filter((app) => !offlinePackages.has(app.packageName))
+    const devPackages = new Set(dev.map((app) => app.packageName))
+    const installed = diskApps.filter(
+      (app) => !offlinePackages.has(app.packageName) && !devPackages.has(app.packageName),
+    )
+    return [...installed, ...dev, ...offline]
   }
 
   public async getInstalledMiniapps(): Promise<ClientApp[]> {
@@ -945,21 +935,18 @@ export interface DevAppRecord {
   hardwareRequirements?: Array<{type: string; level: string; description?: string}>
   /** Manifest-declared actions — so dev-sideloaded miniapps can be invoked too. */
   actions?: Array<{id?: unknown; description?: unknown; parameters?: unknown}>
-  /**
-   * The dev miniapp's real manifest package name. `packageName` is overwritten to
-   * {@link DEV_APP_PACKAGE_NAME} so the launch chain routes consistently, so this field
-   * preserves the original so install/uninstall of OTHER packages don't wipe the dev slot.
-   */
+  /** Legacy single-slot migration field. New records use the real packageName directly. */
   sourcePackageName?: string
   /**
    * Short-lived Core-verifiable proof emitted by `mentra dev`. This lets the
-   * single `com.dev` slot request auto-auth for the real package without
-   * letting arbitrary dev URLs claim any package name.
+   * dev runtime request auto-auth for the manifest package without letting
+   * arbitrary dev URLs claim any package name.
    */
   devAttestation?: string
 }
 
 const DEV_APPS_INDEX_KEY = "dev_apps_index"
+const DEV_APP_ICONS_DIR = "dev-miniapp-icons"
 
 function configuredDevHost(): string | undefined {
   // Explicit escape hatch first; otherwise the host-injected Metro host (the
@@ -1008,72 +995,144 @@ function normalizeDevAppRecord(record: DevAppRecord): DevAppRecord {
   return devUrl === record.devUrl && iconUrl === record.iconUrl ? record : {...record, devUrl, iconUrl}
 }
 
-/**
- * The one and only package name a dev miniapp is registered under.
- *
- * There is a SINGLE dev slot: scanning a new QR (or entering a new dev URL)
- * replaces the previous dev app rather than adding a second tile. Because the
- * whole launch chain — JSContext registration, UI-router binding,
- * setForeground, dev_url/dev_port storage keys, respawn-bg lookup — keys on
- * this package name, every consumer MUST use `DEV_APP_PACKAGE_NAME` (not the
- * manifest's real packageName) so messages route consistently. Mixing the two
- * was the cause of the "CONNECT_ACK timeout" — the tile said `com.dev` while
- * the dev URL/port and foreground target used the manifest name.
- */
+/** Legacy package used by builds that supported only one dev miniapp. */
 export const DEV_APP_PACKAGE_NAME = "com.dev"
 export const DEV_APP_NAME = "Dev"
 
 /**
- * Register (or replace) THE dev miniapp. Persists the home-tile metadata AND
- * the dev_url/dev_port keyed on {@link DEV_APP_PACKAGE_NAME}, so this function
- * is the single source of truth for the dev slot — callers must not write the
- * `*_dev_url` / `*_dev_port` keys under the manifest's real package name.
- *
- * Callers pass the manifest's REAL packageName/name. Only the packageName is
- * forced to {@link DEV_APP_PACKAGE_NAME} so the home tile and launch chain key
- * on the single dev slot (the real package survives in `sourcePackageName` for
- * clearDevArtifacts). The name + icon are kept as-is so the home tile reflects
- * the actual dev miniapp — marked as dev by the {@link DevMiniappBadge} dot
- * rather than renamed to a generic "Dev" tile.
+ * Copy a dev-server icon into Documents so the tile remains branded after the
+ * laptop/server disappears. A failed download is non-fatal: the remote URL is
+ * retained and can still render while the server is reachable.
  */
-export function registerDevApp(record: DevAppRecord): void {
+async function cacheDevAppIcon(packageName: string, iconUrl: string): Promise<string> {
+  if (!/^https?:\/\//.test(iconUrl)) return iconUrl
+
+  try {
+    const dir = new Directory(Paths.document, DEV_APP_ICONS_DIR)
+    if (!dir.exists) dir.create({intermediates: true})
+
+    const safePackageName = packageName.replace(/[^a-zA-Z0-9._-]/g, "_")
+    let extension = ".png"
+    try {
+      const match = new URL(iconUrl).pathname.match(/\.(png|jpe?g|webp|gif|svg)$/i)
+      if (match) extension = `.${match[1].toLowerCase()}`
+    } catch {
+      // Keep the decoder-friendly .png fallback; image loaders sniff content.
+    }
+
+    const target = new File(dir, `${safePackageName}${extension}`)
+    const downloaded = await File.downloadFileAsync(iconUrl, target, {idempotent: true})
+
+    // Only remove older extensions AFTER the replacement is safely on disk;
+    // a broken icon URL must not destroy the last known-good cached logo.
+    for (const item of dir.list()) {
+      if (item instanceof File && item.uri !== downloaded.uri && item.name.startsWith(`${safePackageName}.`)) {
+        try {
+          item.delete()
+        } catch {
+          // Best effort; the current icon has already been persisted.
+        }
+      }
+    }
+    return downloaded.uri
+  } catch (error) {
+    console.warn(`APP_REGISTRY: failed to cache dev icon for ${packageName}:`, error)
+    return readDevAppRecord(packageName)?.iconUrl ?? iconUrl
+  }
+}
+
+function removeDevRecordKeys(packageName: string): void {
+  const existing = readDevAppRecord(packageName)
+  if (existing?.iconUrl.startsWith("file://")) {
+    try {
+      const icon = new File(existing.iconUrl)
+      if (icon.exists) icon.delete()
+    } catch (error) {
+      console.warn(`APP_REGISTRY: failed to delete dev icon for ${packageName}:`, error)
+    }
+  }
+  storage.remove(`${packageName}_dev_meta`)
+  storage.remove(`${packageName}_dev_url`)
+  storage.remove(`${packageName}_dev_port`)
+  storage.remove(`${packageName}_dev_last_reachable`)
+}
+
+function readDevAppRecord(packageName: string): DevAppRecord | null {
+  const res = storage.load<string>(`${packageName}_dev_meta`)
+  if (!res.is_ok()) return null
+  try {
+    return JSON.parse(res.value) as DevAppRecord
+  } catch {
+    return null
+  }
+}
+
+/** Move the historical `com.dev` record onto its real manifest package key. */
+function migrateLegacyDevSlot(): void {
+  const legacy = readDevAppRecord(DEV_APP_PACKAGE_NAME)
+  const targetPackage = legacy?.sourcePackageName?.trim()
+  if (!legacy || !targetPackage || targetPackage === DEV_APP_PACKAGE_NAME) return
+
+  const existingTarget = readDevAppRecord(targetPackage)
+  const migrated: DevAppRecord = existingTarget ?? {
+    ...legacy,
+    packageName: targetPackage,
+    sourcePackageName: targetPackage,
+  }
+  if (!existingTarget) storage.save(`${targetPackage}_dev_meta`, JSON.stringify(migrated))
+
+  const legacyUrl = storage.load<string>(`${DEV_APP_PACKAGE_NAME}_dev_url`)
+  if (!existingTarget) {
+    storage.save(`${targetPackage}_dev_url`, legacyUrl.is_ok() ? legacyUrl.value : migrated.devUrl)
+  }
+  const legacyPort = storage.load<number>(`${DEV_APP_PACKAGE_NAME}_dev_port`)
+  if (!existingTarget && legacyPort.is_ok()) storage.save(`${targetPackage}_dev_port`, legacyPort.value)
+
+  storage.remove(`${DEV_APP_PACKAGE_NAME}_dev_meta`)
+  storage.remove(`${DEV_APP_PACKAGE_NAME}_dev_url`)
+  storage.remove(`${DEV_APP_PACKAGE_NAME}_dev_port`)
+  storage.remove(`${DEV_APP_PACKAGE_NAME}_dev_last_reachable`)
+
+  const index = Array.from(new Set(getDevAppIndex().map((pkg) => (pkg === DEV_APP_PACKAGE_NAME ? targetPackage : pkg))))
+  storage.save(DEV_APPS_INDEX_KEY, JSON.stringify(index))
+}
+
+/**
+ * Register or update one dev miniapp under its real manifest package. Different
+ * package names coexist; rescanning the same package updates that package only.
+ */
+export async function registerDevApp(record: DevAppRecord): Promise<void> {
+  migrateLegacyDevSlot()
+  const packageName = record.packageName.trim()
+  if (!packageName) throw new Error("Dev miniapp manifest is missing packageName")
+
+  const iconUrl = await cacheDevAppIcon(packageName, record.iconUrl)
   const devRecord: DevAppRecord = {
     ...record,
-    // Preserve the real manifest package before overwriting packageName with the
-    // single dev-slot name, so clearDevArtifacts can tell whether an install/uninstall
-    // actually targets the dev slot.
-    sourcePackageName: record.sourcePackageName ?? record.packageName,
-    packageName: DEV_APP_PACKAGE_NAME,
-    // Keep the manifest's real name + icon (display-only; routing keys on
-    // packageName). Fall back to DEV_APP_NAME only if a caller omitted the name.
+    packageName,
+    sourcePackageName: packageName,
     name: record.name || DEV_APP_NAME,
-    iconUrl: record.iconUrl,
+    iconUrl,
   }
-  storage.save(`${DEV_APP_PACKAGE_NAME}_dev_meta`, JSON.stringify(devRecord))
-  // The launch chain (LocalMiniappView.resolveDevPort, mentraJsBootstrap
-  // respawn-bg) reads these keys under DEV_APP_PACKAGE_NAME — persist them
-  // here so callers can't key them on the wrong (real) package name.
-  storage.save(`${DEV_APP_PACKAGE_NAME}_dev_url`, record.devUrl)
+  storage.save(`${packageName}_dev_meta`, JSON.stringify(devRecord))
+  storage.save(`${packageName}_dev_url`, record.devUrl)
   if (typeof record.devPort === "number" && Number.isFinite(record.devPort)) {
-    storage.save(`${DEV_APP_PACKAGE_NAME}_dev_port`, record.devPort)
+    storage.save(`${packageName}_dev_port`, record.devPort)
   } else {
-    storage.remove(`${DEV_APP_PACKAGE_NAME}_dev_port`)
+    storage.remove(`${packageName}_dev_port`)
   }
   const idx = getDevAppIndex()
-  if (!idx.includes(DEV_APP_PACKAGE_NAME)) {
-    idx.push(DEV_APP_PACKAGE_NAME)
+  if (!idx.includes(packageName)) {
+    idx.push(packageName)
     storage.save(DEV_APPS_INDEX_KEY, JSON.stringify(idx))
   }
   appRegistry.markRefreshNeeded()
 }
 
-/** Drop the dev miniapp's home-tile metadata + dev URL/port keys. */
-export function unregisterDevApp(): void {
-  storage.remove(`${DEV_APP_PACKAGE_NAME}_dev_meta`)
-  storage.remove(`${DEV_APP_PACKAGE_NAME}_dev_url`)
-  storage.remove(`${DEV_APP_PACKAGE_NAME}_dev_port`)
-  storage.remove(`${DEV_APP_PACKAGE_NAME}_dev_last_reachable`)
-  const idx = getDevAppIndex().filter((p) => p !== DEV_APP_PACKAGE_NAME)
+/** Drop one dev miniapp's metadata, routing keys, and cached icon. */
+export function unregisterDevApp(packageName = DEV_APP_PACKAGE_NAME): void {
+  removeDevRecordKeys(packageName)
+  const idx = getDevAppIndex().filter((p) => p !== packageName)
   storage.save(DEV_APPS_INDEX_KEY, JSON.stringify(idx))
   appRegistry.markRefreshNeeded()
 }
@@ -1089,33 +1148,20 @@ function getDevAppIndex(): string[] {
   }
 }
 
-/**
- * The real manifest package name currently occupying the dev slot, or null if no dev app is
- * registered. Used to decide whether clearing a package's artifacts should also drop the dev slot.
- */
-export function getDevAppSourcePackage(): string | null {
-  const res = storage.load<string>(`${DEV_APP_PACKAGE_NAME}_dev_meta`)
-  if (!res.is_ok()) return null
-  try {
-    const rec = JSON.parse(res.value) as DevAppRecord
-    return rec.sourcePackageName ?? null
-  } catch {
-    return null
-  }
+/** Resolve the manifest package for a dev runtime (including the legacy slot). */
+export function getDevAppSourcePackage(packageName = DEV_APP_PACKAGE_NAME): string | null {
+  migrateLegacyDevSlot()
+  const rec = readDevAppRecord(packageName)
+  return rec?.sourcePackageName ?? rec?.packageName ?? null
 }
 
-export function getDevAppAttestation(): string | null {
-  const res = storage.load<string>(`${DEV_APP_PACKAGE_NAME}_dev_meta`)
-  if (!res.is_ok()) return null
-  try {
-    const rec = JSON.parse(res.value) as DevAppRecord
-    return rec.devAttestation ?? null
-  } catch {
-    return null
-  }
+export function getDevAppAttestation(packageName = DEV_APP_PACKAGE_NAME): string | null {
+  migrateLegacyDevSlot()
+  return readDevAppRecord(packageName)?.devAttestation ?? null
 }
 
 export function getDevAppRecords(): DevAppRecord[] {
+  migrateLegacyDevSlot()
   const out: DevAppRecord[] = []
   for (const pkg of getDevAppIndex()) {
     const res = storage.load<string>(`${pkg}_dev_meta`)

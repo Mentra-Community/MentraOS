@@ -13,5 +13,6 @@
   `XMLHttpRequest`, `crypto.subtle`, Node built-ins, `process`, or runtime module
   resolution in `src/background/`. Use `Date.now()` instead of
   `performance.now()`.
-- `bun run dev` is live and temporary. Use `bun run release` for a persistent
-  local install or to test multiple installed miniapps.
+- `bun run dev` is live and temporary. Multiple dev miniapps can coexist when
+  they use distinct manifest package names. Use `bun run release` for a
+  persistent local install that runs without the development computer.

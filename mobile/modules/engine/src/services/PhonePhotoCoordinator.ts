@@ -49,6 +49,8 @@ export interface PhotoOpts {
   /** Legacy cloud size names are normalized before the native take_photo command. */
   size?: "low" | "medium" | "high" | "max" | "small" | "large" | "full"
   mode?: "photo" | "text"
+  /** Force phone-relayed BLE delivery, or leave native on its auto Wi-Fi/BLE policy. */
+  transferMethod?: "auto" | "ble"
   compress?: "none" | "low" | "medium" | "high"
   sound?: boolean
   saveToGallery?: boolean
@@ -172,7 +174,9 @@ export class PhonePhotoCoordinator {
       const presignMs = Math.round(performance.now() - presignStarted)
       if (typeof __DEV__ !== "undefined" && __DEV__) {
         console.debug(
-          `[PhonePhotoCoordinator] presign ${presignMs}ms size=${opts.mode === "text" ? "max" : captureSize} mode=${opts.mode ?? "photo"}`,
+          `[PhonePhotoCoordinator] presign ${presignMs}ms size=${opts.mode === "text" ? "max" : captureSize} mode=${
+            opts.mode ?? "photo"
+          }`,
         )
       }
       requestId = r.requestId
@@ -227,8 +231,8 @@ export class PhonePhotoCoordinator {
 
     // 3) Drive glasses over BLE. requestPhoto now resolves at terminal
     //    photo_response success, so run it beside the cloud poll instead of
-    //    awaiting it before polling. iOS auto-injects transferMethod: "auto"
-    //    (WiFi direct with BLE fallback) — see MentraLive.swift.
+    //    awaiting it before polling. Native defaults transferMethod to "auto"
+    //    (Wi-Fi direct with BLE fallback) unless the miniapp forces BLE.
     try {
       void BluetoothSdk.requestPhoto({
         requestId: bleRequestId,
@@ -237,7 +241,7 @@ export class PhonePhotoCoordinator {
         mode: opts.mode ?? "photo",
         webhookUrl: uploadUrl,
         authToken: null,
-        ...(isLoopbackUpload ? {transferMethod: "ble" as const} : {}),
+        ...(isLoopbackUpload || opts.transferMethod === "ble" ? {transferMethod: "ble" as const} : {}),
         compress: toNativeCompression(opts.compress),
         save: opts.saveToGallery ?? false,
         sound: opts.sound ?? true,
@@ -252,11 +256,11 @@ export class PhonePhotoCoordinator {
         ispDigitalGain: opts.ispDigitalGain,
         ispAnalogGain: opts.ispAnalogGain,
       }).catch((err) => {
-          const e = this.activeRequests.get(requestId)
-          if (!e) return
-          e.abort.abort()
-          e.reject(this.toPhotoError(err, "BLE_SEND_FAILED", "command", "ble"))
-        })
+        const e = this.activeRequests.get(requestId)
+        if (!e) return
+        e.abort.abort()
+        e.reject(this.toPhotoError(err, "BLE_SEND_FAILED", "command", "ble"))
+      })
     } catch (err) {
       this.activeRequests.delete(requestId)
       this.bleIdToCloud.delete(bleRequestId)

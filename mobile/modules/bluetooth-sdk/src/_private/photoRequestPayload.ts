@@ -25,12 +25,11 @@ function nonBlankString(value?: string | null): string | undefined {
 }
 
 /** Expo Android bridge rejects null values in Map<String, Any> — omit optional nullish fields. */
-export function photoRequestParamsForNative(
-  params: PhotoRequestParams,
-): Record<string, string | number | boolean> {
+export function photoRequestParamsForNative(params: PhotoRequestParams): Record<string, string | number | boolean> {
   const payload: Record<string, string | number | boolean> = {
     size: normalizePhotoSizeTier(params.size),
     mode: params.mode ?? "photo",
+    transferMethod: params.transferMethod ?? "auto",
     webhookUrl: params.webhookUrl ?? "",
     compress: params.compress,
     sound: params.sound,

@@ -570,6 +570,8 @@ export type PhotoRequestParams = {
   appId?: string
   size: PhotoSize
   mode?: PhotoMode
+  /** `ble` skips direct upload and forces phone-relayed BLE image transfer. */
+  transferMethod?: "auto" | "ble"
   webhookUrl: string | null
   authToken: string | null
   compress: PhotoCompression

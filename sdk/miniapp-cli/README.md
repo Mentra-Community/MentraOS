@@ -42,12 +42,12 @@ Default `port` is `3000`; override the starting point with a `"port": <n>` field
 
 **On the phone:** open the Mentra App → **Settings → Developer settings → Mini App Development → Scan Mini App QR Code**. Phone and laptop must be on the same Wi-Fi.
 
-`dev` is live and temporary. Keep the CLI and computer running: the Mentra App
-loads the bundle, name, and icon from that LAN server. The Mentra App has one dev
-miniapp slot, so scanning another dev QR replaces the current dev miniapp. Use
-`bun run release` when you need an installed miniapp that persists across
-restarts, works without the computer, or can coexist with other installed
-miniapps.
+`dev` is live and temporary. Keep the CLI and computer running because the
+Mentra App loads the runtime bundle from that LAN server. Dev miniapps are keyed
+by their manifest package name, so you can scan and test several side by side;
+rescanning the same package updates only that entry. The Mentra App caches each
+entry's name and icon. Use `bun run release` when you need an installed miniapp
+that works without the computer.
 
 `Ctrl+C` stops the server, the sidecar, and the IP watcher.
 

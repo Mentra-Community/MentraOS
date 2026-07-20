@@ -36,6 +36,7 @@ class PhotoRequestTest {
 
         assertThat(request.exposureTimeNs).isNull()
         assertThat(request.mode).isEqualTo(PhotoMode.PHOTO)
+        assertThat(request.transferMethod).isEqualTo("auto")
     }
 
     @Test
@@ -92,5 +93,19 @@ class PhotoRequestTest {
             )
 
         assertThat(request.mode).isEqualTo(PhotoMode.TEXT)
+    }
+
+    @Test
+    fun `fromMap preserves forced BLE transfer`() {
+        val request =
+            PhotoRequest.fromMap(
+                mapOf(
+                    "size" to "medium",
+                    "transferMethod" to "ble",
+                    "webhookUrl" to "https://example.com/upload",
+                )
+            )
+
+        assertThat(request.transferMethod).isEqualTo("ble")
     }
 }

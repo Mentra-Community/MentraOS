@@ -1532,7 +1532,8 @@ struct ViewState {
             zsl: request.zsl,
             ispDigitalGain: request.ispDigitalGain,
             ispAnalogGain: request.ispAnalogGain,
-            mode: request.mode
+            mode: request.mode,
+            transferMethod: request.transferMethod
         )
         Bridge.log(
             "MAN: PHOTO PIPELINE [4/6] DeviceManager.requestPhoto requestId=\(routed.requestId) webhookUrl=\(routed.webhookUrl ?? "nil") size=\(routed.size.rawValue) compress=\(routed.compress?.rawValue ?? "none") save=\(routed.save) sound=\(routed.sound) exposureTimeNs=\(manualExposureNs.map { String($0) } ?? "nil") iso=\(manualIso.map { String($0) } ?? "auto") aeDivisor=\(routed.aeExposureDivisor.map { String($0) } ?? "nil") isoCap=\(routed.isoCap.map { String($0) } ?? "nil") sgc=\(sgc != nil ? String(describing: type(of: sgc!)) : "null")"

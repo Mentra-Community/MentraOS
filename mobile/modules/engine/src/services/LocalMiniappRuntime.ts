@@ -70,7 +70,7 @@ import ttsModelManager from "./TTSModelManager"
 import {NavigationHandlers} from "./NavigationHandlers"
 import type {ClientApp} from "../types/applet"
 import {useAppStatusStore} from "../stores/apps"
-import {DEV_APP_PACKAGE_NAME, getDevAppSourcePackage} from "./AppRegistry"
+import {getDevAppAttestation, getDevAppSourcePackage} from "./AppRegistry"
 import {listPhoneCalendarEvents, PhoneCalendarError} from "./PhoneCalendarService"
 
 // =============================================================================
@@ -1226,9 +1226,12 @@ class LocalMiniappRuntime {
   }
 
   private async requestMiniappAuth(packageName: string, opts?: {minTtlMs?: number}): Promise<MiniappAuthToken | null> {
-    const authPackageName = packageName === DEV_APP_PACKAGE_NAME ? getDevAppSourcePackage() : packageName
-    if (!authPackageName) return null
-    return cloudClientService.getMiniappAuthToken(authPackageName, opts)
+    const authPackageName = getDevAppSourcePackage(packageName) ?? packageName
+    const devAttestation = getDevAppAttestation(packageName) ?? undefined
+    return cloudClientService.getMiniappAuthToken(authPackageName, {
+      ...opts,
+      ...(devAttestation ? {devAttestation} : {}),
+    })
   }
 
   private async handleAuthRefresh(
@@ -2808,6 +2811,7 @@ class LocalMiniappRuntime {
       const result = await phonePhotoCoordinator.takePhoto(packageName, {
         size: payload.size as "low" | "medium" | "high" | "max" | "small" | "large" | "full" | undefined,
         mode: payload.mode as "photo" | "text" | undefined,
+        transferMethod: payload.transferMethod as "auto" | "ble" | undefined,
         compress: payload.compress as "none" | "low" | "medium" | "high" | undefined,
         sound: payload.sound as boolean | undefined,
         saveToGallery: payload.saveToGallery as boolean | undefined,

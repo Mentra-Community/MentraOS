@@ -27,6 +27,7 @@ bun run release  # persistent local install that runs without the computer
 bun run build    # build both layers into dist/
 ```
 
-The Mentra App keeps one dev miniapp at a time. Scanning another dev QR replaces
-it. Use `bun run release` when you want to test multiple installed miniapps or
-retain the miniapp's name and icon after leaving the computer.
+The Mentra App keeps one dev entry per manifest package name, so you can scan and
+test multiple dev miniapps side by side. It also caches each entry's name and
+icon. Rescanning the same package updates that entry. Use `bun run release` when
+you want the miniapp to run without the computer.
