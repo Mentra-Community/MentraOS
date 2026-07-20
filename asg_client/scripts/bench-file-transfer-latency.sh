@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 # Benchmark Mentra asg_client UART file-transfer latency from logcat.
 #
-# Mentra emits one summary line per completed transfer:
-#   I FileTransferLatency: SUMMARY file=... ack_to_send_p50_ms=... packet_rtt_p50_ms=... packets_per_sec=...
+# Mentra emits Mentra-vs-K900Server packet clocks in two places after a BLE photo:
+#   1) Standalone SUMMARY:
+#        I FileTransferLatency: SUMMARY ... ack_to_send_p50_ms=... packet_rtt_p50_ms=...
+#   2) Inside BlePhotoTiming PHASE BREAKDOWN → PAYLOAD / TRANSFER:
+#        ack→send p50 / packet RTT p50 / packets/sec
 #
 # Compare against 刘新云 / K900Server (com.lhs.btserver) using the same wall clocks:
 #   ack_to_send  ≈ time from ACK observed → next sendFile  (their <<< → sendFile ≈ 1ms)
