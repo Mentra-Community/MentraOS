@@ -6,9 +6,9 @@
  * client's tokenRejected path cleared the session — a permanent logout.
  *
  * Semantics under test: a rotated-away refresh token stays honored until its
- * successor is first USED. Recovery re-rotates (orphaning the never-delivered
- * successor); anything older than the immediate predecessor, or a predecessor
- * whose successor has been used, still fails exactly as before.
+ * successor is first USED. Recovery re-rotates while retaining one displaced
+ * successor so duplicate responses cannot race the client into a logout;
+ * anything older than the immediate predecessor still fails.
  *
  * Prereq: a running Mongo (override via MONGO_URL). Wipes its own collection.
  *
@@ -115,12 +115,34 @@ describe("refresh rotation recovery (OS-1703)", () => {
     expect(recovery.refresh_token).toBeTruthy();
     expect(recovery.access_token).toBeTruthy();
 
-    // The never-delivered successor was orphaned by the recovery: no two
-    // live tokens ever coexist.
-    await expectInvalidGrant(b);
-
-    // The recovered pair is fully functional.
+    // The recovered pair is fully functional. Its confirmed use collapses
+    // the original predecessor and the displaced successor branch.
     const next = await refreshSession({ refreshToken: recovery.refresh_token });
+    expect(next.refresh_token).toBeTruthy();
+    await expectInvalidGrant(a);
+    await expectInvalidGrant(b);
+  });
+
+  test("duplicate refresh responses both remain valid until one branch is confirmed", async () => {
+    const a = "token-A-" + crypto.randomBytes(16).toString("base64url");
+    await seedSession(a);
+
+    // The first response carries b. A duplicate request recovers through a
+    // and carries c, displacing b. Network response ordering determines which
+    // token the phone saves, so both must remain usable at this point.
+    const { refresh_token: b } = await refreshSession({ refreshToken: a });
+    const { refresh_token: c } = await refreshSession({ refreshToken: a });
+
+    const viaDisplacedSibling = await refreshSession({ refreshToken: b });
+    expect(viaDisplacedSibling.refresh_token).toBeTruthy();
+
+    // Presenting b confirms that branch and retires the alternatives.
+    await expectInvalidGrant(a);
+    await expectInvalidGrant(c);
+
+    const next = await refreshSession({
+      refreshToken: viaDisplacedSibling.refresh_token,
+    });
     expect(next.refresh_token).toBeTruthy();
   });
 

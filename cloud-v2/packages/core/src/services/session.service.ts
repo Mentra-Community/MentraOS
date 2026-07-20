@@ -190,6 +190,12 @@ export async function refreshSession(args: {
     }).lean();
   }
   if (!oldDoc) {
+    oldDoc = await RefreshTokenModel.findOne({
+      altTokenHash: presentedHash,
+      expiresAt: { $gt: now },
+    }).lean();
+  }
+  if (!oldDoc) {
     throw new InvalidGrant("refresh_token unknown, expired, or already used");
   }
   if (!oldDoc.sessionId || !oldDoc.mentraUserId || !oldDoc.tenantId) {
@@ -211,37 +217,54 @@ export async function refreshSession(args: {
   });
   const nextRefresh = mintRefreshToken();
 
-  // Single-use guarantee with one-step recovery. The same $set serves both
-  // paths: on a normal rotation the presented hash becomes `prevTokenHash`,
-  // retiring the grandparent; on a recovery rotation the presented hash
-  // already IS `prevTokenHash` (so it stays put, and the client can recover
-  // repeatedly if it keeps losing responses) while the never-delivered
-  // successor's hash is overwritten — orphaned, dead. Only one concurrent
-  // request can win each findOneAndUpdate; a loser on the live-hash path
-  // retries once via the predecessor path, so a concurrent duplicate gets a
-  // valid pair instead of a spurious invalid_grant.
-  const rotation = {
+  // A normal live-token use proves which branch the client persisted: rotate
+  // it, retire the grandparent, and collapse any alternate sibling. The same
+  // confirmed path handles a presented alternate sibling.
+  const confirmedRotation = {
     $set: {
       refreshTokenHash: nextRefresh.hash,
       prevTokenHash: presentedHash,
-      issuedAt: new Date(),
+      issuedAt: now,
       expiresAt: nextRefresh.expiresAt,
     },
+    $unset: { altTokenHash: "" },
   };
   let rotated = await RefreshTokenModel.findOneAndUpdate(
     {
       refreshTokenHash: presentedHash,
-      expiresAt: { $gt: new Date() },
+      expiresAt: { $gt: now },
     },
-    rotation,
+    confirmedRotation,
   ).lean();
   if (!rotated) {
+    // Recovery via the predecessor means either the prior response was lost
+    // or a duplicate request raced it. Capture the currently-live successor
+    // into altTokenHash atomically before replacing it, so either response the
+    // phone persists remains usable instead of causing an unprovoked logout.
     rotated = await RefreshTokenModel.findOneAndUpdate(
       {
         prevTokenHash: presentedHash,
-        expiresAt: { $gt: new Date() },
+        expiresAt: { $gt: now },
       },
-      rotation,
+      [
+        {
+          $set: {
+            altTokenHash: "$refreshTokenHash",
+            refreshTokenHash: nextRefresh.hash,
+            issuedAt: now,
+            expiresAt: nextRefresh.expiresAt,
+          },
+        },
+      ],
+    ).lean();
+  }
+  if (!rotated) {
+    rotated = await RefreshTokenModel.findOneAndUpdate(
+      {
+        altTokenHash: presentedHash,
+        expiresAt: { $gt: now },
+      },
+      confirmedRotation,
     ).lean();
   }
   if (!rotated) {
