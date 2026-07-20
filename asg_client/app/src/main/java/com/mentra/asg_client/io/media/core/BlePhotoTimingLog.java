@@ -162,18 +162,13 @@ public final class BlePhotoTimingLog {
     public static void recordStillCaptureBreakdown(@Nullable StillCaptureBreakdown breakdown) {
         synchronized (STILL_BREAKDOWN_LOCK) {
             pendingStillBreakdown = breakdown;
-            // #region agent log
             if (breakdown != null) {
                 storeComboBreakdown(breakdown);
             }
-            // #endregion
         }
-        // #region agent log
         logZslMfnrAbComparison(breakdown);
-        // #endregion
     }
 
-    // #region agent log
     private static void storeComboBreakdown(StillCaptureBreakdown breakdown) {
         if (breakdown.zslRequested && breakdown.mfnrRequested) {
             lastZslOnMfnrOn = breakdown;
@@ -294,8 +289,6 @@ public final class BlePhotoTimingLog {
                 controlEnableZslLabel(b.controlEnableZsl),
                 b.estimated ? "EST" : "HAL");
     }
-
-    // #endregion
 
     private static String controlEnableZslLabel(@Nullable Boolean value) {
         if (value == null) {

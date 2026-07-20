@@ -744,21 +744,25 @@ public class CameraNeoService extends LifecycleService {
                             + QueuedPhotoRequestQueue.getInstance().size()
                             + " | Service active: "
                             + (sInstance != null));
-            Log.i(
-                    TAG,
-                    "SCAN_PARAMS enqueued requestId="
-                            + request.requestId
-                            + " isFromSdk="
-                            + isFromSdk
-                            + " size="
-                            + size
-                            + " exposureTimeNs="
-                            + exposureTimeNs
-                            + " iso="
-                            + iso
-                            + " captureTuning={"
-                            + (captureSettings != null ? captureSettings.describeForLog() : "null")
-                            + "}");
+            if (AsgConstants.ENABLE_PHOTO_TIMING_LOGS) {
+                Log.i(
+                        TAG,
+                        "SCAN_PARAMS enqueued requestId="
+                                + request.requestId
+                                + " isFromSdk="
+                                + isFromSdk
+                                + " size="
+                                + size
+                                + " exposureTimeNs="
+                                + exposureTimeNs
+                                + " iso="
+                                + iso
+                                + " captureTuning={"
+                                + (captureSettings != null
+                                        ? captureSettings.describeForLog()
+                                        : "null")
+                                + "}");
+            }
 
             // Check current service state and act accordingly
             boolean cameraReady =

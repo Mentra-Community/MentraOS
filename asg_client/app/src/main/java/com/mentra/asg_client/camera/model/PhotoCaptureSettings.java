@@ -240,6 +240,9 @@ public final class PhotoCaptureSettings {
      * secrets ({@code authToken}, {@code webhookUrl}).
      */
     public static void logIncomingTakePhotoFields(JSONObject data, String requestId) {
+        if (!AsgConstants.ENABLE_PHOTO_TIMING_LOGS) {
+            return;
+        }
         if (data == null) {
             Log.i(TAG, "SCAN_PARAMS incoming take_photo requestId=" + requestId + " data=null");
             return;
@@ -282,6 +285,9 @@ public final class PhotoCaptureSettings {
             PhotoCaptureSettings merged,
             AsgSettings stored,
             String requestId) {
+        if (!AsgConstants.ENABLE_PHOTO_TIMING_LOGS) {
+            return;
+        }
         if (fromRequest == null) {
             fromRequest = EMPTY;
         }
@@ -363,6 +369,9 @@ public final class PhotoCaptureSettings {
             Integer resolvedIso,
             boolean globalZsl,
             boolean globalMfnr) {
+        if (!AsgConstants.ENABLE_PHOTO_TIMING_LOGS) {
+            return;
+        }
         if (settings == null) {
             settings = EMPTY;
         }

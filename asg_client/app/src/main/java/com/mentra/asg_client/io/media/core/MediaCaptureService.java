@@ -4929,17 +4929,6 @@ public class MediaCaptureService {
         // TESTING: Add fake delay for camera capture
         PhotoCaptureTestHooks.addFakeDelay("CAMERA_CAPTURE");
 
-        // #region agent log
-        Log.i(
-                TAG,
-                "🔥 CAM_WARMTH CHECK requestId="
-                        + requestId
-                        + " predicted="
-                        + (CameraNeoService.isCameraWarm(captureSize, true, exposureTimeNs, captureSettings)
-                                ? "WARM (will reuse open camera)"
-                                : "COLD (will open/reconfigure + pay AE wait)"));
-        // #endregion
-
         // Skip sound and flash during camera HAL restart cooldown (e.g. after FOV change)
         if (!shouldSuppressPhotoFeedback()) {
             triggerPhotoFlashLed();
@@ -6335,35 +6324,6 @@ public class MediaCaptureService {
         PhotoCaptureSettings warmSettings =
                 captureSettings != null ? captureSettings : PhotoCaptureSettings.EMPTY;
 
-        // #region agent log
-        Log.i(
-                TAG,
-                "🔥 CAM_WARMTH SERVICE_RECEIVED requestId="
-                        + requestId
-                        + " size="
-                        + size
-                        + " exposureTimeNs="
-                        + exposureTimeNs
-                        + " durationMs="
-                        + durationMs
-                        + " zsl="
-                        + warmSettings.zsl
-                        + " mfnr="
-                        + warmSettings.mfnr
-                        + " — already-warm(config match)="
-                        + CameraNeoService.isCameraWarm(size, true, exposureTimeNs, warmSettings));
-        Log.i(
-                TAG,
-                "🔥 CAM_WARMTH ACCEPTED requestId="
-                        + requestId
-                        + " size="
-                        + size
-                        + " exposureTimeNs="
-                        + exposureTimeNs
-                        + " durationMs="
-                        + durationMs);
-        // #endregion
-
         // CameraNeoService.warmUpCamera rejects an overlapping/mid-capture warm-up synchronously
         // (it fires onCameraError on this thread before returning). Track that so the return value
         // reflects a synchronous busy rejection instead of always reporting acceptance. Rejections
@@ -6387,14 +6347,6 @@ public class MediaCaptureService {
 
                     @Override
                     public void onCameraReady() {
-                        // #region agent log
-                        Log.i(
-                                TAG,
-                                "🔥 CAM_WARMTH READY requestId="
-                                        + requestId
-                                        + " — camera open, AE settled; a take_photo now should hit"
-                                        + " the WARM path");
-                        // #endregion
                         sendCameraStatus(requestId, "ready", null);
                     }
 

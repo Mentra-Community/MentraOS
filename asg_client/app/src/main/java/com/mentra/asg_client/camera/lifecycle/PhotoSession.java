@@ -532,45 +532,12 @@ public final class PhotoSession {
         }
         boolean reqZsl = resolveZslForRequest(request.captureSettings);
         boolean reqMfnr = resolveMfnrForRequest(request.captureSettings);
-        boolean differs =
-                baseline.differsFrom(
-                        request.size,
-                        request.isFromSdk,
-                        request.exposureTimeNs,
-                        reqZsl,
-                        reqMfnr);
-        if (differs) {
-            // #region agent log
-            Log.i(
-                    TAG,
-                    "🔥 CAM_WARMTH MISMATCH baseline={size="
-                            + baseline.size
-                            + " sdk="
-                            + baseline.isFromSdk
-                            + " exp="
-                            + baseline.exposureTimeNs
-                            + " zsl="
-                            + baseline.zsl
-                            + " mfnr="
-                            + baseline.mfnr
-                            + " previewZsl="
-                            + (baseline.zsl || baseline.mfnr)
-                            + "} request={size="
-                            + request.size
-                            + " sdk="
-                            + request.isFromSdk
-                            + " exp="
-                            + request.exposureTimeNs
-                            + " zsl="
-                            + reqZsl
-                            + " mfnr="
-                            + reqMfnr
-                            + " previewZsl="
-                            + (reqZsl || reqMfnr)
-                            + "}");
-            // #endregion
-        }
-        return differs;
+        return baseline.differsFrom(
+                request.size,
+                request.isFromSdk,
+                request.exposureTimeNs,
+                reqZsl,
+                reqMfnr);
     }
 
     /**
@@ -662,13 +629,6 @@ public final class PhotoSession {
                 }
                 mCaptureDispatchedAsWarmReuse = true;
                 Log.d(TAG, "Dispatching queued photo with configured camera: " + request.requestId);
-                // #region agent log
-                Log.i(
-                        TAG,
-                        "🔥 CAM_WARMTH DISPATCH requestId="
-                                + request.requestId
-                                + " path=WARM (configured camera reuse, no reopen)");
-                // #endregion
                 recordCaptureSessionForTiming(true, request.size, null);
                 hooks.cancelKeepAliveTimer();
                 activateQueuedRequest(request);
@@ -718,13 +678,6 @@ public final class PhotoSession {
             if (needsReopen) {
                 mCaptureDispatchedAsWarmReuse = false;
                 Log.d(TAG, "Camera config changed (reconfiguration required), reopening camera");
-                // #region agent log
-                Log.i(
-                        TAG,
-                        "🔥 CAM_WARMTH DISPATCH requestId="
-                                + request.requestId
-                                + " path=COLD (config mismatch — close+reopen)");
-                // #endregion
                 recordCaptureSessionForTiming(
                         false,
                         request.size,
@@ -739,13 +692,6 @@ public final class PhotoSession {
             } else {
                 mCaptureDispatchedAsWarmReuse = true;
                 Log.d(TAG, "Camera config unchanged, taking photo immediately");
-                // #region agent log
-                Log.i(
-                        TAG,
-                        "🔥 CAM_WARMTH DISPATCH requestId="
-                                + request.requestId
-                                + " path=WARM (kept-alive, config match)");
-                // #endregion
                 recordCaptureSessionForTiming(true, request.size, null);
                 hooks.cancelKeepAliveTimer();
 
@@ -784,13 +730,6 @@ public final class PhotoSession {
                             + " priorTier="
                             + (priorConfig != null ? priorConfig.size : "none")
                             + ")");
-            // #region agent log
-            Log.i(
-                    TAG,
-                    "🔥 CAM_WARMTH DISPATCH requestId="
-                            + request.requestId
-                            + " path=COLD (camera was closed — full open)");
-            // #endregion
             recordCaptureSessionForTiming(false, request.size, coldReason);
             hooks.wakeUpScreen();
             hooks.openCameraInternal(request.filePath, false);
@@ -2328,19 +2267,6 @@ public final class PhotoSession {
             mStillMfnrRequested = mfnr;
             mStillPreviewZslEnabled = previewZslEnabled();
             mStillControlEnableZsl = reqZsl;
-            // #region agent log
-            Log.i(
-                    TAG,
-                    "ZSL_AB shutter flags: zsl_req="
-                            + (zsl ? "on" : "off")
-                            + " mfnr_req="
-                            + (mfnr ? "on" : "off")
-                            + " preview_zsl="
-                            + (mStillPreviewZslEnabled ? "on" : "off")
-                            + " CONTROL_ENABLE_ZSL="
-                            + reqZsl
-                            + " (hypotheses A/B/E)");
-            // #endregion
             int jpegQ = getJpegQualityForSize();
             String sizeLabel =
                     jpegSize != null
@@ -2367,29 +2293,6 @@ public final class PhotoSession {
                             String.valueOf(reqZsl),
                             reqNr != null ? reqNr.toString() : "?",
                             mStillMfnrRequested));
-            // #region agent log
-            boolean keptAlive = hooks.coordinator().isCameraKeptAlive();
-            boolean hasConfigured = hooks.coordinator().hasConfiguredCamera();
-            long msSinceActivate =
-                    activeCapture != null
-                            ? Math.max(0L, System.currentTimeMillis() - activeCapture.startTimeMs)
-                            : -1L;
-            Log.i(
-                    TAG,
-                    "🔥 CAM_WARMTH PRE_SHOT path="
-                            + (currentFilePath() != null ? currentFilePath() : "unknown")
-                            + " camera="
-                            + (mCaptureDispatchedAsWarmReuse ? "WARM" : "COLD")
-                            + " (dispatchedAsWarmReuse="
-                            + mCaptureDispatchedAsWarmReuse
-                            + " keptAlive="
-                            + keptAlive
-                            + " hasConfigured="
-                            + hasConfigured
-                            + " msSinceActivate="
-                            + msSinceActivate
-                            + ") — submitting still capture now");
-            // #endregion
             activeSession.capture(
                     captureRequest,
                     new StillCaptureCallback(

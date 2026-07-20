@@ -108,26 +108,6 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
                 return false;
             }
 
-            // #region agent log
-            Log.i(
-                    TAG,
-                    "🔥 CAM_WARMTH CMD_RECEIVED requestId="
-                            + requestId
-                            + " mode="
-                            + mode
-                            + " size="
-                            + size
-                            + (size.equals(requestedSize) ? "" : " (from " + requestedSize + ")")
-                            + " exposureTimeNs="
-                            + exposureTimeNs
-                            + " durationMs="
-                            + durationMs
-                            + " zsl="
-                            + captureSettings.zsl
-                            + " mfnr="
-                            + captureSettings.mfnr);
-            // #endregion
-
             boolean accepted =
                     captureService.warmUpCamera(
                             requestId, size, exposureTimeNs, durationMs, mode, captureSettings);
