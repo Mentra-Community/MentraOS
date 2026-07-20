@@ -400,7 +400,7 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
         }
 
         AsyncFunction("requestPhoto") { (params: [String: Any]) in
-            let req = PhotoRequest.from(params: params)
+            let req = try PhotoRequest.from(params: params)
             Bridge.log(
                 "NATIVE: PHOTO PIPELINE [3/6] BluetoothSdk.requestPhoto requestId=\(req.requestId) size=\(req.size.rawValue) compress=\(req.compress?.rawValue ?? "none") aeDivisor=\(req.aeExposureDivisor.map { String($0) } ?? "nil")"
             )

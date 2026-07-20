@@ -174,6 +174,18 @@ describe("PhonePhotoCoordinator", () => {
       expect(requestPhotoNative.mock.calls[0]![0]).toMatchObject({transferMethod: "direct"})
     })
 
+    test("rejects an unknown runtime transfer method before starting the photo pipeline", async () => {
+      const coord = new PhonePhotoCoordinator()
+      const promise = coord.takePhoto("com.a", {transferMethod: "wifi"} as any)
+
+      await expect(promise).rejects.toMatchObject({
+        code: "INVALID_ARGUMENT",
+        message: 'Invalid transferMethod "wifi". Expected "auto", "direct", or "ble".',
+      })
+      expect(startManagedPhoto).not.toHaveBeenCalled()
+      expect(requestPhotoNative).not.toHaveBeenCalled()
+    })
+
     test("passes saveToGallery and sound through to the native take_photo command", async () => {
       const coord = new PhonePhotoCoordinator()
       await coord.takePhoto("com.a", {saveToGallery: true, sound: false})

@@ -74,6 +74,12 @@ describe("photoRequestParamsForNative", () => {
     expect(photoRequestParamsForNative({...baseParams, transferMethod: "direct"}).transferMethod).toBe("direct")
     expect(photoRequestParamsForNative({...baseParams, transferMethod: "ble"}).transferMethod).toBe("ble")
   })
+
+  it("rejects an unknown transfer method at runtime", () => {
+    expect(() => photoRequestParamsForNative({...baseParams, transferMethod: "wifi"} as any)).toThrow(
+      'Invalid transferMethod "wifi". Expected "auto", "direct", or "ble".',
+    )
+  })
 })
 
 describe("warmUpCameraParamsForNative", () => {

@@ -51,6 +51,8 @@ All options are optional. The defaults are listed below.
 | `saveToGallery` | `boolean` | `false` | Keep a copy in the glasses gallery. |
 | `exposureTimeNs` | `number` | auto | Manual shutter time in nanoseconds. Honored only on cameras with manual exposure; ignored otherwise. Omit to auto-expose. |
 
+Unknown runtime `transferMethod` values are rejected instead of being treated as `"auto"`.
+
 The result is a `PhotoTaken`:
 
 | Field | Type | Description |

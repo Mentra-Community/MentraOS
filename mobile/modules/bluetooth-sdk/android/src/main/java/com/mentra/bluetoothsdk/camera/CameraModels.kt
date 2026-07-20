@@ -204,6 +204,18 @@ data class PhotoRequest @JvmOverloads constructor(
     val transferMethod: String = "auto",
 ) {
     companion object {
+        private fun transferMethodFromValue(value: Any?): String {
+            if (value == null) return "auto"
+            val raw = value as? String
+                ?: throw IllegalArgumentException(
+                    "Invalid transferMethod ${value::class.java.simpleName}. Expected auto, direct, or ble."
+                )
+            return raw.takeIf { it == "auto" || it == "direct" || it == "ble" }
+                ?: throw IllegalArgumentException(
+                    "Invalid transferMethod \"$raw\". Expected auto, direct, or ble."
+                )
+        }
+
         /** Mirrors iOS `BluetoothSdkModule` defaults for keys omitted from the JS bridge. */
         @JvmStatic
         fun fromMap(values: Map<String, Any>): PhotoRequest {
@@ -240,12 +252,7 @@ data class PhotoRequest @JvmOverloads constructor(
                 save = boolValue(values, "save", "saveToGallery") ?: false,
                 sound = boolValue(values, "sound") ?: true,
                 mode = PhotoMode.fromValue(stringValue(values, "mode")),
-                transferMethod =
-                    when (stringValue(values, "transferMethod")) {
-                        "ble" -> "ble"
-                        "direct" -> "direct"
-                        else -> "auto"
-                    },
+                transferMethod = transferMethodFromValue(values["transferMethod"]),
                 exposureTimeNs = exposureTimeNs,
                 iso = iso,
                 aeExposureDivisor = aeDivisor,

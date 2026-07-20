@@ -130,6 +130,7 @@ Use `transferMethod: "ble"` when you need to skip the glasses' direct Wi-Fi
 upload attempt and always relay the image through the phone over Bluetooth.
 Use `"direct"` to attempt only the direct upload, without BLE fallback.
 `"auto"` tries direct upload first and falls back to BLE.
+Unknown runtime values are rejected instead of being treated as `"auto"`.
 
 **Returns:** `PhotoTaken`
 

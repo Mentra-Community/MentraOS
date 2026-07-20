@@ -19,7 +19,7 @@
  */
 
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
-import type {PhotoSize} from "@mentra/bluetooth-sdk/internal"
+import type {PhotoSize, PhotoTransferMethod} from "@mentra/bluetooth-sdk/internal"
 import {cloudClientService} from "./CloudClientService"
 import {isGlassesConnected} from "./GlassesReadiness"
 import {useGlassesStore} from "../stores/glasses"
@@ -50,7 +50,7 @@ export interface PhotoOpts {
   size?: "low" | "medium" | "high" | "max" | "small" | "large" | "full"
   mode?: "photo" | "text"
   /** Select direct-only, phone-relayed BLE, or the default Wi-Fi/BLE fallback policy. */
-  transferMethod?: "auto" | "direct" | "ble"
+  transferMethod?: PhotoTransferMethod
   compress?: "none" | "low" | "medium" | "high"
   sound?: boolean
   saveToGallery?: boolean
@@ -89,6 +89,15 @@ export class PhotoError extends Error {
     super(message)
     this.name = "PhotoError"
   }
+}
+
+function parsePhotoTransferMethod(value: unknown): PhotoTransferMethod | undefined {
+  if (value === undefined) return undefined
+  if (value === "auto" || value === "direct" || value === "ble") return value
+  throw new PhotoError(
+    "INVALID_ARGUMENT",
+    `Invalid transferMethod ${JSON.stringify(value)}. Expected "auto", "direct", or "ble".`,
+  )
 }
 
 interface ActiveRequest {
@@ -139,6 +148,8 @@ export class PhonePhotoCoordinator {
   >()
 
   async takePhoto(packageName: string, opts: PhotoOpts): Promise<PhotoTaken> {
+    const transferMethod = parsePhotoTransferMethod(opts.transferMethod)
+
     // Pre-check: if glasses aren't even connected, the BLE photo command
     // would be sent into the void and we'd wait 30s for the cloud long-poll
     // to time out. Fail fast with a typed error.
@@ -241,11 +252,7 @@ export class PhonePhotoCoordinator {
         mode: opts.mode ?? "photo",
         webhookUrl: uploadUrl,
         authToken: null,
-        ...(isLoopbackUpload
-          ? {transferMethod: "ble" as const}
-          : opts.transferMethod
-            ? {transferMethod: opts.transferMethod}
-            : {}),
+        ...(isLoopbackUpload ? {transferMethod: "ble" as const} : transferMethod ? {transferMethod} : {}),
         compress: toNativeCompression(opts.compress),
         save: opts.saveToGallery ?? false,
         sound: opts.sound ?? true,
