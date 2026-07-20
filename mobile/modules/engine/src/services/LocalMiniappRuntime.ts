@@ -49,7 +49,7 @@ import {phoneCameraFovCoordinator} from "./PhoneCameraFovCoordinator"
 import {phonePhotoCoordinator} from "./PhonePhotoCoordinator"
 import {phoneStreamCoordinator} from "./PhoneStreamCoordinator"
 import {phoneVideoCoordinator} from "./PhoneVideoCoordinator"
-import {runSentenceTtsPipeline, segmentTextForOfflineTts} from "./SentenceTtsPipeline"
+import {runSentenceTtsPipeline} from "./SentenceTtsPipeline"
 import {summarizeTranscriptionRoutes, transcriptionDeliveryRoute} from "./TranscriptionRouting"
 import {cloudClientService} from "./CloudClientService"
 import {miniappLauncher} from "./MiniappLauncher"
@@ -1962,14 +1962,21 @@ class LocalMiniappRuntime {
   }
 
   private async handleSpeak(packageName: string, payload: Record<string, unknown>, requestId?: string): Promise<void> {
-    const text = payload.text as string | undefined
-    if (!text) {
+    const rawText = payload.text
+    const sentences =
+      typeof rawText === "string"
+        ? [rawText.trim()].filter(Boolean)
+        : Array.isArray(rawText)
+          ? rawText.filter((sentence): sentence is string => typeof sentence === "string").map((sentence) => sentence.trim()).filter(Boolean)
+          : []
+    if (sentences.length === 0) {
       this.sendResult(packageName, requestId, false, undefined, {
         code: MiniappErrorCode.INTERNAL,
-        message: "speak requires text",
+        message: "speak requires text or a non-empty sentence list",
       })
       return
     }
+    const cloudText = sentences.join(" ")
 
     const voice = ((payload.voice_id ?? payload.voice) as string) || "default"
     const audioRequestId = requestId || `tts_${Date.now()}`
@@ -2050,7 +2057,7 @@ class LocalMiniappRuntime {
         if (run.cancelled) return true
 
         const languageCode = ttsModelManager.getAvailableLanguages().some((l) => l.code === voice) ? voice : undefined
-        const offlineSentences = segmentTextForOfflineTts(text)
+        const offlineSentences = sentences
 
         if (offlineSentences.length > 1) {
           let firstSentence: TtsSynthesisResult
@@ -2085,6 +2092,7 @@ class LocalMiniappRuntime {
                     appId: packageName,
                     volume,
                     stopOtherAudio,
+                    suppressCloudUplink: true,
                   },
                   (_responseId, success, error, duration, completionReason) => {
                     if (run.playbackRequestId === sentenceRequestId) run.playbackRequestId = undefined
@@ -2113,7 +2121,7 @@ class LocalMiniappRuntime {
         let offlineGenerated: TtsSynthesisResult | undefined
 
         try {
-          offlineGenerated = await ttsModelManager.synthesizeToFile(text, {languageCode, speed})
+          offlineGenerated = await ttsModelManager.synthesizeToFile(offlineSentences[0], {languageCode, speed})
         } catch (offlineErr) {
           if (run.cancelled) return true
           console.warn(`${LOG_TAG}: offline TTS synthesize failed${reason ? ` after ${reason}` : ""}:`, offlineErr)
@@ -2127,7 +2135,14 @@ class LocalMiniappRuntime {
         }
         run.playbackRequestId = audioRequestId
         audioPlaybackService.play(
-          {requestId: audioRequestId, audioUrl: generated.audioUrl, appId: packageName, volume, stopOtherAudio},
+          {
+            requestId: audioRequestId,
+            audioUrl: generated.audioUrl,
+            appId: packageName,
+            volume,
+            stopOtherAudio,
+            suppressCloudUplink: true,
+          },
           (_respId, success, error, duration, completionReason) => {
             if (run.playbackRequestId === audioRequestId) run.playbackRequestId = undefined
             void Promise.resolve(generated.cleanup?.()).catch((cleanupError) => {
@@ -2152,7 +2167,7 @@ class LocalMiniappRuntime {
         if (run.cancelled) return true
         let source: Awaited<ReturnType<typeof cloudClientService.tts.speak>>
         try {
-          source = await cloudClientService.tts.speak(text, {
+          source = await cloudClientService.tts.speak(cloudText, {
             ...(voiceExplicit && voice !== "default" ? {voice_id: voice} : {}),
             ...(modelId ? {model_id: modelId} : {}),
             ...(voiceSettings ? {voice_settings: voiceSettings} : {}),
@@ -2173,7 +2188,14 @@ class LocalMiniappRuntime {
         run.playbackRequestId = audioRequestId
         await Promise.resolve(
           audioPlaybackService.play(
-            {requestId: audioRequestId, audioUrl: source.audioUrl, appId: packageName, volume, stopOtherAudio},
+            {
+              requestId: audioRequestId,
+              audioUrl: source.audioUrl,
+              appId: packageName,
+              volume,
+              stopOtherAudio,
+              suppressCloudUplink: true,
+            },
             (_respId, success, error, duration, completionReason) => {
               if (run.playbackRequestId === audioRequestId) run.playbackRequestId = undefined
               if (!success && fallbackToOffline) {

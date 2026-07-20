@@ -329,6 +329,11 @@ class DeviceManager {
             return
         }
 
+        if (sgc?.isMicSuspendedForAudio == true) {
+            Bridge.log("MAN: Glasses mic intentionally suspended for phone audio; skipping mic recovery")
+            return
+        }
+
         // When no frame has ever been received, treat elapsed as "forever" so we
         // actually attempt recovery (was 0 before, which made the watchdog a no-op).
         val timeSinceLastLc3Event = System.currentTimeMillis() - (lastLc3Event ?: 0L)
@@ -1647,6 +1652,22 @@ class DeviceManager {
     fun sendCameraFovSetting(requestId: String, fov: Int, roiPosition: Int) {
         val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
         live.sendCameraFovSetting(requestId, fov, roiPosition)
+    }
+
+    /** Sends the pre-lease FOV command used by ASG clients that do not send an acknowledgement. */
+    fun sendLegacyCameraFovSetting(fov: Int, roiPosition: Int) {
+        val glassesConnected = DeviceStore.get("glasses", "connected") as? Boolean ?: false
+        if (!glassesConnected) throw IllegalStateException("not_connected")
+        val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
+        live.sendCameraFovSetting(null, fov, roiPosition)
+    }
+
+    /** Replays the persistent base FOV without waiting for an acknowledgement. */
+    fun restoreLegacyCameraFovSetting() {
+        val glassesConnected = DeviceStore.get("glasses", "connected") as? Boolean ?: false
+        if (!glassesConnected) throw IllegalStateException("not_connected")
+        val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
+        live.sendCameraFovSetting()
     }
 
     fun sendCameraFovOverride(

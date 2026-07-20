@@ -799,6 +799,11 @@ struct ViewState {
             return
         }
 
+        if sgc?.isMicSuspendedForAudio == true {
+            Bridge.log("MAN: Glasses mic intentionally suspended for phone audio; skipping mic recovery")
+            return
+        }
+
         let timeSinceLastLc3Event = Date().timeIntervalSince(lastLc3Event ?? Date())
         if timeSinceLastLc3Event > 5 {
             Bridge.log("MAN: No audio activity in the last 5 seconds from glasses, reinitializing glasses mic")
@@ -1357,6 +1362,22 @@ struct ViewState {
 
     func sendCameraFovSetting(requestId: String, fov: Int, roiPosition: Int) throws {
         try liveSgc().sendCameraFovSetting(requestId: requestId, fov: fov, roiPosition: roiPosition)
+    }
+
+    func sendLegacyCameraFovSetting(fov: Int, roiPosition: Int) throws {
+        let glassesConnected = DeviceStore.shared.get("glasses", "connected") as? Bool ?? false
+        guard glassesConnected else {
+            throw BluetoothSdkError(code: "not_connected", message: "Mentra Live glasses are not connected.")
+        }
+        try liveSgc().sendCameraFovSetting(requestId: nil, fov: fov, roiPosition: roiPosition)
+    }
+
+    func restoreLegacyCameraFovSetting() throws {
+        let glassesConnected = DeviceStore.shared.get("glasses", "connected") as? Bool ?? false
+        guard glassesConnected else {
+            throw BluetoothSdkError(code: "not_connected", message: "Mentra Live glasses are not connected.")
+        }
+        try liveSgc().sendCameraFovSetting()
     }
 
     func sendCameraFovOverride(
