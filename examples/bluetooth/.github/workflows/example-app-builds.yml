@@ -115,7 +115,7 @@ jobs:
         id: sdk-version
         run: |
           version=$(awk '/repositoryURL = .*mentra-bluetooth-sdk-ios/,/};/' examples/ios/MentraExample.xcodeproj/project.pbxproj \
-            | sed -n 's/.*version = \([0-9][0-9.]*\);.*/\1/p' | head -1)
+            | sed -n 's/.*version = \([^;[:space:]][^;[:space:]]*\);.*/\1/p' | head -1)
           if [ -z "$version" ]; then
             echo "Could not read the Bluetooth SDK package version from project.pbxproj" >&2
             exit 1

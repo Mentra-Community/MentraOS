@@ -24,7 +24,7 @@ bun install
 The example depends on the SDK version pinned in `package.json`, for example:
 
 ```json
-"@mentra/bluetooth-sdk": "0.1.20"
+"@mentra/bluetooth-sdk": "0.1.21-beta.0"
 ```
 
 Use the latest SDK version published by Mentra. When validating unreleased SDK
@@ -132,7 +132,7 @@ the published package, remove the symlink and run `bun install`.
 The example has five tabs:
 
 - **Device**: scan for Mentra Live glasses, connect, disconnect, reconnect to the saved/default device, inspect battery, firmware, Wi-Fi, RSSI, and discovered-device state, and explicitly check/start OTA updates once the glasses are connected to Wi-Fi.
-- **Camera**: request photo upload to the local demo cloud or directly to this phone, record and upload videos to the media webhook, tune manual exposure and ISO, enable **Scan Mode** for document/barcode capture presets (max resolution, AE divisor, ISO cap, edge/MFNR off), preview received media, and scan photo previews for barcodes. Direct phone photo is provided by the SDK, while barcode scanning is implemented in a companion local native module.
+- **Camera**: request photo upload to the local demo cloud or directly to this phone, record and upload videos to the media webhook, tune manual exposure and ISO, enable **Text Capture Mode** for glasses-side max-resolution capture and text-region cropping, preview received media, or separately scan standard photo previews for barcodes. Text capture and barcode scanning are mutually exclusive; enabling either turns the other off. Direct phone photo is provided by the SDK, while barcode scanning is implemented in a companion local native module.
 - **Stream**: start RTMP, SRT, or WebRTC streams with SDK-managed keep-alives and preview HLS/WebRTC output. Android and iOS can receive WebRTC directly on the phone through the app-hosted GStreamer WHIP receiver.
 - **System**: scan/connect/forget Wi-Fi, toggle hotspot, change gallery mode, receive microphone PCM, and send RGB LED controls.
 - **Console**: watch button, touch, swipe, BLE, TX, STORE, hotspot, stream, photo, video upload, microphone, and SDK diagnostic events.

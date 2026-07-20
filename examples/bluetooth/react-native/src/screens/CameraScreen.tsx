@@ -74,13 +74,14 @@ function photoSdkCall(
   iso: number,
   cameraFov: number,
   cameraRoiPosition: (typeof CAMERA_ROI_POSITIONS)[number]['value'],
-  scanMode: boolean,
+  textMode: boolean,
 ) {
   const prefix = `const cameraFov = await BluetoothSdk.setCameraFov({ fov: ${cameraFov}, roiPosition: "${cameraRoiPosition}" });
 console.log(\`Camera FOV applied at \${cameraFov.fov}°\`);
 `;
   const requestFields = [
         `  size: "${size}",`,
+        `  mode: "${textMode ? 'text' : 'photo'}",`,
         `  compress: "${compression}",`,
         '  sound: true,',
         exposureManual ? `  exposureTimeNs: ${exposureTimeNs},` : '  exposureTimeNs: null, // auto exposure',
@@ -163,7 +164,7 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
     !connected ||
     needsGlassesHotspotSetup ||
     sdk.activeAction === 'Capture & upload' ||
-    sdk.activeAction === 'Capture scan photo';
+    sdk.activeAction === 'Capture text photo';
   const photoStatusOverlay = photoStatusOverlayInfo(
     sdk.photoStatus,
     sdk.photoPreviewUrl,
@@ -206,7 +207,7 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
         sdk.photoIso,
         sdk.cameraFov,
         sdk.cameraRoiPosition,
-        sdk.scanMode,
+        sdk.textMode,
       );
 
   React.useEffect(() => {
@@ -218,7 +219,7 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
       setCaptureMode('video');
     } else if (
       sdk.activeAction === 'Capture & upload' ||
-      sdk.activeAction === 'Capture scan photo'
+      sdk.activeAction === 'Capture text photo'
     ) {
       setCaptureMode('photo');
     }
@@ -257,7 +258,11 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
           <LinearGradient colors={['#1F4A33', '#3A8A56', '#7DD89E', '#26B870', '#163A26']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.preview}>
             {sdk.photoPreviewUrl ? (
               <>
-                <Image source={{ uri: sdk.photoPreviewUrl }} style={styles.previewImage} resizeMode="cover" />
+                <Image
+                  source={{ uri: sdk.photoPreviewUrl }}
+                  style={styles.previewImage}
+                  resizeMode="cover"
+                />
                 <Pressable
                   accessibilityLabel="Open photo preview"
                   hitSlop={8}
@@ -349,18 +354,22 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
                   ? sdk.galleryServerReachable === null
                     ? 'Preparing hotspot…'
                     : 'Connect glasses hotspot'
-                : sdk.activeAction === 'Capture & upload' || sdk.activeAction === 'Capture scan photo'
+                : sdk.activeAction === 'Capture & upload' || sdk.activeAction === 'Capture text photo'
                   ? 'Capturing…'
-                  : sdk.scanMode
-                    ? 'Capture scan photo'
+                  : sdk.textMode
+                    ? 'Capture text photo'
                     : 'Capture photo'}
             </Text>
           </LinearGradient>
         </Pressable>
-        <View style={styles.scanModeBelowCapture}>
-          <ScanModeSettingsCard
-            enabled={sdk.scanMode}
-            onEnabledChange={sdk.setScanMode}
+        <View style={styles.captureOptionsBelowCapture}>
+          <TextModeSettingsCard
+            enabled={sdk.textMode}
+            onEnabledChange={sdk.setTextMode}
+          />
+          <BarcodeScanningSettingsCard
+            enabled={sdk.barcodeScanningEnabled}
+            onEnabledChange={sdk.setBarcodeScanningEnabled}
           />
         </View>
         <PhotoDetailsCard
@@ -1121,7 +1130,7 @@ function photoCaptureMetadataDetail(config: PhotoStatusExtras['captureMetadata']
   return values.length > 0 ? values.join(' · ') : null;
 }
 
-function ScanModeSettingsCard({
+function TextModeSettingsCard({
   enabled,
   onEnabledChange,
 }: {
@@ -1132,9 +1141,9 @@ function ScanModeSettingsCard({
     <View style={styles.settingCard}>
       <View style={styles.settingHeader}>
         <View style={{ flex: 1 }}>
-          <Text style={styles.settingLabel}>BARCODE SCANNING</Text>
+          <Text style={styles.settingLabel}>TEXT CAPTURE MODE</Text>
           <Text style={styles.settingHint}>
-            {enabled ? 'Barcode scanning on' : 'Standard photo capture'}
+            {enabled ? 'Text mode on · barcode scanning off' : 'Standard photo capture'}
           </Text>
         </View>
         <Switch
@@ -1147,13 +1156,44 @@ function ScanModeSettingsCard({
       </View>
       {enabled ? (
         <Text style={styles.settingDescription}>
-          Applies the AE-divisor / ISO-cap barcode preset and scans captured photo previews for barcodes.
+          Sends mode: &quot;text&quot; for max-resolution capture and text-region cropping on the glasses. Barcode scanning is off.
         </Text>
       ) : (
         <Text style={styles.settingDescription}>
-          Off - capture uses the current fields below without barcode recognition.
+          Off: photo requests use mode: &quot;photo&quot; with your current size and tuning fields below.
         </Text>
       )}
+    </View>
+  );
+}
+
+function BarcodeScanningSettingsCard({
+  enabled,
+  onEnabledChange,
+}: {
+  enabled: boolean;
+  onEnabledChange: (enabled: boolean) => void;
+}) {
+  return (
+    <View style={styles.settingCard}>
+      <View style={styles.settingHeader}>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.settingLabel}>BARCODE SCANNING</Text>
+          <Text style={styles.settingHint}>
+            {enabled ? 'Scan delivered photo previews' : 'Barcode scanning off'}
+          </Text>
+        </View>
+        <Switch
+          ios_backgroundColor="rgba(15,42,29,0.18)"
+          onValueChange={onEnabledChange}
+          thumbColor="#fff"
+          trackColor={{ false: 'rgba(15,42,29,0.18)', true: colors.greenAccent }}
+          value={enabled}
+        />
+      </View>
+      <Text style={styles.settingDescription}>
+        Uses the companion native barcode scanner on the delivered photo preview. Enabling it turns text capture mode off.
+      </Text>
     </View>
   );
 }
@@ -2175,7 +2215,7 @@ const styles = StyleSheet.create({
   barcodeValue: { color: colors.ink, fontSize: 11, fontWeight: '700', lineHeight: 15, marginTop: 2 },
   barcodeMeta: { color: colors.muted, fontSize: 10, fontWeight: '600', lineHeight: 14, marginTop: 2 },
   captureBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', borderRadius: 18, paddingVertical: 16, marginTop: 14, marginHorizontal: 6, gap: 10 },
-  scanModeBelowCapture: { marginTop: 12, marginHorizontal: 6 },
+  captureOptionsBelowCapture: { marginTop: 12, marginHorizontal: 6, gap: 10 },
   captureText: { color: '#fff', fontSize: 15, fontWeight: '600' },
   disabled: { opacity: 0.45 },
 
