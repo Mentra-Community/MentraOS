@@ -49,8 +49,8 @@ export interface PhotoOpts {
   /** Legacy cloud size names are normalized before the native take_photo command. */
   size?: "low" | "medium" | "high" | "max" | "small" | "large" | "full"
   mode?: "photo" | "text"
-  /** Force phone-relayed BLE delivery, or leave native on its auto Wi-Fi/BLE policy. */
-  transferMethod?: "auto" | "ble"
+  /** Select direct-only, phone-relayed BLE, or the default Wi-Fi/BLE fallback policy. */
+  transferMethod?: "auto" | "direct" | "ble"
   compress?: "none" | "low" | "medium" | "high"
   sound?: boolean
   saveToGallery?: boolean
@@ -241,7 +241,11 @@ export class PhonePhotoCoordinator {
         mode: opts.mode ?? "photo",
         webhookUrl: uploadUrl,
         authToken: null,
-        ...(isLoopbackUpload || opts.transferMethod === "ble" ? {transferMethod: "ble" as const} : {}),
+        ...(isLoopbackUpload
+          ? {transferMethod: "ble" as const}
+          : opts.transferMethod
+            ? {transferMethod: opts.transferMethod}
+            : {}),
         compress: toNativeCompression(opts.compress),
         save: opts.saveToGallery ?? false,
         sound: opts.sound ?? true,

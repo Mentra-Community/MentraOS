@@ -108,4 +108,18 @@ class PhotoRequestTest {
 
         assertThat(request.transferMethod).isEqualTo("ble")
     }
+
+    @Test
+    fun `fromMap preserves direct transfer without BLE fallback`() {
+        val request =
+            PhotoRequest.fromMap(
+                mapOf(
+                    "size" to "medium",
+                    "transferMethod" to "direct",
+                    "webhookUrl" to "https://example.com/upload",
+                )
+            )
+
+        assertThat(request.transferMethod).isEqualTo("direct")
+    }
 }

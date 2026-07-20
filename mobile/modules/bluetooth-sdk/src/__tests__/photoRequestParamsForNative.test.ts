@@ -69,8 +69,9 @@ describe("photoRequestParamsForNative", () => {
     expect(photoRequestParamsForNative({...baseParams, mode: "text"}).mode).toBe("text")
   })
 
-  it("preserves a forced BLE transfer and defaults to auto", () => {
+  it("preserves explicit transfer methods and defaults to auto", () => {
     expect(photoRequestParamsForNative(baseParams).transferMethod).toBe("auto")
+    expect(photoRequestParamsForNative({...baseParams, transferMethod: "direct"}).transferMethod).toBe("direct")
     expect(photoRequestParamsForNative({...baseParams, transferMethod: "ble"}).transferMethod).toBe("ble")
   })
 })

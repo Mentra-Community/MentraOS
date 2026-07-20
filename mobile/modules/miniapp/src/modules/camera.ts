@@ -35,9 +35,9 @@ export interface TakePhotoOptions {
   mode?: "photo" | "text"
   /**
    * Image delivery path. `auto` tries direct Wi-Fi upload and falls back to
-   * BLE; `ble` skips the Wi-Fi attempt and always relays through the phone.
+   * BLE; `direct` disables BLE fallback; `ble` always relays through the phone.
    */
-  transferMethod?: "auto" | "ble"
+  transferMethod?: "auto" | "direct" | "ble"
   compress?: "none" | "low" | "medium" | "high"
   sound?: boolean
   saveToGallery?: boolean

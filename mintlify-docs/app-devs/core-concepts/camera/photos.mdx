@@ -45,7 +45,7 @@ All options are optional. The defaults are listed below.
 | Option | Type | Default | What it does |
 |---|---|---|---|
 | `size` | `"low" \| "medium" \| "high" \| "max"` | `"medium"` | Capture resolution. |
-| `transferMethod` | `"auto" \| "ble"` | `"auto"` | Use `"ble"` to skip direct Wi-Fi upload and always relay the image through the phone over Bluetooth. |
+| `transferMethod` | `"auto" \| "direct" \| "ble"` | `"auto"` | Use `"direct"` for webhook upload without BLE fallback, or `"ble"` to always relay through the phone. |
 | `compress` | `"none" \| "low" \| "medium" \| "high"` | `"none"` | JPEG compression applied before upload. |
 | `sound` | `boolean` | `true` | Play a shutter sound on the glasses. |
 | `saveToGallery` | `boolean` | `false` | Keep a copy in the glasses gallery. |

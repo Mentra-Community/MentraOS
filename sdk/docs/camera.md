@@ -108,7 +108,7 @@ error. Check `session.capabilities.hasCamera` before calling.
 interface TakePhotoOptions {
   size?: "low" | "medium" | "high" | "max"
   mode?: "photo" | "text"
-  transferMethod?: "auto" | "ble"
+  transferMethod?: "auto" | "direct" | "ble"
   compress?: "none" | "low" | "medium" | "high"
   sound?: boolean
   saveToGallery?: boolean
@@ -128,6 +128,7 @@ Defaults (applied client-side before the request is sent):
 
 Use `transferMethod: "ble"` when you need to skip the glasses' direct Wi-Fi
 upload attempt and always relay the image through the phone over Bluetooth.
+Use `"direct"` to attempt only the direct upload, without BLE fallback.
 `"auto"` tries direct upload first and falls back to BLE.
 
 **Returns:** `PhotoTaken`

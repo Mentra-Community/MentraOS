@@ -200,7 +200,7 @@ data class PhotoRequest @JvmOverloads constructor(
     val ispAnalogGain: String? = null,
     val resetCaptureTuning: Boolean? = null,
     val mode: PhotoMode = PhotoMode.PHOTO,
-    /** `ble` skips direct upload; `auto` tries Wi-Fi with BLE fallback. */
+    /** `direct` disables BLE fallback; `ble` skips direct upload; `auto` tries both. */
     val transferMethod: String = "auto",
 ) {
     companion object {
@@ -240,7 +240,12 @@ data class PhotoRequest @JvmOverloads constructor(
                 save = boolValue(values, "save", "saveToGallery") ?: false,
                 sound = boolValue(values, "sound") ?: true,
                 mode = PhotoMode.fromValue(stringValue(values, "mode")),
-                transferMethod = if (stringValue(values, "transferMethod") == "ble") "ble" else "auto",
+                transferMethod =
+                    when (stringValue(values, "transferMethod")) {
+                        "ble" -> "ble"
+                        "direct" -> "direct"
+                        else -> "auto"
+                    },
                 exposureTimeNs = exposureTimeNs,
                 iso = iso,
                 aeExposureDivisor = aeDivisor,

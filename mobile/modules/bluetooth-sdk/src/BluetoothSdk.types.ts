@@ -453,6 +453,7 @@ export type RgbLedAction = "on" | "off"
 export type RgbLedColor = "red" | "green" | "blue" | "orange" | "white"
 export type PhotoSize = "low" | "medium" | "high" | "max"
 export type PhotoMode = "photo" | "text"
+export type PhotoTransferMethod = "auto" | "direct" | "ble"
 export type ButtonPhotoSize = "low" | "medium" | "high" | "max"
 
 /**
@@ -570,8 +571,8 @@ export type PhotoRequestParams = {
   appId?: string
   size: PhotoSize
   mode?: PhotoMode
-  /** `ble` skips direct upload and forces phone-relayed BLE image transfer. */
-  transferMethod?: "auto" | "ble"
+  /** `direct` disables BLE fallback; `ble` skips direct upload and forces phone-relayed transfer. */
+  transferMethod?: PhotoTransferMethod
   webhookUrl: string | null
   authToken: string | null
   compress: PhotoCompression

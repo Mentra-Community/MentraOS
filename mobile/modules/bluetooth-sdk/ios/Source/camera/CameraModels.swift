@@ -302,7 +302,12 @@ public struct PhotoRequest {
         self.ispDigitalGain = ispDigitalGain
         self.ispAnalogGain = ispAnalogGain
         self.mode = mode
-        self.transferMethod = transferMethod == "ble" ? "ble" : "auto"
+        switch transferMethod {
+        case "ble", "direct":
+            self.transferMethod = transferMethod
+        default:
+            self.transferMethod = "auto"
+        }
     }
 
     public static func from(params: [String: Any]) -> PhotoRequest {
