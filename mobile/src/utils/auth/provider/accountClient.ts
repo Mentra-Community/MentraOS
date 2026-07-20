@@ -102,10 +102,10 @@ export class AccountAuthProvider extends AuthClient {
   private refreshInFlight: Promise<Tokens | null> | null = null
 
   /** Run the V2 refresh grant. Returns the new tokens, or null ONLY when the
-   * server definitively rejected the refresh token (400/401: revoked or
-   * expired session). Throws on network failure AND transient server errors
-   * (5xx, 429) so callers keep the tokens instead of signing the user out
-   * during a brief core outage. */
+   * server definitively rejected the refresh token (`invalid_grant` or 401:
+   * revoked/expired session). Throws on network failure, malformed requests,
+   * and transient server errors (5xx, 429) so callers keep the tokens instead
+   * of signing the user out during a client bug or brief core outage. */
   private async refreshTokens(refresh: string): Promise<Tokens | null> {
     if (this.refreshInFlight) return this.refreshInFlight
     const inFlight = this.performRefresh(refresh).finally(() => {
@@ -119,9 +119,25 @@ export class AccountAuthProvider extends AuthClient {
     const res = await fetch(core("/api/client/auth/refresh"), {
       method: "POST",
       headers: {"content-type": "application/x-www-form-urlencoded"},
-      body: new URLSearchParams({grant_type: "refresh_token", refresh_token: refresh}),
+      // React Native's native request-body converter does not serialize a
+      // URLSearchParams instance. Pass the encoded string explicitly, as the
+      // cloud-client transport does, or Core receives a malformed/empty form
+      // and responds with unsupported_grant_type (HTTP 400).
+      body: new URLSearchParams({grant_type: "refresh_token", refresh_token: refresh}).toString(),
     })
-    if (AccountAuthProvider.tokenRejected(res.status)) {
+    if (!res.ok) {
+      const errorBody = (await res.json().catch(() => ({}))) as {error?: string}
+      const errorCode = errorBody.error ?? "unknown_error"
+
+      // A refresh endpoint can return several RFC-shaped 400 responses. Only
+      // invalid_grant (or an authorization-level 401) proves the stored token
+      // is dead. Treat malformed requests and transient failures as errors so
+      // callers preserve the session instead of logging the user out.
+      const refreshRejected = errorCode === "invalid_grant" || res.status === 401
+      if (!refreshRejected) {
+        throw new Error(`refresh failed without rejecting session: HTTP ${res.status} (${errorCode})`)
+      }
+
       // The in-flight guard above only covers callers that both call
       // refreshTokens() while ONE request is still pending. A caller that
       // snapshotted this exact refresh token earlier (via loadTokens()) but
@@ -134,10 +150,9 @@ export class AccountAuthProvider extends AuthClient {
       // would make the caller clearTokens() out from under it.
       const current = loadTokens()
       if (current && current.refresh !== refresh) return current
-      console.log(`MENTRA AUTH: refresh grant rejected (HTTP ${res.status}), session is dead`)
+      console.log(`MENTRA AUTH: refresh grant rejected (${errorCode}, HTTP ${res.status}), session is dead`)
       return null
     }
-    if (!res.ok) throw new Error(`refresh failed transiently: HTTP ${res.status}`)
     const body = (await res.json()) as {access_token: string; refresh_token: string}
     const t = {access: body.access_token, refresh: body.refresh_token}
     saveTokens(t)
