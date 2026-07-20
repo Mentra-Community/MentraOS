@@ -249,8 +249,8 @@ export class PhonePhotoCoordinator {
         isoCap: opts.isoCap,
         noiseReduction: opts.noiseReduction,
         edgeEnhancement: opts.edgeEnhancement,
-        zsl: opts.zsl,
-        mfnr: opts.mfnr,
+        ...(opts.zsl != null ? {zsl: opts.zsl} : {}),
+        ...(opts.mfnr != null ? {mfnr: opts.mfnr} : {}),
         ispDigitalGain: opts.ispDigitalGain,
         ispAnalogGain: opts.ispAnalogGain,
       }).catch((err) => {
