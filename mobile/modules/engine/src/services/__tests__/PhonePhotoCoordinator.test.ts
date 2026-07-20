@@ -401,6 +401,21 @@ describe("PhonePhotoCoordinator", () => {
       await coord.stopWarmUpForApp("com.a")
     })
 
+    test("passes zsl and mfnr through to the native warm-up command", async () => {
+      const coord = new PhonePhotoCoordinator()
+      await coord.warmUpCamera("com.a", {zsl: true, mfnr: false})
+      expect(warmUpCameraNative.mock.calls[0]![0]).toMatchObject({zsl: true, mfnr: false})
+      await coord.stopWarmUpForApp("com.a")
+    })
+
+    test("omits zsl and mfnr when unset", async () => {
+      const coord = new PhonePhotoCoordinator()
+      await coord.warmUpCamera("com.a", {})
+      expect(warmUpCameraNative.mock.calls[0]![0]).not.toHaveProperty("zsl")
+      expect(warmUpCameraNative.mock.calls[0]![0]).not.toHaveProperty("mfnr")
+      await coord.stopWarmUpForApp("com.a")
+    })
+
     test("throws GLASSES_NOT_CONNECTED when glasses are disconnected", async () => {
       glassesState = {connection: {state: "disconnected"}}
       const coord = new PhonePhotoCoordinator()
