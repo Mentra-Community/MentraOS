@@ -126,6 +126,20 @@ describe("MiniappLauncher", () => {
     expect(mockRouter.spawnCalls.length).toBe(0)
   })
 
+  test("ensureRunning returns null UI for an already-registered package whose resolve fails", async () => {
+    // First launch succeeds and registers the package. Later the bundle becomes
+    // unresolvable (e.g. the mentra-miniapp dev server dropped). Headless
+    // callers must not throw — LocalMiniappView routes null uiUri + devUrl to
+    // /applet/dev-offline instead.
+    await miniappLauncher.ensureRunning("com.x")
+    expect(mockRouter.spawnCalls.length).toBe(1)
+    activeVersion = ""
+    const result = await miniappLauncher.ensureRunning("com.x")
+    expect(result).toEqual({uiUri: null, uiBaseDir: null})
+    expect(mockRouter.spawnCalls.length).toBe(1)
+    expect(miniappLauncher.isRunning("com.x")).toBe(true)
+  })
+
   test("stop tears the background context down via the router", async () => {
     await miniappLauncher.ensureRunning("com.x")
     expect(miniappLauncher.isRunning("com.x")).toBe(true)
