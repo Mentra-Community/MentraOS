@@ -157,6 +157,8 @@ public class CameraNeoService extends LifecycleService {
     private static final String EXTRA_WARM_UP_EXPOSURE_NS =
             "com.augmentos.camera.EXTRA_WARM_UP_EXPOSURE_NS";
     private static final String EXTRA_WARM_UP_MODE = "com.augmentos.camera.EXTRA_WARM_UP_MODE";
+    private static final String EXTRA_WARM_UP_ZSL = "com.augmentos.camera.EXTRA_WARM_UP_ZSL";
+    private static final String EXTRA_WARM_UP_MFNR = "com.augmentos.camera.EXTRA_WARM_UP_MFNR";
     public static final String EXTRA_VIDEO_FILE_PATH = "com.augmentos.camera.EXTRA_VIDEO_FILE_PATH";
     public static final String EXTRA_VIDEO_ID = "com.augmentos.camera.EXTRA_VIDEO_ID";
     public static final String EXTRA_VIDEO_SETTINGS = "com.augmentos.camera.EXTRA_VIDEO_SETTINGS";
@@ -817,8 +819,11 @@ public class CameraNeoService extends LifecycleService {
             Long exposureTimeNs,
             long durationMs,
             String mode,
+            @Nullable PhotoCaptureSettings captureSettings,
             CameraWarmUpCallback callback) {
         CameraWarmUpCallback rejectBusy = null;
+        PhotoCaptureSettings warmSettings =
+                captureSettings != null ? captureSettings : PhotoCaptureSettings.EMPTY;
         synchronized (SERVICE_LOCK) {
             long ttl = clampWarmUpDuration(durationMs);
             boolean cameraReady =
@@ -834,7 +839,7 @@ public class CameraNeoService extends LifecycleService {
                             && idle
                             && !warmUpInFlight
                             && sInstance.photoSession.willReuseConfiguredCamera(
-                                    size, true, exposureTimeNs)
+                                    size, true, exposureTimeNs, warmSettings)
                             && (sInstance.warmLeases.isEmpty()
                                     || PhotoMode.normalize(mode).equals(sInstance.warmLeaseMode));
 
@@ -888,6 +893,12 @@ public class CameraNeoService extends LifecycleService {
                 intent.putExtra(EXTRA_WARM_UP_MODE, mode);
                 if (exposureTimeNs != null) {
                     intent.putExtra(EXTRA_WARM_UP_EXPOSURE_NS, exposureTimeNs.longValue());
+                }
+                if (warmSettings.zsl != null) {
+                    intent.putExtra(EXTRA_WARM_UP_ZSL, warmSettings.zsl.booleanValue());
+                }
+                if (warmSettings.mfnr != null) {
+                    intent.putExtra(EXTRA_WARM_UP_MFNR, warmSettings.mfnr.booleanValue());
                 }
                 context.startForegroundService(intent);
             }
@@ -1114,7 +1125,20 @@ public class CameraNeoService extends LifecycleService {
                                         ? intent.getLongExtra(EXTRA_WARM_UP_EXPOSURE_NS, 0L)
                                         : null;
                         String warmMode = intent.getStringExtra(EXTRA_WARM_UP_MODE);
-                        performWarmUp(warmSize, warmExposureNs, warmDuration, warmMode);
+                        PhotoCaptureSettings.Builder warmTuning =
+                                new PhotoCaptureSettings.Builder();
+                        if (intent.hasExtra(EXTRA_WARM_UP_ZSL)) {
+                            warmTuning.zsl(intent.getBooleanExtra(EXTRA_WARM_UP_ZSL, true));
+                        }
+                        if (intent.hasExtra(EXTRA_WARM_UP_MFNR)) {
+                            warmTuning.mfnr(intent.getBooleanExtra(EXTRA_WARM_UP_MFNR, true));
+                        }
+                        performWarmUp(
+                                warmSize,
+                                warmExposureNs,
+                                warmDuration,
+                                warmMode,
+                                warmTuning.build());
                         break;
                     }
             }
@@ -1132,15 +1156,24 @@ public class CameraNeoService extends LifecycleService {
      * emitted once preview is running and {@code error} on any open/configure failure. Keep-alive
      * expiry emits {@code stopped} (see {@link #startWarmKeepAliveTimer}).
      */
-    private void performWarmUp(String size, Long exposureTimeNs, long durationMs, String mode) {
+    private void performWarmUp(
+            String size,
+            Long exposureTimeNs,
+            long durationMs,
+            String mode,
+            @Nullable PhotoCaptureSettings captureSettings) {
         // Mirror take_photo's text-mode AE preset (see PhotoCommandHandler.handleTakePhoto) so the
         // warmed preview's exposure mode matches the eventual capture exactly — otherwise the
         // still shot would flip auto→manual scan exposure on the same session, which is harmless
         // for reuse but leaves the preview metering under the wrong AE regime while warm.
+        // Text mode forces zsl/mfnr off via applyTextModeExposure; otherwise honor the request's
+        // independent zsl/mfnr (null inherits globals inside PhotoSession resolvers).
+        PhotoCaptureSettings base =
+                captureSettings != null ? captureSettings : PhotoCaptureSettings.EMPTY;
         PhotoCaptureSettings warmCaptureSettings =
                 (PhotoMode.TEXT.equals(PhotoMode.normalize(mode)) && exposureTimeNs == null)
-                        ? PhotoCaptureSettings.applyTextModeExposure(PhotoCaptureSettings.EMPTY)
-                        : PhotoCaptureSettings.EMPTY;
+                        ? PhotoCaptureSettings.applyTextModeExposure(base)
+                        : base;
         // Bind the pending callback(s) AND drive setupWarmUp under one continuous SERVICE_LOCK
         // hold,
         // so warmUpRequest is set before the lock is released. Splitting them lets a second
