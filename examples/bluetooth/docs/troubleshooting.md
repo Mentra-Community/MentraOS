@@ -70,7 +70,7 @@ Common cause:
 
 Fix:
 
-1. Upgrade to the Mentra Bluetooth SDK release that includes BLE wire v2 / K900 endian negotiation (`0.1.15` or newer once published).
+1. Upgrade to Mentra Bluetooth SDK `0.1.20` or newer, which includes BLE wire v2 and K900 endian negotiation.
 2. Update glasses firmware through the normal Mentra Live OTA path when available.
 3. If testing unreleased SDK source, symlink `mobile/modules/bluetooth-sdk` from MentraOS and rebuild the native app (see [Getting Started](getting-started.md) local override section).
 4. Power-cycle glasses and forget/re-pair after upgrading either side.

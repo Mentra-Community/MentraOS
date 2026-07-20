@@ -18,15 +18,15 @@ Use a **matching** SDK + glasses firmware combination:
 
 | Your app SDK | Glasses firmware | Result |
 | --- | --- | --- |
-| `0.1.14` or older | Any | Legacy path only. Works with older firmware; may fail boot-ready on newer ASG↔BES stacks that changed UART endian without negotiation. |
-| `0.1.15` or newer (wire v2 release) | Older BES (big-endian) | Supported. SDK defaults to BE and upgrades to LE only when `wire_caps` advertises it. |
-| `0.1.15` or newer | New BES (wire v2) | Full wire v2: LE lengths, optional binary `0x40`, compact JSON. |
+| `0.1.19` or older | Any | Legacy path only. Works with older firmware; may fail boot-ready on newer ASG↔BES stacks that changed UART endian without negotiation. |
+| `0.1.20` or newer (wire v2 release) | Older BES (big-endian) | Supported. SDK defaults to BE and upgrades to LE only when `wire_caps` advertises it. |
+| `0.1.20` or newer | New BES (wire v2) | Full wire v2: LE lengths, optional binary `0x40`, compact JSON. |
 
-When Mentra publishes the wire-v2 SDK release, bump `@mentra/bluetooth-sdk`, the Android Maven artifact, and the iOS Swift package to that version in your app. Until then, local SDK development can symlink the MentraOS `mobile/modules/bluetooth-sdk` checkout (see example READMEs).
+BLE wire v2 shipped in SDK `0.1.20`. Pin `@mentra/bluetooth-sdk`, the Android Maven artifact, or the iOS Swift package to `0.1.20` or newer in your app.
 
 ## Integrator Checklist
 
-- Pin the published SDK version in your app and upgrade when Mentra ships the wire-v2 release.
+- Pin SDK `0.1.20` or newer in your app to use BLE wire v2.
 - Do **not** hand-roll K900 length bytes in app code; always go through the SDK.
 - Subscribe to glasses status before sending commands; wait for `fullyBooted` / connection ready on Mentra Live.
 - Debounce rapid display or settings writes (the production checklist already recommends this).
