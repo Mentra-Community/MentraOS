@@ -1735,7 +1735,7 @@ class MentraLive: NSObject, SGCManager {
         let bleImgId =
             "I" + String(format: "%09d", Int(Date().timeIntervalSince1970 * 1000) % 100_000_000)
         json["bleImgId"] = bleImgId
-        json["transferMethod"] = "auto"
+        json["transferMethod"] = request.transferMethod
 
         if let webhookUrl = request.webhookUrl, !webhookUrl.isEmpty {
             json["webhookUrl"] = webhookUrl
@@ -1776,7 +1776,9 @@ class MentraLive: NSObject, SGCManager {
         }
         request.appendScanFields(to: &json)
 
-        Bridge.log("LIVE: PHOTO PIPELINE [5b/6] take_photo JSON ready bleImgId=\(bleImgId) transferMethod=auto")
+        Bridge.log(
+            "LIVE: PHOTO PIPELINE [5b/6] take_photo JSON ready bleImgId=\(bleImgId) transferMethod=\(request.transferMethod)"
+        )
         Bridge.log("LIVE: PHOTO PIPELINE [6/6] Dispatching take_photo to sendJson()")
 
         sendJson(json, wakeUp: true)

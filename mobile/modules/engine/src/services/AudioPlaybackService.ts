@@ -71,6 +71,9 @@ class AudioPlaybackService {
   // Reuse a single AudioPlayer to avoid AudioTrack exhaustion
   // Creating new ExoPlayer instances per request leads to -12 ENOMEM errors
   private player: AudioPlayer | null = null
+  // The source currently loaded into the reusable player. Keep object identity
+  // so a delayed tail cleanup from an older request cannot unload a newer one.
+  private loadedPlayback: PlaybackState | null = null
   private currentPlayback: PlaybackState | null = null
   // Requests that entered play() but have not yet reached the native player.
   // Keeping these addressable prevents a cancelled request from starting after
@@ -318,7 +321,7 @@ class AudioPlaybackService {
     }
   }
 
-  private pauseFinishedPlayerAfterTail(playback: PlaybackState): void {
+  private clearFinishedPlayerAfterTail(playback: PlaybackState): void {
     if (playback.suppressCloudUplink) {
       this.tailUplinkSuppressions.add(playback.uplinkSuppressionId)
     }
@@ -329,15 +332,17 @@ class AudioPlaybackService {
       if (playback.suppressCloudUplink && this.tailUplinkSuppressions.delete(playback.uplinkSuppressionId)) {
         setAudioCloudUplinkSuppressed(playback.uplinkSuppressionId, false)
       }
-      if (this.currentPlayback) return
       if (!this.player) return
+      if (this.loadedPlayback !== playback) return
       try {
         this.player.pause()
+        this.player.replace(null)
+        this.loadedPlayback = null
         console.log(
-          `AUDIO: Paused finished player for ${playback.requestId} after ${AudioPlaybackService.A2DP_TAIL_DRAIN_MS}ms tail drain`,
+          `AUDIO: Cleared finished player for ${playback.requestId} after ${AudioPlaybackService.A2DP_TAIL_DRAIN_MS}ms tail drain`,
         )
       } catch (e) {
-        console.warn("AUDIO: Error pausing player after tail drain:", e)
+        console.warn("AUDIO: Error clearing player after tail drain:", e)
       }
     }, AudioPlaybackService.A2DP_TAIL_DRAIN_MS)
   }
@@ -420,6 +425,7 @@ class AudioPlaybackService {
       // Replace the source and play
       // Using replace() reuses the existing ExoPlayer/AudioTrack instead of creating new ones
       player.replace({uri: audioUrl})
+      this.loadedPlayback = playback
       player.play()
 
       // Mentra Live volume reads can block up to 5s when the glasses don't
@@ -531,8 +537,8 @@ class AudioPlaybackService {
 
       // ExoPlayer can report finished before an A2DP sink has audibly drained
       // the last buffered audio. Pausing immediately can clip the tail on
-      // Mentra Live; defer cleanup unless another playback has started.
-      this.pauseFinishedPlayerAfterTail(playback)
+      // Mentra Live; defer cleanup and guard it against a newer loaded source.
+      this.clearFinishedPlayerAfterTail(playback)
 
       this.currentPlayback = null
       playback.onComplete(playback.requestId, true, null, durationMs, "completed")
@@ -798,6 +804,7 @@ class AudioPlaybackService {
         console.error("AUDIO: Error releasing player:", error)
       }
       this.player = null
+      this.loadedPlayback = null
     }
   }
 }

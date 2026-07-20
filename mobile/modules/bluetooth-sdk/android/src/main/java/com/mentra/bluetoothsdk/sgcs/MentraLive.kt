@@ -5508,8 +5508,9 @@ class MentraLive : SGCManager() {
             val bleImgId = "I" + String.format("%09d", System.currentTimeMillis() % 1000000000)
             json.put("bleImgId", bleImgId)
 
-            // Use auto mode by default - glasses try WiFi direct upload, BLE fallback via bleImgId
-            json.put("transferMethod", "auto")
+            // Miniapps may explicitly skip direct Wi-Fi upload and force the
+            // phone-relayed BLE path. Auto remains the default.
+            json.put("transferMethod", request.transferMethod)
 
             // Always prepare for potential BLE transfer
             if (webhookUrl != null && !webhookUrl.isEmpty()) {
@@ -5519,7 +5520,7 @@ class MentraLive : SGCManager() {
                 blePhotoTransfers[bleImgId] = transfer
             }
 
-            Bridge.log("LIVE: Using auto transfer mode with BLE fallback ID: " + bleImgId)
+            Bridge.log("LIVE: Using " + request.transferMethod + " transfer mode with BLE fallback ID: " + bleImgId)
             Bridge.log(
                     "LIVE: PHOTO PIPELINE [5b/6] JSON ready mode=" +
                             mode +

@@ -200,6 +200,8 @@ data class PhotoRequest @JvmOverloads constructor(
     val ispAnalogGain: String? = null,
     val resetCaptureTuning: Boolean? = null,
     val mode: PhotoMode = PhotoMode.PHOTO,
+    /** `ble` skips direct upload; `auto` tries Wi-Fi with BLE fallback. */
+    val transferMethod: String = "auto",
 ) {
     companion object {
         /** Mirrors iOS `BluetoothSdkModule` defaults for keys omitted from the JS bridge. */
@@ -238,6 +240,7 @@ data class PhotoRequest @JvmOverloads constructor(
                 save = boolValue(values, "save", "saveToGallery") ?: false,
                 sound = boolValue(values, "sound") ?: true,
                 mode = PhotoMode.fromValue(stringValue(values, "mode")),
+                transferMethod = if (stringValue(values, "transferMethod") == "ble") "ble" else "auto",
                 exposureTimeNs = exposureTimeNs,
                 iso = iso,
                 aeExposureDivisor = aeDivisor,

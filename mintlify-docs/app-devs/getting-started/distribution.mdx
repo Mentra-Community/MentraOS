@@ -20,6 +20,13 @@ your project over the LAN with hot reload. Scan the QR from the Mentra App and
 your changes reload on save. This is the inner loop; see the
 [Quickstart](/app-devs/getting-started/quickstart).
 
+Dev mode is not an installation: the computer and CLI must remain running to
+serve each miniapp's runtime bundle. The Mentra App keeps a separate dev entry
+for each manifest package name and caches its name and icon, so you can scan and
+test multiple dev miniapps together. Rescanning the same package updates that
+entry. Use a release install when you want the miniapp to run without the
+computer.
+
 ## 2. Release install (sharing a build over LAN)
 
 To put a real, installed build on one or more phones without going through the Mentra Miniapp Store, run:

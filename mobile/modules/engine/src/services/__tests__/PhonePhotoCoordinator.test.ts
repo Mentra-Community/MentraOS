@@ -47,8 +47,7 @@ mock.module("../GlassesReadiness", () => ({
   isGlassesConnected: (connection: {state?: string} | undefined) => connection?.state === "connected",
 }))
 
-const {CAPTURE_PIPELINE_TIMEOUT_MS, PhonePhotoCoordinator, PhotoError} =
-  await import("../PhonePhotoCoordinator")
+const {CAPTURE_PIPELINE_TIMEOUT_MS, PhonePhotoCoordinator, PhotoError} = await import("../PhonePhotoCoordinator")
 
 beforeEach(() => {
   requestPhotoNative.mockClear()
@@ -163,6 +162,12 @@ describe("PhonePhotoCoordinator", () => {
       expect(requestPhotoNative.mock.calls[0]![0]).toMatchObject({transferMethod: "ble"})
     })
 
+    test("passes a miniapp's forced BLE transfer to the native request", async () => {
+      const coord = new PhonePhotoCoordinator()
+      await coord.takePhoto("com.a", {transferMethod: "ble"})
+      expect(requestPhotoNative.mock.calls[0]![0]).toMatchObject({transferMethod: "ble"})
+    })
+
     test("passes saveToGallery and sound through to the native take_photo command", async () => {
       const coord = new PhonePhotoCoordinator()
       await coord.takePhoto("com.a", {saveToGallery: true, sound: false})
@@ -191,15 +196,12 @@ describe("PhonePhotoCoordinator", () => {
       expect(startManagedPhoto).toHaveBeenCalledWith({size: "full"})
     })
 
-    test.each(["low", "high", "max"] as const)(
-      "presign accepts canonical size %s without HTTP 400",
-      async (size) => {
-        const coord = new PhonePhotoCoordinator()
-        await coord.takePhoto("com.a", {size})
-        expect(startManagedPhoto).toHaveBeenCalledWith({size})
-        expect(requestPhotoNative.mock.calls[0]![0]).toMatchObject({size})
-      },
-    )
+    test.each(["low", "high", "max"] as const)("presign accepts canonical size %s without HTTP 400", async (size) => {
+      const coord = new PhonePhotoCoordinator()
+      await coord.takePhoto("com.a", {size})
+      expect(startManagedPhoto).toHaveBeenCalledWith({size})
+      expect(requestPhotoNative.mock.calls[0]![0]).toMatchObject({size})
+    })
 
     test("owns(requestId) true mid-flight, false after completion", async () => {
       const coord = new PhonePhotoCoordinator()
@@ -236,7 +238,7 @@ describe("PhonePhotoCoordinator", () => {
       const coord = new PhonePhotoCoordinator()
       awaitManagedPhotoReady.mockImplementationOnce(() => new Promise<never>(() => {}))
       void coord.takePhoto("com.a", {}).catch(() => {})
-      await new Promise(r => setTimeout(r, 5))
+      await new Promise((r) => setTimeout(r, 5))
       const bleId = (requestPhotoNative.mock.calls[0]![0] as {requestId: string}).requestId
       expect(coord.owns(bleId)).toBe(true)
       expect(coord.resolveCloudRequestId(bleId)).toBe("rq-test-1")
@@ -292,7 +294,7 @@ describe("PhonePhotoCoordinator", () => {
       const coord = new PhonePhotoCoordinator()
       const p = coord.takePhoto("com.a", {})
       // Wait a tick so the coordinator registers activeRequests.
-      await new Promise(r => setTimeout(r, 5))
+      await new Promise((r) => setTimeout(r, 5))
       expect(coord.owns("rq-test-1")).toBe(true)
       coord.handlePhotoError("rq-test-1", "BATTERY_LOW", "Battery too low")
       const err = await expectPhotoError(p)

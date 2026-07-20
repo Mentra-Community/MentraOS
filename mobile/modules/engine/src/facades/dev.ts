@@ -125,8 +125,9 @@ export const dev = {
   /**
    * Side-load a miniapp being served from a dev machine (the `mentra dev` / CLI
    * flow) by its URL: probes `<url>/miniapp.json`, and on a reachable manifest
-   * registers it into the single dev slot so it appears in `engine.miniapps`
-   * and can be started. This is the OEM-host equivalent of the first-party
+   * registers it under its manifest package so it appears in `engine.miniapps`
+   * and can coexist with other dev miniapps. This is the OEM-host equivalent
+   * of the first-party
    * developer-URL screen — the registration itself is engine-internal, so a
    * host reaches it here rather than the internal registry. Rendering still
    * flows through the normal display path once the miniapp is started.
@@ -153,11 +154,11 @@ export const dev = {
       devPort = undefined
     }
     const appName = name ?? manifest.name ?? "Dev Miniapp"
-    registerDevApp({
-      // The REAL manifest package: registerDevApp preserves it as
-      // sourcePackageName (miniapp auth + dev-slot cleanup key off it) before
-      // forcing packageName to the single dev slot.
-      packageName: (manifest.packageName as string | undefined) ?? DEV_APP_PACKAGE_NAME,
+    const packageName = (manifest.packageName as string | undefined) ?? DEV_APP_PACKAGE_NAME
+    const existing = useAppStatusStore.getState().apps.find((app) => app.packageName === packageName)
+    if (existing?.running) await useAppStatusStore.getState().stop(packageName)
+    await registerDevApp({
+      packageName,
       name: appName,
       iconUrl: manifest.icon ? new URL(manifest.icon, `${devUrl}/`).toString() : `${devUrl}/icon.png`,
       devUrl,
@@ -168,7 +169,7 @@ export const dev = {
       actions: manifest.actions as DevAppRecord["actions"],
     })
     await useAppStatusStore.getState().refresh()
-    return {ok: true, packageName: DEV_APP_PACKAGE_NAME, name: appName}
+    return {ok: true, packageName, name: appName}
   },
 
   /** Current engine runtime status for engine-owned debug surfaces. */

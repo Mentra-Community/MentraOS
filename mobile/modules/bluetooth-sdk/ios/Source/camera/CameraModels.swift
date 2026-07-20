@@ -244,6 +244,7 @@ public struct PhotoRequest {
     public let requestId: String
     public let size: PhotoSize
     public let mode: PhotoMode
+    public let transferMethod: String
     public let webhookUrl: String?
     public let authToken: String?
     public let compress: PhotoCompression?
@@ -280,7 +281,8 @@ public struct PhotoRequest {
         zsl: Bool? = nil,
         ispDigitalGain: Int? = nil,
         ispAnalogGain: String? = nil,
-        mode: PhotoMode = .photo
+        mode: PhotoMode = .photo,
+        transferMethod: String = "auto"
     ) {
         self.requestId = nonBlankRequestId(requestId) ?? generatedCameraRequestId("photo")
         self.size = size
@@ -300,6 +302,7 @@ public struct PhotoRequest {
         self.ispDigitalGain = ispDigitalGain
         self.ispAnalogGain = ispAnalogGain
         self.mode = mode
+        self.transferMethod = transferMethod == "ble" ? "ble" : "auto"
     }
 
     public static func from(params: [String: Any]) -> PhotoRequest {
@@ -367,7 +370,8 @@ public struct PhotoRequest {
             zsl: optionalBool("zsl"),
             ispDigitalGain: optionalInt("ispDigitalGain"),
             ispAnalogGain: params["ispAnalogGain"] as? String,
-            mode: PhotoMode(normalizedRawValue: params["mode"] as? String)
+            mode: PhotoMode(normalizedRawValue: params["mode"] as? String),
+            transferMethod: params["transferMethod"] as? String ?? "auto"
         )
     }
 
@@ -417,7 +421,8 @@ public struct PhotoRequest {
             zsl: zsl,
             ispDigitalGain: ispDigitalGain,
             ispAnalogGain: ispAnalogGain,
-            mode: mode
+            mode: mode,
+            transferMethod: transferMethod
         )
     }
 }

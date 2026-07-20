@@ -78,6 +78,15 @@ describe("CameraModule", () => {
     expect(requestCalls[0]).toMatchObject({mode: "text"})
   })
 
+  test("takePhoto forwards a forced BLE transfer", async () => {
+    const {session, requestCalls} = mockSession({})
+    const camera = new CameraModule(session)
+
+    await camera.takePhoto({transferMethod: "ble"})
+
+    expect(requestCalls[0]).toMatchObject({transferMethod: "ble"})
+  })
+
   test("takePhoto forwards timeoutMs as the sendRequest options argument", async () => {
     const {session, requestOptions} = mockSession({})
     const camera = new CameraModule(session)
