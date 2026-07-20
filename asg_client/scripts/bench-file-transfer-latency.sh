@@ -52,8 +52,10 @@ Mentra clocks to compare:
   packet_rtt_ms   = timestamp(<<< for index N) - prior send  # target ~11ms
   packets_per_sec = completed indices / wall seconds         # target ~90
 
-Mentra (this APK) summary line:
+Mentra (this APK) — same clocks appear in:
   adb logcat -v time -s FileTransferLatency:I BlePhotoTiming:I
+Look for either the FileTransferLatency SUMMARY line or the PHASE BREAKDOWN
+PAYLOAD / TRANSFER rows: ack→send p50, packet RTT p50, packets/sec.
 EOF
 }
 

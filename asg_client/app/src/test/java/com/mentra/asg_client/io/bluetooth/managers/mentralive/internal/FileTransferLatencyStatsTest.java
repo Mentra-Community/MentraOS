@@ -2,6 +2,7 @@ package com.mentra.asg_client.io.bluetooth.managers.mentralive.internal;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.mentra.asg_client.io.media.core.BlePhotoTimingLog;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
@@ -23,13 +24,14 @@ public class FileTransferLatencyStatsTest {
         stats.onPacketRtt(11);
         stats.onPacketRtt(15);
 
-        String summary = stats.finishAndLog("bench.bin", 2048, 2);
+        BlePhotoTimingLog.PacketClockStats clocks = stats.finishAndLog("bench.bin", 2048, 2);
 
-        assertThat(summary).contains("SUMMARY");
-        assertThat(summary).contains("file=bench.bin");
-        assertThat(summary).contains("ack_to_send_p50_ms=");
-        assertThat(summary).contains("packet_rtt_p50_ms=11");
-        assertThat(summary).contains("packet_rtt_p95_ms=15");
+        assertThat(clocks).isNotNull();
+        assertThat(clocks.packetRttP50Ms).isEqualTo(11);
+        assertThat(clocks.packetRttP95Ms).isEqualTo(15);
+        assertThat(clocks.packetsAcked).isEqualTo(2);
+        assertThat(clocks.totalPackets).isEqualTo(2);
+        assertThat(clocks.ackToSendP50Ms).isGreaterThanOrEqualTo(0);
         assertThat(stats.getPacketsAcked()).isEqualTo(2);
     }
 

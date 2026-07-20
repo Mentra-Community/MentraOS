@@ -2430,18 +2430,21 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             long now = System.currentTimeMillis();
             long transferDuration = now - currentFileTransfer.startTime;
             currentFileTransfer.packetsCompleteAtEpochMs = now;
+            BlePhotoTimingLog.PacketClockStats packetClocks = null;
             FileTransferLatencyStats stats = fileTransferLatencyStats;
             if (stats != null) {
-                stats.finishAndLog(
-                        currentFileTransfer.fileName,
-                        currentFileTransfer.fileSize,
-                        currentFileTransfer.totalPackets);
+                packetClocks =
+                        stats.finishAndLog(
+                                currentFileTransfer.fileName,
+                                currentFileTransfer.fileSize,
+                                currentFileTransfer.totalPackets);
                 fileTransferLatencyStats = null;
             }
             BlePhotoTimingLog.recordUartTransfer(
                     currentFileTransfer.fileName,
                     currentFileTransfer.fileSize,
-                    transferDuration);
+                    transferDuration,
+                    packetClocks);
             int rateKbps =
                     transferDuration > 0
                             ? (int) (currentFileTransfer.fileSize * 1000L / transferDuration / 1024)

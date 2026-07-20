@@ -136,12 +136,26 @@ public final class BlePhotoTimingLog {
 
     /** Record the completed glasses-MCU packet transfer for the final pipeline summary. */
     public static void recordUartTransfer(String bleImgId, long payloadBytes, long durationMs) {
+        recordUartTransfer(bleImgId, payloadBytes, durationMs, null);
+    }
+
+    /**
+     * Record UART/BLE packet transfer stats, optionally including Mentra vs K900Server packet
+     * clocks ({@code ack_to_send} / {@code packet_rtt} / packets-per-sec) for the PHASE BREAKDOWN
+     * report.
+     */
+    public static void recordUartTransfer(
+            String bleImgId,
+            long payloadBytes,
+            long durationMs,
+            @Nullable PacketClockStats packetClocks) {
         if (!enabled() || bleImgId == null || bleImgId.isEmpty()) {
             return;
         }
         UART_TRANSFER_STATS.put(
                 bleImgId,
-                new UartTransferStats(payloadBytes, durationMs, System.currentTimeMillis()));
+                new UartTransferStats(
+                        payloadBytes, durationMs, System.currentTimeMillis(), packetClocks));
     }
 
     /** Consume UART transfer stats for a finished BLE file transfer (may be null). */
@@ -217,16 +231,58 @@ public final class BlePhotoTimingLog {
         Log.i(TAG, sb.toString());
     }
 
+    /**
+     * Mentra-owned packet clocks for comparing against K900Server (~1ms ack→send, ~11ms RTT, ~90
+     * packets/s). Values of {@code -1} mean "no samples".
+     */
+    public static final class PacketClockStats {
+        public final long ackToSendP50Ms;
+        public final long ackToSendP95Ms;
+        public final long packetRttP50Ms;
+        public final long packetRttP95Ms;
+        public final double packetsPerSec;
+        public final int packetsAcked;
+        public final int totalPackets;
+
+        public PacketClockStats(
+                long ackToSendP50Ms,
+                long ackToSendP95Ms,
+                long packetRttP50Ms,
+                long packetRttP95Ms,
+                double packetsPerSec,
+                int packetsAcked,
+                int totalPackets) {
+            this.ackToSendP50Ms = ackToSendP50Ms;
+            this.ackToSendP95Ms = ackToSendP95Ms;
+            this.packetRttP50Ms = packetRttP50Ms;
+            this.packetRttP95Ms = packetRttP95Ms;
+            this.packetsPerSec = packetsPerSec;
+            this.packetsAcked = packetsAcked;
+            this.totalPackets = totalPackets;
+        }
+    }
+
     public static final class UartTransferStats {
         public final long payloadBytes;
         public final long durationMs;
         /** Wall-clock millis when the last UART/BLE packet was MCU-ACKed. */
         public final long packetsCompleteAtEpochMs;
+        /** Optional Mentra packet-clock samples for the PHASE BREAKDOWN report. */
+        @Nullable public final PacketClockStats packetClocks;
 
         UartTransferStats(long payloadBytes, long durationMs, long packetsCompleteAtEpochMs) {
+            this(payloadBytes, durationMs, packetsCompleteAtEpochMs, null);
+        }
+
+        UartTransferStats(
+                long payloadBytes,
+                long durationMs,
+                long packetsCompleteAtEpochMs,
+                @Nullable PacketClockStats packetClocks) {
             this.payloadBytes = payloadBytes;
             this.durationMs = durationMs;
             this.packetsCompleteAtEpochMs = packetsCompleteAtEpochMs;
+            this.packetClocks = packetClocks;
         }
     }
 
@@ -396,6 +452,19 @@ public final class BlePhotoTimingLog {
             sb.append(" | uart_speed=")
                     .append(String.format(Locale.US, "%.1f", uartSpeedKBs))
                     .append("KB/s");
+        }
+        if (uart != null && uart.packetClocks != null) {
+            PacketClockStats clocks = uart.packetClocks;
+            if (clocks.ackToSendP50Ms >= 0) {
+                sb.append(" | ack_to_send_p50=").append(clocks.ackToSendP50Ms).append("ms");
+            }
+            if (clocks.packetRttP50Ms >= 0) {
+                sb.append(" | packet_rtt_p50=").append(clocks.packetRttP50Ms).append("ms");
+            }
+            if (clocks.packetsPerSec > 0) {
+                sb.append(" | packets_per_sec=")
+                        .append(String.format(Locale.US, "%.1f", clocks.packetsPerSec));
+            }
         }
         long transferStart = phaseMs(phases, "ble_file_transfer_start");
         long transferDone = phaseMs(phases, "ble_transfer_complete");
@@ -677,6 +746,7 @@ public final class BlePhotoTimingLog {
                             String.format(Locale.US, "%.1fKB/s", uartSpeedKBs),
                             "UART/BLE packet TX speed"));
         }
+        appendPacketClockSection(sb, uart != null ? uart.packetClocks : null);
         long transferStart = phaseMs(timings, "ble_file_transfer_start");
         long transferDone = phaseMs(timings, "ble_transfer_complete");
         if (payloadBytes > 0 && transferStart > 0 && transferDone > transferStart) {
@@ -702,6 +772,65 @@ public final class BlePhotoTimingLog {
             sb.setLength(sb.length() - 1);
         }
         return sb.toString();
+    }
+
+    /**
+     * Mentra vs K900Server packet clocks. Compare {@code ack→send p50} to K900Server's ~1ms
+     * {@code <<<}→{@code sendFile} gap, and {@code packet RTT p50} to their ~11ms round trip.
+     */
+    private static void appendPacketClockSection(
+            StringBuilder sb, @Nullable PacketClockStats clocks) {
+        if (clocks == null) {
+            return;
+        }
+        if (clocks.ackToSendP50Ms >= 0) {
+            sb.append(
+                    String.format(
+                            Locale.US,
+                            "  %12s  %s%n",
+                            formatMs(clocks.ackToSendP50Ms),
+                            "ack→send p50 (Mentra turnaround; K900Server ~1ms)"));
+        }
+        if (clocks.ackToSendP95Ms >= 0) {
+            sb.append(
+                    String.format(
+                            Locale.US,
+                            "  %12s  %s%n",
+                            formatMs(clocks.ackToSendP95Ms),
+                            "ack→send p95"));
+        }
+        if (clocks.packetRttP50Ms >= 0) {
+            sb.append(
+                    String.format(
+                            Locale.US,
+                            "  %12s  %s%n",
+                            formatMs(clocks.packetRttP50Ms),
+                            "packet RTT p50 (send→ACK; K900Server ~11ms)"));
+        }
+        if (clocks.packetRttP95Ms >= 0) {
+            sb.append(
+                    String.format(
+                            Locale.US,
+                            "  %12s  %s%n",
+                            formatMs(clocks.packetRttP95Ms),
+                            "packet RTT p95"));
+        }
+        if (clocks.packetsPerSec > 0) {
+            sb.append(
+                    String.format(
+                            Locale.US,
+                            "  %12s  %s%n",
+                            String.format(Locale.US, "%.1f/s", clocks.packetsPerSec),
+                            "packets/sec (K900Server ~90/s)"));
+        }
+        if (clocks.totalPackets > 0) {
+            sb.append(
+                    String.format(
+                            Locale.US,
+                            "  %12s  %s%n",
+                            clocks.packetsAcked + "/" + clocks.totalPackets,
+                            "packets ACKed / total"));
+        }
     }
 
     private static void appendCaptureSessionSection(

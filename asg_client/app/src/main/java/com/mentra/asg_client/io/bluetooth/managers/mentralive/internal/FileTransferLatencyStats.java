@@ -1,6 +1,7 @@
 package com.mentra.asg_client.io.bluetooth.managers.mentralive.internal;
 
 import android.util.Log;
+import androidx.annotation.Nullable;
 import com.mentra.asg_client.io.media.core.BlePhotoTimingLog;
 import java.util.Arrays;
 import java.util.Locale;
@@ -62,14 +63,20 @@ public final class FileTransferLatencyStats {
     }
 
     /**
-     * Format and emit a one-line transfer summary for logcat harnesses and BlePhotoTimingLog.
-     *
-     * @return the summary string
+     * Build Mentra packet-clock stats, emit the standalone SUMMARY log line, and return clocks for
+     * the BLE photo PHASE BREAKDOWN / PAYLOAD TRANSFER report.
      */
-    public synchronized String finishAndLog(String fileName, long fileSizeBytes, int totalPackets) {
+    @Nullable
+    public synchronized BlePhotoTimingLog.PacketClockStats finishAndLog(
+            String fileName, long fileSizeBytes, int totalPackets) {
         long elapsedMs = Math.max(1L, (System.nanoTime() - startTimeNs) / 1_000_000L);
         double pps = packetsAcked * 1000.0 / elapsedMs;
         double kbps = fileSizeBytes * 1000.0 / elapsedMs / 1024.0;
+
+        long ackP50 = percentileMs(ackToSendMs, ackToSendCount, 0.50);
+        long ackP95 = percentileMs(ackToSendMs, ackToSendCount, 0.95);
+        long rttP50 = percentileMs(packetRttMs, packetRttCount, 0.50);
+        long rttP95 = percentileMs(packetRttMs, packetRttCount, 0.95);
 
         String summary =
                 String.format(
@@ -84,10 +91,10 @@ public final class FileTransferLatencyStats {
                         packetsAcked,
                         totalPackets,
                         elapsedMs,
-                        percentileOrNa(ackToSendMs, ackToSendCount, 0.50),
-                        percentileOrNa(ackToSendMs, ackToSendCount, 0.95),
-                        percentileOrNa(packetRttMs, packetRttCount, 0.50),
-                        percentileOrNa(packetRttMs, packetRttCount, 0.95),
+                        ackP50 >= 0 ? Long.toString(ackP50) : "na",
+                        ackP95 >= 0 ? Long.toString(ackP95) : "na",
+                        rttP50 >= 0 ? Long.toString(rttP50) : "na",
+                        rttP95 >= 0 ? Long.toString(rttP95) : "na",
                         pps,
                         kbps,
                         ackToSendCount,
@@ -95,12 +102,14 @@ public final class FileTransferLatencyStats {
 
         Log.i(TAG, summary);
         BlePhotoTimingLog.event("TRANSFER", summary);
-        return summary;
+
+        return new BlePhotoTimingLog.PacketClockStats(
+                ackP50, ackP95, rttP50, rttP95, pps, packetsAcked, totalPackets);
     }
 
-    static String percentileOrNa(long[] values, int count, double percentile) {
+    static long percentileMs(long[] values, int count, double percentile) {
         if (count <= 0) {
-            return "na";
+            return -1L;
         }
         long[] copy = Arrays.copyOf(values, count);
         Arrays.sort(copy);
@@ -111,6 +120,12 @@ public final class FileTransferLatencyStats {
         if (idx >= count) {
             idx = count - 1;
         }
-        return Long.toString(copy[idx]);
+        return copy[idx];
+    }
+
+    /** Kept for unit tests; prefer {@link #percentileMs}. */
+    static String percentileOrNa(long[] values, int count, double percentile) {
+        long ms = percentileMs(values, count, percentile);
+        return ms >= 0 ? Long.toString(ms) : "na";
     }
 }
