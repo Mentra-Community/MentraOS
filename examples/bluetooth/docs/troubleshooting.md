@@ -56,6 +56,27 @@ If your app also uses Firebase with static frameworks, Firebase modular header c
 - Confirm the hardware feature is available on the connected model.
 - Watch SDK log callbacks for native diagnostics.
 
+## Mentra Live Glasses Stuck "Not Ready"
+
+Symptoms:
+
+- Connect succeeds but commands fail with "not ready yet" or similar.
+- Native logs show impossible K900 lengths (for example `Extracted length=9472`) during boot.
+- `glasses_ready` never arrives after pairing.
+
+Common cause:
+
+- **SDK/firmware endian mismatch** on the UART path between the phone-side ASG client and BES firmware when using an older SDK against newer glasses stacks (or vice versa) without negotiated `wire_caps`.
+
+Fix:
+
+1. Upgrade to Mentra Bluetooth SDK `0.1.20` or newer, which includes BLE wire v2 and K900 endian negotiation.
+2. Update glasses firmware through the normal Mentra Live OTA path when available.
+3. If testing unreleased SDK source, symlink `mobile/modules/bluetooth-sdk` from MentraOS and rebuild the native app (see [Getting Started](getting-started.md) local override section).
+4. Power-cycle glasses and forget/re-pair after upgrading either side.
+
+No app-level framing changes are required; negotiation is internal to the SDK. See [Mentra Live BLE Wire Protocol Notes](mentra-live-ble-wire-protocol.md) for background.
+
 ## Local Stream Preview Does Not Show Video
 
 - Confirm the local demo cloud or MediaMTX helper is still running.

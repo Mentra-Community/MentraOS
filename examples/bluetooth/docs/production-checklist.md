@@ -43,6 +43,7 @@ Use this checklist before shipping an app with the Mentra Bluetooth SDK.
 - Fresh install test on iOS.
 - Fresh install test on Android.
 - Pairing test with each supported glasses model.
+- Mentra Live: connect reaches `glasses_ready` / fully booted on current firmware; if you support older field firmware, repeat on a representative device (see [Mentra Live BLE Wire Protocol Notes](mentra-live-ble-wire-protocol.md)).
 - Reconnect test after app restart.
 - Reconnect test after Bluetooth toggle.
 - Display command test, if shipping display-equipped models such as G2.

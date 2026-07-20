@@ -57,6 +57,7 @@ Android APKs install directly from the phone browser (enable installs from unkno
 - `docs/display-guide.md`: text, dashboard, and display-related settings.
 - `docs/audio-guide.md`: microphone events, LC3/PCM, local transcription, playback route, and glasses media volume.
 - `docs/hardware-integration.md`: model differences and capability gating.
+- `docs/mentra-live-ble-wire-protocol.md`: Mentra Live BLE wire v2, K900 endian negotiation, and SDK/firmware pairing notes.
 - `docs/production-checklist.md`: release-readiness checklist.
 - `docs/troubleshooting.md`: build, permission, scan, stream, and React Native issues.
 - `examples/local-demo-cloud`: recommended local helper for media upload and stream preview.
