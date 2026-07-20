@@ -1623,6 +1623,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       if (!(await ensureAndroidPermissions('photo'))) {
         throw new Error('Camera and Bluetooth permissions are required for photos.');
       }
+      barcodeScanRequestIdsRef.current.clear();
       if (photoDestinationRef.current === 'glasses') {
         if (galleryServerReachableRef.current !== true) {
           throw new Error('Connect to the glasses hotspot before capturing.');
@@ -1907,7 +1908,6 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
         return;
       }
       activePhotoRequestIdRef.current = null;
-      barcodeScanRequestIdsRef.current.delete(requestId);
       const message = formatError(error);
       setCameraStatus(`Camera: ${message}`);
       setPhotoPreviewDetails((current) => ({
@@ -2078,12 +2078,13 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     });
   }
 
+  // A delivery timeout may still be followed by a late receiver event.
+  // Callers remove barcode intent only for definitive capture failures.
   function markPhotoRequestFailed(
     requestId: string,
     errorCode: string,
     errorMessage: string,
   ) {
-    barcodeScanRequestIdsRef.current.delete(requestId);
     const failedAt = Date.now();
     setPhotoStatus({
       type: 'photo_status',
@@ -2635,7 +2636,6 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       await delay(1000);
     }
     if (activePhotoRequestIdRef.current === requestId) {
-      barcodeScanRequestIdsRef.current.delete(requestId);
       setCameraStatus('Camera: timed out waiting for local server upload');
     }
   }
@@ -2976,6 +2976,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       photoDestinationRef.current = destination;
       setPhotoDestination(destination);
       activePhotoRequestIdRef.current = null;
+      barcodeScanRequestIdsRef.current.clear();
       clearPhotoUploadTimeout();
       setPhotoStatus(null);
       pollGenerationRef.current += 1;
@@ -3006,6 +3007,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
         photoDestinationRef.current = destination;
         setPhotoDestination(destination);
         activePhotoRequestIdRef.current = null;
+        barcodeScanRequestIdsRef.current.clear();
         clearPhotoUploadTimeout();
         setPhotoStatus(null);
         pollGenerationRef.current += 1;
@@ -3817,6 +3819,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     const hadPhotoRequest = disconnectedPhotoRequestId !== null;
     const hadVideoRequest = disconnectedVideoRequestId !== null || videoRecordingRef.current;
     activePhotoRequestIdRef.current = null;
+    barcodeScanRequestIdsRef.current.clear();
     activeVideoRequestIdRef.current = null;
     videoRecordingRef.current = false;
     setVideoRecording(false);
