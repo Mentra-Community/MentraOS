@@ -87,6 +87,16 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
                 durationMs = AsgConstants.CAMERA_WARM_UP_DEFAULT_DURATION_MS;
             }
             durationMs = Math.min(durationMs, AsgConstants.CAMERA_WARM_UP_MAX_DURATION_MS);
+            // Only pull zsl/mfnr from the warm-up JSON — other take_photo tuning fields are
+            // irrelevant for opening the preview session.
+            PhotoCaptureSettings.Builder warmTuning = new PhotoCaptureSettings.Builder();
+            if (data.has("zsl") && !data.isNull("zsl")) {
+                warmTuning.zsl(data.optBoolean("zsl", true));
+            }
+            if (data.has("mfnr") && !data.isNull("mfnr")) {
+                warmTuning.mfnr(data.optBoolean("mfnr", true));
+            }
+            PhotoCaptureSettings captureSettings = warmTuning.build();
 
             MediaCaptureService captureService = serviceManager.getMediaCaptureService();
             if (captureService == null) {
@@ -111,11 +121,16 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
                             + " exposureTimeNs="
                             + exposureTimeNs
                             + " durationMs="
-                            + durationMs);
+                            + durationMs
+                            + " zsl="
+                            + captureSettings.zsl
+                            + " mfnr="
+                            + captureSettings.mfnr);
             // #endregion
 
             boolean accepted =
-                    captureService.warmUpCamera(requestId, size, exposureTimeNs, durationMs, mode);
+                    captureService.warmUpCamera(
+                            requestId, size, exposureTimeNs, durationMs, mode, captureSettings);
             logCommandResult("camera_warm_up", accepted, accepted ? null : "Warm-up rejected");
             return accepted;
         } catch (Exception e) {
