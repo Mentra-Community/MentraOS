@@ -2858,6 +2858,8 @@ class LocalMiniappRuntime {
         mode: payload.mode as "photo" | "text" | undefined,
         exposureTimeNs: payload.exposureTimeNs as number | undefined,
         durationMs: payload.durationMs as number | undefined,
+        zsl: payload.zsl as boolean | undefined,
+        mfnr: payload.mfnr as boolean | undefined,
       })
       this.sendResult(packageName, requestId, true)
     } catch (err) {
