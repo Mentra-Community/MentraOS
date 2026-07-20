@@ -6,6 +6,7 @@ import {
   type ConfigPlugin,
   withAndroidManifest,
   withGradleProperties,
+  withProjectBuildGradle,
   withSettingsGradle,
 } from "expo/config-plugins"
 
@@ -116,6 +117,49 @@ function withGradlePropertiesModifications(config: any) {
   })
 }
 
+/**
+ * Inject a local Maven repository into the root project's allprojects block so
+ * that `:app` (and any other module that transitively pulls our deps) can
+ * resolve `com.k2fsa.sherpa.onnx:sherpa-onnx`. The AAR is downloaded at
+ * configure-time by bluetooth-sdk's own build.gradle into
+ * `android/libs/maven/`; we just need that directory exposed as a maven repo
+ * to consumers as well. AGP rejects raw local-.aar deps from library modules,
+ * so the Maven layout is the supported workaround.
+ */
+function withSherpaOnnxLocalMavenRepo(config: any) {
+  return withProjectBuildGradle(config, (config) => {
+    if (config.modResults.language !== "groovy") {
+      return config
+    }
+
+    let contents = config.modResults.contents
+    const fallbackRoot = toGroovyString(getBluetoothSdkRoot())
+    const repoDirExpression = `new File(System.getenv("MENTRA_BLUETOOTH_SDK_PACKAGE_PATH") ?: ${fallbackRoot}, "android/libs/maven")`
+    const marker = "// bluetooth-sdk: sherpa-onnx local maven repo"
+
+    if (contents.includes(marker)) {
+      return config
+    }
+
+    const repoBlock = `    maven {\n      ${marker}\n      url = uri(${repoDirExpression})\n    }`
+
+    const allprojectsMatch = contents.match(/allprojects\s*\{[\s\S]*?repositories\s*\{/)
+    if (allprojectsMatch) {
+      const insertIdx = allprojectsMatch.index! + allprojectsMatch[0].length
+      contents = contents.slice(0, insertIdx) + "\n" + repoBlock + contents.slice(insertIdx)
+    } else {
+      // Fallback: append an allprojects block. Older Expo templates that don't
+      // emit allprojects {} put repositories in settings.gradle instead — but
+      // this codebase's prebuild has historically emitted allprojects, so this
+      // branch is just a safety net.
+      contents += `\nallprojects {\n  repositories {\n${repoBlock}\n  }\n}\n`
+    }
+
+    config.modResults.contents = contents
+    return config
+  })
+}
+
 function resolveAnalyticsProps(props: BluetoothSdkPluginProps | undefined) {
   const analytics = props?.analytics
   let disabled: boolean | undefined
@@ -166,6 +210,7 @@ function withAnalyticsManifestMetadata(config: any, props: BluetoothSdkPluginPro
 
 export const withAndroidConfiguration: ConfigPlugin<BluetoothSdkPluginProps> = (config, props) => {
   config = withSettingsGradleModifications(config)
+  config = withSherpaOnnxLocalMavenRepo(config)
   config = withAnalyticsManifestMetadata(config, props)
 
   if (props?.node) {
