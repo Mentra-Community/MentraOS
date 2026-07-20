@@ -80,7 +80,7 @@ public final class HdrBurstCapture {
                     selectedFpsRange, hasAutoFocus, jpegQuality, jpegOrientation);
 
             if (cameraSettings != null) {
-                // Use the active capture's resolved ZSL/MFNR (manual/scan force both off),
+                // Use the active capture's resolved ZSL/MFNR,
                 // not the global defaults — matching the single still path.
                 cameraSettings.configureCaptureBuilder(builder, zsl, mfnr);
             }

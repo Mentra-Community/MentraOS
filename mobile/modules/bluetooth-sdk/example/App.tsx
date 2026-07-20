@@ -79,9 +79,8 @@ export default function App() {
       ...SCAN_MODE_PRESET,
       aeExposureDivisor: aeDivisor,
       isoCap,
-      // Scan mode forces both off; the UI toggles still reflect the explicit opt-out.
-      zsl: false,
-      mfnr: false,
+      zsl,
+      mfnr,
     }
   }, [scanMode, aeDivisor, isoCap, zsl, mfnr])
 

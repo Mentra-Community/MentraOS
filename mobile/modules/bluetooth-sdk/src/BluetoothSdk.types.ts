@@ -587,9 +587,9 @@ export type PhotoRequestParams = {
   /** Requested on wire; glasses may log not_implemented. */
   noiseReduction?: boolean
   edgeEnhancement?: boolean
-  /** ZSL preview buffering. Forced off for text/scan/manual-exposure modes. */
+  /** ZSL preview buffering. Honored in text/scan/manual-exposure modes. */
   zsl?: boolean
-  /** MFNR still capture. Forced off for text/scan/manual-exposure modes. */
+  /** MFNR still capture. Honored in text/scan/manual-exposure modes. */
   mfnr?: boolean
   ispDigitalGain?: number
   ispAnalogGain?: string

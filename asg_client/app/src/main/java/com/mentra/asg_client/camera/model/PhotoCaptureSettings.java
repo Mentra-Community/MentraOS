@@ -95,16 +95,10 @@ public final class PhotoCaptureSettings {
 
     /**
      * Resolve a single optional request flag against an optional stored button preset and the
-     * global device default. Scan AE path forces the flag off.
+     * global device default.
      */
     public static boolean resolveMergedFlag(
-            Boolean requestValue,
-            Boolean storedButtonValue,
-            boolean hasScanDivisor,
-            boolean globalDefault) {
-        if (hasScanDivisor) {
-            return false;
-        }
+            Boolean requestValue, Boolean storedButtonValue, boolean globalDefault) {
         if (requestValue != null) {
             return requestValue;
         }
@@ -118,6 +112,7 @@ public final class PhotoCaptureSettings {
      * Text-mode auto exposure: divide metered shutter time by {@link
      * AsgConstants#TEXT_MODE_AE_EXPOSURE_DIVISOR}.
      * Caller must skip this when the request supplies manual {@code exposureTimeNs}.
+     * Preserves request {@code zsl}/{@code mfnr} (null inherits globals at merge time).
      */
     public static PhotoCaptureSettings applyTextModeExposure(PhotoCaptureSettings settings) {
         if (settings == null) {
@@ -130,9 +125,8 @@ public final class PhotoCaptureSettings {
         builder.edgeEnhancement(settings.edgeEnhancement);
         builder.ispDigitalGain(settings.ispDigitalGain);
         builder.ispAnalogGain(settings.ispAnalogGain);
-        // Text/scan AE path conflicts with vendor multi-frame capture — force both off.
-        builder.zsl(Boolean.FALSE);
-        builder.mfnr(Boolean.FALSE);
+        builder.zsl(settings.zsl);
+        builder.mfnr(settings.mfnr);
         applyUnimplementedWarnings(builder);
         return builder.build();
     }
@@ -161,13 +155,8 @@ public final class PhotoCaptureSettings {
         builder.edgeEnhancement(request.edgeEnhancement);
         builder.ispDigitalGain(request.ispDigitalGain);
         builder.ispAnalogGain(request.ispAnalogGain);
-        boolean hasScanDivisor = request.aeExposureDivisor != null && request.aeExposureDivisor > 1;
-        builder.zsl(
-                resolveMergedFlag(
-                        request.zsl, null, hasScanDivisor, stored.isZslEnabled()));
-        builder.mfnr(
-                resolveMergedFlag(
-                        request.mfnr, null, hasScanDivisor, stored.isMfnrEnabled()));
+        builder.zsl(resolveMergedFlag(request.zsl, null, stored.isZslEnabled()));
+        builder.mfnr(resolveMergedFlag(request.mfnr, null, stored.isMfnrEnabled()));
         applyUnimplementedWarnings(builder);
         return builder.build();
     }
@@ -176,7 +165,7 @@ public final class PhotoCaptureSettings {
      * Merge a button/local capture request with stored button-photo tuning.
      *
      * <p>Physical camera-button photos deliberately ignore stored ZSL/MFNR button presets and use
-     * the global defaults. Text/scan exposure still forces both off.
+     * the global defaults. Explicit request {@code zsl}/{@code mfnr} are preserved.
      */
     public static PhotoCaptureSettings mergeWithStoredDefaults(
             PhotoCaptureSettings request, AsgSettings stored) {
@@ -201,15 +190,8 @@ public final class PhotoCaptureSettings {
                 request.edgeEnhancement != null
                         ? request.edgeEnhancement
                         : stored.getButtonPhotoEdgeEnhancement());
-        boolean hasScanDivisor =
-                (request.aeExposureDivisor != null && request.aeExposureDivisor > 1)
-                        || stored.getButtonPhotoAeExposureDivisor() != null;
-        builder.zsl(
-                resolveMergedFlag(
-                        request.zsl, null, hasScanDivisor, stored.isZslEnabled()));
-        builder.mfnr(
-                resolveMergedFlag(
-                        request.mfnr, null, hasScanDivisor, stored.isMfnrEnabled()));
+        builder.zsl(resolveMergedFlag(request.zsl, null, stored.isZslEnabled()));
+        builder.mfnr(resolveMergedFlag(request.mfnr, null, stored.isMfnrEnabled()));
         builder.ispDigitalGain(
                 request.ispDigitalGain != null
                         ? request.ispDigitalGain

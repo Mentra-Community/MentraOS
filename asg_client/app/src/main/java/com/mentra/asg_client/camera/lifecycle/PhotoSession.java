@@ -353,15 +353,12 @@ public final class PhotoSession {
     }
 
     /**
-     * Resolved ZSL for the active request. Manual and scan exposure force ZSL off. When the
-     * request omits {@code zsl}, inherit the global default so EMPTY/unmerged settings stay
-     * default-on. ZSL and MFNR are independent capabilities — ZSL being off should not be implied
-     * by MFNR being off, as ZSL reduces shutter lag regardless of multi-frame processing.
+     * Resolved ZSL for the active request. When the request omits {@code zsl}, inherit the global
+     * default so EMPTY/unmerged settings stay default-on. ZSL and MFNR are independent capabilities
+     * — ZSL being off should not be implied by MFNR being off, as ZSL reduces shutter lag
+     * regardless of multi-frame processing.
      */
-    private boolean resolveZslForCapture(boolean useManualExposure) {
-        if (useManualExposure) {
-            return false;
-        }
+    private boolean resolveZslForCapture() {
         PhotoCaptureSettings settings = currentCaptureSettings();
         if (settings != null && settings.zsl != null) {
             return settings.zslEnabled();
@@ -371,13 +368,10 @@ public final class PhotoSession {
     }
 
     /**
-     * Resolved MFNR for the active request. Manual and scan exposure force MFNR off. When the
-     * request omits {@code mfnr}, inherit the global default.
+     * Resolved MFNR for the active request. When the request omits {@code mfnr}, inherit the global
+     * default.
      */
-    private boolean resolveMfnrForCapture(boolean useManualExposure) {
-        if (useManualExposure) {
-            return false;
-        }
+    private boolean resolveMfnrForCapture() {
         PhotoCaptureSettings settings = currentCaptureSettings();
         if (settings != null && settings.mfnr != null) {
             return settings.mfnrEnabled();
@@ -388,11 +382,10 @@ public final class PhotoSession {
 
     /**
      * Preview ZSL buffering should match the pending capture: arm when either ZSL or MFNR is
-     * resolved on (MFNR needs the circular buffer). Forced off during manual/scan exposure.
+     * resolved on (MFNR needs the circular buffer).
      */
     public boolean previewZslEnabled() {
-        boolean useManual = shouldUseManualExposure();
-        return resolveZslForCapture(useManual) || resolveMfnrForCapture(useManual);
+        return resolveZslForCapture() || resolveMfnrForCapture();
     }
 
     private long currentStartTimeMs() {
@@ -434,8 +427,8 @@ public final class PhotoSession {
                 request.size,
                 request.isFromSdk,
                 request.exposureTimeNs,
-                resolveZslForRequest(request.captureSettings, request.exposureTimeNs),
-                resolveMfnrForRequest(request.captureSettings, request.exposureTimeNs));
+                resolveZslForRequest(request.captureSettings),
+                resolveMfnrForRequest(request.captureSettings));
     }
 
     private ConfiguredCameraConfig configFrom(ActivePhotoCapture request) {
@@ -443,20 +436,15 @@ public final class PhotoSession {
                 request.size,
                 request.isFromSdk,
                 request.exposureTimeNs,
-                resolveZslForRequest(request.captureSettings, request.exposureTimeNs),
-                resolveMfnrForRequest(request.captureSettings, request.exposureTimeNs));
+                resolveZslForRequest(request.captureSettings),
+                resolveMfnrForRequest(request.captureSettings));
     }
 
     /**
-     * Resolved ZSL for a request shape (queue / warm prediction). Only forces off when manual
-     * exposure would actually engage (same capability gates as {@link #shouldUseManualExposure()});
-     * omitted {@code zsl} inherits the global default.
+     * Resolved ZSL for a request shape (queue / warm prediction). Omitted {@code zsl} inherits the
+     * global default.
      */
-    private boolean resolveZslForRequest(
-            @Nullable PhotoCaptureSettings settings, @Nullable Long exposureTimeNs) {
-        if (wouldUseManualExposure(exposureTimeNs)) {
-            return false;
-        }
+    private boolean resolveZslForRequest(@Nullable PhotoCaptureSettings settings) {
         if (settings != null && settings.zsl != null) {
             return settings.zslEnabled();
         }
@@ -465,36 +453,15 @@ public final class PhotoSession {
     }
 
     /**
-     * Resolved MFNR for a request shape (queue / warm prediction). Only forces off when manual
-     * exposure would actually engage (same capability gates as {@link #shouldUseManualExposure()});
-     * omitted {@code mfnr} inherits the global default.
+     * Resolved MFNR for a request shape (queue / warm prediction). Omitted {@code mfnr} inherits
+     * the global default.
      */
-    private boolean resolveMfnrForRequest(
-            @Nullable PhotoCaptureSettings settings, @Nullable Long exposureTimeNs) {
-        if (wouldUseManualExposure(exposureTimeNs)) {
-            return false;
-        }
+    private boolean resolveMfnrForRequest(@Nullable PhotoCaptureSettings settings) {
         if (settings != null && settings.mfnr != null) {
             return settings.mfnrEnabled();
         }
         return hooks.cameraSettings() != null
                 && hooks.cameraSettings().mAsgSettings.isMfnrEnabled();
-    }
-
-    /**
-     * Whether a request with {@code exposureTimeNs} would take the manual still path under current
-     * camera capabilities. Mirrors {@link #shouldUseManualExposure()} excluding scan exposure,
-     * which only arms after AE metering for the active shot.
-     */
-    private boolean wouldUseManualExposure(@Nullable Long exposureTimeNs) {
-        if (exposureTimeNs == null || exposureTimeNs <= 0) {
-            return false;
-        }
-        CameraCapabilities caps = hooks.capabilities();
-        if (caps == null || !caps.manualSensorSupported) {
-            return false;
-        }
-        return caps.sensorExposureTimeRange != null && caps.sensorSensitivityRange != null;
     }
 
     /** Clears the configured-camera snapshot when the HAL session is torn down. */
@@ -563,8 +530,8 @@ public final class PhotoSession {
         if (baseline == null) {
             return false;
         }
-        boolean reqZsl = resolveZslForRequest(request.captureSettings, request.exposureTimeNs);
-        boolean reqMfnr = resolveMfnrForRequest(request.captureSettings, request.exposureTimeNs);
+        boolean reqZsl = resolveZslForRequest(request.captureSettings);
+        boolean reqMfnr = resolveMfnrForRequest(request.captureSettings);
         boolean differs =
                 baseline.differsFrom(
                         request.size,
@@ -643,8 +610,8 @@ public final class PhotoSession {
                 size,
                 isFromSdk,
                 exposureTimeNs,
-                resolveZslForRequest(captureSettings, exposureTimeNs),
-                resolveMfnrForRequest(captureSettings, exposureTimeNs));
+                resolveZslForRequest(captureSettings),
+                resolveMfnrForRequest(captureSettings));
     }
 
     public void dispatchNextPhotoRequest() {
@@ -1945,7 +1912,7 @@ public final class PhotoSession {
                     hooks.cameraSettings() != null
                             && hooks.cameraSettings().isZslSupported()
                             && previewZslEnabled();
-            boolean mfnrEnabled = resolveMfnrForCapture(shouldUseManualExposure());
+            boolean mfnrEnabled = resolveMfnrForCapture();
 
             Log.d(TAG, "DIAGNOSTIC: startPrecaptureSequence() called");
             Log.d(TAG, "ZSL enabled (preview): " + zslEnabled + "; MFNR enabled: " + mfnrEnabled);
@@ -1997,7 +1964,7 @@ public final class PhotoSession {
 
     /**
      * Whether {@link #capturePhoto()} would dispatch to the HDR burst path. EV-bracket HDR needs
-     * AE, so manual/scan exposure (which also forces ZSL/MFNR off) disables HDR.
+     * AE, so manual/scan exposure disables HDR.
      */
     boolean wouldCaptureHdrBurst() {
         return hooks.cameraSettings() != null
@@ -2195,7 +2162,7 @@ public final class PhotoSession {
                                 + requestedExposureNs
                                 + ", requestedIso="
                                 + (currentIso() != null ? currentIso() : "auto")
-                                + "; AE disabled; ZSL/MFNR vendor path skipped)");
+                                + "; AE disabled)");
             } else {
                 Log.d(TAG, "Using auto exposure / AE lock path");
             }
@@ -2229,16 +2196,13 @@ public final class PhotoSession {
                             + " for display orientation: "
                             + displayOrientation);
 
-            boolean zsl = resolveZslForCapture(useManual);
-            boolean mfnr = resolveMfnrForCapture(useManual);
+            boolean zsl = resolveZslForCapture();
+            boolean mfnr = resolveMfnrForCapture();
             String appliedSource =
-                    useManual
-                            ? "forced-off-manual"
-                            : (captureSettings != null
-                                            && (captureSettings.zsl != null
-                                                    || captureSettings.mfnr != null)
-                                    ? "request"
-                                    : "global");
+                    captureSettings != null
+                                    && (captureSettings.zsl != null || captureSettings.mfnr != null)
+                            ? "request"
+                            : "global";
             if (hooks.cameraSettings() != null) {
                 hooks.cameraSettings().configureCaptureBuilder(stillBuilder, zsl, mfnr);
             }
@@ -2540,9 +2504,8 @@ public final class PhotoSession {
                             displayOrientation, JpegOrientationResolver.DEFAULT_JPEG_ORIENTATION);
             int jpegQuality = getJpegQualityForSize();
 
-            boolean useManual = shouldUseManualExposure();
-            boolean zsl = resolveZslForCapture(useManual);
-            boolean mfnr = resolveMfnrForCapture(useManual);
+            boolean zsl = resolveZslForCapture();
+            boolean mfnr = resolveMfnrForCapture();
 
             hdrBurstCapture.start(
                     hooks.coordinator().session(),

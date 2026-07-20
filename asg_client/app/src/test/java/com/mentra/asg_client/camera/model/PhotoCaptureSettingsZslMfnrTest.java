@@ -20,20 +20,15 @@ public class PhotoCaptureSettingsZslMfnrTest {
 
     @Test
     public void resolveMergedFlag_requestWinsOverGlobal() {
-        assertTrue(PhotoCaptureSettings.resolveMergedFlag(true, null, false, false));
-        assertFalse(PhotoCaptureSettings.resolveMergedFlag(false, null, false, true));
-    }
-
-    @Test
-    public void resolveMergedFlag_scanDivisorForcesOff() {
-        assertFalse(PhotoCaptureSettings.resolveMergedFlag(true, true, true, true));
+        assertTrue(PhotoCaptureSettings.resolveMergedFlag(true, null, false));
+        assertFalse(PhotoCaptureSettings.resolveMergedFlag(false, null, true));
     }
 
     @Test
     public void resolveMergedFlag_inheritsStoredThenGlobal() {
-        assertTrue(PhotoCaptureSettings.resolveMergedFlag(null, true, false, false));
-        assertFalse(PhotoCaptureSettings.resolveMergedFlag(null, null, false, false));
-        assertTrue(PhotoCaptureSettings.resolveMergedFlag(null, null, false, true));
+        assertTrue(PhotoCaptureSettings.resolveMergedFlag(null, true, false));
+        assertFalse(PhotoCaptureSettings.resolveMergedFlag(null, null, false));
+        assertTrue(PhotoCaptureSettings.resolveMergedFlag(null, null, true));
     }
 
     @Test
@@ -83,18 +78,18 @@ public class PhotoCaptureSettingsZslMfnrTest {
     }
 
     @Test
-    public void mergeForSdkRequest_scanDivisorForcesBothOff() {
+    public void mergeForSdkRequest_scanDivisorPreservesRequestFlags() {
         AsgSettings stored = mock(AsgSettings.class);
-        when(stored.isZslEnabled()).thenReturn(true);
-        when(stored.isMfnrEnabled()).thenReturn(true);
+        when(stored.isZslEnabled()).thenReturn(false);
+        when(stored.isMfnrEnabled()).thenReturn(false);
 
         PhotoCaptureSettings request =
                 new PhotoCaptureSettings.Builder().aeExposureDivisor(3).zsl(true).mfnr(true).build();
         PhotoCaptureSettings merged = PhotoCaptureSettings.mergeForSdkRequest(request, stored);
-        assertEquals(Boolean.FALSE, merged.zsl);
-        assertEquals(Boolean.FALSE, merged.mfnr);
-        assertFalse(merged.zslEnabled());
-        assertFalse(merged.mfnrEnabled());
+        assertEquals(Boolean.TRUE, merged.zsl);
+        assertEquals(Boolean.TRUE, merged.mfnr);
+        assertTrue(merged.zslEnabled());
+        assertTrue(merged.mfnrEnabled());
     }
 
     @Test
@@ -113,15 +108,15 @@ public class PhotoCaptureSettingsZslMfnrTest {
     }
 
     @Test
-    public void applyTextModeExposure_forcesBothOff() {
+    public void applyTextModeExposure_preservesRequestZslMfnr() {
         PhotoCaptureSettings request =
                 new PhotoCaptureSettings.Builder().zsl(true).mfnr(true).isoCap(800).build();
         PhotoCaptureSettings tuned = PhotoCaptureSettings.applyTextModeExposure(request);
-        assertEquals(Boolean.FALSE, tuned.zsl);
-        assertEquals(Boolean.FALSE, tuned.mfnr);
+        assertEquals(Boolean.TRUE, tuned.zsl);
+        assertEquals(Boolean.TRUE, tuned.mfnr);
         assertEquals(Integer.valueOf(800), tuned.isoCap);
-        assertFalse(tuned.zslEnabled());
-        assertFalse(tuned.mfnrEnabled());
+        assertTrue(tuned.zslEnabled());
+        assertTrue(tuned.mfnrEnabled());
     }
 
     @Test

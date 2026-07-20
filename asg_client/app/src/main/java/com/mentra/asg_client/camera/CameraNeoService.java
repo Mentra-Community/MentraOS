@@ -1166,8 +1166,8 @@ public class CameraNeoService extends LifecycleService {
         // warmed preview's exposure mode matches the eventual capture exactly — otherwise the
         // still shot would flip auto→manual scan exposure on the same session, which is harmless
         // for reuse but leaves the preview metering under the wrong AE regime while warm.
-        // Text mode forces zsl/mfnr off via applyTextModeExposure; otherwise honor the request's
-        // independent zsl/mfnr (null inherits globals inside PhotoSession resolvers).
+        // Text mode applies scan AE via applyTextModeExposure; request zsl/mfnr are preserved
+        // (null inherits globals inside PhotoSession resolvers / merge).
         PhotoCaptureSettings base =
                 captureSettings != null ? captureSettings : PhotoCaptureSettings.EMPTY;
         PhotoCaptureSettings warmCaptureSettings =

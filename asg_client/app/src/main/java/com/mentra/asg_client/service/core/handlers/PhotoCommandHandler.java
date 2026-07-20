@@ -249,8 +249,8 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
             Long exposureTimeNs = PhotoExposureTimeNs.parse(data);
             PhotoCaptureSettings captureSettings = requestCaptureSettings;
             if (PhotoMode.TEXT.equals(mode) && exposureTimeNs == null) {
-                // Apply text-mode defaults before stored global MFNR/ZSL defaults are merged.
-                // Explicit per-request values remain preserved by applyTextModeExposure().
+                // Apply text-mode scan AE before stored global MFNR/ZSL defaults are merged.
+                // Request zsl/mfnr (and other tuning) are preserved by applyTextModeExposure().
                 captureSettings = PhotoCaptureSettings.applyTextModeExposure(captureSettings);
             }
             if (asgSettings != null) {
