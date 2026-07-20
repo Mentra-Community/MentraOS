@@ -185,9 +185,6 @@ public class AsgConstants {
     /** Default for photo requests when {@code mfnr} is omitted. */
     public static final boolean DEFAULT_MFNR = true;
 
-    /** After AE meters in text mode, divide exposure time by this factor (shorter shutter). */
-    public static final int TEXT_MODE_AE_EXPOSURE_DIVISOR = 3;
-
     /**
      * Requested sensor JPEG width for text-mode capture (and matching warm-up). Mentra Live's
      * maximum supported 16:9 still size is 3840×2160 (4K UHD); the full sensor max is 4032×3024

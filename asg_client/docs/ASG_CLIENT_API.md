@@ -115,11 +115,10 @@ Capture a still photo. The handler routes through `transferMethod` to one of thr
 In `text` mode, Mentra Live captures the source JPEG using ASG text-mode sensor constants
 (`TEXT_MODE_SENSOR_CAPTURE_WIDTH` × `TEXT_MODE_SENSOR_CAPTURE_HEIGHT`, currently 3840×2160),
 selecting an exact Camera2 JPEG size match when available or the closest supported size otherwise.
-For auto-exposure captures (no `exposureTimeNs`), the glasses also
-divide the metered shutter time by 3 (`aeExposureDivisor: 3`) to reduce motion blur on text.
-Text-region detection and crop run on both WiFi upload and BLE transfer. On BLE, the crop
-happens before downscale. Text mode always uses the max-tier BLE downscale cap (1920 px),
-regardless of requested {@code size}.
+Text mode does not inject an AE exposure divisor; pass `aeExposureDivisor` explicitly when you
+want scan-style shorter shutter. Text-region detection and crop run on both WiFi upload and BLE
+transfer. On BLE, the crop happens before downscale. Text mode always uses the max-tier BLE
+downscale cap (1920 px), regardless of requested {@code size}.
 
 All BLE photo payloads — text mode and ordinary size-tier photos alike — encode with the single
 codec configured in `AsgConstants.BLE_PHOTO_CODEC`. There is no per-mode split: flipping this one

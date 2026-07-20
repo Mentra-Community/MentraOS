@@ -6266,8 +6266,7 @@ public class MediaCaptureService {
      * @param size resolution tier matching the warmed config ("low"/"medium"/"high"/"max")
      * @param exposureTimeNs optional manual shutter in ns; {@code null} = auto
      * @param durationMs keep-alive TTL in ms; {@code <= 0} uses the default warm-up hold
-     * @param mode capture mode ("photo"/"text"); forwarded so the warmed preview applies the same
-     *     text-mode AE preset the eventual {@code take_photo} will use
+     * @param mode capture mode ("photo"/"text"); forwarded for text sensor size/crop alignment
      * @return true if the warm-up was accepted (or the camera was already warm), false otherwise
      */
     public boolean warmUpCamera(

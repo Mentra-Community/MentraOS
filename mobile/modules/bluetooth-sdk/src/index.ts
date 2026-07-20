@@ -98,7 +98,7 @@ export const BluetoothSdk: BluetoothSdkPublicModule = Object.freeze({
   setVoiceActivityDetectionEnabled: bindPublicMethod("setVoiceActivityDetectionEnabled"),
   /**
    * @deprecated Sticky action-button photo presets are deprecated. Prefer per-request
-   * `requestPhoto(...)` options (e.g. `mode: "text"` for AE ÷3, or explicit per-shot
+   * `requestPhoto(...)` options (e.g. `mode: "text"` for text sensor size/crop, or explicit per-shot
    * fields). Still functional until removed in a future release.
    */
   setPhotoCaptureDefaults: bindPublicMethod("setPhotoCaptureDefaults"),

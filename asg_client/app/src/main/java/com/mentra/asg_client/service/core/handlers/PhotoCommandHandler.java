@@ -227,12 +227,9 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
             PhotoCaptureSettings.logIncomingTakePhotoFields(data, requestId);
             AsgSettings asgSettings = serviceManager.getAsgSettings();
             Long exposureTimeNs = PhotoExposureTimeNs.parse(data);
+            // Text mode no longer injects aeExposureDivisor; callers that want scan AE pass it
+            // explicitly. Request zsl/mfnr omit → global defaults (same as photo mode).
             PhotoCaptureSettings captureSettings = requestCaptureSettings;
-            if (PhotoMode.TEXT.equals(mode) && exposureTimeNs == null) {
-                // Apply text-mode scan AE before stored global MFNR/ZSL defaults are merged.
-                // Request zsl/mfnr (and other tuning) are preserved by applyTextModeExposure().
-                captureSettings = PhotoCaptureSettings.applyTextModeExposure(captureSettings);
-            }
             if (asgSettings != null) {
                 captureSettings =
                         PhotoCaptureSettings.mergeForSdkRequest(

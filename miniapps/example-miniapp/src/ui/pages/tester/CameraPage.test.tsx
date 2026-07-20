@@ -103,7 +103,9 @@ describe("CameraPage", () => {
 
     fireEvent.click(screen.getByRole("button", {name: "takePhoto()"}))
     await waitFor(() => {
-      expect(cameraInvokeMock).toHaveBeenCalledWith("takePhoto", [{size: "medium", mode: "text"}])
+      expect(cameraInvokeMock).toHaveBeenCalledWith("takePhoto", [
+        {size: "medium", mode: "text", zsl: true, mfnr: true},
+      ])
     })
   })
 

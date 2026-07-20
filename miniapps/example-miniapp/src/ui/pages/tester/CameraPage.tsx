@@ -74,13 +74,11 @@ export default function CameraPage() {
   const warmupDurationMs =
     Number.isFinite(parsedDurationMs) && parsedDurationMs > 0 ? parsedDurationMs : DEFAULT_WARMUP_DURATION_MS
   const busy = capturePending || warmupPending || isSharing
-  // Text mode conflicts with the vendor multi-frame path — send both false even if the
-  // switches were left on from a previous photo-mode capture.
   const config: TakePhotoConfig = {
     size,
     mode,
-    zsl: mode === "text" ? false : zsl,
-    mfnr: mode === "text" ? false : mfnr,
+    zsl,
+    mfnr,
   }
 
   const captureWithConfig = async (captureConfig: TakePhotoConfig) => {
@@ -222,22 +220,20 @@ export default function CameraPage() {
               <Label htmlFor="zsl">zsl</Label>
               <p className="mt-0.5 text-[13px] text-muted-foreground">
                 Zero-shutter-lag preview buffering. Sends{" "}
-                <code className="mx-0.5">{mode === "text" ? "false" : zsl ? "true" : "false"}</code> on every
-                takePhoto.
+                <code className="mx-0.5">{zsl ? "true" : "false"}</code> on every takePhoto.
               </p>
             </div>
-            <Switch id="zsl" checked={zsl} onCheckedChange={setZsl} disabled={busy || mode === "text"} />
+            <Switch id="zsl" checked={zsl} onCheckedChange={setZsl} disabled={busy} />
           </div>
           <div className="flex items-center justify-between gap-3 rounded-xl border border-border px-3 py-3">
             <div className="min-w-0">
               <Label htmlFor="mfnr">mfnr</Label>
               <p className="mt-0.5 text-[13px] text-muted-foreground">
                 Multi-frame noise reduction capture. Sends{" "}
-                <code className="mx-0.5">{mode === "text" ? "false" : mfnr ? "true" : "false"}</code> on every
-                takePhoto.
+                <code className="mx-0.5">{mfnr ? "true" : "false"}</code> on every takePhoto.
               </p>
             </div>
-            <Switch id="mfnr" checked={mfnr} onCheckedChange={setMfnr} disabled={busy || mode === "text"} />
+            <Switch id="mfnr" checked={mfnr} onCheckedChange={setMfnr} disabled={busy} />
           </div>
           <div>
             <Label htmlFor="warmup-duration">warmUp durationMs</Label>

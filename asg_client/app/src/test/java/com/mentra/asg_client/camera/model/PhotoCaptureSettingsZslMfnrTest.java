@@ -108,15 +108,19 @@ public class PhotoCaptureSettingsZslMfnrTest {
     }
 
     @Test
-    public void applyTextModeExposure_preservesRequestZslMfnr() {
+    public void mergeForSdkRequest_preservesRequestZslMfnr() {
+        AsgSettings stored = mock(AsgSettings.class);
+        when(stored.isZslEnabled()).thenReturn(false);
+        when(stored.isMfnrEnabled()).thenReturn(false);
+
         PhotoCaptureSettings request =
                 new PhotoCaptureSettings.Builder().zsl(true).mfnr(true).isoCap(800).build();
-        PhotoCaptureSettings tuned = PhotoCaptureSettings.applyTextModeExposure(request);
-        assertEquals(Boolean.TRUE, tuned.zsl);
-        assertEquals(Boolean.TRUE, tuned.mfnr);
-        assertEquals(Integer.valueOf(800), tuned.isoCap);
-        assertTrue(tuned.zslEnabled());
-        assertTrue(tuned.mfnrEnabled());
+        PhotoCaptureSettings merged = PhotoCaptureSettings.mergeForSdkRequest(request, stored);
+        assertEquals(Boolean.TRUE, merged.zsl);
+        assertEquals(Boolean.TRUE, merged.mfnr);
+        assertEquals(Integer.valueOf(800), merged.isoCap);
+        assertTrue(merged.zslEnabled());
+        assertTrue(merged.mfnrEnabled());
     }
 
     @Test

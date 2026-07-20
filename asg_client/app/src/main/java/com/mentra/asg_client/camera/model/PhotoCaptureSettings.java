@@ -109,29 +109,6 @@ public final class PhotoCaptureSettings {
     }
 
     /**
-     * Text-mode auto exposure: divide metered shutter time by {@link
-     * AsgConstants#TEXT_MODE_AE_EXPOSURE_DIVISOR}.
-     * Caller must skip this when the request supplies manual {@code exposureTimeNs}.
-     * Preserves request {@code zsl}/{@code mfnr} (null inherits globals at merge time).
-     */
-    public static PhotoCaptureSettings applyTextModeExposure(PhotoCaptureSettings settings) {
-        if (settings == null) {
-            settings = EMPTY;
-        }
-        Builder builder = new Builder();
-        builder.aeExposureDivisor(AsgConstants.TEXT_MODE_AE_EXPOSURE_DIVISOR);
-        builder.isoCap(settings.isoCap);
-        builder.noiseReduction(settings.noiseReduction);
-        builder.edgeEnhancement(settings.edgeEnhancement);
-        builder.ispDigitalGain(settings.ispDigitalGain);
-        builder.ispAnalogGain(settings.ispAnalogGain);
-        builder.zsl(settings.zsl);
-        builder.mfnr(settings.mfnr);
-        applyUnimplementedWarnings(builder);
-        return builder.build();
-    }
-
-    /**
      * Merge a remote SDK take_photo request with stored device-level settings.
      *
      * <p>Unlike {@link #mergeWithStoredDefaults(PhotoCaptureSettings, AsgSettings)} this variant
@@ -321,12 +298,13 @@ public final class PhotoCaptureSettings {
                         + " mfnr="
                         + fieldSource(
                                 fromRequest.mfnr,
-                                stored != null ? stored.getButtonPhotoMfnr() : null,
+                                // Button presets are unused; merge inherits the global default.
+                                stored != null ? stored.isMfnrEnabled() : null,
                                 merged.mfnr)
                         + " zsl="
                         + fieldSource(
                                 fromRequest.zsl,
-                                stored != null ? stored.getButtonPhotoZsl() : null,
+                                stored != null ? stored.isZslEnabled() : null,
                                 merged.zsl)
                         + " ispDigitalGain="
                         + fieldSource(

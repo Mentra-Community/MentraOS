@@ -813,8 +813,8 @@ public class CameraNeoService extends LifecycleService {
      * @param size requested resolution tier ("low"/"medium"/"high"/"max")
      * @param exposureTimeNs optional manual shutter in nanoseconds; {@code null} = auto
      * @param durationMs keep-alive TTL in ms; {@code <= 0} uses the ASG default
-     * @param mode capture mode ("photo"/"text"); text mode applies the same scan-exposure AE
-     *     preset {@code take_photo} uses, so the warmed preview matches the eventual capture
+     * @param mode capture mode ("photo"/"text"); text mode still uses text sensor size/crop
+     *     constants on capture, but no longer injects an AE exposure divisor
      * @param callback warm-up lifecycle callback (ready / stopped / error)
      */
     public static void warmUpCamera(
@@ -1166,18 +1166,11 @@ public class CameraNeoService extends LifecycleService {
             long durationMs,
             String mode,
             @Nullable PhotoCaptureSettings captureSettings) {
-        // Mirror take_photo's text-mode AE preset (see PhotoCommandHandler.handleTakePhoto) so the
-        // warmed preview's exposure mode matches the eventual capture exactly — otherwise the
-        // still shot would flip auto→manual scan exposure on the same session, which is harmless
-        // for reuse but leaves the preview metering under the wrong AE regime while warm.
-        // Text mode applies scan AE via applyTextModeExposure; request zsl/mfnr are preserved
-        // (null inherits globals inside PhotoSession resolvers / merge).
-        PhotoCaptureSettings base =
-                captureSettings != null ? captureSettings : PhotoCaptureSettings.EMPTY;
+        // Use the request's capture settings as-is. Text mode no longer injects an AE exposure
+        // divisor; explicit aeExposureDivisor / zsl / mfnr on the request (or globals when omitted)
+        // apply the same way as take_photo.
         PhotoCaptureSettings warmCaptureSettings =
-                (PhotoMode.TEXT.equals(PhotoMode.normalize(mode)) && exposureTimeNs == null)
-                        ? PhotoCaptureSettings.applyTextModeExposure(base)
-                        : base;
+                captureSettings != null ? captureSettings : PhotoCaptureSettings.EMPTY;
         // Bind the pending callback(s) AND drive setupWarmUp under one continuous SERVICE_LOCK
         // hold,
         // so warmUpRequest is set before the lock is released. Splitting them lets a second

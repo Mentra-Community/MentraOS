@@ -516,7 +516,7 @@ class MentraBluetoothSdk private constructor(
     @Deprecated(
         message =
             "Sticky action-button photo presets are deprecated. Prefer per-request " +
-                "requestPhoto(...) options (e.g. mode=TEXT for AE ÷3, or explicit per-shot fields). " +
+                "requestPhoto(...) options (e.g. mode=TEXT for text sensor size/crop, or explicit per-shot fields). " +
                 "This method still works but will be removed in a future release.",
     )
     suspend fun setPhotoCaptureDefaults(settings: PhotoCaptureDefaults): SettingsAckEvent =

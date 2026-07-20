@@ -88,8 +88,8 @@ For one-shot manual capture tuning, pass `exposureTimeNs` and `iso` together. `e
 | `iso` | React Native, Android, iOS | Optional manual ISO. Used only when `exposureTimeNs` enables manual exposure. |
 | `aeExposureDivisor` | React Native, Android, iOS | Optional scan-style auto-exposure divisor. Values must be greater than `1`. |
 | `isoCap` | React Native, Android, iOS | Optional scan-style ISO cap. Values must be greater than `0`. |
-| `zsl` | React Native, Android, iOS | ZSL preview/capture buffering. Enabled by default; pass `false` to disable. Forced off for text/scan/manual exposure. |
-| `mfnr` | React Native, Android, iOS | Vendor multi-frame noise reduction on still capture. Enabled by default; pass `false` for the single-frame pipeline. Forced off for text/scan/manual exposure. MFNR arms ZSL buffering in preview even when `zsl` is false. |
+| `zsl` | React Native, Android, iOS | ZSL preview/capture buffering. Enabled by default; pass `false` to disable. Honored in text/scan/manual exposure modes. |
+| `mfnr` | React Native, Android, iOS | Vendor multi-frame noise reduction on still capture. Enabled by default; pass `false` for the single-frame pipeline. Honored in text/scan/manual exposure modes. MFNR arms ZSL buffering in preview even when `zsl` is false. |
 | `noiseReduction` | React Native, Android, iOS | Optional per-request noise-reduction preference. Some firmware may report that this tuning is not implemented. |
 | `edgeEnhancement` | React Native, Android, iOS | Optional per-request edge-enhancement preference. Some firmware may report that this tuning is not implemented. |
 | `ispDigitalGain` | React Native, Android, iOS | Optional per-request ISP digital gain hint. Some firmware may report that this tuning is not implemented. |
@@ -369,7 +369,7 @@ console.log('saved as', savedPhoto?.name, 'at', savedPhoto?.url);
 ### Action-Button Photo Defaults
 
 <Warning>
-  `setPhotoCaptureDefaults(...)` is **deprecated**. Prefer per-request `requestPhoto(...)` options (for example `mode: "text"` for AE ÷3) instead of sticky button-photo presets. The method still works but will be removed in a future release.
+  `setPhotoCaptureDefaults(...)` is **deprecated**. Prefer per-request `requestPhoto(...)` options (for example `mode: "text"` for text sensor size/crop, or explicit `aeExposureDivisor`) instead of sticky button-photo presets. The method still works but will be removed in a future release.
 </Warning>
 
 `setPhotoCaptureDefaults(...)` controls action-button photo defaults. Omitted fields leave the existing defaults unchanged. Pass `resetCaptureTuning: true` to restore the optional tuning fields to standard capture behavior; this does not change photo size unless you also pass `size`. If you include other fields in the same call, those fields become the new defaults after the reset.
