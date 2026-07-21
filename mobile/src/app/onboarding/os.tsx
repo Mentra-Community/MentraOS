@@ -97,6 +97,8 @@ export default function MentraOSOnboarding() {
       preset="fixed"
       className="px-0"
       backgroundColor="#ffffff"
+      extraAndroidInsets
+      safeAreaEdges={["top", "bottom"]}
       StatusBarProps={{hidden: true}}
       statusBarStyle="dark">
       <View style={styles.screen}>

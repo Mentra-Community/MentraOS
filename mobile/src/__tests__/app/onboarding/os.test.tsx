@@ -6,6 +6,7 @@ import {SETTINGS} from "@mentra/engine"
 import {useSettingsStore} from "@mentra/engine/internal"
 
 const mockPushPrevious = jest.fn()
+const mockScreen = jest.fn()
 
 jest.mock("expo-image", () => {
   const {View} = require("react-native")
@@ -16,7 +17,8 @@ jest.mock("expo-image", () => {
 
 jest.mock("@/components/ignite", () => {
   const {Text: RNText, View} = require("react-native")
-  function MockScreen({children}: {children: ReactNode}) {
+  function MockScreen({children, ...props}: {children: ReactNode}) {
+    mockScreen(props)
     return <View>{children}</View>
   }
   function MockText({text}: {text: string}) {
@@ -46,6 +48,13 @@ describe("MentraOS onboarding", () => {
     expect(getByText("onboarding:osStartMiniappTitle")).toBeTruthy()
     expect(getByTestId("mentraos-onboarding-hero-1")).toBeTruthy()
     expect(queryByTestId("mentraos-onboarding-back")).toBeNull()
+    expect(mockScreen).toHaveBeenCalledWith(
+      expect.objectContaining({
+        extraAndroidInsets: true,
+        safeAreaEdges: ["top", "bottom"],
+        StatusBarProps: {hidden: true},
+      }),
+    )
 
     fireEvent.press(getByTestId("mentraos-onboarding-next"))
     expect(getByText("onboarding:osMinimizeCloseTitle")).toBeTruthy()

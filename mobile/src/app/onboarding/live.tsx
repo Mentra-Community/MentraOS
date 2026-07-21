@@ -177,13 +177,13 @@ export default function MentraLiveOnboarding() {
       {
         text: translate("onboarding:confirmSkip"),
         onPress: () => {
-          handleExit()
+          continueToNextOnboarding()
         },
       },
     ])
   }
 
-  const handleExit = () => {
+  const continueToNextOnboarding = () => {
     const nextRoute = getNextOnboardingRoute({
       includeMentraLive: false,
       onboardingLiveCompleted: true,
@@ -198,7 +198,7 @@ export default function MentraLiveOnboarding() {
 
   const handleEndButton = () => {
     setOnboardingLiveCompleted(true)
-    handleExit()
+    continueToNextOnboarding()
   }
 
   return (
