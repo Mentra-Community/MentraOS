@@ -178,6 +178,8 @@ class OtaInstallCoordinator {
   private mtkSimTickTimer: ReturnType<typeof setInterval> | null = null
 
   // Retry / ack bookkeeping (no glasses source)
+  // At most one apk-install status poll in flight (native rejects concurrent queries).
+  private apkInstallPollInFlight = false
   private hasReceivedAck = false
   private hasFirstActivity = false
   // Stuck-at-zero watchdog clears only on first NON-ZERO progress; "first activity"
@@ -370,6 +372,7 @@ class OtaInstallCoordinator {
     this.legacyApkSettleHold = false
     this.mtkSimulatedPercent = null
     this.lastRealMtkProgress = 0
+    this.apkInstallPollInFlight = false
     this.hasReceivedAck = false
     this.hasFirstActivity = false
     this.hasFirstNonZeroProgress = false
@@ -950,11 +953,22 @@ class OtaInstallCoordinator {
    * delivers the missed completion. Gated to the apk install phase so a stray
    * idle reply can't disturb an active download; legacy (< 37) builds ignore
    * the query, which is harmless.
+   *
+   * The native query pends up to 15s and rejects a concurrent call with
+   * request_in_flight — longer than the 10s tick — so exactly one poll is kept
+   * in flight (the glasses being slow to answer IS the silent-restart window
+   * this poll exists for) and rejections are swallowed: the next tick retries.
    */
   private maybePollApkInstallStatus(): void {
+    if (this.apkInstallPollInFlight) return
     const s = useGlassesStore.getState().otaStatus
     if (s?.stepType === "apk" && s.phase === "install" && s.status === "in_progress") {
+      this.apkInstallPollInFlight = true
       void BluetoothSdk.sendOtaQueryStatus()
+        .catch(() => {})
+        .finally(() => {
+          this.apkInstallPollInFlight = false
+        })
     }
   }
 

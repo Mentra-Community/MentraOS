@@ -742,6 +742,36 @@ describe("OtaInstallCoordinator apk install-phase status poll", () => {
     expect(bluetoothSdkMock.sendOtaQueryStatus).toHaveBeenCalledTimes(2)
   })
 
+  it("keeps one poll in flight and swallows its rejection", async () => {
+    // The native query pends up to 15s (longer than the 10s tick) and rejects a
+    // concurrent call with request_in_flight; a slow glasses restart must not
+    // stack queries or surface an unhandled rejection.
+    setGlassesConnected()
+    otaInstallCoordinator.attach()
+    GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
+    useGlassesStore.getState().setOtaStatus(inProgressStatus({phase: "install", stepPercent: 0, overallPercent: 100}))
+    bluetoothSdkMock.sendOtaQueryStatus.mockClear()
+    let rejectPending!: (err: Error) => void
+    bluetoothSdkMock.sendOtaQueryStatus.mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectPending = reject
+        }),
+    )
+
+    await jest.advanceTimersByTimeAsync(PING_INTERVAL_MS)
+    expect(bluetoothSdkMock.sendOtaQueryStatus).toHaveBeenCalledTimes(1)
+
+    // First query still pending: the next tick must not fire a concurrent one.
+    await jest.advanceTimersByTimeAsync(PING_INTERVAL_MS)
+    expect(bluetoothSdkMock.sendOtaQueryStatus).toHaveBeenCalledTimes(1)
+
+    // Rejection (e.g. request_timeout) is swallowed and polling resumes.
+    rejectPending(new Error("request_timeout"))
+    await jest.advanceTimersByTimeAsync(PING_INTERVAL_MS)
+    expect(bluetoothSdkMock.sendOtaQueryStatus).toHaveBeenCalledTimes(2)
+  })
+
   it("does not poll during the download phase", async () => {
     setGlassesConnected()
     otaInstallCoordinator.attach()
