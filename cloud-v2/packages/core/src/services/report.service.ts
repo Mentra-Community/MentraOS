@@ -13,6 +13,8 @@ import { createLogger } from "@mentra/cloud-shared";
 import { ReportModel } from "../models/report.model";
 import { ReportAssetModel } from "../models/report-asset.model";
 import { notifyReportSlack } from "./report-slack.service";
+import { UserModel } from "../models/user.model";
+import { getUserById } from "./account/gotrue.client";
 import { createStorageService } from "./storage/storage.service";
 
 const logger = createLogger("core").child({ service: "report.service" });
@@ -94,6 +96,45 @@ export interface AddReportArtifactsResult {
   stored: number;
 }
 
+/**
+ * Best-effort account email for a report's Slack post: V1 showed the
+ * submitter's email, and an opaque mu_ id is useless to a human triaging the
+ * channel. First-party users' tenantUserId is their GoTrue id, so it resolves
+ * through the admin API; anything that can't resolve (OEM tenants, missing
+ * service-role key, GoTrue outage) yields null and the message falls back to
+ * the mentraUserId. Never throws — this runs on the fire-and-forget path.
+ */
+async function reportUserEmail(mentraUserId: string): Promise<string | null> {
+  // The catch is attached to the lookup itself, not around the race: once
+  // the timer wins, a later rejection of the still-running lookup would
+  // otherwise be unhandled.
+  const lookup = lookupUserEmail(mentraUserId).catch(() => null);
+  return await Promise.race([
+    lookup,
+    // The email is a nicety: neither Mongo nor the GoTrue fetch carries a
+    // timeout, and a hung lookup would stall the Slack post itself (the
+    // API response is already decoupled). Give up and post the mu_ id
+    // instead of waiting.
+    new Promise<null>((resolve) => {
+      const timer = setTimeout(() => resolve(null), EMAIL_LOOKUP_TIMEOUT_MS);
+      timer.unref?.();
+    }),
+  ]);
+}
+
+const EMAIL_LOOKUP_TIMEOUT_MS = 5_000;
+
+async function lookupUserEmail(mentraUserId: string): Promise<string | null> {
+  const user = await UserModel.findOne({ mentraUserId }).lean();
+  // Only first-party rows store a GoTrue id in tenantUserId (same gate as
+  // account.api's tenantUserIdFor); an OEM sub is a different identifier
+  // space, and a stray collision would resolve some unrelated account's
+  // email.
+  if (!user || user.tenantId !== "mentra") return null;
+  const identity = await getUserById(user.tenantUserId);
+  return identity?.email || null;
+}
+
 export async function submitReport(input: SubmitReportInput): Promise<SubmitReportResult> {
   const reportId = `rep_${ulid()}`;
   const status: ReportStatus = input.kind === "feedback" ? "ready" : "collecting";
@@ -116,15 +157,21 @@ export async function submitReport(input: SubmitReportInput): Promise<SubmitRepo
 
   // Feedback reports are complete as submitted, so they notify here;
   // bug/automatic reports notify from markReportReady once artifact
-  // collection finishes. Fire-and-forget: the response never waits on Slack.
+  // collection finishes. Fire-and-forget: the response never waits on Slack
+  // or the email lookup.
   if (status === "ready") {
-    notifyReportSlack({
-      reportId,
-      mentraUserId: input.mentraUserId,
-      kind: input.kind,
-      feedback,
-      context: input.context,
-    }).catch(() => {});
+    reportUserEmail(input.mentraUserId)
+      .then((userEmail) =>
+        notifyReportSlack({
+          reportId,
+          mentraUserId: input.mentraUserId,
+          userEmail,
+          kind: input.kind,
+          feedback,
+          context: input.context,
+        }),
+      )
+      .catch(() => {});
   }
 
   return { reportId, status };
@@ -183,16 +230,21 @@ export async function markReportReady(input: {
   ).lean();
   if (!before) return null;
   if (before.status === "collecting") {
-    notifyReportSlack({
-      reportId: input.reportId,
-      mentraUserId: input.mentraUserId,
-      kind: before.kind,
-      trigger: before.trigger,
-      report: before.report,
-      feedback: before.feedback,
-      context: before.context,
-      artifactCount: before.artifacts?.length ?? 0,
-    }).catch(() => {});
+    reportUserEmail(input.mentraUserId)
+      .then((userEmail) =>
+        notifyReportSlack({
+          reportId: input.reportId,
+          mentraUserId: input.mentraUserId,
+          userEmail,
+          kind: before.kind,
+          trigger: before.trigger,
+          report: before.report,
+          feedback: before.feedback,
+          context: before.context,
+          artifactCount: before.artifacts?.length ?? 0,
+        }),
+      )
+      .catch(() => {});
   }
   return "ready";
 }
