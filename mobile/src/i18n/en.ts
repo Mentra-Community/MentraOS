@@ -131,6 +131,7 @@ const en = {
     instructions: "Instructions",
     g1Ready: "Continue to pairing",
     g1NotReady: "Orange LED is blinking",
+    g2NotReady: "Need more help?",
     success: "Success",
     glassesConnected: "Your glasses are connected.",
     needHelpPairing: "Need help pairing?",
@@ -151,7 +152,7 @@ const en = {
     },
     G2: {
       step1: "Disconnect your G2 from within the Even Realities app, or uninstall the Even Realities app",
-      step2: "Place your G2 in the charging case with the lid open.",
+      step2: "Place your G2 in the charging case.",
     },
     LIVE: {
       step1: "Make sure your Mentra Live is fully charged and turned on.",
