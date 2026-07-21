@@ -172,7 +172,7 @@ export class CameraModule {
         type: MiniappRequestType.PHOTO,
         size: options.size ?? "medium",
         mode: options.mode ?? "photo",
-        ...(options.transferMethod ? {transferMethod: options.transferMethod} : {}),
+        ...(options.transferMethod !== undefined ? {transferMethod: options.transferMethod} : {}),
         compress: options.compress ?? "none",
         sound: options.sound ?? true,
         saveToGallery: options.saveToGallery ?? false,

@@ -186,6 +186,30 @@ describe("PhonePhotoCoordinator", () => {
       expect(requestPhotoNative).not.toHaveBeenCalled()
     })
 
+    test("rejects a runtime null transfer method before starting the photo pipeline", async () => {
+      const coord = new PhonePhotoCoordinator()
+      const promise = coord.takePhoto("com.a", {transferMethod: null} as any)
+
+      await expect(promise).rejects.toMatchObject({
+        code: "INVALID_ARGUMENT",
+        message: 'Invalid transferMethod null. Expected "auto", "direct", or "ble".',
+      })
+      expect(startManagedPhoto).not.toHaveBeenCalled()
+      expect(requestPhotoNative).not.toHaveBeenCalled()
+    })
+
+    test("rejects a runtime empty transfer method before starting the photo pipeline", async () => {
+      const coord = new PhonePhotoCoordinator()
+      const promise = coord.takePhoto("com.a", {transferMethod: ""} as any)
+
+      await expect(promise).rejects.toMatchObject({
+        code: "INVALID_ARGUMENT",
+        message: 'Invalid transferMethod "". Expected "auto", "direct", or "ble".',
+      })
+      expect(startManagedPhoto).not.toHaveBeenCalled()
+      expect(requestPhotoNative).not.toHaveBeenCalled()
+    })
+
     test("passes saveToGallery and sound through to the native take_photo command", async () => {
       const coord = new PhonePhotoCoordinator()
       await coord.takePhoto("com.a", {saveToGallery: true, sound: false})

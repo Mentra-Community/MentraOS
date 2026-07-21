@@ -98,6 +98,24 @@ describe("CameraModule", () => {
     expect(requestCalls[0]).toMatchObject({transferMethod: "direct"})
   })
 
+  test("takePhoto preserves a runtime null transfer method for host validation", async () => {
+    const {session, requestCalls} = mockSession({})
+    const camera = new CameraModule(session)
+
+    await camera.takePhoto({transferMethod: null} as any)
+
+    expect(requestCalls[0]).toMatchObject({transferMethod: null})
+  })
+
+  test("takePhoto preserves a runtime empty transfer method for host validation", async () => {
+    const {session, requestCalls} = mockSession({})
+    const camera = new CameraModule(session)
+
+    await camera.takePhoto({transferMethod: ""} as any)
+
+    expect(requestCalls[0]).toMatchObject({transferMethod: ""})
+  })
+
   test("takePhoto forwards zsl and mfnr", async () => {
     const {session, requestCalls} = mockSession({})
     const camera = new CameraModule(session)
