@@ -29,17 +29,26 @@ Doppler config.
 
 ## Install / upgrade
 
-See the header of `cloud-v2/infra/betterstack-logs/values.yaml` for the
-exact `porter helm --cluster 5692` command. Re-run with `upgrade` instead of
-`install` after editing values.
+Cluster 5692 does NOT expose kubeconfig, so `porter helm`/`kubectl` return
+`kubeconfig 400` (architectural, not a permissions gap). Deploy through the
+Porter dashboard: Add-ons -> Helm Chart, chart `betterstack-logs` **pinned to
+v1.1.6** (do not use latest; v2 restructures the metrics pipeline under
+`vector-aggregator` and breaks this `vector.customConfig` layout). Paste the
+contents of `infra/betterstack-logs/values.yaml` with the real per-env tokens
+from Doppler substituted for each `PLACEHOLDER_*_TOKEN`. To change config,
+edit the add-on's Configuration tab and Deploy a new revision. The add-on's
+API calls use the Admin token in Doppler `mentra-sre/dev` `PORTER_TOKEN_ADMIN`.
 
 ## Cost guard
 
-The Vector filter (`starts_with(container_name, "cloud-dev-")`) is the only
-thing bounding ingest. Renaming a Porter app or adding a service changes
-container names; check the filter whenever that happens. Keep retention at
-30 days unless there is a reason. Watch the source's ingest volume for the
-first week after any change.
+`cloudv2_only_filter` (the five `cloud-*` `starts_with` clauses) is the only
+thing bounding ingest; cluster 5692 also runs kube-system, ingress, karaoke,
+etc. which must never be shipped. Renaming a Porter app or adding a service
+changes container names, so re-check the filter and the `route_by_env` prefixes
+whenever that happens. Keep retention at 30 days per source unless there is a
+reason. The metrics pipeline stays disabled (`metrics-server.enabled: false`,
+no metrics-sink override) to avoid the V1 metrics-datapoint cost. Watch each
+source's ingest volume for the first week after any change.
 
 ## Querying
 
@@ -51,12 +60,21 @@ connect endpoint `https://eu-central-1a-connect.betterstackdata.com/`, not
 the `eu-nbg-2-connect` host the `bstack` CLI defaults to. The `remote()`
 table only materializes once the source has received data.
 
+Application fields live inside the `raw` JSON column, not physical columns,
+so extract them with `JSONExtractString` in both `SELECT` and `WHERE` (a bare
+`WHERE level = ...` fails with `UNKNOWN_IDENTIFIER`).
+
 Hot storage (last ~30 min, sub-second):
 
 ```sql
-SELECT dt, level, message, package, module
+SELECT dt,
+       JSONExtractString(raw, 'level')   AS level,
+       JSONExtractString(raw, 'message') AS message,
+       JSONExtractString(raw, 'package') AS package,
+       JSONExtractString(raw, 'module')  AS module
 FROM remote(t373499_mentracloud_v2_dev_2_logs)
-WHERE level = 'error' AND dt > now() - INTERVAL 30 MINUTE
+WHERE JSONExtractString(raw, 'level') = 'error'
+  AND dt > now() - INTERVAL 30 MINUTE
 ORDER BY dt DESC LIMIT 100
 ```
 

@@ -1,5 +1,9 @@
 # BetterStack Logs Helm chart values for the cloud-v2 cluster (Porter 5692).
 #
+# Chart: betterstack-logs PINNED to v1.1.6. Do NOT install unpinned: v2.0.0
+# restructures the metrics pipeline under vector-aggregator, which would invalidate
+# this vector.customConfig layout. The Porter add-on has Chart Version pinned to v1.1.6.
+#
 # ONE Vector DaemonSet (one pod per node) tails every container stdout on the
 # node, filters to the five cloud-v2 Porter apps, flattens the pino JSON, and
 # routes each env to its OWN BetterStack source via a route transform. There is
