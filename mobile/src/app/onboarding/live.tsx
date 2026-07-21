@@ -1,19 +1,22 @@
+import {SETTINGS, useSetting} from "@mentra/engine"
+import {useMemo} from "react"
+import {Platform} from "react-native"
+
 import {Screen} from "@/components/ignite"
 import {OnboardingGuide, OnboardingStep} from "@/components/onboarding/OnboardingGuide"
 import {waitForButtonPress, waitForTouchGesture} from "@/components/onboarding/waitForGlassesEvent"
-import {useNavigationStore} from "@/stores/navigation"
-import {translate} from "@/i18n"
-import {SETTINGS, useSetting} from "@mentra/engine"
-import showAlert from "@/utils/AlertUtils"
-import {useMemo} from "react"
-import {Platform} from "react-native"
 import {CDN_BASE_URL} from "@/constants/appConfig"
+import {translate} from "@/i18n"
+import {useNavigationStore} from "@/stores/navigation"
+import showAlert from "@/utils/AlertUtils"
+import {getNextOnboardingRoute} from "@/utils/onboarding/getNextOnboardingRoute"
 
 const CDN_BASE = `${CDN_BASE_URL}/onboarding/mentra-live/light`
 
 export default function MentraLiveOnboarding() {
-  const {clearHistoryAndGoHome} = useNavigationStore.getState()
+  const {clearHistoryAndGoHome, replace} = useNavigationStore.getState()
   const [_onboardingLiveCompleted, setOnboardingLiveCompleted] = useSetting(SETTINGS.onboarding_live_completed.key)
+  const [onboardingOsCompleted] = useSetting<boolean>(SETTINGS.onboarding_os_completed.key)
 
   // NOTE: you can't have 2 transition videos in a row or things will break:
   // Memoized so each step's `waitFn` keeps a stable identity across re-renders.
@@ -181,12 +184,21 @@ export default function MentraLiveOnboarding() {
   }
 
   const handleExit = () => {
+    const nextRoute = getNextOnboardingRoute({
+      includeMentraLive: false,
+      onboardingLiveCompleted: true,
+      onboardingOsCompleted,
+    })
+    if (nextRoute) {
+      replace(nextRoute)
+      return
+    }
     clearHistoryAndGoHome()
   }
 
   const handleEndButton = () => {
     setOnboardingLiveCompleted(true)
-    clearHistoryAndGoHome()
+    handleExit()
   }
 
   return (

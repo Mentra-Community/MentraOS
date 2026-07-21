@@ -1,15 +1,13 @@
+import {engine, SETTINGS} from "@mentra/engine"
+import {useSettingsStore} from "@mentra/engine/internal"
+import {useRoute} from "@react-navigation/native"
 import {fireEvent, render, waitFor} from "@testing-library/react-native"
 import type {ReactNode} from "react"
 import {Platform} from "react-native"
 
-import {useRoute} from "@react-navigation/native"
-
-import {engine} from "@mentra/engine"
 import PairingSuccessScreen from "@/app/pairing/success"
 import {usePushUnder} from "@/contexts/NavigationHistoryContext"
 import {useNavigationStore} from "@/stores/navigation"
-import {SETTINGS} from "@mentra/engine"
-import {useSettingsStore} from "@mentra/engine/internal"
 
 jest.mock("@/../../cloud/packages/types/src", () => ({
   ControllerTypes: {
@@ -144,6 +142,19 @@ describe("pairing success screen", () => {
 
     await waitFor(() => expect(clearHistoryAndGoHome).toHaveBeenCalled())
     expect(push).not.toHaveBeenCalled()
+    expect(pushUnder).not.toHaveBeenCalled()
+  })
+
+  it("opens MentraOS onboarding after pairing non-Live glasses when it is incomplete", async () => {
+    ;(useRoute as jest.Mock).mockReturnValue({params: {deviceModel: "Even Realities G1"}})
+
+    const {getAllByText} = render(<PairingSuccessScreen />)
+
+    await waitFor(() => expect(getAllByText("onboarding:continueSetup").length).toBeGreaterThan(0))
+    fireEvent.press(getAllByText("onboarding:continueSetup")[1])
+
+    await waitFor(() => expect(clearHistoryAndGoHome).toHaveBeenCalled())
+    expect(push).toHaveBeenCalledWith("/onboarding/os")
     expect(pushUnder).not.toHaveBeenCalled()
   })
 })
