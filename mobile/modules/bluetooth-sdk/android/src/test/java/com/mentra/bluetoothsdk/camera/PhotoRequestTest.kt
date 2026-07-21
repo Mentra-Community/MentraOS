@@ -5,6 +5,7 @@ import com.mentra.bluetoothsdk.PhotoMode
 import com.mentra.bluetoothsdk.PhotoRequest
 import com.mentra.bluetoothsdk.PhotoSize
 import org.assertj.core.api.Assertions.assertThat
+import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.Test
 
 class PhotoRequestTest {
@@ -107,5 +108,34 @@ class PhotoRequestTest {
             )
 
         assertThat(request.transferMethod).isEqualTo("ble")
+    }
+
+    @Test
+    fun `fromMap preserves direct transfer without BLE fallback`() {
+        val request =
+            PhotoRequest.fromMap(
+                mapOf(
+                    "size" to "medium",
+                    "transferMethod" to "direct",
+                    "webhookUrl" to "https://example.com/upload",
+                )
+            )
+
+        assertThat(request.transferMethod).isEqualTo("direct")
+    }
+
+    @Test
+    fun `fromMap rejects an unknown transfer method`() {
+        assertThatThrownBy {
+            PhotoRequest.fromMap(
+                mapOf(
+                    "size" to "medium",
+                    "transferMethod" to "wifi",
+                    "webhookUrl" to "https://example.com/upload",
+                )
+            )
+        }
+            .isInstanceOf(IllegalArgumentException::class.java)
+            .hasMessage("Invalid transferMethod \"wifi\". Expected auto, direct, or ble.")
     }
 }

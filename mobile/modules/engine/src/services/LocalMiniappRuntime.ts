@@ -2854,7 +2854,7 @@ class LocalMiniappRuntime {
       const result = await phonePhotoCoordinator.takePhoto(packageName, {
         size: payload.size as "low" | "medium" | "high" | "max" | "small" | "large" | "full" | undefined,
         mode: payload.mode as "photo" | "text" | undefined,
-        transferMethod: payload.transferMethod as "auto" | "ble" | undefined,
+        transferMethod: payload.transferMethod as "auto" | "direct" | "ble" | undefined,
         compress: payload.compress as "none" | "low" | "medium" | "high" | undefined,
         sound: payload.sound as boolean | undefined,
         saveToGallery: payload.saveToGallery as boolean | undefined,

@@ -21,6 +21,7 @@ import org.json.JSONObject;
  */
 public class PhotoCommandHandler extends BaseMediaCommandHandler {
     private static final String TAG = "PhotoCommandHandler";
+    private static final Set<String> PHOTO_TRANSFER_METHODS = Set.of("auto", "direct", "ble");
 
     private final AsgClientServiceManager serviceManager;
     private final IStateManager stateManager;
@@ -281,6 +282,16 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
                 logCommandResult("take_photo", false, "Media capture service not available");
                 return false;
             }
+            if (!PHOTO_TRANSFER_METHODS.contains(transferMethod)) {
+                String message =
+                        "Invalid transferMethod \""
+                                + transferMethod
+                                + "\". Expected auto, direct, or ble.";
+                logCommandResult("take_photo", false, message);
+                captureService.sendPhotoErrorResponse(
+                        requestId, "INVALID_TRANSFER_METHOD", message);
+                return false;
+            }
 
             // Use the permanent gallery path only when the caller wants to save; otherwise use
             // the transient _sdk_pending tree so in-flight SDK photos are invisible to gallery
@@ -532,7 +543,7 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
                         exposureTimeNs,
                         iso,
                         captureSettings);
-            default:
+            case "direct":
                 return captureService.takePhotoAndUpload(
                         photoFilePath,
                         requestId,
@@ -547,6 +558,9 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
                         exposureTimeNs,
                         iso,
                         captureSettings);
+            default:
+                // handleTakePhoto validates this before any capture work starts.
+                throw new IllegalArgumentException("Unsupported transferMethod: " + transferMethod);
         }
     }
 
