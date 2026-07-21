@@ -89,6 +89,8 @@ export function ModalProvider({children}: {children: React.ReactNode}) {
   const fadeAnim = useRef(new Animated.Value(0)).current
   const scaleAnim = useRef(new Animated.Value(0.93)).current
   const pendingDismissCallback = useRef<(() => void) | undefined>(undefined)
+  const visibleRef = useRef(visible)
+  visibleRef.current = visible
 
   // Effects run after React commits. Dispatch callbacks from here so a button
   // that opens a native surface cannot race the custom overlay's removal.
@@ -184,7 +186,7 @@ export function ModalProvider({children}: {children: React.ReactNode}) {
   useEffect(() => {
     // Register the modal functions for global access
     setModalRef({
-      isVisible: () => visible,
+      isVisible: () => visibleRef.current,
       showModal: (title, message, alertButtons = [], opts = {}) => {
         setTitle(title)
         setMessage(message)
@@ -212,7 +214,7 @@ export function ModalProvider({children}: {children: React.ReactNode}) {
     return () => {
       setModalRef(null)
     }
-  }, [visible])
+  }, [])
 
   const handleDismiss = (onDismiss?: () => void) => {
     // Animate out before hiding (only for new UI)

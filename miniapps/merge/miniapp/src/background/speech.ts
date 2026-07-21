@@ -12,10 +12,14 @@ export function insightToSpeechText(text: string): string {
 
   speech = speech
     .replace(/<say-as\b[^>]*>(.*?)<\/say-as>/gis, "$1")
-    .replace(/<[^>]+>/g, " ")
+    .replace(/<\/?[a-z][a-z0-9-]*(?:\s[^<>]*?)?\s*\/?>/gi, " ")
     .replace(/\[([^\]]+)]\([^)]+\)/g, "$1")
     .replace(/`([^`]*)`/g, "$1")
-    .replace(/[\[\]{}()<>]/g, " ")
+    .replace(/<=/g, " less than or equal to ")
+    .replace(/>=/g, " greater than or equal to ")
+    .replace(/</g, " less than ")
+    .replace(/>/g, " greater than ")
+    .replace(/[\[\]{}()]/g, " ")
     .replace(/&/g, " and ")
     .replace(/\+/g, " plus ")
     .replace(/=/g, " equals ")
