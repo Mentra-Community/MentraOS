@@ -154,7 +154,7 @@ export function DeviceScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
               <Svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke={colors.inkAlt} strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
                 <Path d="M12 3v12" /><Path d="m7 10 5 5 5-5" /><Path d="M5 21h14" />
               </Svg>
-              <Text style={styles.btnTextDark}>Start OTA</Text>
+              <Text style={styles.btnTextDark}>{sdk.otaStartPending ? 'Starting OTA...' : 'Start OTA'}</Text>
             </Pressable>
           </View>
           <View style={styles.btnRow}>
@@ -313,10 +313,13 @@ function canStartOta(sdk: BluetoothSdkExampleModel) {
 }
 
 function isOtaInProgress(sdk: BluetoothSdkExampleModel) {
-  return sdk.otaStatus?.status === 'in_progress' || sdk.otaStatus?.status === 'step_complete';
+  return sdk.otaStartPending || sdk.otaStatus?.status === 'in_progress' || sdk.otaStatus?.status === 'step_complete';
 }
 
 function otaStatusLine(sdk: BluetoothSdkExampleModel) {
+  if (sdk.otaStartPending) {
+    return 'starting update';
+  }
   if (sdk.otaStatus) {
     return `${sdk.otaStatus.status.replace(/_/g, ' ')} · ${otaDisplayPercent(sdk)}%`;
   }
@@ -330,6 +333,9 @@ function otaStatusLine(sdk: BluetoothSdkExampleModel) {
 }
 
 function otaCardTitle(sdk: BluetoothSdkExampleModel) {
+  if (sdk.otaStartPending) {
+    return 'Starting update';
+  }
   if (sdk.otaStatus?.status === 'failed') {
     return 'Update failed';
   }
@@ -346,6 +352,9 @@ function otaCardTitle(sdk: BluetoothSdkExampleModel) {
 }
 
 function otaCardDetail(sdk: BluetoothSdkExampleModel) {
+  if (sdk.otaStartPending) {
+    return 'Sending the OTA start request to the glasses.';
+  }
   if (sdk.otaStatus?.error_message) {
     return sdk.otaStatus.error_message;
   }
@@ -402,7 +411,7 @@ function OtaCard({ sdk }: { sdk: BluetoothSdkExampleModel }) {
             <Text style={[styles.otaTitle, updateRequired && styles.otaTitleRequired]}>{otaCardTitle(sdk)}</Text>
           </View>
         </View>
-        {installing ? (
+        {sdk.otaStartPending || installing ? (
           <ActivityIndicator color={colors.greenPrimary} size="small" />
         ) : sdk.otaStatus ? (
           <Text style={styles.otaPercent}>{percent}%</Text>
@@ -428,7 +437,9 @@ function OtaCard({ sdk }: { sdk: BluetoothSdkExampleModel }) {
             <Path d="m7 10 5 5 5-5" />
             <Path d="M5 21h14" />
           </Svg>
-          <Text style={styles.otaStartButtonText}>{canStartOta(sdk) ? 'Start OTA' : 'Connect Wi-Fi first'}</Text>
+          <Text style={styles.otaStartButtonText}>
+            {sdk.otaStartPending ? 'Starting OTA...' : canStartOta(sdk) ? 'Start OTA' : 'Connect Wi-Fi first'}
+          </Text>
         </Pressable>
       ) : null}
     </View>

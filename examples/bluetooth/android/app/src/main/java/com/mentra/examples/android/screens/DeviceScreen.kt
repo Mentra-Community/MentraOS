@@ -167,7 +167,7 @@ fun DeviceScreen(controller: MentraExampleController) {
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     LightBtn(if (connected && !glassesWifiConnected) "Connect Wi-Fi" else "Check OTA", Icons.Outlined.Refresh, Modifier.weight(1f), enabled = canCheckOta, onClick = controller::checkForOtaUpdate)
-                    LightBtn("Start OTA", Icons.Outlined.FileDownload, Modifier.weight(1f), enabled = canStartOta(state), onClick = controller::startOtaUpdate)
+                    LightBtn(if (state.otaStartPending) "Starting OTA..." else "Start OTA", Icons.Outlined.FileDownload, Modifier.weight(1f), enabled = canStartOta(state), onClick = controller::startOtaUpdate)
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     LightBtn("Clear Default", Icons.Outlined.DeleteOutline, Modifier.weight(1f), enabled = hasDefaultTarget, onClick = controller::clearDefaultDevice)
@@ -301,10 +301,12 @@ private fun canStartOta(state: com.mentra.examples.android.MentraExampleState): 
     isGlassesConnected(state.glassesStatus) && isGlassesWifiConnected(state.glassesStatus) && state.otaUpdateAvailable && !isOtaInProgress(state)
 
 private fun isOtaInProgress(state: com.mentra.examples.android.MentraExampleState): Boolean =
-    state.otaStatus?.status == "in_progress" || state.otaStatus?.status == "step_complete"
+    state.otaStartPending || state.otaStatus?.status == "in_progress" || state.otaStatus?.status == "step_complete"
 
 private fun otaStatusLine(state: com.mentra.examples.android.MentraExampleState): String =
-    if (isOtaInstalling(state)) {
+    if (state.otaStartPending) {
+        "starting update"
+    } else if (isOtaInstalling(state)) {
         "installing update"
     } else {
         state.otaStatus?.let { "${it.status.replace('_', ' ')} · ${otaDisplayPercent(state)}%" }
@@ -318,6 +320,7 @@ private fun otaDisplayPercent(state: com.mentra.examples.android.MentraExampleSt
 
 private fun otaCardTitle(state: com.mentra.examples.android.MentraExampleState): String =
     when {
+        state.otaStartPending -> "Starting update"
         state.otaStatus?.status == "failed" -> "Update failed"
         isOtaInstalling(state) -> "Installing update"
         state.otaStatus != null && isOtaInProgress(state) -> "Updating ${state.otaStatus.stepType.ifBlank { "firmware" }}"
@@ -326,6 +329,9 @@ private fun otaCardTitle(state: com.mentra.examples.android.MentraExampleState):
     }
 
 private fun otaCardDetail(state: com.mentra.examples.android.MentraExampleState): String {
+    if (state.otaStartPending) {
+        return "Sending the OTA start request to the glasses."
+    }
     state.otaStatus?.errorMessage?.let { return it }
     if (isOtaInstalling(state)) {
         return "The glasses client may restart to finish installation."
@@ -384,7 +390,7 @@ private fun OtaCard(controller: MentraExampleController, modifier: Modifier = Mo
                     )
                 }
             }
-            if (installing) {
+            if (state.otaStartPending || installing) {
                 CircularProgressIndicator(
                     color = AppColor.greenPrimary,
                     strokeWidth = 2.dp,
@@ -414,7 +420,7 @@ private fun OtaCard(controller: MentraExampleController, modifier: Modifier = Mo
         )
         if (updateRequired) {
             DarkBtn(
-                if (canStartOta(state)) "Start OTA" else "Connect Wi-Fi first",
+                if (state.otaStartPending) "Starting OTA..." else if (canStartOta(state)) "Start OTA" else "Connect Wi-Fi first",
                 Icons.Outlined.FileDownload,
                 AppColor.greenInk,
                 Modifier.fillMaxWidth(),

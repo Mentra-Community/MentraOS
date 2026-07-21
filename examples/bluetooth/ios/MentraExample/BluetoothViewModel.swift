@@ -433,6 +433,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     @Published private(set) var lastMicBytes = 0
     @Published private(set) var micPlaybackHint: String?
     @Published private(set) var otaDisplayPercent: Int?
+    @Published private(set) var otaStartPending = false
     @Published private(set) var otaStatus: OtaStatusEvent?
     @Published private(set) var otaStatusMessage: String?
     @Published private(set) var otaUpdateAvailable = false
@@ -700,15 +701,25 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     }
 
     func startOtaUpdate() {
+        guard !otaStartPending else {
+            append(tag: "TX", text: "OTA start skipped; a start is already in flight")
+            return
+        }
+        otaStartPending = true
         runAsyncAction("Start OTA") { [self] in
-            try requireConnected("start OTA")
-            try requireGlassesWifi("start OTA updates")
-            postOtaCheckedSessionKey = nil
-            otaStartingAppIdentity = otaAppIdentity(glassesValues)
-            resetOtaDisplayProgress()
-            otaDisplayPercent = nil
-            _ = try await mentraBluetoothSdk.startOtaUpdate()
-            append(tag: "LIVE", text: "OTA start acknowledged")
+            do {
+                try requireConnected("start OTA")
+                try requireGlassesWifi("start OTA updates")
+                postOtaCheckedSessionKey = nil
+                otaStartingAppIdentity = otaAppIdentity(glassesValues)
+                resetOtaDisplayProgress()
+                otaDisplayPercent = nil
+                _ = try await mentraBluetoothSdk.startOtaUpdate()
+                append(tag: "LIVE", text: "OTA start acknowledged")
+            } catch {
+                otaStartPending = false
+                throw error
+            }
         }
     }
 
@@ -2235,6 +2246,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                 self.otaStartingAppIdentity = nil
                 resetOtaDisplayProgress()
                 autoOtaCheckedConnectionKey = nil
+                otaStartPending = false
                 otaStatus = nil
                 otaDisplayPercent = nil
                 otaStatusMessage = "OTA installed; checking for additional updates"
@@ -2306,6 +2318,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         guard isDisplayableOtaStatus(event) else {
             otaStartingAppIdentity = nil
             resetOtaDisplayProgress()
+            otaStartPending = false
             otaStatus = nil
             otaDisplayPercent = nil
             otaStatusMessage = "No active OTA"
@@ -2314,6 +2327,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         }
 
         otaDisplayPercent = updateOtaDisplayPercent(event)
+        otaStartPending = false
         otaStatus = event
         otaStatusMessage = nil
         if event.status == "complete" || event.status == "failed" {
@@ -2508,7 +2522,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     }
 
     private func isOtaInProgress() -> Bool {
-        otaStatus?.status == "in_progress" || otaStatus?.status == "step_complete"
+        otaStartPending || otaStatus?.status == "in_progress" || otaStatus?.status == "step_complete"
     }
 
     private func startCameraWarmUpLoop() {
@@ -2779,6 +2793,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         galleryServerReachable = nil
         galleryServerStatus = "Gallery server: connect glasses first"
         otaStartingAppIdentity = nil
+        otaStartPending = false
         latestVersionInfo = nil
         mentraLiveVersions = MentraLiveVersions()
         resetOtaDisplayProgress()

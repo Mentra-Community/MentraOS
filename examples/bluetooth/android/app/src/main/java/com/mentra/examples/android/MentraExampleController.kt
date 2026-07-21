@@ -255,6 +255,7 @@ data class MentraExampleState(
     val micPlaying: Boolean = false,
     val micRecording: Boolean = false,
     val otaDisplayPercent: Int? = null,
+    val otaStartPending: Boolean = false,
     val otaStatus: OtaStatusEvent? = null,
     val otaStatusMessage: String? = null,
     val otaUpdateAvailable: Boolean = false,
@@ -2469,6 +2470,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             resetOtaDisplayProgress()
             autoOtaCheckedConnectionKey = null
             state = state.copy(
+                otaStartPending = false,
                 otaStatus = null,
                 otaDisplayPercent = null,
                 otaStatusMessage = "OTA installed; checking for additional updates",
@@ -2639,15 +2641,27 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         }
     }
 
-    fun startOtaUpdate() = runAction("Start OTA") {
-        requireConnected("start OTA")
-        requireGlassesWifi("start OTA updates")
-        postOtaCheckedSessionKey = null
-        otaStartingAppIdentity = state.glassesStatus.otaAppIdentity()
-        resetOtaDisplayProgress()
-        state = state.copy(otaDisplayPercent = null)
-        withContext(Dispatchers.IO) { mentraBluetoothSdk.startOtaUpdate() }
-        addEvent("LIVE", "OTA start acknowledged")
+    fun startOtaUpdate() {
+        if (state.otaStartPending) {
+            addEvent("TX", "OTA start skipped; a start is already in flight")
+            return
+        }
+        state = state.copy(otaStartPending = true)
+        runAction("Start OTA") {
+            try {
+                requireConnected("start OTA")
+                requireGlassesWifi("start OTA updates")
+                postOtaCheckedSessionKey = null
+                otaStartingAppIdentity = state.glassesStatus.otaAppIdentity()
+                resetOtaDisplayProgress()
+                state = state.copy(otaDisplayPercent = null)
+                withContext(Dispatchers.IO) { mentraBluetoothSdk.startOtaUpdate() }
+                addEvent("LIVE", "OTA start acknowledged")
+            } catch (error: Throwable) {
+                state = state.copy(otaStartPending = false)
+                throw error
+            }
+        }
     }
 
     fun openBluetoothSettings() = runAction("Open Bluetooth settings") {
@@ -2944,7 +2958,9 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     private fun isGlassesConnected(): Boolean = isGlassesConnected(state.glassesStatus)
 
     private fun isOtaInProgress(): Boolean =
-        state.otaStatus?.status == "in_progress" || state.otaStatus?.status == "step_complete"
+        state.otaStartPending ||
+            state.otaStatus?.status == "in_progress" ||
+            state.otaStatus?.status == "step_complete"
 
     private fun startCameraWarmUpLoop() {
         if (cameraWarmUpJob?.isActive == true) {
@@ -3101,6 +3117,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             streamStatus = status,
             hotspotEnabled = false,
             mentraLiveVersions = MentraLiveVersions(),
+            otaStartPending = false,
             otaStatus = null,
             otaDisplayPercent = null,
             otaStatusMessage = null,
@@ -3135,6 +3152,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             otaStartingAppIdentity = null
             resetOtaDisplayProgress()
             state = state.copy(
+                otaStartPending = false,
                 otaStatus = null,
                 otaDisplayPercent = null,
                 otaStatusMessage = "No active OTA",
@@ -3145,6 +3163,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
 
         val displayPercent = updateOtaDisplayPercent(event)
         state = state.copy(
+            otaStartPending = false,
             otaStatus = event,
             otaDisplayPercent = displayPercent,
             otaStatusMessage = null,

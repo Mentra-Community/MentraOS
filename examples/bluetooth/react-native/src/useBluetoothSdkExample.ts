@@ -405,6 +405,7 @@ export type BluetoothSdkExampleState = {
   micPlaying: boolean;
   micRecording: boolean;
   otaDisplayPercent: number | null;
+  otaStartPending: boolean;
   otaStatus: OtaStatusEvent | null;
   otaStatusMessage: string | null;
   otaUpdateAvailable: boolean;
@@ -654,6 +655,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   const [micPlaybackHint, setMicPlaybackHint] = useState<string | null>(null);
   const [otaStatus, setOtaStatus] = useState<OtaStatusEvent | null>(null);
   const [otaDisplayPercent, setOtaDisplayPercent] = useState<number | null>(null);
+  const [otaStartPending, setOtaStartPending] = useState(false);
   const [otaStatusMessage, setOtaStatusMessage] = useState<string | null>(null);
   const [otaUpdateAvailable, setOtaUpdateAvailable] = useState(false);
   const [wifiConnectingSsid, setWifiConnectingSsid] = useState<string | null>(null);
@@ -886,7 +888,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       // 'step_complete' before the reboot) must not gate the next check.
       otaStatusRef.current = null;
       otaStartingAppIdentityRef.current = null;
-      otaStartInFlightRef.current = false;
+      setOtaStartInFlight(false);
       if (otaChainRemainingRef.current > 0 && otaChainDisconnectedAtRef.current === null) {
         otaChainDisconnectedAtRef.current = Date.now();
       }
@@ -1362,7 +1364,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     }
     const generation = otaChainGenerationRef.current;
     otaChainRemainingRef.current -= 1;
-    otaStartInFlightRef.current = true;
+    setOtaStartInFlight(true);
     void runAction('Continue OTA', async () => {
       try {
         postOtaCheckedSessionRef.current = null;
@@ -1374,7 +1376,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
         }
         addEvent('LIVE', 'OTA continuing with next update pass');
       } catch (error) {
-        otaStartInFlightRef.current = false;
+        setOtaStartInFlight(false);
         // Nothing started, so the failed dispatch should not consume a
         // pass — but stop the run after repeated failures rather than
         // retrying on every subsequent check. If the run was cancelled or
@@ -1395,6 +1397,11 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   function clearOtaDisplayProgress() {
     otaDisplayProgressRef.current = null;
     setOtaDisplayPercent(null);
+  }
+
+  function setOtaStartInFlight(inFlight: boolean) {
+    otaStartInFlightRef.current = inFlight;
+    setOtaStartPending(inFlight);
   }
 
   function updateOtaDisplayPercent(payload: OtaStatusEvent) {
@@ -1461,11 +1468,11 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       postOtaCheckedSessionRef.current = null;
       otaStartingAppIdentityRef.current = otaAppIdentity(glasses);
       clearOtaDisplayProgress();
-      otaStartInFlightRef.current = true;
+      setOtaStartInFlight(true);
       try {
         await BluetoothSdk.startOtaUpdate();
       } catch (error) {
-        otaStartInFlightRef.current = false;
+        setOtaStartInFlight(false);
         throw error;
       }
       // Arm the auto-chain only once the start is acknowledged.
@@ -3878,7 +3885,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     }
     otaStatusRef.current = null;
     otaStartingAppIdentityRef.current = null;
-    otaStartInFlightRef.current = false;
+    setOtaStartInFlight(false);
     setOtaStatus(null);
     clearOtaDisplayProgress();
     setOtaStatusMessage(null);
@@ -3892,7 +3899,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   }
 
   function applyOtaStatus(payload: OtaStatusEvent) {
-    otaStartInFlightRef.current = false;
+    setOtaStartInFlight(false);
     if (!isDisplayableOtaStatus(payload)) {
       otaStatusRef.current = null;
       otaStartingAppIdentityRef.current = null;
@@ -4021,6 +4028,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     micRecording,
     otaStatus,
     otaDisplayPercent,
+    otaStartPending,
     otaStatusMessage,
     otaUpdateAvailable,
     openBluetoothSettings,
