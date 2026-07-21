@@ -1,6 +1,6 @@
 {
   "name": "@mentra/miniapp-cli",
-  "version": "0.1.0-dev.0",
+  "version": "0.1.0-dev.1",
   "description": "Dev tools for MentraOS miniapps",
   "type": "module",
   "bin": {
@@ -22,12 +22,12 @@
   "dependencies": {
     "@clack/prompts": "^1.2.0",
     "jszip": "^3.10.1",
-    "qrcode": "^1.5.4"
+    "qrcode": "^1.5.4",
+    "typescript": "^5.0.0"
   },
   "devDependencies": {
     "@types/qrcode": "^1.5.5",
-    "bun-types": "^1.3.14",
-    "typescript": "^5.0.0"
+    "bun-types": "^1.3.14"
   },
   "files": [
     "src",

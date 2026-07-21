@@ -23,11 +23,22 @@
  */
 
 // ----- @mentra/miniapp/background ---------------------------------------
-import type {MiniappSession} from "./background/index"
+import {registerMiniapp} from "./background/index"
+import type {MiniappSession, UIModule} from "./background/index"
 
 // ✅ MiniappSession is reachable from the background entry.
 const _bg: MiniappSession | undefined = undefined
 void _bg
+
+// ✅ registerMiniapp<Channels> carries the shared channel registry into
+//    session.ui on the background side.
+interface _TestChannels {
+  ping: {at: number}
+}
+type _RegisteredHandler = Parameters<typeof registerMiniapp<_TestChannels>>[0]
+type _RegisteredSession = Parameters<_RegisteredHandler>[0]
+type _Assert<T extends true> = T
+export type _TypedBackground = _Assert<_RegisteredSession["ui"] extends UIModule<_TestChannels> ? true : false>
 
 // ----- @mentra/miniapp/ui -----------------------------------------------
 import type {MentraUiGlobal, MentraTyped} from "./ui/index"

@@ -100,6 +100,10 @@ Exchange only serializable data through `mentra.*` / `session.ui.*`.
 If an AI coding agent introduces `performance.now()`, DOM access, or a Node API
 under `src/background/`, move that code to the UI or replace it with a supported
 primitive. For elapsed time in the background, use `Date.now()`.
+
+Projects created with `create-mentra-miniapp` also check background source and
+its imported shared files during `bun run build`. Common unsupported browser or
+Node APIs fail the build with the source location and a supported alternative.
 </Warning>
 
 ## The UI layer
