@@ -9,6 +9,7 @@
  * `<WebView>` wired to them. This facade is the lifecycle half.
  */
 import {useAppStatusStore} from "../stores/apps"
+import localMiniappRuntime from "../services/LocalMiniappRuntime"
 import type {ClientApp} from "../types"
 
 type AppsState = ReturnType<typeof useAppStatusStore.getState>
@@ -28,6 +29,12 @@ export const miniapps = {
       cb(apps)
     })
   },
+
+  /** Miniapps actively subscribed to Mentra Live hardware-button events. */
+  buttonPressSubscribers: (): string[] => localMiniappRuntime.getButtonPressSubscribers(),
+  /** Observe the active Mentra Live hardware-button subscriber set. */
+  onButtonPressSubscribersChanged: (cb: (packageNames: string[]) => void): (() => void) =>
+    localMiniappRuntime.onButtonPressSubscribersChanged(cb),
 
   /** Re-fetch the installed-app list from the backend. */
   refresh: () => useAppStatusStore.getState().refresh(),

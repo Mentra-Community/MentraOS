@@ -273,9 +273,7 @@ function LocalMiniappView({
       // dev server returns {uiUri: null} instead. Route those reopens to the
       // offline recovery screen the same way as first-launch resolve failures.
       if (devUrl && !result.uiUri) {
-        console.warn(
-          `LocalMiniappView: ${packageName} already running but UI unresolved, routing to dev-offline`,
-        )
+        console.warn(`LocalMiniappView: ${packageName} already running but UI unresolved, routing to dev-offline`)
         engine.miniapps.clearForeground()
         useNavigationStore.getState().push("/applet/dev-offline", {
           packageName,
@@ -459,7 +457,7 @@ function LocalMiniappView({
 
   if (!uiUri) {
     return (
-      <View className="flex-1">
+      <View ref={viewShotRef} collapsable={false} className="flex-1">
         <MiniappSplash
           name={appName}
           iconUrl={iconUrl}
@@ -499,7 +497,7 @@ function LocalMiniappView({
   }
 
   return (
-    <View className="flex-1 bg-black">
+    <View ref={viewShotRef} collapsable={false} className="flex-1 bg-black">
       <WebView
         ref={handleRef}
         source={{uri: uiUri}}
