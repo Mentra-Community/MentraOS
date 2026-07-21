@@ -171,18 +171,6 @@ export default function MentraLiveOnboarding() {
   //   steps = steps.slice(0, 2)
   // }
 
-  const handleCloseButton = () => {
-    showAlert(translate("onboarding:liveEndOnboardingTitle"), translate("onboarding:liveEndOnboardingMessage"), [
-      {text: translate("common:no"), onPress: () => {}},
-      {
-        text: translate("onboarding:confirmSkip"),
-        onPress: () => {
-          continueToNextOnboarding()
-        },
-      },
-    ])
-  }
-
   const continueToNextOnboarding = () => {
     const nextRoute = getNextOnboardingRoute({
       includeMentraLive: false,
@@ -196,9 +184,23 @@ export default function MentraLiveOnboarding() {
     clearHistoryAndGoHome()
   }
 
-  const handleEndButton = () => {
+  const completeMentraLiveOnboarding = () => {
     setOnboardingLiveCompleted(true)
     continueToNextOnboarding()
+  }
+
+  const handleCloseButton = () => {
+    const messageKey = onboardingOsCompleted
+      ? "onboarding:liveEndOnboardingHomeMessage"
+      : "onboarding:liveEndOnboardingMessage"
+
+    showAlert(translate("onboarding:liveEndOnboardingTitle"), translate(messageKey), [
+      {text: translate("common:no"), onPress: () => {}},
+      {
+        text: translate("onboarding:confirmSkip"),
+        onPress: completeMentraLiveOnboarding,
+      },
+    ])
   }
 
   return (
@@ -210,7 +212,7 @@ export default function MentraLiveOnboarding() {
         preventBack={true}
         requiresGlassesConnection={true}
         skipFn={handleCloseButton}
-        endButtonFn={handleEndButton}
+        endButtonFn={completeMentraLiveOnboarding}
         startButtonText={translate("onboarding:continueOnboarding")}
         endButtonText={translate("common:continue")}
       />
