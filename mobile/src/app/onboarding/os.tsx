@@ -84,12 +84,12 @@ export default function MentraOSOnboarding() {
       ],
     },
     {
-      title: translate("onboarding:osCloudMiniappsTitle"),
+      title: translate("onboarding:osMovedMiniappsTitle"),
       actionLabel: translate("onboarding:osOpenLegacyPage"),
       details: [
         {
-          title: translate("onboarding:osCloudMiniappsMovedTitle"),
-          description: translate("onboarding:osCloudMiniappsMovedDescription"),
+          title: translate("onboarding:osMissingMiniappTitle"),
+          description: translate("onboarding:osMissingMiniappDescription"),
         },
         {
           title: translate("onboarding:osMentraOsLegacyTitle"),
@@ -379,7 +379,7 @@ const styles = {
   controls: {
     flexDirection: "row",
     gap: 10,
-    minHeight: 54,
+    minHeight: 48,
     width: "100%",
   },
   firstPageControls: {
@@ -387,20 +387,21 @@ const styles = {
   },
   backButton: {
     alignItems: "center",
-    borderColor: "rgba(0, 0, 0, 0.08)",
+    backgroundColor: "#f2f2f2",
+    borderColor: "rgba(0, 0, 0, 0.12)",
     borderRadius: 999,
     borderWidth: 1,
     flex: 1,
     justifyContent: "center",
     paddingHorizontal: 20,
-    paddingVertical: 16,
+    paddingVertical: 12,
   },
   backButtonText: {
-    color: "rgba(0, 0, 0, 0.35)",
+    color: "#1a1a1a",
     fontFamily: typography.fonts.redHatDisplay.semibold,
-    fontSize: 17,
-    letterSpacing: -0.204,
-    lineHeight: 22,
+    fontSize: 16,
+    letterSpacing: -0.16,
+    lineHeight: 20,
   },
   nextButton: {
     alignItems: "center",
@@ -410,7 +411,7 @@ const styles = {
     flex: 1,
     justifyContent: "center",
     paddingHorizontal: 20,
-    paddingVertical: 16,
+    paddingVertical: 12,
     shadowColor: "#000000",
     shadowOffset: {width: 0, height: 2},
     shadowOpacity: 0.22,
@@ -419,9 +420,9 @@ const styles = {
   nextButtonText: {
     color: "#ffffff",
     fontFamily: typography.fonts.redHatDisplay.semibold,
-    fontSize: 17,
-    letterSpacing: -0.204,
-    lineHeight: 22,
+    fontSize: 16,
+    letterSpacing: -0.16,
+    lineHeight: 20,
   },
   pressed: {
     opacity: 0.72,
