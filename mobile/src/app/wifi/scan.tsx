@@ -16,6 +16,7 @@ import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {useNavigationStore} from "@/stores/navigation"
 import showAlert from "@/utils/AlertUtils"
 import WifiCredentialsService from "@/utils/wifi/WifiCredentialsService"
+import {mergeWifiScanResults} from "@/utils/wifi/WifiScanUtils"
 import {translate} from "@/i18n"
 
 export default function WifiScanScreen() {
@@ -85,15 +86,16 @@ export default function WifiScanScreen() {
 
   useEffect(() => {
     refreshSavedNetworks()
-    startScan()
 
     // The glasses stream networks one by one while the scan runs; show them as
     // they arrive instead of waiting for the final requestWifiScan() result.
+    // Each correlated event is one chunk, so merge it into the visible list.
     const unsubscribe = engine.glasses.wifi.onScanResult((scanned) => {
       if (scanned.length > 0) {
-        setNetworks(mapNetworks(scanned))
+        setNetworks((current) => mergeWifiScanResults(current, mapNetworks(scanned)))
       }
     })
+    startScan()
     return unsubscribe
   }, [refreshSavedNetworks])
 
