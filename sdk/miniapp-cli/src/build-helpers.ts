@@ -183,6 +183,23 @@ export function findUnsupportedBackgroundApis(
       .getSymbolAtLocation(node)
       ?.declarations?.some((declaration) => declaration.getSourceFile() === source) ?? false
 
+  const globalObjectPath = (node: ts.PropertyAccessExpression): string[] | null => {
+    const properties: string[] = []
+    let expression: ts.Expression = node
+    while (ts.isPropertyAccessExpression(expression)) {
+      properties.unshift(expression.name.text)
+      expression = expression.expression
+    }
+    if (
+      !ts.isIdentifier(expression) ||
+      (expression.text !== "globalThis" && expression.text !== "self") ||
+      isLocallyBound(expression)
+    ) {
+      return null
+    }
+    return [expression.text, ...properties]
+  }
+
   const add = (node: ts.Node, api: string, replacement: string): void => {
     const start = node.getStart(source)
     const {line, character} = source.getLineAndCharacterOfPosition(start)
@@ -209,6 +226,18 @@ export function findUnsupportedBackgroundApis(
       if (specifier && ts.isStringLiteral(specifier)) {
         const builtin = nodeBuiltinName(specifier.text)
         if (builtin) add(specifier, builtin, "remove the Node built-in; it is unavailable in background")
+      }
+    }
+
+    if (
+      ts.isPropertyAccessExpression(node)
+    ) {
+      const path = globalObjectPath(node)
+      if (path?.[1] === "crypto" && path[2] === "subtle") {
+        add(node, `${path[0]}.crypto.subtle`, "use crypto.getRandomValues/randomUUID or move cryptography behind your backend")
+      } else if (path?.[1]) {
+        const replacement = UNSUPPORTED_BACKGROUND_GLOBALS.get(path[1])
+        if (replacement) add(node, `${path[0]}.${path[1]}`, replacement)
       }
     }
 

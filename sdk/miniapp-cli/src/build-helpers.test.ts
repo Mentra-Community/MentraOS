@@ -65,4 +65,29 @@ describe("background runtime guard", () => {
 
     expect(findings).toEqual([])
   })
+
+  test("reports unsupported APIs accessed through global objects", () => {
+    const findings = findUnsupportedBackgroundApis(`
+      globalThis.performance.now()
+      self.document.querySelector("main")
+      void globalThis.crypto.subtle
+    `)
+
+    expect(findings.map(({api}) => api)).toEqual([
+      "globalThis.performance",
+      "self.document",
+      "globalThis.crypto.subtle",
+    ])
+  })
+
+  test("allows shadowed global-object names", () => {
+    const findings = findUnsupportedBackgroundApis(`
+      function read(globalThis: {performance: number}, self: {document: string}) {
+        return [globalThis.performance, self.document]
+      }
+      void read
+    `)
+
+    expect(findings).toEqual([])
+  })
 })
