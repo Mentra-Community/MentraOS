@@ -140,6 +140,15 @@ export class PhonePhotoCoordinator {
     {requestId: string; durationMs: number; expiryTimer?: ReturnType<typeof setTimeout>}
   >()
 
+  /** Report-safe camera ownership snapshot for incident diagnostics. */
+  getDiagnosticSnapshot(): Record<string, unknown> {
+    return {
+      captureOwners: [...new Set([...this.activeRequests.values()].map((request) => request.packageName))].sort(),
+      warmUpOwners: [...this.activeWarmUps.keys()].sort(),
+      activeCaptureCount: this.activeRequests.size,
+    }
+  }
+
   async takePhoto(packageName: string, opts: PhotoOpts): Promise<PhotoTaken> {
     // Pre-check: if glasses aren't even connected, the BLE photo command
     // would be sent into the void and we'd wait 30s for the cloud long-poll

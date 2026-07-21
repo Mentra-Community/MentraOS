@@ -1,14 +1,50 @@
 import type * as ImagePicker from "expo-image-picker"
 
-import {engine, type ReportDetails, type ReportTrigger} from "@mentra/engine"
+import {engine, type ReportContext, type ReportDetails, type ReportTrigger} from "@mentra/engine"
 
 export interface SubmitBugReportInput {
   trigger: ReportTrigger
   report: ReportDetails
+  context?: Partial<ReportContext>
 }
 
 export interface SubmitBugReportOptions {
   screenshots?: ImagePicker.ImagePickerAsset[]
+}
+
+export function buildReportSurfaceContext(input: {
+  surface: string
+  route: string
+  source: string
+  sourceRoute?: string | null
+  reason: string
+  sourceAppletPackageName?: string
+  sourceAppletName?: string
+  userSelectedSubject?: boolean
+}): Partial<ReportContext> {
+  const packageName = input.sourceAppletPackageName?.trim()
+  const name = input.sourceAppletName?.trim()
+  const userSelectedSubject = input.userSelectedSubject === true
+
+  return {
+    reporting: {
+      surface: input.surface,
+      route: input.route,
+      openedFrom: {
+        source: input.source,
+        reason: input.reason,
+        ...(input.sourceRoute ? {route: input.sourceRoute} : {}),
+      },
+      subject: packageName
+        ? {
+            packageName,
+            ...(name ? {name} : {}),
+            attribution: userSelectedSubject ? "user_selection" : "launch_context",
+          }
+        : null,
+      userSelectedSubject,
+    },
+  }
 }
 
 export function buildReportDetails(input: {
@@ -43,6 +79,7 @@ export async function submitBugReport(
     kind: "bug",
     trigger: input.trigger,
     report: input.report,
+    context: input.context,
     screenshots: options?.screenshots,
   })
   if (res.status === "failed") {

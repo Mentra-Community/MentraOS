@@ -66,6 +66,7 @@ import {
 import {getAnalytics, getUiSeams} from "../runtime/bootstrap"
 import {normalizeStreamAudioConfig, normalizeStreamVideoConfig} from "../runtime/streamConfig"
 import type {AudioSubscription, LanguageSource, TranscriptionData, TranslationData} from "@mentra/cloud-protocol"
+import {buildMiniappManifestSnapshot, type MiniappRuntimeDiagnosticSnapshot} from "../utils/miniappDiagnostics"
 import ttsModelManager from "./TTSModelManager"
 import {NavigationHandlers} from "./NavigationHandlers"
 import type {ClientApp} from "../types/applet"
@@ -78,11 +79,18 @@ import {listPhoneCalendarEvents, PhoneCalendarError} from "./PhoneCalendarServic
 // =============================================================================
 
 export interface InstalledMiniappManifest {
+  packageName?: string
   /** Human-facing app name (from miniapp.json `name`). Shown in the "Starting
    * <name>…" boot message; falls back to the package name when absent. */
   name?: string
+  version?: string
+  sdkVersion?: string
+  minHostVersion?: string
+  type?: string
+  entry?: {background?: string; ui?: string}
   permissions?: Array<{type: string; required?: boolean; description?: string}>
   hardwareRequirements?: Array<{type: string; level: string; description?: string}>
+  actions?: Array<{id?: unknown; description?: unknown; parameters?: unknown}>
 }
 
 type SpeakerStateValue = "idle" | "loading" | "playing" | "stopped" | "error"
@@ -168,6 +176,16 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T | nul
 }
 
 const LOG_TAG = "LOCAL_MINIAPP"
+const DIAGNOSTIC_MAX_LIST_ITEMS = 100
+const DIAGNOSTIC_MAX_STRING_LENGTH = 512
+
+function diagnosticStringList(values: Iterable<string>): string[] {
+  return [...values]
+    .map((value) => value.slice(0, DIAGNOSTIC_MAX_STRING_LENGTH))
+    .sort()
+    .slice(0, DIAGNOSTIC_MAX_LIST_ITEMS)
+}
+
 const SYSTEM_MINIAPP_PACKAGES = new Set([
   "com.mentra.camera",
   "com.mentra.gallery",
@@ -393,6 +411,53 @@ class LocalMiniappRuntime {
   public onButtonPressSubscribersChanged(listener: (packageNames: string[]) => void): () => void {
     this.buttonPressSubscriberListeners.add(listener)
     return () => this.buttonPressSubscriberListeners.delete(listener)
+  }
+
+  /** Report-safe live miniapp/subscription/resource snapshot. */
+  public getDiagnosticSnapshot(nowMs = Date.now()): MiniappRuntimeDiagnosticSnapshot {
+    const connectedApps = [...this.connectedApps.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .slice(0, DIAGNOSTIC_MAX_LIST_ITEMS)
+      .map(([packageName, app]) => ({
+        packageName: packageName.slice(0, DIAGNOSTIC_MAX_STRING_LENGTH),
+        handshakeComplete: this.handshookApps.has(packageName),
+        subscriptions: diagnosticStringList(app.subscriptions),
+        lastMessageAgeMs: Math.max(0, nowMs - app.lastPongAt),
+        requestedLocationRate: app.requestedLocationRate,
+        hasActiveSpeakerStream: app.activeSpeakerStreamId !== undefined,
+        ...(app.installedManifest
+          ? {
+              manifest: buildMiniappManifestSnapshot(app.installedManifest, {
+                packageName,
+                name: app.installedManifest.name,
+                version: app.installedManifest.version,
+                type: app.installedManifest.type,
+              }),
+            }
+          : {}),
+      }))
+    const subscriptionsByStream = Object.fromEntries(
+      [...this.streamSubscribers.entries()]
+        .filter(([, packageNames]) => packageNames.size > 0)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .slice(0, DIAGNOSTIC_MAX_LIST_ITEMS)
+        .map(([stream, packageNames]) => [
+          stream.slice(0, DIAGNOSTIC_MAX_STRING_LENGTH),
+          diagnosticStringList(packageNames),
+        ]),
+    )
+
+    return {
+      connectedApps,
+      subscriptionsByStream,
+      resources: {
+        display: localDisplayManager.getDiagnosticSnapshot(),
+        camera: phonePhotoCoordinator.getDiagnosticSnapshot(),
+        video: phoneVideoCoordinator.getDiagnosticSnapshot(),
+        stream: phoneStreamCoordinator.getDiagnosticSnapshot(),
+        cameraFov: phoneCameraFovCoordinator.getDiagnosticSnapshot(),
+      },
+    }
   }
 
   private replaceStreamSubscribers(
