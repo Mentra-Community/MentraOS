@@ -102,8 +102,16 @@ internal object OtaManifestChecker {
                     "invalid_glasses_version",
                     "Cannot check OTA update because glasses build number is invalid.",
                 )
-        val serverVersion = latestAppInfo(manifest).requiredLong("versionCode")
-        return serverVersion > currentVersion
+        val appInfo = latestAppInfo(manifest)
+        val serverVersion = appInfo.requiredLong("versionCode")
+        // Manifests that pin one exact ASG artifact opt into downgrades explicitly; for them any
+        // mismatch is an update (the glasses take the uninstall-then-reinstall detour). Fleet
+        // manifests never set the flag and stay strictly upgrade-only.
+        return if (appInfo.optBoolean("allowDowngrade", false)) {
+            serverVersion != currentVersion
+        } else {
+            serverVersion > currentVersion
+        }
     }
 
     private fun hasMtkUpdate(patches: JSONArray?, currentVersion: String): Boolean {
