@@ -165,12 +165,8 @@ public class CircleBuffer {
      * Clear the buffer
      */
     public void clear() {
+        // Index reset is enough; zeroing the whole backing array was O(bufferSize) on every clear.
         begin = end = 0;
-        for (int i = 0; i < mLen; i++) {
-            mBuf[i] = 0;
-        }
-        // Keep this circle buffer log
-        Log.d(TAG, "Buffer cleared");
     }
     
     /**

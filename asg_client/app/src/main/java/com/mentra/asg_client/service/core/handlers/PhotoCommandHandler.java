@@ -206,6 +206,12 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
             String transferMethod = data.optString("transferMethod", "direct");
             String bleImgId = data.optString("bleImgId", "");
             boolean save = data.optBoolean("save", false);
+            if (AsgConstants.FORCE_SAVE_PHOTOS && !save) {
+                Log.i(
+                        TAG,
+                        "📸 FORCE_SAVE_PHOTOS active: overriding requested save=false → true");
+                save = true;
+            }
             String mode = PhotoMode.normalize(data.optString("mode", PhotoMode.PHOTO));
             String requestedSize = PhotoSizeTier.normalize(data.optString("size", "medium"));
             String size = PhotoMode.captureSize(mode, requestedSize);

@@ -1036,20 +1036,21 @@ public class AsgClientService extends Service implements NetworkStateListener, T
 
     @Override
     public void onDataReceived(byte[] data) {
-        Log.d(TAG, "📥 Bluetooth onDataReceived() called");
-
         if (data == null || data.length == 0) {
             Log.w(TAG, "⚠️ Received empty data packet from Bluetooth");
             return;
         }
 
-        Log.i(TAG, "📥 Received " + data.length + " bytes from Bluetooth");
-        String incomingPayload = new String(data, StandardCharsets.UTF_8);
-        Log.d(
-                TAG,
-                "📋 Data preview: "
-                        + incomingPayload.substring(0, Math.min(incomingPayload.length(), 100))
-                        + (incomingPayload.length() > 100 ? "..." : ""));
+        if (Log.isLoggable(TAG, Log.VERBOSE)) {
+            Log.v(TAG, "📥 Bluetooth onDataReceived() called");
+            Log.v(TAG, "📥 Received " + data.length + " bytes from Bluetooth");
+            String incomingPayload = new String(data, StandardCharsets.UTF_8);
+            Log.v(
+                    TAG,
+                    "📋 Data preview: "
+                            + incomingPayload.substring(0, Math.min(incomingPayload.length(), 100))
+                            + (incomingPayload.length() > 100 ? "..." : ""));
+        }
 
         // BLE/serial can deliver data before getInterfaceReferences() runs (e.g. right after
         // MY_PACKAGE_REPLACED when the service is still in onCreate). Guard to avoid NPE.
@@ -1064,7 +1065,6 @@ public class AsgClientService extends Service implements NetworkStateListener, T
         }
         try {
             processor.processCommand(data);
-            Log.d(TAG, "✅ Data processing delegated successfully");
         } catch (Exception e) {
             Log.e(TAG, "💥 Error processing received data", e);
         }

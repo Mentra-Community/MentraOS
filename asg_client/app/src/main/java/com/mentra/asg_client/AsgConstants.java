@@ -149,6 +149,13 @@ public class AsgConstants {
     public static final boolean FORCE_BLE_TRANSFER = false;
 
     /**
+     * When true, every {@code take_photo} persists the sensor JPEG to the glasses gallery even if
+     * the request sent {@code save:false}. Dev stopgap for comparing BLE payload quality against
+     * the on-device original — set false for production.
+     */
+    public static final boolean FORCE_SAVE_PHOTOS = true;
+
+    /**
      * Grayscale luma BLE pipeline (crop + contrast + unsharp on 1-byte/pixel buffers). When false,
      * uses the legacy full-color decode → scale → sharpen path.
      */
