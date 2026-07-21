@@ -100,6 +100,19 @@ public class AsgConstants {
      */
     public static final long BES_OTA_RESPONSE_TIMEOUT_MS = 30000;
 
+    /**
+     * Resend schedule for the post-APK-restart OTA completion push
+     * (OtaHelper#sendCompletionToPhone). The freshly installed process races its own UART
+     * transport startup, and a one-shot send can be silently lost — the phone then fails a
+     * successful update via its 120s stall watchdog (incident rep_01KY31HEMTSBSMK8DVMNXJ5XGG).
+     * 15 attempts x 3s = 45s of coverage, well past transport settle and below the phone's
+     * watchdog. Duplicate terminal statuses are idempotent on the phone.
+     */
+    public static final long OTA_COMPLETION_RESEND_INTERVAL_MS = 3_000L;
+
+    /** Number of post-APK-restart completion resend attempts (see {@link #OTA_COMPLETION_RESEND_INTERVAL_MS}). */
+    public static final int OTA_COMPLETION_RESEND_ATTEMPTS = 15;
+
     /** Delay before probing the alternate UART baud after ASG starts at the rendezvous rate. */
     public static final long UART_BOOT_RECOVERY_INITIAL_DELAY_MS = 8000;
 
