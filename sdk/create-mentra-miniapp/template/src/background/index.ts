@@ -11,9 +11,9 @@
  */
 
 import {registerMiniapp} from "@mentra/miniapp/background"
-import "../shared/channels"
+import type {Channels} from "../shared/channels"
 
-registerMiniapp(async (session) => {
+registerMiniapp<Channels>(async (session) => {
   // Hydrate any persisted state from session.storage (string KV — JSON-encode
   // structured data yourself).
   // const stored = await session.storage.get("notes")

@@ -3,19 +3,24 @@ package com.mentra.asg_client.io.bluetooth.managers;
 import android.content.Context;
 import android.util.Log;
 
+import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.io.bluetooth.core.BaseBluetoothManager;
 import com.mentra.asg_client.io.bluetooth.interfaces.SerialListener;
 import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.BesMessageParser;
 import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.BesWireFormat;
+import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.CsFltsAckPayload;
 import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.K900LengthCodec;
 import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.MessageChunker;
 import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.SerialPortBridge;
 import com.mentra.asg_client.io.bluetooth.utils.DebugNotificationManager;
+import com.mentra.asg_client.io.media.core.BlePhotoTimingLog;
 import com.mentra.asg_client.logging.BleTraceLogger;
 import com.mentra.asg_client.reporting.domains.BluetoothReporting;
 import com.mentra.asg_client.service.core.AsgClientService;
 import com.mentra.asg_client.service.core.processors.ChunkReassembler;
 import com.mentra.asg_client.service.core.processors.ChunkedMessageProtocolStrategy;
+import com.mentra.asg_client.settings.AsgSettings;
+import com.mentra.asg_client.utils.WakeLockManager;
 
 import org.json.JSONObject;
 
@@ -30,6 +35,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.BooleanSupplier;
 
 /**
  * Implementation of IBluetoothManager for K900 devices. Uses the K900's serial port to communicate
@@ -44,10 +50,17 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     // Keep normal K900 messages contiguous on the shared ASG-to-BES UART stream.
     private final Object outboundSendLock = new Object();
     private BesMessageParser messageParser;
+    private final Object messageParserLock = new Object();
     private final ChunkReassembler inboundBinaryReassembler = new ChunkReassembler();
     private final ChunkedMessageProtocolStrategy inboundBinaryStrategy =
             new ChunkedMessageProtocolStrategy(inboundBinaryReassembler);
     private boolean wireV2HandshakeSent = false;
+    // Message ids whose FLAG_WAKE fragment arrived and are still reassembling; on THAT
+    // message's completion the wake window is granted again so follow-up work gets the
+    // full window (see handleInboundBinaryFrame). Keyed by msgId because the reassembler
+    // interleaves messages. Bounded: abandoned reassemblies would leak entries, so the set
+    // is cleared when it exceeds a size no legitimate interleave reaches.
+    private final java.util.Set<Integer> pendingBinaryWakeMsgIds = new java.util.LinkedHashSet<>();
     private volatile boolean besWireCapsK900Le = false;
     private volatile boolean besWireCapsBinary = false;
     private volatile boolean besWireCapsFilePayloadV2 = false;
@@ -154,18 +167,19 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     /** True between sending cs_baud and receiving sr_baud (guards spurious sr_baud). */
     private boolean baudSwitchWaitingSrBaud = false;
 
+    private ScheduledFuture<?> baudAckTimeoutFuture = null;
+
     // Boot-time baud recovery: if asg restarts after a previous baud switch, the BES
     // is still at the high rate while we reopen at the 460800 default - the link is
-    // silent until something hunts for the right rate. Cycle candidates until an
-    // sr_syvr answers.
-    private static final int[] BOOT_BAUD_CANDIDATES = {
-        SerialPortBridge.DEFAULT_BAUDRATE, TARGET_UART_BAUD, 1152000
-    };
-    private static final int BOOT_RECOVERY_INITIAL_DELAY_MS = 8000;
-    private static final int BOOT_RECOVERY_STEP_MS = 3000;
+    // silent until something hunts for the right rate. The default rate has already
+    // had the initial-delay window to answer, so probe the only alternate rate once.
+    // If the firmware does not implement cs_syvr, return to the default instead of
+    // rotating rates forever and corrupting otherwise healthy phone traffic.
+    private static final int[] BOOT_BAUD_CANDIDATES = {TARGET_UART_BAUD};
     private volatile long lastSrSyvrTime = 0;
-    private int bootRecoveryIdx = 0;
-    private java.util.concurrent.ScheduledFuture<?> bootRecoveryFuture;
+    private int bootRecoveryAttempts = 0;
+    private ScheduledFuture<?> bootRecoveryFuture;
+    private int recoveryProbeGeneration = 0;
 
     /** True between reopening at TARGET_UART_BAUD and the sr_syvr probe answer. */
     private boolean baudProbePending = false;
@@ -185,6 +199,8 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         int highestAckedIndex = -1; // highest packet index BES has acked
         boolean isActive;
         long startTime;
+        /** Wall-clock millis when the last UART/BLE packet was MCU-ACKed. */
+        long packetsCompleteAtEpochMs;
         boolean waitingForPhoneConfirmation;
         int retryCount;
 
@@ -256,64 +272,192 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         notificationManager = new DebugNotificationManager(context);
         notificationManager.showDeviceTypeNotification(true);
 
+        // Initialize every callback dependency before the serial receive thread starts.
+        messageParser = new BesMessageParser();
+        fileTransferExecutor = Executors.newSingleThreadScheduledExecutor();
+
         // Create the communication manager
         comManager = new SerialPortBridge(context);
         comManager.registerListener(this);
         comManager.start();
 
-        // Create the message parser to handle fragmented messages
-        messageParser = new BesMessageParser();
-
-        // Initialize file transfer executor
-        fileTransferExecutor = Executors.newSingleThreadScheduledExecutor();
-
-        // Boot-time baud recovery: if a previous asg run switched the BES to a high
-        // baud and asg restarted, we come up at 460800 against a fast BES and the
-        // link is silent. Hunt candidate rates until sr_syvr answers.
+        // Retry discovery at the rendezvous baud before considering the alternate. This observes
+        // the wire instead of guessing whether Android, BES, or only this process restarted.
         synchronized (baudSwitchLock) {
             bootRecoveryFuture =
                     baudSwitchExecutor.schedule(
-                            this::bootBaudRecoveryTick,
-                            BOOT_RECOVERY_INITIAL_DELAY_MS,
+                            this::startupRendezvousProbe,
+                            AsgConstants.UART_BOOT_RECOVERY_INITIAL_DELAY_MS,
                             TimeUnit.MILLISECONDS);
         }
     }
 
-    /** No sr_syvr since boot: cycle through candidate bauds until the BES answers. */
+    /** Retry the known-safe baud first, then let alternate recovery run only if still unanswered. */
+    private void startupRendezvousProbe() {
+        if (lastSrSyvrTime > 0) {
+            return;
+        }
+        int generation;
+        synchronized (baudSwitchLock) {
+            bootRecoveryFuture = null;
+            if (baudProbePending || baudSwitchWaitingSrBaud || comManager.isOtaUpdating()) {
+                bootRecoveryFuture =
+                        baudSwitchExecutor.schedule(
+                                this::startupRendezvousProbe,
+                                AsgConstants.UART_BOOT_RECOVERY_RETRY_DELAY_MS,
+                                TimeUnit.MILLISECONDS);
+                return;
+            }
+            generation = ++recoveryProbeGeneration;
+        }
+        Log.i(
+                BAUD_TAG,
+                "Startup recovery: retrying BES discovery at rendezvous baud "
+                        + SerialPortBridge.DEFAULT_BAUDRATE);
+        scheduleVersionProbeBurst(
+                SerialPortBridge.DEFAULT_BAUDRATE,
+                generation,
+                () -> lastSrSyvrTime == 0,
+                "startup_rendezvous");
+        synchronized (baudSwitchLock) {
+            bootRecoveryFuture =
+                    baudSwitchExecutor.schedule(
+                            this::bootBaudRecoveryTick,
+                            AsgConstants.UART_RECOVERY_PROBES_PER_BURST
+                                            * AsgConstants.UART_RECOVERY_PROBE_SPACING_MS
+                                    + AsgConstants.UART_RECOVERY_PROBE_SPACING_MS,
+                            TimeUnit.MILLISECONDS);
+        }
+    }
+
+    /** No sr_syvr since boot: probe alternate bauds once, then settle at the default. */
     private void bootBaudRecoveryTick() {
         if (lastSrSyvrTime > 0) {
             return; // Link is alive; nothing to recover.
         }
+        Integer candidate = null;
+        boolean settleAtDefault = false;
         synchronized (baudSwitchLock) {
-            if (baudProbePending || comManager.mbOtaUpdating) {
-                return; // A switch/OTA is mid-flight; stay out of its way.
+            if (baudProbePending || baudSwitchWaitingSrBaud || comManager.isOtaUpdating()) {
+                scheduleBootRecoveryLocked(AsgConstants.UART_BOOT_RECOVERY_RETRY_DELAY_MS);
+                return; // A switch/OTA is mid-flight; retry after it releases UART.
+            }
+            if (!cachedBesSupportsBaudSwitch()) {
+                bootRecoveryFuture = null;
+                Log.i(
+                        BAUD_TAG,
+                        "Boot recovery: no cached high-baud-capable BES; staying at rendezvous "
+                                + SerialPortBridge.DEFAULT_BAUDRATE);
+                return;
+            }
+            if (bootRecoveryAttempts >= BOOT_BAUD_CANDIDATES.length) {
+                bootRecoveryFuture = null;
+                settleAtDefault = true;
+            } else {
+                candidate = BOOT_BAUD_CANDIDATES[bootRecoveryAttempts++];
             }
         }
-        bootRecoveryIdx = (bootRecoveryIdx + 1) % BOOT_BAUD_CANDIDATES.length;
-        int candidate = BOOT_BAUD_CANDIDATES[bootRecoveryIdx];
+        if (settleAtDefault) {
+            settleBootRecoveryAtDefaultBaud();
+            return;
+        }
         Log.w(
                 BAUD_TAG,
                 "Boot recovery: no sr_syvr yet - trying "
                         + candidate
                         + " baud (candidate "
-                        + (bootRecoveryIdx + 1)
+                        + bootRecoveryAttempts
                         + "/"
                         + BOOT_BAUD_CANDIDATES.length
                         + ")");
         try {
-            comManager.reopen(candidate);
-            requestBesSystemVersion();
+            clearMessageParser();
+            boolean reopened = comManager.reopen(candidate);
+            if (reopened) {
+                int generation;
+                synchronized (baudSwitchLock) {
+                    generation = ++recoveryProbeGeneration;
+                }
+                scheduleVersionProbeBurst(
+                        candidate,
+                        generation,
+                        () -> lastSrSyvrTime == 0,
+                        "boot_recovery");
+            }
         } catch (Exception e) {
             Log.e(BAUD_TAG, "Boot recovery reopen failed at " + candidate, e);
         }
         synchronized (baudSwitchLock) {
             if (lastSrSyvrTime == 0) {
-                bootRecoveryFuture =
-                        baudSwitchExecutor.schedule(
-                                this::bootBaudRecoveryTick,
-                                BOOT_RECOVERY_STEP_MS,
-                                TimeUnit.MILLISECONDS);
+                scheduleBootRecoveryLocked(AsgConstants.UART_BOOT_RECOVERY_RETRY_DELAY_MS);
             }
+        }
+    }
+
+    /** The alternate-rate boot probe is safe only after this installation saw capable firmware. */
+    private boolean cachedBesSupportsBaudSwitch() {
+        try {
+            AsgSettings settings = new AsgSettings(context);
+            return shouldProbeAlternateBaud(
+                    settings.getBesBaudSwitchVersion(), settings.getBesFirmwareVersion());
+        } catch (Exception e) {
+            Log.w(BAUD_TAG, "Could not read cached BES version; staying at rendezvous baud", e);
+            return false;
+        }
+    }
+
+    /** Prefer the exact capability-gate field; the display version is a migration fallback. */
+    static boolean shouldProbeAlternateBaud(String cachedGateVersion, String cachedDisplayVersion) {
+        if (cachedGateVersion != null && !cachedGateVersion.trim().isEmpty()) {
+            return shouldProbeAlternateBaud(cachedGateVersion);
+        }
+        return shouldProbeAlternateBaud(cachedDisplayVersion);
+    }
+
+    /** Pure compatibility gate for the boot-only alternate-baud probe. */
+    static boolean shouldProbeAlternateBaud(String cachedVersion) {
+        return cachedVersion != null
+                && !cachedVersion.trim().isEmpty()
+                && compareDottedVersions(
+                                cachedVersion.trim(), MIN_BES_VERSION_FOR_BAUD_SWITCH)
+                        >= 0;
+    }
+
+    /** Must be called with baudSwitchLock held. */
+    private void scheduleBootRecoveryLocked(long delayMs) {
+        if (bootRecoveryFuture != null) {
+            bootRecoveryFuture.cancel(false);
+        }
+        bootRecoveryFuture =
+                baudSwitchExecutor.schedule(this::bootBaudRecoveryTick, delayMs, TimeUnit.MILLISECONDS);
+    }
+
+    /** Finish a failed boot probe at the known-safe baud without scheduling another hunt. */
+    private void settleBootRecoveryAtDefaultBaud() {
+        if (lastSrSyvrTime > 0) {
+            return;
+        }
+        int defaultBaud = SerialPortBridge.DEFAULT_BAUDRATE;
+        if (comManager.getCurrentBaud() == defaultBaud) {
+            Log.w(BAUD_TAG, "Boot recovery exhausted; remaining at " + defaultBaud + " baud");
+            return;
+        }
+        try {
+            clearMessageParser();
+            boolean reopened = comManager.reopen(defaultBaud);
+            if (reopened) {
+                Log.w(
+                        BAUD_TAG,
+                        "Boot recovery exhausted without sr_syvr; settled at "
+                                + defaultBaud
+                                + " baud and stopped probing");
+            } else {
+                Log.e(
+                        BAUD_TAG,
+                        "Boot recovery could not reopen the default " + defaultBaud + " baud");
+            }
+        } catch (Exception e) {
+            Log.e(BAUD_TAG, "Boot recovery failed to restore default " + defaultBaud + " baud", e);
         }
     }
 
@@ -435,6 +579,9 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     public void resetPhoneWireProtocolState() {
         BesWireFormat.resetBinaryProtocol();
         inboundBinaryReassembler.clear();
+        // Pending wake grants die with the reassemblies they belong to: a new session
+        // reusing an old msgId must not inherit a stale completion-time wake grant.
+        pendingBinaryWakeMsgIds.clear();
         wireV2HandshakeSent = false;
     }
 
@@ -583,9 +730,35 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             return true;
         }
 
+        // Wake-flagged frame: grant a fresh awake window (see AsgConstants.PHONE_WAKE_COMMAND_WINDOW_MS —
+        // the BES power-key pulse never extends a window already in progress). The string-frame
+        // path gets the same grant from CommandProcessor via the "W":1 wrapper field, which
+        // binary frames do not carry. FLAG_WAKE rides only the FIRST fragment of a message,
+        // so remember it and grant AGAIN when reassembly completes: the command's follow-up
+        // work needs its full window from completion, not from the first fragment (a slow
+        // multi-fragment reassembly must not eat into it). Extend-only merges the grants.
+        if ((header.flags & BesWireFormat.FLAG_WAKE) != 0) {
+            if (pendingBinaryWakeMsgIds.size() > 16) {
+                // Evict only the OLDEST entry (insertion order): it belongs to the most
+                // stale abandoned reassembly, while newer in-flight wake messages keep
+                // their completion-time grant.
+                java.util.Iterator<Integer> eldest = pendingBinaryWakeMsgIds.iterator();
+                eldest.next();
+                eldest.remove();
+            }
+            pendingBinaryWakeMsgIds.add(header.msgId);
+            WakeLockManager.acquireCpu(
+                    context, WakeLockManager.WakeOwner.PHONE_COMMAND, AsgConstants.PHONE_WAKE_COMMAND_WINDOW_MS);
+        }
+
         byte[] reassembled = inboundBinaryStrategy.processBinaryWireFrame(message);
         if (reassembled == null) {
             return true;
+        }
+
+        if (pendingBinaryWakeMsgIds.remove(header.msgId)) {
+            WakeLockManager.acquireCpu(
+                    context, WakeLockManager.WakeOwner.PHONE_COMMAND, AsgConstants.PHONE_WAKE_COMMAND_WINDOW_MS);
         }
 
         BleTraceLogger.logWireMetrics(
@@ -997,8 +1170,15 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
         // Shutdown the baud switch executor (cancels any pending reopen/probe timers)
         synchronized (baudSwitchLock) {
+            recoveryProbeGeneration++;
+            baudSwitchWaitingSrBaud = false;
             baudProbePending = false;
+            cancelBaudAckTimeoutLocked();
             cancelBaudProbeTimeoutLocked();
+            if (bootRecoveryFuture != null) {
+                bootRecoveryFuture.cancel(false);
+                bootRecoveryFuture = null;
+            }
         }
         baudSwitchExecutor.shutdownNow();
 
@@ -1034,13 +1214,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         Log.i(TAG, "🔧 Requesting BES system version (cs_syvr) via UART");
 
         try {
-            // Build K900 command format: {"C":"cs_syvr","V":1,"B":""}
-            org.json.JSONObject k900Command = new org.json.JSONObject();
-            k900Command.put("C", "cs_syvr");
-            k900Command.put("V", 1);
-            k900Command.put("B", "");
-
-            String commandStr = k900Command.toString();
+            String commandStr = buildBesSystemVersionCommand();
             Log.d(TAG, "📤 Sending cs_syvr request: " + commandStr);
 
             // Send via sendMessage() which handles protocol formatting and isSerialOpen check
@@ -1054,6 +1228,62 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             }
         } catch (org.json.JSONException e) {
             Log.e(TAG, "💥 Failed to build cs_syvr request", e);
+        }
+    }
+
+    /** Build the legacy-compatible system-version request used for discovery and recovery. */
+    private static String buildBesSystemVersionCommand() throws org.json.JSONException {
+        org.json.JSONObject k900Command = new org.json.JSONObject();
+        k900Command.put("C", "cs_syvr");
+        k900Command.put("V", 1);
+        k900Command.put("B", "");
+        return k900Command.toString();
+    }
+
+    /** Queue spaced version probes, dropping stale work immediately before the UART write. */
+    private void scheduleVersionProbeBurst(
+            int expectedBaud,
+            int generation,
+            BooleanSupplier remainsNeeded,
+            String reason) {
+        for (int i = 0; i < AsgConstants.UART_RECOVERY_PROBES_PER_BURST; i++) {
+            baudSwitchExecutor.schedule(
+                    () -> queueGuardedVersionProbe(expectedBaud, generation, remainsNeeded, reason),
+                    i * AsgConstants.UART_RECOVERY_PROBE_SPACING_MS,
+                    TimeUnit.MILLISECONDS);
+        }
+    }
+
+    private void queueGuardedVersionProbe(
+            int expectedBaud,
+            int generation,
+            BooleanSupplier remainsNeeded,
+            String reason) {
+        try {
+            byte[] command = buildBesSystemVersionCommand().getBytes(StandardCharsets.UTF_8);
+            sendMessage(
+                    command,
+                    success -> {
+                        if (!success) {
+                            Log.w(BAUD_TAG, "Version probe did not send (reason=" + reason + ")");
+                        }
+                    },
+                    new SendMessageGate() {
+                        @Override
+                        public boolean shouldSend() {
+                            return generation == recoveryProbeGeneration
+                                    && remainsNeeded.getAsBoolean()
+                                    && !comManager.isOtaUpdating()
+                                    && comManager.getCurrentBaud() == expectedBaud;
+                        }
+
+                        @Override
+                        public Object lock() {
+                            return baudSwitchLock;
+                        }
+                    });
+        } catch (Exception e) {
+            Log.e(BAUD_TAG, "Could not queue version probe (reason=" + reason + ")", e);
         }
     }
 
@@ -1087,6 +1317,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             } else {
                 bData = new org.json.JSONObject(bFieldStr);
             }
+            cacheBesBaudSwitchVersion(bData);
             cacheBesVersionFromSyvrBField(bData);
 
             // Runtime UART baud switch: sr_syvr either confirms our post-reopen probe or,
@@ -1235,6 +1466,13 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         }
     }
 
+    private void cacheBesBaudSwitchVersion(JSONObject bData) {
+        String version = extractBaudSwitchVersion(bData);
+        if (!version.isEmpty()) {
+            new AsgSettings(context).setBesBaudSwitchVersion(version);
+        }
+    }
+
     // ------------------------------------------------------------------
     // Runtime UART baud switch (BAUD-SWITCH)
     //
@@ -1287,7 +1525,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                 if (comManager.getCurrentBaud() == TARGET_UART_BAUD) {
                     return; // Already at the target (e.g., boot recovery landed there).
                 }
-                if (comManager.mbOtaUpdating) {
+                if (comManager.isOtaUpdating()) {
                     Log.i(BAUD_TAG, "BES OTA in progress - skipping baud switch");
                     return;
                 }
@@ -1392,19 +1630,56 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             Log.i(BAUD_TAG, "📤 Sending cs_baud request: " + commandStr);
 
             boolean sent =
-                    sendMessage(commandStr.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                    sendMessage(
+                            commandStr.getBytes(StandardCharsets.UTF_8),
+                            success -> {
+                                synchronized (baudSwitchLock) {
+                                    if (!baudSwitchWaitingSrBaud) {
+                                        return;
+                                    }
+                                    if (!success) {
+                                        baudSwitchWaitingSrBaud = false;
+                                        cancelBaudAckTimeoutLocked();
+                                        Log.e(
+                                                BAUD_TAG,
+                                                "Failed to write cs_baud - staying at rendezvous");
+                                        return;
+                                    }
+                                    cancelBaudAckTimeoutLocked();
+                                    baudAckTimeoutFuture =
+                                            baudSwitchExecutor.schedule(
+                                                    this::onBaudAckTimeout,
+                                                    AsgConstants.UART_BAUD_ACK_TIMEOUT_MS,
+                                                    TimeUnit.MILLISECONDS);
+                                }
+                            });
             if (!sent) {
                 Log.e(BAUD_TAG, "Failed to send cs_baud - staying at 460800");
                 synchronized (baudSwitchLock) {
                     baudSwitchWaitingSrBaud = false;
+                    cancelBaudAckTimeoutLocked();
                 }
             }
         } catch (Exception e) {
             Log.e(BAUD_TAG, "Error building/sending cs_baud - staying at 460800", e);
             synchronized (baudSwitchLock) {
                 baudSwitchWaitingSrBaud = false;
+                cancelBaudAckTimeoutLocked();
             }
         }
+    }
+
+    /** A lost old-baud ack is ambiguous: BES may already have switched, so verify target once. */
+    private void onBaudAckTimeout() {
+        synchronized (baudSwitchLock) {
+            if (!baudSwitchWaitingSrBaud) {
+                return;
+            }
+            baudSwitchWaitingSrBaud = false;
+            baudAckTimeoutFuture = null;
+        }
+        Log.w(BAUD_TAG, "No sr_baud acknowledgement; probing the requested target baud");
+        reopenAtTargetBaudAndProbe();
     }
 
     /**
@@ -1430,6 +1705,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                     return true;
                 }
                 baudSwitchWaitingSrBaud = false;
+                cancelBaudAckTimeoutLocked();
             }
 
             String bFieldStr = json.optString("B", "");
@@ -1484,6 +1760,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
      */
     private void reopenAtTargetBaudAndProbe() {
         try {
+            clearMessageParser();
             boolean reopened = comManager.reopen(TARGET_UART_BAUD);
             if (!reopened) {
                 Log.e(
@@ -1495,6 +1772,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
             synchronized (baudSwitchLock) {
                 baudProbePending = true;
+                recoveryProbeGeneration++;
                 cancelBaudProbeTimeoutLocked();
                 baudProbeTimeoutFuture =
                         baudSwitchExecutor.schedule(
@@ -1504,7 +1782,15 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             }
 
             Log.i(BAUD_TAG, "UART reopened at " + TARGET_UART_BAUD + " - probing with cs_syvr");
-            requestBesSystemVersion();
+            int generation;
+            synchronized (baudSwitchLock) {
+                generation = recoveryProbeGeneration;
+            }
+            scheduleVersionProbeBurst(
+                    TARGET_UART_BAUD,
+                    generation,
+                    () -> baudProbePending,
+                    "baud_verification");
         } catch (Exception e) {
             Log.e(BAUD_TAG, "‼️ Exception during baud reopen - reverting to 460800", e);
             revertToDefaultBaud("reopen_exception");
@@ -1537,6 +1823,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             cancelBaudProbeTimeoutLocked();
         }
         try {
+            clearMessageParser();
             boolean ok = comManager.reopen(SerialPortBridge.DEFAULT_BAUDRATE);
             Log.e(
                     BAUD_TAG,
@@ -1556,6 +1843,14 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         if (baudProbeTimeoutFuture != null) {
             baudProbeTimeoutFuture.cancel(false);
             baudProbeTimeoutFuture = null;
+        }
+    }
+
+    /** Must be called with baudSwitchLock held. */
+    private void cancelBaudAckTimeoutLocked() {
+        if (baudAckTimeoutFuture != null) {
+            baudAckTimeoutFuture.cancel(false);
+            baudAckTimeoutFuture = null;
         }
     }
 
@@ -1658,8 +1953,10 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
     @Override
     public void onSerialRead(String serialPath, byte[] data, int size) {
-        // Log serial reads for debugging (especially for hs_syvr response)
-        Log.d(TAG, "📥 K900 SERIAL READ - " + size + " bytes");
+        boolean fileTransferActive = isFileTransferInProgress();
+        if (!fileTransferActive) {
+            Log.d(TAG, "📥 K900 SERIAL READ - " + size + " bytes");
+        }
 
         if (data != null && size > 0) {
             // Copy the data to avoid issues with buffer reuse
@@ -1669,77 +1966,105 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             // Hex dump suppressed to prevent logcat overflow
             // Enable only when debugging specific issues
 
-            // Add the data to our message parser
-            if (messageParser != null && messageParser.addData(dataCopy, size)) {
-                // Try to extract complete messages
-                List<byte[]> completeMessages = messageParser.parseMessages();
-                if (completeMessages != null && !completeMessages.isEmpty()) {
-                    Log.d(TAG, "📥 Extracted " + completeMessages.size() + " complete messages");
-                    // Process each complete message
-                    for (byte[] message : completeMessages) {
-                        BleTraceLogger.logK900Frame("bes_to_asg", "asg_uart_input", message);
-
-                        // Check for file transfer acknowledgments first
-                        processReceivedMessage(message);
-
-                        // Extract payload from K900 protocol message for listeners
-                        if (BesWireFormat.isBinaryWireFrame(message)) {
-                            handleInboundBinaryFrame(message);
-                        } else if (BesWireFormat.isK900ProtocolFormat(message)) {
-                            // Auto-detect the length endianness so we parse frames from both legacy
-                            // big-endian and wire-v2 little-endian BES firmware (fixes the
-                            // "Extracted length=9472" misframe against old firmware).
-                            K900LengthCodec.Detected detected =
-                                    K900LengthCodec.detectLength(message);
-                            if (detected != null) {
-                                uartToBesEndian = detected.endian;
-                            }
-                            byte[] payload = BesWireFormat.extractPayloadAuto(message);
-
-                            if (payload != null && payload.length > 0) {
-                                // Notify listeners with the clean payload (JSON data without
-                                // markers)
-                                String payloadPreview =
-                                        new String(payload, 0, Math.min(payload.length, 200));
-                                Log.d(
-                                        TAG,
-                                        "📥 Extracted K900 payload ("
-                                                + payload.length
-                                                + " bytes): "
-                                                + payloadPreview);
-
-                                // Check if this is a sr_syvr response (BES system version)
-                                // or an sr_baud response (UART baud switch ack).
-                                // Handle them directly here to avoid timing issues with
-                                // CommandProcessor initialization
-                                if (!handleSrSyvrResponse(payload)
-                                        && !handleSrBaudResponse(payload)
-                                        && !handleFileTransportResponse(payload)) {
-                                    // Not a sr_syvr/sr_baud response, forward to listeners
-                                    notifyDataReceived(payload);
-                                }
-                            } else {
-                                Log.w(TAG, "📥 Failed to extract payload from K900 message");
-                            }
-                        } else {
-                            // Not a K900 protocol message, pass as-is
-                            Log.d(TAG, "📥 Non-K900 message, passing as-is");
-                            notifyDataReceived(message);
-                        }
+            boolean parserAcceptedData = false;
+            List<byte[]> completeMessages = null;
+            synchronized (messageParserLock) {
+                if (messageParser != null) {
+                    parserAcceptedData = messageParser.addData(dataCopy, size);
+                    if (parserAcceptedData) {
+                        completeMessages = messageParser.parseMessages();
                     }
-                } else {
-                    // No complete messages yet, just accumulating data
-                    Log.d(TAG, "📥 Data added to parser, waiting for complete message");
                 }
-            } else {
+            }
+
+            if (!parserAcceptedData) {
                 // If parser is not available or data couldn't be added, send raw data
                 Log.d(TAG, "📥 📤 Parser unavailable, notifying listeners of raw data...");
                 notifyDataReceived(dataCopy);
+            } else if (completeMessages == null || completeMessages.isEmpty()) {
+                // No complete messages yet, just accumulating data
+                Log.d(TAG, "📥 Data added to parser, waiting for complete message");
+            } else {
+                Log.d(TAG, "📥 Extracted " + completeMessages.size() + " complete messages");
+                // Process each complete message outside the parser lock.
+                for (byte[] message : completeMessages) {
+                    BleTraceLogger.logK900Frame("bes_to_asg", "asg_uart_input", message);
+
+                    // Check for file transfer acknowledgments first
+                    processReceivedMessage(message);
+
+                    // Extract payload from K900 protocol message for listeners
+                    if (BesWireFormat.isBinaryWireFrame(message)) {
+                        handleInboundBinaryFrame(message);
+                    } else if (BesWireFormat.isK900ProtocolFormat(message)) {
+                        // Auto-detect the length endianness so we parse frames from both legacy
+                        // big-endian and wire-v2 little-endian BES firmware (fixes the
+                        // "Extracted length=9472" misframe against old firmware).
+                        K900LengthCodec.Detected detected = K900LengthCodec.detectLength(message);
+                        if (detected != null) {
+                            uartToBesEndian = detected.endian;
+                        }
+                        byte[] payload = BesWireFormat.extractPayloadAuto(message);
+
+                        if (payload != null && payload.length > 0) {
+                            // Fast path: cs_flts ACKs — skip BleTrace + CommandProcessor spam
+                            // that otherwise runs dozens of Log calls per packet window.
+                            if (handleCsFltsAckPayload(payload)) {
+                                continue;
+                            }
+
+                            // Notify listeners with the clean payload (JSON data without markers)
+                            String payloadPreview =
+                                    new String(payload, 0, Math.min(payload.length, 200));
+                            Log.d(
+                                    TAG,
+                                    "📥 Extracted K900 payload ("
+                                            + payload.length
+                                            + " bytes): "
+                                            + payloadPreview);
+
+                            // Check if this is a sr_syvr response (BES system version)
+                            // or an sr_baud response (UART baud switch ack).
+                            // Handle them directly here to avoid timing issues with
+                            // CommandProcessor initialization
+                            if (!handleSrSyvrResponse(payload)
+                                    && !handleSrBaudResponse(payload)
+                                    && !handleFileTransportResponse(payload)) {
+                                // Not a sr_syvr/sr_baud response, forward to listeners
+                                notifyDataReceived(payload);
+                            }
+                        } else {
+                            Log.w(TAG, "📥 Failed to extract payload from K900 message");
+                        }
+                    } else {
+                        // Not a K900 protocol message, pass as-is
+                        Log.d(TAG, "📥 Non-K900 message, passing as-is");
+                        notifyDataReceived(message);
+                    }
+                }
             }
             // Data processing complete
         } else {
             Log.w(TAG, "📥 ❌ Invalid data received - null or empty");
         }
+    }
+
+    /**
+     * Handle BES {@code cs_flts} file-transfer ACKs without routing through CommandProcessor /
+     * BleTrace / AsgClientService receive logging (those paths dominate logcat I/O during TX).
+     *
+     * @return true if the payload was a cs_flts ACK and was consumed
+     */
+    private boolean handleCsFltsAckPayload(byte[] payload) {
+        CsFltsAckPayload parsed = CsFltsAckPayload.parse(payload);
+        if (parsed.kind == CsFltsAckPayload.Kind.NOT_CS_FLTS) {
+            return false;
+        }
+        if (parsed.kind == CsFltsAckPayload.Kind.ACK) {
+            handleFileTransferAck(parsed.state, parsed.index);
+        }
+        // MALFORMED and ACK both consume the payload so CommandProcessor is not spammed.
+        return true;
     }
 
     @Override
@@ -1765,6 +2090,120 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
         Log.d(TAG, "🔌 📋 Requesting BES system version via UART");
         requestBesSystemVersion();
+    }
+
+    @Override
+    public void onBesOtaApplied() {
+        Log.i(BAUD_TAG, "BES OTA applied; scheduling reconnect at rendezvous baud");
+        int generation;
+        synchronized (baudSwitchLock) {
+            generation = ++recoveryProbeGeneration;
+            lastSrSyvrTime = 0;
+            baudSwitchAttempted = false;
+            baudSwitchWaitingSrBaud = false;
+            baudProbePending = false;
+            cancelBaudAckTimeoutLocked();
+            cancelBaudProbeTimeoutLocked();
+            if (bootRecoveryFuture != null) {
+                bootRecoveryFuture.cancel(false);
+                bootRecoveryFuture = null;
+            }
+        }
+        baudSwitchExecutor.execute(() -> prepareRendezvousAfterBesOta(generation));
+    }
+
+    /** Leave the negotiated fast rate immediately; delay only BES readiness probes. */
+    private void prepareRendezvousAfterBesOta(int generation) {
+        synchronized (baudSwitchLock) {
+            if (generation != recoveryProbeGeneration) {
+                return;
+            }
+        }
+        try {
+            clearMessageParser();
+            if (!comManager.reopen(SerialPortBridge.DEFAULT_BAUDRATE)) {
+                Log.e(BAUD_TAG, "Initial rendezvous reopen failed after BES OTA");
+            }
+        } catch (Exception e) {
+            Log.e(BAUD_TAG, "Initial rendezvous reopen threw after BES OTA", e);
+        }
+        scheduleBesOtaReconnect(
+                generation,
+                1,
+                AsgConstants.BES_OTA_RECONNECT_DELAY_MS,
+                "initial reboot wait");
+    }
+
+    private void scheduleBesOtaReconnect(
+            int generation, int attempt, long delayMs, String reason) {
+        baudSwitchExecutor.schedule(
+                () -> reconnectAfterBesOta(generation, attempt, reason),
+                delayMs,
+                TimeUnit.MILLISECONDS);
+    }
+
+    /** BES reboots at 460800 after OTA; rediscover there and negotiate again if supported. */
+    private void reconnectAfterBesOta(int generation, int attempt, String previousReason) {
+        synchronized (baudSwitchLock) {
+            if (generation != recoveryProbeGeneration || lastSrSyvrTime > 0) {
+                return;
+            }
+        }
+        if (attempt > AsgConstants.BES_OTA_RECONNECT_ATTEMPTS) {
+            Log.e(
+                    BAUD_TAG,
+                    "BES OTA reconnect exhausted after "
+                            + AsgConstants.BES_OTA_RECONNECT_ATTEMPTS
+                            + " attempts (last reason="
+                            + previousReason
+                            + ")");
+            return;
+        }
+        if (comManager.isOtaUpdating()) {
+            scheduleBesOtaReconnect(
+                    generation,
+                    attempt + 1,
+                    AsgConstants.UART_BOOT_RECOVERY_RETRY_DELAY_MS,
+                    "OTA still owns UART");
+            return;
+        }
+        try {
+            clearMessageParser();
+            boolean reopened = comManager.reopen(SerialPortBridge.DEFAULT_BAUDRATE);
+            if (!reopened) {
+                scheduleBesOtaReconnect(
+                        generation,
+                        attempt + 1,
+                        AsgConstants.UART_BOOT_RECOVERY_RETRY_DELAY_MS,
+                        "rendezvous reopen failed");
+                return;
+            }
+            scheduleVersionProbeBurst(
+                    SerialPortBridge.DEFAULT_BAUDRATE,
+                    generation,
+                    () -> lastSrSyvrTime == 0,
+                    "bes_ota_reconnect");
+            scheduleBesOtaReconnect(
+                    generation,
+                    attempt + 1,
+                    AsgConstants.UART_BOOT_RECOVERY_RETRY_DELAY_MS,
+                    "no version response");
+        } catch (Exception e) {
+            Log.e(BAUD_TAG, "Failed to reconnect after BES OTA", e);
+            scheduleBesOtaReconnect(
+                    generation,
+                    attempt + 1,
+                    AsgConstants.UART_BOOT_RECOVERY_RETRY_DELAY_MS,
+                    "reconnect exception");
+        }
+    }
+
+    private void clearMessageParser() {
+        synchronized (messageParserLock) {
+            if (messageParser != null) {
+                messageParser.clear();
+            }
+        }
     }
 
     @Override
@@ -1858,8 +2297,51 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             return false;
         }
 
-        // Create file transfer session
-        String fileName = file.getName();
+        return startFileTransferSession(filePath, file.getName(), fileData);
+    }
+
+    /**
+     * Send an in-memory payload over the K900 file-transfer protocol without a backing file.
+     * Everything after session creation (packet pump, acks, retries) already operates on the
+     * in-memory {@code fileData} buffer, so no disk artifact is required.
+     *
+     * @param data payload bytes
+     * @param fileName wire name for the transfer (truncated to the 16-char protocol cap)
+     * @return true if transfer started successfully
+     */
+    @Override
+    protected boolean sendFileInternal(byte[] data, String fileName) {
+        if (!isSerialOpen) {
+            Log.e(TAG, "Cannot send in-memory file - serial port not open");
+            BluetoothReporting.reportFileTransferFailure(
+                    context, memoryReportPath(fileName), "send_file", "serial_port_not_open", null);
+            return false;
+        }
+
+        if (currentFileTransfer != null && currentFileTransfer.isActive) {
+            Log.e(TAG, "File transfer already in progress");
+            BluetoothReporting.reportFileTransferFailure(
+                    context,
+                    memoryReportPath(fileName),
+                    "send_file",
+                    "transfer_already_in_progress",
+                    null);
+            return false;
+        }
+
+        return startFileTransferSession(null, fileName, data);
+    }
+
+    /** Synthetic identifier for Sentry reports on transfers that never touch disk. */
+    private static String memoryReportPath(String fileName) {
+        return "mem:" + fileName;
+    }
+
+    /**
+     * Create the transfer session and start the packet pump. {@code filePath} is {@code null} for
+     * in-memory transfers; it is only used for post-transfer cleanup and failure reporting.
+     */
+    private boolean startFileTransferSession(String filePath, String fileName, byte[] fileData) {
         if (fileName.length() > 16) {
             fileName = fileName.substring(0, 16); // Truncate to 16 chars max
         }
@@ -1884,7 +2366,9 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                         + fileData.length
                         + " bytes, "
                         + currentFileTransfer.totalPackets
-                        + " packets)");
+                        + " packets, "
+                        + (filePath != null ? "disk-backed" : "in-memory")
+                        + ")");
 
         notificationManager.showDebugNotification(
                 "File Transfer",
@@ -1915,7 +2399,28 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
         if (currentFileTransfer.highestAckedIndex + 1 >= currentFileTransfer.totalPackets) {
             // All packets sent and ACKed by MCU
-            long transferDuration = System.currentTimeMillis() - currentFileTransfer.startTime;
+            long now = System.currentTimeMillis();
+            long transferDuration = now - currentFileTransfer.startTime;
+            currentFileTransfer.packetsCompleteAtEpochMs = now;
+            BlePhotoTimingLog.recordUartTransfer(
+                    currentFileTransfer.fileName,
+                    currentFileTransfer.fileSize,
+                    transferDuration);
+            int rateKbps =
+                    transferDuration > 0
+                            ? (int) (currentFileTransfer.fileSize * 1000L / transferDuration / 1024)
+                            : 0;
+            BlePhotoTimingLog.event(
+                    "TRANSFER",
+                    "all UART/BLE packets sent and ACKed by glasses MCU (BES) | file="
+                            + currentFileTransfer.fileName
+                            + " | uart_tx="
+                            + transferDuration
+                            + "ms | size="
+                            + String.format("%.1f", currentFileTransfer.fileSize / 1024.0)
+                            + "KB | ~"
+                            + rateKbps
+                            + "KB/s — now waiting for phone transfer_complete");
             Log.d(TAG, "📤 All packets sent and ACKed by MCU: " + currentFileTransfer.fileName);
             Log.d(
                     TAG,
@@ -1963,8 +2468,6 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
     /** Send one file packet. Returns false if the transfer was aborted. */
     private boolean sendFilePacketAt(int packetIndex) {
-        long methodStartTime = System.currentTimeMillis();
-
         // Calculate packet data
         int offset = packetIndex * currentFileTransfer.packSize;
         int packSize =
@@ -2002,13 +2505,11 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         }
 
         // Send the packet using sendFile (no logging)
-        long sendStartTime = System.currentTimeMillis();
         boolean sent = comManager.sendFile(packet);
-        long sendEndTime = System.currentTimeMillis();
         if (!sent) {
             Log.e(TAG, "Failed to write file packet " + packetIndex + " to UART");
             BluetoothReporting.reportFileTransferFailure(
-                    context, currentFileTransfer.filePath, "send_file", "uart_write_failed", null);
+                    context, transferReportPath(), "send_file", "uart_write_failed", null);
             notificationManager.showDebugNotification(
                     "File Transfer Failed", "UART write failed at packet " + packetIndex);
             notifyTransferFailedToPhone("uart_write_failed");
@@ -2029,20 +2530,24 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             existingState.lastSendTime = System.currentTimeMillis();
         }
 
-        long totalMethodTime = System.currentTimeMillis() - methodStartTime;
-        Log.d(
-                TAG,
-                "📊 Sent file packet "
-                        + packetIndex
-                        + "/"
-                        + (currentFileTransfer.totalPackets - 1)
-                        + " ("
-                        + packSize
-                        + " bytes) - UART send took "
-                        + (sendEndTime - sendStartTime)
-                        + "ms, total method time: "
-                        + totalMethodTime
-                        + "ms");
+        if (shouldLogFileTransferProgress(packetIndex)) {
+            int totalPackets = currentFileTransfer.totalPackets;
+            int pct =
+                    totalPackets > 0
+                            ? (int) ((100L * (packetIndex + 1)) / totalPackets)
+                            : 0;
+            Log.i(
+                    TAG,
+                    "📊 File TX progress: packet "
+                            + packetIndex
+                            + "/"
+                            + (totalPackets - 1)
+                            + " ("
+                            + pct
+                            + "%, "
+                            + packSize
+                            + " bytes this packet)");
+        }
 
         // Schedule acknowledgment timeout check
         fileTransferExecutor.schedule(
@@ -2050,6 +2555,11 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                 FILE_TRANSFER_ACK_TIMEOUT_MS,
                 TimeUnit.MILLISECONDS);
         return true;
+    }
+
+    private static boolean shouldLogFileTransferProgress(int index) {
+        int interval = AsgConstants.FILE_TRANSFER_PROGRESS_LOG_INTERVAL;
+        return interval > 0 && index >= 0 && (index % interval) == 0;
     }
 
     /** Check if file packet acknowledgment was received */
@@ -2079,7 +2589,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
                 // Report file transfer failure
                 BluetoothReporting.reportFileTransferFailure(
-                        context, currentFileTransfer.filePath, "send_file", "packet_timeout", null);
+                        context, transferReportPath(), "send_file", "packet_timeout", null);
 
                 notificationManager.showDebugNotification(
                         "File Transfer Failed", "Packet " + packetIndex + " timeout");
@@ -2172,21 +2682,23 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         long ackDelay =
                 packetState != null ? (System.currentTimeMillis() - packetState.lastSendTime) : -1;
 
-        Log.d(
-                TAG,
-                "📊 File transfer ACK: state="
-                        + state
-                        + ", index="
-                        + index
-                        + " (tracked: "
-                        + trackedPacketIndex
-                        + "), ACK received after "
-                        + ackDelay
-                        + "ms"
-                        + ", consecutiveFailures="
-                        + consecutiveFailures
-                        + ", currentPacketIndex="
-                        + currentFileTransfer.currentPacketIndex);
+        if ((state != 1) && shouldLogFileTransferProgress(index)) {
+            Log.d(
+                    TAG,
+                    "📊 File transfer ACK: state="
+                            + state
+                            + ", index="
+                            + index
+                            + " (tracked: "
+                            + trackedPacketIndex
+                            + "), ACK received after "
+                            + ackDelay
+                            + "ms"
+                            + ", consecutiveFailures="
+                            + consecutiveFailures
+                            + ", currentPacketIndex="
+                            + currentFileTransfer.currentPacketIndex);
+        }
 
         if (state == 1) { // Success (K900 uses state=1 for success)
             // Ignore true duplicates (acks at or below the high-water mark)
@@ -2257,7 +2769,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                 // Report the failure
                 BluetoothReporting.reportFileTransferFailure(
                         context,
-                        currentFileTransfer.filePath,
+                        transferReportPath(),
                         "send_file",
                         "ble_tx_stuck_consecutive_failures",
                         null);
@@ -2400,8 +2912,32 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
         if (success) {
             // SUCCESS! Clean up and delete file
-            Log.d(TAG, "✅ Phone confirmed success - cleaning up");
-            long transferDuration = System.currentTimeMillis() - currentFileTransfer.startTime;
+            long now = System.currentTimeMillis();
+            long transferDuration = now - currentFileTransfer.startTime;
+            long lastPacketToPhoneAckMs =
+                    currentFileTransfer.packetsCompleteAtEpochMs > 0
+                            ? now - currentFileTransfer.packetsCompleteAtEpochMs
+                            : -1L;
+            BlePhotoTimingLog.event(
+                    "TRANSFER",
+                    "phone confirmed transfer_complete (photo received on phone) | file="
+                            + fileName
+                            + " | full_ble_round_trip="
+                            + transferDuration
+                            + "ms"
+                            + (lastPacketToPhoneAckMs >= 0
+                                    ? " | last_packet_to_phone_ack="
+                                            + lastPacketToPhoneAckMs
+                                            + "ms"
+                                    : ""));
+            Log.i(
+                    TAG,
+                    "✅ Phone confirmed success - cleaning up"
+                            + (lastPacketToPhoneAckMs >= 0
+                                    ? " (last MCU-acked packet → phone ack: "
+                                            + lastPacketToPhoneAckMs
+                                            + "ms)"
+                                    : ""));
 
             notificationManager.showDebugNotification(
                     "Transfer Success!", currentFileTransfer.fileName + " confirmed by phone");
@@ -2437,6 +2973,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                 currentFileTransfer.currentPacketIndex = 0;
                 currentFileTransfer.highestAckedIndex = -1;
                 currentFileTransfer.startTime = System.currentTimeMillis();
+                currentFileTransfer.packetsCompleteAtEpochMs = 0L;
                 currentFileTransfer.waitingForPhoneConfirmation = false;
                 pendingPackets.clear();
 
@@ -2536,9 +3073,23 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         }
     }
 
+    /** Identifier for failure reports on the active transfer (synthetic for in-memory sends). */
+    private String transferReportPath() {
+        if (currentFileTransfer == null) {
+            return "mem:unknown";
+        }
+        return currentFileTransfer.filePath != null
+                ? currentFileTransfer.filePath
+                : memoryReportPath(currentFileTransfer.fileName);
+    }
+
     /** Delete file after successful transfer */
     private void deleteFileAfterSuccess() {
         if (currentFileTransfer == null) {
+            return;
+        }
+        if (currentFileTransfer.filePath == null) {
+            // In-memory transfer - nothing was ever written to disk.
             return;
         }
 

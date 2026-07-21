@@ -16,7 +16,7 @@
  */
 
 export {MiniappSession, type MiniappSessionOptions} from "../session"
-export {registerMiniapp, type MiniappInitHandler} from "./register"
+export {registerMiniapp, type MiniappInitHandler, type TypedMiniappSession} from "./register"
 
 // Event / data type re-exports — these are payload shapes a miniapp's
 // background-side handlers consume from session.transcription.on, etc.
@@ -34,11 +34,11 @@ export type {
   LocationData,
   PhoneNotificationData,
   NotificationDismissedData,
-  CalendarEventData,
   HeadingData,
   TouchData,
   UnsubscribeFn,
 } from "../modules/events"
+export type {CalendarEvent, CalendarListOptions, CalendarListResult} from "../modules/phone"
 
 // Public envelope + protocol types so authors can write strongly-typed
 // glue when they need to fall back to session.sendOneShot / sendRequest.
@@ -110,7 +110,7 @@ export type {
 export type {DashboardMode} from "../modules/dashboard"
 export type {PlayAudioOptions, SpeakOptions, SpeakResult, SpeakerState, SpeakerStateEvent} from "../modules/speaker"
 export type {ShareOptions, ShareResult, DownloadOptions, DownloadResult} from "../modules/system"
-export type {TranscriptionConfig} from "../modules/transcription"
+export type {TranscriptionConfig, TranscriptionOptions} from "../modules/transcription"
 export type {PermissionErrorEvent} from "../modules/permissions"
 export type {
   AuthUpdatePayload,

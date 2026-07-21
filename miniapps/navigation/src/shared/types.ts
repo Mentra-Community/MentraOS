@@ -18,6 +18,13 @@ export type NavStatus = "idle" | "navigating" | "rerouting" | "arrived"
  * the chosen system. Defaults to "metric".
  */
 export type UnitSystem = "metric" | "imperial"
+export type VoiceGuidanceMode = "off" | "essential" | "full"
+export type GlassesCapabilitySnapshot = {
+  modelName: string | null
+  hasDisplay: boolean
+  hasSpeaker: boolean
+  hasButton: boolean
+}
 export type LogEntry = {id: number; ts: number; line: string}
 
 export type PlaceSuggestion = {placeId: string; mainText: string; secondaryText?: string}
@@ -132,4 +139,6 @@ export type NavSnapshot = {
   devSettings: DevSettings
   /** User's distance-unit preference. Defaults to "metric". */
   unitSystem: UnitSystem
+  voiceGuidanceMode: VoiceGuidanceMode
+  capabilities: GlassesCapabilitySnapshot
 }

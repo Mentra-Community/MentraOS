@@ -8,6 +8,8 @@ import * as RNFS from "@dr.pogodin/react-native-fs"
 import {PhotoInfo} from "../../types/asg"
 import {BgTimer} from "../../utils/timers"
 import {storage, StorageValueNotFoundError} from "../../utils/storage"
+import {galleryTransferLedger, GalleryAssetReceipt} from "./galleryTransferLedger"
+import {toPortableGalleryPath} from "./galleryPathMigration"
 
 export interface DownloadedFile {
   name: string
@@ -21,6 +23,7 @@ export interface DownloadedFile {
   glassesModel?: string // Model of glasses that captured this media
   duration?: number // Video duration in milliseconds
   capture_id?: string // Capture folder name (when synced via capture-aware pipeline)
+  assetReceipt?: GalleryAssetReceipt
 }
 
 interface SyncState {
@@ -47,6 +50,7 @@ export class LocalStorageService {
   private readonly SYNC_STATE_KEY = "asg_sync_state"
   private readonly CLIENT_ID_KEY = "asg_client_id"
   private readonly SYNC_QUEUE_KEY = "asg_sync_queue"
+  private readonly QUARANTINED_FILES_KEY = "asg_quarantined_downloaded_files_v1"
   private readonly ASG_PHOTOS_DIR = `${RNFS.DocumentDirectoryPath}/MentraPhotos`
   private readonly ASG_THUMBNAILS_DIR = `${RNFS.DocumentDirectoryPath}/MentraPhotos/thumbnails`
 
@@ -157,7 +161,22 @@ export class LocalStorageService {
    */
   async saveDownloadedFile(file: DownloadedFile): Promise<void> {
     try {
-      const files = await this.getDownloadedFiles()
+      const rawFiles = this.loadRawDownloadedFiles()
+      const files: Record<string, DownloadedFile> = {}
+      const quarantined = this.loadQuarantinedFiles()
+      const missingCaptureIds: string[] = []
+      for (const [name, existing] of Object.entries(rawFiles)) {
+        const existingPath = this.toPortableRelativePath(existing.filePath)
+        const existingThumbnail = existing.thumbnailPath
+          ? this.toPortableRelativePath(existing.thumbnailPath) || undefined
+          : undefined
+        if (!existingPath) {
+          quarantined[name] = existing
+          missingCaptureIds.push(name)
+          continue
+        }
+        files[name] = {...existing, filePath: existingPath, thumbnailPath: existingThumbnail}
+      }
 
       // 🔍 DIAGNOSTIC: Check if file already exists
       // const existingFile = files[file.name]
@@ -180,15 +199,14 @@ export class LocalStorageService {
 
       // Store relative paths to handle iOS app container changes between launches
       // Convert absolute paths to relative (remove DocumentDirectoryPath prefix)
-      const docPath = RNFS.DocumentDirectoryPath
-      const relativePath = file.filePath.startsWith(docPath)
-        ? file.filePath.substring(docPath.length + 1) // +1 for the slash
-        : file.filePath
+      const relativePath = this.toPortableRelativePath(file.filePath)
       const relativeThumbnailPath = file.thumbnailPath
-        ? file.thumbnailPath.startsWith(docPath)
-          ? file.thumbnailPath.substring(docPath.length + 1)
-          : file.thumbnailPath
+        ? this.toPortableRelativePath(file.thumbnailPath) || undefined
         : undefined
+
+      if (!relativePath) {
+        throw new Error(`Cannot persist non-portable gallery path: ${file.filePath}`)
+      }
 
       files[file.name] = {
         ...file,
@@ -196,7 +214,13 @@ export class LocalStorageService {
         filePath: relativePath,
         thumbnailPath: relativeThumbnailPath,
       }
-      await storage.save(this.DOWNLOADED_FILES_KEY, files)
+      const saveResult = storage.save(this.DOWNLOADED_FILES_KEY, files)
+      if (saveResult.is_error()) throw saveResult.error
+      const quarantineResult = storage.save(this.QUARANTINED_FILES_KEY, quarantined)
+      if (quarantineResult.is_error()) throw quarantineResult.error
+      for (const captureId of missingCaptureIds) {
+        galleryTransferLedger.releaseMissingLocalCommit(captureId, true)
+      }
       // console.log(`[LocalStorage] 💾 Saved metadata for ${file.name} with relative path: ${relativePath}`)
     } catch (error) {
       console.error("Error saving downloaded file metadata:", error)
@@ -218,29 +242,116 @@ export class LocalStorageService {
 
     const files = res.value
     const reconstructedFiles: Record<string, DownloadedFile> = {}
-    const docPath = RNFS.DocumentDirectoryPath
+    const normalizedFiles: Record<string, DownloadedFile> = {}
+    const quarantined = this.loadQuarantinedFiles()
+    const missingCaptureIds: string[] = []
+    let didMigrate = false
 
-    // Reconstruct absolute paths from relative paths
+    // Normalize every record before saving. This fixes the old read-absolute/write-one-relative
+    // bug and migrates stale iOS container UUID paths via their Documents/MentraPhotos suffix.
     for (const [name, file] of Object.entries(files as Record<string, DownloadedFile>)) {
-      // Check if path is already absolute (legacy data) or relative
-      const absolutePath = file.filePath.startsWith("/")
-        ? file.filePath // Already absolute (legacy data)
-        : `${docPath}/${file.filePath}` // Relative path, prepend DocumentDirectoryPath
-
-      const absoluteThumbnailPath = file.thumbnailPath
-        ? file.thumbnailPath.startsWith("/")
-          ? file.thumbnailPath // Already absolute (legacy data)
-          : `${docPath}/${file.thumbnailPath}` // Relative path
+      const relativePath = this.toPortableRelativePath(file.filePath)
+      const relativeThumbnailPath = file.thumbnailPath
+        ? this.toPortableRelativePath(file.thumbnailPath) || undefined
         : undefined
+      if (!relativePath) {
+        quarantined[name] = {...file, downloaded_at: file.downloaded_at || Date.now()}
+        missingCaptureIds.push(name)
+        didMigrate = true
+        continue
+      }
+      const absolutePath = `${RNFS.DocumentDirectoryPath}/${relativePath}`
+      const absoluteThumbnailPath = relativeThumbnailPath
+        ? `${RNFS.DocumentDirectoryPath}/${relativeThumbnailPath}`
+        : undefined
+
+      normalizedFiles[name] = {
+        ...file,
+        filePath: relativePath,
+        thumbnailPath: relativeThumbnailPath,
+      }
 
       reconstructedFiles[name] = {
         ...file,
         filePath: absolutePath,
         thumbnailPath: absoluteThumbnailPath,
       }
+      if (file.filePath !== relativePath || file.thumbnailPath !== relativeThumbnailPath) didMigrate = true
+    }
+
+    if (didMigrate) {
+      const saveResult = storage.save(this.DOWNLOADED_FILES_KEY, normalizedFiles)
+      if (saveResult.is_error()) throw saveResult.error
+      const quarantineResult = storage.save(this.QUARANTINED_FILES_KEY, quarantined)
+      if (quarantineResult.is_error()) throw quarantineResult.error
+      for (const captureId of missingCaptureIds) {
+        galleryTransferLedger.releaseMissingLocalCommit(captureId, true)
+      }
     }
 
     return reconstructedFiles
+  }
+
+  /**
+   * Reconcile the remote manifest against the app-local gallery index before ledger filtering.
+   * Android backup/restore and data-preserving reinstalls can restore MMKV ledger rows without
+   * restoring app-private media. Only captures currently advertised by the glasses are released,
+   * so acknowledged captures that remain in glasses trash are not resurrected unnecessarily.
+   */
+  async reconcileRemoteCaptures(
+    captureIds: string[],
+    downloadedFiles?: Record<string, DownloadedFile>,
+  ): Promise<number> {
+    const localFiles = downloadedFiles || (await this.getDownloadedFiles())
+    let released = 0
+    for (const captureId of captureIds) {
+      const entry = galleryTransferLedger.get(captureId)
+      if (!entry || !galleryTransferLedger.isLocallyCommitted(captureId)) continue
+      const localFile = localFiles[captureId]
+      const localFileExists = localFile?.filePath ? await RNFS.exists(localFile.filePath).catch(() => false) : false
+      if (localFileExists) continue
+
+      // The transfer ledger and gallery index are persisted independently. A crash can leave the
+      // committed media in place after its index write was lost, so repair the index from the
+      // ledger before deciding that the capture needs to be restored from the glasses.
+      const committedPath = entry.finalPath?.replace(/^file:\/\//, "")
+      const committedFileExists = committedPath ? await RNFS.exists(committedPath).catch(() => false) : false
+      if (committedPath && committedFileExists) {
+        try {
+          const stat = await RNFS.stat(committedPath)
+          const size = Number(stat.size)
+          if (Number.isFinite(size) && size > 0) {
+            const recovered = this.convertToDownloadedFile(
+              {
+                name: captureId,
+                url: "",
+                download: "",
+                size,
+                modified: entry.timestamp,
+                mime_type: entry.captureType === "video" ? "video/mp4" : "image/jpeg",
+                is_video: entry.captureType === "video",
+                filePath: committedPath,
+              },
+              committedPath,
+              entry.thumbnailPath,
+            )
+            recovered.capture_id = captureId
+            recovered.assetReceipt = entry.assetReceipt
+            await this.saveDownloadedFile(recovered)
+            localFiles[captureId] = recovered
+            continue
+          }
+        } catch (error) {
+          console.warn(`[LocalStorage] Could not recover gallery index for ${captureId}:`, error)
+        }
+      }
+      galleryTransferLedger.releaseMissingLocalCommit(captureId, true)
+      released++
+    }
+    if (released > 0) {
+      console.warn(`[LocalStorage] Released ${released} stale gallery ledger commit(s) missing local media`)
+    }
+    return released
   }
 
   /**
@@ -254,6 +365,14 @@ export class LocalStorageService {
       console.error("Error getting downloaded file:", error)
       return null
     }
+  }
+
+  /** Persist a durable camera-roll receipt without replacing the local-file generation. */
+  async updateDownloadedFileAssetReceipt(fileName: string, assetReceipt: GalleryAssetReceipt): Promise<void> {
+    const files = await this.getDownloadedFiles()
+    const file = files[fileName]
+    if (!file) throw new Error(`Downloaded file is missing: ${fileName}`)
+    await this.saveDownloadedFile({...file, assetReceipt})
   }
 
   /**
@@ -286,6 +405,7 @@ export class LocalStorageService {
         const rawFiles = res.value
         delete rawFiles[fileName]
         await storage.save(this.DOWNLOADED_FILES_KEY, rawFiles)
+        galleryTransferLedger.releaseMissingLocalCommit(fileName)
         return true
       }
       return false
@@ -293,6 +413,25 @@ export class LocalStorageService {
       console.error("Error deleting downloaded file:", error)
       return false
     }
+  }
+
+  /** Preserve unresolved metadata for repair instead of silently deleting it from the gallery. */
+  async quarantineDownloadedFile(fileName: string, reason: string): Promise<void> {
+    const rawFiles = this.loadRawDownloadedFiles()
+    const file = rawFiles[fileName]
+    if (!file) return
+    const quarantined = this.loadQuarantinedFiles()
+    quarantined[fileName] = {...file, quarantineReason: reason} as DownloadedFile
+    delete rawFiles[fileName]
+    const quarantineResult = storage.save(this.QUARANTINED_FILES_KEY, quarantined)
+    if (quarantineResult.is_error()) throw quarantineResult.error
+    const filesResult = storage.save(this.DOWNLOADED_FILES_KEY, rawFiles)
+    if (filesResult.is_error()) throw filesResult.error
+    galleryTransferLedger.releaseMissingLocalCommit(fileName, true)
+  }
+
+  async getQuarantinedDownloadedFiles(): Promise<Record<string, DownloadedFile>> {
+    return this.loadQuarantinedFiles()
   }
 
   /**
@@ -327,15 +466,15 @@ export class LocalStorageService {
     const fileUrl = downloadedFile.filePath.startsWith("file://")
       ? downloadedFile.filePath
       : downloadedFile.filePath.startsWith("/")
-        ? `file://${downloadedFile.filePath}` // Path already has leading slash
-        : `file:///${downloadedFile.filePath}` // Path needs leading slash
+      ? `file://${downloadedFile.filePath}` // Path already has leading slash
+      : `file:///${downloadedFile.filePath}` // Path needs leading slash
 
     const thumbnailUrl = downloadedFile.thumbnailPath
       ? downloadedFile.thumbnailPath.startsWith("file://")
         ? downloadedFile.thumbnailPath
         : downloadedFile.thumbnailPath.startsWith("/")
-          ? `file://${downloadedFile.thumbnailPath}` // Path already has leading slash
-          : `file:///${downloadedFile.thumbnailPath}` // Path needs leading slash
+        ? `file://${downloadedFile.thumbnailPath}` // Path already has leading slash
+        : `file:///${downloadedFile.thumbnailPath}` // Path needs leading slash
       : undefined
 
     return {
@@ -408,6 +547,8 @@ export class LocalStorageService {
       console.error("[LocalStorage] Error clearing downloaded files:", res.error)
       throw res.error
     }
+    storage.remove(this.QUARANTINED_FILES_KEY)
+    galleryTransferLedger.releaseAllMissingLocalCommits()
     console.log("[LocalStorage] Cleared all downloaded files and thumbnails")
   }
 
@@ -491,6 +632,20 @@ export class LocalStorageService {
     if (!queue) return false
     // Has resumable queue if there are still files to process
     return queue.currentIndex < queue.files.length
+  }
+
+  private loadRawDownloadedFiles(): Record<string, DownloadedFile> {
+    const result = storage.load<Record<string, DownloadedFile>>(this.DOWNLOADED_FILES_KEY)
+    return result.is_error() ? {} : result.value
+  }
+
+  private loadQuarantinedFiles(): Record<string, DownloadedFile> {
+    const result = storage.load<Record<string, DownloadedFile>>(this.QUARANTINED_FILES_KEY)
+    return result.is_error() ? {} : result.value
+  }
+
+  private toPortableRelativePath(path: string): string | null {
+    return toPortableGalleryPath(path, RNFS.DocumentDirectoryPath)
   }
 }
 

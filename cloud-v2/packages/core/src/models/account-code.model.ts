@@ -7,7 +7,8 @@
  * deletion code. `subject` is the thing the code authorizes (email for reset,
  * user id for deletion, the PKCE challenge for oauth).
  */
-import { Schema, model, type InferSchemaType } from "mongoose";
+import { Schema, type InferSchemaType } from "mongoose";
+import { registerModel } from "./register-model";
 
 export const ACCOUNT_CODE_PURPOSES = [
   "password_reset",
@@ -36,4 +37,4 @@ const AccountCodeSchema = new Schema(
 AccountCodeSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 
 export type AccountCode = InferSchemaType<typeof AccountCodeSchema>;
-export const AccountCodeModel = model("AccountCode", AccountCodeSchema);
+export const AccountCodeModel = registerModel("AccountCode", AccountCodeSchema);

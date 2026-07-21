@@ -32,11 +32,11 @@ mock.module("../LocalMiniappRuntime", () => ({
   },
 }))
 // No dev url stored → released (file://) path; resolveDevPort also misses.
+// Because there's no dev url, decideDevLaunchRoute is never reached here, so we
+// deliberately do NOT mock.module("../../utils/devMiniappLaunch"): that mock is
+// process-global in Bun and would leak into devMiniappLaunch.test.ts.
 mock.module("../../utils/storage/storage", () => ({
   storage: {load: () => ({is_ok: () => false})},
-}))
-mock.module("../../utils/devMiniappLaunch", () => ({
-  decideDevLaunchRoute: async () => ({decision: "offline", manifest: null}),
 }))
 mock.module("expo-file-system", () => ({
   File: class {
@@ -124,6 +124,20 @@ describe("MiniappLauncher", () => {
     activeVersion = "" // no installed version → resolveBundle returns null
     await expect(miniappLauncher.ensureRunning("com.missing")).rejects.toThrow(/cannot resolve bundle/)
     expect(mockRouter.spawnCalls.length).toBe(0)
+  })
+
+  test("ensureRunning returns null UI for an already-registered package whose resolve fails", async () => {
+    // First launch succeeds and registers the package. Later the bundle becomes
+    // unresolvable (e.g. the mentra-miniapp dev server dropped). Headless
+    // callers must not throw — LocalMiniappView routes null uiUri + devUrl to
+    // /applet/dev-offline instead.
+    await miniappLauncher.ensureRunning("com.x")
+    expect(mockRouter.spawnCalls.length).toBe(1)
+    activeVersion = ""
+    const result = await miniappLauncher.ensureRunning("com.x")
+    expect(result).toEqual({uiUri: null, uiBaseDir: null})
+    expect(mockRouter.spawnCalls.length).toBe(1)
+    expect(miniappLauncher.isRunning("com.x")).toBe(true)
   })
 
   test("stop tears the background context down via the router", async () => {

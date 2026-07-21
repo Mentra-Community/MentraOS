@@ -54,6 +54,7 @@ protocol SGCManager {
     // MARK: - Audio Control
 
     func setMicEnabled(_ enabled: Bool)
+    var isMicSuspendedForAudio: Bool { get }
     func sortMicRanking(list: [String]) -> [String]
 
     // MARK: - Messaging
@@ -184,7 +185,7 @@ protocol SGCManager {
 
     // MARK: - Network Management
 
-    func requestWifiScan()
+    func requestWifiScan(scanId: String?)
     func sendWifiCredentials(_ ssid: String, _ password: String)
     func forgetWifiNetwork(_ ssid: String)
     func sendHotspotState(_ enabled: Bool)
@@ -217,6 +218,8 @@ protocol SGCManager {
 /// doesn't seem to work for concurrency reasons :(
 /// we can make read-only getters for convienence though:
 extension SGCManager {
+    var isMicSuspendedForAudio: Bool { false }
+
     /// Default: no-op. Only G2 renders positioned text containers; other glasses ignore it.
     func sendPositionedText(
         _: String, x _: Int32, y _: Int32, width _: Int32, height _: Int32,
@@ -362,7 +365,7 @@ extension SGCManager {
 
     func sendVoiceActivityDetectionSetting() {}
 
-    /// Default no-op; Mentra Live overrides when phone detects clock skew during gallery sync.
+    /// Default no-op; Mentra Live and G2 override to handle phone-detected clock skew.
     func sendSetSystemTime(_: Int64) {
         Bridge.log("SGC: sendSetSystemTime not supported")
     }

@@ -19,7 +19,7 @@ import type { Logger } from "./logger";
 import type { CloudClientConfig } from "./config";
 import { createHttpClient } from "./http";
 import { CloudClientError } from "./errors";
-import type { ConnectionInit } from "@mentra/cloud-runtime/protocol";
+import type { ConnectionInit } from "@mentra/cloud-protocol";
 
 // The module implementations. Each is owned by another agent under ./modules/**;
 // this file only constructs them, matching the constructor signatures fixed in
@@ -121,14 +121,8 @@ export class CloudClient {
     // Resolve the two base addresses. With a proxy set, both route through it;
     // without one, each module talks to its own service directly.
     const { core: coreBase, runtime: runtimeBase, proxy } = config.endpoints;
-    const coreUrl = coreBase
-      ? proxy
-        ? rewriteThroughProxy(coreBase, proxy)
-        : coreBase
-      : undefined;
-    const runtimeUrl = proxy
-      ? rewriteThroughProxy(runtimeBase, proxy)
-      : runtimeBase;
+    const coreUrl = coreBase ? (proxy ? rewriteThroughProxy(coreBase, proxy) : coreBase) : undefined;
+    const runtimeUrl = proxy ? rewriteThroughProxy(runtimeBase, proxy) : runtimeBase;
 
     if (config.auth.core && !coreUrl) {
       throw new CloudClientError("auth.core requires endpoints.core");
@@ -139,17 +133,12 @@ export class CloudClient {
     // (`{ subjectToken, subjectTokenType }`, no `runtime`) gets a clear
     // configuration error instead of an opaque `TypeError` from `"source" in undefined`.
     if (!config.auth.runtime) {
-      throw new CloudClientError(
-        "auth.runtime is required (got a pre-split/flat auth config?)",
-      );
+      throw new CloudClientError("auth.runtime is required (got a pre-split/flat auth config?)");
     }
 
-    const runtimeUsesCore =
-      "source" in config.auth.runtime && config.auth.runtime.source === "core";
+    const runtimeUsesCore = "source" in config.auth.runtime && config.auth.runtime.source === "core";
     if (runtimeUsesCore && (!coreUrl || !config.auth.core)) {
-      throw new CloudClientError(
-        "auth.runtime.source='core' requires endpoints.core and auth.core",
-      );
+      throw new CloudClientError("auth.runtime.source='core' requires endpoints.core and auth.core");
     }
 
     // Build auth FIRST: runtime and core both source their Bearer from it, so it
@@ -160,7 +149,7 @@ export class CloudClient {
     // before any access token exists. It is deliberately Core-only: runtime-only
     // clients never get a fallback that points Core/Auth calls at Runtime.
     const authHttp = coreUrl
-      ? createHttpClient({ baseUrl: coreUrl, logger })
+      ? createHttpClient({ baseUrl: coreUrl, logger, fetch: config.transports.http })
       : undefined;
     const store = new TokenStore({ storage: config.transports.storage });
     const auth = new Auth({
@@ -168,25 +157,29 @@ export class CloudClient {
       store,
       config: config.auth,
       logger,
-      // The form-encoded `/exchange` and `/refresh` calls go through `fetch`
-      // directly (not the JSON `HttpClient`), so Auth needs the core base URL.
+      // Form-encoded `/exchange` and `/refresh` calls are not JSON HttpClient
+      // requests, but still use the host's injected HTTP transport.
       baseUrl: coreUrl,
+      fetch: config.transports.http,
     });
 
     const getRuntimeToken = (): Promise<string> => auth.getRuntimeToken();
     const getCoreToken = (): Promise<string> => auth.getCoreToken();
 
-    const coreHttp = coreUrl && config.auth.core
-      ? createHttpClient({
-          baseUrl: coreUrl,
-          getToken: getCoreToken,
-          logger,
-        })
-      : null;
+    const coreHttp =
+      coreUrl && config.auth.core
+        ? createHttpClient({
+            baseUrl: coreUrl,
+            getToken: getCoreToken,
+            logger,
+            fetch: config.transports.http,
+          })
+        : null;
     const runtimeHttp = createHttpClient({
       baseUrl: runtimeUrl,
       getToken: getRuntimeToken,
       logger,
+      fetch: config.transports.http,
     });
 
     const emitter = new RuntimeEmitter();
@@ -216,9 +209,7 @@ export class CloudClient {
         sampleRate: config.audio?.sampleRate ?? DEFAULT_AUDIO_SAMPLE_RATE,
         // Only LC3 carries a frame size; the config type forces LC3 hosts to
         // state theirs explicitly (decoder is sized from this — no safe guess).
-        ...(config.audio?.codec === "lc3"
-          ? { frameSizeBytes: config.audio.frameSizeBytes }
-          : {}),
+        ...(config.audio?.codec === "lc3" ? { frameSizeBytes: config.audio.frameSizeBytes } : {}),
         initialSubscriptions: subscriptions.currentSet(),
       },
     });

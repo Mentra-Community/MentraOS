@@ -1,16 +1,22 @@
 package com.mentra.asg_client.io.media.core;
 
-import androidx.annotation.Nullable;
-
 import com.mentra.asg_client.AsgConstants;
+import java.util.Locale;
 
-/** Chooses whether a prepared BLE image should use the text-mode JPEG shortcut. */
+/**
+ * Chooses the payload codec for a prepared BLE image from the central ASG configuration constant.
+ * Text mode and ordinary size-tier photos intentionally share this one policy — there is no
+ * per-mode codec split.
+ */
 final class BlePhotoEncodingPolicy {
     private BlePhotoEncodingPolicy() {}
 
-    static boolean shouldUseJpeg(boolean textModeRequested, @Nullable byte[] jpegCandidate) {
-        return textModeRequested
-                && jpegCandidate != null
-                && jpegCandidate.length < AsgConstants.TEXT_MODE_AVIF_SIZE_THRESHOLD_BYTES;
+    static BleCodec selectCodec() {
+        try {
+            return BleCodec.valueOf(
+                    AsgConstants.BLE_PHOTO_CODEC.toUpperCase(Locale.US));
+        } catch (IllegalArgumentException | NullPointerException e) {
+            return BleCodec.AVIF;
+        }
     }
 }

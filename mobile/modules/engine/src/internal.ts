@@ -30,6 +30,7 @@ export {
   getDevAppAttestation,
   DEV_APP_PACKAGE_NAME,
   type DevAppRecord,
+  type MiniappReleaseIdentity,
 } from "./services/AppRegistry"
 export {default as displayProcessor} from "./services/DisplayProcessor"
 export {default as localDisplayManager, type DisplayPayload} from "./services/LocalDisplayManager"
@@ -115,6 +116,7 @@ export {asgCameraApi} from "./services/asg/asgCameraApi"
 export {localStorageService} from "./services/asg/localStorageService"
 export {mediaProcessingQueue} from "./services/asg/mediaProcessingQueue"
 export {gallerySettingsService} from "./services/asg/gallerySettingsService"
+export {cameraRollExportCoordinator, type CameraRollExportSummary} from "./services/asg/cameraRollExportCoordinator"
 export {
   INVALID_DOWNLOADED_MEDIA,
   validateCaptureMetadataForDownload,

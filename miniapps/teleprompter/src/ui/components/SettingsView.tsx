@@ -1,7 +1,7 @@
 import {AlignLeft, Gauge, Repeat, Rows3, Timer} from "lucide-react"
 
 import type {LineWidth, TeleprompterSettings} from "../../shared/types"
-import {ACCENT, ACCENT_FG} from "../lib/theme"
+import {ACCENT, ACCENT_FG, ACCENT_TEXT} from "../lib/theme"
 
 interface SettingsViewProps {
   settings: TeleprompterSettings
@@ -29,7 +29,7 @@ export function SettingsView({
           <div className="flex items-center gap-3">
             <Gauge className="w-5 h-5 text-zinc-900 dark:text-zinc-50" />
             <span className="text-base font-medium text-zinc-900 dark:text-zinc-50">Scroll speed</span>
-            <span className="ml-auto text-sm font-semibold tabular-nums" style={{color: ACCENT}}>
+            <span className="ml-auto text-sm font-semibold tabular-nums" style={{color: ACCENT_TEXT}}>
               {settings.wpm} wpm
             </span>
           </div>

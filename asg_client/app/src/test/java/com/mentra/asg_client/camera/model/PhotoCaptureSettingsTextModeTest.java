@@ -1,58 +1,52 @@
 package com.mentra.asg_client.camera.model;
 
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.settings.AsgSettings;
 import org.junit.Test;
 
 public class PhotoCaptureSettingsTextModeTest {
 
     @Test
-    public void applyTextModeExposureDividesMeteredShutterByThree() {
-        PhotoCaptureSettings tuned =
-                PhotoCaptureSettings.applyTextModeExposure(PhotoCaptureSettings.EMPTY);
+    public void mergeForSdkRequest_doesNotInjectTextModeAeDivisor() {
+        AsgSettings stored = mock(AsgSettings.class);
+        when(stored.isZslEnabled()).thenReturn(true);
+        when(stored.isMfnrEnabled()).thenReturn(true);
 
-        assertEquals(
-                Integer.valueOf(AsgConstants.TEXT_MODE_AE_EXPOSURE_DIVISOR),
-                tuned.aeExposureDivisor);
-        assertFalse(tuned.mfnrEnabled());
-        assertEquals(Boolean.FALSE, tuned.zsl);
+        PhotoCaptureSettings merged =
+                PhotoCaptureSettings.mergeForSdkRequest(PhotoCaptureSettings.EMPTY, stored);
+
+        assertNull(
+                "text mode no longer injects aeExposureDivisor; EMPTY must stay unset",
+                merged.aeExposureDivisor);
+        assertEquals(Boolean.TRUE, merged.zsl);
+        assertEquals(Boolean.TRUE, merged.mfnr);
     }
 
     @Test
-    public void applyTextModeExposurePreservesExplicitTuning() {
+    public void mergeForSdkRequest_preservesExplicitAeDivisorAndZslMfnr() {
+        AsgSettings stored = mock(AsgSettings.class);
+        when(stored.isZslEnabled()).thenReturn(true);
+        when(stored.isMfnrEnabled()).thenReturn(true);
+
         PhotoCaptureSettings request =
                 new PhotoCaptureSettings.Builder()
+                        .aeExposureDivisor(3)
                         .isoCap(800)
-                        .mfnr(true)
                         .zsl(true)
+                        .mfnr(true)
                         .edgeEnhancement(false)
                         .build();
 
-        PhotoCaptureSettings tuned = PhotoCaptureSettings.applyTextModeExposure(request);
+        PhotoCaptureSettings merged = PhotoCaptureSettings.mergeForSdkRequest(request, stored);
 
-        assertEquals(Integer.valueOf(800), tuned.isoCap);
-        assertEquals(Boolean.TRUE, tuned.mfnr);
-        assertEquals(Boolean.TRUE, tuned.zsl);
-        assertEquals(Boolean.FALSE, tuned.edgeEnhancement);
-    }
-
-    @Test
-    public void textModeDefaultsOverrideStoredGlobalMfnrAndZsl() {
-        AsgSettings stored = mock(AsgSettings.class);
-        when(stored.isMfnrEnabled()).thenReturn(true);
-        when(stored.isZslEnabled()).thenReturn(true);
-
-        PhotoCaptureSettings textDefaults =
-                PhotoCaptureSettings.applyTextModeExposure(PhotoCaptureSettings.EMPTY);
-        PhotoCaptureSettings merged =
-                PhotoCaptureSettings.mergeForSdkRequest(textDefaults, stored);
-
-        assertEquals(Boolean.FALSE, merged.mfnr);
-        assertEquals(Boolean.FALSE, merged.zsl);
+        assertEquals(Integer.valueOf(3), merged.aeExposureDivisor);
+        assertEquals(Integer.valueOf(800), merged.isoCap);
+        assertEquals(Boolean.TRUE, merged.mfnr);
+        assertEquals(Boolean.TRUE, merged.zsl);
+        assertEquals(Boolean.FALSE, merged.edgeEnhancement);
     }
 }

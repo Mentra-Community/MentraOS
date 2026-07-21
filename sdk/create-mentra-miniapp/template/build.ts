@@ -29,7 +29,7 @@
  */
 
 import {rm} from "fs/promises"
-import {reactSingletonPlugin} from "@mentra/miniapp-cli/build-helpers"
+import {backgroundRuntimeGuardPlugin, reactSingletonPlugin} from "@mentra/miniapp-cli/build-helpers"
 
 const distDir = "./dist"
 
@@ -50,6 +50,7 @@ const backgroundResult = await Bun.build({
   outdir: `${distDir}/background`,
   target: "browser",
   format: "iife",
+  plugins: [backgroundRuntimeGuardPlugin(import.meta.url)],
   minify: false,
   define,
 })

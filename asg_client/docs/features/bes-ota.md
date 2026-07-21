@@ -139,10 +139,10 @@ Manual procedure:
 ## Troubleshooting
 
 - **Update never starts** — confirm BES OTA path is initialized (`BesOtaManager` log line at startup). Check WiFi, battery (≥ 5%), and that no APK update is currently running.
-- **Silent stall mid-transfer** — UART instability or BES not responding. Look for `BesOtaUartListener` logs. Check the Infinity Cable; loose connections kill UART traffic.
+- **Stall mid-transfer** — UART instability or BES not responding. The transfer is response-driven, so a lost response no longer stalls silently: a dead-man watchdog aborts the transfer after 30 seconds without any BES response (`AsgConstants.BES_OTA_RESPONSE_TIMEOUT_MS`), runs the normal cleanup (OTA mode exited, wake leases released), posts a failure the phone surfaces as "Update failed", and emits a `bes_ota_response_timeout` lifecycle trace with the transfer position (`sentPos`, `confirmedSegments`). The BES stays on its current firmware — the recovery is simply retrying the whole OTA from the phone. If aborts recur, look for `BesOtaUartListener` logs and check the Infinity Cable; loose connections kill UART traffic.
 - **`File too big`** — firmware exceeds 2 MB.
 - **`SHA-256 mismatch`** — the downloaded `.bin` doesn't match `version.json`. The file is deleted; verify your hash and re-upload.
-- **Stuck in OTA mode** — if `mbOtaUpdating` doesn't get cleared (rare), normal BLE traffic stays blocked. Restart the app.
+- **Stuck in OTA mode** — if `mbOtaUpdating` doesn't get cleared (rare), normal BLE traffic stays blocked. The response watchdog's cleanup clears it on any stalled transfer; if it somehow persists outside a transfer, restart the app.
 
 ## Logcat tags
 

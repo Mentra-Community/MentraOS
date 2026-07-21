@@ -1,0 +1,40 @@
+{
+  "name": "@mentra/cloud-protocol",
+  "version": "0.1.0-dev.0",
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*.ts"
+  },
+  "files": [
+    "src",
+    "!src/**/*.test.ts"
+  ],
+  "scripts": {
+    "test": "bun test"
+  },
+  "dependencies": {
+    "zod": "^3.24.1"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Mentra-Community/MentraOS.git",
+    "directory": "cloud-v2/packages/protocol"
+  },
+  "description": "MentraOS phone-cloud wire protocol — message schemas, envelopes and error types (zod)",
+  "keywords": [
+    "mentra",
+    "mentraos",
+    "protocol",
+    "schemas",
+    "zod"
+  ],
+  "homepage": "https://github.com/Mentra-Community/MentraOS/tree/dev/cloud-v2/packages/protocol#readme",
+  "bugs": {
+    "url": "https://github.com/Mentra-Community/MentraOS/issues"
+  }
+}

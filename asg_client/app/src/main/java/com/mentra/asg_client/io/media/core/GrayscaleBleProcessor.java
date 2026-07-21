@@ -4,8 +4,9 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Rect;
 import android.util.Log;
+
 import androidx.annotation.Nullable;
-import com.mentra.asg_client.io.media.core.textdetect.CropRect;
+
 import java.io.IOException;
 
 /**
@@ -20,10 +21,10 @@ import java.io.IOException;
  * the previous pipeline spent most of its ~35MB peak per photo.
  *
  * <p>Chroma is never allocated on our side, but the AVIF encoder itself still emits a YUV420
- * (color) bitstream internally - true YUV400-only encode requires a native libavif/libaom shim
- * that this library doesn't expose (Phase 2, out of scope here). The wire-size win from skipping
- * chroma is small regardless (flat chroma planes already compress to near-nothing in AV1); the
- * real payoff of this pass is the ~3x RAM reduction and matching increase in decode/encode speed.
+ * (color) bitstream internally - true YUV400-only encode requires a native libavif/libaom shim that
+ * this library doesn't expose (Phase 2, out of scope here). The wire-size win from skipping chroma
+ * is small regardless (flat chroma planes already compress to near-nothing in AV1); the real payoff
+ * of this pass is the ~3x RAM reduction and matching increase in decode/encode speed.
  */
 final class GrayscaleBleProcessor {
     private static final String TAG = "GrayscaleBleProcessor";
@@ -45,32 +46,51 @@ final class GrayscaleBleProcessor {
      */
     static Bitmap process(String jpegPath, @Nullable Rect roi, int targetWidth, int targetHeight)
             throws IOException {
+        return process(null, jpegPath, roi, targetWidth, targetHeight);
+    }
+
+    /** In-memory variant of {@link #process(String, Rect, int, int)} - no disk reads. */
+    static Bitmap process(byte[] jpegBytes, @Nullable Rect roi, int targetWidth, int targetHeight)
+            throws IOException {
+        return process(jpegBytes, "in-memory JPEG", roi, targetWidth, targetHeight);
+    }
+
+    private static Bitmap process(
+            @Nullable byte[] jpegBytes,
+            String jpegSource,
+            @Nullable Rect roi,
+            int targetWidth,
+            int targetHeight)
+            throws IOException {
         long start = System.currentTimeMillis();
 
         BitmapFactory.Options bounds = new BitmapFactory.Options();
         bounds.inJustDecodeBounds = true;
-        BitmapFactory.decodeFile(jpegPath, bounds);
+        decodeJpeg(jpegBytes, jpegSource, bounds);
         int srcWidth = bounds.outWidth;
         int srcHeight = bounds.outHeight;
         if (srcWidth <= 0 || srcHeight <= 0) {
-            throw new IOException("Failed to read JPEG bounds: " + jpegPath);
+            throw new IOException("Failed to read JPEG bounds: " + jpegSource);
         }
 
         Rect region =
-                (roi != null) ? clampRect(roi, srcWidth, srcHeight) : new Rect(0, 0, srcWidth, srcHeight);
+                (roi != null)
+                        ? clampRect(roi, srcWidth, srcHeight)
+                        : new Rect(0, 0, srcWidth, srcHeight);
 
         // Decode at the smallest power-of-two sample size that still comfortably covers the
         // target resolution - we never materialize a full-res ARGB bitmap here.
-        int sampleSize = computeSampleSize(region.width(), region.height(), targetWidth, targetHeight);
+        int sampleSize =
+                computeSampleSize(region.width(), region.height(), targetWidth, targetHeight);
 
         BitmapFactory.Options decodeOpts = new BitmapFactory.Options();
         decodeOpts.inSampleSize = sampleSize;
         // Source JPEG has no alpha; RGB_565 halves decode memory vs ARGB_8888 (2B/px vs 4B/px)
         // and loses nothing we need since we reduce to luma immediately below.
         decodeOpts.inPreferredConfig = Bitmap.Config.RGB_565;
-        Bitmap decoded = BitmapFactory.decodeFile(jpegPath, decodeOpts);
+        Bitmap decoded = decodeJpeg(jpegBytes, jpegSource, decodeOpts);
         if (decoded == null) {
-            throw new IOException("Failed to decode JPEG: " + jpegPath);
+            throw new IOException("Failed to decode JPEG: " + jpegSource);
         }
 
         float scale = 1f / sampleSize;
@@ -98,17 +118,17 @@ final class GrayscaleBleProcessor {
 
         Bitmap gray = lumaToGrayscaleBitmap(sharpened, outDims[0], outDims[1]);
 
-        Log.d(
+        Log.i(
                 TAG,
-                "GrayscaleBleProcessor: "
+                "GrayscaleBleProcessor finished: "
                         + srcWidth
                         + "x"
                         + srcHeight
-                        + " -> crop "
+                        + " JPEG → crop "
                         + lumaWidth
                         + "x"
                         + lumaHeight
-                        + " -> out "
+                        + " → BLE bitmap "
                         + outDims[0]
                         + "x"
                         + outDims[1]
@@ -116,6 +136,20 @@ final class GrayscaleBleProcessor {
                         + (System.currentTimeMillis() - start)
                         + "ms");
         return gray;
+    }
+
+    /**
+     * Decodes from the in-memory JPEG when present, else from the file path in {@code jpegSource}.
+     * Returns null (with populated bounds when {@code inJustDecodeBounds}) exactly like {@link
+     * BitmapFactory}.
+     */
+    @Nullable
+    private static Bitmap decodeJpeg(
+            @Nullable byte[] jpegBytes, String jpegSource, BitmapFactory.Options opts) {
+        if (jpegBytes != null) {
+            return BitmapFactory.decodeByteArray(jpegBytes, 0, jpegBytes.length, opts);
+        }
+        return BitmapFactory.decodeFile(jpegSource, opts);
     }
 
     private static Rect clampRect(Rect r, int width, int height) {
@@ -178,14 +212,10 @@ final class GrayscaleBleProcessor {
     }
 
     private static int[] fitWithinAspect(int width, int height, int targetWidth, int targetHeight) {
-        float aspect = (float) width / height;
-        int outWidth = targetWidth;
-        int outHeight = targetHeight;
-        if (aspect > (float) targetWidth / targetHeight) {
-            outHeight = Math.max(1, Math.round(targetWidth / aspect));
-        } else {
-            outWidth = Math.max(1, Math.round(targetHeight * aspect));
-        }
+        float scale =
+                Math.min(1f, Math.min(targetWidth / (float) width, targetHeight / (float) height));
+        int outWidth = Math.max(1, Math.round(width * scale));
+        int outHeight = Math.max(1, Math.round(height * scale));
         return new int[] {outWidth, outHeight};
     }
 
@@ -269,93 +299,6 @@ final class GrayscaleBleProcessor {
             bitmap.setPixels(row, 0, width, 0, y, width, 1);
         }
         return bitmap;
-    }
-
-    /**
-     * Result of {@link #extractDetectionLuma}: a subsampled full-frame luma buffer plus the
-     * true source-JPEG dimensions, so a caller running detection on this buffer can scale the
-     * returned crop back up to source-pixel coordinates via {@link #scaleDetectionRoi}.
-     *
-     * <p>{@code srcWidth}/{@code srcHeight} are carried explicitly because {@code
-     * BitmapFactory.inSampleSize} decoding uses integer division — the decoded dimensions are
-     * often not exactly {@code src / sampleSize}, so multiplying back by {@code sampleSize}
-     * would misalign the crop.
-     */
-    static final class DetectionLuma {
-        final byte[] luma;
-        final int width;
-        final int height;
-        final int sampleSize;
-        final int srcWidth;
-        final int srcHeight;
-
-        DetectionLuma(
-                byte[] luma, int width, int height, int sampleSize, int srcWidth, int srcHeight) {
-            this.luma = luma;
-            this.width = width;
-            this.height = height;
-            this.sampleSize = sampleSize;
-            this.srcWidth = srcWidth;
-            this.srcHeight = srcHeight;
-        }
-    }
-
-    /**
-     * Decodes {@code jpegPath} at the smallest sample size that still comfortably covers {@code
-     * analysisWidth}, then reduces it to a single-channel luma buffer. Used to feed {@code
-     * TextRegionDetector} a small analysis frame without ever allocating a full-resolution
-     * bitmap. Independent of {@link #process}, which performs its own separate decode.
-     */
-    static DetectionLuma extractDetectionLuma(String jpegPath, int analysisWidth) throws IOException {
-        BitmapFactory.Options bounds = new BitmapFactory.Options();
-        bounds.inJustDecodeBounds = true;
-        BitmapFactory.decodeFile(jpegPath, bounds);
-        int srcWidth = bounds.outWidth;
-        int srcHeight = bounds.outHeight;
-        if (srcWidth <= 0 || srcHeight <= 0) {
-            throw new IOException("Failed to read JPEG bounds: " + jpegPath);
-        }
-
-        // computeSampleSize doubles the sample size while both dimensions stay >= target; passing
-        // targetHeight=1 makes that condition a no-op for height (real photos are far from 1px
-        // tall at any sane sample size), so the loop is effectively driven by analysisWidth alone
-        // while inSampleSize decoding preserves aspect ratio for us.
-        int sampleSize = computeSampleSize(srcWidth, srcHeight, analysisWidth, 1);
-
-        BitmapFactory.Options decodeOpts = new BitmapFactory.Options();
-        decodeOpts.inSampleSize = sampleSize;
-        decodeOpts.inPreferredConfig = Bitmap.Config.RGB_565;
-        Bitmap decoded = BitmapFactory.decodeFile(jpegPath, decodeOpts);
-        if (decoded == null) {
-            throw new IOException("Failed to decode JPEG: " + jpegPath);
-        }
-
-        int width = decoded.getWidth();
-        int height = decoded.getHeight();
-        Rect fullFrame = new Rect(0, 0, width, height);
-        byte[] luma = extractCroppedLuma(decoded, fullFrame);
-        decoded.recycle();
-
-        return new DetectionLuma(luma, width, height, sampleSize, srcWidth, srcHeight);
-    }
-
-    /**
-     * Scales a {@code TextRegionDetector} crop (computed against the subsampled dimensions
-     * returned by {@link #extractDetectionLuma}) back up to true source-JPEG pixel coordinates.
-     *
-     * <p>Uses the actual decoded-to-source dimension ratio rather than multiplying by {@code
-     * sampleSize}: {@code BitmapFactory.inSampleSize} decoding rounds dimensions with integer
-     * division, so {@code decoded * sampleSize} can overshoot the real source size and misalign
-     * the crop. The result is clamped to the source bounds.
-     */
-    static Rect scaleDetectionRoi(CropRect roi, DetectionLuma input) {
-        float scaleX = input.srcWidth / (float) Math.max(1, input.width);
-        float scaleY = input.srcHeight / (float) Math.max(1, input.height);
-        int left = clampInt(Math.round(roi.left * scaleX), 0, input.srcWidth - 1);
-        int top = clampInt(Math.round(roi.top * scaleY), 0, input.srcHeight - 1);
-        int right = clampInt(Math.round(roi.right * scaleX), left + 1, input.srcWidth);
-        int bottom = clampInt(Math.round(roi.bottom * scaleY), top + 1, input.srcHeight);
-        return new Rect(left, top, right, bottom);
     }
 
     private static int clampInt(int v, int min, int max) {

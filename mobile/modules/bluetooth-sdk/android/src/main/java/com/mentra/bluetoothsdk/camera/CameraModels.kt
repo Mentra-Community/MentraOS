@@ -110,14 +110,15 @@ class CameraFov @JvmOverloads constructor(
     companion object {
         const val MIN_FOV = 62
         const val MAX_FOV = 118
-        const val DEFAULT_FOV = 102
+        const val DEFAULT_FOV = 118
         const val NARROW_FOV = 82
+        const val STANDARD_FOV = 102
         @JvmField
         val DEFAULT_ROI_POSITION = CameraRoiPosition.CENTER
         @JvmField
         val NARROW = CameraFov(NARROW_FOV, DEFAULT_ROI_POSITION)
         @JvmField
-        val STANDARD = CameraFov(DEFAULT_FOV, DEFAULT_ROI_POSITION)
+        val STANDARD = CameraFov(STANDARD_FOV, DEFAULT_ROI_POSITION)
         @JvmField
         val WIDE = CameraFov(MAX_FOV, DEFAULT_ROI_POSITION)
     }
@@ -200,8 +201,22 @@ data class PhotoRequest @JvmOverloads constructor(
     val ispAnalogGain: String? = null,
     val resetCaptureTuning: Boolean? = null,
     val mode: PhotoMode = PhotoMode.PHOTO,
+    /** `direct` disables BLE fallback; `ble` skips direct upload; `auto` tries both. */
+    val transferMethod: String = "auto",
 ) {
     companion object {
+        private fun transferMethodFromValue(value: Any?): String {
+            if (value == null) return "auto"
+            val raw = value as? String
+                ?: throw IllegalArgumentException(
+                    "Invalid transferMethod ${value::class.java.simpleName}. Expected auto, direct, or ble."
+                )
+            return raw.takeIf { it == "auto" || it == "direct" || it == "ble" }
+                ?: throw IllegalArgumentException(
+                    "Invalid transferMethod \"$raw\". Expected auto, direct, or ble."
+                )
+        }
+
         /** Mirrors iOS `BluetoothSdkModule` defaults for keys omitted from the JS bridge. */
         @JvmStatic
         fun fromMap(values: Map<String, Any>): PhotoRequest {
@@ -238,6 +253,7 @@ data class PhotoRequest @JvmOverloads constructor(
                 save = boolValue(values, "save", "saveToGallery") ?: false,
                 sound = boolValue(values, "sound") ?: true,
                 mode = PhotoMode.fromValue(stringValue(values, "mode")),
+                transferMethod = transferMethodFromValue(values["transferMethod"]),
                 exposureTimeNs = exposureTimeNs,
                 iso = iso,
                 aeExposureDivisor = aeDivisor,

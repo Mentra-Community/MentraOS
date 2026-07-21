@@ -1773,7 +1773,7 @@ class G1 : SGCManager() {
         return ""
     }
 
-    override fun requestWifiScan() {
+    override fun requestWifiScan(scanId: String?) {
 
     }
 

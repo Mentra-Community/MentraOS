@@ -580,12 +580,12 @@ export function AwesomeGalleryViewer({visible, photos, initialIndex, onClose, on
         onShare={onShare ? () => onShare(photos[currentIndex]) : undefined}
       />
 
-      {!isMetadataOpen && (
+      {/* {!isMetadataOpen && (
         <View style={$metadataHint} pointerEvents="none">
           <MaterialCommunityIcons name="chevron-up" size={20} color="rgba(255,255,255,0.78)" />
           <Text style={$metadataHintText}>Swipe up for details</Text>
         </View>
-      )}
+      )} */}
 
       <MediaMetadataSheet
         bottomSheetRef={metadataSheetRef}

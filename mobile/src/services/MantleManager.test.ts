@@ -1,11 +1,10 @@
 import {waitFor} from "@testing-library/react-native"
+import {router} from "expo-router"
 
 import mantle from "@/services/MantleManager"
-import {useCoreStore} from "@mentra/engine/internal"
-import {useDisplayStore} from "@mentra/engine/internal"
+import {localMiniappRuntime, useCoreStore, useDisplayStore, useSettingsStore} from "@mentra/engine/internal"
 import {isGlassesConnected, useGlassesStore} from "../../modules/engine/src/stores/glasses"
-import {SETTINGS} from "@mentra/engine"
-import {useSettingsStore} from "@mentra/engine/internal"
+import {engine, SETTINGS} from "@mentra/engine"
 import {crustModuleMock, emitCrustEvent, resetCrustModuleMock} from "@/test-utils/mockCrustModule"
 import {
   bluetoothSdkMock,
@@ -29,6 +28,13 @@ jest.mock("@mentra/crust", () => {
     default: crustModuleMock,
   }
 })
+
+const mockShowAlert = jest.fn()
+jest.mock("@/utils/AlertUtils", () => ({
+  __esModule: true,
+  default: (...args: unknown[]) => mockShowAlert(...args),
+  showAlert: (...args: unknown[]) => mockShowAlert(...args),
+}))
 
 // gallerySyncService moved into @mentra/engine; the global @mentra/engine jest mock
 // already supplies it (gallerySyncService.initialize), so no local mock is needed.
@@ -83,8 +89,12 @@ function resetMantleTestState() {
   useDisplayStore.setState({view: "main"})
 }
 
+let requestWifiSetup: (reason?: string, packageName?: string) => Promise<void>
+let routerPushSpy: jest.SpiedFunction<typeof router.push>
+
 describe("MantleManager", () => {
   beforeAll(async () => {
+    routerPushSpy = jest.spyOn(router, "push").mockImplementation(() => {})
     jest.useFakeTimers()
     resetBluetoothSdkMock()
     resetCrustModuleMock()
@@ -95,6 +105,7 @@ describe("MantleManager", () => {
       settings: {...state.settings, contextual_dashboard: true, auth_email: "from-server@example.com"},
     }))
     await mantle.init()
+    requestWifiSetup = (engine.configure as jest.Mock).mock.calls[0][0].ui.requestWifiSetup
   })
 
   afterEach(() => {
@@ -277,7 +288,8 @@ describe("MantleManager", () => {
 
   it("routes notification events without the retired V1 upload", async () => {
     // The Cloud V1 REST upload is gone; the events still flow through the
-    // local-miniapp forward path without throwing.
+    // local-miniapp forward path without a server roundtrip.
+    const forwardEvent = jest.spyOn(localMiniappRuntime, "forwardEvent")
     emitCrustEvent("phone_notification", {
       notificationId: "n-1",
       app: "Calendar",
@@ -291,6 +303,37 @@ describe("MantleManager", () => {
       notificationId: "n-1",
       notificationKey: "key-1",
       packageName: "com.calendar",
+    })
+    emitBluetoothSdkEvent("phone_notification", {
+      notificationId: "ancs-42",
+      app: "com.apple.mobilemail",
+      title: "Build complete",
+      content: "The iOS relay is working",
+      priority: "1",
+      timestamp: 12345,
+      packageName: "com.apple.mobilemail",
+    })
+    emitBluetoothSdkEvent("phone_notification_dismissed", {
+      notificationId: "ancs-42",
+      notificationKey: "ancs-42",
+      packageName: "com.apple.mobilemail",
+      timestamp: 12346,
+    })
+
+    expect(forwardEvent).toHaveBeenCalledWith("phone_notification", {
+      notificationId: "ancs-42",
+      app: "com.apple.mobilemail",
+      title: "Build complete",
+      content: "The iOS relay is working",
+      priority: "1",
+      timestamp: 12345,
+      packageName: "com.apple.mobilemail",
+    })
+    expect(forwardEvent).toHaveBeenCalledWith("phone_notification_dismissed", {
+      notificationId: "ancs-42",
+      notificationKey: "ancs-42",
+      packageName: "com.apple.mobilemail",
+      timestamp: 12346,
     })
     await Promise.resolve()
   })
@@ -339,5 +382,27 @@ describe("MantleManager", () => {
     })
     expect(useGlassesStore.getState().otaUpdateAvailable).toBeNull()
     expect(useGlassesStore.getState().otaInProgress).toBe(false)
+  })
+
+  it("prompts before opening Wi-Fi setup and backgrounds the requesting miniapp", async () => {
+    const cancelRequest = requestWifiSetup("Streaming needs Wi-Fi")
+    const [, message, cancelButtons] = mockShowAlert.mock.calls.at(-1)!
+
+    expect(message).toBe("Streaming needs Wi-Fi")
+    expect(engine.miniapps.clearForeground).not.toHaveBeenCalled()
+    cancelButtons[0].onPress()
+    await cancelRequest
+    expect(engine.miniapps.clearForeground).not.toHaveBeenCalled()
+
+    const confirmRequest = requestWifiSetup("Streaming needs Wi-Fi", "com.mentra.livestreamer")
+    const confirmButtons = mockShowAlert.mock.calls.at(-1)![2]
+    confirmButtons[1].onPress()
+    await confirmRequest
+
+    expect(engine.miniapps.clearForeground).toHaveBeenCalledTimes(1)
+    expect(routerPushSpy).toHaveBeenLastCalledWith({
+      pathname: "/wifi/scan",
+      params: {returnToMiniapp: "com.mentra.livestreamer"},
+    })
   })
 })

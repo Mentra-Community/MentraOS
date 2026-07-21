@@ -436,12 +436,25 @@ sealed interface StreamStatus {
 data class StreamStatusEvent(
     val status: StreamStatus,
 ) {
-    constructor(values: Map<String, Any>) : this(StreamStatus.fromMap(values))
+    // True when the glasses will retry the failed publisher themselves
+    // (emitting side lands in PR #3488); absent on older firmware and on
+    // events not parsed from a glasses status map. Carried here instead of
+    // on StreamStatus.Error so the public Error shape stays unchanged.
+    var willRetry: Boolean? = null
+        private set
+
+    constructor(values: Map<String, Any>) : this(StreamStatus.fromMap(values)) {
+        willRetry = boolValue(values, "willRetry")
+    }
 
     val state: StreamState get() = status.state
     val streamId: String? get() = status.streamId
     val resolvedConfig: StreamResolvedConfig? get() = status.resolvedConfig
-    val values: Map<String, Any> get() = status.toEventMap()
+    val values: Map<String, Any>
+        get() = buildMap {
+            putAll(status.toEventMap())
+            willRetry?.let { put("willRetry", it) }
+        }
 }
 
 data class KeepAliveAckEvent(

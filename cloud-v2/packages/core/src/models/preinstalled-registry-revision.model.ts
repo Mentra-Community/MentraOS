@@ -1,4 +1,5 @@
-import { Schema, model, type InferSchemaType } from "mongoose";
+import { Schema, type InferSchemaType } from "mongoose";
+import { registerModel } from "./register-model";
 
 export const PREINSTALLED_INSTALL_POLICIES = ["install_once", "keep_updated", "mandatory"] as const;
 export const PREINSTALLED_REVISION_STATUSES = ["draft", "active", "archived"] as const;
@@ -38,7 +39,7 @@ PreinstalledRegistryRevisionSchema.index(
 );
 
 export type PreinstalledRegistryRevision = InferSchemaType<typeof PreinstalledRegistryRevisionSchema>;
-export const PreinstalledRegistryRevisionModel = model(
+export const PreinstalledRegistryRevisionModel = registerModel(
   "PreinstalledRegistryRevision",
   PreinstalledRegistryRevisionSchema,
 );

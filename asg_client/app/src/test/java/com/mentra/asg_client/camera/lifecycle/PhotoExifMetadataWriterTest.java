@@ -63,6 +63,23 @@ public class PhotoExifMetadataWriterTest {
     }
 
     @Test
+    public void writeCaptureIdCanUseIntendedCapturePathForCachedJpeg() throws Exception {
+        File cacheDir = tempFolder.newFolder("text_mode_uploads");
+        File cachedJpeg = new File(cacheDir, "transient.jpg");
+        File captureDir = tempFolder.newFolder("IMG_20260709_120000_123_456_cachedReq");
+        File intendedJpeg = new File(captureDir, "base.jpg");
+        PhotoExifMetadataWriter.writeMinimalJpegForTest(cachedJpeg);
+
+        PhotoExifMetadataWriter.writeCaptureIdFromPath(
+                cachedJpeg.getAbsolutePath(), intendedJpeg.getAbsolutePath());
+
+        androidx.exifinterface.media.ExifInterface exif =
+                new androidx.exifinterface.media.ExifInterface(cachedJpeg.getAbsolutePath());
+        assertThat(exif.getAttribute(androidx.exifinterface.media.ExifInterface.TAG_IMAGE_UNIQUE_ID))
+                .isEqualTo("IMG_20260709_120000_123_456_cachedReq");
+    }
+
+    @Test
     public void writeCaptureIdIsNoOpOutsideCaptureDirectories() throws Exception {
         File jpeg = tempFolder.newFile("loose.jpg");
         PhotoExifMetadataWriter.writeMinimalJpegForTest(jpeg);
@@ -112,24 +129,71 @@ public class PhotoExifMetadataWriterTest {
     }
 
     @Test
-    public void encodeJpegForBlePreservesImuMetadata() throws Exception {
+    public void buildCaptureExifSegmentCarriesImuMetadata() throws Exception {
         File jpeg = tempFolder.newFile("source.jpg");
         PhotoExifMetadataWriter.writeMinimalJpegForTest(jpeg);
         PhotoExifMetadataWriter.writeImuPayload(jpeg.getAbsolutePath(), samplePayload(1));
 
-        android.graphics.Bitmap bitmap =
-                android.graphics.Bitmap.createBitmap(32, 16, android.graphics.Bitmap.Config.ARGB_8888);
-        try {
-            byte[] bleJpeg =
-                    PhotoExifMetadataWriter.encodeJpegForBle(
-                            bitmap, 95, jpeg.getAbsolutePath());
-            assertThat(bleJpeg.length).isGreaterThan(100);
-            File decoded = tempFolder.newFile("ble.jpg");
-            java.nio.file.Files.write(decoded.toPath(), bleJpeg);
-            assertThat(PhotoExifMetadataWriter.hasImuMetadata(decoded.getAbsolutePath())).isTrue();
-        } finally {
-            bitmap.recycle();
-        }
+        byte[] segment =
+                PhotoExifMetadataWriter.buildCaptureExifApp1Segment(jpeg.getAbsolutePath());
+
+        assertThat(segment).isNotNull();
+        assertThat(segment[0] & 0xFF).isEqualTo(0xFF);
+        assertThat(segment[1] & 0xFF).isEqualTo(0xE1);
+        assertThat(segment[4]).isEqualTo((byte) 'E');
+        assertThat(segment[5]).isEqualTo((byte) 'x');
+    }
+
+    @Test
+    public void buildCaptureExifSegmentIsNullWithoutCaptureMetadata() throws Exception {
+        File jpeg = tempFolder.newFile("plain.jpg");
+        PhotoExifMetadataWriter.writeMinimalJpegForTest(jpeg);
+
+        assertThat(PhotoExifMetadataWriter.buildCaptureExifApp1Segment(jpeg.getAbsolutePath()))
+                .isNull();
+    }
+
+    @Test
+    public void buildCaptureExifSegmentCarriesImageUniqueId() throws Exception {
+        File captureDir = tempFolder.newFolder("IMG_20260709_120000_123_456_reqC");
+        File jpeg = new File(captureDir, "base.jpg");
+        PhotoExifMetadataWriter.writeMinimalJpegForTest(jpeg);
+        PhotoExifMetadataWriter.writeCaptureIdFromPath(jpeg.getAbsolutePath());
+
+        byte[] segment =
+                PhotoExifMetadataWriter.buildCaptureExifApp1Segment(jpeg.getAbsolutePath());
+
+        assertThat(segment).isNotNull();
+        assertThat(new String(segment, java.nio.charset.StandardCharsets.ISO_8859_1))
+                .contains("IMG_20260709_120000_123_456_reqC");
+    }
+
+    @Test
+    public void ramFirstExifSegmentCarriesPayloadAndIntendedCaptureId() throws Exception {
+        File captureDir = tempFolder.newFolder("IMG_20260709_120000_123_456_ramReq");
+        String intendedPath = new File(captureDir, "base.jpg").getAbsolutePath();
+
+        byte[] segment =
+                PhotoExifMetadataWriter.buildCaptureExifApp1Segment(
+                        samplePayload(2), intendedPath);
+
+        assertThat(segment).isNotNull();
+        String bytes = new String(segment, java.nio.charset.StandardCharsets.ISO_8859_1);
+        assertThat(bytes).contains("IMG_20260709_120000_123_456_ramReq");
+        assertThat(bytes).contains("sampleCount");
+    }
+
+    @Test
+    public void ramFirstExifSegmentCarriesCaptureIdWithoutImu() throws Exception {
+        File captureDir = tempFolder.newFolder("IMG_20260709_120000_123_456_noImu");
+        String intendedPath = new File(captureDir, "base.jpg").getAbsolutePath();
+
+        byte[] segment =
+                PhotoExifMetadataWriter.buildCaptureExifApp1Segment(null, intendedPath);
+
+        assertThat(segment).isNotNull();
+        assertThat(new String(segment, java.nio.charset.StandardCharsets.ISO_8859_1))
+                .contains("IMG_20260709_120000_123_456_noImu");
     }
 
     @Test

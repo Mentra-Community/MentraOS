@@ -1,4 +1,5 @@
-import { Schema, model, type InferSchemaType } from "mongoose";
+import { Schema, type InferSchemaType } from "mongoose";
+import { registerModel } from "./register-model";
 
 export const MINIAPP_ASSET_ROLES = [
   "release_bundle",
@@ -29,4 +30,4 @@ const MiniAppAssetSchema = new Schema(
 );
 
 export type MiniAppAsset = InferSchemaType<typeof MiniAppAssetSchema>;
-export const MiniAppAssetModel = model("MiniAppAsset", MiniAppAssetSchema);
+export const MiniAppAssetModel = registerModel("MiniAppAsset", MiniAppAssetSchema);

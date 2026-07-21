@@ -195,6 +195,16 @@ class LocalDisplayManager {
     }
   }
 
+  /** Report-safe ownership snapshot for incident diagnostics. */
+  public getDiagnosticSnapshot(): Record<string, unknown> {
+    return {
+      coreAppPackageName: this.coreApp,
+      currentDisplayPackageName: this.currentDisplay?.packageName ?? null,
+      backgroundLockPackageName: this.backgroundLock?.packageName ?? null,
+      bootingPackageName: this.bootingApp?.packageName ?? null,
+    }
+  }
+
   /**
    * A local miniapp is going away. Clean up all state associated with it.
    */

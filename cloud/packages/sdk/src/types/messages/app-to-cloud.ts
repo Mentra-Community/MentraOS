@@ -52,6 +52,8 @@ export interface PhotoRequest extends BaseMessage {
   authToken?: string; // Auth token for custom webhook authentication
   /** Desired photo size sent by App. Defaults to 'medium' if omitted. */
   size?: "low" | "medium" | "high" | "max";
+  /** Capture mode. Text mode preserves source detail and enables on-glasses text ROI cropping. */
+  mode?: "photo" | "text";
   /** Image compression level: none, medium, or heavy. Defaults to none. */
   compress?: "none" | "medium" | "heavy";
   /** Controls shutter sound. Defaults to true if omitted. */

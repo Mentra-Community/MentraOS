@@ -24,7 +24,7 @@
  */
 import nacl from "tweetnacl";
 import type { UdpSocketLike } from "../../transports";
-import { UDP_LIVENESS_PROBE_PREFIX, type ConnectionAck } from "@mentra/cloud-runtime/protocol";
+import { UDP_LIVENESS_PROBE_PREFIX, type ConnectionAck } from "@mentra/cloud-protocol";
 
 /** The audio block of `connection.ack`, present only when UDP audio is offered. */
 type AudioConfig = NonNullable<ConnectionAck["audio"]>;

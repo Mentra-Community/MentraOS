@@ -48,6 +48,10 @@ class PhoneAudioMonitor private constructor(private val context: Context) {
     private var listener: Listener? = null
     private var isMonitoring = false
     private var lastKnownState = false
+    // Set explicitly by AudioPlaybackService. Unlike isPlaying(), this is
+    // limited to Mentra's own playback and is safe for mic-watchdog gating.
+    @Volatile
+    private var ownAppAudioPlaying = false
 
     // Rate limiting: max 1 state change notification per 500ms
     // If state changes rapidly (true/false/true), we wait and send the final state
@@ -78,6 +82,8 @@ class PhoneAudioMonitor private constructor(private val context: Context) {
         return audioManager.isMusicActive
     }
 
+    fun isOwnAppAudioPlaying(): Boolean = ownAppAudioPlaying
+
     /**
      * Notify the monitor that our own app started/stopped playing audio
      * Called from RN AudioPlaybackService via Bridge
@@ -88,6 +94,7 @@ class PhoneAudioMonitor private constructor(private val context: Context) {
      * The hold-off prevents us from reporting STOPPED during this transition.
      */
     fun setOwnAppAudioPlaying(playing: Boolean) {
+        ownAppAudioPlaying = playing
         Bridge.log("$TAG: Own app audio -> ${if (playing) "PLAYING" else "STOPPED"}")
 
         if (playing) {

@@ -135,6 +135,48 @@ describe("notifyReportSlack", () => {
     expect(blocksJson).toContain("<https://admin.example.test/?report=rep_TEST123|Open incident>");
   });
 
+  test("shows the resolved account email as the user, mentraUserId only as fallback", async () => {
+    process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL = WEBHOOK_URL;
+
+    await notifyReportSlack(bugNotification({ userEmail: "reporter@example.test" }));
+    await notifyReportSlack(bugNotification({ userEmail: null }));
+
+    const bodies = fetchMock.mock.calls.map((call) => {
+      const [, init] = call as unknown as [string, RequestInit];
+      return JSON.parse(String(init.body)) as { text: string; blocks: unknown[] };
+    });
+    expect(JSON.stringify(bodies[0].blocks)).toContain("*User:*\\nreporter@example.test");
+    expect(JSON.stringify(bodies[0].blocks)).not.toContain("user-1");
+    expect(bodies[0].text).toContain("from reporter@example.test");
+    expect(JSON.stringify(bodies[1].blocks)).toContain("*User:*\\nuser-1");
+  });
+
+  test("adds https to a schemeless CLOUD_ADMIN_CONSOLE_URL so Slack links leave Slack", async () => {
+    process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL = WEBHOOK_URL;
+    process.env.CLOUD_ADMIN_CONSOLE_URL = "admin.dev.mentraglass.com";
+
+    await notifyReportSlack(bugNotification());
+
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    const payload = JSON.parse(String(init.body)) as { text: string; blocks: unknown[] };
+    const blocksJson = JSON.stringify(payload.blocks);
+    expect(blocksJson).toContain(
+      "<https://admin.dev.mentraglass.com/?report=rep_TEST123|Open incident>",
+    );
+    expect(payload.text).toContain("Console: https://admin.dev.mentraglass.com/?report=rep_TEST123");
+  });
+
+  test("keeps an explicit http scheme on CLOUD_ADMIN_CONSOLE_URL", async () => {
+    process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL = WEBHOOK_URL;
+    process.env.CLOUD_ADMIN_CONSOLE_URL = "http://localhost:5173";
+
+    await notifyReportSlack(bugNotification());
+
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    const blocksJson = JSON.stringify(JSON.parse(String(init.body)).blocks);
+    expect(blocksJson).toContain("<http://localhost:5173/?report=rep_TEST123|Open incident>");
+  });
+
   test("omits the console link and System line when environment and context are unknown", async () => {
     process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL = WEBHOOK_URL;
 

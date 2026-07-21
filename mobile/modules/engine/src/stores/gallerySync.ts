@@ -53,6 +53,7 @@ export interface SyncQueue {
 export interface GallerySyncInfo {
   // State machine
   syncState: SyncState
+  syncStarting: boolean
 
   // Progress tracking
   currentFile: string | null
@@ -82,6 +83,7 @@ export interface GallerySyncInfo {
 export interface GallerySyncState extends GallerySyncInfo {
   // State transitions
   setSyncState: (state: SyncState) => void
+  setSyncStarting: (starting: boolean) => void
   setRequestingHotspot: () => void
   setConnectingWifi: () => void
   setSyncing: (files: PhotoInfo[]) => void
@@ -122,6 +124,7 @@ export interface GallerySyncState extends GallerySyncInfo {
 
 const initialState: GallerySyncInfo & {processingFiles: Set<string>; processedFiles: number} = {
   syncState: "idle",
+  syncStarting: false,
   currentFile: null,
   currentFileProgress: 0,
   completedFiles: 0,
@@ -146,6 +149,7 @@ export const useGallerySyncStore = create<GallerySyncState>()(
 
     // State transitions
     setSyncState: (syncState: SyncState) => set({syncState}),
+    setSyncStarting: (syncStarting: boolean) => set({syncStarting}),
 
     setRequestingHotspot: () =>
       set({

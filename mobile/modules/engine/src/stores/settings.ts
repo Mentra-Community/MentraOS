@@ -292,7 +292,7 @@ export const SETTINGS: Record<string, Setting> = {
   },
   theme_preference: {
     key: "theme_preference",
-    defaultValue: () => (__DEV__ ? "system" : "light"),
+    defaultValue: () => "light",
     // Force light mode - i mode is not complete yet
     // override: () => "light",
     writable: true,
@@ -906,7 +906,15 @@ export const useSettingsStore = create<SettingsState>()(
           }
           // normal key:value pair:
           let value = res.value
-          console.log(`SETTINGS: LOAD: ${setting.key} = ${value.value}`)
+          // res.value IS the stored value; logging value.value printed
+          // "undefined" for every loaded setting and disguised present
+          // values as missing. Redact token- and email-bearing keys: console
+          // logs are uploaded in bug-report artifacts (same keys
+          // diagnosticContext's SENSITIVE_SETTINGS_KEYS strips, minus an
+          // import that would cycle stores <-> utils).
+          const printable =
+            setting.key.includes("token") || setting.key.includes("email") ? "<redacted>" : JSON.stringify(value)
+          console.log(`SETTINGS: LOAD: ${setting.key} = ${printable}`)
           loadedSettings[setting.key] = value
         }
 
@@ -951,6 +959,27 @@ export const useSettingsStore = create<SettingsState>()(
           // want to retry the migration on every boot. The local value is
           // already correct.
           storage.save(MIGRATION_KEY, true)
+        }
+
+        // The old camera default cropped the sensor to 102°. Move existing
+        // default-shaped values to the full 118° sensor once; named miniapp
+        // requests for the 102° "standard" preset remain available.
+        const CAMERA_FOV_MIGRATION_KEY = "migration:camera_fov_full_sensor_v1"
+        const cameraFovMigrationDone = storage.load<boolean>(CAMERA_FOV_MIGRATION_KEY)
+        if (cameraFovMigrationDone.is_error() || !cameraFovMigrationDone.value) {
+          const current = get().getSetting(SETTINGS.camera_fov.key) as {fov?: number; roi_position?: number} | undefined
+          let migrationSucceeded = true
+          if (current?.fov === 102 && (current.roi_position ?? 0) === 0) {
+            const result = await get().setSetting(SETTINGS.camera_fov.key, {fov: 118, roi_position: 0}, true)
+            if (result.is_error()) {
+              console.log("SETTINGS: camera FOV migration failed:", result.error)
+              migrationSucceeded = false
+            }
+          }
+          // Unlike the blur migration above, a failed camera set may leave the
+          // local value unchanged. Only mark this migration complete once the
+          // desired value was applied so a transient failure retries on boot.
+          if (migrationSucceeded) storage.save(CAMERA_FOV_MIGRATION_KEY, true)
         }
       })
       loadAllSettingsInFlight = inFlight

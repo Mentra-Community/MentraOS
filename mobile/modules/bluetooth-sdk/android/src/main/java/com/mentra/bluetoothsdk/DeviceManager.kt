@@ -28,6 +28,7 @@ import com.mentra.bluetoothsdk.utils.ControllerTypes
 import com.mentra.bluetoothsdk.utils.DeviceTypes
 import com.mentra.bluetoothsdk.utils.MicMap
 import com.mentra.bluetoothsdk.utils.MicTypes
+import com.mentra.bluetoothsdk.utils.PhoneAudioMonitor
 import com.mentra.lc3Lib.Lc3Cpp
 import com.mentra.bluetoothsdk.stt.SherpaOnnxTranscriber
 import kotlinx.coroutines.CoroutineScope
@@ -326,6 +327,16 @@ class DeviceManager {
         val glassesMicEnabled = DeviceStore.get("glasses", "micEnabled") as? Boolean ?: false
         val glassesConnected = DeviceStore.get("glasses", "connected") as? Boolean ?: false
         if (!glassesMicEnabled || !glassesConnected) {
+            return
+        }
+
+        if (sgc?.isMicSuspendedForAudio == true) {
+            Bridge.log("MAN: Glasses mic intentionally suspended for phone audio; skipping mic recovery")
+            return
+        }
+
+        if (PhoneAudioMonitor.getInstance(Bridge.getContext()).isOwnAppAudioPlaying()) {
+            Bridge.log("MAN: Mentra audio is playing; skipping glasses mic recovery")
             return
         }
 
@@ -1194,6 +1205,10 @@ class DeviceManager {
                 }
             )
             nextTranscriber.initialize()
+            if (!nextTranscriber.isInitialized()) {
+                Bridge.log("SherpaOnnxTranscriber initialize() returned without becoming ready")
+                return false
+            }
             transcriber = nextTranscriber
             Bridge.log("SherpaOnnxTranscriber fully initialized")
             true
@@ -1556,10 +1571,10 @@ class DeviceManager {
         sgc?.sendStreamKeepAlive(message)
     }
 
-    fun requestWifiScan() {
+    fun requestWifiScan(scanId: String? = null) {
         Bridge.log("MAN: Requesting wifi scan")
         DeviceStore.apply("bluetooth", "wifiScanResults", emptyList<Any>())
-        sgc?.requestWifiScan()
+        sgc?.requestWifiScan(scanId)
     }
 
     fun sendIncidentId(incidentId: String, apiBaseUrl: String? = null) {
@@ -1649,6 +1664,38 @@ class DeviceManager {
         live.sendCameraFovSetting(requestId, fov, roiPosition)
     }
 
+    /** Sends the pre-lease FOV command used by ASG clients that do not send an acknowledgement. */
+    fun sendLegacyCameraFovSetting(fov: Int, roiPosition: Int) {
+        val glassesConnected = DeviceStore.get("glasses", "connected") as? Boolean ?: false
+        if (!glassesConnected) throw IllegalStateException("not_connected")
+        val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
+        live.sendCameraFovSetting(null, fov, roiPosition)
+    }
+
+    /** Replays the persistent base FOV without waiting for an acknowledgement. */
+    fun restoreLegacyCameraFovSetting() {
+        val glassesConnected = DeviceStore.get("glasses", "connected") as? Boolean ?: false
+        if (!glassesConnected) throw IllegalStateException("not_connected")
+        val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
+        live.sendCameraFovSetting()
+    }
+
+    fun sendCameraFovOverride(
+        requestId: String,
+        leaseId: String,
+        fov: Int,
+        roiPosition: Int,
+        ttlMs: Int,
+    ) {
+        val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
+        live.sendCameraFovOverride(requestId, leaseId, fov, roiPosition, ttlMs)
+    }
+
+    fun releaseCameraFovOverride(requestId: String, leaseId: String) {
+        val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
+        live.releaseCameraFovOverride(requestId, leaseId)
+    }
+
     fun sendCameraTuningConfig(requestId: String, anrOn: Boolean, gainOn: Boolean) {
         val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
         live.sendCameraTuningConfig(requestId, anrOn, gainOn)
@@ -1657,8 +1704,11 @@ class DeviceManager {
     fun warmUpCamera(
         requestId: String,
         size: PhotoSize,
+        mode: PhotoMode = PhotoMode.PHOTO,
         exposureTimeNs: Long?,
         durationMs: Int,
+        zsl: Boolean? = null,
+        mfnr: Boolean? = null,
     ) {
         // Fail fast like other camera commands so the SDK promise rejects immediately instead of
         // hanging until the request timeout with no camera_status.
@@ -1668,7 +1718,12 @@ class DeviceManager {
                     "unsupported_device",
                     "This command requires Mentra Live glasses.",
                 )
-        live.warmUpCamera(requestId, size, exposureTimeNs, durationMs)
+        live.warmUpCamera(requestId, size, mode, exposureTimeNs, durationMs, zsl, mfnr)
+    }
+
+    fun stopCameraWarmUp(requestId: String) {
+        val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
+        live.stopCameraWarmUp(requestId)
     }
 
     /**

@@ -7,9 +7,14 @@ import {beforeEach, describe, expect, mock, test} from "bun:test"
 // --- BLE native bridge (@mentra/bluetooth-sdk/internal) -------------------
 const requestPhotoNative = mock(async (_req: unknown): Promise<undefined> => undefined)
 const warmUpCameraNative = mock(async (_req: unknown): Promise<undefined> => undefined)
+const stopCameraWarmUpNative = mock(async (_requestId: string): Promise<undefined> => undefined)
 
 mock.module("@mentra/bluetooth-sdk/internal", () => ({
-  default: {requestPhoto: requestPhotoNative, warmUpCamera: warmUpCameraNative},
+  default: {
+    requestPhoto: requestPhotoNative,
+    warmUpCamera: warmUpCameraNative,
+    stopCameraWarmUp: stopCameraWarmUpNative,
+  },
 }))
 
 // --- cloud-v2 managed-photo service (CloudClientService singleton) --------
@@ -42,11 +47,12 @@ mock.module("../GlassesReadiness", () => ({
   isGlassesConnected: (connection: {state?: string} | undefined) => connection?.state === "connected",
 }))
 
-const {PhonePhotoCoordinator, PhotoError} = await import("../PhonePhotoCoordinator")
+const {CAPTURE_PIPELINE_TIMEOUT_MS, PhonePhotoCoordinator, PhotoError} = await import("../PhonePhotoCoordinator")
 
 beforeEach(() => {
   requestPhotoNative.mockClear()
   warmUpCameraNative.mockClear()
+  stopCameraWarmUpNative.mockClear()
   startManagedPhoto.mockClear()
   awaitManagedPhotoReady.mockClear()
   glassesState = {connection: {state: "connected"}}
@@ -69,6 +75,10 @@ async function expectPhotoError(p: Promise<unknown>): Promise<InstanceType<typeo
 }
 
 describe("PhonePhotoCoordinator", () => {
+  test("pipeline watchdog does not preempt the managed-photo ready-push timeout", () => {
+    expect(CAPTURE_PIPELINE_TIMEOUT_MS).toBeGreaterThan(30_000)
+  })
+
   describe("prechecks", () => {
     test("rejects with GLASSES_NOT_CONNECTED when glasses are disconnected", async () => {
       glassesState = {connection: {state: "disconnected"}}
@@ -141,15 +151,63 @@ describe("PhonePhotoCoordinator", () => {
       expect(result.photoUrl).toBe(PRESIGN.readUrl)
     })
 
-    test("forces BLE transfer when the upload URL is loopback (adb-reversed local runtime)", async () => {
+    test("forces BLE transfer when the upload URL is loopback, overriding direct", async () => {
       startManagedPhoto.mockResolvedValueOnce({
         requestId: "rq-loop",
         uploadUrl: "http://127.0.0.1:8089/photo/upload/rq-loop",
         readUrl: "http://127.0.0.1:8089/photo/read/rq-loop",
       })
       const coord = new PhonePhotoCoordinator()
-      await coord.takePhoto("com.a", {})
+      await coord.takePhoto("com.a", {transferMethod: "direct"})
       expect(requestPhotoNative.mock.calls[0]![0]).toMatchObject({transferMethod: "ble"})
+    })
+
+    test("passes a miniapp's forced BLE transfer to the native request", async () => {
+      const coord = new PhonePhotoCoordinator()
+      await coord.takePhoto("com.a", {transferMethod: "ble"})
+      expect(requestPhotoNative.mock.calls[0]![0]).toMatchObject({transferMethod: "ble"})
+    })
+
+    test("passes a miniapp's direct transfer to the native request", async () => {
+      const coord = new PhonePhotoCoordinator()
+      await coord.takePhoto("com.a", {transferMethod: "direct"})
+      expect(requestPhotoNative.mock.calls[0]![0]).toMatchObject({transferMethod: "direct"})
+    })
+
+    test("rejects an unknown runtime transfer method before starting the photo pipeline", async () => {
+      const coord = new PhonePhotoCoordinator()
+      const promise = coord.takePhoto("com.a", {transferMethod: "wifi"} as any)
+
+      await expect(promise).rejects.toMatchObject({
+        code: "INVALID_ARGUMENT",
+        message: 'Invalid transferMethod "wifi". Expected "auto", "direct", or "ble".',
+      })
+      expect(startManagedPhoto).not.toHaveBeenCalled()
+      expect(requestPhotoNative).not.toHaveBeenCalled()
+    })
+
+    test("rejects a runtime null transfer method before starting the photo pipeline", async () => {
+      const coord = new PhonePhotoCoordinator()
+      const promise = coord.takePhoto("com.a", {transferMethod: null} as any)
+
+      await expect(promise).rejects.toMatchObject({
+        code: "INVALID_ARGUMENT",
+        message: 'Invalid transferMethod null. Expected "auto", "direct", or "ble".',
+      })
+      expect(startManagedPhoto).not.toHaveBeenCalled()
+      expect(requestPhotoNative).not.toHaveBeenCalled()
+    })
+
+    test("rejects a runtime empty transfer method before starting the photo pipeline", async () => {
+      const coord = new PhonePhotoCoordinator()
+      const promise = coord.takePhoto("com.a", {transferMethod: ""} as any)
+
+      await expect(promise).rejects.toMatchObject({
+        code: "INVALID_ARGUMENT",
+        message: 'Invalid transferMethod "". Expected "auto", "direct", or "ble".',
+      })
+      expect(startManagedPhoto).not.toHaveBeenCalled()
+      expect(requestPhotoNative).not.toHaveBeenCalled()
     })
 
     test("passes saveToGallery and sound through to the native take_photo command", async () => {
@@ -165,10 +223,24 @@ describe("PhonePhotoCoordinator", () => {
       expect(requestPhotoNative.mock.calls[0]![0]).toMatchObject({exposureTimeNs: 12_000_000})
     })
 
-    test("passes text mode through to the native take_photo command", async () => {
+    test("passes text mode through without forcing public max quality", async () => {
       const coord = new PhonePhotoCoordinator()
-      await coord.takePhoto("com.a", {mode: "text"})
-      expect(requestPhotoNative.mock.calls[0]![0]).toMatchObject({mode: "text"})
+      await coord.takePhoto("com.a", {mode: "text", size: "low"})
+      expect(startManagedPhoto).toHaveBeenCalledWith({size: "max"})
+      expect(requestPhotoNative.mock.calls[0]![0]).toMatchObject({mode: "text", size: "low"})
+    })
+
+    test("passes zsl and mfnr through to the native take_photo command", async () => {
+      const coord = new PhonePhotoCoordinator()
+      await coord.takePhoto("com.a", {zsl: true, mfnr: false})
+      expect(requestPhotoNative.mock.calls[0]![0]).toMatchObject({zsl: true, mfnr: false})
+    })
+
+    test("omits zsl and mfnr when unset", async () => {
+      const coord = new PhonePhotoCoordinator()
+      await coord.takePhoto("com.a", {})
+      expect(requestPhotoNative.mock.calls[0]![0]).not.toHaveProperty("zsl")
+      expect(requestPhotoNative.mock.calls[0]![0]).not.toHaveProperty("mfnr")
     })
 
     test("normalizes legacy size 'full' to 'max' for the native take_photo command", async () => {
@@ -176,6 +248,14 @@ describe("PhonePhotoCoordinator", () => {
       // Legacy wire values may still arrive from older callers at runtime.
       await coord.takePhoto("com.a", {size: "full"})
       expect(requestPhotoNative.mock.calls[0]![0]).toMatchObject({size: "max"})
+      expect(startManagedPhoto).toHaveBeenCalledWith({size: "full"})
+    })
+
+    test.each(["low", "high", "max"] as const)("presign accepts canonical size %s without HTTP 400", async (size) => {
+      const coord = new PhonePhotoCoordinator()
+      await coord.takePhoto("com.a", {size})
+      expect(startManagedPhoto).toHaveBeenCalledWith({size})
+      expect(requestPhotoNative.mock.calls[0]![0]).toMatchObject({size})
     })
 
     test("owns(requestId) true mid-flight, false after completion", async () => {
@@ -213,7 +293,7 @@ describe("PhonePhotoCoordinator", () => {
       const coord = new PhonePhotoCoordinator()
       awaitManagedPhotoReady.mockImplementationOnce(() => new Promise<never>(() => {}))
       void coord.takePhoto("com.a", {}).catch(() => {})
-      await new Promise(r => setTimeout(r, 5))
+      await new Promise((r) => setTimeout(r, 5))
       const bleId = (requestPhotoNative.mock.calls[0]![0] as {requestId: string}).requestId
       expect(coord.owns(bleId)).toBe(true)
       expect(coord.resolveCloudRequestId(bleId)).toBe("rq-test-1")
@@ -269,7 +349,7 @@ describe("PhonePhotoCoordinator", () => {
       const coord = new PhonePhotoCoordinator()
       const p = coord.takePhoto("com.a", {})
       // Wait a tick so the coordinator registers activeRequests.
-      await new Promise(r => setTimeout(r, 5))
+      await new Promise((r) => setTimeout(r, 5))
       expect(coord.owns("rq-test-1")).toBe(true)
       coord.handlePhotoError("rq-test-1", "BATTERY_LOW", "Battery too low")
       const err = await expectPhotoError(p)
@@ -330,20 +410,54 @@ describe("PhonePhotoCoordinator", () => {
       await coord.warmUpCamera("com.a", {})
       expect(warmUpCameraNative).toHaveBeenCalledTimes(1)
       expect(warmUpCameraNative.mock.calls[0]![0]).toEqual({
+        requestId: expect.any(String),
         size: "medium",
+        mode: "photo",
         exposureTimeNs: null,
         durationMs: 15000,
       })
+      await coord.stopWarmUpForApp("com.a")
     })
 
     test("passes size/exposure/duration through to the native warm-up command", async () => {
       const coord = new PhonePhotoCoordinator()
       await coord.warmUpCamera("com.a", {size: "high", exposureTimeNs: 5_000_000, durationMs: 20_000})
       expect(warmUpCameraNative.mock.calls[0]![0]).toEqual({
+        requestId: expect.any(String),
         size: "high",
+        mode: "photo",
         exposureTimeNs: 5_000_000,
         durationMs: 20_000,
       })
+      await coord.stopWarmUpForApp("com.a")
+    })
+
+    test("text mode warms with mode=text without forcing public max quality", async () => {
+      const coord = new PhonePhotoCoordinator()
+      await coord.warmUpCamera("com.a", {size: "low", mode: "text"})
+      expect(warmUpCameraNative.mock.calls[0]![0]).toEqual({
+        requestId: expect.any(String),
+        size: "low",
+        mode: "text",
+        exposureTimeNs: null,
+        durationMs: 15000,
+      })
+      await coord.stopWarmUpForApp("com.a")
+    })
+
+    test("passes zsl and mfnr through to the native warm-up command", async () => {
+      const coord = new PhonePhotoCoordinator()
+      await coord.warmUpCamera("com.a", {zsl: true, mfnr: false})
+      expect(warmUpCameraNative.mock.calls[0]![0]).toMatchObject({zsl: true, mfnr: false})
+      await coord.stopWarmUpForApp("com.a")
+    })
+
+    test("omits zsl and mfnr when unset", async () => {
+      const coord = new PhonePhotoCoordinator()
+      await coord.warmUpCamera("com.a", {})
+      expect(warmUpCameraNative.mock.calls[0]![0]).not.toHaveProperty("zsl")
+      expect(warmUpCameraNative.mock.calls[0]![0]).not.toHaveProperty("mfnr")
+      await coord.stopWarmUpForApp("com.a")
     })
 
     test("throws GLASSES_NOT_CONNECTED when glasses are disconnected", async () => {
@@ -361,6 +475,52 @@ describe("PhonePhotoCoordinator", () => {
       expect(err.code).toBe("WARM_UP_FAILED")
       expect(err.stage).toBe("command")
       expect(err.transport).toBe("ble")
+    })
+
+    test("caps warm-up leases at 60 seconds", async () => {
+      const coord = new PhonePhotoCoordinator()
+      await coord.warmUpCamera("com.a", {durationMs: 120_000})
+      expect(warmUpCameraNative.mock.calls[0]![0]).toMatchObject({durationMs: 60_000})
+      await coord.stopWarmUpForApp("com.a")
+    })
+
+    test("unregister-style cleanup cancels an opening request by its phone-owned ID", async () => {
+      let rejectWarmUp!: (error: Error) => void
+      warmUpCameraNative.mockImplementationOnce(() => new Promise((_resolve, reject) => (rejectWarmUp = reject)))
+      const coord = new PhonePhotoCoordinator()
+      const warming = coord.warmUpCamera("com.a", {})
+      await Promise.resolve()
+
+      const requestId = (warmUpCameraNative.mock.calls[0]![0] as {requestId: string}).requestId
+      await coord.stopWarmUpForApp("com.a")
+      expect(stopCameraWarmUpNative).toHaveBeenCalledWith(requestId)
+
+      rejectWarmUp(new Error("cancelled"))
+      const err = await expectPhotoError(warming)
+      expect(err.code).toBe("WARM_UP_FAILED")
+    })
+
+    test("replacing an app lease stops the previous request first", async () => {
+      const coord = new PhonePhotoCoordinator()
+      await coord.warmUpCamera("com.a", {})
+      const firstId = (warmUpCameraNative.mock.calls[0]![0] as {requestId: string}).requestId
+
+      await coord.warmUpCamera("com.a", {size: "high"})
+      expect(stopCameraWarmUpNative).toHaveBeenCalledWith(firstId)
+      expect(warmUpCameraNative).toHaveBeenCalledTimes(2)
+      await coord.stopWarmUpForApp("com.a")
+    })
+
+    test("retains a warm-up lease when native cancellation fails", async () => {
+      const coord = new PhonePhotoCoordinator()
+      await coord.warmUpCamera("com.a", {})
+      const requestId = (warmUpCameraNative.mock.calls[0]![0] as {requestId: string}).requestId
+      stopCameraWarmUpNative.mockRejectedValueOnce(new Error("BLE down"))
+
+      await expect(coord.stopWarmUpForApp("com.a")).rejects.toThrow("BLE down")
+      await coord.stopWarmUpForApp("com.a")
+
+      expect(stopCameraWarmUpNative.mock.calls).toEqual([[requestId], [requestId]])
     })
   })
 })

@@ -96,6 +96,11 @@ export const BluetoothSdk: BluetoothSdkPublicModule = Object.freeze({
   setHotspotState: bindPublicMethod("setHotspotState"),
   setGalleryModeEnabled: bindPublicMethod("setGalleryModeEnabled"),
   setVoiceActivityDetectionEnabled: bindPublicMethod("setVoiceActivityDetectionEnabled"),
+  /**
+   * @deprecated Sticky action-button photo presets are deprecated. Prefer per-request
+   * `requestPhoto(...)` options (e.g. `mode: "text"` for text sensor size/crop, or explicit per-shot
+   * fields). Still functional until removed in a future release.
+   */
   setPhotoCaptureDefaults: bindPublicMethod("setPhotoCaptureDefaults"),
   setVideoRecordingDefaults: ({width, height, fps}: VideoRecordingDefaults) => {
     const method = (PrivateBluetoothSdkModule as unknown as Record<string, unknown>).setVideoRecordingDefaults
@@ -108,10 +113,14 @@ export const BluetoothSdk: BluetoothSdkPublicModule = Object.freeze({
   },
   setMaxVideoRecordingDuration: bindPublicMethod("setMaxVideoRecordingDuration"),
   setCameraFov: bindPublicMethod("setCameraFov"),
+  setLegacyCameraFov: bindPublicMethod("setLegacyCameraFov"),
+  setCameraFovOverride: bindPublicMethod("setCameraFovOverride"),
+  releaseCameraFovOverride: bindPublicMethod("releaseCameraFovOverride"),
   setCameraTuningConfig: bindPublicMethod("setCameraTuningConfig"),
   queryGalleryStatus: bindPublicMethod("queryGalleryStatus"),
   requestPhoto: bindPublicMethod("requestPhoto"),
   warmUpCamera: bindPublicMethod("warmUpCamera"),
+  stopCameraWarmUp: bindPublicMethod("stopCameraWarmUp"),
   startVideoRecording: bindPublicMethod("startVideoRecording"),
   stopVideoRecording: bindPublicMethod("stopVideoRecording"),
   startStream: bindPublicMethod("startStream"),
@@ -205,6 +214,7 @@ export type {
   PhotoFpsRange,
   PhotoMeteredPreview,
   PhotoMode,
+  PhotoTransferMethod,
   PhotoResponseEvent,
   PhotoRequestedCaptureConfig,
   PhotoRequestParams,

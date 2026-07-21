@@ -12,6 +12,7 @@ export type GalleryNoticeCode =
   | "wifi_initializing"
   | "wifi_off"
   | "location_services_off"
+  | "camera_roll_permission_required"
   | "connect_to_glasses"
 
 export interface GalleryNotice {

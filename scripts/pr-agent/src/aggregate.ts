@@ -6,7 +6,7 @@ import {
   mergeFindings,
   openBlocking,
   parseVerdictFromText,
-  resolveOpenFindingsFromSource,
+  resolveStaleFindingsFromSource,
   sourceCounts,
   verdictToFindings,
 } from './findings.js';
@@ -66,16 +66,24 @@ export function aggregateCycle(
     newBlockingFingerprints.push(...mergedOpen.newFingerprints);
     const mergedNits = mergeFindings(nitFindings, nits, cycle);
     nitFindings = mergedNits.merged;
-    const resolveOnApprove = options?.resolveOnApprove ?? true;
-    if (verdict.verdict === 'approve' && blocking.length === 0 && resolveOnApprove) {
-      const resolved = resolveOpenFindingsFromSource(
+
+    // `source` gave a genuine, current read on the PR this cycle: drop any of
+    // its previously-open findings that it did not repeat (see
+    // resolveStaleFindingsFromSource doc comment). Skipped when the caller
+    // says this cycle's report can't be trusted (e.g. bugbot's GitHub Check
+    // itself failed even though the parsed verdict text looked clean).
+    const trustThisReport = options?.resolveOnApprove ?? true;
+    if (trustThisReport) {
+      const currentFingerprints = new Set(blocking.map((b) => b.fingerprint));
+      const staleResolved = resolveStaleFindingsFromSource(
         openFindings,
         resolvedFindings,
         source,
+        currentFingerprints,
         cycle,
       );
-      openFindings = resolved.open;
-      resolvedFindings = resolved.resolved;
+      openFindings = staleResolved.open;
+      resolvedFindings = staleResolved.resolved;
     }
   };
 

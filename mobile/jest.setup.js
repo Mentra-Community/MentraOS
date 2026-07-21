@@ -28,6 +28,16 @@ jest.mock("@mentra/bluetooth-sdk-internal", () => {
   }
 })
 
+jest.mock("@mentra/bluetooth-sdk/internal", () => {
+  const {bluetoothSdkMock, mentraLocalNetworkMock} = require("./src/test-utils/mockBluetoothSdk")
+  return {
+    __esModule: true,
+    default: bluetoothSdkMock,
+    ...bluetoothSdkMock,
+    MentraLocalNetwork: mentraLocalNetworkMock,
+  }
+})
+
 jest.mock("@/utils/auth/authClient", () => ({
   __esModule: true,
   default: {
@@ -548,6 +558,8 @@ const mockIslandEntries = () => {
         // one store double.
         list: jest.fn(() => [...appStatusState.apps]),
         onChanged: jest.fn(() => () => {}),
+        buttonPressSubscribers: jest.fn(() => []),
+        onButtonPressSubscribersChanged: jest.fn(() => () => {}),
         refresh: jest.fn((...a) => appStatusState.refresh(...a) ?? Promise.resolve()),
         start: jest.fn((...a) => appStatusState.start(...a) ?? Promise.resolve(true)),
         stop: jest.fn((...a) => appStatusState.stop(...a) ?? Promise.resolve()),
@@ -933,7 +945,6 @@ const mockIslandEntries = () => {
 jest.mock("@mentra/engine", () => mockIslandEntries().main)
 jest.mock("@mentra/engine/internal", () => mockIslandEntries().internal)
 jest.mock("@mentra/engine/devtools", () => mockIslandEntries().devtools)
-
 
 // Mock crust native module to avoid native bridge errors
 jest.mock("@mentra/crust", () => ({

@@ -19,9 +19,21 @@ import type {
 } from "@mentra/miniapp/background"
 
 import type {Channels} from "../shared/channels"
-import type {Coords, DevSettings, LogEntry, NavSnapshot, TripState, UnitSystem} from "../shared/types"
+import type {
+  Coords,
+  DevSettings,
+  GlassesCapabilitySnapshot,
+  LogEntry,
+  NavSnapshot,
+  TripState,
+  UnitSystem,
+  VoiceGuidanceMode,
+} from "../shared/types"
 import {deriveManeuverDisplay, liveDistanceToNextTurn} from "../shared/maneuverDisplay"
 
+import {getSavedAddresses, setSavedAddress} from "./actions/savedAddressActions"
+import type {PlaceDetails} from "./lib/places"
+import {AudioGuidanceManager, selectAudioGuidanceDistance} from "./managers/AudioGuidanceManager"
 import {CompassManager} from "./managers/CompassManager"
 import {DisplayManager} from "./managers/DisplayManager"
 import {LocationManager} from "./managers/LocationManager"
@@ -52,6 +64,7 @@ export class NavigationController {
   private readonly navigation: NavigationManager
   private readonly storage: SimpleStorageManager
   private readonly places: PlacesManager
+  private readonly audioGuidance: AudioGuidanceManager
 
   // PoC OSM map: current view center, mutated by the pan buttons. Starts at
   // Hayes Valley, SF.
@@ -230,6 +243,16 @@ export class NavigationController {
   // glasses HUD and (via the snapshot) the UI. Defaults to metric until
   // the stored value loads.
   private unitSystem: UnitSystem = "metric"
+  private capabilities: GlassesCapabilitySnapshot = {
+    modelName: null,
+    hasDisplay: false,
+    hasSpeaker: false,
+    hasButton: false,
+  }
+  private voiceGuidanceMode: VoiceGuidanceMode = "off"
+  private voiceGuidancePreferenceLoaded = false
+  private voiceGuidancePreferenceExplicit = false
+  private routeRevision = 0
 
   // Cached raw Google `navigationInstruction.instructions` strings, in
   // step order, from the most recent successful Routes API call. Drives
@@ -252,23 +275,108 @@ export class NavigationController {
     // Place search routes through the SDK → host → v2 cloud maps (Mapbox Search
     // Box). No Worker, no provider key in this bundle.
     this.places = new PlacesManager(session)
+    this.audioGuidance = new AudioGuidanceManager(session.speaker, (message) => this.appendLog(message))
   }
 
   start(): void {
     if (this.started) return
     this.started = true
 
+    this.applyCapabilities(this.session.capabilities)
+    this.loadVoiceGuidanceMode()
+
     this.wireSensorSubscriptions()
+    this.wireCapabilityChanges()
     this.wireRpcHandlers()
     this.wireUIBroadcasts()
     this.registerActions()
     this.wireHUDPump()
     this.wireTouchGestures()
+    this.wireRepeatButton()
     this.primeNavigationPermission()
     this.seedInitialFix()
     this.loadUnitSystem()
 
     this.session.onBeforeDisconnect(() => this.dispose())
+  }
+
+  private readCapabilities(capabilities: MiniappSession["capabilities"]): GlassesCapabilitySnapshot {
+    const record = (capabilities ?? {}) as Record<string, unknown>
+    return {
+      modelName: typeof record.modelName === "string" ? record.modelName : null,
+      hasDisplay: record.hasDisplay === true || !!record.display,
+      hasSpeaker: record.hasSpeaker === true,
+      hasButton: record.hasButton === true,
+    }
+  }
+
+  private defaultVoiceGuidanceMode(capabilities = this.capabilities): VoiceGuidanceMode {
+    if (!capabilities.hasSpeaker) return "off"
+    return capabilities.hasDisplay ? "essential" : "full"
+  }
+
+  private applyCapabilities(raw: MiniappSession["capabilities"]): void {
+    const previous = this.capabilities
+    this.capabilities = this.readCapabilities(raw)
+    this.audioGuidance.setAvailable(this.capabilities.hasSpeaker)
+    if (!this.voiceGuidancePreferenceExplicit) {
+      this.voiceGuidanceMode = this.defaultVoiceGuidanceMode()
+      this.audioGuidance.setMode(this.voiceGuidanceMode)
+    }
+    if (!this.capabilities.hasDisplay) {
+      this.stopMinimapWatchdog()
+      this.lastMinimapPng = null
+    } else if (!previous.hasDisplay && this.trip.running) {
+      this.startMinimapWatchdog()
+      this.lastHudKey = ""
+      this.refreshHUD()
+    }
+    this.broadcastVoiceGuidanceState()
+  }
+
+  private wireCapabilityChanges(): void {
+    // registerMiniapp invokes start() before connect(), so the initial read
+    // above sees null. CONNECT_ACK populates session.capabilities and emits
+    // "ready" (not a capabilities-change event); refresh from the session once
+    // that handshake lands so speaker-only glasses work on first launch.
+    this.unsubs.push(this.session.on("ready", () => this.applyCapabilities(this.session.capabilities)))
+    this.unsubs.push(this.session.onCapabilitiesChange((capabilities) => this.applyCapabilities(capabilities)))
+  }
+
+  private broadcastVoiceGuidanceState(): void {
+    this.ui.send("nav:voice-guidance-update", {
+      voiceGuidanceMode: this.voiceGuidanceMode,
+      capabilities: this.capabilities,
+    })
+  }
+
+  private loadVoiceGuidanceMode(): void {
+    this.storage
+      .getVoiceGuidanceMode()
+      .then((stored) => {
+        // A user choice made while the read was in flight wins over the stale
+        // stored value that was captured before that choice was persisted.
+        if (this.voiceGuidancePreferenceLoaded) return
+        this.voiceGuidancePreferenceLoaded = true
+        this.voiceGuidancePreferenceExplicit = stored != null
+        this.voiceGuidanceMode = stored ?? this.defaultVoiceGuidanceMode()
+        this.audioGuidance.setMode(this.voiceGuidanceMode)
+        this.broadcastVoiceGuidanceState()
+      })
+      .catch((err) => {
+        if (this.voiceGuidancePreferenceLoaded) return
+        this.voiceGuidancePreferenceLoaded = true
+        this.appendLog(`voice-guidance load failed: ${err instanceof Error ? err.message : String(err)}`)
+      })
+  }
+
+  private wireRepeatButton(): void {
+    this.unsubs.push(
+      this.session.input.onButtonPress((data) => {
+        if (data.pressType !== "short" || !this.trip.running || !this.capabilities.hasButton) return
+        if (this.audioGuidance.repeatCurrent()) this.appendLog(`VOICE repeat (${data.buttonId})`)
+      }),
+    )
   }
 
   // ── Sensor → state pump ──────────────────────────────────────────────
@@ -383,7 +491,10 @@ export class NavigationController {
             this.trip = {...this.trip, offRouteAt: Date.now()}
             break
           case "rerouting":
-            this.trip = {...this.trip, status: "rerouting"}
+            // The previous maneuver belongs to the abandoned route. Clear it
+            // so neither display nor audio can replay stale guidance while the
+            // replacement route is landing.
+            this.trip = {...this.trip, status: "rerouting", maneuver: null}
             break
           case "arrived": {
             // Compute side from the current route *before* nulling it,
@@ -440,6 +551,7 @@ export class NavigationController {
     // Route updates (full polyline rebuild)
     this.unsubs.push(
       this.navigation.onRoute((route: NavRoute) => {
+        this.routeRevision += 1
         // Mirror NavStep → NavRouteStep, dropping `routeIndex` (UI
         // doesn't need it) and widening `maneuver` from the SDK union
         // to a plain string for the channel wire (see NavRouteStep).
@@ -517,6 +629,7 @@ export class NavigationController {
           this.activePivot = this.navigation.getActivePivot()
           this.upcomingPivot = this.navigation.getUpcomingPivot()
           this.ui.send("nav:pivots", {active: this.activePivot, upcoming: this.upcomingPivot})
+          this.refreshHUD()
         }, 0)
       }),
     )
@@ -598,6 +711,8 @@ export class NavigationController {
     // fire start() with the same shape, and so we can gate
     // rebuilds on "user has actually moved away from start".
     this.lastStartOpts = opts
+    this.audioGuidance.beginTrip()
+    this.startMinimapWatchdog()
     this.tripStartCoords = this.coords ? {lat: this.coords.lat, lng: this.coords.lng} : null
     // Reset the movement-vector heading so this trip's "you" arrow measures
     // direction of travel fresh (anchor re-seeds on the next fix).
@@ -637,6 +752,8 @@ export class NavigationController {
       if (!res.ok) {
         this.appendLog(`START failed: ${res.error ?? "unknown"}`)
         this.rollbackTripToIdle()
+      } else {
+        this.audioGuidance.confirmTripStarted(destinationName ?? null)
       }
       return res
     } catch (err) {
@@ -655,6 +772,7 @@ export class NavigationController {
    * map keeps a pin on a destination we never actually started routing to.
    */
   private rollbackTripToIdle(): void {
+    this.audioGuidance.endTrip()
     this.trip = {
       ...this.trip,
       status: "idle",
@@ -681,9 +799,15 @@ export class NavigationController {
   private registerActions(): void {
     try {
       this.unsubs.push(this.session.actions.handle("start_navigation", (params) => this.startNavigationAction(params)))
+      this.unsubs.push(this.session.actions.handle("get_saved_addresses", () => getSavedAddresses(this.storage)))
+      this.unsubs.push(
+        this.session.actions.handle("set_saved_address", (params) =>
+          setSavedAddress(params, this.storage, (query) => this.resolveDestination(query)),
+        ),
+      )
     } catch (err) {
       // actions module unavailable on this host, or already registered — the
-      // miniapp still runs, it just can't be started via the action.
+      // miniapp still runs, but its actions won't be available.
       this.appendLog(`actions register failed: ${err instanceof Error ? err.message : String(err)}`)
     }
   }
@@ -743,7 +867,7 @@ export class NavigationController {
    * to the user's current location. Mirrors the UI's autocomplete → details
    * pick. Returns null when there's no match or the lookup fails.
    */
-  private async resolveDestination(query: string): Promise<{lat: number; lng: number; name?: string} | null> {
+  private async resolveDestination(query: string): Promise<PlaceDetails | null> {
     try {
       let near = this.coords ? {lat: this.coords.lat, lng: this.coords.lng} : undefined
       // A headless start_navigation invoke can be dispatched before the initial
@@ -766,7 +890,7 @@ export class NavigationController {
       const suggestions = await this.places.autocomplete(query, near)
       if (!suggestions.length) return null
       const details = await this.places.details(suggestions[0].placeId)
-      return {lat: details.lat, lng: details.lng, name: details.name}
+      return details
     } catch (err) {
       this.appendLog(`resolveDestination failed: ${err instanceof Error ? err.message : String(err)}`)
       return null
@@ -778,94 +902,13 @@ export class NavigationController {
   private wireUIBroadcasts(): void {
     this.unsubs.push(
       this.ui.on("nav:start", async (opts) => {
-        // Re-entrancy guard: ignore a second nav:start while one is already
-        // in flight (the duplicate's start() would stop() the session the
-        // first just created and freeze the puck).
-        if (this.starting) {
-          this.appendLog("START ignored — already starting")
-          return
-        }
-        this.starting = true
-        const {destinationName, ...startOpts} = opts
-        // Clear the previous trip's route polyline immediately so the
-        // off-route threshold check doesn't run against a stale route
-        // between nav:start and the new onRoute event landing. Without
-        // this, the user can be e.g. 500m from the prior route's
-        // polyline at start, instantly trigger the >30m bucket, flip
-        // status to "rerouting", and fire a redundant auto-rebuild.
-        this.trip = {
-          ...this.trip,
-          status: "navigating",
-          running: true,
-          activeDestination: startOpts.stops?.[startOpts.stops.length - 1] ?? null,
-          activeDestinationName: destinationName ?? null,
-          maneuver: null,
-          routePoints: null,
-          routeSteps: null,
-          offRouteAt: null,
-          arrivalSide: null,
-        }
-        // Snapshot the trip-start context so an auto-rebuild can re-
-        // fire start() with the same shape, and so we can gate
-        // rebuilds on "user has actually moved away from start".
-        this.lastStartOpts = opts
-        // Keep the minimap refreshing even if the live update stream goes quiet.
-        this.startMinimapWatchdog()
-        this.tripStartCoords = this.coords ? {lat: this.coords.lat, lng: this.coords.lng} : null
-        // Reset the movement-vector heading so this trip's "you" arrow measures
-        // direction of travel fresh (anchor re-seeds on the next fix).
-        this.moveBearingAnchor = this.coords ? {lat: this.coords.lat, lng: this.coords.lng} : null
-        this.moveBearingDeg = null
-        this.lastAutoRebuildAt = 0
-        this.lastOffRouteBucket = 0
-        this.offRouteAdvisory = false
-        this.offRouteAdvisoryDistanceM = null
-        // Clear any pivots left over from a previous trip. Without this, a new
-        // start with stale activePivot/upcomingPivot would make refreshHUD take
-        // a pivot branch and show the OLD trip's instruction instead of
-        // "Starting…" — the HUD must read "Starting…" until THIS trip's first
-        // real maneuver/pivot lands.
-        this.activePivot = null
-        this.upcomingPivot = null
-        // Cancel any in-flight delayed rebuild — a fresh start
-        // supersedes the old "are we still off-route?" timer.
-        this.cancelPendingRebuild()
-        this.appendLog(`START ${destinationName ?? "(unnamed)"}`)
-        this.ui.send("nav:trip-state", this.trip)
-        // Repaint the glasses HUD immediately so the left text flips from the
-        // idle "Welcome to Mentra Maps!" frame to "Starting…" the instant the
-        // user starts — instead of the welcome frame lingering until the next
-        // GPS tick / HUD pump (~1s). running is already true above, so refreshHUD
-        // takes the "Starting…" branch and showManeuver overwrites the welcome
-        // text in place.
-        this.refreshHUD()
-        try {
-          // start() resolves `{ok:false}` (it never throws) for
-          // permission, GPS, REST, or native failures — on those the
-          // native trip never began and no synthetic onRoute will land,
-          // so we must roll the optimistic "navigating" state set above
-          // back to idle. Inspecting only `catch` left the UI stuck on a
-          // routeless trip with no recovery but a manual stop.
-          const res = await this.navigation.start(withPivotDefaults(startOpts))
-          if (!res.ok) {
-            this.appendLog(`START failed: ${res.error ?? "unknown"}`)
-            this.trip = {...this.trip, status: "idle", running: false}
-            this.ui.send("nav:trip-state", this.trip)
-            this.refreshHUD()
-          }
-        } catch (err) {
-          this.appendLog(`START error: ${err instanceof Error ? err.message : String(err)}`)
-          this.trip = {...this.trip, status: "idle", running: false}
-          this.ui.send("nav:trip-state", this.trip)
-          this.refreshHUD()
-        } finally {
-          this.starting = false
-        }
+        await this.beginTrip(opts)
       }),
     )
     this.unsubs.push(
       this.ui.on("nav:stop", () => {
         this.appendLog("STOP")
+        this.audioGuidance.endTrip()
         try {
           this.navigation.stop()
         } catch {
@@ -920,6 +963,7 @@ export class NavigationController {
         // forces a fresh one-shot fix, then broadcasts it as nav:coords so
         // the map re-centers on where the device actually is.
         this.appendLog("RESET LOCATION → real fix")
+        this.audioGuidance.endTrip()
         try {
           this.navigation.stop()
         } catch {
@@ -1022,6 +1066,27 @@ export class NavigationController {
     )
 
     this.unsubs.push(
+      this.ui.on("nav:set-voice-guidance", ({mode}) => {
+        if (mode === this.voiceGuidanceMode) return
+        this.voiceGuidancePreferenceLoaded = true
+        this.voiceGuidancePreferenceExplicit = true
+        this.voiceGuidanceMode = mode
+        this.audioGuidance.setMode(mode)
+        this.storage.setVoiceGuidanceMode(mode).catch((err) => {
+          this.appendLog(`voice-guidance persist failed: ${err instanceof Error ? err.message : String(err)}`)
+        })
+        this.broadcastVoiceGuidanceState()
+        this.refreshHUD()
+      }),
+    )
+
+    this.unsubs.push(
+      this.ui.on("nav:repeat-direction", () => {
+        if (!this.audioGuidance.repeatCurrent()) this.appendLog("VOICE repeat ignored — no active direction")
+      }),
+    )
+
+    this.unsubs.push(
       this.ui.on("nav:set-show-minimap", (show) => {
         if (show === this.showMinimap) return
         this.showMinimap = show
@@ -1029,7 +1094,7 @@ export class NavigationController {
           // Drop just the minimap slot — the HUD frame re-renders without it
           // (clear() would blank the whole HUD until the next nav tick).
           // Reset the dedup cache so toggling back on re-pushes the frame.
-          this.display.clearMinimap()
+          if (this.capabilities.hasDisplay) this.display.clearMinimap()
           this.lastMinimapPng = null
           this.lastHudKey = ""
         } else {
@@ -1225,6 +1290,7 @@ export class NavigationController {
   private wireTouchGestures(): void {
     this.unsubs.push(
       this.session.input.onTouch((data) => {
+        if (!this.capabilities.hasDisplay) return
         // `data.kind` carries the gesture (single_tap / double_tap / swipe_up /
         // swipe_down / ...); gestureName is a fallback for older host builds.
         const d = data as unknown as Record<string, unknown>
@@ -1423,9 +1489,40 @@ export class NavigationController {
   }
 
   private refreshHUD(): void {
-    // While the swipe-up large map is showing, don't repaint the HUD over it.
-    if (this.largeMapShown) return
     const {status, running, activeDestinationName, maneuver, arrivalSide} = this.trip
+
+    // Audio and display consume the same maneuver derivation. Keep this before
+    // every display guard so displayless glasses still receive guidance and a
+    // large-map overlay never pauses spoken directions.
+    const me = this.coords ? {lat: this.coords.lat, lng: this.coords.lng} : null
+    const liveDist =
+      maneuver?.maneuverType === "ARRIVE"
+        ? remainingRouteMeters(me, this.trip.routePoints)
+        : liveDistanceToNextTurn(me, this.trip.routePoints, this.trip.routeSteps, remainingRouteMeters, haversineMeters)
+    const md = deriveManeuverDisplay(maneuver, status, liveDist)
+    this.audioGuidance.observe({
+      status,
+      running,
+      routeRevision: this.routeRevision,
+      pivotIndex: this.upcomingPivot?.index ?? null,
+      maneuverType: md?.kind ?? null,
+      instruction: md?.instruction ?? null,
+      // Turn thresholds stay paired with the native event that supplied the
+      // type/instruction. ARRIVE is different: md carries the live remaining
+      // route distance, so its spoken destination countdown stays current.
+      distanceMeters: selectAudioGuidanceDistance(
+        maneuver?.maneuverType,
+        maneuver?.distanceMeters,
+        md?.distanceMeters,
+      ),
+      offRoute: this.offRouteAdvisory,
+      destinationName: activeDestinationName,
+      arrivalSide,
+      travelMode: this.lastStartOpts?.mode ?? "walking",
+      unitSystem: this.unitSystem,
+    })
+
+    if (!this.capabilities.hasDisplay || this.largeMapShown) return
 
     // Minimap runs first so heading-only updates still refresh the map
     // even when the text line below is unchanged (and short-circuits).
@@ -1449,13 +1546,6 @@ export class NavigationController {
     // + same geometry the phone card uses), so the "In X m" line ticks down on
     // every location tick instead of only when a new native maneuver event
     // fires. For the ARRIVE leg the relevant distance is to the destination.
-    const me = this.coords ? {lat: this.coords.lat, lng: this.coords.lng} : null
-    const liveDist =
-      maneuver?.maneuverType === "ARRIVE"
-        ? remainingRouteMeters(me, this.trip.routePoints)
-        : liveDistanceToNextTurn(me, this.trip.routePoints, this.trip.routeSteps, remainingRouteMeters, haversineMeters)
-    const md = deriveManeuverDisplay(maneuver, status, liveDist)
-
     // Mirrors the phone-side OrientationCard's pickDisplay() — same
     // layout, same source, same precedence. If you tweak one, tweak the
     // other or they'll diverge.
@@ -1723,6 +1813,7 @@ export class NavigationController {
   private readonly MINIMAP_MIN_INTERVAL_MS = 300
 
   private refreshMinimap(): void {
+    if (!this.capabilities.hasDisplay) return
     if (this.largeMapShown) return // large map owns the screen; don't overdraw
     if (!this.showMinimap) return
     if (!this.trip.running || !this.coords) return
@@ -1888,6 +1979,7 @@ export class NavigationController {
 
   /** Start the recurring minimap watchdog (no-op if already running). */
   private startMinimapWatchdog(): void {
+    if (!this.capabilities.hasDisplay) return
     if (this.minimapWatchdogTimer != null) return
     console.log(
       `[MINIMAP-WATCHDOG] started (every ${this.MINIMAP_WATCHDOG_INTERVAL_MS}ms, idle threshold ${this.MINIMAP_WATCHDOG_IDLE_MS}ms)`,
@@ -2241,6 +2333,8 @@ export class NavigationController {
       log: [...this.log],
       devSettings: this.devSettings,
       unitSystem: this.unitSystem,
+      voiceGuidanceMode: this.voiceGuidanceMode,
+      capabilities: this.capabilities,
     }
   }
 
@@ -2266,6 +2360,7 @@ export class NavigationController {
   }
 
   private dispose(): void {
+    this.audioGuidance.dispose()
     this.cancelPendingRebuild()
     this.stopMinimapWatchdog()
     if (this.minimapTrailingTimer != null) {
@@ -2277,10 +2372,12 @@ export class NavigationController {
     } catch {
       /* ignore */
     }
-    try {
-      this.display.clear()
-    } catch {
-      /* ignore */
+    if (this.capabilities.hasDisplay) {
+      try {
+        this.display.clear()
+      } catch {
+        /* ignore */
+      }
     }
     for (const u of this.unsubs) {
       try {

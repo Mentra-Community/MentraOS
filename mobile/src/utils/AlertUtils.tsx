@@ -88,6 +88,19 @@ export function ModalProvider({children}: {children: React.ReactNode}) {
   // Animation values - start at final values if not using new UI
   const fadeAnim = useRef(new Animated.Value(0)).current
   const scaleAnim = useRef(new Animated.Value(0.93)).current
+  const pendingDismissCallback = useRef<(() => void) | undefined>(undefined)
+  const visibleRef = useRef(visible)
+  visibleRef.current = visible
+
+  // Effects run after React commits. Dispatch callbacks from here so a button
+  // that opens a native surface cannot race the custom overlay's removal.
+  useEffect(() => {
+    if (visible || !pendingDismissCallback.current) return
+
+    const callback = pendingDismissCallback.current
+    pendingDismissCallback.current = undefined
+    callback()
+  }, [visible])
 
   useEffect(() => {
     const backHandler = () => {
@@ -173,7 +186,7 @@ export function ModalProvider({children}: {children: React.ReactNode}) {
   useEffect(() => {
     // Register the modal functions for global access
     setModalRef({
-      isVisible: () => visible,
+      isVisible: () => visibleRef.current,
       showModal: (title, message, alertButtons = [], opts = {}) => {
         setTitle(title)
         setMessage(message)
@@ -201,9 +214,9 @@ export function ModalProvider({children}: {children: React.ReactNode}) {
     return () => {
       setModalRef(null)
     }
-  }, [visible])
+  }, [])
 
-  const handleDismiss = () => {
+  const handleDismiss = (onDismiss?: () => void) => {
     // Animate out before hiding (only for new UI)
     Animated.parallel([
       Animated.timing(fadeAnim, {
@@ -217,6 +230,7 @@ export function ModalProvider({children}: {children: React.ReactNode}) {
         useNativeDriver: true,
       }),
     ]).start(() => {
+      pendingDismissCallback.current = onDismiss
       setVisible(false)
     })
   }
@@ -264,19 +278,13 @@ export function ModalProvider({children}: {children: React.ReactNode}) {
             onLeftPress={
               buttons.length > 1
                 ? () => {
-                    buttons[0].onPress?.()
-                    handleDismiss()
+                    handleDismiss(buttons[0].onPress)
                   }
                 : undefined
             }
             rightButtonText={buttons.length > 1 ? buttons[1].text : buttons[0].text}
             onRightPress={() => {
-              if (buttons.length > 1) {
-                buttons[1].onPress?.()
-              } else {
-                buttons[0].onPress?.()
-              }
-              handleDismiss()
+              handleDismiss(buttons.length > 1 ? buttons[1].onPress : buttons[0].onPress)
             }}
           />
         </Animated.View>

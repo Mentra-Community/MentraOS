@@ -32,4 +32,7 @@ public interface SerialListener {
      * @param serialPath The path to the serial port
      */
     void onSerialClose(String serialPath);
-} 
+
+    /** Called after BES accepts an OTA image and begins rebooting at its default UART baud. */
+    default void onBesOtaApplied() {}
+}

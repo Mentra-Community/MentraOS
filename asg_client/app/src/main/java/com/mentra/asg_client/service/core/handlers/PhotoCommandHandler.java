@@ -10,8 +10,8 @@ import com.mentra.asg_client.io.file.core.FileManager;
 import com.mentra.asg_client.io.media.core.MediaCaptureService;
 import com.mentra.asg_client.service.core.constants.BatteryConstants;
 import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
-import com.mentra.asg_client.settings.AsgSettings;
 import com.mentra.asg_client.service.system.interfaces.IStateManager;
+import com.mentra.asg_client.settings.AsgSettings;
 import java.util.Set;
 import org.json.JSONObject;
 
@@ -21,9 +21,7 @@ import org.json.JSONObject;
  */
 public class PhotoCommandHandler extends BaseMediaCommandHandler {
     private static final String TAG = "PhotoCommandHandler";
-
-    /** Default warm-up hold (ms) when {@code camera_warm_up} omits/zeros {@code durationMs}. */
-    private static final long DEFAULT_WARM_UP_DURATION_MS = 15000;
+    private static final Set<String> PHOTO_TRANSFER_METHODS = Set.of("auto", "direct", "ble");
 
     private final AsgClientServiceManager serviceManager;
     private final IStateManager stateManager;
@@ -40,7 +38,7 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
 
     @Override
     public Set<String> getSupportedCommandTypes() {
-        return Set.of("take_photo", "camera_warm_up");
+        return Set.of("take_photo", "camera_warm_up", "camera_warm_up_stop");
     }
 
     @Override
@@ -51,6 +49,8 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
                     return handleTakePhoto(data);
                 case "camera_warm_up":
                     return handleCameraWarmUp(data);
+                case "camera_warm_up_stop":
+                    return handleCameraWarmUpStop(data);
                 default:
                     Log.e(TAG, "Unsupported photo command: " + commandType);
                     return false;
@@ -62,9 +62,9 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
     }
 
     /**
-     * Handle {@code camera_warm_up}: open + configure + preview the camera and hold it warm for a TTL
-     * (default 15000ms) without capturing, so a subsequent {@code take_photo} of the same {@code
-     * size}/{@code exposureTimeNs} reuses the warm session. Routes to {@link
+     * Handle {@code camera_warm_up}: open + configure + preview the camera and hold it warm for a
+     * TTL (default 15000ms) without capturing, so a subsequent {@code take_photo} of the same
+     * {@code size}/{@code exposureTimeNs} reuses the warm session. Routes to {@link
      * MediaCaptureService#warmUpCamera} which emits {@code camera_status} (warming → ready →
      * stopped/error).
      */
@@ -79,12 +79,25 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
             }
 
             String requestId = data.optString("requestId", "");
-            String size = PhotoSizeTier.normalize(data.optString("size", "medium"));
+            String mode = PhotoMode.normalize(data.optString("mode", PhotoMode.PHOTO));
+            String requestedSize = PhotoSizeTier.normalize(data.optString("size", "medium"));
+            String size = PhotoMode.captureSize(mode, requestedSize);
             Long exposureTimeNs = PhotoExposureTimeNs.parse(data);
             long durationMs = data.optLong("durationMs", 0L);
             if (durationMs <= 0) {
-                durationMs = DEFAULT_WARM_UP_DURATION_MS;
+                durationMs = AsgConstants.CAMERA_WARM_UP_DEFAULT_DURATION_MS;
             }
+            durationMs = Math.min(durationMs, AsgConstants.CAMERA_WARM_UP_MAX_DURATION_MS);
+            // Only pull zsl/mfnr from the warm-up JSON — other take_photo tuning fields are
+            // irrelevant for opening the preview session.
+            PhotoCaptureSettings.Builder warmTuning = new PhotoCaptureSettings.Builder();
+            if (data.has("zsl") && !data.isNull("zsl")) {
+                warmTuning.zsl(data.optBoolean("zsl", true));
+            }
+            if (data.has("mfnr") && !data.isNull("mfnr")) {
+                warmTuning.mfnr(data.optBoolean("mfnr", true));
+            }
+            PhotoCaptureSettings captureSettings = warmTuning.build();
 
             MediaCaptureService captureService = serviceManager.getMediaCaptureService();
             if (captureService == null) {
@@ -96,19 +109,9 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
                 return false;
             }
 
-            Log.i(
-                    TAG,
-                    "📷 camera_warm_up requestId="
-                            + requestId
-                            + " size="
-                            + size
-                            + " exposureTimeNs="
-                            + exposureTimeNs
-                            + " durationMs="
-                            + durationMs);
-
             boolean accepted =
-                    captureService.warmUpCamera(requestId, size, exposureTimeNs, durationMs);
+                    captureService.warmUpCamera(
+                            requestId, size, exposureTimeNs, durationMs, mode, captureSettings);
             logCommandResult("camera_warm_up", accepted, accepted ? null : "Warm-up rejected");
             return accepted;
         } catch (Exception e) {
@@ -123,6 +126,29 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
             }
             return false;
         }
+    }
+
+    /** Release one request-owned warm-up lease without disturbing compatible owners. */
+    private boolean handleCameraWarmUpStop(JSONObject data) {
+        String requestId = data.optString("requestId", "");
+        if (requestId.isEmpty()) {
+            requestId = data.optString("request_id", "");
+        }
+        if (requestId.isEmpty()) {
+            Log.w(TAG, "camera_warm_up_stop rejected - missing requestId");
+            return false;
+        }
+
+        MediaCaptureService captureService = serviceManager.getMediaCaptureService();
+        if (captureService == null) {
+            sendCameraWarmUpError(
+                    requestId,
+                    "media_capture_service_unavailable",
+                    "Media capture service not available");
+            return false;
+        }
+        captureService.stopCameraWarmUp(requestId);
+        return true;
     }
 
     private void sendCameraWarmUpError(String requestId, String errorCode, String errorMessage) {
@@ -175,33 +201,36 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
             String requestId = data.optString("requestId", "");
             String webhookUrl = data.optString("webhookUrl", "");
             String authToken = data.optString("authToken", "");
-            String transferMethod = data.optString("transferMethod", "direct");
+            String transferMethod = resolveTransferMethod(data);
             String bleImgId = data.optString("bleImgId", "");
             boolean save = data.optBoolean("save", false);
-            String size = PhotoSizeTier.normalize(data.optString("size", "medium"));
             String mode = PhotoMode.normalize(data.optString("mode", PhotoMode.PHOTO));
+            String requestedSize = PhotoSizeTier.normalize(data.optString("size", "medium"));
+            String size = PhotoMode.captureSize(mode, requestedSize);
             if (!data.has("mode")) {
-                Log.w(
-                        TAG,
-                        "📸 take_photo BLE payload missing mode field; defaulting to "
-                                + mode);
+                Log.w(TAG, "📸 take_photo BLE payload missing mode field; defaulting to " + mode);
             }
             Log.i(TAG, "📸 Mentra Live take_photo mode: " + mode);
+            if (!size.equals(requestedSize)) {
+                Log.i(
+                        TAG,
+                        "📸 Text mode overriding capture size "
+                                + requestedSize
+                                + " → "
+                                + size
+                                + " (ASG text sensor constants)");
+            }
             PhotoCaptureSettings requestCaptureSettings =
                     PhotoCaptureSettings.fromTakePhotoJson(data);
             PhotoCaptureSettings.logIncomingTakePhotoFields(data, requestId);
             AsgSettings asgSettings = serviceManager.getAsgSettings();
             Long exposureTimeNs = PhotoExposureTimeNs.parse(data);
+            // Text mode no longer injects aeExposureDivisor; callers that want scan AE pass it
+            // explicitly. Request zsl/mfnr omit → global defaults (same as photo mode).
             PhotoCaptureSettings captureSettings = requestCaptureSettings;
-            if (PhotoMode.TEXT.equals(mode) && exposureTimeNs == null) {
-                // Apply text-mode defaults before stored global MFNR/ZSL defaults are merged.
-                // Explicit per-request values remain preserved by applyTextModeExposure().
-                captureSettings = PhotoCaptureSettings.applyTextModeExposure(captureSettings);
-            }
             if (asgSettings != null) {
                 captureSettings =
-                        PhotoCaptureSettings.mergeForSdkRequest(
-                                captureSettings, asgSettings);
+                        PhotoCaptureSettings.mergeForSdkRequest(captureSettings, asgSettings);
             }
             String compress = resolvePhotoCompress(data, asgSettings);
             // Capture light is mandatory for privacy; ignore any caller-supplied flash value.
@@ -221,12 +250,19 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
                                 + " ns");
             }
             if (requestedIso != null && exposureTimeNs == null) {
-                Log.i(TAG, "Mentra Live ignoring ISO for take_photo request "
-                        + requestId + " because exposureTimeNs was not set");
+                Log.i(
+                        TAG,
+                        "Mentra Live ignoring ISO for take_photo request "
+                                + requestId
+                                + " because exposureTimeNs was not set");
             }
             if (iso != null) {
-                Log.i(TAG, "Mentra Live using manual ISO for take_photo request "
-                        + requestId + ": ISO " + iso);
+                Log.i(
+                        TAG,
+                        "Mentra Live using manual ISO for take_photo request "
+                                + requestId
+                                + ": ISO "
+                                + iso);
             }
 
             logResolvedTakePhotoParams(
@@ -249,13 +285,26 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
                 logCommandResult("take_photo", false, "Media capture service not available");
                 return false;
             }
+            if (transferMethod == null || !PHOTO_TRANSFER_METHODS.contains(transferMethod)) {
+                Object invalidTransferMethod = data.opt("transferMethod");
+                String message =
+                        "Invalid transferMethod \""
+                                + invalidTransferMethod
+                                + "\". Expected auto, direct, or ble.";
+                logCommandResult("take_photo", false, message);
+                captureService.sendPhotoErrorResponse(
+                        requestId, "INVALID_TRANSFER_METHOD", message);
+                return false;
+            }
 
             // Use the permanent gallery path only when the caller wants to save; otherwise use
             // the transient _sdk_pending tree so in-flight SDK photos are invisible to gallery
             // sync and are cleaned up automatically after upload.
-            String photoFilePath = save
-                    ? generateCaptureFilePath(packageName, "IMG_", ".jpg", requestId)
-                    : generateTransientCaptureFilePath(packageName, "IMG_", ".jpg", requestId);
+            String photoFilePath =
+                    save
+                            ? generateCaptureFilePath(packageName, "IMG_", ".jpg", requestId)
+                            : generateTransientCaptureFilePath(
+                                    packageName, "IMG_", ".jpg", requestId);
             if (photoFilePath == null) {
                 logCommandResult("take_photo", false, "Failed to generate file path");
                 captureService.sendPhotoErrorResponse(
@@ -357,6 +406,9 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
             }
 
             // Process photo capture based on transfer method
+            if ("ble".equals(transferMethod) || !bleImgId.isEmpty()) {
+                captureService.markBlePhotoPipelineStart(requestId);
+            }
             Log.i(
                     TAG,
                     "PHOTO PIPELINE [ASG 3/3] Starting capture requestId="
@@ -405,6 +457,14 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
         }
     }
 
+    private static String resolveTransferMethod(JSONObject data) {
+        if (!data.has("transferMethod")) {
+            return "auto";
+        }
+        Object value = data.opt("transferMethod");
+        return value instanceof String ? (String) value : null;
+    }
+
     /**
      * Process photo capture based on transfer method.
      *
@@ -442,7 +502,9 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
             PhotoCaptureSettings captureSettings) {
         Log.d(TAG, "Processing photo capture with transfer method: " + transferMethod);
 
-        if (AsgConstants.FORCE_BLE_TRANSFER && !bleImgId.isEmpty() && !"ble".equals(transferMethod)) {
+        if (AsgConstants.FORCE_BLE_TRANSFER
+                && !bleImgId.isEmpty()
+                && !"ble".equals(transferMethod)) {
             Log.i(
                     TAG,
                     "🚫📶 FORCE_BLE_TRANSFER active: overriding requested transferMethod="
@@ -497,7 +559,7 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
                         exposureTimeNs,
                         iso,
                         captureSettings);
-            default:
+            case "direct":
                 return captureService.takePhotoAndUpload(
                         photoFilePath,
                         requestId,
@@ -512,6 +574,9 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
                         exposureTimeNs,
                         iso,
                         captureSettings);
+            default:
+                // handleTakePhoto validates this before any capture work starts.
+                throw new IllegalArgumentException("Unsupported transferMethod: " + transferMethod);
         }
     }
 

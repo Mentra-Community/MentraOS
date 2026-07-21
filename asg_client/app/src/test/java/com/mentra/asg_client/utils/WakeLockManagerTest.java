@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import android.app.Application;
 import android.os.PowerManager;
 import androidx.test.core.app.ApplicationProvider;
+import com.mentra.asg_client.utils.WakeLockManager.WakeOwner;
 import java.time.Duration;
 import org.junit.After;
 import org.junit.Before;
@@ -16,13 +17,16 @@ import org.robolectric.shadows.ShadowPowerManager;
 import org.robolectric.shadows.ShadowSystemClock;
 
 /**
- * Verifies the extend-only ("longest deadline wins") behavior of {@link WakeLockManager}.
+ * Pins the owner-keyed lease contract of {@link WakeLockManager}:
  *
- * <p>The shared static CPU wake lock used to be replaced on every acquire, so a short acquire
- * (e.g. a 60s camera/util lock) could cut an in-flight long operation (e.g. a 10-min OTA) short
- * and let the CPU — and the MTK SoC — sleep mid-update. These tests pin the new contract: a
- * shorter acquire never shortens a longer lock that is already held; only a later deadline
- * swaps the lock.
+ * <p>1. Extend-only per owner ("longest deadline wins"): a shorter acquire never shortens a
+ * longer lease the same owner already holds; only a later deadline swaps the lock. The shared
+ * static lock used to be replaced on every acquire, letting a short acquire cut a 10-min OTA
+ * short and put the MTK SoC to sleep mid-update.
+ *
+ * <p>2. Ownership isolation: release(owner) ends ONLY that owner's leases. The historical
+ * releaseAllWakeLocks() let camera close / stream cleanup revoke every other subsystem's
+ * protection (BES OTA mid-transfer, W:1 command windows, in-flight uploads).
  */
 @RunWith(RobolectricTestRunner.class)
 @Config(application = Application.class, sdk = 33)
@@ -33,37 +37,43 @@ public class WakeLockManagerTest {
     @Before
     public void setUp() {
         app = ApplicationProvider.getApplicationContext();
-        // WakeLockManager keeps process-static state that Robolectric does not reset between
-        // tests; clear it so each test starts with no held lock and no tracked deadline.
-        WakeLockManager.releaseAllWakeLocks();
+        releaseEveryOwner();
     }
 
     @After
     public void tearDown() {
-        WakeLockManager.releaseAllWakeLocks();
+        releaseEveryOwner();
+    }
+
+    // WakeLockManager keeps process-static state that Robolectric does not reset between
+    // tests; clear every owner so each test starts with no held lease.
+    private static void releaseEveryOwner() {
+        for (WakeOwner owner : WakeOwner.values()) {
+            WakeLockManager.release(owner);
+        }
     }
 
     @Test
-    public void shorterAcquire_doesNotReplaceLongerHeldCpuLock() {
-        assertThat(WakeLockManager.acquireCpuWakeLock(app, 600_000)).isTrue(); // 10 min
+    public void shorterAcquire_doesNotReplaceLongerHeldCpuLease() {
+        assertThat(WakeLockManager.acquireCpu(app, WakeOwner.MTK_OTA, 600_000)).isTrue(); // 10 min
         PowerManager.WakeLock first = ShadowPowerManager.getLatestWakeLock();
         assertThat(first.isHeld()).isTrue();
 
-        // 1 minute later, a 2-minute acquire must be ignored — the original lock still outlives it.
+        // 1 minute later, a 2-minute acquire must be ignored — the original lease still outlives it.
         ShadowSystemClock.advanceBy(Duration.ofMinutes(1));
-        assertThat(WakeLockManager.acquireCpuWakeLock(app, 120_000)).isTrue(); // 2 min
+        assertThat(WakeLockManager.acquireCpu(app, WakeOwner.MTK_OTA, 120_000)).isTrue(); // 2 min
 
-        // No new lock was created; the original 10-min lock is still the active one.
+        // No new lock was created; the original 10-min lease is still the active one.
         assertThat(ShadowPowerManager.getLatestWakeLock()).isSameAs(first);
         assertThat(first.isHeld()).isTrue();
     }
 
     @Test
-    public void longerAcquire_extendsCpuLock() {
-        assertThat(WakeLockManager.acquireCpuWakeLock(app, 120_000)).isTrue(); // 2 min
+    public void longerAcquire_extendsCpuLease() {
+        assertThat(WakeLockManager.acquireCpu(app, WakeOwner.MTK_OTA, 120_000)).isTrue(); // 2 min
         PowerManager.WakeLock first = ShadowPowerManager.getLatestWakeLock();
 
-        assertThat(WakeLockManager.acquireCpuWakeLock(app, 600_000)).isTrue(); // 10 min
+        assertThat(WakeLockManager.acquireCpu(app, WakeOwner.MTK_OTA, 600_000)).isTrue(); // 10 min
         PowerManager.WakeLock second = ShadowPowerManager.getLatestWakeLock();
 
         // Extending to a later deadline swaps in a fresh, longer lock and releases the old one.
@@ -73,29 +83,59 @@ public class WakeLockManagerTest {
     }
 
     @Test
-    public void release_thenShorterAcquire_startsFreshLock() {
-        assertThat(WakeLockManager.acquireCpuWakeLock(app, 600_000)).isTrue();
+    public void release_thenShorterAcquire_startsFreshLease() {
+        assertThat(WakeLockManager.acquireCpu(app, WakeOwner.MTK_OTA, 600_000)).isTrue();
         PowerManager.WakeLock first = ShadowPowerManager.getLatestWakeLock();
 
-        WakeLockManager.releaseCpuWakeLock();
+        WakeLockManager.release(WakeOwner.MTK_OTA);
         assertThat(first.isHeld()).isFalse();
 
         // An explicit release clears the tracked deadline, so a short acquire is honored again.
-        assertThat(WakeLockManager.acquireCpuWakeLock(app, 60_000)).isTrue();
+        assertThat(WakeLockManager.acquireCpu(app, WakeOwner.MTK_OTA, 60_000)).isTrue();
         PowerManager.WakeLock second = ShadowPowerManager.getLatestWakeLock();
         assertThat(second).isNotSameAs(first);
         assertThat(second.isHeld()).isTrue();
     }
 
     @Test
-    public void screenLock_isExtendOnlyToo() {
-        assertThat(WakeLockManager.acquireScreenWakeLock(app, 60_000)).isTrue();
+    public void screenLease_isExtendOnlyToo() {
+        assertThat(WakeLockManager.acquireScreen(app, WakeOwner.CAMERA, 60_000)).isTrue();
         PowerManager.WakeLock first = ShadowPowerManager.getLatestWakeLock();
 
         ShadowSystemClock.advanceBy(Duration.ofSeconds(1));
-        assertThat(WakeLockManager.acquireScreenWakeLock(app, 5_000)).isTrue(); // shorter
+        assertThat(WakeLockManager.acquireScreen(app, WakeOwner.CAMERA, 5_000)).isTrue(); // shorter
 
         assertThat(ShadowPowerManager.getLatestWakeLock()).isSameAs(first);
         assertThat(first.isHeld()).isTrue();
+    }
+
+    @Test
+    public void releaseOfOneOwner_doesNotTouchAnotherOwnersLease() {
+        // The collision this rework exists to prevent: camera close releasing its leases
+        // must not revoke a concurrent BES OTA transfer's protection.
+        assertThat(WakeLockManager.acquireCpu(app, WakeOwner.BES_OTA, 300_000)).isTrue();
+        PowerManager.WakeLock otaLock = ShadowPowerManager.getLatestWakeLock();
+        assertThat(WakeLockManager.acquireFull(app, WakeOwner.CAMERA, 180_000, 5_000)).isTrue();
+
+        WakeLockManager.release(WakeOwner.CAMERA);
+
+        assertThat(otaLock.isHeld()).isTrue();
+
+        WakeLockManager.release(WakeOwner.BES_OTA);
+        assertThat(otaLock.isHeld()).isFalse();
+    }
+
+    @Test
+    public void sameKindLeases_areIndependentPerOwner() {
+        assertThat(WakeLockManager.acquireCpu(app, WakeOwner.PHONE_COMMAND, 15_000)).isTrue();
+        PowerManager.WakeLock commandLock = ShadowPowerManager.getLatestWakeLock();
+        assertThat(WakeLockManager.acquireCpu(app, WakeOwner.STREAMING, 2_180_000)).isTrue();
+        PowerManager.WakeLock streamingLock = ShadowPowerManager.getLatestWakeLock();
+
+        // Two owners hold two distinct kernel locks concurrently; the extend-only rule is
+        // scoped per owner, so the streaming acquire did not touch the command lease.
+        assertThat(streamingLock).isNotSameAs(commandLock);
+        assertThat(commandLock.isHeld()).isTrue();
+        assertThat(streamingLock.isHeld()).isTrue();
     }
 }

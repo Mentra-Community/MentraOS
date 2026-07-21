@@ -2,6 +2,7 @@ package com.mentra.asg_client.camera.policy;
 
 import android.util.Size;
 
+import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.camera.CameraConstants;
 
 /** Resolves requested photo source/size tier to target JPEG dimensions. */
@@ -10,7 +11,10 @@ public final class PhotoResolutionPolicy {
     private PhotoResolutionPolicy() {}
 
     public static Size targetSize(boolean fromSdk, String requestedSizeTier) {
-        String tier = PhotoSizeTier.normalize(requestedSizeTier);
+        String tier = PhotoSizeTier.normalizeCaptureSize(requestedSizeTier);
+        if (CameraConstants.SIZE_TEXT.equals(tier)) {
+            return textModeSensorTarget();
+        }
         if (fromSdk) {
             if (tier == null) {
                 return sdkMedium();
@@ -38,6 +42,13 @@ public final class PhotoResolutionPolicy {
             default:
                 return buttonMedium();
         }
+    }
+
+    /** Sensor JPEG target for text mode — owned by {@link AsgConstants}. */
+    public static Size textModeSensorTarget() {
+        return new Size(
+                AsgConstants.TEXT_MODE_SENSOR_CAPTURE_WIDTH,
+                AsgConstants.TEXT_MODE_SENSOR_CAPTURE_HEIGHT);
     }
 
     private static Size sdkMedium() {

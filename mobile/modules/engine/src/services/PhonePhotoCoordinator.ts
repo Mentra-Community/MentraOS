@@ -19,7 +19,7 @@
  */
 
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
-import type {PhotoSize} from "@mentra/bluetooth-sdk/internal"
+import type {PhotoSize, PhotoTransferMethod} from "@mentra/bluetooth-sdk/internal"
 import {cloudClientService} from "./CloudClientService"
 import {isGlassesConnected} from "./GlassesReadiness"
 import {useGlassesStore} from "../stores/glasses"
@@ -48,11 +48,24 @@ function normalizePhotoSize(value: unknown): PhotoSize {
 export interface PhotoOpts {
   /** Legacy cloud size names are normalized before the native take_photo command. */
   size?: "low" | "medium" | "high" | "max" | "small" | "large" | "full"
-    mode?: "photo" | "text"
+  mode?: "photo" | "text"
+  /** Select direct-only, phone-relayed BLE, or the default Wi-Fi/BLE fallback policy. */
+  transferMethod?: PhotoTransferMethod
   compress?: "none" | "low" | "medium" | "high"
   sound?: boolean
   saveToGallery?: boolean
   exposureTimeNs?: number
+  iso?: number | null
+  aeExposureDivisor?: number
+  isoCap?: number
+  noiseReduction?: boolean
+  edgeEnhancement?: boolean
+  /** ZSL preview buffering. */
+  zsl?: boolean
+  /** MFNR still capture. */
+  mfnr?: boolean
+  ispDigitalGain?: number
+  ispAnalogGain?: string
 }
 
 export interface PhotoTaken {
@@ -80,6 +93,15 @@ export class PhotoError extends Error {
   }
 }
 
+function parsePhotoTransferMethod(value: unknown): PhotoTransferMethod | undefined {
+  if (value === undefined) return undefined
+  if (value === "auto" || value === "direct" || value === "ble") return value
+  throw new PhotoError(
+    "INVALID_ARGUMENT",
+    `Invalid transferMethod ${JSON.stringify(value)}. Expected "auto", "direct", or "ble".`,
+  )
+}
+
 interface ActiveRequest {
   packageName: string
   abort: AbortController
@@ -87,9 +109,18 @@ interface ActiveRequest {
   reject: (err: Error) => void
 }
 
-/** How long to wait for the glasses to acknowledge a capture before failing
- *  fast with CAPTURE_TIMEOUT, instead of hanging on the cloud push timeout. */
-const CAPTURE_TIMEOUT_MS = 15_000
+/**
+ * Last-resort ceiling for the complete capture + encode + transfer + upload
+ * pipeline. This must exceed the managed-photo service's 30s ready-push
+ * timeout so the cloud can return its more specific failure first.
+ *
+ * Text mode commonly spends several seconds detecting/cropping the region and
+ * can take another 10s+ to transfer over BLE. A 15s ceiling incorrectly
+ * rejected successful captures while their upload was still in progress.
+ */
+export const CAPTURE_PIPELINE_TIMEOUT_MS = 45_000
+export const CAMERA_WARM_UP_DEFAULT_DURATION_MS = 15_000
+export const CAMERA_WARM_UP_MAX_DURATION_MS = 60_000
 
 let bleRequestCounter = 0
 
@@ -113,8 +144,23 @@ export class PhonePhotoCoordinator {
   private readonly activeRequests = new Map<string, ActiveRequest>()
   /** Short BLE correlation id (4-char hex) → full cloud requestId. */
   private readonly bleIdToCloud = new Map<string, string>()
+  private readonly activeWarmUps = new Map<
+    string,
+    {requestId: string; durationMs: number; expiryTimer?: ReturnType<typeof setTimeout>}
+  >()
+
+  /** Report-safe camera ownership snapshot for incident diagnostics. */
+  getDiagnosticSnapshot(): Record<string, unknown> {
+    return {
+      captureOwners: [...new Set([...this.activeRequests.values()].map((request) => request.packageName))].sort(),
+      warmUpOwners: [...this.activeWarmUps.keys()].sort(),
+      activeCaptureCount: this.activeRequests.size,
+    }
+  }
 
   async takePhoto(packageName: string, opts: PhotoOpts): Promise<PhotoTaken> {
+    const transferMethod = parsePhotoTransferMethod(opts.transferMethod)
+
     // Pre-check: if glasses aren't even connected, the BLE photo command
     // would be sent into the void and we'd wait 30s for the cloud long-poll
     // to time out. Fail fast with a typed error.
@@ -130,6 +176,10 @@ export class PhonePhotoCoordinator {
       throw new PhotoError("GLASSES_NOT_CONNECTED", "Glasses are not connected", "command", "ble")
     }
 
+    // Text-mode sensor resolution is owned by ASG constants; keep cloud metadata on a stable
+    // high-capacity tier and let the glasses ignore the public size when mode=text.
+    const captureSize = opts.size ?? "medium"
+
     // 1) Presign via the cloud-v2 managed-photo service. Local miniapps use
     //    ONLY the cloud-v2 path: the runtime presigns upload+read URLs and the
     //    phone (as the device controller) delivers the bytes; the legacy
@@ -137,8 +187,20 @@ export class PhonePhotoCoordinator {
     let requestId: string
     let uploadUrl: string
     let readUrl: string
+    const flowStarted = performance.now()
     try {
-      const r = await cloudClientService.startManagedPhoto({size: opts.size ?? "medium"})
+      const presignStarted = performance.now()
+      const r = await cloudClientService.startManagedPhoto({
+        size: opts.mode === "text" ? "max" : captureSize,
+      })
+      const presignMs = Math.round(performance.now() - presignStarted)
+      if (typeof __DEV__ !== "undefined" && __DEV__) {
+        console.debug(
+          `[PhonePhotoCoordinator] presign ${presignMs}ms size=${opts.mode === "text" ? "max" : captureSize} mode=${
+            opts.mode ?? "photo"
+          }`,
+        )
+      }
       requestId = r.requestId
       uploadUrl = r.uploadUrl
       readUrl = r.readUrl
@@ -167,11 +229,9 @@ export class PhonePhotoCoordinator {
       this.activeRequests.set(requestId, {packageName, abort, resolve, reject})
     })
 
-    // Capture watchdog: if the glasses never acknowledge the command (no camera
-    // sound, no capture, no upload — e.g. the command was dropped, or WiFi
-    // upload to an unreachable host stalled), fail FAST and specifically rather
-    // than waiting on the cloud push to time out. A dev should see
-    // "CAPTURE_TIMEOUT stage:capture via:ble" within seconds, not a silent hang.
+    // Last-resort watchdog for a wedged pipeline. The managed-photo ready push
+    // normally resolves or rejects first; this only prevents an indefinite hang
+    // if both the native terminal response and cloud push disappear.
     const captureWatchdog = setTimeout(() => {
       const e = this.activeRequests.get(requestId)
       if (!e) return
@@ -179,12 +239,12 @@ export class PhonePhotoCoordinator {
       e.reject(
         new PhotoError(
           "CAPTURE_TIMEOUT",
-          "Glasses never acknowledged the capture (no photo_response). The take_photo command may not have reached the device, or the upload target was unreachable.",
+          "Photo capture did not complete. The take_photo command, media processing, transfer, or upload may have stalled.",
           "capture",
           isLoopbackUpload ? "ble" : "wifi",
         ),
       )
-    }, CAPTURE_TIMEOUT_MS)
+    }, CAPTURE_PIPELINE_TIMEOUT_MS)
     // Clear the watchdog on BOTH arms. Not `.finally()`: that would mint a new
     // promise that re-rejects unobserved whenever the photo fails (the caller
     // only awaits `outcome` itself), i.e. an unhandled rejection per failure.
@@ -193,21 +253,30 @@ export class PhonePhotoCoordinator {
 
     // 3) Drive glasses over BLE. requestPhoto now resolves at terminal
     //    photo_response success, so run it beside the cloud poll instead of
-    //    awaiting it before polling. iOS auto-injects transferMethod: "auto"
-    //    (WiFi direct with BLE fallback) — see MentraLive.swift.
+    //    awaiting it before polling. Native defaults transferMethod to "auto"
+    //    (Wi-Fi direct with BLE fallback) unless the miniapp forces BLE.
     try {
       void BluetoothSdk.requestPhoto({
         requestId: bleRequestId,
         appId: packageName,
-        size: normalizePhotoSize(opts.size ?? "medium"),
+        size: normalizePhotoSize(captureSize),
         mode: opts.mode ?? "photo",
         webhookUrl: uploadUrl,
         authToken: null,
-        ...(isLoopbackUpload ? {transferMethod: "ble" as const} : {}),
+        ...(isLoopbackUpload ? {transferMethod: "ble" as const} : transferMethod ? {transferMethod} : {}),
         compress: toNativeCompression(opts.compress),
         save: opts.saveToGallery ?? false,
         sound: opts.sound ?? true,
         exposureTimeNs: opts.exposureTimeNs ?? null,
+        iso: opts.iso,
+        aeExposureDivisor: opts.aeExposureDivisor,
+        isoCap: opts.isoCap,
+        noiseReduction: opts.noiseReduction,
+        edgeEnhancement: opts.edgeEnhancement,
+        ...(opts.zsl != null ? {zsl: opts.zsl} : {}),
+        ...(opts.mfnr != null ? {mfnr: opts.mfnr} : {}),
+        ispDigitalGain: opts.ispDigitalGain,
+        ispAnalogGain: opts.ispAnalogGain,
       }).catch((err) => {
         const e = this.activeRequests.get(requestId)
         if (!e) return
@@ -237,6 +306,13 @@ export class PhonePhotoCoordinator {
 
     try {
       const result = await outcome
+      if (typeof __DEV__ !== "undefined" && __DEV__) {
+        console.debug(
+          `[PhonePhotoCoordinator] takePhoto complete ${Math.round(
+            performance.now() - flowStarted,
+          )}ms requestId=${requestId}`,
+        )
+      }
       return {
         photoUrl: result.photoUrl,
         mimeType: result.mimeType,
@@ -257,13 +333,20 @@ export class PhonePhotoCoordinator {
   /**
    * Pre-warm the glasses camera so the next takePhoto() is near-instant.
    *
-   * Pure BLE — NO cloud presign, NO upload, NO long-poll. The SDK mints the
-   * requestId, sends the warm-up command, and resolves when the camera reports
+   * Pure BLE — NO cloud presign, NO upload, NO long-poll. The phone mints and owns
+   * the requestId, sends the warm-up command, and resolves when the camera reports
    * ready (the native promise resolves on the ready status event).
    */
   async warmUpCamera(
     packageName: string,
-    opts: {size?: "low" | "medium" | "high" | "max"; exposureTimeNs?: number; durationMs?: number},
+    opts: {
+      size?: "low" | "medium" | "high" | "max"
+      mode?: "photo" | "text"
+      exposureTimeNs?: number
+      durationMs?: number
+      zsl?: boolean
+      mfnr?: boolean
+    },
   ): Promise<void> {
     // Pre-check: if glasses aren't connected, the BLE warm-up command would be
     // sent into the void. Fail fast with a typed error.
@@ -271,14 +354,50 @@ export class PhonePhotoCoordinator {
       throw new PhotoError("GLASSES_NOT_CONNECTED", "Glasses are not connected", "command", "ble")
     }
 
+    let lease: {requestId: string; durationMs: number; expiryTimer?: ReturnType<typeof setTimeout>} | undefined
     try {
+      await this.stopWarmUpForApp(packageName)
+      const requestId = mintBleRequestId()
+      const requestedDuration =
+        typeof opts.durationMs === "number" && Number.isFinite(opts.durationMs) && opts.durationMs > 0
+          ? Math.round(opts.durationMs)
+          : CAMERA_WARM_UP_DEFAULT_DURATION_MS
+      const durationMs = Math.min(requestedDuration, CAMERA_WARM_UP_MAX_DURATION_MS)
+      lease = {requestId, durationMs}
+      this.activeWarmUps.set(packageName, lease)
       await BluetoothSdk.warmUpCamera({
+        requestId,
         size: normalizePhotoSize(opts.size ?? "medium"),
+        mode: opts.mode ?? "photo",
         exposureTimeNs: opts.exposureTimeNs ?? null,
-        durationMs: opts.durationMs ?? 15000,
+        durationMs,
+        ...(opts.zsl != null ? {zsl: opts.zsl} : {}),
+        ...(opts.mfnr != null ? {mfnr: opts.mfnr} : {}),
       })
+      if (this.activeWarmUps.get(packageName) === lease) {
+        lease.expiryTimer = setTimeout(() => {
+          if (this.activeWarmUps.get(packageName) === lease) {
+            this.activeWarmUps.delete(packageName)
+          }
+        }, durationMs)
+      }
     } catch (err) {
+      if (lease && this.activeWarmUps.get(packageName) === lease) {
+        if (lease.expiryTimer) clearTimeout(lease.expiryTimer)
+        this.activeWarmUps.delete(packageName)
+      }
       throw this.toPhotoError(err, "WARM_UP_FAILED", "command", "ble")
+    }
+  }
+
+  /** Release a miniapp's warm-up even if its original warmUpCamera promise is still opening. */
+  async stopWarmUpForApp(packageName: string): Promise<void> {
+    const active = this.activeWarmUps.get(packageName)
+    if (!active) return
+    await BluetoothSdk.stopCameraWarmUp(active.requestId)
+    if (this.activeWarmUps.get(packageName) === active) {
+      this.activeWarmUps.delete(packageName)
+      if (active.expiryTimer) clearTimeout(active.expiryTimer)
     }
   }
 
@@ -304,12 +423,7 @@ export class PhonePhotoCoordinator {
     // cloud-v2 pending photo requests TTL out on their own; nothing to free.
   }
 
-  private toPhotoError(
-    err: unknown,
-    fallbackCode: string,
-    stage?: PhotoStage,
-    transport?: PhotoTransport,
-  ): PhotoError {
+  private toPhotoError(err: unknown, fallbackCode: string, stage?: PhotoStage, transport?: PhotoTransport): PhotoError {
     if (err instanceof PhotoError) return err
     const code = (err as {code?: string})?.code
     const message = err instanceof Error ? err.message : String(err)

@@ -89,19 +89,70 @@ export class AccountAuthProvider extends AuthClient {
     return Res.ok({unsubscribe: () => (stateCb = null)})
   }
 
+  /** Core rotates refresh tokens on every use and enforces single-use: a
+   * second concurrent grant with the same (now-superseded) token gets a
+   * legitimate 400 invalid_grant, even though the first grant succeeded.
+   * Without this guard, two callers racing on the same expired access token
+   * (e.g. AuthContext's getSession() and CloudClientService's reconnect via
+   * getSubjectToken(), both firing on cold resume) would both call
+   * refreshTokens() with the same stored refresh token; the loser's 400
+   * would make ensureFreshAccess()/getSession() clearTokens(), wiping out
+   * the winner's freshly-saved session. Sharing one in-flight promise across
+   * all callers means only one grant is ever sent per rotation. */
+  private refreshInFlight: Promise<Tokens | null> | null = null
+
   /** Run the V2 refresh grant. Returns the new tokens, or null ONLY when the
-   * server definitively rejected the refresh token (400/401: revoked or
-   * expired session). Throws on network failure AND transient server errors
-   * (5xx, 429) so callers keep the tokens instead of signing the user out
-   * during a brief core outage. */
+   * server definitively rejected the refresh token (`invalid_grant` or 401:
+   * revoked/expired session). Throws on network failure, malformed requests,
+   * and transient server errors (5xx, 429) so callers keep the tokens instead
+   * of signing the user out during a client bug or brief core outage. */
   private async refreshTokens(refresh: string): Promise<Tokens | null> {
+    if (this.refreshInFlight) return this.refreshInFlight
+    const inFlight = this.performRefresh(refresh).finally(() => {
+      if (this.refreshInFlight === inFlight) this.refreshInFlight = null
+    })
+    this.refreshInFlight = inFlight
+    return inFlight
+  }
+
+  private async performRefresh(refresh: string): Promise<Tokens | null> {
     const res = await fetch(core("/api/client/auth/refresh"), {
       method: "POST",
       headers: {"content-type": "application/x-www-form-urlencoded"},
-      body: new URLSearchParams({grant_type: "refresh_token", refresh_token: refresh}),
+      // React Native's native request-body converter does not serialize a
+      // URLSearchParams instance. Pass the encoded string explicitly, as the
+      // cloud-client transport does, or Core receives a malformed/empty form
+      // and responds with unsupported_grant_type (HTTP 400).
+      body: new URLSearchParams({grant_type: "refresh_token", refresh_token: refresh}).toString(),
     })
-    if (AccountAuthProvider.tokenRejected(res.status)) return null
-    if (!res.ok) throw new Error(`refresh failed transiently: HTTP ${res.status}`)
+    if (!res.ok) {
+      const errorBody = (await res.json().catch(() => ({}))) as {error?: string}
+      const errorCode = errorBody.error ?? "unknown_error"
+
+      // A refresh endpoint can return several RFC-shaped 400 responses. Only
+      // invalid_grant (or an authorization-level 401) proves the stored token
+      // is dead. Treat malformed requests and transient failures as errors so
+      // callers preserve the session instead of logging the user out.
+      const refreshRejected = errorCode === "invalid_grant" || res.status === 401
+      if (!refreshRejected) {
+        throw new Error(`refresh failed without rejecting session: HTTP ${res.status} (${errorCode})`)
+      }
+
+      // The in-flight guard above only covers callers that both call
+      // refreshTokens() while ONE request is still pending. A caller that
+      // snapshotted this exact refresh token earlier (via loadTokens()) but
+      // only got here after a DIFFERENT concurrent call already completed
+      // and rotated it will land here with a legitimate rejection for a
+      // token that is simply stale, not dead. Distinguish the two: if
+      // storage now holds a different refresh token than the one we just
+      // presented, someone else already won the rotation and saved a live
+      // session, so hand that back instead of reporting a hard failure that
+      // would make the caller clearTokens() out from under it.
+      const current = loadTokens()
+      if (current && current.refresh !== refresh) return current
+      console.log(`MENTRA AUTH: refresh grant rejected (${errorCode}, HTTP ${res.status}), session is dead`)
+      return null
+    }
     const body = (await res.json()) as {access_token: string; refresh_token: string}
     const t = {access: body.access_token, refresh: body.refresh_token}
     saveTokens(t)
@@ -126,6 +177,7 @@ export class AccountAuthProvider extends AuthClient {
     if (!AccountAuthProvider.tokenRejected(probe.status)) return tokens.access
     const refreshed = await this.refreshTokens(tokens.refresh)
     if (!refreshed) {
+      console.log(`MENTRA AUTH: clearing tokens, refresh rejected after /me probe (HTTP ${probe.status})`)
       clearTokens()
       throw new Error("session expired")
     }
@@ -157,6 +209,11 @@ export class AccountAuthProvider extends AuthClient {
             headers: {authorization: `Bearer ${access}`},
           }).catch(() => null)
         } else if (!offline) {
+          // getSession() runs on cold boot but also from deeplink auth checks
+          // and reset-password, so don't claim "boot" here.
+          console.log(
+            `MENTRA AUTH: getSession clearing tokens, /me rejected (HTTP ${meRes?.status}) and refresh grant rejected`,
+          )
           clearTokens()
           return {token: undefined}
         }

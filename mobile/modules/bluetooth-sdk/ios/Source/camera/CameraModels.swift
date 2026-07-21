@@ -169,15 +169,16 @@ public enum CameraRoiPosition: Int {
 public struct CameraFov {
     public static let minFov = 62
     public static let maxFov = 118
-    public static let defaultFov = 102
+    public static let defaultFov = 118
     public static let narrowFov = 82
+    public static let standardFov = 102
     public static let defaultRoiPosition = CameraRoiPosition.center
     public static let narrow = CameraFov(
         fov: CameraFov.narrowFov,
         roiPosition: CameraFov.defaultRoiPosition
     )
     public static let standard = CameraFov(
-        fov: CameraFov.defaultFov,
+        fov: CameraFov.standardFov,
         roiPosition: CameraFov.defaultRoiPosition
     )
     public static let wide = CameraFov(
@@ -244,6 +245,7 @@ public struct PhotoRequest {
     public let requestId: String
     public let size: PhotoSize
     public let mode: PhotoMode
+    public let transferMethod: String
     public let webhookUrl: String?
     public let authToken: String?
     public let compress: PhotoCompression?
@@ -280,7 +282,8 @@ public struct PhotoRequest {
         zsl: Bool? = nil,
         ispDigitalGain: Int? = nil,
         ispAnalogGain: String? = nil,
-        mode: PhotoMode = .photo
+        mode: PhotoMode = .photo,
+        transferMethod: String = "auto"
     ) {
         self.requestId = nonBlankRequestId(requestId) ?? generatedCameraRequestId("photo")
         self.size = size
@@ -300,11 +303,26 @@ public struct PhotoRequest {
         self.ispDigitalGain = ispDigitalGain
         self.ispAnalogGain = ispAnalogGain
         self.mode = mode
+        self.transferMethod = transferMethod
     }
 
-    public static func from(params: [String: Any]) -> PhotoRequest {
+    public static func from(params: [String: Any]) throws -> PhotoRequest {
         let sizeRaw = params["size"] as? String ?? "medium"
         let compressRaw = params["compress"] as? String ?? "none"
+        let transferMethod: String
+        if let rawValue = params["transferMethod"] {
+            guard let rawString = rawValue as? String,
+                  rawString == "auto" || rawString == "direct" || rawString == "ble"
+            else {
+                throw BluetoothSdkError(
+                    code: "invalid_photo_transfer_method",
+                    message: "Invalid transferMethod \(String(describing: rawValue)). Expected auto, direct, or ble."
+                )
+            }
+            transferMethod = rawString
+        } else {
+            transferMethod = "auto"
+        }
         let exposureTimeNs: Double?
         switch params["exposureTimeNs"] {
         case let value as Double:
@@ -367,7 +385,8 @@ public struct PhotoRequest {
             zsl: optionalBool("zsl"),
             ispDigitalGain: optionalInt("ispDigitalGain"),
             ispAnalogGain: params["ispAnalogGain"] as? String,
-            mode: PhotoMode(normalizedRawValue: params["mode"] as? String)
+            mode: PhotoMode(normalizedRawValue: params["mode"] as? String),
+            transferMethod: transferMethod
         )
     }
 
@@ -417,7 +436,8 @@ public struct PhotoRequest {
             zsl: zsl,
             ispDigitalGain: ispDigitalGain,
             ispAnalogGain: ispAnalogGain,
-            mode: mode
+            mode: mode,
+            transferMethod: transferMethod
         )
     }
 }

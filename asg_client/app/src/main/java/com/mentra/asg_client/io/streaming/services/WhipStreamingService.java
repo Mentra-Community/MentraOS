@@ -12,6 +12,7 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.util.Log;
 
 import androidx.annotation.Nullable;
@@ -150,6 +151,7 @@ public class WhipStreamingService extends Service {
   private volatile boolean mIsReconnecting = false;
 
   private Handler mMainHandler;
+  private long mStartupStartedAtMs;
 
   private static final long STATS_INTERVAL_MS = 2000;
   private long mLastVideoBytesSent = 0;
@@ -230,7 +232,10 @@ public class WhipStreamingService extends Service {
         if (streamId != null && !streamId.isEmpty()) {
           mCurrentStreamId = streamId;
         }
-        mMainHandler.postDelayed(this::startStreaming, 500);
+        mStartupStartedAtMs = SystemClock.elapsedRealtime();
+        logStartupStage("service_command_received");
+        // Defer until onStartCommand returns, without adding a fixed delay.
+        mMainHandler.post(this::startStreaming);
       }
     }
 
@@ -275,10 +280,14 @@ public class WhipStreamingService extends Service {
       }
       mStreamState = StreamState.STARTING;
     }
+    if (!mIsReconnecting && mStartupStartedAtMs == 0) {
+      mStartupStartedAtMs = SystemClock.elapsedRealtime();
+    }
+    logStartupStage("pipeline_started");
 
     // Acquire wake lock to prevent device sleep during streaming
     WakeLockManager.acquireFullWakeLockAndBringToForeground(
-        getApplicationContext(), 2180000, 5000);
+        getApplicationContext(), WakeLockManager.WakeOwner.STREAMING, 2180000, 5000);
 
     if (!mIsReconnecting) {
       mReconnectAttempts = 0;
@@ -290,9 +299,13 @@ public class WhipStreamingService extends Service {
 
     try {
       initWebRtc();
+      logStartupStage("peer_connection_factory_ready");
       setupCamera();
+      logStartupStage("camera_started");
       setupAudio();
+      logStartupStage("audio_started");
       createPeerConnectionAndOffer();
+      logStartupStage("offer_requested");
     } catch (Exception e) {
       Log.e(TAG, "Failed to start streaming", e);
       handleStartupFailure("Failed to start: " + e.getMessage());
@@ -341,7 +354,7 @@ public class WhipStreamingService extends Service {
       }
       mIsReconnecting = false;
       mReconnectAttempts = 0;
-      WakeLockManager.releaseAllWakeLocks();
+      WakeLockManager.release(WakeLockManager.WakeOwner.STREAMING);
       resetState();
       notifyStopped();
       updateNotification("Stream stopped");
@@ -614,6 +627,7 @@ public class WhipStreamingService extends Service {
   }
 
   private void postOfferToWhip(SessionDescription offer) {
+    logStartupStage("whip_request_started");
     Log.d(TAG, "POSTing SDP offer to WHIP URL: " + mWhipUrl);
     logSdpVideoSection("Offer", offer.description);
 
@@ -691,6 +705,7 @@ public class WhipStreamingService extends Service {
             mMainHandler.postDelayed(mStatsRunnable, STATS_INTERVAL_MS);
             scheduleStreamTimeout(mCurrentStreamId);
             startBatteryMonitoring();
+            logStartupStage("whip_answer_applied");
             Log.i(TAG, "Streaming started via WHIP, negotiated video codec: "
                 + firstVideoCodecFromSdp(answerSdp));
             if (mLedEnabled && mHardwareManager != null && mHardwareManager.supportsRecordingLed()) {
@@ -758,6 +773,7 @@ public class WhipStreamingService extends Service {
     public void onIceGatheringChange(PeerConnection.IceGatheringState newState) {
       Log.d(TAG, "ICE gathering state: " + newState);
       if (newState == PeerConnection.IceGatheringState.COMPLETE) {
+        logStartupStage("ice_gathering_complete");
         synchronized (mStateLock) {
           if (mPeerConnection == null || mStreamState == StreamState.STOPPING || mStreamState == StreamState.IDLE) {
             Log.w(TAG, "ICE gathering complete but stream already stopping/stopped, ignoring");
@@ -864,7 +880,7 @@ public class WhipStreamingService extends Service {
     }
     mIsReconnecting = false;
     mReconnectAttempts = 0;
-    WakeLockManager.releaseAllWakeLocks();
+    WakeLockManager.release(WakeLockManager.WakeOwner.STREAMING);
     resetState();
     updateNotification("Stream failed");
   }
@@ -897,7 +913,13 @@ public class WhipStreamingService extends Service {
   }
 
   private void notifyStopped() {
-    if (sStatusCallback != null) mMainHandler.post(() -> sStatusCallback.onStreamStopped(mCurrentStreamId));
+    StreamingStatusCallback callback = sStatusCallback;
+    if (callback != null) {
+      // Capture now: by the time the posted runnable runs, a newer start may
+      // already have overwritten mCurrentStreamId.
+      String streamId = mCurrentStreamId;
+      mMainHandler.post(() -> callback.onStreamStopped(streamId));
+    }
   }
 
   private void notifyReconnecting(int attempt, int maxAttempts, String reason) {
@@ -959,6 +981,16 @@ public class WhipStreamingService extends Service {
   // -----------------------------------------------------------------------
   // Utility
   // -----------------------------------------------------------------------
+
+  private void logStartupStage(String stage) {
+    if (mStartupStartedAtMs == 0) return;
+    Log.i(
+        TAG,
+        "[STREAM_STARTUP] stage="
+            + stage
+            + " elapsedMs="
+            + (SystemClock.elapsedRealtime() - mStartupStartedAtMs));
+  }
 
   private String buildAbsoluteUrl(String base, String location) {
     try {
@@ -1087,6 +1119,8 @@ public class WhipStreamingService extends Service {
       sInstance.mCurrentStreamId = streamId;
       sInstance.mLedEnabled = enableLed;
       sInstance.mSoundEnabled = enableSound;
+      sInstance.mStartupStartedAtMs = SystemClock.elapsedRealtime();
+      sInstance.logStartupStage("service_command_received");
       sInstance.startStreaming();
     } else {
       Intent intent = new Intent(context, WhipStreamingService.class);
@@ -1174,7 +1208,7 @@ public class WhipStreamingService extends Service {
       sInstance.scheduleStreamTimeout(streamId);
       // Re-acquire wake lock on keep-alive
       WakeLockManager.acquireFullWakeLockAndBringToForeground(
-          sInstance.getApplicationContext(), 2180000, 5000);
+          sInstance.getApplicationContext(), WakeLockManager.WakeOwner.STREAMING, 2180000, 5000);
     }
     return matches;
   }

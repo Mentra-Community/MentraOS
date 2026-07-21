@@ -228,10 +228,7 @@ export default function PairingPrepScreen() {
             className="text-lg text-secondary-foreground"
             text="1. Disconnect your G2 from within the Even Realities app, or uninstall the Even Realities app"
           />
-          <Text
-            className="text-lg text-secondary-foreground"
-            text="2. Place your G2 in the charging case with the lid open."
-          />
+          <Text className="text-lg text-secondary-foreground" text="2. Place your G2 in the charging case." />
         </View>
       </View>
     )

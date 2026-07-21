@@ -50,7 +50,7 @@ export interface IslandUiSeams {
    * `session.glasses.requestWifiSetup` — open the host's glasses Wi-Fi setup
    * flow. Absent ⇒ miniapps get NOT_IMPLEMENTED for the request.
    */
-  requestWifiSetup?: (reason?: string) => Promise<void> | void
+  requestWifiSetup?: (reason?: string, packageName?: string) => Promise<void> | void
 }
 
 export interface IslandConfigureOptions {

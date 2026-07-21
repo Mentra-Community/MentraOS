@@ -116,6 +116,16 @@ export function isConnectedWifiStatus(status: WifiStatus): status is ConnectedWi
 
 export type WifiStatusChangeEvent = WifiStatus & {
   type: "wifi_status_change"
+  /**
+   * Glasses-reported provisioning failure reason when THIS event is the verdict of a
+   * failed connect attempt; absent on routine link-state updates. An attempt property,
+   * not a link property — which is why it lives on the event, not on WifiStatus:
+   * "connect_timeout" arrives on a disconnected status (never associated), while
+   * "connected_to_other_network" arrives on a *connected* status (the attempt failed
+   * and the glasses ended up on / fell back to a different SSID than requested).
+   * Requires ASG client v40+ — older glasses never send it.
+   */
+  error?: string
 }
 
 export type HotspotStatus = {state: "disabled"} | {state: "enabled"; ssid: string; password: string; localIp: string}
@@ -407,6 +417,7 @@ export type SettingsAckSetting =
   | "button_video_recording"
   | "button_max_recording_time"
   | "camera_fov"
+  | "camera_fov_override"
   | "camera_tuning"
 
 export type SettingsAckEvent = {
@@ -418,6 +429,7 @@ export type SettingsAckEvent = {
   fov?: number
   roiPosition?: CameraRoiPositionValue
   hardwareApplied?: boolean
+  leaseId?: string
   active?: boolean
   size?: ButtonPhotoSize | string
   width?: number
@@ -443,12 +455,21 @@ export type RgbLedAction = "on" | "off"
 export type RgbLedColor = "red" | "green" | "blue" | "orange" | "white"
 export type PhotoSize = "low" | "medium" | "high" | "max"
 export type PhotoMode = "photo" | "text"
+export type PhotoTransferMethod = "auto" | "direct" | "ble"
 export type ButtonPhotoSize = "low" | "medium" | "high" | "max"
 
+/**
+ * @deprecated Sticky action-button photo presets via {@link BluetoothSdkPublicModule.setPhotoCaptureDefaults}
+ * are deprecated. Prefer per-request {@link BluetoothSdkPublicModule.requestPhoto} options
+ * (e.g. `mode: "text"` for text sensor size/crop, or explicit `aeExposureDivisor`) instead of
+ * persisting button-photo tuning on the glasses.
+ */
 export type PhotoCaptureDefaults = {
   size?: PhotoSize
-  mfnr?: boolean
+  /** ZSL preview buffering for physical camera-button photos. */
   zsl?: boolean
+  /** MFNR still capture for physical camera-button photos. */
+  mfnr?: boolean
   noiseReduction?: boolean
   edgeEnhancement?: boolean
   ispDigitalGain?: number
@@ -508,7 +529,7 @@ export type DashboardMenuItem = {
 
 export const CAMERA_FOV_MIN = 62
 export const CAMERA_FOV_MAX = 118
-export const CAMERA_FOV_DEFAULT = 102
+export const CAMERA_FOV_DEFAULT = CAMERA_FOV_MAX
 
 export type CameraRoiPosition = "center" | "bottom" | "top"
 export type CameraRoiPositionValue = 0 | 1 | 2
@@ -530,6 +551,13 @@ export type CameraFovResult = {
   timestamp: number
 }
 
+export type CameraFovOverrideRequest = CameraFovRequest & {
+  /** Phone-owned lease used to make delayed releases safe. */
+  leaseId: string
+  /** Safety TTL; refresh the same lease/configuration to extend without a HAL restart. */
+  ttlMs?: number
+}
+
 export type CameraFovSetting = {
   fov: number
   roiPosition: CameraRoiPositionValue
@@ -548,6 +576,8 @@ export type PhotoRequestParams = {
   appId?: string
   size: PhotoSize
   mode?: PhotoMode
+  /** `direct` disables BLE fallback; `ble` skips direct upload and forces phone-relayed transfer. */
+  transferMethod?: PhotoTransferMethod
   webhookUrl: string | null
   authToken: string | null
   compress: PhotoCompression
@@ -563,17 +593,26 @@ export type PhotoRequestParams = {
   /** Requested on wire; glasses may log not_implemented. */
   noiseReduction?: boolean
   edgeEnhancement?: boolean
-  mfnr?: boolean
+  /** ZSL buffering. Forced off for manual/scan stills because fixed sensor controls take priority. */
   zsl?: boolean
+  /** MFNR still capture. Forced off for manual/scan stills because fixed sensor controls take priority. */
+  mfnr?: boolean
   ispDigitalGain?: number
   ispAnalogGain?: string
 }
 
 export type WarmUpCameraParams = {
+  /** Supply this when the owner needs to call stopCameraWarmUp during teardown. */
   requestId?: string
   size: PhotoSize
+  mode?: PhotoMode
   exposureTimeNs?: number | null
+  /** Ready-state hold; defaults to 15 seconds and is capped at 60 seconds by ASG. */
   durationMs?: number
+  /** ZSL preview buffering for the warm-up session. */
+  zsl?: boolean
+  /** MFNR still capture for the warm-up session. */
+  mfnr?: boolean
 }
 
 export type StreamVideoConfig = {
@@ -835,6 +874,8 @@ export type BluetoothSdkModuleEvents = {
   speaking_status: (event: SpeakingStatusEvent) => void
   battery_status: (event: BatteryStatusEvent) => void
   local_transcription: (event: LocalTranscriptionEvent) => void
+  phone_notification: (event: PhoneNotificationEvent) => void
+  phone_notification_dismissed: (event: PhoneNotificationDismissedEvent) => void
   wifi_status_change: (event: WifiStatusChangeEvent) => void
   wifi_scan_result: (event: WifiScanResultEvent) => void
   hotspot_status_change: (event: HotspotStatusChangeEvent) => void
@@ -879,6 +920,23 @@ export interface ExtractionProgressEvent {
   percentage: number
   bytesRead: number
   totalBytes: number
+}
+
+export interface PhoneNotificationEvent {
+  notificationId: string
+  app: string
+  title: string
+  content: string
+  priority: string
+  timestamp: number
+  packageName: string
+}
+
+export interface PhoneNotificationDismissedEvent {
+  notificationId: string
+  notificationKey: string
+  packageName: string
+  timestamp: number
 }
 
 export type PublicGlassesStatus = Omit<
@@ -990,10 +1048,19 @@ export interface BluetoothSdkPublicModule {
 
   setGalleryModeEnabled(enabled: boolean): Promise<SettingsAckSuccessEvent>
   setVoiceActivityDetectionEnabled(enabled: boolean): Promise<void>
+  /**
+   * @deprecated Sticky action-button photo presets are deprecated. Prefer per-request
+   * `requestPhoto(...)` options (e.g. `mode: "text"` for text sensor size/crop, or explicit per-shot
+   * fields). Still functional until removed in a future release.
+   */
   setPhotoCaptureDefaults(settings: PhotoCaptureDefaults): Promise<SettingsAckSuccessEvent>
   setVideoRecordingDefaults(settings: VideoRecordingDefaults): Promise<SettingsAckSuccessEvent>
   setMaxVideoRecordingDuration(minutes: number): Promise<SettingsAckSuccessEvent>
   setCameraFov(request: CameraFovRequest): Promise<CameraFovResult>
+  /** One-way FOV command for legacy ASG clients that do not send settings acknowledgements. */
+  setLegacyCameraFov(request: CameraFovRequest): Promise<CameraFovResult>
+  setCameraFovOverride(request: CameraFovOverrideRequest): Promise<CameraFovResult>
+  releaseCameraFovOverride(leaseId: string): Promise<SettingsAckSuccessEvent>
   /**
    * Configure camera HAL tuning (ANR / gain) on Mentra Live glasses.
    *
@@ -1011,6 +1078,8 @@ export interface BluetoothSdkPublicModule {
   queryGalleryStatus(): Promise<GalleryStatusEvent>
   requestPhoto(params: PhotoRequestParams): Promise<PhotoSuccessResponseEvent>
   warmUpCamera(params: WarmUpCameraParams): Promise<CameraStatusEvent>
+  /** Release one request-owned warm-up. Opening requests reject with camera_warm_up_cancelled. */
+  stopCameraWarmUp(requestId: string): Promise<void>
   startVideoRecording(
     requestId: string,
     save: boolean,

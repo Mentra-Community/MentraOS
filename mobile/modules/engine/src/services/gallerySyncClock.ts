@@ -32,7 +32,7 @@ export function isSyncManifestEmpty(syncData: {
   captures?: unknown[]
   changed_files?: unknown[]
 }): boolean {
-  if (syncData.api_version === 2 && syncData.captures && syncData.captures.length > 0) {
+  if ((syncData.api_version || 0) >= 2 && syncData.captures && syncData.captures.length > 0) {
     return false
   }
   return !syncData.changed_files || syncData.changed_files.length === 0

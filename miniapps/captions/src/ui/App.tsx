@@ -1,5 +1,5 @@
 import {useState} from "react"
-import {useSafeArea} from "@mentra/miniapp/ui"
+import {useColorScheme, useSafeArea} from "@mentra/miniapp/ui"
 
 import {BottomNav} from "./components/BottomNav"
 import {Header} from "./components/Header"
@@ -22,6 +22,7 @@ import {useTranscripts} from "./hooks/useTranscripts"
 export function App() {
   const [activeTab, setActiveTab] = useState<"captions" | "settings">("captions")
   const [showLanguageSelector, setShowLanguageSelector] = useState(false)
+  const isDark = useColorScheme() === "dark"
   const {insets} = useSafeArea()
   const {developerMode, holdHandlers} = useDeveloperMode()
   const {settings, updateLanguage, updateHints, updateDisplayLines, updateDisplayWidth, updateWordBreaking} =
@@ -50,8 +51,14 @@ export function App() {
   // the stable brand accent so the app bar/background don't flicker color with
   // cloud connectivity.
   const presentation = developerMode
-    ? getCloudPresentation(cloudStatus)
-    : {label: "", detail: "", accentColor: "#6DAEA6", accentForeground: "#FFFFFF", dark: false}
+    ? getCloudPresentation(cloudStatus, isDark)
+    : {
+        label: "",
+        detail: "",
+        accentColor: isDark ? "#365F5A" : "#6DAEA6",
+        accentForeground: "#FFFFFF",
+        dark: isDark,
+      }
 
   return (
     <div
@@ -137,7 +144,10 @@ export function App() {
 
 export default App
 
-function getCloudPresentation(cloudStatus?: {status: string; audioTransport: string}): {
+function getCloudPresentation(
+  cloudStatus: {status: string; audioTransport: string} | undefined,
+  isDark: boolean,
+): {
   label: string
   detail: string
   accentColor: string
@@ -158,18 +168,18 @@ function getCloudPresentation(cloudStatus?: {status: string; audioTransport: str
     return {
       label: "Cloud captions",
       detail: "WebSocket audio",
-      accentColor: "#A7CDE3",
-      accentForeground: "#1F2937",
-      dark: false,
+      accentColor: isDark ? "#36586B" : "#A7CDE3",
+      accentForeground: isDark ? "#FFFFFF" : "#1F2937",
+      dark: isDark,
     }
   }
   if (status.audioTransport === "udp") {
     return {
       label: "Cloud captions",
       detail: "UDP audio",
-      accentColor: "#6DAEA6",
+      accentColor: isDark ? "#365F5A" : "#6DAEA6",
       accentForeground: "#FFFFFF",
-      dark: false,
+      dark: isDark,
     }
   }
   if (status.status === "connecting" || status.status === "reconnecting") {

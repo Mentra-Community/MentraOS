@@ -88,7 +88,16 @@ Capture a still photo. The handler routes through `transferMethod` to one of thr
 | `bleImgId`       | string  | ""                  | Required for `ble` and `auto` transfer methods              |
 | `save`           | boolean | `false`             | Also save the photo to local gallery                        |
 | `size`               | string  | `"medium"`          | `low`, `medium`, `high`, or `max` (legacy `small`→`low`, `large`→`high`, `full`→`max`) |
-| `mode`               | string  | `"photo"`           | `photo` for normal capture, or `text` to capture at maximum sensor quality and enable text-aware BLE processing |
+| `mode`               | string  | `"photo"`           | `photo` for normal capture, or `text` for ASG text-sensor constants + text-aware BLE processing |
+
+**Text mode behavior**
+
+- Captures at ASG-owned sensor dimensions (`TEXT_MODE_SENSOR_CAPTURE_*`, currently 3840×2160 — Mentra Live's max 16:9 still) via an internal resolution tier — not the public `max` quality tier. Requested `size` is ignored for sensor resolution.
+- Applies shorter auto-exposure (unless `exposureTimeNs` is set manually).
+- Runs text-region detection and crops to the detected/fallback ROI before BLE transfer.
+- Uses dedicated text BLE downscale/encode targets (1920 px long edge, AVIF q55).
+- If detection is untrustworthy, the pipeline falls back to a generous center crop and logs the outcome (`confidence`, `fallback_reason`) in logcat — the photo still completes.
+- Best results on documents, signs, and windshield VIN stickers; plain scenes may look similar to `photo` when the fallback crop is used.
 | `compress`           | string  | `"none"`            | Compression preset passed to capture pipeline               |
 | `flash`              | boolean | `true`              | Fire the privacy LED during capture                         |
 | `sound`              | boolean | `true`              | Play shutter sound                                          |
@@ -98,17 +107,24 @@ Capture a still photo. The handler routes through `transferMethod` to one of thr
 | `isoCap`             | number  | absent              | Cap ISO after AE metering (scan tuning)                     |
 | `noiseReduction`     | boolean | absent              | Parsed; warn-only if unsupported (`not_implemented` in metadata) |
 | `edgeEnhancement`    | boolean | absent              | `false` disables edge enhancement on still capture          |
-| `mfnr`               | boolean | absent              | `false` disables MFNR for this capture                      |
+| `zsl`                | boolean | absent              | ZSL preview/capture buffering. Enabled by default; pass `false` to disable. Manual and scan exposure force it off on the still request because buffered capture conflicts with fixed sensor controls. |
+| `mfnr`               | boolean | absent              | Vendor multi-frame noise reduction on still capture. Enabled by default; pass `false` for the single-frame pipeline. Manual and scan exposure force it off because the vendor pipeline can override fixed sensor controls. MFNR arms ZSL buffering in preview even when `zsl` is false. |
 | `ispDigitalGain`     | number  | absent              | Parsed; warn-only if unsupported                            |
 | `ispAnalogGain`      | string  | absent              | Parsed; warn-only if unsupported                            |
 
-In `text` mode, Mentra Live always captures the source JPEG at the camera's maximum
-resolution and JPEG quality. For auto-exposure captures (no `exposureTimeNs`), the glasses also
-divide the metered shutter time by 3 (`aeExposureDivisor: 3`) to reduce motion blur on text.
-Text-region detection and crop run on both WiFi upload and BLE transfer. On BLE, the crop
-happens before downscale. Text mode always uses the max-tier BLE downscale cap (1920 px) and
-AVIF quality (55), regardless of requested {@code size}. If the captured source JPEG is already
-under 200 KB, the glasses skip AVIF and send JPEG over BLE instead.
+In `text` mode, Mentra Live captures the source JPEG using ASG text-mode sensor constants
+(`TEXT_MODE_SENSOR_CAPTURE_WIDTH` × `TEXT_MODE_SENSOR_CAPTURE_HEIGHT`, currently 3840×2160),
+selecting an exact Camera2 JPEG size match when available or the closest supported size otherwise.
+Text mode does not inject an AE exposure divisor; pass `aeExposureDivisor` explicitly when you
+want scan-style shorter shutter. Text-region detection and crop run on both WiFi upload and BLE
+transfer. On BLE, the crop happens before downscale. Text mode always uses the max-tier BLE
+downscale cap (1920 px), regardless of requested {@code size}.
+
+All BLE photo payloads — text mode and ordinary size-tier photos alike — encode with the single
+codec configured in `AsgConstants.BLE_PHOTO_CODEC`. There is no per-mode split: flipping this one
+constant between `AVIF` (default; quality set per size tier) and `JPEG_FAST` (baseline JPEG at
+`BLE_PHOTO_JPEG_FAST_QUALITY`, encodes in tens of milliseconds on the MT8766 instead of the ~4-5 s
+software AVIF encode) changes both paths at once.
 
 **Constraints (all enforced in `PhotoCommandHandler`):**
 
@@ -690,6 +706,16 @@ Deprecated/reserved. Current ASG Client does not use this command to switch betw
 ```
 
 Persists the FOV/ROI, applies them to the camera HAL via `DevApi.setCameraFov`, and restarts the HAL. After the restart cooldown (`CameraRestartCooldown`), ASG emits `settings_ack` with `status: "ready"` and `hardware_applied: true`. Persist-only fallbacks on non-K900 hardware emit `hardware_applied: false`.
+
+The missing/factory base is the full sensor at `fov: 118`, `roi_position: 0`; existing saved values are preserved.
+
+#### `camera_fov_override` / `camera_fov_override_release`
+
+```json
+{"type":"camera_fov_override","request_id":"settings-1","params":{"lease_id":"fov-1","fov":82,"roi_position":1,"ttl_ms":300000}}
+```
+
+Applies a memory-only FOV/ROI lease without changing the persistent base. Re-sending the same lease and configuration refreshes its TTL without restarting the HAL. `camera_fov_override_release` takes the same `lease_id` and restores the base; releasing a stale lease is a no-op. Expiry is capped at ten minutes.
 
 #### `camera_tuning_config` (Mentra Live / K900-class hardware)
 

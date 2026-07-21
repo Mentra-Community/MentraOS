@@ -3,16 +3,9 @@ import {Languages} from "lucide-react"
 import {TranslationSettings} from "../hooks/useSettings"
 import {getLanguageName, getFlagEmoji} from "../lib/languages"
 
-/**
- * The fake app bar's surface — the app's primary blue, with white title text.
- * Exported so the App root can paint the top safe-area inset the same color,
- * making the status-bar area blend into the app bar.
- */
-export const APP_BAR_BACKGROUND = "#2089F3"
-export const APP_BAR_FOREGROUND = "#FFFFFF"
-
 interface HeaderProps {
   connected: boolean
+  appBarBackground: string
   accentColor: string
   accentForeground: string
   error: string | null
@@ -24,6 +17,7 @@ interface HeaderProps {
 
 export function Header({
   connected,
+  appBarBackground,
   accentColor,
   accentForeground,
   error,
@@ -37,13 +31,11 @@ export function Header({
       {/* Top header bar */}
       <div
         className="w-full h-[46px] px-6 backdrop-blur-lg flex justify-center items-center"
-        style={{background: APP_BAR_BACKGROUND}}>
+        style={{backgroundColor: appBarBackground}}>
         {/* Title with icon */}
         <div className="flex justify-start items-center gap-2">
-          <Languages className="w-6 h-6" color={APP_BAR_FOREGROUND} />
-          <div
-            className="text-center text-lg font-semibold font-['Red_Hat_Display'] leading-6"
-            style={{color: APP_BAR_FOREGROUND}}>
+          <Languages className="w-6 h-6" color="#FFFFFF" />
+          <div className="text-center text-white text-lg font-semibold font-['Red_Hat_Display'] leading-6">
             Translation
           </div>
         </div>

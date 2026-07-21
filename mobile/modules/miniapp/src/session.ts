@@ -24,7 +24,7 @@ import {AuthModule} from "./modules/auth"
 import {CloudModule} from "./modules/cloud"
 import {DashboardAPI} from "./modules/dashboard"
 import {DisplayManager} from "./modules/display"
-import {EventManager, type UnsubscribeFn} from "./modules/events"
+import {EventManager, type TranscriptionEventRoute, type UnsubscribeFn} from "./modules/events"
 import {GlassesModule} from "./modules/glasses"
 import {HeadingModule} from "./modules/heading"
 import {ImuModule} from "./modules/imu"
@@ -194,7 +194,11 @@ type SessionEmitterEvents = {
   auth: (auth: MiniappAuthState) => void
 }
 
-export class MiniappSession {
+// The default preserves the pre-channel-registry behavior for code that creates
+// or accepts a bare MiniappSession. `registerMiniapp<Channels>` supplies the
+// concrete mapping for scaffolded miniapps.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export class MiniappSession<TChannels extends object = any> {
   public readonly auth: AuthModule
   public readonly display: DisplayManager
   /**
@@ -238,7 +242,7 @@ export class MiniappSession {
    * with inverted buffering policy (background drops when no WebView is
    * bound; the WebView buffers until ready).
    */
-  public readonly ui: UIModule
+  public readonly ui: UIModule<TChannels>
   /**
    * Inter-miniapp lifecycle + discovery (list / start / stop). SYSTEM-only —
    * calls reject with NOT_PERMITTED unless this miniapp is a system app.
@@ -324,7 +328,7 @@ export class MiniappSession {
     this.system = new SystemModule(this)
     this.transcription = new TranscriptionModule(this)
     this.translation = new TranslationModule(this)
-    this.ui = new UIModuleImpl(this)
+    this.ui = new UIModuleImpl<TChannels>(this)
     this.miniapps = new MiniappsModule(this)
     this.actions = new ActionsModule(this)
   }
@@ -392,8 +396,12 @@ export class MiniappSession {
    * session.transcription.on(...)
    * etc. instead."
    */
-  _subscribe(streamType: string, handler: (data: unknown) => void): UnsubscribeFn {
-    return this.events.subscribe(streamType, handler)
+  _subscribe(
+    streamType: string,
+    handler: (data: unknown) => void,
+    options: {forceLocal?: boolean} = {},
+  ): UnsubscribeFn {
+    return this.events.subscribe(streamType, handler, options)
   }
 
   // -------------------------------------------------------------------------
@@ -677,7 +685,11 @@ export class MiniappSession {
       case MiniappResponseType.EVENT: {
         const streamType = payload.streamType as string | undefined
         if (!streamType) return
-        this.events._forwardEvent(streamType, payload.data)
+        this.events._forwardEvent(
+          streamType,
+          payload.data,
+          payload.transcriptionRoute as TranscriptionEventRoute | undefined,
+        )
         return
       }
 
