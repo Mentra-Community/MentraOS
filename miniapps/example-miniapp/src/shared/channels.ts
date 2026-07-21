@@ -14,6 +14,7 @@ import type {
   CapabilitiesSnapshot,
   CalendarSnapshotResult,
   ConnectionSnapshot,
+  ElevenLabsSnapshot,
   TesterEventPayload,
   TesterInvoke,
   TesterInvokeResult,
@@ -50,6 +51,9 @@ export interface Channels {
   /** Streamed tester events (subscribe-based testers only). */
   "tester:event": TesterEventPayload
 
+  /** ElevenLabs ConvAI tester snapshot (full state). */
+  "elevenlabs:update": ElevenLabsSnapshot
+
   // ── UI → background broadcasts ─────────────────────────────────────────
 
   "captions:clear": Record<string, never>
@@ -83,6 +87,12 @@ export interface Channels {
     {seconds?: number; freqHz?: number; sampleRate?: 16000 | 24000 | 48000},
     {streamId: string; durationMs?: number; chunks: number; lastBufferedMs: number}
   >
+
+  /** Start ElevenLabs ConvAI session (signed URL → WS → mic PCM). */
+  "elevenlabs:start": Rpc<Record<string, never>, {ok: true}>
+
+  /** Stop ElevenLabs ConvAI session and release mic. */
+  "elevenlabs:stop": Rpc<Record<string, never>, {ok: true}>
 }
 
 declare global {
