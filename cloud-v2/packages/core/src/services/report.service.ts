@@ -105,21 +105,21 @@ export interface AddReportArtifactsResult {
  * the mentraUserId. Never throws — this runs on the fire-and-forget path.
  */
 async function reportUserEmail(mentraUserId: string): Promise<string | null> {
-  try {
-    return await Promise.race([
-      lookupUserEmail(mentraUserId),
-      // The email is a nicety: neither Mongo nor the GoTrue fetch carries a
-      // timeout, and a hung lookup would stall the Slack post itself (the
-      // API response is already decoupled). Give up and post the mu_ id
-      // instead of waiting.
-      new Promise<null>((resolve) => {
-        const timer = setTimeout(() => resolve(null), EMAIL_LOOKUP_TIMEOUT_MS);
-        timer.unref?.();
-      }),
-    ]);
-  } catch {
-    return null;
-  }
+  // The catch is attached to the lookup itself, not around the race: once
+  // the timer wins, a later rejection of the still-running lookup would
+  // otherwise be unhandled.
+  const lookup = lookupUserEmail(mentraUserId).catch(() => null);
+  return await Promise.race([
+    lookup,
+    // The email is a nicety: neither Mongo nor the GoTrue fetch carries a
+    // timeout, and a hung lookup would stall the Slack post itself (the
+    // API response is already decoupled). Give up and post the mu_ id
+    // instead of waiting.
+    new Promise<null>((resolve) => {
+      const timer = setTimeout(() => resolve(null), EMAIL_LOOKUP_TIMEOUT_MS);
+      timer.unref?.();
+    }),
+  ]);
 }
 
 const EMAIL_LOOKUP_TIMEOUT_MS = 5_000;
