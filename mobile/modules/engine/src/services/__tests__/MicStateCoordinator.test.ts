@@ -128,4 +128,14 @@ describe("MicStateCoordinator", () => {
       expect.objectContaining({voice_activity_detection_enabled: false}),
     )
   })
+
+  test("evaluates queued settings against the current PCM state at flush time", () => {
+    MicStateCoordinator.setLocalRequirements({pcm: true, lc3: false, vadEnabled: true})
+    const queuedPatch = {voice_activity_detection_enabled: true}
+    MicStateCoordinator.setLocalRequirements({pcm: false, lc3: false})
+
+    expect(MicStateCoordinator.applyRuntimeOverrides(queuedPatch)).toEqual({
+      voice_activity_detection_enabled: true,
+    })
+  })
 })

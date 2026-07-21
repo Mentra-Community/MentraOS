@@ -29,7 +29,10 @@ import micStateCoordinator from "./MicStateCoordinator"
 const flushBluetoothSettingsPatch = createDebouncedPatchFlusher<Record<string, unknown>>((patch) => {
   // Settings can change while the glasses are disconnected — a native
   // rejection must not surface as an unhandled promise rejection.
-  void Promise.resolve(BluetoothSdk.updateBluetoothSettings(patch)).catch((error) => {
+  // Apply mic overrides at flush time, not enqueue time: raw PCM can stop
+  // during the debounce window and a captured VAD=false would then be stale.
+  const runtimePatch = micStateCoordinator.applyRuntimeOverrides(patch)
+  void Promise.resolve(BluetoothSdk.updateBluetoothSettings(runtimePatch)).catch((error) => {
     console.warn("GlassesSettingsSync: updateBluetoothSettings failed:", error)
   })
 }, 300)
@@ -107,7 +110,7 @@ export function startGlassesSettingsSync(): void {
     (settings: Record<string, unknown>, previous: Record<string, unknown>) => {
       const changed = diffBluetoothSettingsForPush(settings, previous)
       if (Object.keys(changed).length > 0) {
-        flushBluetoothSettingsPatch(micStateCoordinator.applyRuntimeOverrides(changed))
+        flushBluetoothSettingsPatch(changed)
       }
     },
     {equalityFn: shallow},
