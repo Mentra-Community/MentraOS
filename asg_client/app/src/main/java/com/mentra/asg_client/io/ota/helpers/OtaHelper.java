@@ -44,6 +44,7 @@ import java.util.stream.Collectors;
 import java.util.concurrent.locks.ReentrantLock;
 
 import com.mentra.asg_client.io.ota.session.OtaSessionManager;
+import com.mentra.asg_client.io.ota.utils.DowngradeGate;
 import com.mentra.asg_client.io.ota.utils.FirmwareDownloadException;
 import com.mentra.asg_client.io.ota.utils.OtaConstants;
 import com.mentra.asg_client.service.system.core.SystemControllerFactory;
@@ -663,6 +664,25 @@ public class OtaHelper {
                     failedApkPackage = packageName;
                     break; // Stop install sequence if update fails
                 }
+            } else if (OtaConstants.ASG_PACKAGE.equals(packageName)
+                    && DowngradeGate.shouldDowngrade(
+                            currentVersion,
+                            serverVersion,
+                            appInfo.optBoolean("allowDowngrade", false))) {
+                Log.i(TAG, "Pinned downgrade requested for " + packageName +
+                         " (current: " + currentVersion + ", target: " + serverVersion + ")");
+
+                boolean handedOff = stageAndHandoffDowngrade(appInfo, context);
+                if (handedOff) {
+                    // The recovery worker owns the transaction from here; the uninstall it sends
+                    // will kill this process shortly. Do not plan further steps.
+                    apkUpdateNeeded = true;
+                    break;
+                }
+                Log.e(TAG, "Failed to stage downgrade for " + packageName);
+                apkUpdateFailed = true;
+                failedApkPackage = packageName;
+                break;
             } else {
                 Log.d(TAG, packageName + " is up to date (version " + currentVersion + ")");
             }
@@ -932,6 +952,79 @@ public class OtaHelper {
             return false;
         } catch (Exception e) {
             Log.e(TAG, "Failed to update " + packageName, e);
+            isUpdating = false;
+            return false;
+        }
+    }
+
+    /**
+     * Stages a pinned lower-version ASG APK and hands the install transaction to the recovery
+     * worker.
+     *
+     * <p>The OEM installer refuses direct downgrades, so the recovery worker performs the detour:
+     * uninstall the system-app update (reverting to the passive factory build and wiping ASG
+     * state — the deterministic reset a downgrade requires), then install the staged APK as an
+     * ordinary upgrade from the factory floor. ASG cannot supervise any of that itself because the
+     * uninstall kills this process and destroys every ASG-owned preference store, so the handoff
+     * is the last thing ASG does. The phone observes convergence by comparing the reported build
+     * number against the pinned manifest after reconnection.
+     *
+     * @return {@code true} when the APK was staged, checksum-verified, and the handoff broadcast
+     *     was dispatched. The device is untouched when this returns {@code false}.
+     */
+    private boolean stageAndHandoffDowngrade(JSONObject appInfo, Context context) {
+        try {
+            currentUpdateType = "apk";
+            lastApkFailureErrorCode = null;
+
+            if (isBesOtaInProgress()) {
+                Log.w(TAG, "BES firmware update in progress - skipping downgrade");
+                return false;
+            }
+            if (isMtkOtaInProgress) {
+                Log.w(TAG, "MTK firmware update in progress - skipping downgrade");
+                return false;
+            }
+
+            long targetVersion = appInfo.getLong("versionCode");
+            String apkUrl = appInfo.getString("apkUrl");
+            String expectedSha = appInfo.optString("sha256", "");
+            if (expectedSha.isEmpty()) {
+                // The recovery worker re-verifies the staged bytes against this hash after ASG is
+                // gone; never hand over bytes that cannot be re-verified.
+                Log.e(TAG, "Refusing downgrade: manifest entry has no sha256");
+                return false;
+            }
+
+            isUpdating = true;
+            File apkFile = new File(OtaConstants.BASE_DIR, OtaConstants.DOWNGRADE_APK_FILENAME);
+            if (apkFile.exists() && !apkFile.delete()) {
+                Log.w(TAG, "Failed deleting stale downgrade APK: " + apkFile.getAbsolutePath());
+                isUpdating = false;
+                return false;
+            }
+
+            boolean downloadOk =
+                    downloadApk(apkUrl, appInfo, context, OtaConstants.DOWNGRADE_APK_FILENAME);
+            if (!downloadOk) {
+                isUpdating = false;
+                return false;
+            }
+
+            currentUpdateStage = "install";
+            sendProgressToPhone("install", 0, 0, 0, "STARTED", null);
+
+            Intent handoff = new Intent(OtaConstants.RECOVERY_REQUEST_DOWNGRADE);
+            handoff.setPackage(OtaConstants.RECOVERY_PACKAGE);
+            handoff.putExtra(OtaConstants.EXTRA_DOWNGRADE_TARGET_VERSION, targetVersion);
+            handoff.putExtra(OtaConstants.EXTRA_DOWNGRADE_APK_PATH, apkFile.getAbsolutePath());
+            handoff.putExtra(OtaConstants.EXTRA_DOWNGRADE_APK_SHA256, expectedSha);
+            context.sendBroadcast(handoff, OtaConstants.RECOVERY_CONTROL_PERMISSION);
+            Log.i(TAG, "Downgrade handed off to recovery worker (target " + targetVersion
+                    + "); expecting uninstall shortly");
+            return true;
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to stage downgrade handoff", e);
             isUpdating = false;
             return false;
         }

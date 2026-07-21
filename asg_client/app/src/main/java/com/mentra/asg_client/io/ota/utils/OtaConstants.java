@@ -79,4 +79,14 @@ public class OtaConstants {
             "com.mentra.recovery.ACTION_INSTALL_COMPLETED";
     public static final String RECOVERY_CONTROL_PERMISSION =
             "com.mentra.recovery.permission.CONTROL";
+
+    // Pinned ASG downgrade handoff to the recovery worker (uninstall-then-reinstall detour).
+    // ASG cannot supervise its own downgrade: the uninstall kills this process and wipes every
+    // ASG-owned preference store, so recovery owns the transaction end to end.
+    public static final String RECOVERY_REQUEST_DOWNGRADE =
+            "com.mentra.recovery.ACTION_REQUEST_DOWNGRADE";
+    public static final String EXTRA_DOWNGRADE_TARGET_VERSION = "target_version_code";
+    public static final String EXTRA_DOWNGRADE_APK_PATH = "apk_path";
+    public static final String EXTRA_DOWNGRADE_APK_SHA256 = "apk_sha256";
+    public static final String DOWNGRADE_APK_FILENAME = "asg_client_downgrade.apk";
 }
