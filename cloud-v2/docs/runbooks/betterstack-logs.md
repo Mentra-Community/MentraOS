@@ -59,8 +59,15 @@ thing bounding ingest; cluster 5692 also runs kube-system, ingress, karaoke,
 etc. which must never be shipped. Renaming a Porter app or adding a service
 changes container names, so re-check the filter and the `route_by_env` prefixes
 whenever that happens. Keep retention at 30 days per source unless there is a
-reason. The metrics pipeline stays disabled (`metrics-server.enabled: false`,
-no metrics-sink override) to avoid the V1 metrics-datapoint cost. Watch each
+reason. The metrics pipeline stays disabled (`metrics-server.enabled: false`)
+to avoid the V1 metrics-datapoint cost, but the `better_stack_http_metrics_sink`
+override must remain in the values anyway: the chart default for that sink has
+`token: null`, which is invalid Vector config and crash-loops the whole
+DaemonSet, killing log shipping for every env. Removing the override is what
+caused the 2026-07-20/21 outage (addon revisions 3 and 4, roughly 19 hours of
+lost logs; Vector backfills whatever is still in the node log files on restart,
+rotated logs are gone). The sink receives no events while metrics-server is
+disabled, so it just needs any valid token to pass config validation. Watch each
 source's ingest volume for the first week after any change.
 
 ## Querying

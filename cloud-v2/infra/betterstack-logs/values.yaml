@@ -32,8 +32,11 @@
 # 400. Deploy through Porter Add-ons -> Helm Chart (dashboard) or its API with an
 # Admin token (Doppler mentra-sre/dev PORTER_TOKEN_ADMIN). Paste these values with
 # the real per-env tokens substituted for the PLACEHOLDER_*_TOKEN strings below.
-# The metrics sink is intentionally left at the chart default (null token); with
-# metrics-server disabled there is nothing to scrape, so it is inert.
+# The better_stack_http_metrics_sink override below MUST stay. The chart default
+# for that sink has token: null, which is invalid Vector config and crash-loops
+# the entire DaemonSet, stopping log shipping for ALL envs (this caused the
+# 2026-07-20/21 outage, addon revisions 3 and 4). With metrics-server disabled
+# the sink never receives events, so any valid token works; we reuse the dev one.
 
 vector:
   customConfig:
@@ -148,5 +151,10 @@ vector:
           strategy: bearer
           token: "PLACEHOLDER_PROD_TOKEN"
         inputs: ["route_by_env.prod"]
+      better_stack_http_metrics_sink:
+        uri: "https://s2616831.eu-central-1a.betterstackdata.com/metrics"
+        auth:
+          strategy: "bearer"
+          token: "PLACEHOLDER_DEV_TOKEN"
 metrics-server:
   enabled: false
