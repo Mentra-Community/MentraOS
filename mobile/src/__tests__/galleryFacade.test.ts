@@ -1,3 +1,4 @@
+/* eslint-disable no-restricted-imports */
 import {gallery} from "../../modules/engine/src/facades/gallery"
 import {useGallerySyncStore} from "../../modules/engine/src/stores/gallerySync"
 
@@ -42,5 +43,19 @@ describe("gallery facade", () => {
     gallery.clearQueue()
 
     expect(gallery.status()).toEqual(expect.objectContaining({queueLength: 0, queue: []}))
+  })
+
+  it("publishes preflight start completion through the reactive status surface", () => {
+    const statuses: Array<{isStarting: boolean}> = []
+    const unsubscribe = gallery.onStatus((status) => statuses.push(status))
+
+    useGallerySyncStore.getState().setSyncStarting(true)
+    expect(gallery.status().isStarting).toBe(true)
+
+    useGallerySyncStore.getState().setSyncStarting(false)
+    unsubscribe()
+
+    expect(statuses.map(({isStarting}) => isStarting)).toEqual([true, false])
+    expect(gallery.status().isStarting).toBe(false)
   })
 })

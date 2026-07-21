@@ -804,6 +804,11 @@ struct ViewState {
             return
         }
 
+        if PhoneAudioMonitor.getInstance().isOwnAppAudioPlaying() {
+            Bridge.log("MAN: Mentra audio is playing; skipping glasses mic recovery")
+            return
+        }
+
         let timeSinceLastLc3Event = Date().timeIntervalSince(lastLc3Event ?? Date())
         if timeSinceLastLc3Event > 5 {
             Bridge.log("MAN: No audio activity in the last 5 seconds from glasses, reinitializing glasses mic")
@@ -1409,7 +1414,9 @@ struct ViewState {
         size: PhotoSize,
         mode: PhotoMode = .photo,
         exposureTimeNs: Double?,
-        durationMs: Int
+        durationMs: Int,
+        zsl: Bool? = nil,
+        mfnr: Bool? = nil
     ) throws {
         guard let live = sgc as? MentraLive else {
             // Fail fast like other camera commands so the SDK promise rejects immediately instead
@@ -1422,7 +1429,9 @@ struct ViewState {
             size: size,
             mode: mode,
             exposureTimeNs: exposureTimeNs,
-            durationMs: durationMs
+            durationMs: durationMs,
+            zsl: zsl,
+            mfnr: mfnr
         )
     }
 

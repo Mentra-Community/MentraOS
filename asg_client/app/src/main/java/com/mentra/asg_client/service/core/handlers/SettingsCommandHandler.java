@@ -242,7 +242,7 @@ public class SettingsCommandHandler implements ICommandHandler {
 
             Log.d(
                     TAG,
-                    "📱 Received button photo setting: size="
+                    "Received button photo setting: size="
                             + size
                             + (hasMfnr ? ", mfnr=" + mfnr : "")
                             + (hasZsl ? ", zsl=" + zsl : "")
@@ -291,14 +291,11 @@ public class SettingsCommandHandler implements ICommandHandler {
                 if (hasSize) {
                     asgSettings.setButtonPhotoSize(size);
                 }
-                if (mfnr != null) {
-                    // Store as button-photo scan preset only; do NOT write to the global
-                    // mfnr_enabled device pref so unrelated SDK take_photo requests keep
-                    // their own MFNR default (mergeForSdkRequest falls back to that global).
-                    asgSettings.setButtonPhotoMfnr(mfnr);
-                }
-                if (zsl != null) {
+                if (hasZsl) {
                     asgSettings.setButtonPhotoZsl(zsl);
+                }
+                if (hasMfnr) {
+                    asgSettings.setButtonPhotoMfnr(mfnr);
                 }
                 if (hasNoiseReduction) {
                     asgSettings.setButtonPhotoNoiseReduction(noiseReduction);

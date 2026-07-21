@@ -19,6 +19,7 @@ import {useSettingsStore, PAIRING_IDENTITY_KEYS} from "../stores/settings"
 import {useGlassesStore} from "../stores/glasses"
 import {createDebouncedPatchFlusher} from "../utils/debouncedPatch"
 import {isGlassesConnected} from "./GlassesReadiness"
+import micStateCoordinator from "./MicStateCoordinator"
 
 /**
  * Change-pushes are debounced (300ms) and merged so a burst of setSetting
@@ -28,7 +29,10 @@ import {isGlassesConnected} from "./GlassesReadiness"
 const flushBluetoothSettingsPatch = createDebouncedPatchFlusher<Record<string, unknown>>((patch) => {
   // Settings can change while the glasses are disconnected — a native
   // rejection must not surface as an unhandled promise rejection.
-  void Promise.resolve(BluetoothSdk.updateBluetoothSettings(patch)).catch((error) => {
+  // Apply mic overrides at flush time, not enqueue time: raw PCM can stop
+  // during the debounce window and a captured VAD=false would then be stale.
+  const runtimePatch = micStateCoordinator.applyRuntimeOverrides(patch)
+  void Promise.resolve(BluetoothSdk.updateBluetoothSettings(runtimePatch)).catch((error) => {
     console.warn("GlassesSettingsSync: updateBluetoothSettings failed:", error)
   })
 }, 300)
@@ -79,7 +83,8 @@ export async function pushAllBluetoothSettings(): Promise<void> {
   // Returns the native write promise so callers can await the seed before the
   // connect handshake replays settings to the glasses (otherwise the handshake
   // can race ahead and replay stale native settings).
-  await BluetoothSdk.updateBluetoothSettings(useSettingsStore.getState().getBluetoothSettings())
+  const settings = useSettingsStore.getState().getBluetoothSettings()
+  await BluetoothSdk.updateBluetoothSettings(micStateCoordinator.applyRuntimeOverrides(settings))
 }
 
 /**
@@ -91,7 +96,8 @@ export async function pushAllBluetoothSettings(): Promise<void> {
  * with pre-promotion empties (wiping the pairing it had just made).
  */
 export async function pushDeviceSettingsOnConnect(): Promise<void> {
-  await BluetoothSdk.updateBluetoothSettings(stripPairingIdentity(useSettingsStore.getState().getBluetoothSettings()))
+  const settings = stripPairingIdentity(useSettingsStore.getState().getBluetoothSettings())
+  await BluetoothSdk.updateBluetoothSettings(micStateCoordinator.applyRuntimeOverrides(settings))
 }
 
 export function startGlassesSettingsSync(): void {

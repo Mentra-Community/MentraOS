@@ -534,7 +534,7 @@ public final class MentraBluetoothSDK {
         DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "voice_activity_detection_enabled", enabled)
     }
 
-    @available(*, deprecated, message: "Sticky action-button photo presets are deprecated. Prefer per-request requestPhoto(...) options (e.g. mode .text for AE ÷3, or explicit per-shot fields). This method still works but will be removed in a future release.")
+    @available(*, deprecated, message: "Sticky action-button photo presets are deprecated. Prefer per-request requestPhoto(...) options (e.g. mode .text for text sensor size/crop, or explicit per-shot fields). This method still works but will be removed in a future release.")
     public func setPhotoCaptureDefaults(_ settings: PhotoCaptureDefaults) async throws -> SettingsAckEvent {
         try await performSettingsCommand(
             setting: "button_photo",
@@ -543,7 +543,7 @@ public final class MentraBluetoothSDK {
                     // Mirror Android: clear all cached scan-tuning keys so reconnect sync
                     // does not replay stale values after a reset.
                     let cat = ObservableStore.bluetoothCategory
-                    for key in ["button_photo_mfnr", "button_photo_zsl", "button_photo_noise_reduction",
+                    for key in ["button_photo_zsl_mfnr", "button_photo_mfnr", "button_photo_zsl", "button_photo_noise_reduction",
                                 "button_photo_edge_enhancement", "button_photo_isp_digital_gain",
                                 "button_photo_isp_analog_gain", "button_photo_ae_exposure_divisor",
                                 "button_photo_iso_cap", "button_photo_compress", "button_photo_sound"] {
@@ -912,7 +912,9 @@ public final class MentraBluetoothSDK {
         size: PhotoSize,
         mode: PhotoMode = .photo,
         exposureTimeNs: Double?,
-        durationMs: Int
+        durationMs: Int,
+        zsl: Bool? = nil,
+        mfnr: Bool? = nil
     ) async throws -> CameraStatusEvent {
         let effectiveRequestId = nonBlankRequestId(requestId) ?? generatedCameraRequestId("warm")
         let pending = PendingResponse<CameraStatusEvent>(operation: "camera warm up \(effectiveRequestId)")
@@ -924,7 +926,9 @@ public final class MentraBluetoothSDK {
                 size: size,
                 mode: mode,
                 exposureTimeNs: exposureTimeNs,
-                durationMs: durationMs
+                durationMs: durationMs,
+                zsl: zsl,
+                mfnr: mfnr
             )
             let event = try await pending.wait()
             pendingCameraStatusRequests.removeValue(forKey: effectiveRequestId)

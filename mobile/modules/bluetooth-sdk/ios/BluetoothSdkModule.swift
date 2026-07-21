@@ -428,6 +428,8 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             }
             let durationRaw = intValue(params["durationMs"]) ?? 0
             let durationMs = durationRaw > 0 ? durationRaw : 15000
+            let zsl = params["zsl"] as? Bool
+            let mfnr = params["mfnr"] as? Bool
 
             let sdk = await MainActor.run { self.bluetoothSdk() }
             return try await sdk.warmUpCamera(
@@ -435,7 +437,9 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
                 size: size,
                 mode: mode,
                 exposureTimeNs: exposureTimeNs,
-                durationMs: durationMs
+                durationMs: durationMs,
+                zsl: zsl,
+                mfnr: mfnr
             ).values
         }
 

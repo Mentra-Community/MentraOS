@@ -22,7 +22,7 @@ function projectStatus() {
     processingFiles: Array.from(progress.processingFiles),
     processedFiles: s.processedFiles,
     isSyncing: selectIssyncing(s),
-    isStarting: gallerySyncService.isSyncStarting(),
+    isStarting: s.syncStarting,
     glassesGallery: selectGlassesGalleryStatus(s),
     // Copy: the snapshot must not hand callers a mutable reference into the store
     // (each queue item is copied too — callers must not mutate them in place).

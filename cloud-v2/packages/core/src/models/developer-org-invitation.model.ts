@@ -1,4 +1,5 @@
-import { Schema, model, type InferSchemaType } from "mongoose";
+import { Schema, type InferSchemaType } from "mongoose";
+import { registerModel } from "./register-model";
 
 export const DEVELOPER_ORG_INVITATION_ROLES = ["admin", "member"] as const;
 export const DEVELOPER_ORG_INVITATION_STATUSES = ["pending", "accepted", "revoked"] as const;
@@ -29,7 +30,7 @@ DeveloperOrgInvitationSchema.index(
 );
 
 export type DeveloperOrgInvitation = InferSchemaType<typeof DeveloperOrgInvitationSchema>;
-export const DeveloperOrgInvitationModel = model(
+export const DeveloperOrgInvitationModel = registerModel(
   "DeveloperOrgInvitation",
   DeveloperOrgInvitationSchema,
 );

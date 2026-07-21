@@ -5542,6 +5542,8 @@ class MentraLive : SGCManager() {
         mode: PhotoMode = PhotoMode.PHOTO,
         exposureTimeNs: Long?,
         durationMs: Int,
+        zsl: Boolean? = null,
+        mfnr: Boolean? = null,
     ) {
         Bridge.log(
                 "LIVE: warmUpCamera() entry — requestId=" +
@@ -5563,6 +5565,12 @@ class MentraLive : SGCManager() {
             json.put("mode", mode.value)
             if (exposureTimeNs != null && exposureTimeNs > 0L) {
                 json.put("exposureTimeNs", exposureTimeNs)
+            }
+            if (mfnr != null) {
+                json.put("mfnr", mfnr)
+            }
+            if (zsl != null) {
+                json.put("zsl", zsl)
             }
             json.put("durationMs", if (durationMs > 0) durationMs else 15000)
             sendJson(json, true)
@@ -8931,9 +8939,15 @@ class MentraLive : SGCManager() {
 
     /** Send button photo settings to glasses, replaying all stored scan-tuning fields. */
     override fun sendButtonPhotoSettings() {
+        val legacyZslMfnr =
+            DeviceStore.get(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_zsl_mfnr") as Boolean?
         val size = DeviceStore.get(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_size") as String?
-        val mfnr = DeviceStore.get(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_mfnr") as Boolean?
-        val zsl = DeviceStore.get(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_zsl") as Boolean?
+        val mfnr =
+            (DeviceStore.get(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_mfnr") as Boolean?)
+                ?: legacyZslMfnr
+        val zsl =
+            (DeviceStore.get(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_zsl") as Boolean?)
+                ?: legacyZslMfnr
         val noiseReduction = DeviceStore.get(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_noise_reduction") as Boolean?
         val edgeEnhancement = DeviceStore.get(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_edge_enhancement") as Boolean?
         val ispDigitalGain = DeviceStore.get(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_isp_digital_gain") as Int?
@@ -8950,7 +8964,7 @@ class MentraLive : SGCManager() {
 
     /** Send camera FOV setting to glasses (K900 / Mentra Live). */
     override fun sendCameraFovSetting() {
-        var fov = 102
+        var fov = 118
         var roiPosition = 0
         try {
             val raw = DeviceStore.get("bluetooth", "camera_fov")

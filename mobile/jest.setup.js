@@ -558,6 +558,8 @@ const mockIslandEntries = () => {
         // one store double.
         list: jest.fn(() => [...appStatusState.apps]),
         onChanged: jest.fn(() => () => {}),
+        buttonPressSubscribers: jest.fn(() => []),
+        onButtonPressSubscribersChanged: jest.fn(() => () => {}),
         refresh: jest.fn((...a) => appStatusState.refresh(...a) ?? Promise.resolve()),
         start: jest.fn((...a) => appStatusState.start(...a) ?? Promise.resolve(true)),
         stop: jest.fn((...a) => appStatusState.stop(...a) ?? Promise.resolve()),

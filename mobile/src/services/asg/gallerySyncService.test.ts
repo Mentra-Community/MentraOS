@@ -20,6 +20,7 @@ import {useGallerySyncStore} from "../../../modules/engine/src/stores/gallerySyn
 import {useGlassesStore} from "../../../modules/engine/src/stores/glasses"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 import type {CaptureGroup} from "@/types/asg"
+import {Platform} from "react-native"
 import WifiManager from "react-native-wifi-reborn"
 
 jest.mock("@mentra/bluetooth-sdk", () => {
@@ -147,6 +148,7 @@ const mockGetV3Manifest = asgCameraApi.getV3Manifest as jest.Mock
 const mockSyncWithServer = asgCameraApi.syncWithServer as jest.Mock
 const mockSetServer = asgCameraApi.setServer as jest.Mock
 const mockGetCurrentWifiSSID = WifiManager.getCurrentWifiSSID as jest.Mock
+const mockIsWifiEnabled = WifiManager.isEnabled as jest.Mock
 
 const EMPTY_SYNC_RESPONSE = {
   data: {
@@ -183,12 +185,15 @@ async function startFileDownload(): Promise<void> {
 }
 
 describe("GallerySyncService", () => {
+  const originalPlatformOS = Platform.OS
+
   beforeEach(() => {
     // Pin Date.now() to match EMPTY_SYNC_RESPONSE.server_time so detectClockSkew stays quiet
     // in tests that don't explicitly want to trigger clock-skew recovery.
     jest.useFakeTimers({now: 2000})
     jest.clearAllMocks()
     mockGetCurrentWifiSSID.mockResolvedValue("")
+    mockIsWifiEnabled.mockResolvedValue(true)
     useGallerySyncStore.getState().reset()
     useGlassesStore.getState().reset()
     gallerySyncService.cleanup()
@@ -197,6 +202,7 @@ describe("GallerySyncService", () => {
   afterEach(() => {
     jest.restoreAllMocks()
     gallerySyncService.cleanup()
+    Object.defineProperty(Platform, "OS", {value: originalPlatformOS, configurable: true, writable: true})
     jest.clearAllTimers()
     jest.useRealTimers()
   })
@@ -352,6 +358,45 @@ describe("GallerySyncService", () => {
     await Promise.all([first, second])
 
     expect(useGallerySyncStore.getState().syncState).toBe("requesting_hotspot")
+  })
+
+  it("makes sync tappable and uses native WiFi state after returning from settings", async () => {
+    Object.defineProperty(Platform, "OS", {value: "android", configurable: true, writable: true})
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
+    useGallerySyncStore.getState().setSyncError("WiFi disabled - enable WiFi and try again")
+    ;(gallerySyncService as any).waitingForWifiRetry = true
+    ;(gallerySyncService as any).wifiSettingsOpenedAt = Date.now()
+    mockIsWifiEnabled.mockResolvedValueOnce(true)
+    const startSpy = jest.spyOn(gallerySyncService, "startSync").mockResolvedValue(undefined)
+
+    const foregroundPromise = (gallerySyncService as any).handleAppStateChange("active")
+    expect(useGallerySyncStore.getState().syncState).toBe("idle")
+    await jest.advanceTimersByTimeAsync(1000)
+    await foregroundPromise
+
+    expect(mockIsWifiEnabled).toHaveBeenCalledTimes(1)
+    expect(startSpy).toHaveBeenCalledTimes(1)
+    expect((gallerySyncService as any).waitingForWifiRetry).toBe(false)
+    expect((gallerySyncService as any).wifiSettingsOpenedAt).toBeNull()
+  })
+
+  it("releases the WiFi retry guard after native checks fail", async () => {
+    Object.defineProperty(Platform, "OS", {value: "android", configurable: true, writable: true})
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
+    useGallerySyncStore.getState().setSyncError("WiFi disabled - enable WiFi and try again")
+    ;(gallerySyncService as any).waitingForWifiRetry = true
+    ;(gallerySyncService as any).wifiSettingsOpenedAt = Date.now()
+    mockIsWifiEnabled.mockResolvedValue(false)
+    const startSpy = jest.spyOn(gallerySyncService, "startSync").mockResolvedValue(undefined)
+
+    const foregroundPromise = (gallerySyncService as any).handleAppStateChange("active")
+    await jest.advanceTimersByTimeAsync(5000)
+    await foregroundPromise
+
+    expect(useGallerySyncStore.getState().syncState).toBe("idle")
+    expect(startSpy).not.toHaveBeenCalled()
+    expect((gallerySyncService as any).waitingForWifiRetry).toBe(false)
+    expect((gallerySyncService as any).wifiSettingsOpenedAt).toBeNull()
   })
 
   it("keeps sync watermark before zero-byte video captures", async () => {

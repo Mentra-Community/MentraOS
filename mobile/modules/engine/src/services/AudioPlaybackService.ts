@@ -585,6 +585,10 @@ class AudioPlaybackService {
     // Uses BgTimer to work reliably when app is backgrounded on Android
     this.audioStopDebounceTimer = BgTimer.setTimeout(() => {
       this.audioStopDebounceTimer = null
+      // URL playback and live PCM streams may overlap when stopOtherAudio is false.
+      // A URL that ends must not clear the native playback signal while another
+      // source is still active, or the mic watchdog can interrupt that source.
+      if (this.isPlaying()) return
       BluetoothSdk.setOwnAppAudioPlaying(false).catch((e) => {
         console.warn("AUDIO: Failed to notify native of audio stop:", e)
       })

@@ -459,12 +459,15 @@ export type ButtonPhotoSize = "low" | "medium" | "high" | "max"
 /**
  * @deprecated Sticky action-button photo presets via {@link BluetoothSdkPublicModule.setPhotoCaptureDefaults}
  * are deprecated. Prefer per-request {@link BluetoothSdkPublicModule.requestPhoto} options
- * (e.g. `mode: "text"` for AE ÷3) instead of persisting button-photo tuning on the glasses.
+ * (e.g. `mode: "text"` for text sensor size/crop, or explicit `aeExposureDivisor`) instead of
+ * persisting button-photo tuning on the glasses.
  */
 export type PhotoCaptureDefaults = {
   size?: PhotoSize
-  mfnr?: boolean
+  /** ZSL preview buffering for physical camera-button photos. */
   zsl?: boolean
+  /** MFNR still capture for physical camera-button photos. */
+  mfnr?: boolean
   noiseReduction?: boolean
   edgeEnhancement?: boolean
   ispDigitalGain?: number
@@ -524,7 +527,7 @@ export type DashboardMenuItem = {
 
 export const CAMERA_FOV_MIN = 62
 export const CAMERA_FOV_MAX = 118
-export const CAMERA_FOV_DEFAULT = 102
+export const CAMERA_FOV_DEFAULT = CAMERA_FOV_MAX
 
 export type CameraRoiPosition = "center" | "bottom" | "top"
 export type CameraRoiPositionValue = 0 | 1 | 2
@@ -588,8 +591,10 @@ export type PhotoRequestParams = {
   /** Requested on wire; glasses may log not_implemented. */
   noiseReduction?: boolean
   edgeEnhancement?: boolean
-  mfnr?: boolean
+  /** ZSL buffering. Forced off for manual/scan stills because fixed sensor controls take priority. */
   zsl?: boolean
+  /** MFNR still capture. Forced off for manual/scan stills because fixed sensor controls take priority. */
+  mfnr?: boolean
   ispDigitalGain?: number
   ispAnalogGain?: string
 }
@@ -602,6 +607,10 @@ export type WarmUpCameraParams = {
   exposureTimeNs?: number | null
   /** Ready-state hold; defaults to 15 seconds and is capped at 60 seconds by ASG. */
   durationMs?: number
+  /** ZSL preview buffering for the warm-up session. */
+  zsl?: boolean
+  /** MFNR still capture for the warm-up session. */
+  mfnr?: boolean
 }
 
 export type StreamVideoConfig = {
@@ -1039,7 +1048,7 @@ export interface BluetoothSdkPublicModule {
   setVoiceActivityDetectionEnabled(enabled: boolean): Promise<void>
   /**
    * @deprecated Sticky action-button photo presets are deprecated. Prefer per-request
-   * `requestPhoto(...)` options (e.g. `mode: "text"` for AE ÷3, or explicit per-shot
+   * `requestPhoto(...)` options (e.g. `mode: "text"` for text sensor size/crop, or explicit per-shot
    * fields). Still functional until removed in a future release.
    */
   setPhotoCaptureDefaults(settings: PhotoCaptureDefaults): Promise<SettingsAckSuccessEvent>

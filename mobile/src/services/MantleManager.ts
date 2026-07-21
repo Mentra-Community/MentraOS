@@ -150,7 +150,7 @@ class MantleManager {
       // Named host-UI seams: island dispatches the miniapp request, the host
       // owns the screen (branding/navigation).
       ui: {
-        requestWifiSetup: (reason?: string) =>
+        requestWifiSetup: (reason?: string, packageName?: string) =>
           new Promise<void>((resolve) => {
             showAlert("Connect to Wi-Fi", reason || "This miniapp needs your glasses to be connected to Wi-Fi.", [
               {text: "Cancel", style: "cancel", onPress: resolve},
@@ -161,7 +161,10 @@ class MantleManager {
                   // without clearing foreground leaves the Wi-Fi route
                   // rendered underneath the requesting miniapp.
                   engine.miniapps.clearForeground()
-                  router.push({pathname: "/wifi/scan" as any})
+                  router.push({
+                    pathname: "/wifi/scan" as any,
+                    params: packageName ? {returnToMiniapp: packageName} : {},
+                  })
                   resolve()
                 },
               },

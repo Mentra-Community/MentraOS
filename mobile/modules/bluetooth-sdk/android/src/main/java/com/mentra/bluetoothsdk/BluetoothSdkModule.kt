@@ -643,7 +643,9 @@ class BluetoothSdkModule : Module() {
                 if (exposureRaw != null && exposureRaw.isFinite() && exposureRaw > 0) exposureRaw.toLong() else null
             val durationRaw = (params["durationMs"] as? Number)?.toInt() ?: 0
             val durationMs = if (durationRaw > 0) durationRaw else 15000
-            requireSdk().warmUpCamera(requestId, size, mode, exposureTimeNs, durationMs).values
+            val zsl = params["zsl"] as? Boolean
+            val mfnr = params["mfnr"] as? Boolean
+            requireSdk().warmUpCamera(requestId, size, mode, exposureTimeNs, durationMs, zsl, mfnr).values
         }
 
         SdkAsyncFunction("stopCameraWarmUp") { requestId: String ->
