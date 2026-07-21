@@ -35,6 +35,10 @@ const SLACK_FIELD_TEXT_MAX = 1900;
 export interface ReportSlackNotification {
   reportId: string;
   mentraUserId: string;
+  /** Account email resolved by the caller (best-effort); the message falls
+   * back to the opaque mentraUserId when null so a GoTrue outage or an OEM
+   * tenant never blocks the notification. */
+  userEmail?: string | null;
   kind: "bug" | "feedback" | "automatic";
   /** Trigger/report/feedback are snapshots of the stored (Mixed) report
    * fields, so every property is read defensively. */
@@ -135,6 +139,7 @@ function buildSlackMessage(notification: ReportSlackNotification): {
   blocks: SlackBlock[];
 } {
   const { reportId, mentraUserId, kind, trigger, artifactCount } = notification;
+  const userLabel = notification.userEmail || mentraUserId;
   const env = environmentLabel();
   const header =
     kind === "bug"
@@ -150,7 +155,7 @@ function buildSlackMessage(notification: ReportSlackNotification): {
 
   const consoleUrl = adminConsoleReportUrl(reportId);
   const identityFields = [
-    { type: "mrkdwn", text: `*User:*\n${slackText(mentraUserId, SHORT_TEXT_MAX)}` },
+    { type: "mrkdwn", text: `*User:*\n${slackText(userLabel, SHORT_TEXT_MAX)}` },
     { type: "mrkdwn", text: `*Report ID:*\n\`${slackText(reportId, SHORT_TEXT_MAX)}\`` },
     { type: "mrkdwn", text: `*Env:*\n${slackText(env, SHORT_TEXT_MAX)}` },
   ];
@@ -206,7 +211,7 @@ function buildSlackMessage(notification: ReportSlackNotification): {
   });
 
   const fallbackParts = [
-    `New ${kind} report from ${mentraUserId} (${env})`,
+    `New ${kind} report from ${truncate(userLabel, SHORT_TEXT_MAX)} (${env})`,
     `Report ID: ${reportId}`,
     ...(consoleUrl ? [`Console: ${consoleUrl}`] : []),
     ...(typeof trigger?.reason === "string"
@@ -328,15 +333,26 @@ function environmentLabel(): string {
  */
 function adminConsoleReportUrl(reportId: string): string | null {
   const env = process.env.CLOUD_CORE_ENVIRONMENT;
-  const base =
-    process.env.CLOUD_ADMIN_CONSOLE_URL ||
-    (env === "prod" || env === "production"
+  const configured = process.env.CLOUD_ADMIN_CONSOLE_URL;
+  const base = configured
+    ? withHttpsScheme(configured)
+    : env === "prod" || env === "production"
       ? "https://admin.mentraglass.com"
       : env === "dev" || env === "staging"
         ? `https://admin.${env}.mentraglass.com`
-        : null);
+        : null;
   if (!base) return null;
   return `${base.replace(/\/+$/, "")}/?report=${encodeURIComponent(reportId)}`;
+}
+
+/**
+ * Slack treats a schemeless link target as an in-app relative path and
+ * renders it as app.slack.com/client/<team>/admin.dev.mentraglass.com/...,
+ * so a configured console base must carry a scheme before it goes into the
+ * message.
+ */
+function withHttpsScheme(url: string): string {
+  return /^https?:\/\//i.test(url) ? url : `https://${url}`;
 }
 
 /**
