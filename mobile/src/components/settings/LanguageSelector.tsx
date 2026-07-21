@@ -16,7 +16,6 @@ export type LanguageRow = {
 
 type LanguageSelectorProps = {
   title: string
-  description?: string
   languages: LanguageRow[]
   currentLanguage: string
   downloadingLanguage?: string
@@ -28,7 +27,6 @@ type LanguageSelectorProps = {
 
 export default function LanguageSelector({
   title,
-  description,
   languages,
   currentLanguage,
   downloadingLanguage,
@@ -41,11 +39,6 @@ export default function LanguageSelector({
 
   return (
     <Group title={title}>
-      {description ? (
-        <View style={themed($descriptionContainer)}>
-          <Text text={description} style={themed($rowSubtitle)} />
-        </View>
-      ) : null}
       {languages.map((lang) => {
         const isActive = lang.code === currentLanguage && lang.downloaded
         const isDownloading = lang.code === downloadingLanguage
@@ -94,11 +87,6 @@ const $row: ThemedStyle<ViewStyle> = ({spacing}) => ({
   alignItems: "center",
   paddingVertical: spacing.s4,
   paddingHorizontal: spacing.s4,
-})
-
-const $descriptionContainer: ThemedStyle<ViewStyle> = ({spacing}) => ({
-  paddingHorizontal: spacing.s4,
-  paddingVertical: spacing.s3,
 })
 
 const $rowText: ThemedStyle<ViewStyle> = () => ({

@@ -380,7 +380,6 @@ export default function SpeechSettingsScreen() {
 
             <LanguageSelector
               title="Voice Language (Text-to-Speech)"
-              description="These languages are intentionally included in one shared multilingual voice model. Download it once, then switch languages without another download."
               languages={ttsLanguages}
               currentLanguage={ttsCurrent}
               downloadingLanguage={ttsRowDownloading}
