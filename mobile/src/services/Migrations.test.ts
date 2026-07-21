@@ -33,7 +33,7 @@ describe("mobile migrations", () => {
   beforeEach(() => {
     jest.clearAllMocks()
     mockSave.mockReturnValue(Res.ok(undefined))
-    mockSet.mockReturnValue(Res.ok(undefined))
+    mockSet.mockImplementation(() => Res.try_async(async () => undefined))
   })
 
   it("resets MentraOS onboarding once for users upgrading from version 3", async () => {
