@@ -81,8 +81,12 @@ export class RecorderController {
   private interimTranscript = ""
   /** Detected/active transcription language tag (e.g. "en-US"). */
   private lang = ""
+  /** Shared start promise so duplicate UI/action starts create one writer. */
+  private startPromise: Promise<void> | null = null
   /** True while a stop/cancel is finalizing the blob — blocks a new start from racing its state. */
   private finalizing = false
+  /** Shared stop promise so duplicate UI/action stops await one finalization. */
+  private stopPromise: Promise<void> | null = null
   /** Serializes blob writes so chunks land in order, one at a time. */
   private drainChain: Promise<void> = Promise.resolve()
 
@@ -112,6 +116,7 @@ export class RecorderController {
     }
 
     this.registerUiHandlers()
+    this.registerActions()
 
     // Playback UI state is driven entirely by play()'s own request lifecycle
     // (see play()), NOT by speaker.onStateChange. The speaker state is global to
@@ -179,6 +184,15 @@ export class RecorderController {
     this.unsubs.push(this.ui.on("rec:clear", () => void this.clearAll()))
   }
 
+  private registerActions(): void {
+    try {
+      this.unsubs.push(this.session.actions.handle("start_recording", () => this.startRecordingAction()))
+      this.unsubs.push(this.session.actions.handle("stop_recording", () => this.stopRecordingAction()))
+    } catch (err) {
+      console.log("Recorder: failed to register actions", err)
+    }
+  }
+
   private sendSnapshot(): void {
     this.ui.send("rec:snapshot", {
       recording: this.lastStatus,
@@ -195,8 +209,57 @@ export class RecorderController {
 
   // ── Recording (capture in the miniapp) ─────────────────────────────────────
 
-  private async startRecording(): Promise<void> {
-    if (this.recordingId || this.finalizing) return
+  private async startRecordingAction(): Promise<{
+    status: "recording"
+    recordingId: string
+    startedAt: number
+    paused: boolean
+  }> {
+    if (!this.session.mic.hasPermission) {
+      throw new Error("Microphone permission is required to start a recording")
+    }
+    if (this.finalizing) {
+      throw new Error("The previous recording is still being saved")
+    }
+
+    await this.startRecording()
+    if (!this.recordingId || !this.lastStatus) {
+      throw new Error("Failed to start recording")
+    }
+    return {
+      status: "recording",
+      recordingId: this.recordingId,
+      startedAt: this.lastStatus.startedAt,
+      paused: this.lastStatus.paused === true,
+    }
+  }
+
+  private async stopRecordingAction(): Promise<{
+    status: "stopped" | "idle"
+    recording: RecordingItem | null
+  }> {
+    const recordingId = this.recordingId
+    if (!recordingId) return {status: "idle", recording: null}
+
+    await this.stopRecording()
+    return {
+      status: "stopped",
+      recording: this.recordings.find((recording) => recording.id === recordingId) ?? null,
+    }
+  }
+
+  private startRecording(): Promise<void> {
+    if (this.startPromise) return this.startPromise
+    if (this.recordingId || this.finalizing) return Promise.resolve()
+
+    const start = this.beginRecording()
+    this.startPromise = start.finally(() => {
+      this.startPromise = null
+    })
+    return this.startPromise
+  }
+
+  private async beginRecording(): Promise<void> {
     // Recording and playback are mutually exclusive. Stop synchronously before
     // opening the writer so no old clip keeps playing over the new capture.
     this.stopPlay()
@@ -418,7 +481,18 @@ export class RecorderController {
     })
   }
 
-  private async stopRecording(): Promise<void> {
+  private stopRecording(): Promise<void> {
+    if (this.stopPromise) return this.stopPromise
+    if (!this.recordingId || !this.writer) return Promise.resolve()
+
+    const stop = this.finalizeRecording()
+    this.stopPromise = stop.finally(() => {
+      this.stopPromise = null
+    })
+    return this.stopPromise
+  }
+
+  private async finalizeRecording(): Promise<void> {
     const writer = this.writer
     if (!this.recordingId || !writer) return
     // `finalizing` blocks a new start from racing this recording's capture state
