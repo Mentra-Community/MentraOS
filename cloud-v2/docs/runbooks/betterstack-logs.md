@@ -8,15 +8,24 @@ a worker thread and grows heap without bound under load.
 
 ## Sources
 
+One Vector DaemonSet routes each cloud-v2 env to its own source (route transform
+keyed on the container-name prefix). All sources are in the germany /
+eu-central-1a region, 30-day retention.
+
 | Env | Source | id | Table | Retention |
 | --- | --- | --- | --- | --- |
 | dev | MentraCloud V2 - Dev | 2616831 | `mentracloud_v2_dev_2` | 30 days |
+| debug | MentraCloud V2 - Debug | 2616845 | `mentracloud_v2_debug` | 30 days |
+| isaiah | MentraCloud V2 - Isaiah | 2616847 | `mentracloud_v2_isaiah` | 30 days |
+| staging | MentraCloud V2 - Staging | 2616849 | `mentracloud_v2_staging` | 30 days |
+| prod | MentraCloud V2 - Prod | 2616851 | `mentracloud_v2_prod` | 30 days |
 
-Staging/prod sources get created when their envs join shipping (deliberate
-edit to the Vector filter + a routed sink per env, never a wildcard).
-
-Source tokens live in Doppler: `cloud-v2/<env>` `BETTERSTACK_SOURCE_TOKEN`.
-API credentials for source management live in Doppler `mentra-sre/dev`.
+Adding an env = one `starts_with` clause in the filter + a route entry + a sink
+in `infra/betterstack-logs/values.yaml`, never a wildcard. Per-source ingest
+tokens live in Doppler `mentra-sre/dev` as `BETTERSTACK_V2_SOURCE_TOKEN_<ENV>`
+(injected into the addon values; not committed). Source-management + deploy
+credentials (`BETTERSTACK_API_TOKEN`, `PORTER_TOKEN_ADMIN`) are in the same
+Doppler config.
 
 ## Install / upgrade
 
