@@ -8,7 +8,12 @@ import {Button, Icon, Screen, Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
 import {RadioGroup, RatingButtons, StarRating} from "@/components/ui"
-import {buildReportDetails, buildReportSurfaceContext, submitBugReport} from "@/services/bugReport/bugReportSubmission"
+import {
+  buildReportDetails,
+  buildReportSurfaceContext,
+  resolveFeedbackTriggerReason,
+  submitBugReport,
+} from "@/services/bugReport/bugReportSubmission"
 import {buildReportTrigger} from "@/services/bugReport/bugReportCategorization"
 import {useNavigationStore} from "@/stores/navigation"
 import {engine, SETTINGS, useSetting} from "@mentra/engine"
@@ -105,12 +110,7 @@ export default function FeedbackPage() {
     // Check if user rated 4-5 stars on feature request
     const shouldPromptAppRating = feedbackType === "feature" && experienceRating !== null && experienceRating >= 4
     const triggerSource = typeof params.triggerSource === "string" ? params.triggerSource : "feedback_screen"
-    const triggerReason =
-      typeof params.triggerReason === "string"
-        ? params.triggerReason
-        : feedbackType === "bug"
-          ? "manual_bug_report"
-          : "manual_feedback"
+    const triggerReason = resolveFeedbackTriggerReason(params.triggerReason, feedbackType)
     const sourceAppletPackageName =
       typeof params.sourceAppletPackageName === "string" ? params.sourceAppletPackageName.trim() : ""
     const sourceAppletName = typeof params.sourceAppletName === "string" ? params.sourceAppletName.trim() : ""

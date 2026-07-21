@@ -46,7 +46,6 @@ export default function MainSettingsPage() {
               onPress={() =>
                 push("/miniapps/settings/feedback", {
                   triggerSource: "settings",
-                  triggerReason: "manual_feedback",
                   sourceRoute: "/miniapps/settings/",
                 })
               }

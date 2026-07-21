@@ -12,6 +12,14 @@ export interface SubmitBugReportOptions {
   screenshots?: ImagePicker.ImagePickerAsset[]
 }
 
+export function resolveFeedbackTriggerReason(
+  providedReason: string | string[] | undefined,
+  feedbackType: "bug" | "feature",
+): string {
+  if (typeof providedReason === "string" && providedReason.trim()) return providedReason.trim()
+  return feedbackType === "bug" ? "manual_bug_report" : "manual_feedback"
+}
+
 export function buildReportSurfaceContext(input: {
   surface: string
   route: string

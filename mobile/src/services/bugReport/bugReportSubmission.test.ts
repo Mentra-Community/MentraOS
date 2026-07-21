@@ -1,4 +1,15 @@
-import {buildReportSurfaceContext} from "./bugReportSubmission"
+import {buildReportSurfaceContext, resolveFeedbackTriggerReason} from "./bugReportSubmission"
+
+describe("resolveFeedbackTriggerReason", () => {
+  it("derives the generic feedback form reason from the submitted type", () => {
+    expect(resolveFeedbackTriggerReason(undefined, "bug")).toBe("manual_bug_report")
+    expect(resolveFeedbackTriggerReason(undefined, "feature")).toBe("manual_feedback")
+  })
+
+  it("preserves a specific launch reason", () => {
+    expect(resolveFeedbackTriggerReason(" screenshot_detected ", "bug")).toBe("screenshot_detected")
+  })
+})
 
 describe("buildReportSurfaceContext", () => {
   it("records launch attribution without claiming the user selected a subject", () => {
