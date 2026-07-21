@@ -26,9 +26,16 @@ const SWIFTPM_REPO = 'https://github.com/Mentra-Community/mentra-bluetooth-sdk-i
 
 const outputPath = process.env.GITHUB_OUTPUT;
 const eventName = process.env.GITHUB_EVENT_NAME || '';
-const branch = process.env.GITHUB_REF_NAME || '';
 const forceRelease = process.env.FORCE_RELEASE === 'true';
 const dryRun = process.env.DRY_RUN === 'true';
+const sourceBranch = process.env.GITHUB_REF_NAME || '';
+// A manual dry run must be usable on a PR head so release changes can be
+// validated before merge. Treat a non-channel ref as dev for version
+// derivation only; non-dry-run dispatches still fail closed in channelFor().
+const branch =
+  dryRun && !Object.hasOwn(BLUETOOTH_SDK_CHANNELS, sourceBranch)
+    ? 'dev'
+    : sourceBranch;
 
 function setOutput(name, value) {
   if (!outputPath) {
@@ -95,6 +102,9 @@ setOutput('run_release', String(runRelease));
 
 console.log(`Bluetooth SDK package: ${currentPackage.name}`);
 console.log(`Base version: ${currentPackage.version}`);
+if (branch !== sourceBranch) {
+  console.log(`Dry-run source branch ${sourceBranch} uses the ${branch} release channel.`);
+}
 console.log(`Derived version for ${branch}: ${derived} (npm dist-tag ${tag})`);
 console.log(`Already released — npm: ${npmExists}, maven: ${mavenExists}, swiftpm tag: ${swiftpmExists}`);
 console.log(`Run release jobs: ${runRelease}. Force: ${forceRelease}. Dry run: ${dryRun}.`);
