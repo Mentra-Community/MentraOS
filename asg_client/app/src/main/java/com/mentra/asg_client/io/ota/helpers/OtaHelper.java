@@ -16,6 +16,7 @@ import org.json.JSONObject;
 import org.greenrobot.eventbus.EventBus;
 import org.greenrobot.eventbus.Subscribe;
 import org.greenrobot.eventbus.ThreadMode;
+import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.events.BatteryStatusEvent;
 import com.mentra.asg_client.di.hilt.AsgClientEntryPoint;
 import com.mentra.asg_client.io.ota.events.DownloadProgressEvent;
@@ -86,10 +87,6 @@ public class OtaHelper {
     private Handler handler;
     private Context context;
 
-
-    /** Resend schedule for the post-APK-restart completion push (see {@link #sendCompletionToPhone}). */
-    private static final long COMPLETION_RESEND_INTERVAL_MS = 3_000L;
-    private static final int COMPLETION_RESEND_ATTEMPTS = 15;
 
     // Update order configuration - can be easily modified to change update sequence
     // Order: APK updates → MTK firmware → BES firmware
@@ -2503,7 +2500,7 @@ public class OtaHelper {
     public void sendCompletionToPhone(OtaSessionManager sm) {
         if (sm == null) return;
         this.sessionManager = sm;
-        for (int attempt = 1; attempt <= COMPLETION_RESEND_ATTEMPTS; attempt++) {
+        for (int attempt = 1; attempt <= AsgConstants.OTA_COMPLETION_RESEND_ATTEMPTS; attempt++) {
             final int attemptNumber = attempt;
             handler.postDelayed(
                     () -> {
@@ -2512,13 +2509,13 @@ public class OtaHelper {
                                 "APK completion push attempt "
                                         + attemptNumber
                                         + "/"
-                                        + COMPLETION_RESEND_ATTEMPTS
+                                        + AsgConstants.OTA_COMPLETION_RESEND_ATTEMPTS
                                         + " (phoneConnected="
                                         + isPhoneConnected()
                                         + ")");
                         sendOtaStatus();
                     },
-                    (attempt - 1) * COMPLETION_RESEND_INTERVAL_MS);
+                    (attempt - 1) * AsgConstants.OTA_COMPLETION_RESEND_INTERVAL_MS);
         }
     }
 
