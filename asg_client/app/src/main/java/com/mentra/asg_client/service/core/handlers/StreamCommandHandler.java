@@ -4,6 +4,7 @@ import android.content.Context;
 import android.hardware.camera2.CameraAccessException;
 import android.hardware.camera2.CameraCharacteristics;
 import android.hardware.camera2.CameraManager;
+import android.os.SystemClock;
 import android.util.Log;
 import com.mentra.asg_client.io.media.core.MediaCaptureService;
 import com.mentra.asg_client.io.streaming.config.RtmpStreamConfig;
@@ -107,6 +108,7 @@ public class StreamCommandHandler implements ICommandHandler {
 
     /** Handle start stream command — routes to RTMP, SRT, or WHIP service based on URL. */
     private boolean handleStartCommand(JSONObject data) {
+        long startupStartedAtMs = SystemClock.elapsedRealtime();
         boolean eisChanged = false;
         boolean streamStarted = false;
         String streamId = data.optString("streamId", "");
@@ -157,7 +159,13 @@ public class StreamCommandHandler implements ICommandHandler {
             }
 
             // Stop any existing stream
-            stopAllServices();
+            boolean stoppedExistingStream = stopAllServices();
+            Log.i(
+                    TAG,
+                    "[STREAM_STARTUP] stage=existing_streams_checked elapsedMs="
+                            + (SystemClock.elapsedRealtime() - startupStartedAtMs)
+                            + " stoppedExisting="
+                            + stoppedExistingStream);
 
             // Capture light is mandatory for privacy; ignore any caller-supplied flash value.
             boolean flash = true;
@@ -210,6 +218,10 @@ public class StreamCommandHandler implements ICommandHandler {
                         }
                         applyEisForStreaming(config.getVideoWidth(), config.getVideoHeight());
                         eisChanged = true;
+                        Log.i(
+                                TAG,
+                                "[STREAM_STARTUP] stage=service_start_requested protocol=whip elapsedMs="
+                                        + (SystemClock.elapsedRealtime() - startupStartedAtMs));
                         Log.d(TAG, "Starting WHIP stream to: " + streamUrl);
                         WhipStreamingService.startStreaming(
                                 context, streamUrl, streamId, flash, sound, config);
@@ -512,21 +524,29 @@ public class StreamCommandHandler implements ICommandHandler {
     // Helpers
     // -------------------------------------------------------------------------
 
-    private void stopAllServices() {
+    private boolean stopAllServices() {
+        boolean stoppedExistingStream = false;
         if (RtmpStreamingService.isStreaming() || RtmpStreamingService.isReconnecting()) {
             RtmpStreamingService.stopStreaming(context);
+            stoppedExistingStream = true;
         }
         if (SrtStreamingService.isStreaming() || SrtStreamingService.isReconnecting()) {
             SrtStreamingService.stopStreaming(context);
+            stoppedExistingStream = true;
         }
         if (WhipStreamingService.isStreaming() || WhipStreamingService.isReconnecting()) {
             WhipStreamingService.stopStreaming(context);
+            stoppedExistingStream = true;
         }
-        // Brief pause to let services clean up before starting a new one
-        try {
-            Thread.sleep(500);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
+        if (stoppedExistingStream) {
+            // Give an active service time to release camera/encoder resources
+            // before replacing it. Cold starts do not need this delay.
+            try {
+                Thread.sleep(500);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
         }
+        return stoppedExistingStream;
     }
 }

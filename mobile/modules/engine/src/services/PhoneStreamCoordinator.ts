@@ -58,6 +58,9 @@ const DEFAULT_TIMINGS = {
   ackTimeoutMs: 10_000,
   maxMissedAcks: 3,
   cloudflareStatusPollMs: 5_000,
+  // During WHIP startup, probe quickly so readiness is not quantized to the
+  // steady-state 5s monitoring cadence. The delay backs off on each miss.
+  cloudflareStartupPollInitialMs: 500,
   // Cloudflare typically needs ~5-10s after first frame before HLS is live.
   hlsReadinessInitialDelayMs: 5_000,
   hlsReadinessPollMs: 2_000,
@@ -152,11 +155,13 @@ interface ManagedEntry {
   hlsReady: boolean
   hlsReadyResolvers: Array<(result: ManagedStartResult) => void>
   hlsReadyRejecters: Array<(err: Error) => void>
-  cloudflareTimer?: ReturnType<typeof setInterval>
+  cloudflareTimer?: ReturnType<typeof setTimeout>
   hlsTimer?: ReturnType<typeof setInterval>
   hlsAttempts: number
-  /** webrtc mode: CF status polls seen while waiting for first "connected". */
-  connectAttempts: number
+  /** Cloudflare status probes made during this stream session. */
+  cloudflareAttempts: number
+  /** Wall-clock origin for end-to-end managed startup diagnostics. */
+  startupStartedAtMs: number
 }
 
 type Entry = UnmanagedEntry | ManagedEntry
@@ -324,6 +329,7 @@ export class PhoneStreamCoordinator {
     packageName: string,
     opts: StartManagedOptions,
   ): Promise<ManagedStartResult> {
+    const startupStartedAtMs = Date.now()
     // Two-phase: the entry-claim runs under the transition lock; the wait for
     // HLS readiness happens AFTER the lock releases so a long warm-up doesn't
     // block subsequent start/stop transitions on this coordinator.
@@ -382,9 +388,17 @@ export class PhoneStreamCoordinator {
         hlsReadyResolvers: [],
         hlsReadyRejecters: [],
         hlsAttempts: 0,
-        connectAttempts: 0,
+        cloudflareAttempts: 0,
+        startupStartedAtMs,
       }
       this.current = entry
+
+      console.info("[STREAM_STARTUP]", {
+        streamId,
+        stage: "provisioned",
+        mode,
+        elapsedMs: Date.now() - startupStartedAtMs,
+      })
 
       try {
         const event = await BluetoothSdk.startExternallyManagedStream({
@@ -397,6 +411,12 @@ export class PhoneStreamCoordinator {
           ...(opts.audio !== undefined ? {audio: opts.audio} : {}),
         })
         entry.publisherStart = publisherStartResult(streamId, event)
+        console.info("[STREAM_STARTUP]", {
+          streamId,
+          stage: "publisher_ready",
+          mode,
+          elapsedMs: Date.now() - startupStartedAtMs,
+        })
       } catch (err) {
         this.current = null
         await teardownManagedStream(provision.liveInputId).catch(() => undefined)
@@ -416,6 +436,13 @@ export class PhoneStreamCoordinator {
 
     if (decision.kind === "join" && decision.immediate) {
       return decision.immediate
+    }
+
+    // The first Cloudflare probe runs immediately and can complete before the
+    // transition lock releases. Avoid stranding this caller after readiness
+    // resolvers have already been drained.
+    if (decision.entry.hlsReady) {
+      return managedStartResult(decision.entry)
     }
 
     // Wait for playback readiness OUTSIDE the lock — readiness can take ~10s
@@ -550,20 +577,41 @@ export class PhoneStreamCoordinator {
   }
 
   private startCloudflareStatusPoll(entry: ManagedEntry): void {
-    // webrtc mode: how many polls to wait for the first "connected" before
-    // declaring the publisher never reached Cloudflare. Mirrors the HLS
-    // readiness budget (~60s at the default 5s cadence).
-    const maxConnectAttempts = Math.max(
-      1,
-      Math.ceil(
-        (this.timings.hlsReadinessMaxAttempts * this.timings.hlsReadinessPollMs) /
-          this.timings.cloudflareStatusPollMs,
-      ),
-    )
+    // Keep the existing ~60s readiness budget while decoupling it from probe
+    // count. Startup probes begin immediately and back off to the normal 5s
+    // monitoring cadence, so a just-connected publisher is noticed quickly
+    // without increasing steady-state traffic.
+    const connectTimeoutMs = Math.max(1, this.timings.hlsReadinessMaxAttempts * this.timings.hlsReadinessPollMs)
+    const pollingStartedAtMs = Date.now()
+
+    const scheduleNext = () => {
+      if (this.current !== entry) return
+      const waitingForWebRtc = entry.mode === "webrtc" && !entry.hlsReady
+      const elapsedMs = Date.now() - pollingStartedAtMs
+      const remainingMs = Math.max(0, connectTimeoutMs - elapsedMs)
+      const startupDelayMs = Math.min(
+        this.timings.cloudflareStatusPollMs,
+        this.timings.cloudflareStartupPollInitialMs * 2 ** Math.min(Math.max(0, entry.cloudflareAttempts - 1), 10),
+      )
+      const delayMs = waitingForWebRtc ? Math.min(startupDelayMs, remainingMs) : this.timings.cloudflareStatusPollMs
+      entry.cloudflareTimer = setTimeout(() => void poll(), delayMs)
+    }
+
     const poll = async () => {
       if (this.current !== entry) return
+      const requestStartedAtMs = Date.now()
+      let keepPolling = true
+      entry.cloudflareAttempts += 1
       try {
         const status: CloudflareStatus = await getManagedStreamStatus(entry.liveInputId)
+        console.debug("[STREAM_STARTUP]", {
+          streamId: entry.streamId,
+          stage: "cloudflare_probe",
+          connected: status.isConnected,
+          attempt: entry.cloudflareAttempts,
+          requestMs: Date.now() - requestStartedAtMs,
+          elapsedMs: Date.now() - entry.startupStartedAtMs,
+        })
         this.fanout({
           streamId: entry.streamId,
           source: "cloudflare",
@@ -576,6 +624,13 @@ export class PhoneStreamCoordinator {
         if (entry.mode === "webrtc" && !entry.hlsReady) {
           if (status.isConnected) {
             entry.hlsReady = true
+            console.info("[STREAM_STARTUP]", {
+              streamId: entry.streamId,
+              stage: "playback_ready",
+              mode: entry.mode,
+              probes: entry.cloudflareAttempts,
+              elapsedMs: Date.now() - entry.startupStartedAtMs,
+            })
             const result = managedStartResult(entry)
             for (const r of entry.hlsReadyResolvers) r(result)
             entry.hlsReadyResolvers = []
@@ -587,11 +642,8 @@ export class PhoneStreamCoordinator {
               data: result as unknown as Record<string, unknown>,
             })
           } else {
-            entry.connectAttempts += 1
-            if (entry.connectAttempts >= maxConnectAttempts) {
-              const err = new Error(
-                `WebRTC ingest never reached Cloudflare after ${entry.connectAttempts} status polls`,
-              )
+            if (Date.now() - pollingStartedAtMs >= connectTimeoutMs) {
+              const err = new Error(`WebRTC ingest never reached Cloudflare after ${connectTimeoutMs}ms`)
               for (const reject of entry.hlsReadyRejecters) reject(err)
               entry.hlsReadyResolvers = []
               entry.hlsReadyRejecters = []
@@ -606,15 +658,32 @@ export class PhoneStreamCoordinator {
                 if (this.current?.streamId !== targetStreamId) return
                 await this.teardownLocked("webrtc_not_connected")
               })
+              keepPolling = false
             }
           }
         }
       } catch (err) {
         console.warn("[STREAM] cloudflare status poll failed:", err)
+        if (entry.mode === "webrtc" && !entry.hlsReady && Date.now() - pollingStartedAtMs >= connectTimeoutMs) {
+          const timeoutErr = new Error(`WebRTC ingest status could not be confirmed after ${connectTimeoutMs}ms`)
+          for (const reject of entry.hlsReadyRejecters) reject(timeoutErr)
+          entry.hlsReadyResolvers = []
+          entry.hlsReadyRejecters = []
+          const targetStreamId = entry.streamId
+          void this.runExclusive(async () => {
+            if (this.current?.streamId !== targetStreamId) return
+            await this.teardownLocked("webrtc_status_unavailable")
+          })
+          keepPolling = false
+        }
+      } finally {
+        if (keepPolling) scheduleNext()
       }
     }
-    entry.cloudflareTimer = setInterval(poll, this.timings.cloudflareStatusPollMs)
-    // Don't fire immediately — Cloudflare wouldn't have first-frame yet.
+
+    // The glasses publisher has already reported streaming, so the first
+    // status request is useful now. Most starts avoid the old blind 5s wait.
+    void poll()
   }
 
   private startHlsReadinessPoll(entry: ManagedEntry): void {
@@ -630,6 +699,13 @@ export class PhoneStreamCoordinator {
         const res = await fetch(entry.hlsUrl, {method: "HEAD"})
         if (res.status === 200) {
           entry.hlsReady = true
+          console.info("[STREAM_STARTUP]", {
+            streamId: entry.streamId,
+            stage: "playback_ready",
+            mode: entry.mode,
+            probes: entry.hlsAttempts,
+            elapsedMs: Date.now() - entry.startupStartedAtMs,
+          })
           if (entry.hlsTimer) {
             clearInterval(entry.hlsTimer)
             entry.hlsTimer = undefined
@@ -717,7 +793,7 @@ export class PhoneStreamCoordinator {
     this.lifecycle = null
 
     if (entry.kind === "managed") {
-      if (entry.cloudflareTimer) clearInterval(entry.cloudflareTimer)
+      if (entry.cloudflareTimer) clearTimeout(entry.cloudflareTimer)
       if (entry.hlsTimer) clearInterval(entry.hlsTimer)
       // Reject any still-pending HLS readiness waiters.
       const pendingErr = new Error(`Stream torn down: ${reason}`)
