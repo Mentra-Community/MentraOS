@@ -103,4 +103,29 @@ describe("MicStateCoordinator", () => {
       expect.objectContaining({voice_activity_detection_enabled: false}),
     )
   })
+
+  test("keeps VAD disabled when persisted settings replay during raw PCM", () => {
+    MicStateCoordinator.setLocalRequirements({pcm: true, lc3: false, vadEnabled: true})
+
+    expect(
+      MicStateCoordinator.applyRuntimeOverrides({
+        brightness: 50,
+        voice_activity_detection_enabled: true,
+      }),
+    ).toEqual({
+      brightness: 50,
+      voice_activity_detection_enabled: false,
+    })
+  })
+
+  test("restores a VAD preference changed while raw PCM is active", async () => {
+    MicStateCoordinator.setLocalRequirements({pcm: true, lc3: false, vadEnabled: true})
+    MicStateCoordinator.applyRuntimeOverrides({voice_activity_detection_enabled: false})
+    MicStateCoordinator.setLocalRequirements({pcm: false, lc3: false})
+    await flushMicWrite()
+
+    expect(mockUpdateBluetoothSettings).toHaveBeenLastCalledWith(
+      expect.objectContaining({voice_activity_detection_enabled: false}),
+    )
+  })
 })

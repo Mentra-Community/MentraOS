@@ -56,6 +56,24 @@ class MicStateCoordinator {
   }
 
   /**
+   * Preserve the runtime microphone contract when the persisted device
+   * settings are replayed (for example after a glasses reconnect). A user VAD
+   * change made while PCM is active is remembered, but native must continue
+   * receiving VAD=false until the last raw-audio consumer unsubscribes.
+   */
+  public applyRuntimeOverrides(settings: Record<string, unknown>): Record<string, unknown> {
+    const configuredVad = settings.voice_activity_detection_enabled
+    if (typeof configuredVad === "boolean") this.configuredVad = configuredVad
+
+    if (!this.localWantsPcm) return settings
+
+    return {
+      ...settings,
+      voice_activity_detection_enabled: false,
+    }
+  }
+
+  /**
    * Push local requirements to BluetoothSdk. `should_send_pcm` is strictly for
    * on-device PCM consumers; cloud audio uses LC3 through AudioCloudUplink.
    */

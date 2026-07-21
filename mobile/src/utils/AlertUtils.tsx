@@ -88,6 +88,17 @@ export function ModalProvider({children}: {children: React.ReactNode}) {
   // Animation values - start at final values if not using new UI
   const fadeAnim = useRef(new Animated.Value(0)).current
   const scaleAnim = useRef(new Animated.Value(0.93)).current
+  const pendingDismissCallback = useRef<(() => void) | undefined>(undefined)
+
+  // Effects run after React commits. Dispatch callbacks from here so a button
+  // that opens a native surface cannot race the custom overlay's removal.
+  useEffect(() => {
+    if (visible || !pendingDismissCallback.current) return
+
+    const callback = pendingDismissCallback.current
+    pendingDismissCallback.current = undefined
+    callback()
+  }, [visible])
 
   useEffect(() => {
     const backHandler = () => {
@@ -217,10 +228,8 @@ export function ModalProvider({children}: {children: React.ReactNode}) {
         useNativeDriver: true,
       }),
     ]).start(() => {
+      pendingDismissCallback.current = onDismiss
       setVisible(false)
-      // Let React remove the custom overlay before a callback opens another
-      // native surface (for example Android's Wi-Fi or permission dialog).
-      if (onDismiss) requestAnimationFrame(onDismiss)
     })
   }
 

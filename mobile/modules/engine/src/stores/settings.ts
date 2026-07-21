@@ -968,13 +968,18 @@ export const useSettingsStore = create<SettingsState>()(
         const cameraFovMigrationDone = storage.load<boolean>(CAMERA_FOV_MIGRATION_KEY)
         if (cameraFovMigrationDone.is_error() || !cameraFovMigrationDone.value) {
           const current = get().getSetting(SETTINGS.camera_fov.key) as {fov?: number; roi_position?: number} | undefined
+          let migrationSucceeded = true
           if (current?.fov === 102 && (current.roi_position ?? 0) === 0) {
             const result = await get().setSetting(SETTINGS.camera_fov.key, {fov: 118, roi_position: 0}, true)
             if (result.is_error()) {
               console.log("SETTINGS: camera FOV migration failed:", result.error)
+              migrationSucceeded = false
             }
           }
-          storage.save(CAMERA_FOV_MIGRATION_KEY, true)
+          // Unlike the blur migration above, a failed camera set may leave the
+          // local value unchanged. Only mark this migration complete once the
+          // desired value was applied so a transient failure retries on boot.
+          if (migrationSucceeded) storage.save(CAMERA_FOV_MIGRATION_KEY, true)
         }
       })
       loadAllSettingsInFlight = inFlight
