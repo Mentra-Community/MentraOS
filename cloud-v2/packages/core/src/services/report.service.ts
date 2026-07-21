@@ -126,7 +126,11 @@ const EMAIL_LOOKUP_TIMEOUT_MS = 5_000;
 
 async function lookupUserEmail(mentraUserId: string): Promise<string | null> {
   const user = await UserModel.findOne({ mentraUserId }).lean();
-  if (!user) return null;
+  // Only first-party rows store a GoTrue id in tenantUserId (same gate as
+  // account.api's tenantUserIdFor); an OEM sub is a different identifier
+  // space, and a stray collision would resolve some unrelated account's
+  // email.
+  if (!user || user.tenantId !== "mentra") return null;
   const identity = await getUserById(user.tenantUserId);
   return identity?.email || null;
 }
