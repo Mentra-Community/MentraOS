@@ -31,6 +31,8 @@ import type {
 } from "../shared/types"
 import {deriveManeuverDisplay, liveDistanceToNextTurn} from "../shared/maneuverDisplay"
 
+import {getSavedAddresses, setSavedAddress} from "./actions/savedAddressActions"
+import type {PlaceDetails} from "./lib/places"
 import {AudioGuidanceManager, selectAudioGuidanceDistance} from "./managers/AudioGuidanceManager"
 import {CompassManager} from "./managers/CompassManager"
 import {DisplayManager} from "./managers/DisplayManager"
@@ -797,9 +799,15 @@ export class NavigationController {
   private registerActions(): void {
     try {
       this.unsubs.push(this.session.actions.handle("start_navigation", (params) => this.startNavigationAction(params)))
+      this.unsubs.push(this.session.actions.handle("get_saved_addresses", () => getSavedAddresses(this.storage)))
+      this.unsubs.push(
+        this.session.actions.handle("set_saved_address", (params) =>
+          setSavedAddress(params, this.storage, (query) => this.resolveDestination(query)),
+        ),
+      )
     } catch (err) {
       // actions module unavailable on this host, or already registered — the
-      // miniapp still runs, it just can't be started via the action.
+      // miniapp still runs, but its actions won't be available.
       this.appendLog(`actions register failed: ${err instanceof Error ? err.message : String(err)}`)
     }
   }
@@ -859,7 +867,7 @@ export class NavigationController {
    * to the user's current location. Mirrors the UI's autocomplete → details
    * pick. Returns null when there's no match or the lookup fails.
    */
-  private async resolveDestination(query: string): Promise<{lat: number; lng: number; name?: string} | null> {
+  private async resolveDestination(query: string): Promise<PlaceDetails | null> {
     try {
       let near = this.coords ? {lat: this.coords.lat, lng: this.coords.lng} : undefined
       // A headless start_navigation invoke can be dispatched before the initial
@@ -882,7 +890,7 @@ export class NavigationController {
       const suggestions = await this.places.autocomplete(query, near)
       if (!suggestions.length) return null
       const details = await this.places.details(suggestions[0].placeId)
-      return {lat: details.lat, lng: details.lng, name: details.name}
+      return details
     } catch (err) {
       this.appendLog(`resolveDestination failed: ${err instanceof Error ? err.message : String(err)}`)
       return null
