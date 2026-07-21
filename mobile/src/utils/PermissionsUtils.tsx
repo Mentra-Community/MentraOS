@@ -704,7 +704,11 @@ export const askPermissionsUI = async (app: AppletInterface, _theme: Theme): Pro
         {
           text: translate("common:next"),
           onPress: async () => {
-            await requestPermissionsUI(neededPermissions)
+            const requestResult = await requestPermissionsUI(neededPermissions)
+            if (requestResult === "cancelled") {
+              resolve(-1)
+              return
+            }
 
             // Check if permissions were actually granted
             const stillNeededPermissions = await checkPermissionsUI(app)
@@ -799,14 +803,17 @@ export const checkPermissionsUI = async (app: AppletInterface) => {
   return neededPermissions
 }
 
-export const requestPermissionsUI = async (permissions: string[]) => {
+export const requestPermissionsUI = async (permissions: string[]): Promise<"completed" | "cancelled"> => {
   for (const permission of permissions) {
     await requestFeaturePermissions(permission)
   }
 
   if (permissions.includes(PermissionFeatures.READ_NOTIFICATIONS) && Platform.OS === "android") {
-    await checkAndRequestNotificationAccessSpecialPermission()
+    const result = await checkAndRequestNotificationAccessSpecialPermission()
+    if (result === "cancelled") return "cancelled"
   }
+
+  return "completed"
 }
 
 // Utility methods for checking permissions and device capabilities

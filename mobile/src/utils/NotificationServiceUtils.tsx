@@ -5,24 +5,26 @@ import showAlert from "@/utils/AlertUtils"
 
 import {checkPermissionAfterSettingsReturn} from "./notificationPermissionFlow"
 
-export async function checkAndRequestNotificationAccessSpecialPermission(): Promise<boolean> {
+export type NotificationAccessRequestResult = "granted" | "denied" | "cancelled"
+
+export async function checkAndRequestNotificationAccessSpecialPermission(): Promise<NotificationAccessRequestResult> {
   if (Platform.OS !== "android") {
-    return false
+    return "denied"
   }
 
   let hasAccess = await CrustModule.hasNotificationListenerPermission()
   if (hasAccess) {
     console.log("Notification access already granted")
-    return true
+    return "granted"
   }
 
-  return await new Promise<boolean>((resolve) => {
+  return await new Promise<NotificationAccessRequestResult>((resolve) => {
     let settled = false
 
-    const finish = (granted: boolean) => {
+    const finish = (result: NotificationAccessRequestResult) => {
       if (settled) return
       settled = true
-      resolve(granted)
+      resolve(result)
     }
 
     const openSettings = async () => {
@@ -32,7 +34,7 @@ export async function checkAndRequestNotificationAccessSpecialPermission(): Prom
           () => CrustModule.hasNotificationListenerPermission(),
           (listener) => AppState.addEventListener("change", listener),
         )
-        finish(granted)
+        finish(granted ? "granted" : "denied")
       } catch (error) {
         console.error("Error completing notification settings request:", error)
         showAlert(
@@ -40,7 +42,7 @@ export async function checkAndRequestNotificationAccessSpecialPermission(): Prom
           "Could not open notification settings. Please enable notification access manually in your device settings.",
           [{text: "OK"}],
         )
-        finish(false)
+        finish("denied")
       }
     }
 
@@ -55,7 +57,7 @@ export async function checkAndRequestNotificationAccessSpecialPermission(): Prom
         {
           text: "Later",
           style: "cancel",
-          onPress: () => finish(false),
+          onPress: () => finish("cancelled"),
         },
         {
           text: "Go to Settings",
