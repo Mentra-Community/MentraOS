@@ -106,13 +106,29 @@ export interface AddReportArtifactsResult {
  */
 async function reportUserEmail(mentraUserId: string): Promise<string | null> {
   try {
-    const user = await UserModel.findOne({ mentraUserId }).lean();
-    if (!user) return null;
-    const identity = await getUserById(user.tenantUserId);
-    return identity?.email || null;
+    return await Promise.race([
+      lookupUserEmail(mentraUserId),
+      // The email is a nicety: neither Mongo nor the GoTrue fetch carries a
+      // timeout, and a hung lookup would stall the Slack post itself (the
+      // API response is already decoupled). Give up and post the mu_ id
+      // instead of waiting.
+      new Promise<null>((resolve) => {
+        const timer = setTimeout(() => resolve(null), EMAIL_LOOKUP_TIMEOUT_MS);
+        timer.unref?.();
+      }),
+    ]);
   } catch {
     return null;
   }
+}
+
+const EMAIL_LOOKUP_TIMEOUT_MS = 5_000;
+
+async function lookupUserEmail(mentraUserId: string): Promise<string | null> {
+  const user = await UserModel.findOne({ mentraUserId }).lean();
+  if (!user) return null;
+  const identity = await getUserById(user.tenantUserId);
+  return identity?.email || null;
 }
 
 export async function submitReport(input: SubmitReportInput): Promise<SubmitReportResult> {
