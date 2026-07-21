@@ -135,6 +135,26 @@ function isDeclarationOrPropertyName(node: ts.Identifier): boolean {
   return false
 }
 
+function isPublicEnvAccess(node: ts.Identifier): boolean {
+  const envAccess = node.parent
+  if (
+    node.text !== "process" ||
+    !envAccess ||
+    !ts.isPropertyAccessExpression(envAccess) ||
+    envAccess.expression !== node ||
+    envAccess.name.text !== "env"
+  ) {
+    return false
+  }
+
+  const valueAccess = envAccess.parent
+  return (
+    ts.isPropertyAccessExpression(valueAccess) &&
+    valueAccess.expression === envAccess &&
+    valueAccess.name.text.startsWith("MENTRA_PUBLIC_")
+  )
+}
+
 /** Analyze one background source file against the documented bare-runtime contract. */
 export function findUnsupportedBackgroundApis(
   sourceText: string,
@@ -142,8 +162,26 @@ export function findUnsupportedBackgroundApis(
 ): BackgroundRuntimeFinding[] {
   const kind = fileName.endsWith("x") ? ts.ScriptKind.TSX : ts.ScriptKind.TS
   const source = ts.createSourceFile(fileName, sourceText, ts.ScriptTarget.Latest, true, kind)
+  const compilerOptions: ts.CompilerOptions = {
+    allowJs: true,
+    jsx: ts.JsxEmit.Preserve,
+    noLib: true,
+    noResolve: true,
+    target: ts.ScriptTarget.Latest,
+  }
+  const host = ts.createCompilerHost(compilerOptions)
+  host.fileExists = (candidate) => candidate === fileName
+  host.getSourceFile = (candidate) => (candidate === fileName ? source : undefined)
+  host.readFile = (candidate) => (candidate === fileName ? sourceText : undefined)
+  host.writeFile = () => {}
+  const checker = ts.createProgram([fileName], compilerOptions, host).getTypeChecker()
   const findings: BackgroundRuntimeFinding[] = []
   const seen = new Set<string>()
+
+  const isLocallyBound = (node: ts.Identifier): boolean =>
+    checker
+      .getSymbolAtLocation(node)
+      ?.declarations?.some((declaration) => declaration.getSourceFile() === source) ?? false
 
   const add = (node: ts.Node, api: string, replacement: string): void => {
     const start = node.getStart(source)
@@ -178,12 +216,18 @@ export function findUnsupportedBackgroundApis(
       ts.isPropertyAccessExpression(node) &&
       ts.isIdentifier(node.expression) &&
       node.expression.text === "crypto" &&
+      !isLocallyBound(node.expression) &&
       node.name.text === "subtle"
     ) {
       add(node, "crypto.subtle", "use crypto.getRandomValues/randomUUID or move cryptography behind your backend")
     }
 
-    if (ts.isIdentifier(node) && !isDeclarationOrPropertyName(node)) {
+    if (
+      ts.isIdentifier(node) &&
+      !isDeclarationOrPropertyName(node) &&
+      !isLocallyBound(node) &&
+      !isPublicEnvAccess(node)
+    ) {
       const replacement = UNSUPPORTED_BACKGROUND_GLOBALS.get(node.text)
       if (replacement) add(node, node.text, replacement)
     }

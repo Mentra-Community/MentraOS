@@ -32,4 +32,37 @@ describe("background runtime guard", () => {
 
     expect(findings).toEqual([])
   })
+
+  test("allows public env values that the scaffold build inlines", () => {
+    const findings = findUnsupportedBackgroundApis(`
+      const apiUrl = process.env.MENTRA_PUBLIC_API_URL
+      void fetch(apiUrl)
+    `)
+
+    expect(findings).toEqual([])
+  })
+
+  test("rejects process access that the scaffold cannot inline", () => {
+    const findings = findUnsupportedBackgroundApis(`
+      const secret = process.env.API_SECRET
+      const env = process.env
+      void secret
+      void env
+    `)
+
+    expect(findings.map(({api}) => api)).toEqual(["process", "process"])
+  })
+
+  test("does not mistake local bindings for runtime globals", () => {
+    const findings = findUnsupportedBackgroundApis(`
+      const location = {latitude: 1, longitude: 2}
+      const crypto = {subtle: "local"}
+      function report(performance: number) {
+        return {location, performance, subtle: crypto.subtle}
+      }
+      void report(1)
+    `)
+
+    expect(findings).toEqual([])
+  })
 })
