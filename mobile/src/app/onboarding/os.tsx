@@ -1,9 +1,9 @@
 import {SETTINGS, useSetting} from "@mentra/engine"
 import {Image, type ImageSource} from "expo-image"
 import {useState} from "react"
-import {Pressable, View, type ImageStyle, type TextStyle, type ViewStyle} from "react-native"
+import {Linking, Pressable, View, type ImageStyle, type TextStyle, type ViewStyle} from "react-native"
 
-import {Screen, Text} from "@/components/ignite"
+import {Icon, Screen, Text} from "@/components/ignite"
 import {focusEffectPreventBack, usePushPrevious} from "@/contexts/NavigationHistoryContext"
 import {translate} from "@/i18n"
 import {typography} from "@/theme"
@@ -15,11 +15,13 @@ interface OnboardingDetail {
 
 interface OnboardingPage {
   title: string
-  hero: ImageSource
+  hero?: ImageSource
   details: OnboardingDetail[]
+  actionLabel?: string
 }
 
 const HERO_SHADOW_INSET = -6
+const LEGACY_MENTRAOS_URL = "https://mentraglass.com/legacy"
 
 export default function MentraOSOnboarding() {
   const pushPrevious = usePushPrevious()
@@ -81,6 +83,20 @@ export default function MentraOSOnboarding() {
         },
       ],
     },
+    {
+      title: translate("onboarding:osCloudMiniappsTitle"),
+      actionLabel: translate("onboarding:osOpenLegacyPage"),
+      details: [
+        {
+          title: translate("onboarding:osCloudMiniappsMovedTitle"),
+          description: translate("onboarding:osCloudMiniappsMovedDescription"),
+        },
+        {
+          title: translate("onboarding:osMentraOsLegacyTitle"),
+          description: translate("onboarding:osMentraOsLegacyDescription"),
+        },
+      ],
+    },
   ]
 
   const page = pages[currentIndex]
@@ -90,6 +106,12 @@ export default function MentraOSOnboarding() {
   const finishOnboarding = () => {
     setOnboardingOsCompleted(true)
     pushPrevious()
+  }
+
+  const openLegacyPage = () => {
+    void Linking.openURL(LEGACY_MENTRAOS_URL).catch((error) => {
+      console.error("Failed to open the MentraOS Legacy page", error)
+    })
   }
 
   return (
@@ -119,13 +141,31 @@ export default function MentraOSOnboarding() {
           <View style={styles.heroSpacer} />
           <View style={styles.heroColumn}>
             <View style={styles.hero}>
-              <Image
-                accessibilityLabel={page.title}
-                contentFit="fill"
-                source={page.hero}
-                style={styles.heroImage}
-                testID={`mentraos-onboarding-hero-${currentIndex + 1}`}
-              />
+              {page.hero ? (
+                <Image
+                  accessibilityLabel={page.title}
+                  contentFit="fill"
+                  source={page.hero}
+                  style={styles.heroImage}
+                  testID={`mentraos-onboarding-hero-${currentIndex + 1}`}
+                />
+              ) : (
+                <View
+                  accessibilityLabel={page.title}
+                  style={styles.legacyHero}
+                  testID={`mentraos-onboarding-hero-${currentIndex + 1}`}>
+                  <View style={styles.legacyIconBadge}>
+                    <Icon color="#356b53" name="world-download" size={48} />
+                  </View>
+                  <View style={styles.legacyPageCard}>
+                    <View style={styles.legacyPageCopy}>
+                      <Text text="MentraOS Legacy" style={styles.legacyPageTitle} />
+                      <Text text="mentraglass.com/legacy" style={styles.legacyPageUrl} />
+                    </View>
+                    <Icon color="#356b53" name="external-link" size={24} />
+                  </View>
+                </View>
+              )}
             </View>
           </View>
 
@@ -138,6 +178,16 @@ export default function MentraOSOnboarding() {
                 <Text text={detail.description} style={styles.detailDescription} />
               </View>
             ))}
+            {page.actionLabel && (
+              <Pressable
+                accessibilityRole="link"
+                onPress={openLegacyPage}
+                style={({pressed}) => [styles.legacyLink, pressed && styles.pressed]}
+                testID="mentraos-onboarding-open-legacy">
+                <Text text={page.actionLabel} style={styles.legacyLinkText} />
+                <Icon color="#356b53" name="external-link" size={18} />
+              </Pressable>
+            )}
           </View>
 
           <View style={styles.flexSpacer} />
@@ -229,6 +279,55 @@ const styles = {
     right: HERO_SHADOW_INSET,
     top: HERO_SHADOW_INSET,
   },
+  legacyHero: {
+    alignItems: "center",
+    backgroundColor: "#e6f0e9",
+    borderRadius: 20,
+    flex: 1,
+    justifyContent: "center",
+    paddingHorizontal: 28,
+  },
+  legacyIconBadge: {
+    alignItems: "center",
+    backgroundColor: "rgba(255, 255, 255, 0.82)",
+    borderRadius: 999,
+    height: 88,
+    justifyContent: "center",
+    marginBottom: 24,
+    width: 88,
+  },
+  legacyPageCard: {
+    alignItems: "center",
+    backgroundColor: "#ffffff",
+    borderColor: "rgba(53, 107, 83, 0.12)",
+    borderRadius: 16,
+    borderWidth: 1,
+    elevation: 2,
+    flexDirection: "row",
+    paddingHorizontal: 18,
+    paddingVertical: 16,
+    shadowColor: "#214332",
+    shadowOffset: {width: 0, height: 2},
+    shadowOpacity: 0.12,
+    shadowRadius: 4,
+    width: "100%",
+  },
+  legacyPageCopy: {
+    flex: 1,
+  },
+  legacyPageTitle: {
+    color: "#0e0e0e",
+    fontFamily: typography.fonts.redHatDisplay.semibold,
+    fontSize: 16,
+    lineHeight: 21,
+  },
+  legacyPageUrl: {
+    color: "rgba(0, 0, 0, 0.55)",
+    fontFamily: typography.fonts.redHatDisplay.normal,
+    fontSize: 13,
+    lineHeight: 18,
+    marginTop: 2,
+  },
   detailsSpacer: {
     height: 16,
   },
@@ -256,6 +355,20 @@ const styles = {
   detailDescription: {
     color: "rgba(0, 0, 0, 0.55)",
     fontFamily: typography.fonts.redHatDisplay.normal,
+    fontSize: 14,
+    lineHeight: 19,
+  },
+  legacyLink: {
+    alignItems: "center",
+    alignSelf: "flex-start",
+    flexDirection: "row",
+    gap: 6,
+    marginTop: 16,
+    minHeight: 32,
+  },
+  legacyLinkText: {
+    color: "#356b53",
+    fontFamily: typography.fonts.redHatDisplay.semibold,
     fontSize: 14,
     lineHeight: 19,
   },

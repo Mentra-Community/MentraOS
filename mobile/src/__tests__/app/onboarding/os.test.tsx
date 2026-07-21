@@ -1,5 +1,6 @@
 import {fireEvent, render} from "@testing-library/react-native"
 import type {ReactNode} from "react"
+import {Linking} from "react-native"
 
 import MentraOSOnboarding from "@/app/onboarding/os"
 import {SETTINGS} from "@mentra/engine"
@@ -24,7 +25,10 @@ jest.mock("@/components/ignite", () => {
   function MockText({text}: {text: string}) {
     return <RNText>{text}</RNText>
   }
-  return {Screen: MockScreen, Text: MockText}
+  function MockIcon() {
+    return <View />
+  }
+  return {Icon: MockIcon, Screen: MockScreen, Text: MockText}
 })
 
 jest.mock("@/contexts/NavigationHistoryContext", () => ({
@@ -79,9 +83,26 @@ describe("MentraOS onboarding", () => {
     fireEvent.press(getByTestId("mentraos-onboarding-next"))
     fireEvent.press(getByTestId("mentraos-onboarding-next"))
     fireEvent.press(getByTestId("mentraos-onboarding-next"))
+    fireEvent.press(getByTestId("mentraos-onboarding-next"))
     fireEvent.press(getByTestId("mentraos-onboarding-done"))
 
     expect(useSettingsStore.getState().getSetting(SETTINGS.onboarding_os_completed.key)).toBe(true)
     expect(mockPushPrevious).toHaveBeenCalledTimes(1)
+  })
+
+  it("opens the MentraOS Legacy page from the Cloud miniapps page", () => {
+    const openUrl = jest.spyOn(Linking, "openURL").mockResolvedValueOnce(undefined)
+    const {getByTestId, getByText} = render(<MentraOSOnboarding />)
+
+    fireEvent.press(getByTestId("mentraos-onboarding-next"))
+    fireEvent.press(getByTestId("mentraos-onboarding-next"))
+    fireEvent.press(getByTestId("mentraos-onboarding-next"))
+    fireEvent.press(getByTestId("mentraos-onboarding-next"))
+
+    expect(getByText("onboarding:osCloudMiniappsTitle")).toBeTruthy()
+    expect(getByTestId("mentraos-onboarding-hero-5")).toBeTruthy()
+    fireEvent.press(getByTestId("mentraos-onboarding-open-legacy"))
+
+    expect(openUrl).toHaveBeenCalledWith("https://mentraglass.com/legacy")
   })
 })
