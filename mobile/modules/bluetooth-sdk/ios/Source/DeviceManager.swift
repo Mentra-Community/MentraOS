@@ -804,6 +804,11 @@ struct ViewState {
             return
         }
 
+        if PhoneAudioMonitor.getInstance().isOwnAppAudioPlaying() {
+            Bridge.log("MAN: Mentra audio is playing; skipping glasses mic recovery")
+            return
+        }
+
         let timeSinceLastLc3Event = Date().timeIntervalSince(lastLc3Event ?? Date())
         if timeSinceLastLc3Event > 5 {
             Bridge.log("MAN: No audio activity in the last 5 seconds from glasses, reinitializing glasses mic")

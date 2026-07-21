@@ -28,6 +28,7 @@ import com.mentra.bluetoothsdk.utils.ControllerTypes
 import com.mentra.bluetoothsdk.utils.DeviceTypes
 import com.mentra.bluetoothsdk.utils.MicMap
 import com.mentra.bluetoothsdk.utils.MicTypes
+import com.mentra.bluetoothsdk.utils.PhoneAudioMonitor
 import com.mentra.lc3Lib.Lc3Cpp
 import com.mentra.bluetoothsdk.stt.SherpaOnnxTranscriber
 import kotlinx.coroutines.CoroutineScope
@@ -331,6 +332,11 @@ class DeviceManager {
 
         if (sgc?.isMicSuspendedForAudio == true) {
             Bridge.log("MAN: Glasses mic intentionally suspended for phone audio; skipping mic recovery")
+            return
+        }
+
+        if (PhoneAudioMonitor.getInstance(Bridge.getContext()).isOwnAppAudioPlaying()) {
+            Bridge.log("MAN: Mentra audio is playing; skipping glasses mic recovery")
             return
         }
 

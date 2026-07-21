@@ -10,6 +10,7 @@ import {
   pcmStreamWrite,
   resetAudioTestMocks,
   sendAudioFrame,
+  setOwnAppAudioPlaying,
 } from "./audioTestMocks"
 
 const setAudioModeAsync = mock(async () => {})
@@ -213,6 +214,33 @@ describe("AudioPlaybackService live PCM streams", () => {
 
     expect(firstComplete).toHaveBeenCalledTimes(1)
     expect(firstComplete).toHaveBeenCalledWith("first-url", true, null, expect.any(Number), "interrupted")
+  })
+
+  test("keeps native audio marked active when URL playback finishes beside a live PCM stream", async () => {
+    await audioPlaybackService.openStream({
+      appId: "stream-app",
+      channels: 1,
+      onEnded: () => {},
+      sampleRate: 16_000,
+      stopOtherAudio: false,
+      streamId: "ongoing-stream",
+    })
+    await audioPlaybackService.play(
+      {requestId: "short-url", audioUrl: "file://short.wav", appId: "url-app", stopOtherAudio: false},
+      () => {},
+    )
+    setOwnAppAudioPlaying.mockClear()
+
+    const playbackStatusTarget = audioPlaybackService as unknown as {
+      onPlaybackStatusUpdate(status: {didJustFinish: boolean; duration: number}): void
+    }
+    playbackStatusTarget.onPlaybackStatusUpdate({didJustFinish: true, duration: 1})
+
+    expect(audioPlaybackService.getActiveAppIds()).toEqual(["stream-app"])
+    expect(setOwnAppAudioPlaying).not.toHaveBeenCalledWith(false)
+
+    await audioPlaybackService.closeStream("ongoing-stream")
+    expect(setOwnAppAudioPlaying).toHaveBeenCalledWith(false)
   })
 
   test("only suppresses cloud STT when the caller opts in", async () => {
