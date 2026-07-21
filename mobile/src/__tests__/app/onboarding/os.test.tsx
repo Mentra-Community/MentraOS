@@ -90,7 +90,7 @@ describe("MentraOS onboarding", () => {
     expect(mockPushPrevious).toHaveBeenCalledTimes(1)
   })
 
-  it("opens the MentraOS Legacy page from the Cloud miniapps page", () => {
+  it("opens the MentraOS Legacy page from the moved miniapps page", () => {
     const openUrl = jest.spyOn(Linking, "openURL").mockResolvedValueOnce(undefined)
     const {getByTestId, getByText} = render(<MentraOSOnboarding />)
 
@@ -99,7 +99,8 @@ describe("MentraOS onboarding", () => {
     fireEvent.press(getByTestId("mentraos-onboarding-next"))
     fireEvent.press(getByTestId("mentraos-onboarding-next"))
 
-    expect(getByText("onboarding:osCloudMiniappsTitle")).toBeTruthy()
+    expect(getByText("onboarding:osMovedMiniappsTitle")).toBeTruthy()
+    expect(getByText("onboarding:osMissingMiniappTitle")).toBeTruthy()
     expect(getByTestId("mentraos-onboarding-hero-5")).toBeTruthy()
     fireEvent.press(getByTestId("mentraos-onboarding-open-legacy"))
 
