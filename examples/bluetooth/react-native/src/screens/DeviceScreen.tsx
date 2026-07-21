@@ -99,7 +99,7 @@ export function DeviceScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
             <StatCard label="WI-FI" value={wifiLabel(sdk.glasses)} sub={wifiSubLabel(sdk.glasses)} subColor={colors.muted} bold />
             <StatCard label="RSSI" value={rssiLabel(sdk.glasses)} sub={rssiUpdatedLabel(sdk.glasses)} subColor={colors.greenAccent} bold />
           </View>
-          {(sdk.otaStatus || sdk.otaUpdateAvailable) ? <OtaCard sdk={sdk} /> : null}
+          {(sdk.otaStatus || sdk.otaUpdateAvailable || sdk.otaNoUpdateVisible) ? <OtaCard sdk={sdk} /> : null}
           {otaWifiRequired ? (
             <OfflineNotice message="Connect the glasses to Wi-Fi from the System tab before checking or starting OTA updates. OTA downloads run over the glasses network connection." />
           ) : null}
@@ -348,6 +348,9 @@ function otaCardTitle(sdk: BluetoothSdkExampleModel) {
   if (sdk.otaUpdateAvailable) {
     return 'Firmware update available';
   }
+  if (sdk.otaNoUpdateVisible) {
+    return 'No OTA available';
+  }
   return 'OTA status';
 }
 
@@ -367,6 +370,9 @@ function otaCardDetail(sdk: BluetoothSdkExampleModel) {
   if (sdk.otaUpdateAvailable) {
     return 'A newer firmware version is available for these glasses.';
   }
+  if (sdk.otaNoUpdateVisible) {
+    return 'Your glasses firmware is up to date.';
+  }
   return 'Tap Check OTA to compare the current glasses version with the SDK OTA manifest.';
 }
 
@@ -385,7 +391,7 @@ function isOtaInstalling(sdk: BluetoothSdkExampleModel) {
 }
 
 function OtaCard({ sdk }: { sdk: BluetoothSdkExampleModel }) {
-  if (!sdk.otaStatus && !sdk.otaUpdateAvailable) {
+  if (!sdk.otaStatus && !sdk.otaUpdateAvailable && !sdk.otaNoUpdateVisible) {
     return null;
   }
   const percent = otaDisplayPercent(sdk);

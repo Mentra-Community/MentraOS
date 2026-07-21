@@ -19,7 +19,7 @@ struct DeviceScreen: View {
                         .padding(.horizontal, 16)
                         .padding(.top, 12)
 
-                    if model.otaStatus != nil || model.otaUpdateAvailable {
+                    if model.otaStatus != nil || model.otaUpdateAvailable || model.otaNoUpdateVisible {
                         otaCard
                             .padding(.horizontal, 16)
                             .padding(.top, 10)
@@ -490,6 +490,9 @@ private func otaCardTitle(model: BluetoothViewModel) -> String {
     if model.otaUpdateAvailable {
         return "Firmware update available"
     }
+    if model.otaNoUpdateVisible {
+        return "No OTA available"
+    }
     return "OTA status"
 }
 
@@ -509,6 +512,9 @@ private func otaCardDetail(model: BluetoothViewModel) -> String {
     }
     if model.otaUpdateAvailable {
         return "A newer firmware version is available for these glasses."
+    }
+    if model.otaNoUpdateVisible {
+        return "Your glasses firmware is up to date."
     }
     return "Tap Check OTA to compare the current glasses version with the SDK OTA manifest."
 }

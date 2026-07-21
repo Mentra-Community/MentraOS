@@ -134,7 +134,7 @@ fun DeviceScreen(controller: MentraExampleController) {
                 StatTile("WI-FI", wifiLabel(glasses), currentWifi?.localIp ?: "unknown", AppColor.muted, Modifier.weight(1f), bold = true)
                 StatTile("RSSI", rssiLabel(glasses), rssiUpdatedLabel(glasses), AppColor.greenAccent, Modifier.weight(1f), bold = true)
             }
-            if (state.otaStatus != null || state.otaUpdateAvailable) {
+            if (state.otaStatus != null || state.otaUpdateAvailable || state.otaNoUpdateVisible) {
                 OtaCard(controller, modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp))
             }
             if (otaWifiRequired) {
@@ -325,6 +325,7 @@ private fun otaCardTitle(state: com.mentra.examples.android.MentraExampleState):
         isOtaInstalling(state) -> "Installing update"
         state.otaStatus != null && isOtaInProgress(state) -> "Updating ${state.otaStatus.stepType.ifBlank { "firmware" }}"
         state.otaUpdateAvailable -> "Firmware update available"
+        state.otaNoUpdateVisible -> "No OTA available"
         else -> "OTA status"
     }
 
@@ -342,6 +343,9 @@ private fun otaCardDetail(state: com.mentra.examples.android.MentraExampleState)
     if (state.otaUpdateAvailable) {
         return "A newer firmware version is available for these glasses."
     }
+    if (state.otaNoUpdateVisible) {
+        return "Your glasses firmware is up to date."
+    }
     return "Tap Check OTA to compare the current glasses version with the SDK OTA manifest."
 }
 
@@ -351,7 +355,7 @@ private fun isOtaInstalling(state: com.mentra.examples.android.MentraExampleStat
 @Composable
 private fun OtaCard(controller: MentraExampleController, modifier: Modifier = Modifier) {
     val state = controller.state
-    if (state.otaStatus == null && !state.otaUpdateAvailable) return
+    if (state.otaStatus == null && !state.otaUpdateAvailable && !state.otaNoUpdateVisible) return
     val percent = otaDisplayPercent(state)
     val updateRequired = state.otaUpdateAvailable && state.otaStatus == null
     val installing = isOtaInstalling(state)

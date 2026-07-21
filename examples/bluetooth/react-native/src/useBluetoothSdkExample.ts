@@ -82,6 +82,7 @@ type PhotoCaptureOptions = {
 // glasses first hop to an intermediate ASG client before the firmware pass).
 // Bound the automatic continuations so a misbehaving manifest cannot loop.
 const MAX_OTA_CHAIN_PASSES = 4;
+const OTA_NO_UPDATE_CARD_DURATION_MS = 10_000;
 
 // The SDK gives up waiting for a wifi connect ack after 15s, but the glasses
 // often finish associating shortly after; keep the connecting state alive a
@@ -405,6 +406,7 @@ export type BluetoothSdkExampleState = {
   micPlaying: boolean;
   micRecording: boolean;
   otaDisplayPercent: number | null;
+  otaNoUpdateVisible: boolean;
   otaStartPending: boolean;
   otaStatus: OtaStatusEvent | null;
   otaStatusMessage: string | null;
@@ -655,6 +657,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   const [micPlaybackHint, setMicPlaybackHint] = useState<string | null>(null);
   const [otaStatus, setOtaStatus] = useState<OtaStatusEvent | null>(null);
   const [otaDisplayPercent, setOtaDisplayPercent] = useState<number | null>(null);
+  const [otaNoUpdateVisible, setOtaNoUpdateVisible] = useState(false);
   const [otaStartPending, setOtaStartPending] = useState(false);
   const [otaStatusMessage, setOtaStatusMessage] = useState<string | null>(null);
   const [otaUpdateAvailable, setOtaUpdateAvailable] = useState(false);
@@ -732,6 +735,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   const otaChainStartFailuresRef = useRef(0);
   const otaChainGenerationRef = useRef(0);
   const otaStartInFlightRef = useRef(false);
+  const otaNoUpdateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const connectedDeviceKeyRef = useRef<string | null>(null);
   const otaAppIdentityRef = useRef<string | null>(null);
   const wifiConnectAttemptRef = useRef(0);
@@ -894,6 +898,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       }
       setOtaStatus(null);
       clearOtaDisplayProgress();
+      hideOtaNoUpdateCard();
       setOtaStatusMessage(null);
       setOtaUpdateAvailable(false);
       return;
@@ -1089,6 +1094,10 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       barcodeScanRequestIdsRef.current.clear();
       pollGenerationRef.current += 1;
       videoPollGenerationRef.current += 1;
+      if (otaNoUpdateTimerRef.current) {
+        clearTimeout(otaNoUpdateTimerRef.current);
+        otaNoUpdateTimerRef.current = null;
+      }
       stopMicElapsedTimer();
       stopMicPlaybackSync();
     };
@@ -1296,6 +1305,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   }
 
   async function checkForOtaUpdate() {
+    hideOtaNoUpdateCard();
     await runAction('Check OTA', async () => {
       if (!glassesConnected) {
         throw new Error('Connect glasses first.');
@@ -1305,11 +1315,11 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
         addEvent('TX', 'OTA check skipped while update is in progress');
         return;
       }
-      await checkForOtaUpdateResult();
+      await checkForOtaUpdateResult(true);
     });
   }
 
-  async function checkForOtaUpdateResult(): Promise<boolean> {
+  async function checkForOtaUpdateResult(showNoUpdateCard = false): Promise<boolean> {
     const updateAvailable = await BluetoothSdk.checkForOtaUpdate();
     if (otaStartInFlightRef.current || isOtaEventInProgress(otaStatusRef.current)) {
       addEvent('LIVE', 'OTA check result ignored while update is in progress');
@@ -1318,6 +1328,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     otaStartingAppIdentityRef.current = null;
     clearOtaDisplayProgress();
     if (updateAvailable) {
+      hideOtaNoUpdateCard();
       otaStatusRef.current = null;
       setOtaStatus(null);
       setOtaStatusMessage(null);
@@ -1331,8 +1342,28 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     setOtaStatus(null);
     setOtaStatusMessage('Glasses firmware is up to date');
     setOtaUpdateAvailable(false);
+    if (showNoUpdateCard) {
+      showOtaNoUpdateCard();
+    }
     addEvent('LIVE', 'OTA up to date');
     return false;
+  }
+
+  function showOtaNoUpdateCard() {
+    hideOtaNoUpdateCard();
+    setOtaNoUpdateVisible(true);
+    otaNoUpdateTimerRef.current = setTimeout(() => {
+      otaNoUpdateTimerRef.current = null;
+      setOtaNoUpdateVisible(false);
+    }, OTA_NO_UPDATE_CARD_DURATION_MS);
+  }
+
+  function hideOtaNoUpdateCard() {
+    if (otaNoUpdateTimerRef.current) {
+      clearTimeout(otaNoUpdateTimerRef.current);
+      otaNoUpdateTimerRef.current = null;
+    }
+    setOtaNoUpdateVisible(false);
   }
 
   // Cancel the armed run; bumping the generation invalidates any pending
@@ -1440,7 +1471,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
           addEvent('LIVE', 'OTA complete; skipped verification because glasses Wi-Fi is unavailable');
           return;
         }
-        await checkForOtaUpdateResult();
+        await checkForOtaUpdateResult(true);
         checkSucceeded = true;
       } finally {
         postOtaCheckInProgressRef.current = false;
@@ -3886,6 +3917,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     otaStatusRef.current = null;
     otaStartingAppIdentityRef.current = null;
     setOtaStartInFlight(false);
+    hideOtaNoUpdateCard();
     setOtaStatus(null);
     clearOtaDisplayProgress();
     setOtaStatusMessage(null);
@@ -3900,6 +3932,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
 
   function applyOtaStatus(payload: OtaStatusEvent) {
     setOtaStartInFlight(false);
+    hideOtaNoUpdateCard();
     if (!isDisplayableOtaStatus(payload)) {
       otaStatusRef.current = null;
       otaStartingAppIdentityRef.current = null;
@@ -4028,6 +4061,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     micRecording,
     otaStatus,
     otaDisplayPercent,
+    otaNoUpdateVisible,
     otaStartPending,
     otaStatusMessage,
     otaUpdateAvailable,
