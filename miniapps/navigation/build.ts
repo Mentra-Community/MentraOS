@@ -12,6 +12,9 @@
  */
 
 import {rm} from "fs/promises"
+
+import {resolveMapboxBuildToken} from "./buildConfig"
+
 const distDir = "./dist"
 
 await rm(distDir, {recursive: true, force: true})
@@ -37,8 +40,8 @@ if (!navKey) console.warn("WARN: PUBLIC_MAP_NAV_VIEWER is not set — maps will 
 // UI bundle only (the background bundle never renders a map). Replaces
 // PUBLIC_MAP_NAV_VIEWER once NavMap.tsx is ported to Mapbox GL JS; kept
 // alongside it during the transition so both map paths can build.
-const mapboxToken = process.env.PUBLIC_MAPBOX_TOKEN ?? ""
-if (!mapboxToken) console.warn("WARN: PUBLIC_MAPBOX_TOKEN is not set — Mapbox GL JS map will fail to load.")
+const mapboxToken = resolveMapboxBuildToken(process.env)
+if (!mapboxToken) console.warn("WARN: No public Mapbox token is set — Mapbox GL JS map will fail to load.")
 
 const nodeEnv = process.env.NODE_ENV === "production" ? "production" : "development"
 // Only announce when we're in production — that's the unusual case

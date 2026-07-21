@@ -205,8 +205,8 @@ const RGB_LED_ACTIONS = new Set<RgbLedAction>(["on", "off"])
 const RGB_LED_COLORS = new Set<RgbLedColor>(["red", "green", "blue", "orange", "white"])
 const CAMERA_FOV_MIN = 62
 const CAMERA_FOV_MAX = 118
-const CAMERA_FOV_DEFAULT = 102
-const CAMERA_FOV_PRESETS: Record<CameraFovPreset, number> = {narrow: 82, standard: CAMERA_FOV_DEFAULT, wide: 118}
+const CAMERA_FOV_DEFAULT = 118
+const CAMERA_FOV_PRESETS: Record<CameraFovPreset, number> = {narrow: 82, standard: 102, wide: 118}
 const CAMERA_ROI_POSITION_BY_NAME: Record<string, CameraRoiPosition> = {center: "center", bottom: "bottom", top: "top"}
 
 // =============================================================================
@@ -350,6 +350,9 @@ class LocalMiniappRuntime {
   /** Ref-counted stream subscriptions: stream → set of packageNames. */
   private streamSubscribers: Map<string, Set<string>> = new Map()
 
+  /** Host observers for the Mentra Live button-capture policy. */
+  private buttonPressSubscriberListeners = new Set<(packageNames: string[]) => void>()
+
   /** Guards one-time wiring of the cloud transcript/translation fan-out. */
   private cloudResultsWired = false
   private cloudStatusWired = false
@@ -380,6 +383,52 @@ class LocalMiniappRuntime {
   private usedTokens = new Set<string>()
 
   private constructor() {}
+
+  /** Snapshot of miniapps actively subscribed to hardware button events. */
+  public getButtonPressSubscribers(): string[] {
+    return [...(this.streamSubscribers.get(MiniappStreamType.BUTTON_PRESS) ?? [])].sort()
+  }
+
+  /** Observe active hardware-button subscriptions. */
+  public onButtonPressSubscribersChanged(listener: (packageNames: string[]) => void): () => void {
+    this.buttonPressSubscriberListeners.add(listener)
+    return () => this.buttonPressSubscriberListeners.delete(listener)
+  }
+
+  private replaceStreamSubscribers(
+    packageName: string,
+    previousStreams: Iterable<string>,
+    nextStreams: Iterable<string>,
+  ) {
+    const previousButtonSubscribers = this.getButtonPressSubscribers().join("\u0000")
+
+    for (const stream of previousStreams) {
+      const subscribers = this.streamSubscribers.get(stream)
+      if (!subscribers) continue
+      subscribers.delete(packageName)
+      if (subscribers.size === 0) this.streamSubscribers.delete(stream)
+    }
+
+    for (const stream of nextStreams) {
+      let subscribers = this.streamSubscribers.get(stream)
+      if (!subscribers) {
+        subscribers = new Set()
+        this.streamSubscribers.set(stream, subscribers)
+      }
+      subscribers.add(packageName)
+    }
+
+    const nextButtonSubscribers = this.getButtonPressSubscribers()
+    if (previousButtonSubscribers !== nextButtonSubscribers.join("\u0000")) {
+      for (const listener of this.buttonPressSubscriberListeners) {
+        try {
+          listener(nextButtonSubscribers)
+        } catch (error) {
+          console.warn(`${LOG_TAG}: button press subscriber listener threw:`, error)
+        }
+      }
+    }
+  }
 
   /**
    * Generate an HMAC-signed local session token for browser fallback auth.
@@ -606,13 +655,7 @@ class LocalMiniappRuntime {
         BgTimer.clearTimeout(existing.authRetryTimerId)
         existing.authRetryTimerId = null
       }
-      for (const stream of existing.subscriptions) {
-        const subs = this.streamSubscribers.get(stream)
-        if (subs) {
-          subs.delete(packageName)
-          if (subs.size === 0) this.streamSubscribers.delete(stream)
-        }
-      }
+      this.replaceStreamSubscribers(packageName, existing.subscriptions, [])
       this.recomputeMicRequirements()
       this.updateCloudSubscriptions()
     }
@@ -769,15 +812,7 @@ class LocalMiniappRuntime {
     if (!app) return
 
     // Remove from all stream subscriber sets
-    for (const stream of app.subscriptions) {
-      const subs = this.streamSubscribers.get(stream)
-      if (subs) {
-        subs.delete(packageName)
-        if (subs.size === 0) {
-          this.streamSubscribers.delete(stream)
-        }
-      }
-    }
+    this.replaceStreamSubscribers(packageName, app.subscriptions, [])
 
     // Reset per-session warning dedup so a relaunch surfaces issues again.
     resetPermissionWarnings(packageName)
@@ -1450,18 +1485,8 @@ class LocalMiniappRuntime {
       }
     }
 
-    // Remove old subscriptions for this app
-    for (const oldStream of app.subscriptions) {
-      const subs = this.streamSubscribers.get(oldStream)
-      if (subs) {
-        subs.delete(packageName)
-        if (subs.size === 0) {
-          this.streamSubscribers.delete(oldStream)
-        }
-      }
-    }
-
     // Add new subscriptions
+    const previousSubscriptions = app.subscriptions
     app.subscriptions = new Set(streams)
     app.forceLocalTranscriptionStreams = new Set(
       [...forceLocalTranscriptionStreams].filter((stream) => app.subscriptions.has(stream)),
@@ -1469,14 +1494,7 @@ class LocalMiniappRuntime {
     app.cloudTranscriptionStreams = new Set(
       [...cloudTranscriptionStreams].filter((stream) => app.subscriptions.has(stream)),
     )
-    for (const stream of streams) {
-      let subs = this.streamSubscribers.get(stream)
-      if (!subs) {
-        subs = new Set()
-        this.streamSubscribers.set(stream, subs)
-      }
-      subs.add(packageName)
-    }
+    this.replaceStreamSubscribers(packageName, previousSubscriptions, app.subscriptions)
 
     this.recomputeMicRequirements()
     this.updateCloudSubscriptions()
@@ -1970,7 +1988,10 @@ class LocalMiniappRuntime {
       typeof rawText === "string"
         ? [rawText.trim()].filter(Boolean)
         : Array.isArray(rawText)
-          ? rawText.filter((sentence): sentence is string => typeof sentence === "string").map((sentence) => sentence.trim()).filter(Boolean)
+          ? rawText
+              .filter((sentence): sentence is string => typeof sentence === "string")
+              .map((sentence) => sentence.trim())
+              .filter(Boolean)
           : []
     if (sentences.length === 0) {
       this.sendResult(packageName, requestId, false, undefined, {
@@ -2843,8 +2864,8 @@ class LocalMiniappRuntime {
         isoCap: payload.isoCap as number | undefined,
         noiseReduction: payload.noiseReduction as boolean | undefined,
         edgeEnhancement: payload.edgeEnhancement as boolean | undefined,
-        mfnr: payload.mfnr as boolean | undefined,
         zsl: payload.zsl as boolean | undefined,
+        mfnr: payload.mfnr as boolean | undefined,
         ispDigitalGain: payload.ispDigitalGain as number | undefined,
         ispAnalogGain: payload.ispAnalogGain as string | undefined,
       })
@@ -2884,6 +2905,8 @@ class LocalMiniappRuntime {
         mode: payload.mode as "photo" | "text" | undefined,
         exposureTimeNs: payload.exposureTimeNs as number | undefined,
         durationMs: payload.durationMs as number | undefined,
+        zsl: payload.zsl as boolean | undefined,
+        mfnr: payload.mfnr as boolean | undefined,
       })
       this.sendResult(packageName, requestId, true)
     } catch (err) {
@@ -3071,7 +3094,7 @@ class LocalMiniappRuntime {
       return
     }
     try {
-      await requestWifiSetup(payload.reason as string | undefined)
+      await requestWifiSetup(payload.reason as string | undefined, packageName)
       this.sendResult(packageName, requestId, true)
     } catch (err) {
       this.sendResult(packageName, requestId, false, undefined, {
@@ -3135,29 +3158,12 @@ class LocalMiniappRuntime {
       }
     }
 
-    // Remove old subscriptions for this app
-    for (const oldStream of app.subscriptions) {
-      const subs = this.streamSubscribers.get(oldStream)
-      if (subs) {
-        subs.delete(packageName)
-        if (subs.size === 0) {
-          this.streamSubscribers.delete(oldStream)
-        }
-      }
-    }
-
     // Add new subscriptions
+    const previousSubscriptions = app.subscriptions
     app.subscriptions = new Set(streams)
     app.forceLocalTranscriptionStreams.clear()
     app.cloudTranscriptionStreams = new Set(streams.filter((stream) => stream.startsWith("transcription:")))
-    for (const stream of streams) {
-      let subs = this.streamSubscribers.get(stream)
-      if (!subs) {
-        subs = new Set()
-        this.streamSubscribers.set(stream, subs)
-      }
-      subs.add(packageName)
-    }
+    this.replaceStreamSubscribers(packageName, previousSubscriptions, app.subscriptions)
 
     this.recomputeMicRequirements()
     this.updateCloudSubscriptions()
@@ -3176,7 +3182,16 @@ class LocalMiniappRuntime {
       if (stream === "audio_chunk") anyPcm = true
       if (stream.startsWith("transcription:") || stream.startsWith("translation:") || stream === "vad") anyLc3 = true
     }
-    micStateCoordinator.setLocalRequirements({pcm: anyPcm, lc3: anyLc3})
+    const bluetoothSettings = useSettingsStore.getState().getBluetoothSettings()
+    const configuredVad = bluetoothSettings.voice_activity_detection_enabled
+    micStateCoordinator.setLocalRequirements({
+      pcm: anyPcm,
+      lc3: anyLc3,
+      // Mentra Live intentionally omits VAD from its device settings. Pass
+      // null so MicStateCoordinator disables VAD only while PCM is active and
+      // otherwise leaves the native default untouched.
+      vadEnabled: typeof configuredVad === "boolean" ? configuredVad : null,
+    })
   }
 
   /**
@@ -4191,7 +4206,17 @@ class LocalMiniappRuntime {
 
     // Belt-and-suspenders: clear any remaining state
     this.pendingCloudRequests.clear()
+    const hadButtonPressSubscribers = this.getButtonPressSubscribers().length > 0
     this.streamSubscribers.clear()
+    if (hadButtonPressSubscribers) {
+      for (const listener of this.buttonPressSubscriberListeners) {
+        try {
+          listener([])
+        } catch (error) {
+          console.warn(`${LOG_TAG}: button press subscriber listener threw during cleanup:`, error)
+        }
+      }
+    }
     this.connectedApps.clear()
     for (const timerId of this.foregroundProbeTimers.values()) {
       BgTimer.clearTimeout(timerId)

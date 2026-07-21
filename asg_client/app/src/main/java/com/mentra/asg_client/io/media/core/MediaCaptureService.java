@@ -576,6 +576,7 @@ public class MediaCaptureService {
     private void clearBlePhotoTimingTracking(String requestId) {
         blePhotoPipelineStartMs.remove(requestId);
         photoTimings.remove(requestId);
+        photoTimingDetails.remove(requestId);
         bleImgIdToRequestId.entrySet().removeIf(entry -> requestId.equals(entry.getValue()));
     }
 
@@ -628,6 +629,8 @@ public class MediaCaptureService {
 
     // Per-request timing instrumentation (gated by AsgConstants.ENABLE_PHOTO_TIMING_LOGS)
     private final Map<String, Map<String, Long>> photoTimings = new ConcurrentHashMap<>();
+    /** Optional per-step detail strings shown in PHASE BREAKDOWN (exposure/ISO/size/etc.). */
+    private final Map<String, Map<String, String>> photoTimingDetails = new ConcurrentHashMap<>();
 
     /** Wall-clock start for BLE photo pipeline (request received on glasses). */
     private final Map<String, Long> blePhotoPipelineStartMs = new ConcurrentHashMap<>();
@@ -788,8 +791,13 @@ public class MediaCaptureService {
      * @param size requested photo size for the upcoming capture (nullable)
      * @param isFromSdk whether the upcoming capture is an SDK request (vs. a button photo)
      * @param exposureTimeNs requested manual exposure for the upcoming capture, or null for auto
+     * @param captureSettings per-request tuning (including resolved {@code zsl}/{@code mfnr}) for warmth
      */
-    private void playShutterSound(String size, boolean isFromSdk, Long exposureTimeNs) {
+    private void playShutterSound(
+            String size,
+            boolean isFromSdk,
+            Long exposureTimeNs,
+            @Nullable PhotoCaptureSettings captureSettings) {
         if (hardwareManager == null) {
             Log.w(TAG, "⚠️ hardwareManager is null, cannot play shutter sound");
             return;
@@ -803,8 +811,10 @@ public class MediaCaptureService {
         // A warm capture reuses the open camera (including queuing behind an in-flight shot), so a
         // short "hot" sound matches the quick capture. A cold capture needs a longer "cold" sound
         // that spans the camera/ISP warmup so the user keeps still until the photo actually lands.
-        boolean cameraWarm = CameraNeoService.isCameraWarm(size, isFromSdk, exposureTimeNs);
-        String shutterAsset = cameraWarm ? AudioAssets.TAKE_PHOTO_HOT : AudioAssets.TAKE_PHOTO_COLD;
+        boolean cameraWarm =
+                CameraNeoService.isCameraWarm(size, isFromSdk, exposureTimeNs, captureSettings);
+        String shutterAsset =
+                cameraWarm ? AudioAssets.TAKE_PHOTO_HOT : AudioAssets.TAKE_PHOTO_COLD;
         Log.d(TAG, "📸 Playing " + (cameraWarm ? "HOT (short)" : "COLD (long)") + " shutter sound");
         hardwareManager.playAudioAsset(shutterAsset);
     }
@@ -1981,7 +1991,7 @@ public class MediaCaptureService {
             if (effectiveSound) {
                 // Button photo: isFromSdk=false, auto exposure (null) — matches the
                 // enqueuePhotoRequest call below so the warm/cold prediction lines up.
-                playShutterSound(size, false, null);
+                playShutterSound(size, false, null, captureSettings);
             }
             if (enableFlash) {
                 flashPrivacyLedForPhoto(); // Flash privacy LED
@@ -2183,7 +2193,7 @@ public class MediaCaptureService {
             triggerPhotoFlashLed();
             if (enableSound) {
                 // Local-save SDK photo: isFromSdk=true, matching the enqueue below.
-                playShutterSound(captureSize, true, exposureTimeNs);
+                playShutterSound(captureSize, true, exposureTimeNs, captureSettings);
             }
             if (enableFlash) {
                 flashPrivacyLedForPhoto();
@@ -2565,7 +2575,7 @@ public class MediaCaptureService {
                 if (enableSound) {
                     // SDK photo: isFromSdk=true; size and exposure match the enqueuePhotoRequest
                     // call below so the warm/cold prediction lines up.
-                    playShutterSound(captureSize, true, exposureTimeNs);
+                    playShutterSound(captureSize, true, exposureTimeNs, captureSettings);
                 }
                 if (enableFlash) {
                     flashPrivacyLedForPhoto();
@@ -2602,8 +2612,8 @@ public class MediaCaptureService {
                             logBlePhotoStep(
                                     requestId,
                                     "capture_configured",
-                                    "camera configuration resolved for the requested size and"
-                                            + " exposure");
+                                    summarizeCaptureTimingDetail(
+                                            "resolved", resolvedConfig, null));
                             sendPhotoStatus(
                                     requestId,
                                     "configuring",
@@ -2624,7 +2634,10 @@ public class MediaCaptureService {
                             logBlePhotoStep(
                                     requestId,
                                     "capture_started",
-                                    "camera sensor capture is now in progress");
+                                    summarizeCaptureTimingDetail(
+                                            "requested",
+                                            requestedCaptureConfig,
+                                            meteredPreview));
                             sendPhotoStatus(
                                     requestId,
                                     "capturing",
@@ -2971,6 +2984,7 @@ public class MediaCaptureService {
         if (requestId != null) {
             blePhotoPipelineStartMs.remove(requestId);
             photoTimings.remove(requestId);
+            photoTimingDetails.remove(requestId);
             bleEncodeInvocationCount.remove(requestId);
             bleEncodeTotalMs.remove(requestId);
             bleOriginalBytes.remove(requestId);
@@ -2999,11 +3013,67 @@ public class MediaCaptureService {
         logBlePhotoStep(requestId, step, null);
     }
 
+    /**
+     * Compact capture-config summary for PHASE BREAKDOWN / live timing lines (size, AE mode,
+     * exposure, ISO, ZSL, metered preview).
+     */
+    private static String summarizeCaptureTimingDetail(
+            String kind,
+            @Nullable JSONObject captureConfig,
+            @Nullable JSONObject meteredPreview) {
+        StringBuilder sb = new StringBuilder(kind);
+        if (captureConfig != null) {
+            int width = captureConfig.optInt("width", -1);
+            int height = captureConfig.optInt("height", -1);
+            if (width > 0 && height > 0) {
+                sb.append(' ').append(width).append('x').append(height);
+            }
+            if (captureConfig.has("quality")) {
+                sb.append(" jpegQ=").append(captureConfig.optInt("quality"));
+            }
+            if (captureConfig.has("manual")) {
+                sb.append(captureConfig.optBoolean("manual") ? " MANUAL" : " AUTO");
+            }
+            if (captureConfig.has("exposureTimeNs")) {
+                double expMs = captureConfig.optLong("exposureTimeNs") / 1_000_000.0;
+                sb.append(String.format(Locale.US, " exp=%.2fms", expMs));
+            }
+            if (captureConfig.has("iso")) {
+                sb.append(" iso=").append(captureConfig.optInt("iso"));
+            }
+            if (captureConfig.has("zsl")) {
+                sb.append(" zsl=").append(captureConfig.optBoolean("zsl"));
+            }
+            if (captureConfig.has("noiseReductionMode")) {
+                sb.append(" nr=").append(captureConfig.optInt("noiseReductionMode"));
+            }
+        } else {
+            sb.append(" (no config)");
+        }
+        if (meteredPreview != null) {
+            if (meteredPreview.has("iso") || meteredPreview.has("exposureTimeNs")) {
+                sb.append(" | metered");
+                if (meteredPreview.has("iso")) {
+                    sb.append(" iso=").append(meteredPreview.optInt("iso"));
+                }
+                if (meteredPreview.has("exposureTimeNs")) {
+                    double expMs = meteredPreview.optLong("exposureTimeNs") / 1_000_000.0;
+                    sb.append(String.format(Locale.US, " exp=%.2fms", expMs));
+                }
+            }
+        }
+        return sb.toString();
+    }
+
     private void logBlePhotoStep(String requestId, String step, String detail) {
+        logBlePhotoStepAt(requestId, step, detail, System.currentTimeMillis());
+    }
+
+    private void logBlePhotoStepAt(
+            String requestId, String step, String detail, long wallTimeMs) {
         if (!AsgConstants.ENABLE_PHOTO_TIMING_LOGS || requestId == null || requestId.isEmpty()) {
             return;
         }
-        long now = System.currentTimeMillis();
         Map<String, Long> timings =
                 photoTimings.computeIfAbsent(requestId, k -> new java.util.LinkedHashMap<>());
         long delta;
@@ -3015,11 +3085,19 @@ public class MediaCaptureService {
                 for (Long t : timings.values()) {
                     prev = t;
                 }
-                delta = now - prev;
+                delta = wallTimeMs - prev;
             }
-            timings.put(step, now);
+            timings.put(step, wallTimeMs);
             Long pipelineStart = blePhotoPipelineStartMs.get(requestId);
-            elapsed = pipelineStart != null ? now - pipelineStart : -1;
+            elapsed = pipelineStart != null ? wallTimeMs - pipelineStart : -1;
+        }
+        if (detail != null && !detail.isEmpty()) {
+            Map<String, String> details =
+                    photoTimingDetails.computeIfAbsent(
+                            requestId, k -> new java.util.LinkedHashMap<>());
+            synchronized (details) {
+                details.put(step, detail);
+            }
         }
         BlePhotoTimingLog.requestStep(requestId, step, detail, elapsed, delta);
     }
@@ -3037,16 +3115,24 @@ public class MediaCaptureService {
             @Nullable BlePhotoTimingLog.CaptureSessionStats captureSession) {
         if (!AsgConstants.ENABLE_PHOTO_TIMING_LOGS) return;
         Map<String, Long> timings = photoTimings.remove(requestId);
+        Map<String, String> details = photoTimingDetails.remove(requestId);
         if (timings == null || timings.isEmpty()) return;
         Map<String, Long> snapshot;
         synchronized (timings) {
             snapshot = new java.util.LinkedHashMap<>(timings);
+        }
+        Map<String, String> detailSnapshot = null;
+        if (details != null && !details.isEmpty()) {
+            synchronized (details) {
+                detailSnapshot = new java.util.LinkedHashMap<>(details);
+            }
         }
         Log.i(
                 BlePhotoTimingLog.TAG,
                 BlePhotoTimingLog.formatPhaseBreakdown(
                         requestId,
                         snapshot,
+                        detailSnapshot,
                         originalBytes,
                         compressedBytes,
                         uart,
@@ -4849,7 +4935,7 @@ public class MediaCaptureService {
             if (enableSound) {
                 // BLE-transfer SDK photo: isFromSdk=true; size and exposure match the
                 // enqueuePhotoRequest call below so the warm/cold prediction lines up.
-                playShutterSound(captureSize, true, exposureTimeNs);
+                playShutterSound(captureSize, true, exposureTimeNs, captureSettings);
             }
             if (enableFlash) {
                 flashPrivacyLedForPhoto();
@@ -4864,6 +4950,12 @@ public class MediaCaptureService {
                         @Override
                         public void onPhase(String step, @Nullable String detail) {
                             logBlePhotoStep(requestId, step, detail);
+                        }
+
+                        @Override
+                        public void onPhaseAt(
+                                String step, @Nullable String detail, long wallTimeMs) {
+                            logBlePhotoStepAt(requestId, step, detail, wallTimeMs);
                         }
 
                         @Override
@@ -4893,8 +4985,8 @@ public class MediaCaptureService {
                             logBlePhotoStep(
                                     requestId,
                                     "capture_configured",
-                                    "camera configuration resolved for the requested size and"
-                                            + " exposure");
+                                    summarizeCaptureTimingDetail(
+                                            "resolved", resolvedConfig, null));
                             sendPhotoStatus(
                                     requestId,
                                     "configuring",
@@ -4909,7 +5001,10 @@ public class MediaCaptureService {
                             logBlePhotoStep(
                                     requestId,
                                     "capture_started",
-                                    "camera sensor capture is now in progress");
+                                    summarizeCaptureTimingDetail(
+                                            "requested",
+                                            requestedCaptureConfig,
+                                            meteredPreview));
                             sendPhotoStatus(
                                     requestId,
                                     "capturing",
@@ -6171,12 +6266,16 @@ public class MediaCaptureService {
      * @param size resolution tier matching the warmed config ("low"/"medium"/"high"/"max")
      * @param exposureTimeNs optional manual shutter in ns; {@code null} = auto
      * @param durationMs keep-alive TTL in ms; {@code <= 0} uses the default warm-up hold
-     * @param mode capture mode ("photo"/"text"); forwarded so the warmed preview applies the same
-     *     text-mode AE preset the eventual {@code take_photo} will use
+     * @param mode capture mode ("photo"/"text"); forwarded for text sensor size/crop alignment
      * @return true if the warm-up was accepted (or the camera was already warm), false otherwise
      */
     public boolean warmUpCamera(
-            String requestId, String size, Long exposureTimeNs, long durationMs, String mode) {
+            String requestId,
+            String size,
+            Long exposureTimeNs,
+            long durationMs,
+            String mode,
+            @Nullable PhotoCaptureSettings captureSettings) {
         if (requestId == null || requestId.isEmpty()) {
             Log.w(TAG, "camera_warm_up rejected - missing requestId");
             return false;
@@ -6221,16 +6320,8 @@ public class MediaCaptureService {
             return false;
         }
 
-        Log.i(
-                TAG,
-                "📷 camera_warm_up accepted requestId="
-                        + requestId
-                        + " size="
-                        + size
-                        + " exposureTimeNs="
-                        + exposureTimeNs
-                        + " durationMs="
-                        + durationMs);
+        PhotoCaptureSettings warmSettings =
+                captureSettings != null ? captureSettings : PhotoCaptureSettings.EMPTY;
 
         // CameraNeoService.warmUpCamera rejects an overlapping/mid-capture warm-up synchronously
         // (it fires onCameraError on this thread before returning). Track that so the return value
@@ -6244,6 +6335,7 @@ public class MediaCaptureService {
                 exposureTimeNs,
                 durationMs,
                 mode,
+                warmSettings,
                 new CameraNeoService.CameraWarmUpCallback() {
                     @Override
                     public void onWarming() {

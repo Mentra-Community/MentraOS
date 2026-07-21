@@ -109,6 +109,7 @@ export class TranslationController {
   private readonly unsubs: Array<() => void> = []
 
   private translationCleanup: UnsubscribeFn | null = null
+  private translationTarget: string | null = null
   private inactivityTimer: ReturnType<typeof setTimeout> | null = null
 
   // session.ui, retyped against this miniapp's channel registry. The SDK types
@@ -190,6 +191,7 @@ export class TranslationController {
         /* ignore */
       }
       this.translationCleanup = null
+      this.translationTarget = null
     }
     if (this.inactivityTimer) {
       clearTimeout(this.inactivityTimer)
@@ -358,6 +360,11 @@ export class TranslationController {
   }
 
   private async setTargetLanguage(targetLanguage: string): Promise<void> {
+    if (targetLanguage === this.settings.targetLanguage) {
+      this.subscribeTranslation()
+      this.broadcastSettings()
+      return
+    }
     this.settings.targetLanguage = targetLanguage
     await this.persist(STORAGE_KEYS.targetLanguage, targetLanguage)
     this.subscribeTranslation()
@@ -417,17 +424,8 @@ export class TranslationController {
   // ───────────────────────────────────────────────────────────────────────
 
   private subscribeTranslation(): void {
-    // Tear down any existing subscription before re-subscribing.
-    if (this.translationCleanup) {
-      try {
-        this.translationCleanup()
-      } catch {
-        /* ignore */
-      }
-      this.translationCleanup = null
-    }
-
     const targetLanguage = this.settings.targetLanguage
+    if (this.translationCleanup && this.translationTarget === targetLanguage) return
 
     try {
       const handler = (data: TranslationData) => {
@@ -437,7 +435,20 @@ export class TranslationController {
       // Any source language -> selected target language. Translating whatever
       // is spoken into one chosen language is the app's whole model; the source
       // is intentionally not configurable (see the file header).
-      this.translationCleanup = this.session.translation.to(targetLanguage, handler)
+      // Attach the replacement before releasing the old subscription. This
+      // keeps the microphone/cloud translation union live while settings are
+      // changed and preserves the working subscription if replacement fails.
+      const previousCleanup = this.translationCleanup
+      const nextCleanup = this.session.translation.to(targetLanguage, handler)
+      this.translationCleanup = nextCleanup
+      this.translationTarget = targetLanguage
+      if (previousCleanup) {
+        try {
+          previousCleanup()
+        } catch {
+          /* ignore */
+        }
+      }
     } catch (err) {
       console.log(`LocalTranslation: translation subscribe failed for target=${targetLanguage}`, err)
     }

@@ -6,6 +6,8 @@ import {useApps, useStart, engine, SETTINGS, useSetting} from "@mentra/engine"
 import {askPermissionsUI} from "@/utils/PermissionsUtils"
 import {ButtonPressEvent} from "@mentra/bluetooth-sdk"
 
+import {shouldUseMentraLiveNativeCapture} from "@/effects/buttonCapturePolicy"
+
 export function ButtonActions() {
   const applets = useApps()
   const startApplet = useStart()
@@ -80,25 +82,19 @@ export function ButtonActions() {
         return
       }
 
-      // Check if any standard or background app is running. A running background app
-      // (e.g. one that listens for hardware button presses) already receives this event
-      // server-side, so it owns the button. Launching the default app here would also
-      // re-enable gallery mode (camera running), recreating the duplicate native-capture +
-      // SDK requestPhoto() race that GalleryModeSync suppresses. Keep this predicate in sync
-      // with GalleryModeSync.
-      const activeButtonHandlingApp = applets.find(
-        (app) => (app.type === "standard" || app.type === "background") && app.running,
-      )
-
-      if (activeButtonHandlingApp) {
+      // A running miniapp only owns Mentra Live's hardware button while it has
+      // an active button_press subscription. This keeps UI-only miniapps such
+      // as Give Feedback from disabling native photo/video capture.
+      const buttonPressSubscribers = engine.miniapps.buttonPressSubscribers()
+      if (!shouldUseMentraLiveNativeCapture(buttonPressSubscribers)) {
         console.log(
-          "BUTTON_ACTION: App is running - button event already sent to server for app:",
-          activeButtonHandlingApp.name,
+          "BUTTON_ACTION: Button event delivered to subscribed miniapp(s):",
+          buttonPressSubscribers.join(", "),
         )
         return
       }
 
-      // No foreground app running - start default app
+      // No miniapp owns this button press - start the default app.
       const defaultAppPackageName = await engine.settings.get(SETTINGS.default_button_action_app.key)
 
       if (!defaultAppPackageName) {

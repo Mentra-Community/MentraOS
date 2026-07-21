@@ -1,4 +1,5 @@
 import {waitFor} from "@testing-library/react-native"
+import {router} from "expo-router"
 
 import mantle from "@/services/MantleManager"
 import {localMiniappRuntime, useCoreStore, useDisplayStore, useSettingsStore} from "@mentra/engine/internal"
@@ -88,10 +89,12 @@ function resetMantleTestState() {
   useDisplayStore.setState({view: "main"})
 }
 
-let requestWifiSetup: (reason?: string) => Promise<void>
+let requestWifiSetup: (reason?: string, packageName?: string) => Promise<void>
+let routerPushSpy: jest.SpiedFunction<typeof router.push>
 
 describe("MantleManager", () => {
   beforeAll(async () => {
+    routerPushSpy = jest.spyOn(router, "push").mockImplementation(() => {})
     jest.useFakeTimers()
     resetBluetoothSdkMock()
     resetCrustModuleMock()
@@ -391,11 +394,15 @@ describe("MantleManager", () => {
     await cancelRequest
     expect(engine.miniapps.clearForeground).not.toHaveBeenCalled()
 
-    const confirmRequest = requestWifiSetup("Streaming needs Wi-Fi")
+    const confirmRequest = requestWifiSetup("Streaming needs Wi-Fi", "com.mentra.livestreamer")
     const confirmButtons = mockShowAlert.mock.calls.at(-1)![2]
     confirmButtons[1].onPress()
     await confirmRequest
 
     expect(engine.miniapps.clearForeground).toHaveBeenCalledTimes(1)
+    expect(routerPushSpy).toHaveBeenLastCalledWith({
+      pathname: "/wifi/scan",
+      params: {returnToMiniapp: "com.mentra.livestreamer"},
+    })
   })
 })

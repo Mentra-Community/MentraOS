@@ -87,6 +87,16 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
                 durationMs = AsgConstants.CAMERA_WARM_UP_DEFAULT_DURATION_MS;
             }
             durationMs = Math.min(durationMs, AsgConstants.CAMERA_WARM_UP_MAX_DURATION_MS);
+            // Only pull zsl/mfnr from the warm-up JSON — other take_photo tuning fields are
+            // irrelevant for opening the preview session.
+            PhotoCaptureSettings.Builder warmTuning = new PhotoCaptureSettings.Builder();
+            if (data.has("zsl") && !data.isNull("zsl")) {
+                warmTuning.zsl(data.optBoolean("zsl", true));
+            }
+            if (data.has("mfnr") && !data.isNull("mfnr")) {
+                warmTuning.mfnr(data.optBoolean("mfnr", true));
+            }
+            PhotoCaptureSettings captureSettings = warmTuning.build();
 
             MediaCaptureService captureService = serviceManager.getMediaCaptureService();
             if (captureService == null) {
@@ -98,22 +108,9 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
                 return false;
             }
 
-            Log.i(
-                    TAG,
-                    "📷 camera_warm_up requestId="
-                            + requestId
-                            + " mode="
-                            + mode
-                            + " size="
-                            + size
-                            + (size.equals(requestedSize) ? "" : " (from " + requestedSize + ")")
-                            + " exposureTimeNs="
-                            + exposureTimeNs
-                            + " durationMs="
-                            + durationMs);
-
             boolean accepted =
-                    captureService.warmUpCamera(requestId, size, exposureTimeNs, durationMs, mode);
+                    captureService.warmUpCamera(
+                            requestId, size, exposureTimeNs, durationMs, mode, captureSettings);
             logCommandResult("camera_warm_up", accepted, accepted ? null : "Warm-up rejected");
             return accepted;
         } catch (Exception e) {
@@ -230,12 +227,9 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
             PhotoCaptureSettings.logIncomingTakePhotoFields(data, requestId);
             AsgSettings asgSettings = serviceManager.getAsgSettings();
             Long exposureTimeNs = PhotoExposureTimeNs.parse(data);
+            // Text mode no longer injects aeExposureDivisor; callers that want scan AE pass it
+            // explicitly. Request zsl/mfnr omit → global defaults (same as photo mode).
             PhotoCaptureSettings captureSettings = requestCaptureSettings;
-            if (PhotoMode.TEXT.equals(mode) && exposureTimeNs == null) {
-                // Apply text-mode defaults before stored global MFNR/ZSL defaults are merged.
-                // Explicit per-request values remain preserved by applyTextModeExposure().
-                captureSettings = PhotoCaptureSettings.applyTextModeExposure(captureSettings);
-            }
             if (asgSettings != null) {
                 captureSettings =
                         PhotoCaptureSettings.mergeForSdkRequest(

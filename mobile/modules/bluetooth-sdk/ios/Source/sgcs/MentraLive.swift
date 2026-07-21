@@ -1789,7 +1789,9 @@ class MentraLive: NSObject, SGCManager {
         size: PhotoSize,
         mode: PhotoMode = .photo,
         exposureTimeNs: Double?,
-        durationMs: Int
+        durationMs: Int,
+        zsl: Bool? = nil,
+        mfnr: Bool? = nil
     ) {
         Bridge.log(
             "LIVE: warmUpCamera() entry requestId=\(requestId) size=\(size.rawValue) mode=\(mode.rawValue) durationMs=\(durationMs)"
@@ -1807,6 +1809,12 @@ class MentraLive: NSObject, SGCManager {
 
         if let e = exposureTimeNs, e.isFinite, e > 0, e <= Double(Int64.max) {
             json["exposureTimeNs"] = Int64(e)
+        }
+        if let mfnr {
+            json["mfnr"] = mfnr
+        }
+        if let zsl {
+            json["zsl"] = zsl
         }
 
         sendJson(json, wakeUp: true)
@@ -6127,11 +6135,12 @@ extension MentraLive {
     }
 
     func sendButtonPhotoSettings() {
+        let legacyZslMfnr = DeviceStore.shared.get("bluetooth", "button_photo_zsl_mfnr") as? Bool
         let size = (DeviceStore.shared.get("bluetooth", "button_photo_size") as? String).flatMap { rawSize in
             rawSize.isEmpty ? nil : PhotoSize(normalizedRawValue: rawSize)
         }
-        let mfnr = DeviceStore.shared.get("bluetooth", "button_photo_mfnr") as? Bool
-        let zsl = DeviceStore.shared.get("bluetooth", "button_photo_zsl") as? Bool
+        let mfnr = DeviceStore.shared.get("bluetooth", "button_photo_mfnr") as? Bool ?? legacyZslMfnr
+        let zsl = DeviceStore.shared.get("bluetooth", "button_photo_zsl") as? Bool ?? legacyZslMfnr
         let noiseReduction = DeviceStore.shared.get("bluetooth", "button_photo_noise_reduction") as? Bool
         let edgeEnhancement = DeviceStore.shared.get("bluetooth", "button_photo_edge_enhancement") as? Bool
         let ispDigitalGain = DeviceStore.shared.get("bluetooth", "button_photo_isp_digital_gain") as? Int
@@ -6248,8 +6257,8 @@ extension MentraLive {
     }
 
     func sendCameraFovSetting() {
-        let settings = DeviceStore.shared.get("bluetooth", "camera_fov") as? [String: Any] ?? ["fov": 102, "roi_position": 0]
-        let fov = settings["fov"] as? Int ?? 102
+        let settings = DeviceStore.shared.get("bluetooth", "camera_fov") as? [String: Any] ?? ["fov": 118, "roi_position": 0]
+        let fov = settings["fov"] as? Int ?? CameraFov.defaultFov
         let roiPosition = settings["roi_position"] as? Int ?? 0
         sendCameraFovSetting(requestId: nil, fov: fov, roiPosition: roiPosition)
     }

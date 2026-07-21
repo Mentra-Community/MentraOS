@@ -8,9 +8,13 @@ import android.hardware.camera2.TotalCaptureResult;
 import android.util.Log;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 
 import com.mentra.asg_client.camera.diagnostics.CameraDiagnosticsLog;
 import com.mentra.asg_client.camera.policy.AeStateMachine;
+import com.mentra.asg_client.io.media.core.BlePhotoTimingLog;
+
+import java.util.Locale;
 
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -20,6 +24,18 @@ public final class StillCaptureCallback extends CameraCaptureSession.CaptureCall
 
     public interface Hooks {
         void recordStillSensorTimestampNs(Long timestampNs);
+
+        /** Wall-clock when HAL reported {@code onCaptureStarted}. */
+        void recordStillHalStartedWallMs(long startedWallMs);
+
+        /** True when ImageReader already backfilled an estimated {@code still_hal_started}. */
+        boolean stillHalStartedAlreadyLogged();
+
+        /** True when ImageReader already wrote estimated shutter→JPEG phases. */
+        boolean stillTimingFinalizedByImageReader();
+
+        /** Wall-clock when HAL reported {@code onCaptureCompleted} (for ImageReader lag). */
+        void recordStillCaptureCompletedWallMs(long completedWallMs);
 
         void recordCaptureMetadata(JSONObject captureMetadata);
 
@@ -43,9 +59,12 @@ public final class StillCaptureCallback extends CameraCaptureSession.CaptureCall
     private static final String TAG = "CameraNeo";
 
     private final Hooks hooks;
+    private final long shutterSubmittedWallMs;
+    private volatile long captureStartedWallMs;
 
     public StillCaptureCallback(Hooks hooks) {
         this.hooks = hooks;
+        this.shutterSubmittedWallMs = System.currentTimeMillis();
     }
 
     private static void putIfNotNull(JSONObject json, String key, Object value) throws JSONException {
@@ -55,9 +74,74 @@ public final class StillCaptureCallback extends CameraCaptureSession.CaptureCall
     }
 
     @Override
+    public void onCaptureStarted(
+            @NonNull CameraCaptureSession session,
+            @NonNull CaptureRequest request,
+            long timestamp,
+            long frameNumber) {
+        captureStartedWallMs = System.currentTimeMillis();
+        boolean alreadyLogged = hooks.stillHalStartedAlreadyLogged();
+        hooks.recordStillHalStartedWallMs(captureStartedWallMs);
+        long submitToStartMs = captureStartedWallMs - shutterSubmittedWallMs;
+        Long reqExpNs = request.get(CaptureRequest.SENSOR_EXPOSURE_TIME);
+        Integer reqIso = request.get(CaptureRequest.SENSOR_SENSITIVITY);
+        Boolean reqZsl = request.get(CaptureRequest.CONTROL_ENABLE_ZSL);
+        Integer reqAeMode = request.get(CaptureRequest.CONTROL_AE_MODE);
+        boolean manual =
+                reqAeMode != null && reqAeMode == CaptureRequest.CONTROL_AE_MODE_OFF;
+        String detail =
+                String.format(
+                        Locale.US,
+                        "frame=#%d; submit→HAL_start=%dms (queue/schedule); mode=%s; req_exp=%s; req_iso=%s; zsl=%s; sensor_ts_ns=%d",
+                        frameNumber,
+                        submitToStartMs,
+                        manual ? "MANUAL" : "AUTO",
+                        formatExposureMs(reqExpNs),
+                        reqIso != null ? reqIso.toString() : "ae",
+                        String.valueOf(reqZsl),
+                        timestamp);
+        // Skip phase row if ImageReader already backfilled an ESTIMATED start (avoids dup keys).
+        if (!alreadyLogged) {
+            BlePhotoTimingLog.capturePhase("still_hal_started", detail);
+        } else {
+            Log.i(TAG, "Still capture started (HAL, phase already estimated): " + detail);
+        }
+        Log.i(
+                TAG,
+                "Still capture started (HAL): frame=#"
+                        + frameNumber
+                        + " submit→start="
+                        + submitToStartMs
+                        + "ms");
+    }
+
+    @Override
+    public void onCaptureProgressed(
+            @NonNull CameraCaptureSession session,
+            @NonNull CaptureRequest request,
+            @NonNull CaptureResult partialResult) {
+        Integer aeState = partialResult.get(CaptureResult.CONTROL_AE_STATE);
+        Integer iso = partialResult.get(CaptureResult.SENSOR_SENSITIVITY);
+        Long expNs = partialResult.get(CaptureResult.SENSOR_EXPOSURE_TIME);
+        long sinceSubmitMs = System.currentTimeMillis() - shutterSubmittedWallMs;
+        Log.i(
+                TAG,
+                "Still capture progressed (HAL): +"
+                        + sinceSubmitMs
+                        + "ms since submit; ae="
+                        + AeStateMachine.getAeStateName(aeState)
+                        + " iso="
+                        + iso
+                        + " exp="
+                        + formatExposureMs(expNs));
+    }
+
+    @Override
     public void onCaptureCompleted(@NonNull CameraCaptureSession session,
                                    @NonNull CaptureRequest request,
                                    @NonNull TotalCaptureResult result) {
+        long completedWallMs = System.currentTimeMillis();
+        hooks.recordStillCaptureCompletedWallMs(completedWallMs);
         Log.i(TAG, "Photo capture completed successfully");
 
         Boolean zslInRequest = request.get(CaptureRequest.CONTROL_ENABLE_ZSL);
@@ -75,7 +159,7 @@ public final class StillCaptureCallback extends CameraCaptureSession.CaptureCall
         double captureExposureMs = (captureExposureNs != null) ? captureExposureNs / 1_000_000.0 : -1;
         boolean mfnrLikelyTriggered = (captureIso != null && captureIso > 800);
         Log.i(TAG, "MFNR_DIAG: ISO=" + captureIso
-                + " exposure=" + String.format("%.2f", captureExposureMs) + "ms"
+                + " exposure=" + String.format(Locale.US, "%.2f", captureExposureMs) + "ms"
                 + " NR_MODE=" + captureNrMode
                 + " MFNR_likely=" + mfnrLikelyTriggered);
 
@@ -102,6 +186,54 @@ public final class StillCaptureCallback extends CameraCaptureSession.CaptureCall
         double xyCam2TotalLight = -1;
         if (reqExp2 != null) {
             xyCam2TotalLight = (reqExp2 / 1_000_000.0) * 400.0;
+        }
+
+        long submitToCompleteMs = completedWallMs - shutterSubmittedWallMs;
+        long startToCompleteMs =
+                captureStartedWallMs > 0 ? completedWallMs - captureStartedWallMs : -1L;
+        long sensorExposureBudgetMs =
+                captureExposureNs != null ? Math.round(captureExposureNs / 1_000_000.0) : -1L;
+        long ispAfterExposureMs =
+                startToCompleteMs >= 0 && sensorExposureBudgetMs >= 0
+                        ? Math.max(0L, startToCompleteMs - sensorExposureBudgetMs)
+                        : -1L;
+        String bottleneckHint;
+        if (startToCompleteMs < 0) {
+            bottleneckHint = "no onCaptureStarted";
+        } else if (sensorExposureBudgetMs > 0
+                && startToCompleteMs > sensorExposureBudgetMs * 2) {
+            bottleneckHint =
+                    "HAL/ISP (beyond exposure) ~"
+                            + ispAfterExposureMs
+                            + "ms — likely JPEG encode / NR / MFNR";
+        } else if (sensorExposureBudgetMs > 50) {
+            bottleneckHint = "long sensor exposure (" + sensorExposureBudgetMs + "ms)";
+        } else {
+            bottleneckHint = "HAL processing ~" + startToCompleteMs + "ms";
+        }
+
+        String completedDetail =
+                String.format(
+                        Locale.US,
+                        "exp=%.2fms iso=%s nr=%s ae=%s/%s zsl=%s mfnr_likely=%s; submit→complete=%dms; HAL_start→complete=%dms; exposure_budget=%dms; isp_after_exposure≈%sms; bottleneck=%s",
+                        captureExposureMs,
+                        captureIso != null ? captureIso.toString() : "?",
+                        captureNrMode != null ? captureNrMode.toString() : "?",
+                        captureAeMode != null ? captureAeMode.toString() : "?",
+                        AeStateMachine.getAeStateName(captureAeState),
+                        String.valueOf(reqZsl2),
+                        mfnrLikelyTriggered,
+                        submitToCompleteMs,
+                        startToCompleteMs,
+                        sensorExposureBudgetMs,
+                        ispAfterExposureMs >= 0 ? Long.toString(ispAfterExposureMs) : "?",
+                        bottleneckHint);
+        // If ImageReader already emitted estimated shutter→JPEG phases, keep metadata/logging
+        // but don't insert a late still_hal_completed row that lands after storage steps.
+        if (!hooks.stillTimingFinalizedByImageReader()) {
+            BlePhotoTimingLog.capturePhase("still_hal_completed", completedDetail);
+        } else {
+            Log.i(TAG, "Still capture completed (HAL, phase already estimated): " + completedDetail);
         }
 
         try {
@@ -147,6 +279,13 @@ public final class StillCaptureCallback extends CameraCaptureSession.CaptureCall
                 captureMetadata.put("totalLightProxy", totalLightProxy);
             }
             captureMetadata.put("mfnrLikely", mfnrLikelyTriggered);
+            putIfNotNull(captureMetadata, "submitToCompleteMs", submitToCompleteMs);
+            if (startToCompleteMs >= 0) {
+                captureMetadata.put("halStartToCompleteMs", startToCompleteMs);
+            }
+            if (ispAfterExposureMs >= 0) {
+                captureMetadata.put("ispAfterExposureMs", ispAfterExposureMs);
+            }
             hooks.recordCaptureMetadata(captureMetadata);
         } catch (Throwable t) {
             Log.w(TAG, "Failed to build still capture metadata", t);
@@ -168,5 +307,12 @@ public final class StillCaptureCallback extends CameraCaptureSession.CaptureCall
         hooks.cancelKeepAliveTimer();
         hooks.closeCamera();
         hooks.stopSelf();
+    }
+
+    private static String formatExposureMs(@Nullable Long exposureNs) {
+        if (exposureNs == null) {
+            return "ae";
+        }
+        return String.format(Locale.US, "%.2fms", exposureNs / 1_000_000.0);
     }
 }
