@@ -9,9 +9,9 @@
  * `App.tsx`, `RawMapPage`, and `NavMap` can switch over with minimal
  * changes.
  *
- * Token: the Mentra App injects its public token into `window.MentraOS` for
- * installed bundles. Standalone release builds can still inline
- * `PUBLIC_MAPBOX_TOKEN`, while dev falls back to `/api/config`.
+ * Token: build.ts inlines `PUBLIC_MAPBOX_TOKEN` via `define` for release
+ * builds; dev fetches `/api/config` (`mapboxToken`) from the local server,
+ * mirroring how the Google key was resolved.
  *
  * The CSS (`mapbox-gl/dist/mapbox-gl.css`) is MANDATORY — without it
  * markers/controls/canvas render incorrectly.
@@ -71,16 +71,6 @@ export class MapboxManager {
   }
 
   private async resolveToken(): Promise<string> {
-    try {
-      const fromHost = window.MentraOS?.mapboxAccessToken
-      if (fromHost) {
-        console.log("[NAV-MINI] mapbox token from host")
-        return fromHost
-      }
-    } catch {
-      // window is not defined during non-WebView tooling — try other sources.
-    }
-
     // `bun run release` substitutes this at build time via define in
     // build.ts. `bun run dev` ships the source unchanged — `process` is
     // undefined in the WebView, so fall through to /api/config.

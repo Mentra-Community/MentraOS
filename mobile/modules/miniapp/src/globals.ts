@@ -47,8 +47,6 @@ export interface MentraOSGlobals {
    * `colorScheme` event — see `useColorScheme()` in @mentra/miniapp/react.
    */
   colorScheme?: MiniappColorScheme
-  /** Public Mapbox token supplied by hosts that bundle map rendering. */
-  mapboxAccessToken?: string
 }
 
 declare global {
