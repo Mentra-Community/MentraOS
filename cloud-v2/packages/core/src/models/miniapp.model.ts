@@ -1,4 +1,5 @@
-import { Schema, model, type InferSchemaType } from "mongoose";
+import { Schema, type InferSchemaType } from "mongoose";
+import { registerModel } from "./register-model";
 
 export const MINIAPP_STATUSES = ["active", "archived", "suspended"] as const;
 
@@ -18,4 +19,4 @@ const MiniAppSchema = new Schema(
 MiniAppSchema.index({ orgId: 1, packageName: 1 }, { unique: true });
 
 export type MiniApp = InferSchemaType<typeof MiniAppSchema>;
-export const MiniAppModel = model("MiniApp", MiniAppSchema);
+export const MiniAppModel = registerModel("MiniApp", MiniAppSchema);

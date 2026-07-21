@@ -9,7 +9,8 @@
  * in the owning report document.
  */
 
-import { Schema, model, type InferSchemaType } from "mongoose";
+import { Schema, type InferSchemaType } from "mongoose";
+import { registerModel } from "./register-model";
 
 const ReportAssetSchema = new Schema(
   {
@@ -26,4 +27,4 @@ const ReportAssetSchema = new Schema(
 );
 
 export type ReportAsset = InferSchemaType<typeof ReportAssetSchema>;
-export const ReportAssetModel = model("ReportAsset", ReportAssetSchema);
+export const ReportAssetModel = registerModel("ReportAsset", ReportAssetSchema);
