@@ -12,7 +12,8 @@
  * Spec: docs/issues/001-oem-auth/design.md ("Data model" / "Collection: users")
  */
 
-import { Schema, model, type InferSchemaType } from "mongoose";
+import { Schema, type InferSchemaType } from "mongoose";
+import { registerModel } from "./register-model";
 
 const UserSchema = new Schema(
   {
@@ -36,4 +37,4 @@ const UserSchema = new Schema(
 UserSchema.index({ tenantId: 1, tenantUserId: 1 }, { unique: true });
 
 export type User = InferSchemaType<typeof UserSchema>;
-export const UserModel = model("User", UserSchema);
+export const UserModel = registerModel("User", UserSchema);

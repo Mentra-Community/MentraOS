@@ -1,4 +1,5 @@
-import { Schema, model, type InferSchemaType } from "mongoose";
+import { Schema, type InferSchemaType } from "mongoose";
+import { registerModel } from "./register-model";
 
 export const DEVELOPER_SIGNING_KEY_STATUSES = ["active", "revoked"] as const;
 
@@ -16,5 +17,5 @@ const DeveloperSigningKeySchema = new Schema(
 DeveloperSigningKeySchema.index({ orgId: 1, workosUserId: 1, status: 1 });
 
 export type DeveloperSigningKey = InferSchemaType<typeof DeveloperSigningKeySchema>;
-export const DeveloperSigningKeyModel = model("DeveloperSigningKey", DeveloperSigningKeySchema);
+export const DeveloperSigningKeyModel = registerModel("DeveloperSigningKey", DeveloperSigningKeySchema);
 

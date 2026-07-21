@@ -14,7 +14,8 @@
  * Spec: docs/issues/001-oem-auth/design.md ("Data model" / "revokedJtis")
  */
 
-import { Schema, model, type InferSchemaType } from "mongoose";
+import { Schema, type InferSchemaType } from "mongoose";
+import { registerModel } from "./register-model";
 
 const RevokedJtiSchema = new Schema(
   {
@@ -33,4 +34,4 @@ const RevokedJtiSchema = new Schema(
 RevokedJtiSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 
 export type RevokedJti = InferSchemaType<typeof RevokedJtiSchema>;
-export const RevokedJtiModel = model("RevokedJti", RevokedJtiSchema);
+export const RevokedJtiModel = registerModel("RevokedJti", RevokedJtiSchema);

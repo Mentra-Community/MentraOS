@@ -13,7 +13,8 @@
  * Spec: docs/issues/001-oem-auth/design.md ("Data model" / "Collection: oems")
  */
 
-import { Schema, model, type InferSchemaType } from "mongoose";
+import { Schema, type InferSchemaType } from "mongoose";
+import { registerModel } from "./register-model";
 
 export const OEM_PUBLIC_KEY_MODES = ["static", "jwks-url"] as const;
 export type OemPublicKeyMode = (typeof OEM_PUBLIC_KEY_MODES)[number];
@@ -55,4 +56,4 @@ const OemSchema = new Schema(
 );
 
 export type Oem = InferSchemaType<typeof OemSchema>;
-export const OemModel = model("Oem", OemSchema);
+export const OemModel = registerModel("Oem", OemSchema);

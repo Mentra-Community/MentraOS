@@ -1,4 +1,5 @@
-import { Schema, model, type InferSchemaType } from "mongoose";
+import { Schema, type InferSchemaType } from "mongoose";
+import { registerModel } from "./register-model";
 
 const AdminActionAuditLogSchema = new Schema(
   {
@@ -15,4 +16,4 @@ const AdminActionAuditLogSchema = new Schema(
 AdminActionAuditLogSchema.index({ createdAt: -1 });
 
 export type AdminActionAuditLog = InferSchemaType<typeof AdminActionAuditLogSchema>;
-export const AdminActionAuditLogModel = model("AdminActionAuditLog", AdminActionAuditLogSchema);
+export const AdminActionAuditLogModel = registerModel("AdminActionAuditLog", AdminActionAuditLogSchema);
