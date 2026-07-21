@@ -1,6 +1,9 @@
 package com.mentra.asg_client;
 
 public class AsgConstants {
+    /** Android package-manager transport value; never a logical ASG release identifier. */
+    public static final long ASG_ANDROID_TRANSPORT_VERSION_CODE = 1_000_000_000L;
+
     /** Mentra Live hotspot idle timeout after the last local HTTP activity. */
     public static final long HOTSPOT_INACTIVITY_TIMEOUT_MS = 120_000L;
 
@@ -112,6 +115,9 @@ public class AsgConstants {
 
     /** Number of post-APK-restart completion resend attempts (see {@link #OTA_COMPLETION_RESEND_INTERVAL_MS}). */
     public static final int OTA_COMPLETION_RESEND_ATTEMPTS = 15;
+
+    /** Attempts to arm recovery after an irreversible ASG downgrade state reset. */
+    public static final int RECOVERY_READY_HANDOFF_ATTEMPTS = 3;
 
     /** Delay before probing the alternate UART baud after ASG starts at the rendezvous rate. */
     public static final long UART_BOOT_RECOVERY_INITIAL_DELAY_MS = 8000;

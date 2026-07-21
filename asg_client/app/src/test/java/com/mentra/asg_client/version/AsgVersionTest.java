@@ -36,12 +36,27 @@ public class AsgVersionTest {
     }
 
     @Test
+    public void fixedTransportCodeWithoutMetadataIsNotLogicalVersion() {
+        PackageInfo info = new PackageInfo();
+        info.versionCode = 1_000_000_000;
+
+        assertEquals(-1L, AsgVersion.fromPackageInfo(info));
+    }
+
+    @Test
     public void targetFallsBackToLegacyVersionCode() throws Exception {
         JSONObject modern = new JSONObject().put("asgVersion", 48_332_721L).put("versionCode", 1_000_000_000);
         JSONObject legacy = new JSONObject().put("versionCode", 47_442_366L);
 
         assertEquals(48_332_721L, AsgVersion.fromManifestApp(modern));
         assertEquals(47_442_366L, AsgVersion.fromManifestApp(legacy));
+    }
+
+    @Test
+    public void targetDoesNotTreatFixedTransportCodeAsLogicalVersion() throws Exception {
+        JSONObject malformed = new JSONObject().put("versionCode", 1_000_000_000L);
+
+        assertEquals(-1L, AsgVersion.fromManifestApp(malformed));
     }
 
     @Test

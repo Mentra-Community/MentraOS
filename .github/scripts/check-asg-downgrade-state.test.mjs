@@ -119,6 +119,27 @@ test('successful downgrade reset also clears the live OTA session snapshot', () 
   );
 });
 
+test('a lost READY acknowledgement cannot abandon a reset downgrade target', () => {
+  const otaHelper = readFileSync(
+    join(sourceRoot, 'com/mentra/asg_client/io/ota/helpers/OtaHelper.java'),
+    'utf8',
+  );
+  const readyFailure = otaHelper.match(
+    /if \(!notifyRecoveryAsgInstallReady\(context, serverVersion\)\) \{([\s\S]*?)\n\s*\}/,
+  );
+  assert.ok(readyFailure, 'downgrade flow must handle a lost recovery READY acknowledgement');
+  assert.doesNotMatch(
+    readyFailure[1],
+    /notifyRecoveryAsgInstallCancelled|return false/,
+    'an irreversible reset must retain its pending target and continue the direct install',
+  );
+  assert.match(
+    readyFailure[1],
+    /continuing direct ASG install/,
+    'the fallback must document that the verified direct install still proceeds',
+  );
+});
+
 test('MTK-only success parks the session until its expected reboot', () => {
   const otaService = readFileSync(
     join(sourceRoot, 'com/mentra/asg_client/io/ota/services/OtaService.java'),

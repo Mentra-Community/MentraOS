@@ -4,6 +4,7 @@ import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageInfo;
 import android.os.Build;
 import android.os.Bundle;
+import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.BuildConfig;
 import org.json.JSONObject;
 
@@ -28,7 +29,9 @@ public final class AsgVersion {
             return -1L;
         }
         long metadataVersion = fromApplicationInfo(info.applicationInfo);
-        return metadataVersion > 0 ? metadataVersion : androidVersionCode(info);
+        return metadataVersion > 0
+                ? metadataVersion
+                : legacyLogicalVersion(androidVersionCode(info));
     }
 
     public static long fromApplicationInfo(ApplicationInfo info) {
@@ -61,13 +64,15 @@ public final class AsgVersion {
         }
     }
 
-    /** Read a target logical version, falling back to legacy manifest versionCode. */
+    /** Read a target logical version, falling back only to a legacy logical versionCode. */
     public static long fromManifestApp(JSONObject appInfo) {
         if (appInfo == null) {
             return -1L;
         }
         long logical = appInfo.optLong("asgVersion", -1L);
-        return logical > 0 ? logical : appInfo.optLong("versionCode", -1L);
+        return logical > 0
+                ? logical
+                : legacyLogicalVersion(appInfo.optLong("versionCode", -1L));
     }
 
     public static boolean requiresInstall(long installed, long target) {
@@ -83,5 +88,13 @@ public final class AsgVersion {
             return info.getLongVersionCode();
         }
         return info.versionCode;
+    }
+
+    private static long legacyLogicalVersion(long versionCode) {
+        if (versionCode <= 0
+                || versionCode == AsgConstants.ASG_ANDROID_TRANSPORT_VERSION_CODE) {
+            return -1L;
+        }
+        return versionCode;
     }
 }

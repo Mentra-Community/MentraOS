@@ -1046,14 +1046,13 @@ public class OtaHelper {
                         return false;
                     }
                     if (!notifyRecoveryAsgInstallReady(context, serverVersion)) {
-                        isUpdating = false;
-                        notifyRecoveryAsgInstallCancelled(context, serverVersion);
-                        if (sessionManager != null) {
-                            sessionManager.clear();
-                        }
-                        lastApkFailureErrorCode = "recovery_ready_handoff_failed";
-                        Log.e(TAG, "Refusing ASG downgrade because recovery did not arm the reset target");
-                        return false;
+                        // The reset above is irreversible. Do not cancel its persisted target or
+                        // abandon the verified APK: the READY acknowledgement may have been lost
+                        // after recovery committed it. Continue the direct install while retaining
+                        // the transaction so recovery can still act if any retry reached it.
+                        Log.e(
+                                TAG,
+                                "Recovery did not confirm the reset target; continuing direct ASG install with the pending transaction retained");
                     }
                 }
 
@@ -1334,10 +1333,26 @@ public class OtaHelper {
     }
 
     private static boolean notifyRecoveryAsgInstallReady(Context context, long targetAsgVersion) {
-        Intent intent = new Intent(OtaConstants.RECOVERY_ASG_INSTALL_READY);
-        intent.setPackage(OtaConstants.RECOVERY_PACKAGE);
-        intent.putExtra(OtaConstants.EXTRA_TARGET_ASG_VERSION, targetAsgVersion);
-        return sendOrderedRecoveryHandoff(context, intent, "armed reset ASG install");
+        for (int attempt = 1;
+                attempt <= AsgConstants.RECOVERY_READY_HANDOFF_ATTEMPTS;
+                attempt++) {
+            Intent intent = new Intent(OtaConstants.RECOVERY_ASG_INSTALL_READY);
+            intent.setPackage(OtaConstants.RECOVERY_PACKAGE);
+            intent.putExtra(OtaConstants.EXTRA_TARGET_ASG_VERSION, targetAsgVersion);
+            if (sendOrderedRecoveryHandoff(
+                    context,
+                    intent,
+                    "armed reset ASG install (attempt " + attempt + ")")) {
+                return true;
+            }
+            Log.w(
+                    TAG,
+                    "Recovery READY handoff attempt "
+                            + attempt
+                            + " failed for ASG target "
+                            + targetAsgVersion);
+        }
+        return false;
     }
 
     private static void notifyRecoveryAsgInstallCancelled(
