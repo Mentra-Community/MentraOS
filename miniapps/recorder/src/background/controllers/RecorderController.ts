@@ -87,6 +87,8 @@ export class RecorderController {
   private finalizing = false
   /** Shared stop promise so duplicate UI/action stops await one finalization. */
   private stopPromise: Promise<void> | null = null
+  /** Capture being finalized after recordingId is cleared, for concurrent action responses. */
+  private finalizingRecordingId: string | null = null
   /** Serializes blob writes so chunks land in order, one at a time. */
   private drainChain: Promise<void> = Promise.resolve()
 
@@ -238,7 +240,7 @@ export class RecorderController {
     status: "stopped" | "idle"
     recording: RecordingItem | null
   }> {
-    const recordingId = this.recordingId
+    const recordingId = this.recordingId ?? this.finalizingRecordingId
     if (!recordingId) return {status: "idle", recording: null}
 
     await this.stopRecording()
@@ -485,9 +487,11 @@ export class RecorderController {
     if (this.stopPromise) return this.stopPromise
     if (!this.recordingId || !this.writer) return Promise.resolve()
 
+    this.finalizingRecordingId = this.recordingId
     const stop = this.finalizeRecording()
     this.stopPromise = stop.finally(() => {
       this.stopPromise = null
+      this.finalizingRecordingId = null
     })
     return this.stopPromise
   }

@@ -2,7 +2,7 @@ import {describe, expect, it, mock} from "bun:test"
 
 import {RecorderController} from "./RecorderController"
 
-function makeHarness(stopTailDrainMs = 0, hasMic = true) {
+function makeHarness(stopTailDrainMs = 0, hasMic = true, closeMs = 0) {
   const writes: Uint8Array[] = []
   let committed = false
   let audioHandler: ((data: {data: string; sampleRate?: number}) => void) | null = null
@@ -13,6 +13,7 @@ function makeHarness(stopTailDrainMs = 0, hasMic = true) {
     }),
     writeAt: mock(async () => {}),
     close: mock(async () => {
+      if (closeMs > 0) await new Promise((resolve) => setTimeout(resolve, closeMs))
       committed = true
     }),
     abort: mock(async () => {}),
@@ -146,6 +147,23 @@ describe("RecorderController recording edges", () => {
         sampleRate: 16000,
         truncated: false,
       },
+    })
+    expect(h.writer.close).toHaveBeenCalledTimes(1)
+  })
+
+  it("coalesces duplicate stop actions while the recording is being saved", async () => {
+    const h = makeHarness(0, true, 20)
+    await h.controller.startRecordingAction()
+
+    const firstStop = h.controller.stopRecordingAction()
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    const secondStop = h.controller.stopRecordingAction()
+
+    const [firstResult, secondResult] = await Promise.all([firstStop, secondStop])
+    expect(secondResult).toEqual(firstResult)
+    expect(secondResult).toEqual({
+      status: "stopped",
+      recording: expect.objectContaining({id: "rec-test"}),
     })
     expect(h.writer.close).toHaveBeenCalledTimes(1)
   })
