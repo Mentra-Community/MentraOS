@@ -9,6 +9,8 @@ public final class RecoveryConstants {
 
   public static final String RECOVERY_PACKAGE = "com.mentra.recovery";
   public static final String ASG_PACKAGE = "com.mentra.asg_client";
+  /** Android package-manager transport value; never a logical ASG release identifier. */
+  public static final long ASG_ANDROID_TRANSPORT_VERSION_CODE = 1_000_000_000L;
   public static final String ASG_TELEMETRY_PERMISSION =
       "com.mentra.asg_client.permission.RECOVERY_TELEMETRY";
   public static final String RECOVERY_HEARTBEAT_PERMISSION =

@@ -149,7 +149,15 @@ public final class AsgInstallTransactionStore {
         return parsed;
       }
     }
-    return info.getLongVersionCode();
+    return legacyLogicalVersion(info.getLongVersionCode());
+  }
+
+  static long legacyLogicalVersion(long versionCode) {
+    if (versionCode <= 0
+        || versionCode == RecoveryConstants.ASG_ANDROID_TRANSPORT_VERSION_CODE) {
+      return -1L;
+    }
+    return versionCode;
   }
 
   static String sha256(File file) throws Exception {

@@ -88,6 +88,10 @@ test('ASG and recovery worker share the complete install transaction action cont
     join(sourceRoot, 'com/mentra/asg_client/io/ota/utils/OtaConstants.java'),
     'utf8',
   );
+  const asgGlobalConstants = readFileSync(
+    join(sourceRoot, 'com/mentra/asg_client/AsgConstants.java'),
+    'utf8',
+  );
   const recoveryConstants = readFileSync(
     'asg_client/recovery_worker/app/src/main/java/com/mentra/recovery/util/RecoveryConstants.java',
     'utf8',
@@ -105,6 +109,14 @@ test('ASG and recovery worker share the complete install transaction action cont
     assert.ok(recoveryConstants.includes(action), `recovery is missing action ${action}`);
     assert.ok(recoveryManifest.includes(action), `manifest is missing recovery action ${action}`);
   }
+  assert.ok(
+    asgGlobalConstants.includes('ASG_ANDROID_TRANSPORT_VERSION_CODE = 1_000_000_000L'),
+    'ASG must declare the fixed Android transport sentinel',
+  );
+  assert.ok(
+    recoveryConstants.includes('ASG_ANDROID_TRANSPORT_VERSION_CODE = 1_000_000_000L'),
+    'recovery must share the fixed Android transport sentinel',
+  );
 });
 
 test('successful downgrade reset also clears the live OTA session snapshot', () => {

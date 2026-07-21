@@ -23,6 +23,12 @@ public class AsgInstallTransactionStoreTest {
   }
 
   @Test
+  public void fixedTransportCodeIsNotALegacyLogicalVersion() {
+    assertEquals(-1L, AsgInstallTransactionStore.legacyLogicalVersion(1_000_000_000L));
+    assertEquals(47_442_366L, AsgInstallTransactionStore.legacyLogicalVersion(47_442_366L));
+  }
+
+  @Test
   public void hashesPendingArtifactBytes() throws Exception {
     File apk = Files.createTempFile("asg-target", ".apk").toFile();
     Files.write(apk.toPath(), "exact target".getBytes(StandardCharsets.UTF_8));
