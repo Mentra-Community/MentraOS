@@ -8964,7 +8964,7 @@ class MentraLive : SGCManager() {
 
     /** Send camera FOV setting to glasses (K900 / Mentra Live). */
     override fun sendCameraFovSetting() {
-        var fov = 102
+        var fov = 118
         var roiPosition = 0
         try {
             val raw = DeviceStore.get("bluetooth", "camera_fov")

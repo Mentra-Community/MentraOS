@@ -205,8 +205,8 @@ const RGB_LED_ACTIONS = new Set<RgbLedAction>(["on", "off"])
 const RGB_LED_COLORS = new Set<RgbLedColor>(["red", "green", "blue", "orange", "white"])
 const CAMERA_FOV_MIN = 62
 const CAMERA_FOV_MAX = 118
-const CAMERA_FOV_DEFAULT = 102
-const CAMERA_FOV_PRESETS: Record<CameraFovPreset, number> = {narrow: 82, standard: CAMERA_FOV_DEFAULT, wide: 118}
+const CAMERA_FOV_DEFAULT = 118
+const CAMERA_FOV_PRESETS: Record<CameraFovPreset, number> = {narrow: 82, standard: 102, wide: 118}
 const CAMERA_ROI_POSITION_BY_NAME: Record<string, CameraRoiPosition> = {center: "center", bottom: "bottom", top: "top"}
 
 // =============================================================================
@@ -1970,7 +1970,10 @@ class LocalMiniappRuntime {
       typeof rawText === "string"
         ? [rawText.trim()].filter(Boolean)
         : Array.isArray(rawText)
-          ? rawText.filter((sentence): sentence is string => typeof sentence === "string").map((sentence) => sentence.trim()).filter(Boolean)
+          ? rawText
+              .filter((sentence): sentence is string => typeof sentence === "string")
+              .map((sentence) => sentence.trim())
+              .filter(Boolean)
           : []
     if (sentences.length === 0) {
       this.sendResult(packageName, requestId, false, undefined, {
@@ -3073,7 +3076,7 @@ class LocalMiniappRuntime {
       return
     }
     try {
-      await requestWifiSetup(payload.reason as string | undefined)
+      await requestWifiSetup(payload.reason as string | undefined, packageName)
       this.sendResult(packageName, requestId, true)
     } catch (err) {
       this.sendResult(packageName, requestId, false, undefined, {
@@ -3178,7 +3181,16 @@ class LocalMiniappRuntime {
       if (stream === "audio_chunk") anyPcm = true
       if (stream.startsWith("transcription:") || stream.startsWith("translation:") || stream === "vad") anyLc3 = true
     }
-    micStateCoordinator.setLocalRequirements({pcm: anyPcm, lc3: anyLc3})
+    const bluetoothSettings = useSettingsStore.getState().getBluetoothSettings()
+    const configuredVad = bluetoothSettings.voice_activity_detection_enabled
+    micStateCoordinator.setLocalRequirements({
+      pcm: anyPcm,
+      lc3: anyLc3,
+      // Mentra Live intentionally omits VAD from its device settings. Pass
+      // null so MicStateCoordinator disables VAD only while PCM is active and
+      // otherwise leaves the native default untouched.
+      vadEnabled: typeof configuredVad === "boolean" ? configuredVad : null,
+    })
   }
 
   /**

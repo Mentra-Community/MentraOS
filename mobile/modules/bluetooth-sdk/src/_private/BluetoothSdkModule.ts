@@ -287,10 +287,10 @@ const CAMERA_ROI_POSITION_VALUES: Record<CameraRoiPosition, CameraFovSetting["ro
 }
 
 // Named presets are a convenience layer over the numeric {fov, roiPosition} API.
-// "narrow" uses 82, a device-tested FOV; "standard" matches CAMERA_FOV_DEFAULT.
+// The default is the full sensor; "standard" preserves the historical 102° crop.
 const CAMERA_FOV_PRESETS: Record<CameraFovPreset, CameraFovSetting> = {
   narrow: {fov: 82, roiPosition: 0},
-  standard: {fov: CAMERA_FOV_DEFAULT, roiPosition: 0},
+  standard: {fov: 102, roiPosition: 0},
   wide: {fov: CAMERA_FOV_MAX, roiPosition: 0},
 }
 

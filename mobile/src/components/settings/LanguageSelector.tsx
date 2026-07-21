@@ -60,10 +60,7 @@ export default function LanguageSelector({
 
         return (
           <GlassView key={lang.code} className="bg-primary-foreground">
-            <Pressable
-              disabled={isDownloading}
-              style={themed($row)}
-              onPress={() => onPickLanguage(lang.code)}>
+            <Pressable disabled={isDownloading} style={themed($row)} onPress={() => onPickLanguage(lang.code)}>
               <View style={themed($rowText)}>
                 <Text text={lang.displayName} style={themed($rowTitle)} />
                 <Text text={subtitle} style={themed($rowSubtitle)} />

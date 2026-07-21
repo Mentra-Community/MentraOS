@@ -23,7 +23,7 @@ public class AsgConstants {
     public static final String DEFAULT_HOTSPOT_GATEWAY_IP = "192.168.43.1";
 
     /** Canonical camera crop defaults shared with the phone and Bluetooth SDK. */
-    public static final int CAMERA_FOV_DEFAULT = 102;
+    public static final int CAMERA_FOV_DEFAULT = 118;
     public static final int CAMERA_ROI_POSITION_DEFAULT = 0;
 
     /** Warm-up leases are intentionally short-lived to bound idle camera power use. */
