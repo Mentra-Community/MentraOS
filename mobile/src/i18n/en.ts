@@ -229,6 +229,7 @@ const en = {
     liveConnected: "Mentra Live connected",
     liveEndOnboardingTitle: "Skip the Mentra Live tutorial?",
     liveEndOnboardingMessage: "You'll continue to the MentraOS tutorial.",
+    liveEndOnboardingHomeMessage: "You'll finish setup and go to the home screen.",
     g1Connected: "Even Realities G1 connected",
     g2Connected: "Even Realities G2 connected",
     r1Connected: "Even Realities R1 connected",
