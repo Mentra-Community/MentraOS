@@ -707,7 +707,7 @@ Deprecated/reserved. Current ASG Client does not use this command to switch betw
 
 Persists the FOV/ROI, applies them to the camera HAL via `DevApi.setCameraFov`, and restarts the HAL. After the restart cooldown (`CameraRestartCooldown`), ASG emits `settings_ack` with `status: "ready"` and `hardware_applied: true`. Persist-only fallbacks on non-K900 hardware emit `hardware_applied: false`.
 
-The missing/factory base is `fov: 102`, `roi_position: 0`; existing saved values are preserved.
+The missing/factory base is the full sensor at `fov: 118`, `roi_position: 0`; existing saved values are preserved.
 
 #### `camera_fov_override` / `camera_fov_override_release`
 

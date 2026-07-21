@@ -522,7 +522,7 @@ export const SETTINGS: Record<string, Setting> = {
   },
   camera_fov: {
     key: "camera_fov",
-    defaultValue: () => ({fov: 102, roi_position: 0}),
+    defaultValue: () => ({fov: 118, roi_position: 0}),
     writable: true,
     saveOnServer: true,
     persist: true,
@@ -959,6 +959,22 @@ export const useSettingsStore = create<SettingsState>()(
           // want to retry the migration on every boot. The local value is
           // already correct.
           storage.save(MIGRATION_KEY, true)
+        }
+
+        // The old camera default cropped the sensor to 102°. Move existing
+        // default-shaped values to the full 118° sensor once; named miniapp
+        // requests for the 102° "standard" preset remain available.
+        const CAMERA_FOV_MIGRATION_KEY = "migration:camera_fov_full_sensor_v1"
+        const cameraFovMigrationDone = storage.load<boolean>(CAMERA_FOV_MIGRATION_KEY)
+        if (cameraFovMigrationDone.is_error() || !cameraFovMigrationDone.value) {
+          const current = get().getSetting(SETTINGS.camera_fov.key) as {fov?: number; roi_position?: number} | undefined
+          if (current?.fov === 102 && (current.roi_position ?? 0) === 0) {
+            const result = await get().setSetting(SETTINGS.camera_fov.key, {fov: 118, roi_position: 0}, true)
+            if (result.is_error()) {
+              console.log("SETTINGS: camera FOV migration failed:", result.error)
+            }
+          }
+          storage.save(CAMERA_FOV_MIGRATION_KEY, true)
         }
       })
       loadAllSettingsInFlight = inFlight

@@ -19,8 +19,8 @@ const flushMicWrite = () => new Promise((r) => setTimeout(r, 320))
 
 describe("MicStateCoordinator", () => {
   beforeEach(async () => {
-    MicStateCoordinator.reset()
-    // Drain any write scheduled by reset() before clearing the mock.
+    MicStateCoordinator.setLocalRequirements({pcm: false, lc3: false, vadEnabled: true})
+    // Drain the baseline write before clearing the mock.
     await flushMicWrite()
     mockUpdateBluetoothSettings.mockClear()
   })
@@ -33,6 +33,7 @@ describe("MicStateCoordinator", () => {
         should_send_pcm: true,
         should_send_lc3: false,
         should_send_transcript: false,
+        voice_activity_detection_enabled: false,
       }),
     )
   })
@@ -45,6 +46,7 @@ describe("MicStateCoordinator", () => {
         should_send_pcm: false,
         should_send_lc3: true,
         should_send_transcript: false,
+        voice_activity_detection_enabled: true,
       }),
     )
   })
@@ -58,6 +60,7 @@ describe("MicStateCoordinator", () => {
         should_send_pcm: true,
         should_send_lc3: true,
         should_send_transcript: false,
+        voice_activity_detection_enabled: false,
       }),
     )
   })
@@ -71,6 +74,7 @@ describe("MicStateCoordinator", () => {
         should_send_pcm: false,
         should_send_lc3: false,
         should_send_transcript: false,
+        voice_activity_detection_enabled: true,
       }),
     )
   })
@@ -85,7 +89,18 @@ describe("MicStateCoordinator", () => {
         should_send_pcm: false,
         should_send_lc3: false,
         should_send_transcript: false,
+        voice_activity_detection_enabled: true,
       }),
+    )
+  })
+
+  test("restores a disabled user VAD preference after PCM ends", async () => {
+    MicStateCoordinator.setLocalRequirements({pcm: true, lc3: false, vadEnabled: false})
+    MicStateCoordinator.setLocalRequirements({pcm: false, lc3: false})
+    await flushMicWrite()
+
+    expect(mockUpdateBluetoothSettings).toHaveBeenLastCalledWith(
+      expect.objectContaining({voice_activity_detection_enabled: false}),
     )
   })
 })

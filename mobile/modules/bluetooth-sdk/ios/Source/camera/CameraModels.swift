@@ -169,15 +169,16 @@ public enum CameraRoiPosition: Int {
 public struct CameraFov {
     public static let minFov = 62
     public static let maxFov = 118
-    public static let defaultFov = 102
+    public static let defaultFov = 118
     public static let narrowFov = 82
+    public static let standardFov = 102
     public static let defaultRoiPosition = CameraRoiPosition.center
     public static let narrow = CameraFov(
         fov: CameraFov.narrowFov,
         roiPosition: CameraFov.defaultRoiPosition
     )
     public static let standard = CameraFov(
-        fov: CameraFov.defaultFov,
+        fov: CameraFov.standardFov,
         roiPosition: CameraFov.defaultRoiPosition
     )
     public static let wide = CameraFov(

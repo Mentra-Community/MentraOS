@@ -455,6 +455,8 @@ function LocalMiniappView({
     },
     webviewFillsStatusBar: true,
     colorScheme,
+    mapboxAccessToken:
+      packageName === "com.mentra.navigation" ? process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN : undefined,
   })
   const uiShim = buildMentraUiShim({packageName})
   const injectedJS = `${globalsScript}\n${uiShim}`

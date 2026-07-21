@@ -32,6 +32,7 @@ class MicStateCoordinator {
   // Local miniapp requirements (set when miniapps subscribe to audio streams)
   private localWantsPcm = false
   private localWantsLc3 = false
+  private configuredVad = true
 
   private constructor() {}
 
@@ -46,9 +47,10 @@ class MicStateCoordinator {
    * Update local miniapp requirements. Called by LocalMiniappRuntime when
    * the aggregated set of local subscriptions changes.
    */
-  public setLocalRequirements(req: {pcm: boolean; lc3: boolean}): void {
+  public setLocalRequirements(req: {pcm: boolean; lc3: boolean; vadEnabled?: boolean}): void {
     this.localWantsPcm = req.pcm
     this.localWantsLc3 = req.lc3
+    if (typeof req.vadEnabled === "boolean") this.configuredVad = req.vadEnabled
     console.log(`${LOG_TAG}: local requirements updated — pcm=${req.pcm} lc3=${req.lc3}`)
     this.applyUnion()
   }
@@ -71,6 +73,11 @@ class MicStateCoordinator {
       should_send_pcm: shouldSendPcm,
       should_send_lc3: shouldSendLc3,
       should_send_transcript: false,
+      // Hardware VAD intentionally suppresses silence. Raw-audio consumers
+      // such as Recorder need a continuous PCM timeline, so suspend VAD for
+      // the duration of the PCM subscription and restore the user's setting
+      // as soon as the last raw consumer unsubscribes.
+      voice_activity_detection_enabled: shouldSendPcm ? false : this.configuredVad,
     })
   }
 

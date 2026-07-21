@@ -523,7 +523,7 @@ export type DashboardMenuItem = {
 
 export const CAMERA_FOV_MIN = 62
 export const CAMERA_FOV_MAX = 118
-export const CAMERA_FOV_DEFAULT = 102
+export const CAMERA_FOV_DEFAULT = CAMERA_FOV_MAX
 
 export type CameraRoiPosition = "center" | "bottom" | "top"
 export type CameraRoiPositionValue = 0 | 1 | 2

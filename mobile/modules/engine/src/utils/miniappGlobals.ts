@@ -72,6 +72,8 @@ export interface BuildMiniappGlobalsOptions {
   webviewFillsStatusBar?: boolean
   /** Current host color scheme. Miniapps may follow this to match the phone. */
   colorScheme?: MiniappColorScheme
+  /** Public Mapbox access token bundled by the host for map-rendering miniapps. */
+  mapboxAccessToken?: string
 }
 
 /**
@@ -98,6 +100,7 @@ export function buildMiniappGlobalsScript(opts: BuildMiniappGlobalsOptions): str
   if (opts.miniappLocal) globals.miniappLocal = true
   if (opts.miniappDeveloperMode) globals.miniappDeveloperMode = true
   if (opts.colorScheme) globals.colorScheme = opts.colorScheme
+  if (opts.mapboxAccessToken) globals.mapboxAccessToken = opts.mapboxAccessToken
 
   // CSS custom properties that mirror the capsule menu / safe-area data.
   // Miniapp CSS (or Tailwind arbitrary values) can read these without

@@ -203,7 +203,7 @@ export function ModalProvider({children}: {children: React.ReactNode}) {
     }
   }, [visible])
 
-  const handleDismiss = () => {
+  const handleDismiss = (onDismiss?: () => void) => {
     // Animate out before hiding (only for new UI)
     Animated.parallel([
       Animated.timing(fadeAnim, {
@@ -218,6 +218,9 @@ export function ModalProvider({children}: {children: React.ReactNode}) {
       }),
     ]).start(() => {
       setVisible(false)
+      // Let React remove the custom overlay before a callback opens another
+      // native surface (for example Android's Wi-Fi or permission dialog).
+      if (onDismiss) requestAnimationFrame(onDismiss)
     })
   }
 
@@ -264,19 +267,13 @@ export function ModalProvider({children}: {children: React.ReactNode}) {
             onLeftPress={
               buttons.length > 1
                 ? () => {
-                    buttons[0].onPress?.()
-                    handleDismiss()
+                    handleDismiss(buttons[0].onPress)
                   }
                 : undefined
             }
             rightButtonText={buttons.length > 1 ? buttons[1].text : buttons[0].text}
             onRightPress={() => {
-              if (buttons.length > 1) {
-                buttons[1].onPress?.()
-              } else {
-                buttons[0].onPress?.()
-              }
-              handleDismiss()
+              handleDismiss(buttons.length > 1 ? buttons[1].onPress : buttons[0].onPress)
             }}
           />
         </Animated.View>
