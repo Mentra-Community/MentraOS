@@ -32,7 +32,7 @@ class MicStateCoordinator {
   // Local miniapp requirements (set when miniapps subscribe to audio streams)
   private localWantsPcm = false
   private localWantsLc3 = false
-  private configuredVad = true
+  private configuredVad: boolean | undefined
 
   private constructor() {}
 
@@ -47,10 +47,12 @@ class MicStateCoordinator {
    * Update local miniapp requirements. Called by LocalMiniappRuntime when
    * the aggregated set of local subscriptions changes.
    */
-  public setLocalRequirements(req: {pcm: boolean; lc3: boolean; vadEnabled?: boolean}): void {
+  public setLocalRequirements(req: {pcm: boolean; lc3: boolean; vadEnabled?: boolean | null}): void {
     this.localWantsPcm = req.pcm
     this.localWantsLc3 = req.lc3
-    if (typeof req.vadEnabled === "boolean") this.configuredVad = req.vadEnabled
+    // null means this device intentionally omits VAD from settings sync (Mentra Live).
+    // undefined means the caller is not updating the remembered preference.
+    if (req.vadEnabled !== undefined) this.configuredVad = req.vadEnabled ?? undefined
     console.log(`${LOG_TAG}: local requirements updated — pcm=${req.pcm} lc3=${req.lc3}`)
     this.applyUnion()
   }
@@ -87,16 +89,21 @@ class MicStateCoordinator {
 
     // The mic control plane is a direct btsdk call now (was a host setMicRequirements
     // hook) so a bare OEM streams audio without wiring it.
-    flushMicRequirementsPatch({
+    const patch: Record<string, unknown> = {
       should_send_pcm: shouldSendPcm,
       should_send_lc3: shouldSendLc3,
       should_send_transcript: false,
-      // Hardware VAD intentionally suppresses silence. Raw-audio consumers
-      // such as Recorder need a continuous PCM timeline, so suspend VAD for
-      // the duration of the PCM subscription and restore the user's setting
-      // as soon as the last raw consumer unsubscribes.
-      voice_activity_detection_enabled: shouldSendPcm ? false : this.configuredVad,
-    })
+    }
+
+    // Hardware VAD intentionally suppresses silence. Raw-audio consumers
+    // such as Recorder need a continuous PCM timeline, so suspend VAD for
+    // the duration of the PCM subscription. Restore the user's setting only
+    // on devices that sync it; Mentra Live omits the key and keeps its native
+    // default when PCM ends.
+    if (shouldSendPcm) patch.voice_activity_detection_enabled = false
+    else if (this.configuredVad !== undefined) patch.voice_activity_detection_enabled = this.configuredVad
+
+    flushMicRequirementsPatch(patch)
   }
 
   /**

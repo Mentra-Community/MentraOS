@@ -3179,11 +3179,15 @@ class LocalMiniappRuntime {
       if (stream === "audio_chunk") anyPcm = true
       if (stream.startsWith("transcription:") || stream.startsWith("translation:") || stream === "vad") anyLc3 = true
     }
+    const bluetoothSettings = useSettingsStore.getState().getBluetoothSettings()
+    const configuredVad = bluetoothSettings.voice_activity_detection_enabled
     micStateCoordinator.setLocalRequirements({
       pcm: anyPcm,
       lc3: anyLc3,
-      vadEnabled:
-        (useSettingsStore.getState().getSetting("voice_activity_detection_enabled") as boolean | undefined) ?? true,
+      // Mentra Live intentionally omits VAD from its device settings. Pass
+      // null so MicStateCoordinator disables VAD only while PCM is active and
+      // otherwise leaves the native default untouched.
+      vadEnabled: typeof configuredVad === "boolean" ? configuredVad : null,
     })
   }
 

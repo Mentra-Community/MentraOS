@@ -104,6 +104,21 @@ describe("MicStateCoordinator", () => {
     )
   })
 
+  test("leaves the native VAD default untouched when the device omits that setting", async () => {
+    MicStateCoordinator.setLocalRequirements({pcm: true, lc3: false, vadEnabled: null})
+    await flushMicWrite()
+    expect(mockUpdateBluetoothSettings).toHaveBeenLastCalledWith(
+      expect.objectContaining({voice_activity_detection_enabled: false}),
+    )
+
+    mockUpdateBluetoothSettings.mockClear()
+    MicStateCoordinator.setLocalRequirements({pcm: false, lc3: false, vadEnabled: null})
+    await flushMicWrite()
+
+    const lastCall = mockUpdateBluetoothSettings.mock.calls[mockUpdateBluetoothSettings.mock.calls.length - 1]
+    expect(lastCall[0]).not.toHaveProperty("voice_activity_detection_enabled")
+  })
+
   test("keeps VAD disabled when persisted settings replay during raw PCM", () => {
     MicStateCoordinator.setLocalRequirements({pcm: true, lc3: false, vadEnabled: true})
 
