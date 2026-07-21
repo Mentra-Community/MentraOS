@@ -21,6 +21,9 @@ describe("LocalMiniappRuntime button subscriptions", () => {
 
     expect(localMiniappRuntime.subscribe(packageName, [MiniappStreamType.BUTTON_PRESS])).toEqual({ok: true})
     expect(localMiniappRuntime.getButtonPressSubscribers()).toEqual([packageName])
+    expect(localMiniappRuntime.getDiagnosticSnapshot().subscriptionsByStream).toEqual({
+      [MiniappStreamType.BUTTON_PRESS]: [packageName],
+    })
 
     expect(localMiniappRuntime.subscribe(packageName, [])).toEqual({ok: true})
     expect(localMiniappRuntime.getButtonPressSubscribers()).toEqual([])

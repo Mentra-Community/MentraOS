@@ -159,6 +159,17 @@ interface InstalledLma {
   versions: Record<string, InstalledInfo>
 }
 
+export interface MiniappReleaseIdentity {
+  source: "direct_download" | "bundled_asset" | "preinstalled_registry" | "dev_snapshot"
+  releaseId?: string
+  bundleSha256?: string
+  channel?: string
+}
+
+function releaseIdentityKey(packageName: string, version: string): string {
+  return `miniapp_release_identity:${packageName}:${version}`
+}
+
 /**
  * Download a miniapp zip from `url` into the cache and return its local path.
  *
@@ -451,11 +462,18 @@ class AppRegistry {
    *   of `manifest.version`. The dev caching path uses `dev-<ms>` so multiple
    *   snapshots can coexist alongside semver-installed versions.
    */
-  public installFromUrl(url: string, opts?: {versionOverride?: string}): AsyncResult<void, Error> {
+  public installFromUrl(
+    url: string,
+    opts?: {versionOverride?: string; releaseIdentity?: MiniappReleaseIdentity},
+  ): AsyncResult<void, Error> {
     return Res.try_async(async () => {
       const {packageName, version} = await downloadAndInstallMiniApp(url, opts?.versionOverride)
       console.log("APP_REGISTRY: Downloaded and installed mini app")
-      this.finalizeInstall(packageName, version)
+      this.finalizeInstall(
+        packageName,
+        version,
+        opts?.releaseIdentity ?? {source: version.startsWith("dev-") ? "dev_snapshot" : "direct_download"},
+      )
     })
   }
 
@@ -468,12 +486,12 @@ class AppRegistry {
    */
   public installFromLocalZip(
     zipPath: string,
-    opts?: {versionOverride?: string},
+    opts?: {versionOverride?: string; releaseIdentity?: MiniappReleaseIdentity},
   ): AsyncResult<{packageName: string; version: string}, Error> {
     return Res.try_async(async () => {
       const {packageName, version} = await unpackMiniApp(zipPath, opts?.versionOverride)
       console.log("APP_REGISTRY: Installed mini app from local zip")
-      this.finalizeInstall(packageName, version)
+      this.finalizeInstall(packageName, version, opts?.releaseIdentity ?? {source: "bundled_asset"})
       return {packageName, version}
     })
   }
@@ -483,7 +501,7 @@ class AppRegistry {
    * artifacts on release installs, point the active-version at the just-
    * installed bundle, and notify subscribers to refresh.
    */
-  private finalizeInstall(packageName: string, version: string): void {
+  private finalizeInstall(packageName: string, version: string, releaseIdentity: MiniappReleaseIdentity): void {
     // If this is a release install (semver, not dev-*) of a package that
     // currently has dev-* snapshots, clear the dev state so the swap to
     // "released" is clean. Otherwise the dev version would keep winning
@@ -495,8 +513,14 @@ class AppRegistry {
     }
 
     this.setActiveVersion(packageName, version)
+    storage.save(releaseIdentityKey(packageName, version), releaseIdentity)
     this.refreshNeeded = true
     this.notify()
+  }
+
+  public getReleaseIdentity(packageName: string, version: string): MiniappReleaseIdentity | null {
+    const result = storage.load<MiniappReleaseIdentity>(releaseIdentityKey(packageName, version))
+    return result.is_ok() ? result.value : null
   }
 
   public installFromJsonUrl(baseUrl: string): AsyncResult<{packageName: string; version: string; name: string}, Error> {
@@ -534,6 +558,7 @@ class AppRegistry {
         for (const item of pkgDir.list()) {
           if (item instanceof Directory && item.name.startsWith("dev-")) {
             try {
+              storage.remove(releaseIdentityKey(packageName, item.name))
               item.delete()
             } catch (e) {
               console.warn(`APP_REGISTRY: failed to delete ${item.name}:`, e)
@@ -588,12 +613,16 @@ class AppRegistry {
         // Guard exists: a dev miniapp loads over HTTP and has no on-disk dir,
         // so an unconditional delete() would throw and abort the cleanup below.
         if (lmaDir.exists) lmaDir.delete()
+        storage.remove(releaseIdentityKey(packageName, version))
         console.log("APP_REGISTRY: Uninstalled mini app version", version)
         const packageDir = new Directory(Paths.document, "lmas", packageName)
         if (packageDir.exists && packageDir.list().length === 0) {
           packageDir.delete()
         }
       } else {
+        for (const installedVersion of this.getInstalledVersions(packageName)) {
+          storage.remove(releaseIdentityKey(packageName, installedVersion))
+        }
         const packageDir = new Directory(Paths.document, "lmas", packageName)
         if (packageDir.exists) {
           packageDir.delete()

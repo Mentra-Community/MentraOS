@@ -41,6 +41,21 @@ export class PhoneCameraFovCoordinator {
 
   constructor(private readonly legacyRestartSettleMs = LEGACY_CAMERA_RESTART_SETTLE_MS) {}
 
+  /** Report-safe FOV ownership snapshot for incident diagnostics. */
+  getDiagnosticSnapshot(): Record<string, unknown> {
+    return {
+      owners: [...this.overrides.entries()]
+        .sort(([, a], [, b]) => b.order - a.order)
+        .map(([packageName, entry]) => ({
+          packageName,
+          effective: entry.leaseId === this.effectiveLeaseId,
+          fov: entry.fov,
+          roiPosition: entry.roiPosition,
+        })),
+      legacyMode: this.legacyMode,
+    }
+  }
+
   setOverride(packageName: string, request: CameraFovRequest): Promise<CameraFovResult> {
     return this.enqueue(async () => {
       const previous = this.overrides.get(packageName)

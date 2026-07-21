@@ -30,6 +30,7 @@ export {
   getDevAppAttestation,
   DEV_APP_PACKAGE_NAME,
   type DevAppRecord,
+  type MiniappReleaseIdentity,
 } from "./services/AppRegistry"
 export {default as displayProcessor} from "./services/DisplayProcessor"
 export {default as localDisplayManager, type DisplayPayload} from "./services/LocalDisplayManager"

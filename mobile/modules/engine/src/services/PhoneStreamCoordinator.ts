@@ -250,6 +250,26 @@ export class PhoneStreamCoordinator {
     return this.current !== null && this.current.streamId === streamId
   }
 
+  /** Report-safe stream ownership snapshot for incident diagnostics. */
+  getDiagnosticSnapshot(): Record<string, unknown> {
+    if (!this.current) return {active: false}
+    return this.current.kind === "managed"
+      ? {
+          active: true,
+          kind: this.current.kind,
+          streamId: this.current.streamId,
+          subscribers: [...this.current.subscribers].sort(),
+          mode: this.current.mode,
+          playbackReady: this.current.hlsReady,
+        }
+      : {
+          active: true,
+          kind: this.current.kind,
+          streamId: this.current.streamId,
+          ownerPackageName: this.current.packageName,
+        }
+  }
+
   async startUnmanaged(
     packageName: string,
     opts: StartUnmanagedOptions,

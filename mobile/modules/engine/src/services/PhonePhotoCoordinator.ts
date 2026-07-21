@@ -149,6 +149,15 @@ export class PhonePhotoCoordinator {
     {requestId: string; durationMs: number; expiryTimer?: ReturnType<typeof setTimeout>}
   >()
 
+  /** Report-safe camera ownership snapshot for incident diagnostics. */
+  getDiagnosticSnapshot(): Record<string, unknown> {
+    return {
+      captureOwners: [...new Set([...this.activeRequests.values()].map((request) => request.packageName))].sort(),
+      warmUpOwners: [...this.activeWarmUps.keys()].sort(),
+      activeCaptureCount: this.activeRequests.size,
+    }
+  }
+
   async takePhoto(packageName: string, opts: PhotoOpts): Promise<PhotoTaken> {
     const transferMethod = parsePhotoTransferMethod(opts.transferMethod)
 

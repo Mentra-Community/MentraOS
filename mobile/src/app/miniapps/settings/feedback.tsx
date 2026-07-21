@@ -8,19 +8,24 @@ import {Button, Icon, Screen, Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
 import {RadioGroup, RatingButtons, StarRating} from "@/components/ui"
-import {buildReportDetails, submitBugReport} from "@/services/bugReport/bugReportSubmission"
+import {
+  buildReportDetails,
+  buildReportSurfaceContext,
+  resolveFeedbackTriggerReason,
+  submitBugReport,
+} from "@/services/bugReport/bugReportSubmission"
 import {buildReportTrigger} from "@/services/bugReport/bugReportCategorization"
 import {useNavigationStore} from "@/stores/navigation"
-import {SETTINGS, useSetting} from "@mentra/engine"
+import {engine, SETTINGS, useSetting} from "@mentra/engine"
 import showAlert from "@/utils/AlertUtils"
 import mentraAuth from "@/utils/auth/authClient"
 import {useRegisterCapsule} from "@/stores/capsule"
-import {engine} from "@mentra/engine"
 
 export default function FeedbackPage() {
   const params = useLocalSearchParams<{
     triggerSource?: string
     triggerReason?: string
+    sourceRoute?: string
     sourceAppletPackageName?: string
     sourceAppletName?: string
   }>()
@@ -39,7 +44,7 @@ export default function FeedbackPage() {
 
   const {theme} = useAppTheme()
   const viewShotRef = useRef<View>(null)
-  const {goBack} = useNavigationStore.getState()
+  const {goBack, getPreviousRoute} = useNavigationStore.getState()
 
   useRegisterCapsule({
     packageName: "com.mentra.settings",
@@ -104,15 +109,29 @@ export default function FeedbackPage() {
 
     // Check if user rated 4-5 stars on feature request
     const shouldPromptAppRating = feedbackType === "feature" && experienceRating !== null && experienceRating >= 4
+    const triggerSource = typeof params.triggerSource === "string" ? params.triggerSource : "feedback_screen"
+    const triggerReason = resolveFeedbackTriggerReason(params.triggerReason, feedbackType)
+    const sourceAppletPackageName =
+      typeof params.sourceAppletPackageName === "string" ? params.sourceAppletPackageName.trim() : ""
+    const sourceAppletName = typeof params.sourceAppletName === "string" ? params.sourceAppletName.trim() : ""
+    const sourceRoute = typeof params.sourceRoute === "string" ? params.sourceRoute : getPreviousRoute()
+    const reportContext = buildReportSurfaceContext({
+      surface: "feedback_form",
+      route: "/miniapps/settings/feedback",
+      source: triggerSource,
+      sourceRoute,
+      reason: triggerReason,
+      sourceAppletPackageName,
+      sourceAppletName,
+    })
 
     // Bug reports and feature requests both go through the engine reports surface.
     if (feedbackType === "bug") {
       const trigger = buildReportTrigger({
-        triggerSource: typeof params.triggerSource === "string" ? params.triggerSource : "feedback_screen",
-        triggerReason: typeof params.triggerReason === "string" ? params.triggerReason : "manual_bug_report",
-        sourceAppletPackageName:
-          typeof params.sourceAppletPackageName === "string" ? params.sourceAppletPackageName : undefined,
-        sourceAppletName: typeof params.sourceAppletName === "string" ? params.sourceAppletName : undefined,
+        triggerSource,
+        triggerReason,
+        sourceAppletPackageName: sourceAppletPackageName || undefined,
+        sourceAppletName: sourceAppletName || undefined,
       })
       const report = buildReportDetails({
         expectedBehavior,
@@ -123,7 +142,7 @@ export default function FeedbackPage() {
 
       console.log("Bug report submitted:", JSON.stringify({trigger, report}, null, 2))
 
-      const submitRes = await submitBugReport({trigger, report}, {screenshots})
+      const submitRes = await submitBugReport({trigger, report, context: reportContext}, {screenshots})
 
       if (!submitRes.ok) {
         setIsSubmitting(false)
@@ -151,6 +170,7 @@ export default function FeedbackPage() {
         const submitRes = await engine.reports.submit({
           kind: "feedback",
           feedback: feedbackPayload,
+          context: reportContext,
         })
         if (submitRes.status !== "submitted") {
           setIsSubmitting(false)
