@@ -21,11 +21,11 @@
 #     --create-namespace \
 #     --values cloud-v2/infra/betterstack-logs/values.yaml \
 #     --set "vector.customConfig.sinks.better_stack_http_sink.auth.token=$SOURCE_TOKEN" \
-#     --set "vector.customConfig.sinks.better_stack_http_sink.uri=https://s2616420.ap-sng-8.betterstackdata.com/" \
+#     --set "vector.customConfig.sinks.better_stack_http_sink.uri=https://s2616831.eu-central-1a.betterstackdata.com/" \
 #     --set "vector.customConfig.sinks.better_stack_http_metrics_sink.auth.token=$SOURCE_TOKEN" \
-#     --set "vector.customConfig.sinks.better_stack_http_metrics_sink.uri=https://s2616420.ap-sng-8.betterstackdata.com/metrics"
+#     --set "vector.customConfig.sinks.better_stack_http_metrics_sink.uri=https://s2616831.eu-central-1a.betterstackdata.com/metrics"
 #
-# Source: "MentraCloud V2 - Dev" (id 2616420, table mentracloud_v2_dev,
+# Source: "MentraCloud V2 - Dev" (id 2616831, table mentracloud_v2_dev_2,
 # 30-day retention). Token lives in Doppler cloud-v2/dev as
 # BETTERSTACK_SOURCE_TOKEN.
 

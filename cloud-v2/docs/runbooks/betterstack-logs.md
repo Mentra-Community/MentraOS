@@ -10,7 +10,7 @@ a worker thread and grows heap without bound under load.
 
 | Env | Source | id | Table | Retention |
 | --- | --- | --- | --- | --- |
-| dev | MentraCloud V2 - Dev | 2616420 | `mentracloud_v2_dev` | 30 days |
+| dev | MentraCloud V2 - Dev | 2616831 | `mentracloud_v2_dev_2` | 30 days |
 
 Staging/prod sources get created when their envs join shipping (deliberate
 edit to the Vector filter + a routed sink per env, never a wildcard).
@@ -34,11 +34,19 @@ first week after any change.
 
 ## Querying
 
+This source lives in the `germany` data region on the `eu-central-1a`
+ClickHouse cluster (the legacy V1 sources are on `eu-nbg-2`). It shares the
+same SQL credentials as the `eu-nbg-2` sources (Doppler `mentra-sre`
+`BETTERSTACK_USERNAME`/`PASSWORD`), but you must query it against its own
+connect endpoint `https://eu-central-1a-connect.betterstackdata.com/`, not
+the `eu-nbg-2-connect` host the `bstack` CLI defaults to. The `remote()`
+table only materializes once the source has received data.
+
 Hot storage (last ~30 min, sub-second):
 
 ```sql
 SELECT dt, level, message, package, module
-FROM remote(t2616420_mentracloud_v2_dev_logs)
+FROM remote(t373499_mentracloud_v2_dev_2_logs)
 WHERE level = 'error' AND dt > now() - INTERVAL 30 MINUTE
 ORDER BY dt DESC LIMIT 100
 ```
@@ -47,7 +55,7 @@ S3 storage (30 days, 3-5s per query, `_row_type = 1` for log rows):
 
 ```sql
 SELECT dt, JSONExtractString(raw, 'message') AS msg
-FROM s3Cluster(primary, t2616420_mentracloud_v2_dev_s3)
+FROM s3Cluster(primary, t373499_mentracloud_v2_dev_2_s3)
 WHERE _row_type = 1
   AND JSONExtractString(raw, 'level') = 'error'
   AND dt > now() - INTERVAL 7 DAY
