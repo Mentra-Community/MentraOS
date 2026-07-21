@@ -1,7 +1,7 @@
 {
   "$schema": "./node_modules/@mentra/miniapp-cli/schema/miniapp.schema.json",
   "packageName": "com.mentra.navigation",
-  "version": "1.1.21",
+  "version": "1.1.22",
   "name": "Mentra Maps",
   "description": "Turn-by-turn navigation with visual or spoken directions.",
   "icon": "icon.png",
@@ -68,6 +68,39 @@
             "description": "How the user is traveling. Defaults to 'walking'."
           }
         }
+      }
+    },
+    {
+      "id": "get_saved_addresses",
+      "description": "Get the user's saved Home and Work addresses. Use before starting navigation when the user refers to Home or Work without giving an address. Returns the configured slots only; missing slots are omitted.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "id": "set_saved_address",
+      "description": "Save or replace the user's Home or Work address. Use when the user asks to remember, set, or update where Home or Work is. The address is resolved with place search near the user's current location.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "home",
+              "work"
+            ],
+            "description": "Which saved-address slot to set. Only Home and Work are supported."
+          },
+          "address": {
+            "type": "string",
+            "description": "The place name or street address to save (e.g. '369 Hayes St, San Francisco')."
+          }
+        },
+        "required": [
+          "type",
+          "address"
+        ]
       }
     }
   ]
