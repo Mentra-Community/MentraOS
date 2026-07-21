@@ -1199,6 +1199,10 @@ class DeviceManager {
                 }
             )
             nextTranscriber.initialize()
+            if (!nextTranscriber.isInitialized()) {
+                Bridge.log("SherpaOnnxTranscriber initialize() returned without becoming ready")
+                return false
+            }
             transcriber = nextTranscriber
             Bridge.log("SherpaOnnxTranscriber fully initialized")
             true
@@ -1697,6 +1701,8 @@ class DeviceManager {
         mode: PhotoMode = PhotoMode.PHOTO,
         exposureTimeNs: Long?,
         durationMs: Int,
+        zsl: Boolean? = null,
+        mfnr: Boolean? = null,
     ) {
         // Fail fast like other camera commands so the SDK promise rejects immediately instead of
         // hanging until the request timeout with no camera_status.
@@ -1706,7 +1712,7 @@ class DeviceManager {
                     "unsupported_device",
                     "This command requires Mentra Live glasses.",
                 )
-        live.warmUpCamera(requestId, size, mode, exposureTimeNs, durationMs)
+        live.warmUpCamera(requestId, size, mode, exposureTimeNs, durationMs, zsl, mfnr)
     }
 
     fun stopCameraWarmUp(requestId: String) {

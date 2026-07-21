@@ -103,7 +103,9 @@ describe("CameraPage", () => {
 
     fireEvent.click(screen.getByRole("button", {name: "takePhoto()"}))
     await waitFor(() => {
-      expect(cameraInvokeMock).toHaveBeenCalledWith("takePhoto", [{size: "medium", mode: "text"}])
+      expect(cameraInvokeMock).toHaveBeenCalledWith("takePhoto", [
+        {size: "medium", mode: "text", zsl: true, mfnr: true},
+      ])
     })
   })
 
@@ -121,11 +123,36 @@ describe("CameraPage", () => {
         {
           size: "medium",
           mode: "photo",
+          zsl: true,
+          mfnr: true,
         },
       ])
     })
     expect(await screen.findByText("photo-1")).toBeTruthy()
     expect(screen.getByText("2.0 KB")).toBeTruthy()
+  })
+
+  test("takePhoto sends zsl and mfnr false when the toggles are off", async () => {
+    render(
+      <MemoryRouter>
+        <CameraPage />
+      </MemoryRouter>,
+    )
+
+    fireEvent.click(screen.getByRole("switch", {name: "zsl"}))
+    fireEvent.click(screen.getByRole("switch", {name: "mfnr"}))
+    fireEvent.click(screen.getByRole("button", {name: "takePhoto()"}))
+
+    await waitFor(() => {
+      expect(cameraInvokeMock).toHaveBeenCalledWith("takePhoto", [
+        {
+          size: "medium",
+          mode: "photo",
+          zsl: false,
+          mfnr: false,
+        },
+      ])
+    })
   })
 
   test("glasses button press captures with the same options as the takePhoto button", async () => {
@@ -144,6 +171,8 @@ describe("CameraPage", () => {
         {
           size: "medium",
           mode: "photo",
+          zsl: true,
+          mfnr: true,
         },
       ])
     })

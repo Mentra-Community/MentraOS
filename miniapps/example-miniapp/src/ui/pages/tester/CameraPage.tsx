@@ -17,6 +17,7 @@ import {Input} from "../../components/input"
 import {Label} from "../../components/label"
 import {Select, SelectContent, SelectItem, SelectTrigger, SelectValue} from "../../components/select"
 import {Spinner} from "../../components/spinner"
+import {Switch} from "../../components/switch"
 import {ErrorRow, TableRow} from "./_TesterRow"
 import {
   buildTakePhotoArgs,
@@ -57,6 +58,8 @@ export default function CameraPage() {
   const [result, setResult] = useState<PhotoTakenResult | undefined>(undefined)
   const [size, setSize] = useState<PhotoSize>("medium")
   const [mode, setMode] = useState<PhotoMode>("photo")
+  const [zsl, setZsl] = useState(true)
+  const [mfnr, setMfnr] = useState(true)
   const [durationMs, setDurationMs] = useState(String(DEFAULT_WARMUP_DURATION_MS))
   const [capturePending, setCapturePending] = useState(false)
   const [warmupPending, setWarmupPending] = useState(false)
@@ -71,7 +74,12 @@ export default function CameraPage() {
   const warmupDurationMs =
     Number.isFinite(parsedDurationMs) && parsedDurationMs > 0 ? parsedDurationMs : DEFAULT_WARMUP_DURATION_MS
   const busy = capturePending || warmupPending || isSharing
-  const config: TakePhotoConfig = {size, mode}
+  const config: TakePhotoConfig = {
+    size,
+    mode,
+    zsl,
+    mfnr,
+  }
 
   const captureWithConfig = async (captureConfig: TakePhotoConfig) => {
     const startedAt = performance.now()
@@ -207,6 +215,26 @@ export default function CameraPage() {
               </SelectContent>
             </Select>
           </div>
+          <div className="flex items-center justify-between gap-3 rounded-xl border border-border px-3 py-3">
+            <div className="min-w-0">
+              <Label htmlFor="zsl">zsl</Label>
+              <p className="mt-0.5 text-[13px] text-muted-foreground">
+                Zero-shutter-lag preview buffering. Sends{" "}
+                <code className="mx-0.5">{zsl ? "true" : "false"}</code> on every takePhoto.
+              </p>
+            </div>
+            <Switch id="zsl" checked={zsl} onCheckedChange={setZsl} disabled={busy} />
+          </div>
+          <div className="flex items-center justify-between gap-3 rounded-xl border border-border px-3 py-3">
+            <div className="min-w-0">
+              <Label htmlFor="mfnr">mfnr</Label>
+              <p className="mt-0.5 text-[13px] text-muted-foreground">
+                Multi-frame noise reduction capture. Sends{" "}
+                <code className="mx-0.5">{mfnr ? "true" : "false"}</code> on every takePhoto.
+              </p>
+            </div>
+            <Switch id="mfnr" checked={mfnr} onCheckedChange={setMfnr} disabled={busy} />
+          </div>
           <div>
             <Label htmlFor="warmup-duration">warmUp durationMs</Label>
             <Input
@@ -253,6 +281,8 @@ export default function CameraPage() {
           data={{
             ...(mode === "photo" ? {size} : {sensor: "ASG text constants"}),
             mode,
+            zsl: config.zsl,
+            mfnr: config.mfnr,
             warmupDurationMs,
             warmupStatus: warmupStatus ?? "(not warmed)",
             warmupElapsed: formatElapsedMs(warmupElapsedMs),

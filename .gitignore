@@ -421,3 +421,4 @@ miniapps/navigation/build/
 
 # Downloaded bug report bundles (scripts/fetch-incident-logs.sh)
 incident-logs/
+asg_client/StreamPackLite.zip

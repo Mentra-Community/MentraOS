@@ -16,18 +16,33 @@ describe("cameraPageModel", () => {
       buildTakePhotoArgs({
         size: "high",
         mode: "text",
+        zsl: false,
+        mfnr: false,
       }),
     ).toEqual([
       {
         size: "medium",
         mode: "text",
+        zsl: false,
+        mfnr: false,
       },
+    ])
+  })
+
+  test("buildTakePhotoArgs always includes explicit zsl and mfnr", () => {
+    expect(buildTakePhotoArgs({size: "medium", mode: "photo", zsl: true, mfnr: true})).toEqual([
+      {size: "medium", mode: "photo", zsl: true, mfnr: true},
+    ])
+    expect(buildTakePhotoArgs({size: "medium", mode: "photo", zsl: false, mfnr: false})).toEqual([
+      {size: "medium", mode: "photo", zsl: false, mfnr: false},
     ])
   })
 
   test("photo mode preserves its selected quality", () => {
     expect(wirePhotoSize("high", "photo")).toBe("high")
-    expect(buildTakePhotoArgs({size: "low", mode: "photo"})).toEqual([{size: "low", mode: "photo"}])
+    expect(buildTakePhotoArgs({size: "low", mode: "photo", zsl: false, mfnr: false})).toEqual([
+      {size: "low", mode: "photo", zsl: false, mfnr: false},
+    ])
   })
 
   test("warm-up carries mode so ASG can apply text sensor constants", () => {

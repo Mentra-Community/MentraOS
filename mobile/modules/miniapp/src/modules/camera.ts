@@ -57,10 +57,14 @@ export interface TakePhotoOptions {
   noiseReduction?: boolean
   /** Request per-capture edge enhancement. Sent on the wire; glasses may log `not_implemented`. */
   edgeEnhancement?: boolean
-  /** Multi-frame noise reduction preference. */
-  mfnr?: boolean
-  /** Zero-shutter-lag preference. */
+  /**
+   * ZSL buffering. Manual and scan stills force it off because fixed sensor controls take priority.
+   */
   zsl?: boolean
+  /**
+   * MFNR still capture. Manual and scan stills force it off because fixed sensor controls take priority.
+   */
+  mfnr?: boolean
   /** ISP digital gain hint. */
   ispDigitalGain?: number
   /** ISP analog gain hint. */
@@ -92,6 +96,10 @@ export interface WarmUpCameraOptions {
   exposureTimeNs?: number
   /** Ready-state hold in milliseconds. Defaults to 15 seconds and is capped at 60 seconds. */
   durationMs?: number
+  /** ZSL preview buffering for the warm-up session. */
+  zsl?: boolean
+  /** MFNR still capture for the warm-up session. */
+  mfnr?: boolean
 }
 
 export interface StartVideoRecordingOptions {
@@ -174,8 +182,8 @@ export class CameraModule {
         isoCap: options.isoCap,
         noiseReduction: options.noiseReduction,
         edgeEnhancement: options.edgeEnhancement,
-        mfnr: options.mfnr,
         zsl: options.zsl,
+        mfnr: options.mfnr,
         ispDigitalGain: options.ispDigitalGain,
         ispAnalogGain: options.ispAnalogGain,
       },
@@ -204,6 +212,8 @@ export class CameraModule {
       mode: options.mode ?? "photo",
       exposureTimeNs: options.exposureTimeNs,
       durationMs: options.durationMs ?? 15000,
+      zsl: options.zsl,
+      mfnr: options.mfnr,
     })
   }
 

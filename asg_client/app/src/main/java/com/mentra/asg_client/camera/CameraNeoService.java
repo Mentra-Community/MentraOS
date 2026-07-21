@@ -157,6 +157,8 @@ public class CameraNeoService extends LifecycleService {
     private static final String EXTRA_WARM_UP_EXPOSURE_NS =
             "com.augmentos.camera.EXTRA_WARM_UP_EXPOSURE_NS";
     private static final String EXTRA_WARM_UP_MODE = "com.augmentos.camera.EXTRA_WARM_UP_MODE";
+    private static final String EXTRA_WARM_UP_ZSL = "com.augmentos.camera.EXTRA_WARM_UP_ZSL";
+    private static final String EXTRA_WARM_UP_MFNR = "com.augmentos.camera.EXTRA_WARM_UP_MFNR";
     public static final String EXTRA_VIDEO_FILE_PATH = "com.augmentos.camera.EXTRA_VIDEO_FILE_PATH";
     public static final String EXTRA_VIDEO_ID = "com.augmentos.camera.EXTRA_VIDEO_ID";
     public static final String EXTRA_VIDEO_SETTINGS = "com.augmentos.camera.EXTRA_VIDEO_SETTINGS";
@@ -456,17 +458,24 @@ public class CameraNeoService extends LifecycleService {
      *       still in progress — a rapid second press simply queues behind it (see {@code
      *       enqueuePhotoRequest}) and runs without a cold ISP start, so we must NOT gate on the
      *       shot state being idle.
-     *   <li>The open session won't be reconfigured for this request. A differing size, SDK flag, or
-     *       manual exposure forces a close + reopen (see {@code
+     *   <li>The open session won't be reconfigured for this request. A differing size, SDK flag,
+     *       manual exposure, or a request that needs preview-ZSL buffering ({@code zsl || mfnr})
+     *       the open session lacks forces a close + reopen (see {@code
      *       PhotoSession#willReuseConfiguredCamera}), which is effectively a cold start.
      * </ul>
      *
      * @param size requested photo size for the upcoming capture (nullable)
      * @param isFromSdk whether the upcoming capture is an SDK request (vs. a button photo)
      * @param exposureTimeNs requested manual exposure for the upcoming capture, or null for auto
+     * @param captureSettings per-request tuning used for resolved {@code zsl}/{@code mfnr} (nullable /
+     *     {@link PhotoCaptureSettings#EMPTY} inherits the global defaults)
      * @return true if the upcoming capture would reuse the open camera; false otherwise.
      */
-    public static boolean isCameraWarm(String size, boolean isFromSdk, Long exposureTimeNs) {
+    public static boolean isCameraWarm(
+            String size,
+            boolean isFromSdk,
+            Long exposureTimeNs,
+            @Nullable PhotoCaptureSettings captureSettings) {
         // Read the open-session state under SERVICE_LOCK — the same lock enqueuePhotoRequest()
         // holds — so this prediction is consistent with the state that request will actually see.
         // Without it, a keep-alive expiry / closeCamera() on the background thread could tear down
@@ -476,8 +485,14 @@ public class CameraNeoService extends LifecycleService {
             return sInstance != null
                     && sInstance.cameraCoordinator.hasConfiguredCamera()
                     && sInstance.photoSession.willReuseConfiguredCamera(
-                            size, isFromSdk, exposureTimeNs);
+                            size, isFromSdk, exposureTimeNs, captureSettings);
         }
+    }
+
+    /** @deprecated Prefer {@link #isCameraWarm(String, boolean, Long, PhotoCaptureSettings)}. */
+    @Deprecated
+    public static boolean isCameraWarm(String size, boolean isFromSdk, Long exposureTimeNs) {
+        return isCameraWarm(size, isFromSdk, exposureTimeNs, null);
     }
 
     /**
@@ -729,21 +744,25 @@ public class CameraNeoService extends LifecycleService {
                             + QueuedPhotoRequestQueue.getInstance().size()
                             + " | Service active: "
                             + (sInstance != null));
-            Log.i(
-                    TAG,
-                    "SCAN_PARAMS enqueued requestId="
-                            + request.requestId
-                            + " isFromSdk="
-                            + isFromSdk
-                            + " size="
-                            + size
-                            + " exposureTimeNs="
-                            + exposureTimeNs
-                            + " iso="
-                            + iso
-                            + " captureTuning={"
-                            + (captureSettings != null ? captureSettings.describeForLog() : "null")
-                            + "}");
+            if (AsgConstants.ENABLE_PHOTO_TIMING_LOGS) {
+                Log.i(
+                        TAG,
+                        "SCAN_PARAMS enqueued requestId="
+                                + request.requestId
+                                + " isFromSdk="
+                                + isFromSdk
+                                + " size="
+                                + size
+                                + " exposureTimeNs="
+                                + exposureTimeNs
+                                + " iso="
+                                + iso
+                                + " captureTuning={"
+                                + (captureSettings != null
+                                        ? captureSettings.describeForLog()
+                                        : "null")
+                                + "}");
+            }
 
             // Check current service state and act accordingly
             boolean cameraReady =
@@ -794,8 +813,8 @@ public class CameraNeoService extends LifecycleService {
      * @param size requested resolution tier ("low"/"medium"/"high"/"max")
      * @param exposureTimeNs optional manual shutter in nanoseconds; {@code null} = auto
      * @param durationMs keep-alive TTL in ms; {@code <= 0} uses the ASG default
-     * @param mode capture mode ("photo"/"text"); text mode applies the same scan-exposure AE
-     *     preset {@code take_photo} uses, so the warmed preview matches the eventual capture
+     * @param mode capture mode ("photo"/"text"); text mode still uses text sensor size/crop
+     *     constants on capture, but no longer injects an AE exposure divisor
      * @param callback warm-up lifecycle callback (ready / stopped / error)
      */
     public static void warmUpCamera(
@@ -804,8 +823,11 @@ public class CameraNeoService extends LifecycleService {
             Long exposureTimeNs,
             long durationMs,
             String mode,
+            @Nullable PhotoCaptureSettings captureSettings,
             CameraWarmUpCallback callback) {
         CameraWarmUpCallback rejectBusy = null;
+        PhotoCaptureSettings warmSettings =
+                captureSettings != null ? captureSettings : PhotoCaptureSettings.EMPTY;
         synchronized (SERVICE_LOCK) {
             long ttl = clampWarmUpDuration(durationMs);
             boolean cameraReady =
@@ -821,7 +843,7 @@ public class CameraNeoService extends LifecycleService {
                             && idle
                             && !warmUpInFlight
                             && sInstance.photoSession.willReuseConfiguredCamera(
-                                    size, true, exposureTimeNs)
+                                    size, true, exposureTimeNs, warmSettings)
                             && (sInstance.warmLeases.isEmpty()
                                     || PhotoMode.normalize(mode).equals(sInstance.warmLeaseMode));
 
@@ -875,6 +897,12 @@ public class CameraNeoService extends LifecycleService {
                 intent.putExtra(EXTRA_WARM_UP_MODE, mode);
                 if (exposureTimeNs != null) {
                     intent.putExtra(EXTRA_WARM_UP_EXPOSURE_NS, exposureTimeNs.longValue());
+                }
+                if (warmSettings.zsl != null) {
+                    intent.putExtra(EXTRA_WARM_UP_ZSL, warmSettings.zsl.booleanValue());
+                }
+                if (warmSettings.mfnr != null) {
+                    intent.putExtra(EXTRA_WARM_UP_MFNR, warmSettings.mfnr.booleanValue());
                 }
                 context.startForegroundService(intent);
             }
@@ -1101,7 +1129,20 @@ public class CameraNeoService extends LifecycleService {
                                         ? intent.getLongExtra(EXTRA_WARM_UP_EXPOSURE_NS, 0L)
                                         : null;
                         String warmMode = intent.getStringExtra(EXTRA_WARM_UP_MODE);
-                        performWarmUp(warmSize, warmExposureNs, warmDuration, warmMode);
+                        PhotoCaptureSettings.Builder warmTuning =
+                                new PhotoCaptureSettings.Builder();
+                        if (intent.hasExtra(EXTRA_WARM_UP_ZSL)) {
+                            warmTuning.zsl(intent.getBooleanExtra(EXTRA_WARM_UP_ZSL, true));
+                        }
+                        if (intent.hasExtra(EXTRA_WARM_UP_MFNR)) {
+                            warmTuning.mfnr(intent.getBooleanExtra(EXTRA_WARM_UP_MFNR, true));
+                        }
+                        performWarmUp(
+                                warmSize,
+                                warmExposureNs,
+                                warmDuration,
+                                warmMode,
+                                warmTuning.build());
                         break;
                     }
             }
@@ -1119,15 +1160,17 @@ public class CameraNeoService extends LifecycleService {
      * emitted once preview is running and {@code error} on any open/configure failure. Keep-alive
      * expiry emits {@code stopped} (see {@link #startWarmKeepAliveTimer}).
      */
-    private void performWarmUp(String size, Long exposureTimeNs, long durationMs, String mode) {
-        // Mirror take_photo's text-mode AE preset (see PhotoCommandHandler.handleTakePhoto) so the
-        // warmed preview's exposure mode matches the eventual capture exactly — otherwise the
-        // still shot would flip auto→manual scan exposure on the same session, which is harmless
-        // for reuse but leaves the preview metering under the wrong AE regime while warm.
+    private void performWarmUp(
+            String size,
+            Long exposureTimeNs,
+            long durationMs,
+            String mode,
+            @Nullable PhotoCaptureSettings captureSettings) {
+        // Use the request's capture settings as-is. Text mode no longer injects an AE exposure
+        // divisor; explicit aeExposureDivisor / zsl / mfnr on the request (or globals when omitted)
+        // apply the same way as take_photo.
         PhotoCaptureSettings warmCaptureSettings =
-                (PhotoMode.TEXT.equals(PhotoMode.normalize(mode)) && exposureTimeNs == null)
-                        ? PhotoCaptureSettings.applyTextModeExposure(PhotoCaptureSettings.EMPTY)
-                        : PhotoCaptureSettings.EMPTY;
+                captureSettings != null ? captureSettings : PhotoCaptureSettings.EMPTY;
         // Bind the pending callback(s) AND drive setupWarmUp under one continuous SERVICE_LOCK
         // hold,
         // so warmUpRequest is set before the lock is released. Splitting them lets a second
@@ -1617,7 +1660,8 @@ public class CameraNeoService extends LifecycleService {
                     sizeForMetering,
                     photoSession.previewJpegQuality(),
                     jpegOrientation,
-                    mCameraSettings);
+                    mCameraSettings,
+                    forVideo ? false : photoSession.previewZslEnabled());
 
             CameraCaptureSession.StateCallback sessionStateCallback =
                     new CameraCaptureSession.StateCallback() {

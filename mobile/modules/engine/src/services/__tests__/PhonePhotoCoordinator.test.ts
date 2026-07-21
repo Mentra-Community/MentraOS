@@ -188,6 +188,19 @@ describe("PhonePhotoCoordinator", () => {
       expect(requestPhotoNative.mock.calls[0]![0]).toMatchObject({mode: "text", size: "low"})
     })
 
+    test("passes zsl and mfnr through to the native take_photo command", async () => {
+      const coord = new PhonePhotoCoordinator()
+      await coord.takePhoto("com.a", {zsl: true, mfnr: false})
+      expect(requestPhotoNative.mock.calls[0]![0]).toMatchObject({zsl: true, mfnr: false})
+    })
+
+    test("omits zsl and mfnr when unset", async () => {
+      const coord = new PhonePhotoCoordinator()
+      await coord.takePhoto("com.a", {})
+      expect(requestPhotoNative.mock.calls[0]![0]).not.toHaveProperty("zsl")
+      expect(requestPhotoNative.mock.calls[0]![0]).not.toHaveProperty("mfnr")
+    })
+
     test("normalizes legacy size 'full' to 'max' for the native take_photo command", async () => {
       const coord = new PhonePhotoCoordinator()
       // Legacy wire values may still arrive from older callers at runtime.
@@ -387,6 +400,21 @@ describe("PhonePhotoCoordinator", () => {
         exposureTimeNs: null,
         durationMs: 15000,
       })
+      await coord.stopWarmUpForApp("com.a")
+    })
+
+    test("passes zsl and mfnr through to the native warm-up command", async () => {
+      const coord = new PhonePhotoCoordinator()
+      await coord.warmUpCamera("com.a", {zsl: true, mfnr: false})
+      expect(warmUpCameraNative.mock.calls[0]![0]).toMatchObject({zsl: true, mfnr: false})
+      await coord.stopWarmUpForApp("com.a")
+    })
+
+    test("omits zsl and mfnr when unset", async () => {
+      const coord = new PhonePhotoCoordinator()
+      await coord.warmUpCamera("com.a", {})
+      expect(warmUpCameraNative.mock.calls[0]![0]).not.toHaveProperty("zsl")
+      expect(warmUpCameraNative.mock.calls[0]![0]).not.toHaveProperty("mfnr")
       await coord.stopWarmUpForApp("com.a")
     })
 
