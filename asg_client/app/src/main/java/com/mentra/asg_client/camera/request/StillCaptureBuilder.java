@@ -21,9 +21,8 @@ import com.mentra.asg_client.camera.policy.MeteringRegions;
  * responsible for:
  * <ul>
  *   <li>adding capture targets (preview/still surfaces) before invoking,</li>
- *   <li>applying vendor-specific {@code CameraSettings.configureCaptureBuilder(...)} on the
- *       auto-exposure path (skipped for manual since manual SENSOR_* keys conflict with the
- *       vendor MFNR pipeline), and</li>
+ *   <li>applying vendor-specific {@code CameraSettings.configureCaptureBuilder(...)} with the
+ *       resolved per-request {@code zsl}/{@code mfnr} flags on the auto-exposure path only, and</li>
  *   <li>calling {@code builder.build()} + {@code session.capture(...)}.</li>
  * </ul>
  */
@@ -47,6 +46,11 @@ public final class StillCaptureBuilder {
                 builder.set(key, value);
             }
         };
+    }
+
+    /** Vendor ZSL/MFNR processing must not be combined with fixed manual SENSOR_* controls. */
+    public static boolean allowsVendorZslMfnr(boolean useManual) {
+        return !useManual;
     }
 
     /**

@@ -127,7 +127,7 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   setVoiceActivityDetectionEnabled(enabled: boolean): Promise<void>
   /**
    * @deprecated Sticky action-button photo presets are deprecated. Prefer per-request
-   * `requestPhoto(...)` options (e.g. `mode: "text"` for AE ÷3).
+   * `requestPhoto(...)` options (e.g. `mode: "text"` for text sensor size/crop).
    */
   setPhotoCaptureDefaults(settings: PhotoCaptureDefaults): Promise<SettingsAckSuccessEvent>
   setVideoRecordingDefaults(width: number, height: number, fps: number): Promise<SettingsAckSuccessEvent>

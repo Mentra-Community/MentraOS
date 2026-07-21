@@ -516,7 +516,7 @@ class MentraBluetoothSdk private constructor(
     @Deprecated(
         message =
             "Sticky action-button photo presets are deprecated. Prefer per-request " +
-                "requestPhoto(...) options (e.g. mode=TEXT for AE ÷3, or explicit per-shot fields). " +
+                "requestPhoto(...) options (e.g. mode=TEXT for text sensor size/crop, or explicit per-shot fields). " +
                 "This method still works but will be removed in a future release.",
     )
     suspend fun setPhotoCaptureDefaults(settings: PhotoCaptureDefaults): SettingsAckEvent =
@@ -526,6 +526,7 @@ class MentraBluetoothSdk private constructor(
                 if (settings.resetCaptureTuning) {
                     // Clear all stored scan-tuning keys from phone cache
                     listOf(
+                        "button_photo_zsl_mfnr",
                         "button_photo_mfnr",
                         "button_photo_zsl",
                         "button_photo_noise_reduction",
@@ -877,6 +878,8 @@ class MentraBluetoothSdk private constructor(
         mode: PhotoMode = PhotoMode.PHOTO,
         exposureTimeNs: Long?,
         durationMs: Int,
+        zsl: Boolean? = null,
+        mfnr: Boolean? = null,
     ): CameraStatusEvent {
         val effectiveRequestId = nonBlankRequestId(requestId) ?: generatedCameraRequestId("warm")
         val pending = PendingResponse<CameraStatusEvent>("camera warm up $effectiveRequestId")
@@ -889,7 +892,7 @@ class MentraBluetoothSdk private constructor(
             )
         }
         try {
-            deviceManager.warmUpCamera(effectiveRequestId, size, mode, exposureTimeNs, durationMs)
+            deviceManager.warmUpCamera(effectiveRequestId, size, mode, exposureTimeNs, durationMs, zsl, mfnr)
             return pending.await()
         } finally {
             pendingCameraStatusRequests.remove(effectiveRequestId, pending)

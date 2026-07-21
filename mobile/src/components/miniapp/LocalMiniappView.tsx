@@ -69,6 +69,14 @@ function LocalMiniappView({
   const onExitRef = useRef(onExit)
   onExitRef.current = onExit
 
+  // Read inside the launch effect's catch handler without adding appName/iconUrl
+  // to its dependency array — they're display-only and shouldn't re-trigger a
+  // JSContext respawn on their own (e.g. a store refresh resolving a lazy icon).
+  const appNameRef = useRef(appName)
+  appNameRef.current = appName
+  const iconUrlRef = useRef(iconUrl)
+  iconUrlRef.current = iconUrl
+
   const viewShotRef = useRef<View | null>(null)
   const webViewRef = useRef<WebView | null>(null)
   const appStateRef = useRef<AppStateStatus>(AppState.currentState)
@@ -261,21 +269,44 @@ function LocalMiniappView({
       checkpoint()
 
       setLabel(undefined)
-      // Set unconditionally: when the launcher resolves no UI entry (e.g. the
-      // dev server dropped, or a re-foreground couldn't re-resolve), clearing
-      // prevents the WebView from continuing to show a stale / previous URL.
+      // Already-registered packages never throw from ensureRunning — a dropped
+      // dev server returns {uiUri: null} instead. Route those reopens to the
+      // offline recovery screen the same way as first-launch resolve failures.
+      if (devUrl && !result.uiUri) {
+        console.warn(
+          `LocalMiniappView: ${packageName} already running but UI unresolved, routing to dev-offline`,
+        )
+        engine.miniapps.clearForeground()
+        useNavigationStore.getState().push("/applet/dev-offline", {
+          packageName,
+          name: appNameRef.current,
+          iconUrl: iconUrlRef.current,
+        })
+        return
+      }
+      // Set unconditionally: when the launcher resolves no UI entry (e.g. a
+      // re-foreground couldn't re-resolve a non-dev package), clearing prevents
+      // the WebView from continuing to show a stale / previous URL.
       setUiUri(result.uiUri)
       setUiBaseDir(result.uiBaseDir)
     }
 
     launch().catch((e: Error) => {
       if (e.name === "AbortError") return // stale run — ignore entirely
-      // if (devUrl) {
-      //   // failed to load the dev url (we probably are connected to a different wifi network)
-      //   engine.miniapps.clearForeground()
-      //   useNavigationStore.getState().push("/applet/dev-offline", {packageName, name: appName, iconUrl})
-      //   return
-      // }
+      if (devUrl) {
+        // Dev bundle couldn't be resolved (dev server unreachable, or the
+        // manifest/background bundle fetch failed) — route to the dedicated
+        // offline screen with "Try again" / "Re-scan QR" instead of leaving
+        // the user stuck on a bare error splash with no recovery action.
+        console.warn(`LocalMiniappView: ${packageName} dev bundle unresolvable, routing to dev-offline: ${e.message}`)
+        engine.miniapps.clearForeground()
+        useNavigationStore.getState().push("/applet/dev-offline", {
+          packageName,
+          name: appNameRef.current,
+          iconUrl: iconUrlRef.current,
+        })
+        return
+      }
       fail(e.message)
     })
 

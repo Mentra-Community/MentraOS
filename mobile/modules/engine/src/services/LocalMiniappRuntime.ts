@@ -2846,8 +2846,8 @@ class LocalMiniappRuntime {
         isoCap: payload.isoCap as number | undefined,
         noiseReduction: payload.noiseReduction as boolean | undefined,
         edgeEnhancement: payload.edgeEnhancement as boolean | undefined,
-        mfnr: payload.mfnr as boolean | undefined,
         zsl: payload.zsl as boolean | undefined,
+        mfnr: payload.mfnr as boolean | undefined,
         ispDigitalGain: payload.ispDigitalGain as number | undefined,
         ispAnalogGain: payload.ispAnalogGain as string | undefined,
       })
@@ -2887,6 +2887,8 @@ class LocalMiniappRuntime {
         mode: payload.mode as "photo" | "text" | undefined,
         exposureTimeNs: payload.exposureTimeNs as number | undefined,
         durationMs: payload.durationMs as number | undefined,
+        zsl: payload.zsl as boolean | undefined,
+        mfnr: payload.mfnr as boolean | undefined,
       })
       this.sendResult(packageName, requestId, true)
     } catch (err) {
