@@ -640,6 +640,7 @@ class OtaInstallCoordinator {
         const pingIntervalMs = legacySession ? LEGACY_PING_INTERVAL_MS : PING_INTERVAL_MS
         this.pingInterval = setInterval(() => {
           void BluetoothSdk.ping().catch(() => {})
+          this.maybePollApkInstallStatus()
         }, pingIntervalMs)
       }
     }
@@ -936,6 +937,25 @@ class OtaInstallCoordinator {
       legacyApkSettleHold: this.legacyApkSettleHold,
       apkCompletedViaBuildIncrease: this.apkCompletedViaBuildIncrease,
     })
+  }
+
+  /**
+   * During an APK install the package installer kills and restarts the glasses
+   * process, and the new process's completion push can lose its startup race
+   * against the UART transport (incident rep_01KY31HEMTSBSMK8DVMNXJ5XGG: the
+   * phone sat on a stale "install in_progress 0%" until the stall watchdog
+   * failed a successful update). The persisted session on the glasses always
+   * knows the truth, so poll ota_query_status on the keepalive tick while an
+   * apk step sits in its install phase — the reply either confirms progress or
+   * delivers the missed completion. Gated to the apk install phase so a stray
+   * idle reply can't disturb an active download; legacy (< 37) builds ignore
+   * the query, which is harmless.
+   */
+  private maybePollApkInstallStatus(): void {
+    const s = useGlassesStore.getState().otaStatus
+    if (s?.stepType === "apk" && s.phase === "install" && s.status === "in_progress") {
+      void BluetoothSdk.sendOtaQueryStatus()
+    }
   }
 
   /**

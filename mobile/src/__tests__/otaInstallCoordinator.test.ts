@@ -728,6 +728,55 @@ describe("OtaInstallCoordinator legacy padded watchdogs (WP 8C-g)", () => {
   })
 })
 
+describe("OtaInstallCoordinator apk install-phase status poll", () => {
+  it("polls ota_query_status on each keepalive tick while an apk step is installing", async () => {
+    setGlassesConnected()
+    otaInstallCoordinator.attach()
+    GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
+    useGlassesStore.getState().setOtaStatus(inProgressStatus({phase: "install", stepPercent: 0, overallPercent: 100}))
+    bluetoothSdkMock.sendOtaQueryStatus.mockClear()
+
+    await jest.advanceTimersByTimeAsync(PING_INTERVAL_MS)
+    expect(bluetoothSdkMock.sendOtaQueryStatus).toHaveBeenCalledTimes(1)
+    await jest.advanceTimersByTimeAsync(PING_INTERVAL_MS)
+    expect(bluetoothSdkMock.sendOtaQueryStatus).toHaveBeenCalledTimes(2)
+  })
+
+  it("does not poll during the download phase", async () => {
+    setGlassesConnected()
+    otaInstallCoordinator.attach()
+    GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
+    useGlassesStore.getState().setOtaStatus(inProgressStatus({stepPercent: 40, overallPercent: 40}))
+    bluetoothSdkMock.sendOtaQueryStatus.mockClear()
+
+    await jest.advanceTimersByTimeAsync(PING_INTERVAL_MS * 3)
+    expect(bluetoothSdkMock.sendOtaQueryStatus).not.toHaveBeenCalled()
+  })
+
+  it("a polled complete reply lands the session on complete instead of the stall failure", async () => {
+    // The incident shape (rep_01KY31HEMTSBSMK8DVMNXJ5XGG): the apk install starts,
+    // the glasses process restarts, and no further push arrives. The poll's reply
+    // must complete the session before the PROGRESS_TIMEOUT_MS stall watchdog fails it.
+    setGlassesConnected()
+    otaInstallCoordinator.attach()
+    GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
+    useGlassesStore.getState().setOtaStatus(inProgressStatus({phase: "install", stepPercent: 0, overallPercent: 100}))
+
+    await jest.advanceTimersByTimeAsync(PING_INTERVAL_MS)
+    expect(bluetoothSdkMock.sendOtaQueryStatus).toHaveBeenCalled()
+
+    // Glasses answer the query from their persisted session: install complete.
+    useGlassesStore
+      .getState()
+      .setOtaStatus(inProgressStatus({phase: "install", status: "complete", stepPercent: 100, overallPercent: 100}))
+
+    await jest.advanceTimersByTimeAsync(PROGRESS_TIMEOUT_MS)
+    const snap = otaInstallCoordinator.snapshot()
+    expect(snap.errorMsg).toBe("")
+    expect(snap.displayState).toBe("complete")
+  })
+})
+
 describe("OtaInstallCoordinator legacy APK completion settle hold (WP 8C-g)", () => {
   it("holds the complete state for the 32s settle window after an in-flight apk install FINISHED", async () => {
     setLegacyGlassesConnected("33")
