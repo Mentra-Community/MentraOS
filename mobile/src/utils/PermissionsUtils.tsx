@@ -1,5 +1,4 @@
 import {AppletInterface, AppletPermission} from "@/../../cloud/packages/types/src"
-import BluetoothSdk from "@mentra/bluetooth-sdk"
 import CrustModule from "@mentra/crust"
 import {Alert, Linking, PermissionsAndroid, Platform} from "react-native"
 import BleManager from "react-native-ble-manager"
@@ -710,18 +709,11 @@ export const askPermissionsUI = async (app: AppletInterface, _theme: Theme): Pro
             // Check if permissions were actually granted
             const stillNeededPermissions = await checkPermissionsUI(app)
 
-            // If we still need READ_NOTIFICATIONS, don't auto-retry
-            if (stillNeededPermissions.includes(PermissionFeatures.READ_NOTIFICATIONS) && Platform.OS === "android") {
-              // Permission flow is in progress, user needs to complete it manually
-              resolve(-1) // Return 0 to indicate "in progress" state
-              return
-            }
-
-            // For other permissions that were granted, proceed
+            // The notification-listener request waits for the Settings
+            // round-trip, so any permission still missing here was denied.
             if (stillNeededPermissions.length === 0) {
               resolve(1) // Success
             } else {
-              // Still have missing permissions (other than READ_NOTIFICATIONS)
               resolve(0) // Failed to get all permissions
             }
           },

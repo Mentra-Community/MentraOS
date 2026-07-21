@@ -6,6 +6,11 @@ const HTML_ENTITIES: Record<string, string> = {
   "&#39;": "'",
 }
 
+interface InsightSpeaker {
+  speak(text: string, options: {stopOtherAudio: boolean}): Promise<unknown>
+  stop(): void
+}
+
 /** Convert display-oriented insight text into plain words for the TTS API. */
 export function insightToSpeechText(text: string): string {
   let speech = text.replace(/&(amp|lt|gt|quot|#39);/gi, (entity) => HTML_ENTITIES[entity.toLowerCase()] ?? entity)
@@ -27,8 +32,21 @@ export function insightToSpeechText(text: string): string {
     .replace(/@/g, " at ")
     .replace(/%/g, " percent ")
     .replace(/\\/g, " backslash ")
-    .replace(/\//g, " slash ")
+    .replace(/\//g, (slash, offset, source) => {
+      const numericSeparator = /\d/.test(source[offset - 1] ?? "") && /\d/.test(source[offset + 1] ?? "")
+      return numericSeparator ? slash : " slash "
+    })
     .replace(/\*/g, " star ")
 
   return speech.replace(/\s+/g, " ").trim()
+}
+
+/** Replace the current spoken insight, even when its display text has no speakable content. */
+export async function speakInsightText(speaker: InsightSpeaker, text: string): Promise<void> {
+  const speechText = insightToSpeechText(text)
+  if (!speechText) {
+    speaker.stop()
+    return
+  }
+  await speaker.speak(speechText, {stopOtherAudio: true})
 }

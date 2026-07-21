@@ -16,7 +16,7 @@ import type {
   MergeSnapshot,
   MergeTranscript,
 } from "../shared/types"
-import {insightToSpeechText} from "./speech"
+import {speakInsightText} from "./speech"
 
 type Send = <C extends keyof Channels & string>(channel: C, payload: Channels[C]) => void
 type On = <C extends keyof Channels & string>(channel: C, cb: (payload: Channels[C]) => void) => () => void
@@ -573,9 +573,7 @@ class MergeController {
     try {
       // stopOtherAudio mirrors "replace" display semantics for audio: a newer
       // insight cuts off one that is still being spoken instead of overlapping.
-      const speechText = insightToSpeechText(insight.text)
-      if (!speechText) return
-      await this.session.speaker.speak(speechText, {stopOtherAudio: true})
+      await speakInsightText(this.session.speaker, insight.text)
     } catch (err) {
       console.log("LocalMerge: failed to speak insight", err)
     }
