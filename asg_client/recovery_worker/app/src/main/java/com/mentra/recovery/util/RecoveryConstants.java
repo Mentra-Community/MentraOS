@@ -85,4 +85,29 @@ public final class RecoveryConstants {
   public static final int REMEDIATION_CONNECT_TIMEOUT_MS = 15_000;
   /** HTTP read timeout for manifest fetch / APK download. */
   public static final int REMEDIATION_READ_TIMEOUT_MS = 60_000;
+
+  // --- Pinned ASG downgrade transaction (uninstall-then-reinstall detour) ---
+
+  /** ASG hands off a staged, checksummed downgrade APK for recovery to install. */
+  public static final String ACTION_REQUEST_DOWNGRADE = "com.mentra.recovery.ACTION_REQUEST_DOWNGRADE";
+  public static final String EXTRA_DOWNGRADE_TARGET_VERSION = "target_version_code";
+  public static final String EXTRA_DOWNGRADE_APK_PATH = "apk_path";
+  public static final String EXTRA_DOWNGRADE_APK_SHA256 = "apk_sha256";
+
+  public static final String DOWNGRADE_PREFS = "mentra_downgrade_transaction";
+  public static final String UNIQUE_DOWNGRADE_WORK = "mentra_downgrade_transaction";
+
+  /** Uninstall broadcast dispatch until the factory /system revert is observed. */
+  public static final long DOWNGRADE_REVERT_TIMEOUT_MS = 90_000L;
+  /** Install broadcast dispatch until the target versionCode is observed installed. */
+  public static final long DOWNGRADE_INSTALL_TIMEOUT_MS = 120_000L;
+  /** Installed-version poll cadence while a downgrade phase is in flight. */
+  public static final long DOWNGRADE_POLL_INTERVAL_MS = 2_000L;
+  /** Install broadcast attempts before the transaction gives up. */
+  public static final int DOWNGRADE_MAX_INSTALL_ATTEMPTS = 3;
+  /**
+   * Abandon a transaction that has not converged after this long. Generous because the
+   * transaction legitimately spans the uninstall revert, an install, and process restarts.
+   */
+  public static final long DOWNGRADE_TRANSACTION_STALE_MS = 30 * 60 * 1000L;
 }

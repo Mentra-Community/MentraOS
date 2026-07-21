@@ -17,6 +17,7 @@ import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
 import androidx.core.content.ContextCompat;
 
+import com.mentra.recovery.downgrade.DowngradeController;
 import com.mentra.recovery.health.HealthMonitor;
 import com.mentra.recovery.health.InstallPauseNotifier;
 import com.mentra.recovery.remediation.RemediationController;
@@ -48,6 +49,7 @@ public class RecoveryService extends Service {
     registerReceivers();
     healthMonitor.start();
     RemediationController.schedule(this);
+    DowngradeController.resumeIfActive(this);
   }
 
   @Nullable
