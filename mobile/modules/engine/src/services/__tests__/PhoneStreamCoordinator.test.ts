@@ -62,6 +62,10 @@ beforeEach(() => {
   sendExternallyManagedStreamKeepAlive.mockClear()
   provisionManagedStream.mockClear()
   getManagedStreamStatus.mockClear()
+  getManagedStreamStatus.mockImplementation(async (_id: string) => ({
+    isConnected: true,
+    viewerCount: 0,
+  }))
   teardownManagedStream.mockClear()
   hlsHeadResponder = () => new Response(null, {status: 200})
   ;(globalThis as {fetch: typeof fetch}).fetch = (async (url) => {
@@ -165,6 +169,55 @@ describe("PhoneStreamCoordinator", () => {
   })
 
   describe("managed", () => {
+    test("WHIP probes Cloudflare immediately and retries quickly during startup", async () => {
+      getManagedStreamStatus
+        .mockImplementationOnce(async () => ({isConnected: false, viewerCount: 0}))
+        .mockImplementationOnce(async () => ({isConnected: true, viewerCount: 0}))
+
+      const coord = new PhoneStreamCoordinator({
+        cloudflareStartupPollInitialMs: 5,
+        cloudflareStatusPollMs: 1000,
+        hlsReadinessPollMs: 1000,
+        hlsReadinessMaxAttempts: 5,
+        keepAliveIntervalMs: 10_000,
+      })
+      const result = await coord.startManaged("com.a", {ingest: "whip"})
+
+      expect(result.mode).toBe("webrtc")
+      expect(result.webrtcUrl).toBe("https://playback.test/abc/whep")
+      expect(getManagedStreamStatus).toHaveBeenCalledTimes(2)
+      await coord.stop("com.a")
+    })
+
+    test("WHIP startup resolves when the immediate probe is already connected", async () => {
+      const coord = new PhoneStreamCoordinator({
+        cloudflareStartupPollInitialMs: 5,
+        cloudflareStatusPollMs: 1000,
+        keepAliveIntervalMs: 10_000,
+      })
+
+      const result = await coord.startManaged("com.a", {ingest: "whip"})
+
+      expect(result.mode).toBe("webrtc")
+      expect(getManagedStreamStatus).toHaveBeenCalledTimes(1)
+      await coord.stop("com.a")
+    })
+
+    test("WHIP startup rejects when Cloudflare never reports the publisher", async () => {
+      getManagedStreamStatus.mockImplementation(async () => ({isConnected: false, viewerCount: 0}))
+      const coord = new PhoneStreamCoordinator({
+        cloudflareStartupPollInitialMs: 1,
+        cloudflareStatusPollMs: 5,
+        hlsReadinessPollMs: 5,
+        hlsReadinessMaxAttempts: 1,
+        keepAliveIntervalMs: 10_000,
+      })
+
+      await expect(coord.startManaged("com.a", {ingest: "whip"})).rejects.toThrow(
+        "WebRTC ingest never reached Cloudflare",
+      )
+    })
+
     test("startManaged provisions Cloudflare and resolves when HLS is ready", async () => {
       const coord = new PhoneStreamCoordinator({
         hlsReadinessInitialDelayMs: 5,
