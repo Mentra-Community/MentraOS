@@ -23,6 +23,8 @@ describe("background runtime guard", () => {
       interface Metrics { performance: number }
       import type {Stats} from "node:fs"
       import {type BufferEncoding} from "node:buffer"
+      export type {PathLike} from "node:fs"
+      export {type PathLike as FilePath} from "node:fs"
       const metrics = {performance: Date.now()}
       const bytes = new TextEncoder().encode("hello")
       const id = crypto.randomUUID()
@@ -31,6 +33,15 @@ describe("background runtime guard", () => {
     `)
 
     expect(findings).toEqual([])
+  })
+
+  test("reports value re-exports from Node built-ins", () => {
+    const findings = findUnsupportedBackgroundApis(`
+      export {readFile} from "node:fs/promises"
+      export * from "fs"
+    `)
+
+    expect(findings.map(({api}) => api)).toEqual(["node:fs/promises", "fs"])
   })
 
   test("allows public env values that the scaffold build inlines", () => {

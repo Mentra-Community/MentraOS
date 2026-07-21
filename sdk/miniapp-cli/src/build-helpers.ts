@@ -111,6 +111,12 @@ function importHasRuntimeBindings(node: ts.ImportDeclaration): boolean {
   return clause.namedBindings?.elements.some((element) => !element.isTypeOnly) ?? false
 }
 
+function exportHasRuntimeBindings(node: ts.ExportDeclaration): boolean {
+  if (node.isTypeOnly) return false
+  if (!node.exportClause || ts.isNamespaceExport(node.exportClause)) return true
+  return node.exportClause.elements.some((element) => !element.isTypeOnly)
+}
+
 function isDeclarationOrPropertyName(node: ts.Identifier): boolean {
   const parent = node.parent
   if (!parent) return false
@@ -210,7 +216,23 @@ export function findUnsupportedBackgroundApis(
   }
 
   const visit = (node: ts.Node): void => {
-    if (ts.isImportDeclaration(node) && importHasRuntimeBindings(node) && ts.isStringLiteral(node.moduleSpecifier)) {
+    if (
+      ts.isImportDeclaration(node) &&
+      importHasRuntimeBindings(node) &&
+      ts.isStringLiteral(node.moduleSpecifier)
+    ) {
+      const builtin = nodeBuiltinName(node.moduleSpecifier.text)
+      if (builtin) {
+        add(node.moduleSpecifier, builtin, "remove the Node built-in; it is unavailable in background")
+      }
+    }
+
+    if (
+      ts.isExportDeclaration(node) &&
+      exportHasRuntimeBindings(node) &&
+      node.moduleSpecifier &&
+      ts.isStringLiteral(node.moduleSpecifier)
+    ) {
       const builtin = nodeBuiltinName(node.moduleSpecifier.text)
       if (builtin) {
         add(node.moduleSpecifier, builtin, "remove the Node built-in; it is unavailable in background")
