@@ -209,7 +209,8 @@
     "react-native-executorch@0.7.2": "patches/react-native-executorch@0.7.2.patch",
     "expo-speech-transcriber@0.1.9": "patches/expo-speech-transcriber@0.1.9.patch",
     "react-native-inner-shadow@2.4.0": "patches/react-native-inner-shadow@2.4.0.patch",
-    "react-native-webview@13.16.0": "patches/react-native-webview@13.16.0.patch"
+    "react-native-webview@13.16.0": "patches/react-native-webview@13.16.0.patch",
+    "expo-audio@55.0.14": "patches/expo-audio@55.0.14.patch"
   },
   "trustedDependencies": [
     "@sentry/cli",

@@ -370,6 +370,7 @@
     "react-native-mmkv",
   ],
   "patchedDependencies": {
+    "expo-audio@55.0.14": "patches/expo-audio@55.0.14.patch",
     "react-native-draggable-masonry@1.3.0": "patches/react-native-draggable-masonry@1.3.0.patch",
     "react-native-webview@13.16.0": "patches/react-native-webview@13.16.0.patch",
     "react-native-awesome-gallery@0.4.3": "patches/react-native-awesome-gallery@0.4.3.patch",
