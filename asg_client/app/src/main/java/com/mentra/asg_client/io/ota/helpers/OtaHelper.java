@@ -16,6 +16,7 @@ import org.json.JSONObject;
 import org.greenrobot.eventbus.EventBus;
 import org.greenrobot.eventbus.Subscribe;
 import org.greenrobot.eventbus.ThreadMode;
+import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.events.BatteryStatusEvent;
 import com.mentra.asg_client.di.hilt.AsgClientEntryPoint;
 import com.mentra.asg_client.io.ota.events.DownloadProgressEvent;
@@ -2478,17 +2479,44 @@ public class OtaHelper {
     }
 
     /**
-     * Attach a session manager and immediately push its current state to the phone.
+     * Attach a session manager and push its current state to the phone, resending on a
+     * fixed schedule instead of firing once.
      *
      * Used by {@link OtaService#resumeFromSession(OtaSessionManager)} after an APK-only
      * OTA completes across a process restart. The original {@code installApk()} call
      * deliberately skips the FINISHED send because the process is about to die, so the
      * phone needs an explicit completion signal once the new process comes up.
+     *
+     * This runs during early startup of the freshly installed process, usually before the
+     * UART transport is open ({@link #sendOtaStatus()} silently no-ops while the phone is
+     * unreachable) — and a single send at the serial-ready instant can still be dropped
+     * downstream while the wire protocol settles. A one-shot push losing that race leaves
+     * the phone staring at a stale "install in_progress 0%" until its stall watchdog fails
+     * a successful update (incident rep_01KY31HEMTSBSMK8DVMNXJ5XGG). Resending is safe:
+     * each attempt re-reads the persisted session state, duplicate terminal statuses are
+     * idempotent on the phone, and any phone-initiated ota_start/ota_query_status
+     * supersedes these pushes.
      */
     public void sendCompletionToPhone(OtaSessionManager sm) {
         if (sm == null) return;
         this.sessionManager = sm;
-        sendOtaStatus();
+        for (int attempt = 1; attempt <= AsgConstants.OTA_COMPLETION_RESEND_ATTEMPTS; attempt++) {
+            final int attemptNumber = attempt;
+            handler.postDelayed(
+                    () -> {
+                        Log.i(
+                                TAG,
+                                "APK completion push attempt "
+                                        + attemptNumber
+                                        + "/"
+                                        + AsgConstants.OTA_COMPLETION_RESEND_ATTEMPTS
+                                        + " (phoneConnected="
+                                        + isPhoneConnected()
+                                        + ")");
+                        sendOtaStatus();
+                    },
+                    (attempt - 1) * AsgConstants.OTA_COMPLETION_RESEND_INTERVAL_MS);
+        }
     }
 
     /**

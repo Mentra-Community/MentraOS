@@ -120,9 +120,16 @@ class MiniappLauncher {
         .map((p) => (typeof p === "string" ? p : p?.type))
         .filter((t): t is string => typeof t === "string")
       const installedManifest: InstalledMiniappManifest = {
+        packageName: typeof manifest.packageName === "string" ? manifest.packageName : packageName,
         name: manifest.name,
+        version: typeof manifest.version === "string" ? manifest.version : undefined,
+        sdkVersion: typeof manifest.sdkVersion === "string" ? manifest.sdkVersion : undefined,
+        minHostVersion: typeof manifest.minHostVersion === "string" ? manifest.minHostVersion : undefined,
+        type: typeof manifest.type === "string" ? manifest.type : undefined,
+        entry: manifest.entry as InstalledMiniappManifest["entry"],
         permissions: manifest.permissions as InstalledMiniappManifest["permissions"],
         hardwareRequirements: manifest.hardwareRequirements as InstalledMiniappManifest["hardwareRequirements"],
+        actions: manifest.actions as InstalledMiniappManifest["actions"],
       }
 
       let bgSource: string
@@ -152,15 +159,33 @@ class MiniappLauncher {
     if (!entryPaths?.background) return null
 
     const manifest = appRegistry.getMiniappManifest(packageName, version) as {
+      packageName?: string
       name?: string
+      version?: string
+      sdkVersion?: string
+      minHostVersion?: string
+      type?: string
+      entry?: {background?: string; ui?: string}
       permissions?: Array<{type: string; required?: boolean; description?: string}>
       hardwareRequirements?: Array<{type: string; level: string; description?: string}>
+      actions?: Array<{id?: unknown; description?: unknown; parameters?: unknown}>
     } | null
     const declaredPermissions = (manifest?.permissions ?? [])
       .map((p) => p.type)
       .filter((t): t is string => typeof t === "string")
     const installedManifest: InstalledMiniappManifest | undefined = manifest
-      ? {name: manifest.name, permissions: manifest.permissions, hardwareRequirements: manifest.hardwareRequirements}
+      ? {
+          packageName: manifest.packageName ?? packageName,
+          name: manifest.name,
+          version: manifest.version ?? version,
+          sdkVersion: manifest.sdkVersion,
+          minHostVersion: manifest.minHostVersion,
+          type: manifest.type,
+          entry: manifest.entry,
+          permissions: manifest.permissions,
+          hardwareRequirements: manifest.hardwareRequirements,
+          actions: manifest.actions,
+        }
       : undefined
 
     let bgSource: string

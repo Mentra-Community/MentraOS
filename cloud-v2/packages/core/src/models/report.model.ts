@@ -14,7 +14,8 @@
  * a deployed environment, so no inline-payload documents exist to migrate.
  */
 
-import { Schema, model, type InferSchemaType } from "mongoose";
+import { Schema, type InferSchemaType } from "mongoose";
+import { registerModel } from "./register-model";
 
 const ReportArtifactSchema = new Schema(
   {
@@ -63,4 +64,4 @@ ReportSchema.index({ mentraUserId: 1, createdAt: -1 });
 ReportSchema.index({ createdAt: -1 });
 
 export type Report = InferSchemaType<typeof ReportSchema>;
-export const ReportModel = model("Report", ReportSchema);
+export const ReportModel = registerModel("Report", ReportSchema);

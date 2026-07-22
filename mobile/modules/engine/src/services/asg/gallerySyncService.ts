@@ -156,6 +156,10 @@ class GallerySyncService {
     }
 
     this.syncStartPromise = null
+    useGallerySyncStore.getState().setSyncStarting(false)
+    this.waitingForWifiRetry = false
+    this.wifiSettingsOpenedAt = null
+    this.startAborted = false
     this.isInitialized = false
     console.log("[GallerySyncService] Cleaned up")
   }
@@ -228,14 +232,23 @@ class GallerySyncService {
     if (!glassesConnected) {
       console.log("[GallerySyncService] Glasses disconnected - not retrying sync")
       this.waitingForWifiRetry = false
+      this.wifiSettingsOpenedAt = null
       return
+    }
+
+    // The user has returned from the WiFi settings prompt, so the previous
+    // "Sync failed" state is no longer actionable. Make the button available
+    // immediately while the native WiFi state catches up; a successful check
+    // below will start the sync automatically.
+    if (store.syncState === "error" && store.lastError?.startsWith("WiFi disabled")) {
+      store.setSyncState("idle")
     }
 
     // Check if WiFi is now enabled (Android only)
     // Use retry logic because WiFi status takes time to propagate after user enables it
     if (Platform.OS === "android") {
       const MAX_RETRIES = 5
-      const RETRY_DELAY_MS = 1000 // Wait 500ms between checks
+      const RETRY_DELAY_MS = 1000
 
       console.log("[GallerySyncService] Waiting for WiFi to initialize (may take a moment after enabling)...")
 
@@ -243,35 +256,28 @@ class GallerySyncService {
         try {
           await new Promise<void>((resolve) => BgTimer.setTimeout(() => resolve(), RETRY_DELAY_MS))
 
-          const netState = await NetInfo.fetch()
-          console.log(
-            `[GallerySyncService] WiFi check attempt ${attempt}/${MAX_RETRIES}: enabled=${netState.isWifiEnabled}`,
-          )
+          // NetInfo can remain stale after Android's WiFi settings close. Use
+          // the same native source as the normal sync preflight.
+          const wifiEnabled = await WifiManager.isEnabled()
+          console.log(`[GallerySyncService] WiFi check attempt ${attempt}/${MAX_RETRIES}: enabled=${wifiEnabled}`)
 
-          if (netState.isWifiEnabled === true) {
+          if (wifiEnabled) {
             console.log("[GallerySyncService] ✅ WiFi is now enabled - auto-retrying sync")
             this.waitingForWifiRetry = false
             this.wifiSettingsOpenedAt = null // Clear cooldown timestamp
-            // Clear previous error state
-            store.setSyncState("idle")
             // Auto-retry sync
             await this.startSync()
             return
-          }
-
-          // If this was the last attempt, log and give up
-          if (attempt === MAX_RETRIES) {
-            console.log(
-              "[GallerySyncService] ❌ WiFi still disabled after all retries - user may need to tap sync manually",
-            )
-            this.waitingForWifiRetry = false
-            this.wifiSettingsOpenedAt = null // Clear cooldown timestamp
           }
         } catch (error) {
           console.warn(`[GallerySyncService] Failed to check WiFi status on attempt ${attempt}:`, error)
           // Continue to next retry
         }
       }
+
+      console.log("[GallerySyncService] WiFi not detected after retries - leaving sync available for manual retry")
+      this.waitingForWifiRetry = false
+      this.wifiSettingsOpenedAt = null
     }
   }
 
@@ -378,8 +384,10 @@ class GallerySyncService {
       return this.syncStartPromise
     }
 
+    useGallerySyncStore.getState().setSyncStarting(true)
     this.syncStartPromise = this.runStartSync().finally(() => {
       this.syncStartPromise = null
+      useGallerySyncStore.getState().setSyncStarting(false)
     })
     return this.syncStartPromise
   }
@@ -2251,7 +2259,7 @@ class GallerySyncService {
 
   /** True while pre-flight startSync work is in flight (before sync state transitions). */
   isSyncStarting(): boolean {
-    return this.syncStartPromise !== null
+    return useGallerySyncStore.getState().syncStarting
   }
 
   /**

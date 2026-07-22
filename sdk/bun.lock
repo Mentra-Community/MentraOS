@@ -279,7 +279,7 @@
     },
     "../mobile/modules/crust": {
       "name": "@mentra/crust",
-      "version": "0.1.0-dev.0",
+      "version": "0.1.0-dev.1",
       "dependencies": {
         "@mentra/jspolyfill": "^0.1.0-dev.0",
       },
@@ -362,7 +362,7 @@
     },
     "../mobile/modules/miniapp": {
       "name": "@mentra/miniapp",
-      "version": "0.3.0-dev.0",
+      "version": "0.3.0-dev.1",
       "dependencies": {
         "@mentra/types": "1.0.0-beta.2",
         "eventemitter3": "^5.0.1",
@@ -381,7 +381,7 @@
     },
     "create-mentra-miniapp": {
       "name": "create-mentra-miniapp",
-      "version": "0.1.0-dev.0",
+      "version": "0.1.0-dev.1",
       "bin": {
         "create-mentra-miniapp": "./bin/index.ts",
       },
@@ -412,6 +412,7 @@
         "expo-audio": "~55.0.14",
         "expo-battery": "^55.0.13",
         "expo-build-properties": "~55.0.14",
+        "expo-calendar": "~55.0.14",
         "expo-clipboard": "~55.0.13",
         "expo-constants": "~55.0.16",
         "expo-file-system": "~55.0.20",
@@ -446,7 +447,7 @@
     },
     "miniapp-cli": {
       "name": "@mentra/miniapp-cli",
-      "version": "0.1.0-dev.0",
+      "version": "0.1.0-dev.1",
       "bin": {
         "mentra-miniapp": "./src/index.ts",
       },
@@ -454,11 +455,11 @@
         "@clack/prompts": "^1.2.0",
         "jszip": "^3.10.1",
         "qrcode": "^1.5.4",
+        "typescript": "^5.0.0",
       },
       "devDependencies": {
         "@types/qrcode": "^1.5.5",
         "bun-types": "^1.3.14",
-        "typescript": "^5.0.0",
       },
     },
   },
@@ -3174,6 +3175,8 @@
     "example-oem-app/@react-native-community/netinfo": ["@react-native-community/netinfo@11.5.2", "", { "peerDependencies": { "react": "*", "react-native": ">=0.59" } }, "sha512-/g0m65BtX9HU+bPiCH2517bOHpEIUsGrWFXDzi1a5nNKn5KujQgm04WhL7/OSXWKHyrT8VVtUoJA0XKRxueBpQ=="],
 
     "example-oem-app/expo-audio": ["expo-audio@55.0.15", "", { "peerDependencies": { "expo": "*", "expo-asset": "*", "react": "*", "react-native": "*" } }, "sha512-VS5112dO7sUivJpqLjAJLsP4Cv1c4o92wrMqkUCPA/879f8hy6RUQI7t2NVTnK5qkVzp1MtzkWhArwAtjVuVHg=="],
+
+    "example-oem-app/expo-calendar": ["expo-calendar@55.0.17", "", { "peerDependencies": { "expo": "*", "react-native": "*" } }, "sha512-+SixsYR4jrSvPsEEUpwGbpsMuui+g+GO5OdoWwv/SRtmmQ/n+klK8dOvgB7Tc5WzzvV3Io8sjfy5gc6SRVhSuw=="],
 
     "example-oem-app/expo-constants": ["expo-constants@55.0.16", "", { "dependencies": { "@expo/env": "~2.1.2" }, "peerDependencies": { "expo": "*", "react-native": "*" } }, "sha512-Z15/No94UHoogD+pulxjudGAeOHTEIWZgb/vnX48Wx5D+apWTeCbnKxQZZtGQlosvduYL5kaic2/W8U+NHfBQQ=="],
 

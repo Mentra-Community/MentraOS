@@ -55,6 +55,17 @@ export class PhoneVideoCoordinator {
   // second start that races the first is still rejected.
   private starting = false
 
+  /** Report-safe recording ownership snapshot for incident diagnostics. */
+  getDiagnosticSnapshot(): Record<string, unknown> {
+    return {
+      recordingOwners: [
+        ...new Set([...this.activeRecordings.values()].map((recording) => recording.packageName)),
+      ].sort(),
+      activeRecordingCount: this.activeRecordings.size,
+      startInProgress: this.starting,
+    }
+  }
+
   async startRecording(packageName: string, opts: VideoRecordingOpts): Promise<VideoRecordingStarted> {
     // Fail fast if glasses aren't connected — the BLE command would otherwise
     // be sent into the void.

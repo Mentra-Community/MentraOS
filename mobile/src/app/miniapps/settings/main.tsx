@@ -43,7 +43,12 @@ export default function MainSettingsPage() {
             <RouteButton
               icon={<Icon name="message-2-star" size={24} color={theme.colors.secondary_foreground} />}
               label={translate("settings:feedback")}
-              onPress={() => push("/miniapps/settings/feedback")}
+              onPress={() =>
+                push("/miniapps/settings/feedback", {
+                  triggerSource: "settings",
+                  sourceRoute: "/miniapps/settings/",
+                })
+              }
             />
           </Group>
 

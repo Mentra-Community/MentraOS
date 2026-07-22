@@ -48,6 +48,18 @@ const migrations: Migration[] = [
       storage.remove("com.mentra.offline_captions_screenshot")
     },
   },
+  {
+    version: 4,
+    run: async () => {
+      // MentraOS onboarding was disabled while its content was out of date.
+      // Reset completion once so every user sees the replacement flow after
+      // their next pairing, including users who completed the old version.
+      const res = await engine.settings.set(SETTINGS.onboarding_os_completed.key, false, false)
+      if (res.is_error()) {
+        throw res.error
+      }
+    },
+  },
 ]
 
 const migration_version_key = "migration_version"

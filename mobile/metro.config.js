@@ -82,10 +82,37 @@ const CLOUD_V2_ALIASES = {
 // only local dev bundling is redirected here.)
 const ENGINE_SRC = path.resolve(__dirname, "./modules/engine/src")
 
+// Singleton packages that must NEVER resolve to a nested copy. bun installs
+// duplicate react-native/expo under local expo-modules (e.g.
+// modules/crust/node_modules/react-native) because they declare them as peer
+// deps; if Metro resolves an import from inside such a module to the nested
+// copy, the bundle carries a SECOND react-native whose TurboModule specs are
+// not wired to the host registry. Symptom (found the hard way): module-eval
+// throws "TurboModuleRegistry.getEnforcing('SourceCode') could not be found",
+// which silently DROPS any expo-router route whose import chain touches the
+// module (cold boots land on "Unmatched Route") and breaks components into
+// `undefined`. Forcing these to the app's own copy makes resolution immune to
+// install-layout drift.
+const SINGLETONS = ["react-native", "expo", "react"]
+const singletonPath = Object.fromEntries(SINGLETONS.map((name) => [name, path.resolve(__dirname, "node_modules", name)]))
+
 const baseResolveRequest = config.resolver.resolveRequest
 config.resolver.resolveRequest = (context, moduleName, platform) => {
   const aliased = CLOUD_V2_ALIASES[moduleName]
   if (aliased) return {type: "sourceFile", filePath: aliased}
+  // Subpath imports into the protocol package ("@mentra/cloud-protocol/languages")
+  // mirror its package.json "./*": "./src/*.ts" exports map, which Metro does
+  // not read. Resolve them to the source file directly.
+  if (moduleName.startsWith("@mentra/cloud-protocol/")) {
+    const rest = moduleName.slice("@mentra/cloud-protocol/".length)
+    return {type: "sourceFile", filePath: path.join(CLOUD_V2_PACKAGES, "protocol/src", `${rest}.ts`)}
+  }
+  for (const name of SINGLETONS) {
+    if (moduleName === name || moduleName.startsWith(`${name}/`)) {
+      const target = moduleName === name ? singletonPath[name] : path.join(singletonPath[name], moduleName.slice(name.length + 1))
+      return (baseResolveRequest ?? context.resolveRequest)(context, target, platform)
+    }
+  }
   // @mentra/engine -> src/index.ts. Keep this limited to the public root export
   // so future engine internals do not become implicit app import surface area.
   if (moduleName === "@mentra/engine") {

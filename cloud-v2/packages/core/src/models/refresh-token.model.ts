@@ -28,7 +28,8 @@
  * Spec: docs/issues/001-oem-auth/design.md ("Data model" / "refreshTokens")
  */
 
-import { Schema, model, type InferSchemaType } from "mongoose";
+import { Schema, type InferSchemaType } from "mongoose";
+import { registerModel } from "./register-model";
 
 const RefreshTokenSchema = new Schema(
   {
@@ -91,4 +92,4 @@ RefreshTokenSchema.index({ mentraUserId: 1, tenantId: 1 });
 RefreshTokenSchema.index({ tenantId: 1 });
 
 export type RefreshToken = InferSchemaType<typeof RefreshTokenSchema>;
-export const RefreshTokenModel = model("RefreshToken", RefreshTokenSchema);
+export const RefreshTokenModel = registerModel("RefreshToken", RefreshTokenSchema);

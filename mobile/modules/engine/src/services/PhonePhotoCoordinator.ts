@@ -19,7 +19,7 @@
  */
 
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
-import type {PhotoSize} from "@mentra/bluetooth-sdk/internal"
+import type {PhotoSize, PhotoTransferMethod} from "@mentra/bluetooth-sdk/internal"
 import {cloudClientService} from "./CloudClientService"
 import {isGlassesConnected} from "./GlassesReadiness"
 import {useGlassesStore} from "../stores/glasses"
@@ -49,8 +49,8 @@ export interface PhotoOpts {
   /** Legacy cloud size names are normalized before the native take_photo command. */
   size?: "low" | "medium" | "high" | "max" | "small" | "large" | "full"
   mode?: "photo" | "text"
-  /** Force phone-relayed BLE delivery, or leave native on its auto Wi-Fi/BLE policy. */
-  transferMethod?: "auto" | "ble"
+  /** Select direct-only, phone-relayed BLE, or the default Wi-Fi/BLE fallback policy. */
+  transferMethod?: PhotoTransferMethod
   compress?: "none" | "low" | "medium" | "high"
   sound?: boolean
   saveToGallery?: boolean
@@ -91,6 +91,15 @@ export class PhotoError extends Error {
     super(message)
     this.name = "PhotoError"
   }
+}
+
+function parsePhotoTransferMethod(value: unknown): PhotoTransferMethod | undefined {
+  if (value === undefined) return undefined
+  if (value === "auto" || value === "direct" || value === "ble") return value
+  throw new PhotoError(
+    "INVALID_ARGUMENT",
+    `Invalid transferMethod ${JSON.stringify(value)}. Expected "auto", "direct", or "ble".`,
+  )
 }
 
 interface ActiveRequest {
@@ -140,7 +149,18 @@ export class PhonePhotoCoordinator {
     {requestId: string; durationMs: number; expiryTimer?: ReturnType<typeof setTimeout>}
   >()
 
+  /** Report-safe camera ownership snapshot for incident diagnostics. */
+  getDiagnosticSnapshot(): Record<string, unknown> {
+    return {
+      captureOwners: [...new Set([...this.activeRequests.values()].map((request) => request.packageName))].sort(),
+      warmUpOwners: [...this.activeWarmUps.keys()].sort(),
+      activeCaptureCount: this.activeRequests.size,
+    }
+  }
+
   async takePhoto(packageName: string, opts: PhotoOpts): Promise<PhotoTaken> {
+    const transferMethod = parsePhotoTransferMethod(opts.transferMethod)
+
     // Pre-check: if glasses aren't even connected, the BLE photo command
     // would be sent into the void and we'd wait 30s for the cloud long-poll
     // to time out. Fail fast with a typed error.
@@ -243,7 +263,7 @@ export class PhonePhotoCoordinator {
         mode: opts.mode ?? "photo",
         webhookUrl: uploadUrl,
         authToken: null,
-        ...(isLoopbackUpload || opts.transferMethod === "ble" ? {transferMethod: "ble" as const} : {}),
+        ...(isLoopbackUpload ? {transferMethod: "ble" as const} : transferMethod ? {transferMethod} : {}),
         compress: toNativeCompression(opts.compress),
         save: opts.saveToGallery ?? false,
         sound: opts.sound ?? true,
