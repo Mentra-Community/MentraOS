@@ -21,7 +21,7 @@ process.env.SONIOX_RECONNECT_MAX_MS = "4";
 process.env.SONIOX_RECONNECT_MAX_ATTEMPTS = "5";
 process.env.SONIOX_ENDPOINT_DEBOUNCE_MS = "1";
 
-import { createSonioxProvider, sonioxLanguageHints } from "./soniox";
+import { createSonioxProvider, sonioxLanguageHints, sonioxTranslationTarget } from "./soniox";
 import type { TranscriptEvent } from "./provider";
 
 // Minimal shape of a Soniox realtime token we care about in these tests.
@@ -199,7 +199,43 @@ describe("sonioxLanguageHints", () => {
   });
 });
 
+describe("sonioxTranslationTarget", () => {
+  test("strips the region to a bare code (Soniox rejects BCP-47 targets)", () => {
+    expect(sonioxTranslationTarget("es-ES")).toBe("es");
+    expect(sonioxTranslationTarget("zh-CN")).toBe("zh");
+    expect(sonioxTranslationTarget("en")).toBe("en");
+    expect(sonioxTranslationTarget("PT-BR")).toBe("pt");
+  });
+});
+
 describe("SonioxProvider session configuration", () => {
+  test("configures one-way translation with a bare target_language", async () => {
+    const session = new FakeSession();
+    let sessionConfig: Record<string, unknown> | undefined;
+    const client = {
+      realtime: {
+        stt: (config: Record<string, unknown>) => {
+          sessionConfig = config;
+          return session;
+        },
+      },
+    };
+
+    const provider = await createSonioxProvider({
+      scope: "user_xlate",
+      language: "auto",
+      targetLanguage: "es-ES",
+      client: client as never,
+      onTranscript: () => {},
+    });
+
+    expect(sessionConfig).toMatchObject({
+      translation: { type: "one_way", target_language: "es" },
+    });
+
+    await provider.close();
+  });
+
   test("passes auto-mode detection hints to Soniox language_hints", async () => {
     const session = new FakeSession();
     let sessionConfig: Record<string, unknown> | undefined;

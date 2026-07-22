@@ -119,6 +119,18 @@ export function sonioxLanguageHints(
   return bare.length > 0 ? bare : undefined;
 }
 
+/**
+ * Soniox one-way translation target. Like `language_hints`, Soniox's
+ * `translation.target_language` takes a bare ISO 639-1 code — a BCP-47 tag
+ * ("es-ES") is rejected with "Invalid language in translation.target_language"
+ * and kills the session, so strip the region (mirrors v1's SonioxSdkStream,
+ * which used `targetLanguage.split("-")[0]`). Subscription keys and result
+ * routing keep the full tag; only the provider config is reduced (issue 021).
+ */
+export function sonioxTranslationTarget(target: string): string {
+  return target.split("-")[0].toLowerCase();
+}
+
 /** Shared client per worker. Soniox SDK is happy with one client for many streams. */
 let sharedClient: SonioxNodeClient | null = null;
 function getClient(): SonioxNodeClient {
@@ -179,7 +191,7 @@ export async function createSonioxProvider(
     // tokens then carry `translation_status: "original" | "translation"`
     // and we filter to the translation half.
     translation: opts.targetLanguage
-      ? { type: "one_way", target_language: opts.targetLanguage }
+      ? { type: "one_way", target_language: sonioxTranslationTarget(opts.targetLanguage) }
       : undefined,
   } as SttSessionConfig;
   const isTranslation = !!opts.targetLanguage;
