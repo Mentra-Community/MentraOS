@@ -29,6 +29,7 @@ import androidx.annotation.Nullable;
 import androidx.annotation.RequiresPermission;
 import androidx.core.app.NotificationCompat;
 
+import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.camera.CameraNeoService;
 import com.mentra.asg_client.utils.WakeLockManager;
 import com.mentra.asg_client.reporting.domains.StreamingReporting;
@@ -108,6 +109,7 @@ public class SrtStreamingService extends Service {
   private long mStreamStartTime = 0;
   private long mLastReconnectionTime = 0;
   private int mReconnectionSequence = 0;
+  private PeriodicStreamMetricsReporter mMetricsReporter;
 
   private IHardwareManager mHardwareManager;
   private boolean mLedEnabled = false;
@@ -159,6 +161,7 @@ public class SrtStreamingService extends Service {
     }
 
     mReconnectHandler = new Handler(Looper.getMainLooper());
+    mMetricsReporter = createMetricsReporter();
     mTimeoutHandler = new Handler(Looper.getMainLooper());
     mHardwareManager = HardwareManagerFactory.getInstance(this);
 
@@ -357,6 +360,7 @@ public class SrtStreamingService extends Service {
             }
 
             startBatteryMonitoring();
+            startMetricsReporting();
             EventBus.getDefault().post(new StreamingEvent.Connected());
             EventBus.getDefault().post(new StreamingEvent.Started());
           }
@@ -370,6 +374,7 @@ public class SrtStreamingService extends Service {
           }
           mLastReconnectionTime = currentTime;
           Log.e(TAG, "SRT connection failed: " + message);
+          stopMetricsReporting();
           EventBus.getDefault().post(new StreamingEvent.ConnectionFailed(message));
           StreamingReporting.reportRtmpConnectionFailure(SrtStreamingService.this, mSrtUrl, message, null);
 
@@ -399,6 +404,7 @@ public class SrtStreamingService extends Service {
           long streamDuration = mStreamStartTime > 0 ? currentTime - mStreamStartTime : 0;
           Log.e(TAG, "🔴 SRT STREAM DISCONNECTED after " + formatDuration(streamDuration));
           mLastReconnectionTime = currentTime;
+          stopMetricsReporting();
           synchronized (mStateLock) {
             // StreamPack reports connection loss asynchronously. Mark the
             // publisher non-streaming while we give its internal recovery a
@@ -641,6 +647,7 @@ public class SrtStreamingService extends Service {
     }
 
     if (!preserveSession) stopBatteryMonitoring();
+    stopMetricsReporting();
 
     mReconnectionSequence++;
     if (mReconnectHandler != null) mReconnectHandler.removeCallbacksAndMessages(null);
@@ -755,6 +762,49 @@ public class SrtStreamingService extends Service {
   private long calculateReconnectDelay(int attempt) {
     double jitter = Math.random() * 0.3 * INITIAL_RECONNECT_DELAY_MS;
     return (long) (INITIAL_RECONNECT_DELAY_MS * Math.pow(BACKOFF_MULTIPLIER, attempt - 1) + jitter);
+  }
+
+  private PeriodicStreamMetricsReporter createMetricsReporter() {
+    return new PeriodicStreamMetricsReporter(
+        mReconnectHandler,
+        AsgConstants.STREAM_METRICS_INTERVAL_MS,
+        () -> {
+          synchronized (mStateLock) {
+            return mStreamState == StreamState.STREAMING && mIsStreaming && !mReconnecting;
+          }
+        },
+        () ->
+            new PeriodicStreamMetricsReporter.MetricsSample(
+                mStreamConfig.getVideoBitrate(),
+                mStreamConfig.getVideoFps(),
+                0,
+                mStreamStartTime > 0
+                    ? Math.max(0, (System.currentTimeMillis() - mStreamStartTime) / 1_000L)
+                    : 0,
+                StreamThermalReader.readCpuTemperatureC()),
+        new PeriodicStreamMetricsReporter.CallbackProvider() {
+          @Override
+          public StreamingStatusCallback getCallback() {
+            return sStatusCallback;
+          }
+
+          @Override
+          public String getStreamId() {
+            return mCurrentStreamId;
+          }
+        });
+  }
+
+  private void startMetricsReporting() {
+    if (mMetricsReporter != null) {
+      mMetricsReporter.start();
+    }
+  }
+
+  private void stopMetricsReporting() {
+    if (mMetricsReporter != null) {
+      mMetricsReporter.stop();
+    }
   }
 
   public static void setStreamingStatusCallback(StreamingStatusCallback callback) {

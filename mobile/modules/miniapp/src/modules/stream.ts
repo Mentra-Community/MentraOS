@@ -98,7 +98,7 @@ export interface StreamResult {
   webrtcUrl?: string
 }
 
-/** Live encoder telemetry, when the glasses emit it (no firmware does yet). */
+/** Live encoder and device telemetry emitted periodically by supported glasses firmware. */
 export interface StreamLiveStats {
   /** Current encoded video bitrate in bits per second. */
   bitrate?: number

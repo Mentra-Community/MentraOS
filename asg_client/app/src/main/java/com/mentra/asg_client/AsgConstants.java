@@ -26,6 +26,19 @@ public class AsgConstants {
     public static final int CAMERA_FOV_DEFAULT = 118;
     public static final int CAMERA_ROI_POSITION_DEFAULT = 0;
 
+    /** Cadence for live stream bitrate, frame-rate, duration, and thermal telemetry. */
+    public static final long STREAM_METRICS_INTERVAL_MS = 2_000L;
+
+    /** Linux thermal sysfs root used to discover the Mentra Live CPU sensor. */
+    public static final String THERMAL_SYSFS_ROOT = "/sys/class/thermal";
+
+    /** MediaTek thermal-zone type that reports Mentra Live CPU temperature. */
+    public static final String CPU_THERMAL_ZONE_TYPE = "mtktscpu";
+
+    /** Known Mentra Live CPU-temperature fallback when sysfs type discovery is unavailable. */
+    public static final String CPU_THERMAL_FALLBACK_PATH =
+            "/sys/class/thermal/thermal_zone1/temp";
+
     /** Warm-up leases are intentionally short-lived to bound idle camera power use. */
     public static final long CAMERA_WARM_UP_DEFAULT_DURATION_MS = 15_000L;
     public static final long CAMERA_WARM_UP_MAX_DURATION_MS = 60_000L;

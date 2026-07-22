@@ -19,6 +19,14 @@ enum BleJsonCompact {
         "transferMethod": "tm",
         "manual": "m",
         "reconnecting": "rc",
+        "stats": "st",
+        "width": "w",
+        "height": "h",
+        "bitrate": "br",
+        "fps": "f",
+        "droppedFrames": "df",
+        "duration": "du",
+        "temperatureC": "tc",
     ]
 
     private static let shortToLong: [String: String] = {
