@@ -6,9 +6,9 @@
  *   GET /:reportId   — full report document plus its asset rows
  *   GET /:reportId/artifacts/:artifactId — raw artifact payload bytes
  *
- * Mounted at `/reports` inside the admin router (preinstalled.api.ts) AFTER
- * its `adminAuth` gate, so every route here is admin-only without running the
- * auth middleware a second time. Do not mount this router anywhere else.
+ * Mounted behind either the admin console auth gate or the dedicated,
+ * read-only report-agent auth gate. Keep authentication in the parent routers
+ * so this shared handler surface stays identical for both trusted callers.
  */
 
 import { Hono } from "hono";
