@@ -50,6 +50,12 @@ export interface OtaCheckResult {
   besVersion: string | null
   /** True when the pending APK step installs an OLDER build than the glasses currently run. */
   isApkDowngrade: boolean
+  /**
+   * Raw manifest JSON (stringified) this check actually fetched, or null when the
+   * fetch failed. Lets change-watchers baseline on exactly what the check saw,
+   * instead of racing it with a second fetch of the same URL.
+   */
+  manifestBody: string | null
 }
 
 export type OtaCheckSkippedReason = "disconnected" | "missing_build"
@@ -81,6 +87,7 @@ function emptyCheckResult(skippedReason?: OtaCheckSkippedReason): OtaCheckCurren
     mtkPatch: null,
     besVersion: null,
     isApkDowngrade: false,
+    manifestBody: null,
     updateInfo: null,
     isRequired: true,
     skippedReason,
@@ -274,6 +281,7 @@ export async function checkForOtaUpdate(
       mtkPatch,
       besVersion: versionJson?.bes_firmware?.version || null,
       isApkDowngrade: apkDirection === "downgrade",
+      manifestBody: versionJson ? JSON.stringify(versionJson) : null,
     }
   } catch (error) {
     console.error("Error checking for OTA update:", error)
@@ -285,6 +293,7 @@ export async function checkForOtaUpdate(
       mtkPatch: null,
       besVersion: null,
       isApkDowngrade: false,
+      manifestBody: null,
     }
   }
 }
