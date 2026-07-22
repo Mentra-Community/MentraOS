@@ -19,7 +19,13 @@
  * full snapshot on every session.ui.onOpen.
  */
 
-import type {CloudClientStatus, MiniappSession, TranslationData, UnsubscribeFn} from "@mentra/miniapp/background"
+import type {
+  CloudClientStatus,
+  MiniappSession,
+  TranscriptionData,
+  TranslationData,
+  UnsubscribeFn,
+} from "@mentra/miniapp/background"
 
 import {
   CaptionsFormatter,
@@ -31,6 +37,11 @@ import {
 } from "../../core/CaptionsFormatter"
 import type {Channels} from "../../shared/channels"
 import type {TranslationEntry, TranslationSettings, TranslationsSnapshot, DisplayPreview} from "../../shared/types"
+
+/** Primary language subtag, lowercased ("fr-FR" -> "fr", "FR" -> "fr"). */
+function primarySubtag(code: string | undefined): string {
+  return (code ?? "").split("-")[0].toLowerCase()
+}
 
 type Send = <C extends keyof Channels & string>(channel: C, payload: Channels[C]) => void
 type On = <C extends keyof Channels & string>(channel: C, cb: (payload: Channels[C]) => void) => () => void
@@ -110,6 +121,7 @@ export class TranslationController {
 
   private translationCleanup: UnsubscribeFn | null = null
   private translationTarget: string | null = null
+  private sameLanguageCleanup: UnsubscribeFn | null = null
   private inactivityTimer: ReturnType<typeof setTimeout> | null = null
 
   // session.ui, retyped against this miniapp's channel registry. The SDK types
@@ -176,6 +188,7 @@ export class TranslationController {
     await this.loadSettings()
     this.applySettingsToDisplay()
     this.subscribeTranslation()
+    this.subscribeSameLanguageTranscription()
     this.subscribeCloudStatus()
 
     this.registerUiHandlers()
@@ -192,6 +205,14 @@ export class TranslationController {
       }
       this.translationCleanup = null
       this.translationTarget = null
+    }
+    if (this.sameLanguageCleanup) {
+      try {
+        this.sameLanguageCleanup()
+      } catch {
+        /* ignore */
+      }
+      this.sameLanguageCleanup = null
     }
     if (this.inactivityTimer) {
       clearTimeout(this.inactivityTimer)
@@ -422,16 +443,19 @@ export class TranslationController {
    * but recomputes the per-line content for the new mode.
    */
   private rebuildGlassesDisplay(): void {
+    const both = this.settings.glassesDisplayMode === "both"
     this.createFormatter()
     let lastSpeaker: string | undefined
     for (const entry of this.translations) {
       if (!entry.isFinal) continue
+      // Same-language transcriptions (source === target) show on the glasses
+      // only in "both" mode — matches the live path in
+      // handleSameLanguageTranscription.
+      const sameLanguage = primarySubtag(entry.sourceLanguage) === primarySubtag(entry.targetLanguage)
+      if (sameLanguage && !both) continue
       const speakerChanged = entry.speaker !== lastSpeaker
       lastSpeaker = entry.speaker
-      const displayText =
-        this.settings.glassesDisplayMode === "both" && entry.originalText
-          ? `${entry.text}\n${entry.originalText}`
-          : entry.text
+      const displayText = both && entry.originalText ? `${entry.text}\n${entry.originalText}` : entry.text
       this.formatter.processTranscription(displayText, true, entry.speaker, speakerChanged)
     }
     this.refreshDisplay()
@@ -481,6 +505,86 @@ export class TranslationController {
       }
     } catch (err) {
       console.log(`LocalTranslation: translation subscribe failed for target=${targetLanguage}`, err)
+    }
+  }
+
+  /**
+   * Also listen to raw transcription so speech ALREADY in the target language
+   * shows up. The translation stream only emits cross-language results — when
+   * the spoken language equals the target there is nothing to translate, so
+   * Soniox returns no translation and the utterance would silently vanish.
+   *
+   * We subscribe to auto-detect transcription and keep only utterances whose
+   * detected language matches the target; other languages are covered by the
+   * translation stream (and would be raw untranslated text here, so we drop
+   * them). The UI history always shows these; the glasses show them only in
+   * "Translation + transcription" mode (per product: same-language on glasses
+   * is opt-in). Subscribing to auto (not the target) avoids force-transcribing
+   * foreign speech as the target language.
+   */
+  private subscribeSameLanguageTranscription(): void {
+    if (this.sameLanguageCleanup) return
+    try {
+      this.sameLanguageCleanup = this.session.transcription.on((data: TranscriptionData) => {
+        void this.handleSameLanguageTranscription(data)
+      })
+    } catch (err) {
+      console.log("LocalTranslation: transcription subscribe failed", err)
+    }
+  }
+
+  private handleSameLanguageTranscription(data: TranscriptionData): void {
+    const rich = data as TranscriptionData & {
+      transcribeLanguage?: string
+      utteranceId?: string
+      speakerId?: string
+    }
+    const detected = primarySubtag(rich.transcribeLanguage ?? data.language)
+    const target = primarySubtag(this.settings.targetLanguage)
+    // Only same-language passes through here; cross-language is the translation
+    // stream's job. Unknown/absent detected language is dropped (can't confirm).
+    if (!detected || detected !== target) return
+
+    const utteranceId = rich.utteranceId ?? null
+    const entry: InternalTranslationEntry = {
+      id: utteranceId || this.randomId(),
+      utteranceId,
+      speaker: this.formatSpeakerId(rich.speakerId),
+      text: data.text,
+      // Same-language: the text IS the source; there is no separate original.
+      originalText: undefined,
+      sourceLanguage: this.settings.targetLanguage,
+      targetLanguage: this.settings.targetLanguage,
+      timestamp: data.isFinal ? Date.now() : null,
+      isFinal: data.isFinal,
+      receivedAt: Date.now(),
+    }
+
+    if (utteranceId) {
+      this.updateByUtteranceId(entry)
+    } else if (data.isFinal) {
+      this.legacyReplaceInterim(entry)
+    } else {
+      this.legacyUpdateInterim(entry)
+    }
+
+    // UI history: always show same-language transcriptions.
+    this.ui.send("translation:live-translation", {
+      type: entry.isFinal ? "final" : "interim",
+      id: entry.id,
+      utteranceId: entry.utteranceId,
+      speaker: entry.speaker,
+      text: entry.text,
+      originalText: entry.originalText,
+      sourceLanguage: entry.sourceLanguage,
+      targetLanguage: entry.targetLanguage,
+      timestamp: entry.timestamp,
+    })
+
+    // Glasses: same-language transcription is opt-in via the "Translation +
+    // transcription" display mode.
+    if (this.settings.glassesDisplayMode === "both") {
+      this.processAndDisplay(data.text, data.isFinal, rich.speakerId)
     }
   }
 

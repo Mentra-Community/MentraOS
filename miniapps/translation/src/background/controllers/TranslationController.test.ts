@@ -5,7 +5,9 @@ import {TranslationController} from "./TranslationController"
 /** Mock session that captures translation handlers and glasses render text. */
 function makeDisplayController() {
   let translationHandler: ((data: unknown) => void) | undefined
+  let transcriptionHandler: ((data: unknown) => void) | undefined
   const renders: string[] = []
+  const uiSends: Array<{channel: string; payload: Record<string, unknown>}> = []
   const storage = new Map<string, string>()
   const noop = () => () => {}
   const session = {
@@ -15,13 +17,19 @@ function makeDisplayController() {
         return () => {}
       },
     },
+    transcription: {
+      on: (h: (data: unknown) => void) => {
+        transcriptionHandler = h
+        return () => {}
+      },
+    },
     display: {
       render: (els: Array<{text?: string}>) => {
         if (els.length > 0 && typeof els[0].text === "string") renders.push(els[0].text)
       },
     },
     storage: {get: (k: string) => Promise.resolve(storage.get(k) ?? null), set: (k: string, v: string) => (storage.set(k, v), Promise.resolve())},
-    ui: {send: () => {}, on: noop, onOpen: noop},
+    ui: {send: (channel: string, payload: Record<string, unknown>) => uiSends.push({channel, payload}), on: noop, onOpen: noop},
     actions: {handle: noop},
     capabilities: {display: {width: 576, height: 288}},
     onCapabilitiesChange: noop,
@@ -30,7 +38,13 @@ function makeDisplayController() {
     start: () => Promise<void>
     setGlassesDisplayMode: (m: string) => Promise<void>
   }
-  return {controller, renders, feed: (d: unknown) => translationHandler?.(d)}
+  return {
+    controller,
+    renders,
+    uiSends,
+    feed: (d: unknown) => translationHandler?.(d),
+    feedTranscription: (d: unknown) => transcriptionHandler?.(d),
+  }
 }
 
 function makeController() {
@@ -99,5 +113,42 @@ describe("TranslationController glasses display mode", () => {
     await controller.setGlassesDisplayMode("translation")
     expect(renders.at(-1)).toContain("Bonjour")
     expect(renders.at(-1)).not.toContain("Hello")
+  })
+})
+
+describe("TranslationController same-language transcription", () => {
+  test("speech already in the target language shows in the UI history", async () => {
+    const {controller, uiSends, feedTranscription} = makeDisplayController()
+    await controller.start() // default target es
+
+    feedTranscription({text: "Hola mundo", isFinal: true, transcribeLanguage: "es", utteranceId: "t1", speakerId: "1"})
+
+    const card = uiSends.find(
+      (s) => s.channel === "translation:live-translation" && s.payload.text === "Hola mundo",
+    )
+    expect(card).toBeDefined()
+    expect(card?.payload.sourceLanguage).toBe(card?.payload.targetLanguage)
+  })
+
+  test("foreign-language transcription is dropped (covered by the translation stream)", async () => {
+    const {controller, uiSends, feedTranscription} = makeDisplayController()
+    await controller.start() // target es
+
+    feedTranscription({text: "Hello world", isFinal: true, transcribeLanguage: "en", utteranceId: "t2"})
+
+    const leaked = uiSends.find((s) => s.payload.text === "Hello world")
+    expect(leaked).toBeUndefined()
+  })
+
+  test("same-language reaches the glasses only in 'both' mode", async () => {
+    const {controller, renders, feedTranscription} = makeDisplayController()
+    await controller.start() // target es, default glasses mode "translation"
+
+    feedTranscription({text: "Hola", isFinal: true, transcribeLanguage: "es-ES", utteranceId: "t3"})
+    expect(renders.some((r) => r.includes("Hola"))).toBe(false) // translation-only: not on glasses
+
+    await controller.setGlassesDisplayMode("both")
+    feedTranscription({text: "Adios", isFinal: true, transcribeLanguage: "es", utteranceId: "t4"})
+    expect(renders.some((r) => r.includes("Adios"))).toBe(true) // both: on glasses
   })
 })
