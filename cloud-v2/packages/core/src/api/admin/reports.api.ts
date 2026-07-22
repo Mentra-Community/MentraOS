@@ -6,9 +6,8 @@
  *   GET /:reportId   — full report document plus its asset rows
  *   GET /:reportId/artifacts/:artifactId — raw artifact payload bytes
  *
- * Mounted at `/reports` inside the admin router (preinstalled.api.ts) AFTER
- * its `adminAuth` gate, so every route here is admin-only without running the
- * auth middleware a second time. Do not mount this router anywhere else.
+ * Mounted behind the admin console auth gate. The private report-agent router
+ * reuses only the exported detail and artifact handlers, never the list route.
  */
 
 import { Hono } from "hono";
@@ -47,13 +46,13 @@ async function getReportsList(c: AppContext) {
   return c.json({ reports: await listReports(parsed.data) });
 }
 
-async function getReportDetail(c: AppContext) {
+export async function getReportDetail(c: AppContext) {
   const detail = await getReport(requiredParam(c, "reportId"));
   if (!detail) return c.json({ error: "not_found", error_description: "report not found" }, 404);
   return c.json(detail);
 }
 
-async function getReportArtifact(c: AppContext) {
+export async function getReportArtifact(c: AppContext) {
   const reportId = requiredParam(c, "reportId");
   const artifactId = requiredParam(c, "artifactId");
 
