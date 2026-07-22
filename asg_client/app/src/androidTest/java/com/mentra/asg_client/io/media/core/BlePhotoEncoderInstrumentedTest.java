@@ -11,6 +11,7 @@ import android.graphics.Paint;
 import android.util.Log;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.platform.app.InstrumentationRegistry;
+import com.mentra.asg_client.AsgConstants;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.util.ArrayList;
@@ -118,9 +119,23 @@ public class BlePhotoEncoderInstrumentedTest {
     }
 
     @Test
-    public void benchmarkCurrentAvifConfig() throws Exception {
-        // Production text-mode AVIF control: 1920px cap at quality 55.
-        runConfig("1920_avif_q55", BleCodec.AVIF, 1920, 55);
+    public void benchmarkCurrentTextModeCropConfig() throws Exception {
+        // A detected text crop preserves more spatial detail for small text.
+        runConfig(
+                "2880_jpeg_q80",
+                BleCodec.JPEG_FAST,
+                AsgConstants.TEXT_MODE_BLE_TARGET_WIDTH,
+                AsgConstants.BLE_PHOTO_JPEG_FAST_QUALITY);
+    }
+
+    @Test
+    public void benchmarkCurrentTextModeFallbackConfig() throws Exception {
+        // A full-frame fallback retains the previous BLE transfer bound.
+        runConfig(
+                "1920_jpeg_q80",
+                BleCodec.JPEG_FAST,
+                AsgConstants.TEXT_MODE_BLE_FALLBACK_TARGET_WIDTH,
+                AsgConstants.BLE_PHOTO_JPEG_FAST_QUALITY);
     }
 
     @Test

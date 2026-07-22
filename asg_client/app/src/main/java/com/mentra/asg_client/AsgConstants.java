@@ -211,10 +211,15 @@ public class AsgConstants {
      */
     public static final int TEXT_MODE_SENSOR_CAPTURE_HEIGHT = 2160;
 
-    /** Long-edge cap for text-mode BLE downscale after crop (aspect ratio preserved). */
-    public static final int TEXT_MODE_BLE_TARGET_WIDTH = 1920;
+    /** Long-edge cap when text-mode detection produced a usable crop. */
+    public static final int TEXT_MODE_BLE_TARGET_WIDTH = 2880;
 
-    public static final int TEXT_MODE_BLE_TARGET_HEIGHT = 1920;
+    public static final int TEXT_MODE_BLE_TARGET_HEIGHT = 2880;
+
+    /** Long-edge cap when text-mode detection falls back to the full frame. */
+    public static final int TEXT_MODE_BLE_FALLBACK_TARGET_WIDTH = 1920;
+
+    public static final int TEXT_MODE_BLE_FALLBACK_TARGET_HEIGHT = 1920;
 
     /** AVIF quality for the canonical text-mode BLE payload. */
     public static final int TEXT_MODE_AVIF_QUALITY = 55;

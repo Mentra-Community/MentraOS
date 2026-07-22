@@ -211,10 +211,14 @@ public class MediaCaptureService {
         }
     }
 
-    private BleParams resolveTextModeBleParams() {
+    private BleParams resolveTextModeBleParams(boolean hasUsableTextCrop) {
         return new BleParams(
-                AsgConstants.TEXT_MODE_BLE_TARGET_WIDTH,
-                AsgConstants.TEXT_MODE_BLE_TARGET_HEIGHT,
+                hasUsableTextCrop
+                        ? AsgConstants.TEXT_MODE_BLE_TARGET_WIDTH
+                        : AsgConstants.TEXT_MODE_BLE_FALLBACK_TARGET_WIDTH,
+                hasUsableTextCrop
+                        ? AsgConstants.TEXT_MODE_BLE_TARGET_HEIGHT
+                        : AsgConstants.TEXT_MODE_BLE_FALLBACK_TARGET_HEIGHT,
                 AsgConstants.TEXT_MODE_AVIF_QUALITY);
     }
 
@@ -5248,29 +5252,8 @@ public class MediaCaptureService {
                                 }
                                 boolean textCropAlreadyPrepared =
                                         Boolean.TRUE.equals(photoTextCropPrepared.get(requestId));
-                                BleParams bleParams =
-                                        textModeRequested
-                                                ? resolveTextModeBleParams()
-                                                : tierBleParams;
+                                BleParams bleParams;
                                 BleCodec codec = BlePhotoEncodingPolicy.selectCodec();
-                                logBlePhotoStep(
-                                        requestId,
-                                        "compress_resolve_params",
-                                        "size="
-                                                + requestedSize
-                                                + ", mode="
-                                                + requestedMode
-                                                + ", target="
-                                                + bleParams.targetWidth
-                                                + "x"
-                                                + bleParams.targetHeight
-                                                + ", codec="
-                                                + codec
-                                                + ", quality="
-                                                + (codec == BleCodec.AVIF
-                                                        ? bleParams.avifQuality
-                                                        : AsgConstants
-                                                                .BLE_PHOTO_JPEG_FAST_QUALITY));
                                 logBlePhotoStep(
                                         requestId,
                                         "text_mode_prepare",
@@ -5278,25 +5261,6 @@ public class MediaCaptureService {
                                                 + requestedMode
                                                 + ", canonicalCropPrepared="
                                                 + textCropAlreadyPrepared);
-                                if (textModeRequested && bleParams != tierBleParams) {
-                                    Log.d(
-                                            TAG,
-                                            "Text mode: using dedicated BLE downscale "
-                                                    + bleParams.targetWidth
-                                                    + "x"
-                                                    + bleParams.targetHeight
-                                                    + " (cfg AVIF q"
-                                                    + bleParams.avifQuality
-                                                    + ") (size tier "
-                                                    + requestedSize
-                                                    + " would use "
-                                                    + tierBleParams.targetWidth
-                                                    + "x"
-                                                    + tierBleParams.targetHeight
-                                                    + " (cfg AVIF q"
-                                                    + tierBleParams.avifQuality
-                                                    + "))");
-                                }
                                 boolean shouldCrop =
                                         AsgConstants.ENABLE_TEXT_REGION_CROP || textModeRequested;
                                 Log.i(
@@ -5362,6 +5326,53 @@ public class MediaCaptureService {
                                                     + (roi != null
                                                             ? " roi=" + roi.toShortString()
                                                             : " roi=full-frame"));
+                                }
+
+                                boolean hasUsableTextCrop =
+                                        textModeRequested
+                                                && (textCropAlreadyPrepared || roi != null);
+                                bleParams =
+                                        textModeRequested
+                                                ? resolveTextModeBleParams(hasUsableTextCrop)
+                                                : tierBleParams;
+                                logBlePhotoStep(
+                                        requestId,
+                                        "compress_resolve_params",
+                                        "size="
+                                                + requestedSize
+                                                + ", mode="
+                                                + requestedMode
+                                                + ", textCropAvailable="
+                                                + hasUsableTextCrop
+                                                + ", target="
+                                                + bleParams.targetWidth
+                                                + "x"
+                                                + bleParams.targetHeight
+                                                + ", codec="
+                                                + codec
+                                                + ", quality="
+                                                + (codec == BleCodec.AVIF
+                                                        ? bleParams.avifQuality
+                                                        : AsgConstants
+                                                                .BLE_PHOTO_JPEG_FAST_QUALITY));
+                                if (textModeRequested) {
+                                    Log.d(
+                                            TAG,
+                                            "Text mode: using "
+                                                    + (hasUsableTextCrop
+                                                            ? "detected-crop"
+                                                            : "full-frame fallback")
+                                                    + " BLE downscale "
+                                                    + bleParams.targetWidth
+                                                    + "x"
+                                                    + bleParams.targetHeight
+                                                    + " (size tier "
+                                                    + requestedSize
+                                                    + " would use "
+                                                    + tierBleParams.targetWidth
+                                                    + "x"
+                                                    + tierBleParams.targetHeight
+                                                    + ")");
                                 }
 
                                 int sourceWidth = 0;
