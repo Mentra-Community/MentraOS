@@ -126,7 +126,13 @@ public class AsgConstants {
     public static final long UART_RECOVERY_PROBE_SPACING_MS = 400;
 
     /** Parser-discarded bytes that indicate the two UART endpoints likely disagree on baud. */
-    public static final long UART_RUNTIME_RECOVERY_DISCARDED_BYTES = 2048;
+    public static final long UART_RUNTIME_RECOVERY_DISCARDED_BYTES = 24;
+
+    /** Corrupt UART reads that trigger a link probe even when each wrong-baud burst is tiny. */
+    public static final int UART_RUNTIME_RECOVERY_DISCARD_EVENTS = 4;
+
+    /** Idle time after a confirmed fast link before actively verifying that BES is still there. */
+    public static final long UART_HIGH_BAUD_IDLE_PROBE_MS = 15000;
 
     /** Number of version probes sent at each baud during live-link recovery. */
     public static final int UART_RUNTIME_RECOVERY_PROBES_PER_BAUD = 3;
