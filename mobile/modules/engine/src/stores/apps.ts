@@ -398,6 +398,13 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
         // before the spawn; run onStop to undo it so a refresh/reboot doesn't
         // resurrect a "running" app with no JS context.
         await startStopApp(app, false)
+        // Release the foreground slot claimed above; a failed launch must not
+        // leave a ghost core app skewing display arbitration. Skip if another
+        // standard app started (and claimed the slot) while this spawn was in
+        // flight.
+        if (app.type === "standard" && !get().apps.some((a) => a.running && a.type === "standard")) {
+          localDisplayManager.onCoreAppChange(null)
+        }
         return false
       }
     }
@@ -414,9 +421,11 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
     }
 
     // Release the display-manager's foreground slot. The foreground-only-one
-    // invariant means at most one standard app is ever running, so this is
-    // always releasing the app that currently holds it.
-    if (app.type === "standard") {
+    // invariant means at most one standard app is ever running, so a RUNNING
+    // standard app is always the current holder. The running guard keeps a
+    // stop() on an already-stopped standard app from clearing someone else's
+    // claim.
+    if (app.type === "standard" && app.running) {
       localDisplayManager.onCoreAppChange(null)
     }
 
