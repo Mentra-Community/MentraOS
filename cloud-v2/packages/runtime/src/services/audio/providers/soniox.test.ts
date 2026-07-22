@@ -33,6 +33,8 @@ type FakeToken = {
   language?: string;
   start_ms?: number;
   end_ms?: number;
+  /** Set on translation-session tokens; absent for same-language passthrough. */
+  translation_status?: "original" | "translation";
 };
 
 /**
@@ -178,6 +180,68 @@ async function makeProvider(): Promise<{
   });
   return { session, events, provider };
 }
+
+async function makeTranslationProvider(target: string): Promise<{
+  session: FakeSession;
+  events: TranscriptEvent[];
+  provider: Awaited<ReturnType<typeof createSonioxProvider>>;
+}> {
+  const session = new FakeSession();
+  const events: TranscriptEvent[] = [];
+  const provider = await createSonioxProvider({
+    scope: "user_xlate_test",
+    language: "auto",
+    targetLanguage: target,
+    client: fakeClient(session) as never,
+    onTranscript: (e) => events.push(e),
+  });
+  return { session, events, provider };
+}
+
+describe("SonioxProvider translation same-language passthrough", () => {
+  test("untagged tokens (spoken language == target) emit as transcription text with their source language", async () => {
+    const { session, events, provider } = await makeTranslationProvider("es-ES");
+
+    // Soniox emits NO translation_status when there is nothing to translate
+    // (verified live: EN speech -> target en). Simulate Spanish speech with a
+    // Spanish target: plain untagged tokens.
+    session.result([
+      { text: "Hola ", confidence: 0.9, is_final: false, language: "es" },
+      { text: "mundo", confidence: 0.9, is_final: false, language: "es" },
+    ]);
+    session.endpoint();
+    await wait(5);
+
+    const finals = events.filter((e) => e.isFinal);
+    expect(finals.length).toBe(1);
+    expect(finals[0]!.text).toBe("Hola mundo");
+    expect(finals[0]!.sourceLanguage).toBe("es");
+    expect(finals[0]!.originalText).toBeUndefined();
+
+    await provider.close();
+  });
+
+  test("cross-language windows still emit only the translation half with originalText", async () => {
+    const { session, events, provider } = await makeTranslationProvider("es-ES");
+
+    session.result([
+      { text: "Hello ", confidence: 0.9, is_final: false, language: "en", translation_status: "original" },
+      { text: "world", confidence: 0.9, is_final: false, language: "en", translation_status: "original" },
+      { text: "Hola ", confidence: 0.9, is_final: false, language: "es", translation_status: "translation" },
+      { text: "mundo", confidence: 0.9, is_final: false, language: "es", translation_status: "translation" },
+    ]);
+    session.endpoint();
+    await wait(5);
+
+    const finals = events.filter((e) => e.isFinal);
+    expect(finals.length).toBe(1);
+    expect(finals[0]!.text).toBe("Hola mundo");
+    expect(finals[0]!.originalText).toBe("Hello world");
+    expect(finals[0]!.sourceLanguage).toBe("en");
+
+    await provider.close();
+  });
+});
 
 describe("sonioxLanguageHints", () => {
   test("a specific language becomes its own bare-code hint (region stripped)", () => {
