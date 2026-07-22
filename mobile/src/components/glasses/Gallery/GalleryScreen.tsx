@@ -533,7 +533,7 @@ export function GalleryScreen() {
   )
 
   // Handle photo sharing — copies to cache dir for Android FileProvider compatibility
-  const handleSharePhoto = async (photo: PhotoInfo) => {
+  const handleSharePhoto = useCallback(async (photo: PhotoInfo) => {
     if (!photo) {
       console.error("No photo provided to share")
       return
@@ -589,7 +589,7 @@ export function GalleryScreen() {
       console.error("Error sharing photo:", error)
       showAlert("Error", "Failed to share. Please try again.", [{text: translate("common:ok")}])
     }
-  }
+  }, [])
 
   // Handle sync button press - delegate to the island gallery service.
   const handleSyncPress = async () => {
@@ -954,6 +954,18 @@ export function GalleryScreen() {
 
     return items
   }, [syncState, syncQueue, downloadedPhotos])
+
+  const viewerPhotos = useMemo(
+    () => allPhotos.map((item) => item.photo).filter((photo): photo is PhotoInfo => photo !== undefined),
+    [allPhotos],
+  )
+  const selectedPhotoIndex = useMemo(
+    () => (selectedPhoto ? viewerPhotos.findIndex((photo) => photo.name === selectedPhoto.name) : -1),
+    [selectedPhoto, viewerPhotos],
+  )
+  const closeMediaViewer = useCallback(() => {
+    setSelectedPhoto(null)
+  }, [])
 
   // Create placeholder items during initial load (only if loading is taking a while)
   const placeholderItems = useMemo(() => {
@@ -1432,35 +1444,16 @@ export function GalleryScreen() {
         {renderStatusBar()}
 
         {/* Gallery viewer - direct open (no floating transition) */}
-        {selectedPhoto &&
-          (() => {
-            // Calculate the actual index in the flattened photos array
-            // GalleryItem.index includes sync queue offsets, so we need to find the real position
-            const flatPhotos = allPhotos.map((item) => item.photo).filter((p): p is PhotoInfo => p !== undefined)
-            const actualIndex = flatPhotos.findIndex((p) => p?.name === selectedPhoto.name)
-
-            if (actualIndex === -1) {
-              console.error("[GalleryScreen] ❌ Selected photo not found in photos array:", selectedPhoto.name)
-              return null
-            }
-
-            console.log("[GalleryScreen] 🎬 Rendering MediaViewer with", flatPhotos.length, "photos")
-            console.log("[GalleryScreen] 🎬 actualIndex for", selectedPhoto.name, ":", actualIndex)
-
-            return (
-              <MediaViewer
-                visible={true}
-                photo={selectedPhoto}
-                photos={flatPhotos}
-                initialIndex={actualIndex}
-                onClose={() => {
-                  console.log("[GalleryScreen] 🎬 MediaViewer closed by user")
-                  setSelectedPhoto(null)
-                }}
-                onShare={handleSharePhoto}
-              />
-            )
-          })()}
+        {selectedPhoto && selectedPhotoIndex >= 0 && (
+          <MediaViewer
+            visible={true}
+            photo={selectedPhoto}
+            photos={viewerPhotos}
+            initialIndex={selectedPhotoIndex}
+            onClose={closeMediaViewer}
+            onShare={handleSharePhoto}
+          />
+        )}
       </View>
     </>
   )

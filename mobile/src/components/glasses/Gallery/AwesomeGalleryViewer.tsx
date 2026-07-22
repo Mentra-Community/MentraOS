@@ -8,7 +8,7 @@ import BottomSheet from "@gorhom/bottom-sheet"
 import {Image} from "expo-image"
 import {useState, useRef, useEffect, useCallback, useMemo, memo, type ElementRef} from "react"
 // eslint-disable-next-line no-restricted-imports
-import {View, TouchableOpacity, Modal, StatusBar, Text, useWindowDimensions} from "react-native"
+import {View, TouchableOpacity, Modal, Platform, StatusBar, Text, useWindowDimensions} from "react-native"
 import Gallery, {GalleryRef} from "react-native-awesome-gallery"
 import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
 import MaterialCommunityIcons from "react-native-vector-icons/MaterialCommunityIcons"
@@ -369,7 +369,9 @@ const ImageItem = memo(function ImageItem({
         priority="high"
         cachePolicy="memory-disk"
         transition={100}
-        allowDownscaling={false}
+        // Full-size glasses photos decode into very large Android bitmaps. Let
+        // Expo Image size them for the viewport there; keep iOS zoom fidelity.
+        allowDownscaling={Platform.OS === "android"}
         onLoad={(e) => {
           // Report dimensions back to Gallery for proper scaling - only once
           if (e.source?.width && e.source?.height && !hasReportedDimensions.current) {
@@ -446,27 +448,19 @@ export function AwesomeGalleryViewer({visible, photos, initialIndex, onClose, on
   const galleryRef = useRef<GalleryRef>(null)
   const metadataSheetRef = useRef<BottomSheet>(null)
 
-  console.log("🎨 [AwesomeGalleryViewer] === RENDER START ===")
-  console.log("🎨 [AwesomeGalleryViewer] visible:", visible)
-  console.log("🎨 [AwesomeGalleryViewer] photos.length:", photos.length)
-  console.log("🎨 [AwesomeGalleryViewer] initialIndex:", initialIndex)
-  console.log(
-    "🎨 [AwesomeGalleryViewer] photos:",
-    photos.map((p) => ({name: p.name, isVideo: p.is_video})),
-  )
-
   // Reset index when modal opens
   useEffect(() => {
     if (visible) {
-      console.log("🎨 [AwesomeGalleryViewer] Modal opened, setting index to:", initialIndex)
       setCurrentIndex(initialIndex)
       setIsMetadataOpen(false)
       metadataSheetRef.current?.close()
       // Reset gallery to initial position
-      setTimeout(() => {
+      const resetTimer = setTimeout(() => {
         galleryRef.current?.setIndex(initialIndex, false)
       }, 50)
+      return () => clearTimeout(resetTimer)
     }
+    return undefined
   }, [visible, initialIndex])
 
   const recordDimensions = useCallback((name: string, dimensions: MediaDimensions) => {
@@ -494,15 +488,6 @@ export function AwesomeGalleryViewer({visible, photos, initialIndex, onClose, on
 
       const isActiveItem = index === currentIndex
 
-      console.log(
-        "🎨 [AwesomeGalleryViewer] Rendering item:",
-        item.name,
-        "isVideo:",
-        isVideo,
-        "isActive:",
-        isActiveItem,
-      )
-
       if (isVideo) {
         return (
           <VideoPlayerItem
@@ -529,25 +514,44 @@ export function AwesomeGalleryViewer({visible, photos, initialIndex, onClose, on
   // Memoized keyExtractor
   const keyExtractor = useCallback((item: PhotoInfo, index: number) => `${item.name}-${index}`, [])
 
+  const handleIndexChange = useCallback((newIndex: number) => {
+    setCurrentIndex(newIndex)
+  }, [])
+
+  const handleRequestClose = useCallback(() => {
+    if (isMetadataOpen) {
+      metadataSheetRef.current?.close()
+      return
+    }
+    onClose()
+  }, [isMetadataOpen, onClose])
+
+  const handleShowDetails = useCallback(() => {
+    metadataSheetRef.current?.snapToIndex(0)
+  }, [])
+
+  const handleMetadataChange = useCallback((index: number) => {
+    setIsMetadataOpen(index >= 0)
+  }, [])
+
   if (!visible || photos.length === 0) {
     return null
   }
 
   return (
-    <Modal visible={visible} transparent={false} animationType="fade" onRequestClose={onClose} statusBarTranslucent>
+    <Modal
+      visible={visible}
+      transparent={false}
+      animationType="fade"
+      onRequestClose={handleRequestClose}
+      statusBarTranslucent>
       <StatusBar hidden />
       <Gallery
         ref={galleryRef}
         data={photos}
         initialIndex={initialIndex}
-        onIndexChange={(newIndex) => {
-          console.log("🎨 [AwesomeGalleryViewer] Index changed to:", newIndex, photos[newIndex]?.name)
-          setCurrentIndex(newIndex)
-        }}
-        onSwipeToClose={() => {
-          console.log("🎨 [AwesomeGalleryViewer] Swipe to close triggered")
-          onClose()
-        }}
+        onIndexChange={handleIndexChange}
+        onSwipeToClose={onClose}
         renderItem={renderItem}
         keyExtractor={keyExtractor}
         numToRender={3}
@@ -560,27 +564,24 @@ export function AwesomeGalleryViewer({visible, photos, initialIndex, onClose, on
         disableVerticalSwipe={isMetadataOpen}
         disableTransitionOnScaledImage={true}
         loop={false}
-        onTap={() => {
-          console.log("🎨 [AwesomeGalleryViewer] Gallery tapped")
-        }}
       />
 
       {/* Custom overlay */}
-      <CustomOverlay
-        onClose={onClose}
-        currentIndex={currentIndex}
-        total={photos.length}
-        onDetails={() => metadataSheetRef.current?.snapToIndex(0)}
-        onShare={onShare ? () => onShare(photos[currentIndex]) : undefined}
-      />
+      {!isMetadataOpen && (
+        <CustomOverlay
+          onClose={onClose}
+          currentIndex={currentIndex}
+          total={photos.length}
+          onDetails={handleShowDetails}
+          onShare={onShare ? () => onShare(photos[currentIndex]) : undefined}
+        />
+      )}
 
       <MediaMetadataSheet
         bottomSheetRef={metadataSheetRef}
         photo={photos[currentIndex]}
         dimensions={mediaDimensions[photos[currentIndex].name]}
-        onChange={(index) => {
-          setIsMetadataOpen(index >= 0)
-        }}
+        onChange={handleMetadataChange}
       />
     </Modal>
   )
