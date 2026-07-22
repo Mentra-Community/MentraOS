@@ -35,6 +35,9 @@ export default function PairingSuccessScreen() {
   const glassesImage = deviceModel === DeviceTypes.AR99 ? getAr99ImageSource(ar99ProjectName) : getGlassesImage(deviceModel)
 
   const buildLiveStack = useCallback(async (): Promise<string[]> => {
+    if (deviceModel === DeviceTypes.AR99) {
+      return []
+    }
     const features = getModelCapabilities(deviceModel as DeviceTypes)
     if (!features.hasOta) {
       return []

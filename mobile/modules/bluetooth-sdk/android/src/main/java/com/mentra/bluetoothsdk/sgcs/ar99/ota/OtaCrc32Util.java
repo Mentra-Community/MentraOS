@@ -1,4 +1,4 @@
-package com.mentra.bluetoothsdk.ota;
+package com.mentra.bluetoothsdk.sgcs.ar99.ota;
 
 import java.util.zip.CRC32;
 

@@ -179,7 +179,12 @@ export const HARDWARE_CAPABILITIES: Record<string, Capabilities> = {
   [DeviceTypes.AR99]: {
     ...evenRealitiesG1,
     modelName: DeviceTypes.AR99,
+    display: {
+      ...evenRealitiesG1.display,
+      canDisplayBitmap: false,
+    },
     hasMicrophone: true,
+    hasOta: true,
     microphone: {
       count: 1,
       hasVAD: false,

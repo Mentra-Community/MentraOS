@@ -151,4 +151,3 @@ function resolveFirmwareUrl(url: string): string {
   if (/^https?:\/\//i.test(url)) return url
   return new URL(url.replace(/^\/+/, ""), getAr99ApiConfig().baseUrl).toString()
 }
-

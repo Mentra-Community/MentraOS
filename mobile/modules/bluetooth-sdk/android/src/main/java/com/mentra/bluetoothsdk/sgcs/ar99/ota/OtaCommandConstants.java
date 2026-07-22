@@ -1,4 +1,4 @@
-package com.mentra.bluetoothsdk.ota;
+package com.mentra.bluetoothsdk.sgcs.ar99.ota;
 
 public final class OtaCommandConstants {
   private OtaCommandConstants() {}

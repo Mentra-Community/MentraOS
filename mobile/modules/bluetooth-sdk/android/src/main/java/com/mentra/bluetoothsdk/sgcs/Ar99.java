@@ -25,8 +25,8 @@ import com.mentra.bluetoothsdk.Bridge;
 import com.mentra.bluetoothsdk.DeviceManager;
 import com.mentra.bluetoothsdk.DeviceStore;
 import com.mentra.bluetoothsdk.PhotoRequest;
-import com.mentra.bluetoothsdk.ota.Ar99OtaManager;
-import com.mentra.bluetoothsdk.ota.OtaGattTransport;
+import com.mentra.bluetoothsdk.sgcs.ar99.ota.Ar99OtaManager;
+import com.mentra.bluetoothsdk.sgcs.ar99.ota.OtaGattTransport;
 import com.mentra.bluetoothsdk.utils.ConnTypes;
 import com.mentra.bluetoothsdk.utils.DeviceTypes;
 import com.mentra.bluetoothsdk.utils.audio.Ar99OpusPcmDecoder;
@@ -129,7 +129,7 @@ public class Ar99 extends SGCManager {
   private static final long READY_BRIGHTNESS_DELAY_MS = 280L;
   private static final long READY_BATTERY_DELAY_MS = 420L;
   private static final long DISPLAY_SESSION_IDLE_RESTART_MS = 8_000L;
-  private static final String[] NAME_PREFIXES = new String[] {"AR99", "AF98", "AF99", "HVXM", "HVXF"};
+  static final String[] SUPPORTED_PROJECT_NAMES = new String[] {"AR99", "AF99", "HVXM", "HVXF"};
 
   private static final int CTRL_SENDER_MASK = 0x03;
 
@@ -2199,6 +2199,7 @@ public class Ar99 extends SGCManager {
               new Ar99OpusPcmDecoder.Callback() {
                 @Override
                 public void onPcmDecoded(byte[] pcmData) {
+                  DeviceManager.getInstance().reportGlassesAudioActivity();
                   DeviceManager.getInstance().handlePcm(pcmData);
                 }
 
@@ -2387,23 +2388,16 @@ public class Ar99 extends SGCManager {
   // ---------------- Advertisement parsing (BtUtil-like) ----------------
 
   private boolean matchesAr99(String name, String projectName) {
-    String candidate = name != null ? name.trim() : "";
-    for (String prefix : NAME_PREFIXES) {
-      if (startsWithIgnoreCase(candidate, prefix)) return true;
-    }
+    return isSupportedProjectName(projectName);
+  }
+
+  static boolean isSupportedProjectName(String projectName) {
     String project = projectName != null ? projectName.trim() : "";
-    for (String prefix : NAME_PREFIXES) {
-      if (startsWithIgnoreCase(project, prefix)) return true;
+    for (String supported : SUPPORTED_PROJECT_NAMES) {
+      if (project.equalsIgnoreCase(supported)) return true;
     }
     return false;
   }
-
-  private static boolean startsWithIgnoreCase(String s, String prefix) {
-    if (s == null || prefix == null) return false;
-    if (s.length() < prefix.length()) return false;
-    return s.substring(0, prefix.length()).equalsIgnoreCase(prefix);
-  }
-
   private ParsedAdvertisement parseAdvertisement(byte[] scanRecord) {
     if (scanRecord == null || scanRecord.length == 0) return null;
 

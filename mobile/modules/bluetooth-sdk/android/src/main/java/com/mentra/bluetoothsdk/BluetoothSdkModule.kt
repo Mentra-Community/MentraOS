@@ -5,9 +5,9 @@ import com.mentra.bluetoothsdk.utils.DeviceTypes
 import expo.modules.kotlin.functions.Coroutine
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
-import java.security.MessageDigest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.security.MessageDigest
 
 class BluetoothSdkModule : Module() {
     private var sdk: MentraBluetoothSdk? = null
@@ -250,7 +250,7 @@ class BluetoothSdkModule : Module() {
             "ota_start_ack",
             "ota_status",
             "ar99_ota_status",
-            // Nex / BLE debug (NexEventUtils â†?Bridge.sendTypedMessage)
+            // Nex / BLE debug (NexEventUtils ï¿½?Bridge.sendTypedMessage)
             "send_command_to_ble",
             "receive_command_from_ble",
             "miniapp_selected",
@@ -406,7 +406,7 @@ class BluetoothSdkModule : Module() {
             deviceManager?.sgc?.dbg2()
         }
 
-        // Stub on Android â€?iOS uses this for the jetsam stress test.
+        // Stub on Android ï¿½?iOS uses this for the jetsam stress test.
         Function("getMemoryMB") { -> 0.0 }
 
         // MARK: - Incident Reporting
@@ -525,12 +525,12 @@ class BluetoothSdkModule : Module() {
 
         AsyncFunction("sendAr99FactoryReset") { requireSdk().sendAr99FactoryReset() }
 
-                Function("buildAr99OtaSignature") { secret: String, appName: String, currentVersion: String, serialNumber: String, nonce: String ->
+
+        Function("buildAr99OtaSignature") { secret: String, appName: String, currentVersion: String, serialNumber: String, nonce: String ->
             val raw = secret + appName + "juxinOTA" + currentVersion + serialNumber.trim() + nonce
             val digest = MessageDigest.getInstance("MD5").digest(raw.toByteArray(Charsets.UTF_8))
             digest.joinToString("") { "%02x".format(it.toInt() and 0xff) }
         }
-
         // MARK: - Version Info Commands
 
         AsyncFunction("requestVersionInfo") { requireSdk().requestVersionInfo().toMap() }
@@ -685,7 +685,7 @@ class BluetoothSdkModule : Module() {
         }
 
         // Runs on Dispatchers.IO, not the shared Expo AsyncFunctionQueue: bz2/tar
-        // extraction of the 100â€?50MB model is a multi-minute, CPU-bound job. On the
+        // extraction of the 100ï¿½?50MB model is a multi-minute, CPU-bound job. On the
         // shared queue it froze every other native call in the app until it finished.
         AsyncFunction("extractTarBz2") Coroutine { sourcePath: String, destinationPath: String ->
             withContext(Dispatchers.IO) {

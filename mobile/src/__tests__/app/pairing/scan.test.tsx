@@ -17,6 +17,7 @@ jest.mock("@/../../cloud/packages/types/src", () => ({
     LIVE: "Mentra Live",
     G1: "Even Realities G1",
     G2: "Even Realities G2",
+    AR99: "AR99",
   },
 }))
 
@@ -103,6 +104,22 @@ jest.mock("@/components/ui/GlassView", () => {
   return MockGlassView
 })
 jest.mock("@/utils/getGlassesImage", () => ({
+  AR99_MODEL_OPTIONS: [
+    {projectName: "AR99", displayName: "Xingyi AR99"},
+    {projectName: "AF99", displayName: "Xingyi AR99 CAT"},
+    {projectName: "HVXM", displayName: "HOLOVOX Legacy"},
+    {projectName: "HVXF", displayName: "HOLOVOX Luna"},
+  ],
+  getAr99DisplayName: jest.fn((projectName?: string) => {
+    const match = [
+      {projectName: "AR99", displayName: "Xingyi AR99"},
+      {projectName: "AF99", displayName: "Xingyi AR99 CAT"},
+      {projectName: "HVXM", displayName: "HOLOVOX Legacy"},
+      {projectName: "HVXF", displayName: "HOLOVOX Luna"},
+    ].find((option) => option.projectName === projectName)
+    return match?.displayName ?? "AR99"
+  }),
+  getAr99ImageSource: jest.fn(() => 1),
   getGlassesOpenImage: jest.fn(() => 1),
 }))
 jest.mock("@/components/ignite", () => {
@@ -214,7 +231,7 @@ describe("pairing scan screen", () => {
       })
     })
 
-    // Two-phase identity: picking a device must NOT write the default identity —
+    // Two-phase identity: picking a device must NOT write the default identity -
     // the scan marks the model pending and the native layer promotes on success.
     expect(toolkit.pairing.setDefault).not.toHaveBeenCalled()
     expect(useSettingsStore.getState().getSetting(SETTINGS.device_name.key)).toBe("")
@@ -232,7 +249,7 @@ describe("pairing scan screen", () => {
   it("back-out delegates cleanup to the live abandonAttempt and keeps the pending marker", async () => {
     // No entry snapshot: the abandon decision must come from the LIVE
     // default-device read, because a pairing can promote while the flow is
-    // open — an entry snapshot would forget that brand-new pairing.
+    // open - an entry snapshot would forget that brand-new pairing.
     render(<SelectGlassesBluetoothScreen />)
 
     const backHandler = (focusEffectPreventBack as jest.Mock).mock.calls[0][0]
@@ -270,5 +287,44 @@ describe("pairing scan screen", () => {
         deviceName: "NOTREQUIREDSKIP",
       })
     })
+  })
+  it("filters AR99-family scan results to the selected project", async () => {
+    ;(useLocalSearchParams as jest.Mock).mockReturnValue({deviceModel: "AR99", ar99ProjectName: "HVXM"})
+    useCoreStore.setState({
+      searchResults: [
+        {id: "legacy", model: "AR99", projectName: "HVXM", name: "MAC: 11:22:33:44:55:66", address: "AA:BB:CC:DD:EE:11"},
+        {id: "luna", model: "AR99", projectName: "HVXF", name: "MAC: 22:33:44:55:66:77", address: "AA:BB:CC:DD:EE:22"},
+        {id: "missing", model: "AR99", name: "AR99_123456", address: "AA:BB:CC:DD:EE:33"},
+        {id: "unsupported", model: "AR99", projectName: "AF98", name: "AF98_123456", address: "AA:BB:CC:DD:EE:44"},
+      ],
+    })
+
+    const {getByText, queryByText} = render(<SelectGlassesBluetoothScreen />)
+
+    await waitFor(() => {
+      expect(toolkit.pairing.scan).toHaveBeenCalledWith("AR99")
+    })
+
+    expect(getByText("HOLOVOX Legacy")).toBeTruthy()
+    expect(queryByText("HOLOVOX Luna")).toBeNull()
+    expect(queryByText("AR99_123456")).toBeNull()
+    expect(queryByText("AF98_123456")).toBeNull()
+  })
+
+  it("does not wildcard AR99-family results when no project was selected", async () => {
+    ;(useLocalSearchParams as jest.Mock).mockReturnValue({deviceModel: "AR99"})
+    useCoreStore.setState({
+      searchResults: [
+        {id: "ar99", model: "AR99", projectName: "AR99", name: "SN: 123456", address: "AA:BB:CC:DD:EE:55"},
+      ],
+    })
+
+    const {queryByText} = render(<SelectGlassesBluetoothScreen />)
+
+    await waitFor(() => {
+      expect(toolkit.pairing.scan).toHaveBeenCalledWith("AR99")
+    })
+
+    expect(queryByText("Xingyi AR99")).toBeNull()
   })
 })

@@ -2,7 +2,7 @@
 //  Ar99.swift
 //  MentraBluetoothSDK
 //
-//  Native iOS implementation for AR99/AF98/AF99 glasses.
+//  Native iOS implementation for AR99/AF99/HVXM/HVXF glasses.
 //
 
 import AVFoundation
@@ -511,7 +511,7 @@ final class Ar99: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SGCM
     var type = DeviceTypes.AR99
     let hasMic = true
 
-    private let namePrefixes = ["AR99", "AF98", "AF99", "HVXM", "HVXF"]
+    private let supportedProjectNames = ["AR99", "AF99", "HVXM", "HVXF"]
     private var centralManager: CBCentralManager?
     private var peripheral: CBPeripheral?
     private var controlWriteCharacteristic: CBCharacteristic?
@@ -1850,6 +1850,7 @@ final class Ar99: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SGCM
     private func ensureOpusDecoder() {
         guard opusDecoder == nil else { return }
         opusDecoder = Ar99OpusPcmDecoder { pcm in
+            DeviceManager.shared.reportGlassesAudioActivity()
             DeviceManager.shared.handlePcm(pcm)
         }
         if opusDecoder == nil {
@@ -2320,13 +2321,15 @@ final class Ar99: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SGCM
         return nil
     }
 
-    private func matchesAr99(name: String?, projectName: String?) -> Bool {
-        let candidates = [name, projectName].compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
-        return candidates.contains { candidate in
-            namePrefixes.contains { prefix in
-                candidate.range(of: prefix, options: [.caseInsensitive, .anchored]) != nil
-            }
+    private func matchesAr99(name _: String?, projectName: String?) -> Bool {
+        isSupportedProjectName(projectName)
+    }
+
+    private func isSupportedProjectName(_ projectName: String?) -> Bool {
+        guard let projectName = projectName?.trimmingCharacters(in: .whitespacesAndNewlines), !projectName.isEmpty else {
+            return false
         }
+        return supportedProjectNames.contains { $0.caseInsensitiveCompare(projectName) == .orderedSame }
     }
 
     private func trimAscii4(_ data: Data, offset: Int) -> String {

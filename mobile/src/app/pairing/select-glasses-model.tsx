@@ -79,19 +79,14 @@ export default function SelectGlassesModelScreen() {
 
   const SUPER_MODE_ONLY_MODELS = new Set<string>([DeviceTypes.NEX, DeviceTypes.NIMO])
 
-  const defaultAr99Option = AR99_MODEL_OPTIONS.find((option) => option.projectName === "AR99")
-  const ar99Options: GlassesOption[] = defaultAr99Option
-    ? [
-        {
-          key: defaultAr99Option.key,
-          deviceModel: defaultAr99Option.deviceModel,
-          projectName: defaultAr99Option.projectName,
-          manufacturerName: defaultAr99Option.manufacturerName,
-          displayName: defaultAr99Option.displayName,
-          imageSource: defaultAr99Option.imageSource,
-        },
-      ]
-    : []
+  const ar99Options: GlassesOption[] = AR99_MODEL_OPTIONS.map((option) => ({
+    key: option.key,
+    deviceModel: option.deviceModel,
+    projectName: option.projectName,
+    manufacturerName: option.manufacturerName,
+    displayName: option.displayName,
+    imageSource: option.imageSource,
+  }))
 
   const sharedOptions: GlassesOption[] = [
     ...ar99Options,
@@ -109,7 +104,7 @@ export default function SelectGlassesModelScreen() {
   const triggerGlassesPairingGuide = async (option: GlassesOption) => {
     push("/pairing/prep", {
       deviceModel: option.deviceModel,
-      ar99ProjectName: option.deviceModel === DeviceTypes.AR99 ? undefined : option.projectName,
+      ar99ProjectName: option.projectName,
     })
   }
 

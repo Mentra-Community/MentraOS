@@ -35,4 +35,3 @@ const AR99_API_CONFIGS: Record<Ar99ApiEnv, Ar99ApiConfig> = {
 export function getAr99ApiConfig(): Ar99ApiConfig {
   return AR99_API_CONFIGS[AR99_API_ENV]
 }
-

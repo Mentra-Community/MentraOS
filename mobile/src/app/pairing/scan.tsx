@@ -18,9 +18,10 @@ import {translate} from "@/i18n"
 import {useNavigationStore} from "@/stores/navigation"
 import showAlert from "@/utils/AlertUtils"
 import {PermissionFeatures, requestFeaturePermissions} from "@/utils/PermissionsUtils"
-import {getAr99DisplayName, getAr99ImageSource, getGlassesOpenImage} from "@/utils/getGlassesImage"
+import {AR99_MODEL_OPTIONS, getAr99DisplayName, getAr99ImageSource, getGlassesOpenImage} from "@/utils/getGlassesImage"
 
 const normalizeProjectName = (value?: string | null) => value?.trim().toUpperCase() ?? ""
+const SUPPORTED_AR99_PROJECT_NAMES = new Set<string>(AR99_MODEL_OPTIONS.map((option) => option.projectName))
 
 export default function SelectGlassesBluetoothScreen() {
   const {deviceModel, ar99ProjectName} = useLocalSearchParams() as {deviceModel: DeviceModel; ar99ProjectName?: string}
@@ -47,9 +48,13 @@ export default function SelectGlassesBluetoothScreen() {
       return result.model === deviceModel
     }
     if (result.model !== DeviceTypes.AR99) return false
+
+    const resultProjectName = normalizeProjectName(result.projectName)
+    if (!SUPPORTED_AR99_PROJECT_NAMES.has(resultProjectName)) return false
+
     const selectedProjectName = normalizeProjectName(ar99ProjectName)
-    if (!selectedProjectName) return true
-    return normalizeProjectName(result.projectName) === selectedProjectName
+    if (!selectedProjectName) return false
+    return resultProjectName === selectedProjectName
   }
 
   useEffect(() => {

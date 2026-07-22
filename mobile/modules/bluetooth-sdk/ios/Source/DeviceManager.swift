@@ -22,7 +22,7 @@ struct ViewState {
     var text: String
     var data: String?
     var animationData: [String: Any]?
-    // Optional container position/size â€?used by bitmap_view and positioned_text (G2; ignored by others)
+    // Optional container position/size - used by bitmap_view and positioned_text (G2; ignored by others)
     var bmpX: Int32? = nil
     var bmpY: Int32? = nil
     var bmpWidth: Int32? = nil
@@ -76,7 +76,7 @@ struct ViewState {
 
         if isPaired {
             // Device is paired! Don't activate it - let PhoneMic.swift activate when recording starts
-            Bridge.log("Audio: âœ?Mentra Live is paired (preserving A2DP for music)")
+            Bridge.log("Audio: Mentra Live is paired (preserving A2DP for music)")
             glassesBluetoothClassicConnected = true
         } else {
             glassesBluetoothClassicConnected = false
@@ -88,7 +88,7 @@ struct ViewState {
                 guard let self = self else { return }
 
                 if connected {
-                    Bridge.log("Audio: âœ?Device paired and connected")
+                    Bridge.log("Audio: Device paired and connected")
                     // Don't activate - let PhoneMic.swift handle that when recording starts
                     self.glassesBluetoothClassicConnected = true
                 } else {
@@ -325,7 +325,7 @@ struct ViewState {
         ),
     ]
 
-    // Scene slots â€?one whole SceneFrame per view (main/dashboard), parallel to
+    // Scene slots - one whole SceneFrame per view (main/dashboard), parallel to
     // viewStates. When a slot holds a scene, viewStates carries a "scene"
     // sentinel so sendCurrentState routes here. Holding the WHOLE frame keeps
     // native re-dispatch coherent (dashboard exit re-applies a complete scene).
@@ -420,6 +420,10 @@ struct ViewState {
         }
         // Forward to handlePcm which handles SDK audio events and encoding.
         handlePcm(pcmData)
+    }
+
+    func reportGlassesAudioActivity() {
+        lastLc3Event = Date()
     }
 
     func handlePcm(_ pcmData: Data) {
@@ -557,7 +561,7 @@ struct ViewState {
     private func playStartupSequence() {
         Bridge.log("MAN: playStartupSequence()")
         // Arrow frames for the animation
-        let arrowFrames = ["â†?, "â†?, "â†?, "â†?]
+        let arrowFrames = ["â†‘", "â†—", "â†‘", "â†–"]
 
         let delay = 0.25 // Frame delay in seconds
         let totalCycles = 2 // Number of animation cycles
@@ -729,7 +733,7 @@ struct ViewState {
                 )
             case "positioned_text":
                 Bridge.log(
-                    "MAN: positioned_text â†?text='\(currentViewState.text)' rect=\(currentViewState.bmpX ?? 0),\(currentViewState.bmpY ?? 0) \(currentViewState.bmpWidth ?? 576)x\(currentViewState.bmpHeight ?? 288)"
+                    "MAN: positioned_text -> text='\(currentViewState.text)' rect=\(currentViewState.bmpX ?? 0),\(currentViewState.bmpY ?? 0) \(currentViewState.bmpWidth ?? 576)x\(currentViewState.bmpHeight ?? 288)"
                 )
                 await sgc?.sendPositionedText(
                     currentViewState.text,
@@ -863,7 +867,7 @@ struct ViewState {
             let deviceName = session.availableInputs?.first(where: {
                 $0.portName.localizedCaseInsensitiveContains(audioDevicePattern)
             })?.portName
-            Bridge.log("MAN: âœ?Successfully detected newly paired device '\(deviceName)'")
+            Bridge.log("MAN: Successfully detected newly paired device '\(deviceName)'")
             glassesBluetoothClassicConnected = true
         } else {
             glassesBluetoothClassicConnected = false
@@ -930,7 +934,7 @@ struct ViewState {
             // stale/torn-down connection.
             guard let sgc = self?.sgc else { return }
             let h = DeviceStore.shared.get("bluetooth", "dashboard_height") as? Int ?? 4
-            // Fall back to the canonical default (2), matching DeviceStore â€?not 1.
+            // Fall back to the canonical default (2), matching DeviceStore, not 1.
             let rawDepth = DeviceStore.shared.get("bluetooth", "dashboard_depth") as? Int ?? 2
             let d = min(max(rawDepth, 1), 4)
             sgc.setDashboardPosition(h, d)
@@ -1174,7 +1178,7 @@ struct ViewState {
             // Legacyâ†’scene handoff: stale legacy content (e.g. a cloud app's
             // text wall) must not linger under the scene's elements.
             // clearDisplay is the per-device "wipe what's there" (blank-in-place
-            // on G2 â€?no page rebuild).
+            // on G2 - no page rebuild).
             let prevLegacyType = viewStates[stateIndex].layoutType
             if !prevLegacyType.isEmpty, prevLegacyType != "clear_view", prevLegacyType != "scene" {
                 sgc?.clearDisplay()
@@ -1193,7 +1197,7 @@ struct ViewState {
         }
 
         // Store the REDISPATCH form: any later sendCurrentState (dashboard
-        // exit, head-up return) must repaint the whole frame â€?the original
+        // exit, head-up return) must repaint the whole frame - the original
         // annotations are only valid for the first dispatch right now.
         sceneStates[stateIndex] = frame.asReplay()
         viewStates[stateIndex] = ViewState(
@@ -1207,7 +1211,7 @@ struct ViewState {
         }
     }
 
-    /// Guarded scene dispatch â€?mirrors sendCurrentState's send conditions.
+    /// Guarded scene dispatch - mirrors sendCurrentState's send conditions.
     private func dispatchSceneFrame(_ frame: SceneFrame) {
         if screenDisabled { return }
         if sgc?.type.contains(DeviceTypes.SIMULATED) ?? true { return }
@@ -1480,7 +1484,7 @@ struct ViewState {
         )
     }
 
-    /// Mentra Live only: K900 `cs_getvol` / `sr_getvol` (step volume 0â€?5).
+    /// Mentra Live only: K900 `cs_getvol` / `sr_getvol` (step volume 0-5).
     func getGlassesMediaVolume() async throws -> [String: Any] {
         guard let live = sgc as? MentraLive else {
             throw NSError(
@@ -1541,7 +1545,7 @@ struct ViewState {
         )
         guard let sgc else {
             Bridge.log(
-                "MAN: PHOTO PIPELINE â€?sgc is null (glasses not connected); dropping requestId=\(routed.requestId)"
+                "MAN: PHOTO PIPELINE - sgc is null (glasses not connected); dropping requestId=\(routed.requestId)"
             )
             return
         }
