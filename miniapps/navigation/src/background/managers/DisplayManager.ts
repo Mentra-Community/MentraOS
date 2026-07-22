@@ -24,8 +24,10 @@ export class DisplayManager {
     map: {x: 330, y: 70, w: 150, h: 150},
     arrow: {x: 0, y: 182, w: 38, h: 38},
     // Wall-clock current time, top-LEFT (the phone's clock, sent each refresh).
-    // One firmware text line tall (see stats note below).
-    clock: {x: 0, y: 0, w: 54, h: 26},
+    // The widest 24-hour clock is 52px in the G2 font, and native adds 4px of
+    // padding on each side. Keep a little extra headroom so it never wraps into
+    // a clipped second line.
+    clock: {x: 0, y: 0, w: 64, h: 26},
     // Trip stats (distance remaining + ETA), top-RIGHT — mirrors the clock.
     // No text alignment primitive exists, so the box is positioned right and
     // the (short) text left-aligns within it. One firmware text line tall — the
