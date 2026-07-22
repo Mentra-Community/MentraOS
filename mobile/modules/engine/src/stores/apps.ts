@@ -20,6 +20,7 @@ import {getModelCapabilities} from "../types/hardware"
 import {HardwareCompatibility, type CompatibilityResult} from "../utils/hardware/hardware"
 import {storage} from "../utils/storage/storage"
 import appRegistry from "../services/AppRegistry"
+import localDisplayManager from "../services/LocalDisplayManager"
 import {islandNotifications} from "../services/NotificationsEmitter"
 import sttModelManager from "../services/STTModelManager"
 import {miniappLauncher} from "../services/MiniappLauncher"
@@ -361,6 +362,12 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
       for (const r of runningForeground) {
         await get().stop(r.packageName)
       }
+      // Claim the display-manager's foreground slot AFTER the stop() calls
+      // above (each of which releases it for the app it's stopping) so this
+      // app becomes the sole core app. Restores V1-parity foreground/
+      // background display arbitration (background apps may render over this
+      // app, then revert to it) that V2 never wired up.
+      localDisplayManager.onCoreAppChange(packageName)
     }
 
     set((s) => ({
@@ -404,6 +411,13 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
     if (!app) {
       console.error(`ISLAND: app not found for package name: ${packageName}`)
       return
+    }
+
+    // Release the display-manager's foreground slot. The foreground-only-one
+    // invariant means at most one standard app is ever running, so this is
+    // always releasing the app that currently holds it.
+    if (app.type === "standard") {
+      localDisplayManager.onCoreAppChange(null)
     }
 
     set((s) => ({
