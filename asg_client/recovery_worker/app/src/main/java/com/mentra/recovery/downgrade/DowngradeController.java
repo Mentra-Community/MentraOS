@@ -16,6 +16,15 @@ public final class DowngradeController {
   /** Persists a fresh transaction from an ASG handoff and starts driving it. */
   public static void requestDowngrade(
       Context context, long targetVersion, String apkPath, String apkSha256) {
+    if (targetVersion < RecoveryConstants.DOWNGRADE_FLOOR_VERSION_CODE) {
+      Log.e(
+          RecoveryConstants.TAG,
+          "Rejected downgrade handoff below floor "
+              + RecoveryConstants.DOWNGRADE_FLOOR_VERSION_CODE
+              + ": target="
+              + targetVersion);
+      return;
+    }
     DowngradeTransactionStore store = new DowngradeTransactionStore(context);
     if (!store.begin(targetVersion, apkPath, apkSha256)) {
       Log.e(

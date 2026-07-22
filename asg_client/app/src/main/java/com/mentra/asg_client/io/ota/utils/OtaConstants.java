@@ -89,4 +89,12 @@ public class OtaConstants {
     public static final String EXTRA_DOWNGRADE_APK_PATH = "apk_path";
     public static final String EXTRA_DOWNGRADE_APK_SHA256 = "apk_sha256";
     public static final String DOWNGRADE_APK_FILENAME = "asg_client_downgrade.apk";
+    /**
+     * Oldest ASG versionCode a pinned downgrade may target. Builds below this floor predate the
+     * downgrade-safe contract (media storage layout, post-uninstall behavior), so moving a device
+     * onto them is unsupported even when a manifest pins them. Must be raised to the first
+     * downgrade-safe release before downgrades are enabled in production; 0 leaves the floor
+     * open for RFC/bench testing only.
+     */
+    public static final long DOWNGRADE_FLOOR_VERSION_CODE = 0L;
 }

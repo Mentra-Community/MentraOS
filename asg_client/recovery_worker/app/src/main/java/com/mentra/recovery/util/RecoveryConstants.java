@@ -97,6 +97,15 @@ public final class RecoveryConstants {
   public static final String DOWNGRADE_PREFS = "mentra_downgrade_transaction";
   public static final String UNIQUE_DOWNGRADE_WORK = "mentra_downgrade_transaction";
 
+  /**
+   * Oldest ASG versionCode a downgrade transaction may target. Mirrors ASG's
+   * {@code OtaConstants.DOWNGRADE_FLOOR_VERSION_CODE} as defense in depth (this package updates
+   * independently of ASG): builds below the floor predate the downgrade-safe contract (media
+   * storage layout, post-uninstall behavior). 0 leaves the floor open for RFC/bench testing only;
+   * raise both constants together before enabling downgrades in production.
+   */
+  public static final long DOWNGRADE_FLOOR_VERSION_CODE = 0L;
+
   /** Uninstall broadcast dispatch until the factory /system revert is observed. */
   public static final long DOWNGRADE_REVERT_TIMEOUT_MS = 90_000L;
   /** Install broadcast dispatch until the target versionCode is observed installed. */
