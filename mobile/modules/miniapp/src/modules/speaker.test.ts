@@ -45,6 +45,7 @@ describe("SpeakerModule.speak", () => {
         voice_settings: undefined,
         volume: undefined,
         stopOtherAudio: false,
+        enableSanitization: true,
         forceLocal: true,
       },
     ])
@@ -61,6 +62,19 @@ describe("SpeakerModule.speak", () => {
       type: MiniappRequestType.SPEAK,
       text: ["First sentence.", "Second sentence."],
       forceLocal: true,
+    })
+  })
+
+  test("forwards an explicit sanitization opt-out", async () => {
+    const {session, requestCalls} = mockSession([{completed: true}])
+    const speaker = new SpeakerModule(session)
+
+    await speaker.speak("Read C++ exactly.", {enableSanitization: false})
+
+    expect(requestCalls[0]).toMatchObject({
+      type: MiniappRequestType.SPEAK,
+      text: "Read C++ exactly.",
+      enableSanitization: false,
     })
   })
 
