@@ -36,6 +36,9 @@ import type {
   TranscriptionProvider,
   TranscriptEvent,
 } from "./provider";
+import { createLogger } from "@mentra/cloud-shared";
+
+const logger = createLogger("runtime").child({ module: "soniox" });
 
 const SONIOX_MODEL = process.env.SONIOX_MODEL ?? "stt-rt-v4";
 function audioGapConfig(): { checkIntervalMs: number; thresholdMs: number } {
@@ -635,9 +638,7 @@ export async function createSonioxProvider(
   // The `disconnected` handler is named so the same function is wired onto every
   // session instance (original + each reconnect) and can be `off`-ed on close.
   const handleDisconnected = (reason: unknown) => {
-    console.log(
-      `[soniox] disconnected scope=${opts.scope} reason=${typeof reason === "string" ? reason : JSON.stringify(reason)}`,
-    );
+    logger.info(`disconnected scope=${opts.scope} reason=${typeof reason === "string" ? reason : JSON.stringify(reason)}`);
     // An UNEXPECTED disconnect (not our own close()) means the upstream session
     // is gone. Self-heal in place so the provider keeps producing transcripts
     // for the audio that is still arriving. An expected disconnect (closed=true)
@@ -646,13 +647,13 @@ export async function createSonioxProvider(
   };
 
   const handleConnected = () => {
-    console.log(
-      `[soniox] connected scope=${opts.scope} lang=${opts.language}${opts.targetLanguage ? ` → ${opts.targetLanguage}` : ""}`,
+    logger.info(
+      `connected scope=${opts.scope} lang=${opts.language}${opts.targetLanguage ? ` → ${opts.targetLanguage}` : ""}`,
     );
   };
 
   const handleFinished = () => {
-    console.log(`[soniox] finished scope=${opts.scope}`);
+    logger.info(`finished scope=${opts.scope}`);
     commitPendingFinal();
     emitFinal();
   };
@@ -707,9 +708,9 @@ export async function createSonioxProvider(
       try {
         session.pause();
         pausedForGap = true;
-        console.log(`[soniox] auto-paused scope=${opts.scope} after audio gap`);
+        logger.info(`auto-paused scope=${opts.scope} after audio gap`);
       } catch (err) {
-        console.warn(`[soniox] auto-pause failed scope=${opts.scope}:`, err);
+        logger.warn({ err }, `auto-pause failed scope=${opts.scope}`);
       }
     }, gapConfig.checkIntervalMs);
   };
@@ -737,9 +738,7 @@ export async function createSonioxProvider(
       while (!closed) {
         reconnectAttempts += 1;
         if (reconnectAttempts > reconnect.maxAttempts) {
-          console.error(
-            `[soniox] self-heal gave up scope=${opts.scope} after ${reconnect.maxAttempts} attempts (trigger=${trigger})`,
-          );
+          logger.error(`self-heal gave up scope=${opts.scope} after ${reconnect.maxAttempts} attempts (trigger=${trigger})`);
           opts.onError?.(
             new Error(`soniox session lost and could not reconnect (scope=${opts.scope})`),
           );
@@ -751,9 +750,7 @@ export async function createSonioxProvider(
           reconnect.maxMs,
           reconnect.baseMs * 2 ** (reconnectAttempts - 1),
         );
-        console.log(
-          `[soniox] self-heal reconnect scope=${opts.scope} attempt=${reconnectAttempts} delayMs=${delay} trigger=${trigger}`,
-        );
+        logger.info(`self-heal reconnect scope=${opts.scope} attempt=${reconnectAttempts} delayMs=${delay} trigger=${trigger}`);
         await new Promise((resolve) => setTimeout(resolve, delay));
         if (closed) break;
 
@@ -769,13 +766,10 @@ export async function createSonioxProvider(
           reconnecting = false;
           reconnectAttempts = 0;
           startGapDetection();
-          console.log(`[soniox] self-heal reconnected scope=${opts.scope}`);
+          logger.info(`self-heal reconnected scope=${opts.scope}`);
           return;
         } catch (err) {
-          console.error(
-            `[soniox] self-heal connect failed scope=${opts.scope} attempt=${reconnectAttempts}:`,
-            err,
-          );
+          logger.error({ err }, `self-heal connect failed scope=${opts.scope} attempt=${reconnectAttempts}`);
           unwireSession(next);
           try {
             await next.close();
@@ -797,7 +791,7 @@ export async function createSonioxProvider(
     await session.connect();
     startGapDetection();
   } catch (err) {
-    console.error(`[soniox] connect failed scope=${opts.scope}:`, err);
+    logger.error({ err }, `connect failed scope=${opts.scope}`);
     opts.onError?.(err as Error);
     throw err;
   }
@@ -817,9 +811,9 @@ export async function createSonioxProvider(
           session.resume();
           pausedForGap = false;
           resetActiveUtterance();
-          console.log(`[soniox] resumed scope=${opts.scope} after audio gap`);
+          logger.info(`resumed scope=${opts.scope} after audio gap`);
         } catch (err) {
-          console.warn(`[soniox] resume failed scope=${opts.scope}:`, err);
+          logger.warn({ err }, `resume failed scope=${opts.scope}`);
         }
       }
       try {
