@@ -90,6 +90,14 @@ public class OtaConstants {
     public static final String EXTRA_DOWNGRADE_APK_SHA256 = "apk_sha256";
     public static final String DOWNGRADE_APK_FILENAME = "asg_client_downgrade.apk";
     /**
+     * Oldest recovery worker versionCode that understands the downgrade handoff
+     * ({@code ACTION_REQUEST_DOWNGRADE}). ASG deploys its bundled recovery worker asynchronously
+     * at startup, so a downgrade must not be staged until the installed recovery worker is at
+     * least this new — an older receiver would silently drop the handoff after ASG already
+     * reported the install as started.
+     */
+    public static final long MIN_RECOVERY_VERSION_FOR_DOWNGRADE = 7L;
+    /**
      * Oldest ASG versionCode a pinned downgrade may target. Builds below this floor predate the
      * downgrade-safe contract — most importantly the shared media root
      * ({@code MediaStorage.MEDIA_ROOT_PATH}): older builds capture into the app-owned

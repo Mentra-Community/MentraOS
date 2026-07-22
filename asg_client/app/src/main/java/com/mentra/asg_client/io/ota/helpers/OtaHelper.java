@@ -997,6 +997,18 @@ public class OtaHelper {
                 return false;
             }
 
+            // The recovery worker owns the transaction after the handoff; an older worker would
+            // silently ignore the broadcast. ASG deploys its bundled worker asynchronously at
+            // startup, so a too-old worker here usually means that deploy has not landed yet —
+            // fail this attempt and let the phone's next OTA check retry.
+            long recoveryVersion =
+                    getInstalledVersion(OtaConstants.RECOVERY_PACKAGE, context);
+            if (recoveryVersion < OtaConstants.MIN_RECOVERY_VERSION_FOR_DOWNGRADE) {
+                Log.e(TAG, "Refusing downgrade: recovery worker version " + recoveryVersion
+                        + " < required " + OtaConstants.MIN_RECOVERY_VERSION_FOR_DOWNGRADE);
+                return false;
+            }
+
             isUpdating = true;
             File apkFile = new File(OtaConstants.BASE_DIR, OtaConstants.DOWNGRADE_APK_FILENAME);
             if (apkFile.exists() && !apkFile.delete()) {
