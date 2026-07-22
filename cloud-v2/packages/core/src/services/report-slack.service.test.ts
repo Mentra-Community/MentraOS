@@ -118,7 +118,7 @@ describe("notifyReportSlack", () => {
     expect(blocksJson).toContain("*Env:*\\ntest-env");
   });
 
-  test("adds a signed fix-agent confirmation button to bug reports when configured", async () => {
+  test("adds a signed one-click fix-agent button to bug reports when configured", async () => {
     process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL = WEBHOOK_URL;
     process.env.CLOUD_CORE_ENVIRONMENT = "dev";
     process.env.CLOUD_REPORT_AGENT_URL = AGENT_URL;
@@ -128,11 +128,15 @@ describe("notifyReportSlack", () => {
 
     const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     const payload = JSON.parse(String(init.body)) as {
-      blocks: Array<{ type: string; elements?: Array<{ text: { text: string }; url: string }> }>;
+      blocks: Array<{
+        type: string;
+        elements?: Array<{ text: { text: string }; action_id: string; value: string }>;
+      }>;
     };
     const action = payload.blocks.find((block) => block.type === "actions")?.elements?.[0];
     expect(action?.text.text).toBe("Run Fix Agent");
-    const url = new URL(action?.url ?? "");
+    expect(action?.action_id).toBe("run_fix_agent");
+    const url = new URL(action?.value ?? "");
     expect(`${url.origin}${url.pathname}`).toBe(`${AGENT_URL}/actions/report`);
     expect(url.searchParams.get("reportId")).toBe("rep_TEST123");
     expect(url.searchParams.get("environment")).toBe("dev");
