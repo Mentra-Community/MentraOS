@@ -2196,6 +2196,17 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                     || generation != recoveryProbeGeneration) {
                 return;
             }
+            if (isFileTransferInProgress()) {
+                runtimeBaudRecoveryInProgress = false;
+                runtimeBaudRecoveryGeneration++;
+                uartDiscardedBytesSinceValidFrame = 0;
+                uartDiscardEventsSinceValidFrame = 0;
+                cancelRuntimeBaudRecoveryLocked();
+                scheduleHighBaudHealthCheckLocked(
+                        AsgConstants.UART_BOOT_RECOVERY_RETRY_DELAY_MS);
+                Log.i(BAUD_TAG, "Stopping UART recovery because a file transfer is active");
+                return;
+            }
             if (comManager.isOtaUpdating() || baudSwitchWaitingSrBaud || baudProbePending) {
                 scheduleRuntimeBaudRecoveryLocked(
                         generation, AsgConstants.UART_RUNTIME_RECOVERY_RETRY_DELAY_MS);
@@ -2207,7 +2218,6 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                 uartDiscardedBytesSinceValidFrame = 0;
                 uartDiscardEventsSinceValidFrame = 0;
                 cancelRuntimeBaudRecoveryLocked();
-                scheduleHighBaudHealthCheckLocked(AsgConstants.UART_HIGH_BAUD_IDLE_PROBE_MS);
                 Log.e(
                         BAUD_TAG,
                         "Runtime recovery scan found no valid UART frame; remaining at preferred "
@@ -2604,13 +2614,19 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             fileName = fileName.substring(0, 16); // Truncate to 16 chars max
         }
 
-        currentFileTransfer =
-                new FileTransferSession(
-                        filePath,
-                        fileName,
-                        fileData,
-                        effectiveUartPackSize(),
-                        besWireCapsFilePayloadV2);
+        synchronized (baudSwitchLock) {
+            if (runtimeBaudRecoveryInProgress) {
+                Log.w(TAG, "Cannot start file transfer while UART recovery is active");
+                return false;
+            }
+            currentFileTransfer =
+                    new FileTransferSession(
+                            filePath,
+                            fileName,
+                            fileData,
+                            effectiveUartPackSize(),
+                            besWireCapsFilePayloadV2);
+        }
         pendingPackets.clear();
         consecutiveFailures = 0; // Reset failure counter for new transfer
         pendingFailureRetryIndex = -1;
