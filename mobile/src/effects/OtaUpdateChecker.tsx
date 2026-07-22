@@ -1,4 +1,4 @@
-import {useEffect, useRef} from "react"
+import {useEffect, useRef, useState} from "react"
 
 import {useNavigationStore} from "@/stores/navigation"
 import {Capabilities, getModelCapabilities} from "@/../../cloud/packages/types/src"
@@ -8,6 +8,7 @@ import showAlert from "@/utils/AlertUtils"
 import {translate} from "@/i18n/translate"
 import {usePathname} from "expo-router"
 import {BgTimer, engine, type VersionInfo} from "@mentra/engine"
+import {fetchVersionInfo} from "@mentra/engine/internal"
 
 export {
   fetchVersionInfo,
@@ -21,6 +22,10 @@ export {
 function areGlassesConnectedNow(): boolean {
   return engine.ota.snapshot().connected
 }
+
+// How often to re-fetch the OTA manifest while glasses stay connected, so a
+// server-side manifest change surfaces the update prompt without a reconnect.
+const MANIFEST_POLL_INTERVAL_MS = 60_000
 
 export function OtaUpdateChecker() {
   const {push} = useNavigationStore.getState()
@@ -57,6 +62,11 @@ export function OtaUpdateChecker() {
     isDowngrade: boolean
   } | null>(null)
   const otaCheckTimeoutRef = useRef<number | null>(null)
+
+  // Bumped when the OTA manifest changes server-side; re-arms the main check
+  // effect the same way a fresh glasses connection does.
+  const [manifestGeneration, setManifestGeneration] = useState(0)
+  const manifestBaselineRef = useRef<{url: string; body: string} | null>(null)
 
   // Reset OTA check flag when glasses disconnect (allows fresh check on reconnect)
   useEffect(() => {
@@ -124,6 +134,51 @@ export function OtaUpdateChecker() {
     if (besFirmwareVersion) last.bes = besFirmwareVersion
   }, [buildNumber, mtkFirmwareVersion, besFirmwareVersion])
 
+  // Watch the OTA manifest for server-side changes while glasses stay connected.
+  // The first successful fetch (per resolved URL) is the baseline; any later
+  // difference in content resets the per-connection check latches and bumps
+  // manifestGeneration so the main check effect runs again and surfaces the
+  // same prompt flow as a fresh connection.
+  useEffect(() => {
+    if (!glassesConnected || !buildNumber || otaSnapshot.inProgress) {
+      manifestBaselineRef.current = null
+      return
+    }
+    const features: Capabilities = getModelCapabilities(defaultWearable)
+    if (!features?.hasOta) {
+      return
+    }
+
+    let cancelled = false
+    const pollManifest = async () => {
+      const url = engine.ota.snapshot().manifestUrl
+      const versionJson = await fetchVersionInfo(url)
+      if (cancelled || !versionJson) return
+      const body = JSON.stringify(versionJson)
+      const baseline = manifestBaselineRef.current
+      if (!baseline) {
+        manifestBaselineRef.current = {url, body}
+        return
+      }
+      if (baseline.url === url && baseline.body === body) return
+
+      console.log("OTA: manifest changed on server - re-arming update check")
+      manifestBaselineRef.current = {url, body}
+      pendingUpdate.current = null
+      hasCheckedOta.current = false
+      hasPromptedOta.current = false
+      hasPromptedOtaWifiSetup.current = false
+      setManifestGeneration((generation) => generation + 1)
+    }
+
+    void pollManifest() // establish the baseline right away
+    const intervalId = BgTimer.setInterval(() => void pollManifest(), MANIFEST_POLL_INTERVAL_MS)
+    return () => {
+      cancelled = true
+      BgTimer.clearInterval(intervalId)
+    }
+  }, [glassesConnected, buildNumber, otaSnapshot.inProgress, defaultWearable])
+
   // Show pending update alert when user navigates back to /home.
   const wasAwayFromHomeRef = useRef(false)
   useEffect(() => {
@@ -158,22 +213,18 @@ export function OtaUpdateChecker() {
     const updateMessage = isDowngrade
       ? translate("ota:downgradeDescriptionShort") + (superMode ? ` (${pending.updates.join(", ").toUpperCase()})` : "")
       : superMode
-      ? `Updates available: ${pending.updates.join(", ").toUpperCase()}`
-      : updateCount === 1
-      ? "1 update available"
-      : `${updateCount} updates available`
+        ? `Updates available: ${pending.updates.join(", ").toUpperCase()}`
+        : updateCount === 1
+          ? "1 update available"
+          : `${updateCount} updates available`
     pendingUpdate.current = null
     hasPromptedOta.current = true
     hasPromptedOtaWifiSetup.current = false
 
-    showAlert(
-      translate(isDowngrade ? "ota:downgradeAvailable" : "ota:updateAvailable", {deviceName}),
-      updateMessage,
-      [
-        {text: translate("ota:updateLater"), style: "cancel"},
-        {text: translate("ota:install"), onPress: () => push("/ota/check-for-updates")},
-      ],
-    )
+    showAlert(translate(isDowngrade ? "ota:downgradeAvailable" : "ota:updateAvailable", {deviceName}), updateMessage, [
+      {text: translate("ota:updateLater"), style: "cancel"},
+      {text: translate("ota:install"), onPress: () => push("/ota/check-for-updates")},
+    ])
   }, [pathname, glassesConnected, glassesWifiConnected, defaultWearable, superMode, push])
 
   // Main OTA check effect
@@ -211,7 +262,7 @@ export function OtaUpdateChecker() {
 
     // Delay OTA check by 500ms to allow all version_info chunks to arrive
     // (version_info_1, version_info_2, version_info_3 arrive sequentially with ~100ms gaps)
-    console.log("OTA: check scheduled - waiting 500ms for firmware version info...")
+    console.log(`OTA: check scheduled (manifest generation ${manifestGeneration}) - waiting 500ms for version info...`)
     otaCheckTimeoutRef.current = BgTimer.setTimeout(async () => {
       // Re-check conditions after delay (glasses might have disconnected)
       if (!areGlassesConnectedNow()) {
@@ -272,10 +323,10 @@ export function OtaUpdateChecker() {
           const updateMessage = isApkDowngrade
             ? translate("ota:downgradeDescriptionShort") + (superMode ? ` (${updateList})` : "")
             : superMode
-            ? `Updates available: ${updateList}`
-            : updateCount === 1
-            ? "1 update available"
-            : `${updateCount} updates available`
+              ? `Updates available: ${updateList}`
+              : updateCount === 1
+                ? "1 update available"
+                : `${updateCount} updates available`
 
           pendingUpdate.current = {latestVersionInfo, updates, isDowngrade: isApkDowngrade}
 
@@ -339,6 +390,7 @@ export function OtaUpdateChecker() {
     pathname,
     push,
     superMode,
+    manifestGeneration,
   ])
 
   return null
