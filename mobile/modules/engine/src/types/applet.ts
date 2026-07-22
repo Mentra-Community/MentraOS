@@ -87,6 +87,8 @@ export interface DeclaredAction {
   description: string
   /** JSON-Schema input descriptor (MCP-compatible subset). */
   parameters?: Record<string, unknown>
+  /** JSON-Schema descriptor for the action's structured result. */
+  outputSchema?: Record<string, unknown>
 }
 
 export interface ClientApp extends AppletInterface {

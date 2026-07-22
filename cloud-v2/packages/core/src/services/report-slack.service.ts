@@ -74,13 +74,17 @@ interface SlackBlock {
   type: string;
   text?: { type: string; text: string; emoji?: boolean };
   fields?: Array<{ type: string; text: string }>;
-  elements?: Array<{
-    type: "button";
-    text: { type: "plain_text"; text: string; emoji: boolean };
-    url: string;
-    style?: "primary" | "danger";
-  }>;
+  elements?: SlackButton[];
 }
+
+type SlackButton = {
+  type: "button";
+  text: { type: "plain_text"; text: string; emoji: boolean };
+  style?: "primary" | "danger";
+} & (
+  | { url: string; action_id?: never; value?: never }
+  | { action_id: string; value: string; url?: never }
+);
 
 /**
  * Post a report summary to the reports Slack channel. Resolves with
@@ -215,16 +219,24 @@ function buildSlackMessage(notification: ReportSlackNotification): {
 
   const agentActionUrl = reportAgentActionUrl(notification);
   if (agentActionUrl) {
+    const agentButton: SlackButton =
+      process.env.CLOUD_REPORT_AGENT_SLACK_INTERACTIVITY_ENABLED === "true"
+        ? {
+            type: "button",
+            text: { type: "plain_text", text: "Run Fix Agent", emoji: true },
+            action_id: "run_fix_agent",
+            style: "primary",
+            value: agentActionUrl,
+          }
+        : {
+            type: "button",
+            text: { type: "plain_text", text: "Run Fix Agent", emoji: true },
+            style: "primary",
+            url: agentActionUrl,
+          };
     blocks.push({
       type: "actions",
-      elements: [
-        {
-          type: "button",
-          text: { type: "plain_text", text: "Run Fix Agent", emoji: true },
-          style: "primary",
-          url: agentActionUrl,
-        },
-      ],
+      elements: [agentButton],
     });
   }
 
@@ -247,10 +259,13 @@ function buildSlackMessage(notification: ReportSlackNotification): {
 }
 
 /**
- * Signed, expiring link to the private agent controller. The link itself is
- * a read-only confirmation page; only its POST form queues work, so Slack's
- * unfurl crawler cannot start an agent. Bug reports are the deliberately
- * narrow MVP scope; feedback and automatic diagnostics never receive it.
+ * Signed, expiring action for the private agent controller. Until Slack's
+ * Interactivity Request URL is configured, the default URL button keeps the
+ * confirmation-page fallback working. Explicitly setting
+ * CLOUD_REPORT_AGENT_SLACK_INTERACTIVITY_ENABLED=true switches to a one-click
+ * action value, which Slack sends only when a human presses the button. Bug
+ * reports are the deliberately narrow MVP scope; feedback and automatic
+ * diagnostics never receive it.
  */
 function reportAgentActionUrl(notification: ReportSlackNotification): string | null {
   if (notification.kind !== "bug") return null;

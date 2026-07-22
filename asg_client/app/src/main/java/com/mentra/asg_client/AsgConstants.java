@@ -125,6 +125,27 @@ public class AsgConstants {
     /** Spacing between UART recovery probes. */
     public static final long UART_RECOVERY_PROBE_SPACING_MS = 400;
 
+    /** Parser-discarded bytes that indicate the two UART endpoints likely disagree on baud. */
+    public static final long UART_RUNTIME_RECOVERY_DISCARDED_BYTES = 24;
+
+    /** Corrupt UART reads that trigger a link probe even when each wrong-baud burst is tiny. */
+    public static final int UART_RUNTIME_RECOVERY_DISCARD_EVENTS = 4;
+
+    /** Idle time after a confirmed fast link before actively verifying that BES is still there. */
+    public static final long UART_HIGH_BAUD_IDLE_PROBE_MS = 15000;
+
+    /** Number of version probes sent at each baud during live-link recovery. */
+    public static final int UART_RUNTIME_RECOVERY_PROBES_PER_BAUD = 3;
+
+    /** Spacing between live-link recovery probes. */
+    public static final long UART_RUNTIME_RECOVERY_PROBE_SPACING_MS = 150;
+
+    /** Time allowed for a live-link recovery baud candidate to answer. */
+    public static final long UART_RUNTIME_RECOVERY_STEP_TIMEOUT_MS = 700;
+
+    /** Delay before restarting a bounded live-link recovery scan that found neither endpoint. */
+    public static final long UART_RUNTIME_RECOVERY_RETRY_DELAY_MS = 3000;
+
     /** Maximum wait for the old-baud {@code sr_baud} acknowledgement before probing target baud. */
     public static final long UART_BAUD_ACK_TIMEOUT_MS = 1000;
 

@@ -1,7 +1,7 @@
 {
   "$schema": "./node_modules/@mentra/miniapp-cli/schema/miniapp.schema.json",
   "packageName": "com.mentra.navigation",
-  "version": "1.1.22",
+  "version": "1.1.24",
   "name": "Mentra Maps",
   "description": "Turn-by-turn navigation with visual or spoken directions.",
   "icon": "icon.png",
@@ -68,6 +68,24 @@
             "description": "How the user is traveling. Defaults to 'walking'."
           }
         }
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "ok": {"type": "boolean"},
+          "error": {"type": "string"},
+          "destination": {
+            "type": "object",
+            "properties": {
+              "lat": {"type": "number"},
+              "lng": {"type": "number"},
+              "name": {"type": "string"},
+              "address": {"type": "string"},
+              "placeId": {"type": "string"}
+            }
+          }
+        },
+        "required": ["ok"]
       }
     },
     {
@@ -76,6 +94,25 @@
       "parameters": {
         "type": "object",
         "properties": {}
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "addresses": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "type": {"type": "string"},
+                "name": {"type": "string"},
+                "address": {"type": "string"},
+                "latitude": {"type": "number"},
+                "longitude": {"type": "number"}
+              }
+            }
+          }
+        },
+        "required": ["addresses"]
       }
     },
     {
@@ -101,6 +138,22 @@
           "type",
           "address"
         ]
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "address": {
+            "type": "object",
+            "properties": {
+              "type": {"type": "string"},
+              "name": {"type": "string"},
+              "address": {"type": "string"},
+              "latitude": {"type": "number"},
+              "longitude": {"type": "number"}
+            }
+          }
+        },
+        "required": ["address"]
       }
     }
   ]

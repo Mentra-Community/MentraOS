@@ -51,6 +51,7 @@ import {phoneStreamCoordinator} from "./PhoneStreamCoordinator"
 import {phoneVideoCoordinator} from "./PhoneVideoCoordinator"
 import {runSentenceTtsPipeline} from "./SentenceTtsPipeline"
 import {summarizeTranscriptionRoutes, transcriptionDeliveryRoute} from "./TranscriptionRouting"
+import {prepareTtsSentences} from "./TtsTextSanitizer"
 import {cloudClientService} from "./CloudClientService"
 import {miniappLauncher} from "./MiniappLauncher"
 import {
@@ -91,7 +92,7 @@ export interface InstalledMiniappManifest {
   entry?: {background?: string; ui?: string}
   permissions?: Array<{type: string; required?: boolean; description?: string}>
   hardwareRequirements?: Array<{type: string; level: string; description?: string}>
-  actions?: Array<{id?: unknown; description?: unknown; parameters?: unknown}>
+  actions?: Array<{id?: unknown; description?: unknown; parameters?: unknown; outputSchema?: unknown}>
 }
 
 type SpeakerStateValue = "idle" | "loading" | "playing" | "stopped" | "error"
@@ -2118,7 +2119,7 @@ class LocalMiniappRuntime {
 
   private async handleSpeak(packageName: string, payload: Record<string, unknown>, requestId?: string): Promise<void> {
     const rawText = payload.text
-    const sentences =
+    const rawSentences =
       typeof rawText === "string"
         ? [rawText.trim()].filter(Boolean)
         : Array.isArray(rawText)
@@ -2127,10 +2128,12 @@ class LocalMiniappRuntime {
               .map((sentence) => sentence.trim())
               .filter(Boolean)
           : []
+    const enableSanitization = payload.enableSanitization !== false
+    const sentences = prepareTtsSentences(rawSentences, enableSanitization)
     if (sentences.length === 0) {
       this.sendResult(packageName, requestId, false, undefined, {
         code: MiniappErrorCode.INTERNAL,
-        message: "speak requires text or a non-empty sentence list",
+        message: "speak requires text or a non-empty sentence list with speakable content",
       })
       return
     }

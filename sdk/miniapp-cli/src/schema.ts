@@ -183,6 +183,10 @@ export function generateSchema(): Record<string, unknown> {
                 required: {type: 'array', items: {type: 'string'}},
               },
             },
+            outputSchema: {
+              type: 'object',
+              description: 'JSON-Schema descriptor for the structured action result (MCP outputSchema).',
+            },
           },
         },
       },
