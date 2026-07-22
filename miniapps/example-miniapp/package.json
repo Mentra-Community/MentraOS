@@ -3,11 +3,13 @@
   "private": true,
   "description": "Example MentraOS miniapp demonstrating the @mentra/miniapp SDK",
   "scripts": {
-    "dev": "mentra-miniapp dev",
+    "dev": "node ./scripts/dev.mjs",
+    "dev:miniapp": "mentra-miniapp dev",
     "build": "bun run build.ts",
     "test": "bun test",
     "release": "mentra-miniapp release",
-    "pack": "mentra-miniapp pack"
+    "pack": "mentra-miniapp pack",
+    "signer": "node ./scripts/signed-url-server.mjs"
   },
   "dependencies": {
     "@mentra/miniapp": "workspace:*",

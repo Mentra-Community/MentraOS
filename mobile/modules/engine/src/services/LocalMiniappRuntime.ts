@@ -65,7 +65,9 @@ import {
 } from "../runtime/config"
 import {getAnalytics, getUiSeams} from "../runtime/bootstrap"
 import {normalizeStreamAudioConfig, normalizeStreamVideoConfig} from "../runtime/streamConfig"
+import {toLanguageHint} from "@mentra/cloud-protocol/languages"
 import type {AudioSubscription, LanguageSource, TranscriptionData, TranslationData} from "@mentra/cloud-protocol"
+import {buildMiniappManifestSnapshot, type MiniappRuntimeDiagnosticSnapshot} from "../utils/miniappDiagnostics"
 import ttsModelManager from "./TTSModelManager"
 import {NavigationHandlers} from "./NavigationHandlers"
 import type {ClientApp} from "../types/applet"
@@ -78,11 +80,18 @@ import {listPhoneCalendarEvents, PhoneCalendarError} from "./PhoneCalendarServic
 // =============================================================================
 
 export interface InstalledMiniappManifest {
+  packageName?: string
   /** Human-facing app name (from miniapp.json `name`). Shown in the "Starting
    * <name>…" boot message; falls back to the package name when absent. */
   name?: string
+  version?: string
+  sdkVersion?: string
+  minHostVersion?: string
+  type?: string
+  entry?: {background?: string; ui?: string}
   permissions?: Array<{type: string; required?: boolean; description?: string}>
   hardwareRequirements?: Array<{type: string; level: string; description?: string}>
+  actions?: Array<{id?: unknown; description?: unknown; parameters?: unknown}>
 }
 
 type SpeakerStateValue = "idle" | "loading" | "playing" | "stopped" | "error"
@@ -168,6 +177,16 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T | nul
 }
 
 const LOG_TAG = "LOCAL_MINIAPP"
+const DIAGNOSTIC_MAX_LIST_ITEMS = 100
+const DIAGNOSTIC_MAX_STRING_LENGTH = 512
+
+function diagnosticStringList(values: Iterable<string>): string[] {
+  return [...values]
+    .map((value) => value.slice(0, DIAGNOSTIC_MAX_STRING_LENGTH))
+    .sort()
+    .slice(0, DIAGNOSTIC_MAX_LIST_ITEMS)
+}
+
 const SYSTEM_MINIAPP_PACKAGES = new Set([
   "com.mentra.camera",
   "com.mentra.gallery",
@@ -358,6 +377,14 @@ class LocalMiniappRuntime {
   private cloudStatusWired = false
   private cloudAudioSubscriptionSync = new CloudAudioSubscriptionSync()
 
+  /**
+   * Per-miniapp language hints from TRANSCRIPTION_CONFIG (issue 021 WP3).
+   * Bare ISO 639-1 codes, already registry-validated by the SDK and
+   * re-normalized here (defense in depth). Merged (union) into the auto-mode
+   * cloud transcription subscription in buildCloudAudioSubscriptions.
+   */
+  private transcriptionHintsByApp = new Map<string, string[]>()
+
   /** Ping interval handle. */
   private pingIntervalId: number | null = null
   private foregroundProbeTimers: Map<string, number> = new Map()
@@ -393,6 +420,53 @@ class LocalMiniappRuntime {
   public onButtonPressSubscribersChanged(listener: (packageNames: string[]) => void): () => void {
     this.buttonPressSubscriberListeners.add(listener)
     return () => this.buttonPressSubscriberListeners.delete(listener)
+  }
+
+  /** Report-safe live miniapp/subscription/resource snapshot. */
+  public getDiagnosticSnapshot(nowMs = Date.now()): MiniappRuntimeDiagnosticSnapshot {
+    const connectedApps = [...this.connectedApps.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .slice(0, DIAGNOSTIC_MAX_LIST_ITEMS)
+      .map(([packageName, app]) => ({
+        packageName: packageName.slice(0, DIAGNOSTIC_MAX_STRING_LENGTH),
+        handshakeComplete: this.handshookApps.has(packageName),
+        subscriptions: diagnosticStringList(app.subscriptions),
+        lastMessageAgeMs: Math.max(0, nowMs - app.lastPongAt),
+        requestedLocationRate: app.requestedLocationRate,
+        hasActiveSpeakerStream: app.activeSpeakerStreamId !== undefined,
+        ...(app.installedManifest
+          ? {
+              manifest: buildMiniappManifestSnapshot(app.installedManifest, {
+                packageName,
+                name: app.installedManifest.name,
+                version: app.installedManifest.version,
+                type: app.installedManifest.type,
+              }),
+            }
+          : {}),
+      }))
+    const subscriptionsByStream = Object.fromEntries(
+      [...this.streamSubscribers.entries()]
+        .filter(([, packageNames]) => packageNames.size > 0)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .slice(0, DIAGNOSTIC_MAX_LIST_ITEMS)
+        .map(([stream, packageNames]) => [
+          stream.slice(0, DIAGNOSTIC_MAX_STRING_LENGTH),
+          diagnosticStringList(packageNames),
+        ]),
+    )
+
+    return {
+      connectedApps,
+      subscriptionsByStream,
+      resources: {
+        display: localDisplayManager.getDiagnosticSnapshot(),
+        camera: phonePhotoCoordinator.getDiagnosticSnapshot(),
+        video: phoneVideoCoordinator.getDiagnosticSnapshot(),
+        stream: phoneStreamCoordinator.getDiagnosticSnapshot(),
+        cameraFov: phoneCameraFovCoordinator.getDiagnosticSnapshot(),
+      },
+    }
   }
 
   private replaceStreamSubscribers(
@@ -793,6 +867,9 @@ class LocalMiniappRuntime {
     // the early-return so it runs even if the connectedApps entry is already gone.
     this.handshookApps.delete(packageName)
     this.flushConnectWaiters(packageName, new Error(`${packageName} unregistered before connect`))
+    // Drop this app's transcription hints; the cloud subscription rebuild
+    // below (via replaceStreamSubscribers) re-derives the hint union without it.
+    this.transcriptionHintsByApp.delete(packageName)
 
     // Warm-up is a request-owned camera lease. Cancel it even if the app record was already
     // removed so a close racing the camera-open promise cannot leave the sensor running.
@@ -1179,8 +1256,20 @@ class LocalMiniappRuntime {
         })
         break
 
+      case MiniappRequestType.TRANSCRIPTION_CONFIG:
+        this.handleTranscriptionConfig(packageName, payload, requestId)
+        break
+
       default:
+        // NACK instead of silent drop (issue 021 S3): an SDK that sends a
+        // request this runtime doesn't implement must get a rejected promise,
+        // not a permanently-pending silent gap. One-shots (no requestId) can
+        // only be logged.
         console.warn(`${LOG_TAG}: Unknown request type from ${packageName}: ${requestType}`)
+        this.sendResult(packageName, requestId, false, undefined, {
+          code: MiniappErrorCode.NOT_IMPLEMENTED,
+          message: `Unknown or unimplemented request type: ${requestType}`,
+        })
         break
     }
   }
@@ -1410,6 +1499,51 @@ class LocalMiniappRuntime {
       this.clearMiniappAuthDeliveryRetry(packageName)
       this.deliverInitialMiniappAuth(packageName, undefined, 0)
     }
+  }
+
+  /**
+   * TRANSCRIPTION_CONFIG (issue 021 WP3): store the miniapp's language hints
+   * and rebuild the cloud subscription set so the auto-mode subscription
+   * carries them. Replies with a REQUEST_RESULT so the SDK's configure()
+   * promise settles: unknown hint values are an error, not a silent drop.
+   */
+  private handleTranscriptionConfig(packageName: string, payload: Record<string, unknown>, requestId?: string): void {
+    const app = this.connectedApps.get(packageName)
+    if (!app) return
+
+    const config = (payload.config ?? {}) as Record<string, unknown>
+    const rawHints = config.languageHints
+    if (rawHints !== undefined && !Array.isArray(rawHints)) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: "languageHints must be an array of language codes",
+      })
+      return
+    }
+
+    if (rawHints === undefined || rawHints.length === 0) {
+      this.transcriptionHintsByApp.delete(packageName)
+    } else {
+      // Defense in depth: the SDK already validated, but the wire is untyped.
+      const hints: string[] = []
+      const invalid: string[] = []
+      for (const raw of rawHints as unknown[]) {
+        const hint = typeof raw === "string" ? toLanguageHint(raw) : null
+        if (hint) hints.push(hint)
+        else invalid.push(String(raw))
+      }
+      if (invalid.length > 0) {
+        this.sendResult(packageName, requestId, false, undefined, {
+          code: MiniappErrorCode.INTERNAL,
+          message: `Unknown language hint(s): ${invalid.join(", ")}`,
+        })
+        return
+      }
+      this.transcriptionHintsByApp.set(packageName, [...new Set(hints)].sort())
+    }
+
+    this.updateCloudSubscriptions()
+    this.sendResult(packageName, requestId, true, {applied: true})
   }
 
   private handleSubscribe(packageName: string, payload: Record<string, unknown>, requestId?: string): void {
@@ -2854,7 +2988,7 @@ class LocalMiniappRuntime {
       const result = await phonePhotoCoordinator.takePhoto(packageName, {
         size: payload.size as "low" | "medium" | "high" | "max" | "small" | "large" | "full" | undefined,
         mode: payload.mode as "photo" | "text" | undefined,
-        transferMethod: payload.transferMethod as "auto" | "ble" | undefined,
+        transferMethod: payload.transferMethod as "auto" | "direct" | "ble" | undefined,
         compress: payload.compress as "none" | "low" | "medium" | "high" | undefined,
         sound: payload.sound as boolean | undefined,
         saveToGallery: payload.saveToGallery as boolean | undefined,
@@ -3269,12 +3403,21 @@ class LocalMiniappRuntime {
    */
   private buildCloudAudioSubscriptions(cloudStreams: Set<string>): AudioSubscription[] {
     const subs: AudioSubscription[] = []
+    // Union of every connected app's TRANSCRIPTION_CONFIG hints. Hints only
+    // apply to the auto-mode TRANSCRIPTION subscription (the wire schema has
+    // no hints field on specific-language sources — the language IS the hint
+    // there), and are deliberately NOT attached to translation sources.
+    const hintUnion = [...new Set([...this.transcriptionHintsByApp.values()].flat())].sort()
     const langSource = (code: string): LanguageSource =>
       code === "auto" || code === "*" ? {mode: "auto"} : {mode: "specific", code}
     for (const stream of cloudStreams) {
       if (stream.startsWith("transcription:")) {
         const lang = stream.substring("transcription:".length)
-        subs.push({kind: "transcription", language: langSource(lang)})
+        const source = langSource(lang)
+        subs.push({
+          kind: "transcription",
+          language: source.mode === "auto" && hintUnion.length > 0 ? {mode: "auto", hints: hintUnion} : source,
+        })
       } else if (stream.startsWith("translation:")) {
         const parts = stream.split(":")
         // Only `translation:<source>:<target>` maps cleanly; a concrete target

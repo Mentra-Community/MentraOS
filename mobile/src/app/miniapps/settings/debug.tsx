@@ -158,9 +158,10 @@ export default function DebugSettingsScreen() {
             />
 
             <RouteButton
-              label="Mentra OS Onboarding"
-              subtitle="Start the Mentra Live onboarding"
+              label="MentraOS Onboarding"
+              subtitle="Reset and start the MentraOS onboarding"
               onPress={() => {
+                setOnboardingOsCompleted(false)
                 clearHistoryAndGoHome()
                 push("/onboarding/os")
               }}

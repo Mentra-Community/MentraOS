@@ -1,6 +1,6 @@
 {
   "name": "create-mentra-miniapp",
-  "version": "0.1.0-dev.0",
+  "version": "0.1.0-dev.1",
   "description": "Scaffold a new MentraOS miniapp project",
   "type": "module",
   "publishConfig": {

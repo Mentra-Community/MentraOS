@@ -20,10 +20,21 @@ export const TARGET_LANGUAGES: Language[] = [
   {code: "vi", name: "Vietnamese", nativeName: "Tiếng Việt", flag: "🇻🇳"},
 ]
 
+/**
+ * Look up a language by code. Accepts both bare codes ("es") and BCP-47 tags
+ * ("es-ES", "en-US") — the primary subtag is matched, so target languages that
+ * arrive canonicalized (e.g. from the translation subscription) still resolve
+ * to a flag and name instead of falling back to the raw code + white flag.
+ */
+function findLanguage(code: string): Language | undefined {
+  const primary = (code ?? "").split("-")[0].toLowerCase()
+  return TARGET_LANGUAGES.find((l) => l.code === primary)
+}
+
 export function getLanguageName(code: string): string {
-  return TARGET_LANGUAGES.find((l) => l.code === code)?.name || code
+  return findLanguage(code)?.name || code
 }
 
 export function getFlagEmoji(code: string): string {
-  return TARGET_LANGUAGES.find((l) => l.code === code)?.flag || "🏳️"
+  return findLanguage(code)?.flag || "🏳️"
 }

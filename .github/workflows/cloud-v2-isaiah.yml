@@ -9,6 +9,7 @@ on:
       - mentra-account-auth
       - cloud-v2/isaiah
       - cloud-v2/isaiah/**
+      - isaiah/os-1746-captions-language-hints
     paths:
       - "cloud-v2/**"
       - ".github/workflows/cloud-v2-isaiah.yml"

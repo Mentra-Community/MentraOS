@@ -4,11 +4,14 @@ import * as Location from "expo-location"
 import {Platform} from "react-native"
 import type {ReportContext} from "@mentra/cloud-client"
 
-import {useAppStatusStore} from "../stores/apps"
+import appRegistry from "../services/AppRegistry"
+import localMiniappRuntime from "../services/LocalMiniappRuntime"
+import {getLastOpenTime, useAppStatusStore} from "../stores/apps"
 import {useConnectionStore} from "../stores/connection"
 import {useCoreStore} from "../stores/core"
 import {useGlassesStore} from "../stores/glasses"
 import {SETTINGS, useSettingsStore} from "../stores/settings"
+import {buildMiniappDiagnosticContext} from "./miniappDiagnostics"
 
 const SENSITIVE_SETTINGS_KEYS = ["core_token", "auth_token", "auth_email"] as const
 const SENSITIVE_GLASSES_KEYS = ["hotspotPassword"] as const
@@ -108,17 +111,17 @@ export async function collectDiagnosticContext(extra?: Partial<ReportContext>): 
 
   const offlineMode = await useSettingsStore.getState().getSetting(SETTINGS.offline_mode.key)
   const defaultWearable = await useSettingsStore.getState().getSetting(SETTINGS.default_wearable.key)
-  const apps = appletState.apps.map((app) => ({
-    packageName: app.packageName,
-    name: app.name,
-    running: app.running,
-    loading: app.loading,
-    healthy: app.healthy,
-    hidden: app.hidden,
-    type: app.type,
-    offline: app.offline,
-    local: app.local,
-  }))
+  const miniappRuntime = localMiniappRuntime.getDiagnosticSnapshot()
+  const miniapps = buildMiniappDiagnosticContext({
+    apps: appletState.apps,
+    foregroundedPackage: appletState.foregroundedPackage,
+    runtime: miniappRuntime,
+    getLastOpenedAtMs: (app) => getLastOpenTime(app.packageName),
+    getManifest: (app) =>
+      app.local && app.version ? appRegistry.getMiniappManifest(app.packageName, app.version) : undefined,
+    getReleaseIdentity: (app) =>
+      app.local && app.version ? appRegistry.getReleaseIdentity(app.packageName, app.version) : undefined,
+  })
 
   return {
     app: {
@@ -139,12 +142,9 @@ export async function collectDiagnosticContext(extra?: Partial<ReportContext>): 
     runtime: {
       core: coreState,
       connection: connectionState,
+      miniapps: miniappRuntime,
     },
-    apps: {
-      apps,
-      installed: apps.map((app) => app.packageName),
-      running: apps.filter((app) => app.running).map((app) => app.packageName),
-    },
+    apps: miniapps,
     settings: {
       ...filteredSettings,
       offlineMode: !!offlineMode,

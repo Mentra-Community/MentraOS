@@ -93,11 +93,10 @@ Capture a still photo. The handler routes through `transferMethod` to one of thr
 **Text mode behavior**
 
 - Captures at ASG-owned sensor dimensions (`TEXT_MODE_SENSOR_CAPTURE_*`, currently 3840×2160 — Mentra Live's max 16:9 still) via an internal resolution tier — not the public `max` quality tier. Requested `size` is ignored for sensor resolution.
-- Applies shorter auto-exposure (unless `exposureTimeNs` is set manually).
-- Runs text-region detection and crops to the detected/fallback ROI before BLE transfer.
-- Uses dedicated text BLE downscale/encode targets (1920 px long edge, AVIF q55).
-- If detection is untrustworthy, the pipeline falls back to a generous center crop and logs the outcome (`confidence`, `fallback_reason`) in logcat — the photo still completes.
-- Best results on documents, signs, and windshield VIN stickers; plain scenes may look similar to `photo` when the fallback crop is used.
+- Runs text-region detection and crops to the detected ROI before BLE transfer.
+- Uses a dedicated 2880 px long-edge cap after a successful text crop; the configured BLE codec and quality apply afterward (currently JPEG quality 80).
+- If detection finds no usable text region or fails, the pipeline preserves the full frame and retains the smaller 1920 px fallback cap.
+- Best results on documents, signs, and windshield VIN stickers; plain scenes may look similar to `photo` when the full-frame fallback is used.
 | `compress`           | string  | `"none"`            | Compression preset passed to capture pipeline               |
 | `flash`              | boolean | `true`              | Fire the privacy LED during capture                         |
 | `sound`              | boolean | `true`              | Play shutter sound                                          |
@@ -117,8 +116,9 @@ In `text` mode, Mentra Live captures the source JPEG using ASG text-mode sensor 
 selecting an exact Camera2 JPEG size match when available or the closest supported size otherwise.
 Text mode does not inject an AE exposure divisor; pass `aeExposureDivisor` explicitly when you
 want scan-style shorter shutter. Text-region detection and crop run on both WiFi upload and BLE
-transfer. On BLE, the crop happens before downscale. Text mode always uses the max-tier BLE
-downscale cap (1920 px), regardless of requested {@code size}.
+transfer. On BLE, the crop happens before downscale. A successful text crop uses a 2880 px
+long-edge cap; a full-frame fallback uses a 1920 px cap. Requested {@code size} does not change
+either text-mode cap.
 
 All BLE photo payloads — text mode and ordinary size-tier photos alike — encode with the single
 codec configured in `AsgConstants.BLE_PHOTO_CODEC`. There is no per-mode split: flipping this one

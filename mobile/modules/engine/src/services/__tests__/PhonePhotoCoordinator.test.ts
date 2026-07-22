@@ -151,14 +151,14 @@ describe("PhonePhotoCoordinator", () => {
       expect(result.photoUrl).toBe(PRESIGN.readUrl)
     })
 
-    test("forces BLE transfer when the upload URL is loopback (adb-reversed local runtime)", async () => {
+    test("forces BLE transfer when the upload URL is loopback, overriding direct", async () => {
       startManagedPhoto.mockResolvedValueOnce({
         requestId: "rq-loop",
         uploadUrl: "http://127.0.0.1:8089/photo/upload/rq-loop",
         readUrl: "http://127.0.0.1:8089/photo/read/rq-loop",
       })
       const coord = new PhonePhotoCoordinator()
-      await coord.takePhoto("com.a", {})
+      await coord.takePhoto("com.a", {transferMethod: "direct"})
       expect(requestPhotoNative.mock.calls[0]![0]).toMatchObject({transferMethod: "ble"})
     })
 
@@ -166,6 +166,48 @@ describe("PhonePhotoCoordinator", () => {
       const coord = new PhonePhotoCoordinator()
       await coord.takePhoto("com.a", {transferMethod: "ble"})
       expect(requestPhotoNative.mock.calls[0]![0]).toMatchObject({transferMethod: "ble"})
+    })
+
+    test("passes a miniapp's direct transfer to the native request", async () => {
+      const coord = new PhonePhotoCoordinator()
+      await coord.takePhoto("com.a", {transferMethod: "direct"})
+      expect(requestPhotoNative.mock.calls[0]![0]).toMatchObject({transferMethod: "direct"})
+    })
+
+    test("rejects an unknown runtime transfer method before starting the photo pipeline", async () => {
+      const coord = new PhonePhotoCoordinator()
+      const promise = coord.takePhoto("com.a", {transferMethod: "wifi"} as any)
+
+      await expect(promise).rejects.toMatchObject({
+        code: "INVALID_ARGUMENT",
+        message: 'Invalid transferMethod "wifi". Expected "auto", "direct", or "ble".',
+      })
+      expect(startManagedPhoto).not.toHaveBeenCalled()
+      expect(requestPhotoNative).not.toHaveBeenCalled()
+    })
+
+    test("rejects a runtime null transfer method before starting the photo pipeline", async () => {
+      const coord = new PhonePhotoCoordinator()
+      const promise = coord.takePhoto("com.a", {transferMethod: null} as any)
+
+      await expect(promise).rejects.toMatchObject({
+        code: "INVALID_ARGUMENT",
+        message: 'Invalid transferMethod null. Expected "auto", "direct", or "ble".',
+      })
+      expect(startManagedPhoto).not.toHaveBeenCalled()
+      expect(requestPhotoNative).not.toHaveBeenCalled()
+    })
+
+    test("rejects a runtime empty transfer method before starting the photo pipeline", async () => {
+      const coord = new PhonePhotoCoordinator()
+      const promise = coord.takePhoto("com.a", {transferMethod: ""} as any)
+
+      await expect(promise).rejects.toMatchObject({
+        code: "INVALID_ARGUMENT",
+        message: 'Invalid transferMethod "". Expected "auto", "direct", or "ble".',
+      })
+      expect(startManagedPhoto).not.toHaveBeenCalled()
+      expect(requestPhotoNative).not.toHaveBeenCalled()
     })
 
     test("passes saveToGallery and sound through to the native take_photo command", async () => {

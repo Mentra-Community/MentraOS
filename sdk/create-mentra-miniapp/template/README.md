@@ -16,6 +16,10 @@ support `window`, `document`, DOM elements, `performance`, `XMLHttpRequest`,
 `crypto.subtle`, Node built-ins, `process`, or runtime module resolution. Use
 `Date.now()` instead of `performance.now()`.
 
+`bun run build` checks background source (including imported shared files) and
+reports common unsupported browser or Node APIs with a file, line, and supported
+alternative before it emits a bundle.
+
 The layers do not share memory. Exchange serializable data through the typed
 `mentra.*` / `session.ui.*` message bus declared in `src/shared/channels.ts`.
 

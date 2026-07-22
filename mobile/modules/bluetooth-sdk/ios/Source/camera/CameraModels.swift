@@ -303,12 +303,26 @@ public struct PhotoRequest {
         self.ispDigitalGain = ispDigitalGain
         self.ispAnalogGain = ispAnalogGain
         self.mode = mode
-        self.transferMethod = transferMethod == "ble" ? "ble" : "auto"
+        self.transferMethod = transferMethod
     }
 
-    public static func from(params: [String: Any]) -> PhotoRequest {
+    public static func from(params: [String: Any]) throws -> PhotoRequest {
         let sizeRaw = params["size"] as? String ?? "medium"
         let compressRaw = params["compress"] as? String ?? "none"
+        let transferMethod: String
+        if let rawValue = params["transferMethod"] {
+            guard let rawString = rawValue as? String,
+                  rawString == "auto" || rawString == "direct" || rawString == "ble"
+            else {
+                throw BluetoothSdkError(
+                    code: "invalid_photo_transfer_method",
+                    message: "Invalid transferMethod \(String(describing: rawValue)). Expected auto, direct, or ble."
+                )
+            }
+            transferMethod = rawString
+        } else {
+            transferMethod = "auto"
+        }
         let exposureTimeNs: Double?
         switch params["exposureTimeNs"] {
         case let value as Double:
@@ -372,7 +386,7 @@ public struct PhotoRequest {
             ispDigitalGain: optionalInt("ispDigitalGain"),
             ispAnalogGain: params["ispAnalogGain"] as? String,
             mode: PhotoMode(normalizedRawValue: params["mode"] as? String),
-            transferMethod: params["transferMethod"] as? String ?? "auto"
+            transferMethod: transferMethod
         )
     }
 

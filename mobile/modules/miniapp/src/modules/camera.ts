@@ -35,9 +35,9 @@ export interface TakePhotoOptions {
   mode?: "photo" | "text"
   /**
    * Image delivery path. `auto` tries direct Wi-Fi upload and falls back to
-   * BLE; `ble` skips the Wi-Fi attempt and always relays through the phone.
+   * BLE; `direct` disables BLE fallback; `ble` always relays through the phone.
    */
-  transferMethod?: "auto" | "ble"
+  transferMethod?: "auto" | "direct" | "ble"
   compress?: "none" | "low" | "medium" | "high"
   sound?: boolean
   saveToGallery?: boolean
@@ -172,7 +172,7 @@ export class CameraModule {
         type: MiniappRequestType.PHOTO,
         size: options.size ?? "medium",
         mode: options.mode ?? "photo",
-        ...(options.transferMethod ? {transferMethod: options.transferMethod} : {}),
+        ...(options.transferMethod !== undefined ? {transferMethod: options.transferMethod} : {}),
         compress: options.compress ?? "none",
         sound: options.sound ?? true,
         saveToGallery: options.saveToGallery ?? false,
