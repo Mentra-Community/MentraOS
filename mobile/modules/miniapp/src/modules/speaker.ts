@@ -51,6 +51,11 @@ export interface SpeakOptions {
   volume?: number
   stopOtherAudio?: boolean
   /**
+   * Normalize display-oriented markup and symbols into natural spoken words.
+   * Defaults to true. Set false when exact characters must reach the TTS engine.
+   */
+  enableSanitization?: boolean
+  /**
    * Force this call to use on-device offline TTS, skipping cloud TTS
    * entirely — even when cloud is connected. Rejects with `TTS_LOCAL_UNAVAILABLE`
    * if the offline model isn't ready instead of falling back to cloud.
@@ -253,9 +258,7 @@ export class SpeakerModule {
   async speak(text: string, options?: SpeakOptions): Promise<SpeakResult>
   async speak(sentences: string[], options?: SpeakOptions): Promise<SpeakResult>
   async speak(text: string | string[], options: SpeakOptions = {}): Promise<SpeakResult> {
-    const normalized = Array.isArray(text)
-      ? text.map((sentence) => sentence.trim()).filter(Boolean)
-      : text.trim()
+    const normalized = Array.isArray(text) ? text.map((sentence) => sentence.trim()).filter(Boolean) : text.trim()
     if ((Array.isArray(normalized) && normalized.length === 0) || normalized === "") {
       throw {code: MiniappErrorCode.INTERNAL, message: "speak requires at least one non-empty sentence"}
     }
@@ -271,6 +274,7 @@ export class SpeakerModule {
           voice_settings: options.voice_settings,
           volume: options.volume,
           stopOtherAudio: options.stopOtherAudio ?? false,
+          enableSanitization: options.enableSanitization ?? true,
           forceLocal: options.forceLocal ?? false,
         },
         {timeoutMs: 0},
