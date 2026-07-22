@@ -1,0 +1,33 @@
+###############################################
+# Local WHIP / WHEP ingest for Mentra Live testing
+#
+# webrtcAdditionalHosts is NOT hardcoded here. The start script exports
+# MTX_WEBRTCADDITIONALHOSTS=<LAN_IP> and MediaMTX picks it up as an override
+# (env wins over this file). That keeps the config DHCP-safe.
+###############################################
+
+logLevel: info
+logDestinations: [stdout]
+
+api: yes
+apiAddress: :9997
+
+# RTMP left on for optional non-WebRTC experiments; WHIP is the primary path.
+rtmp: yes
+rtmpAddress: :1935
+
+# Optional HLS (handy if you want a non-WebRTC fallback viewer).
+hls: yes
+hlsAddress: :8888
+
+# WebRTC / WHIP publish + WHEP playback.
+webrtc: yes
+webrtcAddress: :8889
+# ICE UDP port (Docker Desktop must publish this UDP mapping).
+webrtcLocalUDPAddress: :8189
+
+paths:
+  # Glasses publish to http://<LAN_IP>:8889/live/whip
+  # Watch at          http://<LAN_IP>:8889/live
+  live:
+    source: publisher
