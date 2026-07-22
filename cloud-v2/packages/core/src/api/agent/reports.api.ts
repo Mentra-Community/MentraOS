@@ -6,13 +6,15 @@
  */
 
 import { Hono } from "hono";
-import reports from "../admin/reports.api";
+import { getReportArtifact, getReportDetail } from "../admin/reports.api";
 import { reportAgentAuth } from "../middleware/report-agent-auth.middleware";
 import type { AppEnv } from "../../types/hono.types";
 
 const app = new Hono<AppEnv>();
 
 app.use("*", reportAgentAuth);
-app.route("/", reports);
+app.get("/health", c => c.json({ ok: true }));
+app.get("/:reportId", getReportDetail);
+app.get("/:reportId/artifacts/:artifactId", getReportArtifact);
 
 export default app;
