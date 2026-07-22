@@ -33,6 +33,14 @@ class NotificationListener private constructor(private val context: Context) {
             }
         }
     }
+
+    /** Dispose the process singleton so a service rebind gets a live HandlerThread. */
+    fun destroyInstance() {
+      synchronized(this) {
+        instance?.cleanup()
+        instance = null
+      }
+    }
   }
 
   private val listeners = mutableListOf<OnNotificationReceivedListener>()
@@ -314,6 +322,6 @@ class NotificationListenerServiceImpl : NotificationListenerService() {
   override fun onDestroy() {
     super.onDestroy()
     Log.d("CrustNotificationListener", "NotificationListenerService being destroyed")
-    NotificationListener.getInstance(applicationContext).cleanup()
+    NotificationListener.destroyInstance()
   }
 }

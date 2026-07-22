@@ -136,6 +136,26 @@ public class BleJsonCompactTest {
     }
 
     @Test
+    public void streamTelemetryRoundTripsWithCompactKeys() throws Exception {
+        JSONObject status =
+                new JSONObject(
+                        "{\"type\":\"stream_status\",\"status\":\"streaming\","
+                                + "\"stats\":{\"bitrate\":912345,\"fps\":19.8,"
+                                + "\"droppedFrames\":2,\"duration\":31,"
+                                + "\"temperatureC\":54.6}}\n");
+
+        JSONObject wire = BleJsonCompact.encode(status);
+        assertEquals(912345L, wire.getJSONObject("st").getLong("br"));
+        assertEquals(54.6d, wire.getJSONObject("st").getDouble("tc"), 0.001d);
+
+        JSONObject restored = BleJsonCompact.decode(wire);
+        JSONObject stats = restored.getJSONObject("stats");
+        assertEquals(19.8d, stats.getDouble("fps"), 0.001d);
+        assertEquals(2L, stats.getLong("droppedFrames"));
+        assertEquals(31L, stats.getLong("duration"));
+    }
+
+    @Test
     public void decodeIfSupported_rejectsCompactLowRoi() throws Exception {
         JSONObject compactPing = new JSONObject("{\"t\":\"ping\"}");
 

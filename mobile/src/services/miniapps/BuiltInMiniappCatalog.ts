@@ -254,13 +254,18 @@ class BuiltInMiniappCatalog {
       apps.push({
         packageName: notifyPackageName,
         name: translate("miniApps:notify"),
-        type: "standard",
+        // Notifications is a persistent system helper, not the foreground
+        // miniapp. Starting its settings UI must not stop Captions (or any
+        // other running standard miniapp).
+        type: "background",
         offline: true,
         logoUrl: require("@assets/applet-icons/notification.png"),
         webviewUrl: "",
         healthy: true,
         hidden: false,
-        permissions: [],
+        // The home-screen launcher uses manifest permissions to request the
+        // Android NotificationListenerService grant before opening this UI.
+        permissions: [{type: "READ_NOTIFICATIONS", required: true}],
         offlineRoute: "/miniapps/settings/notifications",
         running: false,
         loading: false,
