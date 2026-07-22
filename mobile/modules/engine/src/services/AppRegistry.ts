@@ -22,13 +22,16 @@ import {unzip} from "react-native-zip-archive"
 import semver from "semver"
 import {AsyncResult, Result, result as Res} from "typesafe-ts"
 
-import type {AppletPermission, AppPermissionType, AppletType, ClientApp, DeclaredAction} from "../types/applet"
+import type {AppletPermission, AppPermissionType, AppletType, ClientApp} from "../types/applet"
 import {HardwareRequirement, HardwareRequirementLevel, HardwareType} from "../types"
 import {getConfigValues} from "../runtime/bootstrap"
 import {storage} from "../utils/storage/storage"
 import {printDirectory} from "../utils/storage/zip"
 import {checkManifestVersions} from "./manifestVersionGate"
+import {normalizeManifestActions} from "./manifestActions"
 import {miniappRunningRegistry} from "./MiniappRunningRegistry"
+
+export {normalizeManifestActions} from "./manifestActions"
 
 const ALLOWED_PERMISSION_TYPES: ReadonlySet<AppPermissionType> = new Set<AppPermissionType>([
   "MICROPHONE",
@@ -71,29 +74,6 @@ export function normalizeManifestPermissions(
 
 function normalizeManifestType(raw: unknown): AppletType {
   return raw === "background" || raw === "system_dashboard" || raw === "standard" ? raw : "standard"
-}
-
-/**
- * Normalize a manifest's `actions` into DeclaredAction[]. Defensive — keeps only
- * well-formed `{id, description}` entries (installed/dev bundles may be
- * malformed). Shared by installed (disk) and dev-sideload projection so both
- * surface declared actions to session.miniapps.list + the invoke gate.
- */
-export function normalizeManifestActions(raw: unknown): DeclaredAction[] {
-  if (!Array.isArray(raw)) return []
-  const out: DeclaredAction[] = []
-  for (const a of raw as Array<{id?: unknown; description?: unknown; parameters?: unknown}>) {
-    if (a && typeof a.id === "string" && typeof a.description === "string") {
-      out.push({
-        id: a.id,
-        description: a.description,
-        ...(a.parameters && typeof a.parameters === "object"
-          ? {parameters: a.parameters as Record<string, unknown>}
-          : {}),
-      })
-    }
-  }
-  return out
 }
 
 /**
@@ -761,7 +741,7 @@ class AppRegistry {
           permissions?: Array<string | {type: string; required?: boolean; description?: string}>
           hardwareRequirements?: Array<{type: string; level: string; description?: string}>
           type?: string
-          actions?: Array<{id?: unknown; description?: unknown; parameters?: unknown}>
+          actions?: Array<{id?: unknown; description?: unknown; parameters?: unknown; outputSchema?: unknown}>
         } | null
 
         const permissions = normalizeManifestPermissions(manifest?.permissions)
@@ -963,7 +943,7 @@ export interface DevAppRecord {
   permissions?: Array<string | {type: string; required?: boolean; description?: string}>
   hardwareRequirements?: Array<{type: string; level: string; description?: string}>
   /** Manifest-declared actions — so dev-sideloaded miniapps can be invoked too. */
-  actions?: Array<{id?: unknown; description?: unknown; parameters?: unknown}>
+  actions?: Array<{id?: unknown; description?: unknown; parameters?: unknown; outputSchema?: unknown}>
   /** Legacy single-slot migration field. New records use the real packageName directly. */
   sourcePackageName?: string
   /**

@@ -168,7 +168,7 @@ class MiniappLauncher {
       entry?: {background?: string; ui?: string}
       permissions?: Array<{type: string; required?: boolean; description?: string}>
       hardwareRequirements?: Array<{type: string; level: string; description?: string}>
-      actions?: Array<{id?: unknown; description?: unknown; parameters?: unknown}>
+      actions?: Array<{id?: unknown; description?: unknown; parameters?: unknown; outputSchema?: unknown}>
     } | null
     const declaredPermissions = (manifest?.permissions ?? [])
       .map((p) => p.type)
