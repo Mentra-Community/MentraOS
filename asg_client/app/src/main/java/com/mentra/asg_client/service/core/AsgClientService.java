@@ -20,6 +20,7 @@ import android.util.Size;
 import com.dev.api.DevApi;
 import com.mentra.asg_client.camera.UvcStreamingState;
 import com.mentra.asg_client.io.bluetooth.interfaces.ICompanionTransport;
+import com.mentra.asg_client.io.media.utils.MediaStorage;
 import com.mentra.asg_client.io.bluetooth.interfaces.TransportListener;
 import com.mentra.asg_client.io.bluetooth.managers.K900BluetoothManager;
 import com.mentra.asg_client.io.file.core.FileManager;
@@ -1879,8 +1880,8 @@ public class AsgClientService extends Service implements NetworkStateListener, T
      */
     private void cleanupOrphanedBleTransfers() {
         try {
-            // App's external files directory where compressed files are stored
-            java.io.File appFilesDir = getExternalFilesDir("");
+            // Media root where the per-package BLE transfer files are stored
+            java.io.File appFilesDir = MediaStorage.getMediaRoot(this);
             if (appFilesDir == null || !appFilesDir.exists()) {
                 Log.d(TAG, "🗑️ App files directory does not exist, skipping cleanup");
                 return;

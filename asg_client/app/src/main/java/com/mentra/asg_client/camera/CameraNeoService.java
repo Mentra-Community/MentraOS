@@ -26,6 +26,7 @@ import androidx.lifecycle.LifecycleService;
 
 import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.camera.lifecycle.CameraCoordinator;
+import com.mentra.asg_client.io.media.utils.MediaStorage;
 import com.mentra.asg_client.camera.lifecycle.CameraOpener;
 import com.mentra.asg_client.camera.lifecycle.CameraRecoveryHelper;
 import com.mentra.asg_client.camera.lifecycle.CameraServiceNotification;
@@ -1094,7 +1095,7 @@ public class CameraNeoService extends LifecycleService {
                                             .format(new Date());
                             String videoCaptureDir = "VID_" + timeStamp;
                             File videoCaptureDirFile =
-                                    new File(getExternalFilesDir(null), videoCaptureDir);
+                                    new File(MediaStorage.getMediaRoot(this), videoCaptureDir);
                             videoCaptureDirFile.mkdirs();
                             videoPath = new File(videoCaptureDirFile, "base.mp4").getAbsolutePath();
                         }
