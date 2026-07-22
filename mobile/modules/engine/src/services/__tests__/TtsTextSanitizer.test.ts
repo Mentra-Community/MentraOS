@@ -17,6 +17,10 @@ describe("sanitizeTtsText", () => {
     )
   })
 
+  test("does not add or before a lone parenthetical temperature", () => {
+    expect(sanitizeTtsText("It feels like (20°C) outside.")).toBe("It feels like 20 degrees Celsius outside.")
+  })
+
   test("removes markup and turns common symbols into words", () => {
     expect(
       sanitizeTtsText(
