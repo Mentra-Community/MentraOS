@@ -251,6 +251,33 @@ public class BesWireFormatTest {
     }
 
     @Test
+    public void linkHealthFrame_rejectsMarkerShapedGarbage() {
+        byte[] markerShapedGarbage = {'#', '#', 0x30, 0x00, 0x01, 'x', '$', '$'};
+
+        assertThat(BesWireFormat.extractPayloadAuto(markerShapedGarbage))
+                .containsExactly((byte) 'x');
+        assertThat(BesWireFormat.isValidLinkHealthFrame(markerShapedGarbage)).isFalse();
+    }
+
+    @Test
+    public void linkHealthFrame_acceptsExactJsonAndBinaryFrames() {
+        byte[] jsonPayload = "{\"C\":\"sr_syvr\"}".getBytes(StandardCharsets.UTF_8);
+        byte[] jsonFrame =
+                BesWireFormat.packDataCommand(
+                        jsonPayload, BesWireFormat.CMD_TYPE_STRING, K900LengthCodec.Endian.BE);
+        byte[] binaryFrame =
+                BesWireFormat.packBinaryFragment(
+                        (byte) (BesWireFormat.FLAG_FIRST_FRAG | BesWireFormat.FLAG_LAST_FRAG),
+                        7,
+                        0,
+                        1,
+                        new byte[] {1, 2, 3});
+
+        assertThat(BesWireFormat.isValidLinkHealthFrame(jsonFrame)).isTrue();
+        assertThat(BesWireFormat.isValidLinkHealthFrame(binaryFrame)).isTrue();
+    }
+
+    @Test
     public void repackStringFrame_transcodesLengthEndiannessOnly() {
         byte[] payload = "{\"type\":\"ping\"}".getBytes(StandardCharsets.UTF_8);
         byte[] be =

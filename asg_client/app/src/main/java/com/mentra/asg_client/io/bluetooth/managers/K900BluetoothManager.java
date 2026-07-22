@@ -2019,7 +2019,9 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                         BesWireFormat.BinaryHeader header =
                                 BesWireFormat.parseBinaryHeader(message);
                         if (header.valid) {
-                            onValidUartFrame();
+                            if (BesWireFormat.isValidLinkHealthFrame(message)) {
+                                onValidUartFrame();
+                            }
                             handleInboundBinaryFrame(message);
                         }
                     } else if (BesWireFormat.isK900ProtocolFormat(message)) {
@@ -2033,7 +2035,9 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                         byte[] payload = BesWireFormat.extractPayloadAuto(message);
 
                         if (payload != null && payload.length > 0) {
-                            onValidUartFrame();
+                            if (BesWireFormat.isValidLinkHealthFrame(message)) {
+                                onValidUartFrame();
+                            }
                             // Fast path: cs_flts ACKs — skip BleTrace + CommandProcessor spam
                             // that otherwise runs dozens of Log calls per packet window.
                             if (handleCsFltsAckPayload(payload)) {
