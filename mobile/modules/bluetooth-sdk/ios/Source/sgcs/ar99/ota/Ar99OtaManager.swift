@@ -295,12 +295,12 @@ final class Ar99OtaManager {
 
     func handleOTAResponse(_ data: Data) {
         guard data.count >= 5 else { return }
-        cancelTimeout()
         guard let header = Ar99OtaProtocol.parseFrameHeader(data),
               header.serviceId == Ar99OtaCommand.serviceId
         else {
             return
         }
+        cancelTimeout()
 
         let payload: Data?
         if header.parameterLength > 0, data.count >= header.payloadOffset + header.parameterLength {
@@ -323,6 +323,7 @@ final class Ar99OtaManager {
         case Ar99OtaCommand.validateImage:
             handleValidateImageResponse(payload)
         default:
+            startTimeout()
             break
         }
     }
@@ -472,7 +473,10 @@ final class Ar99OtaManager {
             handleOTAFailure(Ar99OtaErrorCode.protocolError, "Invalid firmware offset")
             return
         }
-        guard fileOffset < firmwareSize else { return }
+        guard fileOffset < firmwareSize else {
+            startTimeout()
+            return
+        }
 
         let remaining = firmwareSize - fileOffset
         let totalSendLength = fileLength > 0 ? min(remaining, fileLength) : remaining
@@ -489,6 +493,7 @@ final class Ar99OtaManager {
 
         currentOffset = fileOffset + sentLength
         notifyProgress(offset: currentOffset, progress: getProgress())
+        startTimeout()
     }
 
     private func handleValidateImageResponse(_ payload: Data?) {
@@ -534,6 +539,7 @@ final class Ar99OtaManager {
         if receivedOffset != currentOffset {
             currentOffset = receivedOffset
         }
+        startTimeout()
     }
 
     private func sendOtaData(_ frame: Data) {

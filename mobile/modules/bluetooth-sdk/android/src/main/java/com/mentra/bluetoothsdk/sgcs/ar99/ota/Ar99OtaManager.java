@@ -14,6 +14,7 @@ public class Ar99OtaManager {
   private static final String TAG = "Ar99OtaManager";
   private static final int DEFAULT_BLOCK_SIZE = 200;
   private static final int TIMEOUT_MS = 5000;
+  private static final int RECONNECT_TIMEOUT_MS = 90000;
 
   private static volatile Ar99OtaManager instance;
 
@@ -21,6 +22,7 @@ public class Ar99OtaManager {
   private OtaGattTransport transport;
   private OTACallback callback;
   private Runnable timeoutRunnable;
+  private Runnable reconnectTimeoutRunnable;
 
   private int state = OtaCommandConstants.OTA.State.IDLE;
   private byte[] firmwareData;
@@ -94,6 +96,7 @@ public class Ar99OtaManager {
     state = OtaCommandConstants.OTA.State.IDLE;
     otaNotifyEnabled = false;
     cancelTimeout();
+    cancelReconnectTimeout();
     firmwareData = data;
     firmwareSize = data.length;
     firmwareCrc32 = OtaCrc32Util.calculate(data);
@@ -120,6 +123,7 @@ public class Ar99OtaManager {
       firmwareSize = 0;
       currentOffset = 0;
       cancelTimeout();
+      cancelReconnectTimeout();
     }
     OTACallback cb = callback;
     if (cb != null) mainHandler.post(cb::onCancelled);
@@ -134,6 +138,7 @@ public class Ar99OtaManager {
       state = OtaCommandConstants.OTA.State.PAUSED_DISCONNECTED;
       otaNotifyEnabled = false;
       cancelTimeout();
+      startReconnectTimeout();
       shouldNotify = true;
     }
     if (shouldNotify) notifyPausedWaitingReconnect();
@@ -189,9 +194,9 @@ public class Ar99OtaManager {
 
   public void handleOTAResponse(byte[] data) {
     if (data == null || data.length < 5) return;
-    cancelTimeout();
     OtaProtocol.FrameHeader header = OtaProtocol.parseFrameHeader(data);
     if (header == null || header.svcId != OtaCommandConstants.OTA.SVC_ID) return;
+    cancelTimeout();
 
     byte[] payload = null;
     if (header.paramLen > 0 && data.length >= header.payloadOffset + header.paramLen) {
@@ -218,6 +223,7 @@ public class Ar99OtaManager {
         handleValidateImageResponse(payload);
         break;
       default:
+        startTimeout();
         break;
     }
   }
@@ -232,6 +238,7 @@ public class Ar99OtaManager {
         state = OtaCommandConstants.OTA.State.IDLE;
         return false;
       }
+      cancelReconnectTimeout();
       state = OtaCommandConstants.OTA.State.REQUESTING;
     }
     OtaGattTransport t = transport;
@@ -364,7 +371,10 @@ public class Ar99OtaManager {
       handleOTAFailure(OtaCommandConstants.OTA.ErrorCode.PROTOCOL_ERROR, "Invalid firmware offset");
       return;
     }
-    if (fileOffset >= imageSize) return;
+    if (fileOffset >= imageSize) {
+      startTimeout();
+      return;
+    }
 
     int remaining = imageSize - fileOffset;
     int totalSendLength = fileLength > 0 ? Math.min(remaining, fileLength) : remaining;
@@ -383,6 +393,7 @@ public class Ar99OtaManager {
       currentOffset = fileOffset + sentLength;
     }
     notifyProgress(currentOffset, getProgress());
+    startTimeout();
   }
 
   private void handleValidateImageResponse(byte[] payload) {
@@ -426,6 +437,7 @@ public class Ar99OtaManager {
     synchronized (this) {
       if (receivedOffset != currentOffset) currentOffset = receivedOffset;
     }
+    startTimeout();
   }
 
   private void sendOtaData(byte[] frame) {
@@ -447,6 +459,7 @@ public class Ar99OtaManager {
       state = OtaCommandConstants.OTA.State.COMPLETED;
       currentOffset = firmwareSize;
       cancelTimeout();
+      cancelReconnectTimeout();
     }
     notifyProgress(firmwareSize, 100);
     OTACallback cb = callback;
@@ -458,6 +471,7 @@ public class Ar99OtaManager {
     synchronized (this) {
       state = OtaCommandConstants.OTA.State.FAILED;
       cancelTimeout();
+      cancelReconnectTimeout();
     }
     notifyError(code, message);
     cleanupFirmware();
@@ -474,6 +488,26 @@ public class Ar99OtaManager {
     if (timeoutRunnable != null) {
       mainHandler.removeCallbacks(timeoutRunnable);
       timeoutRunnable = null;
+    }
+  }
+
+  private synchronized void startReconnectTimeout() {
+    cancelReconnectTimeout();
+    reconnectTimeoutRunnable =
+        () -> {
+          synchronized (Ar99OtaManager.this) {
+            if (state != OtaCommandConstants.OTA.State.PAUSED_DISCONNECTED) return;
+          }
+          handleOTAFailure(
+              OtaCommandConstants.OTA.ErrorCode.UNKNOWN_ERROR, "OTA reconnect timed out");
+        };
+    mainHandler.postDelayed(reconnectTimeoutRunnable, RECONNECT_TIMEOUT_MS);
+  }
+
+  private synchronized void cancelReconnectTimeout() {
+    if (reconnectTimeoutRunnable != null) {
+      mainHandler.removeCallbacks(reconnectTimeoutRunnable);
+      reconnectTimeoutRunnable = null;
     }
   }
 

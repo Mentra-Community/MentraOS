@@ -169,6 +169,7 @@ public class Ar99 extends SGCManager {
   private boolean connecting = false;
   private boolean isWriteInFlight = false;
   private boolean isOtaWriteInFlight = false;
+  private boolean otaWriteUsesNoResponseMode = false;
   private boolean isOtaNotificationEnabled = false;
   private boolean isNotifyWriteInFlight = false;
   private boolean minimalModeReady = false;
@@ -330,6 +331,9 @@ public class Ar99 extends SGCManager {
         public void onCharacteristicWrite(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status) {
           if (characteristic != null && OTA_WRITE_UUID.equals(characteristic.getUuid())) {
             synchronized (otaWriteQueue) {
+              if (otaWriteUsesNoResponseMode) {
+                return;
+              }
               isOtaWriteInFlight = false;
             }
             if (status != BluetoothGatt.GATT_SUCCESS) {
@@ -931,10 +935,12 @@ public class Ar99 extends SGCManager {
               ? BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
               : BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT;
       characteristic.setWriteType(writeType);
+      otaWriteUsesNoResponseMode = writeType == BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE;
       characteristic.setValue(next);
       boolean started = gatt.writeCharacteristic(characteristic);
       if (!started) {
         isOtaWriteInFlight = false;
+        otaWriteUsesNoResponseMode = false;
         otaWriteQueue.addFirst(next);
         handler.postDelayed(this::processNextOtaWrite, 15L);
       } else if (writeType == BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE) {
@@ -943,6 +949,7 @@ public class Ar99 extends SGCManager {
       }
     }
   }
+
 
   private void sendAr99OtaStatus(String phase, int progress, int offset, int total, String errorMessage) {
     java.util.HashMap<String, Object> body = new java.util.HashMap<>();
@@ -2325,6 +2332,7 @@ public class Ar99 extends SGCManager {
     synchronized (otaWriteQueue) {
       otaWriteQueue.clear();
       isOtaWriteInFlight = false;
+      otaWriteUsesNoResponseMode = false;
     }
     notifyQueue.clear();
     isWriteInFlight = false;
@@ -2645,4 +2653,3 @@ public class Ar99 extends SGCManager {
     }
   }
 }
-
