@@ -33,6 +33,8 @@ type FakeToken = {
   language?: string;
   start_ms?: number;
   end_ms?: number;
+  /** Set on translation-session tokens; absent for same-language passthrough. */
+  translation_status?: "original" | "translation";
 };
 
 /**
