@@ -151,4 +151,24 @@ describe("TranslationController same-language passthrough (cloud events)", () =>
     feed({text: "Hola mundo", originalText: "Hello world", isFinal: true, sourceLanguage: "en", targetLanguage: "es-ES", utteranceId: "u4"})
     expect(renders.some((r) => r.includes("Hola mundo"))).toBe(true)
   })
+
+  test("passthrough interims with an unidentified source do not leak onto the glasses", async () => {
+    // Regression: early interims of a same-language utterance arrive before
+    // Soniox has identified the language (source = "auto"/absent, and no
+    // originalText since nothing is being translated). A source-vs-target
+    // compare says "different" and rendered them in Translation-only mode.
+    const {controller, renders, feed} = makeDisplayController()
+    await controller.start() // target es, translation-only mode
+
+    feed({text: "Hola", isFinal: false, sourceLanguage: "auto", targetLanguage: "es-ES", utteranceId: "u5"})
+    feed({text: "Hola mun", isFinal: false, sourceLanguage: undefined, targetLanguage: "es-ES", utteranceId: "u5"})
+    feed({text: "Hola mundo", isFinal: true, sourceLanguage: "es", targetLanguage: "es-ES", utteranceId: "u5"})
+
+    expect(renders.some((r) => r.includes("Hola"))).toBe(false)
+
+    // Cross-language interims (originalText present, source still unknown)
+    // must STILL display in translation-only mode.
+    feed({text: "Adios", originalText: "Goodbye", isFinal: false, sourceLanguage: "auto", targetLanguage: "es-ES", utteranceId: "u6"})
+    expect(renders.some((r) => r.includes("Adios"))).toBe(true)
+  })
 })

@@ -37,6 +37,29 @@ function primarySubtag(code: string | undefined): string {
   return (code ?? "").split("-")[0].toLowerCase()
 }
 
+/**
+ * Is this event a same-language passthrough (speech already in the target
+ * language, emitted by the cloud as a transcription) rather than a real
+ * translation?
+ *
+ * When the detected source is known, compare it to the target. But on early
+ * INTERIMS Soniox often has not identified the language yet, so the source
+ * arrives as "auto"/absent — comparing that against the target says
+ * "different language" and lets passthrough interims leak onto the glasses in
+ * "Translation only" mode. Fall back to the structural tell: a cross-language
+ * translation always carries `originalText` (source tokens stream in ahead of
+ * the lagging translation tokens), a passthrough never does.
+ */
+function isSameLanguagePassthrough(
+  sourceLanguage: string | undefined,
+  targetLanguage: string,
+  originalText: string | undefined,
+): boolean {
+  const src = primarySubtag(sourceLanguage)
+  if (src && src !== "auto") return src === primarySubtag(targetLanguage)
+  return !originalText
+}
+
 type Send = <C extends keyof Channels & string>(channel: C, payload: Channels[C]) => void
 type On = <C extends keyof Channels & string>(channel: C, cb: (payload: Channels[C]) => void) => () => void
 
@@ -435,7 +458,7 @@ export class TranslationController {
       // Same-language transcriptions (source === target) show on the glasses
       // only in "both" mode — matches the live path in
       // handleSameLanguageTranscription.
-      const sameLanguage = primarySubtag(entry.sourceLanguage) === primarySubtag(entry.targetLanguage)
+      const sameLanguage = isSameLanguagePassthrough(entry.sourceLanguage, entry.targetLanguage, entry.originalText)
       if (sameLanguage && !both) continue
       const speakerChanged = entry.speaker !== lastSpeaker
       lastSpeaker = entry.speaker
@@ -546,7 +569,7 @@ export class TranslationController {
     // target language as a transcription; source == target) always land in the
     // UI history above, but reach the glasses only in "Translation +
     // transcription" mode — same-language on the display is opt-in.
-    const sameLanguage = primarySubtag(entry.sourceLanguage) === primarySubtag(entry.targetLanguage)
+    const sameLanguage = isSameLanguagePassthrough(entry.sourceLanguage, entry.targetLanguage, rich.originalText)
     if (sameLanguage && this.settings.glassesDisplayMode !== "both") return
     const displayText =
       this.settings.glassesDisplayMode === "both" && rich.originalText
