@@ -116,39 +116,39 @@ describe("TranslationController glasses display mode", () => {
   })
 })
 
-describe("TranslationController same-language transcription", () => {
-  test("speech already in the target language shows in the UI history", async () => {
-    const {controller, uiSends, feedTranscription} = makeDisplayController()
+describe("TranslationController same-language passthrough (cloud events)", () => {
+  // The cloud translation stream now emits speech ALREADY in the target
+  // language as a transcription event whose source == target (single-detector
+  // design; no second transcription subscription).
+  test("same-language event shows in the UI history", async () => {
+    const {controller, uiSends, feed} = makeDisplayController()
     await controller.start() // default target es
 
-    feedTranscription({text: "Hola mundo", isFinal: true, transcribeLanguage: "es", utteranceId: "t1", speakerId: "1"})
+    feed({text: "Hola mundo", isFinal: true, sourceLanguage: "es", targetLanguage: "es-ES", utteranceId: "u1", speakerId: "1"})
 
     const card = uiSends.find(
       (s) => s.channel === "translation:live-translation" && s.payload.text === "Hola mundo",
     )
     expect(card).toBeDefined()
-    expect(card?.payload.sourceLanguage).toBe(card?.payload.targetLanguage)
-  })
-
-  test("foreign-language transcription is dropped (covered by the translation stream)", async () => {
-    const {controller, uiSends, feedTranscription} = makeDisplayController()
-    await controller.start() // target es
-
-    feedTranscription({text: "Hello world", isFinal: true, transcribeLanguage: "en", utteranceId: "t2"})
-
-    const leaked = uiSends.find((s) => s.payload.text === "Hello world")
-    expect(leaked).toBeUndefined()
   })
 
   test("same-language reaches the glasses only in 'both' mode", async () => {
-    const {controller, renders, feedTranscription} = makeDisplayController()
+    const {controller, renders, feed} = makeDisplayController()
     await controller.start() // target es, default glasses mode "translation"
 
-    feedTranscription({text: "Hola", isFinal: true, transcribeLanguage: "es-ES", utteranceId: "t3"})
+    feed({text: "Hola", isFinal: true, sourceLanguage: "es", targetLanguage: "es-ES", utteranceId: "u2"})
     expect(renders.some((r) => r.includes("Hola"))).toBe(false) // translation-only: not on glasses
 
     await controller.setGlassesDisplayMode("both")
-    feedTranscription({text: "Adios", isFinal: true, transcribeLanguage: "es", utteranceId: "t4"})
+    feed({text: "Adios", isFinal: true, sourceLanguage: "es-ES", targetLanguage: "es-ES", utteranceId: "u3"})
     expect(renders.some((r) => r.includes("Adios"))).toBe(true) // both: on glasses
+  })
+
+  test("cross-language events reach the glasses in every mode", async () => {
+    const {controller, renders, feed} = makeDisplayController()
+    await controller.start() // target es, translation-only mode
+
+    feed({text: "Hola mundo", originalText: "Hello world", isFinal: true, sourceLanguage: "en", targetLanguage: "es-ES", utteranceId: "u4"})
+    expect(renders.some((r) => r.includes("Hola mundo"))).toBe(true)
   })
 })

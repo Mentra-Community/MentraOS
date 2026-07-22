@@ -458,11 +458,22 @@ export async function createSonioxProvider(
     // parallel `originalText` accumulator and the detected SOURCE language.
     // For transcription subs, keep everything (translation_status will be
     // 'none' since we didn't request translation).
+    //
+    // SAME-LANGUAGE PASSTHROUGH (issue 021 / OS-1762): when the spoken
+    // language already equals the translation target, Soniox skips translation
+    // entirely and emits plain transcription tokens with NO translation_status
+    // (verified empirically 2026-07-21: EN speech -> target en yields only
+    // untagged tokens; EN -> es yields original/translation pairs). Keep those
+    // untagged tokens as emitted text so target-language speech surfaces as a
+    // transcription instead of silently vanishing. Because the SAME session
+    // makes both the detection and the translation decision, this cannot
+    // double-emit: an utterance either has translation tokens (cross-language)
+    // or untagged tokens (same-language), never both halves for one segment.
     const tokens = isTranslation
       ? allTokens.filter(
           (t) =>
-            (t as { translation_status?: string }).translation_status ===
-            "translation",
+            (t as { translation_status?: string }).translation_status !==
+            "original",
         )
       : allTokens;
     const originalTokens = isTranslation
@@ -511,6 +522,15 @@ export async function createSonioxProvider(
       if (t.language) {
         language = t.language;
         currentLanguage = t.language;
+        // Untagged tokens on a translation session are the same-language
+        // passthrough: their language IS the detected source. (Cross-language
+        // source tracking comes from the original-token loop below.)
+        if (
+          isTranslation &&
+          (t as { translation_status?: string }).translation_status == null
+        ) {
+          currentSourceLanguage = t.language;
+        }
       }
 
       if (t.is_final) {
