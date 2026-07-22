@@ -214,6 +214,7 @@ describe("AudioPlaybackService live PCM streams", () => {
 
     expect(firstComplete).toHaveBeenCalledTimes(1)
     expect(firstComplete).toHaveBeenCalledWith("first-url", true, null, expect.any(Number), "interrupted")
+    expect(audioPlayer.replace.mock.calls).toEqual([[{uri: "file://first.wav"}], [null], [{uri: "file://second.wav"}]])
   })
 
   test("keeps native audio marked active when URL playback finishes beside a live PCM stream", async () => {
@@ -350,7 +351,70 @@ describe("AudioPlaybackService live PCM streams", () => {
     audioPlaybackService.cancelPlayback("active-tts")
 
     expect(audioPlayer.pause).toHaveBeenCalledTimes(1)
+    expect(audioPlayer.replace).toHaveBeenLastCalledWith(null)
     expect(onComplete).toHaveBeenCalledWith("active-tts", true, null, expect.any(Number), "interrupted")
+    expect(audioPlaybackService.isPlaying()).toBe(false)
+  })
+
+  test("unloads URL playback when its owning miniapp stops", async () => {
+    await audioPlaybackService.play(
+      {requestId: "stopped-tts", audioUrl: "file://speech.wav", appId: "app-one"},
+      () => {},
+    )
+
+    await audioPlaybackService.stopForApp("app-one")
+
+    expect(audioPlayer.replace).toHaveBeenLastCalledWith(null)
+    expect(audioPlaybackService.isPlaying()).toBe(false)
+  })
+
+  test("unloads a source when native playback start fails", async () => {
+    const onComplete = mock(() => {})
+    audioPlayer.play.mockImplementationOnce(() => {
+      throw new Error("native start failed")
+    })
+
+    await audioPlaybackService.play(
+      {requestId: "failed-tts", audioUrl: "file://speech.wav", appId: "app-one"},
+      onComplete,
+    )
+
+    expect(audioPlayer.replace).toHaveBeenLastCalledWith(null)
+    expect(onComplete).toHaveBeenCalledWith("failed-tts", false, "native start failed", null, "error")
+    expect(audioPlaybackService.isPlaying()).toBe(false)
+  })
+
+  test("unloads a source when the native player falls idle with an error", async () => {
+    const onComplete = mock(() => {})
+    await audioPlaybackService.play(
+      {requestId: "idle-tts", audioUrl: "file://speech.wav", appId: "app-one"},
+      onComplete,
+    )
+
+    const dateNow = spyOn(Date, "now").mockReturnValue(Date.now() + 2_000)
+    try {
+      const playbackStatusTarget = audioPlaybackService as unknown as {
+        onPlaybackStatusUpdate(status: {
+          didJustFinish: boolean
+          duration: number
+          isBuffering: boolean
+          isLoaded: boolean
+          playbackState: string
+        }): void
+      }
+      playbackStatusTarget.onPlaybackStatusUpdate({
+        didJustFinish: false,
+        duration: 0,
+        isBuffering: false,
+        isLoaded: false,
+        playbackState: "idle",
+      })
+    } finally {
+      dateNow.mockRestore()
+    }
+
+    expect(audioPlayer.replace).toHaveBeenLastCalledWith(null)
+    expect(onComplete).toHaveBeenCalledWith("idle-tts", false, "Playback failed (player went idle)", null, "error")
     expect(audioPlaybackService.isPlaying()).toBe(false)
   })
 

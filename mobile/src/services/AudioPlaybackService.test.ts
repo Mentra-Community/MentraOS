@@ -110,6 +110,11 @@ describe("AudioPlaybackService", () => {
     await flushAsyncVolumeGuard()
 
     expect(firstComplete).toHaveBeenCalledWith("first", true, null, expect.any(Number), "interrupted")
+    expect(mockPlayer.replace.mock.calls.slice(0, 3)).toEqual([
+      [{uri: "https://example.com/one.mp3"}],
+      [null],
+      [{uri: "https://example.com/two.mp3"}],
+    ])
     expect(BluetoothSdk.setGlassesMediaVolume).toHaveBeenCalledTimes(1)
     expect(createAudioPlayer).toHaveBeenCalledTimes(1)
 
@@ -135,6 +140,20 @@ describe("AudioPlaybackService", () => {
 
     jest.advanceTimersByTime(300)
     expect(mockPlayer.replace).toHaveBeenLastCalledWith(null)
+  })
+
+  it("unloads cancelled playback so Bluetooth media play cannot resume it", async () => {
+    const onComplete = jest.fn()
+    await audioPlaybackService.play(
+      {requestId: "cancelled", audioUrl: "https://example.com/speech.mp3", appId: "com.mentra.merge"},
+      onComplete,
+    )
+
+    audioPlaybackService.cancelPlayback("cancelled")
+
+    expect(mockPlayer.pause).toHaveBeenCalled()
+    expect(mockPlayer.replace).toHaveBeenLastCalledWith(null)
+    expect(onComplete).toHaveBeenCalledWith("cancelled", true, null, expect.any(Number), "interrupted")
   })
 
   it("starts playback without waiting for a slow glasses volume response", async () => {
