@@ -77,7 +77,8 @@ interface SlackBlock {
   elements?: Array<{
     type: "button";
     text: { type: "plain_text"; text: string; emoji: boolean };
-    url: string;
+    action_id: string;
+    value: string;
     style?: "primary" | "danger";
   }>;
 }
@@ -221,8 +222,9 @@ function buildSlackMessage(notification: ReportSlackNotification): {
         {
           type: "button",
           text: { type: "plain_text", text: "Run Fix Agent", emoji: true },
+          action_id: "run_fix_agent",
           style: "primary",
-          url: agentActionUrl,
+          value: agentActionUrl,
         },
       ],
     });
@@ -247,10 +249,10 @@ function buildSlackMessage(notification: ReportSlackNotification): {
 }
 
 /**
- * Signed, expiring link to the private agent controller. The link itself is
- * a read-only confirmation page; only its POST form queues work, so Slack's
- * unfurl crawler cannot start an agent. Bug reports are the deliberately
- * narrow MVP scope; feedback and automatic diagnostics never receive it.
+ * Signed, expiring action for the private agent controller. Slack sends the
+ * value only when a human presses the button, so unfurl crawlers cannot start
+ * an agent. Bug reports are the deliberately narrow MVP scope; feedback and
+ * automatic diagnostics never receive it.
  */
 function reportAgentActionUrl(notification: ReportSlackNotification): string | null {
   if (notification.kind !== "bug") return null;
