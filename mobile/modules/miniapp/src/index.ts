@@ -36,6 +36,16 @@ export type {MentraOSGlobals, MiniappCapsuleMenuRect, MiniappColorScheme, Miniap
 
 export {MiniappErrorCode, MiniappRequestType, MiniappResponseType, MiniappStreamType} from "./protocol"
 export {CLOUD_STATUS_STREAM} from "./modules/cloud"
+
+// Language registry (issue 021): canonical language types + the validation
+// error the typed transcription/translation surfaces throw.
+export {
+  MiniappValidationError,
+  SUPPORTED_LANGUAGE_HINTS,
+  SUPPORTED_TRANSCRIPTION_LANGUAGES,
+  isTranscriptionLanguage,
+} from "./modules/languages"
+export type {LanguageHint, TranscriptionLanguage} from "./modules/languages"
 export type {CloudClientAudioTransport, CloudClientConnectionStatus, CloudClientStatus} from "./modules/cloud"
 
 // Hardware requirement types — re-exported from @mentra/types so miniapp

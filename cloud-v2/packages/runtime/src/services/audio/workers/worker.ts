@@ -395,6 +395,13 @@ async function createProvider(mentraUserId: string, sub: AudioSubscription): Pro
     ? `${mentraUserId}:${sourceLanguage}>${target}`
     : `${mentraUserId}:${langCode((sub as TranscriptionSubscription).language)}`
   const providerLanguage = isTranslation ? (target as string) : langCode((sub as TranscriptionSubscription).language)
+  // Detection hints only exist on an auto-mode transcription source; carry them
+  // to the provider so `configure({languageHints})` actually biases Soniox
+  // (issue 021). A specific language ignores them — the language is the hint.
+  const languageHints =
+    !isTranslation && sub.kind === "transcription" && sub.language.mode === "auto"
+      ? sub.language.hints
+      : undefined
 
   const onTranscript = (event: TranscriptEvent) => {
     const out: TranscriptMessage = {
@@ -438,6 +445,7 @@ async function createProvider(mentraUserId: string, sub: AudioSubscription): Pro
         // subs we additionally pass `targetLanguage` — Soniox does the
         // translation in-session and we filter result tokens accordingly.
         language: isTranslation ? (sourceLanguage as string) : langCode((sub as TranscriptionSubscription).language),
+        languageHints,
         targetLanguage: isTranslation ? (target as string) : undefined,
         onTranscript,
         onError,
