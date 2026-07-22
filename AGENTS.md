@@ -166,6 +166,13 @@ Automated ransomware scanners actively target exposed MongoDB instances. Use Mon
 - [GitHub Project Board - General Tasks](https://github.com/orgs/Mentra-Community/projects/2)
 - [Discord Community](https://discord.gg/5ukNvkEAqT)
 
+### Related Miniapp Repositories
+
+- [Mentra Notes Miniapp](https://github.com/Mentra-Community/Mentra-Notes-Miniapp)
+- [Livestreamer Miniapp](https://github.com/Mentra-Community/Livestreamer-Miniapp)
+- [Mentra AI Miniapp](https://github.com/Mentra-Community/Mentra-AI-Miniapp)
+- [Mentra Enterprise Miniapp](https://github.com/Mentra-Community/Mentra-Enterprise-Miniapp)
+
 ## Bug Report Logs
 
 Bug reports and feedback filed from the Mentra App land in the Cloud V2 reports system. Report ids look like `rep_01...` and appear in the reports Slack notifications and in the admin console's Incident system page (admin.mentraglass.com).
