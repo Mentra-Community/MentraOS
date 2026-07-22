@@ -12,6 +12,8 @@ export interface VersionInfo {
   sha256: string
   releaseNotes: string
   isRequired?: boolean
+  /** Exact-pin manifests opt into downgrades; fleet manifests never set this. */
+  allowDowngrade?: boolean
 }
 
 export interface MtkPatch {
@@ -46,6 +48,8 @@ export interface OtaCheckResult {
   updates: string[]
   mtkPatch: MtkPatch | null
   besVersion: string | null
+  /** True when the pending APK step installs an OLDER build than the glasses currently run. */
+  isApkDowngrade: boolean
 }
 
 export type OtaCheckSkippedReason = "disconnected" | "missing_build"
@@ -76,6 +80,7 @@ function emptyCheckResult(skippedReason?: OtaCheckSkippedReason): OtaCheckCurren
     updates: [],
     mtkPatch: null,
     besVersion: null,
+    isApkDowngrade: false,
     updateInfo: null,
     isRequired: true,
     skippedReason,
@@ -104,28 +109,50 @@ export function checkVersionUpdateAvailable(
   currentBuildNumber: string | undefined,
   versionJson: VersionJson | null,
 ): boolean {
+  return getApkUpdateDirection(currentBuildNumber, versionJson) !== null
+}
+
+/**
+ * Direction of the pending APK change, or null when the glasses already match the manifest.
+ * Downgrades require the app entry's explicit `allowDowngrade` opt-in (only exact-pin manifests
+ * set it), mirroring the glasses-side `DowngradeGate`; legacy top-level manifests stay
+ * upgrade-only.
+ */
+export function getApkUpdateDirection(
+  currentBuildNumber: string | undefined,
+  versionJson: VersionJson | null,
+): "upgrade" | "downgrade" | null {
   if (!currentBuildNumber || !versionJson) {
-    return false
+    return null
   }
 
   const currentVersion = parseInt(currentBuildNumber, 10)
   if (isNaN(currentVersion)) {
-    return false
+    return null
   }
 
   let serverVersion: number | undefined
+  let allowDowngrade = false
 
-  if (versionJson.apps?.["com.mentra.asg_client"]) {
-    serverVersion = versionJson.apps["com.mentra.asg_client"].versionCode
+  const appEntry = versionJson.apps?.["com.mentra.asg_client"]
+  if (appEntry) {
+    serverVersion = appEntry.versionCode
+    allowDowngrade = appEntry.allowDowngrade === true
   } else if (versionJson.versionCode) {
     serverVersion = versionJson.versionCode
   }
 
   if (!serverVersion || isNaN(serverVersion)) {
-    return false
+    return null
   }
 
-  return serverVersion > currentVersion
+  if (serverVersion > currentVersion) {
+    return "upgrade"
+  }
+  if (serverVersion < currentVersion && allowDowngrade) {
+    return "downgrade"
+  }
+  return null
 }
 
 export function getLatestVersionInfo(versionJson: VersionJson | null): VersionInfo | null {
@@ -214,8 +241,11 @@ export async function checkForOtaUpdate(
     const versionJson = await fetchVersionInfo(otaVersionUrl)
     const latestVersionInfo = getLatestVersionInfo(versionJson)
 
-    const apkUpdateAvailable = checkVersionUpdateAvailable(currentBuildNumber, versionJson)
-    console.log(`OTA: APK update available: ${apkUpdateAvailable} (current: ${currentBuildNumber})`)
+    const apkDirection = getApkUpdateDirection(currentBuildNumber, versionJson)
+    const apkUpdateAvailable = apkDirection !== null
+    console.log(
+      `OTA: APK update available: ${apkUpdateAvailable} (current: ${currentBuildNumber}, direction: ${apkDirection ?? "none"})`,
+    )
 
     const mtkPatch = findMatchingMtkPatch(versionJson?.mtk_patches, currentMtkVersion)
     const mtkUpdateAvailable = mtkPatch !== null
@@ -243,6 +273,7 @@ export async function checkForOtaUpdate(
       updates,
       mtkPatch,
       besVersion: versionJson?.bes_firmware?.version || null,
+      isApkDowngrade: apkDirection === "downgrade",
     }
   } catch (error) {
     console.error("Error checking for OTA update:", error)
@@ -253,6 +284,7 @@ export async function checkForOtaUpdate(
       updates: [],
       mtkPatch: null,
       besVersion: null,
+      isApkDowngrade: false,
     }
   }
 }
@@ -360,6 +392,7 @@ export async function checkCurrentGlassesForUpdate(
     )
   }
   const updateAvailable = filteredUpdates.length > 0 && !!result.latestVersionInfo
+  const isApkDowngrade = result.isApkDowngrade && filteredUpdates.includes("apk")
   const updateInfo = updateAvailable
     ? {
         available: true,
@@ -367,6 +400,7 @@ export async function checkCurrentGlassesForUpdate(
         versionName: result.latestVersionInfo?.versionName || "",
         updates: filteredUpdates,
         totalSize: 0,
+        isDowngrade: isApkDowngrade,
       }
     : null
 
@@ -376,6 +410,7 @@ export async function checkCurrentGlassesForUpdate(
     ...result,
     updateAvailable,
     updates: filteredUpdates,
+    isApkDowngrade,
     updateInfo,
     isRequired: result.latestVersionInfo?.isRequired !== false,
     manifestUrl,

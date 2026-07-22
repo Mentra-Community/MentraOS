@@ -29,6 +29,7 @@ export default function OtaCheckForUpdatesScreen() {
 
   const [checkState, setCheckState] = useState<CheckState>("checking")
   const [isUpdateRequired, setIsUpdateRequired] = useState(true) // Default to required if not specified
+  const [isDowngradeUpdate, setIsDowngradeUpdate] = useState(false)
   const [checkKey, setCheckKey] = useState(0)
   /** Incremented each effect run so stale async performCheck exits before mutating state. */
   const performCheckGenerationRef = useRef(0)
@@ -128,6 +129,7 @@ export default function OtaCheckForUpdatesScreen() {
           console.log("📱 Updates available - setting update_available state")
           checkCompletedRef.current = true
           setIsUpdateRequired(result.isRequired)
+          setIsDowngradeUpdate(result.updateInfo.isDowngrade === true)
           setCheckState("update_available")
         } else {
           console.log("📱 No updates available - setting no_update state")
@@ -237,12 +239,15 @@ export default function OtaCheckForUpdatesScreen() {
           <View className="flex-1 items-center justify-center px-6">
             <Icon name="world-download" size={64} color={theme.colors.primary} />
             <View className="h-6" />
-            <Text text={translate("ota:updateAvailable", {deviceName})} className="font-semibold text-xl text-center" />
+            <Text
+              text={translate(isDowngradeUpdate ? "ota:downgradeAvailable" : "ota:updateAvailable", {deviceName})}
+              className="font-semibold text-xl text-center"
+            />
             <View className="h-4" />
             <Text
               text={
                 glassesWifiConnected
-                  ? translate("ota:updateDescription")
+                  ? translate(isDowngradeUpdate ? "ota:downgradeDescription" : "ota:updateDescription")
                   : translate("ota:updateConnectWifi", {deviceName})
               }
               className="text-sm text-center"

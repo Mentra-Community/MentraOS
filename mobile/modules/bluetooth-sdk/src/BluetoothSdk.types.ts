@@ -1183,6 +1183,8 @@ export interface OtaUpdateInfo {
   updates: string[] // ["apk", "mtk", "bes"]
   totalSize: number
   cacheReady?: boolean
+  /** True when the APK step installs an older build than the glasses currently run (exact-pin manifests only). */
+  isDowngrade?: boolean
 }
 
 export interface OtaProgress {

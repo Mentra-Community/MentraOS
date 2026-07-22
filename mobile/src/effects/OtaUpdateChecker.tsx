@@ -54,6 +54,7 @@ export function OtaUpdateChecker() {
   const pendingUpdate = useRef<{
     latestVersionInfo: VersionInfo
     updates: string[]
+    isDowngrade: boolean
   } | null>(null)
   const otaCheckTimeoutRef = useRef<number | null>(null)
 
@@ -153,7 +154,10 @@ export function OtaUpdateChecker() {
     console.log("OTA: User returned to home with pending update - showing alert")
     const deviceName = defaultWearable || "Glasses"
     const updateCount = pending.updates.length
-    const updateMessage = superMode
+    const isDowngrade = pending.isDowngrade
+    const updateMessage = isDowngrade
+      ? translate("ota:downgradeDescriptionShort") + (superMode ? ` (${pending.updates.join(", ").toUpperCase()})` : "")
+      : superMode
       ? `Updates available: ${pending.updates.join(", ").toUpperCase()}`
       : updateCount === 1
       ? "1 update available"
@@ -162,10 +166,14 @@ export function OtaUpdateChecker() {
     hasPromptedOta.current = true
     hasPromptedOtaWifiSetup.current = false
 
-    showAlert(translate("ota:updateAvailable", {deviceName}), updateMessage, [
-      {text: translate("ota:updateLater"), style: "cancel"},
-      {text: translate("ota:install"), onPress: () => push("/ota/check-for-updates")},
-    ])
+    showAlert(
+      translate(isDowngrade ? "ota:downgradeAvailable" : "ota:updateAvailable", {deviceName}),
+      updateMessage,
+      [
+        {text: translate("ota:updateLater"), style: "cancel"},
+        {text: translate("ota:install"), onPress: () => push("/ota/check-for-updates")},
+      ],
+    )
   }, [pathname, glassesConnected, glassesWifiConnected, defaultWearable, superMode, push])
 
   // Main OTA check effect
@@ -225,7 +233,7 @@ export function OtaUpdateChecker() {
           waitForMtkVersionMs: 0,
           refreshVersionInfo: false,
         })
-        .then(({updateAvailable, latestVersionInfo, updates, skippedReason}) => {
+        .then(({updateAvailable, latestVersionInfo, updates, isApkDowngrade, skippedReason}) => {
           if (skippedReason) {
             console.log(`OTA: check skipped - ${skippedReason}`)
             return
@@ -253,7 +261,7 @@ export function OtaUpdateChecker() {
           // Only show update alert on the homepage - user may have navigated away during async check
           if (pathnameRef.current !== "/home") {
             console.log(`OTA: update found but not on homepage (${pathnameRef.current}) - caching for later`)
-            pendingUpdate.current = {latestVersionInfo, updates}
+            pendingUpdate.current = {latestVersionInfo, updates, isDowngrade: isApkDowngrade}
             return
           }
 
@@ -261,23 +269,29 @@ export function OtaUpdateChecker() {
           // Super mode shows technical details (APK, MTK, BES), normal mode shows simple count
           const updateCount = updates.length
           const updateList = updates.join(", ").toUpperCase() // "APK, MTK, BES"
-          const updateMessage = superMode
+          const updateMessage = isApkDowngrade
+            ? translate("ota:downgradeDescriptionShort") + (superMode ? ` (${updateList})` : "")
+            : superMode
             ? `Updates available: ${updateList}`
             : updateCount === 1
             ? "1 update available"
             : `${updateCount} updates available`
 
-          pendingUpdate.current = {latestVersionInfo, updates}
+          pendingUpdate.current = {latestVersionInfo, updates, isDowngrade: isApkDowngrade}
 
           if (engine.ota.snapshot().wifiConnected) {
             console.log("OTA: Update available and glasses are on WiFi - prompting install")
             pendingUpdate.current = null
             hasPromptedOta.current = true
             hasPromptedOtaWifiSetup.current = false
-            showAlert(translate("ota:updateAvailable", {deviceName}), updateMessage, [
-              {text: translate("ota:updateLater"), style: "cancel"},
-              {text: translate("ota:install"), onPress: () => push("/ota/check-for-updates")},
-            ])
+            showAlert(
+              translate(isApkDowngrade ? "ota:downgradeAvailable" : "ota:updateAvailable", {deviceName}),
+              updateMessage,
+              [
+                {text: translate("ota:updateLater"), style: "cancel"},
+                {text: translate("ota:install"), onPress: () => push("/ota/check-for-updates")},
+              ],
+            )
             return
           }
 
