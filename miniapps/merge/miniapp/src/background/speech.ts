@@ -20,11 +20,16 @@ export function insightToSpeechText(text: string): string {
     .replace(/<\/?[a-z][a-z0-9-]*(?:\s[^<>]*?)?\s*\/?>/gi, " ")
     .replace(/\[([^\]]+)]\([^)]+\)/g, "$1")
     .replace(/`([^`]*)`/g, "$1")
+    .replace(/\(\s*(-?\d+(?:[.,]\d+)?)\s*(?:°\s*f\b|℉)\s*\)/gi, " or $1 degrees Fahrenheit")
+    .replace(/\(\s*(-?\d+(?:[.,]\d+)?)\s*(?:°\s*c\b|℃)\s*\)/gi, " or $1 degrees Celsius")
+    .replace(/(-?\d+(?:[.,]\d+)?)\s*(?:°\s*f\b|℉)/gi, "$1 degrees Fahrenheit")
+    .replace(/(-?\d+(?:[.,]\d+)?)\s*(?:°\s*c\b|℃)/gi, "$1 degrees Celsius")
+    .replace(/(-?\d+(?:[.,]\d+)?)\s*°/g, "$1 degrees")
     .replace(/<=/g, " less than or equal to ")
     .replace(/>=/g, " greater than or equal to ")
     .replace(/</g, " less than ")
     .replace(/>/g, " greater than ")
-    .replace(/[\[\]{}()]/g, " ")
+    .replace(/[[\]{}()]/g, " ")
     .replace(/&/g, " and ")
     .replace(/\+/g, " plus ")
     .replace(/=/g, " equals ")
@@ -38,7 +43,10 @@ export function insightToSpeechText(text: string): string {
     })
     .replace(/\*/g, " star ")
 
-  return speech.replace(/\s+/g, " ").trim()
+  return speech
+    .replace(/\s+([,.;:!?])/g, "$1")
+    .replace(/\s+/g, " ")
+    .trim()
 }
 
 /** Replace the current spoken insight, even when its display text has no speakable content. */

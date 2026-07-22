@@ -5,8 +5,18 @@ import {insightToSpeechText, speakInsightText} from "./speech"
 describe("insightToSpeechText", () => {
   test("removes SSML and bracket markup before speaking", () => {
     expect(insightToSpeechText('Use <say-as interpret-as="characters">API</say-as> [keys] (now).')).toBe(
-      "Use API keys now .",
+      "Use API keys now.",
     )
+  })
+
+  test("expands temperature symbols before removing brackets", () => {
+    expect(insightToSpeechText("SF Weather: Highs around 68°F (20°C), lows near 55℉.")).toBe(
+      "SF Weather: Highs around 68 degrees Fahrenheit or 20 degrees Celsius, lows near 55 degrees Fahrenheit.",
+    )
+  })
+
+  test("expands standalone degree symbols", () => {
+    expect(insightToSpeechText("Turn 90° clockwise.")).toBe("Turn 90 degrees clockwise.")
   })
 
   test("turns common symbols into pronounceable words", () => {
