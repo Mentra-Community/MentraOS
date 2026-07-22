@@ -6,35 +6,18 @@
  */
 
 import {spawn} from "node:child_process"
-import {existsSync, readFileSync} from "node:fs"
 import {dirname, join} from "node:path"
 import {fileURLToPath} from "node:url"
 
+import {loadEnvLocal} from "./load-env-local.mjs"
+
 const root = join(dirname(fileURLToPath(import.meta.url)), "..")
+
+// Must load .env.local before reading ELEVENLABS_SIGNING_SERVER_PORT.
+loadEnvLocal(root)
+
 const port = Number(process.env.ELEVENLABS_SIGNING_SERVER_PORT || 8788)
 const healthUrl = `http://127.0.0.1:${port}/health`
-
-function loadEnvLocal() {
-  const path = join(root, ".env.local")
-  if (!existsSync(path)) return
-  for (const line of readFileSync(path, "utf8").split("\n")) {
-    const trimmed = line.trim()
-    if (!trimmed || trimmed.startsWith("#")) continue
-    const eq = trimmed.indexOf("=")
-    if (eq <= 0) continue
-    const key = trimmed.slice(0, eq).trim()
-    let value = trimmed.slice(eq + 1).trim()
-    if (
-      (value.startsWith('"') && value.endsWith('"')) ||
-      (value.startsWith("'") && value.endsWith("'"))
-    ) {
-      value = value.slice(1, -1)
-    }
-    if (process.env[key] === undefined) {
-      process.env[key] = value
-    }
-  }
-}
 
 async function signerHealthy() {
   try {
@@ -44,8 +27,6 @@ async function signerHealthy() {
     return false
   }
 }
-
-loadEnvLocal()
 
 let signerChild = null
 

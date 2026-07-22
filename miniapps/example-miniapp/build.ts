@@ -68,9 +68,10 @@ function getLanIp(): string | null {
 }
 
 const lanIp = getLanIp()
+const signerPort = Number(process.env.ELEVENLABS_SIGNING_SERVER_PORT || 8788)
 const DEFAULT_ELEVENLABS_SIGNED_URL_ENDPOINT = lanIp
-  ? `http://${lanIp}:8788/signed-url`
-  : "http://localhost:8788/signed-url"
+  ? `http://${lanIp}:${signerPort}/signed-url`
+  : `http://localhost:${signerPort}/signed-url`
 
 const define: Record<string, string> = {}
 for (const [k, v] of Object.entries(process.env)) {

@@ -22,7 +22,7 @@ Same logic and variables:
 | Signed URL endpoint | auto: `http://<this-Mac-LAN-IP>:8788/signed-url` at build time |
 | Signing server port | `8788` |
 
-Flow: local signing server (holds `ELEVENLABS_API_KEY`) → background fetches signed URL → WebSocket → `session.mic.onAudioChunk` as `{ user_audio_chunk }`. Agent audio events are logged only (no glasses playback).
+Flow: local signing server (holds `ELEVENLABS_API_KEY`) → background fetches signed URL → WebSocket → `session.mic.onAudioChunk` as `{ user_audio_chunk }` → agent PCM played on glasses via `session.speaker.createStream` (resampled when needed).
 
 ### Setup
 
@@ -34,12 +34,13 @@ bun run dev      # auto-starts the signing server on :8788 if needed, then mentr
 
 Open the miniapp → **ElevenLabs** → **Start**.
 
-`bun run build` / `dev` bakes the signed-URL endpoint to this Mac’s LAN IP. Override with `MENTRA_PUBLIC_ELEVENLABS_SIGNED_URL_ENDPOINT` if needed. Keep the API key in `.env.local` only — never bake it into the miniapp.
+`bun run build` / `dev` bakes the signed-URL endpoint to this Mac’s LAN IP (and `ELEVENLABS_SIGNING_SERVER_PORT` when set). Override with `MENTRA_PUBLIC_ELEVENLABS_SIGNED_URL_ENDPOINT` if needed. Keep the API key in `.env.local` only — never bake it into the miniapp.
 
-Manual signer only: `bun run signer`. Miniapp-only (no signer): `bun run dev:miniapp`.
+Manual signer only: `bun run signer` (loads `.env.local`). Miniapp-only (no signer): `bun run dev:miniapp`.
 
 ### Notes
 
 - Glasses must already be connected via MentraOS (no scan/pair UI).
 - Do not run the `session.mic` tester and ElevenLabs at the same time (both own the mic).
 - Glasses VAD disable (`setVoiceActivityDetectionEnabled(false)`) is not exposed on the miniapp mic API; this stream uses whatever PCM the host delivers after LC3 decode (~16 kHz mono).
+- The signing server binds `0.0.0.0` with an unauthenticated `/signed-url` endpoint so a phone on the LAN can reach it. **Keep it on a trusted network only** — never expose it beyond your LAN / VPN.

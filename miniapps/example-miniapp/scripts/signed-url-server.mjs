@@ -1,6 +1,13 @@
 #!/usr/bin/env node
 
 import {createServer} from "node:http"
+import {dirname, join} from "node:path"
+import {fileURLToPath} from "node:url"
+
+import {loadEnvLocal} from "./load-env-local.mjs"
+
+const root = join(dirname(fileURLToPath(import.meta.url)), "..")
+loadEnvLocal(root)
 
 const DEFAULT_AGENT_ID = "agent_0301ks3wg64pf9evgxqa6dw34t1f"
 const port = Number(process.env.ELEVENLABS_SIGNING_SERVER_PORT || 8788)
@@ -13,6 +20,7 @@ const defaultAgentId =
 
 if (!apiKey) {
   console.error("ELEVENLABS_API_KEY is required for the local signing server.")
+  console.error("Put it in .env.local (or export it), then re-run bun run signer.")
   process.exit(1)
 }
 
@@ -74,8 +82,8 @@ const server = createServer(async (req, res) => {
   }
 })
 
-// Bind 0.0.0.0 so a MentraOS phone on the LAN can reach this Mac
-// (set MENTRA_PUBLIC_ELEVENLABS_SIGNED_URL_ENDPOINT to http://<lan-ip>:8788/signed-url).
+// Bind 0.0.0.0 so a MentraOS phone on the LAN can reach this Mac.
+// Dev-only: keep this on a trusted network — /signed-url is unauthenticated.
 server.listen(port, "0.0.0.0", () => {
   console.log(`ElevenLabs signing server listening at http://0.0.0.0:${port}`)
 })

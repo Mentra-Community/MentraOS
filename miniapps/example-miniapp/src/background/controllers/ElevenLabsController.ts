@@ -22,6 +22,12 @@ import type {
   ElevenLabsSnapshot,
   ElevenLabsStreamStats,
 } from "../../shared/types"
+import {
+  appendQueryParam,
+  approxBase64ByteLength,
+  parsePcmSampleRate,
+  resamplePcm16Le,
+} from "../elevenLabsHelpers"
 
 type Send = <C extends keyof Channels & string>(channel: C, payload: Channels[C]) => void
 
@@ -93,22 +99,21 @@ export class ElevenLabsController {
   private firstPcmTimeout: ReturnType<typeof setTimeout> | null = null
   private websocketOpenedAtMs: number | null = null
   private startInFlight = false
+  /** Bumped on each start/stop so an in-flight Signing start can be abandoned. */
+  private startGeneration = 0
 
   /** Agent TTS format from conversation_initiation_metadata (e.g. pcm_16000). */
   private agentOutputFormat: string | null = null
+  /** True when metadata reports a non-PCM format (e.g. ulaw_*) — drop audio events. */
+  private agentOutputUnsupported = false
   private agentSampleRate = 16000
   private speakerSampleRate: SpeakerSampleRate = 16000
   private speakerWriter: SpeakerWriter | null = null
   private speakerOpenPromise: Promise<SpeakerWriter | null> | null = null
   private speakerWriteChain: Promise<void> = Promise.resolve()
   private agentAudioChunksPlayed = 0
-  /**
-   * While agent TTS is playing (plus a short hangover), do not forward mic PCM
-   * to ElevenLabs. Otherwise the glasses speaker leaks into the mic and STT
-   * echoes the agent back as "user" speech (feedback loop / "..." transcripts).
-   */
-  private agentSpeakingUntilMs = 0
-  private static readonly MIC_MUTE_HANGOVER_MS = 450
+  /** Bumped on close/interrupt so in-flight createStream cannot leak a writer. */
+  private speakerEpoch = 0
 
   constructor(private readonly session: MiniappSession) {}
 
@@ -200,6 +205,7 @@ export class ElevenLabsController {
     }
 
     this.startInFlight = true
+    const generation = ++this.startGeneration
     this.lastError = null
     this.conversationState = "Signing"
     this.lastTranscript = ""
@@ -211,10 +217,10 @@ export class ElevenLabsController {
     this.closeSource = "remote"
     this.websocketOpenedAtMs = null
     this.agentOutputFormat = null
+    this.agentOutputUnsupported = false
     this.agentSampleRate = 16000
     this.speakerSampleRate = 16000
     this.agentAudioChunksPlayed = 0
-    this.agentSpeakingUntilMs = 0
     await this.closeSpeaker()
     this.clearFirstPcmTimeout()
     this.diagnostics = {
@@ -231,6 +237,11 @@ export class ElevenLabsController {
         this.config.signedUrlEndpoint,
         this.config.agentId,
       )
+      // Stop (or a newer Start) during Signing must not open a WebSocket.
+      if (generation !== this.startGeneration || this.conversationState !== "Signing") {
+        this.appendLog("start aborted before WebSocket open")
+        return
+      }
       this.updateDiagnostics({
         signedUrlLatencyMs: Date.now() - signedUrlStartedAtMs,
         signedUrlStatus: "OK",
@@ -243,6 +254,10 @@ export class ElevenLabsController {
       this.websocket = websocket
 
       websocket.onopen = () => {
+        if (generation !== this.startGeneration || this.websocket !== websocket) {
+          websocket.close()
+          return
+        }
         const openedAtMs = Date.now()
         this.websocketOpenedAtMs = openedAtMs
         this.conversationState = "Streaming"
@@ -264,16 +279,22 @@ export class ElevenLabsController {
       }
 
       websocket.onmessage = (event) => {
+        if (this.websocket !== websocket) return
         this.handleElevenLabsMessage(websocket, event.data)
       }
 
       websocket.onerror = (event) => {
+        if (this.websocket !== websocket) return
         this.lastError = "ElevenLabs WebSocket error"
         this.updateDiagnostics({websocketState: "Error"})
         this.appendLog(`ElevenLabs WebSocket error: ${JSON.stringify(event)}`)
       }
 
       websocket.onclose = (event) => {
+        // Ignore closes from sockets that Stop already replaced/cleared.
+        if (this.websocket !== websocket) {
+          return
+        }
         const openedAtMs = this.websocketOpenedAtMs
         const closedAtMs = Date.now()
         const closeAfterMs = openedAtMs === null ? null : closedAtMs - openedAtMs
@@ -309,6 +330,9 @@ export class ElevenLabsController {
         this.pushSnapshot()
       }
     } catch (error) {
+      if (generation !== this.startGeneration) {
+        return
+      }
       this.conversationState = "Idle"
       this.clearFirstPcmTimeout()
       this.updateDiagnostics({
@@ -318,11 +342,17 @@ export class ElevenLabsController {
       })
       this.fail(error)
     } finally {
-      this.startInFlight = false
+      if (generation === this.startGeneration) {
+        this.startInFlight = false
+      }
     }
   }
 
   private async stopConversation(reason: ElevenLabsCloseSource = "user_stop"): Promise<void> {
+    // Invalidate any in-flight Signing start so it cannot open a WebSocket afterward,
+    // and clear startInFlight so a subsequent Start is not blocked on the abandoned fetch.
+    this.startGeneration += 1
+    this.startInFlight = false
     this.closeSource = reason
     this.clearFirstPcmTimeout()
     this.updateDiagnostics({micStage: "Stopping"})
@@ -535,6 +565,9 @@ export class ElevenLabsController {
       }
       case "audio": {
         const data = event.audio_event as {event_id?: number | string; audio_base_64?: string}
+        if (this.agentOutputUnsupported) {
+          break
+        }
         if (!data.audio_base_64) {
           this.appendLog(`agent audio chunk ${data.event_id} missing audio_base_64`)
           break
@@ -563,9 +596,11 @@ export class ElevenLabsController {
   private applyAgentOutputFormat(format: string): void {
     this.agentOutputFormat = format
     if (format.startsWith("ulaw_")) {
-      this.appendLog(`unsupported agent output format ${format} (need PCM for createStream)`)
+      this.agentOutputUnsupported = true
+      this.appendLog(`unsupported agent output format ${format} (need PCM for createStream) — dropping audio`)
       return
     }
+    this.agentOutputUnsupported = false
     const rate = parsePcmSampleRate(format)
     if (rate === null) {
       this.appendLog(`unknown agent output format ${format}; assuming pcm_16000`)
@@ -583,8 +618,10 @@ export class ElevenLabsController {
   }
 
   private enqueueAgentAudio(audioBase64: string, eventId?: number | string): void {
+    if (this.agentOutputUnsupported) return
     this.speakerWriteChain = this.speakerWriteChain
       .then(async () => {
+        if (this.agentOutputUnsupported) return
         const writer = await this.ensureSpeaker()
         if (!writer) return
 
@@ -618,12 +655,22 @@ export class ElevenLabsController {
       return this.speakerOpenPromise
     }
 
+    const epoch = this.speakerEpoch
     this.speakerOpenPromise = (async () => {
       try {
         const writer = (await this.session.speaker.createStream({
           sampleRate: this.speakerSampleRate,
           stopOtherAudio: true,
         })) as SpeakerWriter
+        // Stop/close may have raced the open — abort the orphaned stream.
+        if (epoch !== this.speakerEpoch) {
+          try {
+            await writer.abort()
+          } catch {
+            /* ignore */
+          }
+          return null
+        }
         this.speakerWriter = writer
         this.appendLog(`speaker stream open @ ${this.speakerSampleRate}Hz for ${this.agentOutputFormat ?? "pcm"}`)
         return writer
@@ -639,6 +686,7 @@ export class ElevenLabsController {
   }
 
   private async interruptSpeaker(): Promise<void> {
+    this.speakerEpoch += 1
     const writer = this.speakerWriter
     this.speakerWriter = null
     this.speakerOpenPromise = null
@@ -652,6 +700,7 @@ export class ElevenLabsController {
   }
 
   private async closeSpeaker(): Promise<void> {
+    this.speakerEpoch += 1
     const writer = this.speakerWriter
     this.speakerWriter = null
     this.speakerOpenPromise = null
@@ -663,14 +712,20 @@ export class ElevenLabsController {
     } catch {
       /* ignore */
     }
-    if (!writer) return
-    try {
-      await writer.abort()
-    } catch {
+    // ensureSpeaker may have assigned after we cleared speakerWriter above.
+    const lateWriter = this.speakerWriter
+    this.speakerWriter = null
+    const toAbort = lateWriter && lateWriter !== writer ? [writer, lateWriter] : [writer]
+    for (const w of toAbort) {
+      if (!w) continue
       try {
-        await writer.close()
+        await w.abort()
       } catch {
-        /* ignore */
+        try {
+          await w.close()
+        } catch {
+          /* ignore */
+        }
       }
     }
   }
@@ -695,16 +750,6 @@ async function fetchSignedUrlFromLocalServer(endpoint: string, agentId: string):
     throw new Error("signed-url server response missing signed_url")
   }
   return data.signed_url
-}
-
-/** Append ?key= / &key= without relying on the URL constructor. */
-function appendQueryParam(endpoint: string, key: string, value: string): string {
-  const encoded = `${encodeURIComponent(key)}=${encodeURIComponent(value)}`
-  const hashIndex = endpoint.indexOf("#")
-  const withoutHash = hashIndex >= 0 ? endpoint.slice(0, hashIndex) : endpoint
-  const hash = hashIndex >= 0 ? endpoint.slice(hashIndex) : ""
-  const sep = withoutHash.includes("?") ? "&" : "?"
-  return `${withoutHash}${sep}${encoded}${hash}`
 }
 
 /** Strip query/hash for log-friendly display (no URL global). */
@@ -744,43 +789,8 @@ function sendJson(websocket: WebSocket, message: object): void {
   }
 }
 
-/** Approximate decoded byte length of a base64 payload (padding-aware). */
-function approxBase64ByteLength(b64: string): number {
-  const padding = b64.endsWith("==") ? 2 : b64.endsWith("=") ? 1 : 0
-  return Math.max(0, Math.floor((b64.length * 3) / 4) - padding)
-}
-
-function parsePcmSampleRate(format: string): number | null {
-  const match = /^pcm_(\d+)$/.exec(format)
-  if (!match) return null
-  const rate = Number(match[1])
-  return Number.isFinite(rate) && rate > 0 ? rate : null
-}
-
 function mapSpeakerSampleRate(rate: number): SpeakerSampleRate {
   if (rate <= 16000) return 16000
   if (rate <= 24000) return 24000
   return 48000
-}
-
-/** Linear resample 16-bit LE mono PCM between sample rates. */
-function resamplePcm16Le(input: Uint8Array, fromRate: number, toRate: number): Uint8Array {
-  if (fromRate === toRate || input.byteLength < 2) {
-    return input
-  }
-  const inSamples = input.byteLength >> 1
-  const outSamples = Math.max(1, Math.round((inSamples * toRate) / fromRate))
-  const out = new Uint8Array(outSamples * 2)
-  const inView = new DataView(input.buffer, input.byteOffset, input.byteLength)
-  const outView = new DataView(out.buffer)
-  for (let i = 0; i < outSamples; i++) {
-    const src = (i * fromRate) / toRate
-    const i0 = Math.floor(src)
-    const i1 = Math.min(i0 + 1, inSamples - 1)
-    const frac = src - i0
-    const s0 = inView.getInt16(i0 * 2, true)
-    const s1 = inView.getInt16(i1 * 2, true)
-    outView.setInt16(i * 2, Math.round(s0 + (s1 - s0) * frac), true)
-  }
-  return out
 }
