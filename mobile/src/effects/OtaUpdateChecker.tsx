@@ -140,8 +140,14 @@ export function OtaUpdateChecker() {
   // manifestGeneration so the main check effect runs again and surfaces the
   // same prompt flow as a fresh connection.
   useEffect(() => {
-    if (!glassesConnected || !buildNumber || otaSnapshot.inProgress) {
+    if (!glassesConnected || !buildNumber) {
       manifestBaselineRef.current = null
+      return
+    }
+    if (otaSnapshot.inProgress) {
+      // Pause polling during an install but keep the baseline: a manifest edit
+      // made during the install window must still re-arm the prompt if the
+      // install ends without a disconnect (failed/abandoned session).
       return
     }
     const features: Capabilities = getModelCapabilities(defaultWearable)
