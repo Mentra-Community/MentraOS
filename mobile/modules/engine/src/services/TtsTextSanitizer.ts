@@ -46,5 +46,21 @@ export function sanitizeTtsText(text: string): string {
 
 /** Prepare an already-trimmed sentence list while preserving the exact-text opt-out. */
 export function prepareTtsSentences(sentences: string[], enableSanitization = true): string[] {
-  return enableSanitization ? sentences.map((sentence) => sanitizeTtsText(sentence)).filter(Boolean) : sentences
+  if (!enableSanitization) return sentences
+
+  const sanitized = sentences.map((sentence) => sanitizeTtsText(sentence)).filter(Boolean)
+
+  return sanitized.map((sentence, index) => {
+    const previous = sanitized[index - 1]
+    if (!previous) return sentence
+
+    const followsFahrenheit = /degrees Fahrenheit[,.;:!?]?$/i.test(previous)
+    const followsCelsius = /degrees Celsius[,.;:!?]?$/i.test(previous)
+    const startsWithFahrenheit = /^-?\d+(?:[.,]\d+)? degrees Fahrenheit\b/i.test(sentence)
+    const startsWithCelsius = /^-?\d+(?:[.,]\d+)? degrees Celsius\b/i.test(sentence)
+
+    return (followsFahrenheit && startsWithCelsius) || (followsCelsius && startsWithFahrenheit)
+      ? `or ${sentence}`
+      : sentence
+  })
 }

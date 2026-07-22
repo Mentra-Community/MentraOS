@@ -21,6 +21,14 @@ describe("sanitizeTtsText", () => {
     expect(sanitizeTtsText("It feels like (20°C) outside.")).toBe("It feels like 20 degrees Celsius outside.")
   })
 
+  test("links temperature alternatives split across sentence entries", () => {
+    expect(prepareTtsSentences(["68°F", "(20°C)", "and sunny."])).toEqual([
+      "68 degrees Fahrenheit",
+      "or 20 degrees Celsius",
+      "and sunny.",
+    ])
+  })
+
   test("removes markup and turns common symbols into words", () => {
     expect(
       sanitizeTtsText(
