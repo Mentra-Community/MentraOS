@@ -402,9 +402,39 @@ export class TranslationController {
 
   private async setGlassesDisplayMode(mode: TranslationSettings["glassesDisplayMode"]): Promise<void> {
     if (mode !== "translation" && mode !== "both") return
+    if (mode === this.settings.glassesDisplayMode) return
     this.settings.glassesDisplayMode = mode
     await this.persist(STORAGE_KEYS.glassesDisplayMode, mode)
+    // Re-render the currently shown line in the new mode immediately. Without
+    // this the toggle only takes effect on the NEXT spoken utterance, so
+    // flipping "Translation + transcription" looks like it does nothing (the
+    // reported no-op). The combined text is baked into the formatter history at
+    // render time, so a plain refresh cannot recombine — rebuild from the
+    // stored translations instead.
+    this.rebuildGlassesDisplay()
     this.broadcastSettings()
+  }
+
+  /**
+   * Rebuild the glasses formatter from the stored final translations,
+   * recombining each with its original transcription per the current
+   * glassesDisplayMode, then refresh. Mirrors updateDisplaySettings' rebuild
+   * but recomputes the per-line content for the new mode.
+   */
+  private rebuildGlassesDisplay(): void {
+    this.createFormatter()
+    let lastSpeaker: string | undefined
+    for (const entry of this.translations) {
+      if (!entry.isFinal) continue
+      const speakerChanged = entry.speaker !== lastSpeaker
+      lastSpeaker = entry.speaker
+      const displayText =
+        this.settings.glassesDisplayMode === "both" && entry.originalText
+          ? `${entry.text}\n${entry.originalText}`
+          : entry.text
+      this.formatter.processTranscription(displayText, true, entry.speaker, speakerChanged)
+    }
+    this.refreshDisplay()
   }
 
   private async persist(key: string, value: string): Promise<void> {

@@ -33,7 +33,7 @@
  * full snapshot on every session.ui.onOpen.
  */
 
-import type {CloudClientStatus, MiniappSession, TranscriptionData, UnsubscribeFn} from "@mentra/miniapp/background"
+import type {CloudClientStatus, LanguageHint, MiniappSession, TranscriptionData, TranscriptionLanguage, UnsubscribeFn} from "@mentra/miniapp/background"
 
 import {
   CaptionsFormatter,
@@ -44,7 +44,6 @@ import {
   type TranscriptHistoryEntry,
 } from "../../core/CaptionsFormatter"
 import {convertToPinyin} from "../../core/ChineseUtils"
-import {languageToLocale} from "../../core/languageLocale"
 import type {Channels} from "../../shared/channels"
 import type {CaptionSettings, CaptionsSnapshot, DisplayPreview, Transcript} from "../../shared/types"
 
@@ -385,7 +384,12 @@ export class CaptionsController {
 
     try {
       if (hints.length > 0) {
-        this.session.transcription.configure({languageHints: hints})
+        // configure() is a request now (issue 021): the promise rejects if the
+        // runtime can't apply the hints. Log loudly; hints failing must not
+        // take the caption stream down with them.
+        this.session.transcription
+          .configure({languageHints: hints as LanguageHint[]})
+          .catch((err) => console.error("LocalCaptions: language hints not applied", err))
       }
 
       const handler = (data: TranscriptionData) => {
@@ -396,12 +400,21 @@ export class CaptionsController {
         // Auto-detect: subscribe to all languages.
         this.transcriptionCleanup = this.session.transcription.on(handler)
       } else {
-        const locale = languageToLocale(language)
-        this.transcriptionCleanup = this.session.transcription.forLanguage(locale, handler)
+        // The SDK owns language validation now: bare registry codes from the
+        // UI ("fr") canonicalize to their BCP-47 tag ("fr-FR"); invalid values
+        // throw MiniappValidationError (caught below). The old local
+        // name->locale mapping table is gone — its silent en-US default is
+        // exactly what broke language selection (OS-1746).
+        this.transcriptionCleanup = this.session.transcription.forLanguage(
+          language as TranscriptionLanguage,
+          handler,
+        )
       }
     } catch (err) {
-      console.log("LocalCaptions: transcription subscribe failed, falling back to en-US", err)
-      this.transcriptionCleanup = this.session.transcription.forLanguage("en-US", (data) => {
+      // Fall back to AUTO, not en-US: auto still captions whatever is spoken,
+      // while a silent en-US fallback reintroduces the wrong-language bug.
+      console.error("LocalCaptions: transcription subscribe failed, falling back to auto", err)
+      this.transcriptionCleanup = this.session.transcription.on((data) => {
         void this.handleTranscription(data)
       })
     }

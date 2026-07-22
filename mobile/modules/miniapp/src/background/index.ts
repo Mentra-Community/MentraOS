@@ -43,6 +43,13 @@ export type {CalendarEvent, CalendarListOptions, CalendarListResult} from "../mo
 // Public envelope + protocol types so authors can write strongly-typed
 // glue when they need to fall back to session.sendOneShot / sendRequest.
 export {MiniappRequestType, MiniappResponseType, MiniappStreamType, MiniappErrorCode} from "../protocol"
+export {
+  MiniappValidationError,
+  SUPPORTED_LANGUAGE_HINTS,
+  SUPPORTED_TRANSCRIPTION_LANGUAGES,
+  isTranscriptionLanguage,
+} from "../modules/languages"
+export type {LanguageHint, TranscriptionLanguage} from "../modules/languages"
 
 // Action handler types — for typing `session.actions.handle(id, fn)` handlers
 // (the registering side lives in the background JSContext). `InvokeOptions` is

@@ -101,6 +101,39 @@ export interface CreateSonioxProviderOptions extends ProviderOptions {
   targetLanguage?: string;
 }
 
+/**
+ * Build Soniox `language_hints` from the subscription. A specific language is
+ * its own hint (region stripped: "en-US" -> "en"). For "auto" we pass the
+ * miniapp's detection hints, each reduced to Soniox's bare-code format and
+ * deduped; unknown/empty yields undefined (no hints). Passing a BCP-47 tag or
+ * an unrecognized code makes Soniox reject the session ("Invalid language
+ * hint"), so everything is normalized here (issue 021).
+ */
+export function sonioxLanguageHints(
+  language: string | undefined,
+  hints: string[] | undefined,
+): string[] | undefined {
+  const toBareCode = (code: string) => code.split("-")[0].toLowerCase();
+  if (language && language !== "auto") {
+    return [toBareCode(language)];
+  }
+  if (!hints || hints.length === 0) return undefined;
+  const bare = [...new Set(hints.map(toBareCode).filter(Boolean))];
+  return bare.length > 0 ? bare : undefined;
+}
+
+/**
+ * Soniox one-way translation target. Like `language_hints`, Soniox's
+ * `translation.target_language` takes a bare ISO 639-1 code — a BCP-47 tag
+ * ("es-ES") is rejected with "Invalid language in translation.target_language"
+ * and kills the session, so strip the region (mirrors v1's SonioxSdkStream,
+ * which used `targetLanguage.split("-")[0]`). Subscription keys and result
+ * routing keep the full tag; only the provider config is reduced (issue 021).
+ */
+export function sonioxTranslationTarget(target: string): string {
+  return target.split("-")[0].toLowerCase();
+}
+
 /** Shared client per worker. Soniox SDK is happy with one client for many streams. */
 let sharedClient: SonioxNodeClient | null = null;
 function getClient(): SonioxNodeClient {
@@ -146,8 +179,13 @@ export async function createSonioxProvider(
     enable_endpoint_detection: true,
     enable_speaker_diarization: true,
     max_endpoint_delay_ms: 2_000,
-    language_hints:
-      opts.language && opts.language !== "auto" ? [opts.language] : undefined,
+    // Soniox hints take bare ISO 639-1 codes ("en"), but subscriptions carry
+    // BCP-47 tags ("en-US") — strip the region like v1's SonioxSdkStream did,
+    // or the hint is unrecognized and does nothing. For a specific language the
+    // language itself is the hint; for "auto" we pass the miniapp's detection
+    // hints (already bare codes) so language identification is biased without
+    // being pinned.
+    language_hints: sonioxLanguageHints(opts.language, opts.languageHints),
     context: {
       terms: ["Mentra", "Hey Mentra"],
       text: "Mentra, Hey Mentra (an AI assistant)",
@@ -156,7 +194,7 @@ export async function createSonioxProvider(
     // tokens then carry `translation_status: "original" | "translation"`
     // and we filter to the translation half.
     translation: opts.targetLanguage
-      ? { type: "one_way", target_language: opts.targetLanguage }
+      ? { type: "one_way", target_language: sonioxTranslationTarget(opts.targetLanguage) }
       : undefined,
   } as SttSessionConfig;
   const isTranslation = !!opts.targetLanguage;
