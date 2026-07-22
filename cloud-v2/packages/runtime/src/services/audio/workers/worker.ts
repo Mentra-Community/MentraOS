@@ -24,6 +24,7 @@
  */
 
 import {Redis} from "ioredis"
+import {createLogger} from "@mentra/cloud-shared"
 import {AUDIO_STREAM_GROUP, audioStreamKey} from "../../session/stream"
 import {CONTROL_STREAM_GROUP, controlStreamKey} from "../../session/control-stream"
 import type {SubscriptionRecord} from "../../session/subscriptions-store"
@@ -37,6 +38,8 @@ import {
   type LanguageSource,
   type TranscriptionSubscription,
 } from "../../session/subscriptions"
+
+const logger = createLogger("runtime").child({module: "audio-worker"})
 
 // === Worker IPC types ===
 
@@ -258,7 +261,7 @@ async function handleAttach(mentraUserId: string): Promise<void> {
     try {
       decoders.set(mentraUserId, await LC3Decoder.create(userLc3FrameSizes.get(mentraUserId) ?? 20))
     } catch (err) {
-      console.error("[audio-worker] LC3Decoder.create failed:", err)
+      logger.error({err}, "LC3Decoder.create failed")
     }
   }
   const ok = await ensureConsumerGroup(mentraUserId)
@@ -291,7 +294,7 @@ async function reconcileFromKey(mentraUserId: string): Promise<void> {
       subs = record.subscriptions ?? []
     }
   } catch (err) {
-    console.error("[audio-worker] reconcileFromKey read failed:", err)
+    logger.error({err}, "reconcileFromKey read failed")
     return
   }
   await reconcileProviders(mentraUserId, subs)
@@ -328,7 +331,7 @@ async function reconcileProviders(mentraUserId: string, subs: AudioSubscription[
     if (!desired.has(key)) {
       existing.delete(key)
       provider.close().catch((err) => {
-        console.error("[audio-worker] provider close failed:", err)
+        logger.error({err}, "provider close failed")
       })
     }
   }
@@ -344,11 +347,11 @@ async function reconcileProviders(mentraUserId: string, subs: AudioSubscription[
           existing.set(key, provider)
         } else if (!existing.has(key)) {
           provider.close().catch((err) => {
-            console.error("[audio-worker] provider close failed:", err)
+            logger.error({err}, "provider close failed")
           })
         }
       } catch (err) {
-        console.error("[audio-worker] provider create failed:", err)
+        logger.error({err}, "provider create failed")
       }
       continue
     }
@@ -361,11 +364,11 @@ async function reconcileProviders(mentraUserId: string, subs: AudioSubscription[
         existing.set(key, provider)
       } else {
         provider.close().catch((err) => {
-          console.error("[audio-worker] provider close failed:", err)
+          logger.error({err}, "provider close failed")
         })
       }
     } catch (err) {
-      console.error("[audio-worker] provider create failed:", err)
+      logger.error({err}, "provider create failed")
     } finally {
       if (creating.get(key) === creation) creating.delete(key)
       if (creating.size === 0) userProviderCreates.delete(mentraUserId)
@@ -427,7 +430,7 @@ async function createProvider(mentraUserId: string, sub: AudioSubscription): Pro
     self.postMessage(out)
   }
   const onError = (err: Error) => {
-    console.error(`[audio-worker] provider(${PROVIDER_KIND}) error for ${mentraUserId}:`, err)
+    logger.error({err, mentraUserId}, `provider(${PROVIDER_KIND}) error`)
   }
 
   switch (PROVIDER_KIND) {
@@ -472,7 +475,7 @@ self.onmessage = (e: MessageEvent<WorkerInMessage>) => {
               decoders.set(msg.mentraUserId, decoder)
             })
             .catch((err) => {
-              console.error("[audio-worker] LC3Decoder.create failed:", err)
+              logger.error({err}, "LC3Decoder.create failed")
             })
         }
       }
@@ -491,7 +494,7 @@ self.onmessage = (e: MessageEvent<WorkerInMessage>) => {
         userProviders.delete(msg.mentraUserId)
         for (const provider of providers.values()) {
           provider.close().catch((err) => {
-            console.error("[audio-worker] provider close failed:", err)
+            logger.error({err}, "provider close failed")
           })
         }
       }
@@ -525,7 +528,7 @@ async function ensureConsumerGroup(mentraUserId: string): Promise<boolean> {
     const msg = (err as Error).message ?? ""
     // BUSYGROUP = "already exists" — that's success for our purposes.
     if (msg.includes("BUSYGROUP")) return true
-    console.error("[audio-worker] xgroup create failed:", err)
+    logger.error({err}, "xgroup create failed")
     return false
   }
 }
@@ -546,7 +549,7 @@ async function ensureControlConsumerGroup(mentraUserId: string): Promise<boolean
       controlReadyUsers.add(mentraUserId)
       return true
     }
-    console.error("[audio-worker] control xgroup create failed:", err)
+    logger.error({err}, "control xgroup create failed")
     return false
   }
 }
@@ -600,11 +603,14 @@ async function controlReadLoop(): Promise<void> {
                 shouldReconcile = true
                 break
               case "udp-liveness-ack":
-                console.debug("[audio-worker] udp liveness ack control received", {
-                  mentraUserId,
-                  sessionTag: map.sessionTag,
-                  probeId: map.probeId,
-                })
+                logger.debug(
+                  {
+                    mentraUserId,
+                    sessionTag: map.sessionTag,
+                    probeId: map.probeId,
+                  },
+                  "udp liveness ack control received",
+                )
                 self.postMessage({
                   type: "UDP_LIVENESS_ACK",
                   mentraUserId,
@@ -623,7 +629,7 @@ async function controlReadLoop(): Promise<void> {
             try {
               await controlClient.xack(streamKey, CONTROL_STREAM_GROUP, entryId)
             } catch (err) {
-              console.error("[audio-worker] control xack failed:", err)
+              logger.error({err}, "control xack failed")
             }
           }
         }
@@ -633,7 +639,7 @@ async function controlReadLoop(): Promise<void> {
           await ensureControlConsumerGroup(userId)
           continue
         }
-        console.error("[audio-worker] control xreadgroup failed:", err)
+        logger.error({err}, "control xreadgroup failed")
         await Bun.sleep(500)
       }
     }
@@ -689,7 +695,7 @@ async function freshReadLoop(): Promise<void> {
           await ensureConsumerGroup(userId)
           continue
         }
-        console.error("[audio-worker] xreadgroup failed:", err)
+        logger.error({err}, "xreadgroup failed")
         await Bun.sleep(500)
       }
     }
@@ -703,7 +709,7 @@ async function autoclaimLoop(): Promise<void> {
       try {
         await drainAutoclaim(userId)
       } catch (err) {
-        console.error("[audio-worker] autoclaim failed:", err)
+        logger.error({err}, "autoclaim failed")
       }
     }
     await Bun.sleep(XAUTOCLAIM_LOOP_INTERVAL_MS)
@@ -798,7 +804,7 @@ async function processBatch(
             try {
               provider.writeAudio(pcm)
             } catch (err) {
-              console.error("[audio-worker] provider.writeAudio failed:", err)
+              logger.error({err}, "provider.writeAudio failed")
             }
           }
         }
@@ -808,8 +814,17 @@ async function processBatch(
       // observable without flooding: payload size, codec, decode result, and
       // how many providers the PCM actually reached.
       if (seq % 128 === 0) {
-        console.log(
-          `[audio-worker] feed user=${mentraUserId.slice(-6)} seq=${seq} payload=${payloadLen}B codec=${codec} hasDecoder=${decoders.has(mentraUserId)} pcm=${pcmBytesLen}B providers=${userProviders.get(mentraUserId)?.size ?? 0}`,
+        logger.info(
+          {
+            user: mentraUserId.slice(-6),
+            seq,
+            payloadBytes: payloadLen,
+            codec,
+            hasDecoder: decoders.has(mentraUserId),
+            pcmBytes: pcmBytesLen,
+            providers: userProviders.get(mentraUserId)?.size ?? 0,
+          },
+          "feed",
         )
       }
 
@@ -828,7 +843,7 @@ async function processBatch(
       try {
         await streamsClient.xack(streamKey, AUDIO_STREAM_GROUP, entryId)
       } catch (err) {
-        console.error("[audio-worker] xack failed:", err)
+        logger.error({err}, "xack failed")
       }
     }
   }
