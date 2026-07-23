@@ -88,9 +88,18 @@ enum OtaManifestChecker {
         currentBuildNumber: String,
         currentMtkVersion: String,
         currentBesVersion: String,
-        manifest: OtaManifest
+        manifest: OtaManifest,
+        // Downgrade floor: a non-positive value (the default) disables downgrades entirely,
+        // matching ASG's fail-closed DowngradeGate and the engine. OEM SDK consumers that do not
+        // set a floor get upgrade-only behavior and are never told a downgrade is available that
+        // the glasses would refuse.
+        downgradeFloorVersionCode: Int = 0
     ) throws -> Bool {
-        try hasApkUpdate(currentBuildNumber: currentBuildNumber, manifest: manifest) ||
+        try hasApkUpdate(
+            currentBuildNumber: currentBuildNumber,
+            manifest: manifest,
+            downgradeFloorVersionCode: downgradeFloorVersionCode
+        ) ||
             hasMtkUpdate(patches: manifest.mtkPatches, currentVersion: currentMtkVersion) ||
             hasBesUpdate(besFirmware: manifest.besFirmware, currentVersion: currentBesVersion)
     }
@@ -113,7 +122,11 @@ enum OtaManifestChecker {
         throw BluetoothSdkError(code: "invalid_ota_manifest", message: "OTA manifest is missing ASG app versionCode.")
     }
 
-    private static func hasApkUpdate(currentBuildNumber: String, manifest: OtaManifest) throws -> Bool {
+    private static func hasApkUpdate(
+        currentBuildNumber: String,
+        manifest: OtaManifest,
+        downgradeFloorVersionCode: Int
+    ) throws -> Bool {
         guard let currentVersion = Int(currentBuildNumber) else {
             throw BluetoothSdkError(
                 code: "invalid_glasses_version",
@@ -144,7 +157,12 @@ enum OtaManifestChecker {
             }
             return false
         }
-        return serverVersion != currentVersion
+        if serverVersion > currentVersion {
+            return true
+        }
+        // Downgrade: only actionable at/above the enabled floor; a non-positive floor disables
+        // downgrades (fail closed, matching ASG and the engine).
+        return downgradeFloorVersionCode > 0 && serverVersion >= downgradeFloorVersionCode
     }
 
     private static func hasMtkUpdate(patches: [MtkPatch]?, currentVersion: String) throws -> Bool {

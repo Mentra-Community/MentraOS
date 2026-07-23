@@ -18,19 +18,32 @@ class OtaManifestDowngradeTest {
         JSONObject()
             .put("apps", JSONObject().put("com.mentra.asg_client", JSONObject().put("versionCode", versionCode)))
 
-    private fun hasUpdate(currentBuildNumber: String, manifest: JSONObject): Boolean =
+    private fun hasUpdate(
+        currentBuildNumber: String,
+        manifest: JSONObject,
+        floor: Long = 0L,
+    ): Boolean =
         OtaManifestChecker.hasUpdate(
             currentBuildNumber = currentBuildNumber,
             currentMtkVersion = "",
             currentBesVersion = "",
             manifest = manifest,
+            downgradeFloorVersionCode = floor,
         )
 
     @Test
-    fun anyPinMismatchIsAnUpdate() {
-        // Every manifest is an exact pin: both directions are actionable.
-        assertTrue(hasUpdate("49076573", manifest(49000000L)))
+    fun upgradeIsAlwaysAnUpdate() {
         assertTrue(hasUpdate("49000000", manifest(49076573L)))
+    }
+
+    @Test
+    fun downgradeNeedsAnEnabledFloor() {
+        // Default floor 0 (fail closed) disables downgrades for native/OEM callers.
+        assertFalse(hasUpdate("49076573", manifest(49000000L)))
+        // A positive floor at/below the pin enables it.
+        assertTrue(hasUpdate("49076573", manifest(49000000L), floor = 49000000L))
+        // A pin below the floor is refused.
+        assertFalse(hasUpdate("49076573", manifest(48999999L), floor = 49000000L))
     }
 
     @Test

@@ -70,8 +70,13 @@ internal object OtaManifestChecker {
         currentMtkVersion: String,
         currentBesVersion: String,
         manifest: JSONObject,
+        // Downgrade floor: a non-positive value (the default) disables downgrades entirely,
+        // matching ASG's fail-closed DowngradeGate and the engine. OEM SDK consumers that do
+        // not set a floor therefore get upgrade-only behavior and are never told a downgrade is
+        // available that the glasses would refuse.
+        downgradeFloorVersionCode: Long = 0L,
     ): Boolean =
-        hasApkUpdate(currentBuildNumber, manifest) ||
+        hasApkUpdate(currentBuildNumber, manifest, downgradeFloorVersionCode) ||
             hasMtkUpdate(manifest.optJSONArray("mtk_patches"), currentMtkVersion) ||
             hasBesUpdate(manifest.optJSONObject("bes_firmware"), currentBesVersion)
 
@@ -95,7 +100,11 @@ internal object OtaManifestChecker {
         throw BluetoothSdkException("invalid_ota_manifest", "OTA manifest is missing ASG app versionCode.")
     }
 
-    private fun hasApkUpdate(currentBuildNumber: String, manifest: JSONObject): Boolean {
+    private fun hasApkUpdate(
+        currentBuildNumber: String,
+        manifest: JSONObject,
+        downgradeFloorVersionCode: Long,
+    ): Boolean {
         val currentVersion =
             currentBuildNumber.toLongOrNull()
                 ?: throw BluetoothSdkException(
@@ -125,7 +134,12 @@ internal object OtaManifestChecker {
             }
             return false
         }
-        return serverVersion != currentVersion
+        if (serverVersion > currentVersion) {
+            return true
+        }
+        // Downgrade: only actionable at/above the enabled floor; a non-positive floor disables
+        // downgrades (fail closed, matching ASG and the engine).
+        return downgradeFloorVersionCode > 0 && serverVersion >= downgradeFloorVersionCode
     }
 
     private fun hasMtkUpdate(patches: JSONArray?, currentVersion: String): Boolean {
