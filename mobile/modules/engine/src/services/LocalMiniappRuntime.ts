@@ -77,6 +77,7 @@ import {getDevAppAttestation, getDevAppSourcePackage} from "./AppRegistry"
 import {resolveForegroundLocationPermission} from "./ForegroundLocationPermission"
 import {advanceMiniappPingLiveness} from "./MiniappLiveness"
 import {listPhoneCalendarEvents, PhoneCalendarError} from "./PhoneCalendarService"
+import {LocalMiniappStorage} from "./LocalMiniappStorage"
 
 // =============================================================================
 // Types
@@ -231,6 +232,25 @@ const CAMERA_FOV_MAX = 118
 const CAMERA_FOV_DEFAULT = 118
 const CAMERA_FOV_PRESETS: Record<CameraFovPreset, number> = {narrow: 82, standard: 102, wide: 118}
 const CAMERA_ROI_POSITION_BY_NAME: Record<string, CameraRoiPosition> = {center: "center", bottom: "bottom", top: "top"}
+
+const localMiniappStorageBackend = {
+  get(key: string): unknown | null {
+    const result = mmkvStorage.load<unknown>(key)
+    return result.is_ok() ? result.value : null
+  },
+  has(key: string): boolean {
+    return mmkvStorage.load<unknown>(key).is_ok()
+  },
+  set(key: string, value: unknown): void {
+    mmkvStorage.save(key, value)
+  },
+  remove(key: string): void {
+    mmkvStorage.remove(key)
+  },
+  keys(): string[] {
+    return mmkvStorage.getAllKeys()
+  },
+}
 
 // =============================================================================
 // Declared-permission record helper (for CONNECT_ACK / PERMISSIONS_UPDATE)
@@ -2526,8 +2546,12 @@ class LocalMiniappRuntime {
   private readonly blobStore = new BlobStore({
     sendResult: (packageName, requestId, ok, result, error) =>
       this.sendResult(packageName, requestId, ok, result, error),
-    getUserId: () =>
-      (useSettingsStore.getState().getSetting(ISLAND_SETTINGS_KEYS.coreToken) as string | undefined) || "anonymous",
+    getUserId: () => cloudClientService.getMentraUserId(),
+  })
+
+  private readonly simpleStorage = new LocalMiniappStorage({
+    backend: localMiniappStorageBackend,
+    getUserId: () => cloudClientService.resolveMentraUserId(),
   })
 
   /**
@@ -2605,12 +2629,6 @@ class LocalMiniappRuntime {
   // Storage helpers
   // ---------------------------------------------------------------------------
 
-  private getStorageKeyPrefix(packageName: string): string {
-    const userId =
-      (useSettingsStore.getState().getSetting(ISLAND_SETTINGS_KEYS.coreToken) as string | undefined) || "anonymous"
-    return `mentraos_localstorage_${userId}_${packageName}_`
-  }
-
   private async handleStorageGet(
     packageName: string,
     payload: Record<string, unknown>,
@@ -2625,9 +2643,8 @@ class LocalMiniappRuntime {
         })
         return
       }
-      const fullKey = this.getStorageKeyPrefix(packageName) + key
-      const result = mmkvStorage.load<unknown>(fullKey)
-      this.sendResult(packageName, requestId, true, {key, value: result.is_ok() ? result.value : null})
+      const value = await this.simpleStorage.get(packageName, key)
+      this.sendResult(packageName, requestId, true, {key, value})
     } catch (err) {
       console.error(`${LOG_TAG}: storage_get error:`, err)
       this.sendResult(packageName, requestId, false, undefined, {
@@ -2651,8 +2668,7 @@ class LocalMiniappRuntime {
         })
         return
       }
-      const fullKey = this.getStorageKeyPrefix(packageName) + key
-      mmkvStorage.save(fullKey, payload.value ?? null)
+      await this.simpleStorage.set(packageName, key, payload.value ?? null)
       this.sendResult(packageName, requestId, true)
     } catch (err) {
       console.error(`${LOG_TAG}: storage_set error:`, err)
@@ -2677,8 +2693,7 @@ class LocalMiniappRuntime {
         })
         return
       }
-      const fullKey = this.getStorageKeyPrefix(packageName) + key
-      mmkvStorage.remove(fullKey)
+      await this.simpleStorage.delete(packageName, key)
       this.sendResult(packageName, requestId, true)
     } catch (err) {
       console.error(`${LOG_TAG}: storage_delete error:`, err)
@@ -2695,9 +2710,7 @@ class LocalMiniappRuntime {
     requestId?: string,
   ): Promise<void> {
     try {
-      const prefix = this.getStorageKeyPrefix(packageName)
-      const allKeys = mmkvStorage.getAllKeys()
-      const keys = allKeys.filter((k) => k.startsWith(prefix)).map((k) => k.slice(prefix.length))
+      const keys = await this.simpleStorage.keys(packageName)
       this.sendResult(packageName, requestId, true, {keys})
     } catch (err) {
       console.error(`${LOG_TAG}: storage_list error:`, err)
@@ -2710,11 +2723,7 @@ class LocalMiniappRuntime {
 
   private async handleStorageClear(packageName: string, requestId?: string): Promise<void> {
     try {
-      const prefix = this.getStorageKeyPrefix(packageName)
-      const allKeys = mmkvStorage.getAllKeys()
-      for (const k of allKeys) {
-        if (k.startsWith(prefix)) mmkvStorage.remove(k)
-      }
+      await this.simpleStorage.clear(packageName)
       this.sendResult(packageName, requestId, true)
     } catch (err) {
       console.error(`${LOG_TAG}: storage_clear error:`, err)
@@ -2739,9 +2748,8 @@ class LocalMiniappRuntime {
         })
         return
       }
-      const fullKey = this.getStorageKeyPrefix(packageName) + key
-      const result = mmkvStorage.load<unknown>(fullKey)
-      this.sendResult(packageName, requestId, true, {has: result.is_ok()})
+      const has = await this.simpleStorage.has(packageName, key)
+      this.sendResult(packageName, requestId, true, {has})
     } catch (err) {
       console.error(`${LOG_TAG}: storage_has error:`, err)
       this.sendResult(packageName, requestId, false, undefined, {
@@ -2753,17 +2761,7 @@ class LocalMiniappRuntime {
 
   private async handleStorageGetAll(packageName: string, requestId?: string): Promise<void> {
     try {
-      const prefix = this.getStorageKeyPrefix(packageName)
-      const allKeys = mmkvStorage.getAllKeys()
-      const values: Record<string, string> = {}
-      for (const k of allKeys) {
-        if (!k.startsWith(prefix)) continue
-        const r = mmkvStorage.load<unknown>(k)
-        if (r.is_ok()) {
-          const v = r.value
-          values[k.slice(prefix.length)] = typeof v === "string" ? v : String(v ?? "")
-        }
-      }
+      const values = await this.simpleStorage.getAll(packageName)
       this.sendResult(packageName, requestId, true, {values})
     } catch (err) {
       console.error(`${LOG_TAG}: storage_get_all error:`, err)
@@ -2788,10 +2786,7 @@ class LocalMiniappRuntime {
         })
         return
       }
-      const prefix = this.getStorageKeyPrefix(packageName)
-      for (const [key, value] of Object.entries(values)) {
-        mmkvStorage.save(prefix + key, value ?? null)
-      }
+      await this.simpleStorage.setMultiple(packageName, values)
       this.sendResult(packageName, requestId, true)
     } catch (err) {
       console.error(`${LOG_TAG}: storage_set_multiple error:`, err)

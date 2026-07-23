@@ -518,6 +518,30 @@ export const cloudClientService = {
     return c.core.miniapps.getRegistry()
   },
 
+  /**
+   * Resolve the stable Core-owned Mentra user id.
+   *
+   * Storage must use this identity rather than the short-lived Core access
+   * token. Awaiting getCoreToken also makes this safe during first-boot auth:
+   * callers join the auth module's single-flight exchange/refresh instead of
+   * falling back to an anonymous storage namespace.
+   */
+  async resolveMentraUserId(): Promise<string> {
+    if (!client) this.init()
+    const c = client
+    if (!c) throw new Error("cloud client not initialized")
+
+    await c.auth.getCoreToken()
+    if (c !== client) throw new Error("cloud client changed while resolving user identity")
+    return c.auth.identity.mentraUserId
+  },
+
+  /** Read the stable Mentra user id after Core auth is already available. */
+  getMentraUserId(): string {
+    if (!client) throw new Error("cloud client not initialized")
+    return client.auth.identity.mentraUserId
+  },
+
   async getMiniappAuthToken(
     packageName: string,
     opts?: {minTtlMs?: number; devAttestation?: string},
