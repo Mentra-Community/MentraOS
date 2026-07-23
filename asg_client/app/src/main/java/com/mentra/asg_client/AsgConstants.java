@@ -156,8 +156,11 @@ public class AsgConstants {
     /** Time allowed for a live-link recovery baud candidate to answer. */
     public static final long UART_RUNTIME_RECOVERY_STEP_TIMEOUT_MS = 700;
 
-    /** Delay before restarting a bounded live-link recovery scan that found neither endpoint. */
+    /** Initial delay before retrying a live-link recovery scan that found neither endpoint. */
     public static final long UART_RUNTIME_RECOVERY_RETRY_DELAY_MS = 3000;
+
+    /** Maximum delay between failed live-link recovery scans while parked at rendezvous baud. */
+    public static final long UART_RUNTIME_RECOVERY_MAX_RETRY_DELAY_MS = 60000;
 
     /** Maximum wait for the old-baud {@code sr_baud} acknowledgement before probing target baud. */
     public static final long UART_BAUD_ACK_TIMEOUT_MS = 1000;
