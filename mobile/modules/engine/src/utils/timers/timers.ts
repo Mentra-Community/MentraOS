@@ -1,4 +1,27 @@
-// until https://github.com/tconns/react-native-nitro-bg-timer/issues/2 is resolved, we need to use this class to disable this package on iOS:
+// BgTimer — background-safe timers for the engine.
+//
+// Everything timing-critical in the engine runs through this class: the
+// miniapp liveness watchdog, display durationMs expiries, boot windows,
+// auth-token refresh. On Android, React Native PAUSES plain JS timers while
+// the app is backgrounded, so those features only keep working in the
+// background when the native implementation (react-native-nitro-bg-timer)
+// is active.
+//
+// Who actually gets native timers:
+//   - Android release builds: always (silent fallback to JS timers only if
+//     the require() fails — which also silently breaks background behavior,
+//     so treat that warning seriously if it ever shows in prod logs).
+//   - Android dev builds: OPT-IN via EXPO_PUBLIC_USE_NITRO_BG_TIMER=true.
+//     Without it, a backgrounded dev build freezes every engine timer AND
+//     local miniapps stop working (captions stop rendering, wake words are
+//     missed, the watchdog respawns contexts on foreground) — dev behavior
+//     silently diverges from production in exactly the backgrounded
+//     scenarios that matter on glasses. Set the var in mobile/.env after a
+//     native rebuild (bun android); see .env.example.
+//   - iOS: never, dev or prod — the package is disabled pending
+//     https://github.com/tconns/react-native-nitro-bg-timer/issues/2. iOS
+//     suspends the whole process in background anyway, so background timing
+//     there is handled by native per-device queues, not JS timers.
 
 import {Platform} from "react-native"
 
@@ -26,12 +49,19 @@ function getNitroTimer(): NitroTimerApi | null {
     return null
   }
 
-  // react-native-nitro-bg-timer calls createHybridObject() at require() time. On dev
-  // builds with a stale native binary that throws NPE, React Native still surfaces a
-  // red LogBox error even when the exception is caught. Skip nitro in __DEV__ unless
-  // explicitly enabled after a native rebuild (bun android).
+  // Dev default is OFF because react-native-nitro-bg-timer calls
+  // createHybridObject() at require() time, and on a dev client whose native
+  // binary predates the module that throws an NPE which LogBox red-boxes even
+  // when caught (bridgeless RN). The cost of this guard is severe though:
+  // with it active, a BACKGROUNDED dev build loses all engine timers and
+  // local miniapps freeze (see header). If your dev client was built after
+  // the module landed, opt in via EXPO_PUBLIC_USE_NITRO_BG_TIMER=true in
+  // mobile/.env so dev matches production background behavior.
   if (__DEV__ && process.env.EXPO_PUBLIC_USE_NITRO_BG_TIMER !== "true") {
-    warnUnavailable("nitro bg-timer disabled in dev (set EXPO_PUBLIC_USE_NITRO_BG_TIMER=true after native rebuild)")
+    warnUnavailable(
+      "nitro bg-timer disabled in dev — BACKGROUNDED apps will freeze engine timers and miniapps. " +
+        "Set EXPO_PUBLIC_USE_NITRO_BG_TIMER=true in mobile/.env (after a native rebuild: bun android)",
+    )
     return null
   }
 

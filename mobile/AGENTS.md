@@ -104,6 +104,14 @@ bun ios
 - Backend server required for local testing
 - Port forwarding: `bun adb` (sets up tcp:9090, tcp:3000, tcp:9001, tcp:8081)
 - Bluetooth functionality for glasses pairing
+- **Background behavior on Android dev builds**: set
+  `EXPO_PUBLIC_USE_NITRO_BG_TIMER=true` in `mobile/.env` (see `.env.example`).
+  Without it, dev builds fall back to plain JS timers, which Android pauses
+  in the background — engine timers freeze and local miniapps (captions,
+  wake words) silently stop working whenever the app isn't foregrounded,
+  which does not happen on release builds. Requires a dev client built after
+  `react-native-nitro-bg-timer` landed; if startup red-boxes, rebuild with
+  `bun android` instead of turning the flag off.
 
 ## Sentry Configuration (iOS)
 
