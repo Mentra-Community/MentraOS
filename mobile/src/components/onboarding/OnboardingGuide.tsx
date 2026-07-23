@@ -748,7 +748,7 @@ export function OnboardingGuide({
   const renderContent = () => {
     if (isCurrentStepImage) {
       return (
-        <View style={step.containerStyle} className={step.containerClassName}>
+        <View style={step.containerStyle} className={`h-full w-full ${step.containerClassName ?? ""}`}>
           {step.content ??
             (step.source && (
               <Image
