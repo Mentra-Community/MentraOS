@@ -4,6 +4,8 @@ import {OnboardingGuide, OnboardingStep} from "@/components/onboarding/Onboardin
 import {getBluetoothSdkListenerCount, resetBluetoothSdkMock} from "@/test-utils/mockBluetoothSdk"
 import BluetoothSdk from "@mentra/bluetooth-sdk"
 
+const mockFocusEffectPreventBack = jest.fn()
+
 // --- Heavy / native deps that OnboardingGuide pulls in ---
 
 jest.mock("expo-video", () => {
@@ -40,7 +42,7 @@ jest.mock("@/contexts/ThemeContext", () => ({
 }))
 
 jest.mock("@/contexts/NavigationHistoryContext", () => ({
-  focusEffectPreventBack: jest.fn(),
+  focusEffectPreventBack: (callback: () => void) => mockFocusEffectPreventBack(callback),
 }))
 
 jest.mock("@/stores/navigation", () => ({
@@ -52,8 +54,8 @@ jest.mock("@/components/ignite", () => {
   const React = require("react")
   return {
     Text: ({text, children}: any) => React.createElement(RNText, null, text ?? children),
-    Button: ({text, onPress}: any) =>
-      React.createElement(TouchableOpacity, {onPress}, React.createElement(RNText, null, text)),
+    Button: ({text, tx, onPress}: any) =>
+      React.createElement(TouchableOpacity, {onPress}, React.createElement(RNText, null, text ?? tx)),
     Header: () => null,
     Icon: () => null,
   }
@@ -107,6 +109,7 @@ const buildSteps = (): OnboardingStep[] => [
 describe("OnboardingGuide waitFn lifecycle", () => {
   beforeEach(() => {
     resetBluetoothSdkMock()
+    mockFocusEffectPreventBack.mockClear()
     jest.useFakeTimers()
   })
 
@@ -173,5 +176,41 @@ describe("OnboardingGuide waitFn lifecycle", () => {
     expect(getByText("Tap any miniapp to have it launch instantly.")).toBeTruthy()
     fireEvent.press(getByText("Open MentraOS Legacy"))
     expect(handleAction).toHaveBeenCalledTimes(1)
+  })
+
+  it("navigates back to a peer first step without reopening the start gate", () => {
+    const {getByText, queryByText} = render(
+      <OnboardingGuide
+        autoStart={false}
+        preventBack={true}
+        startButtonText="Start onboarding"
+        steps={[
+          {
+            type: "image",
+            source: {uri: "first.png"},
+            name: "First",
+            transition: false,
+            title: "First step",
+          },
+          {
+            type: "image",
+            source: {uri: "second.png"},
+            name: "Second",
+            transition: false,
+            title: "Second step",
+          },
+        ]}
+      />,
+    )
+
+    fireEvent.press(getByText("Start onboarding"))
+    fireEvent.press(getByText("common:continue"))
+    expect(getByText("Second step")).toBeTruthy()
+
+    const backHandler = mockFocusEffectPreventBack.mock.calls.at(-1)?.[0]
+    act(() => backHandler())
+
+    expect(getByText("First step")).toBeTruthy()
+    expect(queryByText("Start onboarding")).toBeNull()
   })
 })
