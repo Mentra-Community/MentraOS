@@ -9,7 +9,7 @@
  * management (connect/disconnect/ping).
  */
 
-import {Linking} from "react-native"
+import {AppState, Linking} from "react-native"
 import Share from "react-native-share"
 import * as Battery from "expo-battery"
 import * as Clipboard from "expo-clipboard"
@@ -74,6 +74,7 @@ import {NavigationHandlers} from "./NavigationHandlers"
 import type {ClientApp} from "../types/applet"
 import {useAppStatusStore} from "../stores/apps"
 import {getDevAppAttestation, getDevAppSourcePackage} from "./AppRegistry"
+import {resolveForegroundLocationPermission} from "./ForegroundLocationPermission"
 import {listPhoneCalendarEvents, PhoneCalendarError} from "./PhoneCalendarService"
 
 // =============================================================================
@@ -2450,7 +2451,18 @@ class LocalMiniappRuntime {
 
   private async handleLocationPoll(packageName: string, requestId?: string): Promise<void> {
     try {
-      const {status} = await Location.requestForegroundPermissionsAsync()
+      // Expo's Android requestForegroundPermissionsAsync always delegates to
+      // Activity.requestPermissions(), even when permission is already granted.
+      // Calling it after the user presses Home therefore waits until the Activity
+      // resumes. Read the current grant first, and only enter the prompt flow
+      // while the Activity is actually foregrounded.
+      const permissionStartedAt = Date.now()
+      const appState = AppState.currentState
+      const permission = await resolveForegroundLocationPermission(Location, appState)
+      const {status} = permission
+      console.log(
+        `${LOG_TAG}: location poll permission status=${status} appState=${appState} elapsed=${Date.now() - permissionStartedAt}ms`,
+      )
       if (status !== "granted") {
         this.sendResult(packageName, requestId, false, undefined, {
           code: MiniappErrorCode.PERMISSION_NOT_DECLARED,
@@ -2463,8 +2475,13 @@ class LocalMiniappRuntime {
       // a fresh fix if the cache is empty. Use Low accuracy on the fresh
       // path so we get a cell/wifi-tower fix in ~1s instead of waiting
       // for full GPS warm-up.
+      const locationStartedAt = Date.now()
       const cached = await Location.getLastKnownPositionAsync({maxAge: 60_000})
+      console.log(
+        `${LOG_TAG}: location poll cache hit=${cached !== null} elapsed=${Date.now() - locationStartedAt}ms`,
+      )
       const location = cached ?? (await Location.getCurrentPositionAsync({accuracy: Location.Accuracy.Low}))
+      console.log(`${LOG_TAG}: location poll resolved elapsed=${Date.now() - locationStartedAt}ms`)
 
       this.sendResult(packageName, requestId, true, {
         lat: location.coords.latitude,
