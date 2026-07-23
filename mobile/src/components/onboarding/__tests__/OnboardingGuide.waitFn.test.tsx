@@ -1,4 +1,4 @@
-import {render, act} from "@testing-library/react-native"
+import {act, fireEvent, render} from "@testing-library/react-native"
 
 import {OnboardingGuide, OnboardingStep} from "@/components/onboarding/OnboardingGuide"
 import {getBluetoothSdkListenerCount, resetBluetoothSdkMock} from "@/test-utils/mockBluetoothSdk"
@@ -139,5 +139,39 @@ describe("OnboardingGuide waitFn lifecycle", () => {
     // the previous one, so the count grows unbounded. There should be at most
     // one active listener for the current step.
     expect(getBluetoothSdkListenerCount("button_press")).toBeLessThanOrEqual(1)
+  })
+
+  it("renders structured image-step details and actions", () => {
+    const handleAction = jest.fn()
+    const {getByText} = render(
+      <OnboardingGuide
+        autoStart={true}
+        requiresGlassesConnection={false}
+        steps={[
+          {
+            type: "image",
+            source: {uri: "step.png"},
+            name: "MentraOS step",
+            transition: false,
+            title: "Start using a miniapp",
+            details: [
+              {
+                title: "Tap to launch",
+                description: "Tap any miniapp to have it launch instantly.",
+              },
+            ],
+            action: {
+              label: "Open MentraOS Legacy",
+              onPress: handleAction,
+            },
+          },
+        ]}
+      />,
+    )
+
+    expect(getByText("Tap to launch")).toBeTruthy()
+    expect(getByText("Tap any miniapp to have it launch instantly.")).toBeTruthy()
+    fireEvent.press(getByText("Open MentraOS Legacy"))
+    expect(handleAction).toHaveBeenCalledTimes(1)
   })
 })
