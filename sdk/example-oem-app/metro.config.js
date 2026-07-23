@@ -6,6 +6,13 @@ const projectRoot = __dirname
 const sdkRoot = path.resolve(projectRoot, "..") // the `sdk` workspace root
 const repoRoot = path.resolve(projectRoot, "..", "..") // monorepo root
 const modulesRoot = path.resolve(repoRoot, "mobile", "modules")
+// The `mobile` bun workspace's own node_modules — where @mentra/engine's
+// transitive deps (typesafe-ts, buffer, events, semver, ...) actually live on
+// disk, since engine is a member of that workspace, not sdk's. Metro's Node
+// resolution walk finds these fine, but Metro also requires the resolved path
+// to be inside a watched folder (its Haste/file index) or it 404s as if the
+// file didn't exist — so this has to be watched explicitly, not just modulesRoot.
+const mobileNodeModulesRoot = path.resolve(repoRoot, "mobile", "node_modules")
 
 const config = getDefaultConfig(projectRoot)
 
@@ -14,8 +21,12 @@ const config = getDefaultConfig(projectRoot)
 // (sdk/node_modules/.bun/*) and the modules folder so every symlinked package —
 // including transitive deps of `expo` — resolves.
 const cloudPackagesRoot = path.resolve(repoRoot, "cloud-v2", "packages")
+// Same isolated-linker gap as mobileNodeModulesRoot above, one workspace over:
+// cloud-v2/packages/*/node_modules/<pkg> symlinks resolve into
+// cloud-v2/node_modules/.bun/*, not anywhere under cloudPackagesRoot.
+const cloudNodeModulesRoot = path.resolve(repoRoot, "cloud-v2", "node_modules")
 
-config.watchFolders = [sdkRoot, modulesRoot, cloudPackagesRoot]
+config.watchFolders = [sdkRoot, modulesRoot, mobileNodeModulesRoot, cloudPackagesRoot, cloudNodeModulesRoot]
 
 config.resolver.extraNodeModules = {
   ...(config.resolver.extraNodeModules ?? {}),
