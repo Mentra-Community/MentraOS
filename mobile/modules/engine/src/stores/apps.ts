@@ -362,12 +362,6 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
       for (const r of runningForeground) {
         await get().stop(r.packageName)
       }
-      // Claim the display-manager's foreground slot AFTER the stop() calls
-      // above (each of which releases it for the app it's stopping) so this
-      // app becomes the sole core app. Restores V1-parity foreground/
-      // background display arbitration (background apps may render over this
-      // app, then revert to it) that V2 never wired up.
-      localDisplayManager.onCoreAppChange(packageName)
     }
 
     set((s) => ({
@@ -398,13 +392,6 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
         // before the spawn; run onStop to undo it so a refresh/reboot doesn't
         // resurrect a "running" app with no JS context.
         await startStopApp(app, false)
-        // Release the foreground slot claimed above; a failed launch must not
-        // leave a ghost core app skewing display arbitration. Skip if another
-        // standard app started (and claimed the slot) while this spawn was in
-        // flight.
-        if (app.type === "standard" && !get().apps.some((a) => a.running && a.type === "standard")) {
-          localDisplayManager.onCoreAppChange(null)
-        }
         return false
       }
     }
@@ -418,15 +405,6 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
     if (!app) {
       console.error(`ISLAND: app not found for package name: ${packageName}`)
       return
-    }
-
-    // Release the display-manager's foreground slot. The foreground-only-one
-    // invariant means at most one standard app is ever running, so a RUNNING
-    // standard app is always the current holder. The running guard keeps a
-    // stop() on an already-stopped standard app from clearing someone else's
-    // claim.
-    if (app.type === "standard" && app.running) {
-      localDisplayManager.onCoreAppChange(null)
     }
 
     set((s) => ({
@@ -561,6 +539,17 @@ miniappRunningRegistry.subscribe(() => {
   if (changed) {
     useAppStatusStore.setState({apps: updated})
   }
+})
+
+// The display-manager's core (foreground) slot is DERIVED state: always the
+// currently-running standard app, no matter HOW it came to run — user tap
+// (start()), boot restore (autostartLocalMiniapps → registry projection
+// above), crash-respawn, or interop. One reconciler instead of per-path call
+// sites, so no launch/stop path can forget to claim or release the slot.
+// onCoreAppChange is idempotent, so firing on every store write is free.
+useAppStatusStore.subscribe((state) => {
+  const core = state.apps.find((a) => a.running && (a.type === "standard" || !a.type))
+  localDisplayManager.onCoreAppChange(core?.packageName ?? null)
 })
 
 // AppRegistry change events trigger a store refresh.
