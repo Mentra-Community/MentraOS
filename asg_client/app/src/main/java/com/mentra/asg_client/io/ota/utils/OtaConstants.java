@@ -6,19 +6,13 @@ package com.mentra.asg_client.io.ota.utils;
 public class OtaConstants {
     public static final String TAG = "ASGClientOTA";
 
-    // URLs
-    // Production OTA version JSON URL for ASG client 39+.
-    // The previous production manifest intentionally remains the legacy rescue
-    // manifest for older clients that may be stuck on a corrupted artifact cache.
-    public static final String VERSION_JSON_URL = "https://ota.mentraglass.com/prod_live_version_v2.json";
-
-    // Test URLs (uncomment to use for testing)
-    // public static final String VERSION_JSON_URL = "https://github.com/Mentra-Community/MentraOS/releases/download/asg-client/live_version_test_non_production.json";
-    // public static final String VERSION_JSON_URL = "https://dev.mentraos-ota-site.pages.dev/versiondev.json";
-    
-    // Local file path option (for testing - uncomment to use local file instead of URL)
-    // Note: File must be accessible from the device (e.g., pushed via ADB to /storage/emulated/0/asg/live_version.json)
-    //public static final String VERSION_JSON_URL = "/storage/emulated/0/asg/live_version.json";
+    // There is deliberately NO baked manifest URL for OTA decisions: every manifest the glasses
+    // act on arrives via ota_start's mandatory ota_version_url, so update decisions are always
+    // phone-owned. The fleet manifest below exists ONLY as an artifact source for phone-less
+    // rescue paths (factory reset's recovery-APK download, the disabled standalone
+    // recovery-worker update); it must never feed an OTA availability check.
+    public static final String RESCUE_FLEET_MANIFEST_URL =
+            "https://ota.mentraglass.com/prod_live_version_v2.json";
 
     // Update actions
     public static final String ACTION_UPDATE_COMPLETED = "com.mentra.asg_client.ACTION_UPDATE_COMPLETED";
@@ -52,10 +46,8 @@ public class OtaConstants {
     public static final String APK_FILENAME = "update.apk";
     public static final String APK_FULL_PATH = BASE_DIR + "/" + APK_FILENAME;
     public static final String METADATA_JSON = "metadata.json";
-    public static final long PERIODIC_CHECK_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes in milliseconds
 
     // WorkManager
-    public static final String WORK_NAME_OTA_CHECK = "ota_check";
     public static final String WORK_NAME_OTA_HEARTBEAT = "ota_heartbeat";
 
     // Update handling

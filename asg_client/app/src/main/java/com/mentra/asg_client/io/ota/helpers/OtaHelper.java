@@ -115,8 +115,9 @@ public class OtaHelper {
     // Track phone-initiated vs glasses-initiated OTA
     private static volatile boolean isPhoneInitiatedOta = false;
 
-    // The version JSON URL used for the current/last phone-started OTA check.
-    private volatile String lastVersionJsonUrl = OtaConstants.VERSION_JSON_URL;
+    // The manifest URL of the current/last phone-started OTA check. Always phone-supplied:
+    // the glasses have no baked default manifest and never originate an OTA decision.
+    private volatile String lastVersionJsonUrl = null;
 
     /**
      * Set the phone-initiated OTA flag. Used by DebugApkOtaReceiver to force
@@ -394,18 +395,17 @@ public class OtaHelper {
     }
 
     /**
-     * Start OTA update from phone command (onboarding or background approval).
-     * Called by OtaCommandHandler when phone sends ota_start command.
-     */
-    public void startOtaFromPhone() {
-        startOtaFromPhone(null);
-    }
-
-    /**
-     * Start OTA update from phone command using a caller-supplied version JSON URL when provided.
+     * Start OTA update from phone command (onboarding or background approval). Called by
+     * OtaCommandHandler when phone sends ota_start with its mandatory manifest URL. Every manifest
+     * the glasses act on is phone-supplied and exact-pin shaped; there is no baked fallback.
      */
     public void startOtaFromPhone(String versionJsonUrl) {
-        String requestedVersionJsonUrl = resolveVersionJsonUrl(versionJsonUrl);
+        String requestedVersionJsonUrl = requireVersionJsonUrl(versionJsonUrl);
+        if (requestedVersionJsonUrl == null) {
+            // OtaCommandHandler already rejects URL-less ota_start; this is a defensive guard.
+            Log.e(TAG, "Refusing ota_start without a manifest URL");
+            return;
+        }
         Log.i(TAG, "📱 Starting OTA from phone request");
 
         // Immediately acknowledge receipt so the phone cancels its retry timer.
@@ -434,15 +434,11 @@ public class OtaHelper {
         startVersionCheckWithUrl(context, requestedVersionJsonUrl);
     }
 
-    private String resolveVersionJsonUrl(String versionJsonUrl) {
+    private String requireVersionJsonUrl(String versionJsonUrl) {
         if (versionJsonUrl == null || versionJsonUrl.trim().isEmpty()) {
-            return OtaConstants.VERSION_JSON_URL;
+            return null;
         }
         return versionJsonUrl.trim();
-    }
-
-    public void startVersionCheck(Context context) {
-        startVersionCheckWithUrl(context, OtaConstants.VERSION_JSON_URL);
     }
 
     /**
@@ -452,7 +448,11 @@ public class OtaHelper {
      * @param versionJsonUrl URL to fetch the version JSON from (http, https)
      */
     public void startVersionCheckWithUrl(Context context, String versionJsonUrl) {
-        String resolvedVersionJsonUrl = resolveVersionJsonUrl(versionJsonUrl);
+        String resolvedVersionJsonUrl = requireVersionJsonUrl(versionJsonUrl);
+        if (resolvedVersionJsonUrl == null) {
+            Log.e(TAG, "Refusing OTA version check without a manifest URL");
+            return;
+        }
         Log.d(TAG, "Check OTA update method init");
         Log.i(TAG, "OTA check trigger -> phoneInitiated=" + isPhoneInitiatedOta
                 + ", lockHeld=" + versionCheckLock.isLocked()
@@ -619,8 +619,9 @@ public class OtaHelper {
         if (sessionManager != null) {
             List<String> steps = buildStepSequence(rootJson, apps, context);
             if (!steps.isEmpty()) {
-                String versionUrl = lastVersionJsonUrl != null ? lastVersionJsonUrl : OtaConstants.VERSION_JSON_URL;
-                sessionManager.createSession(steps.toArray(new String[0]), versionUrl);
+                // Non-null: every check runs through startVersionCheckWithUrl, which stores the
+                // phone-supplied URL under the version-check lock before reaching here.
+                sessionManager.createSession(steps.toArray(new String[0]), lastVersionJsonUrl);
                 Log.i(TAG, "OTA session created with steps: " + steps);
             }
         }
@@ -2662,13 +2663,17 @@ public class OtaHelper {
         sessionManager.advanceStep(nextStep, "download");
         sendOtaStatus();
 
-        // Kick off the next step's download/install cycle.
-        setPhoneInitiatedOta(true);
-        if (versionJsonUrl != null && !versionJsonUrl.isEmpty()) {
-            startVersionCheckWithUrl(context, versionJsonUrl);
-        } else {
-            startVersionCheck(context);
+        // Kick off the next step's download/install cycle. Sessions always carry the
+        // phone-supplied manifest URL; a session without one is unrecoverable by design
+        // (the glasses have no fallback manifest and never originate an OTA decision).
+        if (versionJsonUrl == null || versionJsonUrl.isEmpty()) {
+            Log.e(TAG, "Session has no manifest URL - failing instead of guessing a manifest");
+            sessionManager.setFailed("Session missing manifest URL");
+            sendOtaStatus();
+            return false;
         }
+        setPhoneInitiatedOta(true);
+        startVersionCheckWithUrl(context, versionJsonUrl);
         return true;
     }
 

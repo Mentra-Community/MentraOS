@@ -1138,7 +1138,9 @@ public class AsgClientService extends Service implements NetworkStateListener, T
 
             String deviceModel = ServiceUtils.getDeviceTypeString(this);
             String androidVersion = android.os.Build.VERSION.RELEASE;
-            String otaVersionUrl = OtaConstants.VERSION_JSON_URL;
+            // The glasses no longer advertise a manifest: the phone owns manifest selection and
+            // supplies it via ota_start. Reported empty for phone-side backwards compatibility.
+            String otaVersionUrl = "";
 
             // Include BES firmware version (cached from hs_syvr command)
             String besFirmwareVersion = "";

@@ -172,7 +172,7 @@ public class RecoveryWorkerManager {
     private JSONObject fetchManifest() {
         HttpURLConnection conn = null;
         try {
-            conn = (HttpURLConnection) new URL(OtaConstants.VERSION_JSON_URL).openConnection();
+            conn = (HttpURLConnection) new URL(OtaConstants.RESCUE_FLEET_MANIFEST_URL).openConnection();
             conn.setConnectTimeout(OtaConstants.CONNECT_TIMEOUT_MS);
             conn.setReadTimeout(OtaConstants.READ_TIMEOUT_MS);
             conn.setRequestMethod("GET");
