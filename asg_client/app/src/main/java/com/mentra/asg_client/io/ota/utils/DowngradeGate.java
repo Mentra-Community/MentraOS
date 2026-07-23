@@ -22,6 +22,13 @@ public final class DowngradeGate {
      */
     public static boolean shouldDowngrade(
             long installedVersion, long manifestVersion, long floorVersion) {
+        // Fail closed: a non-positive floor means the downgrade-safe boundary has not been set
+        // for this release channel (the media-relocation build's versionCode), so downgrades are
+        // disabled entirely rather than allowing every lower pin. A production build must never
+        // ship the bench configuration (floor 0) with downgrades live.
+        if (floorVersion <= 0) {
+            return false;
+        }
         return manifestVersion > 0
                 && manifestVersion >= floorVersion
                 && installedVersion > manifestVersion;

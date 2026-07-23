@@ -16,13 +16,17 @@ public final class DowngradeController {
   /** Persists a fresh transaction from an ASG handoff and starts driving it. */
   public static void requestDowngrade(
       Context context, long targetVersion, String apkPath, String apkSha256) {
-    if (targetVersion < RecoveryConstants.DOWNGRADE_FLOOR_VERSION_CODE) {
+    // Fail closed, mirroring ASG's DowngradeGate: a non-positive floor means downgrades are not
+    // enabled for this release channel, so reject regardless of target.
+    if (RecoveryConstants.DOWNGRADE_FLOOR_VERSION_CODE <= 0
+        || targetVersion < RecoveryConstants.DOWNGRADE_FLOOR_VERSION_CODE) {
       Log.e(
           RecoveryConstants.TAG,
-          "Rejected downgrade handoff below floor "
+          "Rejected downgrade handoff (floor="
               + RecoveryConstants.DOWNGRADE_FLOOR_VERSION_CODE
-              + ": target="
-              + targetVersion);
+              + ", target="
+              + targetVersion
+              + ")");
       return;
     }
     DowngradeTransactionStore store = new DowngradeTransactionStore(context);
