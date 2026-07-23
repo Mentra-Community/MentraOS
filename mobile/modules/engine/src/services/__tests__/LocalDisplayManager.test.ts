@@ -397,6 +397,23 @@ describe("LocalDisplayManager", () => {
       expect(mgr._peekForTest().bgLockPkg).toBeNull()
       expect(lastText()).toBe("core-saved")
     })
+
+    test("dismissing a temporary background display restores core", () => {
+      mgr.request("com.app.core", {
+        layout: {layoutType: "text_wall", text: "core-saved"},
+      })
+      mgr.request("cloud.augmentos.notify", {
+        layout: {layoutType: "reference_card", title: "Messages", text: "Hello"},
+        durationMs: 5_000,
+      })
+      expect(lastLayoutType()).toBe("reference_card")
+      displayEventMock.mockClear()
+
+      mgr.dismiss("cloud.augmentos.notify")
+
+      expect(mgr._peekForTest().bgLockPkg).toBeNull()
+      expect(lastText()).toBe("core-saved")
+    })
   })
 
   // ==========================================================================
