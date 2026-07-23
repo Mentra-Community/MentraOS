@@ -26,11 +26,13 @@ import {useSettingsStore, SETTINGS} from "../stores/settings"
 import {type CloudClientStatusSnapshot, type MiniappAuthToken} from "../runtime/config"
 import {createCloudUdpSocket} from "../utils/cloudClient/RnUdpAdapter"
 import {cloudSecureStore} from "../utils/cloudClient/cloudSecureStore"
+import {storage as mmkvStorage} from "../utils/storage/storage"
 import {useCloudClientStatusStore} from "../stores/cloudClientStatus"
 import {islandNotifications} from "./NotificationsEmitter"
 import {BgTimer} from "../utils/timers"
 import {logCloudV2TranscriptMetric} from "./CloudTranscriptE2EMetrics"
 import {nativeHttpResponseBody} from "./NativeHttpResponse"
+import {rememberLegacyBlobOwner} from "./LocalMiniappStorage"
 
 const LOG_TAG = "cloudClient"
 type CloudCore = NonNullable<CloudClient["core"]>
@@ -114,6 +116,11 @@ async function syncCoreAccessTokenToBluetoothInternal(): Promise<string> {
   if (c !== client) {
     throw new Error("cloud client changed while syncing core token")
   }
+  // BlobStore's pre-user-id layout retained this same truncated token prefix.
+  // Record its stable owner on every launch before any miniapp runs. Core keeps
+  // session_id stable across refreshes, so force-stop refreshes have the same
+  // 120-character prefix; persisting it also survives a future new session.
+  rememberLegacyBlobOwner({set: (key, value) => void mmkvStorage.save(key, value)}, token, c.auth.identity.mentraUserId)
   const result = await useSettingsStore.getState().setSetting(SETTINGS.core_token.key, token, false)
   if (result.is_error()) {
     throw result.error

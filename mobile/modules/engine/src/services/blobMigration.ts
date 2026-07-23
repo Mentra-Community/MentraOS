@@ -1,5 +1,10 @@
 import {sanitizeSegment} from "./blobPaths"
-import {accessTokenIdentity, LEGACY_BLOB_OWNER_KEY_ROOT, type LegacyTokenIdentity} from "./LocalMiniappStorage"
+import {
+  accessTokenIdentity,
+  LEGACY_BLOB_OWNER_KEY_ROOT,
+  rememberLegacyBlobOwner,
+  type LegacyTokenIdentity,
+} from "./LocalMiniappStorage"
 
 export const BLOB_META_KEY_ROOT = "mentraos_blobmeta_"
 
@@ -43,8 +48,12 @@ export function migrateLegacyBlobScope(options: BlobMigrationOptions): boolean {
   const knownOwners = new Map<string, LegacyTokenIdentity>()
 
   const currentClaims = currentAccessToken ? accessTokenIdentity(currentAccessToken) : null
-  if (currentAccessToken && currentClaims) {
+  if (currentAccessToken && currentClaims?.userId === userId) {
     knownOwners.set(sanitizeSegment(currentAccessToken), currentClaims)
+    // Remember every session prefix as soon as the app touches blob storage.
+    // That keeps its ownership provable even after a later login creates a new
+    // Core session with a different prefix.
+    rememberLegacyBlobOwner({set: (key, value) => void storage.save(key, value)}, currentAccessToken, userId)
   }
   for (const key of storage.keys()) {
     if (!key.startsWith(LEGACY_BLOB_OWNER_KEY_ROOT)) continue
