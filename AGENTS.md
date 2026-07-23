@@ -166,6 +166,25 @@ Automated ransomware scanners actively target exposed MongoDB instances. Use Mon
 - [GitHub Project Board - General Tasks](https://github.com/orgs/Mentra-Community/projects/2)
 - [Discord Community](https://discord.gg/5ukNvkEAqT)
 
+### Related Miniapp Repositories
+
+- [Mentra Notes Miniapp](https://github.com/Mentra-Community/Mentra-Notes-Miniapp)
+- [Livestreamer Miniapp](https://github.com/Mentra-Community/Livestreamer-Miniapp)
+- [Mentra AI Miniapp](https://github.com/Mentra-Community/Mentra-AI-Miniapp)
+- [Mentra Enterprise Miniapp](https://github.com/Mentra-Community/Mentra-Enterprise-Miniapp)
+
+If a MentraOS PR also requires changes to one of the external miniapps above, or
+you are otherwise asked to change one of those miniapps:
+
+1. Clone the external miniapp repository if needed, or pull the latest `main`
+   branch if it is already available locally.
+2. Make the changes in the external miniapp repository, bump its version, and
+   push the changes directly to that repository's `main` branch.
+3. Package the updated miniapp as a ZIP archive.
+4. Add the new ZIP archive to `mobile/assets/miniapps/` in the MentraOS
+   monorepo so the external miniapp update is included in the MentraOS mobile
+   PR.
+
 ## Bug Report Logs
 
 Bug reports and feedback filed from the Mentra App land in the Cloud V2 reports system. Report ids look like `rep_01...` and appear in the reports Slack notifications and in the admin console's Incident system page (admin.mentraglass.com).

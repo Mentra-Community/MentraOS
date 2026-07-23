@@ -96,4 +96,14 @@ public class K900BluetoothManagerBaudPolicyTest {
                                 1152000, false, false, false, false, 0))
                 .isFalse();
     }
+
+    @Test
+    public void runtimeRecoveryRetry_usesCappedExponentialBackoff() {
+        assertThat(K900BluetoothManager.runtimeBaudRecoveryRetryDelayMs(0)).isEqualTo(3_000);
+        assertThat(K900BluetoothManager.runtimeBaudRecoveryRetryDelayMs(1)).isEqualTo(6_000);
+        assertThat(K900BluetoothManager.runtimeBaudRecoveryRetryDelayMs(2)).isEqualTo(12_000);
+        assertThat(K900BluetoothManager.runtimeBaudRecoveryRetryDelayMs(4)).isEqualTo(48_000);
+        assertThat(K900BluetoothManager.runtimeBaudRecoveryRetryDelayMs(5)).isEqualTo(60_000);
+        assertThat(K900BluetoothManager.runtimeBaudRecoveryRetryDelayMs(30)).isEqualTo(60_000);
+    }
 }

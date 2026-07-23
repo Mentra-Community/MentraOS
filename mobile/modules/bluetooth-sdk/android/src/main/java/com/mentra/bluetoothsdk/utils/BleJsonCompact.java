@@ -66,6 +66,14 @@ public final class BleJsonCompact {
         putKey("transferMethod", "tm");
         putKey("manual", "m");
         putKey("reconnecting", "rc");
+        putKey("stats", "st");
+        putKey("width", "w");
+        putKey("height", "h");
+        putKey("bitrate", "br");
+        putKey("fps", "f");
+        putKey("droppedFrames", "df");
+        putKey("duration", "du");
+        putKey("temperatureC", "tc");
 
         putEnum(PHOTO_STATUS_TO_INT, PHOTO_STATUS_FROM_INT, "accepted", 0);
         putEnum(PHOTO_STATUS_TO_INT, PHOTO_STATUS_FROM_INT, "queued", 1);
