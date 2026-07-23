@@ -117,8 +117,6 @@ light may be steady, blinking, or breathing depending on the event and whether
 power is flowing, but its orange/green battery meaning remains the same: it
 reports the charging case, not the glasses.
 
-Source: [Mentra Live Charge Case Function List](https://drive.google.com/file/d/1_qjmxCxpRhGhQDbEIyRgkb3XMM_XvhgQ/view).
-
 ### Interaction with MentraOS control
 
 `asg_client` claims the status LED when the MTK-to-BES UART connection becomes
