@@ -147,6 +147,7 @@ public class Ar99 extends SGCManager {
 
   private BluetoothLeScanner scanner;
   private ScanCallback scanCallback;
+  private Runnable scanTimeoutRunnable;
   private String targetIdentifier;
   private String currentProjectName;
   private String currentBroadcastMacAddress;
@@ -686,18 +687,16 @@ public class Ar99 extends SGCManager {
     if (localScanner == null || localCallback == null) return;
 
     localScanner.startScan(Collections.emptyList(), settings, localCallback);
-    handler.postDelayed(
-        new Runnable() {
-          @Override
-          public void run() {
-            stopScan();
-          }
-        },
-        SCAN_DURATION_MS);
+    scanTimeoutRunnable = this::stopScan;
+    handler.postDelayed(scanTimeoutRunnable, SCAN_DURATION_MS);
   }
 
   @Override
   public void stopScan() {
+    if (scanTimeoutRunnable != null) {
+      handler.removeCallbacks(scanTimeoutRunnable);
+      scanTimeoutRunnable = null;
+    }
     if (!isScanning) return;
 
     ScanCallback cb = scanCallback;
@@ -709,7 +708,6 @@ public class Ar99 extends SGCManager {
       }
     }
 
-    handler.removeCallbacksAndMessages(null);
     isScanning = false;
     scanCallback = null;
     scanner = null;
