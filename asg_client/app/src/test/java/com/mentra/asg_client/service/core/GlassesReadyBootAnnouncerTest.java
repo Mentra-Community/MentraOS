@@ -155,6 +155,40 @@ public class GlassesReadyBootAnnouncerTest {
     }
 
     @Test
+    public void transportGapRestartsTheCapsWait() {
+        // Serial close clears the negotiated BES caps, so caps-wait progress from before
+        // a UART blip must not count toward announcing caps-less right after the reopen.
+        when(k900Manager.isBesBinaryRelaySupported()).thenReturn(false);
+        announcer.start();
+        firstTick();
+        advanceTicks(AsgConstants.GLASSES_READY_BOOT_ANNOUNCE_CAPS_WAIT_TICKS - 1);
+
+        // UART blip: one disconnected tick, then reconnected, still capsless.
+        when(k900Manager.isConnected()).thenReturn(false);
+        advanceTicks(1);
+        when(k900Manager.isConnected()).thenReturn(true);
+
+        // The full caps-wait budget applies again after the gap.
+        advanceTicks(AsgConstants.GLASSES_READY_BOOT_ANNOUNCE_CAPS_WAIT_TICKS);
+        verify(commandProcessor, never()).processJsonCommand(any());
+
+        advanceTicks(1);
+        verify(commandProcessor, times(1)).processJsonCommand(any(JSONObject.class));
+    }
+
+    @Test
+    public void stopCancelsScheduledTicks() {
+        announcer.start();
+        firstTick();
+        verify(commandProcessor, times(1)).processJsonCommand(any(JSONObject.class));
+
+        // Service teardown mid-window: no further ticks may run.
+        announcer.stop();
+        drainWholeWindow();
+        verify(commandProcessor, times(1)).processJsonCommand(any(JSONObject.class));
+    }
+
+    @Test
     public void sendsUpToAttemptCapWithinWindow() {
         announcer.start();
         drainWholeWindow();

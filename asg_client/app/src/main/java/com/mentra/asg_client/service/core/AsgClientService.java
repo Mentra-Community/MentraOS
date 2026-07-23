@@ -354,6 +354,12 @@ public class AsgClientService extends Service implements NetworkStateListener, T
         BleTraceLogger.logLifecycle(this, "AsgClientService", "service_destroy_start");
 
         try {
+            // Stop the boot announcer before tearing down what its ticks touch.
+            if (glassesReadyBootAnnouncer != null) {
+                Log.d(TAG, "📢 Stopping glasses_ready boot announcer");
+                glassesReadyBootAnnouncer.stop();
+            }
+
             // Unregister from EventBus
             if (EventBus.getDefault().isRegistered(this)) {
                 Log.d(TAG, "📡 Unregistering from EventBus");

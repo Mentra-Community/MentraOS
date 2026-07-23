@@ -54,7 +54,9 @@ public class GlassesReadyBootAnnouncer {
     private final Supplier<IBluetoothManager> bluetoothManagerSupplier;
     private final Handler handler;
     private final AtomicBoolean started = new AtomicBoolean(false);
+    private final Runnable tickRunnable = this::tick;
 
+    private volatile boolean stopped = false;
     private int ticksUsed = 0;
     private int connectedCapslessTicks = 0;
     private int announcementsSent = 0;
@@ -73,10 +75,19 @@ public class GlassesReadyBootAnnouncer {
         if (!started.compareAndSet(false, true)) {
             return;
         }
-        handler.post(this::tick);
+        handler.post(tickRunnable);
+    }
+
+    /** Cancels any scheduled ticks. Call on service teardown; late ticks must not touch torn-down managers. */
+    public void stop() {
+        stopped = true;
+        handler.removeCallbacks(tickRunnable);
     }
 
     private void tick() {
+        if (stopped) {
+            return;
+        }
         if (BesWireFormat.isBinaryProtocolActive()) {
             Log.i(TAG, "🤝 Wire v2 active — boot announcement done after "
                     + announcementsSent + " send(s)");
@@ -95,7 +106,7 @@ public class GlassesReadyBootAnnouncer {
             announce();
         }
 
-        handler.postDelayed(this::tick, AsgConstants.GLASSES_READY_BOOT_ANNOUNCE_INTERVAL_MS);
+        handler.postDelayed(tickRunnable, AsgConstants.GLASSES_READY_BOOT_ANNOUNCE_INTERVAL_MS);
     }
 
     private boolean shouldAnnounceNow() {
@@ -103,6 +114,11 @@ public class GlassesReadyBootAnnouncer {
         if (commandProcessorSupplier.get() == null
                 || bluetoothManager == null
                 || !bluetoothManager.isConnected()) {
+            // A transport gap invalidates any caps-wait progress: serial close clears the
+            // negotiated BES caps, so the wait must restart from the reopen — otherwise the
+            // first connected tick after a UART blip could blow the budget and announce
+            // caps-less right when the fresh sr_syvr reply is imminent.
+            connectedCapslessTicks = 0;
             return false;
         }
         // Wait (bounded) for the BES sr_syvr reply to resolve wire caps, so the resulting
