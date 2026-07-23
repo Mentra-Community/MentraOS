@@ -42,6 +42,65 @@ Lifecycle in `AsgClientService` and `PhoneReadyCommandHandler`:
 
 If the claim isn't sent, RGB LED commands appear to "succeed" at the API surface but BES ignores them in favor of its own LED logic.
 
+## Default right-eye status patterns
+
+The RGB ring is the internal indicator visible near the right eye. It is not the
+front-facing MTK recording/privacy LED. The patterns below describe the defaults
+in BES firmware `17.26.07.22`.
+
+Interpret the complete pattern rather than the color alone. For example, red can
+mean that charging started, Bluetooth audio disconnected, an operation failed,
+the battery is critically low, or the glasses are shutting down.
+
+| Event | RGB ring pattern | Notes |
+| --- | --- | --- |
+| Normal power-on | Green fade, then solid green | Remains green while BES waits for the MTK Android side to respond. |
+| MTK Android ready | Three green flashes | Each flash is approximately 200 ms, with a 100 ms gap. |
+| Bluetooth audio/AVRCP connected | Blue for approximately 3 seconds | This reports the classic Bluetooth audio profile, not the Mentra App BLE session. |
+| Bluetooth audio/AVRCP disconnected | Two quick red flashes | Approximately 100 ms on and 100 ms off per flash. |
+| Touch gesture | Brief green flash | Approximately 80 ms; suppressed while MTK owns the ring. |
+| Wear-state change | Green for approximately 1 second | Used for both wear-on and wear-off; suppressed while MTK owns the ring. |
+| Recording or continuous-photo progress | Brief blue flash | Approximately 80 ms; suppressed while MTK owns the ring. |
+| Operation failed or MTK unavailable | Brief red flash | Approximately 100 ms; suppressed while MTK owns the ring. |
+| Charger connected while the glasses are already on | Five quick red flashes | Forced by BES even when MTK has claimed LED authority. |
+| Charger disconnected at 0–25% | Three quick orange flashes | Forced by BES. |
+| Charger disconnected at 26–65% | Three quick yellow flashes | Forced by BES. |
+| Charger disconnected above 65% | Three quick green flashes | Forced by BES. |
+| Battery at 4–10% | Brief orange flash every 2 minutes | Suppressed while MTK owns the ring. |
+| Critically low battery | Five red flashes, then shutdown | Also used when starting below 20% and during automatic shutdown at 3% or lower. |
+| Normal shutdown | Red fade | Accompanies the power-off sound. |
+| Internal voice/VAD firmware update | Alternating green and blue | A failed update shows red for approximately 5 seconds. |
+
+### Charging in the case
+
+Current firmware does **not** show a continuous green "charging" or "fully
+charged" indicator:
+
+- If the glasses are already powered on when charging begins, BES shows five
+  quick red flashes.
+- If inserting powered-off glasses into the case causes a charge-only boot, BES
+  skips the normal green boot indicator and the charger-connected red flashes.
+  The ring normally remains off while charging.
+- Reaching full charge does not turn the ring green.
+
+The firmware contains an unused charging timer that would pulse red while
+charging and show solid green near full charge. Nothing starts that timer, so it
+is not part of the current user-visible behavior.
+
+### Interaction with MentraOS control
+
+These are firmware defaults, not guaranteed meanings for every light a user
+sees. `asg_client` claims the ring when the MTK-to-BES UART connection becomes
+ready and claims it again after the phone-ready handshake. While MTK owns the
+ring, BES suppresses most non-forced status patterns. Charger connection and
+disconnection patterns are explicitly forced and can still appear.
+
+MentraOS also uses the ring for camera and streaming feedback, commonly as a
+white flash or solid white light, and Mentra miniapps can request arbitrary
+supported colors and patterns. A sustained color should therefore be correlated
+with the active camera, stream, or miniapp rather than treated as a universal
+device status.
+
 ## Wire format for `cs_ledon` / `cs_ledoff`
 
 `K900RgbLedController.setLedOn(led, ontime, offtime, count, brightness)` produces:
