@@ -610,7 +610,16 @@ jobs:
         id: asg-reuse
         run: |
           set -euo pipefail
-          TREE_HASH=$(git rev-parse "HEAD:asg_client")
+          # Hash only build-relevant content: docs, the OTA manifests (firmware
+          # definitions ride the generated pin, not the APK), the OTA website
+          # assets, archives, and markdown affect no APK byte, so they must not
+          # mint a new ASG build (a fleet-visible phantom update). git ls-tree
+          # lists every remaining file with its blob SHA in stable path order,
+          # so hashing the listing is a deterministic content hash.
+          TREE_HASH=$(git ls-tree -r "HEAD:asg_client" \
+            | grep -vE $'\t(docs/|ota_manifests/|ota_website/|archive/)' \
+            | grep -vE '\.md$' \
+            | sha256sum | awk '{print $1}')
           echo "tree_hash=${TREE_HASH}" >> "$GITHUB_OUTPUT"
           echo "reuse=false" >> "$GITHUB_OUTPUT"
 
