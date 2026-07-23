@@ -24,7 +24,7 @@ import {
 import * as RNFS from "@dr.pogodin/react-native-fs"
 import {createShimmerPlaceholder} from "react-native-shimmer-placeholder"
 
-import {MediaViewer} from "@/components/glasses/Gallery/MediaViewer"
+import {createMediaViewerSnapshot, MediaViewer} from "@/components/glasses/Gallery/MediaViewer"
 import {PhotoImage} from "@/components/glasses/Gallery/PhotoImage"
 import {ProgressRing} from "@/components/glasses/Gallery/ProgressRing"
 import {Header, Icon, Text} from "@/components/ignite"
@@ -530,12 +530,16 @@ export function GalleryScreen() {
       // Open MediaViewer directly (no floating transition)
       // Snapshot the list so background gallery polling does not continually
       // rebuild and re-render full-resolution viewer items.
-      const photos = galleryPhotosRef.current
-        .map((galleryItem) => galleryItem.photo)
-        .filter((photo): photo is PhotoInfo => photo !== undefined)
-      const initialIndex = photos.findIndex((photo) => photo.name === item.photo?.name)
-      setViewerPhotos(photos)
-      setViewerInitialIndex(Math.max(initialIndex, 0))
+      const snapshot = createMediaViewerSnapshot(
+        galleryPhotosRef.current.map((galleryItem) => galleryItem.photo),
+        item.photo.name,
+      )
+      if (!snapshot) {
+        console.warn(`[GalleryScreen] Ignoring stale media selection: ${item.photo.name}`)
+        return
+      }
+      setViewerPhotos(snapshot.photos)
+      setViewerInitialIndex(snapshot.initialIndex)
       setSelectedPhoto(item.photo)
     },
     [isSelectionMode, photoSyncStates, togglePhotoSelection],
