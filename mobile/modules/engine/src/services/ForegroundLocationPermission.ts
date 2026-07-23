@@ -13,10 +13,10 @@ export interface ForegroundLocationPermissionClient {
  */
 export async function resolveForegroundLocationPermission(
   client: ForegroundLocationPermissionClient,
-  appState: string,
+  getAppState: () => string,
 ): Promise<ForegroundLocationPermissionResponse> {
   const current = await client.getForegroundPermissionsAsync()
-  if (current.status === "granted" || appState !== "active") {
+  if (current.status === "granted" || getAppState() !== "active") {
     return current
   }
 

@@ -2457,11 +2457,10 @@ class LocalMiniappRuntime {
       // resumes. Read the current grant first, and only enter the prompt flow
       // while the Activity is actually foregrounded.
       const permissionStartedAt = Date.now()
-      const appState = AppState.currentState
-      const permission = await resolveForegroundLocationPermission(Location, appState)
+      const permission = await resolveForegroundLocationPermission(Location, () => AppState.currentState)
       const {status} = permission
       console.log(
-        `${LOG_TAG}: location poll permission status=${status} appState=${appState} elapsed=${Date.now() - permissionStartedAt}ms`,
+        `${LOG_TAG}: location poll permission status=${status} appState=${AppState.currentState} elapsed=${Date.now() - permissionStartedAt}ms`,
       )
       if (status !== "granted") {
         this.sendResult(packageName, requestId, false, undefined, {
