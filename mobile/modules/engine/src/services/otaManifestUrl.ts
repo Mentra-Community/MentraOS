@@ -22,7 +22,7 @@ function getOtaVersionUrlDevOverride(): string | null {
   return trimmed || null
 }
 
-export function getAsgOtaVersionUrl(glassesUrl?: string | null, glassesBuildNumber?: string | null): string {
+export function resolveOtaManifestUrl(glassesUrl?: string | null, glassesBuildNumber?: string | null): string {
   const deviceUrl = glassesUrl?.trim()
   if (isLegacyAsgOtaStartBuild(glassesBuildNumber)) {
     // Legacy glasses ignore ota_start.ota_version_url and install from their

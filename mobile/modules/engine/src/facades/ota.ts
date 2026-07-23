@@ -11,7 +11,7 @@
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
 import type {OtaProgress, OtaProgressStatus, OtaStatus, OtaUpdateInfo} from "@mentra/bluetooth-sdk/internal"
 import {isGlassesConnected, useGlassesStore} from "../stores/glasses"
-import {getAsgOtaVersionUrl} from "../services/asgOtaVersionUrl"
+import {resolveOtaManifestUrl} from "../services/otaManifestUrl"
 import {otaInstallCoordinator, type OtaInstallSnapshot} from "../services/OtaInstallCoordinator"
 import {
   checkCurrentGlassesForUpdate,
@@ -28,7 +28,7 @@ function projectSnapshot() {
     besFirmwareVersion: s.besFirmwareVersion || null,
     wifiConnected: s.wifi.state === "connected",
     wifiStatusKnown: s.wifiStatusKnown,
-    manifestUrl: getAsgOtaVersionUrl(s.otaVersionUrl, s.buildNumber),
+    manifestUrl: resolveOtaManifestUrl(s.otaVersionUrl, s.buildNumber),
     updateAvailable: s.otaUpdateAvailable,
     status: s.otaStatus,
     legacyProgress: s.otaProgress,

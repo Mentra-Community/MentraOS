@@ -94,7 +94,7 @@ export {phoneLocationService, stopPhoneLocation} from "./services/PhoneLocationS
 // Clock-skew fix commands (BLE writes) used by OTA + gallery sync.
 export {fixGlassesClockIfSkewed, maybeFixGlassesClockFromVersionInfo} from "./services/glassesClockSync"
 // OTA manifest-URL resolution (dev-override/legacy-build/env/prod).
-export {getAsgOtaVersionUrl} from "./services/asgOtaVersionUrl"
+export {resolveOtaManifestUrl} from "./services/otaManifestUrl"
 // Flat OTA check helpers (network + BLE state). Host usage is a tracked
 // burn-down surface (§F); the sanctioned path is engine.ota.checkForUpdates().
 export {

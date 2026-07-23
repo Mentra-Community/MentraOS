@@ -24,7 +24,7 @@ import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
 import type {OtaProgress, OtaStatus} from "@mentra/bluetooth-sdk/internal"
 import GlobalEventEmitter from "../utils/GlobalEventEmitter"
 import {isGlassesConnected, useGlassesStore} from "../stores/glasses"
-import {getAsgOtaVersionUrl} from "./asgOtaVersionUrl"
+import {resolveOtaManifestUrl} from "./otaManifestUrl"
 import {deriveDisplayState, type DisplayState} from "./otaDisplayState"
 import {
   BES_CONTINUE_LOCKOUT_MS,
@@ -1070,7 +1070,7 @@ class OtaInstallCoordinator {
     this.armAckAndStuckWatchdogsOnly()
     try {
       const state = useGlassesStore.getState()
-      const otaVersionUrl = getAsgOtaVersionUrl(state.otaVersionUrl, state.buildNumber)
+      const otaVersionUrl = resolveOtaManifestUrl(state.otaVersionUrl, state.buildNumber)
       console.log(`[OTA_PROGRESS] sending ota_start with manifest URL: ${otaVersionUrl}`)
       await BluetoothSdk.startOtaUpdate(otaVersionUrl)
     } catch (err) {
