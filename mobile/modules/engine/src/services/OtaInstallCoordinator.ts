@@ -367,6 +367,17 @@ class OtaInstallCoordinator {
     }
   }
 
+  /**
+   * True while the recovery worker owns the downgrade transaction (after the apk install
+   * started, before convergence). During this window ASG is being uninstalled/reinstalled and
+   * cannot answer the phone, so the coordinator must not ping, poll ota_query_status, or arm the
+   * progress-stall watchdog — doing so drives the passive factory build and fails the session
+   * before the target reconnects. Completion is exact-version convergence, detected separately.
+   */
+  private isInVersionChangeDetour(): boolean {
+    return this.versionChangeSession && this.versionChangeInstallStarted && !this.versionChangeConverged
+  }
+
   /** Downgrade-detour sub-phase for the progress narrative (see OtaInstallSnapshot). */
   private deriveVersionChangePhase(connected: boolean): "installing" | "restarting" | "verifying" | null {
     if (!this.versionChangeSession || this.versionChangeConverged) return null
@@ -718,7 +729,10 @@ class OtaInstallCoordinator {
     // padded interval — old builds slept less eagerly and pings are costlier for them).
     if (connectedChanged || displayStateChanged) {
       this.clearPingInterval()
-      const active = connected && (displayState === "starting" || displayState === "updating")
+      const active =
+        connected &&
+        (displayState === "starting" || displayState === "updating") &&
+        !this.isInVersionChangeDetour()
       if (active) {
         void BluetoothSdk.ping().catch(() => {})
         const pingIntervalMs = legacySession ? LEGACY_PING_INTERVAL_MS : PING_INTERVAL_MS
@@ -752,7 +766,10 @@ class OtaInstallCoordinator {
     // update that doesn't change the signature keeps the same timer running
     // instead of forever re-extending the deadline.
     if (stallSigChanged || displayStateChanged) {
-      if (displayState !== "starting" && displayState !== "updating") {
+      if (this.isInVersionChangeDetour()) {
+        // Recovery worker owns the transaction; there are no progress events to stall on.
+        this.clearProgressTimeout()
+      } else if (displayState !== "starting" && displayState !== "updating") {
         this.clearProgressTimeout()
       } else if (!stallSig) {
         this.clearProgressTimeout()
@@ -1052,6 +1069,7 @@ class OtaInstallCoordinator {
    * this poll exists for) and rejections are swallowed: the next tick retries.
    */
   private maybePollApkInstallStatus(): void {
+    if (this.isInVersionChangeDetour()) return
     if (this.apkInstallPollInFlight) return
     const s = useGlassesStore.getState().otaStatus
     if (s?.stepType === "apk" && s.phase === "install" && s.status === "in_progress") {
