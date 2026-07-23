@@ -277,9 +277,9 @@ public class AsgConstants {
     public static final int TEXT_MODE_BLE_JPEG_QUALITY = 80;
 
     /** Long-edge size used for on-glasses ML Kit text localization. */
-    // 1280 is the smallest tested size that consistently retained stylized/low-contrast label
-    // text on real 4032x3024 Mentra Live captures while remaining below the 1s detector budget.
-    public static final int TEXT_MODE_MLKIT_ANALYSIS_LONG_EDGE = 1280;
+    // 1600 reliably retained small label/instruction text on real 4032x3024 Mentra Live captures
+    // while remaining comfortably below the detector timeout.
+    public static final int TEXT_MODE_MLKIT_ANALYSIS_LONG_EDGE = 1600;
 
     /** Minimum source-pixel padding around the union of ML Kit text lines. */
     public static final int TEXT_MODE_MLKIT_MIN_PADDING_PX = 32;
@@ -288,7 +288,7 @@ public class AsgConstants {
     public static final float TEXT_MODE_MLKIT_PADDING_X_FRACTION = 0.12f;
 
     /** Vertical padding relative to the detected text-union height. */
-    public static final float TEXT_MODE_MLKIT_PADDING_Y_FRACTION = 0.25f;
+    public static final float TEXT_MODE_MLKIT_PADDING_Y_FRACTION = 0.35f;
 
     // A lone OCR line is weak evidence for the complete text-bearing object. Keep generous
     // surrounding context so a small conventional label can pull in nearby stylized text that
