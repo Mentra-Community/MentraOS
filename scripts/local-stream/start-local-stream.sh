@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# start-local-whip.sh — stand up MediaMTX WHIP ingest on this laptop for
-# Mentra Live → same-WiFi WebRTC testing.
+# start-local-stream.sh — stand up MediaMTX on this laptop for Mentra Live
+# same-WiFi testing. RTMP is the primary path; WHIP/WHEP is a documented fallback.
 #
 # Detects the LAN IP fresh every run (DHCP-safe), exports it as
-# MTX_WEBRTCADDITIONALHOSTS for ICE candidates, and prints the publish/watch
-# URLs to paste into Livestreamer / a browser.
+# MTX_WEBRTCADDITIONALHOSTS for WHIP ICE candidates, and prints publish/watch
+# URLs to paste into Livestreamer / a browser / VLC.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -57,29 +57,39 @@ fi
 
 export MTX_WEBRTCADDITIONALHOSTS="$LAN_IP"
 
-PUBLISH_URL="http://${LAN_IP}:8889/live/whip"
-WATCH_URL="http://${LAN_IP}:8889/live"
+RTMP_PUBLISH_URL="rtmp://${LAN_IP}:1935/live"
+HLS_WATCH_URL="http://${LAN_IP}:8888/live"
+WHIP_PUBLISH_URL="http://${LAN_IP}:8889/live/whip"
+WHIP_WATCH_URL="http://${LAN_IP}:8889/live"
 
 echo "LAN IP                  : $LAN_IP"
 echo "MTX_WEBRTCADDITIONALHOSTS=$MTX_WEBRTCADDITIONALHOSTS"
 echo ""
-echo "Starting MediaMTX (WHIP/WHEP)…"
+echo "Starting MediaMTX (RTMP primary, WHIP fallback)…"
 docker compose -f "$SCRIPT_DIR/docker-compose.yml" up -d
 
 echo ""
 echo "────────────────────────────────────────────────────────"
-echo "Publish (glasses / Livestreamer Custom + Local network):"
-echo "  $PUBLISH_URL"
+echo "PRIMARY — RTMP (recommended)"
+echo "  Publish (glasses / Livestreamer Custom + Local network):"
+echo "    $RTMP_PUBLISH_URL"
+echo "  Watch (HLS in a browser / VLC):"
+echo "    $HLS_WATCH_URL"
 echo ""
-echo "Watch (laptop browser):"
-echo "  $WATCH_URL"
+echo "FALLBACK — WHIP / WHEP (WebRTC; needs TCP 8889 + UDP 8189)"
+echo "  Publish:"
+echo "    $WHIP_PUBLISH_URL"
+echo "  Watch:"
+echo "    $WHIP_WATCH_URL"
 echo "────────────────────────────────────────────────────────"
 echo ""
-echo "Firewall/ICE tip: allow inbound TCP 8889 and UDP 8189 for Docker."
-echo "If WHIP returns 201 but no video appears, ICE/UDP is blocked — see README.md."
+echo "Firewall tip (RTMP): allow inbound TCP 1935 for Docker."
+echo "Firewall/ICE tip (WHIP): allow inbound TCP 8889 and UDP 8189 —"
+echo "  if WHIP returns 201 but no video appears, ICE/UDP is blocked."
 echo ""
 echo "Glasses-only smoke test (bypass miniapp):"
-echo "  ./asg_client/scripts/test-webrtc-streaming.sh start $PUBLISH_URL"
+echo "  ./asg_client/scripts/test-rtmp-streaming.sh start $RTMP_PUBLISH_URL"
+echo "  ./asg_client/scripts/test-webrtc-streaming.sh start $WHIP_PUBLISH_URL"
 echo ""
 echo "Stop:"
 echo "  docker compose -f $SCRIPT_DIR/docker-compose.yml down"

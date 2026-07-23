@@ -1,0 +1,42 @@
+###############################################
+# Local RTMP (+ WHIP fallback) ingest for Mentra Live testing
+#
+# Primary:   RTMP publish on :1935  →  rtmp://<LAN_IP>:1935/live
+# Fallback:  WHIP/WHEP on :8889     →  http://<LAN_IP>:8889/live/whip
+#
+# For WHIP only: webrtcAdditionalHosts is NOT hardcoded here. The start
+# script exports MTX_WEBRTCADDITIONALHOSTS=<LAN_IP> and MediaMTX picks it
+# up as an override (env wins over this file). That keeps ICE DHCP-safe.
+# RTMP does not need that env at all.
+###############################################
+
+logLevel: info
+logDestinations: [stdout]
+
+api: yes
+apiAddress: :9997
+
+# Primary publish path — plain TCP, no ICE/NAT headaches.
+rtmp: yes
+rtmpAddress: :1935
+
+# HLS viewer (recommended watch URL for RTMP publishers).
+hls: yes
+hlsAddress: :8888
+
+# WHIP / WHEP fallback (WebRTC). Needs TCP 8889 + UDP 8189 through the firewall.
+webrtc: yes
+webrtcAddress: :8889
+webrtcLocalUDPAddress: :8189
+
+paths:
+  # Glasses publish RTMP to rtmp://<LAN_IP>:1935/live
+  # Watch HLS at           http://<LAN_IP>:8888/live
+  # WHIP fallback publish: http://<LAN_IP>:8889/live/whip
+  live:
+    source: publisher
+
+  # Catch-all so an accidentally appended stream key
+  # (e.g. rtmp://<ip>:1935/live/mykey) still works.
+  all_others:
+    source: publisher
