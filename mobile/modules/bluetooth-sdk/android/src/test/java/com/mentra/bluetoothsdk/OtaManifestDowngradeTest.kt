@@ -38,6 +38,16 @@ class OtaManifestDowngradeTest {
         assertFalse(hasUpdate("49076573", manifest(49076573L)))
     }
 
+    private fun legacyTopLevelManifest(versionCode: Long): JSONObject =
+        JSONObject().put("versionCode", versionCode)
+
+    @Test
+    fun legacyTopLevelManifestStaysUpgradeOnly() {
+        // No apps entry -> not an exact pin -> upgrade-only, never a false downgrade.
+        assertFalse(hasUpdate("49076573", legacyTopLevelManifest(49000000L)))
+        assertTrue(hasUpdate("49000000", legacyTopLevelManifest(49076573L)))
+    }
+
     @Test
     fun zeroedPinOnModernGlassesIsAnError() {
         // An unverifiable pin must never present as "no update" on modern glasses.

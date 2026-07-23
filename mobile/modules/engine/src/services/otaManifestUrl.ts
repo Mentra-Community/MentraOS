@@ -2,7 +2,12 @@ import {sdkPinnedOtaManifestUrl} from "@mentra/bluetooth-sdk/internal"
 
 import {SETTINGS, useSettingsStore} from "../stores/settings"
 
-const OTA_VERSION_URL_PROD = "https://ota.mentraglass.com/prod_live_version.json"
+// Legacy production manifest — pre-39 glasses install from this (they ignore ota_start's URL).
+const OTA_VERSION_URL_LEGACY_PROD = "https://ota.mentraglass.com/prod_live_version.json"
+// Modern production fleet manifest (v2). Only a last-resort fallback when the SDK-derived pin
+// URL is somehow unavailable; modern glasses honor ota_start's URL, so this must be the v2
+// artifact, not the legacy v1 rescue manifest.
+const OTA_VERSION_URL_PROD = "https://ota.mentraglass.com/prod_live_version_v2.json"
 
 function isLegacyAsgOtaStartBuild(glassesBuildNumber?: string | null): boolean {
   const buildNumber = Number.parseInt(glassesBuildNumber ?? "", 10)
@@ -27,7 +32,7 @@ export function resolveOtaManifestUrl(glassesUrl?: string | null, glassesBuildNu
   if (isLegacyAsgOtaStartBuild(glassesBuildNumber)) {
     // Legacy glasses ignore ota_start.ota_version_url and install from their
     // compiled default, so the developer override does not apply to them either.
-    return deviceUrl || OTA_VERSION_URL_PROD
+    return deviceUrl || OTA_VERSION_URL_LEGACY_PROD
   }
 
   const devOverrideUrl = getOtaVersionUrlDevOverride()

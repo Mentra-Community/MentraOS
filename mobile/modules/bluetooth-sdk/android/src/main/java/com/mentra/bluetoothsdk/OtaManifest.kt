@@ -102,12 +102,20 @@ internal object OtaManifestChecker {
                     "invalid_glasses_version",
                     "Cannot check OTA update because glasses build number is invalid.",
                 )
+        // Only apps-shaped manifests are exact pins. A legacy top-level manifest (versionCode at
+        // the root, no apps entry) is NOT a pin and stays strictly upgrade-only, matching the
+        // engine TS checker — otherwise a build newer than such a manifest would report a false
+        // downgrade the JS path ignores.
+        val isExactPin = manifest.optJSONObject("apps")?.optJSONObject(ASG_CLIENT_PACKAGE)?.hasNumber("versionCode") == true
         val serverVersion = latestAppInfo(manifest).requiredLong("versionCode")
-        // Every manifest this checker consumes pins one exact ASG artifact, so any mismatch is an
-        // update in either direction (downgrades take the uninstall-then-reinstall detour on the
-        // glasses). A non-positive pin is only legitimate in the frozen legacy rescue manifests
-        // that pre-39 glasses are checked against; for modern glasses it means the manifest
-        // cannot verify anything, and that must surface as an error — never as "no update".
+        if (!isExactPin) {
+            return serverVersion > currentVersion
+        }
+        // Exact pin: any mismatch is an update in either direction (downgrades take the
+        // uninstall-then-reinstall detour on the glasses). A non-positive pin is only legitimate
+        // in the frozen legacy rescue manifests that pre-39 glasses are checked against; for
+        // modern glasses it means the manifest cannot verify anything, and that must surface as an
+        // error — never as "no update".
         if (serverVersion <= 0) {
             if (currentVersion >= 39) {
                 throw BluetoothSdkException(

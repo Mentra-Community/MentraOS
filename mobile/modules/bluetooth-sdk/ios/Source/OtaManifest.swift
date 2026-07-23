@@ -123,12 +123,18 @@ enum OtaManifestChecker {
         guard let serverVersion = try latestAppInfo(manifest).versionCode else {
             throw BluetoothSdkError(code: "invalid_ota_manifest", message: "OTA manifest is missing ASG app versionCode.")
         }
-        // Every manifest this checker consumes pins one exact ASG artifact, so any mismatch is
-        // an update in either direction (downgrades take the uninstall-then-reinstall detour on
-        // the glasses). A non-positive pin is only legitimate in the frozen legacy rescue
-        // manifests that pre-39 glasses are checked against; for modern glasses it means the
-        // manifest cannot verify anything, and that must surface as an error — never as
-        // "no update". Mirrors the Kotlin OtaManifestChecker.
+        // Only apps-shaped manifests are exact pins. A legacy top-level manifest (versionCode at
+        // the root, no apps entry) is NOT a pin and stays strictly upgrade-only, matching the
+        // engine TS checker and Kotlin.
+        let isExactPin = manifest.apps?[asgClientPackage]?.versionCode != nil
+        if !isExactPin {
+            return serverVersion > currentVersion
+        }
+        // Exact pin: any mismatch is an update in either direction (downgrades take the
+        // uninstall-then-reinstall detour on the glasses). A non-positive pin is only legitimate
+        // in the frozen legacy rescue manifests that pre-39 glasses are checked against; for
+        // modern glasses it means the manifest cannot verify anything, and that must surface as
+        // an error — never as "no update". Mirrors the Kotlin OtaManifestChecker.
         if serverVersion <= 0 {
             if currentVersion >= 39 {
                 throw BluetoothSdkError(
