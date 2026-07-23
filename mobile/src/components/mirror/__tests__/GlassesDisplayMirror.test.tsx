@@ -96,4 +96,40 @@ describe("GlassesDisplayMirror", () => {
 
     expect(getByText("Hello mirror")).toBeTruthy()
   })
+
+  it("renders positioned text from scene frames", () => {
+    useDisplayStore.setState({
+      currentEvent: {
+        view: "main",
+        layout: {
+          layoutType: "scene",
+          width: 576,
+          height: 288,
+          elements: [
+            {
+              id: "title",
+              type: "text",
+              box: {x: 12, y: 20, w: 300, h: 50},
+              text: "Scene mirror text",
+              change: "created",
+              contentHash: "hash",
+            },
+            {
+              id: "outline",
+              type: "rect",
+              box: {x: 0, y: 0, w: 576, h: 288},
+              style: {border: 2, radius: 4},
+              change: "created",
+              contentHash: "rect-hash",
+            },
+          ],
+        },
+      },
+    })
+
+    const {getByText, queryByText} = render(<GlassesDisplayMirror />)
+
+    expect(getByText("Scene mirror text")).toBeTruthy()
+    expect(queryByText(/Unknown layout type/i)).toBeNull()
+  })
 })

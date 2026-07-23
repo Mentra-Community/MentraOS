@@ -397,6 +397,23 @@ describe("LocalDisplayManager", () => {
       expect(mgr._peekForTest().bgLockPkg).toBeNull()
       expect(lastText()).toBe("core-saved")
     })
+
+    test("dismissing a temporary background display restores core", () => {
+      mgr.request("com.app.core", {
+        layout: {layoutType: "text_wall", text: "core-saved"},
+      })
+      mgr.request("cloud.augmentos.notify", {
+        layout: {layoutType: "reference_card", title: "Messages", text: "Hello"},
+        durationMs: 5_000,
+      })
+      expect(lastLayoutType()).toBe("reference_card")
+      displayEventMock.mockClear()
+
+      mgr.dismiss("cloud.augmentos.notify")
+
+      expect(mgr._peekForTest().bgLockPkg).toBeNull()
+      expect(lastText()).toBe("core-saved")
+    })
   })
 
   // ==========================================================================
@@ -430,6 +447,131 @@ describe("LocalDisplayManager", () => {
         ([e]: any[]) => e.layout?.text === "a1",
       )
       expect(restoredOldCore).toBe(false)
+    })
+  })
+
+  // ==========================================================================
+  // Boot-strand and clear-forfeit regressions (bug hunt 2026-07-22)
+  // ==========================================================================
+
+  describe("boot-strand and clear-forfeit regressions", () => {
+    test("chained boots never restore a stale 'Starting…' frame", () => {
+      mgr.onCoreAppChange("com.app.core")
+      mgr.request("com.app.core", {layout: {layoutType: "text_wall", text: "core content"}})
+
+      // Back-to-back mounts (autostart restore): the second boot starts while
+      // the first's "Starting A…" is still on the glasses.
+      mgr.onMount("com.app.a", "A")
+      mgr.onMount("com.app.b", "B")
+
+      // Neither app renders; the boot window times out.
+      advance(1500)
+
+      // Must restore the ORIGINAL pre-boot frame — not "Starting A…".
+      expect(lastText()).toBe("core content")
+    })
+
+    test("boot text clears when the glasses were empty and the app never renders", () => {
+      mgr.onMount("com.app.a", "A")
+      mgr.onMount("com.app.b", "B")
+      advance(1500)
+      expect(lastLayoutType()).toBe("clear_view")
+    })
+
+    test("unmounting the booting app does not strand its boot text", () => {
+      mgr.onCoreAppChange("com.app.core")
+      mgr.request("com.app.core", {layout: {layoutType: "text_wall", text: "core content"}})
+
+      mgr.onMount("com.app.a", "A")
+      expect(lastText()).toBe("Starting A…")
+
+      mgr.onUnmount("com.app.a")
+      expect(lastText()).toBe("core content")
+    })
+
+    test("a background app's clear forfeits the lock and restores the core display", () => {
+      mgr.onCoreAppChange("com.app.core")
+      mgr.request("com.app.core", {layout: {layoutType: "text_wall", text: "core content"}})
+
+      mgr.request("com.app.bg", {layout: {layoutType: "text_wall", text: "bg overlay"}})
+      expect(lastText()).toBe("bg overlay")
+
+      // Clear = "I'm done": core comes back and the lock is free immediately.
+      mgr.request("com.app.bg", {layout: {layoutType: "clear_view"}})
+      expect(lastText()).toBe("core content")
+
+      mgr.request("com.app.bg2", {layout: {layoutType: "text_wall", text: "bg2 overlay"}})
+      expect(lastText()).toBe("bg2 overlay")
+    })
+
+    test("an empty scene render (render([])) is a forfeit too", () => {
+      mgr.onCoreAppChange("com.app.core")
+      mgr.request("com.app.core", {layout: {layoutType: "text_wall", text: "core content"}})
+
+      mgr.request("com.app.bg", {layout: {layoutType: "text_wall", text: "bg overlay"}})
+      expect(lastText()).toBe("bg overlay")
+
+      mgr.request("com.app.bg", {view: "main", scene: []})
+      expect(lastText()).toBe("core content")
+    })
+
+    test("a context teardown (respawn) does not release the core claim", () => {
+      // The coreApp pointer is derived from the apps store; a liveness/crash
+      // respawn tears the context down with NO store change (the app is
+      // still "running"), so the claim must survive the unmount. Only the
+      // saved frame is dropped (it belongs to the dead context).
+      mgr.onCoreAppChange("com.app.core")
+      mgr.request("com.app.core", {layout: {layoutType: "text_wall", text: "core content"}, durationMs: 10_000})
+
+      mgr.onUnmount("com.app.core")
+      expect(mgr._peekForTest().coreApp).toBe("com.app.core")
+
+      // The respawned context's first render must arbitrate as CORE: a bg
+      // overlay that then expires restores it.
+      mgr.onMount("com.app.core", "Core")
+      advance(1500)
+      mgr.request("com.app.core", {layout: {layoutType: "text_wall", text: "respawned"}, durationMs: 10_000})
+      mgr.request("com.app.bg", {layout: {layoutType: "text_wall", text: "bg overlay"}, durationMs: 1000})
+      advance(1000)
+      expect(lastText()).toBe("respawned")
+    })
+
+    test("a clear queued during boot forfeits the pre-boot frame (no resurrection)", () => {
+      mgr.onCoreAppChange("com.app.core")
+      mgr.request("com.app.core", {layout: {layoutType: "text_wall", text: "core content"}})
+
+      // An app boots; while its "Starting…" is up, the core CLEARS. The clear
+      // parks in the boot queue; endBoot must not restore the forfeited frame.
+      mgr.onMount("com.app.b", "B")
+      mgr.request("com.app.core", {layout: {layoutType: "clear_view"}})
+      advance(1500)
+
+      expect(lastLayoutType()).toBe("clear_view")
+    })
+
+    test("a clear queued during boot also blocks the unmount-mid-boot restore", () => {
+      mgr.onCoreAppChange("com.app.core")
+      mgr.request("com.app.core", {layout: {layoutType: "text_wall", text: "core content"}})
+
+      mgr.onMount("com.app.b", "B")
+      mgr.request("com.app.core", {layout: {layoutType: "clear_view"}})
+      mgr.onUnmount("com.app.b")
+
+      expect(lastLayoutType()).toBe("clear_view")
+    })
+
+    test("the core app's own clear forgets its snapshot so it cannot resurrect", () => {
+      mgr.onCoreAppChange("com.app.core")
+      mgr.request("com.app.core", {layout: {layoutType: "text_wall", text: "core content"}})
+
+      mgr.request("com.app.core", {layout: {layoutType: "clear_view"}})
+      expect(lastLayoutType()).toBe("clear_view")
+
+      // A bg overlay that later expires must NOT bring the cleared frame back.
+      mgr.request("com.app.bg", {layout: {layoutType: "text_wall", text: "bg overlay"}, durationMs: 1000})
+      expect(lastText()).toBe("bg overlay")
+      advance(1000)
+      expect(lastLayoutType()).toBe("clear_view")
     })
   })
 })

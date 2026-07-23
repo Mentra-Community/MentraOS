@@ -221,6 +221,10 @@
                 }
               }
             }
+          },
+          "outputSchema": {
+            "type": "object",
+            "description": "JSON-Schema descriptor for the structured action result (MCP outputSchema)."
           }
         }
       }

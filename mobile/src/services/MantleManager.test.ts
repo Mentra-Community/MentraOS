@@ -2,7 +2,14 @@ import {waitFor} from "@testing-library/react-native"
 import {router} from "expo-router"
 
 import mantle from "@/services/MantleManager"
-import {localMiniappRuntime, useCoreStore, useDisplayStore, useSettingsStore} from "@mentra/engine/internal"
+import {
+  localDisplayManager,
+  localMiniappRuntime,
+  useAppStatusStore,
+  useCoreStore,
+  useDisplayStore,
+  useSettingsStore,
+} from "@mentra/engine/internal"
 import {isGlassesConnected, useGlassesStore} from "../../modules/engine/src/stores/glasses"
 import {engine, SETTINGS} from "@mentra/engine"
 import {crustModuleMock, emitCrustEvent, resetCrustModuleMock} from "@/test-utils/mockCrustModule"
@@ -83,6 +90,7 @@ jest.mock("expo-task-manager", () => ({
 }))
 
 function resetMantleTestState() {
+  useAppStatusStore.setState({apps: []})
   useCoreStore.getState().reset()
   useGlassesStore.getState().reset()
   useSettingsStore.getState().resetAllSettingsLocally()
@@ -91,6 +99,7 @@ function resetMantleTestState() {
 
 let requestWifiSetup: (reason?: string, packageName?: string) => Promise<void>
 let routerPushSpy: jest.SpiedFunction<typeof router.push>
+let syncCoreDisplayOwner: () => void
 
 describe("MantleManager", () => {
   beforeAll(async () => {
@@ -106,6 +115,7 @@ describe("MantleManager", () => {
     }))
     await mantle.init()
     requestWifiSetup = (engine.configure as jest.Mock).mock.calls[0][0].ui.requestWifiSetup
+    syncCoreDisplayOwner = (useAppStatusStore.subscribe as jest.Mock).mock.calls.at(-1)![0]
   })
 
   afterEach(() => {
@@ -157,7 +167,7 @@ describe("MantleManager", () => {
         twelve_hour_time: true,
       }),
     )
-    expect(crustModuleMock.setNotificationConfig).toHaveBeenCalledWith(true, [])
+    expect(crustModuleMock.setNotificationConfig).toHaveBeenCalledWith(false, true, [])
     expect(getBluetoothSdkListenerCount("local_transcription")).toBe(1)
 
     emitBluetoothSdkEvent("bluetooth_status", {searching: true, otherBtConnected: true})
@@ -211,7 +221,7 @@ describe("MantleManager", () => {
     await useSettingsStore.getState().setSetting(SETTINGS.notifications_blocklist.key, ["com.blocked"], false)
 
     await waitFor(() => {
-      expect(crustModuleMock.setNotificationConfig).toHaveBeenLastCalledWith(false, ["com.blocked"])
+      expect(crustModuleMock.setNotificationConfig).toHaveBeenLastCalledWith(false, false, ["com.blocked"])
     })
     expect(bluetoothSdkMock.updateBluetoothSettings).not.toHaveBeenCalledWith(
       expect.objectContaining({
@@ -223,6 +233,19 @@ describe("MantleManager", () => {
         notifications_blocklist: expect.anything(),
       }),
     )
+  })
+
+  it("keeps the running standard miniapp as display core when Notifications is background", () => {
+    useAppStatusStore.setState({
+      apps: [
+        {packageName: "com.mentra.captions", type: "standard", running: true},
+        {packageName: "cloud.augmentos.notify", type: "background", running: true},
+      ] as any,
+    })
+
+    syncCoreDisplayOwner()
+
+    expect(localDisplayManager.onCoreAppChange).toHaveBeenLastCalledWith("com.mentra.captions")
   })
 
   it("keeps non-SDK settings out of Bluetooth SDK sync", async () => {
@@ -335,6 +358,24 @@ describe("MantleManager", () => {
       packageName: "com.apple.mobilemail",
       timestamp: 12346,
     })
+    expect(localDisplayManager.request).toHaveBeenNthCalledWith(1, "cloud.augmentos.notify", {
+      layout: {
+        layoutType: "reference_card",
+        title: "Calendar: Standup",
+        text: "Daily sync",
+      },
+      durationMs: 5_000,
+    })
+    expect(localDisplayManager.request).toHaveBeenNthCalledWith(2, "cloud.augmentos.notify", {
+      layout: {
+        layoutType: "reference_card",
+        title: "com.apple.mobilemail: Build complete",
+        text: "The iOS relay is working",
+      },
+      durationMs: 5_000,
+    })
+    expect(localDisplayManager.dismiss).toHaveBeenCalledTimes(2)
+    expect(localDisplayManager.dismiss).toHaveBeenLastCalledWith("cloud.augmentos.notify")
     await Promise.resolve()
   })
 

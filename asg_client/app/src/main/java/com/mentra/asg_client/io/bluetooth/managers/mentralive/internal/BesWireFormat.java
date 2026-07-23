@@ -211,6 +211,41 @@ public class BesWireFormat {
                 && data[2] == CMD_TYPE_BINARY_MSG;
     }
 
+    /**
+     * Validate a frame strongly enough to use it as evidence that both UART endpoints agree on
+     * baud. Marker-shaped garbage is insufficient: STRING frames must have an exact encoded length
+     * and a JSON command field, while binary frames must have an exact fragment length and sane
+     * fragment indices.
+     */
+    public static boolean isValidLinkHealthFrame(byte[] frame) {
+        if (isBinaryWireFrame(frame)) {
+            BinaryHeader header = parseBinaryHeader(frame);
+            return header.valid
+                    && header.fragCount > 0
+                    && header.fragIdx < header.fragCount
+                    && frame.length == LENGTH_CMD_MIN_SIZE + BINARY_HEADER_SIZE + header.payloadLen;
+        }
+        if (!isK900ProtocolFormat(frame) || frame[2] != CMD_TYPE_STRING) {
+            return false;
+        }
+        K900LengthCodec.Detected detected = K900LengthCodec.detectLength(frame);
+        if (detected == null || frame.length != detected.length + K900LengthCodec.FRAME_OVERHEAD) {
+            return false;
+        }
+        try {
+            byte[] payload = new byte[detected.length];
+            System.arraycopy(
+                    frame,
+                    K900LengthCodec.PAYLOAD_OFFSET,
+                    payload,
+                    0,
+                    detected.length);
+            return new JSONObject(new String(payload, StandardCharsets.UTF_8)).has(FIELD_C);
+        } catch (JSONException e) {
+            return false;
+        }
+    }
+
     public static boolean isCameraCommand(String jsonData) {
         if (jsonData == null || jsonData.isEmpty()) {
             return false;

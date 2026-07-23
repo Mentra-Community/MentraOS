@@ -391,6 +391,37 @@ public class MediaManager implements IMediaManager {
                     Log.e(TAG, "Error creating stream error status", e);
                 }
             }
+
+            @Override
+            public void onStreamMetrics(
+                    String streamId,
+                    long bitrateBps,
+                    double fps,
+                    long droppedFrames,
+                    long durationSeconds,
+                    double temperatureC) {
+                try {
+                    JSONObject status = new JSONObject();
+                    status.put("type", "stream_status");
+                    status.put("status", "streaming");
+                    if (streamId != null && !streamId.isEmpty()) {
+                        status.put("streamId", streamId);
+                    }
+
+                    JSONObject stats = new JSONObject();
+                    stats.put("bitrate", bitrateBps);
+                    stats.put("fps", fps);
+                    stats.put("droppedFrames", droppedFrames);
+                    stats.put("duration", durationSeconds);
+                    if (Double.isFinite(temperatureC)) {
+                        stats.put("temperatureC", Math.round(temperatureC * 10d) / 10d);
+                    }
+                    status.put("stats", stats);
+                    sendStreamStatusResponse(true, status);
+                } catch (JSONException e) {
+                    Log.e(TAG, "Error creating stream metrics status", e);
+                }
+            }
         };
     }
 

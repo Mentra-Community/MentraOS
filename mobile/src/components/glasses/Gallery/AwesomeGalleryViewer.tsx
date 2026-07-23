@@ -13,8 +13,8 @@ import Gallery, {GalleryRef} from "react-native-awesome-gallery"
 import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
 import MaterialCommunityIcons from "react-native-vector-icons/MaterialCommunityIcons"
 import Video from "react-native-video"
-import {scheduleOnRN} from "react-native-worklets"
 
+import {Icon} from "@/components/ignite/Icon"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {ThemedStyle} from "@/theme"
 import {PhotoInfo} from "@/types/asg"
@@ -393,28 +393,44 @@ interface CustomOverlayProps {
   onClose: () => void
   currentIndex: number
   total: number
+  onDetails: () => void
   onShare?: () => void
 }
 
-function CustomOverlay({onClose, currentIndex, total, onShare}: CustomOverlayProps) {
+export function CustomOverlay({onClose, currentIndex, total, onDetails, onShare}: CustomOverlayProps) {
   const insets = useSaferAreaInsets()
   const {themed} = useAppTheme()
 
   return (
     <View style={[themed($header), {paddingTop: insets.top}]}>
-      <TouchableOpacity onPress={onClose} style={themed($closeButton)}>
-        <MaterialCommunityIcons name="chevron-left" size={32} color="white" />
+      <TouchableOpacity
+        accessibilityLabel="Close media viewer"
+        accessibilityRole="button"
+        onPress={onClose}
+        style={themed($actionButton)}>
+        <Icon name="chevron-left" size={28} color="white" />
       </TouchableOpacity>
-      <Text style={themed($counterText)}>
+      <Text pointerEvents="none" style={themed($counterText)}>
         {currentIndex + 1} / {total}
       </Text>
-      {onShare ? (
-        <TouchableOpacity onPress={onShare} style={themed($actionButton)}>
-          <MaterialCommunityIcons name="share-variant" size={24} color="white" />
+      <View style={themed($headerActions)}>
+        <TouchableOpacity
+          accessibilityLabel="Show media details"
+          accessibilityRole="button"
+          onPress={onDetails}
+          style={themed($actionButton)}>
+          <Icon name="info" size={24} color="white" />
         </TouchableOpacity>
-      ) : (
-        <View style={themed($actionButton)} />
-      )}
+        {onShare && (
+          <TouchableOpacity
+            accessibilityLabel="Share media"
+            accessibilityRole="button"
+            onPress={onShare}
+            style={themed($actionButton)}>
+            <Icon name="share" size={24} color="white" />
+          </TouchableOpacity>
+        )}
+      </View>
     </View>
   )
 }
@@ -429,7 +445,6 @@ export function AwesomeGalleryViewer({visible, photos, initialIndex, onClose, on
   const [mediaDimensions, setMediaDimensions] = useState<Record<string, MediaDimensions>>({})
   const galleryRef = useRef<GalleryRef>(null)
   const metadataSheetRef = useRef<BottomSheet>(null)
-  const verticalSwipeActionRef = useRef<"metadata" | null>(null)
 
   console.log("🎨 [AwesomeGalleryViewer] === RENDER START ===")
   console.log("🎨 [AwesomeGalleryViewer] visible:", visible)
@@ -446,7 +461,6 @@ export function AwesomeGalleryViewer({visible, photos, initialIndex, onClose, on
       console.log("🎨 [AwesomeGalleryViewer] Modal opened, setting index to:", initialIndex)
       setCurrentIndex(initialIndex)
       setIsMetadataOpen(false)
-      verticalSwipeActionRef.current = null
       metadataSheetRef.current?.close()
       // Reset gallery to initial position
       setTimeout(() => {
@@ -461,13 +475,6 @@ export function AwesomeGalleryViewer({visible, photos, initialIndex, onClose, on
       if (existing?.width === dimensions.width && existing.height === dimensions.height) return current
       return {...current, [name]: dimensions}
     })
-  }, [])
-
-  const handleVerticalSwipeThreshold = useCallback((translationY: number) => {
-    if (translationY >= 0 || verticalSwipeActionRef.current === "metadata") return
-    verticalSwipeActionRef.current = "metadata"
-    metadataSheetRef.current?.snapToIndex(0)
-    galleryRef.current?.reset(true)
   }, [])
 
   // Memoized renderItem to prevent unnecessary re-renders of gallery items
@@ -538,22 +545,8 @@ export function AwesomeGalleryViewer({visible, photos, initialIndex, onClose, on
           setCurrentIndex(newIndex)
         }}
         onSwipeToClose={() => {
-          if (verticalSwipeActionRef.current === "metadata") {
-            verticalSwipeActionRef.current = null
-            galleryRef.current?.reset(true)
-            return
-          }
           console.log("🎨 [AwesomeGalleryViewer] Swipe to close triggered")
           onClose()
-        }}
-        onPanStart={() => {
-          verticalSwipeActionRef.current = null
-        }}
-        onTranslationYChange={(translationY, shouldClose) => {
-          "worklet"
-          // Open before the gallery's close threshold so the JS-side action is
-          // recorded before onSwipeToClose runs at the end of a fast upward flick.
-          if (translationY < -40 || shouldClose) scheduleOnRN(handleVerticalSwipeThreshold, translationY)
         }}
         renderItem={renderItem}
         keyExtractor={keyExtractor}
@@ -577,15 +570,9 @@ export function AwesomeGalleryViewer({visible, photos, initialIndex, onClose, on
         onClose={onClose}
         currentIndex={currentIndex}
         total={photos.length}
+        onDetails={() => metadataSheetRef.current?.snapToIndex(0)}
         onShare={onShare ? () => onShare(photos[currentIndex]) : undefined}
       />
-
-      {/* {!isMetadataOpen && (
-        <View style={$metadataHint} pointerEvents="none">
-          <MaterialCommunityIcons name="chevron-up" size={20} color="rgba(255,255,255,0.78)" />
-          <Text style={$metadataHintText}>Swipe up for details</Text>
-        </View>
-      )} */}
 
       <MediaMetadataSheet
         bottomSheetRef={metadataSheetRef}
@@ -593,7 +580,6 @@ export function AwesomeGalleryViewer({visible, photos, initialIndex, onClose, on
         dimensions={mediaDimensions[photos[currentIndex].name]}
         onChange={(index) => {
           setIsMetadataOpen(index >= 0)
-          if (index < 0) verticalSwipeActionRef.current = null
         }}
       />
     </Modal>
@@ -615,37 +601,29 @@ const $header: ThemedStyle<any> = ({spacing}) => ({
   zIndex: 100,
 })
 
-const $closeButton: ThemedStyle<any> = ({spacing}) => ({
-  padding: spacing.s3,
-})
-
 const $actionButton: ThemedStyle<any> = ({spacing}) => ({
   padding: spacing.s3,
   minWidth: 44,
   minHeight: 44,
+  alignItems: "center",
+  justifyContent: "center",
+})
+
+const $headerActions: ThemedStyle<any> = () => ({
+  flexDirection: "row",
+  alignItems: "center",
 })
 
 const $counterText: ThemedStyle<any> = ({spacing}) => ({
+  position: "absolute",
+  left: 0,
+  right: 0,
+  bottom: spacing.s6,
   color: "white",
   fontSize: 16,
   fontWeight: "600",
-  marginLeft: spacing.s3,
+  textAlign: "center",
 })
-
-const $metadataHint = {
-  position: "absolute" as const,
-  bottom: 24,
-  left: 0,
-  right: 0,
-  alignItems: "center" as const,
-  zIndex: 90,
-}
-
-const $metadataHintText = {
-  color: "rgba(255,255,255,0.78)",
-  fontSize: 12,
-  fontWeight: "500" as const,
-}
 
 // Video player styles (dynamic dimensions now inlined via useWindowDimensions)
 

@@ -60,6 +60,12 @@ playback completes. Offline playback may segment longer text internally to
 reduce latency; callers use the same `speak()` API and receive the same
 interruption behavior in either mode.
 
+By default, the Mentra App converts display-oriented markup and symbols into
+natural spoken words before either TTS path runs. For example, `68°F (20°C)`
+becomes "68 degrees Fahrenheit or 20 degrees Celsius." Set
+`enableSanitization: false` when the TTS engine must receive the exact input,
+such as code, equations, or character-by-character content.
+
 ```typescript
 const result = await session.speaker.speak("Turn left in 200 meters", {
   voice_id: "rachel",
@@ -73,13 +79,14 @@ if (!result.completed) {
 
 `SpeakOptions`:
 
-| Field            | Type                       | Notes                                        |
-| ---------------- | -------------------------- | -------------------------------------------- |
-| `voice_id`       | `string?`                  | Voice to use.                                |
-| `voice_settings` | `Record<string, unknown>?` | Provider-specific voice tuning.              |
-| `volume`         | `number?`                  | Playback volume.                             |
-| `stopOtherAudio` | `boolean?`                 | Stop other audio first. Defaults to `false`. |
-| `forceLocal`     | `boolean?`                 | Require on-device TTS; never call cloud TTS. |
+| Field                | Type                       | Notes                                             |
+| -------------------- | -------------------------- | ------------------------------------------------- |
+| `voice_id`           | `string?`                  | Voice to use.                                     |
+| `voice_settings`     | `Record<string, unknown>?` | Provider-specific voice tuning.                   |
+| `volume`             | `number?`                  | Playback volume.                                  |
+| `stopOtherAudio`     | `boolean?`                 | Stop other audio first. Defaults to `false`.      |
+| `enableSanitization` | `boolean?`                 | Normalize markup and symbols. Defaults to `true`. |
+| `forceLocal`         | `boolean?`                 | Require on-device TTS; never call cloud TTS.      |
 
 `SpeakResult` has one field, `completed`: `true` if playback finished, `false`
 if it was interrupted.

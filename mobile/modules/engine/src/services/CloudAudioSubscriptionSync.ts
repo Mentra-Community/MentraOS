@@ -19,7 +19,19 @@ export class CloudAudioSubscriptionSync {
   private pendingKey = ""
 
   public begin(nextKey: string): boolean {
-    if (nextKey === this.lastAppliedKey || nextKey === this.pendingKey) {
+    // Exact duplicate of the write already in flight — nothing to do.
+    if (nextKey === this.pendingKey) {
+      return false
+    }
+    // Matches the last successfully applied set, but ONLY skip when nothing
+    // else is in flight. If a different write is pending (e.g. desired went
+    // fr-FR -> [] -> fr-FR while the [] write is still on the wire),
+    // lastAppliedKey is stale: it names what was applied BEFORE the in-flight
+    // write lands. Skipping here would drop the re-subscribe and strand the
+    // cloud on the intermediate (empty) set — captions silently die on any
+    // rapid A -> B -> A subscription churn. The cloud's own version counter
+    // resolves ordering between the concurrent writes, so sending both is safe.
+    if (nextKey === this.lastAppliedKey && this.pendingKey === "") {
       return false
     }
     this.pendingKey = nextKey

@@ -1,3 +1,4 @@
+import {engine, SETTINGS, useSetting} from "@mentra/engine"
 import {useFocusEffect} from "expo-router"
 import {useEffect, useState, useCallback, useRef} from "react"
 import {View, ActivityIndicator} from "react-native"
@@ -9,8 +10,7 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {translate} from "@/i18n/translate"
 import {useNavigationStore} from "@/stores/navigation"
-import {SETTINGS, useSetting} from "@mentra/engine"
-import {engine} from "@mentra/engine"
+import {getNextOnboardingRoute} from "@/utils/onboarding/getNextOnboardingRoute"
 
 type CheckState = "checking" | "update_available" | "no_update" | "error"
 
@@ -26,6 +26,7 @@ export default function OtaCheckForUpdatesScreen() {
   const deviceName = defaultWearable || "Glasses"
   const glassesConnected = otaSnapshot.connected
   const [onboardingLiveCompleted] = useSetting(SETTINGS.onboarding_live_completed.key)
+  const [onboardingOsCompleted] = useSetting(SETTINGS.onboarding_os_completed.key)
 
   const [checkState, setCheckState] = useState<CheckState>("checking")
   const [isUpdateRequired, setIsUpdateRequired] = useState(true) // Default to required if not specified
@@ -174,16 +175,23 @@ export default function OtaCheckForUpdatesScreen() {
 
   // Navigate to next step based on onboarding status
   const handleContinue = () => {
-    console.log("OTA: handleContinue() - onboardingLiveCompleted:", onboardingLiveCompleted)
-    if (!onboardingLiveCompleted) {
-      // Fresh pairing - go to onboarding (replace so back from onboarding goes home, not back to OTA)
-      console.log("OTA: Fresh pairing - navigating to onboarding")
-      replace("/onboarding/live")
-    } else {
-      // Not fresh pairing - go home
-      console.log("OTA: Onboarding already done - navigating home")
-      clearHistoryAndGoHome()
+    const nextRoute = getNextOnboardingRoute({
+      includeMentraLive: true,
+      onboardingLiveCompleted,
+      onboardingOsCompleted,
+    })
+    console.log("OTA: handleContinue() - onboarding status:", {
+      nextRoute,
+      onboardingLiveCompleted,
+      onboardingOsCompleted,
+    })
+    if (nextRoute) {
+      // Replace so leaving onboarding returns home instead of returning to OTA.
+      replace(nextRoute)
+      return
     }
+    console.log("OTA: Onboarding already completed - navigating home")
+    clearHistoryAndGoHome()
   }
 
   // Retry OTA check

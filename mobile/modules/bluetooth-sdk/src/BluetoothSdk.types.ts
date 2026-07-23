@@ -731,7 +731,7 @@ export type StreamResolvedConfig = {
   }
 }
 
-/** Live encoder telemetry, when the glasses emit it (no firmware does yet). */
+/** Live encoder and device telemetry emitted periodically by supported glasses firmware. */
 export type StreamLiveStats = {
   /** Current encoded video bitrate in bits per second. */
   bitrate?: number

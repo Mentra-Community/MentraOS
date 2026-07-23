@@ -1,15 +1,22 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { createHmac } from "node:crypto";
 
 import { notifyReportSlack, type ReportSlackNotification } from "./report-slack.service";
 
 const WEBHOOK_URL = "https://hooks.slack.test/services/T000/B000/reports";
 const AUTOMATIC_WEBHOOK_URL = "https://hooks.slack.test/services/T000/B000/automatic";
+const AGENT_URL = "https://dev-agent.mentraglass.com";
+const AGENT_SIGNING_SECRET = "test-agent-signing-secret-with-at-least-32-bytes";
 
 const savedEnv = {
   CLOUD_REPORTS_SLACK_WEBHOOK_URL: process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL,
   CLOUD_REPORTS_SLACK_WEBHOOK_AUTOMATIC_URL: process.env.CLOUD_REPORTS_SLACK_WEBHOOK_AUTOMATIC_URL,
   CLOUD_CORE_ENVIRONMENT: process.env.CLOUD_CORE_ENVIRONMENT,
   CLOUD_ADMIN_CONSOLE_URL: process.env.CLOUD_ADMIN_CONSOLE_URL,
+  CLOUD_REPORT_AGENT_URL: process.env.CLOUD_REPORT_AGENT_URL,
+  CLOUD_REPORT_AGENT_SIGNING_SECRET: process.env.CLOUD_REPORT_AGENT_SIGNING_SECRET,
+  CLOUD_REPORT_AGENT_SLACK_INTERACTIVITY_ENABLED:
+    process.env.CLOUD_REPORT_AGENT_SLACK_INTERACTIVITY_ENABLED,
 };
 const realFetch = globalThis.fetch;
 
@@ -21,6 +28,9 @@ beforeEach(() => {
   delete process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL;
   delete process.env.CLOUD_REPORTS_SLACK_WEBHOOK_AUTOMATIC_URL;
   delete process.env.CLOUD_ADMIN_CONSOLE_URL;
+  delete process.env.CLOUD_REPORT_AGENT_URL;
+  delete process.env.CLOUD_REPORT_AGENT_SIGNING_SECRET;
+  delete process.env.CLOUD_REPORT_AGENT_SLACK_INTERACTIVITY_ENABLED;
   process.env.CLOUD_CORE_ENVIRONMENT = "test-env";
   fetchMock = mock<FetchCall>(async () => new Response("ok", { status: 200 }));
   globalThis.fetch = fetchMock as unknown as typeof fetch;
@@ -35,6 +45,12 @@ afterEach(() => {
   );
   restoreEnv("CLOUD_CORE_ENVIRONMENT", savedEnv.CLOUD_CORE_ENVIRONMENT);
   restoreEnv("CLOUD_ADMIN_CONSOLE_URL", savedEnv.CLOUD_ADMIN_CONSOLE_URL);
+  restoreEnv("CLOUD_REPORT_AGENT_URL", savedEnv.CLOUD_REPORT_AGENT_URL);
+  restoreEnv("CLOUD_REPORT_AGENT_SIGNING_SECRET", savedEnv.CLOUD_REPORT_AGENT_SIGNING_SECRET);
+  restoreEnv(
+    "CLOUD_REPORT_AGENT_SLACK_INTERACTIVITY_ENABLED",
+    savedEnv.CLOUD_REPORT_AGENT_SLACK_INTERACTIVITY_ENABLED,
+  );
 });
 
 describe("notifyReportSlack", () => {
@@ -107,6 +123,73 @@ describe("notifyReportSlack", () => {
     expect(blocksJson).toContain("glasses stuck on boot screen");
     expect(blocksJson).toContain("*Artifacts:*\\n3");
     expect(blocksJson).toContain("*Env:*\\ntest-env");
+  });
+
+  test("keeps the signed confirmation URL until Slack interactivity is enabled", async () => {
+    process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL = WEBHOOK_URL;
+    process.env.CLOUD_CORE_ENVIRONMENT = "dev";
+    process.env.CLOUD_REPORT_AGENT_URL = AGENT_URL;
+    process.env.CLOUD_REPORT_AGENT_SIGNING_SECRET = AGENT_SIGNING_SECRET;
+
+    await notifyReportSlack(bugNotification());
+
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    const payload = JSON.parse(String(init.body)) as {
+      blocks: Array<{
+        type: string;
+        elements?: Array<{ text: { text: string }; url?: string; value?: string }>;
+      }>;
+    };
+    const action = payload.blocks.find((block) => block.type === "actions")?.elements?.[0];
+    expect(action?.text.text).toBe("Run Fix Agent");
+    expect(action?.value).toBeUndefined();
+    expect(new URL(action?.url ?? "").pathname).toBe("/actions/report");
+  });
+
+  test("adds a signed one-click fix-agent button when Slack interactivity is enabled", async () => {
+    process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL = WEBHOOK_URL;
+    process.env.CLOUD_CORE_ENVIRONMENT = "dev";
+    process.env.CLOUD_REPORT_AGENT_URL = AGENT_URL;
+    process.env.CLOUD_REPORT_AGENT_SIGNING_SECRET = AGENT_SIGNING_SECRET;
+    process.env.CLOUD_REPORT_AGENT_SLACK_INTERACTIVITY_ENABLED = "true";
+
+    await notifyReportSlack(bugNotification());
+
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    const payload = JSON.parse(String(init.body)) as {
+      blocks: Array<{
+        type: string;
+        elements?: Array<{ text: { text: string }; action_id: string; value: string }>;
+      }>;
+    };
+    const action = payload.blocks.find((block) => block.type === "actions")?.elements?.[0];
+    expect(action?.text.text).toBe("Run Fix Agent");
+    expect(action?.action_id).toBe("run_fix_agent");
+    const url = new URL(action?.value ?? "");
+    expect(`${url.origin}${url.pathname}`).toBe(`${AGENT_URL}/actions/report`);
+    expect(url.searchParams.get("reportId")).toBe("rep_TEST123");
+    expect(url.searchParams.get("environment")).toBe("dev");
+    const expires = url.searchParams.get("expires");
+    const expectedSignature = createHmac("sha256", AGENT_SIGNING_SECRET)
+      .update(`rep_TEST123|dev|${expires}`)
+      .digest("hex");
+    expect(url.searchParams.get("signature")).toBe(expectedSignature);
+  });
+
+  test("does not add the fix-agent action to feedback or automatic reports", async () => {
+    process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL = WEBHOOK_URL;
+    process.env.CLOUD_CORE_ENVIRONMENT = "prod";
+    process.env.CLOUD_REPORT_AGENT_URL = AGENT_URL;
+    process.env.CLOUD_REPORT_AGENT_SIGNING_SECRET = AGENT_SIGNING_SECRET;
+
+    await notifyReportSlack(bugNotification({ kind: "feedback", feedback: { message: "hi" } }));
+    await notifyReportSlack(bugNotification({ kind: "automatic" }));
+
+    for (const call of fetchMock.mock.calls) {
+      const [, init] = call as unknown as [string, RequestInit];
+      const payload = JSON.parse(String(init.body)) as { blocks: Array<{ type: string }> };
+      expect(payload.blocks.some((block) => block.type === "actions")).toBe(false);
+    }
   });
 
   test("links the report to the admin console for known environments", async () => {

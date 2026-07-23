@@ -168,6 +168,38 @@ data class StreamResolvedConfig @JvmOverloads constructor(
     }
 }
 
+/** Live encoder and device telemetry reported by the glasses while streaming. */
+data class StreamLiveStats @JvmOverloads constructor(
+    val bitrate: Long? = null,
+    val fps: Double? = null,
+    val droppedFrames: Long? = null,
+    val duration: Long? = null,
+    val temperatureC: Double? = null,
+) {
+    fun toMap(): Map<String, Any> =
+        buildMap {
+            bitrate?.let { put("bitrate", it) }
+            fps?.let { put("fps", it) }
+            droppedFrames?.let { put("droppedFrames", it) }
+            duration?.let { put("duration", it) }
+            temperatureC?.let { put("temperatureC", it) }
+        }
+
+    companion object {
+        @JvmStatic
+        fun fromMap(values: Map<String, Any>?): StreamLiveStats? {
+            values ?: return null
+            return StreamLiveStats(
+                bitrate = longValue(values, "bitrate"),
+                fps = doubleValue(values, "fps"),
+                droppedFrames = longValue(values, "droppedFrames"),
+                duration = longValue(values, "duration"),
+                temperatureC = doubleValue(values, "temperatureC"),
+            )
+        }
+    }
+}
+
 data class StreamRequest @JvmOverloads constructor(
     val streamUrl: String,
     val streamId: String = "",
@@ -435,6 +467,7 @@ sealed interface StreamStatus {
 
 data class StreamStatusEvent(
     val status: StreamStatus,
+    val stats: StreamLiveStats? = null,
 ) {
     // True when the glasses will retry the failed publisher themselves
     // (emitting side lands in PR #3488); absent on older firmware and on
@@ -443,7 +476,10 @@ data class StreamStatusEvent(
     var willRetry: Boolean? = null
         private set
 
-    constructor(values: Map<String, Any>) : this(StreamStatus.fromMap(values)) {
+    constructor(values: Map<String, Any>) : this(
+        status = StreamStatus.fromMap(values),
+        stats = StreamLiveStats.fromMap(stringMapValue(values["stats"])),
+    ) {
         willRetry = boolValue(values, "willRetry")
     }
 
@@ -453,6 +489,7 @@ data class StreamStatusEvent(
     val values: Map<String, Any>
         get() = buildMap {
             putAll(status.toEventMap())
+            stats?.let { put("stats", it.toMap()) }
             willRetry?.let { put("willRetry", it) }
         }
 }

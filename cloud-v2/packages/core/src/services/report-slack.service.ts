@@ -15,10 +15,12 @@
  */
 
 import { createLogger } from "@mentra/cloud-shared";
+import { createHmac } from "node:crypto";
 
 const logger = createLogger("core").child({ service: "report-slack.service" });
 
 const SLACK_TIMEOUT_MS = 10_000;
+const REPORT_AGENT_ACTION_TTL_SECONDS = 7 * 24 * 60 * 60;
 
 /** How much user-authored text a Slack field keeps, mirroring V1 limits. */
 const BEHAVIOR_TEXT_MAX = 500;
@@ -72,7 +74,17 @@ interface SlackBlock {
   type: string;
   text?: { type: string; text: string; emoji?: boolean };
   fields?: Array<{ type: string; text: string }>;
+  elements?: SlackButton[];
 }
+
+type SlackButton = {
+  type: "button";
+  text: { type: "plain_text"; text: string; emoji: boolean };
+  style?: "primary" | "danger";
+} & (
+  | { url: string; action_id?: never; value?: never }
+  | { action_id: string; value: string; url?: never }
+);
 
 /**
  * Post a report summary to the reports Slack channel. Resolves with
@@ -205,6 +217,29 @@ function buildSlackMessage(notification: ReportSlackNotification): {
     });
   }
 
+  const agentActionUrl = reportAgentActionUrl(notification);
+  if (agentActionUrl) {
+    const agentButton: SlackButton =
+      process.env.CLOUD_REPORT_AGENT_SLACK_INTERACTIVITY_ENABLED === "true"
+        ? {
+            type: "button",
+            text: { type: "plain_text", text: "Run Fix Agent", emoji: true },
+            action_id: "run_fix_agent",
+            style: "primary",
+            value: agentActionUrl,
+          }
+        : {
+            type: "button",
+            text: { type: "plain_text", text: "Run Fix Agent", emoji: true },
+            style: "primary",
+            url: agentActionUrl,
+          };
+    blocks.push({
+      type: "actions",
+      elements: [agentButton],
+    });
+  }
+
   blocks.push({
     type: "section",
     text: { type: "mrkdwn", text: `_Submitted: ${timestamp}_` },
@@ -221,6 +256,48 @@ function buildSlackMessage(notification: ReportSlackNotification): {
   ];
 
   return { text: fallbackParts.join("\n"), blocks };
+}
+
+/**
+ * Signed, expiring action for the private agent controller. Until Slack's
+ * Interactivity Request URL is configured, the default URL button keeps the
+ * confirmation-page fallback working. Explicitly setting
+ * CLOUD_REPORT_AGENT_SLACK_INTERACTIVITY_ENABLED=true switches to a one-click
+ * action value, which Slack sends only when a human presses the button. Bug
+ * reports are the deliberately narrow MVP scope; feedback and automatic
+ * diagnostics never receive it.
+ */
+function reportAgentActionUrl(notification: ReportSlackNotification): string | null {
+  if (notification.kind !== "bug") return null;
+  const configuredBase = process.env.CLOUD_REPORT_AGENT_URL?.trim();
+  const signingSecret = process.env.CLOUD_REPORT_AGENT_SIGNING_SECRET;
+  const environment = reportAgentEnvironment();
+  if (!configuredBase || !signingSecret || signingSecret.length < 32 || !environment) return null;
+
+  try {
+    const expires = Math.floor(Date.now() / 1000) + REPORT_AGENT_ACTION_TTL_SECONDS;
+    const payload = `${notification.reportId}|${environment}|${expires}`;
+    const signature = createHmac("sha256", signingSecret).update(payload).digest("hex");
+    const url = new URL("/actions/report", withHttpsScheme(configuredBase));
+    url.searchParams.set("reportId", notification.reportId);
+    url.searchParams.set("environment", environment);
+    url.searchParams.set("expires", String(expires));
+    url.searchParams.set("signature", signature);
+    return url.toString();
+  } catch (error) {
+    logger.warn(
+      { error: (error as Error)?.message },
+      "invalid CLOUD_REPORT_AGENT_URL; omitting report agent action",
+    );
+    return null;
+  }
+}
+
+function reportAgentEnvironment(): "prod" | "staging" | "dev" | null {
+  const environment = process.env.CLOUD_CORE_ENVIRONMENT;
+  if (environment === "prod" || environment === "production") return "prod";
+  if (environment === "staging" || environment === "dev") return environment;
+  return null;
 }
 
 /** Kind-specific body: bug/automatic report details, or the feedback text. */

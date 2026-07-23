@@ -321,6 +321,25 @@ class AudioPlaybackService {
     }
   }
 
+  private unloadPlaybackSource(playback: PlaybackState, reason: string): void {
+    if (!this.player) return
+    if (this.loadedPlayback !== playback) return
+
+    try {
+      this.player.pause()
+    } catch (e) {
+      console.warn(`AUDIO: Error pausing ${playback.requestId} during ${reason}:`, e)
+    }
+
+    try {
+      this.player.replace(null)
+      this.loadedPlayback = null
+      console.log(`AUDIO: Cleared player for ${playback.requestId} during ${reason}`)
+    } catch (e) {
+      console.warn(`AUDIO: Error clearing ${playback.requestId} during ${reason}:`, e)
+    }
+  }
+
   private clearFinishedPlayerAfterTail(playback: PlaybackState): void {
     if (playback.suppressCloudUplink) {
       this.tailUplinkSuppressions.add(playback.uplinkSuppressionId)
@@ -332,18 +351,7 @@ class AudioPlaybackService {
       if (playback.suppressCloudUplink && this.tailUplinkSuppressions.delete(playback.uplinkSuppressionId)) {
         setAudioCloudUplinkSuppressed(playback.uplinkSuppressionId, false)
       }
-      if (!this.player) return
-      if (this.loadedPlayback !== playback) return
-      try {
-        this.player.pause()
-        this.player.replace(null)
-        this.loadedPlayback = null
-        console.log(
-          `AUDIO: Cleared finished player for ${playback.requestId} after ${AudioPlaybackService.A2DP_TAIL_DRAIN_MS}ms tail drain`,
-        )
-      } catch (e) {
-        console.warn("AUDIO: Error clearing player after tail drain:", e)
-      }
+      this.unloadPlaybackSource(playback, `${AudioPlaybackService.A2DP_TAIL_DRAIN_MS}ms A2DP tail drain`)
     }, AudioPlaybackService.A2DP_TAIL_DRAIN_MS)
   }
 
@@ -450,9 +458,11 @@ class AudioPlaybackService {
       if (suppressCloudUplink) {
         setAudioCloudUplinkSuppressed(`url:${requestId}`, false)
       }
-      if (this.currentPlayback?.requestId === requestId) {
-        this.currentPlayback.completed = true
+      const failedPlayback = this.currentPlayback?.requestId === requestId ? this.currentPlayback : null
+      if (failedPlayback) {
+        failedPlayback.completed = true
         this.currentPlayback = null
+        this.unloadPlaybackSource(failedPlayback, "playback start failure")
       }
       if (pending.cancelled) {
         onComplete(requestId, true, null, 0, "interrupted")
@@ -497,14 +507,9 @@ class AudioPlaybackService {
     }
     this.markAudioRouteWarm()
 
-    // Stop the player
-    if (this.player) {
-      try {
-        this.player.pause()
-      } catch (error) {
-        console.error("AUDIO: Error pausing player:", error)
-      }
-    }
+    // Pausing alone leaves the URI available to OS/Bluetooth media Play.
+    // Unload it unless a newer request has already replaced this source.
+    this.unloadPlaybackSource(playback, "interruption")
 
     // Notify native that our app stopped playing audio (debounced)
     this.notifyAudioStopDebounced()
@@ -563,6 +568,7 @@ class AudioPlaybackService {
         if (playback.suppressCloudUplink) {
           setAudioCloudUplinkSuppressed(playback.uplinkSuppressionId, false)
         }
+        this.unloadPlaybackSource(playback, "playback failure")
         playback.onComplete(playback.requestId, false, "Playback failed (player went idle)", null, "error")
         this.markAudioRouteWarm()
         this.notifyAudioStopDebounced()
