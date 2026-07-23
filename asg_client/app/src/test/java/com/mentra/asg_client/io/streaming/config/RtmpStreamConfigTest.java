@@ -13,10 +13,10 @@ public class RtmpStreamConfigTest {
     @Test
     public void fromJson_null_null_returnsDefaults() {
         RtmpStreamConfig c = RtmpStreamConfig.fromJson(null, null);
-        assertEquals(RtmpStreamConfig.DEFAULT_VIDEO_WIDTH, c.getVideoWidth());
-        assertEquals(RtmpStreamConfig.DEFAULT_VIDEO_HEIGHT, c.getVideoHeight());
-        assertEquals(RtmpStreamConfig.DEFAULT_VIDEO_BITRATE, c.getVideoBitrate());
-        assertEquals(RtmpStreamConfig.DEFAULT_VIDEO_FPS, c.getVideoFps());
+        assertEquals(1280, c.getVideoWidth());
+        assertEquals(720, c.getVideoHeight());
+        assertEquals(2_500_000, c.getVideoBitrate());
+        assertEquals(24, c.getVideoFps());
         assertEquals(RtmpStreamConfig.DEFAULT_AUDIO_BITRATE, c.getAudioBitrate());
         assertEquals(RtmpStreamConfig.DEFAULT_AUDIO_SAMPLE_RATE, c.getAudioSampleRate());
         assertFalse(c.isEchoCancellation());
@@ -24,12 +24,12 @@ public class RtmpStreamConfigTest {
     }
 
     @Test
-    public void compactKeys_parseSameAsFullKeys() throws JSONException {
+    public void fromJson_ignoresCallerVideoOverrides_forces720p24() throws JSONException {
         JSONObject vCompact = new JSONObject();
-        vCompact.put("w", 1280);
-        vCompact.put("h", 720);
-        vCompact.put("br", 2_000_000);
-        vCompact.put("fr", 24);
+        vCompact.put("w", 640);
+        vCompact.put("h", 360);
+        vCompact.put("br", 500_000);
+        vCompact.put("fr", 15);
         JSONObject aCompact = new JSONObject();
         aCompact.put("br", 96_000);
         aCompact.put("sr", 48000);
@@ -37,10 +37,10 @@ public class RtmpStreamConfigTest {
         aCompact.put("ns", true);
 
         JSONObject vFull = new JSONObject();
-        vFull.put("width", 1280);
-        vFull.put("height", 720);
-        vFull.put("bitrate", 2_000_000);
-        vFull.put("frameRate", 24);
+        vFull.put("width", 1920);
+        vFull.put("height", 1080);
+        vFull.put("bitrate", 8_000_000);
+        vFull.put("frameRate", 30);
         JSONObject aFull = new JSONObject();
         aFull.put("bitrate", 96_000);
         aFull.put("sampleRate", 48000);
@@ -49,48 +49,22 @@ public class RtmpStreamConfigTest {
 
         RtmpStreamConfig c1 = RtmpStreamConfig.fromJson(vCompact, aCompact);
         RtmpStreamConfig c2 = RtmpStreamConfig.fromJson(vFull, aFull);
-        assertEquals(c2.getVideoWidth(), c1.getVideoWidth());
-        assertEquals(c2.getVideoHeight(), c1.getVideoHeight());
-        assertEquals(c2.getVideoBitrate(), c1.getVideoBitrate());
-        assertEquals(c2.getVideoFps(), c1.getVideoFps());
+
+        assertEquals(1280, c1.getVideoWidth());
+        assertEquals(720, c1.getVideoHeight());
+        assertEquals(2_500_000, c1.getVideoBitrate());
+        assertEquals(24, c1.getVideoFps());
+        assertEquals(1280, c2.getVideoWidth());
+        assertEquals(720, c2.getVideoHeight());
+        assertEquals(2_500_000, c2.getVideoBitrate());
+        assertEquals(24, c2.getVideoFps());
+
+        // Audio still follows caller config.
+        assertEquals(96_000, c1.getAudioBitrate());
+        assertEquals(48000, c1.getAudioSampleRate());
+        assertTrue(c1.isEchoCancellation());
+        assertTrue(c1.isNoiseSuppression());
         assertEquals(c2.getAudioBitrate(), c1.getAudioBitrate());
-        assertEquals(c2.getAudioSampleRate(), c1.getAudioSampleRate());
-        assertEquals(c2.isEchoCancellation(), c1.isEchoCancellation());
-        assertEquals(c2.isNoiseSuppression(), c1.isNoiseSuppression());
-    }
-
-    @Test
-    public void videoClamps_widthAndHeight() throws JSONException {
-        JSONObject low = new JSONObject();
-        low.put("width", 100);
-        low.put("height", 100);
-        RtmpStreamConfig c = RtmpStreamConfig.fromJson(low, null);
-        assertEquals(320, c.getVideoWidth());
-        assertEquals(240, c.getVideoHeight());
-
-        JSONObject high = new JSONObject();
-        high.put("width", 4000);
-        high.put("height", 4000);
-        c = RtmpStreamConfig.fromJson(high, null);
-        assertEquals(1920, c.getVideoWidth());
-        assertEquals(1080, c.getVideoHeight());
-    }
-
-    @Test
-    public void videoClamps_bitrateAndFrameRate() throws JSONException {
-        JSONObject low = new JSONObject();
-        low.put("bitrate", 1);
-        low.put("frameRate", 1);
-        RtmpStreamConfig c = RtmpStreamConfig.fromJson(low, null);
-        assertEquals(100_000, c.getVideoBitrate());
-        assertEquals(5, c.getVideoFps());
-
-        JSONObject high = new JSONObject();
-        high.put("bitrate", 100_000_000);
-        high.put("frameRate", 240);
-        c = RtmpStreamConfig.fromJson(high, null);
-        assertEquals(10_000_000, c.getVideoBitrate());
-        assertEquals(30, c.getVideoFps());
     }
 
     @Test

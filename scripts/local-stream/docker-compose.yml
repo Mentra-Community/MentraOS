@@ -9,8 +9,9 @@ services:
     container_name: mentra-local-stream
     restart: unless-stopped
     ports:
-      - "1935:1935" # Primary: RTMP publish
-      - "8888:8888" # HLS watch (recommended for RTMP)
+      - "1935:1935" # Primary: RTMP publish (+ VLC can also play this URL)
+      - "8554:8554" # RTSP watch (VLC Open Network)
+      - "8888:8888" # HLS watch (browser)
       - "8889:8889" # WHIP / WHEP fallback (HTTP signaling + WebRTC page)
       - "8189:8189/udp" # WHIP ICE / media (most common failure if blocked)
       - "9997:9997" # MediaMTX API

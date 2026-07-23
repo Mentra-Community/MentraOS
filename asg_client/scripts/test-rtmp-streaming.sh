@@ -13,8 +13,8 @@
 #   - CAMERA + RECORD_AUDIO permissions granted
 #
 # Examples:
-#   ./test-rtmp-streaming.sh start rtmp://192.168.50.252:1935/live
-#   ./test-rtmp-streaming.sh start rtmp://192.168.50.252:1935/live my-stream-01
+#   ./test-rtmp-streaming.sh start rtmp://192.168.50.252:1935/live/stream
+#   ./test-rtmp-streaming.sh start rtmp://192.168.50.252:1935/live/stream my-stream-01
 #   ./test-rtmp-streaming.sh logs
 #   ./test-rtmp-streaming.sh stop
 
@@ -142,7 +142,7 @@ case "${1:-}" in
     echo "  $0 status                         Show service status + recent logs"
     echo ""
     echo "Example:"
-    echo "  $0 start rtmp://192.168.50.252:1935/live"
+    echo "  $0 start rtmp://192.168.50.252:1935/live/stream"
     exit 1
     ;;
 esac

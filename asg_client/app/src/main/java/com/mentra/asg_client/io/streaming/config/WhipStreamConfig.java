@@ -10,10 +10,11 @@ import java.math.RoundingMode;
  */
 public class WhipStreamConfig {
 
-  public static final int DEFAULT_VIDEO_WIDTH = 854;
-  public static final int DEFAULT_VIDEO_HEIGHT = 480;
-  public static final int DEFAULT_VIDEO_FPS = 15;
-  public static final int DEFAULT_VIDEO_BITRATE = 1000000; // 1 Mbps
+  // Hardcoded livestream quality. Caller video overrides are ignored.
+  public static final int DEFAULT_VIDEO_WIDTH = 1280;
+  public static final int DEFAULT_VIDEO_HEIGHT = 720;
+  public static final int DEFAULT_VIDEO_FPS = 24;
+  public static final int DEFAULT_VIDEO_BITRATE = 2_500_000; // 2.5 Mbps
   public static final int MIN_VIDEO_FPS = 5;
   public static final int MAX_VIDEO_FPS = 30;
 
@@ -45,15 +46,11 @@ public class WhipStreamConfig {
   public static WhipStreamConfig fromJson(JSONObject videoJson, JSONObject audioJson) {
     WhipStreamConfig config = new WhipStreamConfig();
 
-    if (videoJson != null) {
-      config.videoWidth = clamp(optIntWithFallback(videoJson, "width", "w", DEFAULT_VIDEO_WIDTH), 320, 1920);
-      config.videoHeight = clamp(optIntWithFallback(videoJson, "height", "h", DEFAULT_VIDEO_HEIGHT), 240, 1080);
-      config.videoBitrate = clamp(optIntWithFallback(videoJson, "bitrate", "br", DEFAULT_VIDEO_BITRATE), 100000, 10000000);
-      config.videoFps = clamp(
-          optIntWithFallback(videoJson, "frameRate", "fr", DEFAULT_VIDEO_FPS),
-          MIN_VIDEO_FPS,
-          MAX_VIDEO_FPS);
-    }
+    // Force 720p24 regardless of caller video JSON (phone/miniapp presets).
+    config.videoWidth = DEFAULT_VIDEO_WIDTH;
+    config.videoHeight = DEFAULT_VIDEO_HEIGHT;
+    config.videoBitrate = DEFAULT_VIDEO_BITRATE;
+    config.videoFps = DEFAULT_VIDEO_FPS;
 
     if (audioJson != null) {
       config.echoCancellation = optBoolWithFallback(audioJson, "echoCancellation", "ec", DEFAULT_ECHO_CANCELLATION);

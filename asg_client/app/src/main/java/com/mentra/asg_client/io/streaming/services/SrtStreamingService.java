@@ -768,6 +768,7 @@ public class SrtStreamingService extends Service {
     return new PeriodicStreamMetricsReporter(
         mReconnectHandler,
         AsgConstants.STREAM_METRICS_INTERVAL_MS,
+        "srt",
         () -> {
           synchronized (mStateLock) {
             return mStreamState == StreamState.STREAMING && mIsStreaming && !mReconnecting;
@@ -775,6 +776,8 @@ public class SrtStreamingService extends Service {
         },
         () ->
             new PeriodicStreamMetricsReporter.MetricsSample(
+                mStreamConfig.getVideoWidth(),
+                mStreamConfig.getVideoHeight(),
                 mStreamConfig.getVideoBitrate(),
                 mStreamConfig.getVideoFps(),
                 0,

@@ -27,7 +27,7 @@ public class AsgConstants {
     public static final int CAMERA_ROI_POSITION_DEFAULT = 0;
 
     /** Cadence for live stream bitrate, frame-rate, duration, and thermal telemetry. */
-    public static final long STREAM_METRICS_INTERVAL_MS = 2_000L;
+    public static final long STREAM_METRICS_INTERVAL_MS = 1_000L;
 
     /** Linux thermal sysfs root used to discover the Mentra Live CPU sensor. */
     public static final String THERMAL_SYSFS_ROOT = "/sys/class/thermal";

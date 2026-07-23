@@ -33,8 +33,9 @@ network** sends that URL as an unmanaged / direct stream.
    The script detects the laptop LAN IP every run (DHCP-safe), starts
    MediaMTX, and prints:
 
-   - **Publish (RTMP):** `rtmp://<LAN_IP>:1935/live`
-   - **Watch (HLS):** `http://<LAN_IP>:8888/live`
+   - **Publish (RTMP):** `rtmp://<LAN_IP>:1935/live/stream`
+     (StreamPack requires `/app/streamKey` — a bare `/live` URL will fail)
+   - **Watch (HLS):** `http://<LAN_IP>:8888/live/stream`
 
 3. **Firewall**
 
@@ -44,7 +45,7 @@ network** sends that URL as an unmanaged / direct stream.
 4. Confirm the glasses path **without** Livestreamer (recommended first):
 
    ```bash
-   ./asg_client/scripts/test-rtmp-streaming.sh start rtmp://<LAN_IP>:1935/live
+   ./asg_client/scripts/test-rtmp-streaming.sh start rtmp://<LAN_IP>:1935/live/stream
    ./asg_client/scripts/test-rtmp-streaming.sh logs
    ./asg_client/scripts/test-rtmp-streaming.sh stop
    ```
@@ -53,12 +54,20 @@ network** sends that URL as an unmanaged / direct stream.
 
    - Platform: **Custom**
    - Stream Server URL: the RTMP publish URL from step 2
-   - Stream key: leave blank (or use any key — `all_others` accepts it)
+     (`rtmp://<LAN_IP>:1935/live/stream` — must include both path segments)
+   - Stream key: leave blank (or put `stream` with URL `…/live`)
    - Enable **Local network**
    - Connect → Go Live (unmanaged / direct)
 
-6. Open the HLS watch URL in a laptop browser, or open it in VLC
-   (`Media → Open Network Stream`).
+6. **Watch on the laptop** (the Mentra App / Livestreamer phone UI has
+   **no preview** for Local-network / unmanaged streams — that card will say
+   "No preview available for unmanaged streams" even when the glasses are
+   publishing successfully):
+
+   - Browser: `http://<LAN_IP>:8888/live/stream/`
+   - VLC → Media → Open Network Stream:
+     - `rtmp://<LAN_IP>:1935/live/stream`, or
+     - `rtsp://<LAN_IP>:8554/live/stream`
 
 7. Stop the server:
 

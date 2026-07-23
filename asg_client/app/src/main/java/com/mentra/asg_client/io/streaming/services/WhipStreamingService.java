@@ -208,12 +208,23 @@ public class WhipStreamingService extends Service {
         long durationSeconds = mStreamStartedAtMs > 0
             ? Math.max(0, (now - mStreamStartedAtMs) / 1_000L)
             : 0;
+        double temperatureC = StreamThermalReader.readCpuTemperatureC();
         notifyMetrics(
             videoBitrateBps,
             fps,
             droppedFrames,
             durationSeconds,
-            StreamThermalReader.readCpuTemperatureC());
+            temperatureC);
+        PeriodicStreamMetricsReporter.logQuality(
+            "whip",
+            mCurrentStreamId,
+            mStreamConfig.getVideoWidth(),
+            mStreamConfig.getVideoHeight(),
+            videoBitrateBps,
+            fps,
+            droppedFrames,
+            durationSeconds,
+            temperatureC);
         Log.d(TAG, String.format(
             "↑ video: %d B/s (%d pkts total)  audio: %d B/s (%d pkts total)",
             elapsedMs > 0 ? videoDelta * 1000 / elapsedMs : 0, videoPackets,

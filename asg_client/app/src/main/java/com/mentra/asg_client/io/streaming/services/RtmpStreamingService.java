@@ -719,8 +719,45 @@ public class RtmpStreamingService extends Service {
      * @param url Stream URL (rtmp:// or rtmps://)
      */
     public void setRtmpUrl(String url) {
-        this.mRtmpUrl = url;
-        Log.i(TAG, "RTMP URL set to: " + url);
+        String normalized = normalizeRtmpUrlForStreamPack(url);
+        this.mRtmpUrl = normalized;
+        if (normalized != null && !normalized.equals(url)) {
+            Log.i(TAG, "RTMP URL normalized for StreamPack: " + url + " → " + normalized);
+        } else {
+            Log.i(TAG, "RTMP URL set to: " + normalized);
+        }
+    }
+
+    /**
+     * StreamPack's RTMP client requires {@code rtmp://host/app/streamKey} (two path
+     * segments). MediaMTX and many servers accept a single-segment path like
+     * {@code rtmp://host/live}; append a default stream key so those URLs still work.
+     */
+    static String normalizeRtmpUrlForStreamPack(String url) {
+        if (url == null || url.isEmpty()) {
+            return url;
+        }
+        String trimmed = url.trim();
+        if (!trimmed.regionMatches(true, 0, "rtmp://", 0, 7)
+                && !trimmed.regionMatches(true, 0, "rtmps://", 0, 8)) {
+            return trimmed;
+        }
+        try {
+            java.net.URI uri = java.net.URI.create(trimmed);
+            String path = uri.getPath();
+            if (path == null || path.isEmpty() || "/".equals(path)) {
+                return trimmed.endsWith("/") ? trimmed + "live/stream" : trimmed + "/live/stream";
+            }
+            String withoutSlash = path.startsWith("/") ? path.substring(1) : path;
+            // Already app/streamKey (or deeper) — leave alone.
+            if (withoutSlash.contains("/")) {
+                return trimmed;
+            }
+            return trimmed.endsWith("/") ? trimmed + "stream" : trimmed + "/stream";
+        } catch (Exception e) {
+            Log.w(TAG, "Could not normalize RTMP URL: " + trimmed, e);
+            return trimmed;
+        }
     }
 
     /**
@@ -1251,6 +1288,7 @@ public class RtmpStreamingService extends Service {
         return new PeriodicStreamMetricsReporter(
                 mReconnectHandler,
                 AsgConstants.STREAM_METRICS_INTERVAL_MS,
+                "rtmp",
                 () -> {
                     synchronized (mStateLock) {
                         return mStreamState == StreamState.STREAMING
@@ -1260,6 +1298,8 @@ public class RtmpStreamingService extends Service {
                 },
                 () ->
                         new PeriodicStreamMetricsReporter.MetricsSample(
+                                mStreamConfig.getVideoWidth(),
+                                mStreamConfig.getVideoHeight(),
                                 mStreamConfig.getVideoBitrate(),
                                 mStreamConfig.getVideoFps(),
                                 0,

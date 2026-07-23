@@ -8,11 +8,11 @@ import org.json.JSONObject;
  */
 public class RtmpStreamConfig {
 
-    // Default values (16:9; native crop applied when sensor mode differs)
-    public static final int DEFAULT_VIDEO_WIDTH = 854;
-    public static final int DEFAULT_VIDEO_HEIGHT = 480;
-    public static final int DEFAULT_VIDEO_BITRATE = 1000000; // 1 Mbps
-    public static final int DEFAULT_VIDEO_FPS = 15;
+    // Hardcoded livestream quality (16:9). Caller video overrides are ignored.
+    public static final int DEFAULT_VIDEO_WIDTH = 1280;
+    public static final int DEFAULT_VIDEO_HEIGHT = 720;
+    public static final int DEFAULT_VIDEO_BITRATE = 2_500_000; // 2.5 Mbps
+    public static final int DEFAULT_VIDEO_FPS = 24;
     public static final int MIN_VIDEO_FPS = 5;
     public static final int MAX_VIDEO_FPS = 30;
 
@@ -55,19 +55,11 @@ public class RtmpStreamConfig {
     public static RtmpStreamConfig fromJson(JSONObject videoJson, JSONObject audioJson) {
         RtmpStreamConfig config = new RtmpStreamConfig();
 
-        // Parse video config (supports both full and compact keys)
-        if (videoJson != null) {
-            config.videoWidth = optIntWithFallback(videoJson, "width", "w", DEFAULT_VIDEO_WIDTH);
-            config.videoHeight = optIntWithFallback(videoJson, "height", "h", DEFAULT_VIDEO_HEIGHT);
-            config.videoBitrate = optIntWithFallback(videoJson, "bitrate", "br", DEFAULT_VIDEO_BITRATE);
-            config.videoFps = optIntWithFallback(videoJson, "frameRate", "fr", DEFAULT_VIDEO_FPS);
-
-            // Validate and clamp values to reasonable ranges
-            config.videoWidth = clamp(config.videoWidth, 320, 1920);
-            config.videoHeight = clamp(config.videoHeight, 240, 1080);
-            config.videoBitrate = clamp(config.videoBitrate, 100000, 10000000); // 100 kbps to 10 Mbps
-            config.videoFps = clamp(config.videoFps, MIN_VIDEO_FPS, MAX_VIDEO_FPS);
-        }
+        // Force 720p24 regardless of caller video JSON (phone/miniapp presets).
+        config.videoWidth = DEFAULT_VIDEO_WIDTH;
+        config.videoHeight = DEFAULT_VIDEO_HEIGHT;
+        config.videoBitrate = DEFAULT_VIDEO_BITRATE;
+        config.videoFps = DEFAULT_VIDEO_FPS;
 
         // Parse audio config (supports both full and compact keys)
         if (audioJson != null) {
