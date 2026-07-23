@@ -35,12 +35,20 @@ export interface BlobMigrationOptions {
   warn?: (message: string, error: unknown) => void
 }
 
+export interface BlobMigrationResult {
+  /** All attributable legacy data was migrated/cleaned and no unknown scope remains. */
+  complete: boolean
+  /** Recoverable same-user data could not be copied/saved; callers must not proceed. */
+  blocked: boolean
+}
+
 /**
  * Move blobs from access-token-scoped storage into the stable user namespace.
- * Returns false only when an old namespace cannot yet be attributed or a file
- * operation failed, allowing BlobStore to retry on the next request.
+ * Incomplete unattributed scopes remain available for a later retry. A blocked
+ * result means attributable data could not be copied safely, so BlobStore must
+ * not continue the requested operation in the new namespace.
  */
-export function migrateLegacyBlobScope(options: BlobMigrationOptions): boolean {
+export function migrateLegacyBlobScope(options: BlobMigrationOptions): BlobMigrationResult {
   const {userId, packageName, currentAccessToken, storage, files} = options
   const stableSegment = sanitizeSegment(userId)
   const stablePrefix = `${BLOB_META_KEY_ROOT}${stableSegment}_${packageName}_`
@@ -93,6 +101,7 @@ export function migrateLegacyBlobScope(options: BlobMigrationOptions): boolean {
   }
 
   let completed = true
+  let blocked = false
   for (const [key, records] of legacy) {
     const stableMetaKey = stablePrefix + key
     let stableMeta = storage.load<MigratableBlobMeta>(stableMetaKey)
@@ -113,6 +122,7 @@ export function migrateLegacyBlobScope(options: BlobMigrationOptions): boolean {
           stableMeta = candidate.meta
         } catch (error) {
           completed = false
+          blocked = true
           migrationFailed = true
           options.warn?.(`failed to migrate legacy blob ${packageName}/${key}`, error)
         }
@@ -136,5 +146,5 @@ export function migrateLegacyBlobScope(options: BlobMigrationOptions): boolean {
     }
   }
 
-  return completed && !unresolvedLegacyScope
+  return {complete: completed && !unresolvedLegacyScope, blocked}
 }

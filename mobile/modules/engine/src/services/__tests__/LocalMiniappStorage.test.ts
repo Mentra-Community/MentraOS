@@ -1,6 +1,11 @@
 import {describe, expect, it} from "bun:test"
 
-import {LEGACY_BLOB_OWNER_KEY_ROOT, LocalMiniappStorage, type LocalMiniappStorageBackend} from "../LocalMiniappStorage"
+import {
+  indexLegacyBlobOwners,
+  LEGACY_BLOB_OWNER_KEY_ROOT,
+  LocalMiniappStorage,
+  type LocalMiniappStorageBackend,
+} from "../LocalMiniappStorage"
 import {sanitizeSegment} from "../blobPaths"
 
 class MemoryBackend implements LocalMiniappStorageBackend {
@@ -96,6 +101,19 @@ describe("LocalMiniappStorage", () => {
     const storage = new LocalMiniappStorage({backend, getUserId: async () => "mu_123"})
     expect(await storage.get("com.mentra.translation", "targetLanguage")).toBe("ja")
     expect(backend.keys().some((key) => key.startsWith("mentraos_localstorage_") && key.includes(oldToken))).toBe(false)
+  })
+
+  it("indexes legacy token ownership before blob-only requests can race migration", () => {
+    const backend = new MemoryBackend()
+    const oldToken = testAccessToken("mu_123", 100)
+    backend.set(`mentraos_localstorage_${oldToken}_com.mentra.translation_targetLanguage`, "es")
+
+    indexLegacyBlobOwners(backend)
+
+    expect(backend.get(`${LEGACY_BLOB_OWNER_KEY_ROOT}${sanitizeSegment(oldToken)}`)).toEqual({
+      userId: "mu_123",
+      issuedAt: 100,
+    })
   })
 
   it("supports list, bulk read, delete, and clear within one scope", async () => {

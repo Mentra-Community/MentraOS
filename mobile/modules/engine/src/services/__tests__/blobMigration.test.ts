@@ -59,7 +59,7 @@ describe("migrateLegacyBlobScope", () => {
         storage: backend.storage,
         files: backend.fileHooks,
       }),
-    ).toBe(true)
+    ).toEqual({complete: true, blocked: false})
     expect(storedMeta(backend, "mu_123", "recording")?.fileName).toBe("legacy.wav")
     expect(backend.files.get(backend.fileKey("mu_123", "legacy.wav"))).toBe("legacy")
     expect(backend.values.get(`${LEGACY_BLOB_OWNER_KEY_ROOT}${sanitizeSegment(refreshedToken)}`)).toEqual({
@@ -87,7 +87,7 @@ describe("migrateLegacyBlobScope", () => {
         storage: backend.storage,
         files: backend.fileHooks,
       }),
-    ).toBe(true)
+    ).toEqual({complete: true, blocked: false})
 
     expect(storedMeta(backend, "mu_123", "recording")?.fileName).toBe("new.wav")
     expect(backend.files.get(backend.fileKey("mu_123", "new.wav"))).toBe("new")
@@ -111,7 +111,7 @@ describe("migrateLegacyBlobScope", () => {
         storage: backend.storage,
         files: backend.fileHooks,
       }),
-    ).toBe(true)
+    ).toEqual({complete: true, blocked: false})
 
     expect(storedMeta(backend, "mu_123", "recording")?.fileName).toBe("stable.wav")
     expect(backend.files.get(backend.fileKey("mu_123", "stable.wav"))).toBe("stable")
@@ -130,7 +130,7 @@ describe("migrateLegacyBlobScope", () => {
         storage: backend.storage,
         files: backend.fileHooks,
       }),
-    ).toBe(false)
+    ).toEqual({complete: false, blocked: false})
     expect(storedMeta(backend, "mu_123", "recording")).toBeNull()
     expect(storedMeta(backend, unknownSegment, "recording")?.fileName).toBe("unknown.wav")
   })
@@ -149,7 +149,7 @@ describe("migrateLegacyBlobScope", () => {
         storage: backend.storage,
         files: backend.fileHooks,
       }),
-    ).toBe(false)
+    ).toEqual({complete: false, blocked: true})
     expect(storedMeta(backend, legacySegment, "recording")?.fileName).toBe("legacy.wav")
     expect(backend.files.get(backend.fileKey(legacySegment, "legacy.wav"))).toBe("legacy")
   })

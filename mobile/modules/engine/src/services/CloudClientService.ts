@@ -32,7 +32,7 @@ import {islandNotifications} from "./NotificationsEmitter"
 import {BgTimer} from "../utils/timers"
 import {logCloudV2TranscriptMetric} from "./CloudTranscriptE2EMetrics"
 import {nativeHttpResponseBody} from "./NativeHttpResponse"
-import {rememberLegacyBlobOwner} from "./LocalMiniappStorage"
+import {indexLegacyBlobOwners, rememberLegacyBlobOwner} from "./LocalMiniappStorage"
 
 const LOG_TAG = "cloudClient"
 type CloudCore = NonNullable<CloudClient["core"]>
@@ -76,6 +76,8 @@ let authStateUnsubscribe: (() => void) | null = null
 let localDevRuntimeToken: {runtimeUrl: string; token: string; expiresAtMs: number} | null = null
 let lc3FrameSizeUnsubscribe: (() => void) | null = null
 let coreTokenSyncPromise: Promise<string> | null = null
+/** Exact token paired with the currently constructed client after identity resolution. */
+let resolvedCoreAccessToken: string | null = null
 
 const transcriptListeners = new Set<(d: TranscriptionData) => void>()
 const translationListeners = new Set<(d: TranslationData) => void>()
@@ -116,11 +118,7 @@ async function syncCoreAccessTokenToBluetoothInternal(): Promise<string> {
   if (c !== client) {
     throw new Error("cloud client changed while syncing core token")
   }
-  // BlobStore's pre-user-id layout retained this same truncated token prefix.
-  // Record its stable owner on every launch before any miniapp runs. Core keeps
-  // session_id stable across refreshes, so force-stop refreshes have the same
-  // 120-character prefix; persisting it also survives a future new session.
-  rememberLegacyBlobOwner({set: (key, value) => void mmkvStorage.save(key, value)}, token, c.auth.identity.mentraUserId)
+  rememberResolvedCoreToken(c, token)
   const result = await useSettingsStore.getState().setSetting(SETTINGS.core_token.key, token, false)
   if (result.is_error()) {
     throw result.error
@@ -133,6 +131,21 @@ async function syncCoreAccessTokenToBluetoothInternal(): Promise<string> {
   }
 
   return token
+}
+
+function rememberResolvedCoreToken(c: CloudClient, token: string): void {
+  const backend = {
+    keys: () => mmkvStorage.getAllKeys(),
+    set: (key: string, value: unknown) => void mmkvStorage.save(key, value),
+  }
+  const userId = c.auth.identity.mentraUserId
+  resolvedCoreAccessToken = token
+  // BlobStore's pre-user-id layout retained this same truncated token prefix.
+  // Core keeps session_id stable across refreshes, so force-stop refreshes have
+  // the same prefix. Also index all full legacy SimpleStorage JWTs now, before
+  // a blob-only request can race that app's first SimpleStorage operation.
+  rememberLegacyBlobOwner(backend, token, userId)
+  indexLegacyBlobOwners(backend)
 }
 
 function frameSizeBytes(): Lc3FrameSizeBytes {
@@ -385,6 +398,7 @@ function stopLc3FrameSizeWatcher(): void {
 
 function construct(): void {
   ensureTransports()
+  resolvedCoreAccessToken = null
 
   const endpoints = resolveEndpoints()
   console.log(`${LOG_TAG}: endpoints ${JSON.stringify(endpoints)}`)
@@ -510,6 +524,7 @@ export const cloudClientService = {
 
     const wasConnected = connected
     client = null
+    resolvedCoreAccessToken = null
     localDevRuntimeToken = null
     connected = false
     resetRuntimeStatus()
@@ -538,8 +553,9 @@ export const cloudClientService = {
     const c = client
     if (!c) throw new Error("cloud client not initialized")
 
-    await c.auth.getCoreToken()
+    const token = await c.auth.getCoreToken()
     if (c !== client) throw new Error("cloud client changed while resolving user identity")
+    rememberResolvedCoreToken(c, token)
     return c.auth.identity.mentraUserId
   },
 
@@ -547,6 +563,12 @@ export const cloudClientService = {
   getMentraUserId(): string {
     if (!client) throw new Error("cloud client not initialized")
     return client.auth.identity.mentraUserId
+  },
+
+  /** Read the exact Core token paired with the already-resolved identity. */
+  getCoreAccessToken(): string {
+    if (!client || !resolvedCoreAccessToken) throw new Error("Core access token is unavailable before sign-in")
+    return resolvedCoreAccessToken
   },
 
   async getMiniappAuthToken(
@@ -580,6 +602,7 @@ export const cloudClientService = {
     clearPersistentFailureAlarm()
     const wasConnected = connected
     client = null
+    resolvedCoreAccessToken = null
     localDevRuntimeToken = null
     connected = false
     resetRuntimeStatus()
