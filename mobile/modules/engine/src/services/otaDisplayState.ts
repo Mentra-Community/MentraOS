@@ -67,12 +67,14 @@ export function deriveDisplayState(args: {
   // status still sitting in the store from before the handoff.
   if (versionChangeConverged) return "complete"
 
-  // In a version-change session, convergence (above) is the ONLY completion. A bare
-  // glasses "complete" before convergence — e.g. the glasses refusing the downgrade
-  // (floor/gate) with no install, or a stale pre-handoff status — must never present
-  // as success; treat it as still in flight so the coordinator's timeout/refusal
-  // handling decides the real outcome rather than the UI flashing "done".
-  if (versionChangeSession && otaStatus?.status === "complete") {
+  // In a version-change session, convergence (above) is the ONLY completion for the ASG
+  // downgrade. A bare non-firmware "complete" before convergence — the glasses refusing
+  // the downgrade (floor/gate) with no install, or a stale pre-handoff status — must never
+  // present as success. Firmware-step completions (mtk/bes) DO pass through: a combined
+  // downgrade+firmware manifest applies firmware first on its own pass, which must finish
+  // so the phone re-checks and re-offers the now-firmware-free downgrade.
+  const isFirmwareComplete = otaStatus?.stepType === "mtk" || otaStatus?.stepType === "bes"
+  if (versionChangeSession && otaStatus?.status === "complete" && !isFirmwareComplete) {
     return connected ? "updating" : "disconnected"
   }
 

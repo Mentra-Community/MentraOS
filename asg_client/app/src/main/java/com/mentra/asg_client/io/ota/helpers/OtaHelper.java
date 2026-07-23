@@ -327,12 +327,14 @@ public class OtaHelper {
                 if (!apps.has(pkg)) continue;
                 long current = getInstalledVersion(pkg, context);
                 long server = apps.getJSONObject(pkg).getLong("versionCode");
+                // Count the ASG step in either direction so the session's step accounting
+                // matches the work the pass actually performs. For a downgrade the handoff is
+                // deferred while firmware is applicable (firmware-first ordering), so only plan
+                // the apk step on the pass that will actually hand off (no applicable firmware).
                 boolean asgDowngrade = OtaConstants.ASG_PACKAGE.equals(pkg)
                         && DowngradeGate.shouldDowngrade(
-                                current, server, OtaConstants.DOWNGRADE_FLOOR_VERSION_CODE);
-                // Count the ASG step in either direction so the session's step accounting matches
-                // the work the pass actually performs (a pinned downgrade replaces the APK via the
-                // recovery-worker detour, same as an upgrade installs one).
+                                current, server, OtaConstants.DOWNGRADE_FLOOR_VERSION_CODE)
+                        && !hasApplicableFirmwareUpdate(rootJson, context);
                 if (server > current || asgDowngrade) {
                     steps.add("apk");
                     break;
