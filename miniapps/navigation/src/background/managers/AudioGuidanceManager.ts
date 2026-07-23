@@ -42,6 +42,7 @@ const THRESHOLDS: Record<AudioTravelMode, Thresholds> = {
 }
 
 const MIN_AUTOMATIC_PROMPT_GAP_MS = 3_500
+const STARTUP_OFF_ROUTE_GRACE_MS = 15_000
 const TURN_TYPES = new Set([
   "TURN_LEFT",
   "TURN_RIGHT",
@@ -63,6 +64,8 @@ export class AudioGuidanceManager {
   private mode: VoiceGuidanceMode = "off"
   private tripActive = false
   private tripConfirmed = false
+  private tripStartedAt: number | null = null
+  private startupRerouteSuppressed = false
   private allowImplicitResume = true
   private latestUnconfirmedInput: AudioGuidanceInput | null = null
   private lastStatus: NavStatus = "idle"
@@ -102,6 +105,8 @@ export class AudioGuidanceManager {
     this.stopSpeech()
     this.tripActive = true
     this.tripConfirmed = false
+    this.tripStartedAt = null
+    this.startupRerouteSuppressed = false
     this.allowImplicitResume = false
     this.latestUnconfirmedInput = null
     this.lastStatus = "navigating"
@@ -112,6 +117,7 @@ export class AudioGuidanceManager {
   confirmTripStarted(destinationName: string | null): void {
     if (!this.tripActive) return
     this.tripConfirmed = true
+    this.tripStartedAt = Date.now()
     if (this.canSpeak()) {
       const destination = cleanSpokenText(destinationName)
       this.enqueue({
@@ -141,6 +147,7 @@ export class AudioGuidanceManager {
     if (this.allowImplicitResume && !this.tripActive && input.running && input.status === "navigating") {
       this.tripActive = true
       this.tripConfirmed = true
+      this.tripStartedAt = null
       this.allowImplicitResume = false
     }
     if (!this.tripActive) {
@@ -156,10 +163,21 @@ export class AudioGuidanceManager {
       return
     }
 
-    if (input.status === "rerouting" && this.lastStatus !== "rerouting") {
+    const startupOffRouteGraceActive = this.isStartupOffRouteGraceActive()
+    const enteredRerouting = input.status === "rerouting" && this.lastStatus !== "rerouting"
+    const deferredStartupReroute =
+      input.status === "rerouting" && this.startupRerouteSuppressed && !startupOffRouteGraceActive
+    if (enteredRerouting || deferredStartupReroute) {
       this.currentManeuverKey = null
       this.currentRepeatPhrase = "Rerouting."
-      this.enqueue({text: "Off route. Rerouting.", priority: 100, expiresAt: Date.now() + 10_000})
+      if (startupOffRouteGraceActive) {
+        this.startupRerouteSuppressed = true
+      } else {
+        this.startupRerouteSuppressed = false
+        this.enqueue({text: "Off route. Rerouting.", priority: 100, expiresAt: Date.now() + 10_000})
+      }
+    } else if (input.status !== "rerouting") {
+      this.startupRerouteSuppressed = false
     }
 
     if (input.status === "arrived" && this.lastStatus !== "arrived") {
@@ -178,7 +196,12 @@ export class AudioGuidanceManager {
     if (!input.running || input.status !== "navigating") return
     this.tripActive = true
 
-    if (input.offRoute) {
+    // A route can initially snap to a walkable road tens of metres from an
+    // indoor or noisy GPS fix. Keep real rerouting active, but do not let that
+    // settling period suppress valid maneuver guidance or speak a false alarm.
+    // If a fresh update is still off route after the grace period, lastOffRoute
+    // remains false so the normal one-shot warning becomes eligible.
+    if (input.offRoute && !startupOffRouteGraceActive) {
       if (!this.lastOffRoute) {
         const phrase = "You are off route. Go back to the route."
         this.discardStaleManeuverPrompts()
@@ -318,6 +341,8 @@ export class AudioGuidanceManager {
   endTrip(): void {
     this.tripActive = false
     this.tripConfirmed = false
+    this.tripStartedAt = null
+    this.startupRerouteSuppressed = false
     this.allowImplicitResume = false
     this.latestUnconfirmedInput = null
     this.lastStatus = "idle"
@@ -334,6 +359,10 @@ export class AudioGuidanceManager {
 
   private canSpeak(): boolean {
     return !this.disposed && this.available && this.mode !== "off"
+  }
+
+  private isStartupOffRouteGraceActive(): boolean {
+    return this.tripStartedAt != null && Date.now() - this.tripStartedAt < STARTUP_OFF_ROUTE_GRACE_MS
   }
 
   private resetManeuverState(): void {
