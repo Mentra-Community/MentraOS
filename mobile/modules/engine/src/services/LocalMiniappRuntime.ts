@@ -75,6 +75,7 @@ import type {ClientApp} from "../types/applet"
 import {useAppStatusStore} from "../stores/apps"
 import {getDevAppAttestation, getDevAppSourcePackage} from "./AppRegistry"
 import {resolveForegroundLocationPermission} from "./ForegroundLocationPermission"
+import {advanceMiniappPingLiveness} from "./MiniappLiveness"
 import {listPhoneCalendarEvents, PhoneCalendarError} from "./PhoneCalendarService"
 
 // =============================================================================
@@ -106,6 +107,7 @@ interface ConnectedMiniapp {
   cloudTranscriptionStreams: Set<string>
   sendMessage: (raw: string) => void
   lastPongAt: number
+  unansweredPingRounds: number
   installedManifest?: InstalledMiniappManifest
   authRefreshTimerId: number | null
   /**
@@ -741,6 +743,7 @@ class LocalMiniappRuntime {
       cloudTranscriptionStreams: new Set(),
       sendMessage: sendFn,
       lastPongAt: Date.now(),
+      unansweredPingRounds: 0,
       installedManifest,
       authRefreshTimerId: null,
       authRetryTimerId: null,
@@ -1296,6 +1299,7 @@ class LocalMiniappRuntime {
 
     // Update lastPongAt so it doesn't time out right away
     existing.lastPongAt = Date.now()
+    existing.unansweredPingRounds = 0
 
     // Read current glasses capabilities from the settings store
     const defaultWearable = useSettingsStore.getState().getSetting(ISLAND_SETTINGS_KEYS.defaultWearable) as
@@ -4307,17 +4311,16 @@ class LocalMiniappRuntime {
   }
 
   private doPingRound(): void {
-    const now = Date.now()
-    const staleThreshold = PING_INTERVAL_MS * PING_TIMEOUT_THRESHOLD
-
     const toRemove: string[] = []
 
     for (const [packageName, app] of this.connectedApps) {
-      if (now - app.lastPongAt > staleThreshold) {
+      const liveness = advanceMiniappPingLiveness(app.unansweredPingRounds, PING_TIMEOUT_THRESHOLD)
+      if (liveness.shouldUnregister) {
         console.warn(`${LOG_TAG}: ${packageName} missed ${PING_TIMEOUT_THRESHOLD} pings, unregistering`)
         toRemove.push(packageName)
         continue
       }
+      app.unansweredPingRounds = liveness.unansweredPingRounds
 
       // Send PING — SDK auto-replies with PONG
       this.sendToMiniapp(packageName, {
@@ -4341,6 +4344,7 @@ class LocalMiniappRuntime {
     const app = this.connectedApps.get(packageName)
     if (app) {
       app.lastPongAt = Date.now()
+      app.unansweredPingRounds = 0
       this.clearForegroundProbe(packageName)
     }
   }
