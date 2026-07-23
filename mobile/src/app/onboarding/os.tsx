@@ -27,6 +27,18 @@ export default function MentraOSOnboarding() {
       {
         type: "image",
         source: require("@assets/onboarding/os/figma/start-miniapp.png"),
+        name: "Welcome to Mentra",
+        transition: true,
+        fadeOut: true,
+        duration: 500,
+        title: translate("onboarding:osWelcomeTitle"),
+        subtitle: translate("onboarding:osWelcomeSubtitle"),
+        titleCentered: true,
+        subtitleCentered: true,
+      },
+      {
+        type: "image",
+        source: require("@assets/onboarding/os/figma/start-miniapp.png"),
         name: "Start using a miniapp",
         transition: false,
         fadeOut: true,

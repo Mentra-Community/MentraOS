@@ -87,8 +87,9 @@ describe("MentraOS onboarding", () => {
     )
 
     const {steps} = mockOnboardingGuide.mock.calls[0][0]
-    expect(steps).toHaveLength(5)
+    expect(steps).toHaveLength(6)
     expect(steps.map((step: {title: string}) => step.title)).toEqual([
+      "onboarding:osWelcomeTitle",
       "onboarding:osStartMiniappTitle",
       "onboarding:osMinimizeCloseTitle",
       "onboarding:osSwitchMiniappsTitle",
@@ -96,6 +97,16 @@ describe("MentraOS onboarding", () => {
       "onboarding:osMovedMiniappsTitle",
     ])
     expect(steps[0]).toEqual(
+      expect.objectContaining({
+        type: "image",
+        transition: true,
+        title: "onboarding:osWelcomeTitle",
+        subtitle: "onboarding:osWelcomeSubtitle",
+        titleCentered: true,
+        subtitleCentered: true,
+      }),
+    )
+    expect(steps[1]).toEqual(
       expect.objectContaining({
         type: "image",
         testID: "mentraos-onboarding-hero-1",
@@ -107,7 +118,7 @@ describe("MentraOS onboarding", () => {
         ],
       }),
     )
-    expect(steps[4]).toEqual(
+    expect(steps[5]).toEqual(
       expect.objectContaining({
         type: "image",
         testID: "mentraos-onboarding-hero-5",
@@ -150,9 +161,9 @@ describe("MentraOS onboarding", () => {
     render(<MentraOSOnboarding />)
 
     const {steps} = mockOnboardingGuide.mock.calls[0][0]
-    act(() => steps[4].action.onPress())
+    act(() => steps[5].action.onPress())
 
-    expect(steps[4].action.testID).toBe("mentraos-onboarding-open-legacy")
+    expect(steps[5].action.testID).toBe("mentraos-onboarding-open-legacy")
     expect(openUrl).toHaveBeenCalledWith("https://mentraglass.com/legacy")
   })
 })
