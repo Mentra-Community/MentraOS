@@ -10,6 +10,7 @@ import {useState, useRef, useEffect, useCallback, useMemo, memo, type ElementRef
 // eslint-disable-next-line no-restricted-imports
 import {View, TouchableOpacity, Modal, StatusBar, Text, useWindowDimensions} from "react-native"
 import Gallery, {GalleryRef} from "react-native-awesome-gallery"
+import {GestureHandlerRootView} from "react-native-gesture-handler"
 import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
 import MaterialCommunityIcons from "react-native-vector-icons/MaterialCommunityIcons"
 import Video from "react-native-video"
@@ -335,12 +336,7 @@ const VideoPlayerItem = memo(function VideoPlayerItem({
 /**
  * Image component for gallery items
  */
-const ImageItem = memo(function ImageItem({
-  photo,
-  setImageDimensions,
-  isActive: _isActive,
-  onDimensions,
-}: ImageItemProps) {
+const ImageItem = memo(function ImageItem({photo, setImageDimensions, isActive, onDimensions}: ImageItemProps) {
   const {width: screenWidth, height: screenHeight} = useWindowDimensions()
   const hasReportedDimensions = useRef(false)
 
@@ -366,10 +362,10 @@ const ImageItem = memo(function ImageItem({
         source={{uri: imageUri}}
         style={imageStyle}
         contentFit="contain"
-        priority="high"
+        priority={isActive ? "high" : "normal"}
         cachePolicy="memory-disk"
-        transition={100}
-        allowDownscaling={false}
+        transition={0}
+        allowDownscaling
         onLoad={(e) => {
           // Report dimensions back to Gallery for proper scaling - only once
           if (e.source?.width && e.source?.height && !hasReportedDimensions.current) {
@@ -399,7 +395,7 @@ interface CustomOverlayProps {
 
 export function CustomOverlay({onClose, currentIndex, total, onDetails, onShare}: CustomOverlayProps) {
   const insets = useSaferAreaInsets()
-  const {themed} = useAppTheme()
+  const {theme, themed} = useAppTheme()
 
   return (
     <View style={[themed($header), {paddingTop: insets.top}]}>
@@ -408,7 +404,7 @@ export function CustomOverlay({onClose, currentIndex, total, onDetails, onShare}
         accessibilityRole="button"
         onPress={onClose}
         style={themed($actionButton)}>
-        <Icon name="chevron-left" size={28} color="white" />
+        <Icon name="chevron-left" size={28} color={theme.colors.foreground} />
       </TouchableOpacity>
       <Text pointerEvents="none" style={themed($counterText)}>
         {currentIndex + 1} / {total}
@@ -419,7 +415,7 @@ export function CustomOverlay({onClose, currentIndex, total, onDetails, onShare}
           accessibilityRole="button"
           onPress={onDetails}
           style={themed($actionButton)}>
-          <Icon name="info" size={24} color="white" />
+          <Icon name="info" size={24} color={theme.colors.foreground} />
         </TouchableOpacity>
         {onShare && (
           <TouchableOpacity
@@ -427,7 +423,7 @@ export function CustomOverlay({onClose, currentIndex, total, onDetails, onShare}
             accessibilityRole="button"
             onPress={onShare}
             style={themed($actionButton)}>
-            <Icon name="share" size={24} color="white" />
+            <MaterialCommunityIcons name="share-variant" size={24} color={theme.colors.foreground} />
           </TouchableOpacity>
         )}
       </View>
@@ -439,6 +435,7 @@ export function CustomOverlay({onClose, currentIndex, total, onDetails, onShare}
  * Main gallery component using react-native-awesome-gallery
  */
 export function AwesomeGalleryViewer({visible, photos, initialIndex, onClose, onShare}: AwesomeGalleryViewerProps) {
+  const {themed} = useAppTheme()
   const [currentIndex, setCurrentIndex] = useState(initialIndex)
   const [isVideoSeeking, setIsVideoSeeking] = useState(false)
   const [isMetadataOpen, setIsMetadataOpen] = useState(false)
@@ -446,27 +443,19 @@ export function AwesomeGalleryViewer({visible, photos, initialIndex, onClose, on
   const galleryRef = useRef<GalleryRef>(null)
   const metadataSheetRef = useRef<BottomSheet>(null)
 
-  console.log("🎨 [AwesomeGalleryViewer] === RENDER START ===")
-  console.log("🎨 [AwesomeGalleryViewer] visible:", visible)
-  console.log("🎨 [AwesomeGalleryViewer] photos.length:", photos.length)
-  console.log("🎨 [AwesomeGalleryViewer] initialIndex:", initialIndex)
-  console.log(
-    "🎨 [AwesomeGalleryViewer] photos:",
-    photos.map((p) => ({name: p.name, isVideo: p.is_video})),
-  )
-
   // Reset index when modal opens
   useEffect(() => {
     if (visible) {
-      console.log("🎨 [AwesomeGalleryViewer] Modal opened, setting index to:", initialIndex)
       setCurrentIndex(initialIndex)
       setIsMetadataOpen(false)
       metadataSheetRef.current?.close()
       // Reset gallery to initial position
-      setTimeout(() => {
+      const resetTimer = setTimeout(() => {
         galleryRef.current?.setIndex(initialIndex, false)
       }, 50)
+      return () => clearTimeout(resetTimer)
     }
+    return undefined
   }, [visible, initialIndex])
 
   const recordDimensions = useCallback((name: string, dimensions: MediaDimensions) => {
@@ -494,15 +483,6 @@ export function AwesomeGalleryViewer({visible, photos, initialIndex, onClose, on
 
       const isActiveItem = index === currentIndex
 
-      console.log(
-        "🎨 [AwesomeGalleryViewer] Rendering item:",
-        item.name,
-        "isVideo:",
-        isVideo,
-        "isActive:",
-        isActiveItem,
-      )
-
       if (isVideo) {
         return (
           <VideoPlayerItem
@@ -528,6 +508,22 @@ export function AwesomeGalleryViewer({visible, photos, initialIndex, onClose, on
 
   // Memoized keyExtractor
   const keyExtractor = useCallback((item: PhotoInfo, index: number) => `${item.name}-${index}`, [])
+  const handleIndexChange = useCallback((newIndex: number) => {
+    setCurrentIndex((previousIndex) => (previousIndex === newIndex ? previousIndex : newIndex))
+  }, [])
+  const handleSwipeToClose = useCallback(() => {
+    onClose()
+  }, [onClose])
+  const handleDetails = useCallback(() => {
+    metadataSheetRef.current?.snapToIndex(0)
+  }, [])
+  const handleMetadataChange = useCallback((index: number) => {
+    setIsMetadataOpen(index >= 0)
+  }, [])
+  const handleShare = useCallback(() => {
+    const photo = photos[currentIndex]
+    if (photo) onShare?.(photo)
+  }, [currentIndex, onShare, photos])
 
   if (!visible || photos.length === 0) {
     return null
@@ -535,59 +531,59 @@ export function AwesomeGalleryViewer({visible, photos, initialIndex, onClose, on
 
   return (
     <Modal visible={visible} transparent={false} animationType="fade" onRequestClose={onClose} statusBarTranslucent>
-      <StatusBar hidden />
-      <Gallery
-        ref={galleryRef}
-        data={photos}
-        initialIndex={initialIndex}
-        onIndexChange={(newIndex) => {
-          console.log("🎨 [AwesomeGalleryViewer] Index changed to:", newIndex, photos[newIndex]?.name)
-          setCurrentIndex(newIndex)
-        }}
-        onSwipeToClose={() => {
-          console.log("🎨 [AwesomeGalleryViewer] Swipe to close triggered")
-          onClose()
-        }}
-        renderItem={renderItem}
-        keyExtractor={keyExtractor}
-        numToRender={3}
-        emptySpaceWidth={16}
-        maxScale={3}
-        doubleTapScale={2}
-        pinchEnabled={true}
-        swipeEnabled={!isVideoSeeking && !isMetadataOpen}
-        doubleTapEnabled={true}
-        disableVerticalSwipe={isMetadataOpen}
-        disableTransitionOnScaledImage={true}
-        loop={false}
-        onTap={() => {
-          console.log("🎨 [AwesomeGalleryViewer] Gallery tapped")
-        }}
-      />
+      <GestureHandlerRootView testID="media-viewer-gesture-root" style={themed($root)}>
+        <StatusBar hidden />
+        <Gallery
+          ref={galleryRef}
+          data={photos}
+          initialIndex={initialIndex}
+          onIndexChange={handleIndexChange}
+          onSwipeToClose={handleSwipeToClose}
+          renderItem={renderItem}
+          keyExtractor={keyExtractor}
+          numToRender={3}
+          emptySpaceWidth={16}
+          maxScale={3}
+          doubleTapScale={2}
+          pinchEnabled
+          swipeEnabled={!isVideoSeeking && !isMetadataOpen}
+          doubleTapEnabled
+          disableVerticalSwipe={isMetadataOpen}
+          disableTransitionOnScaledImage
+          loop={false}
+          style={themed($gallery)}
+        />
 
-      {/* Custom overlay */}
-      <CustomOverlay
-        onClose={onClose}
-        currentIndex={currentIndex}
-        total={photos.length}
-        onDetails={() => metadataSheetRef.current?.snapToIndex(0)}
-        onShare={onShare ? () => onShare(photos[currentIndex]) : undefined}
-      />
+        <CustomOverlay
+          onClose={onClose}
+          currentIndex={currentIndex}
+          total={photos.length}
+          onDetails={handleDetails}
+          onShare={onShare ? handleShare : undefined}
+        />
 
-      <MediaMetadataSheet
-        bottomSheetRef={metadataSheetRef}
-        photo={photos[currentIndex]}
-        dimensions={mediaDimensions[photos[currentIndex].name]}
-        onChange={(index) => {
-          setIsMetadataOpen(index >= 0)
-        }}
-      />
+        <MediaMetadataSheet
+          bottomSheetRef={metadataSheetRef}
+          photo={photos[currentIndex]}
+          dimensions={mediaDimensions[photos[currentIndex].name]}
+          onChange={handleMetadataChange}
+        />
+      </GestureHandlerRootView>
     </Modal>
   )
 }
 
 // Themed styles
-const $header: ThemedStyle<any> = ({spacing}) => ({
+const $root: ThemedStyle<any> = ({colors}) => ({
+  flex: 1,
+  backgroundColor: colors.background,
+})
+
+const $gallery: ThemedStyle<any> = ({colors}) => ({
+  backgroundColor: colors.background,
+})
+
+const $header: ThemedStyle<any> = ({colors, spacing}) => ({
   position: "absolute",
   top: 0,
   left: 0,
@@ -597,7 +593,9 @@ const $header: ThemedStyle<any> = ({spacing}) => ({
   justifyContent: "space-between",
   paddingHorizontal: spacing.s4,
   paddingBottom: spacing.s3,
-  backgroundColor: "rgba(0,0,0,0.5)",
+  backgroundColor: colors.background,
+  borderBottomWidth: 1,
+  borderBottomColor: colors.border,
   zIndex: 100,
 })
 
@@ -614,12 +612,12 @@ const $headerActions: ThemedStyle<any> = () => ({
   alignItems: "center",
 })
 
-const $counterText: ThemedStyle<any> = ({spacing}) => ({
+const $counterText: ThemedStyle<any> = ({colors, spacing}) => ({
   position: "absolute",
   left: 0,
   right: 0,
   bottom: spacing.s6,
-  color: "white",
+  color: colors.foreground,
   fontSize: 16,
   fontWeight: "600",
   textAlign: "center",
