@@ -257,6 +257,10 @@ jobs:
         working-directory: examples/react-native
         run: bunx expo prebuild --platform android --no-install
 
+      - name: Verify Android cleartext support
+        working-directory: examples/react-native
+        run: grep -q 'android:usesCleartextTraffic="true"' android/app/src/main/AndroidManifest.xml
+
       - name: Type check generated Android project
         working-directory: examples/react-native/android
         run: |
@@ -343,6 +347,10 @@ jobs:
       - name: Generate Android project
         working-directory: examples/react-native-elevenlabs-audio
         run: bunx expo prebuild --platform android --no-install
+
+      - name: Verify Android cleartext support
+        working-directory: examples/react-native-elevenlabs-audio
+        run: grep -q 'android:usesCleartextTraffic="true"' android/app/src/main/AndroidManifest.xml
 
       - name: Type check generated Android project
         working-directory: examples/react-native-elevenlabs-audio/android

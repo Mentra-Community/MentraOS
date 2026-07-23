@@ -27,7 +27,6 @@
     "android": {
       "package": "com.mentra.bluetoothsdk.example.reactnative",
       "softwareKeyboardLayoutMode": "pan",
-      "usesCleartextTraffic": true,
       "permissions": [
         "android.permission.BLUETOOTH",
         "android.permission.BLUETOOTH_ADMIN",
@@ -54,6 +53,7 @@
         {
           "android": {
             "minSdkVersion": 28,
+            "usesCleartextTraffic": true,
             "packagingOptions": {
               "pickFirst": [
                 "**/libc++_shared.so",
