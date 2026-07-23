@@ -63,7 +63,7 @@ For some outbound commands, `B` is a JSON object serialized as a string inside t
 - Detecting and classifying camera-button presses.
 - Reporting touch/swipe/power-button events.
 - Battery and default LED signaling.
-- RGB LED ring ownership when MTK has not claimed control.
+- RGB status LED ownership when MTK has not claimed control.
 - BES firmware OTA.
 - Bluetooth/audio responsibilities specific to the glasses firmware.
 
@@ -114,7 +114,7 @@ Mentra Live exposes microphone/audio paths used for recording, streaming, and de
 Mentra Live has two LED systems:
 
 1. **Local MTK recording/privacy LED** — controlled directly by MTK through native APIs; used for camera-in-use feedback.
-2. **BES RGB LED ring** — controlled by BES by default for battery, Bluetooth, and firmware status; MTK can claim authority and send RGB commands over UART.
+2. **BES RGB status LED** — controlled by BES by default for battery, Bluetooth, and firmware status; MTK can claim authority and send RGB commands over UART.
 
 Camera and streaming features must leave LEDs in a safe state on stop, error, service shutdown, or command cancellation. User-visible privacy indication should not be bypassed accidentally.
 
@@ -216,7 +216,7 @@ When changing Mentra Live behavior:
 - [`overview.md`](overview.md) — `asg_client` architecture and K900 naming notes.
 - [`ASG_CLIENT_API.md`](ASG_CLIENT_API.md) — phone/glasses command protocol.
 - [`features/button-press-system.md`](features/button-press-system.md) — camera button and gallery-mode behavior.
-- [`features/led-control.md`](features/led-control.md) — local privacy LED and BES RGB LED ring behavior.
+- [`features/led-control.md`](features/led-control.md) — local privacy LED and BES RGB status LED behavior.
 - [`features/rtmp-streaming.md`](features/rtmp-streaming.md) — live streaming lifecycle.
 - [`features/camera-web-server.md`](features/camera-web-server.md) — local media sync server.
 - [`features/bes-ota.md`](features/bes-ota.md) — BES firmware update flow.
