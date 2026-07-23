@@ -39,9 +39,13 @@ import org.json.JSONObject;
  * listener (and listener registration does not replay current state) — an edge-triggered
  * announcement can be missed entirely. And the announcement must carry {@code wire_caps}: the
  * phone's remote wire reset CLEARS its stored peer caps, then gates its v2 handshake on the
- * caps in the message. The BES caps arrive only after the sr_syvr round-trip, so each tick
- * waits for transport-up AND resolved caps (bounded — a legacy BES that never advertises
- * binary relay proceeds caps-less after the wait budget; v2 is impossible there anyway).
+ * caps in the message. Each tick therefore waits for
+ * {@link K900BluetoothManager#hasResolvedBesWireCaps()} — the sr_syvr reply that carries the
+ * caps also proves the UART works at the current baud, so this single signal covers both the
+ * caps race AND the post-APK-restart baud mismatch, where {@code isConnected()} is already
+ * true but every TX byte is garbage until baud recovery completes. No elapsed-time fallback:
+ * time passing proves nothing while the link is unproven, and a genuinely legacy BES still
+ * answers sr_syvr (just without caps), after which the announcement proceeds caps-less.
  *
  * <p>Wire v2 activation stays RESPONDER-ONLY on the glasses side — the phone still initiates
  * the handshake. Retries stop as soon as v2 activates (proof the phone heard us, or that a
@@ -58,7 +62,6 @@ public class GlassesReadyBootAnnouncer {
 
     private volatile boolean stopped = false;
     private int ticksUsed = 0;
-    private int connectedCapslessTicks = 0;
     private int announcementsSent = 0;
 
     public GlassesReadyBootAnnouncer(
@@ -114,19 +117,15 @@ public class GlassesReadyBootAnnouncer {
         if (commandProcessorSupplier.get() == null
                 || bluetoothManager == null
                 || !bluetoothManager.isConnected()) {
-            // A transport gap invalidates any caps-wait progress: serial close clears the
-            // negotiated BES caps, so the wait must restart from the reopen — otherwise the
-            // first connected tick after a UART blip could blow the budget and announce
-            // caps-less right when the fresh sr_syvr reply is imminent.
-            connectedCapslessTicks = 0;
             return false;
         }
-        // Wait (bounded) for the BES sr_syvr reply to resolve wire caps, so the resulting
-        // glasses_ready carries the wire_caps the phone's handshake gate requires.
-        if (bluetoothManager instanceof K900BluetoothManager
-                && !((K900BluetoothManager) bluetoothManager).isBesBinaryRelaySupported()) {
-            connectedCapslessTicks++;
-            return connectedCapslessTicks > AsgConstants.GLASSES_READY_BOOT_ANNOUNCE_CAPS_WAIT_TICKS;
+        // Wait for the sr_syvr reply: it finalizes the BES wire caps AND proves the UART
+        // actually works at the current baud — isConnected() alone is satisfied by an open
+        // serial port even mid baud-mismatch, when every TX byte would arrive as garbage.
+        // Cleared by the transport itself on serial close / BES OTA link invalidation, so
+        // a transport gap naturally restarts the wait.
+        if (bluetoothManager instanceof K900BluetoothManager) {
+            return ((K900BluetoothManager) bluetoothManager).hasResolvedBesWireCaps();
         }
         return true;
     }

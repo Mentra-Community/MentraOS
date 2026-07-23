@@ -63,6 +63,12 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     private final java.util.Set<Integer> pendingBinaryWakeMsgIds = new java.util.LinkedHashSet<>();
     private volatile boolean besWireCapsK900Le = false;
     private volatile boolean besWireCapsBinary = false;
+    // True once an sr_syvr reply has been parsed on the current UART session. The reply is
+    // what carries the BES's advertised wire caps, so this doubles as "caps state is final":
+    // false may only mean the link is still recovering (e.g. baud mismatch after an APK
+    // restart), never that the BES lacks caps. Cleared with the caps on serial close and on
+    // BES OTA link invalidation — NOT on the phone-facing onTransportReset().
+    private volatile boolean besSystemVersionSeen = false;
     private volatile boolean besWireCapsFilePayloadV2 = false;
     private volatile int besWireCapsProto = BesWireFormat.PROTOCOL_VERSION_V1;
     private volatile int gattFilePackSize = BesWireFormat.FILE_PACK_SIZE_DEFAULT;
@@ -567,6 +573,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     /** Reset all negotiated wire protocol state when the BES UART link is closed. */
     public void resetWireProtocolState() {
         resetPhoneWireProtocolState();
+        besSystemVersionSeen = false;
         besWireCapsK900Le = false;
         besWireCapsBinary = false;
         besWireCapsFilePayloadV2 = false;
@@ -788,6 +795,17 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
     public boolean isBesBinaryRelaySupported() {
         return besWireCapsBinary;
+    }
+
+    /**
+     * True once the BES's sr_syvr reply has been parsed on the current UART session. The
+     * reply carries the BES's advertised wire caps, so this is the "caps state is final"
+     * signal: while false the link may still be recovering (e.g. a baud mismatch after an
+     * APK restart, where {@code isConnected()} is already true but nothing valid can
+     * arrive) and absent caps mean nothing yet.
+     */
+    public boolean hasResolvedBesWireCaps() {
+        return besSystemVersionSeen;
     }
 
     /** Queues an internal command without broadcasting it as a phone-facing command response. */
@@ -1484,6 +1502,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         try {
             // Any sr_syvr proves the UART link is alive at the current baud.
             lastSrSyvrTime = System.currentTimeMillis();
+            besSystemVersionSeen = true;
             synchronized (baudSwitchLock) {
                 if (bootRecoveryFuture != null) {
                     bootRecoveryFuture.cancel(false);
@@ -2419,6 +2438,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             uartDiscardedBytesSinceValidFrame = 0;
             uartDiscardEventsSinceValidFrame = 0;
             lastSrSyvrTime = 0;
+            besSystemVersionSeen = false;
             baudSwitchAttempted = false;
             baudSwitchWaitingSrBaud = false;
             baudProbePending = false;

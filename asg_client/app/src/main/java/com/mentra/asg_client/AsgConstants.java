@@ -133,23 +133,24 @@ public class AsgConstants {
      * wire-reset -> v2-handshake chain never re-runs and the new process is stuck on v1
      * TX for the whole session (incident rep_01KY6BJ0B7A4RBMQ7VN39KAE5E: still ck-chunked
      * v1 strings 6 minutes after restart). GlassesReadyBootAnnouncer polls on this
-     * schedule (transport callbacks can fire before the service registers as listener,
-     * and the announcement must wait for the BES sr_syvr reply so it carries wire_caps —
-     * the phone's remote wire reset CLEARS its stored caps and gates its v2 handshake on
-     * the caps in the message), then drives the standard phone_ready flow so every
-     * handler side effect runs identically to a real phone_ready. Retries stop as soon
-     * as wire v2 activates.
+     * schedule (transport callbacks can fire before the service registers as listener),
+     * gates each tick on the BES sr_syvr reply — which finalizes wire_caps for the
+     * glasses_ready AND proves the UART works at the current baud — then drives the
+     * standard phone_ready flow so every handler side effect runs identically to a real
+     * phone_ready. Retries stop as soon as wire v2 activates.
      */
     public static final int GLASSES_READY_BOOT_ANNOUNCE_ATTEMPTS = 3;
 
     /** Spacing between glasses_ready boot announcement poller ticks. */
     public static final long GLASSES_READY_BOOT_ANNOUNCE_INTERVAL_MS = 3_000L;
 
-    /** Total poller tick budget (x interval = ~30s window; a later phone connect uses the normal phone_ready flow). */
-    public static final int GLASSES_READY_BOOT_ANNOUNCE_MAX_TICKS = 10;
-
-    /** Connected-but-capsless ticks to wait for the BES sr_syvr caps reply before announcing without wire_caps. */
-    public static final int GLASSES_READY_BOOT_ANNOUNCE_CAPS_WAIT_TICKS = 3;
+    /**
+     * Total poller tick budget (x interval = ~60s window). Sized so the post-APK-restart
+     * UART baud recovery (rendezvous probing can take tens of seconds) still leaves room
+     * for the announcement attempts; unmet-gate ticks are cheap no-ops. A phone that
+     * connects after the window uses the normal phone_ready flow.
+     */
+    public static final int GLASSES_READY_BOOT_ANNOUNCE_MAX_TICKS = 20;
 
     /** Delay before probing the alternate UART baud after ASG starts at the rendezvous rate. */
     public static final long UART_BOOT_RECOVERY_INITIAL_DELAY_MS = 8000;

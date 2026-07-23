@@ -31,8 +31,9 @@ import org.robolectric.shadows.ShadowLooper;
  * (incident rep_01KY6BJ0B7A4RBMQ7VN39KAE5E): without it the phone skips phone_ready and
  * the v2 wire handshake never re-runs, leaving the new process on v1 TX for the whole
  * session. The announcer POLLS (transport callbacks can pre-date listener registration),
- * waits for BES wire caps (the phone's remote wire reset clears its stored caps and gates
- * its handshake on the caps in glasses_ready), and delivers by driving the STANDARD
+ * gates on the sr_syvr reply that finalizes the BES wire caps and proves the UART works at
+ * the current baud (the phone's remote wire reset clears its stored caps and gates its
+ * handshake on the caps in glasses_ready), and delivers by driving the STANDARD
  * phone_ready flow so every handler side effect (wire epoch reset, WiFi/hotspot status,
  * RGB LED authority) runs identically to a real phone_ready.
  */
@@ -50,7 +51,7 @@ public class GlassesReadyBootAnnouncerTest {
         commandProcessor = mock(CommandProcessor.class);
         k900Manager = mock(K900BluetoothManager.class);
         when(k900Manager.isConnected()).thenReturn(true);
-        when(k900Manager.isBesBinaryRelaySupported()).thenReturn(true);
+        when(k900Manager.hasResolvedBesWireCaps()).thenReturn(true);
         announcer =
                 new GlassesReadyBootAnnouncer(
                         () -> commandProcessor,
@@ -127,51 +128,18 @@ public class GlassesReadyBootAnnouncerTest {
     }
 
     @Test
-    public void waitsForBesWireCapsBeforeAnnouncing() {
-        when(k900Manager.isBesBinaryRelaySupported()).thenReturn(false);
+    public void waitsForResolvedWireCapsBeforeAnnouncing() {
+        // An open serial port mid baud-mismatch reports isConnected() but nothing valid
+        // can cross; the sr_syvr reply is the proof the link works AND the caps carrier.
+        // Elapsed time proves nothing, so no amount of waiting may trigger a send.
+        when(k900Manager.hasResolvedBesWireCaps()).thenReturn(false);
         announcer.start();
         firstTick();
-        advanceTicks(1);
+        advanceTicks(AsgConstants.GLASSES_READY_BOOT_ANNOUNCE_MAX_TICKS - 3);
         verify(commandProcessor, never()).processJsonCommand(any());
 
-        // Caps resolve (sr_syvr reply landed): the next tick announces.
-        when(k900Manager.isBesBinaryRelaySupported()).thenReturn(true);
-        advanceTicks(1);
-        verify(commandProcessor, times(1)).processJsonCommand(any(JSONObject.class));
-    }
-
-    @Test
-    public void announcesWithoutCapsAfterWaitBudgetOnLegacyBes() {
-        // A legacy BES never advertises binary relay; after the caps-wait budget the
-        // announcement goes out anyway (v2 is impossible there, readiness still refreshes).
-        when(k900Manager.isBesBinaryRelaySupported()).thenReturn(false);
-        announcer.start();
-        firstTick();
-        advanceTicks(AsgConstants.GLASSES_READY_BOOT_ANNOUNCE_CAPS_WAIT_TICKS - 1);
-        verify(commandProcessor, never()).processJsonCommand(any());
-
-        advanceTicks(1);
-        verify(commandProcessor, times(1)).processJsonCommand(any(JSONObject.class));
-    }
-
-    @Test
-    public void transportGapRestartsTheCapsWait() {
-        // Serial close clears the negotiated BES caps, so caps-wait progress from before
-        // a UART blip must not count toward announcing caps-less right after the reopen.
-        when(k900Manager.isBesBinaryRelaySupported()).thenReturn(false);
-        announcer.start();
-        firstTick();
-        advanceTicks(AsgConstants.GLASSES_READY_BOOT_ANNOUNCE_CAPS_WAIT_TICKS - 1);
-
-        // UART blip: one disconnected tick, then reconnected, still capsless.
-        when(k900Manager.isConnected()).thenReturn(false);
-        advanceTicks(1);
-        when(k900Manager.isConnected()).thenReturn(true);
-
-        // The full caps-wait budget applies again after the gap.
-        advanceTicks(AsgConstants.GLASSES_READY_BOOT_ANNOUNCE_CAPS_WAIT_TICKS);
-        verify(commandProcessor, never()).processJsonCommand(any());
-
+        // sr_syvr lands (baud recovered, caps final): the next tick announces.
+        when(k900Manager.hasResolvedBesWireCaps()).thenReturn(true);
         advanceTicks(1);
         verify(commandProcessor, times(1)).processJsonCommand(any(JSONObject.class));
     }
