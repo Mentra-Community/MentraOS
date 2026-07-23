@@ -6,7 +6,7 @@
 // inside the app binary.
 
 export const BUNDLED_MINIAPPS: number[] = [
-  require("@assets/miniapps/com.mentra.ai-1.4.12.zip"),
+  require("@assets/miniapps/com.mentra.ai-1.4.13.zip"),
   require("@assets/miniapps/com.mentra.captions-1.0.13.zip"),
   require("@assets/miniapps/com.mentra.enterprise-0.1.3.zip"),
   require("@assets/miniapps/com.mentra.livestreamer-1.0.8.zip"),
