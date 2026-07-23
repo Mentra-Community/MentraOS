@@ -164,16 +164,9 @@ export default function SelectGlassesBluetoothScreen() {
     const normalizedProjectName = normalizeProjectName(device.projectName ?? ar99ProjectName)
     const deviceDisplayName = getAr99ResultDisplayName(device)
 
-    if (normalizedProjectName === "AR99" || normalizedProjectName === "AF99") {
+    if (normalizedProjectName === "AR99") {
       const serial = rawName.replace(/^SN:\s*/i, "").trim()
       return `${deviceDisplayName}-${serial || rawName}`
-    }
-
-    if (normalizedProjectName === "HVXM" || normalizedProjectName === "HVXF") {
-      const fallbackMac = rawName.startsWith("MAC:") ? rawName.replace(/^MAC:\s*/i, "").trim() : ""
-      const macSource = (device.address || fallbackMac).trim()
-      const lastFour = macSource.replace(/[^A-Fa-f0-9]/g, "").slice(-4).toUpperCase()
-      return `${deviceDisplayName}-${lastFour || rawName}`
     }
 
     return rawName
@@ -254,5 +247,3 @@ export default function SelectGlassesBluetoothScreen() {
     </Screen>
   )
 }
-
-

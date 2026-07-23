@@ -14,26 +14,23 @@ prefix unless the hardware is validated and listed here.
 | Mentra Live | Not available | Not available | Full | Full | Full |
 | Mentra Mach 1 | Full | Not available | Partial* | Not available | Not available |
 | Vuzix Z100 | Full | Not available | Partial* | Not available | Not available |
-| AR99 family | Full | Not available | Full | Not available | Not available |
+| Xingyi AR99 | Full | Not available | Full | Not available | Not available |
 
 * Microphone support via connected phone's microphone.
 
-## AR99 Family Compatibility Matrix
+## AR99 Compatibility Matrix
 
-The Mentra App exposes AR99-family hardware as `DeviceTypes.AR99`, but each
-supported OEM variant must keep its own manufacturer, display model, and BLE
-project identifier.
+The Mentra App exposes validated Xingyi AR99 hardware as `DeviceTypes.AR99`.
+Only the exact BLE project identifier listed below is supported.
 
 | Manufacturer | Display model | Device type | BLE project identifier |
 | --- | --- | --- | --- |
 | Xingyi Intelligent | Xingyi AR99 | `AR99` | `AR99` |
-| Xingyi Intelligent | Xingyi AR99 CAT | `AR99` | `AF99` |
-| HOLOVOX | HOLOVOX Legacy | `AR99` | `HVXM` |
-| HOLOVOX | HOLOVOX Luna | `AR99` | `HVXF` |
 
-`AF98` is not a supported project identifier and must be rejected by scanning and
-advertisement parsing. AR99-family pairing must fail closed when a scan result
-has no project identifier or has a project identifier outside the matrix above.
+`AF98`, `AF99`, `HVXM`, and `HVXF` are not supported project identifiers and
+must be rejected by scanning and advertisement parsing. AR99 pairing must fail
+closed when a scan result has no project identifier or has a project identifier
+outside the matrix above.
 
 ## Getting Started
 

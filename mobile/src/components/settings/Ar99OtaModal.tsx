@@ -56,14 +56,8 @@ export function Ar99OtaModal({visible, onClose}: Ar99OtaModalProps) {
   const busy = phase === "checking" || phase === "downloading" || phase === "transferring" || phase === "paused"
   const deviceDisplayName = getAr99DisplayName(ar99ProjectName)
   const forceUpdate = versionInfo?.forceUpdate === true
-  const normalizedProjectName = ar99ProjectName.trim().toUpperCase()
-  const isHolovoxAr99 = normalizedProjectName === "HVXM" || normalizedProjectName === "HVXF"
-  const displayCurrentVersion =
-    isHolovoxAr99 && currentVersion && !currentVersion.startsWith("HVX-FW-") ? `HVX-FW-${currentVersion}` : currentVersion
-  const displayLatestVersion =
-    isHolovoxAr99 && versionInfo?.currentVersion && !versionInfo.currentVersion.startsWith("HVX-FW-")
-      ? `HVX-FW-${versionInfo.currentVersion}`
-      : (versionInfo?.currentVersion ?? "")
+  const displayCurrentVersion = currentVersion
+  const displayLatestVersion = versionInfo?.currentVersion ?? ""
   const isForceUpdatePrompt = forceUpdate && phase === "confirm"
   const canDismiss = !busy && !isForceUpdatePrompt
   const maxModalHeight = windowHeight * 0.5

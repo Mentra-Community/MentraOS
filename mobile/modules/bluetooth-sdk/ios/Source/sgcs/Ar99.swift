@@ -2,7 +2,7 @@
 //  Ar99.swift
 //  MentraBluetoothSDK
 //
-//  Native iOS implementation for AR99/AF99/HVXM/HVXF glasses.
+//  Native iOS implementation for AR99 glasses.
 //
 
 import AVFoundation
@@ -511,7 +511,7 @@ final class Ar99: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SGCM
     var type = DeviceTypes.AR99
     let hasMic = true
 
-    private let supportedProjectNames = ["AR99", "AF99", "HVXM", "HVXF"]
+    private let supportedProjectNames = ["AR99"]
     private var centralManager: CBCentralManager?
     private var peripheral: CBPeripheral?
     private var controlWriteCharacteristic: CBCharacteristic?
@@ -2449,4 +2449,3 @@ final class Ar99: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SGCM
         return String(trimmed[trimmed.index(after: underscore)...]).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
-

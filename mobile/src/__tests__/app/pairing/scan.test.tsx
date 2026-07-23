@@ -104,20 +104,9 @@ jest.mock("@/components/ui/GlassView", () => {
   return MockGlassView
 })
 jest.mock("@/utils/getGlassesImage", () => ({
-  AR99_MODEL_OPTIONS: [
-    {projectName: "AR99", displayName: "Xingyi AR99"},
-    {projectName: "AF99", displayName: "Xingyi AR99 CAT"},
-    {projectName: "HVXM", displayName: "HOLOVOX Legacy"},
-    {projectName: "HVXF", displayName: "HOLOVOX Luna"},
-  ],
+  AR99_MODEL_OPTIONS: [{projectName: "AR99", displayName: "Xingyi AR99"}],
   getAr99DisplayName: jest.fn((projectName?: string) => {
-    const match = [
-      {projectName: "AR99", displayName: "Xingyi AR99"},
-      {projectName: "AF99", displayName: "Xingyi AR99 CAT"},
-      {projectName: "HVXM", displayName: "HOLOVOX Legacy"},
-      {projectName: "HVXF", displayName: "HOLOVOX Luna"},
-    ].find((option) => option.projectName === projectName)
-    return match?.displayName ?? "AR99"
+    return projectName === "AR99" ? "Xingyi AR99" : "AR99"
   }),
   getAr99ImageSource: jest.fn(() => 1),
   getGlassesOpenImage: jest.fn(() => 1),
@@ -288,14 +277,14 @@ describe("pairing scan screen", () => {
       })
     })
   })
-  it("filters AR99-family scan results to the selected project", async () => {
-    ;(useLocalSearchParams as jest.Mock).mockReturnValue({deviceModel: "AR99", ar99ProjectName: "HVXM"})
+  it("filters AR99 scan results to the selected AR99 project", async () => {
+    ;(useLocalSearchParams as jest.Mock).mockReturnValue({deviceModel: "AR99", ar99ProjectName: "AR99"})
     useCoreStore.setState({
       searchResults: [
-        {id: "legacy", model: "AR99", projectName: "HVXM", name: "MAC: 11:22:33:44:55:66", address: "AA:BB:CC:DD:EE:11"},
-        {id: "luna", model: "AR99", projectName: "HVXF", name: "MAC: 22:33:44:55:66:77", address: "AA:BB:CC:DD:EE:22"},
-        {id: "missing", model: "AR99", name: "AR99_123456", address: "AA:BB:CC:DD:EE:33"},
-        {id: "unsupported", model: "AR99", projectName: "AF98", name: "AF98_123456", address: "AA:BB:CC:DD:EE:44"},
+        {id: "ar99", model: "AR99", projectName: "AR99", name: "SN: 123456", address: "AA:BB:CC:DD:EE:11"},
+        {id: "af99", model: "AR99", projectName: "AF99", name: "SN: 654321", address: "AA:BB:CC:DD:EE:22"},
+        {id: "hvxf", model: "AR99", projectName: "HVXF", name: "MAC: 22:33:44:55:66:77", address: "AA:BB:CC:DD:EE:33"},
+        {id: "missing", model: "AR99", name: "AR99_123456", address: "AA:BB:CC:DD:EE:44"},
       ],
     })
 
@@ -305,13 +294,13 @@ describe("pairing scan screen", () => {
       expect(toolkit.pairing.scan).toHaveBeenCalledWith("AR99")
     })
 
-    expect(getByText("HOLOVOX Legacy")).toBeTruthy()
+    expect(getByText("Xingyi AR99")).toBeTruthy()
+    expect(queryByText("Xingyi AR99 CAT")).toBeNull()
     expect(queryByText("HOLOVOX Luna")).toBeNull()
     expect(queryByText("AR99_123456")).toBeNull()
-    expect(queryByText("AF98_123456")).toBeNull()
   })
 
-  it("does not wildcard AR99-family results when no project was selected", async () => {
+  it("does not wildcard AR99 results when no project was selected", async () => {
     ;(useLocalSearchParams as jest.Mock).mockReturnValue({deviceModel: "AR99"})
     useCoreStore.setState({
       searchResults: [

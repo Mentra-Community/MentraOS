@@ -129,7 +129,7 @@ public class Ar99 extends SGCManager {
   private static final long READY_BRIGHTNESS_DELAY_MS = 280L;
   private static final long READY_BATTERY_DELAY_MS = 420L;
   private static final long DISPLAY_SESSION_IDLE_RESTART_MS = 8_000L;
-  static final String[] SUPPORTED_PROJECT_NAMES = new String[] {"AR99", "AF99", "HVXM", "HVXF"};
+  static final String[] SUPPORTED_PROJECT_NAMES = new String[] {"AR99"};
 
   private static final int CTRL_SENDER_MASK = 0x03;
 

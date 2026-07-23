@@ -27,12 +27,7 @@ export default function DeviceInfoScreen() {
   const isAr99Family = [defaultWearable, deviceInfo.model, deviceInfo.bluetoothName].some(
     (value) => typeof value === "string" && value.toUpperCase().includes(DeviceTypes.AR99),
   )
-  const normalizedProjectName = projectName?.trim().toUpperCase()
-  const isHolovoxAr99 = normalizedProjectName === "HVXM" || normalizedProjectName === "HVXF"
-  const displayFirmwareVersion =
-    isHolovoxAr99 && deviceInfo.firmwareVersion && !deviceInfo.firmwareVersion.startsWith("HVX-FW-")
-      ? `HVX-FW-${deviceInfo.firmwareVersion}`
-      : deviceInfo.firmwareVersion
+  const displayFirmwareVersion = deviceInfo.firmwareVersion
 
   // Extract short bluetooth ID from full name (e.g., "MentraLive_664ebf" -> "664ebf")
   const bluetoothId = deviceInfo.bluetoothName?.split("_").pop() || deviceInfo.bluetoothName

@@ -9,14 +9,13 @@ public class Ar99AdvertisementMatcherTest {
   @Test
   public void supportsOnlyDocumentedProjectIdentifiers() {
     assertThat(Ar99.isSupportedProjectName("AR99")).isTrue();
-    assertThat(Ar99.isSupportedProjectName("AF99")).isTrue();
-    assertThat(Ar99.isSupportedProjectName("HVXM")).isTrue();
-    assertThat(Ar99.isSupportedProjectName("HVXF")).isTrue();
     assertThat(Ar99.isSupportedProjectName("ar99")).isTrue();
 
     assertThat(Ar99.isSupportedProjectName("AF98")).isFalse();
+    assertThat(Ar99.isSupportedProjectName("AF99")).isFalse();
+    assertThat(Ar99.isSupportedProjectName("HVXM")).isFalse();
+    assertThat(Ar99.isSupportedProjectName("HVXF")).isFalse();
     assertThat(Ar99.isSupportedProjectName("AR99X")).isFalse();
-    assertThat(Ar99.isSupportedProjectName("HVX")).isFalse();
     assertThat(Ar99.isSupportedProjectName("")).isFalse();
     assertThat(Ar99.isSupportedProjectName(null)).isFalse();
   }

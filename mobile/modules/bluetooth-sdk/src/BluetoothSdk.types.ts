@@ -5,7 +5,7 @@ export type GlassesNotReadyEvent = {
 }
 
 // NOTE: unlike most events below, the native module does NOT include a `type`
-// field on the button_press payload â€?it sends only {buttonId, pressType,
+// field on the button_press payload ï¿½?it sends only {buttonId, pressType,
 // timestamp} (see BluetoothSdkModule on both iOS and Android). Consumers must
 // filter on `pressType` / the "button_press" listener name, never `event.type`.
 export type ButtonPressEvent = {
@@ -85,7 +85,7 @@ export function createDisconnectedGlassesStatus(): Partial<GlassesStatus> {
   }
 }
 
-/** K900 `sr_getvol` response (Mentra Live glasses media step volume 0â€?5). */
+/** K900 `sr_getvol` response (Mentra Live glasses media step volume 0ï¿½?5). */
 export type GlassesMediaVolumeGetResult = {
   level: number
   statusCode: number
@@ -1016,7 +1016,7 @@ export interface BluetoothSdkPublicModule {
    * Stop the active recording. When {@link webhookUrl} is provided, the glasses
    * upload the recorded video to it (multipart) using {@link authToken}. These
    * are supplied at stop time (not start) so the token is fresh when the upload
-   * runs â€?a recording can last arbitrarily long. An empty/omitted webhook keeps
+   * runs ï¿½?a recording can last arbitrarily long. An empty/omitted webhook keeps
    * the video on device (no upload).
    */
   stopVideoRecording(
@@ -1206,7 +1206,7 @@ export interface Device {
   name: string
   /** Platform address/identifier when available: Android Bluetooth address, iOS CoreBluetooth identifier. */
   address?: string
-  /** Optional AR99-family project discriminator (e.g. AR99 / AF99 / HVXM / HVXF). */
+  /** Optional AR99 project discriminator. Supported value: AR99. */
   projectName?: string
   /**
    * Optional scan signal strength. It may be undefined at first discovery and
@@ -1238,7 +1238,7 @@ export interface WifiSearchResult {
   ssid: string
   requiresPassword: boolean
   signalStrength: number
-  /** Frequency in MHz (from glasses scan). 5 GHz band is typically 5170â€?825. Omitted if unknown. */
+  /** Frequency in MHz (from glasses scan). 5 GHz band is typically 5170ï¿½?825. Omitted if unknown. */
   frequency?: number
 }
 
@@ -1313,9 +1313,3 @@ export type BluetoothSettingsUpdate = Partial<{
   controller_device_name: string
   controller_address: string
 }>
-
-
-
-
-
-

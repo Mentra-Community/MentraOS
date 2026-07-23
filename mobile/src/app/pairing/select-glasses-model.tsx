@@ -16,7 +16,6 @@ import {AR99_MODEL_OPTIONS, type Ar99ProjectName, getGlassesImage} from "@/utils
 import GlassView from "@/components/ui/GlassView"
 
 const AR99_LOGO = require("../../../assets/logo/ar99_logo.png")
-const HOLOVOX_LOGO = require("../../../assets/logo/holovox_log.png")
 
 type GlassesOption = {
   key: string
@@ -34,11 +33,8 @@ export default function SelectGlassesModelScreen() {
 
   const getTitleLogoSource = (option: GlassesOption) => {
     const normalizedProjectName = option.projectName?.trim().toUpperCase()
-    if (normalizedProjectName === "AR99" || normalizedProjectName === "AF99") {
+    if (normalizedProjectName === "AR99") {
       return AR99_LOGO
-    }
-    if (normalizedProjectName === "HVXM" || normalizedProjectName === "HVXF") {
-      return HOLOVOX_LOGO
     }
     return null
   }
@@ -149,4 +145,3 @@ export default function SelectGlassesModelScreen() {
     </Screen>
   )
 }
-
