@@ -458,6 +458,32 @@ describe("GallerySyncService", () => {
     })
   })
 
+  it("passes the downloaded thumbnail to capture-aware media processing", async () => {
+    const capture = {
+      capture_id: "VID_with_thumbnail",
+      type: "video" as const,
+      timestamp: 1_000,
+      total_size: 100,
+      files: [{name: "VID_with_thumbnail/base.mp4", size: 100, role: "primary" as const}],
+    }
+    ;(asgCameraApi.downloadCapture as jest.Mock).mockResolvedValue({
+      primaryPath: "/tmp/VID_with_thumbnail/base.mp4",
+      bracketPaths: [],
+      sidecarPath: undefined,
+      captureDir: "/tmp/VID_with_thumbnail",
+      thumbnailPath: "/tmp/VID_with_thumbnail/.thumb.jpg",
+    })
+
+    await (gallerySyncService as any).executeCaptureDownload([capture], 2_000)
+
+    expect(mediaProcessingQueue.enqueue).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: capture.capture_id,
+        thumbnailPath: "/tmp/VID_with_thumbnail/.thumb.jpg",
+      }),
+    )
+  })
+
   it("holds back the legacy watermark when processing fails after download", async () => {
     const serverTime = 1_700_000_000_000
     const failedTimestamp = serverTime - 20_000
