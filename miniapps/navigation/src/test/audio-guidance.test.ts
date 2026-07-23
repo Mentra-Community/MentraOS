@@ -191,6 +191,96 @@ describe("AudioGuidanceManager", () => {
     expect(spoken).toEqual(["You are off route. Go back to the route.", "Turn left onto Market Street now."])
   })
 
+  test("startup grace resumes maneuver guidance when an off-route fix stabilizes", async () => {
+    jest.useFakeTimers({now: 100_000})
+    const {manager, spoken} = createHarness()
+    manager.setMode("essential")
+    manager.beginTrip()
+    manager.confirmTripStarted("Blue Bottle")
+    await settleSpeech()
+
+    manager.observe(input({distanceMeters: 9, offRoute: true}))
+    await settleSpeech()
+
+    expect(spoken).toEqual(["Navigation started to Blue Bottle."])
+
+    manager.observe(input({distanceMeters: 9, offRoute: false}))
+    await settleSpeech()
+
+    expect(spoken).toEqual(["Navigation started to Blue Bottle.", "Turn left onto Market Street now."])
+  })
+
+  test("startup off-route warning becomes eligible if the condition outlasts the grace period", async () => {
+    jest.useFakeTimers({now: 100_000})
+    const {manager, spoken} = createHarness()
+    manager.setMode("essential")
+    manager.beginTrip()
+    manager.confirmTripStarted("Blue Bottle")
+    await settleSpeech()
+
+    manager.observe(input({distanceMeters: 9, offRoute: true}))
+    await settleSpeech()
+    jest.advanceTimersByTime(15_000)
+    manager.observe(input({distanceMeters: 7, offRoute: true}))
+    await settleSpeech()
+
+    expect(spoken).toEqual(["Navigation started to Blue Bottle.", "You are off route. Go back to the route."])
+  })
+
+  test("startup reroute becomes eligible if it is still active after the grace period", async () => {
+    jest.useFakeTimers({now: 100_000})
+    const {manager, spoken} = createHarness()
+    manager.setMode("essential")
+    manager.beginTrip()
+    manager.confirmTripStarted("Blue Bottle")
+    await settleSpeech()
+
+    manager.observe(input({status: "rerouting", maneuverType: null, instruction: null, distanceMeters: null}))
+    await settleSpeech()
+    jest.advanceTimersByTime(14_999)
+    manager.observe(input({status: "rerouting", maneuverType: null, instruction: null, distanceMeters: null}))
+    await settleSpeech()
+
+    expect(spoken).toEqual(["Navigation started to Blue Bottle."])
+
+    jest.advanceTimersByTime(1)
+    manager.observe(input({status: "rerouting", maneuverType: null, instruction: null, distanceMeters: null}))
+    await settleSpeech()
+    manager.observe(input({status: "rerouting", maneuverType: null, instruction: null, distanceMeters: null}))
+    await settleSpeech()
+
+    expect(spoken).toEqual(["Navigation started to Blue Bottle.", "Off route. Rerouting."])
+  })
+
+  test("a suppressed startup reroute cancels stale maneuver speech", async () => {
+    jest.useFakeTimers({now: 100_000})
+    const spoken: string[] = []
+    let stops = 0
+    const manager = new AudioGuidanceManager({
+      speak: (text) => {
+        spoken.push(text)
+        if (text.startsWith("Turn left")) return new Promise(() => {})
+        return Promise.resolve({completed: true})
+      },
+      stop: () => {
+        stops += 1
+      },
+    })
+    manager.setAvailable(true)
+    manager.setMode("essential")
+    manager.beginTrip()
+    manager.confirmTripStarted("Blue Bottle")
+    await settleSpeech()
+    manager.observe(input({distanceMeters: 9}))
+    await settleSpeech()
+
+    manager.observe(input({status: "rerouting", maneuverType: null, instruction: null, distanceMeters: null}))
+    await settleSpeech()
+
+    expect(spoken).toEqual(["Navigation started to Blue Bottle.", "Turn left onto Market Street now."])
+    expect(stops).toBe(1)
+  })
+
   test("late navigation updates cannot revive guidance after stop or arrival", async () => {
     const stopped = createHarness()
     stopped.manager.setMode("essential")
@@ -243,11 +333,13 @@ describe("AudioGuidanceManager", () => {
   })
 
   test("rerouting and arrival are each announced once", async () => {
+    jest.useFakeTimers({now: 100_000})
     const {manager, spoken} = createHarness()
     manager.setMode("essential")
     manager.beginTrip()
     manager.confirmTripStarted("Blue Bottle")
     await settleSpeech()
+    jest.advanceTimersByTime(15_000)
 
     manager.observe(input({status: "rerouting", maneuverType: null, instruction: null, distanceMeters: null}))
     await settleSpeech()

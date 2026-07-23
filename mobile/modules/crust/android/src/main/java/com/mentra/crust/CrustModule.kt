@@ -152,12 +152,18 @@ class CrustModule : Module() {
 
     // MARK: - MentraOS Notification Commands
 
-    AsyncFunction("setNotificationConfig") { enabled: Boolean, blocklist: List<String> ->
+    AsyncFunction("setNotificationConfig") {
+      listenerEnabled: Boolean, notificationsEnabled: Boolean, blocklist: List<String> ->
       val context =
               appContext.reactContext
                       ?: appContext.currentActivity
                               ?: throw IllegalStateException("No context available")
-      NotificationListener.getInstance(context).setNotificationConfig(enabled, blocklist)
+      NotificationListener.setNotificationConfig(
+        context,
+        listenerEnabled,
+        notificationsEnabled,
+        blocklist,
+      )
     }
 
     AsyncFunction("getInstalledApps") {

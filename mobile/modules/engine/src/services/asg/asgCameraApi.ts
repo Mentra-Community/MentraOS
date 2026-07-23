@@ -1071,7 +1071,13 @@ export class AsgCameraApiClient {
     capture: CaptureGroup,
     onProgress?: (bytesDownloaded: number, totalBytes: number) => void,
     abortSignal?: AbortSignal,
-  ): Promise<{captureDir: string; primaryPath: string; bracketPaths: string[]; sidecarPath?: string}> {
+  ): Promise<{
+    captureDir: string
+    primaryPath: string
+    bracketPaths: string[]
+    sidecarPath?: string
+    thumbnailPath?: string
+  }> {
     if (capture.files.some((file) => !file.size || file.size <= 0)) {
       // Preserve support for malformed manifests from pre-v2 development firmware.
       return this.downloadCaptureLegacyUnsafe(capture, onProgress, abortSignal)
@@ -1136,9 +1142,14 @@ export class AsgCameraApiClient {
         const leafName = sortedFiles[0].name.includes("/") ? sortedFiles[0].name.split("/").pop()! : sortedFiles[0].name
         primaryPath = `${captureDir}/${leafName}`
       }
+      const primaryFile = sortedFiles.find((file) => file.role === "primary") || sortedFiles[0]
+      const thumbnailPath =
+        capture.type === "video" && primaryFile
+          ? await this.downloadVideoThumbnail(primaryFile.name, `${captureDir}/.thumb.jpg`, abortSignal)
+          : undefined
       galleryTransferLedger.transition(capture.capture_id, "VERIFIED")
       onProgress?.(capture.total_size, capture.total_size)
-      return {captureDir, primaryPath, bracketPaths, sidecarPath}
+      return {captureDir, primaryPath, bracketPaths, sidecarPath, thumbnailPath}
     } catch (error) {
       galleryTransferLedger.recordFailure(capture.capture_id, error)
       throw error
@@ -1150,7 +1161,13 @@ export class AsgCameraApiClient {
     capture: CaptureGroup,
     onProgress?: (bytesDownloaded: number, totalBytes: number) => void,
     abortSignal?: AbortSignal,
-  ): Promise<{captureDir: string; primaryPath: string; bracketPaths: string[]; sidecarPath?: string}> {
+  ): Promise<{
+    captureDir: string
+    primaryPath: string
+    bracketPaths: string[]
+    sidecarPath?: string
+    thumbnailPath?: string
+  }> {
     const captureDir = localStorageService.getPhotoFilePath(capture.capture_id)
     console.log(
       `[ASG Camera API] downloadCapture: ${capture.capture_id} (${capture.files.length} files) -> ${captureDir}`,
@@ -1300,7 +1317,76 @@ export class AsgCameraApiClient {
       onProgress(totalBytes, totalBytes)
     }
 
-    return {captureDir, primaryPath, bracketPaths, sidecarPath}
+    const primaryFile = sortedFiles.find((file) => file.role === "primary") || sortedFiles[0]
+    const thumbnailPath =
+      capture.type === "video" && primaryFile
+        ? await this.downloadVideoThumbnail(primaryFile.name, `${captureDir}/.thumb.jpg`, abortSignal)
+        : undefined
+
+    return {captureDir, primaryPath, bracketPaths, sidecarPath, thumbnailPath}
+  }
+
+  /** Download an on-demand video thumbnail while the source capture is still on the glasses. */
+  private async downloadVideoThumbnail(
+    sourceFileName: string,
+    thumbnailPath: string,
+    abortSignal?: AbortSignal,
+  ): Promise<string | undefined> {
+    const partialPath = `${thumbnailPath}.partial`
+    const parentDir = thumbnailPath.substring(0, thumbnailPath.lastIndexOf("/"))
+
+    try {
+      if (parentDir && !(await RNFS.exists(parentDir))) {
+        await RNFS.mkdir(parentDir)
+      }
+      await RNFS.unlink(partialPath).catch(() => {})
+      const {jobId, promise} = localNetworkTransport.downloadFile({
+        fromUrl: `${this.baseUrl}/api/photo?file=${encodeURIComponent(sourceFileName)}`,
+        toFile: partialPath,
+        headers: {
+          "Accept": "image/jpeg",
+          "User-Agent": "MentraOS-Mobile/1.0",
+        },
+        connectionTimeout: 60000,
+        readTimeout: 60000,
+        progressDivider: 10,
+      })
+
+      let abortPollTimer: number | undefined
+      if (abortSignal) {
+        if (abortSignal.aborted) {
+          localNetworkTransport.stopDownload(jobId)
+          throw new Error("Sync cancelled")
+        }
+        abortPollTimer = BgTimer.setInterval(() => {
+          if (abortSignal.aborted) localNetworkTransport.stopDownload(jobId)
+        }, 500)
+      }
+
+      let result
+      try {
+        result = await promise
+      } finally {
+        if (abortPollTimer !== undefined) BgTimer.clearInterval(abortPollTimer)
+      }
+
+      if (abortSignal?.aborted) throw new Error("Sync cancelled")
+      if (result.statusCode !== 200 || result.bytesWritten <= 0) {
+        throw new Error(`HTTP ${result.statusCode}, ${result.bytesWritten} bytes`)
+      }
+
+      await RNFS.unlink(thumbnailPath).catch(() => {})
+      await RNFS.moveFile(partialPath, thumbnailPath)
+      console.log(`[ASG Camera API] Downloaded video thumbnail for ${sourceFileName}`)
+      return thumbnailPath
+    } catch (error) {
+      await RNFS.unlink(partialPath).catch(() => {})
+      if (abortSignal?.aborted || (error instanceof Error && error.message === "Sync cancelled")) {
+        throw new Error("Sync cancelled")
+      }
+      console.warn(`[ASG Camera API] Failed to download video thumbnail for ${sourceFileName}:`, error)
+      return undefined
+    }
   }
 
   /**
@@ -1421,15 +1507,20 @@ export class AsgCameraApiClient {
         mediaKind: isVideo ? "video" : "photo",
       })
       galleryTransferLedger.transition(captureId, "VERIFIED")
+      const thumbnailPath =
+        includeThumbnail && isVideo
+          ? await this.downloadVideoThumbnail(filename, localStorageService.getThumbnailFilePath(filename), abortSignal)
+          : undefined
       return {
         filePath: localFilePath,
+        thumbnailPath,
         mime_type: isVideo
           ? "video/mp4"
           : lowerName.endsWith(".png")
-          ? "image/png"
-          : lowerName.endsWith(".avif")
-          ? "image/avif"
-          : "image/jpeg",
+            ? "image/png"
+            : lowerName.endsWith(".avif")
+              ? "image/avif"
+              : "image/jpeg",
       }
     } catch (error) {
       galleryTransferLedger.recordFailure(captureId, error)

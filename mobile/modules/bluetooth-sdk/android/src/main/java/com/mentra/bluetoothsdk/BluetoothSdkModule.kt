@@ -2,6 +2,8 @@
 
 package com.mentra.bluetoothsdk
 
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleOwner
 import com.mentra.bluetoothsdk.debug.BleTraceLogger
 import com.mentra.bluetoothsdk.utils.DeviceTypes
 import com.mentra.bluetoothsdk.utils.audio.PcmStreamManager
@@ -393,6 +395,21 @@ class BluetoothSdkModule : Module() {
                             sdkListener,
                     )
             deviceManager = DeviceManager.getInstance()
+            val activity = appContext.currentActivity
+            val activityIsResumed =
+                    (activity as? LifecycleOwner)
+                            ?.lifecycle
+                            ?.currentState
+                            ?.isAtLeast(Lifecycle.State.RESUMED) == true
+            if (activityIsResumed) {
+                deviceManager?.refreshForegroundServiceTypes()
+            }
+        }
+
+        OnActivityEntersForeground {
+            // Re-run after runtime permission dialogs and every app resume. This is the safe
+            // point to add Android's while-in-use location foreground-service type.
+            deviceManager?.refreshForegroundServiceTypes()
         }
 
         OnDestroy {

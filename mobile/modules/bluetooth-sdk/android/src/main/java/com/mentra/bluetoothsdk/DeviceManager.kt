@@ -583,6 +583,36 @@ class DeviceManager {
         }
     }
 
+    /**
+     * Re-evaluate the active foreground-service types while the host Activity is visible.
+     *
+     * Location is a while-in-use permission, so Android 14+ only allows the service to add
+     * the location type from the foreground. Sending a command to the existing service
+     * updates its type mask without tearing down the glasses connection.
+     */
+    fun refreshForegroundServiceTypes() {
+        val context = Bridge.getContext()
+
+        try {
+            Bridge.log("MAN: Refreshing foreground service types")
+            val serviceIntent =
+                Intent(context, ForegroundService::class.java).apply {
+                    action = ForegroundService.ACTION_REFRESH_TYPES
+                }
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(serviceIntent)
+            } else {
+                context.startService(serviceIntent)
+            }
+
+            serviceStarted = true
+            Bridge.log("MAN: Foreground service types refreshed")
+        } catch (e: Exception) {
+            Bridge.log("MAN: Failed to refresh foreground service types: ${e.message}")
+        }
+    }
+
     private fun restartForegroundService() {
         val context = Bridge.getContext()
 
