@@ -23,8 +23,6 @@ export default function OtaProgressScreen() {
   const {replace, push} = useNavigationStore.getState()
   const [superMode] = useSetting(SETTINGS.super_mode.key)
   const install = useEngineSnapshot(engine.ota.installSession.snapshot, engine.ota.installSession.onSnapshot)
-  const otaSnapshot = useEngineSnapshot(engine.ota.snapshot, engine.ota.onSnapshot)
-  const isDowngrade = otaSnapshot.updateAvailable?.isDowngrade === true
   const {
     displayState,
     errorMsg,
@@ -33,11 +31,14 @@ export default function OtaProgressScreen() {
     otaStatus,
     otaProgress,
     mtkInstallStallSimulatedPercent,
+    isVersionChange,
+    versionChangePhase,
   } = install
 
   focusEffectPreventBack()
 
-  const isFirmwareCompleting = !connected && displayState === "restarting"
+  const isFirmwareCompleting =
+    (!connected && displayState === "restarting") || versionChangePhase === "restarting"
 
   const {setConfig, clearConfig} = useConnectionOverlayConfig()
   useEffect(() => {
@@ -87,6 +88,29 @@ export default function OtaProgressScreen() {
   }, [replace])
 
   const renderContent = () => {
+    // Downgrade detour: the recovery worker owns the transaction while ASG is being
+    // replaced, so no progress events arrive during this window. Narrate the stages
+    // and set duration expectations instead of showing a dead progress bar. Completion
+    // (displayState === "complete") falls through to the shared complete branch below.
+    if (versionChangePhase === "restarting" || versionChangePhase === "verifying") {
+      return (
+        <View className="flex-1 items-center justify-center px-6">
+          <Icon name="world-download" size={64} color={theme.colors.primary} />
+          <View className="h-6" />
+          <Text
+            tx={versionChangePhase === "verifying" ? "ota:versionChangeVerifying" : "ota:versionChangeRestarting"}
+            className="font-semibold text-xl text-center"
+          />
+          <View className="h-4" />
+          <ActivityIndicator size="large" color={theme.colors.foreground} />
+          <View className="h-4" />
+          <Text tx="ota:versionChangeKeepNearby" className="text-sm text-center" style={{color: theme.colors.textDim}} />
+          <View className="h-2" />
+          <Text tx="ota:downgradeDuration" className="text-sm text-center" style={{color: theme.colors.textDim}} />
+        </View>
+      )
+    }
+
     if (displayState === "starting") {
       return (
         <View className="flex-1 items-center justify-center px-6">
@@ -153,7 +177,7 @@ export default function OtaProgressScreen() {
             className="text-sm text-center"
             style={{color: theme.colors.textDim}}
           />
-          {isDowngrade && otaStatus?.phase === "install" && (
+          {isVersionChange && otaStatus?.phase === "install" && (
             <>
               <View className="h-2" />
               <Text tx="ota:downgradeDuration" className="text-sm text-center" style={{color: theme.colors.textDim}} />
@@ -190,10 +214,15 @@ export default function OtaProgressScreen() {
           <View className="flex-1 items-center justify-center px-6">
             <Icon name="check" size={64} color={theme.colors.primary} />
             <View className="h-6" />
-            <Text text="Update complete!" className="font-semibold text-xl text-center" />
+            <Text
+              tx={isVersionChange ? "ota:versionChangeComplete" : undefined}
+              text={isVersionChange ? undefined : "Update complete!"}
+              className="font-semibold text-xl text-center"
+            />
             <View className="h-2" />
             <Text
-              text="Your glasses are up to date."
+              tx={isVersionChange ? "ota:versionChangeCompleteMessage" : undefined}
+              text={isVersionChange ? undefined : "Your glasses are up to date."}
               className="text-sm text-center"
               style={{color: theme.colors.textDim}}
             />

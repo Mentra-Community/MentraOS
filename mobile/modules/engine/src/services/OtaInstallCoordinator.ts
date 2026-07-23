@@ -134,6 +134,15 @@ export interface OtaInstallSnapshot {
    * +1% ticks up to 60% purely to reassure the user. Render max(real, simulated).
    */
   mtkInstallStallSimulatedPercent: number | null
+  /** True for a downgrade (version-change) session — the UI narrates it differently. */
+  isVersionChange: boolean
+  /**
+   * Sub-phase of the downgrade detour for the progress narrative, or null when not
+   * in one: "installing" before the handoff, "restarting" while the glasses are dark
+   * (uninstall / factory flicker / target install), "verifying" once reconnected and
+   * checking the version. Completion is the "complete" displayState.
+   */
+  versionChangePhase: "installing" | "restarting" | "verifying" | null
 }
 
 class OtaInstallCoordinator {
@@ -157,6 +166,19 @@ class OtaInstallCoordinator {
   private apkExpectedInSession = false
   // Latched when the legacy build-number completion fires; projected as "complete".
   private apkCompletedViaBuildIncrease = false
+
+  // Downgrade detour (version-change mode). Captured at attach from the selected
+  // update: the pinned target is a LOWER build, executed by the recovery worker via
+  // uninstall->reinstall, so the phone must NOT drive ota_start on the intermediate
+  // reconnect (the passive factory build) and completion is exact-version
+  // convergence, not a build-number increase.
+  private versionChangeSession = false
+  private versionChangeTarget: number | null = null
+  // Set once ASG reports the apk install has started (the handoff point after which
+  // ASG dies and the recovery worker owns the transaction).
+  private versionChangeInstallStarted = false
+  // Latched when a reconnect reports buildNumber === versionChangeTarget.
+  private versionChangeConverged = false
   // Holds a legacy apk install FINISHED out of "complete" for the settle window.
   private legacyApkSettleHold = false
   // Display-only legacy MTK install stall simulation.
@@ -218,6 +240,12 @@ class OtaInstallCoordinator {
     if (this.attached) return
     this.attached = true
     this.resetSessionState()
+    const selected = useGlassesStore.getState().otaUpdateAvailable
+    if (selected?.isDowngrade && typeof selected.versionCode === "number" && selected.versionCode > 0) {
+      this.versionChangeSession = true
+      this.versionChangeTarget = selected.versionCode
+      console.log(`[OTA_PROGRESS] version-change (downgrade) session, target=${selected.versionCode}`)
+    }
     this.prevConnected = isGlassesConnected(useGlassesStore.getState().connection)
     this.storeUnsubscribe = useGlassesStore.subscribe(() => this.react())
     // Mount pass: every reaction block runs once (like all effects on mount),
@@ -325,6 +353,7 @@ class OtaInstallCoordinator {
         sawReconnectEdge: this.sawReconnectEdge,
         legacyApkSettleHold: this.legacyApkSettleHold,
         apkCompletedViaBuildIncrease: this.apkCompletedViaBuildIncrease,
+        versionChangeConverged: this.versionChangeConverged,
       }),
       errorMsg: this.errorMsg,
       continueButtonDisabled: this.continueButtonDisabled,
@@ -333,7 +362,16 @@ class OtaInstallCoordinator {
       otaStatus: otaStatus ? {...otaStatus} : null,
       otaProgress: otaProgress ? {...otaProgress} : null,
       mtkInstallStallSimulatedPercent: this.mtkSimulatedPercent,
+      isVersionChange: this.versionChangeSession,
+      versionChangePhase: this.deriveVersionChangePhase(connected),
     }
+  }
+
+  /** Downgrade-detour sub-phase for the progress narrative (see OtaInstallSnapshot). */
+  private deriveVersionChangePhase(connected: boolean): "installing" | "restarting" | "verifying" | null {
+    if (!this.versionChangeSession || this.versionChangeConverged) return null
+    if (!this.versionChangeInstallStarted) return "installing"
+    return connected ? "verifying" : "restarting"
   }
 
   /**
@@ -369,6 +407,10 @@ class OtaInstallCoordinator {
     this.initialBuildNumber = null
     this.apkExpectedInSession = false
     this.apkCompletedViaBuildIncrease = false
+    this.versionChangeSession = false
+    this.versionChangeTarget = null
+    this.versionChangeInstallStarted = false
+    this.versionChangeConverged = false
     this.legacyApkSettleHold = false
     this.mtkSimulatedPercent = null
     this.lastRealMtkProgress = 0
@@ -510,6 +552,7 @@ class OtaInstallCoordinator {
       sawReconnectEdge: this.sawReconnectEdge,
       legacyApkSettleHold: this.legacyApkSettleHold,
       apkCompletedViaBuildIncrease: this.apkCompletedViaBuildIncrease,
+      versionChangeConverged: this.versionChangeConverged,
     })
     const stallSig = buildProgressStalenessSignature(otaStatus, otaProgress, displayState)
     const stallDuration = progressTimeoutDurationMs(otaStatus, otaProgress, legacySession)
@@ -573,6 +616,44 @@ class OtaInstallCoordinator {
     ) {
       console.log("[OTA_PROGRESS] legacy mtk install complete — marking MTK updated this session")
       useGlassesStore.getState().setMtkUpdatedThisSession(true)
+    }
+
+    // Version-change (downgrade) install started: once ASG reports the apk install
+    // phase, the handoff to the recovery worker has happened. From here the phone
+    // stops driving ota_start (see runConnectEdge) and waits for exact-version
+    // convergence — the wipe means no resumable ASG session and no build increase.
+    if (
+      this.versionChangeSession &&
+      !this.versionChangeInstallStarted &&
+      otaStatus?.stepType === "apk" &&
+      otaStatus.phase === "install"
+    ) {
+      console.log("[OTA_PROGRESS] version-change: apk install started — entering detour wait")
+      this.versionChangeInstallStarted = true
+      this.emitInternalChange()
+    }
+
+    // Version-change convergence: the reconnected glasses report exactly the pinned
+    // target. This is the ONLY completion signal for a downgrade (lower build, no
+    // increase, wiped session). Mirrors the legacy build-increase latch but by equality.
+    if (
+      this.versionChangeSession &&
+      this.versionChangeInstallStarted &&
+      !this.versionChangeConverged &&
+      this.versionChangeTarget !== null &&
+      buildNumberChanged &&
+      buildNumber
+    ) {
+      const currentBuild = Number.parseInt(buildNumber, 10)
+      if (Number.isFinite(currentBuild) && currentBuild === this.versionChangeTarget) {
+        console.log(`[OTA_PROGRESS] version-change converged: glasses report target ${currentBuild}, completing`)
+        this.clearPerStepTimers()
+        this.clearGlobalTimeout()
+        this.apkStepSeen = true
+        this.setErrorMsg("")
+        this.versionChangeConverged = true
+        this.emitInternalChange()
+      }
     }
 
     // Legacy APK completion by build-number increase (WP 8C-c): old builds reboot into
@@ -749,6 +830,16 @@ class OtaInstallCoordinator {
     // query/fallback; the settle timer (or the build-number increase) completes.
     if (becameConnected && this.legacyApkSettleHold) {
       console.log("[OTA_PROGRESS] connect-edge: reconnect during legacy apk settle hold — no query")
+      return
+    }
+
+    // Version-change detour: after the install started, EVERY reconnect is expected
+    // (the passive factory build, then the target). Do NOT send ota_start/query — the
+    // factory build would treat the pin as a plain upgrade and start a redundant
+    // download racing the recovery worker. Convergence (buildNumber === target) is
+    // detected in the reaction pass; here we simply take no action.
+    if (this.versionChangeSession && this.versionChangeInstallStarted && !this.versionChangeConverged) {
+      console.log("[OTA_PROGRESS] connect-edge: reconnect during version-change detour — no query (expected)")
       return
     }
 
@@ -939,6 +1030,7 @@ class OtaInstallCoordinator {
       sawReconnectEdge: this.sawReconnectEdge,
       legacyApkSettleHold: this.legacyApkSettleHold,
       apkCompletedViaBuildIncrease: this.apkCompletedViaBuildIncrease,
+      versionChangeConverged: this.versionChangeConverged,
     })
   }
 
@@ -1002,7 +1094,10 @@ class OtaInstallCoordinator {
     // Legacy-shape check happens once, when the session cap is armed at the first
     // ota_start send (WP 8C-b): old builds get the padded legacy cap for the whole
     // session; a session that starts unified keeps the unified cap.
-    const globalTimeoutMs = this.isLegacySessionShapeNow() ? LEGACY_GLOBAL_OTA_TIMEOUT_MS : GLOBAL_OTA_TIMEOUT_MS
+    const globalTimeoutMs =
+      this.versionChangeSession || this.isLegacySessionShapeNow()
+        ? LEGACY_GLOBAL_OTA_TIMEOUT_MS
+        : GLOBAL_OTA_TIMEOUT_MS
     this.globalTimeout = setTimeout(() => {
       this.globalTimeout = null
       this.globalTimeoutStarted = false

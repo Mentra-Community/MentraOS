@@ -42,11 +42,27 @@ export function deriveDisplayState(args: {
   legacyApkSettleHold?: boolean
   /** Legacy APK completion detected by build-number increase (WP 8C). */
   apkCompletedViaBuildIncrease?: boolean
+  /** Downgrade detour: the reconnected glasses reported exactly the pinned target version. */
+  versionChangeConverged?: boolean
 }): DisplayState {
-  const {otaStatus, otaProgress, connected, errorMsg, sawReconnectEdge, legacyApkSettleHold, apkCompletedViaBuildIncrease} =
-    args
+  const {
+    otaStatus,
+    otaProgress,
+    connected,
+    errorMsg,
+    sawReconnectEdge,
+    legacyApkSettleHold,
+    apkCompletedViaBuildIncrease,
+    versionChangeConverged,
+  } = args
 
   if (errorMsg) return "failed"
+
+  // Downgrade detour completion: exact-version convergence after reconnect is the
+  // only completion signal (the wipe destroys ASG's ota_session, and the target is
+  // a LOWER build so no build-number increase fires). Outranks the stale install
+  // status still sitting in the store from before the handoff.
+  if (versionChangeConverged) return "complete"
 
   const besTerminal = isBesTerminal(otaStatus, otaProgress)
   if (besTerminal && connected && sawReconnectEdge) return "complete"
