@@ -230,7 +230,11 @@ class LocalDisplayManager {
       const preBoot = this.bootingApp.preBoot
       this.cancelBoot()
       if (this.currentDisplay?.packageName === SYSTEM_BOOT_PKG) {
-        if (preBoot && (preBoot.expiresAt === null || preBoot.expiresAt > this.now())) {
+        // The preBoot owner may have forfeited its frame during the boot
+        // window (a clear parked in the boot queue) — don't resurrect it.
+        const ownerQueued = preBoot ? this.bootQueue.get(preBoot.packageName) : undefined
+        const preBootForfeited = ownerQueued !== undefined && isClearPayload(ownerQueued.payload)
+        if (preBoot && !preBootForfeited && (preBoot.expiresAt === null || preBoot.expiresAt > this.now())) {
           this.restoreDisplay(preBoot)
         } else {
           this.sendClear()
@@ -248,10 +252,17 @@ class LocalDisplayManager {
       this.backgroundLock = null
     }
 
-    // Clear saved core app display if the core is going away.
+    // Drop the saved core frame if the core's context is going away — the
+    // frame belongs to a dead context and must not be restored later. The
+    // coreApp POINTER itself is NOT cleared here: it is derived state owned
+    // by the apps-store reconciler. A liveness/crash respawn tears the
+    // context down (this path) without any store change — the app is still
+    // "running" — and clearing the pointer here would leave the respawned
+    // foreground app arbitrating as background until an unrelated store
+    // write happened to re-run the reconciler. Real stops release the slot
+    // via the store (running → false → reconciler → onCoreAppChange(null)).
     if (this.coreApp === packageName) {
       this.coreAppDisplay = null
-      this.coreApp = null
     }
 
     // If this app owned the current on-glasses display, clear it (and maybe
@@ -615,10 +626,15 @@ class LocalDisplayManager {
     // If the boot text is still on the glasses — nothing was queued, or every
     // drained request lost arbitration — it must not strand: it's a system
     // frame with no expiry. Restore whatever was on the glasses before the
-    // boot (only if still valid — a frame whose duration elapsed during the
-    // boot window should clear, not come back), else clear.
+    // boot, else clear. Two reasons NOT to restore: the frame's duration
+    // elapsed during the boot window, or its owner FORFEITED it during the
+    // window (its final queued intent — the queue keeps last-wins per app —
+    // was a clear, which the drain above processed as a forfeit; restoring
+    // would resurrect content the clear removed).
     if (this.currentDisplay?.packageName === SYSTEM_BOOT_PKG) {
-      if (preBoot && (preBoot.expiresAt === null || preBoot.expiresAt > this.now())) {
+      const ownerEntry = preBoot ? queued.find(([pkg]) => pkg === preBoot.packageName) : undefined
+      const preBootForfeited = ownerEntry !== undefined && isClearPayload(ownerEntry[1].payload)
+      if (preBoot && !preBootForfeited && (preBoot.expiresAt === null || preBoot.expiresAt > this.now())) {
         this.restoreDisplay(preBoot)
       } else {
         this.sendClear()

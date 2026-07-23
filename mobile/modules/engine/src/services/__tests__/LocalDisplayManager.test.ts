@@ -498,6 +498,51 @@ describe("LocalDisplayManager", () => {
       expect(lastText()).toBe("core content")
     })
 
+    test("a context teardown (respawn) does not release the core claim", () => {
+      // The coreApp pointer is derived from the apps store; a liveness/crash
+      // respawn tears the context down with NO store change (the app is
+      // still "running"), so the claim must survive the unmount. Only the
+      // saved frame is dropped (it belongs to the dead context).
+      mgr.onCoreAppChange("com.app.core")
+      mgr.request("com.app.core", {layout: {layoutType: "text_wall", text: "core content"}, durationMs: 10_000})
+
+      mgr.onUnmount("com.app.core")
+      expect(mgr._peekForTest().coreApp).toBe("com.app.core")
+
+      // The respawned context's first render must arbitrate as CORE: a bg
+      // overlay that then expires restores it.
+      mgr.onMount("com.app.core", "Core")
+      advance(1500)
+      mgr.request("com.app.core", {layout: {layoutType: "text_wall", text: "respawned"}, durationMs: 10_000})
+      mgr.request("com.app.bg", {layout: {layoutType: "text_wall", text: "bg overlay"}, durationMs: 1000})
+      advance(1000)
+      expect(lastText()).toBe("respawned")
+    })
+
+    test("a clear queued during boot forfeits the pre-boot frame (no resurrection)", () => {
+      mgr.onCoreAppChange("com.app.core")
+      mgr.request("com.app.core", {layout: {layoutType: "text_wall", text: "core content"}})
+
+      // An app boots; while its "Starting…" is up, the core CLEARS. The clear
+      // parks in the boot queue; endBoot must not restore the forfeited frame.
+      mgr.onMount("com.app.b", "B")
+      mgr.request("com.app.core", {layout: {layoutType: "clear_view"}})
+      advance(1500)
+
+      expect(lastLayoutType()).toBe("clear_view")
+    })
+
+    test("a clear queued during boot also blocks the unmount-mid-boot restore", () => {
+      mgr.onCoreAppChange("com.app.core")
+      mgr.request("com.app.core", {layout: {layoutType: "text_wall", text: "core content"}})
+
+      mgr.onMount("com.app.b", "B")
+      mgr.request("com.app.core", {layout: {layoutType: "clear_view"}})
+      mgr.onUnmount("com.app.b")
+
+      expect(lastLayoutType()).toBe("clear_view")
+    })
+
     test("the core app's own clear forgets its snapshot so it cannot resurrect", () => {
       mgr.onCoreAppChange("com.app.core")
       mgr.request("com.app.core", {layout: {layoutType: "text_wall", text: "core content"}})
