@@ -622,6 +622,7 @@ jobs:
       reuse: ${{ steps.asg-reuse.outputs.reuse }}
       apk_url: ${{ steps.asg-reuse.outputs.apk_url }}
       tree_hash: ${{ steps.asg-reuse.outputs.tree_hash }}
+      spl_sha: ${{ steps.asg-reuse.outputs.spl_sha }}
 
     steps:
       - name: Get cache week number
@@ -674,6 +675,9 @@ jobs:
           fi
           TREE_HASH=$(printf '%s\n%s\n' "$asg_tree" "$spl_sha" | sha256sum | awk '{print $1}')
           echo "tree_hash=${TREE_HASH}" >> "$GITHUB_OUTPUT"
+          # Export the exact SHA that entered the hash so the clone step builds from it (not a
+          # later 'working' tip), keeping the recorded key and the built input atomic.
+          echo "spl_sha=${spl_sha}" >> "$GITHUB_OUTPUT"
           echo "reuse=false" >> "$GITHUB_OUTPUT"
 
           MANIFEST_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/staging-builds/staging_live_version.json"
@@ -760,7 +764,8 @@ jobs:
         run: |
           git clone https://github.com/Mentra-Community/StreamPackLite.git
           cd StreamPackLite
-          git checkout working
+          # Build from the exact SHA that entered the reuse hash, not a later 'working' tip.
+          git checkout "${{ steps.asg-reuse.outputs.spl_sha }}"
 
       - name: Cache Gradle dependencies
         if: steps.asg-reuse.outputs.reuse != 'true'
