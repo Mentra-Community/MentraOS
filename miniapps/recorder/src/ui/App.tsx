@@ -62,6 +62,7 @@ export function App() {
           transcript={rec.transcript}
           transcriptLang={rec.transcriptLang}
           paused={rec.paused}
+          stopping={rec.stopping}
           onPause={rec.pauseRecording}
           onResume={rec.resumeRecording}
           onStop={rec.stopRecording}
@@ -102,7 +103,9 @@ export function App() {
         ) : (
           groups.map(([label, items]) => (
             <section key={label} className="mb-5">
-              <h2 className="px-1 pt-2 pb-2 text-[12px] font-semibold tracking-wider" style={{color: "var(--text-muted)"}}>
+              <h2
+                className="px-1 pt-2 pb-2 text-[12px] font-semibold tracking-wider"
+                style={{color: "var(--text-muted)"}}>
                 {label}
               </h2>
               <div className="flex flex-col gap-2.5">
@@ -133,7 +136,9 @@ export function App() {
       />
 
       {/* Record FAB */}
-      <div className="absolute inset-x-0 bottom-0 flex justify-center pointer-events-none" style={{paddingBottom: insets.bottom + 24}}>
+      <div
+        className="absolute inset-x-0 bottom-0 flex justify-center pointer-events-none"
+        style={{paddingBottom: insets.bottom + 24}}>
         <button
           type="button"
           aria-label="Start recording"

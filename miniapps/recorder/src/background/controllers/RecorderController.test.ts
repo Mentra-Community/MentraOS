@@ -108,6 +108,19 @@ describe("RecorderController recording edges", () => {
     expect(h.writer.close).toHaveBeenCalledTimes(1)
   })
 
+  it("acknowledges stop before the tail-drain finishes", async () => {
+    const h = makeHarness(20)
+    await h.controller.startRecording()
+
+    const stopping = h.controller.stopRecording()
+
+    expect(h.send).toHaveBeenCalledWith("rec:stopping", {})
+    expect(h.writer.close).not.toHaveBeenCalled()
+
+    await stopping
+    expect(h.send).toHaveBeenCalledWith("rec:stopped", {})
+  })
+
   it("coalesces duplicate stops onto one finalization", async () => {
     const h = makeHarness(20)
     await h.controller.startRecording()

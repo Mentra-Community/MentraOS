@@ -198,6 +198,7 @@ export class RecorderController {
   private sendSnapshot(): void {
     this.ui.send("rec:snapshot", {
       recording: this.lastStatus,
+      stopping: this.finalizing,
       recordings: this.recordings,
       usage: this.usage,
       playingId: this.playingId,
@@ -488,6 +489,9 @@ export class RecorderController {
     if (!this.recordingId || !this.writer) return Promise.resolve()
 
     this.finalizingRecordingId = this.recordingId
+    // Acknowledge the tap before the tail-drain/save work begins so the UI can
+    // stop animating immediately without sacrificing in-flight audio frames.
+    this.ui.send("rec:stopping", {})
     const stop = this.finalizeRecording()
     this.stopPromise = stop.finally(() => {
       this.stopPromise = null
