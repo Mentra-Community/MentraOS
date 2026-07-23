@@ -309,10 +309,15 @@ describe("MantleManager", () => {
     expect(useGlassesStore.getState().wifi).toEqual({state: "disconnected"})
   })
 
-  it("routes notification events without the retired V1 upload", async () => {
+  it("routes every notification event but coalesces a display burst to the latest card", async () => {
     // The Cloud V1 REST upload is gone; the events still flow through the
     // local-miniapp forward path without a server roundtrip.
     const forwardEvent = jest.spyOn(localMiniappRuntime, "forwardEvent")
+    useAppStatusStore.setState({
+      apps: [{packageName: "cloud.augmentos.notify", type: "background", running: true}] as any,
+    })
+    syncCoreDisplayOwner()
+
     emitCrustEvent("phone_notification", {
       notificationId: "n-1",
       app: "Calendar",
@@ -320,11 +325,6 @@ describe("MantleManager", () => {
       content: "Daily sync",
       priority: 4,
       timestamp: "12345",
-      packageName: "com.calendar",
-    })
-    emitCrustEvent("phone_notification_dismissed", {
-      notificationId: "n-1",
-      notificationKey: "key-1",
       packageName: "com.calendar",
     })
     emitBluetoothSdkEvent("phone_notification", {
@@ -335,6 +335,25 @@ describe("MantleManager", () => {
       priority: "1",
       timestamp: 12345,
       packageName: "com.apple.mobilemail",
+    })
+
+    expect(localDisplayManager.request).not.toHaveBeenCalled()
+    jest.advanceTimersByTime(250)
+
+    expect(localDisplayManager.request).toHaveBeenCalledTimes(1)
+    expect(localDisplayManager.request).toHaveBeenCalledWith("cloud.augmentos.notify", {
+      layout: {
+        layoutType: "reference_card",
+        title: "com.apple.mobilemail: Build complete",
+        text: "The iOS relay is working",
+      },
+      durationMs: 5_000,
+    })
+
+    emitCrustEvent("phone_notification_dismissed", {
+      notificationId: "n-1",
+      notificationKey: "key-1",
+      packageName: "com.calendar",
     })
     emitBluetoothSdkEvent("phone_notification_dismissed", {
       notificationId: "ancs-42",
@@ -358,25 +377,71 @@ describe("MantleManager", () => {
       packageName: "com.apple.mobilemail",
       timestamp: 12346,
     })
-    expect(localDisplayManager.request).toHaveBeenNthCalledWith(1, "cloud.augmentos.notify", {
-      layout: {
-        layoutType: "reference_card",
-        title: "Calendar: Standup",
-        text: "Daily sync",
-      },
-      durationMs: 5_000,
-    })
-    expect(localDisplayManager.request).toHaveBeenNthCalledWith(2, "cloud.augmentos.notify", {
-      layout: {
-        layoutType: "reference_card",
-        title: "com.apple.mobilemail: Build complete",
-        text: "The iOS relay is working",
-      },
-      durationMs: 5_000,
-    })
-    expect(localDisplayManager.dismiss).toHaveBeenCalledTimes(2)
+    expect(localDisplayManager.dismiss).toHaveBeenCalledTimes(1)
     expect(localDisplayManager.dismiss).toHaveBeenLastCalledWith("cloud.augmentos.notify")
     await Promise.resolve()
+  })
+
+  it("does not paint phone notifications while the Notifications miniapp is stopped", () => {
+    const forwardEvent = jest.spyOn(localMiniappRuntime, "forwardEvent")
+    useAppStatusStore.setState({
+      apps: [{packageName: "cloud.augmentos.notify", type: "background", running: false}] as any,
+    })
+    syncCoreDisplayOwner()
+
+    emitCrustEvent("phone_notification", {
+      notificationId: "n-stopped",
+      app: "Messages",
+      title: "New message",
+      content: "Still forwarded to subscribers",
+      priority: "normal",
+      timestamp: 12345,
+      packageName: "com.messages",
+    })
+    jest.advanceTimersByTime(250)
+
+    expect(forwardEvent).toHaveBeenCalledWith(
+      "phone_notification",
+      expect.objectContaining({notificationId: "n-stopped"}),
+    )
+    expect(localDisplayManager.request).not.toHaveBeenCalled()
+  })
+
+  it("cancels notification display work when Notifications stops", () => {
+    useAppStatusStore.setState({
+      apps: [{packageName: "cloud.augmentos.notify", type: "background", running: true}] as any,
+    })
+    syncCoreDisplayOwner()
+    emitCrustEvent("phone_notification", {
+      notificationId: "n-active",
+      app: "Messages",
+      title: "First",
+      content: "Rendered",
+      priority: "normal",
+      timestamp: 12345,
+      packageName: "com.messages",
+    })
+    jest.advanceTimersByTime(250)
+    expect(localDisplayManager.request).toHaveBeenCalledTimes(1)
+
+    emitCrustEvent("phone_notification", {
+      notificationId: "n-pending",
+      app: "Messages",
+      title: "Second",
+      content: "Must not render",
+      priority: "normal",
+      timestamp: 12346,
+      packageName: "com.messages",
+    })
+    useAppStatusStore.setState({
+      apps: [{packageName: "cloud.augmentos.notify", type: "background", running: false}] as any,
+    })
+    syncCoreDisplayOwner()
+    jest.advanceTimersByTime(250)
+
+    expect(localDisplayManager.request).toHaveBeenCalledTimes(1)
+    expect(localDisplayManager.dismiss).toHaveBeenCalledTimes(1)
+    expect(localDisplayManager.dismiss).toHaveBeenCalledWith("cloud.augmentos.notify")
   })
 
   it("tracks OTA status without allowing backward progress or stale terminal update hints", async () => {

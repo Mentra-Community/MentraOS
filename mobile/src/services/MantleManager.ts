@@ -18,7 +18,6 @@ import {
   gallerySyncService,
   localDisplayManager,
   localMiniappRuntime,
-  localSttFallbackCoordinator,
   micStateCoordinator,
   miniappLauncher,
   offlineSpeechModelService,
@@ -64,6 +63,19 @@ function parseBundledMiniappName(name: string): {packageName: string; version: s
   }
 }
 
+interface PendingPhoneNotification {
+  notificationId: string
+  displayTitle: string
+  content: string
+  packageName: string
+}
+
+// Android's native listener already deduplicates repeated copies of the same
+// notification. Different notifications posted together still arrive as a
+// burst, though, and sending every intermediate card to the glasses can queue
+// overlapping display rebuilds. Collapse that burst to the latest card.
+const PHONE_NOTIFICATION_BURST_WINDOW_MS = 250
+
 // The background phone-location task + its tier control moved into island
 // (PhoneLocationService). MantleManager now drives it through the island service
 // (setupSubscriptions / cleanup) instead of defining the task here.
@@ -78,6 +90,8 @@ class MantleManager {
   private subs: Array<any> = []
   private initialized: boolean = false
   private activePhoneNotificationId: string | null = null
+  private pendingPhoneNotification: PendingPhoneNotification | null = null
+  private phoneNotificationDisplayTimer: ReturnType<typeof BgTimer.setTimeout> | null = null
 
   public static getInstance(): MantleManager {
     if (!MantleManager.instance) {
@@ -116,6 +130,59 @@ class MantleManager {
       this.micDataActive = false
       useDebugStore.getState().setDebugInfo({micDataRecvd: false})
     }
+  }
+
+  private isPhoneNotificationDisplayRunning(): boolean {
+    return useAppStatusStore.getState().apps.some((app) => app.packageName === notifyPackageName && app.running)
+  }
+
+  private cancelPendingPhoneNotification(notificationId?: string): void {
+    if (notificationId && this.pendingPhoneNotification?.notificationId !== notificationId) {
+      return
+    }
+    if (this.phoneNotificationDisplayTimer !== null) {
+      BgTimer.clearTimeout(this.phoneNotificationDisplayTimer)
+      this.phoneNotificationDisplayTimer = null
+    }
+    this.pendingPhoneNotification = null
+  }
+
+  private stopPhoneNotificationDisplay(): void {
+    this.cancelPendingPhoneNotification()
+    if (this.activePhoneNotificationId) {
+      localDisplayManager.dismiss(notifyPackageName)
+    }
+    this.activePhoneNotificationId = null
+  }
+
+  private schedulePhoneNotificationDisplay(notification: PendingPhoneNotification): void {
+    if (!this.isPhoneNotificationDisplayRunning()) {
+      return
+    }
+
+    this.cancelPendingPhoneNotification()
+    this.pendingPhoneNotification = notification
+    this.phoneNotificationDisplayTimer = BgTimer.setTimeout(() => {
+      this.phoneNotificationDisplayTimer = null
+      const pending = this.pendingPhoneNotification
+      this.pendingPhoneNotification = null
+      if (!pending || !this.isPhoneNotificationDisplayRunning()) {
+        return
+      }
+
+      console.log(
+        `MANTLE: displaying coalesced phone notification ${pending.notificationId} from ${pending.packageName}`,
+      )
+      this.activePhoneNotificationId = pending.notificationId || null
+      localDisplayManager.request(notifyPackageName, {
+        layout: {
+          layoutType: "reference_card",
+          title: pending.displayTitle || "Notification",
+          text: pending.content,
+        },
+        durationMs: 5_000,
+      })
+    }, PHONE_NOTIFICATION_BURST_WINDOW_MS)
   }
 
   // run at app start on the init.tsx screen:
@@ -239,7 +306,7 @@ class MantleManager {
     // Remove all event subscriptions
     this.subs.forEach((sub) => sub.remove())
     this.subs = []
-    this.activePhoneNotificationId = null
+    this.stopPhoneNotificationDisplay()
 
     phoneLocationService.stopPhoneLocation()
 
@@ -407,10 +474,12 @@ class MantleManager {
     // core owner projected from the app store so a notification can briefly
     // replace Captions and then restore the latest caption frame.
     const syncCoreDisplayOwner = () => {
-      const coreApp = useAppStatusStore
-        .getState()
-        .apps.find((app) => app.running && (app.type === "standard" || !app.type))
+      const apps = useAppStatusStore.getState().apps
+      const coreApp = apps.find((app) => app.running && (app.type === "standard" || !app.type))
       localDisplayManager.onCoreAppChange(coreApp?.packageName ?? null)
+      if (!apps.some((app) => app.packageName === notifyPackageName && app.running)) {
+        this.stopPhoneNotificationDisplay()
+      }
     }
     syncCoreDisplayOwner()
     const unsubscribeCoreDisplayOwner = useAppStatusStore.subscribe(syncCoreDisplayOwner)
@@ -520,14 +589,11 @@ class MantleManager {
         // restores that app's retained frame instead of stopping it.
         const displayTitle = title && title !== app ? [app, title].filter(Boolean).join(": ") : title || app
         if (displayTitle || content) {
-          this.activePhoneNotificationId = notificationId || null
-          localDisplayManager.request(notifyPackageName, {
-            layout: {
-              layoutType: "reference_card",
-              title: displayTitle || "Notification",
-              text: content,
-            },
-            durationMs: 5_000,
+          this.schedulePhoneNotificationDisplay({
+            notificationId,
+            displayTitle,
+            content,
+            packageName: String(event.packageName ?? ""),
           })
         }
       }
@@ -551,6 +617,7 @@ class MantleManager {
         })
 
         const notificationId = String(event.notificationId ?? "")
+        this.cancelPendingPhoneNotification(notificationId)
         if (notificationId && notificationId === this.activePhoneNotificationId) {
           this.activePhoneNotificationId = null
           localDisplayManager.dismiss(notifyPackageName)
@@ -609,7 +676,7 @@ class MantleManager {
       // app end-of-life.
 
       this.subs.push(
-        BluetoothSdk.addListener("mic_lc3", (event) => {
+        BluetoothSdk.addListener("mic_lc3", (_event) => {
           this.noteMicDataReceived()
 
           // console.log("MANTLE: Received mic_lc3 event from Bluetooth SDK", event.lc3.length)
