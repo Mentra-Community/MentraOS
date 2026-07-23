@@ -670,20 +670,31 @@ public class OtaHelper {
                             currentVersion,
                             serverVersion,
                             OtaConstants.DOWNGRADE_FLOOR_VERSION_CODE)) {
-                Log.i(TAG, "Pinned downgrade requested for " + packageName +
-                         " (current: " + currentVersion + ", target: " + serverVersion + ")");
+                if (hasApplicableFirmwareUpdate(rootJson, context)) {
+                    // Firmware first, ASG replacement last (the spec's downgrade ordering):
+                    // the current -- newer -- ASG applies MTK/BES this session, and the phone's
+                    // next check re-offers the still-mismatched pin, handing off the downgrade
+                    // once no firmware remains. Multi-pass by design: each pass converges one
+                    // layer and the phone re-checks after each.
+                    Log.i(TAG, "Pinned downgrade pending for " + packageName
+                            + " but firmware updates are applicable - applying firmware first,"
+                            + " downgrade on the next pass");
+                } else {
+                    Log.i(TAG, "Pinned downgrade requested for " + packageName +
+                             " (current: " + currentVersion + ", target: " + serverVersion + ")");
 
-                boolean handedOff = stageAndHandoffDowngrade(appInfo, context);
-                if (handedOff) {
-                    // The recovery worker owns the transaction from here; the uninstall it sends
-                    // will kill this process shortly. Do not plan further steps.
-                    apkUpdateNeeded = true;
+                    boolean handedOff = stageAndHandoffDowngrade(appInfo, context);
+                    if (handedOff) {
+                        // The recovery worker owns the transaction from here; the uninstall it
+                        // sends will kill this process shortly. Do not plan further steps.
+                        apkUpdateNeeded = true;
+                        break;
+                    }
+                    Log.e(TAG, "Failed to stage downgrade for " + packageName);
+                    apkUpdateFailed = true;
+                    failedApkPackage = packageName;
                     break;
                 }
-                Log.e(TAG, "Failed to stage downgrade for " + packageName);
-                apkUpdateFailed = true;
-                failedApkPackage = packageName;
-                break;
             } else {
                 Log.d(TAG, packageName + " is up to date (version " + currentVersion + ")");
             }
@@ -973,6 +984,41 @@ public class OtaHelper {
      * @return {@code true} when the APK was staged, checksum-verified, and the handoff broadcast
      *     was dispatched. The device is untouched when this returns {@code false}.
      */
+    /**
+     * True when this manifest carries firmware the device would actually apply right now,
+     * mirroring the phase-2 decisions exactly: an MTK patch matching the current firmware
+     * (unless MTK already updated this session or is in progress) or a BES image newer than
+     * the cached BES version. Used to order combined sessions: firmware runs before an ASG
+     * downgrade is handed off, so the newest ASG drives the flashes and the replacement is
+     * the final step.
+     */
+    private boolean hasApplicableFirmwareUpdate(JSONObject rootJson, Context context) {
+        try {
+            if (!wasMtkUpdatedThisSession() && !isMtkOtaInProgress() && rootJson.has("mtk_patches")) {
+                String currentMtkVersion = SysProp.getProperty(context, "ro.custom.ota.version");
+                if (findMatchingMtkPatch(rootJson.getJSONArray("mtk_patches"), currentMtkVersion) != null) {
+                    return true;
+                }
+            }
+            if (rootJson.has("bes_firmware")) {
+                String currentBesVersion = "";
+                try {
+                    currentBesVersion = new AsgSettings(context).getBesFirmwareVersion();
+                } catch (Exception e) {
+                    Log.e(TAG, "Error getting BES firmware version from AsgSettings", e);
+                }
+                if (checkBesUpdate(rootJson.getJSONObject("bes_firmware"), currentBesVersion)) {
+                    return true;
+                }
+            }
+        } catch (Exception e) {
+            // Ordering is best-effort: on any evaluation error fall through to the downgrade
+            // handoff rather than deferring it forever.
+            Log.w(TAG, "Could not evaluate firmware applicability; proceeding with downgrade", e);
+        }
+        return false;
+    }
+
     private boolean stageAndHandoffDowngrade(JSONObject appInfo, Context context) {
         try {
             currentUpdateType = "apk";
