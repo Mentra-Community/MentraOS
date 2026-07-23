@@ -75,6 +75,14 @@ public class RemediationWorker extends Worker {
       return Result.retry();
     }
 
+    // A pinned downgrade transaction owns ASG's install state (and survives reboots via its own
+    // store). Remediation force-installs the fleet APK, which is NEWER than any downgrade target,
+    // so it must stand down until the transaction completes.
+    if (new com.mentra.recovery.downgrade.DowngradeTransactionStore(context).isActive()) {
+      Log.i(RecoveryConstants.TAG, "Downgrade transaction active; deferring remediation");
+      return Result.retry();
+    }
+
     // Serialize boot and periodic runs before any fetch/download so they cannot clobber the shared
     // remediation APK or dispatch duplicate installs.
     if (!RUNNING.compareAndSet(false, true)) {

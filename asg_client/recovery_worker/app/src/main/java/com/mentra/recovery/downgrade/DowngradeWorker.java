@@ -100,8 +100,14 @@ public class DowngradeWorker extends Worker {
             // Re-dispatching the uninstall is harmless while still above target and self-heals a
             // broadcast lost to process death between persist and dispatch.
             installer.uninstallPackage(RecoveryConstants.ASG_PACKAGE);
+            // Wait for a REAL lower installed build (the factory floor), not just "below target":
+            // mid-uninstall the package is briefly unresolved (installedAsgVersion == -1), which
+            // is below target but is NOT the factory build being present. Dispatching SEND_INSTALL
+            // then would race the still-in-flight OEM uninstall.
             if (!waitForInstalledVersion(
-                context, v -> v < target, RecoveryConstants.DOWNGRADE_REVERT_TIMEOUT_MS)) {
+                context,
+                v -> v > 0 && v < target,
+                RecoveryConstants.DOWNGRADE_REVERT_TIMEOUT_MS)) {
               Log.w(RecoveryConstants.TAG, "Factory revert not observed in time; will retry");
               return Result.retry();
             }
