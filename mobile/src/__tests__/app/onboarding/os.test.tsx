@@ -104,8 +104,10 @@ describe("MentraOS onboarding", () => {
         subtitle: "onboarding:osWelcomeSubtitle",
         titleCentered: true,
         subtitleCentered: true,
+        content: expect.anything(),
       }),
     )
+    expect(steps[0].source).toBeUndefined()
     expect(steps[1]).toEqual(
       expect.objectContaining({
         type: "image",
