@@ -638,6 +638,11 @@ class OtaInstallCoordinator {
     if (
       this.versionChangeSession &&
       !this.versionChangeInstallStarted &&
+      // Only latch from a status that belongs to THIS session: an install/apk status is a
+      // response to our own ota_start (hasReceivedAck), so a leftover from a prior session
+      // sitting in the store at mount cannot prematurely enter the detour wait (which would
+      // suppress ota_start and hang the fresh downgrade until the global timeout).
+      this.hasReceivedAck &&
       otaStatus?.stepType === "apk" &&
       otaStatus.phase === "install"
     ) {
