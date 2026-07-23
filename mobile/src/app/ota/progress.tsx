@@ -23,6 +23,8 @@ export default function OtaProgressScreen() {
   const {replace, push} = useNavigationStore.getState()
   const [superMode] = useSetting(SETTINGS.super_mode.key)
   const install = useEngineSnapshot(engine.ota.installSession.snapshot, engine.ota.installSession.onSnapshot)
+  const otaSnapshot = useEngineSnapshot(engine.ota.snapshot, engine.ota.onSnapshot)
+  const isDowngrade = otaSnapshot.updateAvailable?.isDowngrade === true
   const {
     displayState,
     errorMsg,
@@ -151,6 +153,12 @@ export default function OtaProgressScreen() {
             className="text-sm text-center"
             style={{color: theme.colors.textDim}}
           />
+          {isDowngrade && otaStatus?.phase === "install" && (
+            <>
+              <View className="h-2" />
+              <Text tx="ota:downgradeDuration" className="text-sm text-center" style={{color: theme.colors.textDim}} />
+            </>
+          )}
         </View>
       )
     }

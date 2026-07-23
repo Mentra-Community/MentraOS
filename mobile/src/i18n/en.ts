@@ -364,6 +364,7 @@ const en = {
     downloading: "Downloading Update",
     installing: "Installing Update",
     doNotDisconnect: "Please keep your glasses connected and do not close the app.",
+    downgradeDuration: "Your glasses will restart twice \u2014 this may take up to 2 minutes.",
     updateComplete: "Update Complete",
     updateCompleteMessage: "Your glasses have been updated successfully.",
     updateFailed: "Update Failed",
