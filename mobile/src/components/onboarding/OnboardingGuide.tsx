@@ -374,8 +374,9 @@ export function OnboardingGuide({
 
     fadeOpacity.setValue(1)
 
-    // The start is a special case
-    if (currentIndex === 0 || currentIndex === 1) {
+    // Transition intros act as a welcome gate, so backing into them returns to
+    // the unstarted state. Peer instructional steps should navigate normally.
+    if (currentIndex === 0 || (currentIndex === 1 && steps[0].transition)) {
       resettingRef.current = true
       setHasStarted(autoStart) // if autoStart is true, we don't want to reset the hasStarted state (because it's already started)
       setCurrentIndex(0)
