@@ -8,7 +8,7 @@ import {bootstrapMentraJS} from "@/services/mentraJsBootstrap"
 import {preinstalledMiniappSync} from "@/services/miniapps/preinstalledMiniappSync"
 import builtInMiniappCatalog from "@/services/miniapps/BuiltInMiniappCatalog"
 import {BUNDLED_MINIAPPS} from "@/generated/bundledMiniapps"
-import {CHINA_HIDDEN_APPS, isChinaBuild} from "@/constants/miniapps"
+import {CHINA_HIDDEN_APPS, isChinaBuild, notifyPackageName} from "@/constants/miniapps"
 import {migrate} from "@/services/Migrations"
 import {cloudConfigValues} from "@/services/cloudClient"
 import {engine, BgTimer, SETTINGS} from "@mentra/engine"
@@ -16,13 +16,14 @@ import {
   appRegistry,
   displayProcessor,
   gallerySyncService,
-  phoneLocationService,
   localDisplayManager,
   localMiniappRuntime,
-  miniappLauncher,
   localSttFallbackCoordinator,
   micStateCoordinator,
+  miniappLauncher,
   offlineSpeechModelService,
+  phoneLocationService,
+  useAppStatusStore,
 } from "@mentra/engine/internal"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 import {useDebugStore} from "@/stores/debug"
@@ -76,6 +77,7 @@ class MantleManager {
   private lastMicDataAt: number = 0
   private subs: Array<any> = []
   private initialized: boolean = false
+  private activePhoneNotificationId: string | null = null
 
   public static getInstance(): MantleManager {
     if (!MantleManager.instance) {
@@ -237,6 +239,7 @@ class MantleManager {
     // Remove all event subscriptions
     this.subs.forEach((sub) => sub.remove())
     this.subs = []
+    this.activePhoneNotificationId = null
 
     phoneLocationService.stopPhoneLocation()
 
@@ -399,6 +402,20 @@ class MantleManager {
     this.subs.forEach((sub) => sub.remove())
     this.subs = []
 
+    // LocalDisplayManager arbitrates foreground miniapp frames against
+    // temporary background frames (notably phone notifications). Keep its
+    // core owner projected from the app store so a notification can briefly
+    // replace Captions and then restore the latest caption frame.
+    const syncCoreDisplayOwner = () => {
+      const coreApp = useAppStatusStore
+        .getState()
+        .apps.find((app) => app.running && (app.type === "standard" || !app.type))
+      localDisplayManager.onCoreAppChange(coreApp?.packageName ?? null)
+    }
+    syncCoreDisplayOwner()
+    const unsubscribeCoreDisplayOwner = useAppStatusStore.subscribe(syncCoreDisplayOwner)
+    this.subs.push({remove: unsubscribeCoreDisplayOwner})
+
     // (The device-status projection — onBluetoothStatus -> core store and
     // onGlassesStatus -> glasses store — moved into island's GlassesStatusProjection,
     // started by engine.start(), so the device->store feed reaches ANY host. Removed
@@ -479,20 +496,40 @@ class MantleManager {
       // live further down (head_up there is the superset — it also forwards to miniapps).
 
       const forwardPhoneNotification = async (event: any) => {
+        const notificationId = String(event.notificationId ?? "")
+        const app = String(event.app ?? "").trim()
+        const title = String(event.title ?? "").trim()
+        const content = String(event.content ?? "").trim()
+
         // Direct forward to local miniapps subscribed to phone_notification.
         // Gated by READ_NOTIFICATIONS in miniapp.json at subscribe time.
         localMiniappRuntime.forwardEvent("phone_notification", {
-          notificationId: event.notificationId,
-          app: event.app,
-          title: event.title,
-          content: event.content,
+          notificationId,
+          app,
+          title,
+          content,
           priority: event.priority?.toString?.() ?? String(event.priority ?? ""),
           timestamp: parseInt(event.timestamp?.toString?.() ?? "0"),
           packageName: event.packageName,
         })
-        // (Cloud V1 notification upload removed; local miniapps get the event
-        // above. A V2 notification channel for cloud miniapps is tracked in
-        // the ripout issue.)
+
+        // Cloud V1 used to relay this event to the Notify miniapp, which then
+        // painted the glasses. Notify is now an offline built-in, so render the
+        // temporary card locally through the same display arbiter as miniapps.
+        // As a background owner it overlays the foreground app briefly; expiry
+        // restores that app's retained frame instead of stopping it.
+        const displayTitle = title && title !== app ? [app, title].filter(Boolean).join(": ") : title || app
+        if (displayTitle || content) {
+          this.activePhoneNotificationId = notificationId || null
+          localDisplayManager.request(notifyPackageName, {
+            layout: {
+              layoutType: "reference_card",
+              title: displayTitle || "Notification",
+              text: content,
+            },
+            durationMs: 5_000,
+          })
+        }
       }
 
       // Android: Crust's NotificationListenerService reads notifications.
@@ -512,6 +549,12 @@ class MantleManager {
           packageName: event.packageName,
           timestamp: event.timestamp ?? Date.now(),
         })
+
+        const notificationId = String(event.notificationId ?? "")
+        if (notificationId && notificationId === this.activePhoneNotificationId) {
+          this.activePhoneNotificationId = null
+          localDisplayManager.dismiss(notifyPackageName)
+        }
       }
 
       this.subs.push(

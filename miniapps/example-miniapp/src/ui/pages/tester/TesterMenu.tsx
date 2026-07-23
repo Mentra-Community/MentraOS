@@ -35,6 +35,12 @@ const API_ROWS: Row[] = [
   {emoji: "🔊", title: "session.speaker", subtitle: "play URL, speak text", path: "/tester/speaker"},
   {emoji: "🎙️", title: "session.mic", subtitle: "audio chunks, VAD, stop()", path: "/tester/mic"},
   {
+    emoji: "🗣️",
+    title: "ElevenLabs",
+    subtitle: "ConvAI mic → WebSocket",
+    path: "/tester/elevenlabs",
+  },
+  {
     emoji: "📝",
     title: "session.transcription",
     subtitle: "on / forLanguage / configure / stop",

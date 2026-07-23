@@ -82,3 +82,58 @@ export interface CalendarSnapshotResult {
   events: CalendarSnapshotEvent[]
   truncated: boolean
 }
+
+/** ElevenLabs ConvAI tester — mirrors RN example App.tsx types. */
+export type ElevenLabsConversationState = "Idle" | "Signing" | "Streaming"
+
+export type ElevenLabsCloseSource = "none" | "remote" | "user_stop" | "cleanup" | "mic_start_failed"
+
+export interface ElevenLabsStreamStats {
+  droppedChunks: number
+  frames: number
+  receivedBytes: number
+  sentBytes: number
+  sentChunks: number
+}
+
+export interface ElevenLabsDiagnostics {
+  elevenLabsEventCount: number
+  firstPcmDelayMs: number | null
+  firstPcmAtMs: number | null
+  lastElevenLabsEvent: string
+  lastPcmAtMs: number | null
+  lastPcmSize: number | null
+  lastSendError: string | null
+  micRequestedAtMs: number | null
+  micStage: string
+  signedUrlLatencyMs: number | null
+  signedUrlStatus: string
+  websocketCloseAfterMs: number | null
+  websocketCloseCode: number | null
+  websocketCloseReason: string
+  websocketCloseSource: ElevenLabsCloseSource
+  websocketCloseWasClean: boolean | null
+  websocketOpenedAtMs: number | null
+  websocketState: string
+  websocketTarget: string
+}
+
+export interface ElevenLabsLogEntry {
+  id: string
+  message: string
+}
+
+/** Full ElevenLabs tester snapshot pushed background → UI. */
+export interface ElevenLabsSnapshot {
+  agentId: string
+  signedUrlEndpoint: string
+  conversationState: ElevenLabsConversationState
+  lastError: string | null
+  lastTranscript: string
+  lastAgentResponse: string
+  metadata: string
+  vadScore: number | null
+  stats: ElevenLabsStreamStats
+  diagnostics: ElevenLabsDiagnostics
+  logs: ElevenLabsLogEntry[]
+}

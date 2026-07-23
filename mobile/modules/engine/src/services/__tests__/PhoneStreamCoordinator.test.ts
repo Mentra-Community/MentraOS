@@ -348,6 +348,36 @@ describe("PhoneStreamCoordinator", () => {
       expect(streaming.map((u) => u.pkg).sort()).toEqual(["com.a", "com.b"])
     })
 
+    test("fanout preserves live bitrate and temperature telemetry", async () => {
+      const coord = new PhoneStreamCoordinator({
+        hlsReadinessInitialDelayMs: 5,
+        hlsReadinessPollMs: 5,
+        cloudflareStatusPollMs: 1000,
+        keepAliveIntervalMs: 10_000,
+      })
+      let telemetry: Record<string, unknown> | undefined
+      coord.setStatusSubscriber((_pkg, update) => {
+        if (update.status === "streaming") telemetry = update.data
+      })
+      const {streamId} = await coord.startUnmanaged("com.a", {streamUrl: "rtmp://x"})
+
+      coord.handleGlassesStatus({
+        type: "stream_status",
+        kind: "lifecycle",
+        status: "streaming",
+        streamId,
+        stats: {bitrate: 912_345, fps: 19.8, duration: 31, temperatureC: 54.6},
+      } as never)
+
+      expect(telemetry?.stats).toEqual({
+        bitrate: 912_345,
+        fps: 19.8,
+        duration: 31,
+        temperatureC: 54.6,
+      })
+      await coord.stop("com.a")
+    })
+
     test("glasses transient error does NOT tear down (publisher auto-recovers)", async () => {
       const coord = new PhoneStreamCoordinator({
         hlsReadinessInitialDelayMs: 5,

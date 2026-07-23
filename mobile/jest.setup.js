@@ -867,6 +867,7 @@ const mockIslandEntries = () => {
       attachToRuntime: jest.fn(),
       replayCurrent: jest.fn(),
       request: jest.fn(),
+      dismiss: jest.fn(),
       onMount: jest.fn(),
       onUnmount: jest.fn(),
       onCoreAppChange: jest.fn(),

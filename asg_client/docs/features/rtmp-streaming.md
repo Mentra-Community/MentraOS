@@ -37,7 +37,7 @@ See the [API doc](../ASG_CLIENT_API.md#streaming-rtmp--srt--whip) for fields and
 
 ### Active stream
 
-Status callbacks emit `stream_status` messages back to the phone. Canonical status values include `initializing`, `streaming`, `reconnecting`, `reconnected`, `reconnect_failed`, `stopping`, `stopped`, and `error`.
+Status callbacks emit `stream_status` messages back to the phone. Canonical status values include `initializing`, `streaming`, `reconnecting`, `reconnected`, `reconnect_failed`, `stopping`, `stopped`, and `error`. While live, the glasses send a `streaming` update every two seconds with a nested `stats` object containing bitrate, frame rate, dropped frames, elapsed seconds, and CPU temperature when available.
 
 ### Keep-alive timeout
 

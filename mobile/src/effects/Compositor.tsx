@@ -38,14 +38,13 @@ import LocalMiniappView from "@/components/miniapp/LocalMiniappView"
 import OfflineAppHost from "@/components/miniapp/OfflineAppHost"
 import {isOfflineHosted} from "@/components/miniapp/offlineHostedPackages"
 import {captureScreenshot} from "@/effects/CapsuleMenu"
-import {engine, useForegroundApp} from "@mentra/engine"
+import {engine, useForegroundApp, SETTINGS, useSetting} from "@mentra/engine"
 import {Screen} from "@/components/ignite/Screen"
 import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
 import {appSwitcherProgress, OPEN_SPRING, SWIPE_DISTANCE_THRESHOLD, SWIPE_PERCENT_THRESHOLD} from "@/stores/appSwitcher"
 import {useNavigationStore} from "@/stores/navigation"
 import {hapticBuzz} from "@/utils/utils"
 import CrustModule from "@mentra/crust"
-import {SETTINGS, useSetting} from "@mentra/engine"
 const EDGE_HIT_WIDTH = 24
 // Distance past which a slow drag commits the back gesture (fraction of screen
 // width). UIKit's interactive pop commits at ~50%; we sit a hair under that.
@@ -154,6 +153,13 @@ export default function Compositor() {
     captureScreenshot(viewShotRef, foregroundApp?.packageName ?? "", insets.top)
   }, [foregroundApp?.packageName, insets.top])
 
+  // Exit for the swipe-commit paths: the screenshot was already captured at
+  // commit time (while the overlay was still mounted — the CLOSE effect
+  // unmounts swipe exits immediately, so capturing here would race teardown).
+  const finishSwipeExit = useCallback(() => {
+    engine.miniapps.clearForeground()
+  }, [])
+
   const swipeTranslateX = useSharedValue(0)
   const swipeTranslateY = useSharedValue(0)
   const fadeOpacity = useSharedValue(0)
@@ -165,6 +171,12 @@ export default function Compositor() {
 
   const markSwipedToExit = () => {
     didSwipeToExit.current = true
+    // Swipe exits bypass OfflineAppHost's beginExit(), so the host never gets
+    // to stand its NavInterceptor down itself. Clear it here so pushes landing
+    // during the exit spring reach the real router instead of the dying host's
+    // internal stack. (Identity-guarded cleanups make this safe: the host's
+    // unmount cleanup only clears an interceptor that is still its own.)
+    useNavigationStore.getState().setInterceptor(null)
   }
 
   const swipeGesture = Gesture.Pan()
@@ -197,11 +209,15 @@ export default function Compositor() {
         // is seamless. Clamp the seed so a violent flick doesn't overshoot.
         const velocity = Math.min(Math.max(e.velocityX, 0), MAX_COMMIT_VELOCITY)
         runOnJS(markSwipedToExit)()
+        // Capture the app-switcher card now, while the overlay is guaranteed
+        // mounted for the whole spring (the swipe exit unmounts right after
+        // clearForeground, unlike the button close's slide-out grace period).
+        runOnJS(handleShouldCapture)()
         swipeTranslateX.value = withSpring(
           screenWidth,
           {damping: 50, stiffness: 800, velocity, overshootClamping: true},
           (finished) => {
-            if (finished) runOnJS(handleBack)()
+            if (finished) runOnJS(finishSwipeExit)()
           },
         )
 
@@ -354,7 +370,17 @@ export default function Compositor() {
   useEffect(() => {
     if (isForeground) return
     openedPackageRef.current = null // allow the next open to re-trigger the slide
-    if (didSwipeToExit.current) return
+    if (didSwipeToExit.current) {
+      // The swipe gesture already drove the overlay off-screen (edge swipe) or
+      // faded it out (switcher swipe-up) before clearing foreground — unmount
+      // immediately. Skipping the unmount here left renderedApp set forever:
+      // the host stayed mounted invisibly, and for offline-hosted apps its
+      // still-registered NavInterceptor silently swallowed every later push()
+      // to a route it owns (e.g. home's glasses card → /miniapps/settings/main
+      // after swiping out of Settings).
+      setRenderedApp(null)
+      return
+    }
     fadeOpacity.value = 1
     fadeScale.value = 1
     swipeTranslateX.value = withTiming(

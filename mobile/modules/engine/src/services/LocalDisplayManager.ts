@@ -98,6 +98,12 @@ const BACKGROUND_LOCK_TIMEOUT_MS = 10_000
 // Sentinel package name used as the "source" of the system boot message.
 const SYSTEM_BOOT_PKG = "system.boot"
 
+/** "Render nothing" — an empty scene or an explicit clear_view layout. */
+function isClearPayload(payload: DisplayPayload): boolean {
+  if (payload.scene) return payload.scene.length === 0
+  return payload.layout?.layoutType === "clear_view"
+}
+
 // =============================================================================
 // LocalDisplayManager
 // =============================================================================
@@ -144,14 +150,20 @@ class LocalDisplayManager {
   public onMount(packageName: string, displayName: string): void {
     console.log(`${LOG_TAG}: onMount(${packageName}, "${displayName}")`)
 
-    // Cancel any in-flight boot for a prior app.
-    this.cancelBoot()
-
     // Snapshot whatever's on the glasses BEFORE the boot text overwrites it.
     // registerApp fires onMount for every spawn — including a background app or
     // a crash-respawn while another app is foreground — so a boot that times out
     // without rendering must put the prior frame back rather than blank it.
-    const preBoot = this.currentDisplay
+    // Never snapshot the boot text itself: back-to-back mounts (the autostart
+    // restore loop, crash-respawn chains) land while the previous app's
+    // "Starting X…" is still on the glasses, and endBoot would "restore" that
+    // stale, expiry-less frame permanently. Across chained boots, inherit the
+    // original pre-boot frame instead.
+    const inherited = this.bootingApp ? this.bootingApp.preBoot : this.currentDisplay
+    const preBoot = inherited?.packageName === SYSTEM_BOOT_PKG ? null : inherited
+
+    // Cancel any in-flight boot for a prior app.
+    this.cancelBoot()
 
     // Send the boot message directly (bypass arbitration — this is a system
     // display). Goes through sendNow so scene devices render it as a scene:
@@ -163,7 +175,7 @@ class LocalDisplayManager {
     })
 
     const timerId = BgTimer.setTimeout(() => {
-      this.endBoot(/* triggeredByFirstDisplay */ false)
+      this.endBoot()
     }, BOOT_DURATION_MS)
 
     this.bootingApp = {
@@ -211,9 +223,23 @@ class LocalDisplayManager {
   public onUnmount(packageName: string): void {
     console.log(`${LOG_TAG}: onUnmount(${packageName})`)
 
-    // If this was the booting app, cancel boot.
+    // If this was the booting app, cancel boot — and don't strand its
+    // "Starting X…" text (a system frame with no expiry): put back what the
+    // boot covered, or clear.
     if (this.bootingApp?.packageName === packageName) {
+      const preBoot = this.bootingApp.preBoot
       this.cancelBoot()
+      if (this.currentDisplay?.packageName === SYSTEM_BOOT_PKG) {
+        // The preBoot owner may have forfeited its frame during the boot
+        // window (a clear parked in the boot queue) — don't resurrect it.
+        const ownerQueued = preBoot ? this.bootQueue.get(preBoot.packageName) : undefined
+        const preBootForfeited = ownerQueued !== undefined && isClearPayload(ownerQueued.payload)
+        if (preBoot && !preBootForfeited && (preBoot.expiresAt === null || preBoot.expiresAt > this.now())) {
+          this.restoreDisplay(preBoot)
+        } else {
+          this.sendClear()
+        }
+      }
     }
     this.bootQueue.get(packageName)?.resolve?.({status: "blocked", reason: "app stopped"})
     this.bootQueue.delete(packageName)
@@ -226,10 +252,17 @@ class LocalDisplayManager {
       this.backgroundLock = null
     }
 
-    // Clear saved core app display if the core is going away.
+    // Drop the saved core frame if the core's context is going away — the
+    // frame belongs to a dead context and must not be restored later. The
+    // coreApp POINTER itself is NOT cleared here: it is derived state owned
+    // by the apps-store reconciler. A liveness/crash respawn tears the
+    // context down (this path) without any store change — the app is still
+    // "running" — and clearing the pointer here would leave the respawned
+    // foreground app arbitrating as background until an unrelated store
+    // write happened to re-run the reconciler. Real stops release the slot
+    // via the store (running → false → reconciler → onCoreAppChange(null)).
     if (this.coreApp === packageName) {
       this.coreAppDisplay = null
-      this.coreApp = null
     }
 
     // If this app owned the current on-glasses display, clear it (and maybe
@@ -273,12 +306,22 @@ class LocalDisplayManager {
       superseded?.resolve?.({status: "blocked", reason: "superseded by a newer frame"})
       this.bootQueue.set(packageName, {payload, resolve})
       if (this.bootingApp.packageName === packageName) {
-        this.endBoot(/* triggeredByFirstDisplay */ true)
+        this.endBoot()
       }
       return
     }
 
     this.arbitrateAndSend(packageName, payload, resolve)
+  }
+
+  /**
+   * End a package's temporary display early. If it currently owns the main
+   * view, release its background lock and restore the foreground miniapp's
+   * saved frame. A dismissal for a package that is no longer visible is a
+   * no-op.
+   */
+  public dismiss(packageName: string): void {
+    this.handleExpiry(packageName)
   }
 
   // ===========================================================================
@@ -291,6 +334,16 @@ class LocalDisplayManager {
     // Expire a stale bg lock before arbitrating.
     if (this.backgroundLock && now > this.backgroundLock.expiresAt) {
       this.backgroundLock = null
+    }
+
+    // A clear ("render nothing") means "I'm done with the display" — it is a
+    // forfeit, not a frame. A background app releases its lock and the core
+    // app's still-valid display comes back; treating it as a render instead
+    // would RENEW the lock with an empty frame and blank the glasses while
+    // still blocking everyone else.
+    if (isClearPayload(payload)) {
+      this.handleAppClear(packageName, resolve)
+      return
     }
 
     const isCore = packageName === this.coreApp
@@ -347,6 +400,33 @@ class LocalDisplayManager {
     }
 
     this.sendNow(packageName, payload, resolve)
+  }
+
+  /**
+   * An app cleared its display ("render nothing"). Same semantics as its
+   * frame expiring: give up ownership, restore the core app's still-valid
+   * display if there is one, otherwise clear the glasses.
+   */
+  private handleAppClear(packageName: string, resolve?: DisplayRequestResolver): void {
+    // Forget the app's retained scene state — its next render starts fresh.
+    sceneRenderer.clearApp(packageName)
+
+    if (this.backgroundLock?.packageName === packageName) {
+      this.backgroundLock = null
+    }
+    if (this.coreApp === packageName) {
+      this.coreAppDisplay = null
+    }
+
+    if (this.currentDisplay?.packageName === packageName) {
+      this.clearExpiryTimer()
+      this.currentDisplay = null
+      this.tryRestoreCoreDisplay()
+      if (!this.currentDisplay) {
+        this.sendClear()
+      }
+    }
+    resolve?.({status: "displayed"})
   }
 
   // ===========================================================================
@@ -533,7 +613,7 @@ class LocalDisplayManager {
     this.bootingApp = null
   }
 
-  private endBoot(triggeredByFirstDisplay: boolean): void {
+  private endBoot(): void {
     if (!this.bootingApp) return
     const preBoot = this.bootingApp.preBoot
     BgTimer.clearTimeout(this.bootingApp.timerId)
@@ -553,17 +633,18 @@ class LocalDisplayManager {
       this.arbitrateAndSend(pkg, entry.payload, entry.resolve)
     }
 
-    // Boot ended on the timeout with nothing queued and no first display — the
-    // app just never rendered. Restore whatever was on the glasses before the
-    // boot text so a background app or crash-respawn can't blank a foreground
-    // app's frame (registerApp fires onMount for every spawn, and the core app
-    // isn't wired on the local path yet). If the glasses were empty before,
-    // clear the lingering "Starting …" instead — otherwise a miniapp that never
-    // renders (e.g. audio-only) would strand it.
-    if (!triggeredByFirstDisplay && queued.length === 0) {
-      // Only restore a frame that's still valid — one whose duration elapsed
-      // during the boot window should clear, not come back.
-      if (preBoot && (preBoot.expiresAt === null || preBoot.expiresAt > this.now())) {
+    // If the boot text is still on the glasses — nothing was queued, or every
+    // drained request lost arbitration — it must not strand: it's a system
+    // frame with no expiry. Restore whatever was on the glasses before the
+    // boot, else clear. Two reasons NOT to restore: the frame's duration
+    // elapsed during the boot window, or its owner FORFEITED it during the
+    // window (its final queued intent — the queue keeps last-wins per app —
+    // was a clear, which the drain above processed as a forfeit; restoring
+    // would resurrect content the clear removed).
+    if (this.currentDisplay?.packageName === SYSTEM_BOOT_PKG) {
+      const ownerEntry = preBoot ? queued.find(([pkg]) => pkg === preBoot.packageName) : undefined
+      const preBootForfeited = ownerEntry !== undefined && isClearPayload(ownerEntry[1].payload)
+      if (preBoot && !preBootForfeited && (preBoot.expiresAt === null || preBoot.expiresAt > this.now())) {
         this.restoreDisplay(preBoot)
       } else {
         this.sendClear()

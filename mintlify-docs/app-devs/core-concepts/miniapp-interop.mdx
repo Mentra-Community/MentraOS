@@ -10,8 +10,8 @@ your background layer. Mentra AI reads your declarations and decides when to cal
 them.
 
 Actions map 1:1 onto [MCP](https://modelcontextprotocol.io) tools (`id` to `name`,
-`description`, `parameters` to `inputSchema`), so the same declarations can be
-surfaced to external agents later.
+`description`, `parameters` to `inputSchema`, and `outputSchema`), so the same
+declarations can be surfaced to external agents later.
 
 ## Declare an action
 
@@ -30,6 +30,14 @@ reads, so say *when* the action should be used.
           "text": { "type": "string", "description": "The todo item text" }
         },
         "required": ["text"]
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "ok": { "type": "boolean" },
+          "count": { "type": "number" }
+        },
+        "required": ["ok", "count"]
       }
     }
   ]
@@ -41,6 +49,7 @@ reads, so say *when* the action should be used.
 | `id` | `^[a-z][a-z0-9_]*$`, unique within your miniapp, ≤64 chars. |
 | `description` | Required, non-empty. The AI-facing contract: say when to use it. |
 | `parameters` | A JSON-Schema object (the MCP subset): top-level `type: "object"`, `properties` typed `string` / `number` / `boolean` / `array` (of primitives), plus `enum`, `description`, `items`, and a top-level `required` array. Use `number`, not `integer`. |
+| `outputSchema` | Optional JSON Schema describing the handler's structured return value. Declaring it lets result-aware agents interpret the result reliably instead of guessing from arbitrary JSON. |
 
 ## Handle it
 
@@ -58,7 +67,15 @@ session.actions.handle("add_todo", async (params, ctx) => {
 - One handler per `id`. Registering the same `id` twice throws.
 - A thrown handler rejects the caller, and your error message comes back to them.
 - The return value is serialized to the caller (max 256 KB).
+- Keep results structured and consistent with `outputSchema`. Do not return logs,
+  secrets, access tokens, or instructions intended for the agent.
 - `handle` returns a function that deregisters the handler.
+
+Mentra AI executes actions before producing its final answer. It sends the
+structured result through a result-finalization step, which turns values such as
+`{ "ok": true, "count": 3 }` into concise user-facing language. A thrown error
+or a result that explicitly reports failure produces a failure answer instead of
+an optimistic success message.
 
 ## How a call reaches you
 

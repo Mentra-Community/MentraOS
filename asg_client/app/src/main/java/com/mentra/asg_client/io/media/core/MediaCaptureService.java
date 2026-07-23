@@ -211,10 +211,14 @@ public class MediaCaptureService {
         }
     }
 
-    private BleParams resolveTextModeBleParams() {
+    private BleParams resolveTextModeBleParams(boolean hasUsableTextCrop) {
         return new BleParams(
-                AsgConstants.TEXT_MODE_BLE_TARGET_WIDTH,
-                AsgConstants.TEXT_MODE_BLE_TARGET_HEIGHT,
+                hasUsableTextCrop
+                        ? AsgConstants.TEXT_MODE_BLE_TARGET_WIDTH
+                        : AsgConstants.TEXT_MODE_BLE_FALLBACK_TARGET_WIDTH,
+                hasUsableTextCrop
+                        ? AsgConstants.TEXT_MODE_BLE_TARGET_HEIGHT
+                        : AsgConstants.TEXT_MODE_BLE_FALLBACK_TARGET_HEIGHT,
                 AsgConstants.TEXT_MODE_AVIF_QUALITY);
     }
 
@@ -392,6 +396,7 @@ public class MediaCaptureService {
             if (croppedPath != null) {
                 PhotoArtifactFiles.promoteToCanonical(photoFilePath, croppedPath);
                 photoTextCropPrepared.put(requestId, true);
+                photoTextCropApplied.put(requestId, true);
                 return photoFilePath;
             }
         } catch (java.io.IOException e) {
@@ -503,6 +508,7 @@ public class MediaCaptureService {
                 }
             }
             photoTextCropPrepared.put(requestId, true);
+            photoTextCropApplied.put(requestId, wroteCrop);
             Log.i(
                     TAG,
                     wroteCrop
@@ -524,8 +530,10 @@ public class MediaCaptureService {
 
     // Track original photo paths for BLE fallback
     private Map<String, String> photoOriginalPaths = new HashMap<>();
-    // True after text mode has replaced the canonical capture with its final cropped JPEG.
+    // True after text mode has selected either a crop or the full-frame fallback for transfer.
     private Map<String, Boolean> photoTextCropPrepared = new HashMap<>();
+    // True only when the canonical text-mode selection is an actual detected-text crop.
+    private Map<String, Boolean> photoTextCropApplied = new HashMap<>();
     // Track requested photo size per request for proper fallback handling
     private Map<String, String> photoRequestedSizes = new HashMap<>();
     // Track capture mode through asynchronous WiFi-to-BLE fallback.
@@ -557,6 +565,7 @@ public class MediaCaptureService {
         photoBleIds.remove(requestId);
         photoOriginalPaths.remove(requestId);
         photoTextCropPrepared.remove(requestId);
+        photoTextCropApplied.remove(requestId);
         photoRequestedSizes.remove(requestId);
         photoRequestedModes.remove(requestId);
     }
@@ -3197,7 +3206,8 @@ public class MediaCaptureService {
      * Largest power-of-two JPEG subsampling factor that still keeps the decoded region at or above
      * the aspect-fitted BLE output, so the follow-up {@code createScaledBitmap} only ever shrinks.
      * The configured dimensions are caps, not the literal output dimensions. Decoding 4032x3024 at
-     * inSampleSize=2 cuts the ARGB working set 4x with no quality cost at a 1920px output cap.
+     * inSampleSize=2 cuts the ARGB working set 4x while preserving enough detail for the configured
+     * output cap.
      */
     static int computeBleDecodeSampleSize(
             int regionWidth, int regionHeight, int targetWidth, int targetHeight) {
@@ -5246,57 +5256,21 @@ public class MediaCaptureService {
                                     // handoff.
                                     prepareTextModePhotoPath(originalPath, requestId);
                                 }
-                                boolean textCropAlreadyPrepared =
+                                boolean textSelectionAlreadyPrepared =
                                         Boolean.TRUE.equals(photoTextCropPrepared.get(requestId));
-                                BleParams bleParams =
-                                        textModeRequested
-                                                ? resolveTextModeBleParams()
-                                                : tierBleParams;
+                                boolean textCropAlreadyApplied =
+                                        Boolean.TRUE.equals(photoTextCropApplied.get(requestId));
+                                BleParams bleParams;
                                 BleCodec codec = BlePhotoEncodingPolicy.selectCodec();
-                                logBlePhotoStep(
-                                        requestId,
-                                        "compress_resolve_params",
-                                        "size="
-                                                + requestedSize
-                                                + ", mode="
-                                                + requestedMode
-                                                + ", target="
-                                                + bleParams.targetWidth
-                                                + "x"
-                                                + bleParams.targetHeight
-                                                + ", codec="
-                                                + codec
-                                                + ", quality="
-                                                + (codec == BleCodec.AVIF
-                                                        ? bleParams.avifQuality
-                                                        : AsgConstants
-                                                                .BLE_PHOTO_JPEG_FAST_QUALITY));
                                 logBlePhotoStep(
                                         requestId,
                                         "text_mode_prepare",
                                         "mode="
                                                 + requestedMode
-                                                + ", canonicalCropPrepared="
-                                                + textCropAlreadyPrepared);
-                                if (textModeRequested && bleParams != tierBleParams) {
-                                    Log.d(
-                                            TAG,
-                                            "Text mode: using dedicated BLE downscale "
-                                                    + bleParams.targetWidth
-                                                    + "x"
-                                                    + bleParams.targetHeight
-                                                    + " (cfg AVIF q"
-                                                    + bleParams.avifQuality
-                                                    + ") (size tier "
-                                                    + requestedSize
-                                                    + " would use "
-                                                    + tierBleParams.targetWidth
-                                                    + "x"
-                                                    + tierBleParams.targetHeight
-                                                    + " (cfg AVIF q"
-                                                    + tierBleParams.avifQuality
-                                                    + "))");
-                                }
+                                                + ", canonicalSelectionPrepared="
+                                                + textSelectionAlreadyPrepared
+                                                + ", canonicalCropApplied="
+                                                + textCropAlreadyApplied);
                                 boolean shouldCrop =
                                         AsgConstants.ENABLE_TEXT_REGION_CROP || textModeRequested;
                                 Log.i(
@@ -5317,8 +5291,10 @@ public class MediaCaptureService {
                                 // Human-readable verdict for whether ML Kit found a usable text
                                 // region or the transfer is preserving the full frame.
                                 String textCropOutcome =
-                                        textCropAlreadyPrepared
-                                                ? "PREPARED_CANONICAL_CROP"
+                                        textSelectionAlreadyPrepared
+                                                ? textCropAlreadyApplied
+                                                        ? "PREPARED_CANONICAL_CROP"
+                                                        : "PREPARED_FULL_FRAME_FALLBACK"
                                                 : shouldCrop
                                                         ? "NOT_ATTEMPTED (pending detection)"
                                                         : "NOT_ATTEMPTED"
@@ -5332,7 +5308,8 @@ public class MediaCaptureService {
                                 android.graphics.Rect roi = null;
                                 long cropPhaseStartMs = 0L;
                                 long cropPhaseEndMs = 0L;
-                                boolean cropAttempted = shouldCrop && !textCropAlreadyPrepared;
+                                boolean cropAttempted =
+                                        shouldCrop && !textSelectionAlreadyPrepared;
                                 if (cropAttempted) {
                                     stage.start("text-region detection");
                                     cropPhaseStartMs = System.currentTimeMillis();
@@ -5362,6 +5339,53 @@ public class MediaCaptureService {
                                                     + (roi != null
                                                             ? " roi=" + roi.toShortString()
                                                             : " roi=full-frame"));
+                                }
+
+                                boolean hasUsableTextCrop =
+                                        textModeRequested
+                                                && (textCropAlreadyApplied || roi != null);
+                                bleParams =
+                                        textModeRequested
+                                                ? resolveTextModeBleParams(hasUsableTextCrop)
+                                                : tierBleParams;
+                                logBlePhotoStep(
+                                        requestId,
+                                        "compress_resolve_params",
+                                        "size="
+                                                + requestedSize
+                                                + ", mode="
+                                                + requestedMode
+                                                + ", textCropAvailable="
+                                                + hasUsableTextCrop
+                                                + ", target="
+                                                + bleParams.targetWidth
+                                                + "x"
+                                                + bleParams.targetHeight
+                                                + ", codec="
+                                                + codec
+                                                + ", quality="
+                                                + (codec == BleCodec.AVIF
+                                                        ? bleParams.avifQuality
+                                                        : AsgConstants
+                                                                .BLE_PHOTO_JPEG_FAST_QUALITY));
+                                if (textModeRequested) {
+                                    Log.d(
+                                            TAG,
+                                            "Text mode: using "
+                                                    + (hasUsableTextCrop
+                                                            ? "detected-crop"
+                                                            : "full-frame fallback")
+                                                    + " BLE downscale "
+                                                    + bleParams.targetWidth
+                                                    + "x"
+                                                    + bleParams.targetHeight
+                                                    + " (size tier "
+                                                    + requestedSize
+                                                    + " would use "
+                                                    + tierBleParams.targetWidth
+                                                    + "x"
+                                                    + tierBleParams.targetHeight
+                                                    + ")");
                                 }
 
                                 int sourceWidth = 0;
@@ -5480,7 +5504,7 @@ public class MediaCaptureService {
                                     }
 
                                     // Decode subsampled: never materialize the ~46MB full-res
-                                    // ARGB frame when the output is capped at 1920px anyway.
+                                    // ARGB frame when the configured output cap is smaller.
                                     // The ROI (source-pixel coordinates) is mapped onto the
                                     // subsampled space so the crop lands on the same region.
                                     int regionWidth = cropWidth > 0 ? cropWidth : srcWidth;

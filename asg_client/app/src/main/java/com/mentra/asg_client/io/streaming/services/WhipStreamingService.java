@@ -18,6 +18,7 @@ import android.util.Log;
 import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
 
+import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.audio.AudioAssets;
 import com.mentra.asg_client.camera.CameraNeoService;
 import com.mentra.asg_client.io.hardware.core.HardwareManagerFactory;
@@ -153,9 +154,10 @@ public class WhipStreamingService extends Service {
   private Handler mMainHandler;
   private long mStartupStartedAtMs;
 
-  private static final long STATS_INTERVAL_MS = 2000;
   private long mLastVideoBytesSent = 0;
   private long mLastAudioBytesSent = 0;
+  private long mLastStatsAtMs = 0;
+  private long mStreamStartedAtMs = 0;
   private final Runnable mStatsRunnable = new Runnable() {
     @Override
     public void run() {
@@ -163,6 +165,8 @@ public class WhipStreamingService extends Service {
       mPeerConnection.getStats(report -> {
         long videoBytesTotal = 0, audioBytesTotal = 0;
         long videoPackets = 0, audioPackets = 0;
+        long droppedFrames = 0;
+        double measuredFps = Double.NaN;
         for (RTCStats stats : report.getStatsMap().values()) {
           if (!"outbound-rtp".equals(stats.getType())) continue;
           Object kind  = stats.getMembers().get("kind");
@@ -171,19 +175,57 @@ public class WhipStreamingService extends Service {
           if (bytes == null) continue;
           long b = ((Number) bytes).longValue();
           long p = pkts != null ? ((Number) pkts).longValue() : 0;
-          if ("video".equals(kind)) { videoBytesTotal = b; videoPackets = p; }
+          if ("video".equals(kind)) {
+            videoBytesTotal += b;
+            videoPackets += p;
+            Object dropped = stats.getMembers().get("framesDropped");
+            if (!(dropped instanceof Number)) {
+              dropped = stats.getMembers().get("framesDiscardedOnSend");
+            }
+            if (dropped instanceof Number) {
+              droppedFrames += ((Number) dropped).longValue();
+            }
+            Object fps = stats.getMembers().get("framesPerSecond");
+            if (fps instanceof Number) {
+              measuredFps = Math.max(
+                  Double.isFinite(measuredFps) ? measuredFps : 0,
+                  ((Number) fps).doubleValue());
+            }
+          }
           else if ("audio".equals(kind)) { audioBytesTotal = b; audioPackets = p; }
         }
-        long videoDelta = videoBytesTotal - mLastVideoBytesSent;
-        long audioDelta = audioBytesTotal - mLastAudioBytesSent;
+        long now = SystemClock.elapsedRealtime();
+        long elapsedMs = mLastStatsAtMs > 0
+            ? now - mLastStatsAtMs
+            : AsgConstants.STREAM_METRICS_INTERVAL_MS;
+        long videoDelta = Math.max(0, videoBytesTotal - mLastVideoBytesSent);
+        long audioDelta = Math.max(0, audioBytesTotal - mLastAudioBytesSent);
         mLastVideoBytesSent = videoBytesTotal;
         mLastAudioBytesSent = audioBytesTotal;
+        mLastStatsAtMs = now;
+        long videoBitrateBps = elapsedMs > 0 ? videoDelta * 8_000L / elapsedMs : 0;
+        double fps = Double.isFinite(measuredFps) ? measuredFps : mStreamConfig.getVideoFps();
+        long durationSeconds = mStreamStartedAtMs > 0
+            ? Math.max(0, (now - mStreamStartedAtMs) / 1_000L)
+            : 0;
+        notifyMetrics(
+            videoBitrateBps,
+            fps,
+            droppedFrames,
+            durationSeconds,
+            StreamThermalReader.readCpuTemperatureC());
         Log.d(TAG, String.format(
             "↑ video: %d B/s (%d pkts total)  audio: %d B/s (%d pkts total)",
-            videoDelta * 1000 / STATS_INTERVAL_MS, videoPackets,
-            audioDelta * 1000 / STATS_INTERVAL_MS, audioPackets));
+            elapsedMs > 0 ? videoDelta * 1000 / elapsedMs : 0, videoPackets,
+            elapsedMs > 0 ? audioDelta * 1000 / elapsedMs : 0, audioPackets));
+
+        synchronized (mStateLock) {
+          if (mStreamState != StreamState.STREAMING || mPeerConnection == null) {
+            return;
+          }
+        }
+        mMainHandler.postDelayed(this, AsgConstants.STREAM_METRICS_INTERVAL_MS);
       });
-      mMainHandler.postDelayed(this, STATS_INTERVAL_MS);
     }
   };
 
@@ -702,7 +744,12 @@ public class WhipStreamingService extends Service {
             }
             mLastVideoBytesSent = 0;
             mLastAudioBytesSent = 0;
-            mMainHandler.postDelayed(mStatsRunnable, STATS_INTERVAL_MS);
+            mLastStatsAtMs = SystemClock.elapsedRealtime();
+            if (!mIsReconnecting || mStreamStartedAtMs == 0) {
+              mStreamStartedAtMs = mLastStatsAtMs;
+            }
+            mMainHandler.postDelayed(
+                mStatsRunnable, AsgConstants.STREAM_METRICS_INTERVAL_MS);
             scheduleStreamTimeout(mCurrentStreamId);
             startBatteryMonitoring();
             logStartupStage("whip_answer_applied");
@@ -880,6 +927,8 @@ public class WhipStreamingService extends Service {
     }
     mIsReconnecting = false;
     mReconnectAttempts = 0;
+    mStreamStartedAtMs = 0;
+    mLastStatsAtMs = 0;
     WakeLockManager.release(WakeLockManager.WakeOwner.STREAMING);
     resetState();
     updateNotification("Stream failed");
@@ -945,6 +994,27 @@ public class WhipStreamingService extends Service {
         mMainHandler.post(notify);
       }
     }
+  }
+
+  private void notifyMetrics(
+      long bitrateBps,
+      double fps,
+      long droppedFrames,
+      long durationSeconds,
+      double temperatureC) {
+    StreamingStatusCallback callback = sStatusCallback;
+    String streamId = mCurrentStreamId;
+    if (callback == null) return;
+    mMainHandler.post(() -> {
+      synchronized (mStateLock) {
+        if (mStreamState != StreamState.STREAMING
+            || (streamId != null && !streamId.equals(mCurrentStreamId))) {
+          return;
+        }
+      }
+      callback.onStreamMetrics(
+          streamId, bitrateBps, fps, droppedFrames, durationSeconds, temperatureC);
+    });
   }
 
   // -----------------------------------------------------------------------
