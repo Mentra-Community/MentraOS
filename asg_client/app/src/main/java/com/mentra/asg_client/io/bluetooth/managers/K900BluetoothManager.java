@@ -182,15 +182,17 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     private int recoveryProbeGeneration = 0;
 
     // BES firmware before the sticky-baud fix can fall back to 460800 while Android sleeps.
-    // Raw bytes then arrive at our still-fast UART but no longer form valid K900 frames. Hunt both
-    // supported rates when the parser supplies strong evidence of that live-link baud split.
+    // Raw bytes then arrive at our still-fast UART but no longer form valid K900 frames. Verify the
+    // fast rate, then finish at the rendezvous rate so a BES that boots after the scan can still be
+    // discovered by sparse retries.
     private static final int[] RUNTIME_RECOVERY_BAUD_CANDIDATES = {
-        TARGET_UART_BAUD, SerialPortBridge.DEFAULT_BAUDRATE, TARGET_UART_BAUD
+        TARGET_UART_BAUD, SerialPortBridge.DEFAULT_BAUDRATE
     };
     private long uartDiscardedBytesSinceValidFrame = 0;
     private int uartDiscardEventsSinceValidFrame = 0;
     private boolean runtimeBaudRecoveryInProgress = false;
     private int runtimeBaudRecoveryStep = 0;
+    private int runtimeBaudRecoveryRetryAttempt = 0;
     private int runtimeBaudRecoveryGeneration = 0;
     private ScheduledFuture<?> runtimeBaudRecoveryFuture;
     private ScheduledFuture<?> highBaudHealthFuture;
@@ -2068,6 +2070,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                             + comManager.getCurrentBaud()
                             + " baud");
             runtimeBaudRecoveryInProgress = false;
+            runtimeBaudRecoveryRetryAttempt = 0;
             runtimeBaudRecoveryGeneration++;
             cancelRuntimeBaudRecoveryLocked();
         }
@@ -2145,10 +2148,11 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                 && lastSystemVersionTime > 0;
     }
 
-    /** Start the existing bounded high/default/high scan. Must hold {@link #baudSwitchLock}. */
+    /** Start a fast/rendezvous scan. Must hold {@link #baudSwitchLock}. */
     private int beginRuntimeBaudRecoveryLocked() {
         runtimeBaudRecoveryInProgress = true;
         runtimeBaudRecoveryStep = 0;
+        runtimeBaudRecoveryRetryAttempt = 0;
         int generation = ++recoveryProbeGeneration;
         runtimeBaudRecoveryGeneration = generation;
         cancelRuntimeBaudRecoveryLocked();
@@ -2190,6 +2194,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     private void runRuntimeBaudRecoveryStep(int generation) {
         final int candidate;
         final int step;
+        long exhaustedRetryDelayMs = -1;
         synchronized (baudSwitchLock) {
             if (!runtimeBaudRecoveryInProgress
                     || generation != runtimeBaudRecoveryGeneration
@@ -2198,6 +2203,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             }
             if (isFileTransferInProgress()) {
                 runtimeBaudRecoveryInProgress = false;
+                runtimeBaudRecoveryRetryAttempt = 0;
                 runtimeBaudRecoveryGeneration++;
                 uartDiscardedBytesSinceValidFrame = 0;
                 uartDiscardEventsSinceValidFrame = 0;
@@ -2213,24 +2219,27 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                 return;
             }
             if (runtimeBaudRecoveryStep >= RUNTIME_RECOVERY_BAUD_CANDIDATES.length) {
-                runtimeBaudRecoveryInProgress = false;
-                runtimeBaudRecoveryGeneration++;
                 uartDiscardedBytesSinceValidFrame = 0;
                 uartDiscardEventsSinceValidFrame = 0;
                 cancelRuntimeBaudRecoveryLocked();
-                Log.e(
-                        BAUD_TAG,
-                        "Runtime recovery scan found no valid UART frame; remaining at preferred "
-                                + TARGET_UART_BAUD
-                                + " baud until new link evidence arrives");
-                return;
+                runtimeBaudRecoveryStep = 0;
+                exhaustedRetryDelayMs =
+                        runtimeBaudRecoveryRetryDelayMs(runtimeBaudRecoveryRetryAttempt++);
+                candidate = SerialPortBridge.DEFAULT_BAUDRATE;
+                step = -1;
+            } else {
+                step = runtimeBaudRecoveryStep++;
+                candidate = RUNTIME_RECOVERY_BAUD_CANDIDATES[step];
+                if (candidate == SerialPortBridge.DEFAULT_BAUDRATE) {
+                    // A response at rendezvous must be allowed to negotiate back to the fast rate.
+                    baudSwitchAttempted = false;
+                }
             }
-            step = runtimeBaudRecoveryStep++;
-            candidate = RUNTIME_RECOVERY_BAUD_CANDIDATES[step];
-            if (candidate == SerialPortBridge.DEFAULT_BAUDRATE) {
-                // A response at rendezvous must be allowed to negotiate back to the fast rate.
-                baudSwitchAttempted = false;
-            }
+        }
+
+        if (exhaustedRetryDelayMs >= 0) {
+            parkRuntimeRecoveryAtRendezvous(generation, exhaustedRetryDelayMs);
+            return;
         }
 
         try {
@@ -2259,6 +2268,51 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                         generation, AsgConstants.UART_RUNTIME_RECOVERY_STEP_TIMEOUT_MS);
             }
         }
+    }
+
+    private void parkRuntimeRecoveryAtRendezvous(int generation, long retryDelayMs) {
+        clearMessageParser();
+        boolean reopened = true;
+        synchronized (baudSwitchLock) {
+            if (!runtimeBaudRecoveryInProgress
+                    || generation != runtimeBaudRecoveryGeneration
+                    || generation != recoveryProbeGeneration) {
+                return;
+            }
+            baudSwitchAttempted = false;
+            if (comManager.getCurrentBaud() != SerialPortBridge.DEFAULT_BAUDRATE) {
+                try {
+                    reopened = comManager.reopen(SerialPortBridge.DEFAULT_BAUDRATE);
+                } catch (Exception e) {
+                    reopened = false;
+                    Log.e(BAUD_TAG, "Runtime recovery rendezvous reopen failed", e);
+                }
+            }
+            scheduleRuntimeBaudRecoveryLocked(generation, retryDelayMs);
+        }
+        Log.w(
+                BAUD_TAG,
+                "Runtime recovery scan found no valid UART frame; "
+                        + (reopened ? "parked" : "failed to park")
+                        + " at rendezvous "
+                        + SerialPortBridge.DEFAULT_BAUDRATE
+                        + " baud; retrying in "
+                        + retryDelayMs
+                        + " ms");
+    }
+
+    static long runtimeBaudRecoveryRetryDelayMs(int retryAttempt) {
+        long delayMs = AsgConstants.UART_RUNTIME_RECOVERY_RETRY_DELAY_MS;
+        for (int i = 0;
+                i < retryAttempt
+                        && delayMs < AsgConstants.UART_RUNTIME_RECOVERY_MAX_RETRY_DELAY_MS;
+                i++) {
+            delayMs =
+                    Math.min(
+                            delayMs * 2,
+                            AsgConstants.UART_RUNTIME_RECOVERY_MAX_RETRY_DELAY_MS);
+        }
+        return delayMs;
     }
 
     private void scheduleRuntimeVersionProbeBurst(int expectedBaud, int generation) {

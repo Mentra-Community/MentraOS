@@ -321,6 +321,14 @@ See [features/rtmp-streaming.md](features/rtmp-streaming.md) for stream lifecycl
 {"type": "stream_status", "kind": "lifecycle", "status": "streaming", "timestamp": 1708963201234}
 ```
 
+While a stream is active, supported firmware also emits this status periodically with live encoder and device telemetry:
+
+```json
+{"type": "stream_status", "status": "streaming", "streamId": "stream-123", "stats": {"bitrate": 2450000, "fps": 29.8, "droppedFrames": 3, "duration": 42, "temperatureC": 54.6}}
+```
+
+`bitrate` is in bits per second, `duration` is in seconds, and `temperatureC` is omitted when the CPU thermal sensor is unavailable.
+
 #### `stop_stream`
 
 ```json

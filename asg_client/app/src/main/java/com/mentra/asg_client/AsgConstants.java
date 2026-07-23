@@ -26,6 +26,19 @@ public class AsgConstants {
     public static final int CAMERA_FOV_DEFAULT = 118;
     public static final int CAMERA_ROI_POSITION_DEFAULT = 0;
 
+    /** Cadence for live stream bitrate, frame-rate, duration, and thermal telemetry. */
+    public static final long STREAM_METRICS_INTERVAL_MS = 2_000L;
+
+    /** Linux thermal sysfs root used to discover the Mentra Live CPU sensor. */
+    public static final String THERMAL_SYSFS_ROOT = "/sys/class/thermal";
+
+    /** MediaTek thermal-zone type that reports Mentra Live CPU temperature. */
+    public static final String CPU_THERMAL_ZONE_TYPE = "mtktscpu";
+
+    /** Known Mentra Live CPU-temperature fallback when sysfs type discovery is unavailable. */
+    public static final String CPU_THERMAL_FALLBACK_PATH =
+            "/sys/class/thermal/thermal_zone1/temp";
+
     /** Warm-up leases are intentionally short-lived to bound idle camera power use. */
     public static final long CAMERA_WARM_UP_DEFAULT_DURATION_MS = 15_000L;
     public static final long CAMERA_WARM_UP_MAX_DURATION_MS = 60_000L;
@@ -143,8 +156,11 @@ public class AsgConstants {
     /** Time allowed for a live-link recovery baud candidate to answer. */
     public static final long UART_RUNTIME_RECOVERY_STEP_TIMEOUT_MS = 700;
 
-    /** Delay before restarting a bounded live-link recovery scan that found neither endpoint. */
+    /** Initial delay before retrying a live-link recovery scan that found neither endpoint. */
     public static final long UART_RUNTIME_RECOVERY_RETRY_DELAY_MS = 3000;
+
+    /** Maximum delay between failed live-link recovery scans while parked at rendezvous baud. */
+    public static final long UART_RUNTIME_RECOVERY_MAX_RETRY_DELAY_MS = 60000;
 
     /** Maximum wait for the old-baud {@code sr_baud} acknowledgement before probing target baud. */
     public static final long UART_BAUD_ACK_TIMEOUT_MS = 1000;

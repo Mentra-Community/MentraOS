@@ -314,6 +314,16 @@ class LocalDisplayManager {
     this.arbitrateAndSend(packageName, payload, resolve)
   }
 
+  /**
+   * End a package's temporary display early. If it currently owns the main
+   * view, release its background lock and restore the foreground miniapp's
+   * saved frame. A dismissal for a package that is no longer visible is a
+   * no-op.
+   */
+  public dismiss(packageName: string): void {
+    this.handleExpiry(packageName)
+  }
+
   // ===========================================================================
   // Internals — arbitration
   // ===========================================================================
