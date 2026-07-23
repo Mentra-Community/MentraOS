@@ -73,6 +73,45 @@ describe("OtaUpdateCheckService", () => {
     expect(global.fetch).not.toHaveBeenCalled()
   })
 
+  it("downgrades default to skippable; explicit isRequired forces them", async () => {
+    const check = () =>
+      checkCurrentGlassesForUpdate({
+        refreshVersionInfo: false,
+        fixClockBeforeCheck: false,
+        waitForBesVersionMs: 0,
+        waitForMtkVersionMs: 0,
+      })
+    const manifestWith = (extra: object) => ({
+      apps: {"com.mentra.asg_client": {versionCode: 9, versionName: "9", downloadUrl: "u", apkSize: 1, sha256: "s", releaseNotes: "", ...extra}},
+    })
+
+    // Glasses newer than the pin -> downgrade; absent isRequired -> skippable.
+    global.fetch = jest.fn(() =>
+      Promise.resolve({ok: true, json: () => Promise.resolve(manifestWith({}))} as unknown as Response),
+    ) as unknown as typeof fetch
+    let result = await check()
+    expect(result.isApkDowngrade).toBe(true)
+    expect(result.isRequired).toBe(false)
+
+    // Explicit isRequired: true is the escape hatch and forces the downgrade.
+    global.fetch = jest.fn(() =>
+      Promise.resolve({ok: true, json: () => Promise.resolve(manifestWith({isRequired: true}))} as unknown as Response),
+    ) as unknown as typeof fetch
+    result = await check()
+    expect(result.isRequired).toBe(true)
+
+    // Upgrades keep the historical forced default when isRequired is absent.
+    global.fetch = jest.fn(() =>
+      Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({apps: {"com.mentra.asg_client": {versionCode: 999999, versionName: "n", downloadUrl: "u", apkSize: 1, sha256: "s", releaseNotes: ""}}}),
+      } as unknown as Response),
+    ) as unknown as typeof fetch
+    result = await check()
+    expect(result.isApkDowngrade).toBe(false)
+    expect(result.isRequired).toBe(true)
+  })
+
   it("checks the current glasses and writes the available OTA snapshot", async () => {
     global.fetch = jest.fn(() =>
       Promise.resolve({

@@ -467,7 +467,17 @@ export async function checkCurrentGlassesForUpdate(
     updates: filteredUpdates,
     isApkDowngrade,
     updateInfo,
-    isRequired: result.latestVersionInfo?.isRequired !== false,
+    // Required-update policy: an EXPLICIT isRequired in the manifest is the
+    // release-engineering escape hatch and wins in both directions. When absent,
+    // upgrades keep the historical forced default, but downgrades are always
+    // skippable — a version change that resets glasses settings must be
+    // declinable unless someone explicitly forced it.
+    isRequired:
+      result.latestVersionInfo?.isRequired === true
+        ? true
+        : result.latestVersionInfo?.isRequired === false
+          ? false
+          : !isApkDowngrade,
     manifestUrl,
     buildNumber,
     mtkFirmwareVersion,
