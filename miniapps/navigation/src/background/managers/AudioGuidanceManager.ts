@@ -65,6 +65,7 @@ export class AudioGuidanceManager {
   private tripActive = false
   private tripConfirmed = false
   private tripStartedAt: number | null = null
+  private startupOffRouteSuppressed = false
   private startupRerouteSuppressed = false
   private allowImplicitResume = true
   private latestUnconfirmedInput: AudioGuidanceInput | null = null
@@ -106,6 +107,7 @@ export class AudioGuidanceManager {
     this.tripActive = true
     this.tripConfirmed = false
     this.tripStartedAt = null
+    this.startupOffRouteSuppressed = false
     this.startupRerouteSuppressed = false
     this.allowImplicitResume = false
     this.latestUnconfirmedInput = null
@@ -168,6 +170,7 @@ export class AudioGuidanceManager {
     const deferredStartupReroute =
       input.status === "rerouting" && this.startupRerouteSuppressed && !startupOffRouteGraceActive
     if (enteredRerouting || deferredStartupReroute) {
+      this.discardStaleManeuverPrompts()
       this.currentManeuverKey = null
       this.currentRepeatPhrase = "Rerouting."
       if (startupOffRouteGraceActive) {
@@ -197,11 +200,23 @@ export class AudioGuidanceManager {
     this.tripActive = true
 
     // A route can initially snap to a walkable road tens of metres from an
-    // indoor or noisy GPS fix. Keep real rerouting active, but do not let that
-    // settling period suppress valid maneuver guidance or speak a false alarm.
-    // If a fresh update is still off route after the grace period, lastOffRoute
-    // remains false so the normal one-shot warning becomes eligible.
-    if (input.offRoute && !startupOffRouteGraceActive) {
+    // indoor or noisy GPS fix. Keep real rerouting active, but do not speak
+    // either an off-route warning or maneuver guidance derived from that
+    // unstable fix. A stable on-route update resumes the current maneuver
+    // afresh; if the condition persists past the grace period, the normal
+    // one-shot warning becomes eligible.
+    if (input.offRoute && startupOffRouteGraceActive) {
+      if (!this.startupOffRouteSuppressed) {
+        this.discardStaleManeuverPrompts()
+        this.currentManeuverKey = null
+        this.currentPivotIndex = null
+        this.currentRepeatPhrase = null
+      }
+      this.startupOffRouteSuppressed = true
+      return
+    }
+    if (input.offRoute) {
+      this.startupOffRouteSuppressed = false
       if (!this.lastOffRoute) {
         const phrase = "You are off route. Go back to the route."
         this.discardStaleManeuverPrompts()
@@ -212,12 +227,13 @@ export class AudioGuidanceManager {
       this.lastOffRoute = true
       return
     }
-    if (this.lastOffRoute) {
+    if (this.lastOffRoute || this.startupOffRouteSuppressed) {
       // Returning to the route should evaluate the current maneuver afresh;
       // stages spoken before the deviation no longer describe the live spot.
       this.currentManeuverKey = null
       this.currentPivotIndex = null
     }
+    this.startupOffRouteSuppressed = false
     this.lastOffRoute = false
 
     const instruction = cleanSpokenText(input.instruction)
@@ -342,6 +358,7 @@ export class AudioGuidanceManager {
     this.tripActive = false
     this.tripConfirmed = false
     this.tripStartedAt = null
+    this.startupOffRouteSuppressed = false
     this.startupRerouteSuppressed = false
     this.allowImplicitResume = false
     this.latestUnconfirmedInput = null
