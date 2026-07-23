@@ -195,6 +195,25 @@ jobs:
           upload-key-alias: ${{ secrets.MENTRAOS_UPLOAD_KEY_ALIAS }}
           google-play-key-json: ${{ secrets.GOOGLE_PLAY_KEY_JSON }}
 
+      - name: Wait for paired ASG pin manifest
+        # No app upload without a live pin: the publish-asg-pin job must have
+        # succeeded (including its GitHub asset uploads) before this binary is
+        # allowed near TestFlight / Play / the release. A missing pin here
+        # means the ASG build or the asset upload failed -- fail loudly rather
+        # than ship an app whose baked manifest URL 404s.
+        run: |
+          echo "Waiting for $ASG_PINNED_OTA_MANIFEST_URL"
+          for attempt in {1..80}; do
+            if curl --fail --silent --location "$ASG_PINNED_OTA_MANIFEST_URL" -o /tmp/asg_pin.json 2>/dev/null \
+              && jq -e '.apps["com.mentra.asg_client"].versionCode > 0' /tmp/asg_pin.json >/dev/null 2>&1; then
+              echo "Pin manifest is live."
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "::error::Paired ASG pin manifest never became available -- refusing to upload an app with a dead pin (did the ASG build or its asset upload fail?)"
+          exit 1
+
       - name: Run release-android (signed APK + Beta_N upload + Play internal)
         working-directory: ./mobile
         env:
@@ -499,6 +518,25 @@ jobs:
           asc-api-key-id: ${{ secrets.ASC_API_KEY_ID }}
           asc-api-issuer-id: ${{ secrets.ASC_API_ISSUER_ID }}
 
+      - name: Wait for paired ASG pin manifest
+        # No app upload without a live pin: the publish-asg-pin job must have
+        # succeeded (including its GitHub asset uploads) before this binary is
+        # allowed near TestFlight / Play / the release. A missing pin here
+        # means the ASG build or the asset upload failed -- fail loudly rather
+        # than ship an app whose baked manifest URL 404s.
+        run: |
+          echo "Waiting for $ASG_PINNED_OTA_MANIFEST_URL"
+          for attempt in {1..80}; do
+            if curl --fail --silent --location "$ASG_PINNED_OTA_MANIFEST_URL" -o /tmp/asg_pin.json 2>/dev/null \
+              && jq -e '.apps["com.mentra.asg_client"].versionCode > 0' /tmp/asg_pin.json >/dev/null 2>&1; then
+              echo "Pin manifest is live."
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "::error::Paired ASG pin manifest never became available -- refusing to upload an app with a dead pin (did the ASG build or its asset upload fail?)"
+          exit 1
+
       - name: Run release-ios (signed IPA + Beta_N upload + TestFlight)
         working-directory: ./mobile
         env:
@@ -780,6 +818,168 @@ jobs:
           name: asg-staging
           path: asg_client/app/build/outputs/apk/release/app-release.apk
 
+  publish-asg-pin:
+    name: Publish paired ASG pin
+    # Publishes the ASG APK and this run's immutable pin manifest BEFORE the
+    # mobile jobs upload anything to TestFlight / Play / the GitHub release:
+    # their pre-upload gate waits for the pin URL to be live, so a refused or
+    # failed asset upload here (GitHub can reject uploads) hard-blocks app
+    # publishing instead of shipping binaries with a dead pin.
+    needs: build-asg
+    if: needs.build-asg.result == 'success'
+    runs-on: ubuntu-latest
+    outputs:
+      build_date: ${{ steps.build-info.outputs.date }}
+      short_sha: ${{ steps.build-info.outputs.sha }}
+      reuse: ${{ needs.build-asg.outputs.reuse }}
+    steps:
+      - name: Checkout for firmware manifest
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+
+      - name: Get build info
+        id: build-info
+        run: |
+          echo "date=$(date +%Y-%m-%d)" >> $GITHUB_OUTPUT
+          echo "sha=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+
+      - name: Download ASG artifact
+        # Reuse mode (OS-1689): no fresh artifact; manifests re-pin the
+        # previously published APK and asg-latest.apk stays as-is.
+        if: needs.build-asg.outputs.reuse != 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: asg-staging
+          path: ./asg-apk
+
+      - name: Generate ASG staging OTA manifest
+        if: needs.build-asg.result == 'success'
+        env:
+          BUILD_DATE: ${{ steps.build-info.outputs.date }}
+          BUILD_SHORT_SHA: ${{ steps.build-info.outputs.sha }}
+          VERSION_CODE: ${{ needs.build-asg.outputs.version_code }}
+          VERSION_NAME: ${{ needs.build-asg.outputs.version_name }}
+          APK_SHA256: ${{ needs.build-asg.outputs.apk_sha256 }}
+          APK_SIZE: ${{ needs.build-asg.outputs.apk_size }}
+          ASG_REUSE: ${{ needs.build-asg.outputs.reuse }}
+          REUSED_APK_URL: ${{ needs.build-asg.outputs.apk_url }}
+          ASG_TREE_HASH: ${{ needs.build-asg.outputs.tree_hash }}
+        run: |
+          mkdir -p asg-manifest
+          if [ "$ASG_REUSE" = "true" ]; then
+            # asg_client/ unchanged: the manifest re-pins the previously published
+            # artifact so app-only releases never move the glasses pin (OS-1689).
+            APK_URL="$REUSED_APK_URL"
+          else
+            APK_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/staging-builds/asg-staging-${BUILD_DATE}-${BUILD_SHORT_SHA}.apk"
+          fi
+          FIRMWARE_MANIFEST="asg_client/ota_manifests/firmware_live.json"
+
+          jq -e '
+            (.mtk_patches | type == "array" and length > 0)
+            and (.bes_firmware | type == "object")
+          ' "$FIRMWARE_MANIFEST" >/dev/null
+
+          jq \
+            --arg apkUrl "$APK_URL" \
+            --arg versionName "$VERSION_NAME" \
+            --arg sha256 "$APK_SHA256" \
+            --arg treeHash "$ASG_TREE_HASH" \
+            --argjson versionCode "$VERSION_CODE" \
+            --argjson apkSize "$APK_SIZE" \
+            '{
+              sourceTreeHash: $treeHash,
+              apps: {
+                "com.mentra.asg_client": {
+                  versionCode: $versionCode,
+                  versionName: $versionName,
+                  apkUrl: $apkUrl,
+                  apkSize: $apkSize,
+                  sha256: $sha256
+                }
+              },
+              mtk_patches: .mtk_patches,
+              bes_firmware: .bes_firmware
+            }
+            + (if .remediation then {remediation: .remediation} else {} end)' "$FIRMWARE_MANIFEST" > asg-manifest/staging_live_version.json
+
+      - name: Publish pin, APK and rolling manifest to staging-builds release
+        uses: actions/github-script@v7
+        env:
+          ASG_REUSE: ${{ needs.build-asg.outputs.reuse }}
+        with:
+          script: |
+            const fs = require('fs');
+            const date = '${{ steps.build-info.outputs.date }}';
+            const sha = '${{ steps.build-info.outputs.sha }}';
+            const reuse = process.env.ASG_REUSE === 'true';
+            const onStaging = context.ref === 'refs/heads/staging';
+
+            let release;
+            try {
+              release = await github.rest.repos.getReleaseByTag({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                tag: 'staging-builds'
+              });
+            } catch (error) {
+              if (error.status === 404) {
+                release = await github.rest.repos.createRelease({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  tag_name: 'staging-builds',
+                  name: 'Staging Builds',
+                  body: 'Automated builds from the staging branch.',
+                  prerelease: true,
+                  draft: false
+                });
+              } else {
+                throw error;
+              }
+            }
+            const releaseId = release.data.id;
+
+            // Ordered uploads: APK first (fresh mode), then the pin that references
+            // it, then the rolling head. Any API failure throws and fails the job,
+            // which blocks the mobile store uploads via their pin gate.
+            const uploads = [];
+            if (!reuse) {
+              uploads.push({path: './asg-apk/app-release.apk', names: [`asg-staging-${date}-${sha}.apk`, 'asg-latest.apk']});
+            }
+            uploads.push({path: './asg-manifest/staging_live_version.json', names: ['asg-staging-r${{ github.run_id }}-version.json']});
+            if (onStaging) {
+              uploads.push({path: './asg-manifest/staging_live_version.json', names: ['staging_live_version.json']});
+            }
+
+            for (const upload of uploads) {
+              if (!fs.existsSync(upload.path)) {
+                throw new Error(`Missing artifact: ${upload.path}`);
+              }
+              const data = fs.readFileSync(upload.path);
+              for (const name of upload.names) {
+                for (const asset of release.data.assets) {
+                  if (asset.name === name) {
+                    console.log(`Deleting existing ${name}`);
+                    await github.rest.repos.deleteReleaseAsset({
+                      owner: context.repo.owner,
+                      repo: context.repo.repo,
+                      asset_id: asset.id
+                    });
+                  }
+                }
+                console.log(`Uploading ${name} (${data.length} bytes)...`);
+                await github.rest.repos.uploadReleaseAsset({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  release_id: releaseId,
+                  name,
+                  data
+                });
+              }
+            }
+
   upload-releases:
     name: Upload to staging-builds release
     needs: [build-mobile-android, build-mobile-ios, build-asg]
@@ -815,15 +1015,6 @@ jobs:
         with:
           name: mobile-staging-ios
           path: ./mobile-ipa
-
-      - name: Download ASG artifact
-        # Reuse mode (OS-1689) builds and uploads no artifact — the manifests
-        # re-pin the previously published APK, and asg-latest.apk stays as-is.
-        if: needs.build-asg.result == 'success' && needs.build-asg.outputs.reuse != 'true'
-        uses: actions/download-artifact@v4
-        with:
-          name: asg-staging
-          path: ./asg-apk
 
       - name: Get build info
         id: build-info
@@ -868,8 +1059,7 @@ jobs:
 
             const uploads = [
               { path: './mobile-apk/app-release.apk', latestName: 'mobile-latest.apk', datedName: `mobile-staging-${date}-${sha}.apk` },
-              { path: './mobile-ipa/app-release.ipa', latestName: 'mobile-latest.ipa', datedName: `mobile-staging-${date}-${sha}.ipa` },
-              { path: './asg-apk/app-release.apk', latestName: 'asg-latest.apk', datedName: `asg-staging-${date}-${sha}.apk` }
+              { path: './mobile-ipa/app-release.ipa', latestName: 'mobile-latest.ipa', datedName: `mobile-staging-${date}-${sha}.ipa` }
             ];
 
             for (const upload of uploads) {
@@ -923,148 +1113,6 @@ jobs:
             });
 
             console.log('Successfully uploaded build artifacts');
-
-      - name: Generate ASG staging OTA manifest
-        if: needs.build-asg.result == 'success'
-        env:
-          BUILD_DATE: ${{ steps.build-info.outputs.date }}
-          BUILD_SHORT_SHA: ${{ steps.build-info.outputs.sha }}
-          VERSION_CODE: ${{ needs.build-asg.outputs.version_code }}
-          VERSION_NAME: ${{ needs.build-asg.outputs.version_name }}
-          APK_SHA256: ${{ needs.build-asg.outputs.apk_sha256 }}
-          APK_SIZE: ${{ needs.build-asg.outputs.apk_size }}
-          ASG_REUSE: ${{ needs.build-asg.outputs.reuse }}
-          REUSED_APK_URL: ${{ needs.build-asg.outputs.apk_url }}
-          ASG_TREE_HASH: ${{ needs.build-asg.outputs.tree_hash }}
-        run: |
-          mkdir -p asg-manifest
-          if [ "$ASG_REUSE" = "true" ]; then
-            # asg_client/ unchanged: the manifest re-pins the previously published
-            # artifact so app-only releases never move the glasses pin (OS-1689).
-            APK_URL="$REUSED_APK_URL"
-          else
-            APK_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/staging-builds/asg-staging-${BUILD_DATE}-${BUILD_SHORT_SHA}.apk"
-          fi
-          FIRMWARE_MANIFEST="asg_client/ota_manifests/firmware_live.json"
-
-          jq -e '
-            (.mtk_patches | type == "array" and length > 0)
-            and (.bes_firmware | type == "object")
-          ' "$FIRMWARE_MANIFEST" >/dev/null
-
-          jq \
-            --arg apkUrl "$APK_URL" \
-            --arg versionName "$VERSION_NAME" \
-            --arg sha256 "$APK_SHA256" \
-            --arg treeHash "$ASG_TREE_HASH" \
-            --argjson versionCode "$VERSION_CODE" \
-            --argjson apkSize "$APK_SIZE" \
-            '{
-              sourceTreeHash: $treeHash,
-              apps: {
-                "com.mentra.asg_client": {
-                  versionCode: $versionCode,
-                  versionName: $versionName,
-                  apkUrl: $apkUrl,
-                  apkSize: $apkSize,
-                  sha256: $sha256
-                }
-              },
-              mtk_patches: .mtk_patches,
-              bes_firmware: .bes_firmware
-            }
-            + (if .remediation then {remediation: .remediation} else {} end)' "$FIRMWARE_MANIFEST" > asg-manifest/staging_live_version.json
-
-      - name: Upload ASG OTA manifest to staging-builds release
-        # Same ref guard as the Pages deploy: a workflow_dispatch run from a
-        # non-staging branch must not overwrite the release-asset manifest the
-        # cleanup keep-APK logic trusts while Pages keeps serving the old one.
-        if: needs.build-asg.result == 'success' && github.ref_name == 'staging'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const fs = require('fs');
-            const date = '${{ steps.build-info.outputs.date }}';
-            const sha = '${{ steps.build-info.outputs.sha }}';
-
-            const releaseBody = `Automated builds from the \`staging\` branch.\n\n**Latest builds:** ${date} (${sha})\n\n## Download Links\n\n- [Mobile App Android (latest)](https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/staging-builds/mobile-latest.apk)\n- [Mobile App iOS (latest)](https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/staging-builds/mobile-latest.ipa)\n- [ASG Client (latest)](https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/staging-builds/asg-latest.apk)\n- [ASG OTA manifest (release asset)](https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/staging-builds/staging_live_version.json)\n\nVersioned builds with \`_Beta_N\` numbering are also published under the per-version release tag (e.g. \`v2.10\`).\n\n---\n\n*Builds older than 7 days in this rolling-latest channel are automatically cleaned up.*`;
-
-            let release;
-            try {
-              release = await github.rest.repos.getReleaseByTag({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                tag: 'staging-builds'
-              });
-            } catch (error) {
-              if (error.status === 404) {
-                release = await github.rest.repos.createRelease({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  tag_name: 'staging-builds',
-                  name: 'Staging Builds',
-                  body: releaseBody,
-                  prerelease: true,
-                  draft: false
-                });
-              } else {
-                throw error;
-              }
-            }
-
-            const releaseId = release.data.id;
-
-            const uploads = [
-              // Rolling name only: the per-run pinned copy below is the
-              // permanent historical record, so no dated duplicate is needed.
-              { path: './asg-manifest/staging_live_version.json', latestName: 'staging_live_version.json', datedName: null },
-              // Immutable per-run pin baked into this run's mobile app builds
-              // (EXPO_PUBLIC_ASG_OTA_VERSION_URL). Name derives from run_id so
-              // the parallel mobile jobs know it up front.
-              { path: './asg-manifest/staging_live_version.json', latestName: null, datedName: 'asg-staging-r${{ github.run_id }}-version.json' }
-            ];
-
-            for (const upload of uploads) {
-              if (!fs.existsSync(upload.path)) {
-                throw new Error(`Missing ASG OTA manifest: ${upload.path}`);
-              }
-              const data = fs.readFileSync(upload.path);
-
-              // Delete existing same-name assets first: the rolling latestName is
-              // replaced every run, and a re-run attempt of the same run_id
-              // re-uploads its pinned name (same commit, same pairing).
-              const names = [upload.latestName, upload.datedName].filter(Boolean);
-              for (const asset of release.data.assets) {
-                if (names.includes(asset.name)) {
-                  console.log(`Deleting existing ${asset.name}`);
-                  await github.rest.repos.deleteReleaseAsset({
-                    owner: context.repo.owner,
-                    repo: context.repo.repo,
-                    asset_id: asset.id
-                  });
-                }
-              }
-
-              for (const name of names) {
-                console.log(`Uploading ${name} (${data.length} bytes)...`);
-                await github.rest.repos.uploadReleaseAsset({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  release_id: releaseId,
-                  name,
-                  data
-                });
-              }
-            }
-
-            await github.rest.repos.updateRelease({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              release_id: releaseId,
-              body: releaseBody
-            });
-
-            console.log('Successfully uploaded ASG OTA manifest');
 
       - name: Cleanup old staging builds
         if: ${{ github.event.inputs.skip_cleanup != 'true' }}
@@ -1121,7 +1169,7 @@ jobs:
 
   slack-notify:
     name: Notify Slack
-    needs: [build-mobile-android, build-mobile-ios, build-asg, upload-releases]
+    needs: [build-mobile-android, build-mobile-ios, build-asg, publish-asg-pin, upload-releases]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -1163,6 +1211,9 @@ jobs:
           # upload step.
           BUILD_DATE: ${{ needs.upload-releases.outputs.build_date }}
           BUILD_SHORT_SHA: ${{ needs.upload-releases.outputs.short_sha }}
+          ASG_PIN_DATE: ${{ needs.publish-asg-pin.outputs.build_date }}
+          ASG_PIN_SHA: ${{ needs.publish-asg-pin.outputs.short_sha }}
+          ASG_PIN_REUSE: ${{ needs.publish-asg-pin.outputs.reuse }}
         # All shell here is pure ASCII. Status symbols use Slack mrkdwn
         # emoji codes (e.g. :white_check_mark:) instead of literal Unicode
         # so the shell parser never has to deal with non-ASCII bytes.
@@ -1253,8 +1304,13 @@ jobs:
           # Slack messages stop being interesting anyway). Reuse date+sha
           # from upload-releases so the link stays in sync if the run
           # crosses a UTC midnight boundary.
-          if [ -n "$BUILD_DATE" ] && [ -n "$BUILD_SHORT_SHA" ]; then
-            ASG_NAME="asg-staging-${BUILD_DATE}-${BUILD_SHORT_SHA}.apk"
+          if [ "$ASG_PIN_REUSE" = "true" ]; then
+            # Reuse mode published no new dated APK; asg-latest still points at
+            # the (unchanged) build this run re-pinned.
+            ASG_NAME="asg-latest.apk"
+            ASG_URL="https://github.com/${REPO}/releases/download/staging-builds/asg-latest.apk"
+          elif [ -n "$ASG_PIN_DATE" ] && [ -n "$ASG_PIN_SHA" ]; then
+            ASG_NAME="asg-staging-${ASG_PIN_DATE}-${ASG_PIN_SHA}.apk"
             ASG_URL="https://github.com/${REPO}/releases/download/staging-builds/${ASG_NAME}"
           else
             # Fallback: upload-releases didn't run (all builds failed), so
