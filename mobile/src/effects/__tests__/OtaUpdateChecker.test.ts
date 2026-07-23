@@ -108,10 +108,15 @@ describe("checkVersionUpdateAvailable", () => {
     expect(checkVersionUpdateAvailable("100", newFormatJson)).toBe(false)
   })
 
-  it("flags a downgrade when current is newer than the pin in new format", () => {
-    // Every apps-shaped manifest is an exact pin: a newer installed build means the pinned
-    // (older) version is the required one, so this is an actionable version change.
-    expect(checkVersionUpdateAvailable("200", newFormatJson)).toBe(true)
+  it("does not flag a downgrade when the floor is disabled (production default 0)", () => {
+    // Floor 0 disables downgrades: a newer installed build than the exact pin is not offered.
+    expect(checkVersionUpdateAvailable("200", newFormatJson)).toBe(false)
+  })
+
+  it("flags a downgrade when the floor is enabled at/below the pin", () => {
+    // With a positive floor at/below the pinned versionCode (100), the lower-than-installed pin
+    // is an actionable version change.
+    expect(checkVersionUpdateAvailable("200", newFormatJson, 100)).toBe(true)
   })
 
   it("detects update available in legacy format", () => {

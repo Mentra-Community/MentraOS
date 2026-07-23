@@ -354,6 +354,7 @@ class OtaInstallCoordinator {
         legacyApkSettleHold: this.legacyApkSettleHold,
         apkCompletedViaBuildIncrease: this.apkCompletedViaBuildIncrease,
         versionChangeConverged: this.versionChangeConverged,
+        versionChangeSession: this.versionChangeSession,
       }),
       errorMsg: this.errorMsg,
       continueButtonDisabled: this.continueButtonDisabled,
@@ -564,6 +565,7 @@ class OtaInstallCoordinator {
       legacyApkSettleHold: this.legacyApkSettleHold,
       apkCompletedViaBuildIncrease: this.apkCompletedViaBuildIncrease,
       versionChangeConverged: this.versionChangeConverged,
+      versionChangeSession: this.versionChangeSession,
     })
     const stallSig = buildProgressStalenessSignature(otaStatus, otaProgress, displayState)
     const stallDuration = progressTimeoutDurationMs(otaStatus, otaProgress, legacySession)
@@ -1048,6 +1050,7 @@ class OtaInstallCoordinator {
       legacyApkSettleHold: this.legacyApkSettleHold,
       apkCompletedViaBuildIncrease: this.apkCompletedViaBuildIncrease,
       versionChangeConverged: this.versionChangeConverged,
+      versionChangeSession: this.versionChangeSession,
     })
   }
 

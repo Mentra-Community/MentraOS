@@ -5,6 +5,16 @@ import {SETTINGS, useSettingsStore} from "../stores/settings"
 import {maybeFixGlassesClockFromVersionInfo} from "./glassesClockSync"
 import {resolveOtaManifestUrl} from "./otaManifestUrl"
 
+/**
+ * Phone-side mirror of ASG's `DOWNGRADE_FLOOR_VERSION_CODE`. Set to the versionCode of the first
+ * release shipping the shared media root (the first downgrade-safe build). A non-positive value
+ * means downgrades are disabled, so the phone must NOT offer them — offering a downgrade the
+ * glasses' `DowngradeGate` will refuse leaves the version-change session with no install and the
+ * glasses reporting a bare "complete", which would otherwise present as false success. Keep this
+ * in lockstep with the ASG/recovery constant at release time.
+ */
+export const DOWNGRADE_FLOOR_VERSION_CODE = 0
+
 export interface VersionInfo {
   versionCode: number
   versionName: string
@@ -81,6 +91,8 @@ export interface OtaCheckCurrentGlassesOptions {
   waitForMtkVersionMs?: number
   refreshVersionInfo?: boolean
   fixClockBeforeCheck?: boolean
+  /** Downgrade floor override (defaults to DOWNGRADE_FLOOR_VERSION_CODE); for tests. */
+  floorVersionCode?: number
 }
 
 function emptyCheckResult(skippedReason?: OtaCheckSkippedReason): OtaCheckCurrentGlassesResult {
@@ -134,8 +146,9 @@ export async function fetchVersionInfo(url: string): Promise<VersionJson | null>
 export function checkVersionUpdateAvailable(
   currentBuildNumber: string | undefined,
   versionJson: VersionJson | null,
+  floorVersionCode: number = DOWNGRADE_FLOOR_VERSION_CODE,
 ): boolean {
-  return getApkUpdateDirection(currentBuildNumber, versionJson) !== null
+  return getApkUpdateDirection(currentBuildNumber, versionJson, floorVersionCode) !== null
 }
 
 /**
@@ -147,6 +160,7 @@ export function checkVersionUpdateAvailable(
 export function getApkUpdateDirection(
   currentBuildNumber: string | undefined,
   versionJson: VersionJson | null,
+  floorVersionCode: number = DOWNGRADE_FLOOR_VERSION_CODE,
 ): "upgrade" | "downgrade" | null {
   if (!currentBuildNumber || !versionJson) {
     return null
@@ -175,7 +189,15 @@ export function getApkUpdateDirection(
   if (serverVersion > currentVersion) {
     return "upgrade"
   }
-  if (serverVersion < currentVersion && exactPin) {
+  // Downgrades require an exact pin AND a target at/above the enabled floor. A non-positive floor
+  // disables downgrades entirely, matching ASG's fail-closed DowngradeGate — so the phone never
+  // offers what the glasses would refuse.
+  if (
+    serverVersion < currentVersion &&
+    exactPin &&
+    floorVersionCode > 0 &&
+    serverVersion >= floorVersionCode
+  ) {
     return "downgrade"
   }
   return null
@@ -261,6 +283,7 @@ export async function checkForOtaUpdate(
   currentBuildNumber: string,
   currentMtkVersion?: string,
   currentBesVersion?: string,
+  floorVersionCode: number = DOWNGRADE_FLOOR_VERSION_CODE,
 ): Promise<OtaCheckResult> {
   try {
     console.log("OTA: Checking for OTA update - URL: " + otaVersionUrl + ", current build: " + currentBuildNumber)
@@ -311,7 +334,7 @@ export async function checkForOtaUpdate(
       }
     }
 
-    const apkDirection = getApkUpdateDirection(currentBuildNumber, versionJson)
+    const apkDirection = getApkUpdateDirection(currentBuildNumber, versionJson, floorVersionCode)
     const apkUpdateAvailable = apkDirection !== null
     console.log(
       `OTA: APK update available: ${apkUpdateAvailable} (current: ${currentBuildNumber}, direction: ${apkDirection ?? "none"})`,
@@ -371,6 +394,7 @@ export async function checkCurrentGlassesForUpdate(
     waitForMtkVersionMs = 2000,
     refreshVersionInfo = true,
     fixClockBeforeCheck = true,
+    floorVersionCode = DOWNGRADE_FLOOR_VERSION_CODE,
   } = options
 
   if (!glassesConnectedNow()) {
@@ -450,7 +474,7 @@ export async function checkCurrentGlassesForUpdate(
   }
 
   const manifestUrl = resolveOtaManifestUrl(useGlassesStore.getState().otaVersionUrl, buildNumber)
-  const result = await checkForOtaUpdate(manifestUrl, buildNumber, mtkFirmwareVersion, besFirmwareVersion)
+  const result = await checkForOtaUpdate(manifestUrl, buildNumber, mtkFirmwareVersion, besFirmwareVersion, floorVersionCode)
 
   if (!result.hasCheckCompleted) {
     return {

@@ -44,6 +44,8 @@ export function deriveDisplayState(args: {
   apkCompletedViaBuildIncrease?: boolean
   /** Downgrade detour: the reconnected glasses reported exactly the pinned target version. */
   versionChangeConverged?: boolean
+  /** True for the whole downgrade (version-change) session. */
+  versionChangeSession?: boolean
 }): DisplayState {
   const {
     otaStatus,
@@ -54,6 +56,7 @@ export function deriveDisplayState(args: {
     legacyApkSettleHold,
     apkCompletedViaBuildIncrease,
     versionChangeConverged,
+    versionChangeSession,
   } = args
 
   if (errorMsg) return "failed"
@@ -63,6 +66,15 @@ export function deriveDisplayState(args: {
   // a LOWER build so no build-number increase fires). Outranks the stale install
   // status still sitting in the store from before the handoff.
   if (versionChangeConverged) return "complete"
+
+  // In a version-change session, convergence (above) is the ONLY completion. A bare
+  // glasses "complete" before convergence — e.g. the glasses refusing the downgrade
+  // (floor/gate) with no install, or a stale pre-handoff status — must never present
+  // as success; treat it as still in flight so the coordinator's timeout/refusal
+  // handling decides the real outcome rather than the UI flashing "done".
+  if (versionChangeSession && otaStatus?.status === "complete") {
+    return connected ? "updating" : "disconnected"
+  }
 
   const besTerminal = isBesTerminal(otaStatus, otaProgress)
   if (besTerminal && connected && sawReconnectEdge) return "complete"
