@@ -22,6 +22,7 @@ import type {DisplayRequestResult} from "../../modules/engine/src/services/Local
 import {useGlassesStore} from "../../modules/engine/src/stores/glasses"
 import {useSettingsStore, SETTINGS} from "../../modules/engine/src/stores/settings"
 import {bluetoothSdkMock} from "../test-utils/mockBluetoothSdk"
+import {flushDisplayCoalesceForTests, useDisplayStore} from "@mentra/engine/internal"
 
 function setDeviceModel(model: string) {
   useSettingsStore.getState().setSetting(SETTINGS.default_wearable.key, model, false)
@@ -48,6 +49,12 @@ beforeEach(() => {
   setDeviceModel("Even Realities G2")
   setGlassesConnected(true)
   localDisplayManager._resetForTest()
+  useDisplayStore.setState({
+    currentEvent: {},
+    dashboardEvent: {},
+    mainEvent: {},
+    view: "main",
+  })
 })
 
 afterEach(() => {
@@ -67,6 +74,31 @@ describe("scene requests through arbitration", () => {
     const scene = lastScene()
     expect(scene.appId).toBe("com.app.a")
     expect((scene.elements as unknown[]).length).toBe(1)
+  })
+
+  it("publishes the full positioned scene to the glasses mirror store", () => {
+    localDisplayManager.request("com.app.a", {
+      view: "main",
+      scene: [
+        {type: "text", id: "title", box: {x: 12, y: 20, w: 300, h: 50}, text: "mirror me"},
+        {type: "rect", id: "outline", box: {x: 0, y: 0, w: 576, h: 288}, style: {border: 2}},
+      ],
+    })
+    flushDisplayCoalesceForTests()
+
+    const event = useDisplayStore.getState().currentEvent
+    expect(event.view).toBe("main")
+    expect(event.layout).toMatchObject({
+      layoutType: "scene",
+      width: 576,
+      height: 288,
+    })
+    expect(event.layout.elements).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({id: "title", type: "text", text: "mirror me"}),
+        expect.objectContaining({id: "outline", type: "rect"}),
+      ]),
+    )
   })
 
   it("reports degraded + dropped for over-budget scenes", () => {
