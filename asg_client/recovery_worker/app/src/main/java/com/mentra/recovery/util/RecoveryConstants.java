@@ -68,23 +68,6 @@ public final class RecoveryConstants {
   public static final String BACKUP_APK_PATH = "/storage/emulated/0/asg/asg_client_backup.apk";
   public static final String BACKUP_METADATA_PATH = "/storage/emulated/0/asg/asg_client_backup.json";
 
-  // --- Remediation (self-contained ASG force-install path) ---
-
-  /** OTA manifest fetched directly by the recovery worker (independent of ASG's OTA cache). */
-  public static final String VERSION_JSON_URL = "https://ota.mentraglass.com/prod_live_version_v2.json";
-  /** Fresh-download target; always overwritten so the ASG OTA cache is bypassed implicitly. */
-  public static final String REMEDIATION_APK_PATH =
-      "/storage/emulated/0/asg/recovery_remediation.apk";
-  public static final String REMEDIATION_PREFS = "mentra_remediation_state";
-  public static final String KEY_LAST_APPLIED_VERSION = "last_applied_version_code";
-  public static final String UNIQUE_REMEDIATION_WORK = "mentra_remediation_check";
-
-  /** Periodic remediation check cadence. */
-  public static final long REMEDIATION_CHECK_INTERVAL_HOURS = 6L;
-  /** HTTP connect timeout for manifest fetch / APK download. */
-  public static final int REMEDIATION_CONNECT_TIMEOUT_MS = 15_000;
-  /** HTTP read timeout for manifest fetch / APK download. */
-  public static final int REMEDIATION_READ_TIMEOUT_MS = 60_000;
 
   // --- Pinned ASG downgrade transaction (uninstall-then-reinstall detour) ---
 

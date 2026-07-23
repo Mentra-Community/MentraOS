@@ -20,7 +20,6 @@ import androidx.core.content.ContextCompat;
 import com.mentra.recovery.downgrade.DowngradeController;
 import com.mentra.recovery.health.HealthMonitor;
 import com.mentra.recovery.health.InstallPauseNotifier;
-import com.mentra.recovery.remediation.RemediationController;
 import com.mentra.recovery.reset.ResetController;
 import com.mentra.recovery.util.RecoveryConstants;
 import com.mentra.recovery.R;
@@ -48,7 +47,6 @@ public class RecoveryService extends Service {
     InstallPauseNotifier.setListener(paused -> healthMonitor.setPaused(paused));
     registerReceivers();
     healthMonitor.start();
-    RemediationController.schedule(this);
     DowngradeController.resumeIfActive(this);
   }
 

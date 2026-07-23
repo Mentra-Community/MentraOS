@@ -516,17 +516,6 @@ public class OtaHelper {
                 Log.i(TAG, "OTA execution mode -> phone-started install");
                 stage[0] = "process_updates";
                 if (json.has("apps")) {
-                    // If the installed ASG version is in the remediation range, the recovery
-                    // worker sidecar owns the ASG update for this device. Remove ASG from the
-                    // apps map so the normal OTA loop skips it; the recovery worker will install
-                    // it autonomously. Once installed, the version exceeds maxVersionCode and
-                    // normal OTA resumes ownership on the next ota_start.
-                    // TODO: re-enable once remediation is activated in the prod manifest.
-                    // if (isAsgDeferredToRemediation(json, context)) {
-                    //     json.getJSONObject("apps").remove("com.mentra.asg_client");
-                    //     Log.i(TAG, "ASG is in remediation range — skipping normal OTA for "
-                    //             + "com.mentra.asg_client; recovery worker will handle it");
-                    // }
                     processAppsSequentially(json, context);
                 } else {
                     Log.d(TAG, "Using legacy version.json format");
@@ -857,32 +846,6 @@ public class OtaHelper {
         } catch (PackageManager.NameNotFoundException e) {
             Log.d(TAG, packageName + " not installed");
             return 0;
-        }
-    }
-
-    /**
-     * Returns {@code true} when the installed ASG version falls within the remediation range
-     * declared in the manifest's {@code remediation} block, meaning the recovery worker sidecar
-     * owns the ASG update for this device.
-     *
-     * <p>When this returns true, the normal OTA loop removes {@code com.mentra.asg_client} from
-     * the apps map so it is not downloaded or installed by the phone-triggered OTA path.
-     * Once the recovery worker installs the target version, {@code installedVersion} exceeds
-     * {@code maxVersionCode} and this method returns {@code false}, handing ownership back to
-     * the normal OTA path automatically.
-     */
-    private boolean isAsgDeferredToRemediation(JSONObject rootJson, Context context) {
-        try {
-            JSONObject remediation = rootJson.optJSONObject("remediation");
-            if (remediation == null) return false;
-            if (!remediation.optBoolean("enabled", false)) return false;
-            long maxVersionCode = remediation.optLong("maxVersionCode", -1);
-            if (maxVersionCode < 0) return false;
-            long installed = getInstalledVersion("com.mentra.asg_client", context);
-            return installed <= maxVersionCode;
-        } catch (Exception e) {
-            Log.w(TAG, "Could not evaluate remediation block; proceeding with normal OTA", e);
-            return false;
         }
     }
 

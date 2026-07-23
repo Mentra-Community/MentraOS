@@ -21,6 +21,7 @@ import androidx.work.Worker;
 import androidx.work.WorkerParameters;
 
 import com.mentra.recovery.R;
+import com.mentra.recovery.downgrade.DowngradeTransactionStore;
 import com.mentra.recovery.health.InstallPauseNotifier;
 import com.mentra.recovery.reset.RecoveryStateStore;
 import com.mentra.recovery.reset.ReinstallStrategy;
@@ -57,6 +58,15 @@ public class RecoveryWorker extends Worker {
     RecoveryStateStore store = new RecoveryStateStore(context);
     RecoveryTelemetry telemetry = new RecoveryTelemetry(context);
     int attempt = store.getAttempts();
+
+    // A pinned downgrade deliberately uninstalls/reinstalls ASG, so its unresponsiveness is
+    // expected. Heartbeat recovery must stand down — reinstalling the (higher-version) backup
+    // would fight the downgrade. Checked here for an already-enqueued worker that predates the
+    // transaction, and again right before the reinstall for a transaction that begins mid-run.
+    if (new DowngradeTransactionStore(context).isActive()) {
+      Log.i(RecoveryConstants.TAG, "Downgrade transaction active; skipping heartbeat recovery");
+      return Result.success();
+    }
 
     RestartStrategy restartStrategy = new RestartStrategy(context);
     restartStrategy.execute();
@@ -100,6 +110,14 @@ public class RecoveryWorker extends Worker {
         "RESTART_FAILED",
         attempt,
         false);
+    // Re-check at the install boundary: the transaction may have begun during the restart/pong
+    // waits above, after this worker was already enqueued.
+    if (new DowngradeTransactionStore(context).isActive()) {
+      Log.i(RecoveryConstants.TAG, "Downgrade transaction began during recovery; aborting reinstall");
+      store.setState(RecoveryConstants.STATE_COOLDOWN, "DOWNGRADE_ACTIVE_SKIP_REINSTALL");
+      return Result.success();
+    }
+
     notifyInstallInProgress(context);
 
     ReinstallStrategy reinstall = new ReinstallStrategy(context);
