@@ -160,6 +160,10 @@ enum OtaManifestChecker {
         if serverVersion > currentVersion {
             return true
         }
+        // Exact match: already on the pin, no update.
+        if serverVersion == currentVersion {
+            return false
+        }
         // Downgrade: only actionable at/above the enabled floor; a non-positive floor disables
         // downgrades (fail closed, matching ASG and the engine).
         return downgradeFloorVersionCode > 0 && serverVersion >= downgradeFloorVersionCode

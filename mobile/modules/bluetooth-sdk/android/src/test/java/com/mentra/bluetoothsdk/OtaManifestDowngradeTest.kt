@@ -37,6 +37,11 @@ class OtaManifestDowngradeTest {
     }
 
     @Test
+    fun exactPinIsNotAnUpdateEvenWithAnEnabledFloor() {
+        assertFalse(hasUpdate("49000000", manifest(49000000L), floor = 49000000L))
+    }
+
+    @Test
     fun downgradeNeedsAnEnabledFloor() {
         // Default floor 0 (fail closed) disables downgrades for native/OEM callers.
         assertFalse(hasUpdate("49076573", manifest(49000000L)))
