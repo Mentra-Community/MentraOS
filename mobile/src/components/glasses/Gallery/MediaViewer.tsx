@@ -19,6 +19,15 @@ interface MediaViewerProps {
   onDelete?: () => void
 }
 
+export function createMediaViewerSnapshot(
+  photos: readonly (PhotoInfo | undefined)[],
+  selectedPhotoName: string,
+): {photos: PhotoInfo[]; initialIndex: number} | null {
+  const availablePhotos = photos.filter((photo): photo is PhotoInfo => photo !== undefined)
+  const initialIndex = availablePhotos.findIndex((photo) => photo.name === selectedPhotoName)
+  return initialIndex >= 0 ? {photos: availablePhotos, initialIndex} : null
+}
+
 export const MediaViewer = memo(function MediaViewer({
   visible,
   photo,
