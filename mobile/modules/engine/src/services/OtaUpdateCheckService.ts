@@ -1,6 +1,7 @@
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
 import type {OtaUpdateInfo} from "@mentra/bluetooth-sdk/internal"
 import {getGlassesSystemTimeMs, isGlassesConnected, useGlassesStore, waitForGlassesState} from "../stores/glasses"
+import {SETTINGS, useSettingsStore} from "../stores/settings"
 import {maybeFixGlassesClockFromVersionInfo} from "./glassesClockSync"
 import {resolveOtaManifestUrl} from "./otaManifestUrl"
 
@@ -56,7 +57,7 @@ export interface OtaCheckResult {
   manifestBody: string | null
 }
 
-export type OtaCheckSkippedReason = "disconnected" | "missing_build"
+export type OtaCheckSkippedReason = "disconnected" | "missing_build" | "dev_build"
 
 export interface OtaCheckCurrentGlassesResult extends OtaCheckResult {
   updateInfo: OtaUpdateInfo | null
@@ -325,6 +326,22 @@ export async function checkCurrentGlassesForUpdate(
 
   if (!buildNumber) {
     return emptyCheckResult("missing_build")
+  }
+
+  // Development builds (debug buildType) report a "-dev" versionName suffix and are exempt
+  // from OTA: a sideloaded dev build must not be prompted to roll back to the app's pinned
+  // release on every check. A super-mode manifest override re-enables checks so OTA flows can
+  // still be exercised against dev glasses deliberately.
+  const glassesAppVersion = useGlassesStore.getState().appVersion
+  if (glassesAppVersion?.endsWith("-dev")) {
+    const superMode = useSettingsStore.getState().getSetting(SETTINGS.super_mode.key)
+    const overrideUrl = useSettingsStore.getState().getSetting(SETTINGS.ota_version_url.key)
+    const overrideActive = superMode && typeof overrideUrl === "string" && overrideUrl.trim() !== ""
+    if (!overrideActive) {
+      console.log(`OTA: check skipped - glasses run a development build (${glassesAppVersion})`)
+      return emptyCheckResult("dev_build")
+    }
+    console.log("OTA: dev build detected but super-mode manifest override active - checking anyway")
   }
 
   if (!glassesConnectedNow()) {

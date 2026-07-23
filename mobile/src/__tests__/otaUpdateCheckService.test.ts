@@ -21,6 +21,23 @@ describe("OtaUpdateCheckService", () => {
     global.fetch = originalFetch
   })
 
+  it("skips the check entirely for development builds", async () => {
+    useGlassesStore.getState().setGlassesInfo({appVersion: "49076573-dev"})
+    global.fetch = jest.fn() as unknown as typeof fetch
+
+    const result = await checkCurrentGlassesForUpdate({
+      refreshVersionInfo: false,
+      fixClockBeforeCheck: false,
+      waitForBesVersionMs: 0,
+      waitForMtkVersionMs: 0,
+    })
+
+    expect(result.skippedReason).toBe("dev_build")
+    expect(result.updateAvailable).toBe(false)
+    // The manifest must not even be fetched for a dev build.
+    expect(global.fetch).not.toHaveBeenCalled()
+  })
+
   it("checks the current glasses and writes the available OTA snapshot", async () => {
     global.fetch = jest.fn(() =>
       Promise.resolve({

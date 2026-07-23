@@ -118,6 +118,15 @@ export default function OtaCheckForUpdatesScreen() {
           return
         }
 
+        if (result.skippedReason === "dev_build") {
+          // Development builds are exempt from OTA; report the glasses as up to date.
+          console.log("OTA: Check skipped (dev_build) - glasses run a development build")
+          checkCompletedRef.current = true
+          engine.ota.clearUpdateAvailable()
+          setCheckState("no_update")
+          return
+        }
+
         if (!result.hasCheckCompleted) {
           console.log("📱 OTA check did not complete - setting error state")
           checkCompletedRef.current = true

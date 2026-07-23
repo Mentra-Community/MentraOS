@@ -301,6 +301,11 @@ android {
     buildTypes {
         debug {
             signingConfig signingConfigs.debug
+            // Debug builds self-identify as development builds: the phone skips OTA checks for
+            // glasses whose reported version carries this suffix, so a sideloaded debug build
+            // is never prompted to roll back to the app's pinned release. Release builds
+            // (installRelease), local or CI, participate in OTA normally.
+            versionNameSuffix "-dev"
             // Third-party developers (without Mentra's signing key) get a different
             // package name so their build can coexist with the stock system app.
             // This is required because Android won't allow installing a differently-signed
