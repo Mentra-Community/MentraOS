@@ -1,8 +1,10 @@
 # LED control
 
-Mentra Live has **two distinct LED systems** that are easy to confuse. This doc covers both, then explains how the recording pipeline coordinates them.
+Mentra Live has **two distinct on-glasses LED systems**, and the charging case
+has a separate indicator of its own. This doc distinguishes all three, then
+explains how the recording pipeline coordinates the two LEDs on the glasses.
 
-## Two systems
+## On-glasses LED systems
 
 ### 1. Local MTK recording LED (single LED, on the device)
 
@@ -81,7 +83,7 @@ shutting down.
 | Normal shutdown | Red fade | Accompanies the power-off sound. |
 | Mentra miniapp or Mentra App LED request | Requested color and timing | Red, green, blue, orange, and white are supported; this has no universal status meaning. |
 
-### Charging in the case
+### Glasses status LED while charging in the case
 
 Current firmware does **not** show a continuous green "charging" or "fully
 charged" indicator:
@@ -92,6 +94,30 @@ charged" indicator:
   skips the normal green boot indicator and the charger-connected red flashes.
   The status LED normally remains off while charging.
 - Reaching full charge does not turn the status LED green.
+
+## Charging case indicator
+
+The charging case has its own external power indicator. It is separate from
+both LEDs on Mentra Live and is not controlled by the BES-to-MTK authority
+handoff described above.
+
+**The charging case indicator always reports the battery level of the case
+itself, not the battery level of the Mentra Live glasses.**
+
+Newer charging cases use only orange and green for this indication:
+
+| Charging case battery level | Indicator color |
+| --- | --- |
+| Below approximately 70% | Orange |
+| Above approximately 70% | Green |
+
+Opening the lid, inserting or removing the glasses, connecting or disconnecting
+external power, or pressing the case button can trigger the case indicator. The
+light may be steady, blinking, or breathing depending on the event and whether
+power is flowing, but its orange/green battery meaning remains the same: it
+reports the charging case, not the glasses.
+
+Source: [Mentra Live Charge Case Function List](https://drive.google.com/file/d/1_qjmxCxpRhGhQDbEIyRgkb3XMM_XvhgQ/view).
 
 ### Interaction with MentraOS control
 
