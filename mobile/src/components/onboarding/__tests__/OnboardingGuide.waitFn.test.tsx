@@ -178,6 +178,40 @@ describe("OnboardingGuide waitFn lifecycle", () => {
     expect(handleAction).toHaveBeenCalledTimes(1)
   })
 
+  it("advances from a transition welcome after the start gate", () => {
+    const {getByText, queryByText} = render(
+      <OnboardingGuide
+        autoStart={false}
+        startButtonText="Start onboarding"
+        steps={[
+          {
+            type: "image",
+            source: {uri: "welcome.png"},
+            name: "Welcome",
+            transition: true,
+            duration: 500,
+            title: "Welcome to Mentra",
+          },
+          {
+            type: "image",
+            source: {uri: "first.png"},
+            name: "First",
+            transition: false,
+            title: "First lesson",
+          },
+        ]}
+      />,
+    )
+
+    fireEvent.press(getByText("Start onboarding"))
+    act(() => {
+      jest.advanceTimersByTime(500)
+    })
+
+    expect(getByText("First lesson")).toBeTruthy()
+    expect(queryByText("Welcome to Mentra")).toBeNull()
+  })
+
   it("navigates back to a peer first step without reopening the start gate", () => {
     const {getByText, queryByText} = render(
       <OnboardingGuide
