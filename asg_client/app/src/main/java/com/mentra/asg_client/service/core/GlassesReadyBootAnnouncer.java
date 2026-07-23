@@ -39,7 +39,15 @@ import org.json.JSONObject;
  * <p>Wire v2 activation stays RESPONDER-ONLY on the glasses side — this class only advertises
  * readiness and caps; the phone still initiates the handshake. Retries stop as soon as v2
  * activates (proof the phone heard us, or that a parallel phone_ready flow negotiated).
- * Duplicate {@code glasses_ready} deliveries are idempotent on the phone.
+ *
+ * <p>Every announcement is preceded by {@link IBluetoothManager#onTransportReset()}, honoring
+ * the phone-side invariant that glasses_ready marks a fresh wire epoch on the glasses. This is
+ * what makes RE-announcement convergent rather than merely hopeful: the phone resets its own
+ * epoch on each glasses_ready and re-initiates the handshake, and the reset here clears the
+ * glasses' {@code wireV2HandshakeSent} latch so that re-handshake always gets a reply. Without
+ * it, an announcement straggling in after a completed negotiation would reset the phone but
+ * leave the glasses' latch set — the phone's re-handshake would go unanswered and the session
+ * would park on v1, the exact failure this class exists to fix.
  */
 public class GlassesReadyBootAnnouncer {
     private static final String TAG = "GlassesReadyBootAnnouncer";
@@ -111,6 +119,13 @@ public class GlassesReadyBootAnnouncer {
     }
 
     private void announce() {
+        // New wire epoch on the glasses side BEFORE the announcement goes out, exactly like
+        // the phone_ready path: clears the wireV2HandshakeSent latch (so the phone's
+        // re-handshake gets a reply) and any partially negotiated wire state.
+        IBluetoothManager bluetoothManager = bluetoothManagerSupplier.get();
+        if (bluetoothManager != null) {
+            bluetoothManager.onTransportReset();
+        }
         JSONObject message = buildGlassesReady();
         boolean sent =
                 message != null && communicationManagerSupplier.get().sendBluetoothResponse(message);

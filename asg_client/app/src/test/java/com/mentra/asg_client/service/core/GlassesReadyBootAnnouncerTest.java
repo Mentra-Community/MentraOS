@@ -93,6 +93,23 @@ public class GlassesReadyBootAnnouncerTest {
     }
 
     @Test
+    public void resetsWireEpochBeforeEveryAnnouncement() {
+        // Each glasses_ready must be preceded by onTransportReset(): the phone resets its
+        // wire epoch on every glasses_ready and re-initiates the handshake, and the local
+        // reset clears the wireV2HandshakeSent latch so that re-handshake gets a reply.
+        announcer.start();
+        drainWholeWindow();
+
+        org.mockito.InOrder inOrder = org.mockito.Mockito.inOrder(k900Manager, communicationManager);
+        for (int i = 0; i < AsgConstants.GLASSES_READY_BOOT_ANNOUNCE_ATTEMPTS; i++) {
+            inOrder.verify(k900Manager).onTransportReset();
+            inOrder.verify(communicationManager).sendBluetoothResponse(any(JSONObject.class));
+        }
+        verify(k900Manager, times(AsgConstants.GLASSES_READY_BOOT_ANNOUNCE_ATTEMPTS))
+                .onTransportReset();
+    }
+
+    @Test
     public void waitsForTransportBeforeAnnouncing() {
         when(k900Manager.isConnected()).thenReturn(false);
         announcer.start();
