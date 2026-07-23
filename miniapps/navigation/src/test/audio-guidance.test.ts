@@ -40,6 +40,7 @@ function input(partial: Partial<AudioGuidanceInput> = {}): AudioGuidanceInput {
     instruction: "Turn left onto Market Street",
     distanceMeters: 100,
     offRoute: false,
+    inStartGrace: false,
     destinationName: "Blue Bottle",
     arrivalSide: null,
     travelMode: "walking",
@@ -189,6 +190,25 @@ describe("AudioGuidanceManager", () => {
     await settleSpeech()
 
     expect(spoken).toEqual(["You are off route. Go back to the route.", "Turn left onto Market Street now."])
+  })
+
+  test("no off-route phrasing inside the trip's start grace window", async () => {
+    const {manager, spoken} = createHarness()
+    manager.setMode("essential")
+
+    // GPS still converging right after start: the controller reports the
+    // grace flag and any off-route/reroute signals stay silent.
+    manager.observe(input({distanceMeters: 200, offRoute: true, inStartGrace: true}))
+    await settleSpeech()
+    manager.observe(input({status: "rerouting", maneuverType: null, instruction: null, inStartGrace: true}))
+    await settleSpeech()
+
+    expect(spoken.some((line) => line.includes("off route") || line.includes("Rerouting"))).toBe(false)
+
+    // Past the grace the same signals speak normally.
+    manager.observe(input({distanceMeters: 200, offRoute: true}))
+    await settleSpeech()
+    expect(spoken).toContain("You are off route. Go back to the route.")
   })
 
   test("late navigation updates cannot revive guidance after stop or arrival", async () => {

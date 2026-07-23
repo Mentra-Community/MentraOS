@@ -19,6 +19,12 @@ export type AudioGuidanceInput = {
   instruction: string | null
   distanceMeters: number | null
   offRoute: boolean
+  /**
+   * True within the trip's start grace window: GPS is still converging on the
+   * fresh route, so off-route phrasing is suppressed (a genuine early reroute
+   * still applies silently).
+   */
+  inStartGrace: boolean
   destinationName: string | null
   arrivalSide: "left" | "right" | null
   travelMode: AudioTravelMode
@@ -159,7 +165,12 @@ export class AudioGuidanceManager {
     if (input.status === "rerouting" && this.lastStatus !== "rerouting") {
       this.currentManeuverKey = null
       this.currentRepeatPhrase = "Rerouting."
-      this.enqueue({text: "Off route. Rerouting.", priority: 100, expiresAt: Date.now() + 10_000})
+      // Within the start grace the reroute still happens, but silently:
+      // telling the user they're off route seconds after they asked for
+      // directions reads as broken (the fix is usually still converging).
+      if (!input.inStartGrace) {
+        this.enqueue({text: "Off route. Rerouting.", priority: 100, expiresAt: Date.now() + 10_000})
+      }
     }
 
     if (input.status === "arrived" && this.lastStatus !== "arrived") {
@@ -178,7 +189,7 @@ export class AudioGuidanceManager {
     if (!input.running || input.status !== "navigating") return
     this.tripActive = true
 
-    if (input.offRoute) {
+    if (input.offRoute && !input.inStartGrace) {
       if (!this.lastOffRoute) {
         const phrase = "You are off route. Go back to the route."
         this.discardStaleManeuverPrompts()

@@ -189,6 +189,13 @@ export class NavigationController {
   // user has moved >REBUILD_MIN_MOVE_M from the start point, we won't
   // auto-rebuild.
   private tripStartCoords: {lat: number; lng: number} | null = null
+  // Trip-start wall clock. The first fixes after start routinely land
+  // ≥ADVISORY_M off the fresh route (stale fix, indoor start, GPS still
+  // converging), so every off-route indication — HUD advisory, spoken
+  // "off route", offRouteAt — is suppressed for the first
+  // OFF_ROUTE_START_GRACE_MS of a trip. Refreshed by every start(); never
+  // needs clearing because it is only consulted while a trip is active.
+  private tripStartedAt = 0
   // Last StartNavigationOptions so an auto-rebuild can re-fire the same
   // mode / simulate / speedMultiplier without the UI having to re-send.
   private lastStartOpts: (StartNavigationOptions & {destinationName?: string}) | null = null
@@ -488,7 +495,11 @@ export class NavigationController {
             this.heartbeatLocationIfStale()
             break
           case "off_route":
-            this.trip = {...this.trip, offRouteAt: Date.now()}
+            // Start-of-trip grace: don't mark the trip off-route while the
+            // fix is still converging on the fresh route.
+            if (!this.inStartGrace()) {
+              this.trip = {...this.trip, offRouteAt: Date.now()}
+            }
             break
           case "rerouting":
             // The previous maneuver belongs to the abandoned route. Clear it
@@ -714,6 +725,7 @@ export class NavigationController {
     this.audioGuidance.beginTrip()
     this.startMinimapWatchdog()
     this.tripStartCoords = this.coords ? {lat: this.coords.lat, lng: this.coords.lng} : null
+    this.tripStartedAt = Date.now()
     // Reset the movement-vector heading so this trip's "you" arrow measures
     // direction of travel fresh (anchor re-seeds on the next fix).
     this.moveBearingAnchor = this.coords ? {lat: this.coords.lat, lng: this.coords.lng} : null
@@ -1516,6 +1528,7 @@ export class NavigationController {
         md?.distanceMeters,
       ),
       offRoute: this.offRouteAdvisory,
+      inStartGrace: this.inStartGrace(),
       destinationName: activeDestinationName,
       arrivalSide,
       travelMode: this.lastStartOpts?.mode ?? "walking",
@@ -2064,6 +2077,11 @@ export class NavigationController {
   //   - REBUILD_COOLDOWN_MS: no rebuild within N seconds of the last
   //     one, so a fresh route can land before we'd consider firing
   //     another.
+  /** True within the first OFF_ROUTE_START_GRACE_MS of the current trip. */
+  private inStartGrace(): boolean {
+    return this.tripStartedAt > 0 && Date.now() - this.tripStartedAt < OFF_ROUTE_START_GRACE_MS
+  }
+
   private logOffRouteThresholds(): void {
     if (!this.coords) return
     const route = this.trip.routePoints
@@ -2076,6 +2094,17 @@ export class NavigationController {
     const here = {lat: this.coords.lat, lng: this.coords.lng}
     const dist = distanceToPolylineMeters(here, route)
     if (dist == null) return
+    // Start-of-trip grace: the first fixes routinely land ≥ADVISORY_M off the
+    // fresh route (stale fix, indoor start, GPS converging), and announcing
+    // "off route" seconds after the user asked for directions reads as broken.
+    // Hold the advisory fully off until the grace elapses; if the user is
+    // genuinely off route it engages on the first fix after the window.
+    if (this.inStartGrace()) {
+      this.lastOffRouteBucket = 0
+      this.offRouteAdvisory = false
+      this.offRouteAdvisoryDistanceM = null
+      return
+    }
     // Two states now: 0 = on route (< ADVISORY_M), 1 = OFF route (≥ ADVISORY_M).
     // The "Go back in X m" advisory shows for ANY distance ≥ ADVISORY_M and the
     // X GROWS the further the user strays — it persists past the old TRIGGER_M
@@ -2466,6 +2495,11 @@ function withPivotDefaults<T extends {pivots?: {radiusMeters?: number; approachT
 // user returns. (The old separate TRIGGER_M rebuild threshold was removed when
 // reroute became native-owned — there's only on/off now.)
 const OFF_ROUTE_ADVISORY_M = 20
+// No off-route indications (HUD advisory, spoken phrases, offRouteAt) within
+// this window after trip start — the first fixes routinely land off the fresh
+// route while GPS converges, and "off route" seconds after asking for
+// directions reads as broken.
+const OFF_ROUTE_START_GRACE_MS = 15_000
 
 // How long the HUD may sit on "Starting…" (running, no maneuver event yet)
 // before the watchdog derives the first instruction from the route's steps.
