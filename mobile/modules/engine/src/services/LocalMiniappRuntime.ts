@@ -1178,49 +1178,77 @@ class LocalMiniappRuntime {
 
       // Persistent binary blob storage (session.blob)
       case MiniappRequestType.BLOB_CREATE:
-        this.blobStore.handleCreate(packageName, payload, requestId)
+        this.enqueueBlobRequest(packageName, requestId, () =>
+          this.blobStore.handleCreate(packageName, payload, requestId),
+        )
         break
       case MiniappRequestType.BLOB_WRITE:
-        this.blobStore.handleWrite(packageName, payload, requestId)
+        this.enqueueBlobRequest(packageName, requestId, () =>
+          this.blobStore.handleWrite(packageName, payload, requestId),
+        )
         break
       case MiniappRequestType.BLOB_COMMIT:
-        this.blobStore.handleCommit(packageName, payload, requestId)
+        this.enqueueBlobRequest(packageName, requestId, () =>
+          this.blobStore.handleCommit(packageName, payload, requestId),
+        )
         break
       case MiniappRequestType.BLOB_ABORT:
-        this.blobStore.handleAbort(packageName, payload, requestId)
+        this.enqueueBlobRequest(packageName, requestId, () =>
+          this.blobStore.handleAbort(packageName, payload, requestId),
+        )
         break
       case MiniappRequestType.BLOB_SET_FROM_URL:
-        void this.blobStore.handleSetFromUrl(packageName, payload, requestId)
+        this.enqueueBlobRequest(packageName, requestId, () =>
+          this.blobStore.handleSetFromUrl(packageName, payload, requestId),
+        )
         break
       case MiniappRequestType.BLOB_IMPORT:
-        void this.blobStore.handleImport(packageName, payload, requestId)
+        this.enqueueBlobRequest(packageName, requestId, () =>
+          this.blobStore.handleImport(packageName, payload, requestId),
+        )
         break
       case MiniappRequestType.BLOB_GET:
-        this.blobStore.handleGet(packageName, payload, requestId)
+        this.enqueueBlobRequest(packageName, requestId, () => this.blobStore.handleGet(packageName, payload, requestId))
         break
       case MiniappRequestType.BLOB_LIST:
-        this.blobStore.handleList(packageName, payload, requestId)
+        this.enqueueBlobRequest(packageName, requestId, () =>
+          this.blobStore.handleList(packageName, payload, requestId),
+        )
         break
       case MiniappRequestType.BLOB_USAGE:
-        this.blobStore.handleUsage(packageName, payload, requestId)
+        this.enqueueBlobRequest(packageName, requestId, () =>
+          this.blobStore.handleUsage(packageName, payload, requestId),
+        )
         break
       case MiniappRequestType.BLOB_DELETE:
-        this.blobStore.handleDelete(packageName, payload, requestId)
+        this.enqueueBlobRequest(packageName, requestId, () =>
+          this.blobStore.handleDelete(packageName, payload, requestId),
+        )
         break
       case MiniappRequestType.BLOB_CLEAR:
-        this.blobStore.handleClear(packageName, payload, requestId)
+        this.enqueueBlobRequest(packageName, requestId, () =>
+          this.blobStore.handleClear(packageName, payload, requestId),
+        )
         break
       case MiniappRequestType.BLOB_OPEN_READ:
-        this.blobStore.handleOpenRead(packageName, payload, requestId)
+        this.enqueueBlobRequest(packageName, requestId, () =>
+          this.blobStore.handleOpenRead(packageName, payload, requestId),
+        )
         break
       case MiniappRequestType.BLOB_READ:
-        this.blobStore.handleRead(packageName, payload, requestId)
+        this.enqueueBlobRequest(packageName, requestId, () =>
+          this.blobStore.handleRead(packageName, payload, requestId),
+        )
         break
       case MiniappRequestType.BLOB_CLOSE_READ:
-        this.blobStore.handleCloseRead(packageName, payload, requestId)
+        this.enqueueBlobRequest(packageName, requestId, () =>
+          this.blobStore.handleCloseRead(packageName, payload, requestId),
+        )
         break
       case MiniappRequestType.BLOB_SHARE:
-        void this.blobStore.handleShare(packageName, payload, requestId)
+        this.enqueueBlobRequest(packageName, requestId, () =>
+          this.blobStore.handleShare(packageName, payload, requestId),
+        )
         break
 
       // Cloud-coordinated features
@@ -2528,11 +2556,56 @@ class LocalMiniappRuntime {
       this.sendResult(packageName, requestId, ok, result, error),
     getUserId: () => cloudClientService.getMentraUserId(),
   })
+  private readonly blobRequestQueues = new Map<string, Promise<void>>()
 
   private readonly simpleStorage = new LocalMiniappStorage({
     backend: localMiniappStorageBackend,
     getUserId: () => cloudClientService.resolveMentraUserId(),
   })
+
+  /**
+   * BlobStore's file helpers are synchronous once a user namespace is selected,
+   * but first-boot Core auth is not. Queue requests per app behind stable
+   * identity resolution so CREATE/WRITE/COMMIT ordering survives that wait.
+   */
+  private enqueueBlobRequest(
+    packageName: string,
+    requestId: string | undefined,
+    operation: () => Promise<void> | void,
+  ): void {
+    const app = this.connectedApps.get(packageName)
+    const previous = this.blobRequestQueues.get(packageName) ?? Promise.resolve()
+    const queued = previous.then(async () => {
+      try {
+        await cloudClientService.resolveMentraUserId()
+      } catch (err) {
+        console.error(`${LOG_TAG}: blob identity error:`, err)
+        this.sendResult(packageName, requestId, false, undefined, {
+          code: MiniappErrorCode.NOT_CONNECTED,
+          message: "Blob storage is unavailable before sign-in completes",
+        })
+        return
+      }
+
+      // unregisterApp() or a crash-respawn may have replaced this app while
+      // identity resolution was pending. Never replay an old context's request
+      // against its replacement.
+      if (!app || this.connectedApps.get(packageName) !== app) return
+      try {
+        await operation()
+      } catch (err) {
+        console.error(`${LOG_TAG}: blob request error:`, err)
+        this.sendResult(packageName, requestId, false, undefined, {
+          code: MiniappErrorCode.INTERNAL,
+          message: err instanceof Error ? err.message : "Blob storage error",
+        })
+      }
+    })
+    this.blobRequestQueues.set(packageName, queued)
+    void queued.finally(() => {
+      if (this.blobRequestQueues.get(packageName) === queued) this.blobRequestQueues.delete(packageName)
+    })
+  }
 
   /**
    * Heading is a sensor stream — start the native compass when any mini
