@@ -2555,6 +2555,8 @@ class LocalMiniappRuntime {
     sendResult: (packageName, requestId, ok, result, error) =>
       this.sendResult(packageName, requestId, ok, result, error),
     getUserId: () => cloudClientService.getMentraUserId(),
+    getAccessToken: () =>
+      (useSettingsStore.getState().getSetting(ISLAND_SETTINGS_KEYS.coreToken) as string | undefined) || undefined,
   })
   private readonly blobRequestQueues = new Map<string, Promise<void>>()
 

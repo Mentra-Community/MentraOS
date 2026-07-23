@@ -6,6 +6,8 @@
  * in memory only, so using one makes every app restart look like a new user.
  */
 
+import {sanitizeSegment} from "./blobPaths"
+
 export interface LocalMiniappStorageBackend {
   get(key: string): unknown | null
   has(key: string): boolean
@@ -20,6 +22,18 @@ export interface LocalMiniappStorageHooks {
 }
 
 const KEY_ROOT = "mentraos_localstorage_"
+/**
+ * A short, non-authenticating legacy token prefix → stable identity mapping.
+ * BlobStore used the same truncated prefix for its old on-disk namespace, so
+ * retaining this mapping lets it migrate after SimpleStorage removes the full
+ * legacy token keys.
+ */
+export const LEGACY_BLOB_OWNER_KEY_ROOT = "mentraos_legacy_blob_owner_"
+
+export interface LegacyTokenIdentity {
+  userId: string
+  issuedAt: number
+}
 
 export class LocalMiniappStorage {
   private readonly migratedScopes = new Set<string>()
@@ -107,6 +121,8 @@ export class LocalMiniappStorage {
       const claims = accessTokenIdentity(token)
       if (!claims || claims.userId !== userId) continue
 
+      this.hooks.backend.set(`${LEGACY_BLOB_OWNER_KEY_ROOT}${sanitizeSegment(token)}`, claims)
+
       const key = fullKey.slice(markerIndex + packageMarker.length)
       if (!key) continue
       legacyKeys.push(fullKey)
@@ -127,7 +143,7 @@ export class LocalMiniappStorage {
   }
 }
 
-function accessTokenIdentity(token: string): {userId: string; issuedAt: number} | null {
+export function accessTokenIdentity(token: string): LegacyTokenIdentity | null {
   const payload = token.split(".")[1]
   if (!payload) return null
 

@@ -34,6 +34,7 @@ import {Directory, File, Paths, type FileHandle} from "expo-file-system"
 import {MiniappErrorCode} from "@mentra/miniapp"
 import {storage as mmkvStorage} from "../utils/storage/storage"
 import {sanitizeSegment, shareFileName, withDiskExt} from "./blobPaths"
+import {BLOB_META_KEY_ROOT, migrateLegacyBlobScope, type MigratableBlobMeta} from "./blobMigration"
 
 const LOG_TAG = "LocalMiniappRuntime"
 
@@ -42,7 +43,6 @@ export const BLOB_QUOTA_BYTES = 1024 * 1024 * 1024
 const ROOT_DIR_NAME = "mentra_blobs"
 /** Cache dir root holding short-lived, properly-named copies handed to the OS share sheet (one unique subdir per share). */
 const SHARE_DIR_NAME = "mentra_blob_share"
-const META_KEY_ROOT = "mentraos_blobmeta_"
 /** Cap md5 computation so we don't block the JS thread hashing a huge file. */
 const MD5_MAX_BYTES = 50 * 1024 * 1024
 
@@ -59,9 +59,11 @@ export interface BlobStoreHooks {
   sendResult: SendResult
   /** Resolve the current user id (same source SimpleStorage uses). */
   getUserId: () => string
+  /** Current Core token, used only to identify its old truncated namespace during migration. */
+  getAccessToken?: () => string | undefined
 }
 
-interface StoredBlobMeta {
+interface StoredBlobMeta extends MigratableBlobMeta {
   key: string
   fileName: string
   name?: string
@@ -97,22 +99,38 @@ interface ActiveReader {
 export class BlobStore {
   private readonly uploads = new Map<string, ActiveUpload>() // key: `${pkg} ${key}`
   private readonly readers = new Map<string, ActiveReader>() // key: host handle id
-  /** packageName → committed usage bytes, cached; invalidated on commit/delete/clear. */
+  /** user + package → committed usage bytes, cached; invalidated on commit/delete/clear. */
   private readonly usageCache = new Map<string, number>()
+  private readonly migratedScopes = new Set<string>()
 
   constructor(private readonly hooks: BlobStoreHooks) {}
 
   // ---- path / meta helpers -------------------------------------------------
 
-  private dirFor(packageName: string): Directory {
-    const userId = sanitizeSegment(this.hooks.getUserId())
-    const dir = new Directory(Paths.document, ROOT_DIR_NAME, userId, sanitizeSegment(packageName))
-    if (!dir.exists) dir.create({intermediates: true})
+  private currentIdentity(packageName: string): {userId: string; scope: string} {
+    const userId = this.hooks.getUserId().trim()
+    if (!userId) throw new Error("Mentra user identity is unavailable")
+    const scope = `${userId}\0${packageName}`
+    this.migrateLegacyTokenScope(userId, packageName, scope)
+    return {userId, scope}
+  }
+
+  private dirForIdentity(identity: string, packageName: string, create = true): Directory {
+    const dir = new Directory(Paths.document, ROOT_DIR_NAME, sanitizeSegment(identity), sanitizeSegment(packageName))
+    if (create && !dir.exists) dir.create({intermediates: true})
     return dir
   }
 
+  private dirFor(packageName: string): Directory {
+    return this.dirForIdentity(this.currentIdentity(packageName).userId, packageName)
+  }
+
+  private metaPrefixForIdentity(identity: string, packageName: string): string {
+    return `${BLOB_META_KEY_ROOT}${sanitizeSegment(identity)}_${packageName}_`
+  }
+
   private metaPrefix(packageName: string): string {
-    return `${META_KEY_ROOT}${sanitizeSegment(this.hooks.getUserId())}_${packageName}_`
+    return this.metaPrefixForIdentity(this.currentIdentity(packageName).userId, packageName)
   }
 
   private metaKey(packageName: string, key: string): string {
@@ -147,6 +165,52 @@ export class BlobStore {
     return new File(this.dirFor(packageName), fileName)
   }
 
+  private fileForIdentity(identity: string, packageName: string, fileName: string, createDir = true): File {
+    return new File(this.dirForIdentity(identity, packageName, createDir), fileName)
+  }
+
+  /**
+   * Move blobs written by the token-scoped implementation into the stable user
+   * namespace. Old blob paths used a 120-character token prefix, which is not
+   * always a decodable JWT. We therefore accept a prefix only when it is tied
+   * to this user by the current Core token, a decodable prefix, or the mapping
+   * recorded while SimpleStorage migrated a full legacy token.
+   */
+  private migrateLegacyTokenScope(userId: string, packageName: string, scope: string): void {
+    if (this.migratedScopes.has(scope)) return
+    this.usageCache.delete(scope)
+    const completed = migrateLegacyBlobScope({
+      userId,
+      packageName,
+      currentAccessToken: this.hooks.getAccessToken?.(),
+      storage: {
+        keys: () => mmkvStorage.getAllKeys(),
+        load: <T>(key: string) => {
+          const result = mmkvStorage.load<T>(key)
+          return result.is_ok() ? result.value : null
+        },
+        save: (key, value) => mmkvStorage.save(key, value).is_ok(),
+        remove: (key) => {
+          mmkvStorage.remove(key)
+        },
+      },
+      files: {
+        exists: (identity, pkg, fileName) => this.fileForIdentity(identity, pkg, fileName, false).exists,
+        copy: (fromIdentity, toIdentity, pkg, fileName) => {
+          const source = this.fileForIdentity(fromIdentity, pkg, fileName, false)
+          const destination = this.fileForIdentity(toIdentity, pkg, fileName)
+          if (!destination.exists) source.copy(destination)
+        },
+        remove: (identity, pkg, fileName) => {
+          const file = this.fileForIdentity(identity, pkg, fileName, false)
+          if (file.exists) file.delete()
+        },
+      },
+      warn: (message, error) => console.warn(`${LOG_TAG}: ${message}`, error),
+    })
+    if (completed) this.migratedScopes.add(scope)
+  }
+
   /** Public API shape: stored meta + derived file:// uri. */
   private toBlobMeta(packageName: string, m: StoredBlobMeta) {
     return {
@@ -163,17 +227,19 @@ export class BlobStore {
   }
 
   private committedUsage(packageName: string): number {
-    const cached = this.usageCache.get(packageName)
+    const {scope} = this.currentIdentity(packageName)
+    const cached = this.usageCache.get(scope)
     if (cached !== undefined) return cached
     let total = 0
     for (const m of this.allMeta(packageName)) total += m.bytes || 0
-    this.usageCache.set(packageName, total)
+    this.usageCache.set(scope, total)
     return total
   }
 
   private bumpUsage(packageName: string, delta: number): void {
-    const cur = this.usageCache.get(packageName)
-    if (cur !== undefined) this.usageCache.set(packageName, Math.max(0, cur + delta))
+    const {scope} = this.currentIdentity(packageName)
+    const cur = this.usageCache.get(scope)
+    if (cur !== undefined) this.usageCache.set(scope, Math.max(0, cur + delta))
   }
 
   private safeMd5(file: File, bytes: number): string | undefined {
@@ -509,7 +575,7 @@ export class BlobStore {
       } catch {
         /* best-effort */
       }
-      this.usageCache.set(packageName, 0)
+      this.usageCache.set(this.currentIdentity(packageName).scope, 0)
       this.hooks.sendResult(packageName, requestId, true)
     } catch (err) {
       this.fail(packageName, requestId, MiniappErrorCode.INTERNAL, err)
