@@ -1,6 +1,7 @@
 import {describe, expect, it} from "bun:test"
 
-import {LocalMiniappStorage, type LocalMiniappStorageBackend} from "../LocalMiniappStorage"
+import {LEGACY_BLOB_OWNER_KEY_ROOT, LocalMiniappStorage, type LocalMiniappStorageBackend} from "../LocalMiniappStorage"
+import {sanitizeSegment} from "../blobPaths"
 
 class MemoryBackend implements LocalMiniappStorageBackend {
   readonly values = new Map<string, unknown>()
@@ -74,7 +75,15 @@ describe("LocalMiniappStorage", () => {
 
     const storage = new LocalMiniappStorage({backend, getUserId: async () => "mu_123"})
     expect(await storage.getAll("com.mentra.translation")).toEqual({targetLanguage: "fr", displayLines: "3"})
-    expect(backend.keys().some((key) => key.includes(oldToken) || key.includes(newToken))).toBe(false)
+    expect(
+      backend
+        .keys()
+        .some((key) => key.startsWith("mentraos_localstorage_") && (key.includes(oldToken) || key.includes(newToken))),
+    ).toBe(false)
+    expect(backend.get(`${LEGACY_BLOB_OWNER_KEY_ROOT}${sanitizeSegment(newToken)}`)).toEqual({
+      userId: "mu_123",
+      issuedAt: 200,
+    })
     expect(backend.keys().some((key) => key.includes(otherUserToken))).toBe(true)
   })
 
@@ -86,7 +95,7 @@ describe("LocalMiniappStorage", () => {
 
     const storage = new LocalMiniappStorage({backend, getUserId: async () => "mu_123"})
     expect(await storage.get("com.mentra.translation", "targetLanguage")).toBe("ja")
-    expect(backend.keys().some((key) => key.includes(oldToken))).toBe(false)
+    expect(backend.keys().some((key) => key.startsWith("mentraos_localstorage_") && key.includes(oldToken))).toBe(false)
   })
 
   it("supports list, bulk read, delete, and clear within one scope", async () => {
@@ -111,5 +120,7 @@ function testAccessToken(userId: string, issuedAt: number): string {
     .replace(/\+/g, "-")
     .replace(/\//g, "_")
     .replace(/=+$/g, "")
-  return `header.${payload}.signature`
+  // Real Core JWTs are longer than BlobStore's 120-character path segment;
+  // keep the fixture representative so the migration-owner bridge is covered.
+  return `header.${payload}.${"s".repeat(160)}`
 }
