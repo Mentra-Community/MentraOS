@@ -1052,7 +1052,9 @@ jobs:
             const releaseId = release.data.id;
 
             const uploads = [
-              { path: './asg-manifest/staging_live_version.json', latestName: 'staging_live_version.json', datedName: `staging_live_version-${date}-${sha}.json` },
+              // Rolling name only: the per-run pinned copy below is the
+              // permanent historical record, so no dated duplicate is needed.
+              { path: './asg-manifest/staging_live_version.json', latestName: 'staging_live_version.json', datedName: null },
               // Immutable per-run pin baked into this run's mobile app builds
               // (EXPO_PUBLIC_ASG_OTA_VERSION_URL). Name derives from run_id so
               // the parallel mobile jobs know it up front.
