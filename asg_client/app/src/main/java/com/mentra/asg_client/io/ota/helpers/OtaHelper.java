@@ -669,7 +669,6 @@ public class OtaHelper {
                     && DowngradeGate.shouldDowngrade(
                             currentVersion,
                             serverVersion,
-                            appInfo.optBoolean("allowDowngrade", false),
                             OtaConstants.DOWNGRADE_FLOOR_VERSION_CODE)) {
                 Log.i(TAG, "Pinned downgrade requested for " + packageName +
                          " (current: " + currentVersion + ", target: " + serverVersion + ")");

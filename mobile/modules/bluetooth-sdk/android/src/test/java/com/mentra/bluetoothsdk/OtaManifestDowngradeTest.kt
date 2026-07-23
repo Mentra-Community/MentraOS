@@ -12,14 +12,9 @@ import org.robolectric.annotation.Config
 @Config(sdk = [33])
 class OtaManifestDowngradeTest {
 
-    private fun manifest(versionCode: Long, allowDowngrade: Boolean?): JSONObject {
-        val app = JSONObject().put("versionCode", versionCode)
-        if (allowDowngrade != null) {
-            app.put("allowDowngrade", allowDowngrade)
-        }
-        return JSONObject()
-            .put("apps", JSONObject().put("com.mentra.asg_client", app))
-    }
+    private fun manifest(versionCode: Long): JSONObject =
+        JSONObject()
+            .put("apps", JSONObject().put("com.mentra.asg_client", JSONObject().put("versionCode", versionCode)))
 
     private fun hasUpdate(currentBuildNumber: String, manifest: JSONObject): Boolean =
         OtaManifestChecker.hasUpdate(
@@ -30,21 +25,21 @@ class OtaManifestDowngradeTest {
         )
 
     @Test
-    fun fleetManifestStaysUpgradeOnly() {
-        // No allowDowngrade flag: a lower pinned version is not an update.
-        assertFalse(hasUpdate("49076573", manifest(49000000L, allowDowngrade = null)))
-        assertFalse(hasUpdate("49076573", manifest(49000000L, allowDowngrade = false)))
-        assertTrue(hasUpdate("49000000", manifest(49076573L, allowDowngrade = null)))
-    }
-
-    @Test
-    fun pinnedManifestFlagsAnyMismatch() {
-        assertTrue(hasUpdate("49076573", manifest(49000000L, allowDowngrade = true)))
-        assertTrue(hasUpdate("49000000", manifest(49076573L, allowDowngrade = true)))
+    fun anyPinMismatchIsAnUpdate() {
+        // Every manifest is an exact pin: both directions are actionable.
+        assertTrue(hasUpdate("49076573", manifest(49000000L)))
+        assertTrue(hasUpdate("49000000", manifest(49076573L)))
     }
 
     @Test
     fun exactPinIsNotAnUpdate() {
-        assertFalse(hasUpdate("49076573", manifest(49076573L, allowDowngrade = true)))
+        assertFalse(hasUpdate("49076573", manifest(49076573L)))
+    }
+
+    @Test
+    fun zeroedRescuePinIsNeverActionable() {
+        // The frozen legacy rescue manifests carry a zeroed ASG pin; it must never read as an
+        // update (especially not as a downgrade to versionCode 0).
+        assertFalse(hasUpdate("49076573", manifest(0L)))
     }
 }

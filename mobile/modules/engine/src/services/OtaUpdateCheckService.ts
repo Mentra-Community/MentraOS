@@ -12,8 +12,6 @@ export interface VersionInfo {
   sha256: string
   releaseNotes: string
   isRequired?: boolean
-  /** Exact-pin manifests opt into downgrades; fleet manifests never set this. */
-  allowDowngrade?: boolean
 }
 
 export interface MtkPatch {
@@ -121,9 +119,9 @@ export function checkVersionUpdateAvailable(
 
 /**
  * Direction of the pending APK change, or null when the glasses already match the manifest.
- * Downgrades require the app entry's explicit `allowDowngrade` opt-in (only exact-pin manifests
- * set it), mirroring the glasses-side `DowngradeGate`; legacy top-level manifests stay
- * upgrade-only.
+ * Every apps-shaped manifest the phone drives is an exact pin, so both directions are
+ * actionable (mirroring the glasses-side `DowngradeGate`); the ancient top-level manifest
+ * shape stays upgrade-only, and zeroed rescue pins are never actionable.
  */
 export function getApkUpdateDirection(
   currentBuildNumber: string | undefined,
@@ -139,12 +137,12 @@ export function getApkUpdateDirection(
   }
 
   let serverVersion: number | undefined
-  let allowDowngrade = false
+  let exactPin = false
 
   const appEntry = versionJson.apps?.["com.mentra.asg_client"]
   if (appEntry) {
     serverVersion = appEntry.versionCode
-    allowDowngrade = appEntry.allowDowngrade === true
+    exactPin = true
   } else if (versionJson.versionCode) {
     serverVersion = versionJson.versionCode
   }
@@ -156,7 +154,7 @@ export function getApkUpdateDirection(
   if (serverVersion > currentVersion) {
     return "upgrade"
   }
-  if (serverVersion < currentVersion && allowDowngrade) {
+  if (serverVersion < currentVersion && exactPin) {
     return "downgrade"
   }
   return null
