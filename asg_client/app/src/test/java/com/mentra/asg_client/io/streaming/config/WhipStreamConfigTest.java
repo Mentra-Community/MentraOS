@@ -13,16 +13,16 @@ public class WhipStreamConfigTest {
     @Test
     public void fromJson_null_null_returnsDefaults() {
         WhipStreamConfig c = WhipStreamConfig.fromJson(null, null);
-        assertEquals(1280, c.getVideoWidth());
-        assertEquals(720, c.getVideoHeight());
-        assertEquals(2_500_000, c.getVideoBitrate());
+        assertEquals(1920, c.getVideoWidth());
+        assertEquals(1080, c.getVideoHeight());
+        assertEquals(4_500_000, c.getVideoBitrate());
         assertEquals(24, c.getVideoFps());
         assertFalse(c.isEchoCancellation());
         assertFalse(c.isNoiseSuppression());
     }
 
     @Test
-    public void fromJson_ignoresCallerVideoOverrides_forces720p24() throws JSONException {
+    public void fromJson_ignoresCallerVideoOverrides_forces1080p24() throws JSONException {
         JSONObject vCompact = new JSONObject();
         vCompact.put("w", 640);
         vCompact.put("h", 360);
@@ -37,9 +37,9 @@ public class WhipStreamConfigTest {
 
         WhipStreamConfig c1 = WhipStreamConfig.fromJson(vCompact, null);
         WhipStreamConfig c2 = WhipStreamConfig.fromJson(vFull, null);
-        assertEquals(1280, c1.getVideoWidth());
-        assertEquals(720, c1.getVideoHeight());
-        assertEquals(2_500_000, c1.getVideoBitrate());
+        assertEquals(1920, c1.getVideoWidth());
+        assertEquals(1080, c1.getVideoHeight());
+        assertEquals(4_500_000, c1.getVideoBitrate());
         assertEquals(24, c1.getVideoFps());
         assertEquals(c2.getVideoWidth(), c1.getVideoWidth());
         assertEquals(c2.getVideoHeight(), c1.getVideoHeight());

@@ -13,9 +13,9 @@ public class RtmpStreamConfigTest {
     @Test
     public void fromJson_null_null_returnsDefaults() {
         RtmpStreamConfig c = RtmpStreamConfig.fromJson(null, null);
-        assertEquals(1280, c.getVideoWidth());
-        assertEquals(720, c.getVideoHeight());
-        assertEquals(2_500_000, c.getVideoBitrate());
+        assertEquals(1920, c.getVideoWidth());
+        assertEquals(1080, c.getVideoHeight());
+        assertEquals(4_500_000, c.getVideoBitrate());
         assertEquals(24, c.getVideoFps());
         assertEquals(RtmpStreamConfig.DEFAULT_AUDIO_BITRATE, c.getAudioBitrate());
         assertEquals(RtmpStreamConfig.DEFAULT_AUDIO_SAMPLE_RATE, c.getAudioSampleRate());
@@ -24,7 +24,7 @@ public class RtmpStreamConfigTest {
     }
 
     @Test
-    public void fromJson_ignoresCallerVideoOverrides_forces720p24() throws JSONException {
+    public void fromJson_ignoresCallerVideoOverrides_forces1080p24() throws JSONException {
         JSONObject vCompact = new JSONObject();
         vCompact.put("w", 640);
         vCompact.put("h", 360);
@@ -50,13 +50,13 @@ public class RtmpStreamConfigTest {
         RtmpStreamConfig c1 = RtmpStreamConfig.fromJson(vCompact, aCompact);
         RtmpStreamConfig c2 = RtmpStreamConfig.fromJson(vFull, aFull);
 
-        assertEquals(1280, c1.getVideoWidth());
-        assertEquals(720, c1.getVideoHeight());
-        assertEquals(2_500_000, c1.getVideoBitrate());
+        assertEquals(1920, c1.getVideoWidth());
+        assertEquals(1080, c1.getVideoHeight());
+        assertEquals(4_500_000, c1.getVideoBitrate());
         assertEquals(24, c1.getVideoFps());
-        assertEquals(1280, c2.getVideoWidth());
-        assertEquals(720, c2.getVideoHeight());
-        assertEquals(2_500_000, c2.getVideoBitrate());
+        assertEquals(1920, c2.getVideoWidth());
+        assertEquals(1080, c2.getVideoHeight());
+        assertEquals(4_500_000, c2.getVideoBitrate());
         assertEquals(24, c2.getVideoFps());
 
         // Audio still follows caller config.

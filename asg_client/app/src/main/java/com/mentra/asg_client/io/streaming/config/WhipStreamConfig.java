@@ -11,10 +11,10 @@ import java.math.RoundingMode;
 public class WhipStreamConfig {
 
   // Hardcoded livestream quality. Caller video overrides are ignored.
-  public static final int DEFAULT_VIDEO_WIDTH = 1280;
-  public static final int DEFAULT_VIDEO_HEIGHT = 720;
+  public static final int DEFAULT_VIDEO_WIDTH = 1920;
+  public static final int DEFAULT_VIDEO_HEIGHT = 1080;
   public static final int DEFAULT_VIDEO_FPS = 24;
-  public static final int DEFAULT_VIDEO_BITRATE = 2_500_000; // 2.5 Mbps
+  public static final int DEFAULT_VIDEO_BITRATE = 4_500_000; // 4.5 Mbps
   public static final int MIN_VIDEO_FPS = 5;
   public static final int MAX_VIDEO_FPS = 30;
 
@@ -46,7 +46,7 @@ public class WhipStreamConfig {
   public static WhipStreamConfig fromJson(JSONObject videoJson, JSONObject audioJson) {
     WhipStreamConfig config = new WhipStreamConfig();
 
-    // Force 720p24 regardless of caller video JSON (phone/miniapp presets).
+    // Force 1080p24 regardless of caller video JSON (phone/miniapp presets).
     config.videoWidth = DEFAULT_VIDEO_WIDTH;
     config.videoHeight = DEFAULT_VIDEO_HEIGHT;
     config.videoBitrate = DEFAULT_VIDEO_BITRATE;
