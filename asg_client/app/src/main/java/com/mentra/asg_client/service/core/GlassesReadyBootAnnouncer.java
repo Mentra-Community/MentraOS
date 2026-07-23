@@ -3,6 +3,7 @@ package com.mentra.asg_client.service.core;
 import android.os.Handler;
 import android.util.Log;
 import com.mentra.asg_client.AsgConstants;
+import com.mentra.asg_client.io.bluetooth.interfaces.IBluetoothManager;
 import com.mentra.asg_client.io.bluetooth.managers.K900BluetoothManager;
 import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.BesWireFormat;
 import com.mentra.asg_client.service.communication.interfaces.ICommunicationManager;
@@ -11,79 +12,118 @@ import java.util.function.Supplier;
 import org.json.JSONObject;
 
 /**
- * Announces {@code glasses_ready} once per process when the transport first comes up.
+ * Announces {@code glasses_ready} once per process, so a phone whose BLE link survived an
+ * asg_client restart re-runs its wire-session reset and the BLE wire v2 handshake.
  *
  * <p>The normal readiness flow is phone-driven: the phone sends {@code phone_ready} when the
  * BES heartbeat reports the SoC ready, and {@link
  * com.mentra.asg_client.service.core.handlers.PhoneReadyCommandHandler} answers with {@code
  * glasses_ready}. That flow silently dies after an APK-OTA process restart: the phone-BES BLE
  * link survives the restart, so the phone's stale {@code glassesReady} flag suppresses {@code
- * phone_ready} — and with it the wire-session reset and the phone-initiated BLE wire v2
- * handshake. The freshly installed process then stays on v1 TX for the rest of the session
- * (incident rep_01KY6BJ0B7A4RBMQ7VN39KAE5E).
+ * phone_ready} — and with it the wire reset and the phone-initiated v2 handshake. The freshly
+ * installed process then stays on v1 TX for the rest of the session (incident
+ * rep_01KY6BJ0B7A4RBMQ7VN39KAE5E).
  *
- * <p>Both phone SDKs already treat an incoming {@code glasses_ready} as a REMOTE wire-session
- * reset (reset negotiation state, re-parse {@code wire_caps}, re-initiate the v2 handshake), so
- * a boot-time announcement re-syncs deployed phones without any phone-side change. Wire v2
- * activation stays RESPONDER-ONLY on the glasses side — this class only advertises readiness
- * and caps; the phone still initiates the handshake.
+ * <p>This is a self-scheduling poller, NOT a transport-callback subscriber, for two reasons:
+ * {@code K900BluetoothManager} opens its serial port from its constructor, so the first
+ * serial-ready edge can fire before {@code AsgClientService} is registered as a transport
+ * listener (and listener registration does not replay current state) — an edge-triggered
+ * announcement can be missed entirely. And the announcement must carry {@code wire_caps}: the
+ * phone treats {@code glasses_ready} as a remote wire reset that CLEARS its stored peer caps,
+ * then gates its v2 handshake on the caps in the message — a caps-less announcement leaves the
+ * session stuck on v1, which is the exact failure being fixed. The BES caps arrive only after
+ * the sr_syvr round-trip, so each tick waits for transport-up AND resolved caps (bounded — a
+ * legacy BES that never advertises binary relay gets a caps-less announcement after the wait
+ * budget; v2 is impossible there anyway and the announcement still refreshes readiness).
  *
- * <p>Duplicate {@code glasses_ready} deliveries (e.g. racing a genuine phone_ready flow on a
- * fresh connection) are idempotent on the phone. Retries stop early once wire v2 activates —
- * proof the announcement (or a parallel readiness flow) already reached the phone.
+ * <p>Wire v2 activation stays RESPONDER-ONLY on the glasses side — this class only advertises
+ * readiness and caps; the phone still initiates the handshake. Retries stop as soon as v2
+ * activates (proof the phone heard us, or that a parallel phone_ready flow negotiated).
+ * Duplicate {@code glasses_ready} deliveries are idempotent on the phone.
  */
 public class GlassesReadyBootAnnouncer {
     private static final String TAG = "GlassesReadyBootAnnouncer";
 
-    private final ICommunicationManager communicationManager;
-    private final Supplier<K900BluetoothManager> k900ManagerSupplier;
+    private final Supplier<ICommunicationManager> communicationManagerSupplier;
+    private final Supplier<IBluetoothManager> bluetoothManagerSupplier;
     private final Handler handler;
-    private final AtomicBoolean announced = new AtomicBoolean(false);
+    private final AtomicBoolean started = new AtomicBoolean(false);
+
+    private int ticksUsed = 0;
+    private int connectedCapslessTicks = 0;
+    private int announcementsSent = 0;
 
     public GlassesReadyBootAnnouncer(
-            ICommunicationManager communicationManager,
-            Supplier<K900BluetoothManager> k900ManagerSupplier,
+            Supplier<ICommunicationManager> communicationManagerSupplier,
+            Supplier<IBluetoothManager> bluetoothManagerSupplier,
             Handler handler) {
-        this.communicationManager = communicationManager;
-        this.k900ManagerSupplier = k900ManagerSupplier;
+        this.communicationManagerSupplier = communicationManagerSupplier;
+        this.bluetoothManagerSupplier = bluetoothManagerSupplier;
         this.handler = handler;
     }
 
-    /**
-     * Call on every transport-up edge; the announcement schedule runs only once per process.
-     * A fresh process starts with default (reset) transport framing, so the phone-side
-     * assumption "the glasses reset their wire state before sending glasses_ready" holds
-     * without an explicit onTransportReset() here.
-     */
-    public void onTransportUp() {
-        if (!announced.compareAndSet(false, true)) {
+    /** Starts the once-per-process announcement schedule. Safe to call more than once. */
+    public void start() {
+        if (!started.compareAndSet(false, true)) {
             return;
         }
-        sendAttempt(1);
+        handler.post(this::tick);
     }
 
-    private void sendAttempt(int attempt) {
-        if (attempt > 1 && BesWireFormat.isBinaryProtocolActive()) {
-            Log.i(TAG, "🤝 Wire v2 active after boot announcement attempt " + (attempt - 1)
-                    + " — stopping retries");
+    private void tick() {
+        if (BesWireFormat.isBinaryProtocolActive()) {
+            Log.i(TAG, "🤝 Wire v2 active — boot announcement done after "
+                    + announcementsSent + " send(s)");
             return;
         }
+        if (announcementsSent >= AsgConstants.GLASSES_READY_BOOT_ANNOUNCE_ATTEMPTS) {
+            return;
+        }
+        if (ticksUsed >= AsgConstants.GLASSES_READY_BOOT_ANNOUNCE_MAX_TICKS) {
+            Log.i(TAG, "📢 Boot announcement window closed (" + announcementsSent + " send(s))");
+            return;
+        }
+        ticksUsed++;
 
+        if (shouldAnnounceNow()) {
+            announce();
+        }
+
+        handler.postDelayed(this::tick, AsgConstants.GLASSES_READY_BOOT_ANNOUNCE_INTERVAL_MS);
+    }
+
+    private boolean shouldAnnounceNow() {
+        IBluetoothManager bluetoothManager = bluetoothManagerSupplier.get();
+        ICommunicationManager communicationManager = communicationManagerSupplier.get();
+        if (bluetoothManager == null
+                || communicationManager == null
+                || !bluetoothManager.isConnected()) {
+            return false;
+        }
+        // Wait (bounded) for the BES sr_syvr reply to resolve wire caps, so the
+        // announcement carries the wire_caps the phone's handshake gate requires.
+        if (bluetoothManager instanceof K900BluetoothManager
+                && !((K900BluetoothManager) bluetoothManager).isBesBinaryRelaySupported()) {
+            connectedCapslessTicks++;
+            return connectedCapslessTicks > AsgConstants.GLASSES_READY_BOOT_ANNOUNCE_CAPS_WAIT_TICKS;
+        }
+        return true;
+    }
+
+    private void announce() {
         JSONObject message = buildGlassesReady();
-        boolean sent = message != null && communicationManager.sendBluetoothResponse(message);
+        boolean sent =
+                message != null && communicationManagerSupplier.get().sendBluetoothResponse(message);
+        if (sent) {
+            announcementsSent++;
+        }
         Log.i(
                 TAG,
-                "📢 glasses_ready boot announcement attempt "
-                        + attempt
+                "📢 glasses_ready boot announcement "
+                        + announcementsSent
                         + "/"
                         + AsgConstants.GLASSES_READY_BOOT_ANNOUNCE_ATTEMPTS
-                        + (sent ? " sent" : " not sent (transport not ready?)"));
-
-        if (attempt < AsgConstants.GLASSES_READY_BOOT_ANNOUNCE_ATTEMPTS) {
-            handler.postDelayed(
-                    () -> sendAttempt(attempt + 1),
-                    AsgConstants.GLASSES_READY_BOOT_ANNOUNCE_INTERVAL_MS);
-        }
+                        + (sent ? " sent" : " send failed"));
     }
 
     /** Same shape as PhoneReadyCommandHandler's reply: type/timestamp plus wire_caps. */
@@ -92,9 +132,9 @@ public class GlassesReadyBootAnnouncer {
             JSONObject message = new JSONObject();
             message.put("type", "glasses_ready");
             message.put("timestamp", System.currentTimeMillis());
-            K900BluetoothManager k900Manager = k900ManagerSupplier.get();
-            if (k900Manager != null) {
-                k900Manager.addPhoneWireCapsIfSupported(message);
+            IBluetoothManager bluetoothManager = bluetoothManagerSupplier.get();
+            if (bluetoothManager instanceof K900BluetoothManager) {
+                ((K900BluetoothManager) bluetoothManager).addPhoneWireCapsIfSupported(message);
             }
             return message;
         } catch (Exception e) {

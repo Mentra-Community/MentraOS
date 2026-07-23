@@ -127,20 +127,27 @@ public class AsgConstants {
     public static final int OTA_COMPLETION_RESEND_ATTEMPTS = 15;
 
     /**
-     * Boot announcement of glasses_ready when a fresh asg_client process finds the
-     * transport already up. After an APK-OTA restart the phone-BES BLE link survives, so
-     * the phone's sr_hrt handler sees a stale glassesReady=true and skips phone_ready —
-     * the phone_ready -> glasses_ready -> wire-reset -> v2-handshake chain never re-runs
-     * and the new process is stuck on v1 TX for the whole session (incident
-     * rep_01KY6BJ0B7A4RBMQ7VN39KAE5E: still ck-chunked v1 strings 6 minutes after
-     * restart). Announcing glasses_ready at boot re-triggers the phone's existing
-     * remote-wire-reset handling. A few spaced attempts cover the early-transport race;
-     * retries stop as soon as wire v2 activates (proof the phone heard us).
+     * Boot announcement of glasses_ready by a fresh asg_client process. After an APK-OTA
+     * restart the phone-BES BLE link survives, so the phone's sr_hrt handler sees a stale
+     * glassesReady=true and skips phone_ready — the phone_ready -> glasses_ready ->
+     * wire-reset -> v2-handshake chain never re-runs and the new process is stuck on v1
+     * TX for the whole session (incident rep_01KY6BJ0B7A4RBMQ7VN39KAE5E: still ck-chunked
+     * v1 strings 6 minutes after restart). GlassesReadyBootAnnouncer polls on this
+     * schedule (transport callbacks can fire before the service registers as listener,
+     * and the announcement must wait for the BES sr_syvr reply so it carries wire_caps —
+     * the phone's remote wire reset CLEARS its stored caps and gates its v2 handshake on
+     * the caps in the message). Retries stop as soon as wire v2 activates.
      */
     public static final int GLASSES_READY_BOOT_ANNOUNCE_ATTEMPTS = 3;
 
-    /** Spacing between glasses_ready boot announcement attempts. */
+    /** Spacing between glasses_ready boot announcement poller ticks. */
     public static final long GLASSES_READY_BOOT_ANNOUNCE_INTERVAL_MS = 3_000L;
+
+    /** Total poller tick budget (x interval = ~30s window; a later phone connect uses the normal phone_ready flow). */
+    public static final int GLASSES_READY_BOOT_ANNOUNCE_MAX_TICKS = 10;
+
+    /** Connected-but-capsless ticks to wait for the BES sr_syvr caps reply before announcing without wire_caps. */
+    public static final int GLASSES_READY_BOOT_ANNOUNCE_CAPS_WAIT_TICKS = 3;
 
     /** Delay before probing the alternate UART baud after ASG starts at the rendezvous rate. */
     public static final long UART_BOOT_RECOVERY_INITIAL_DELAY_MS = 8000;

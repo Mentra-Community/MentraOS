@@ -144,8 +144,8 @@ public class AsgClientService extends Service implements NetworkStateListener, T
     // Interface references (Dependency Inversion Principle)
     private IServiceLifecycle lifecycleManager;
     private ICommunicationManager communicationManager;
-    // Announces glasses_ready once per process on the first transport-up edge, so a phone
-    // whose BLE link survived an asg restart re-runs its wire reset + v2 handshake.
+    // Announces glasses_ready once per process (self-scheduling poller), so a phone whose
+    // BLE link survived an asg restart re-runs its wire reset + v2 handshake.
     private GlassesReadyBootAnnouncer glassesReadyBootAnnouncer;
     private IConfigurationManager configurationManager;
     private IStateManager stateManager;
@@ -259,6 +259,26 @@ public class AsgClientService extends Service implements NetworkStateListener, T
             // Send version info
             Log.d(TAG, "📋 Sending initial version information");
             sendVersionInfo();
+
+            // Boot announcement: if this process replaced one mid-session (APK OTA), the
+            // phone never saw a disconnect and will not re-run phone_ready on its own.
+            // The announcer polls (transport callbacks can pre-date our listener
+            // registration) and waits for BES wire caps before sending glasses_ready,
+            // which triggers the phone's remote wire reset + v2 re-handshake.
+            Log.d(TAG, "📢 Starting glasses_ready boot announcer");
+            glassesReadyBootAnnouncer =
+                    new GlassesReadyBootAnnouncer(
+                            () -> communicationManager,
+                            () ->
+                                    serviceInitializer != null
+                                                    && serviceInitializer.getServiceManager()
+                                                            != null
+                                            ? serviceInitializer
+                                                    .getServiceManager()
+                                                    .getBluetoothManager()
+                                            : null,
+                            new Handler(Looper.getMainLooper()));
+            glassesReadyBootAnnouncer.start();
 
             // Start heartbeat monitoring
             Log.d(TAG, "💓 Starting heartbeat monitoring");
@@ -997,27 +1017,6 @@ public class AsgClientService extends Service implements NetworkStateListener, T
                         + (connected ? "CONNECTED" : "DISCONNECTED"));
 
         if (connected) {
-            // Boot announcement FIRST: if this process replaced one mid-session (APK OTA),
-            // the phone never saw a disconnect and will not re-run phone_ready on its own.
-            // glasses_ready triggers the phone's remote wire reset + v2 re-handshake, so it
-            // should land before this process's other post-connect traffic.
-            if (glassesReadyBootAnnouncer == null) {
-                glassesReadyBootAnnouncer =
-                        new GlassesReadyBootAnnouncer(
-                                communicationManager,
-                                () -> {
-                                    var bluetoothManager =
-                                            serviceInitializer
-                                                    .getServiceManager()
-                                                    .getBluetoothManager();
-                                    return bluetoothManager instanceof K900BluetoothManager
-                                            ? (K900BluetoothManager) bluetoothManager
-                                            : null;
-                                },
-                                new Handler(Looper.getMainLooper()));
-            }
-            glassesReadyBootAnnouncer.onTransportUp();
-
             // Send the pending APK-done signal immediately on reconnect (before WiFi/version info).
             // This is the primary path for the phone to learn the APK updated successfully.
             if (otaHelper != null) {
