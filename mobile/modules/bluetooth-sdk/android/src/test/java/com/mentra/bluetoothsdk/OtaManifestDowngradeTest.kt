@@ -1,8 +1,10 @@
 package com.mentra.bluetoothsdk
 
 import org.json.JSONObject
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -37,9 +39,20 @@ class OtaManifestDowngradeTest {
     }
 
     @Test
-    fun zeroedRescuePinIsNeverActionable() {
-        // The frozen legacy rescue manifests carry a zeroed ASG pin; it must never read as an
-        // update (especially not as a downgrade to versionCode 0).
-        assertFalse(hasUpdate("49076573", manifest(0L)))
+    fun zeroedPinOnModernGlassesIsAnError() {
+        // An unverifiable pin must never present as "no update" on modern glasses.
+        try {
+            hasUpdate("49076573", manifest(0L))
+            fail("expected invalid_ota_manifest")
+        } catch (e: BluetoothSdkException) {
+            assertEquals("invalid_ota_manifest", e.code)
+        }
+    }
+
+    @Test
+    fun zeroedRescuePinIsInertForLegacyGlasses() {
+        // Pre-39 glasses are legitimately checked against the frozen rescue manifests, whose
+        // zeroed ASG pin must read as no APK update (the MTK patch chain is what matters there).
+        assertFalse(hasUpdate("38", manifest(0L)))
     }
 }

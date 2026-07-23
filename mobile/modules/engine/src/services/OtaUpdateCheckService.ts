@@ -247,6 +247,34 @@ export async function checkForOtaUpdate(
     const versionJson = await fetchVersionInfo(otaVersionUrl)
     const latestVersionInfo = getLatestVersionInfo(versionJson)
 
+    // A manifest whose ASG pin is missing/zeroed cannot verify anything for modern
+    // glasses (zeroed pins are only legitimate in the frozen legacy rescue manifests
+    // that pre-39 glasses are checked against). Report the check as FAILED rather
+    // than silently completing as "up to date" — an unverifiable state must never
+    // present as a verified one.
+    const currentVersionNumber = parseInt(currentBuildNumber, 10)
+    const pinnedEntry = versionJson?.apps?.["com.mentra.asg_client"]
+    const pinnedVersion = pinnedEntry?.versionCode ?? versionJson?.versionCode
+    if (
+      versionJson &&
+      Number.isFinite(currentVersionNumber) &&
+      currentVersionNumber >= 39 &&
+      !(typeof pinnedVersion === "number" && pinnedVersion > 0)
+    ) {
+      console.error(
+        `OTA: manifest at ${otaVersionUrl} has no valid ASG pin (versionCode=${String(pinnedVersion)}) - treating check as failed`,
+      )
+      return {
+        hasCheckCompleted: false,
+        updateAvailable: false,
+        latestVersionInfo: null,
+        updates: [],
+        mtkPatch: null,
+        besVersion: null,
+        isApkDowngrade: false,
+      }
+    }
+
     const apkDirection = getApkUpdateDirection(currentBuildNumber, versionJson)
     const apkUpdateAvailable = apkDirection !== null
     console.log(
@@ -324,7 +352,10 @@ export async function checkCurrentGlassesForUpdate(
     buildNumber = useGlassesStore.getState().buildNumber
   }
 
-  if (!buildNumber) {
+  if (!buildNumber || !(parseInt(buildNumber, 10) > 0)) {
+    // Covers absent, non-numeric, and zero build numbers: a glasses version we
+    // cannot parse means nothing is verifiable, so skip rather than ghost an
+    // "up to date" result from a comparison that never really ran.
     return emptyCheckResult("missing_build")
   }
 

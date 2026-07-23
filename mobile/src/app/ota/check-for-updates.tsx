@@ -12,7 +12,7 @@ import {translate} from "@/i18n/translate"
 import {useNavigationStore} from "@/stores/navigation"
 import {getNextOnboardingRoute} from "@/utils/onboarding/getNextOnboardingRoute"
 
-type CheckState = "checking" | "update_available" | "no_update" | "error"
+type CheckState = "checking" | "update_available" | "no_update" | "dev_build" | "error"
 
 export default function OtaCheckForUpdatesScreen() {
   const {theme} = useAppTheme()
@@ -120,11 +120,12 @@ export default function OtaCheckForUpdatesScreen() {
         }
 
         if (result.skippedReason === "dev_build") {
-          // Development builds are exempt from OTA; report the glasses as up to date.
+          // Development builds are exempt from OTA. Shown as its own state — NOT
+          // "up to date", which would be an unverified claim.
           console.log("OTA: Check skipped (dev_build) - glasses run a development build")
           checkCompletedRef.current = true
           engine.ota.clearUpdateAvailable()
-          setCheckState("no_update")
+          setCheckState("dev_build")
           return
         }
 
@@ -282,6 +283,25 @@ export default function OtaCheckForUpdatesScreen() {
             {__DEV__ && isUpdateRequired && (
               <Button preset="secondary" text="Skip (dev only)" onPress={handleContinue} />
             )}
+          </View>
+        </>
+      )
+    }
+
+    // Development build: OTA exempt — distinct from "up to date" (unverified claim).
+    if (checkState === "dev_build") {
+      return (
+        <>
+          <View className="flex-1 items-center justify-center px-6">
+            <Icon name="settings" size={64} color={theme.colors.primary} />
+            <View className="h-6" />
+            <Text tx="ota:devBuild" className="font-semibold text-xl text-center" />
+            <View className="h-2" />
+            <Text tx="ota:devBuildNoOta" className="text-sm text-center" style={{color: theme.colors.textDim}} />
+          </View>
+
+          <View className="justify-center items-center mb-6">
+            <Button preset="primary" tx="common:continue" flexContainer onPress={handleContinue} />
           </View>
         </>
       )

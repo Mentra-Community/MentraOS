@@ -353,6 +353,8 @@ const en = {
     setupWifi: "Setup WiFi",
     updateLater: "Later",
     upToDate: "Up to Date",
+    devBuild: "Development Build",
+    devBuildNoOta: "These glasses run a development build, so automatic updates are disabled. Use the developer settings manifest override to update them manually.",
     noUpdatesAvailable: "Your glasses are running the latest version.",
     checkFailed: "Check Failed",
     checkFailedMessage: "Unable to check for updates. You can try again later from Settings.",

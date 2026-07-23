@@ -38,6 +38,41 @@ describe("OtaUpdateCheckService", () => {
     expect(global.fetch).not.toHaveBeenCalled()
   })
 
+  it("reports a failed check (never up-to-date) for a zeroed pin on modern glasses", async () => {
+    useGlassesStore.getState().setGlassesInfo({buildNumber: "49076573"})
+    global.fetch = jest.fn(() =>
+      Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({apps: {"com.mentra.asg_client": {versionCode: 0}}}),
+      } as unknown as Response),
+    ) as unknown as typeof fetch
+
+    const result = await checkCurrentGlassesForUpdate({
+      refreshVersionInfo: false,
+      fixClockBeforeCheck: false,
+      waitForBesVersionMs: 0,
+      waitForMtkVersionMs: 0,
+    })
+
+    expect(result.hasCheckCompleted).toBe(false)
+    expect(result.updateAvailable).toBe(false)
+  })
+
+  it("skips (missing_build) for an unparseable or zero glasses build number", async () => {
+    useGlassesStore.getState().setGlassesInfo({buildNumber: "0"})
+    global.fetch = jest.fn() as unknown as typeof fetch
+
+    const result = await checkCurrentGlassesForUpdate({
+      refreshVersionInfo: false,
+      fixClockBeforeCheck: false,
+      waitForBesVersionMs: 0,
+      waitForMtkVersionMs: 0,
+    })
+
+    expect(result.skippedReason).toBe("missing_build")
+    expect(global.fetch).not.toHaveBeenCalled()
+  })
+
   it("checks the current glasses and writes the available OTA snapshot", async () => {
     global.fetch = jest.fn(() =>
       Promise.resolve({
