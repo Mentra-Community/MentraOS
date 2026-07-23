@@ -13,8 +13,9 @@ import android.os.Looper;
 import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.io.bluetooth.managers.K900BluetoothManager;
 import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.BesWireFormat;
-import com.mentra.asg_client.service.communication.interfaces.ICommunicationManager;
+import com.mentra.asg_client.service.core.processors.CommandProcessor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import org.json.JSONObject;
 import org.junit.After;
 import org.junit.Before;
@@ -26,32 +27,33 @@ import org.robolectric.annotation.Config;
 import org.robolectric.shadows.ShadowLooper;
 
 /**
- * The glasses_ready boot announcement re-syncs a phone whose BLE link survived an asg
- * process restart (incident rep_01KY6BJ0B7A4RBMQ7VN39KAE5E): without it the phone skips
- * phone_ready and the v2 wire handshake never re-runs, leaving the new process on v1 TX
- * for the whole session. The announcer POLLS (transport callbacks can pre-date listener
- * registration) and waits for BES wire caps (the phone's remote wire reset clears its
- * stored caps and gates its handshake on the caps carried in the message).
+ * The boot announcement re-syncs a phone whose BLE link survived an asg process restart
+ * (incident rep_01KY6BJ0B7A4RBMQ7VN39KAE5E): without it the phone skips phone_ready and
+ * the v2 wire handshake never re-runs, leaving the new process on v1 TX for the whole
+ * session. The announcer POLLS (transport callbacks can pre-date listener registration),
+ * waits for BES wire caps (the phone's remote wire reset clears its stored caps and gates
+ * its handshake on the caps in glasses_ready), and delivers by driving the STANDARD
+ * phone_ready flow so every handler side effect (wire epoch reset, WiFi/hotspot status,
+ * RGB LED authority) runs identically to a real phone_ready.
  */
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 33)
 public class GlassesReadyBootAnnouncerTest {
 
-    private ICommunicationManager communicationManager;
+    private CommandProcessor commandProcessor;
     private K900BluetoothManager k900Manager;
     private GlassesReadyBootAnnouncer announcer;
 
     @Before
     public void setUp() {
         BesWireFormat.resetBinaryProtocol();
-        communicationManager = mock(ICommunicationManager.class);
-        when(communicationManager.sendBluetoothResponse(any())).thenReturn(true);
+        commandProcessor = mock(CommandProcessor.class);
         k900Manager = mock(K900BluetoothManager.class);
         when(k900Manager.isConnected()).thenReturn(true);
         when(k900Manager.isBesBinaryRelaySupported()).thenReturn(true);
         announcer =
                 new GlassesReadyBootAnnouncer(
-                        () -> communicationManager,
+                        () -> commandProcessor,
                         () -> k900Manager,
                         new Handler(Looper.getMainLooper()));
     }
@@ -80,33 +82,18 @@ public class GlassesReadyBootAnnouncerTest {
     }
 
     @Test
-    public void announcesGlassesReadyWithTimestampAndCapsDecoration() throws Exception {
+    public void announcesByDrivingThePhoneReadyFlow() throws Exception {
         announcer.start();
         firstTick();
 
+        // The synthetic command must carry no mId: the dispatch would otherwise ack a
+        // message the phone never sent (and track it for duplicate suppression).
         ArgumentCaptor<JSONObject> captor = ArgumentCaptor.forClass(JSONObject.class);
-        verify(communicationManager).sendBluetoothResponse(captor.capture());
-        JSONObject message = captor.getValue();
-        assertThat(message.getString("type")).isEqualTo("glasses_ready");
-        assertThat(message.getLong("timestamp")).isPositive();
-        verify(k900Manager).addPhoneWireCapsIfSupported(any(JSONObject.class));
-    }
-
-    @Test
-    public void resetsWireEpochBeforeEveryAnnouncement() {
-        // Each glasses_ready must be preceded by onTransportReset(): the phone resets its
-        // wire epoch on every glasses_ready and re-initiates the handshake, and the local
-        // reset clears the wireV2HandshakeSent latch so that re-handshake gets a reply.
-        announcer.start();
-        drainWholeWindow();
-
-        org.mockito.InOrder inOrder = org.mockito.Mockito.inOrder(k900Manager, communicationManager);
-        for (int i = 0; i < AsgConstants.GLASSES_READY_BOOT_ANNOUNCE_ATTEMPTS; i++) {
-            inOrder.verify(k900Manager).onTransportReset();
-            inOrder.verify(communicationManager).sendBluetoothResponse(any(JSONObject.class));
-        }
-        verify(k900Manager, times(AsgConstants.GLASSES_READY_BOOT_ANNOUNCE_ATTEMPTS))
-                .onTransportReset();
+        verify(commandProcessor).processJsonCommand(captor.capture());
+        JSONObject synthetic = captor.getValue();
+        assertThat(synthetic.getString("type")).isEqualTo("phone_ready");
+        assertThat(synthetic.has("mId")).isFalse();
+        assertThat(synthetic.getBoolean("boot_announce")).isTrue();
     }
 
     @Test
@@ -115,12 +102,28 @@ public class GlassesReadyBootAnnouncerTest {
         announcer.start();
         firstTick();
         advanceTicks(2);
-        verify(communicationManager, never()).sendBluetoothResponse(any());
+        verify(commandProcessor, never()).processJsonCommand(any());
 
         // Transport comes up mid-window: the next tick announces.
         when(k900Manager.isConnected()).thenReturn(true);
         advanceTicks(1);
-        verify(communicationManager, times(1)).sendBluetoothResponse(any(JSONObject.class));
+        verify(commandProcessor, times(1)).processJsonCommand(any(JSONObject.class));
+    }
+
+    @Test
+    public void waitsForCommandProcessorBeforeAnnouncing() {
+        AtomicReference<CommandProcessor> processorRef = new AtomicReference<>(null);
+        announcer =
+                new GlassesReadyBootAnnouncer(
+                        processorRef::get, () -> k900Manager, new Handler(Looper.getMainLooper()));
+        announcer.start();
+        firstTick();
+        advanceTicks(1);
+
+        // Service init finishes mid-window: the next tick announces.
+        processorRef.set(commandProcessor);
+        advanceTicks(1);
+        verify(commandProcessor, times(1)).processJsonCommand(any(JSONObject.class));
     }
 
     @Test
@@ -129,13 +132,12 @@ public class GlassesReadyBootAnnouncerTest {
         announcer.start();
         firstTick();
         advanceTicks(1);
-        verify(communicationManager, never()).sendBluetoothResponse(any());
+        verify(commandProcessor, never()).processJsonCommand(any());
 
-        // Caps resolve (sr_syvr reply landed): the next tick announces WITH caps.
+        // Caps resolve (sr_syvr reply landed): the next tick announces.
         when(k900Manager.isBesBinaryRelaySupported()).thenReturn(true);
         advanceTicks(1);
-        verify(communicationManager, times(1)).sendBluetoothResponse(any(JSONObject.class));
-        verify(k900Manager).addPhoneWireCapsIfSupported(any(JSONObject.class));
+        verify(commandProcessor, times(1)).processJsonCommand(any(JSONObject.class));
     }
 
     @Test
@@ -146,10 +148,10 @@ public class GlassesReadyBootAnnouncerTest {
         announcer.start();
         firstTick();
         advanceTicks(AsgConstants.GLASSES_READY_BOOT_ANNOUNCE_CAPS_WAIT_TICKS - 1);
-        verify(communicationManager, never()).sendBluetoothResponse(any());
+        verify(commandProcessor, never()).processJsonCommand(any());
 
         advanceTicks(1);
-        verify(communicationManager, times(1)).sendBluetoothResponse(any(JSONObject.class));
+        verify(commandProcessor, times(1)).processJsonCommand(any(JSONObject.class));
     }
 
     @Test
@@ -157,8 +159,8 @@ public class GlassesReadyBootAnnouncerTest {
         announcer.start();
         drainWholeWindow();
 
-        verify(communicationManager, times(AsgConstants.GLASSES_READY_BOOT_ANNOUNCE_ATTEMPTS))
-                .sendBluetoothResponse(any(JSONObject.class));
+        verify(commandProcessor, times(AsgConstants.GLASSES_READY_BOOT_ANNOUNCE_ATTEMPTS))
+                .processJsonCommand(any(JSONObject.class));
     }
 
     @Test
@@ -169,7 +171,7 @@ public class GlassesReadyBootAnnouncerTest {
         BesWireFormat.setBinaryProtocolActive(true);
         drainWholeWindow();
 
-        verify(communicationManager, times(1)).sendBluetoothResponse(any(JSONObject.class));
+        verify(commandProcessor, times(1)).processJsonCommand(any(JSONObject.class));
     }
 
     @Test
@@ -179,7 +181,7 @@ public class GlassesReadyBootAnnouncerTest {
         announcer.start();
         drainWholeWindow();
 
-        verify(communicationManager, times(AsgConstants.GLASSES_READY_BOOT_ANNOUNCE_ATTEMPTS))
-                .sendBluetoothResponse(any(JSONObject.class));
+        verify(commandProcessor, times(AsgConstants.GLASSES_READY_BOOT_ANNOUNCE_ATTEMPTS))
+                .processJsonCommand(any(JSONObject.class));
     }
 }

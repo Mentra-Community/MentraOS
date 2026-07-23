@@ -136,7 +136,9 @@ public class AsgConstants {
      * schedule (transport callbacks can fire before the service registers as listener,
      * and the announcement must wait for the BES sr_syvr reply so it carries wire_caps —
      * the phone's remote wire reset CLEARS its stored caps and gates its v2 handshake on
-     * the caps in the message). Retries stop as soon as wire v2 activates.
+     * the caps in the message), then drives the standard phone_ready flow so every
+     * handler side effect runs identically to a real phone_ready. Retries stop as soon
+     * as wire v2 activates.
      */
     public static final int GLASSES_READY_BOOT_ANNOUNCE_ATTEMPTS = 3;
 

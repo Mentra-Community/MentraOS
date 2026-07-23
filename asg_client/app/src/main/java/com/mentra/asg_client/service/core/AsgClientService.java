@@ -263,12 +263,15 @@ public class AsgClientService extends Service implements NetworkStateListener, T
             // Boot announcement: if this process replaced one mid-session (APK OTA), the
             // phone never saw a disconnect and will not re-run phone_ready on its own.
             // The announcer polls (transport callbacks can pre-date our listener
-            // registration) and waits for BES wire caps before sending glasses_ready,
-            // which triggers the phone's remote wire reset + v2 re-handshake.
+            // registration), waits for BES wire caps, then drives the standard
+            // phone_ready flow — glasses_ready + wire_caps triggers the phone's remote
+            // wire reset + v2 re-handshake, and the handler's other session setup
+            // (WiFi/hotspot status, RGB LED authority) runs identically to a real
+            // phone_ready.
             Log.d(TAG, "📢 Starting glasses_ready boot announcer");
             glassesReadyBootAnnouncer =
                     new GlassesReadyBootAnnouncer(
-                            () -> communicationManager,
+                            () -> commandProcessor,
                             () ->
                                     serviceInitializer != null
                                                     && serviceInitializer.getServiceManager()
