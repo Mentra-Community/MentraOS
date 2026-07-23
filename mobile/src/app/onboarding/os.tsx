@@ -2,6 +2,7 @@ import {SETTINGS, useSetting} from "@mentra/engine"
 import {useCallback, useMemo} from "react"
 import {Linking, View} from "react-native"
 
+import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
 import {Icon, Screen, Text} from "@/components/ignite"
 import {OnboardingGuide, OnboardingStep} from "@/components/onboarding/OnboardingGuide"
 import {usePushPrevious} from "@/contexts/NavigationHistoryContext"
@@ -26,7 +27,6 @@ export default function MentraOSOnboarding() {
     () => [
       {
         type: "image",
-        source: require("@assets/onboarding/os/figma/start-miniapp.png"),
         name: "Welcome to Mentra",
         transition: true,
         fadeOut: true,
@@ -35,6 +35,13 @@ export default function MentraOSOnboarding() {
         subtitle: translate("onboarding:osWelcomeSubtitle"),
         titleCentered: true,
         subtitleCentered: true,
+        content: (
+          <View className="m-6 flex-1 items-center justify-center rounded-3xl bg-secondary">
+            <View className="h-32 w-32 items-center justify-center rounded-full bg-background">
+              <MentraLogoStandalone width={92} height={50} />
+            </View>
+          </View>
+        ),
       },
       {
         type: "image",
