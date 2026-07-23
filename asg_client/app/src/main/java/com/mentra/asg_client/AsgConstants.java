@@ -126,6 +126,18 @@ public class AsgConstants {
     /** Number of post-APK-restart completion resend attempts (see {@link #OTA_COMPLETION_RESEND_INTERVAL_MS}). */
     public static final int OTA_COMPLETION_RESEND_ATTEMPTS = 15;
 
+    /**
+     * Maximum packed frame size for a v1 K900 STRING ck chunk. The BES relays v1 string
+     * frames to the phone in a single unfragmented BLE notification, and the effective ATT
+     * payload on that link is 253 bytes (ATT MTU 256) regardless of the MTU the phone
+     * requested — a packed chunk over that cap is silently truncated on the wire and the
+     * phone drops it as unparseable (incident rep_01KY6BJ0B7A4RBMQ7VN39KAE5E: OTA
+     * completion ck chunks packed to 256-263 bytes and none survived). The previous budget
+     * was MTU_TARGET (509), which only holds for v2 binary fragments with phone-side
+     * reassembly. 240 leaves margin for BES re-framing variance.
+     */
+    public static final int K900_STRING_CHUNK_MAX_FRAME_BYTES = 240;
+
     /** Delay before probing the alternate UART baud after ASG starts at the rendezvous rate. */
     public static final long UART_BOOT_RECOVERY_INITIAL_DELAY_MS = 8000;
 
