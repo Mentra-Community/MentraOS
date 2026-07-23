@@ -764,6 +764,10 @@ const getDefaultSettings = () =>
 // flight. Cleared on failure so a later call can retry.
 let loadAllSettingsInFlight: AsyncResult<void, Error> | null = null
 
+function printableSettingValue(key: string, value: unknown): string {
+  return key.includes("token") || key.includes("email") ? "<redacted>" : JSON.stringify(value)
+}
+
 export const useSettingsStore = create<SettingsState>()(
   subscribeWithSelector((set, get) => ({
     settings: getDefaultSettings(),
@@ -787,7 +791,7 @@ export const useSettingsStore = create<SettingsState>()(
         }
 
         // Update store immediately for optimistic UI
-        console.log(`SETTINGS: SET: ${key} = ${value}`)
+        console.log(`SETTINGS: SET: ${key} = ${printableSettingValue(key, value)}`)
         set((state) => ({
           settings: {...state.settings, [key]: value},
         }))
@@ -912,9 +916,7 @@ export const useSettingsStore = create<SettingsState>()(
           // logs are uploaded in bug-report artifacts (same keys
           // diagnosticContext's SENSITIVE_SETTINGS_KEYS strips, minus an
           // import that would cycle stores <-> utils).
-          const printable =
-            setting.key.includes("token") || setting.key.includes("email") ? "<redacted>" : JSON.stringify(value)
-          console.log(`SETTINGS: LOAD: ${setting.key} = ${printable}`)
+          console.log(`SETTINGS: LOAD: ${setting.key} = ${printableSettingValue(setting.key, value)}`)
           loadedSettings[setting.key] = value
         }
 
