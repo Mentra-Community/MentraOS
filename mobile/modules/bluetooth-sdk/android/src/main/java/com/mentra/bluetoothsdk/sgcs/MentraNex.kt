@@ -80,6 +80,13 @@ class MentraNex : SGCManager() {
         // callback is normally near-instant; this only guards against a callback that
         // never arrives, so a dropped write can't wedge the send queue forever.
         private const val WRITE_CALLBACK_TIMEOUT_MS: Long = 10
+        // Upper bound for an acked (write-with-response) fragment. The callback only
+        // fires after the firmware's ATT Write Response — at least one connection
+        // interval — so 10ms is far too short here: timing out early would let the
+        // worker issue the next write while this one is still outstanding, which the
+        // stack rejects (one GATT op at a time) and the fragment is dropped. This is a
+        // safety bound only; the ack normally arrives within an interval or two.
+        private const val WRITE_ACK_TIMEOUT_MS: Long = 400
 
         private const val INITIAL_CONNECTION_DELAY_MS = 350L // Adjust this value as needed
         // Window to let a queued DisconnectRequest flush to the glasses before we close GATT.
@@ -265,7 +272,12 @@ class MentraNex : SGCManager() {
     private var currentImageChunks: MutableList<ByteArray> = mutableListOf()
 
     // Data class to represent a send request
-    private data class SendRequest( val data: ByteArray, var waitTime: Int = -1) {
+    // ack=true issues the fragment as a write-WITH-response (WRITE_TYPE_DEFAULT): the
+    // firmware ATT-acks each write, so the worker knows it landed. ack=false is a
+    // no-response write (WRITE_TYPE_NO_RESPONSE) — fire-and-forget, used for captions
+    // where the newest frame supersedes the last and throughput matters more than
+    // per-packet delivery. See processQueue() for how the write type is applied.
+    private data class SendRequest( val data: ByteArray, var waitTime: Int = -1, val ack: Boolean = true) {
         override fun equals(other: Any?): Boolean {
             if (this === other) return true
             if (javaClass != other?.javaClass) return false
@@ -274,6 +286,7 @@ class MentraNex : SGCManager() {
 
             if (!data.contentEquals(other.data)) return false
             if (waitTime != other.waitTime) return false
+            if (ack != other.ack) return false
 
             return true
         }
@@ -281,6 +294,7 @@ class MentraNex : SGCManager() {
         override fun hashCode(): Int {
             var result = data.contentHashCode()
             result = 31 * result + waitTime
+            result = 31 * result + ack.hashCode()
             return result
         }
     }
@@ -320,7 +334,7 @@ class MentraNex : SGCManager() {
     }
 
     // Network Management
-    override fun requestWifiScan () { Bridge.log("Nex: requestWifiScan operation not supported") }
+    override fun requestWifiScan (scanId: String?) { Bridge.log("Nex: requestWifiScan operation not supported") }
     override fun sendWifiCredentials(ssid: String, password: String) { Bridge.log("Nex: sendWifiCredentials operation not supported") }
     override fun forgetWifiNetwork(ssid: String) { }
     override fun sendHotspotState(enabled: Boolean) { Bridge.log("Nex: sendHotspotState operation not supported") }
@@ -543,7 +557,13 @@ class MentraNex : SGCManager() {
     // update on the same component (reused by rect via sendPositionedText), so captions can sit
     // alongside a navigation minimap or other canvas components instead of owning the screen.
     private fun showCaptionText(text: String) {
-        sendPositionedText(text, CAPTION_BOX_X, CAPTION_BOX_Y, CAPTION_BOX_W, CAPTION_BOX_H, 0, 0)
+        // Captions are high-frequency, replace-in-place updates where the newest frame
+        // supersedes the last, so they go out WITHOUT ATT acks (write-no-response) for
+        // throughput — every other command uses acked writes. Route through upsertText
+        // directly (rather than the public sendPositionedText override, which can't take
+        // an ack flag) using the same rect-synthesized element id so reuse still works.
+        val elementId = "text@$CAPTION_BOX_X,$CAPTION_BOX_Y,${CAPTION_BOX_W}x$CAPTION_BOX_H,0,0"
+        upsertText(elementId, null, text, CAPTION_BOX_X, CAPTION_BOX_Y, CAPTION_BOX_W, CAPTION_BOX_H, 0, 0, ack = false)
     }
 
     // ---- Canvas text containers (G2-style) -------------------------------------------------
@@ -632,7 +652,8 @@ class MentraNex : SGCManager() {
 
     private fun upsertText(
         elementId: String, layoutId: String?, text: String,
-        x: Int, y: Int, width: Int, height: Int, borderWidth: Int, borderRadius: Int
+        x: Int, y: Int, width: Int, height: Int, borderWidth: Int, borderRadius: Int,
+        ack: Boolean = true
     ) {
         ensureLayout(layoutId)
         val rect = "$x,$y,${width}x$height,$borderWidth,$borderRadius"
@@ -641,10 +662,10 @@ class MentraNex : SGCManager() {
             if (existing.rect != rect) {
                 // Geometry moved/resized — recreate the box at the SAME firmware id, then set text.
                 sendProtobuf(NexProtobufUtils.generateCanvasCreateTextboxCommandBytes(
-                    existing.firmwareId, x, y, width, height, borderWidth, borderRadius))
+                    existing.firmwareId, x, y, width, height, borderWidth, borderRadius), ack = ack)
                 canvasElements[elementId] = existing.copy(rect = rect)
             }
-            sendProtobuf(NexProtobufUtils.generateCanvasUpdateTextCommandBytes(existing.firmwareId, text))
+            sendProtobuf(NexProtobufUtils.generateCanvasUpdateTextCommandBytes(existing.firmwareId, text), ack = ack)
             return
         }
         val fid = allocFirmwareId(false)
@@ -654,8 +675,8 @@ class MentraNex : SGCManager() {
         }
         canvasElements[elementId] = CanvasElement(fid, false, rect)
         sendProtobuf(NexProtobufUtils.generateCanvasCreateTextboxCommandBytes(
-            fid, x, y, width, height, borderWidth, borderRadius))
-        sendProtobuf(NexProtobufUtils.generateCanvasUpdateTextCommandBytes(fid, text))
+            fid, x, y, width, height, borderWidth, borderRadius), ack = ack)
+        sendProtobuf(NexProtobufUtils.generateCanvasUpdateTextCommandBytes(fid, text), ack = ack)
     }
 
     override fun removeLayoutElement(elementId: String, layoutId: String?) {
@@ -1064,7 +1085,7 @@ class MentraNex : SGCManager() {
         Bridge.log("Nex: 📤 Requesting MTU: $MTU_517 bytes")
         gatt.requestMtu(MTU_517) // Request our maximum MTU
 
-        val uartService: BluetoothGattService = gatt.getService(NexBluetoothConstants.MAIN_SERVICE_UUID)
+        val uartService: BluetoothGattService? = gatt.getService(NexBluetoothConstants.MAIN_SERVICE_UUID)
 
         if (uartService != null) {
             val writeChar = uartService.getCharacteristic(NexBluetoothConstants.WRITE_CHAR_UUID)
@@ -1072,17 +1093,13 @@ class MentraNex : SGCManager() {
 
             writeChar?.let {
                 mainWriteChar = it
-                // Write-without-response on the characteristic we actually write
-                // to (the firmware RX char advertises WRITE_WITHOUT_RESP). This
-                // is what unblocks TX from the ~1-packet-per-connection-interval
-                // ATT round-trip — critical when the phone sleeps and the
-                // interval is relaxed. Android defaults a freshly-discovered
-                // characteristic to WRITE_TYPE_DEFAULT (with response), and the
-                // reference is reassigned on every service rediscovery, so set
-                // it here. (Previously this was set on the notify char in
-                // enableNotification(), where it had no effect on writes.)
-                it.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
-                Bridge.log("Nex: glass TX characteristic found (write type NO_RESPONSE)")
+                // Write type is now chosen PER FRAGMENT in processQueue (acked for
+                // everything except captions), so it's set there right before each
+                // write rather than once here. Captions still use write-without-
+                // response — which unblocks TX from the ~1-packet-per-connection-
+                // interval ATT round-trip when the phone sleeps and the interval is
+                // relaxed — while every other command is acked for reliable delivery.
+                Bridge.log("Nex: glass TX characteristic found (write type set per-fragment)")
             }
 
             notifyChar?.let {
@@ -1857,8 +1874,9 @@ class MentraNex : SGCManager() {
      *
      * @param protobufBytes raw serialized PhoneToGlasses bytes (no framing)
      * @param waitTime optional post-message delay in ms applied after the last fragment (-1 = none)
+     * @param ack when true (default) each fragment is a write-with-response; captions pass false
      */
-    private fun sendProtobuf(protobufBytes: ByteArray, waitTime: Int = -1) {
+    private fun sendProtobuf(protobufBytes: ByteArray, waitTime: Int = -1, ack: Boolean = true) {
         val headerSize = 4 // [0x02][seq][totalChunks][chunkIndex]
         val maxFragment = (maxChunkSize - headerSize).coerceAtLeast(1)
         val totalChunks =
@@ -1885,7 +1903,7 @@ class MentraNex : SGCManager() {
                 System.arraycopy(protobufBytes, start, frame, headerSize, fragLen)
             }
             // Carry the post-message delay on the final fragment only.
-            SendRequest(frame, if (index == totalChunks - 1) waitTime else -1)
+            SendRequest(frame, if (index == totalChunks - 1) waitTime else -1, ack)
         }
 
         sendQueue.offer(frames)
@@ -1928,6 +1946,15 @@ class MentraNex : SGCManager() {
                         var writeStarted = false
                         if (canSend) {
                             mainWaiter.setTrue()
+                            // Per-request write type: acked fragments go out WITH response
+                            // (firmware ATT-acks each), captions go out WITHOUT response for
+                            // throughput. Set on the shared char just before the write — the
+                            // worker is single-threaded so there's no concurrent write to race.
+                            mainWriteChar?.writeType = if (request.ack) {
+                                BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+                            } else {
+                                BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+                            }
                             mainWriteChar?.value = request.data
                             // Honor the return value: writeCharacteristic returns false when the
                             // stack is busy / out of buffers, and in that case no callback fires.
@@ -1946,7 +1973,11 @@ class MentraNex : SGCManager() {
                         }
 
                         if (writeStarted) {
-                            mainWaiter.waitWhileTrue(WRITE_CALLBACK_TIMEOUT_MS)
+                            // Acked writes need to wait for the real ATT response (a
+                            // connection interval or two); no-response writes get the
+                            // near-instant fast-path bound.
+                            val timeout = if (request.ack) WRITE_ACK_TIMEOUT_MS else WRITE_CALLBACK_TIMEOUT_MS
+                            mainWaiter.waitWhileTrue(timeout)
                         }
 
 

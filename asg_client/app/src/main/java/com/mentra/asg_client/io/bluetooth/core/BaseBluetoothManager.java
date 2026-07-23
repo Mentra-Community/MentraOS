@@ -556,16 +556,35 @@ public abstract class BaseBluetoothManager implements ICompanionTransport {
         if (path == null || path.isEmpty()) {
             return false;
         }
+        return startFileTransfer(() -> sendFileInternal(path));
+    }
 
+    /**
+     * Send an in-memory payload using the file-transfer protocol without requiring it to exist on
+     * disk. Same outbound-worker serialization and start-timeout semantics as the path-based
+     * {@link #sendFile(String)}.
+     */
+    @Override
+    public final boolean sendFile(byte[] data, String fileName) {
+        if (data == null || data.length == 0 || fileName == null || fileName.isEmpty()) {
+            return false;
+        }
+        return startFileTransfer(() -> sendFileInternal(data, fileName));
+    }
+
+    private boolean startFileTransfer(Callable<Boolean> startAction) {
         if (Boolean.TRUE.equals(outboundBleWorkerThread.get())) {
-            return sendFileInternal(path);
+            try {
+                return startAction.call();
+            } catch (Exception e) {
+                Log.e(TAG, "Outbound BLE file transfer start failed on worker", e);
+                return false;
+            }
         }
 
         Future<Boolean> future = null;
         try {
-            future =
-                    outboundBleExecutor.submit(
-                            () -> callOnOutboundBleWorker(() -> sendFileInternal(path)));
+            future = outboundBleExecutor.submit(() -> callOnOutboundBleWorker(startAction));
             return future.get(OUTBOUND_FILE_START_TIMEOUT_MS, TimeUnit.MILLISECONDS);
         } catch (RejectedExecutionException e) {
             Log.e(TAG, "Rejected outbound BLE file transfer start", e);
@@ -619,6 +638,11 @@ public abstract class BaseBluetoothManager implements ICompanionTransport {
 
     protected boolean sendFileInternal(String path) {
         Log.w(TAG, "sendFile not implemented in " + getClass().getSimpleName());
+        return false;
+    }
+
+    protected boolean sendFileInternal(byte[] data, String fileName) {
+        Log.w(TAG, "sendFile(byte[]) not implemented in " + getClass().getSimpleName());
         return false;
     }
 }

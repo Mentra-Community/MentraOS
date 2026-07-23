@@ -21,7 +21,7 @@ process.env.SONIOX_RECONNECT_MAX_MS = "4";
 process.env.SONIOX_RECONNECT_MAX_ATTEMPTS = "5";
 process.env.SONIOX_ENDPOINT_DEBOUNCE_MS = "1";
 
-import { createSonioxProvider } from "./soniox";
+import { createSonioxProvider, sonioxLanguageHints, sonioxTranslationTarget } from "./soniox";
 import type { TranscriptEvent } from "./provider";
 
 // Minimal shape of a Soniox realtime token we care about in these tests.
@@ -33,6 +33,8 @@ type FakeToken = {
   language?: string;
   start_ms?: number;
   end_ms?: number;
+  /** Set on translation-session tokens; absent for same-language passthrough. */
+  translation_status?: "original" | "translation";
 };
 
 /**
@@ -178,6 +180,183 @@ async function makeProvider(): Promise<{
   });
   return { session, events, provider };
 }
+
+async function makeTranslationProvider(target: string): Promise<{
+  session: FakeSession;
+  events: TranscriptEvent[];
+  provider: Awaited<ReturnType<typeof createSonioxProvider>>;
+}> {
+  const session = new FakeSession();
+  const events: TranscriptEvent[] = [];
+  const provider = await createSonioxProvider({
+    scope: "user_xlate_test",
+    language: "auto",
+    targetLanguage: target,
+    client: fakeClient(session) as never,
+    onTranscript: (e) => events.push(e),
+  });
+  return { session, events, provider };
+}
+
+describe("SonioxProvider translation same-language passthrough", () => {
+  test("untagged tokens (spoken language == target) emit as transcription text with their source language", async () => {
+    const { session, events, provider } = await makeTranslationProvider("es-ES");
+
+    // Soniox emits NO translation_status when there is nothing to translate
+    // (verified live: EN speech -> target en). Simulate Spanish speech with a
+    // Spanish target: plain untagged tokens.
+    session.result([
+      { text: "Hola ", confidence: 0.9, is_final: false, language: "es" },
+      { text: "mundo", confidence: 0.9, is_final: false, language: "es" },
+    ]);
+    session.endpoint();
+    await wait(5);
+
+    const finals = events.filter((e) => e.isFinal);
+    expect(finals.length).toBe(1);
+    expect(finals[0]!.text).toBe("Hola mundo");
+    expect(finals[0]!.sourceLanguage).toBe("es");
+    expect(finals[0]!.originalText).toBeUndefined();
+
+    await provider.close();
+  });
+
+  test("cross-language windows still emit only the translation half with originalText", async () => {
+    const { session, events, provider } = await makeTranslationProvider("es-ES");
+
+    session.result([
+      { text: "Hello ", confidence: 0.9, is_final: false, language: "en", translation_status: "original" },
+      { text: "world", confidence: 0.9, is_final: false, language: "en", translation_status: "original" },
+      { text: "Hola ", confidence: 0.9, is_final: false, language: "es", translation_status: "translation" },
+      { text: "mundo", confidence: 0.9, is_final: false, language: "es", translation_status: "translation" },
+    ]);
+    session.endpoint();
+    await wait(5);
+
+    const finals = events.filter((e) => e.isFinal);
+    expect(finals.length).toBe(1);
+    expect(finals[0]!.text).toBe("Hola mundo");
+    expect(finals[0]!.originalText).toBe("Hello world");
+    expect(finals[0]!.sourceLanguage).toBe("en");
+
+    await provider.close();
+  });
+});
+
+describe("sonioxLanguageHints", () => {
+  test("a specific language becomes its own bare-code hint (region stripped)", () => {
+    expect(sonioxLanguageHints("fr-FR", undefined)).toEqual(["fr"]);
+    expect(sonioxLanguageHints("en-US", ["ja"])).toEqual(["en"]); // specific wins; hints ignored
+    expect(sonioxLanguageHints("ZH-hans", undefined)).toEqual(["zh"]);
+  });
+
+  test("auto with no hints yields undefined (never a BCP-47 tag)", () => {
+    expect(sonioxLanguageHints("auto", undefined)).toBeUndefined();
+    expect(sonioxLanguageHints("auto", [])).toBeUndefined();
+    expect(sonioxLanguageHints(undefined, undefined)).toBeUndefined();
+  });
+
+  test("auto passes detection hints, reduced to bare codes and deduped", () => {
+    expect(sonioxLanguageHints("auto", ["en", "ja"])).toEqual(["en", "ja"]);
+    expect(sonioxLanguageHints("auto", ["en-US", "en-GB"])).toEqual(["en"]);
+    expect(sonioxLanguageHints("auto", ["fr-FR", "ja"])).toEqual(["fr", "ja"]);
+  });
+});
+
+describe("sonioxTranslationTarget", () => {
+  test("strips the region to a bare code (Soniox rejects BCP-47 targets)", () => {
+    expect(sonioxTranslationTarget("es-ES")).toBe("es");
+    expect(sonioxTranslationTarget("zh-CN")).toBe("zh");
+    expect(sonioxTranslationTarget("en")).toBe("en");
+    expect(sonioxTranslationTarget("PT-BR")).toBe("pt");
+  });
+});
+
+describe("SonioxProvider session configuration", () => {
+  test("configures one-way translation with a bare target_language", async () => {
+    const session = new FakeSession();
+    let sessionConfig: Record<string, unknown> | undefined;
+    const client = {
+      realtime: {
+        stt: (config: Record<string, unknown>) => {
+          sessionConfig = config;
+          return session;
+        },
+      },
+    };
+
+    const provider = await createSonioxProvider({
+      scope: "user_xlate",
+      language: "auto",
+      targetLanguage: "es-ES",
+      client: client as never,
+      onTranscript: () => {},
+    });
+
+    expect(sessionConfig).toMatchObject({
+      translation: { type: "one_way", target_language: "es" },
+    });
+
+    await provider.close();
+  });
+
+  test("passes auto-mode detection hints to Soniox language_hints", async () => {
+    const session = new FakeSession();
+    let sessionConfig: Record<string, unknown> | undefined;
+    const client = {
+      realtime: {
+        stt: (config: Record<string, unknown>) => {
+          sessionConfig = config;
+          return session;
+        },
+      },
+    };
+
+    const provider = await createSonioxProvider({
+      scope: "user_hints",
+      language: "auto",
+      languageHints: ["ja", "en-US"],
+      client: client as never,
+      onTranscript: () => {},
+    });
+
+    expect(sessionConfig).toMatchObject({
+      enable_language_identification: true,
+      language_hints: ["ja", "en"],
+    });
+
+    await provider.close();
+  });
+
+  test("sends the Mentra activation phrase as recognition context", async () => {
+    const session = new FakeSession();
+    let sessionConfig: Record<string, unknown> | undefined;
+    const client = {
+      realtime: {
+        stt: (config: Record<string, unknown>) => {
+          sessionConfig = config;
+          return session;
+        },
+      },
+    };
+
+    const provider = await createSonioxProvider({
+      scope: "user_test",
+      language: "auto",
+      client: client as never,
+      onTranscript: () => {},
+    });
+
+    expect(sessionConfig).toMatchObject({
+      context: {
+        terms: ["Mentra", "Hey Mentra"],
+        text: "Mentra, Hey Mentra (an AI assistant)",
+      },
+    });
+
+    await provider.close();
+  });
+});
 
 describe("SonioxProvider utterance lifecycle", () => {
   test("does not churn finals/utteranceIds when the rolling window's speaker flips mid-utterance", async () => {

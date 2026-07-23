@@ -8,14 +8,14 @@ import {forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef
 import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
 import GlassView from "@/components/ui/GlassView"
 import {usePathname} from "expo-router"
-import {ClientApp} from "@mentra/island"
-import {useAppStatusStore} from "@mentra/island/internal"
+import {ClientApp, engine} from "@mentra/engine"
+import {Directory, File, Paths} from "expo-file-system"
 import * as ImageManipulator from "expo-image-manipulator"
 import {captureRef} from "react-native-view-shot"
 import {Image as RNImage} from "react-native"
 import {BottomSheetBackdrop, BottomSheetModal} from "@gorhom/bottom-sheet"
 import AppIcon from "@/components/home/AppIcon"
-import {SETTINGS, useSetting} from "@/stores/settings"
+import {SETTINGS, useSetting} from "@mentra/engine"
 import {useNavigationStore} from "@/stores/navigation"
 import {SYSTEM_APPS} from "@/constants/miniapps"
 
@@ -175,44 +175,40 @@ export async function captureScreenshot(
     return
   }
 
-  if (Platform.OS === "ios") {
-    captureRef(viewShotRef, {
+  try {
+    let screenshotUri = await captureRef(viewShotRef, {
       format: "jpg",
-      quality: 0.1,
+      quality: Platform.OS === "ios" ? 0.1 : 0.5,
       result: "tmpfile",
     })
-      .then(async (uri) => {
-        const {width, height} = await new Promise<{width: number; height: number}>((resolve, reject) => {
-          RNImage.getSize(uri, (w, h) => resolve({width: w, height: h}), reject)
-        })
-        let amountToChop = topInsetOffset * PixelRatio.get()
-        amountToChop = 0
-        const context = ImageManipulator.ImageManipulator.manipulate(uri)
-        context.crop({originX: 0, originY: amountToChop, width: width, height: height - amountToChop})
-        const imageRef = await context.renderAsync()
-        const cropped = await imageRef.saveAsync({
-          format: ImageManipulator.SaveFormat.JPEG,
-          compress: 0.1,
-        })
-        await useAppStatusStore.getState().saveScreenshot(packageName, cropped.uri)
+
+    if (Platform.OS === "ios") {
+      const {width, height} = await new Promise<{width: number; height: number}>((resolve, reject) => {
+        RNImage.getSize(screenshotUri, (w, h) => resolve({width: w, height: h}), reject)
       })
-      .catch((e) => {
-        console.warn("screenshot failed:", e)
+      let amountToChop = topInsetOffset * PixelRatio.get()
+      amountToChop = 0
+      const context = ImageManipulator.ImageManipulator.manipulate(screenshotUri)
+      context.crop({originX: 0, originY: amountToChop, width, height: height - amountToChop})
+      const imageRef = await context.renderAsync()
+      const cropped = await imageRef.saveAsync({
+        format: ImageManipulator.SaveFormat.JPEG,
+        compress: 0.1,
       })
-  } else {
-    captureRef(viewShotRef, {
-      format: "jpg",
-      // handleGLSurfaceViewOnAndroid: true,
-      quality: 0.5, // android needs a higher quality to avoid compression artifacts
-      result: "tmpfile",
-    })
-      .then(async (uri) => {
-        // android is weird and the crop doesn't work properly:
-        useAppStatusStore.getState().saveScreenshot(packageName, uri)
-      })
-      .catch((e) => {
-        console.warn("screenshot failed:", e)
-      })
+      screenshotUri = cropped.uri
+    }
+
+    const screenshotDirectory = new Directory(Paths.document, "miniapp-screenshots")
+    if (!screenshotDirectory.exists) screenshotDirectory.create()
+
+    const safePackageName = packageName.replace(/[^a-zA-Z0-9._-]/g, "_")
+    const persistentFile = new File(screenshotDirectory, `${safePackageName}.jpg`)
+    if (persistentFile.exists) persistentFile.delete()
+    new File(screenshotUri).copy(persistentFile)
+
+    await engine.miniapps.saveScreenshot(packageName, persistentFile.uri)
+  } catch (error) {
+    console.warn("screenshot failed:", error)
   }
 }
 
@@ -233,7 +229,7 @@ export async function captureScreenshot(
 //     const [superMode] = useSetting(SETTINGS.super_mode.key)
 
 //     useEffect(() => {
-//       const storeApp = useAppStatusStore.getState().apps.find((a) => a.packageName === packageName)
+//       const storeApp = engine.miniapps.list().find((a) => a.packageName === packageName)
 //       if (storeApp) {
 //         setApp(storeApp)
 //       } else if (appNameOverride || iconUrlOverride) {
@@ -263,7 +259,7 @@ export async function captureScreenshot(
 //     )
 
 //     const handleAddRemoveFromHome = useCallback(() => {
-//       useAppStatusStore.getState().setHiddenStatus(packageName, !app?.hidden)
+//       engine.miniapps.setHiddenStatus(packageName, !app?.hidden)
 //       internalRef.current?.dismiss()
 //       useNavigationStore.getState().clearHistoryAndGoHome()
 //     }, [packageName, app?.hidden])

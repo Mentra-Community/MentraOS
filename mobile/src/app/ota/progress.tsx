@@ -1,4 +1,4 @@
-import {toolkit} from "@mentra/island"
+import {engine} from "@mentra/engine"
 import {useCallback, useEffect} from "react"
 import {View, ActivityIndicator} from "react-native"
 
@@ -7,15 +7,14 @@ import {Screen, Header, Button, Text, Icon} from "@/components/ignite"
 import {focusEffectPreventBack} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useConnectionOverlayConfig} from "@/contexts/ConnectionOverlayContext"
-import {useToolkitSnapshot} from "@/hooks/useToolkitSnapshot"
+import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {getOtaErrorMessage, shouldShowChangeWifiForOtaDownloadFailure} from "@/utils/otaErrorMapping"
 import {useNavigationStore} from "@/stores/navigation"
-import {SETTINGS, useSetting} from "@/stores/settings"
-import {useGlassesStore} from "@/stores/glasses"
+import {SETTINGS, useSetting} from "@mentra/engine"
 
 /**
  * Pure renderer over the island OTA install state machine
- * (`toolkit.ota.installSession` / OtaInstallCoordinator). Every timer, retry,
+ * (`engine.ota.installSession` / OtaInstallCoordinator). Every timer, retry,
  * reconnect and watchdog rule lives in island; this screen only attaches the
  * machine for its lifetime, renders the snapshot, and owns navigation.
  */
@@ -23,7 +22,7 @@ export default function OtaProgressScreen() {
   const {theme} = useAppTheme()
   const {replace, push} = useNavigationStore.getState()
   const [superMode] = useSetting(SETTINGS.super_mode.key)
-  const install = useToolkitSnapshot(toolkit.ota.installSession.snapshot, toolkit.ota.installSession.onSnapshot)
+  const install = useEngineSnapshot(engine.ota.installSession.snapshot, engine.ota.installSession.onSnapshot)
   const {
     displayState,
     errorMsg,
@@ -56,23 +55,23 @@ export default function OtaProgressScreen() {
 
   // The install state machine runs for exactly the screen's lifetime.
   useEffect(() => {
-    toolkit.ota.installSession.attach()
+    engine.ota.installSession.attach()
     return () => {
-      toolkit.ota.installSession.detach()
+      engine.ota.installSession.detach()
     }
   }, [])
 
   const handleContinue = () => {
-    toolkit.ota.installSession.finish()
+    engine.ota.installSession.finish()
     replace("/ota/check-for-updates")
   }
 
   const handleRetry = () => {
-    toolkit.ota.installSession.retry()
+    engine.ota.installSession.retry()
   }
 
   const handleDone = () => {
-    toolkit.ota.installSession.finish()
+    engine.ota.installSession.finish()
     replace("/ota/check-for-updates")
   }
 
@@ -81,10 +80,7 @@ export default function OtaProgressScreen() {
   }, [push])
 
   const handleSkipSuper = useCallback(() => {
-    toolkit.ota.installSession.finish()
-    const store = useGlassesStore.getState()
-    store.setOtaStatus(null)
-    store.setOtaProgress(null)
+    engine.ota.installSession.discard()
     replace("/ota/check-for-updates")
   }, [replace])
 

@@ -1,16 +1,16 @@
 import {DeviceTypes, getModelCapabilities} from "@/../../cloud/packages/types/src"
-import type {GlassesNotReadyEvent} from "@mentra/island"
+import type {GlassesNotReadyEvent} from "@mentra/engine"
 import {useState, useEffect, type ReactNode} from "react"
 import {ActivityIndicator, Image, TouchableOpacity, View, type ImageSourcePropType, type ViewStyle} from "react-native"
 import GlassView from "@/components/ui/GlassView"
 import {Button, Icon, Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
-import {useToolkitSnapshot} from "@/hooks/useToolkitSnapshot"
+import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
-import {decideConnectButtonAction, toolkit} from "@mentra/island"
+import {decideConnectButtonAction, engine} from "@mentra/engine"
 import {useSearchingState} from "@/hooks/useSearchingState"
-import {SETTINGS, useSetting} from "@/stores/settings"
+import {SETTINGS, useSetting} from "@mentra/engine"
 import {showAlert} from "@/utils/AlertUtils"
 import {checkConnectivityRequirementsUI} from "@/utils/PermissionsUtils"
 import {
@@ -63,16 +63,16 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
   const {theme} = useAppTheme()
   const {push} = useNavigationStore.getState()
   // Pairing-identity read-model: none | pending (chosen, never paired) | paired.
-  const identity = useToolkitSnapshot(toolkit.pairing.identity, (onChange) => toolkit.pairing.onIdentity(onChange))
+  const identity = useEngineSnapshot(engine.pairing.identity, (onChange) => engine.pairing.onIdentity(onChange))
   const pairedModel = identity.kind === "paired" ? identity.model : ""
   const [isCheckingConnectivity, setIsCheckingConnectivity] = useState(false)
-  const glassesStatus = useToolkitSnapshot(toolkit.glasses.status, (onChange) => toolkit.glasses.onStatus(onChange))
-  const glassesInfo = useToolkitSnapshot(toolkit.glasses.info, (onChange) => toolkit.glasses.onInfo(onChange))
-  const pairingReadiness = useToolkitSnapshot(toolkit.pairing.readiness, (onChange) =>
-    toolkit.pairing.onReadiness(onChange),
+  const glassesStatus = useEngineSnapshot(engine.glasses.status, (onChange) => engine.glasses.onStatus(onChange))
+  const glassesInfo = useEngineSnapshot(engine.glasses.info, (onChange) => engine.glasses.onInfo(onChange))
+  const pairingReadiness = useEngineSnapshot(engine.pairing.readiness, (onChange) =>
+    engine.pairing.onReadiness(onChange),
   )
-  const wifiStatus = useToolkitSnapshot(toolkit.glasses.wifi.status, (onChange) =>
-    toolkit.glasses.wifi.onStatus(onChange),
+  const wifiStatus = useEngineSnapshot(engine.glasses.wifi.status, (onChange) =>
+    engine.glasses.wifi.onStatus(onChange),
   )
   const glassesConnected = glassesStatus.state === "connected"
   const glassesFullyBooted = glassesStatus.fullyBooted
@@ -85,12 +85,12 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
   const charging = glassesStatus.charging
   const [projectName] = useSetting<string>(SETTINGS.project_name.key)
   const wifiConnected = wifiStatus.state === "connected"
-  const searching = useToolkitSnapshot(toolkit.pairing.scanning, (onChange) => toolkit.pairing.onScanning(onChange))
+  const searching = useEngineSnapshot(engine.pairing.scanning, (onChange) => engine.pairing.onScanning(onChange))
   const [showGlassesBooting, setShowGlassesBooting] = useState(false)
 
   // Listen for glasses_not_ready event to know when glasses are actually booting
   useEffect(() => {
-    const unsub = toolkit.pairing.onGlassesNotReady((_event: GlassesNotReadyEvent) => {
+    const unsub = engine.pairing.onGlassesNotReady((_event: GlassesNotReadyEvent) => {
       setShowGlassesBooting(true)
     })
     return () => {
@@ -154,10 +154,10 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
       }
       // A `paired` identity snapshot does not imply a native device to connect
       // to (the settings echo can outlive the native pairing). Without a
-      // native default device, connectDefault() throws â€?route back into
+      // native default device, connectDefault() throws éˆ¥?route back into
       // pairing for the already-selected model instead of erroring. Fail open
       // on a read error: connectDefault()'s catch is the pre-guard behavior.
-      if (!(await toolkit.glasses.hasDefaultDevice().catch(() => true))) {
+      if (!(await engine.glasses.hasDefaultDevice().catch(() => true))) {
         if (pairedModel === DeviceTypes.AR99) {
           push("/pairing/select-glasses-model", {transition: "simple_push"})
         } else {
@@ -165,7 +165,7 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
         }
         return
       }
-      await toolkit.glasses.connectDefault()
+      await engine.glasses.connectDefault()
     } catch (error) {
       console.error("connect to glasses error:", error)
       showAlert("Connection Error", "Failed to connect to glasses. Please try again.", [{text: "OK"}])
@@ -175,7 +175,7 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
   const handleConnectOrDisconnect = async () => {
     const action = decideConnectButtonAction({hasDefaultWearable: !!pairedModel, busy: searching || nativeLinkBusy})
     if (action === "cancel") {
-      await toolkit.glasses.disconnect()
+      await engine.glasses.disconnect()
       setIsCheckingConnectivity(false)
       resetSearching()
     } else {
@@ -185,12 +185,12 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
 
   // Pending selection: a model was chosen but pairing never completed (abandoned
   // mid-flow, or an orphaned identity demoted at boot). Offer to finish pairing
-  // that model â€?or start over with a different one â€?instead of a Connect
+  // that model éˆ¥?or start over with a different one éˆ¥?instead of a Connect
   // button that has no device to connect to.
   //
   // NOT when the glasses are already connected: right after a promotion, the
   // BLE link is up while the save_setting echoes are still landing, so the JS
-  // identity is momentarily still `pending` â€?render the normal connected card
+  // identity is momentarily still `pending` éˆ¥?render the normal connected card
   // (with the pending model as its display name) instead of finish-pairing
   // actions for a device that is already paired and connected.
   if (identity.kind === "pending" && !glassesConnected) {
@@ -231,8 +231,8 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
     )
   }
 
-  // The card body's model name/image: the paired model, or â€?in the mid-relay
-  // window above (connected while the promotion echoes land) â€?the pending one.
+  // The card body's model name/image: the paired model, or éˆ¥?in the mid-relay
+  // window above (connected while the promotion echoes land) éˆ¥?the pending one.
   const displayModel = pairedModel || (identity.kind === "pending" ? identity.model : "")
   const displayName = displayModel === DeviceTypes.AR99 ? getAr99DisplayName(projectName) : displayModel
 
@@ -341,21 +341,21 @@ export const ControllerStatus = ({style}: {style?: ViewStyle}) => {
   const {theme} = useAppTheme()
   const {push} = useNavigationStore.getState()
   const [defaultController] = useSetting(SETTINGS.default_controller.key)
-  const controllerStatus = useToolkitSnapshot(toolkit.glasses.controller.status, (onChange) =>
-    toolkit.glasses.controller.onStatus(onChange),
+  const controllerStatus = useEngineSnapshot(engine.glasses.controller.status, (onChange) =>
+    engine.glasses.controller.onStatus(onChange),
   )
   const controllerConnected = controllerStatus.connected
   const controllerFullyBooted = controllerStatus.fullyBooted
   const controllerBatteryLevel = controllerStatus.battery
-  const isSearching = useToolkitSnapshot(toolkit.pairing.scanningController, (onChange) =>
-    toolkit.pairing.onScanningController(onChange),
+  const isSearching = useEngineSnapshot(engine.pairing.scanningController, (onChange) =>
+    engine.pairing.onScanningController(onChange),
   )
 
   const handleConnectOrDisconnect = async () => {
     if (isSearching) {
-      await toolkit.glasses.controller.disconnect()
+      await engine.glasses.controller.disconnect()
     } else {
-      await toolkit.glasses.controller.connectDefault()
+      await engine.glasses.controller.connectDefault()
     }
   }
 

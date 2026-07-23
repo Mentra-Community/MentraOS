@@ -1773,7 +1773,7 @@ class G1 : SGCManager() {
         return ""
     }
 
-    override fun requestWifiScan() {
+    override fun requestWifiScan(scanId: String?) {
 
     }
 
@@ -2841,7 +2841,7 @@ class G1 : SGCManager() {
     private fun chunkTextForTransmission(text: String?): List<ByteArray> {
         // Handle empty or whitespace-only text by sending at least a space
         // This ensures the display gets updated/cleared properly
-        val textToSend = if (text == null || text.trim().isEmpty()) " " else text
+        val textToSend = if (text == null || text.trim().isEmpty()) " " else sanitizeG1DisplayText(text)
         val textBytes = textToSend.toByteArray(StandardCharsets.UTF_8)
         val totalChunks = Math.ceil(textBytes.size.toDouble() / MAX_CHUNK_SIZE).toInt()
 

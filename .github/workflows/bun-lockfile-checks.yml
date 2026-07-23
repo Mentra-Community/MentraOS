@@ -76,3 +76,9 @@ jobs:
             -w /work/sdk \
             oven/bun:1.3.11 \
             bun install --frozen-lockfile --ignore-scripts
+
+      - name: Internal @mentra ranges match workspace versions
+        # A drifted range makes bun silently install the npm tarball instead of
+        # linking local source once our packages exist on the registry — see
+        # the script header for the prerelease-tuple trap.
+        run: node .github/scripts/check-workspace-range-sync.mjs

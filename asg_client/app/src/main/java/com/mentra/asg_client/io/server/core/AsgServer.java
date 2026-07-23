@@ -1,10 +1,13 @@
 package com.mentra.asg_client.io.server.core;
 
+import android.os.SystemClock;
+import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.io.server.interfaces.*;
 import com.mentra.asg_client.logging.Logger;
 import fi.iki.elonen.NanoHTTPD;
 
 import java.io.IOException;
+import java.io.FilterInputStream;
 import java.io.InputStream;
 import java.util.HashMap;
 import java.util.Map;
@@ -28,6 +31,12 @@ public abstract class AsgServer extends NanoHTTPD {
     protected final CacheManager cacheManager;
     protected final RateLimiter rateLimiter;
     protected final Logger logger;
+    private HttpActivityListener httpActivityListener;
+
+    /** Receives local HTTP activity used by the hotspot idle policy. */
+    public interface HttpActivityListener {
+        void onHttpActivity();
+    }
 
     /**
      * Constructor for ASG server with dependency injection.
@@ -68,6 +77,11 @@ public abstract class AsgServer extends NanoHTTPD {
             logger.error(getTag(), "Error getting server URL: " + e.getMessage(), e);
             return "http://localhost:" + getListeningPort();
         }
+    }
+
+    /** Set the listener notified for requests and active response streaming. */
+    public void setHttpActivityListener(HttpActivityListener listener) {
+        this.httpActivityListener = listener;
     }
 
     /**
@@ -127,6 +141,7 @@ public abstract class AsgServer extends NanoHTTPD {
      */
     @Override
     public Response serve(IHTTPSession session) {
+        recordHttpActivity();
         String uri = session.getUri();
         Method method = session.getMethod();
         String clientIp = session.getRemoteIpAddress();
@@ -140,17 +155,20 @@ public abstract class AsgServer extends NanoHTTPD {
         logger.debug(getTag(), "🔍 =========================================");
 
         // Rate limiting
-        if (!rateLimiter.isAllowed(clientIp)) {
+        boolean rateLimitedRequest = shouldRateLimit(session);
+        if (rateLimitedRequest && !rateLimiter.isAllowed(clientIp)) {
             logger.warn(getTag(), "🚫 Rate limit exceeded for IP: " + clientIp);
-            return newFixedLengthResponse(
+            return trackResponse(newFixedLengthResponse(
                 Response.Status.TOO_MANY_REQUESTS, 
                 "text/plain", 
                 "Rate limit exceeded. Please wait before making more requests."
-            );
+            ));
         }
         
         // Record the request for rate limiting
-        rateLimiter.recordRequest(clientIp);
+        if (rateLimitedRequest) {
+            rateLimiter.recordRequest(clientIp);
+        }
 
         // CORS headers for cross-origin requests
         Map<String, String> headers = new HashMap<>();
@@ -163,21 +181,75 @@ public abstract class AsgServer extends NanoHTTPD {
         // Handle preflight OPTIONS requests
         if (method == Method.OPTIONS) {
             logger.debug(getTag(), "🔄 Handling CORS preflight request");
-            return newFixedLengthResponse(Response.Status.OK, "text/plain", "");
+            return trackResponse(newFixedLengthResponse(Response.Status.OK, "text/plain", ""));
         }
 
         try {
             // Route requests using the abstract method
             logger.debug(getTag(), "🛣️ Routing request to appropriate handler...");
-            return handleRequest(session);
+            return trackResponse(handleRequest(session));
         } catch (Exception e) {
             logger.error(getTag(), "💥 Error handling request " + uri + ": " + e.getMessage(), e);
-            return newFixedLengthResponse(
+            return trackResponse(newFixedLengthResponse(
                 Response.Status.INTERNAL_ERROR, 
                 "text/plain", 
                 "Internal server error: " + e.getMessage()
-            );
+            ));
         }
+    }
+
+    private void recordHttpActivity() {
+        HttpActivityListener listener = httpActivityListener;
+        if (listener != null) {
+            listener.onHttpActivity();
+        }
+    }
+
+    private Response trackResponse(Response response) {
+        if (response == null || response.getData() == null || httpActivityListener == null) {
+            return response;
+        }
+        response.setData(new ActivityTrackingInputStream(response.getData()));
+        return response;
+    }
+
+    private final class ActivityTrackingInputStream extends FilterInputStream {
+        private long lastUpdateMs = SystemClock.elapsedRealtime();
+
+        ActivityTrackingInputStream(InputStream inputStream) {
+            super(inputStream);
+        }
+
+        @Override
+        public int read() throws IOException {
+            int value = super.read();
+            if (value >= 0) {
+                maybeRecordActivity();
+            }
+            return value;
+        }
+
+        @Override
+        public int read(byte[] buffer, int offset, int length) throws IOException {
+            int count = super.read(buffer, offset, length);
+            if (count > 0) {
+                maybeRecordActivity();
+            }
+            return count;
+        }
+
+        private void maybeRecordActivity() {
+            long now = SystemClock.elapsedRealtime();
+            if (now - lastUpdateMs >= AsgConstants.HTTP_ACTIVITY_STREAM_UPDATE_INTERVAL_MS) {
+                lastUpdateMs = now;
+                recordHttpActivity();
+            }
+        }
+    }
+
+    /** Allow specialized local servers to exempt safe, high-volume transfer requests. */
+    protected boolean shouldRateLimit(IHTTPSession session) {
+        return true;
     }
 
     /**
@@ -284,4 +356,4 @@ public abstract class AsgServer extends NanoHTTPD {
         // This would need to be set when server starts
         return System.currentTimeMillis() - 1000; // Placeholder
     }
-} 
+}

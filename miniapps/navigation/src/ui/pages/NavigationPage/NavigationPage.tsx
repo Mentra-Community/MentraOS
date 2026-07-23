@@ -35,7 +35,6 @@ const DEV_DESTINATION: PlaceDetails = {
   lat: 37.7955,
   lng: -122.3937,
 }
-
 // A previewed turn point: the road-name label for the dot, plus the
 // coarse turn direction ("Turn left"/"Turn right") as metadata — the
 // prompt we'd give the user within this dot's radius. `direction` is
@@ -197,6 +196,8 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
   const activeDestination = trip.activeDestination
   const activeDestinationName = trip.activeDestinationName
   const offRouteAt = trip.offRouteAt
+  const voiceGuidanceMode = useNavStore((s) => s.voiceGuidanceMode)
+  const capabilities = useNavStore((s) => s.capabilities)
 
   const computeRoute = useRpc<Channels, "nav:compute-route">("nav:compute-route")
 
@@ -1007,6 +1008,8 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
                 routeDistanceMeters={maneuver?.distanceToDestinationMeters ?? null}
                 routeDurationSeconds={maneuver?.timeToDestinationSeconds ?? null}
                 routePoints={running ? routePoints : null}
+                canRepeatDirection={capabilities.hasSpeaker && voiceGuidanceMode !== "off"}
+                onRepeatDirection={() => mentra.send("nav:repeat-direction", {})}
                 onStop={handleStop}
                 onClose={() => setDestination(null)}
               />
@@ -1022,7 +1025,7 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
 
         {devEnabled && !isSearching ? (
           <FloatingDevPanel title="Navigation Dev" version={appVersion} storageKey="NavigationPage:dev">
-            <div className="flex gap-1 p-1 mb-3 rounded-xl bg-[#0000000A]">
+            <div className="flex gap-1 p-1 mb-3 rounded-xl bg-[#0000000A] dark:bg-zinc-800">
               {(
                 [
                   {id: "nav", label: "Nav"},
@@ -1035,8 +1038,8 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
                   onClick={() => setDevTab(tab.id)}
                   className={`flex-1 text-[12px] px-2.5 py-1.5 rounded-lg font-semibold transition-colors ${
                     devTab === tab.id
-                      ? "bg-white text-neutral-900 shadow-sm"
-                      : "bg-transparent text-neutral-600 hover:text-neutral-800"
+                      ? "bg-white dark:bg-zinc-600 text-neutral-900 dark:text-zinc-50 shadow-sm"
+                      : "bg-transparent text-neutral-600 dark:text-zinc-400 hover:text-neutral-800 dark:hover:text-zinc-200"
                   }`}>
                   {tab.label}
                 </button>
@@ -1044,8 +1047,8 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
             </div>
             {devTab === "display" ? (
               <>
-                <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
-                  <span className="text-[13px] font-medium text-neutral-700">Show test text on glasses</span>
+                <div className="bg-white dark:bg-zinc-900 border border-neutral-200 dark:border-zinc-800 rounded-xl p-3 mb-3 flex items-center justify-between">
+                  <span className="text-[13px] font-medium text-neutral-700 dark:text-zinc-200">Show test text on glasses</span>
                   <button
                     type="button"
                     onClick={() =>
@@ -1058,8 +1061,8 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
                     Send
                   </button>
                 </div>
-                <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
-                  <span className="text-[13px] font-medium text-neutral-700">Send test bitmap to glasses</span>
+                <div className="bg-white dark:bg-zinc-900 border border-neutral-200 dark:border-zinc-800 rounded-xl p-3 mb-3 flex items-center justify-between">
+                  <span className="text-[13px] font-medium text-neutral-700 dark:text-zinc-200">Send test bitmap to glasses</span>
                   <button
                     type="button"
                     onClick={() => mentra.request("test:show-bitmap-test", undefined)}
@@ -1067,23 +1070,23 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
                     Send
                   </button>
                 </div>
-                <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between gap-2">
-                  <span className="text-[13px] font-medium text-neutral-700 shrink-0">Test bitmap (W×H)</span>
+                <div className="bg-white dark:bg-zinc-900 border border-neutral-200 dark:border-zinc-800 rounded-xl p-3 mb-3 flex items-center justify-between gap-2">
+                  <span className="text-[13px] font-medium text-neutral-700 dark:text-zinc-200 shrink-0">Test bitmap (W×H)</span>
                   <div className="flex items-center gap-1.5">
                     <input
                       type="number"
                       value={bmpWidth}
                       onChange={(e) => setBmpWidth(e.target.value)}
                       placeholder="W"
-                      className="w-12 text-[11px] px-1.5 py-1 rounded-lg border border-neutral-300 text-center"
+                      className="w-12 text-[11px] px-1.5 py-1 rounded-lg border border-neutral-300 dark:border-zinc-700 text-center"
                     />
-                    <span className="text-[11px] text-neutral-400">×</span>
+                    <span className="text-[11px] text-neutral-400 dark:text-zinc-500">×</span>
                     <input
                       type="number"
                       value={bmpHeight}
                       onChange={(e) => setBmpHeight(e.target.value)}
                       placeholder="H"
-                      className="w-12 text-[11px] px-1.5 py-1 rounded-lg border border-neutral-300 text-center"
+                      className="w-12 text-[11px] px-1.5 py-1 rounded-lg border border-neutral-300 dark:border-zinc-700 text-center"
                     />
                     <button
                       type="button"
@@ -1098,8 +1101,8 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
                     </button>
                   </div>
                 </div>
-                <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
-                  <span className="text-[13px] font-medium text-neutral-700">OSM road map (Hayes Valley)</span>
+                <div className="bg-white dark:bg-zinc-900 border border-neutral-200 dark:border-zinc-800 rounded-xl p-3 mb-3 flex items-center justify-between">
+                  <span className="text-[13px] font-medium text-neutral-700 dark:text-zinc-200">OSM road map (Hayes Valley)</span>
                   <button
                     type="button"
                     onClick={async () => {
@@ -1111,8 +1114,8 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
                     Draw
                   </button>
                 </div>
-                <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
-                  <span className="text-[13px] font-medium text-neutral-700">Explore map (pan)</span>
+                <div className="bg-white dark:bg-zinc-900 border border-neutral-200 dark:border-zinc-800 rounded-xl p-3 mb-3 flex items-center justify-between">
+                  <span className="text-[13px] font-medium text-neutral-700 dark:text-zinc-200">Explore map (pan)</span>
                   <div className="flex flex-col items-center gap-1">
                     {(
                       [
@@ -1143,8 +1146,8 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
                     ))}
                   </div>
                 </div>
-                <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
-                  <span className="text-[13px] font-medium text-neutral-700">Test bitmap 200×100</span>
+                <div className="bg-white dark:bg-zinc-900 border border-neutral-200 dark:border-zinc-800 rounded-xl p-3 mb-3 flex items-center justify-between">
+                  <span className="text-[13px] font-medium text-neutral-700 dark:text-zinc-200">Test bitmap 200×100</span>
                   <button
                     type="button"
                     onClick={() => mentra.request("test:show-bitmap-size", {size: 200, height: 100})}
@@ -1152,8 +1155,8 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
                     Send
                   </button>
                 </div>
-                <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
-                  <span className="text-[13px] font-medium text-neutral-700">Large map (center)</span>
+                <div className="bg-white dark:bg-zinc-900 border border-neutral-200 dark:border-zinc-800 rounded-xl p-3 mb-3 flex items-center justify-between">
+                  <span className="text-[13px] font-medium text-neutral-700 dark:text-zinc-200">Large map (center)</span>
                   <div className="flex gap-1.5">
                     {[200, 270].map((size) => (
                       <button
@@ -1169,8 +1172,8 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
                     ))}
                   </div>
                 </div>
-                <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
-                  <span className="text-[13px] font-medium text-neutral-700">Count 1→10 every 3s</span>
+                <div className="bg-white dark:bg-zinc-900 border border-neutral-200 dark:border-zinc-800 rounded-xl p-3 mb-3 flex items-center justify-between">
+                  <span className="text-[13px] font-medium text-neutral-700 dark:text-zinc-200">Count 1→10 every 3s</span>
                   <button
                     type="button"
                     onClick={() => mentra.request("test:count-1-to-10", undefined)}
@@ -1178,8 +1181,8 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
                     Start
                   </button>
                 </div>
-                <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
-                  <span className="text-[13px] font-medium text-neutral-700">
+                <div className="bg-white dark:bg-zinc-900 border border-neutral-200 dark:border-zinc-800 rounded-xl p-3 mb-3 flex items-center justify-between">
+                  <span className="text-[13px] font-medium text-neutral-700 dark:text-zinc-200">
                     Both boxes 100→0 (sync test)
                   </span>
                   <button
@@ -1189,8 +1192,8 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
                     Start
                   </button>
                 </div>
-                <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
-                  <span className="text-[13px] font-medium text-neutral-700">Arrow glyph on glasses</span>
+                <div className="bg-white dark:bg-zinc-900 border border-neutral-200 dark:border-zinc-800 rounded-xl p-3 mb-3 flex items-center justify-between">
+                  <span className="text-[13px] font-medium text-neutral-700 dark:text-zinc-200">Arrow glyph on glasses</span>
                   <div className="flex gap-1.5">
                     {(
                       [
@@ -1217,17 +1220,17 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
               </>
             ) : null}
             {devTab === "nav" ? <>
-            <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
-              <span className="text-[13px] font-medium text-neutral-700">Raw map (no overlays)</span>
+            <div className="bg-white dark:bg-zinc-900 border border-neutral-200 dark:border-zinc-800 rounded-xl p-3 mb-3 flex items-center justify-between">
+              <span className="text-[13px] font-medium text-neutral-700 dark:text-zinc-200">Raw map (no overlays)</span>
               <button
                 type="button"
                 onClick={() => setRawMapOpen(true)}
-                className="text-[11px] px-2.5 py-1 rounded-lg font-semibold bg-neutral-800 text-white">
+                className="text-[11px] px-2.5 py-1 rounded-lg font-semibold bg-neutral-800 dark:bg-zinc-700 text-white">
                 Open
               </button>
             </div>
-            <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
-              <span className="text-[13px] font-medium text-neutral-700">Rebuild current route</span>
+            <div className="bg-white dark:bg-zinc-900 border border-neutral-200 dark:border-zinc-800 rounded-xl p-3 mb-3 flex items-center justify-between">
+              <span className="text-[13px] font-medium text-neutral-700 dark:text-zinc-200">Rebuild current route</span>
               <button
                 type="button"
                 disabled={!effectiveDestination}
@@ -1236,8 +1239,8 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
                 Rebuild
               </button>
             </div>
-            <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
-              <span className="text-[13px] font-medium text-neutral-700">Reset to my location</span>
+            <div className="bg-white dark:bg-zinc-900 border border-neutral-200 dark:border-zinc-800 rounded-xl p-3 mb-3 flex items-center justify-between">
+              <span className="text-[13px] font-medium text-neutral-700 dark:text-zinc-200">Reset to my location</span>
               <button
                 type="button"
                 onClick={handleResetLocation}
@@ -1245,30 +1248,30 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
                 Reset
               </button>
             </div>
-            <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
-              <span className="text-[13px] font-medium text-neutral-700">Turn pivot markers</span>
+            <div className="bg-white dark:bg-zinc-900 border border-neutral-200 dark:border-zinc-800 rounded-xl p-3 mb-3 flex items-center justify-between">
+              <span className="text-[13px] font-medium text-neutral-700 dark:text-zinc-200">Turn pivot markers</span>
               <button
                 type="button"
                 onClick={() => setShowPivots((v) => !v)}
                 className={`text-[11px] px-2.5 py-1 rounded-lg font-semibold ${
-                  showPivots ? "bg-blue-600 text-white" : "bg-neutral-200 text-neutral-700"
+                  showPivots ? "bg-blue-600 text-white" : "bg-neutral-200 dark:bg-zinc-700 text-neutral-700 dark:text-zinc-200"
                 }`}>
                 {showPivots ? "On" : "Off"}
               </button>
             </div>
-            <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
-              <span className="text-[13px] font-medium text-neutral-700">Off-route distance line</span>
+            <div className="bg-white dark:bg-zinc-900 border border-neutral-200 dark:border-zinc-800 rounded-xl p-3 mb-3 flex items-center justify-between">
+              <span className="text-[13px] font-medium text-neutral-700 dark:text-zinc-200">Off-route distance line</span>
               <button
                 type="button"
                 onClick={() => setShowOffRouteLine((v) => !v)}
                 className={`text-[11px] px-2.5 py-1 rounded-lg font-semibold ${
-                  showOffRouteLine ? "bg-blue-600 text-white" : "bg-neutral-200 text-neutral-700"
+                  showOffRouteLine ? "bg-blue-600 text-white" : "bg-neutral-200 dark:bg-zinc-700 text-neutral-700 dark:text-zinc-200"
                 }`}>
                 {showOffRouteLine ? "On" : "Off"}
               </button>
             </div>
-            <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
-              <span className="text-[13px] font-medium text-neutral-700">Glasses minimap bitmap</span>
+            <div className="bg-white dark:bg-zinc-900 border border-neutral-200 dark:border-zinc-800 rounded-xl p-3 mb-3 flex items-center justify-between">
+              <span className="text-[13px] font-medium text-neutral-700 dark:text-zinc-200">Glasses minimap bitmap</span>
               <button
                 type="button"
                 onClick={() => {
@@ -1277,13 +1280,13 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
                   mentra.send("nav:set-show-minimap", next)
                 }}
                 className={`text-[11px] px-2.5 py-1 rounded-lg font-semibold ${
-                  showMinimap ? "bg-blue-600 text-white" : "bg-neutral-200 text-neutral-700"
+                  showMinimap ? "bg-blue-600 text-white" : "bg-neutral-200 dark:bg-zinc-700 text-neutral-700 dark:text-zinc-200"
                 }`}>
                 {showMinimap ? "On" : "Off"}
               </button>
             </div>
-            <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
-              <span className="text-[13px] font-medium text-neutral-700">Simulator Mode</span>
+            <div className="bg-white dark:bg-zinc-900 border border-neutral-200 dark:border-zinc-800 rounded-xl p-3 mb-3 flex items-center justify-between">
+              <span className="text-[13px] font-medium text-neutral-700 dark:text-zinc-200">Simulator Mode</span>
               <button
                 type="button"
                 onClick={() => {
@@ -1299,14 +1302,14 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
                   })
                 }}
                 className={`text-[11px] px-2.5 py-1 rounded-lg font-semibold ${
-                  simulatorMode ? "bg-blue-600 text-white" : "bg-neutral-200 text-neutral-700"
+                  simulatorMode ? "bg-blue-600 text-white" : "bg-neutral-200 dark:bg-zinc-700 text-neutral-700 dark:text-zinc-200"
                 }`}>
                 {simulatorMode ? "On" : "Off"}
               </button>
             </div>
             {simulatorMode && (
-              <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3">
-                <div className="text-[11px] font-bold tracking-wider text-neutral-500 uppercase mb-2">Drawer</div>
+              <div className="bg-white dark:bg-zinc-900 border border-neutral-200 dark:border-zinc-800 rounded-xl p-3 mb-3">
+                <div className="text-[11px] font-bold tracking-wider text-neutral-500 dark:text-zinc-400 uppercase mb-2">Drawer</div>
                 <div className="flex gap-1.5 flex-wrap">
                   {(["auto", "idle", "preview", "running", "arrived"] as const).map((mode) => (
                     <button
@@ -1314,7 +1317,7 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
                       type="button"
                       onClick={() => setDevDrawer(mode)}
                       className={`text-[11px] px-2.5 py-1 rounded-lg font-semibold capitalize ${
-                        devDrawer === mode ? "bg-blue-600 text-white" : "bg-neutral-200 text-neutral-700"
+                        devDrawer === mode ? "bg-blue-600 text-white" : "bg-neutral-200 dark:bg-zinc-700 text-neutral-700 dark:text-zinc-200"
                       }`}>
                       {mode}
                     </button>
@@ -1323,21 +1326,21 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
               </div>
             )}
             <MyLocationCard coords={coords} />
-            <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3">
-              <div className="text-[11px] font-bold tracking-wider text-neutral-500 uppercase">
+            <div className="bg-white dark:bg-zinc-900 border border-neutral-200 dark:border-zinc-800 rounded-xl p-3 mb-3">
+              <div className="text-[11px] font-bold tracking-wider text-neutral-500 dark:text-zinc-400 uppercase">
                 🎯 Selected destination
               </div>
               {destination ? (
                 <>
-                  <div className="text-[14px] text-neutral-900 mt-1">
+                  <div className="text-[14px] text-neutral-900 dark:text-zinc-50 mt-1">
                     {destination.name || destination.address || "(unnamed)"}
                   </div>
-                  <div className="font-mono text-[12px] text-neutral-500 mt-0.5">
+                  <div className="font-mono text-[12px] text-neutral-500 dark:text-zinc-400 mt-0.5">
                     {destination.lat.toFixed(6)}, {destination.lng.toFixed(6)}
                   </div>
                 </>
               ) : (
-                <div className="text-[13px] text-neutral-500 italic mt-1">(none picked)</div>
+                <div className="text-[13px] text-neutral-500 dark:text-zinc-400 italic mt-1">(none picked)</div>
               )}
             </div>
             {simulatorMode && (
@@ -1360,16 +1363,16 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
                     }}
                     className={`w-full mt-2 px-3 py-2.5 rounded-xl text-sm font-semibold border border-dashed ${
                       wrongSidewalk
-                        ? "border-amber-500 bg-amber-100 text-amber-900"
-                        : "border-amber-300 bg-amber-50 text-amber-800"
+                        ? "border-amber-500 bg-amber-100 dark:bg-amber-500/25 text-amber-900 dark:text-amber-300"
+                        : "border-amber-300 dark:border-amber-600 bg-amber-50 dark:bg-amber-500/10 text-amber-800 dark:text-amber-400"
                     }`}>
                     🚶‍♂️ Wrong sidewalk: {wrongSidewalk ? "ON" : "OFF"}
                   </button>
                 ) : null}
               </>
             )}
-            <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3">
-              <div className="text-[11px] font-bold tracking-wider text-neutral-500 uppercase mb-2">🚶 Travel mode</div>
+            <div className="bg-white dark:bg-zinc-900 border border-neutral-200 dark:border-zinc-800 rounded-xl p-3 mb-3">
+              <div className="text-[11px] font-bold tracking-wider text-neutral-500 dark:text-zinc-400 uppercase mb-2">🚶 Travel mode</div>
               <div className="grid grid-cols-2 gap-2">
                 {(["walking", "driving", "cycling", "two_wheeler"] as const).map((m) => (
                   <button
@@ -1378,29 +1381,29 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
                     onClick={() => setTravelMode(m)}
                     className={`px-3 py-2 rounded-lg text-sm font-medium border ${
                       travelMode === m
-                        ? "border-blue-500 bg-blue-50 text-blue-900"
-                        : "border-neutral-200 bg-white text-neutral-700"
+                        ? "border-blue-500 bg-blue-50 dark:bg-blue-500/20 text-blue-900 dark:text-blue-300"
+                        : "border-neutral-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-neutral-700 dark:text-zinc-200"
                     } disabled:opacity-50`}>
                     {m.replace("_", " ")}
                   </button>
                 ))}
               </div>
             </div>
-            <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
-              <span className="text-[13px] font-medium text-neutral-700">Freeze location search panel</span>
+            <div className="bg-white dark:bg-zinc-900 border border-neutral-200 dark:border-zinc-800 rounded-xl p-3 mb-3 flex items-center justify-between">
+              <span className="text-[13px] font-medium text-neutral-700 dark:text-zinc-200">Freeze location search panel</span>
               <button
                 type="button"
                 onClick={() => setSearchFrozen((f) => !f)}
                 className={`text-[11px] px-2.5 py-1 rounded-lg font-semibold ${
-                  searchFrozen ? "bg-blue-600 text-white" : "bg-neutral-200 text-neutral-700"
+                  searchFrozen ? "bg-blue-600 text-white" : "bg-neutral-200 dark:bg-zinc-700 text-neutral-700 dark:text-zinc-200"
                 }`}>
                 {searchFrozen ? "Frozen" : "Freeze"}
               </button>
             </div>
-            <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
+            <div className="bg-white dark:bg-zinc-900 border border-neutral-200 dark:border-zinc-800 rounded-xl p-3 mb-3 flex items-center justify-between">
               <div className="flex flex-col">
-                <span className="text-[13px] font-medium text-neutral-700">Use raw Google instructions</span>
-                <span className="text-[11px] text-neutral-500">Maneuver card + glasses HUD</span>
+                <span className="text-[13px] font-medium text-neutral-700 dark:text-zinc-200">Use raw Google instructions</span>
+                <span className="text-[11px] text-neutral-500 dark:text-zinc-400">Maneuver card + glasses HUD</span>
               </div>
               <button
                 type="button"
@@ -1411,15 +1414,15 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
                   append(`raw-instructions → ${next ? "on" : "off"}`)
                 }}
                 className={`text-[11px] px-2.5 py-1 rounded-lg font-semibold ${
-                  useRawInstructions ? "bg-blue-600 text-white" : "bg-neutral-200 text-neutral-700"
+                  useRawInstructions ? "bg-blue-600 text-white" : "bg-neutral-200 dark:bg-zinc-700 text-neutral-700 dark:text-zinc-200"
                 }`}>
                 {useRawInstructions ? "ON" : "OFF"}
               </button>
             </div>
-            <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
+            <div className="bg-white dark:bg-zinc-900 border border-neutral-200 dark:border-zinc-800 rounded-xl p-3 mb-3 flex items-center justify-between">
               <div className="flex flex-col">
-                <span className="text-[13px] font-medium text-neutral-700">Large map (swipe) — WIP</span>
-                <span className="text-[11px] text-neutral-500">Swipe up/down to toggle full-screen map</span>
+                <span className="text-[13px] font-medium text-neutral-700 dark:text-zinc-200">Large map (swipe) — WIP</span>
+                <span className="text-[11px] text-neutral-500 dark:text-zinc-400">Swipe up/down to toggle full-screen map</span>
               </div>
               <button
                 type="button"
@@ -1430,7 +1433,7 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
                   append(`large-map → ${next ? "on" : "off"}`)
                 }}
                 className={`text-[11px] px-2.5 py-1 rounded-lg font-semibold ${
-                  largeMapEnabled ? "bg-blue-600 text-white" : "bg-neutral-200 text-neutral-700"
+                  largeMapEnabled ? "bg-blue-600 text-white" : "bg-neutral-200 dark:bg-zinc-700 text-neutral-700 dark:text-zinc-200"
                 }`}>
                 {largeMapEnabled ? "ON" : "OFF"}
               </button>

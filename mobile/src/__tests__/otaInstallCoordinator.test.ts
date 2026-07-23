@@ -2,7 +2,7 @@
  * Characterization tests for the island OtaInstallCoordinator (WP 8B) — the OTA
  * install state machine moved verbatim out of mobile/src/app/ota/progress.tsx.
  *
- * Imports the real island sources by path (not via "@mentra/island", which jest
+ * Imports the real island sources by path (not via "@mentra/engine", which jest
  * mocks) so the actual watchdog/retry/arbitration logic runs under the mobile
  * jest runner; the bluetooth SDK stays the shared jest.setup mock. Inputs are
  * driven by mutating the real island glasses store and emitting on island's
@@ -10,7 +10,7 @@
  */
 import type {OtaStatus} from "@mentra/bluetooth-sdk-internal"
 
-import {otaInstallCoordinator} from "../../modules/island/src/services/OtaInstallCoordinator"
+import {otaInstallCoordinator} from "../../modules/engine/src/services/OtaInstallCoordinator"
 import {
   BES_CONTINUE_LOCKOUT_MS,
   DOWNLOAD_STUCK_TIMEOUT_MS,
@@ -27,14 +27,14 @@ import {
   PROGRESS_TIMEOUT_MS,
   QUERY_REPLY_TIMEOUT_MS,
   RETRY_INTERVAL_MS,
-} from "../../modules/island/src/services/otaInstallPolicy"
+} from "../../modules/engine/src/services/otaInstallPolicy"
 import {
   legacyOtaProgressFromOtaStatusEvent,
   normalizeOtaStatusEvent,
   otaStatusFromNormalized,
-} from "../../modules/island/src/services/otaLegacyMapping"
-import {useGlassesStore} from "../../modules/island/src/stores/glasses"
-import GlobalEventEmitter from "../../modules/island/src/utils/GlobalEventEmitter"
+} from "../../modules/engine/src/services/otaLegacyMapping"
+import {useGlassesStore} from "../../modules/engine/src/stores/glasses"
+import GlobalEventEmitter from "../../modules/engine/src/utils/GlobalEventEmitter"
 
 import {bluetoothSdkMock} from "../test-utils/mockBluetoothSdk"
 
@@ -725,6 +725,85 @@ describe("OtaInstallCoordinator legacy padded watchdogs (WP 8C-g)", () => {
 
     await jest.advanceTimersByTimeAsync(LEGACY_EXTRA_TIMEOUT_MS)
     expect(bluetoothSdkMock.ping).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe("OtaInstallCoordinator apk install-phase status poll", () => {
+  it("polls ota_query_status on each keepalive tick while an apk step is installing", async () => {
+    setGlassesConnected()
+    otaInstallCoordinator.attach()
+    GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
+    useGlassesStore.getState().setOtaStatus(inProgressStatus({phase: "install", stepPercent: 0, overallPercent: 100}))
+    bluetoothSdkMock.sendOtaQueryStatus.mockClear()
+
+    await jest.advanceTimersByTimeAsync(PING_INTERVAL_MS)
+    expect(bluetoothSdkMock.sendOtaQueryStatus).toHaveBeenCalledTimes(1)
+    await jest.advanceTimersByTimeAsync(PING_INTERVAL_MS)
+    expect(bluetoothSdkMock.sendOtaQueryStatus).toHaveBeenCalledTimes(2)
+  })
+
+  it("keeps one poll in flight and swallows its rejection", async () => {
+    // The native query pends up to 15s (longer than the 10s tick) and rejects a
+    // concurrent call with request_in_flight; a slow glasses restart must not
+    // stack queries or surface an unhandled rejection.
+    setGlassesConnected()
+    otaInstallCoordinator.attach()
+    GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
+    useGlassesStore.getState().setOtaStatus(inProgressStatus({phase: "install", stepPercent: 0, overallPercent: 100}))
+    bluetoothSdkMock.sendOtaQueryStatus.mockClear()
+    let rejectPending!: (err: Error) => void
+    bluetoothSdkMock.sendOtaQueryStatus.mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectPending = reject
+        }),
+    )
+
+    await jest.advanceTimersByTimeAsync(PING_INTERVAL_MS)
+    expect(bluetoothSdkMock.sendOtaQueryStatus).toHaveBeenCalledTimes(1)
+
+    // First query still pending: the next tick must not fire a concurrent one.
+    await jest.advanceTimersByTimeAsync(PING_INTERVAL_MS)
+    expect(bluetoothSdkMock.sendOtaQueryStatus).toHaveBeenCalledTimes(1)
+
+    // Rejection (e.g. request_timeout) is swallowed and polling resumes.
+    rejectPending(new Error("request_timeout"))
+    await jest.advanceTimersByTimeAsync(PING_INTERVAL_MS)
+    expect(bluetoothSdkMock.sendOtaQueryStatus).toHaveBeenCalledTimes(2)
+  })
+
+  it("does not poll during the download phase", async () => {
+    setGlassesConnected()
+    otaInstallCoordinator.attach()
+    GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
+    useGlassesStore.getState().setOtaStatus(inProgressStatus({stepPercent: 40, overallPercent: 40}))
+    bluetoothSdkMock.sendOtaQueryStatus.mockClear()
+
+    await jest.advanceTimersByTimeAsync(PING_INTERVAL_MS * 3)
+    expect(bluetoothSdkMock.sendOtaQueryStatus).not.toHaveBeenCalled()
+  })
+
+  it("a polled complete reply lands the session on complete instead of the stall failure", async () => {
+    // The incident shape (rep_01KY31HEMTSBSMK8DVMNXJ5XGG): the apk install starts,
+    // the glasses process restarts, and no further push arrives. The poll's reply
+    // must complete the session before the PROGRESS_TIMEOUT_MS stall watchdog fails it.
+    setGlassesConnected()
+    otaInstallCoordinator.attach()
+    GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
+    useGlassesStore.getState().setOtaStatus(inProgressStatus({phase: "install", stepPercent: 0, overallPercent: 100}))
+
+    await jest.advanceTimersByTimeAsync(PING_INTERVAL_MS)
+    expect(bluetoothSdkMock.sendOtaQueryStatus).toHaveBeenCalled()
+
+    // Glasses answer the query from their persisted session: install complete.
+    useGlassesStore
+      .getState()
+      .setOtaStatus(inProgressStatus({phase: "install", status: "complete", stepPercent: 100, overallPercent: 100}))
+
+    await jest.advanceTimersByTimeAsync(PROGRESS_TIMEOUT_MS)
+    const snap = otaInstallCoordinator.snapshot()
+    expect(snap.errorMsg).toBe("")
+    expect(snap.displayState).toBe("complete")
   })
 })
 

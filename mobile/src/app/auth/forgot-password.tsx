@@ -5,7 +5,6 @@ import {Button, Header, Icon, Screen, Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
-import {SETTINGS, useSetting} from "@/stores/settings"
 import showAlert from "@/utils/AlertUtils"
 import mentraAuth from "@/utils/auth/authClient"
 import {mapAuthError} from "@/utils/auth/authErrors"
@@ -16,7 +15,6 @@ export default function ForgotPasswordScreen() {
 
   const {push, goBack} = useNavigationStore.getState()
   const {theme} = useAppTheme()
-  const [isChina] = useSetting<boolean>(SETTINGS.china_deployment.key)
 
   const isEmailValid = email.includes("@") && email.includes(".")
 
@@ -38,13 +36,9 @@ export default function ForgotPasswordScreen() {
 
     setIsLoading(false)
 
-    if (isChina) {
-      push("/auth/reset-password", {email})
-    } else {
-      showAlert(translate("login:resetEmailSent"), translate("login:checkEmailForReset"), [
-        {text: translate("common:ok"), onPress: () => goBack()},
-      ])
-    }
+    // Both providers now email a numeric code (the account backend replaced
+    // Supabase's magic link), so everyone continues to the code-entry screen.
+    push("/auth/reset-password", {email})
   }
 
   return (
@@ -53,7 +47,7 @@ export default function ForgotPasswordScreen() {
       <ScrollView className="flex-grow" showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
         <View className="flex-1 p-4">
           <Text
-            tx={isChina ? "login:forgotPasswordCodeSubtitle" : "login:forgotPasswordSubtitle"}
+            tx="login:forgotPasswordCodeSubtitle"
             className="text-base text-secondary-foreground text-left mb-6 leading-[22px]"
           />
 

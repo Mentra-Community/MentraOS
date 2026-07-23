@@ -1,13 +1,13 @@
 import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
 
 // glassesClockSync + gallerySyncClock moved into island; this jest test imports by path.
-import {detectClockSkew} from "../../../../modules/island/src/services/gallerySyncClock"
+import {detectClockSkew} from "../../../../modules/engine/src/services/gallerySyncClock"
 import {
   fixGlassesClockIfSkewed,
   handleOtaClockSkewFromGlasses,
   maybeFixGlassesClockFromVersionInfo,
   resetOtaClockFixCooldownForTests,
-} from "../../../../modules/island/src/services/glassesClockSync"
+} from "../../../../modules/engine/src/services/glassesClockSync"
 
 jest.mock("@mentra/bluetooth-sdk-internal", () => ({
   __esModule: true,
@@ -17,19 +17,7 @@ jest.mock("@mentra/bluetooth-sdk-internal", () => ({
   },
 }))
 
-jest.mock("@/stores/settings", () => ({
-  SETTINGS: {
-    ota_version_url: {key: "ota_version_url"},
-    super_mode: {key: "super_mode"},
-  },
-  useSettingsStore: {
-    getState: jest.fn(() => ({
-      getSetting: jest.fn(() => false),
-    })),
-  },
-}))
-
-jest.mock("../../../../modules/island/src/utils/timers", () => ({
+jest.mock("../../../../modules/engine/src/utils/timers", () => ({
   BgTimer: {
     setTimeout: (fn: () => void) => {
       fn()
@@ -41,7 +29,7 @@ jest.mock("../../../../modules/island/src/utils/timers", () => ({
 const mockSetSystemTime = BluetoothSdk.setSystemTime as jest.Mock
 const mockStartOta = BluetoothSdk.startOtaUpdate as jest.Mock
 
-jest.mock("../../../../modules/island/src/stores/glasses", () => ({
+jest.mock("../../../../modules/engine/src/stores/glasses", () => ({
   useGlassesStore: {
     getState: jest.fn(() => ({
       buildNumber: "100000",

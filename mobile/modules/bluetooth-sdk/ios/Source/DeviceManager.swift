@@ -186,11 +186,6 @@ struct ViewState {
         set { DeviceStore.shared.apply("bluetooth", "bypass_vad", newValue) }
     }
 
-    private var offlineCaptionsRunning: Bool {
-        get { DeviceStore.shared.get("bluetooth", "offline_captions_running") as? Bool ?? false }
-        set { DeviceStore.shared.apply("bluetooth", "offline_captions_running", newValue) }
-    }
-
     private var localSttFallbackActive: Bool {
         get { DeviceStore.shared.get("bluetooth", "local_stt_fallback_active") as? Bool ?? false }
         set { DeviceStore.shared.apply("bluetooth", "local_stt_fallback_active", newValue) }
@@ -431,7 +426,7 @@ struct ViewState {
 
         // Send PCM to local transcriber.
 #if !SWIFT_PACKAGE || MENTRA_FEATURE_LOCAL_STT
-        if shouldSendTranscript || offlineCaptionsRunning || localSttFallbackActive {
+        if shouldSendTranscript || localSttFallbackActive {
             transcriber?.acceptAudio(pcm16le: pcmData)
         }
 #endif
@@ -807,6 +802,16 @@ struct ViewState {
         let glassesMicEnabled = DeviceStore.shared.get("glasses", "micEnabled") as? Bool ?? false
         let glassesConnected = DeviceStore.shared.get("glasses", "connected") as? Bool ?? false
         if !glassesMicEnabled || !glassesConnected {
+            return
+        }
+
+        if sgc?.isMicSuspendedForAudio == true {
+            Bridge.log("MAN: Glasses mic intentionally suspended for phone audio; skipping mic recovery")
+            return
+        }
+
+        if PhoneAudioMonitor.getInstance().isOwnAppAudioPlaying() {
+            Bridge.log("MAN: Mentra audio is playing; skipping glasses mic recovery")
             return
         }
 
@@ -1291,10 +1296,10 @@ struct ViewState {
         sgc?.sendStreamKeepAlive(message)
     }
 
-    func requestWifiScan() {
+    func requestWifiScan(scanId: String? = nil) {
         Bridge.log("MAN: Requesting wifi scan")
         DeviceStore.shared.apply("bluetooth", "wifiScanResults", [])
-        sgc?.requestWifiScan()
+        sgc?.requestWifiScan(scanId: scanId)
     }
 
     func sendIncidentId(_ incidentId: String, apiBaseUrl: String? = nil) {
@@ -1392,6 +1397,42 @@ struct ViewState {
         try liveSgc().sendCameraFovSetting(requestId: requestId, fov: fov, roiPosition: roiPosition)
     }
 
+    func sendLegacyCameraFovSetting(fov: Int, roiPosition: Int) throws {
+        let glassesConnected = DeviceStore.shared.get("glasses", "connected") as? Bool ?? false
+        guard glassesConnected else {
+            throw BluetoothSdkError(code: "not_connected", message: "Mentra Live glasses are not connected.")
+        }
+        try liveSgc().sendCameraFovSetting(requestId: nil, fov: fov, roiPosition: roiPosition)
+    }
+
+    func restoreLegacyCameraFovSetting() throws {
+        let glassesConnected = DeviceStore.shared.get("glasses", "connected") as? Bool ?? false
+        guard glassesConnected else {
+            throw BluetoothSdkError(code: "not_connected", message: "Mentra Live glasses are not connected.")
+        }
+        try liveSgc().sendCameraFovSetting()
+    }
+
+    func sendCameraFovOverride(
+        requestId: String,
+        leaseId: String,
+        fov: Int,
+        roiPosition: Int,
+        ttlMs: Int
+    ) throws {
+        try liveSgc().sendCameraFovOverride(
+            requestId: requestId,
+            leaseId: leaseId,
+            fov: fov,
+            roiPosition: roiPosition,
+            ttlMs: ttlMs
+        )
+    }
+
+    func releaseCameraFovOverride(requestId: String, leaseId: String) throws {
+        try liveSgc().releaseCameraFovOverride(requestId: requestId, leaseId: leaseId)
+    }
+
     func sendCameraTuningConfig(requestId: String, anrOn: Bool, gainOn: Bool) throws {
         try liveSgc().sendCameraTuningConfig(requestId: requestId, anrOn: anrOn, gainOn: gainOn)
     }
@@ -1399,8 +1440,11 @@ struct ViewState {
     func warmUpCamera(
         requestId: String,
         size: PhotoSize,
+        mode: PhotoMode = .photo,
         exposureTimeNs: Double?,
-        durationMs: Int
+        durationMs: Int,
+        zsl: Bool? = nil,
+        mfnr: Bool? = nil
     ) throws {
         guard let live = sgc as? MentraLive else {
             // Fail fast like other camera commands so the SDK promise rejects immediately instead
@@ -1411,9 +1455,16 @@ struct ViewState {
         live.warmUpCamera(
             requestId: requestId,
             size: size,
+            mode: mode,
             exposureTimeNs: exposureTimeNs,
-            durationMs: durationMs
+            durationMs: durationMs,
+            zsl: zsl,
+            mfnr: mfnr
         )
+    }
+
+    func stopCameraWarmUp(requestId: String) throws {
+        try liveSgc().stopCameraWarmUp(requestId: requestId)
     }
 
     /// Request version info from glasses.
@@ -1459,7 +1510,7 @@ struct ViewState {
 
     func setMicState() {
         let willSendPcm = shouldSendPcm || shouldSendLc3
-        let willSendTranscript = shouldSendTranscript || offlineCaptionsRunning || localSttFallbackActive
+        let willSendTranscript = shouldSendTranscript || localSttFallbackActive
         micEnabled = willSendPcm || willSendTranscript
         updateMicState()
     }
@@ -1538,7 +1589,9 @@ struct ViewState {
             mfnr: request.mfnr,
             zsl: request.zsl,
             ispDigitalGain: request.ispDigitalGain,
-            ispAnalogGain: request.ispAnalogGain
+            ispAnalogGain: request.ispAnalogGain,
+            mode: request.mode,
+            transferMethod: request.transferMethod
         )
         Bridge.log(
             "MAN: PHOTO PIPELINE [4/6] DeviceManager.requestPhoto requestId=\(routed.requestId) webhookUrl=\(routed.webhookUrl ?? "nil") size=\(routed.size.rawValue) compress=\(routed.compress?.rawValue ?? "none") save=\(routed.save) sound=\(routed.sound) exposureTimeNs=\(manualExposureNs.map { String($0) } ?? "nil") iso=\(manualIso.map { String($0) } ?? "auto") aeDivisor=\(routed.aeExposureDivisor.map { String($0) } ?? "nil") isoCap=\(routed.isoCap.map { String($0) } ?? "nil") sgc=\(sgc != nil ? String(describing: type(of: sgc!)) : "null")"

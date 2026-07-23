@@ -1,9 +1,11 @@
 package com.mentra.bluetoothsdk.camera
 
 import com.mentra.bluetoothsdk.PhotoCompression
+import com.mentra.bluetoothsdk.PhotoMode
 import com.mentra.bluetoothsdk.PhotoRequest
 import com.mentra.bluetoothsdk.PhotoSize
 import org.assertj.core.api.Assertions.assertThat
+import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.Test
 
 class PhotoRequestTest {
@@ -34,6 +36,8 @@ class PhotoRequestTest {
             )
 
         assertThat(request.exposureTimeNs).isNull()
+        assertThat(request.mode).isEqualTo(PhotoMode.PHOTO)
+        assertThat(request.transferMethod).isEqualTo("auto")
     }
 
     @Test
@@ -76,5 +80,62 @@ class PhotoRequestTest {
             )
 
         assertThat(request.requestId).isEqualTo("photo-1")
+    }
+
+    @Test
+    fun `fromMap preserves text mode`() {
+        val request =
+            PhotoRequest.fromMap(
+                mapOf(
+                    "size" to "medium",
+                    "mode" to "text",
+                    "webhookUrl" to "https://example.com/upload",
+                )
+            )
+
+        assertThat(request.mode).isEqualTo(PhotoMode.TEXT)
+    }
+
+    @Test
+    fun `fromMap preserves forced BLE transfer`() {
+        val request =
+            PhotoRequest.fromMap(
+                mapOf(
+                    "size" to "medium",
+                    "transferMethod" to "ble",
+                    "webhookUrl" to "https://example.com/upload",
+                )
+            )
+
+        assertThat(request.transferMethod).isEqualTo("ble")
+    }
+
+    @Test
+    fun `fromMap preserves direct transfer without BLE fallback`() {
+        val request =
+            PhotoRequest.fromMap(
+                mapOf(
+                    "size" to "medium",
+                    "transferMethod" to "direct",
+                    "webhookUrl" to "https://example.com/upload",
+                )
+            )
+
+        assertThat(request.transferMethod).isEqualTo("direct")
+    }
+
+    @Test
+    fun `fromMap rejects an unknown transfer method`() {
+        assertThatThrownBy {
+            PhotoRequest.fromMap(
+                mapOf(
+                    "size" to "medium",
+                    "transferMethod" to "wifi",
+                    "webhookUrl" to "https://example.com/upload",
+                )
+            )
+        }
+            .isInstanceOf(IllegalArgumentException::class.java)
+            .hasMessage("Invalid transferMethod \"wifi\". Expected auto, direct, or ble.")
     }
 }

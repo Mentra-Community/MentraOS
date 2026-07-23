@@ -23,7 +23,7 @@ import type {
   ProtocolError,
   ConnectionAck,
   CloudToClientMessage,
-} from "@mentra/cloud-runtime/protocol";
+} from "@mentra/cloud-protocol";
 import type { Logger } from "../../logger";
 import type { Connection } from "./connection";
 import { HandshakeRejectedError } from "./connection";
@@ -61,7 +61,7 @@ export type { RuntimeStatus, RuntimeSnapshot } from "./status";
  *
  * Defined here (rather than in the protocol package) because it is the client's
  * API, not a wire type: it composes the wire types from
- * `@mentra/cloud-runtime/protocol` into the methods a host calls. The per-event
+ * `@mentra/cloud-protocol` into the methods a host calls. The per-event
  * `on*` methods are sugar over the generic typed emitter, so there is one source
  * of truth and no event-name strings to mistype. Every subscribe call returns an
  * unsubscribe function.

@@ -1,7 +1,7 @@
 import * as Sentry from "@sentry/react-native"
 import {FC, createContext, useEffect, useState, useContext} from "react"
 
-import {SETTINGS, useSetting} from "@/stores/settings"
+import {SETTINGS, useSetting} from "@mentra/engine"
 import {LogoutUtils} from "@/utils/LogoutUtils"
 import mentraAuth from "@/utils/auth/authClient"
 import {ensureDevModeForUser} from "@/utils/dev/devModeAllowlist"

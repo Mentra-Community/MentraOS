@@ -11,13 +11,22 @@
 
 import {create} from "zustand"
 
-import type {DevSettings, LogEntry, NavSnapshot, TripState, UnitSystem} from "../../shared/types"
+import type {
+  DevSettings,
+  GlassesCapabilitySnapshot,
+  LogEntry,
+  NavSnapshot,
+  TripState,
+  UnitSystem,
+  VoiceGuidanceMode,
+} from "../../shared/types"
 
 type NavStore = NavSnapshot & {
   apply(snapshot: Partial<NavSnapshot>): void
   applyTrip(trip: TripState): void
   applyDevSettings(s: DevSettings): void
   applyUnitSystem(u: UnitSystem): void
+  applyVoiceGuidance(mode: VoiceGuidanceMode, capabilities?: GlassesCapabilitySnapshot): void
   appendLog(entry: LogEntry): void
   clearLog(): void
 }
@@ -48,6 +57,8 @@ const initialSnapshot: NavSnapshot = {
     largeMapEnabled: false,
   },
   unitSystem: "metric",
+  voiceGuidanceMode: "off",
+  capabilities: {modelName: null, hasDisplay: false, hasSpeaker: false, hasButton: false},
 }
 
 export const useNavStore = create<NavStore>((set) => ({
@@ -56,6 +67,8 @@ export const useNavStore = create<NavStore>((set) => ({
   applyTrip: (trip) => set({trip}),
   applyDevSettings: (devSettings) => set({devSettings}),
   applyUnitSystem: (unitSystem) => set({unitSystem}),
+  applyVoiceGuidance: (voiceGuidanceMode, capabilities) =>
+    set((state) => ({voiceGuidanceMode, capabilities: capabilities ?? state.capabilities})),
   appendLog: (entry) => set((s) => ({log: [entry, ...s.log].slice(0, 100)})),
   clearLog: () => set({log: []}),
 }))
@@ -77,6 +90,9 @@ export function installChannelSubscribers(): void {
   mentra.on("nav:log-clear", () => useNavStore.getState().clearLog())
   mentra.on("nav:dev-settings-update", (s) => useNavStore.getState().applyDevSettings(s))
   mentra.on("nav:units-update", ({unitSystem}) => useNavStore.getState().applyUnitSystem(unitSystem))
+  mentra.on("nav:voice-guidance-update", ({voiceGuidanceMode, capabilities}) =>
+    useNavStore.getState().applyVoiceGuidance(voiceGuidanceMode, capabilities),
+  )
 
   // Best-effort snapshot kickoff — onOpen also fires one from background,
   // but issuing this explicitly ensures we hydrate even if the open

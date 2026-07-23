@@ -15,9 +15,8 @@ import {useState} from "react"
 import GlassesTroubleshootingModal from "@/components/glasses/GlassesTroubleshootingModal"
 import {OnboardingGuide, OnboardingStep} from "@/components/onboarding/OnboardingGuide"
 import {CDN_BASE_URL} from "@/constants/appConfig"
-import {toolkit} from "@mentra/island"
+import {engine} from "@mentra/engine"
 import {getAr99DisplayName} from "@/utils/getGlassesImage"
-import {useAppStatusStore} from "@mentra/island/internal"
 
 type BluetoothPermission = Permission | "android.permission.BLUETOOTH" | "android.permission.BLUETOOTH_ADMIN"
 
@@ -200,11 +199,11 @@ export default function PairingPrepScreen() {
     // Fire-and-forget: stopAll() awaits a per-app backend stop call that can take many
     // seconds (or hang with no internet / NO_ACTIVE_SESSION). We don't need it to finish
     // before navigating to the scan screen, so don't block pairing on it.
-    void useAppStatusStore.getState().stopAll()
+    void engine.miniapps.stopAll()
 
     // skip pairing for simulated glasses:
     if (deviceModel.startsWith(DeviceTypes.SIMULATED)) {
-      await toolkit.glasses.connectSimulated()
+      await engine.glasses.connectSimulated()
       clearHistoryAndGoHome()
       return
     }
@@ -382,10 +381,7 @@ export default function PairingPrepScreen() {
             className="text-lg text-secondary-foreground"
             text="1. Disconnect your G2 from within the Even Realities app, or uninstall the Even Realities app"
           />
-          <Text
-            className="text-lg text-secondary-foreground"
-            text="2. Place your G2 in the charging case with the lid open."
-          />
+          <Text className="text-lg text-secondary-foreground" text="2. Place your G2 in the charging case." />
         </View>
       </View>
     )
@@ -397,7 +393,7 @@ export default function PairingPrepScreen() {
       <>
         <View className="gap-4">
           <Button tx="pairing:g1Ready" onPress={advanceToPairing} />
-          <Button tx="pairing:g1NotReady" preset="secondary" onPress={() => setShowTroubleshootingModal(true)} />
+          <Button tx="pairing:g2NotReady" preset="secondary" onPress={() => setShowTroubleshootingModal(true)} />
         </View>
         <GlassesTroubleshootingModal
           isVisible={showTroubleshootingModal}

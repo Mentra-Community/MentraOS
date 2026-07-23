@@ -8,7 +8,7 @@
     "../mobile/modules/miniapp",
     "../mobile/modules/jspolyfill",
     "../mobile/modules/crust",
-    "../mobile/modules/island",
+    "../mobile/modules/engine",
     "../mobile/modules/bluetooth-sdk",
     "../miniapps/*"
   ],

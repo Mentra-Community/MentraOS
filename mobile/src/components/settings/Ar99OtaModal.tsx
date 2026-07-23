@@ -2,7 +2,7 @@ import {useCallback, useEffect, useMemo, useRef, useState} from "react"
 import {ActivityIndicator, Modal, ScrollView, TouchableOpacity, useWindowDimensions, View} from "react-native"
 
 import BluetoothSdk, {Ar99OtaStatusEvent} from "@mentra/bluetooth-sdk"
-import {toolkit} from "@mentra/island"
+import {engine} from "@mentra/engine"
 
 import {Text} from "@/components/ignite"
 import {Ar99VersionInfo, checkAr99OtaVersion, clearAr99OtaFiles, downloadAr99Firmware} from "@/services/ar99Ota"
@@ -22,7 +22,7 @@ const DEVICE_INFO_POLL_MS = 250
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 
 function readAr99DeviceInfo() {
-  const info = toolkit.glasses.info()
+  const info = engine.glasses.info()
   return {
     firmwareVersion: info.firmwareVersion.trim(),
     serialNumber: info.serialNumber.trim(),
@@ -77,7 +77,7 @@ export function Ar99OtaModal({visible, onClose}: Ar99OtaModalProps) {
     setSerialNumber("")
     setVersionInfo(null)
     try {
-      const freshVersionInfo = await toolkit.glasses.requestVersionInfo()
+      const freshVersionInfo = await engine.glasses.requestVersionInfo()
       const firmwareVersion = freshVersionInfo.firmwareVersion.trim()
       const {serialNumber: syncedSerialNumber} = await waitForAr99SerialNumber(firmwareVersion)
       const sn = syncedSerialNumber.trim()

@@ -6,20 +6,19 @@ import {Group} from "@/components/ui/Group"
 import {RouteButton} from "@/components/ui/RouteButton"
 import {showAlert} from "@/contexts/ModalContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
-import {useToolkitSnapshot} from "@/hooks/useToolkitSnapshot"
+import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {translate} from "@/i18n"
 import {useNavigationStore} from "@/stores/navigation"
-import {SETTINGS, useSetting} from "@/stores/settings"
-import {getAr99DisplayName} from "@/utils/getGlassesImage"
 import BluetoothSdk from "@mentra/bluetooth-sdk"
-import {toolkit} from "@mentra/island"
+import {engine, SETTINGS, useSetting} from "@mentra/engine"
+import {getAr99DisplayName} from "@/utils/getGlassesImage"
 
 export default function DeviceInfoScreen() {
   const {goBack} = useNavigationStore.getState()
   const {theme} = useAppTheme()
 
-  const deviceInfo = useToolkitSnapshot(toolkit.glasses.info, (onChange) => toolkit.glasses.onInfo(onChange))
-  const glassesStatus = useToolkitSnapshot(toolkit.glasses.status, (onChange) => toolkit.glasses.onStatus(onChange))
+  const deviceInfo = useEngineSnapshot(engine.glasses.info, (onChange) => engine.glasses.onInfo(onChange))
+  const glassesStatus = useEngineSnapshot(engine.glasses.status, (onChange) => engine.glasses.onStatus(onChange))
   const connectedWifi = deviceInfo.wifi.state === "connected" ? deviceInfo.wifi : null
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
   const [projectName] = useSetting<string>(SETTINGS.project_name.key)

@@ -5,29 +5,23 @@ import {
   decideDevLaunchRoute,
   HardwareRequirementLevel,
   HardwareType,
-  toolkit,
+  engine,
   type ClientApp,
   type StartOptions,
-} from "@mentra/island"
-import {
-  appRegistry,
-  installAppStoreHooks,
-  sttModelManager as STTModelManager,
-  useAppStatusStore,
-} from "@mentra/island/internal"
+} from "@mentra/engine"
+import {appRegistry, installAppStoreHooks} from "@mentra/engine/internal"
 
 import {DevIcon} from "@/components/miniapps/DevIcons"
 import {isOfflineHosted} from "@/components/miniapp/offlineHostedPackages"
 import {showAlert} from "@/contexts/ModalContext"
 import {translate} from "@/i18n"
 import {useNavigationStore} from "@/stores/navigation"
-import {SETTINGS, useSettingsStore} from "@/stores/settings"
+import {SETTINGS} from "@mentra/engine"
 import {getDefaultMenuApps, type GlassesMenuItem} from "@/utils/glassesMenu"
 import {markMiniappDevMode} from "@/utils/miniappDevMode"
 
 import {
   cameraPackageName,
-  captionsPackageName,
   CHINA_HIDDEN_APPS,
   feedbackPackageName,
   isChinaBuild,
@@ -66,67 +60,44 @@ class BuiltInMiniappCatalog {
     }
 
     installAppStoreHooks({
-      beforeStart: (app, opts) => this.beforeStart(app, opts),
+      onIncompatibleBlocked: (app) => this.showIncompatibleAlert(app),
+      onOpenRequested: (app, opts) => {
+        const nav = useNavigationStore.getState()
+        if (!opts?.skipNavigation && nav.getCurrentRoute() === "/home") {
+          this.navigateForApp(app)
+        }
+      },
     })
 
-    useAppStatusStore.subscribe(() => {
+    engine.miniapps.onChanged(() => {
       void this.syncGlassesMenuApps()
     })
 
     void this.syncGlassesMenuApps()
   }
 
-  private async beforeStart(app: ClientApp, opts?: StartOptions): Promise<boolean> {
-    const nav = useNavigationStore.getState()
-
-    if (!app.compatibility?.isCompatible) {
-      const missingTypes = app.compatibility?.missingRequired?.map((req) => req.type) || []
-      if (missingTypes.includes(HardwareType.EXIST)) {
-        await showAlert({
-          title: translate("home:glassesRequired"),
-          buttons: [{text: translate("common:ok")}],
-          message: translate("home:glassesRequiredMessage", {app: app.name}),
-        })
-        return false
-      }
-
-      const missingHardware =
-        missingTypes
-          .filter((type) => type !== HardwareType.EXIST)
-          .map((type) => type.toLowerCase())
-          .join(", ") || "required features"
-      await showAlert({
-        title: translate("home:hardwareIncompatible"),
+  /** Branded incompatible-launch alert (island already blocked the start). */
+  private showIncompatibleAlert(app: ClientApp): void {
+    const missingTypes = app.compatibility?.missingRequired?.map((req) => req.type) || []
+    if (missingTypes.includes(HardwareType.EXIST)) {
+      void showAlert({
+        title: translate("home:glassesRequired"),
         buttons: [{text: translate("common:ok")}],
-        message: translate("home:hardwareIncompatibleMessage", {app: app.name, missing: missingHardware}),
+        message: translate("home:glassesRequiredMessage", {app: app.name}),
       })
-      return false
+      return
     }
 
-    if (app.packageName === captionsPackageName) {
-      const modelAvailable = await STTModelManager.isModelAvailable()
-      if (!modelAvailable) {
-        const result = await showAlert({
-          title: translate("transcription:noModelInstalled"),
-          message: translate("transcription:noModelInstalledMessage"),
-          buttons: [
-            {text: translate("common:cancel"), style: "cancel"},
-            {text: translate("transcription:goToSettings"), style: "default"},
-          ],
-        })
-        if (result === 1) {
-          nav.push("/miniapps/settings/speech")
-        }
-        return false
-      }
-    }
-
-    if (!opts?.skipNavigation && nav.getCurrentRoute() === "/home") {
-      this.navigateForApp(app)
-    }
-
-    useSettingsStore.getState().setSetting(SETTINGS.has_ever_activated_app.key, true)
-    return true
+    const missingHardware =
+      missingTypes
+        .filter((type) => type !== HardwareType.EXIST)
+        .map((type) => type.toLowerCase())
+        .join(", ") || "required features"
+    void showAlert({
+      title: translate("home:hardwareIncompatible"),
+      buttons: [{text: translate("common:ok")}],
+      message: translate("home:hardwareIncompatibleMessage", {app: app.name, missing: missingHardware}),
+    })
   }
 
   private navigateForApp(app: ClientApp): void {
@@ -135,7 +106,7 @@ class BuiltInMiniappCatalog {
 
     if (app.offlineRoute) {
       if (isOfflineHosted(app.packageName)) {
-        useAppStatusStore.getState().setForeground(app.packageName)
+        engine.miniapps.setForeground(app.packageName)
         return
       }
       nav.push(app.offlineRoute, {transition: appOpenTransition})
@@ -149,7 +120,7 @@ class BuiltInMiniappCatalog {
       decideDevLaunchRoute(packageName, devUrl).then((result) => {
         if (result.decision === "live") {
           markMiniappDevMode()
-          useAppStatusStore.getState().setForeground(packageName)
+          engine.miniapps.setForeground(packageName)
         } else {
           nav.push("/applet/dev-offline", {packageName, name: appName, iconUrl: logoUrl})
         }
@@ -158,7 +129,7 @@ class BuiltInMiniappCatalog {
     }
 
     if (app.local) {
-      useAppStatusStore.getState().setForeground(app.packageName)
+      engine.miniapps.setForeground(app.packageName)
     }
   }
 
@@ -169,9 +140,8 @@ class BuiltInMiniappCatalog {
     }
     this.syncInFlight = true
     try {
-      const settingsStore = useSettingsStore.getState()
-      const apps = useAppStatusStore.getState().apps
-      let menuItems = settingsStore.getSetting(SETTINGS.menu_apps.key) as GlassesMenuItem[] | undefined
+      const apps = engine.miniapps.list()
+      let menuItems = engine.settings.get(SETTINGS.menu_apps.key) as GlassesMenuItem[] | undefined
       if (!menuItems) {
         menuItems = await getDefaultMenuApps(apps)
       }
@@ -189,7 +159,7 @@ class BuiltInMiniappCatalog {
         })
 
       if (changed) {
-        settingsStore.setSetting(SETTINGS.menu_apps.key, itemsForNative)
+        engine.settings.set(SETTINGS.menu_apps.key, itemsForNative)
       }
     } finally {
       this.syncInFlight = false
@@ -217,39 +187,13 @@ class BuiltInMiniappCatalog {
         healthy: true,
         hidden: false,
         onStart: () => {
-          useSettingsStore.getState().setSetting(SETTINGS.offline_camera_running.key, true)
+          engine.settings.set(SETTINGS.offline_camera_running.key, true)
         },
         onStop: () => {
-          useSettingsStore.getState().setSetting(SETTINGS.offline_camera_running.key, false)
+          engine.settings.set(SETTINGS.offline_camera_running.key, false)
         },
         hardwareRequirements: [
           {type: HardwareType.CAMERA, level: HardwareRequirementLevel.REQUIRED},
-          {type: HardwareType.EXIST, level: HardwareRequirementLevel.REQUIRED},
-        ],
-      },
-      {
-        packageName: captionsPackageName,
-        name: translate("miniApps:offlineCaptions"),
-        type: "standard",
-        offline: true,
-        logoUrl: require("@assets/applet-icons/captions.png"),
-        webviewUrl: "",
-        healthy: true,
-        hidden: false,
-        permissions: [],
-        offlineRoute: "",
-        running: false,
-        loading: false,
-        local: false,
-        onStart: () => {
-          void toolkit.speech.restartTranscriber()
-          useSettingsStore.getState().setSetting(SETTINGS.offline_captions_running.key, true)
-        },
-        onStop: () => {
-          useSettingsStore.getState().setSetting(SETTINGS.offline_captions_running.key, false)
-        },
-        hardwareRequirements: [
-          {type: HardwareType.DISPLAY, level: HardwareRequirementLevel.REQUIRED},
           {type: HardwareType.EXIST, level: HardwareRequirementLevel.REQUIRED},
         ],
       },
@@ -310,13 +254,18 @@ class BuiltInMiniappCatalog {
       apps.push({
         packageName: notifyPackageName,
         name: translate("miniApps:notify"),
-        type: "standard",
+        // Notifications is a persistent system helper, not the foreground
+        // miniapp. Starting its settings UI must not stop Captions (or any
+        // other running standard miniapp).
+        type: "background",
         offline: true,
         logoUrl: require("@assets/applet-icons/notification.png"),
         webviewUrl: "",
         healthy: true,
         hidden: false,
-        permissions: [],
+        // The home-screen launcher uses manifest permissions to request the
+        // Android NotificationListenerService grant before opening this UI.
+        permissions: [{type: "READ_NOTIFICATIONS", required: true}],
         offlineRoute: "/miniapps/settings/notifications",
         running: false,
         loading: false,
@@ -329,15 +278,14 @@ class BuiltInMiniappCatalog {
     }
 
     if (
-      useSettingsStore.getState().getSetting(SETTINGS.miniapp_dev_mode.key) ||
-      useSettingsStore.getState().getSetting(SETTINGS.debug_mode.key)
+      engine.settings.get(SETTINGS.miniapp_dev_mode.key)
     ) {
       apps.push({
         packageName: "com.mentra.miniappdev",
         name: translate("miniApps:lmaLoader"),
         type: "standard",
         offline: true,
-        offlineRoute: "/miniapps/miniappdev/main",
+        offlineRoute: "/miniapps/settings/miniapp-dev",
         local: false,
         webviewUrl: "",
         permissions: [],

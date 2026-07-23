@@ -1,9 +1,10 @@
-import {toolkit} from "@mentra/island"
+import {engine} from "@mentra/engine"
 
 import {attemptReconnectToDefaultWearable} from "@/effects/Reconnect"
-import {useCoreStore} from "@/stores/core"
-import {useGlassesStore} from "../../modules/island/src/stores/glasses"
-import {SETTINGS, useSettingsStore} from "@/stores/settings"
+import {useCoreStore} from "@mentra/engine/internal"
+import {useGlassesStore} from "../../modules/engine/src/stores/glasses"
+import {SETTINGS} from "@mentra/engine"
+import {useSettingsStore} from "@mentra/engine/internal"
 import {resetBluetoothSdkMock} from "@/test-utils/mockBluetoothSdk"
 
 jest.mock("@/utils/PermissionsUtils", () => ({
@@ -13,7 +14,7 @@ jest.mock("@/utils/PermissionsUtils", () => ({
 describe("attemptReconnectToDefaultWearable", () => {
   beforeEach(() => {
     resetBluetoothSdkMock()
-    ;(toolkit.glasses.connectDefault as jest.Mock).mockClear()
+    ;(engine.glasses.connectDefault as jest.Mock).mockClear()
     useCoreStore.getState().reset()
     useGlassesStore.getState().reset()
     useSettingsStore.getState().resetAllSettingsLocally()
@@ -29,9 +30,9 @@ describe("attemptReconnectToDefaultWearable", () => {
 
     await expect(attemptReconnectToDefaultWearable()).resolves.toBe(true)
 
-    // The pre-connect settings seed moved into toolkit.glasses.connectDefault();
+    // The pre-connect settings seed moved into engine.glasses.connectDefault();
     // the host just delegates the reconnect now (seed behavior is covered in
     // glassesFacade.test.ts where the real facade runs).
-    expect(toolkit.glasses.connectDefault).toHaveBeenCalled()
+    expect(engine.glasses.connectDefault).toHaveBeenCalled()
   })
 })

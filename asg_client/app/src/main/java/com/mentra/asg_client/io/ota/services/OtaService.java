@@ -442,9 +442,10 @@ public class OtaService extends Service {
                 // can still read the correct session fields (total_steps, step_sequence, etc.).
                 sessionManager.setPendingApkStatus("complete");
                 sessionManager.setComplete();
-                // onPhoneConnected() is the primary delivery path for the APK done signal.
-                // sendCompletionToPhone() here is a fallback for the case where the phone
-                // is already connected when this code runs (unlikely but possible).
+                // sendCompletionToPhone() resends the completion on a fixed schedule, so
+                // delivery no longer depends on winning the startup race against the UART
+                // transport. onPhoneConnected() remains a complementary path for a real
+                // BLE drop/reconnect mid-session.
                 if (otaHelper != null) {
                     otaHelper.sendCompletionToPhone(sessionManager);
                 }

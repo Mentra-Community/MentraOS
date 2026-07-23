@@ -1,5 +1,4 @@
 import {AppletInterface, AppletPermission} from "@/../../cloud/packages/types/src"
-import BluetoothSdk from "@mentra/bluetooth-sdk"
 import CrustModule from "@mentra/crust"
 import {Alert, Linking, PermissionsAndroid, Platform} from "react-native"
 import BleManager from "react-native-ble-manager"
@@ -99,8 +98,9 @@ const PERMISSION_CONFIG: Record<string, PermissionConfig> = {
   },
   [PermissionFeatures.CALENDAR]: {
     name: "Calendar",
-    description: "Used to display your events on your glasses",
+    description: "Allows miniapps to read your calendar events",
     ios: [PERMISSIONS.IOS.CALENDARS],
+    // Expo Calendar requires both Android grants even when only calling read APIs.
     android: [PermissionsAndroid.PERMISSIONS.READ_CALENDAR, PermissionsAndroid.PERMISSIONS.WRITE_CALENDAR],
     critical: false,
   },
@@ -704,23 +704,20 @@ export const askPermissionsUI = async (app: AppletInterface, _theme: Theme): Pro
         {
           text: translate("common:next"),
           onPress: async () => {
-            await requestPermissionsUI(neededPermissions)
+            const requestResult = await requestPermissionsUI(neededPermissions)
+            if (requestResult === "cancelled") {
+              resolve(-1)
+              return
+            }
 
             // Check if permissions were actually granted
             const stillNeededPermissions = await checkPermissionsUI(app)
 
-            // If we still need READ_NOTIFICATIONS, don't auto-retry
-            if (stillNeededPermissions.includes(PermissionFeatures.READ_NOTIFICATIONS) && Platform.OS === "android") {
-              // Permission flow is in progress, user needs to complete it manually
-              resolve(-1) // Return 0 to indicate "in progress" state
-              return
-            }
-
-            // For other permissions that were granted, proceed
+            // The notification-listener request waits for the Settings
+            // round-trip, so any permission still missing here was denied.
             if (stillNeededPermissions.length === 0) {
               resolve(1) // Success
             } else {
-              // Still have missing permissions (other than READ_NOTIFICATIONS)
               resolve(0) // Failed to get all permissions
             }
           },
@@ -806,14 +803,17 @@ export const checkPermissionsUI = async (app: AppletInterface) => {
   return neededPermissions
 }
 
-export const requestPermissionsUI = async (permissions: string[]) => {
+export const requestPermissionsUI = async (permissions: string[]): Promise<"completed" | "cancelled"> => {
   for (const permission of permissions) {
     await requestFeaturePermissions(permission)
   }
 
   if (permissions.includes(PermissionFeatures.READ_NOTIFICATIONS) && Platform.OS === "android") {
-    await checkAndRequestNotificationAccessSpecialPermission()
+    const result = await checkAndRequestNotificationAccessSpecialPermission()
+    if (result === "cancelled") return "cancelled"
   }
+
+  return "completed"
 }
 
 // Utility methods for checking permissions and device capabilities
@@ -871,10 +871,7 @@ async function readLocationServicesEnabled(): Promise<boolean> {
   const locationServicesEnabled = await Promise.race([
     CrustModule.isLocationServicesEnabled(),
     new Promise<boolean>((_, reject) => {
-      setTimeout(
-        () => reject(new Error("Location services check timed out")),
-        LOCATION_SERVICES_CHECK_TIMEOUT_MS,
-      )
+      setTimeout(() => reject(new Error("Location services check timed out")), LOCATION_SERVICES_CHECK_TIMEOUT_MS)
     }),
   ])
   console.log("Location services enabled (native check):", locationServicesEnabled)

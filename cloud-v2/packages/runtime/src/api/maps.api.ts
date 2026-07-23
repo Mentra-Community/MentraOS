@@ -35,7 +35,7 @@ import {
   placeAutocompleteRequestSchema,
   placeDetailsRequestSchema,
   reverseGeocodeRequestSchema,
-} from "../protocol/maps";
+} from "@mentra/cloud-protocol/maps";
 import * as maps from "../services/maps/maps.service";
 
 const logger = createLogger("maps").child({ service: "maps.api" });

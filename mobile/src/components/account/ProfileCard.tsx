@@ -4,7 +4,7 @@ import Svg, {Path} from "react-native-svg"
 
 import {Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
-import {SETTINGS, useSettingsStore} from "@/stores/settings"
+import {SETTINGS, engine} from "@mentra/engine"
 import {ThemedStyle} from "@/theme"
 import mentraAuth from "@/utils/auth/authClient"
 
@@ -36,7 +36,7 @@ export const ProfileCard = () => {
     const fetchUserData = async () => {
       setLoading(true)
 
-      const isChina = useSettingsStore.getState().getSetting(SETTINGS.china_deployment.key)
+      const isChina = engine.settings.get(SETTINGS.china_deployment.key)
       if (isChina) {
         setUserData(null)
         setLoading(false)

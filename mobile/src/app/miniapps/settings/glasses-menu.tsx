@@ -10,10 +10,10 @@ import {RouteButton} from "@/components/ui/RouteButton"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n/translate"
-import {sortAppsByLastOpenTime, useApps, type ClientApp} from "@mentra/island"
+import {sortAppsByLastOpenTime, useApps, type ClientApp} from "@mentra/engine"
 
 import {SYSTEM_APPS} from "@/constants/miniapps"
-import {SETTINGS, useSetting} from "@/stores/settings"
+import {SETTINGS, useSetting} from "@mentra/engine"
 import {buildMenuItems, filterCompatibleMenuItems, getDefaultMenuApps, type GlassesMenuItem} from "@/utils/glassesMenu"
 
 const MAX_MENU_ITEMS = 10

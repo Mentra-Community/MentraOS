@@ -5,18 +5,24 @@ import android.graphics.Color;
 import android.media.MediaCodecInfo;
 import android.media.MediaCodecList;
 import android.util.Log;
+
 import androidx.annotation.Nullable;
 import androidx.exifinterface.media.ExifInterface;
 import androidx.heifwriter.AvifWriter;
+
+import com.mentra.asg_client.io.media.core.BlePhotoTimingLog;
 import com.radzivon.bartoshyk.avif.coder.HeifCoder;
 import com.radzivon.bartoshyk.avif.coder.PreciseMode;
+
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
+
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.util.Arrays;
-import org.json.JSONArray;
-import org.json.JSONException;
-import org.json.JSONObject;
+import java.util.Locale;
 
 /** Embeds IMU JSON in JPEG EXIF (UserComment) and preserves/copies metadata across re-encodes. */
 public final class PhotoExifMetadataWriter {
@@ -26,6 +32,27 @@ public final class PhotoExifMetadataWriter {
     private static final int MAX_EXIF_SAMPLES = 400;
 
     private PhotoExifMetadataWriter() {}
+
+    private static void logAvifEncodeTiming(long encodeStartMs, String path, int bytes) {
+        long ms = System.currentTimeMillis() - encodeStartMs;
+        String encoder =
+                switch (path) {
+                    case "avifwriter_exif" -> "Android AvifWriter with embedded EXIF";
+                    case "heifcoder_bmff_exif" -> "HeifCoder AVIF + BMFF EXIF inject";
+                    case "heifcoder_plain_fallback" -> "HeifCoder plain AVIF (EXIF inject failed)";
+                    case "heifcoder_plain" -> "HeifCoder plain AVIF (no IMU metadata)";
+                    default -> path;
+                };
+        BlePhotoTimingLog.event(
+                "COMPRESS",
+                "AVIF encoded via "
+                        + encoder
+                        + " in "
+                        + ms
+                        + "ms, output="
+                        + String.format(Locale.US, "%.1f", bytes / 1024.0)
+                        + "KB");
+    }
 
     public static void writeImuPayload(String jpegPath, JSONObject imuPayload) throws IOException {
         try {
@@ -40,18 +67,57 @@ public final class PhotoExifMetadataWriter {
         }
     }
 
+    /**
+     * Stamp the capture ID (the capture directory name, e.g. {@code IMG_..._<requestId>}) into EXIF
+     * ImageUniqueID so the request correlation survives file renames and camera-roll export.
+     * Derived from the file's own path, which covers every capture flow (SDK and button, gallery
+     * and transient) without threading IDs through the camera layer. No-op for files that don't
+     * live in a capture directory. Best-effort: a capture must never fail over metadata.
+     */
+    public static void writeCaptureIdFromPath(String jpegPath) {
+        writeCaptureIdFromPath(jpegPath, jpegPath);
+    }
+
+    /** Writes capture correlation from an intended gallery path onto another JPEG. */
+    public static void writeCaptureIdFromPath(String jpegPath, String intendedCapturePath) {
+        try {
+            File parent = new File(intendedCapturePath).getParentFile();
+            String captureId = parent != null ? parent.getName() : null;
+            if (captureId == null
+                    || !(captureId.startsWith("IMG_") || captureId.startsWith("VID_"))) {
+                return;
+            }
+            ExifInterface exif = new ExifInterface(jpegPath);
+            exif.setAttribute(ExifInterface.TAG_IMAGE_UNIQUE_ID, captureId);
+            exif.saveAttributes();
+            Log.d(TAG, "Wrote ImageUniqueID EXIF to " + jpegPath + ": " + captureId);
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to write ImageUniqueID EXIF on " + jpegPath, e);
+        }
+    }
+
+    /** Copies capture metadata (IMU UserComment + ImageUniqueID) onto a re-encoded copy. */
     public static void copyImuMetadata(String sourcePath, String destPath) {
         try {
             String json = readImuJsonFromJpeg(sourcePath);
-            if (json == null || json.isEmpty()) {
+            String uniqueId =
+                    new ExifInterface(sourcePath).getAttribute(ExifInterface.TAG_IMAGE_UNIQUE_ID);
+            boolean hasJson = json != null && !json.isEmpty();
+            boolean hasUniqueId = uniqueId != null && !uniqueId.isEmpty();
+            if (!hasJson && !hasUniqueId) {
                 return;
             }
             ExifInterface dest = new ExifInterface(destPath);
-            dest.setAttribute(ExifInterface.TAG_USER_COMMENT, json);
+            if (hasJson) {
+                dest.setAttribute(ExifInterface.TAG_USER_COMMENT, json);
+            }
+            if (hasUniqueId) {
+                dest.setAttribute(ExifInterface.TAG_IMAGE_UNIQUE_ID, uniqueId);
+            }
             dest.saveAttributes();
-            Log.d(TAG, "Copied IMU EXIF from " + sourcePath + " to " + destPath);
+            Log.d(TAG, "Copied capture EXIF from " + sourcePath + " to " + destPath);
         } catch (IOException e) {
-            Log.w(TAG, "Failed to copy IMU EXIF metadata", e);
+            Log.w(TAG, "Failed to copy capture EXIF metadata", e);
         }
     }
 
@@ -79,11 +145,95 @@ public final class PhotoExifMetadataWriter {
      * AvifWriter.addExifData.
      */
     public static byte[] buildExifApp1Segment(JSONObject imuPayload) throws IOException {
+        byte[] segment = buildCaptureExifApp1Segment(imuPayload, null);
+        if (segment == null) {
+            throw new IOException("Could not build IMU EXIF segment");
+        }
+        return segment;
+    }
+
+    /**
+     * Builds EXIF for a RAM-first capture from its in-memory IMU payload and intended gallery path.
+     * The path need not exist; its capture-directory name supplies ImageUniqueID.
+     */
+    @Nullable
+    public static byte[] buildCaptureExifApp1Segment(
+            @Nullable JSONObject imuPayload, @Nullable String intendedCapturePath)
+            throws IOException {
+        String captureId = captureIdFromPath(intendedCapturePath);
+        if (imuPayload == null && captureId == null) {
+            return null;
+        }
         File tempDir = new File(System.getProperty("java.io.tmpdir"));
-        File tempJpeg = File.createTempFile("imu_exif_", ".jpg", tempDir);
+        File tempJpeg = File.createTempFile("capture_exif_", ".jpg", tempDir);
         try {
             writeMinimalJpeg(tempJpeg);
-            writeImuPayload(tempJpeg.getAbsolutePath(), imuPayload);
+            ExifInterface exif = new ExifInterface(tempJpeg.getAbsolutePath());
+            if (imuPayload != null) {
+                try {
+                    exif.setAttribute(
+                            ExifInterface.TAG_USER_COMMENT,
+                            trimPayloadForExif(imuPayload).toString());
+                } catch (JSONException e) {
+                    throw new IOException("Invalid IMU payload JSON", e);
+                }
+            }
+            if (captureId != null) {
+                exif.setAttribute(ExifInterface.TAG_IMAGE_UNIQUE_ID, captureId);
+            }
+            exif.saveAttributes();
+            return extractExifApp1Segment(tempJpeg);
+        } finally {
+            if (!tempJpeg.delete()) {
+                tempJpeg.deleteOnExit();
+            }
+        }
+    }
+
+    @Nullable
+    private static String captureIdFromPath(@Nullable String capturePath) {
+        if (capturePath == null) {
+            return null;
+        }
+        File parent = new File(capturePath).getParentFile();
+        String captureId = parent != null ? parent.getName() : null;
+        return captureId != null
+                        && (captureId.startsWith("IMG_") || captureId.startsWith("VID_"))
+                ? captureId
+                : null;
+    }
+
+    /**
+     * Builds an EXIF APP1 segment (including the {@code FFE1} marker and length) carrying the
+     * source capture's IMU UserComment and/or ImageUniqueID, for splicing into an in-memory
+     * re-encoded JPEG without round-tripping the full image through a temp file. Returns {@code
+     * null} when the source carries neither attribute. The only disk I/O is the same 2x2-pixel
+     * scratch JPEG {@link #buildExifApp1Segment} already uses, because {@link ExifInterface} can
+     * only write to files.
+     */
+    @Nullable
+    public static byte[] buildCaptureExifApp1Segment(String sourceJpegPath) throws IOException {
+        String imuJson = readImuJsonFromJpeg(sourceJpegPath);
+        String uniqueId =
+                new ExifInterface(sourceJpegPath).getAttribute(ExifInterface.TAG_IMAGE_UNIQUE_ID);
+        boolean hasJson = imuJson != null && !imuJson.isEmpty();
+        boolean hasUniqueId = uniqueId != null && !uniqueId.isEmpty();
+        if (!hasJson && !hasUniqueId) {
+            return null;
+        }
+
+        File tempDir = new File(System.getProperty("java.io.tmpdir"));
+        File tempJpeg = File.createTempFile("capture_exif_", ".jpg", tempDir);
+        try {
+            writeMinimalJpeg(tempJpeg);
+            ExifInterface exif = new ExifInterface(tempJpeg.getAbsolutePath());
+            if (hasJson) {
+                exif.setAttribute(ExifInterface.TAG_USER_COMMENT, imuJson);
+            }
+            if (hasUniqueId) {
+                exif.setAttribute(ExifInterface.TAG_IMAGE_UNIQUE_ID, uniqueId);
+            }
+            exif.saveAttributes();
             return extractExifApp1Segment(tempJpeg);
         } finally {
             if (!tempJpeg.delete()) {
@@ -98,79 +248,118 @@ public final class PhotoExifMetadataWriter {
      */
     public static byte[] encodeAvifForBle(Bitmap bitmap, int quality, String sourceJpegPath)
             throws Exception {
-        boolean hasImu = hasImuMetadata(sourceJpegPath);
+        JSONObject payload = null;
+        if (hasImuMetadata(sourceJpegPath)) {
+            String json = readImuJsonFromJpeg(sourceJpegPath);
+            if (json == null) {
+                Log.w(
+                        TAG,
+                        "encodeAvifForBle: hasImuMetadata true but readImuJsonFromJpeg returned"
+                                + " null");
+            } else {
+                try {
+                    payload = new JSONObject(json);
+                } catch (JSONException e) {
+                    Log.w(TAG, "encodeAvifForBle: source IMU EXIF is not valid JSON", e);
+                }
+            }
+        }
         Log.d(
                 TAG,
                 "encodeAvifForBle: source="
                         + sourceJpegPath
                         + " hasImuMetadata="
-                        + hasImu
+                        + (payload != null)
                         + " quality="
                         + quality);
+        return encodeAvifForBle(bitmap, quality, payload, sourceJpegPath);
+    }
+
+    /**
+     * In-memory variant: encodes AVIF with EXIF built from an already-assembled IMU payload,
+     * avoiding any disk reads of the source capture.
+     */
+    public static byte[] encodeAvifForBle(
+            Bitmap bitmap, int quality, @Nullable JSONObject imuPayload) throws Exception {
+        return encodeAvifForBle(bitmap, quality, imuPayload, null);
+    }
+
+    /** RAM-first AVIF variant that also preserves capture-ID correlation from the intended path. */
+    public static byte[] encodeAvifForBle(
+            Bitmap bitmap,
+            int quality,
+            @Nullable JSONObject imuPayload,
+            @Nullable String intendedCapturePath)
+            throws Exception {
+        long encodeStartMs = System.currentTimeMillis();
         HeifCoder heifCoder = new HeifCoder();
-        if (hasImu) {
-            String json = readImuJsonFromJpeg(sourceJpegPath);
-            if (json == null) {
-                Log.w(
-                        TAG,
-                        "encodeAvifForBle: hasImuMetadata true but readImuJsonFromJpeg returned null");
-            } else {
-                try {
-                    JSONObject payload = new JSONObject(json);
-                    byte[] exifSegment = buildExifApp1Segment(payload);
-                    byte[] exifTiff = Arrays.copyOfRange(exifSegment, 4, exifSegment.length);
+        byte[] captureExif = null;
+        try {
+            captureExif = buildCaptureExifApp1Segment(imuPayload, intendedCapturePath);
+        } catch (Exception exifBuildError) {
+            Log.w(
+                    TAG,
+                    "encodeAvifForBle: capture EXIF build failed, sending plain AVIF: "
+                            + exifBuildError.getMessage());
+        }
+        if (captureExif != null) {
+            try {
+                byte[] exifTiff = Arrays.copyOfRange(captureExif, 4, captureExif.length);
 
-                    if (isAv1EncoderAvailable()) {
-                        try {
-                            byte[] withExif = encodeAvifWithExif(bitmap, quality, payload);
-                            Log.d(
-                                    TAG,
-                                    "encodeAvifForBle: AvifWriter+EXIF, "
-                                            + withExif.length
-                                            + " bytes, rawHasExifMarker="
-                                            + containsExifMarker(withExif));
-                            return withExif;
-                        } catch (Exception e) {
-                            Log.w(
-                                    TAG,
-                                    "AvifWriter+EXIF failed, using HeifCoder+BMFF EXIF inject: "
-                                            + e.getMessage());
-                        }
-                    } else {
-                        Log.d(
-                                TAG,
-                                "encodeAvifForBle: no AV1 encoder; using HeifCoder+BMFF EXIF inject");
-                    }
-
-                    byte[] avif = heifCoder.encodeAvif(bitmap, quality, PreciseMode.LOSSY);
+                if (isAv1EncoderAvailable()) {
                     try {
-                        byte[] withExif = AvifBmffExifInjector.injectExif(avif, exifTiff);
+                        byte[] withExif = encodeAvifWithExif(bitmap, quality, captureExif);
+                        logAvifEncodeTiming(encodeStartMs, "avifwriter_exif", withExif.length);
                         Log.d(
                                 TAG,
-                                "encodeAvifForBle: HeifCoder+EXIF, "
+                                "encodeAvifForBle: AvifWriter+EXIF, "
                                         + withExif.length
                                         + " bytes, rawHasExifMarker="
                                         + containsExifMarker(withExif));
                         return withExif;
-                    } catch (Exception injectError) {
+                    } catch (Exception e) {
                         Log.w(
                                 TAG,
-                                "BMFF EXIF inject failed, sending plain AVIF: "
-                                        + injectError.getMessage());
-                        return avif;
+                                "AvifWriter+EXIF failed, using HeifCoder+BMFF EXIF inject: "
+                                        + e.getMessage());
                     }
-                } catch (Exception exifPathError) {
+                } else {
+                    Log.d(
+                            TAG,
+                            "encodeAvifForBle: no AV1 encoder; using HeifCoder+BMFF EXIF inject");
+                }
+
+                byte[] avif = heifCoder.encodeAvif(bitmap, quality, PreciseMode.LOSSY);
+                try {
+                    byte[] withExif = AvifBmffExifInjector.injectExif(avif, exifTiff);
+                    logAvifEncodeTiming(encodeStartMs, "heifcoder_bmff_exif", withExif.length);
+                    Log.d(
+                            TAG,
+                            "encodeAvifForBle: HeifCoder+EXIF, "
+                                    + withExif.length
+                                    + " bytes, rawHasExifMarker="
+                                    + containsExifMarker(withExif));
+                    return withExif;
+                } catch (Exception injectError) {
                     Log.w(
                             TAG,
-                            "encodeAvifForBle: IMU EXIF path failed, sending plain AVIF: "
-                                    + exifPathError.getMessage());
+                            "BMFF EXIF inject failed, sending plain AVIF: "
+                                    + injectError.getMessage());
+                    logAvifEncodeTiming(encodeStartMs, "heifcoder_plain_fallback", avif.length);
+                    return avif;
                 }
+            } catch (Exception exifPathError) {
+                Log.w(
+                        TAG,
+                        "encodeAvifForBle: capture EXIF path failed, sending plain AVIF: "
+                                + exifPathError.getMessage());
             }
         }
         byte[] plain = heifCoder.encodeAvif(bitmap, quality, PreciseMode.LOSSY);
+        logAvifEncodeTiming(encodeStartMs, "heifcoder_plain", plain.length);
         Log.d(
                 TAG,
-                "encodeAvifForBle: HeifCoder (no IMU), "
+                "encodeAvifForBle: HeifCoder (no capture EXIF), "
                         + plain.length
                         + " bytes, rawHasExifMarker="
                         + containsExifMarker(plain));
@@ -211,9 +400,13 @@ public final class PhotoExifMetadataWriter {
 
     public static byte[] encodeAvifWithExif(Bitmap bitmap, int quality, JSONObject imuPayload)
             throws Exception {
+        return encodeAvifWithExif(bitmap, quality, buildExifApp1Segment(imuPayload));
+    }
+
+    private static byte[] encodeAvifWithExif(Bitmap bitmap, int quality, byte[] exifSegment)
+            throws Exception {
         int width = bitmap.getWidth();
         int height = bitmap.getHeight();
-        byte[] exifSegment = buildExifApp1Segment(imuPayload);
         byte[] exifPayload = Arrays.copyOfRange(exifSegment, 4, exifSegment.length);
 
         File tempFile = File.createTempFile("ble_avif_", ".avif");

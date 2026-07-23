@@ -2,12 +2,13 @@ import {useRoute} from "@react-navigation/native"
 import {useEffect, useMemo} from "react"
 import {Button, Screen} from "@/components/ignite"
 import {OnboardingGuide, OnboardingStep} from "@/components/onboarding/OnboardingGuide"
-import {useToolkitSnapshot} from "@/hooks/useToolkitSnapshot"
+import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {translate} from "@/i18n"
 import {focusEffectPreventBack, usePushPrevious} from "@/contexts/NavigationHistoryContext"
-import {toolkit} from "@mentra/island"
+import {engine} from "@mentra/engine"
 import type {Device} from "@mentra/bluetooth-sdk"
-import {SETTINGS, useSetting} from "@/stores/settings"
+import {SETTINGS, useSetting} from "@mentra/engine"
+import {routePairingKickoffFailure} from "@/utils/PairingUtils"
 import {SettingsNavigationUtils} from "@/utils/SettingsNavigationUtils"
 import {View} from "react-native"
 import {useAppTheme} from "@/contexts/ThemeContext"
@@ -35,11 +36,11 @@ export default function BtClassicPairingScreen() {
       return null
     }
   }, [route.params])
-  const bluetoothClassicConnected = useToolkitSnapshot(toolkit.pairing.readiness, (onChange) =>
-    toolkit.pairing.onReadiness(onChange),
+  const bluetoothClassicConnected = useEngineSnapshot(engine.pairing.readiness, (onChange) =>
+    engine.pairing.onReadiness(onChange),
   ).bluetoothClassicConnected
-  const otherBtConnected = useToolkitSnapshot(toolkit.pairing.otherBtConnected, (onChange) =>
-    toolkit.pairing.onOtherBtConnected(onChange),
+  const otherBtConnected = useEngineSnapshot(engine.pairing.otherBtConnected, (onChange) =>
+    engine.pairing.onOtherBtConnected(onChange),
   )
   const [savedDeviceName] = useSetting(SETTINGS.device_name.key)
   const deviceName = device?.name || savedDeviceName || ""
@@ -49,14 +50,19 @@ export default function BtClassicPairingScreen() {
 
   const handleSuccess = () => {
     if (device) {
-      toolkit.glasses.connect(device, {saveAsDefault: false}).catch((error) => {
+      engine.glasses.connect(device, {saveAsDefault: false}).catch((error) => {
         console.error("Failed to connect glasses after Bluetooth Classic pairing:", error)
+        routePairingKickoffFailure(device.model)
       })
     } else {
       // Paired contexts (success step stack / recovery alert): reconnect the
       // saved default device.
-      toolkit.glasses.connectDefault().catch((error) => {
+      engine.glasses.connectDefault().catch((error) => {
         console.error("Failed to connect default glasses after Bluetooth Classic pairing:", error)
+        // Identity read-model, not raw keys: the failure copy names whatever
+        // identity model exists at rejection time (paired or pending).
+        const identity = engine.pairing.identity()
+        routePairingKickoffFailure(identity.kind === "none" ? undefined : identity.model)
       })
     }
     pushPrevious()
@@ -80,7 +86,7 @@ export default function BtClassicPairingScreen() {
     // longer learns it from a selection-time identity write). If the audio
     // device is already paired, the resulting immediate check advances the
     // screen right away.
-    void toolkit.pairing.setBluetoothClassicTarget(device).catch((error) => {
+    void engine.pairing.setBluetoothClassicTarget(device).catch((error) => {
       console.warn("BTCLASSIC: failed to set the Bluetooth Classic target:", error)
     })
   }, [device])
@@ -99,7 +105,7 @@ export default function BtClassicPairingScreen() {
     // actually exists — the same precondition connectDefault() has, read
     // hydration-aware. Fail open (stay) on a read error; connectDefault()'s
     // catch is the fallback for a genuinely missing device.
-    toolkit.glasses
+    engine.glasses
       .hasDefaultDevice()
       .catch(() => true)
       .then((hasDefault) => {

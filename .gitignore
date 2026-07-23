@@ -349,6 +349,10 @@ cython_debug/
 # macos garbage
 .DS_Store
 
+# BLE photo benchmark outputs are generated locally; only the summary README is committed
+benchmarks/jpeg_quality_80_100/*/*.jpg
+benchmarks/jpeg_quality_80_100/*/*.avif
+
 # ContextualSearchEngine
 server/images/cse/
 server/package-lock.json
@@ -381,6 +385,14 @@ nicelogs.txt
 issues
 !cloud-v2/docs/issues/
 !cloud-v2/docs/issues/**
+!cloud/issues/
+!cloud/issues/**
+# Re-ignore macOS junk under the cloud/issues un-ignore above
+cloud/issues/.DS_Store
+cloud/issues/**/.DS_Store
+
+# Local pulled text-detection debug dumps (adb / analysis artifacts)
+mobile/textdetect_debug_pulled/
 
 # Local session notes
 MEMORY.md
@@ -406,3 +418,7 @@ Mentra-Zephyr-Glasses-Client/
 
 # Navigation miniapp build output
 miniapps/navigation/build/
+
+# Downloaded bug report bundles (scripts/fetch-incident-logs.sh)
+incident-logs/
+asg_client/StreamPackLite.zip

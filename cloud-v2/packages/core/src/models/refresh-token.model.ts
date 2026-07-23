@@ -12,11 +12,15 @@
  * server-held pepper protects against DB-only leaks just as well, with no
  * per-refresh CPU cost.
  *
- * **Rotation.** Every successful refresh deletes the old document and inserts
- * a new one. A token can only be used once. Reusing a previously-rotated
- * token (e.g. by a thief who grabbed it before the legitimate client
- * refreshed) yields `invalid_grant`, surfacing the breach to the legitimate
- * client on its next refresh attempt.
+ * **Rotation.** Every successful refresh rotates the stored hash in place and
+ * records the presented hash in `prevTokenHash`. A rotated-away token stays
+ * honored until its successor is first USED (OS-1703): a client that sent a
+ * refresh but never received the response (killed mid-rotation, dropped
+ * connection) still holds the predecessor, and re-presenting it rotates again
+ * instead of bricking the session. The displaced successor is retained as one
+ * bounded alternate so either response from a duplicate refresh remains
+ * usable until the client presents one branch. Anything older than the
+ * immediate predecessor still yields `invalid_grant`.
  *
  * **TTL.** A TTL index on `expiresAt` lets Mongo auto-delete expired
  * sessions; no background cleanup job needed.
@@ -24,7 +28,8 @@
  * Spec: docs/issues/001-oem-auth/design.md ("Data model" / "refreshTokens")
  */
 
-import { Schema, model, type InferSchemaType } from "mongoose";
+import { Schema, type InferSchemaType } from "mongoose";
+import { registerModel } from "./register-model";
 
 const RefreshTokenSchema = new Schema(
   {
@@ -40,6 +45,21 @@ const RefreshTokenSchema = new Schema(
      * field on refresh: hash the presented token, find by this field.
      */
     refreshTokenHash: { type: String, required: true, unique: true },
+
+    /**
+     * Hash of the immediately-superseded refresh token, set on every
+     * rotation. Recovery lookup field (OS-1703): a client that lost the
+     * rotation response re-presents its old token, which matches here as
+     * long as the successor was never used. Absent on brand-new sessions.
+     */
+    prevTokenHash: { type: String },
+
+    /**
+     * Hash of a live successor displaced by a predecessor-path recovery
+     * rotation. Both responses from a duplicate refresh remain usable until
+     * the client proves which branch it persisted by presenting one of them.
+     */
+    altTokenHash: { type: String },
 
     /** Whose session this is. Matches `users.mentraUserId`. */
     mentraUserId: { type: String, required: true },
@@ -59,9 +79,17 @@ const RefreshTokenSchema = new Schema(
 // indexed field's date is in the past." Mongo scans every ~60s.
 RefreshTokenSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 
+// Recovery lookup: refresh presented with the immediately-superseded token
+// (OS-1703). Sparse — brand-new sessions have no predecessor.
+RefreshTokenSchema.index({ prevTokenHash: 1 }, { sparse: true });
+
+// Displaced-sibling lookup for duplicate refresh responses. Sparse because a
+// normal session has no alternate branch.
+RefreshTokenSchema.index({ altTokenHash: 1 }, { sparse: true });
+
 // Revocation queries: "kill every session belonging to this user / OEM."
 RefreshTokenSchema.index({ mentraUserId: 1, tenantId: 1 });
 RefreshTokenSchema.index({ tenantId: 1 });
 
 export type RefreshToken = InferSchemaType<typeof RefreshTokenSchema>;
-export const RefreshTokenModel = model("RefreshToken", RefreshTokenSchema);
+export const RefreshTokenModel = registerModel("RefreshToken", RefreshTokenSchema);

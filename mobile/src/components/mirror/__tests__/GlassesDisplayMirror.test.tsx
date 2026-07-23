@@ -1,8 +1,8 @@
 import {render} from "@testing-library/react-native"
 
-import {toolkit} from "@mentra/island"
+import {engine} from "@mentra/engine"
 import GlassesDisplayMirror from "@/components/mirror/GlassesDisplayMirror"
-import {useDisplayStore} from "@/stores/display"
+import {useDisplayStore} from "@mentra/engine/internal"
 
 jest.mock("react-native-canvas", () => {
   const {createElement, forwardRef} = require("react")
@@ -62,10 +62,10 @@ describe("GlassesDisplayMirror", () => {
       mainEvent: {},
       view: "main",
     })
-    // The mirror reads through toolkit.display.mirror now; delegate the mocked
+    // The mirror reads through engine.display.mirror now; delegate the mocked
     // facade to the real display store this test seeds via setState().
-    ;(toolkit.display.mirror.current as jest.Mock).mockImplementation(() => useDisplayStore.getState().currentEvent)
-    ;(toolkit.display.mirror.onMirror as jest.Mock).mockImplementation((cb: (event: unknown) => void) =>
+    ;(engine.display.mirror.current as jest.Mock).mockImplementation(() => useDisplayStore.getState().currentEvent)
+    ;(engine.display.mirror.onMirror as jest.Mock).mockImplementation((cb: (event: unknown) => void) =>
       useDisplayStore.subscribe((s) => s.currentEvent, cb),
     )
   })

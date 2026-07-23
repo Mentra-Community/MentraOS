@@ -1,6 +1,6 @@
 import {useRoute} from "@react-navigation/native"
-import {toolkit} from "@mentra/island"
-import type {PairFailureEvent} from "@mentra/island"
+import {engine} from "@mentra/engine"
+import type {PairFailureEvent} from "@mentra/engine"
 import {useCallback, useEffect, useRef, useState} from "react"
 import {View} from "react-native"
 
@@ -10,7 +10,7 @@ import {Screen} from "@/components/ignite/Screen"
 import GlassesPairingLoader from "@/components/glasses/GlassesPairingLoader"
 import GlassesTroubleshootingModal from "@/components/glasses/GlassesTroubleshootingModal"
 import {focusEffectPreventBack} from "@/contexts/NavigationHistoryContext"
-import {useToolkitSnapshot} from "@/hooks/useToolkitSnapshot"
+import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {useNavigationStore} from "@/stores/navigation"
 
 export default function GlassesPairingLoadingScreen() {
@@ -19,13 +19,13 @@ export default function GlassesPairingLoadingScreen() {
   const {deviceModel, deviceName, ar99ProjectName} = route.params as {deviceModel: string; deviceName?: string; ar99ProjectName?: string}
   const [showTroubleshootingModal, setShowTroubleshootingModal] = useState(false)
   const hasNavigatedRef = useRef(false)
-  const glassesFullyBooted = useToolkitSnapshot(toolkit.pairing.readiness, (onChange) =>
-    toolkit.pairing.onReadiness(onChange),
+  const glassesFullyBooted = useEngineSnapshot(engine.pairing.readiness, (onChange) =>
+    engine.pairing.onReadiness(onChange),
   ).fullyBooted
   const [showGlassesBooting, setShowGlassesBooting] = useState(false)
 
   useEffect(() => {
-    let unsub = toolkit.pairing.onGlassesNotReady(() => {
+    let unsub = engine.pairing.onGlassesNotReady(() => {
       setShowGlassesBooting(true)
     })
     return () => {
@@ -43,7 +43,7 @@ export default function GlassesPairingLoadingScreen() {
     (error: string) => {
       // Clears the failed attempt; when a real pairing predates this attempt
       // (re-pair), it is preserved instead of forgotten.
-      void toolkit.pairing.abandonAttempt().catch((cleanupError) => {
+      void engine.pairing.abandonAttempt().catch((cleanupError) => {
         console.warn("Pairing failure cleanup failed:", cleanupError)
       })
       if (error === "errors:pairNeedDisconnect") {
@@ -56,7 +56,7 @@ export default function GlassesPairingLoadingScreen() {
   )
 
   useEffect(() => {
-    let unsub = toolkit.pairing.onPairFailure((event: PairFailureEvent) => {
+    let unsub = engine.pairing.onPairFailure((event: PairFailureEvent) => {
       handlePairFailure(event.error)
     })
     return () => {
@@ -67,7 +67,7 @@ export default function GlassesPairingLoadingScreen() {
   useEffect(() => {
     const controller = new AbortController()
 
-    void toolkit.pairing.waitForReady({
+    void engine.pairing.waitForReady({
       deviceModel,
       deviceName,
       timeoutMs: 35_000,

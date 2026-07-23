@@ -6,7 +6,7 @@ import {TouchableOpacity, View} from "react-native"
 import {Icon, Text} from "@/components/ignite"
 import {Group} from "@/components/ui/Group"
 import {useAppTheme} from "@/contexts/ThemeContext"
-import {SETTINGS, useSetting} from "@/stores/settings"
+import {SETTINGS, useSetting} from "@mentra/engine"
 import {translate} from "@/i18n"
 
 const PRESET_BACKGROUNDS = [

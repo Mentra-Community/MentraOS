@@ -16,6 +16,7 @@ import org.json.JSONObject;
 import org.greenrobot.eventbus.EventBus;
 import org.greenrobot.eventbus.Subscribe;
 import org.greenrobot.eventbus.ThreadMode;
+import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.events.BatteryStatusEvent;
 import com.mentra.asg_client.di.hilt.AsgClientEntryPoint;
 import com.mentra.asg_client.io.ota.events.DownloadProgressEvent;
@@ -418,7 +419,7 @@ public class OtaHelper {
         }
 
         // Acquire wakelock to prevent CPU sleep during OTA download/install
-        WakeLockManager.acquireCpuWakeLock(context, OTA_WAKELOCK_TIMEOUT_MS);
+        WakeLockManager.acquireCpu(context, WakeLockManager.WakeOwner.MTK_OTA, OTA_WAKELOCK_TIMEOUT_MS);
         Log.i(TAG, "📱 OTA wakelock acquired for " + (OTA_WAKELOCK_TIMEOUT_MS / 1000) + " seconds");
 
         isPhoneInitiatedOta = true;
@@ -1662,7 +1663,9 @@ public class OtaHelper {
      * Find MTK firmware patch matching the current version.
      * MTK requires sequential updates - must find patch starting from current version.
      * @param patches Array of patch objects with start_firmware, end_firmware, url
-     * @param currentVersion Current MTK firmware version string (e.g., "20241130")
+     * @param currentVersion Current MTK firmware version as reported by
+     *     {@code ro.custom.ota.version}, e.g. "MentraLive_20260626"; both sides are
+     *     normalized before comparison, so a bare "20260626" would also match
      * @return Matching patch object, or null if no match or version unknown
      */
     private JSONObject findMatchingMtkPatch(JSONArray patches, String currentVersion) {
@@ -1690,6 +1693,11 @@ public class OtaHelper {
         return null;
     }
 
+    /**
+     * Reduce an MTK version string to its bare date so manifest entries and the device
+     * property match regardless of any "MentraLive_"-style prefix. Both normally carry the
+     * prefix; this is defensive so a bare-date value on either side still matches.
+     */
     private String normalizeMtkFirmwareVersion(String version) {
         if (version == null) {
             return "";
@@ -1737,7 +1745,9 @@ public class OtaHelper {
 
     /**
      * Compare two version strings.
-     * Supports formats like "17.26.1.14" (BES) or "20241130" (MTK date format).
+     * Supports dotted formats like "17.26.1.14" (BES) or bare dates like "20241130".
+     * MTK patch matching does not use this - it uses normalized exact equality in
+     * {@link #findMatchingMtkPatch}.
      * @param version1 First version string
      * @param version2 Second version string
      * @return positive if version1 > version2, negative if version1 < version2, 0 if equal
@@ -2469,17 +2479,44 @@ public class OtaHelper {
     }
 
     /**
-     * Attach a session manager and immediately push its current state to the phone.
+     * Attach a session manager and push its current state to the phone, resending on a
+     * fixed schedule instead of firing once.
      *
      * Used by {@link OtaService#resumeFromSession(OtaSessionManager)} after an APK-only
      * OTA completes across a process restart. The original {@code installApk()} call
      * deliberately skips the FINISHED send because the process is about to die, so the
      * phone needs an explicit completion signal once the new process comes up.
+     *
+     * This runs during early startup of the freshly installed process, usually before the
+     * UART transport is open ({@link #sendOtaStatus()} silently no-ops while the phone is
+     * unreachable) — and a single send at the serial-ready instant can still be dropped
+     * downstream while the wire protocol settles. A one-shot push losing that race leaves
+     * the phone staring at a stale "install in_progress 0%" until its stall watchdog fails
+     * a successful update (incident rep_01KY31HEMTSBSMK8DVMNXJ5XGG). Resending is safe:
+     * each attempt re-reads the persisted session state, duplicate terminal statuses are
+     * idempotent on the phone, and any phone-initiated ota_start/ota_query_status
+     * supersedes these pushes.
      */
     public void sendCompletionToPhone(OtaSessionManager sm) {
         if (sm == null) return;
         this.sessionManager = sm;
-        sendOtaStatus();
+        for (int attempt = 1; attempt <= AsgConstants.OTA_COMPLETION_RESEND_ATTEMPTS; attempt++) {
+            final int attemptNumber = attempt;
+            handler.postDelayed(
+                    () -> {
+                        Log.i(
+                                TAG,
+                                "APK completion push attempt "
+                                        + attemptNumber
+                                        + "/"
+                                        + AsgConstants.OTA_COMPLETION_RESEND_ATTEMPTS
+                                        + " (phoneConnected="
+                                        + isPhoneConnected()
+                                        + ")");
+                        sendOtaStatus();
+                    },
+                    (attempt - 1) * AsgConstants.OTA_COMPLETION_RESEND_INTERVAL_MS);
+        }
     }
 
     /**

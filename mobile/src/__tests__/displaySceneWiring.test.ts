@@ -10,17 +10,17 @@
 
 const mockSentEvents: Record<string, unknown>[] = []
 
-jest.mock("../../modules/island/src/utils/timers", () => ({
+jest.mock("../../modules/engine/src/utils/timers", () => ({
   BgTimer: {
     setTimeout: (fn: () => void, ms: number) => setTimeout(fn, ms) as unknown as number,
     clearTimeout: (id: number) => clearTimeout(id as unknown as NodeJS.Timeout),
   },
 }))
 
-import localDisplayManager from "../../modules/island/src/services/LocalDisplayManager"
-import type {DisplayRequestResult} from "../../modules/island/src/services/LocalDisplayManager"
-import {useGlassesStore} from "../../modules/island/src/stores/glasses"
-import {useSettingsStore, SETTINGS} from "../../modules/island/src/stores/settings"
+import localDisplayManager from "../../modules/engine/src/services/LocalDisplayManager"
+import type {DisplayRequestResult} from "../../modules/engine/src/services/LocalDisplayManager"
+import {useGlassesStore} from "../../modules/engine/src/stores/glasses"
+import {useSettingsStore, SETTINGS} from "../../modules/engine/src/stores/settings"
 import {bluetoothSdkMock} from "../test-utils/mockBluetoothSdk"
 
 function setDeviceModel(model: string) {

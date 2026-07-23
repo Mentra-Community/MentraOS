@@ -104,6 +104,13 @@ class BlePhotoUploadService {
 
     private static func convertToJpegPreservingExif(imageData: Data) throws -> Data {
         logIncomingImageDiagnostics(imageData: imageData)
+        if isJpeg(imageData) {
+            Bridge.log(
+                "\(TAG): BLE relay pass-through: input already JPEG (\(imageData.count) bytes), skipping decode/re-encode"
+            )
+            return imageData
+        }
+
         let imuJson = readImuJsonFromImageData(imageData)
 
         guard let image = decodeImage(imageData: imageData) else {
@@ -118,10 +125,9 @@ class BlePhotoUploadService {
             "\(TAG): Decoded image to bitmap: \(Int(image.size.width))x\(Int(image.size.height))"
         )
 
-        // 1.0: the source already went through a lossy AVIF pass on the glasses,
-        // so this re-encode must not compound the loss. Phone CPU and upload
-        // bandwidth are cheap relative to what was paid to get the bytes over BLE.
-        guard var jpegData = image.jpegData(compressionQuality: 1.0) else {
+        // AVIF sources already went through a lossy pass on the glasses; re-encode
+        // at high-but-not-max quality. JPEG fast-path payloads upload as-is.
+        guard var jpegData = image.jpegData(compressionQuality: 0.9) else {
             throw NSError(
                 domain: "BlePhotoUpload",
                 code: -2,
@@ -146,6 +152,11 @@ class BlePhotoUploadService {
         Bridge.log(
             "\(TAG): BLE image diagnostics: size=\(imageData.count) bytes, container=\(describeContainer(imageData)), rawHasExifMarker=\(containsExifMarker(in: imageData))"
         )
+    }
+
+    private static func isJpeg(_ data: Data) -> Bool {
+        let bytes = [UInt8](data.prefix(2))
+        return bytes.count >= 2 && bytes[0] == 0xFF && bytes[1] == 0xD8
     }
 
     private static func describeContainer(_ data: Data) -> String {
@@ -495,7 +506,7 @@ extension Data {
     }
 }
 
-private enum K900ProtocolUtils {
+enum K900ProtocolUtils {
     // Protocol constants
     static let CMD_START_CODE: [UInt8] = [0x23, 0x23] // ##
     static let CMD_END_CODE: [UInt8] = [0x24, 0x24] // $$
@@ -515,7 +526,9 @@ private enum K900ProtocolUtils {
     static let CMD_TYPE_DATA: UInt8 = 0x35
 
     // File transfer constants
-    static let FILE_PACK_SIZE = 400 // Max data size per packet
+    // Negotiated file protocol ceiling. Legacy/GATT transfers remain smaller; 800-byte frames are
+    // accepted only after file_payload_v2 negotiation and an open CoC channel.
+    static let FILE_PACK_SIZE = 800
     static let LENGTH_FILE_START = 2
     static let LENGTH_FILE_TYPE = 1
     static let LENGTH_FILE_PACKSIZE = 2
@@ -618,13 +631,21 @@ private enum K900ProtocolUtils {
             print(
                 "K900ProtocolUtils: File packet checksum failed. Expected: \(String(format: "%02X", info.verifyCode)), Calculated: \(String(format: "%02X", calculatedVerify))"
             )
-        } else {
+        } else if shouldLogFilePacket(info) {
             print(
                 "K900ProtocolUtils: File packet extracted successfully: index=\(info.packIndex), size=\(info.packSize), fileName=\(info.fileName)"
             )
         }
 
         return info
+    }
+
+    static func shouldLogFilePacket(_ info: FilePacketInfo) -> Bool {
+        let totalPackets =
+            (Int(info.fileSize) + FILE_PACK_SIZE - 1) / FILE_PACK_SIZE
+        return info.packIndex == 0
+            || info.packIndex % 32 == 0
+            || Int(info.packIndex) >= max(totalPackets - 1, 0)
     }
 }
 
@@ -906,6 +927,18 @@ extension MentraLive: CBCentralManagerDelegate {
     }
 
     nonisolated func centralManager(
+        _: CBCentralManager, didUpdateANCSAuthorizationFor peripheral: CBPeripheral
+    ) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, peripheral === self.connectedPeripheral else { return }
+            Bridge.log(
+                "LIVE: ANCS authorization updated: \(peripheral.ancsAuthorized ? "authorized" : "not authorized")"
+            )
+            self.enableAncsRelayIfAuthorized()
+        }
+    }
+
+    nonisolated func centralManager(
         _: CBCentralManager, didDisconnectPeripheral _: CBPeripheral, error _: Error?
     ) {
         DispatchQueue.main.async { [weak self] in
@@ -921,6 +954,7 @@ extension MentraLive: CBCentralManagerDelegate {
             self.rgbLedAuthorityClaimed = false
 
             self.stopAllTimers()
+            self.closeL2capFileChannel()
 
             // Clean up characteristics
             self.txCharacteristic = nil
@@ -941,6 +975,7 @@ extension MentraLive: CBCentralManagerDelegate {
 
             self.stopConnectionTimeout()
             self.isConnecting = false
+            self.closeL2capFileChannel()
             self.connectedPeripheral = nil
             self.updateConnectionState(ConnTypes.DISCONNECTED)
 
@@ -1072,6 +1107,10 @@ extension MentraLive: CBPeripheralDelegate {
                     Bridge.log("LIVE: 🎤 Enabled LC3 audio notifications")
                 }
 
+                // Authorization may complete before or after service discovery.
+                // This covers the former; the central-manager callback covers the latter.
+                self.enableAncsRelayIfAuthorized()
+
                 // Start readiness check loop
                 self.startSignalStrengthPolling()
                 self.startReadinessCheckLoop()
@@ -1085,6 +1124,29 @@ extension MentraLive: CBPeripheralDelegate {
                 }
                 self.centralManager?.cancelPeripheralConnection(peripheral)
             }
+        }
+    }
+
+    nonisolated func peripheral(
+        _ peripheral: CBPeripheral, didOpen channel: CBL2CAPChannel?, error: Error?
+    ) {
+        let errorDescription = error?.localizedDescription
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.l2capFileChannelOpening = false
+
+            if let errorDescription {
+                Bridge.log(
+                    "LIVE: L2CAP: unavailable, staying on GATT (\(errorDescription))"
+                )
+                return
+            }
+            guard peripheral === self.connectedPeripheral, let channel else {
+                Bridge.log("LIVE: L2CAP: open completed for a stale connection")
+                return
+            }
+
+            self.attachL2capFileChannel(channel)
         }
     }
 
@@ -1167,6 +1229,7 @@ extension MentraLive: CBPeripheralDelegate {
 
                 if uuid == self.RX_CHAR_UUID, isNotifying {
                     Bridge.log("LIVE: 🔔 Ready to receive data via notifications")
+                    self.enableAncsRelayIfAuthorized()
                 }
             }
         }
@@ -1221,13 +1284,12 @@ class MentraLive: NSObject, SGCManager {
         // a previous pairing into the next one (would otherwise surface as wrong overall_percent
         // or stale lastBesOtaProgress on the next OTA).
         if state == ConnTypes.DISCONNECTED {
-            incomingChunkReassembler.clear()
-            peerWireProtocolVersion = 0
-            useBinaryWireProtocol = false
-            wireHandshakeQueued = false
-            peerK900Le = false
-            peerWireCapsBinary = false
-            BleJsonCompact.resetSession()
+            resetWireNegotiationState()
+            resetAncsRelayState()
+            // Queued writes are session-bound: transmitting them into the NEXT session
+            // (e.g. a stale handshake whose reply activates v2 before the new session
+            // negotiated) is the bug class this clear removes.
+            Task { await commandQueue.removeAll() }
             stopSignalStrengthPolling()
             DeviceStore.shared.apply("glasses", "signalStrength", -1)
             DeviceStore.shared.apply("glasses", "signalStrengthUpdatedAt", 0)
@@ -1328,6 +1390,7 @@ class MentraLive: NSObject, SGCManager {
     private let TX_CHAR_UUID = CBUUID(string: "000071FF-0000-1000-8000-00805f9b34fb") // Central transmits on peripheral's RX
     private let FILE_READ_UUID = CBUUID(string: "000072FF-0000-1000-8000-00805f9b34fb")
     private let FILE_WRITE_UUID = CBUUID(string: "000073FF-0000-1000-8000-00805f9b34fb")
+    private let L2CAP_FILE_PSM: CBL2CAPPSM = 0x00C9
 
     // LC3 Audio UUIDs (for K901+ devices with microphone support)
     private let LC3_READ_UUID = CBUUID(string: "6E400002-B5A3-F393-E0A9-E50E24DCCA9E")
@@ -1341,6 +1404,9 @@ class MentraLive: NSObject, SGCManager {
     private var activeFileTransfers = [String: FileTransferSession]()
     private var blePhotoTransfers = [String: BlePhotoTransfer]()
     private var bleIncidentLogRelays = [String: BleIncidentLogRelayEntry]()
+    private var l2capFileChannel: MentraLiveL2capChannel?
+    private var l2capFileChannelId: UUID?
+    private var l2capFileChannelOpening = false
     private var rgbLedAuthorityClaimed = false
 
     // LC3 Audio properties
@@ -1359,6 +1425,7 @@ class MentraLive: NSObject, SGCManager {
     // So we temporarily suspend the LC3 mic during phone audio playback
     private var micIntentEnabled = false // User/system WANTS mic enabled
     private var micSuspendedForAudio = false // Mic temporarily suspended due to phone audio
+    var isMicSuspendedForAudio: Bool { micSuspendedForAudio }
     private var phoneAudioMonitor: PhoneAudioMonitor?
 
     // Timing Constants
@@ -1402,11 +1469,26 @@ class MentraLive: NSObject, SGCManager {
     private var peerWireProtocolVersion = 0
     private var useBinaryWireProtocol = false
     private var wireHandshakeQueued = false
+    private var wireHandshakeAttempts = 0
+    // Session generation in which the LAST outgoing v2 handshake was sent; a reply only
+    // activates v2 when it answers a handshake from the CURRENT epoch (see PendingMessage
+    // .generation for the queue-side guard).
+    private var wireHandshakeSentGeneration = -1
+    // Bumped on every BLE session reset; scheduled handshake-retry callbacks capture it
+    // and no-op if the session changed, so a timer from a dead session can't poke a new one.
+    private var wireSessionGeneration = 0
+    // Grace period before an unanswered BLE wire v2 handshake is re-armed for retry,
+    // and the per-session cap on automatic retries (see sendWireHandshake).
+    private static let wireHandshakeRetryGraceSeconds: TimeInterval = 5
+    private static let wireHandshakeMaxAttempts = 3
     // Negotiated K900 STRING length endianness for the phone<->glasses BLE link. Defaults to legacy
     // big-endian; upgraded to little-endian only when the glasses advertise wire_caps.k900_le (or a
     // v2 binary handshake succeeds, which implies wire-v2 LE).
     private var peerK900Le = false
+    private var ancsAppIdentifiers: [UInt32: String] = [:]
+    private var ancsRelayEnableRequested = false
     private var peerWireCapsBinary = false
+    private var peerFilePayloadV2 = false
     private var globalMessageId = 0
     private var lastReceivedMessageId = 0
     private var bleWriteTraceSequence = 0
@@ -1641,7 +1723,7 @@ class MentraLive: NSObject, SGCManager {
 
     func requestPhoto(_ request: PhotoRequest) {
         Bridge.log(
-            "LIVE: PHOTO PIPELINE [5/6] requestPhoto() entry requestId=\(request.requestId) save=\(request.save) sound=\(request.sound) iso=\(request.iso.map { String($0) } ?? "auto") aeDivisor=\(request.aeExposureDivisor.map { String($0) } ?? "nil")"
+            "LIVE: PHOTO PIPELINE [5/6] requestPhoto() entry requestId=\(request.requestId) mode=\(request.mode.rawValue) save=\(request.save) sound=\(request.sound) iso=\(request.iso.map { String($0) } ?? "auto") aeDivisor=\(request.aeExposureDivisor.map { String($0) } ?? "nil")"
         )
 
         var json: [String: Any] = [
@@ -1653,7 +1735,7 @@ class MentraLive: NSObject, SGCManager {
         let bleImgId =
             "I" + String(format: "%09d", Int(Date().timeIntervalSince1970 * 1000) % 100_000_000)
         json["bleImgId"] = bleImgId
-        json["transferMethod"] = "auto"
+        json["transferMethod"] = request.transferMethod
 
         if let webhookUrl = request.webhookUrl, !webhookUrl.isEmpty {
             json["webhookUrl"] = webhookUrl
@@ -1678,6 +1760,7 @@ class MentraLive: NSObject, SGCManager {
         let allowedSizes = ["low", "medium", "high", "max"]
         let size = request.size.rawValue
         json["size"] = allowedSizes.contains(size) ? size : "medium"
+        json["mode"] = request.mode.rawValue
 
         json["compress"] = request.compress?.rawValue ?? "none"
         json["save"] = request.save
@@ -1693,7 +1776,9 @@ class MentraLive: NSObject, SGCManager {
         }
         request.appendScanFields(to: &json)
 
-        Bridge.log("LIVE: PHOTO PIPELINE [5b/6] take_photo JSON ready bleImgId=\(bleImgId) transferMethod=auto")
+        Bridge.log(
+            "LIVE: PHOTO PIPELINE [5b/6] take_photo JSON ready bleImgId=\(bleImgId) transferMethod=\(request.transferMethod)"
+        )
         Bridge.log("LIVE: PHOTO PIPELINE [6/6] Dispatching take_photo to sendJson()")
 
         sendJson(json, wakeUp: true)
@@ -1702,11 +1787,14 @@ class MentraLive: NSObject, SGCManager {
     func warmUpCamera(
         requestId: String,
         size: PhotoSize,
+        mode: PhotoMode = .photo,
         exposureTimeNs: Double?,
-        durationMs: Int
+        durationMs: Int,
+        zsl: Bool? = nil,
+        mfnr: Bool? = nil
     ) {
         Bridge.log(
-            "LIVE: warmUpCamera() entry requestId=\(requestId) size=\(size.rawValue) durationMs=\(durationMs)"
+            "LIVE: warmUpCamera() entry requestId=\(requestId) size=\(size.rawValue) mode=\(mode.rawValue) durationMs=\(durationMs)"
         )
 
         let allowedSizes = ["low", "medium", "high", "max"]
@@ -1715,14 +1803,28 @@ class MentraLive: NSObject, SGCManager {
             "type": "camera_warm_up",
             "requestId": requestId,
             "size": allowedSizes.contains(sizeRaw) ? sizeRaw : "medium",
+            "mode": mode.rawValue,
             "durationMs": durationMs > 0 ? durationMs : 15000,
         ]
 
         if let e = exposureTimeNs, e.isFinite, e > 0, e <= Double(Int64.max) {
             json["exposureTimeNs"] = Int64(e)
         }
+        if let mfnr {
+            json["mfnr"] = mfnr
+        }
+        if let zsl {
+            json["zsl"] = zsl
+        }
 
         sendJson(json, wakeUp: true)
+    }
+
+    func stopCameraWarmUp(requestId: String) {
+        sendJson(
+            ["type": "camera_warm_up_stop", "requestId": requestId],
+            wakeUp: true
+        )
     }
 
     func startStream(_ message: [String: Any]) {
@@ -1766,17 +1868,24 @@ class MentraLive: NSObject, SGCManager {
     // MARK: - Command Queue
 
     class PendingMessage {
-        init(data: Data, id: String, retries: Int, trace: BleWriteTrace? = nil) {
+        init(data: Data, id: String, retries: Int, trace: BleWriteTrace? = nil, generation: Int = 0) {
             self.data = data
             self.id = id
             self.retries = retries
             self.trace = trace
+            self.generation = generation
         }
 
         let data: Data
         let retries: Int
         let id: String
         let trace: BleWriteTrace?
+        // Wire-session generation at enqueue time; the drain loop drops entries from a
+        // previous session so a stale write (worst case: an old handshake whose reply
+        // would activate v2 pre-negotiation) can never cross a session boundary. This is
+        // the deterministic guard - the async removeAll() on disconnect is best-effort
+        // cleanup that may land after a reconnect has already resumed the drain loop.
+        let generation: Int
     }
 
     struct OutgoingBleCommandTraceInfo {
@@ -1822,6 +1931,10 @@ class MentraLive: NSObject, SGCManager {
             guard !commands.isEmpty else { return nil }
             return commands.removeFirst()
         }
+
+        func removeAll() {
+            commands.removeAll()
+        }
     }
 
     private func setupCommandQueue() {
@@ -1831,7 +1944,12 @@ class MentraLive: NSObject, SGCManager {
                 let pendingIsNil = await MainActor.run { self.pending == nil }
                 if pendingIsNil {
                     if let command = await self.commandQueue.dequeue() {
-                        await self.processSendQueue(command)
+                        let currentGeneration = await MainActor.run { self.wireSessionGeneration }
+                        if command.generation != currentGeneration {
+                            Bridge.log("LIVE: Dropping stale queued write from a previous session epoch (id: \(command.id))")
+                        } else {
+                            await self.processSendQueue(command)
+                        }
                     }
                 }
                 try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
@@ -1907,7 +2025,8 @@ class MentraLive: NSObject, SGCManager {
                 data: pendingMessage.data,
                 id: pendingMessage.id,
                 retries: pendingMessage.retries + 1,
-                trace: pendingMessage.trace
+                trace: pendingMessage.trace,
+                generation: pendingMessage.generation
             )
 
             // Push to front of queue for immediate retry
@@ -2001,7 +2120,36 @@ class MentraLive: NSObject, SGCManager {
         // Set connection timeout
         startConnectionTimeout()
 
-        centralManager?.connect(peripheral, options: nil)
+        // ANCS is hosted by iOS and is only exposed to authorized accessories.
+        // Requiring it at connect time lets the system complete that authorization
+        // flow before the glasses subscribe to the ANCS characteristics.
+        centralManager?.connect(
+            peripheral,
+            options: [CBConnectPeripheralOptionRequiresANCS: true]
+        )
+    }
+
+    /// Opt the firmware into ANCS only after iOS has authorized this accessory.
+    /// Old firmware safely ignores the command, while new firmware stays inert
+    /// for old mobile clients that never send it.
+    private func enableAncsRelayIfAuthorized() {
+        guard !ancsRelayEnableRequested,
+              let peripheral = connectedPeripheral,
+              txCharacteristic != nil,
+              rxCharacteristic?.isNotifying == true,
+              peripheral.ancsAuthorized
+        else {
+            return
+        }
+
+        let command: [String: Any] = [
+            "C": "cs_ancs",
+            "B": ["enabled": 1],
+        ]
+        if sendRawK900Command(command) {
+            ancsRelayEnableRequested = true
+            Bridge.log("LIVE: Requested ANCS relay from compatible firmware")
+        }
     }
 
     private func handleReconnection() {
@@ -2067,6 +2215,56 @@ class MentraLive: NSObject, SGCManager {
         )
     }
 
+    // MARK: - L2CAP file channel
+
+    /// Open the BES file CoC. CoreBluetooth does not expose PHY or connection-priority
+    /// controls, so BES owns those link updates when this channel is established.
+    /// Any open failure leaves FILE_READ GATT notifications active as the fallback.
+    private func openL2capFileChannel() {
+        guard !l2capFileChannelOpening, l2capFileChannel == nil else { return }
+        guard let peripheral = connectedPeripheral else { return }
+
+        l2capFileChannelOpening = true
+        Bridge.log("LIVE: L2CAP: opening file channel (PSM 0xC9)")
+        peripheral.openL2CAPChannel(L2CAP_FILE_PSM)
+    }
+
+    private func attachL2capFileChannel(_ channel: CBL2CAPChannel) {
+        closeL2capFileChannel()
+
+        let channelId = UUID()
+        l2capFileChannelId = channelId
+        let reader = MentraLiveL2capChannel(
+            channel: channel,
+            onFileFrame: { [weak self] frame in
+                // The reader thread keeps draining the stream (and returning CoC credits)
+                // while the existing transfer state remains serialized on the main actor.
+                DispatchQueue.main.async {
+                    self?.processReceivedData(frame)
+                }
+            },
+            onClose: { [weak self] in
+                DispatchQueue.main.async {
+                    guard let self, self.l2capFileChannelId == channelId else { return }
+                    self.l2capFileChannel = nil
+                    self.l2capFileChannelId = nil
+                    Bridge.log("LIVE: L2CAP: channel closed; using GATT fallback")
+                }
+            }
+        )
+        l2capFileChannel = reader
+        reader.start()
+        Bridge.log("LIVE: L2CAP: channel open (PSM 0xC9)")
+    }
+
+    private func closeL2capFileChannel() {
+        l2capFileChannelOpening = false
+        l2capFileChannelId = nil
+        let reader = l2capFileChannel
+        l2capFileChannel = nil
+        reader?.close()
+    }
+
     // MARK: - Data Processing
 
     private func processReceivedData(_ data: Data) {
@@ -2105,10 +2303,6 @@ class MentraLive: NSObject, SGCManager {
             || commandType == K900ProtocolUtils.CMD_TYPE_AUDIO
             || commandType == K900ProtocolUtils.CMD_TYPE_DATA
         {
-            Bridge.log(
-                "📦 DETECTED FILE TRANSFER PACKET (type: 0x\(String(format: "%02X", commandType)))"
-            )
-
             // Debug: Log the raw data
             // let hexDump = data.prefix(64).map { String(format: "%02X ", $0) }.joined()
             // Bridge.log("📦 Raw file packet data length=\(data.count), first 64 bytes: \(hexDump)")
@@ -2221,13 +2415,23 @@ class MentraLive: NSObject, SGCManager {
 
         switch type {
         case "glasses_ready":
+            // glasses_ready is a REMOTE wire-session reset: the glasses ran
+            // onTransportReset() before sending it, so their side is back on legacy
+            // framing regardless of what this side negotiated earlier. Start a fresh
+            // wire epoch (clears v2-active state that would otherwise gate the
+            // handshake off), then negotiate from the caps this message advertises.
+            resetWireNegotiationState()
             parsePeerWireCaps(json)
+            maybeSendWireHandshake()
             handleGlassesReady()
 
         case "battery_status":
-            let level = json["level"] as? Int ?? batteryLevel
-            let isCharging = json["charging"] as? Bool ?? charging
-            updateBatteryStatus(level: level, isCharging: isCharging)
+            // Percent only (the glasses send it as "percent"; the old "level" read never
+            // matched). battery_status derives from hm_batv, which carries no charge bit —
+            // older glasses fabricate `charging` from a voltage threshold. Charging state
+            // comes exclusively from the PMU charg bit in the sr_hrt heartbeat.
+            let level = json["percent"] as? Int ?? json["level"] as? Int ?? batteryLevel
+            updateBatteryStatus(level: level, isCharging: charging)
 
         case "voice_activity_detection_status":
             let enabled = json["voiceActivityDetectionEnabled"] as? Bool
@@ -2242,7 +2446,18 @@ class MentraLive: NSObject, SGCManager {
             let connected = json["connected"] as? Bool ?? false
             let ssid = json["ssid"] as? String ?? ""
             let ip = json["local_ip"] as? String ?? ""
-            updateWifiStatus(connected: connected, ssid: ssid, ip: ip)
+            // Provisioning failure reason (e.g. connect_timeout). Sticky: routine
+            // error-less status updates (link-state debounce, request_wifi_status)
+            // must not clear a failure nothing recovered from — only a newer error
+            // or a successful connection overwrites it.
+            let wifiError = json["error"] as? String ?? ""
+            if !wifiError.isEmpty {
+                Bridge.log("LIVE: 🌐 WiFi provisioning error from glasses: \(wifiError)")
+                DeviceStore.shared.apply("glasses", "wifiError", wifiError)
+            } else if connected {
+                DeviceStore.shared.apply("glasses", "wifiError", "")
+            }
+            updateWifiStatus(connected: connected, ssid: ssid, ip: ip, error: wifiError.isEmpty ? nil : wifiError)
 
         case "hotspot_status_update":
             let enabled = json["hotspot_enabled"] as? Bool ?? false
@@ -2486,8 +2701,6 @@ class MentraLive: NSObject, SGCManager {
                 if let buildNumber = fields["build_number"] as? String {
                     isNewVersion = (Int(buildNumber) ?? 0) >= 5
                     DeviceStore.shared.apply("glasses", "buildNumber", buildNumber)
-                    parsePeerWireCaps(json)
-                    maybeSendWireHandshake()
                 }
                 if let deviceModel = fields["device_model"] as? String {
                     DeviceStore.shared.apply("glasses", "deviceModel", deviceModel)
@@ -2518,6 +2731,16 @@ class MentraLive: NSObject, SGCManager {
                 if let systemTimeMs = fields["system_time_ms"] as? NSNumber {
                     DeviceStore.shared.apply("glasses", "systemTimeMs", systemTimeMs.int64Value)
                 }
+
+                // Negotiate wire caps from ANY version_info chunk, not only the one
+                // carrying build_number: the glasses put wire_caps in version_info_3
+                // (firmware chunk) while build_number travels in version_info_1, so
+                // gating negotiation on build_number silently discards the caps.
+                // parsePeerWireCaps no-ops without a wire_caps key and
+                // maybeSendWireHandshake gates on caps + build + not-yet-queued, so
+                // running them per chunk is safe.
+                parsePeerWireCaps(json)
+                maybeSendWireHandshake()
 
                 Bridge.sendVersionInfo(fields)
             } else {
@@ -2616,14 +2839,22 @@ class MentraLive: NSObject, SGCManager {
         }
 
         switch command {
+        case "sr_ancs":
+            if let body = k900ParseBody(json["B"]) {
+                processAncsRelay(body)
+            }
+
         case "sr_hrt":
             if let bodyObj = json["B"] as? [String: Any] {
                 let readyResponse = bodyObj["ready"] as? Int ?? 0
 
-                // Extract battery info from heartbeat
+                // Extract battery info from heartbeat. charg is the PMU charging bit — the
+                // only truthful charging source in the protocol. Old firmware omits it;
+                // keep the last known state then instead of defaulting to not-charging.
                 let percentage = bodyObj["pt"] as? Int ?? 0
                 let voltage = bodyObj["vt"] as? Int ?? 0
-                let charging = (bodyObj["charg"] as? Int ?? 0) == 1
+                let chargBit = bodyObj["charg"] as? Int
+                let charging = chargBit != nil ? (chargBit == 1) : self.charging
 
                 // SOC is still booting
                 if readyResponse == 0 {
@@ -2671,12 +2902,15 @@ class MentraLive: NSObject, SGCManager {
                let percentage = body["pt"] as? Int
             {
                 let voltageVolts = Double(voltage) / 1000.0
-                let isCharging = voltage > 4000
 
                 Bridge.log(
                     "🔋 K900 Battery Status - Voltage: \(voltageVolts)V, Level: \(percentage)%"
                 )
-                updateBatteryStatus(level: percentage, isCharging: isCharging)
+                // Percent only. sr_batv carries just voltage+percent; inferring charging
+                // from voltage (>4.0V) reads "not charging" for most of a genuinely-charging
+                // pack's range. Charging state comes exclusively from the PMU charg bit in
+                // the sr_hrt heartbeat.
+                updateBatteryStatus(level: percentage, isCharging: charging)
             }
 
         case "sr_getvol":
@@ -2766,7 +3000,17 @@ class MentraLive: NSObject, SGCManager {
 
                 let syntheticStatus: String
                 if besOtaStatus == "FINISHED" {
-                    syntheticStatus = "step_complete"
+                    // The glasses power-cycle right after the final BES tick, so a session
+                    // whose BES step is the LAST step never gets a follow-up ota_status from
+                    // the glasses — consumers mapping on this synthetic status would otherwise
+                    // never see a terminal state. Emit "complete" for the final step;
+                    // mid-session BES steps keep "step_complete" so session-level trackers
+                    // advance normally. Unknown sessions (cachedOtaTotalSteps == 0, e.g.
+                    // legacy glasses that never sent an ota_status) conservatively keep
+                    // "step_complete".
+                    syntheticStatus = (cachedOtaTotalSteps > 0 && cachedOtaCurrentStep >= cachedOtaTotalSteps)
+                        ? "complete"
+                        : "step_complete"
                 } else if besOtaStatus == "FAILED" {
                     syntheticStatus = "failed"
                 } else {
@@ -2814,11 +3058,87 @@ class MentraLive: NSObject, SGCManager {
         }
     }
 
+    /// Convert a Mentra Live firmware ANCS relay packet into the same native
+    /// events used by Android's NotificationListenerService.
+    private func processAncsRelay(_ body: [String: Any]) {
+        guard let event = body["event"] as? String,
+              let uid = (body["uid"] as? NSNumber)?.uint32Value
+        else {
+            Bridge.log("LIVE: Ignoring malformed ANCS relay packet")
+            return
+        }
+
+        let notificationId = "ancs-\(uid)"
+        let appIdentifier = body["appIdentifier"] as? String ?? ""
+
+        if event == "removed" {
+            let removedAppIdentifier = ancsAppIdentifiers.removeValue(forKey: uid) ?? appIdentifier
+            Bridge.sendTypedMessage(
+                "phone_notification_dismissed",
+                body: [
+                    "notificationId": notificationId,
+                    "notificationKey": notificationId,
+                    "packageName": removedAppIdentifier,
+                    "timestamp": Int64(Date().timeIntervalSince1970 * 1000),
+                ]
+            )
+            return
+        }
+
+        guard event == "added" || event == "modified" else {
+            Bridge.log("LIVE: Ignoring unknown ANCS event: \(event)")
+            return
+        }
+
+        let title = body["title"] as? String ?? ""
+        let subtitle = body["subtitle"] as? String ?? ""
+        let message = body["message"] as? String ?? ""
+        let content = [subtitle, message]
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n")
+        let flags = (body["flags"] as? NSNumber)?.uint8Value ?? 0
+        if !appIdentifier.isEmpty {
+            ancsAppIdentifiers[uid] = appIdentifier
+        }
+
+        Bridge.sendTypedMessage(
+            "phone_notification",
+            body: [
+                "notificationId": notificationId,
+                "app": appIdentifier,
+                "title": title,
+                "content": content,
+                "priority": (flags & 0x02) != 0 ? "1" : "0",
+                "timestamp": ancsTimestamp(body["date"] as? String),
+                "packageName": appIdentifier,
+            ]
+        )
+    }
+
+    private func ancsTimestamp(_ value: String?) -> Int64 {
+        guard let value, !value.isEmpty else {
+            return Int64(Date().timeIntervalSince1970 * 1000)
+        }
+
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.timeZone = .current
+        formatter.dateFormat = "yyyyMMdd'T'HHmmss"
+        guard let date = formatter.date(from: value) else {
+            return Int64(Date().timeIntervalSince1970 * 1000)
+        }
+        return Int64(date.timeIntervalSince1970 * 1000)
+    }
+
     // commands to send to the glasses:
 
-    func requestWifiScan() {
+    func requestWifiScan(scanId: String?) {
         Bridge.log("LIVE: Requesting WiFi scan from glasses")
-        let json: [String: Any] = ["type": "request_wifi_scan"]
+        var json: [String: Any] = ["type": "request_wifi_scan"]
+        if let scanId, !scanId.isEmpty {
+            json["scanId"] = scanId
+        }
         sendJson(json, wakeUp: true)
     }
 
@@ -3000,6 +3320,8 @@ class MentraLive: NSObject, SGCManager {
         Bridge.log("LIVE: 🎉 Received glasses_ready message - SOC is booted and ready!")
 
         stopReadinessCheckLoop()
+        advertiseFilePayloadCapabilityToBes()
+        openL2capFileChannel()
         sendBleMtuConfig()
 
         // Invalidate any version fields from a prior link session so the next version_info
@@ -3056,7 +3378,8 @@ class MentraLive: NSObject, SGCManager {
         }
 
         let scanComplete = json["scan_complete"] as? Bool ?? json["scanComplete"] as? Bool ?? false
-        Bridge.updateWifiScanResults(networks, scanComplete: scanComplete)
+        let scanId = (json["scanId"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        Bridge.updateWifiScanResults(networks, scanComplete: scanComplete, scanId: scanId)
     }
 
     private func handleButtonPress(_ json: [String: Any]) {
@@ -3316,7 +3639,9 @@ class MentraLive: NSObject, SGCManager {
         }
 
         if let incidentRelay = bleIncidentLogRelays[bleImgId] {
-            Bridge.log("LIVE: 📦 BLE incident log relay packet for: \(bleImgId)")
+            if K900ProtocolUtils.shouldLogFilePacket(packetInfo) {
+                Bridge.log("LIVE: 📦 BLE incident log relay packet for: \(bleImgId)")
+            }
 
             if incidentRelay.session == nil {
                 activeFileTransfers.removeValue(forKey: packetInfo.fileName)
@@ -3366,7 +3691,9 @@ class MentraLive: NSObject, SGCManager {
 
         if var photoTransfer = blePhotoTransfers[bleImgId] {
             // This is a BLE photo transfer
-            Bridge.log("📦 BLE photo transfer packet for requestId: \(photoTransfer.requestId)")
+            if K900ProtocolUtils.shouldLogFilePacket(packetInfo) {
+                Bridge.log("📦 BLE photo transfer packet for requestId: \(photoTransfer.requestId)")
+            }
 
             // Get or create session for this transfer
             if photoTransfer.session == nil {
@@ -3462,9 +3789,11 @@ class MentraLive: NSObject, SGCManager {
             activeFileTransfers[packetInfo.fileName] = sess
 
             if added {
-                Bridge.log(
-                    "LIVE: 📦 Packet \(packetInfo.packIndex) received successfully (BES will auto-ACK)"
-                )
+                if K900ProtocolUtils.shouldLogFilePacket(packetInfo) {
+                    Bridge.log(
+                        "LIVE: 📦 Packet \(packetInfo.packIndex) received successfully (BES will auto-ACK)"
+                    )
+                }
 
                 if sess.isComplete {
                     Bridge.log("LIVE: 📦 File transfer complete: \(packetInfo.fileName)")
@@ -3734,8 +4063,12 @@ class MentraLive: NSObject, SGCManager {
 
     func queueSend(_ data: Data, id: String, trace: BleWriteTrace?) {
         let significantQueueSize = SIGNIFICANT_BLE_TRACE_QUEUE_SIZE
+        // Capture the epoch at enqueue-request time: the Task body may run after a
+        // session reset, and a pre-reset payload stamped with the new generation would
+        // defeat the stale-write guard in the drain loop.
+        let generation = wireSessionGeneration
         Task {
-            let queueSize = await commandQueue.enqueue(PendingMessage(data: data, id: id, retries: 0, trace: trace))
+            let queueSize = await commandQueue.enqueue(PendingMessage(data: data, id: id, retries: 0, trace: trace, generation: generation))
             guard trace != nil, queueSize >= significantQueueSize else {
                 return
             }
@@ -3965,19 +4298,47 @@ class MentraLive: NSObject, SGCManager {
         }
         Bridge.log("LIVE: Sending BLE wire v2 handshake")
         wireHandshakeQueued = true
+        wireHandshakeSentGeneration = wireSessionGeneration
         queueSend(packed, id: "-1")
+        // The handshake and its reply are fire-and-forget binary frames with no ACK
+        // tracking; if either is lost, wireHandshakeQueued would block every future
+        // attempt and the session would silently stay on the legacy string wire.
+        // Re-arm after a grace period so negotiation can retry, bounded per session
+        // so a peer that advertises binary but never answers doesn't get pinged
+        // forever (later caps/version triggers may still retry explicitly).
+        wireHandshakeAttempts += 1
+        let scheduledGeneration = wireSessionGeneration
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.wireHandshakeRetryGraceSeconds) { [weak self] in
+            guard let self else { return }
+            guard scheduledGeneration == self.wireSessionGeneration else { return }
+            if self.wireHandshakeQueued, self.peerWireProtocolVersion < BleWireProtocol.protocolV2 {
+                Bridge.log(
+                    "LIVE: BLE wire v2 handshake unanswered after \(Self.wireHandshakeRetryGraceSeconds)s " +
+                        "(attempt \(self.wireHandshakeAttempts)/\(Self.wireHandshakeMaxAttempts)) - re-arming"
+                )
+                self.wireHandshakeQueued = false
+                if self.wireHandshakeAttempts < Self.wireHandshakeMaxAttempts {
+                    self.maybeSendWireHandshake()
+                }
+            }
+        }
     }
 
     private func activateBinaryWireV2Session(logMessage: String) {
         peerWireProtocolVersion = BleWireProtocol.protocolV2
         useBinaryWireProtocol = true
         wireHandshakeQueued = false
+        wireHandshakeAttempts = 0
         peerK900Le = true
         BleJsonCompact.markSessionConnected(epochMs: Int64(Date().timeIntervalSince1970 * 1000))
         Bridge.log(logMessage)
     }
 
     private func handlePeerWireHandshake() {
+        if wireHandshakeSentGeneration != wireSessionGeneration {
+            Bridge.log("LIVE: Ignoring wire v2 handshake reply from a previous session epoch")
+            return
+        }
         activateBinaryWireV2Session(logMessage: "LIVE: Peer confirmed BLE wire protocol v2")
     }
 
@@ -4497,12 +4858,12 @@ class MentraLive: NSObject, SGCManager {
         }
     }
 
-    private func updateWifiStatus(connected: Bool, ssid: String, ip: String) {
+    private func updateWifiStatus(connected: Bool, ssid: String, ip: String, error: String? = nil) {
         Bridge.log("LIVE: 🌐 Updating WiFi status - connected: \(connected), ssid: \(ssid)")
         DeviceStore.shared.apply("glasses", "wifiConnected", connected)
         DeviceStore.shared.apply("glasses", "wifiSsid", ssid)
         DeviceStore.shared.apply("glasses", "wifiLocalIp", ip)
-        emitWifiStatusChange()
+        emitWifiStatusChange(error: error)
     }
 
     private func updateHotspotStatus(enabled: Bool, ssid: String, password: String, ip: String) {
@@ -4796,8 +5157,8 @@ class MentraLive: NSObject, SGCManager {
     //   emitEvent("BatteryLevelEvent", body: eventBody)
     // }
 
-    private func emitWifiStatusChange() {
-        Bridge.sendWifiStatusChange(connected: wifiConnected, ssid: wifiSsid, localIp: wifiLocalIp)
+    private func emitWifiStatusChange(error: String? = nil) {
+        Bridge.sendWifiStatusChange(connected: wifiConnected, ssid: wifiSsid, localIp: wifiLocalIp, error: error)
     }
 
     private func emitHotspotStatusChange() {
@@ -4879,13 +5240,9 @@ class MentraLive: NSObject, SGCManager {
 
         // Stop all timers
         stopAllTimers()
-        incomingChunkReassembler.clear()
-        peerWireProtocolVersion = 0
-        useBinaryWireProtocol = false
-        wireHandshakeQueued = false
-        peerK900Le = false
-        peerWireCapsBinary = false
-        BleJsonCompact.resetSession()
+        resetWireNegotiationState()
+        Task { await commandQueue.removeAll() } // stale writes die with the session
+        closeL2capFileChannel()
 
         // Disconnect BLE
         if let peripheral = connectedPeripheral {
@@ -4977,6 +5334,34 @@ extension MentraLive {
      * per-link endianness and binary support. Missing wire_caps leaves the legacy defaults (BE, no
      * binary) untouched so older glasses keep working.
      */
+    /// Drop every negotiated wire-session artifact and bump the session generation so
+    /// scheduled callbacks from the old session stand down. Called on BLE disconnect and on
+    /// glasses_ready: the glasses run onTransportReset() before sending glasses_ready, so a
+    /// mid-link ASG restart (no BLE disconnect) resets THEIR side to legacy framing - the
+    /// phone must treat every glasses_ready as a new wire epoch and renegotiate (bounded by
+    /// the per-session handshake attempt cap) instead of trusting stale v2-active state.
+    private func resetWireNegotiationState() {
+        incomingChunkReassembler.clear()
+        peerWireProtocolVersion = 0
+        useBinaryWireProtocol = false
+        wireHandshakeQueued = false
+        wireHandshakeAttempts = 0
+        wireSessionGeneration += 1
+        peerK900Le = false
+        peerWireCapsBinary = false
+        peerFilePayloadV2 = false
+        BleJsonCompact.resetSession()
+        wireHandshakeSentGeneration = -1
+    }
+
+    /// ANCS notification IDs live for the BLE link, not the wire epoch. A
+    /// glasses_ready message may reset wire negotiation without disconnecting,
+    /// so clear this state only when the BLE session itself ends.
+    private func resetAncsRelayState() {
+        ancsAppIdentifiers.removeAll()
+        ancsRelayEnableRequested = false
+    }
+
     private func parsePeerWireCaps(_ json: [String: Any]) {
         guard let caps = json["wire_caps"] as? [String: Any] else { return }
         if (caps["k900_le"] as? Bool) == true {
@@ -4987,6 +5372,20 @@ extension MentraLive {
         }
         if caps.keys.contains("binary") {
             peerWireCapsBinary = (caps["binary"] as? Bool) == true
+        }
+        if caps.keys.contains("file_payload_v2") {
+            peerFilePayloadV2 = (caps["file_payload_v2"] as? Bool) == true
+        }
+    }
+
+    private func advertiseFilePayloadCapabilityToBes() {
+        guard peerFilePayloadV2 else { return }
+        let body = "{\"max\":\(K900ProtocolUtils.FILE_PACK_SIZE)}"
+        let command: [String: Any] = ["C": "cs_file_payload", "B": body]
+        if sendRawK900Command(command) {
+            Bridge.log(
+                "LIVE: 📦 Advertised file payload ceiling \(K900ProtocolUtils.FILE_PACK_SIZE) to BES"
+            )
         }
     }
 
@@ -5736,11 +6135,12 @@ extension MentraLive {
     }
 
     func sendButtonPhotoSettings() {
+        let legacyZslMfnr = DeviceStore.shared.get("bluetooth", "button_photo_zsl_mfnr") as? Bool
         let size = (DeviceStore.shared.get("bluetooth", "button_photo_size") as? String).flatMap { rawSize in
             rawSize.isEmpty ? nil : PhotoSize(normalizedRawValue: rawSize)
         }
-        let mfnr = DeviceStore.shared.get("bluetooth", "button_photo_mfnr") as? Bool
-        let zsl = DeviceStore.shared.get("bluetooth", "button_photo_zsl") as? Bool
+        let mfnr = DeviceStore.shared.get("bluetooth", "button_photo_mfnr") as? Bool ?? legacyZslMfnr
+        let zsl = DeviceStore.shared.get("bluetooth", "button_photo_zsl") as? Bool ?? legacyZslMfnr
         let noiseReduction = DeviceStore.shared.get("bluetooth", "button_photo_noise_reduction") as? Bool
         let edgeEnhancement = DeviceStore.shared.get("bluetooth", "button_photo_edge_enhancement") as? Bool
         let ispDigitalGain = DeviceStore.shared.get("bluetooth", "button_photo_isp_digital_gain") as? Int
@@ -5858,7 +6258,7 @@ extension MentraLive {
 
     func sendCameraFovSetting() {
         let settings = DeviceStore.shared.get("bluetooth", "camera_fov") as? [String: Any] ?? ["fov": 118, "roi_position": 0]
-        let fov = settings["fov"] as? Int ?? 118
+        let fov = settings["fov"] as? Int ?? CameraFov.defaultFov
         let roiPosition = settings["roi_position"] as? Int ?? 0
         sendCameraFovSetting(requestId: nil, fov: fov, roiPosition: roiPosition)
     }
@@ -5882,6 +6282,39 @@ extension MentraLive {
             json["request_id"] = requestId
         }
         sendJson(json, wakeUp: true)
+    }
+
+    func sendCameraFovOverride(
+        requestId: String,
+        leaseId: String,
+        fov: Int,
+        roiPosition: Int,
+        ttlMs: Int
+    ) {
+        sendJson(
+            [
+                "type": "camera_fov_override",
+                "request_id": requestId,
+                "params": [
+                    "lease_id": leaseId,
+                    "fov": fov,
+                    "roi_position": roiPosition,
+                    "ttl_ms": ttlMs,
+                ],
+            ],
+            wakeUp: true
+        )
+    }
+
+    func releaseCameraFovOverride(requestId: String, leaseId: String) {
+        sendJson(
+            [
+                "type": "camera_fov_override_release",
+                "request_id": requestId,
+                "params": ["lease_id": leaseId],
+            ],
+            wakeUp: true
+        )
     }
 
     func sendCameraTuningConfig(requestId: String?, anrOn: Bool, gainOn: Bool) {

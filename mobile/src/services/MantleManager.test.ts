@@ -1,11 +1,17 @@
 import {waitFor} from "@testing-library/react-native"
+import {router} from "expo-router"
 
 import mantle from "@/services/MantleManager"
-import restComms from "@/services/RestComms"
-import {useCoreStore} from "@/stores/core"
-import {useDisplayStore} from "@/stores/display"
-import {isGlassesConnected, useGlassesStore} from "../../modules/island/src/stores/glasses"
-import {SETTINGS, useSettingsStore} from "@/stores/settings"
+import {
+  localDisplayManager,
+  localMiniappRuntime,
+  useAppStatusStore,
+  useCoreStore,
+  useDisplayStore,
+  useSettingsStore,
+} from "@mentra/engine/internal"
+import {isGlassesConnected, useGlassesStore} from "../../modules/engine/src/stores/glasses"
+import {engine, SETTINGS} from "@mentra/engine"
 import {crustModuleMock, emitCrustEvent, resetCrustModuleMock} from "@/test-utils/mockCrustModule"
 import {
   bluetoothSdkMock,
@@ -30,51 +36,14 @@ jest.mock("@mentra/crust", () => {
   }
 })
 
-jest.mock("@/services/RestComms", () => ({
+const mockShowAlert = jest.fn()
+jest.mock("@/utils/AlertUtils", () => ({
   __esModule: true,
-  default: {
-    loadUserSettings: jest.fn(async () => ({
-      is_ok: () => true,
-      is_error: () => false,
-      value: {
-        contextual_dashboard: true,
-        core_token: "server-token",
-        auth_email: "from-server@example.com",
-      },
-    })),
-    writeUserSettings: jest.fn(async () => ({
-      is_ok: () => true,
-      is_error: () => false,
-    })),
-    sendPhoneNotification: jest.fn(async () => ({
-      is_ok: () => true,
-      is_error: () => false,
-    })),
-    sendPhoneNotificationDismissed: jest.fn(async () => ({
-      is_ok: () => true,
-      is_error: () => false,
-    })),
-    sendCalendarData: jest.fn(async () => ({
-      is_ok: () => true,
-      is_error: () => false,
-    })),
-    sendLocationData: jest.fn(),
-    goodbye: jest.fn(async () => ({
-      is_ok: () => true,
-      is_error: () => false,
-    })),
-  },
+  default: (...args: unknown[]) => mockShowAlert(...args),
+  showAlert: (...args: unknown[]) => mockShowAlert(...args),
 }))
 
-jest.mock("@/services/SocketComms", () => ({
-  __esModule: true,
-  default: {
-    connectWebsocket: jest.fn(),
-    cleanup: jest.fn(),
-  },
-}))
-
-// gallerySyncService moved into @mentra/island; the global @mentra/island jest mock
+// gallerySyncService moved into @mentra/engine; the global @mentra/engine jest mock
 // already supplies it (gallerySyncService.initialize), so no local mock is needed.
 
 jest.mock("@/services/Migrations", () => ({
@@ -121,19 +90,32 @@ jest.mock("expo-task-manager", () => ({
 }))
 
 function resetMantleTestState() {
+  useAppStatusStore.setState({apps: []})
   useCoreStore.getState().reset()
   useGlassesStore.getState().reset()
   useSettingsStore.getState().resetAllSettingsLocally()
   useDisplayStore.setState({view: "main"})
 }
 
+let requestWifiSetup: (reason?: string, packageName?: string) => Promise<void>
+let routerPushSpy: jest.SpiedFunction<typeof router.push>
+let syncCoreDisplayOwner: () => void
+
 describe("MantleManager", () => {
   beforeAll(async () => {
+    routerPushSpy = jest.spyOn(router, "push").mockImplementation(() => {})
     jest.useFakeTimers()
     resetBluetoothSdkMock()
     resetCrustModuleMock()
     resetMantleTestState()
+    // The V1 settings pull is retired; seed what its mock used to return so
+    // the glasses-sync assertions still exercise the propagation path.
+    useSettingsStore.setState((state) => ({
+      settings: {...state.settings, contextual_dashboard: true, auth_email: "from-server@example.com"},
+    }))
     await mantle.init()
+    requestWifiSetup = (engine.configure as jest.Mock).mock.calls[0][0].ui.requestWifiSetup
+    syncCoreDisplayOwner = (useAppStatusStore.subscribe as jest.Mock).mock.calls.at(-1)![0]
   })
 
   afterEach(() => {
@@ -204,9 +186,8 @@ describe("MantleManager", () => {
     // photo_response / touch_event routing moved into island's DeviceEventRouter
     // (covered by deviceEventRouter.test.ts); MantleManager no longer handles them.
 
-    // Local transcripts no longer roundtrip through the cloud (SocketComms has
-    // no transcription send anymore). With no local-miniapp subscription and
-    // the offline-captions flag off, the transcript is simply dropped.
+    // Local transcripts no longer roundtrip through the cloud. With no
+    // local-miniapp subscription, the transcript is simply dropped.
     emitBluetoothSdkEvent("local_transcription", {
       text: "hello world",
       isFinal: true,
@@ -252,6 +233,19 @@ describe("MantleManager", () => {
         notifications_blocklist: expect.anything(),
       }),
     )
+  })
+
+  it("keeps the running standard miniapp as display core when Notifications is background", () => {
+    useAppStatusStore.setState({
+      apps: [
+        {packageName: "com.mentra.captions", type: "standard", running: true},
+        {packageName: "cloud.augmentos.notify", type: "background", running: true},
+      ] as any,
+    })
+
+    syncCoreDisplayOwner()
+
+    expect(localDisplayManager.onCoreAppChange).toHaveBeenLastCalledWith("com.mentra.captions")
   })
 
   it("keeps non-SDK settings out of Bluetooth SDK sync", async () => {
@@ -315,10 +309,10 @@ describe("MantleManager", () => {
     expect(useGlassesStore.getState().wifi).toEqual({state: "disconnected"})
   })
 
-  it("maps notification events to REST payloads", async () => {
-    ;(restComms.sendPhoneNotification as jest.Mock).mockClear()
-    ;(restComms.sendPhoneNotificationDismissed as jest.Mock).mockClear()
-
+  it("routes notification events without the retired V1 upload", async () => {
+    // The Cloud V1 REST upload is gone; the events still flow through the
+    // local-miniapp forward path without a server roundtrip.
+    const forwardEvent = jest.spyOn(localMiniappRuntime, "forwardEvent")
     emitCrustEvent("phone_notification", {
       notificationId: "n-1",
       app: "Calendar",
@@ -333,23 +327,56 @@ describe("MantleManager", () => {
       notificationKey: "key-1",
       packageName: "com.calendar",
     })
-
-    await waitFor(() => {
-      expect(restComms.sendPhoneNotification).toHaveBeenCalledWith({
-        notificationId: "n-1",
-        app: "Calendar",
-        title: "Standup",
-        content: "Daily sync",
-        priority: "4",
-        timestamp: 12345,
-        packageName: "com.calendar",
-      })
-      expect(restComms.sendPhoneNotificationDismissed).toHaveBeenCalledWith({
-        notificationId: "n-1",
-        notificationKey: "key-1",
-        packageName: "com.calendar",
-      })
+    emitBluetoothSdkEvent("phone_notification", {
+      notificationId: "ancs-42",
+      app: "com.apple.mobilemail",
+      title: "Build complete",
+      content: "The iOS relay is working",
+      priority: "1",
+      timestamp: 12345,
+      packageName: "com.apple.mobilemail",
     })
+    emitBluetoothSdkEvent("phone_notification_dismissed", {
+      notificationId: "ancs-42",
+      notificationKey: "ancs-42",
+      packageName: "com.apple.mobilemail",
+      timestamp: 12346,
+    })
+
+    expect(forwardEvent).toHaveBeenCalledWith("phone_notification", {
+      notificationId: "ancs-42",
+      app: "com.apple.mobilemail",
+      title: "Build complete",
+      content: "The iOS relay is working",
+      priority: "1",
+      timestamp: 12345,
+      packageName: "com.apple.mobilemail",
+    })
+    expect(forwardEvent).toHaveBeenCalledWith("phone_notification_dismissed", {
+      notificationId: "ancs-42",
+      notificationKey: "ancs-42",
+      packageName: "com.apple.mobilemail",
+      timestamp: 12346,
+    })
+    expect(localDisplayManager.request).toHaveBeenNthCalledWith(1, "cloud.augmentos.notify", {
+      layout: {
+        layoutType: "reference_card",
+        title: "Calendar: Standup",
+        text: "Daily sync",
+      },
+      durationMs: 5_000,
+    })
+    expect(localDisplayManager.request).toHaveBeenNthCalledWith(2, "cloud.augmentos.notify", {
+      layout: {
+        layoutType: "reference_card",
+        title: "com.apple.mobilemail: Build complete",
+        text: "The iOS relay is working",
+      },
+      durationMs: 5_000,
+    })
+    expect(localDisplayManager.dismiss).toHaveBeenCalledTimes(2)
+    expect(localDisplayManager.dismiss).toHaveBeenLastCalledWith("cloud.augmentos.notify")
+    await Promise.resolve()
   })
 
   it("tracks OTA status without allowing backward progress or stale terminal update hints", async () => {
@@ -396,5 +423,27 @@ describe("MantleManager", () => {
     })
     expect(useGlassesStore.getState().otaUpdateAvailable).toBeNull()
     expect(useGlassesStore.getState().otaInProgress).toBe(false)
+  })
+
+  it("prompts before opening Wi-Fi setup and backgrounds the requesting miniapp", async () => {
+    const cancelRequest = requestWifiSetup("Streaming needs Wi-Fi")
+    const [, message, cancelButtons] = mockShowAlert.mock.calls.at(-1)!
+
+    expect(message).toBe("Streaming needs Wi-Fi")
+    expect(engine.miniapps.clearForeground).not.toHaveBeenCalled()
+    cancelButtons[0].onPress()
+    await cancelRequest
+    expect(engine.miniapps.clearForeground).not.toHaveBeenCalled()
+
+    const confirmRequest = requestWifiSetup("Streaming needs Wi-Fi", "com.mentra.livestreamer")
+    const confirmButtons = mockShowAlert.mock.calls.at(-1)![2]
+    confirmButtons[1].onPress()
+    await confirmRequest
+
+    expect(engine.miniapps.clearForeground).toHaveBeenCalledTimes(1)
+    expect(routerPushSpy).toHaveBeenLastCalledWith({
+      pathname: "/wifi/scan",
+      params: {returnToMiniapp: "com.mentra.livestreamer"},
+    })
   })
 })

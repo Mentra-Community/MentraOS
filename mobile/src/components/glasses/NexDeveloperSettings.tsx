@@ -1,5 +1,5 @@
 import {Capabilities, getModelCapabilities} from "@/../../cloud/packages/types/src"
-import {toolkit} from "@mentra/island"
+import {engine} from "@mentra/engine"
 import {useEffect, useState} from "react"
 import {ScrollView, TextInput, TextStyle, TouchableOpacity, View, ViewStyle} from "react-native"
 
@@ -9,7 +9,7 @@ import {RouteButton} from "@/components/ui/RouteButton"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n/translate"
-import {SETTINGS, useSetting} from "@/stores/settings"
+import {SETTINGS, useSetting} from "@mentra/engine"
 import {ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
 import {MOCK_CONNECTION} from "@/utils/Constants"
@@ -255,7 +255,7 @@ export default function NexDeveloperSettings() {
   const {theme, themed} = useAppTheme()
   const {push} = useNavigationStore.getState()
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
-  const [glassesConnected, setGlassesConnected] = useState(() => toolkit.glasses.status().state === "connected")
+  const [glassesConnected, setGlassesConnected] = useState(() => engine.glasses.status().state === "connected")
   const features: Capabilities = getModelCapabilities(defaultWearable)
 
   // Mentra Display BLE test state variables
@@ -287,8 +287,8 @@ export default function NexDeveloperSettings() {
   const [showFullReceiverCommand, setShowFullReceiverCommand] = useState(false)
 
   useEffect(() => {
-    setGlassesConnected(toolkit.glasses.status().state === "connected")
-    return toolkit.glasses.onStatus((status) => {
+    setGlassesConnected(engine.glasses.status().state === "connected")
+    return engine.glasses.onStatus((status) => {
       setGlassesConnected(status.state === "connected")
     })
   }, [])
@@ -330,7 +330,7 @@ export default function NexDeveloperSettings() {
         ])
         return
       }
-      await toolkit.display.text(text, parseInt(positionX, 10), parseInt(positionY, 10), parseInt(size, 10))
+      await engine.display.text(text, parseInt(positionX, 10), parseInt(positionY, 10), parseInt(size, 10))
     } else {
       showAlert("Please connect to the device", "Please connect to the device", [
         {
@@ -366,7 +366,7 @@ export default function NexDeveloperSettings() {
 
   const onClearDisplayClick = async () => {
     if (glassesConnected) {
-      await toolkit.display.clear()
+      await engine.display.clear()
     } else {
       showAlert("Please connect to the device", "Please connect to the device", [
         {

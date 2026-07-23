@@ -17,6 +17,8 @@ type Props = {
   /** Active route polyline — used to compute a route-following distance
    *  fallback (matches the glasses) when the SDK value isn't in yet. */
   routePoints?: LatLng[] | null
+  canRepeatDirection: boolean
+  onRepeatDirection: () => void
   onStop: () => void
   onClose: () => void
 }
@@ -31,6 +33,8 @@ export function NavigationRunningDrawer({
   routeDistanceMeters,
   routeDurationSeconds,
   routePoints,
+  canRepeatDirection,
+  onRepeatDirection,
   onStop,
 }: Props) {
   const unitSystem = useNavStore((s) => s.unitSystem)
@@ -89,7 +93,7 @@ export function NavigationRunningDrawer({
           exit={{y: "100%"}}
           transition={{type: "spring", stiffness: 320, damping: 42}}
           className="fixed left-0 right-0 bottom-0 z-40 pointer-events-none">
-          <div ref={measureRef} className="[font-synthesis:none] pointer-events-auto mx-auto max-w-md flex items-center pt-4 pb-8.5 gap-2 bg-[#FFFFFFA6] border-t border-t-solid border-t-[#FFFFFF80] [backdrop-filter:blur(40px)_saturate(180%)] antialiased px-4 rounded-t-[28px]">
+          <div ref={measureRef} className="[font-synthesis:none] pointer-events-auto mx-auto max-w-md flex items-center pt-4 pb-8.5 gap-2 bg-[#FFFFFFA6] dark:bg-[#161619CC] border-t border-t-solid border-t-[#FFFFFF80] dark:border-t-[#FFFFFF1A] [backdrop-filter:blur(40px)_saturate(180%)] antialiased px-4 rounded-t-[28px]">
             <StatRow
               items={[
                 {label: arrivalLabel, sub: "Arrival"},
@@ -97,10 +101,18 @@ export function NavigationRunningDrawer({
                 {label: distanceLabel, sub: "Distance"},
               ]}
             />
+            {canRepeatDirection ? (
+              <button
+                type="button"
+                onClick={onRepeatDirection}
+                className="h-11 flex items-center justify-center rounded-[14px] px-3 bg-[#1A1A1A] dark:bg-zinc-700 shrink-0">
+                <div className="tracking-[0.04em] uppercase text-white font-sans font-semibold text-xs/4.5">Repeat</div>
+              </button>
+            ) : null}
             <button
               type="button"
               onClick={onStop}
-              className="h-11 flex items-center justify-center rounded-[14px] px-4.5 w-22.25 bg-[#C84A3D] shrink-0">
+              className="h-11 flex items-center justify-center rounded-[14px] px-3.5 bg-[#C84A3D] shrink-0">
               <div className="tracking-[0.04em] uppercase text-white font-sans font-semibold text-sm/4.5">
                 End
               </div>
@@ -158,7 +170,7 @@ function StatRow({items}: {items: {label: string; sub: string}[]}) {
     <>
       {items.map((it, i) => (
         <>
-          {i > 0 ? <div key={`sep-${i}`} className="w-px h-7 bg-[#0000001A] shrink-0" /> : null}
+          {i > 0 ? <div key={`sep-${i}`} className="w-px h-7 bg-[#0000001A] dark:bg-[#FFFFFF26] shrink-0" /> : null}
           <div
             key={`stat-${i}`}
             className="grow shrink basis-[0%] min-w-0 flex flex-col items-center gap-0.5">
@@ -167,10 +179,10 @@ function StatRow({items}: {items: {label: string; sub: string}[]}) {
                 labelRefs.current[i] = el
               }}
               style={{fontSize: `${fontPx}px`, lineHeight: `${linePx}px`}}
-              className="tracking-[-0.01em] text-[#000000E6] font-sans font-bold whitespace-nowrap self-stretch text-center overflow-hidden">
+              className="tracking-[-0.01em] text-[#000000E6] dark:text-zinc-50 font-sans font-bold whitespace-nowrap self-stretch text-center overflow-hidden">
               {it.label}
             </div>
-            <div className="text-[#0000008C] font-sans text-[13px]/4 whitespace-nowrap">{it.sub}</div>
+            <div className="text-[#0000008C] dark:text-zinc-400 font-sans text-[13px]/4 whitespace-nowrap">{it.sub}</div>
           </div>
         </>
       ))}

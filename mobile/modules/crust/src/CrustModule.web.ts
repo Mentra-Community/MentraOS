@@ -7,6 +7,15 @@ class CrustModule extends NativeModule<CrustModuleEvents> {
   async setValueAsync(value: string): Promise<void> {
     this.emit("onChange", {value})
   }
+  async nativeHttpRequest(method: string, url: string, headers: Record<string, string>, body?: string | null) {
+    const response = await fetch(url, {method, headers, body})
+    return {
+      status: response.status,
+      statusText: response.statusText,
+      headers: Object.fromEntries(response.headers.entries()),
+      body: await response.text(),
+    }
+  }
   hello() {
     return "Hello world! 👋"
   }

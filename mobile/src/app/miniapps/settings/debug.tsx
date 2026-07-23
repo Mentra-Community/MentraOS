@@ -2,7 +2,6 @@ import {DeviceTypes} from "@/../../cloud/packages/types/src"
 import {useEffect, useRef, useState} from "react"
 import {ScrollView, View} from "react-native"
 
-import BackendUrl from "@/components/dev/BackendUrl"
 import CloudUrl from "@/components/dev/CloudUrl"
 import OtaVersionUrl from "@/components/dev/OtaVersionUrl"
 import {Header, Icon, Screen, Text} from "@/components/ignite"
@@ -14,10 +13,8 @@ import {Spacer} from "@/components/ui/Spacer"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
-import {SETTINGS, useSetting} from "@/stores/settings"
-import {navigationService} from "@mentra/island/internal"
-import ws from "@/services/WebSocketManager"
-import socketComms from "@/services/SocketComms"
+import {SETTINGS, useSetting} from "@mentra/engine"
+import {navigationService} from "@mentra/engine/internal"
 import showAlert from "@/utils/AlertUtils"
 
 // Hardcoded test destination for the nav POC. SF Ferry Building.
@@ -41,6 +38,7 @@ export default function DebugSettingsScreen() {
   const [reconnectOnAppForeground, setReconnectOnAppForeground] = useSetting(SETTINGS.reconnect_on_app_foreground.key)
   const [enableSquircles, setEnableSquircles] = useSetting(SETTINGS.enable_squircles.key)
   const [appearanceMenuEnabled, setAppearanceMenuEnabled] = useSetting(SETTINGS.appearance_menu_enabled.key)
+  const [miniappDevMode, setMiniappDevMode] = useSetting(SETTINGS.miniapp_dev_mode.key)
   const [appBootExtraInfo, setAppBootExtraInfo] = useSetting(SETTINGS.app_boot_extra_info.key)
   const [debugConsole, setDebugConsole] = useSetting(SETTINGS.debug_console.key)
   const [_onboardingOsCompleted, setOnboardingOsCompleted] = useSetting(SETTINGS.onboarding_os_completed.key)
@@ -106,6 +104,13 @@ export default function DebugSettingsScreen() {
             />
 
             <ToggleSetting
+              label="Miniapp Developer Settings"
+              subtitle="Show the Miniapp Developer settings menu"
+              value={miniappDevMode}
+              onValueChange={(value) => setMiniappDevMode(value)}
+            />
+
+            <ToggleSetting
               label="App Boot Extra Info"
               subtitle="Show the current boot state under the logo on the loading screen"
               value={appBootExtraInfo}
@@ -153,9 +158,10 @@ export default function DebugSettingsScreen() {
             />
 
             <RouteButton
-              label="Mentra OS Onboarding"
-              subtitle="Start the Mentra Live onboarding"
+              label="MentraOS Onboarding"
+              subtitle="Reset and start the MentraOS onboarding"
               onPress={() => {
+                setOnboardingOsCompleted(false)
                 clearHistoryAndGoHome()
                 push("/onboarding/os")
               }}
@@ -209,17 +215,6 @@ export default function DebugSettingsScreen() {
                 showAlert("Nav", "T&C cache cleared. Start Test Nav to see the dialog again.")
               }}
             />
-
-            <RouteButton
-              label="Clear Websocket"
-              subtitle="Clear the Websocket"
-              onPress={async () => {
-                await ws.cleanup()
-                await socketComms.cleanup()
-                await new Promise((resolve) => setTimeout(resolve, 3000))
-                await socketComms.restartConnection()
-              }}
-            />
           </Group>
 
           <Group title="Test Errors">
@@ -267,8 +262,6 @@ export default function DebugSettingsScreen() {
               description="Higher bitrates improve transcription quality but use more bandwidth."
             />
           </Group>
-
-          <BackendUrl />
 
           <Group title="Cloud V2 (core + runtime)">
             <CloudUrl />

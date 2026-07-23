@@ -1,14 +1,13 @@
+import {engine, SETTINGS} from "@mentra/engine"
+import {useSettingsStore} from "@mentra/engine/internal"
+import {useRoute} from "@react-navigation/native"
 import {fireEvent, render, waitFor} from "@testing-library/react-native"
 import type {ReactNode} from "react"
 import {Platform} from "react-native"
 
-import {useRoute} from "@react-navigation/native"
-
-import {toolkit} from "@mentra/island"
 import PairingSuccessScreen from "@/app/pairing/success"
 import {usePushUnder} from "@/contexts/NavigationHistoryContext"
 import {useNavigationStore} from "@/stores/navigation"
-import {SETTINGS, useSettingsStore} from "@/stores/settings"
 
 jest.mock("@/../../cloud/packages/types/src", () => ({
   ControllerTypes: {
@@ -107,7 +106,7 @@ describe("pairing success screen", () => {
   })
 
   it("stacks missing Mentra Live setup steps in the expected order", async () => {
-    ;(toolkit.pairing.waitForBluetoothClassic as jest.Mock).mockResolvedValueOnce(false)
+    ;(engine.pairing.waitForBluetoothClassic as jest.Mock).mockResolvedValueOnce(false)
 
     const {getAllByText} = render(<PairingSuccessScreen />)
 
@@ -118,11 +117,11 @@ describe("pairing success screen", () => {
     expect(push).toHaveBeenCalledWith("/pairing/btclassic")
     expect(pushUnder).toHaveBeenCalledTimes(1)
     expect(pushUnder).toHaveBeenCalledWith("/ota/check-for-updates")
-    expect(toolkit.pairing.waitForBluetoothClassic).toHaveBeenCalledWith({timeoutMs: 1000})
+    expect(engine.pairing.waitForBluetoothClassic).toHaveBeenCalledWith({timeoutMs: 1000})
   })
 
   it("uses connected Mentra Live state to skip btclassic setup", async () => {
-    ;(toolkit.pairing.waitForBluetoothClassic as jest.Mock).mockResolvedValueOnce(true)
+    ;(engine.pairing.waitForBluetoothClassic as jest.Mock).mockResolvedValueOnce(true)
 
     const {getAllByText} = render(<PairingSuccessScreen />)
 
@@ -132,7 +131,7 @@ describe("pairing success screen", () => {
     await waitFor(() => expect(push).toHaveBeenCalledWith("/ota/check-for-updates"))
     expect(pushUnder).not.toHaveBeenCalled()
     expect(push).not.toHaveBeenCalledWith("/pairing/btclassic")
-    expect(toolkit.pairing.waitForBluetoothClassic).toHaveBeenCalledWith({timeoutMs: 1000})
+    expect(engine.pairing.waitForBluetoothClassic).toHaveBeenCalledWith({timeoutMs: 1000})
   })
 
   it("finishes non-Live pairing without adding setup routes", async () => {
@@ -160,6 +159,19 @@ describe("pairing success screen", () => {
     await waitFor(() => expect(clearHistoryAndGoHome).toHaveBeenCalled())
     expect(push).not.toHaveBeenCalledWith("/ota/check-for-updates")
     expect(pushUnder).not.toHaveBeenCalled()
-    expect(toolkit.pairing.waitForBluetoothClassic).not.toHaveBeenCalled()
+    expect(engine.pairing.waitForBluetoothClassic).not.toHaveBeenCalled()
+  })
+
+  it("opens MentraOS onboarding after pairing non-Live glasses when it is incomplete", async () => {
+    ;(useRoute as jest.Mock).mockReturnValue({params: {deviceModel: "Even Realities G1"}})
+
+    const {getAllByText} = render(<PairingSuccessScreen />)
+
+    await waitFor(() => expect(getAllByText("onboarding:continueSetup").length).toBeGreaterThan(0))
+    fireEvent.press(getAllByText("onboarding:continueSetup")[1])
+
+    await waitFor(() => expect(clearHistoryAndGoHome).toHaveBeenCalled())
+    expect(push).toHaveBeenCalledWith("/onboarding/os")
+    expect(pushUnder).not.toHaveBeenCalled()
   })
 })

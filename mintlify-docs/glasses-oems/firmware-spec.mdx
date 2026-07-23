@@ -1,0 +1,737 @@
+---
+title: "OEM Firmware Integration Specification"
+description: "Implement the BLE, display, input, audio, notification, and device contracts required for MentraOS-compatible smart glasses."
+---
+
+# MentraOS OEM Display Protocol
+
+This is the firmware-side contract an OEM implements so that MentraOS — running on the user's phone — can drive your glasses. The phone is the brain: it owns all application logic and screen layout and streams your glasses commands that say what to draw. Your glasses are a thin client for the live display, plus a small firmware-resident home screen they render on their own while disconnected.
+
+Control messages between the phone and the glasses are Protocol Buffers; audio and images stream as raw binary for throughput. Every BLE packet begins with a 1-byte control header that names the payload type.
+
+We assume one thing of your firmware: a render stack capable of the draw primitives below. If you already ship a chunked image transport, you may reuse it for bitmap pixel data rather than implementing a new one.
+
+## Contents
+
+**Foundations**
+- [Transport](#-transport) — BLE GATT, packet types, MTU
+- [Capability Descriptor](#-capability-descriptor) — what the glasses report about themselves
+- [Fonts](#-fonts) — required glyph coverage, runtime font upload
+- [Acknowledgements & Forward Compatibility](#-acknowledgements--forward-compatibility) — `command_result`, unknown-message handling
+
+**Display**
+- [The Drawing Model](#-the-drawing-model) — queue → atomic `commit`; `clear`, retained elements, `update`
+- [Display Commands](#-display-commands) — text, shapes, bitmaps, commit/clear/update, power, brightness
+- [The Home Screen](#-the-home-screen) — the offline, firmware-rendered screen
+
+**Input, Audio & Notifications**
+- [Input & Sensors](#-input--sensors) — buttons, head gestures, IMU
+- [Audio & Microphone](#-audio--microphone) — LC3 mic stream, VAD
+- [Notifications](#-notifications) — Android (nothing) vs iOS (ANCS relay)
+
+**Device & Implementation**
+- [Device & System](#-device--system) — battery, heartbeat, pairing, reset
+- [Implementation Notes](#-implementation-notes) — protobuf on the MCU, error handling, timing, security
+- [What a Complete Device Implements](#-what-a-complete-device-implements) — the checklist
+
+---
+
+# Foundations
+
+## 🔐 Transport
+
+Communication is standard BLE GATT. The phone is the **central**; the glasses are the **peripheral** and send notifications on the RX characteristic.
+
+| Role    | UUID                                   | Description                          |
+| ------- | -------------------------------------- | ------------------------------------ |
+| Service | `00004860-0000-1000-8000-00805f9b34fb` | MentraOS BLE Service                 |
+| TX Char | `000071FF-0000-1000-8000-00805f9b34fb` | Phone (central) → Glasses (write)    |
+| RX Char | `000070FF-0000-1000-8000-00805f9b34fb` | Glasses → Phone (notify or indicate) |
+| CCCD    | `00002902-0000-1000-8000-00805f9b34fb` | Enable notify on RX Char             |
+
+### Packet types
+
+Every packet's first byte is a control header naming the payload:
+
+| Control Header Byte | Type             | Payload Format                                                |
+| ------------------- | ---------------- | ------------------------------------------------------------- |
+| `0x02`              | Protobuf message | Protobuf-encoded control message                              |
+| `0xA0`              | Audio chunk      | `[A0][stream_id (1 byte)][LC3 frame data]`                    |
+| `0xB0`              | Image chunk      | `[B0][stream_id (2 bytes)][chunk_index (1 byte)][chunk_data]` |
+| `0xD0`–`0xFF`       | Reserved         | —                                                             |
+
+### Protobuf control messages
+
+A protobuf packet is `0x02` followed by the protobuf-encoded bytes:
+
+```
+[0x02][protobuf encoded bytes]
+```
+
+No length header is needed; the BLE characteristic defines packet length. All control messages are `PhoneToGlasses` or `GlassesToPhone` (a `oneof` over every command/event). **If the glasses receive a field or message type they do not recognize, they ignore it rather than fail** — this is what lets the protocol grow without breaking older firmware.
+
+### MTU
+
+Standard BLE MTU is 23 bytes (20 payload); an extended MTU is negotiated up to 512. Image and audio chunks are sized to fit the negotiated MTU minus their headers; an audio frame must fit a single packet.
+
+---
+
+## 🧭 Capability Descriptor
+
+The phone needs each device's parameters to lay out frames correctly: screen size, intensity depth, available fonts, and max image size. The glasses report them in response to `request_glasses_info`:
+
+```
+[0x02][PhoneToGlasses { request_glasses_info { msg_id: "info_001" }}]
+```
+
+```protobuf
+message DeviceInfo {
+  string fw_version = 1;
+  string hw_model = 2;
+  Features features = 3;
+
+  DisplayProfile display = 20;
+  FontProfile    fonts = 21;
+}
+
+message Features {
+  bool camera = 1;
+  bool display = 2;
+  bool audio_tx = 3;
+  bool audio_rx = 4;
+  bool imu = 5;
+  bool vad = 6;
+  bool mic_switching = 7;
+  uint32 image_chunk_buffer = 8;   // chunks the firmware buffers per image (e.g. 12)
+}
+
+message DisplayProfile {
+  uint32 width = 1;            // px
+  uint32 height = 2;          // px
+  uint32 intensity_levels = 3;// e.g. 16 (4-bit); 2 = pure 1-bit
+  uint32 max_image_width = 4;
+  uint32 max_image_height = 5;
+  repeated string encodings = 6;   // supported pixel encodings, e.g. ["raw","rle_1bit","rle_4bit"]
+  uint32 max_addressable_elements = 7;  // retained (id'd) elements the firmware can hold at once
+}
+
+message FontProfile {
+  repeated Font fonts = 1;         // fonts resident on the glasses today
+  bool supports_font_upload = 2;   // phone can upload a font at runtime
+  uint32 max_uploaded_fonts = 3;   // slots available for uploaded fonts (0 if none)
+}
+
+message Font {
+  uint32 font_code = 1;            // the id used in display_text.font_code / home-screen text ops
+  uint32 size_px = 2;              // glyph height in px
+  string name = 3;                 // e.g. "IBM Plex Sans"
+  string coverage = 4;             // optional glyph-coverage tag, e.g. "latin+cjk"
+}
+```
+
+---
+
+## 🔠 Fonts
+
+The phone wraps and lays out all text, so it must measure each line against the metrics of the font the glasses will actually render. The glasses report their fonts in the capability descriptor; the phone picks a `font_code` for every text draw and measures against the matching font's metrics, which MentraOS holds. An OEM ships at least one font covering the required languages below; the runtime then wraps text identically to what the glasses render.
+
+**Required glyph coverage:** Latin (incl. extended Latin for European languages such as Spanish, French, German, Italian, Portuguese, Dutch, Polish, Turkish, Vietnamese) and CJK — Chinese (Simplified and Traditional), Japanese, and Korean.
+**Recommended:** other scripts — Cyrillic (Russian, Ukrainian), Arabic, Hebrew, Devanagari (Hindi), Bengali, and Thai.
+
+Use the Mentra-provided IBM Plex Sans build, or share your own font (Mentra loads its metrics into the runtime).
+
+### Runtime font upload (optional)
+
+If `supports_font_upload` is true, the phone can push a font to the glasses at runtime. A font is just another binary asset, so it reuses the **cached-bitmap transfer path** (`preload_image`) rather than a new one: the glyph-table bytes stream over the `0xB0` channel against a `stream_id` and are acked with `image_transfer_complete`, exactly like a preloaded image. The only extra is a control message that says "the blob arriving on this `stream_id` is a font — register it under this `font_code`":
+
+```protobuf
+message UploadFont {
+  string msg_id = 1;
+  string stream_id = 2;    // the glyph-table blob arriving on the 0xB0 channel
+  uint32 total_chunks = 3;
+  uint32 font_code = 4;    // id to register the font under; later draws reference it
+  uint32 size_px = 5;
+  string format = 6;       // agreed glyph-table format
+}
+```
+
+Once the transfer completes, the firmware stores the font in one of the `max_uploaded_fonts` slots and addresses it by `font_code` exactly like a resident font.
+
+---
+
+## ✅ Acknowledgements & Forward Compatibility
+
+Many commands are fire-and-forget. A single generic result message lets the phone confirm that state-changing commands landed and detect features a given firmware doesn't implement. Every `PhoneToGlasses` carries a `msg_id`; the glasses echo it in a result:
+
+```protobuf
+message CommandResult {
+  string msg_id = 1;   // echoes the PhoneToGlasses.msg_id this responds to
+  Status status = 2;
+  string detail = 3;   // optional human-readable note on failure
+}
+
+enum Status {
+  OK = 0;
+  FAIL = 1;
+  UNSUPPORTED = 2;     // glasses do not implement this command/field
+  BAD_PARAM = 3;       // value out of range / malformed
+  BUSY = 4;            // transient; phone may retry
+  NO_MEMORY = 5;       // asset storage full
+}
+```
+
+```
+[0x02][GlassesToPhone { command_result { msg_id: "commit_001", status: OK }}]
+```
+
+The glasses should ack state-changing commands — especially `commit`, `SetHomeScreen`, and asset uploads, where the phone must know the change was persisted — rather than stay silent. High-frequency, fire-and-forget commands (individual `draw_*`) need not be acked.
+
+**Forward compatibility:** unknown fields and message types are ignored, never fatal. When the phone sends a feature the firmware doesn't implement, the firmware ignores the effect **and** returns `UNSUPPORTED`, so the phone can adapt rather than guess.
+
+---
+
+---
+
+# Display
+
+## 🎞️ The Drawing Model
+
+The phone draws by sending draw commands that **queue** on the glasses, then a `commit` that paints them all at once. Nothing appears until `commit`. Two examples show the whole model.
+
+**Draw a fresh frame** — lead with `clear`, then the ops, then `commit`:
+
+```
+clear_display          // queued: wipe what was there
+draw_rect   { ... }    // queued
+draw_text   { ... }    // queued, paints over the rectangle
+display_image { ... }  // queued; its pixels stream separately
+commit      { }        // paint it all at once: rect + text + image
+```
+
+**Change one element** — give the element an `id` when you draw it, then `update` that `id` later. No `clear`, so everything else stays:
+
+```
+draw_text { id: 1, text: "12:00", ... }   // retained as element 1
+commit                                     // paints the frame
+
+update { id: 1, op { text { text: "12:01", ... } } }   // queued: new content for element 1
+commit                                                  // repaints only element 1; the rest is untouched
+```
+
+The rules behind those two examples:
+
+- **Everything queues; nothing reaches the panel except via `commit`.** `clear_display`, every `draw_*`, and `update` accumulate in a pending batch. `commit` flushes the batch atomically — the wearer never sees a half-applied batch, and a `commit` is the only thing that changes the screen.
+- **Draw order is layer order.** Commands paint in the order sent; later commands paint over earlier ones. To put text on a filled box, send the rectangle first, the text second.
+- **`clear_display` is the only thing that wipes.** Queue it to start a fresh frame; it drops the standing scene — **including all retained elements, so their `id`s become free** — and the commit begins from blank. A batch with no `clear_display` *amends* the standing scene rather than replacing it.
+- **Retained elements and partial repaint.** A `draw_*` op may carry an optional `id` (1-based; absent = unaddressed), making it a retained element the firmware keeps so the phone can change it later with `update` (see [Updating one element](#updating-one-element)). A `commit` whose batch is **only `update`s** repaints just those elements' regions, leaving the rest of the panel untouched — the flicker-free path for changing one field on a busy screen. Any other batch (a `clear_display`, or any non-`id` `draw_*`) is a full frame and repaints the whole panel.
+- **Intensity, not RGB.** The displays are monochrome. Every drawable carries an `intensity` from `0` (off) to `15` (brightest); `0` means "not drawn."
+- **Bitmaps composite; unset pixels are transparent.** Only lit pixels paint. An unset pixel emits no light, leaves what is beneath untouched, and lets the real world show through — so a bitmap layers cleanly over text and shapes without a hard erase.
+
+> **Pacing is the phone's job, not the firmware's.** The firmware does not implement flow control or backpressure on the display channel. The phone paces its own sends and coalesces redundant frames per device; the glasses simply render what arrives.
+
+---
+
+## 🖥️ Display Commands
+
+All display commands are `PhoneToGlasses` protobuf messages, carry a `msg_id`, and queue into the pending batch — they take effect on the next `commit`.
+
+### Text
+
+Text is drawn in UTF-8 with `(x, y)` as the top-left corner of a single line. The phone handles all line breaking and wrapping — it measures against the font metrics (see [Fonts](#-fonts)) and sends each line as its own `display_text`. The glasses never compute multi-line layout.
+
+```
+[0x02][PhoneToGlasses { display_text {
+  msg_id: "txt_hello_001"
+  id: 1             // optional: retain as an addressable element (omit for one-shot)
+  text: "Hello World"
+  intensity: 15     // 0–15
+  font_code: 0x11   // a font_code reported by the glasses (see Fonts)
+  x: 10
+  y: 20
+  size_px: 20       // glyph height in px; must be a size the glasses report
+}}]
+```
+
+### Shapes
+
+```
+[0x02][PhoneToGlasses { draw_line {
+  msg_id: "line_001"
+  intensity: 15    // 0–15
+  stroke: 1
+  x1: 0   y1: 0
+  x2: 100 y2: 50
+}}]
+```
+
+```
+[0x02][PhoneToGlasses { draw_rect {
+  msg_id: "rect_001"
+  intensity: 15
+  stroke: 1        // outline width; filled when stroke == 0
+  x: 10  y: 10
+  width: 60  height: 40
+}}]
+```
+
+```
+[0x02][PhoneToGlasses { draw_circle {
+  msg_id: "circle_001"
+  intensity: 15
+  stroke: 1
+  x: 64  y: 32    // center
+  radius: 20
+}}]
+```
+
+Every `draw_*` op carries an optional `id` (as in `display_text` above) to retain it as an addressable element. These same op messages are also the building blocks of the stored [home screen](#-the-home-screen). The op messages:
+
+```protobuf
+message DrawText   { uint32 id = 1; string text = 2; uint32 intensity = 3; uint32 font_code = 4; uint32 x = 5; uint32 y = 6; uint32 size_px = 7; Align align = 8; Field field = 9; }
+message DrawLine   { uint32 id = 1; uint32 intensity = 2; uint32 stroke = 3; uint32 x1 = 4; uint32 y1 = 5; uint32 x2 = 6; uint32 y2 = 7; }
+message DrawRect   { uint32 id = 1; uint32 intensity = 2; uint32 stroke = 3; uint32 x = 4; uint32 y = 5; uint32 width = 6; uint32 height = 7; }   // stroke 0 = filled
+message DrawCircle { uint32 id = 1; uint32 intensity = 2; uint32 stroke = 3; uint32 x = 4; uint32 y = 5; uint32 radius = 6; }
+message DrawImage  { uint32 id = 1; uint32 intensity = 2; uint32 x = 3; uint32 y = 4; ... see Bitmaps for the image-transfer fields ... }
+
+message DrawOp {    // one op of any type — used by update and the home screen
+  oneof op { DrawText text = 1; DrawLine line = 2; DrawRect rect = 3; DrawCircle circle = 4; DrawImage image = 5; }
+}
+
+enum Field {        // a firmware-filled placeholder; only honored on the stored home screen (see below)
+  NONE = 0;         // use the literal text
+  TIME = 1;         // current local time, firmware RTC (formatted per SyncClock)
+  DATE = 2;         // current date, firmware RTC
+  BATTERY = 3;      // current battery %, firmware gauge
+  LINK_STATUS = 4;  // firmware draws an offline glyph when the link is down
+}
+```
+
+`id` is 1-based; `0` or absent means the op is a one-shot paint, not retained. The firmware can hold up to `max_addressable_elements` retained elements (see [Capability Descriptor](#-capability-descriptor)); creating more returns `NO_MEMORY`. The `field` member is **ignored on the live display** — the phone draws live values itself, and the firmware never repaints the live screen on its own. It is honored only inside a stored home-screen frame, where the firmware renders standalone (see [The Home Screen](#-the-home-screen)).
+
+### Commit and clear
+
+Both queue into the pending batch and take effect on `commit` (see [The Drawing Model](#-the-drawing-model)).
+
+```
+[0x02][PhoneToGlasses { clear_display { msg_id: "clear_001" }}]   // queue: drop the standing scene (start fresh)
+[0x02][PhoneToGlasses { commit { msg_id: "commit_001" }}]         // flush the batch atomically
+```
+
+### Updating one element
+
+`update` replaces the content of a retained element (one whose `draw_*` carried an `id`). It queues like any draw op and takes effect on the next `commit`; a `commit` whose batch is only `update`s repaints just those elements' regions, so changing one field on a busy screen does not flicker the rest of the panel.
+
+`update` carries a full replacement op. It is an **upsert**: if `id` exists, its content is replaced; if it does not (e.g. the scene was wiped by a `clear`), the op is created as a new retained element. The replacement op **must be the same type** as the element it replaces (you cannot turn a `DrawText` element into a `DrawCircle`). Its coordinates may differ from the original, so an `update` can **move** the element — the firmware clears the element's old region and paints it at the new position, all within the partial repaint.
+
+```protobuf
+message Update {
+  string msg_id = 1;
+  uint32 id = 2;     // the element to replace or create
+  DrawOp op = 3;     // the replacement op (same type as the element; its own id field is ignored)
+}
+```
+
+```
+[0x02][PhoneToGlasses { update {
+  msg_id: "upd_cap_017"
+  id: 1
+  op { text { text: "Hello World", intensity: 15, font_code: 0x11, x: 10, y: 20, size_px: 20 } }
+}}]
+```
+
+To change several elements together without tearing, queue several `update`s and a single `commit` — they all repaint in one atomic frame.
+
+For example, to show an image with a label and then change only the label — without re-sending the image:
+
+```
+clear_display
+display_image { id: 10, ... }   // retained
+draw_text     { id: 11, text: "12:00" }
+commit                          // full repaint: image + "12:00"
+
+update { id: 11, op { text { text: "12:01", ... } } }
+commit                          // partial repaint: only the label's region; the image is untouched
+```
+
+### Bitmaps
+
+A bitmap is sent with two messages: a protobuf `display_image` that places it in the draw order and declares its geometry, and the pixel bytes streamed on the binary channel. The bitmap takes its place in the draw order the instant the protobuf message is queued; the pixels are held against its `stream_id` until `commit`, where they render as part of the frame.
+
+```
+[0x02][PhoneToGlasses { display_image {
+  msg_id: "img_clock_001"
+  stream_id: "002A"
+  x: 0   y: 0
+  width: 128  height: 64
+  encoding: "rle_1bit"   // "raw", "rle_1bit", "rle_4bit"
+  total_chunks: 9
+}}]
+```
+
+The pixels follow on the binary channel, one chunk per packet:
+
+```
+[0xB0][0x00][0x2A][0x00][chunk_data...]   // stream_id 0x002A, chunk 0
+[0xB0][0x00][0x2A][0x01][chunk_data...]   // chunk 1
+...
+[0xB0][0x00][0x2A][0x08][chunk_data...]   // chunk 8
+```
+
+- `stream_id`: 2 bytes, matching the `display_image` message.
+- `chunk_index`: 0–255.
+- `chunk_data`: raw pixel bytes, ≤ MTU − 4.
+
+When every chunk of a bitmap has arrived, the glasses confirm the transfer:
+
+```
+[0x02][GlassesToPhone { image_transfer_complete { stream_id: "002A", status: OK }}]
+```
+
+Or, if chunks are missing:
+
+```
+[0x02][GlassesToPhone { image_transfer_complete {
+  stream_id: "002A"
+  status: INCOMPLETE
+  missing_chunks: [3, 4, 6]
+}}]
+```
+
+The phone re-sends only the missing chunks and waits again, repeating until acknowledged or a per-chunk timeout. **The phone waits for `status: OK` before it sends `commit`.** Multiple bitmaps may be in flight in one frame; `stream_id` routes each chunk to the right bitmap.
+
+### Cached bitmaps
+
+A bitmap can be preloaded once and then drawn by id without re-sending the pixels. `preload_image` uses the same binary chunking as `display_image` but stores the image under an `image_id` instead of drawing it. **The image's dimensions and encoding live only here**, at preload time:
+
+```
+[0x02][PhoneToGlasses { preload_image {
+  msg_id: "preload_logo_001"
+  stream_id: "003B"
+  image_id: 42
+  width: 128  height: 64
+  encoding: "rle_1bit"
+  total_chunks: 6
+}}]
+```
+
+The pixel chunks transfer as above; completion is reported with `image_transfer_complete` against `stream_id: "003B"`. Once cached, draw it by id at a position — no dimensions, since the firmware already knows the image's size from preload (this enqueues into the pending frame like any draw op):
+
+```
+[0x02][PhoneToGlasses { display_cached_image {
+  msg_id: "disp_logo_001"
+  image_id: 42
+  x: 10  y: 20
+}}]
+```
+
+Evict a cached bitmap when it is no longer needed:
+
+```
+[0x02][PhoneToGlasses { clear_cached_image { msg_id: "clear_logo_001", image_id: 42 }}]
+```
+
+### Display power and geometry
+
+```
+[0x02][PhoneToGlasses { turn_off_display { msg_id: "disp_off_001" }}]   // panel off
+[0x02][PhoneToGlasses { turn_on_display  { msg_id: "disp_on_001" }}]    // panel on
+[0x02][PhoneToGlasses { set_display_distance { msg_id: "dist_001", distance_cm: 50 }}]  // virtual projection distance
+[0x02][PhoneToGlasses { set_display_height   { msg_id: "height_001", height: 120 }}]    // vertical offset
+```
+
+### Brightness
+
+```
+[0x02][PhoneToGlasses { set_brightness { msg_id: "bright_001", value: 80 }}]                  // 0–100
+[0x02][PhoneToGlasses { set_auto_brightness { msg_id: "auto_bright_001", enabled: true }}]    // ambient control
+[0x02][PhoneToGlasses { set_auto_brightness_multiplier { msg_id: "auto_mult_001", multiplier: 0.8 }}]  // scale auto-brightness
+```
+
+---
+
+## 🏠 The Home Screen
+
+While the phone is connected, MentraOS draws every screen — including any menus or app launchers — with the ordinary draw commands above, reacting to `button_event`s. The firmware has no resident menus or navigation of its own.
+
+The home screen exists for one reason: the glasses must not go dead during a momentary BLE drop. It is a single firmware-resident screen the glasses can render on their own, showing glanceable info, so a disconnect is invisible to the wearer.
+
+### Display states
+
+- **Idle: the display is off.** Nothing is shown until the wearer wakes it (head-up gesture, or a tap — whatever the device supports).
+- **On wake while connected:** the phone is driving — it draws whatever it wants.
+- **On wake while disconnected:** the firmware shows the cached home screen.
+
+### Uploading the home screen
+
+The phone uploads one home-screen frame, built from the **same draw ops as the live display** ([above](#-display-commands)). The firmware persists it in flash and re-renders it whenever it needs to show the home screen offline.
+
+```protobuf
+message SetHomeScreen {
+  string msg_id = 1;
+  repeated DrawOp ops = 2;   // drawn in order; later paints over earlier
+}
+```
+
+Most content is **baked in as literal text** — weather, notification count, calendar, anything phone-sourced. It cannot change on the glasses, so when it changes the phone simply re-uploads the frame; there is nothing for the firmware to track.
+
+The exception is the `field` placeholder, which is honored here (and only here). A few values change on the glasses while disconnected because only the glasses know them — and `field` lets the firmware fill them from its own state as it renders: `TIME`/`DATE` from its RTC, `BATTERY` from its gauge, `LINK_STATUS` as an offline glyph when the link is down. A `DrawText` op with `field` set renders the firmware's live value instead of its literal `text`, and the firmware keeps it current (the clock ticks, the battery updates) for as long as the home screen is shown.
+
+`SetHomeScreen` is acked with `command_result`. `id`s carry no meaning here — the home screen is a stored frame, not a live scene; to change it, re-upload.
+
+### Setting the clock
+
+The firmware ticks `TIME`/`DATE` from its own RTC, so it stays correct while disconnected. The phone syncs the clock on connect and periodically (for drift and timezone):
+
+```protobuf
+message SyncClock {
+  string msg_id = 1;
+  uint64 epoch_ms = 2;            // current time
+  int32  utc_offset_minutes = 3;  // for local display
+  bool   format_24h = 4;          // 12/24-hour preference (a MentraOS user setting)
+}
+```
+
+`format_24h` is a MentraOS user setting; the phone pushes it here and the firmware persists the last value and renders `TIME` accordingly. The firmware does not expose its own 12/24-hour menu.
+
+---
+
+# Input, Audio & Notifications
+
+## 🎮 Input & Sensors
+
+### Buttons
+
+Triggered by a hardware button tap or hold:
+
+```
+[0x02][GlassesToPhone { button_event {
+  button: LEFT_BACK   // LEFT_BACK, RIGHT_BACK
+  event: SINGLE_TAP   // SINGLE_TAP, DOUBLE_TAP, TRIPLE_TAP, LONG_HOLD
+}}]
+```
+
+### Head gestures and position
+
+```
+[0x02][PhoneToGlasses { request_head_gesture_event {
+  msg_id: "gesture_001"
+  gesture: HEAD_UP    // NOD, SHAKE, HEAD_UP
+  enabled: true       // start/stop listening
+}}]
+```
+
+When a subscribed gesture fires:
+
+```
+[0x02][GlassesToPhone { head_gesture { gesture: HEAD_UP }}]   // NOD, SHAKE, HEAD_UP
+```
+
+Head tilt angle (degrees), and the head-up detection threshold:
+
+```
+[0x02][PhoneToGlasses { request_head_position { msg_id: "head_001" }}]
+→ [0x02][GlassesToPhone { head_position { angle: 15 }}]
+
+[0x02][PhoneToGlasses { set_head_up_angle { msg_id: "angle_001", angle: 20 }}]
+→ [0x02][GlassesToPhone { head_up_angle_set { success: true }}]
+```
+
+### IMU
+
+```
+[0x02][PhoneToGlasses { request_enable_imu { msg_id: "imu_001", enabled: true }}]   // enable/disable
+
+[0x02][PhoneToGlasses { request_imu_single { msg_id: "imu_001" }}]                  // one sample
+[0x02][PhoneToGlasses { request_imu_stream { msg_id: "imu_stream_001", enabled: true }}]  // start/stop stream
+```
+
+The glasses report:
+
+```
+[0x02][GlassesToPhone { imu_data {
+  accel { x: 0.02, y: -9.81, z: 0.15 }
+  gyro  { x: 0.01, y: 0.02,  z: 0.00 }
+  mag   { x: -10.2, y: 2.1,  z: 41.9 }
+}}]
+```
+
+IMU streaming runs at a configurable 10–100 Hz.
+
+---
+
+## 🔉 Audio & Microphone
+
+Audio is a binary stream on the `0xA0` channel, controlled by protobuf messages. Frames are LC3, sized to the negotiated MTU; the 1-byte `stream_id` distinguishes streams (e.g. microphone vs TTS).
+
+```
+[0xA0][stream_id (1 byte)][LC3 frame data]
+```
+
+### Microphone
+
+```
+[0x02][PhoneToGlasses { set_mic_state { msg_id: "mic_001", enabled: true }}]
+→ [0x02][GlassesToPhone { mic_state_set { msg_id: "mic_001", success: true }}]
+
+[0x02][PhoneToGlasses { request_mic_status { msg_id: "mic_status_001" }}]
+→ [0x02][GlassesToPhone { mic_status { enabled: true }}]
+```
+
+While the mic is enabled, the glasses stream LC3 frames continuously:
+
+```
+[0xA0][0x01][LC3 frame data...]   // stream_id 0x01 = microphone
+[0xA0][0x01][LC3 frame data...]
+```
+
+### Voice Activity Detection (VAD)
+
+```
+[0x02][PhoneToGlasses { set_vad_enabled { msg_id: "vad_enable_001", enabled: true }}]
+→ [0x02][GlassesToPhone { vad_configured { msg_id: "vad_enable_001", success: true }}]   // result echoes msg_id
+
+[0x02][PhoneToGlasses { configure_vad { msg_id: "vad_sens_001", sensitivity: 75 }}]   // 0–100
+→ [0x02][GlassesToPhone { vad_configured { msg_id: "vad_sens_001", success: true }}]
+
+[0x02][PhoneToGlasses { request_vad_status { msg_id: "vad_status_001" }}]
+→ [0x02][GlassesToPhone { vad_status { msg_id: "vad_status_001", enabled: true, sensitivity: 75 }}]
+```
+
+When voice activity starts or stops, the glasses emit:
+
+```
+[0x02][GlassesToPhone { vad_event { state: ACTIVE }}]
+```
+
+---
+
+## 🔔 Notifications
+
+The glasses firmware does very little for notifications. MentraOS owns all notification logic - what to show, how, and when - and renders notifications with the ordinary draw commands described above. The firmware never decides what is notification-worthy and never stores notification UI of its own.
+
+**Android.** The glasses are not involved at all. The phone reads notifications through its own OS-level listener and draws whatever it wants on the glasses. There is nothing to implement on the firmware side.
+
+**iOS.** iOS does not expose notifications to a companion app the way Android does; instead a BLE accessory reads them directly over Apple's **ANCS** (Apple Notification Center Service). So on iOS the glasses do one thing: act as an ANCS consumer and relay each notification to the phone.
+
+- After bonding, the glasses subscribe to ANCS on the iPhone (the iPhone is the Notification Provider; the glasses are the Notification Consumer). This is standard ANCS — most BLE SoC SDKs ship an ANCS client.
+- ANCS delivers **every** notification from the iPhone to the accessory; there is no per-app filter in the protocol itself. Each notification carries the source app's bundle id as an attribute. The glasses do not filter — they relay everything, and MentraOS applies the user's per-app preferences on the phone.
+- For each notification, the glasses forward it to the phone and otherwise do nothing with it:
+
+```protobuf
+message AncsNotification {
+  string app_id = 1;     // ANCS AppIdentifier (bundle id), e.g. "com.apple.MobileSMS"
+  string title = 2;      // ANCS Title attribute
+  string body = 3;       // ANCS Message attribute
+  uint64 timestamp = 4;  // ANCS Date attribute, unix ms
+  uint32 ancs_uid = 5;   // ANCS NotificationUID, valid for the session
+}
+```
+
+```
+[0x02][GlassesToPhone { ancs_notification {
+  app_id: "com.apple.MobileSMS"
+  title: "Alex"
+  body: "dinner at 7?"
+  timestamp: 1718900000000
+}}]
+```
+
+MentraOS takes it from there — it decides whether to show the notification and, if so, draws it with the normal display commands. The firmware's entire responsibility is: subscribe to ANCS, relay, done.
+
+---
+
+---
+
+# Device & Implementation
+
+## 🧰 Device & System
+
+### Battery and charging
+
+```
+[0x02][PhoneToGlasses { request_battery_state { msg_id: "battery_001" }}]
+→ [0x02][GlassesToPhone { battery_status { level: 82, charging: false }}]
+```
+
+When the glasses detect they are charging, they emit asynchronously:
+
+```
+[0x02][GlassesToPhone { charging_state { state: CHARGING }}]
+```
+
+### Heartbeat
+
+The glasses send a periodic ping to verify the link is alive; the phone replies:
+
+```
+[0x02][GlassesToPhone { ping { msg_id: "ping_001" }}]
+← [0x02][PhoneToGlasses { pong {} }]
+```
+
+### Pairing, disconnect, restart, factory reset
+
+```
+[0x02][PhoneToGlasses { enter_pairing_mode { msg_id: "pair_001" }}]  // also automatic on boot if never paired
+[0x02][PhoneToGlasses { disconnect { msg_id: "disc_001" }}]          // terminate, clean up
+[0x02][PhoneToGlasses { restart_device { msg_id: "restart_001" }}]   // reboot
+[0x02][PhoneToGlasses { factory_reset { msg_id: "factory_001" }}]    // clear all settings and cached data
+```
+
+---
+
+## 💾 Implementation Notes
+
+### Protobuf on the MCU
+
+**nanopb** (~10 KB footprint, static allocation, no dynamic memory) is the recommended library. A minimal receive path:
+
+```c
+uint8_t buffer[256];
+uint16_t len = ble_read_characteristic(buffer, sizeof(buffer));
+
+if (buffer[0] == 0x02) {  // protobuf control message
+    PhoneToGlasses msg = PhoneToGlasses_init_zero;
+    pb_istream_t stream = pb_istream_from_buffer(buffer + 1, len - 1);
+    if (pb_decode(&stream, PhoneToGlasses_fields, &msg)) {
+        if (msg.has_display_text) {
+            display_text(msg.display_text.text, msg.display_text.x, msg.display_text.y);
+        }
+    }
+}
+```
+
+Schema conventions: field numbers never change; new fields are optional; `oneof` discriminates message type; `repeated` carries arrays (like `missing_chunks`).
+
+### Error handling
+
+- **Invalid message:** if protobuf decode fails, ignore the message.
+- **Unknown fields/messages:** ignore (forward compatibility).
+- **Resource limits:** return a `command_result` error for operations that exceed memory/display limits.
+- **Timeouts:** image transfers ~5 s per chunk; command responses ~1 s.
+- **Connection loss:** clean up pending operations and reset state.
+
+### Timing and buffers
+
+- Audio: 10 ms LC3 frame intervals; buffer 3–5 frames for jitter.
+- Display: aim for < 50 ms latency for responsive UI.
+- IMU streaming: configurable 10–100 Hz.
+- Image chunk buffer: typically 12 chunks (configurable, reported in `Features`).
+- Command queue: support at least 10 pending commands.
+
+### Security
+
+- Implement pairing/bonding and encryption at the BLE level.
+- Validate all input parameters; enforce maximum sizes for strings and arrays.
+- Rate-limit to prevent abuse via excessive commands.
+
+---
+
+## 📌 What a Complete Device Implements
+
+- **Display & input:** the transport, the drawing model (queue → atomic `commit`; `clear` to start fresh; retained `id`'d elements with `update` for flicker-free partial repaint), draw primitives, image transfer and cached bitmaps, brightness, button/IMU/head events.
+- **Capability descriptor & fonts:** report geometry, intensity depth, and the resident fonts so the phone can measure and wrap text.
+- **Acknowledgements:** echo `command_result` for state-changing commands; honor forward-compatibility (ignore unknowns, return `UNSUPPORTED`).
+- **Notifications:** on iOS, subscribe to ANCS and relay each notification to the phone as `ancs_notification`; on Android, nothing. MentraOS draws notifications itself.
+- **Home screen:** accept a phone-uploaded home-screen design (`SetHomeScreen`), render it on wake while disconnected, fill the `TIME`/`DATE`/`BATTERY`/`LINK_STATUS` fields from its own state, and tick the clock from `SyncClock`. Display is off when idle.
+
+**Optional refinements** (none change the contract above): saved-bitmap transforms (scale/rotate a cached image), 4-bit grayscale bitmaps, and curved/arc line support.

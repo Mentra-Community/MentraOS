@@ -78,6 +78,28 @@ describe("MockTransport", () => {
     expect(payload.data.photoUrl.startsWith("data:image/png;base64,")).toBe(true)
   })
 
+  test("CALENDAR_LIST_EVENTS returns an empty snapshot", async () => {
+    const t = new MockTransport({silent: true})
+    const received: string[] = []
+    t.onMessage((raw) => received.push(raw))
+    await t.open()
+
+    t.send(
+      envelope(
+        {
+          type: MiniappRequestType.CALENDAR_LIST_EVENTS,
+          startsAt: "2026-07-16T12:00:00.000Z",
+          endsAt: "2026-07-17T12:00:00.000Z",
+        },
+        "rid-calendar",
+      ),
+    )
+    await new Promise((r) => queueMicrotask(() => r(null)))
+
+    const payload = parseEnvelope(received[0])!.payload as {data: unknown}
+    expect(payload.data).toEqual({events: [], truncated: false})
+  })
+
   test("CAMERA_FOV returns a synthetic ready result", async () => {
     const t = new MockTransport({silent: true})
     const received: string[] = []

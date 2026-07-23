@@ -189,6 +189,7 @@ export class SonioxSdkStream implements StreamInstance {
     public readonly logger: Logger,
     private readonly config: SonioxProviderConfig,
     client: SonioxNodeClient,
+    private readonly credentialId?: string,
   ) {
     this.endpointDebounceMs =
       config.endpointDebounceMs ?? SonioxSdkStream.DEFAULT_ENDPOINT_DEBOUNCE_MS;
@@ -854,6 +855,9 @@ export class SonioxSdkStream implements StreamInstance {
     this.metrics.consecutiveFailures++;
 
     this.provider.recordFailure(error);
+    if (this.credentialId) {
+      this.provider.recordCredentialFailure(this.credentialId, error);
+    }
 
     this.logger.error({ error, streamId: this.id, sessionState: this.session.state }, "Soniox SDK stream error");
 
@@ -960,7 +964,7 @@ export class SonioxSdkStream implements StreamInstance {
     const enableLanguageIdentification = !(disableLangIdParam === true || disableLangIdParam === "true");
 
     const sessionConfig: SttSessionConfig = {
-      model: this.config.model || "stt-rt-v4",
+      model: this.config.model || "stt-rt-v5",
       audio_format: "pcm_s16le",
       sample_rate: 16000,
       num_channels: 1,
@@ -973,8 +977,8 @@ export class SonioxSdkStream implements StreamInstance {
       // mid-utterance splits.
       max_endpoint_delay_ms: this.config.maxEndpointDelayMs,
       context: {
-        terms: ["Mentra", "MentraOS", "Hey Mentra"],
-        text: "Mentra MentraOS, Hey Mentra (an AI assistant)",
+        terms: ["Mentra", "Hey Mentra"],
+        text: "Mentra, Hey Mentra (an AI assistant)",
       },
     };
 

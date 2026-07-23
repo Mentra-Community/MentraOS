@@ -1,6 +1,6 @@
 import * as Sentry from "@sentry/react-native"
 
-import {SETTINGS, useSettingsStore} from "@/stores/settings"
+import {SETTINGS, engine} from "@mentra/engine"
 
 export const SentryNavigationIntegration = Sentry.reactNavigationIntegration({
   enableTimeToInitialDisplay: true,
@@ -46,7 +46,7 @@ export const SentrySetup = () => {
   installKnownErrorFilter()
   // Only initialize Sentry if DSN is provided
   const sentryDsn = process.env.EXPO_PUBLIC_SENTRY_DSN
-  const isChina = useSettingsStore.getState().getSetting(SETTINGS.china_deployment.key)
+  const isChina = engine.settings.get(SETTINGS.china_deployment.key)
 
   if (!sentryDsn || sentryDsn === "secret" || sentryDsn.trim() === "") {
     return

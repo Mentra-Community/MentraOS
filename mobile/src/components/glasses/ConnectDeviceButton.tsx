@@ -1,12 +1,12 @@
 import {DeviceTypes} from "@/../../cloud/packages/types/src"
-import {decideConnectButtonAction, toolkit} from "@mentra/island"
+import {decideConnectButtonAction, engine} from "@mentra/engine"
 import {ActivityIndicator, View} from "react-native"
 
 import {Button} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
-import {useToolkitSnapshot} from "@/hooks/useToolkitSnapshot"
+import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {useNavigationStore} from "@/stores/navigation"
-import {SETTINGS, useSetting} from "@/stores/settings"
+import {SETTINGS, useSetting} from "@mentra/engine"
 import {showAlert} from "@/utils/AlertUtils"
 import {checkConnectivityRequirementsUI} from "@/utils/PermissionsUtils"
 
@@ -14,16 +14,16 @@ export const ConnectDeviceButton = () => {
   const {theme} = useAppTheme()
   const {push} = useNavigationStore.getState()
   // Pairing-identity read-model: none | pending (chosen, never paired) | paired.
-  const identity = useToolkitSnapshot(toolkit.pairing.identity, (onChange) => toolkit.pairing.onIdentity(onChange))
+  const identity = useEngineSnapshot(engine.pairing.identity, (onChange) => engine.pairing.onIdentity(onChange))
   const pairedModel = identity.kind === "paired" ? identity.model : ""
-  const glassesStatus = useToolkitSnapshot(toolkit.glasses.status, (onChange) => toolkit.glasses.onStatus(onChange))
+  const glassesStatus = useEngineSnapshot(engine.glasses.status, (onChange) => engine.glasses.onStatus(onChange))
   const glassesConnected = glassesStatus.state === "connected"
-  const isSearching = useToolkitSnapshot(toolkit.pairing.scanning, (onChange) => toolkit.pairing.onScanning(onChange))
+  const isSearching = useEngineSnapshot(engine.pairing.scanning, (onChange) => engine.pairing.onScanning(onChange))
   // Same busy source as home's DeviceStatus: an active scan OR the native link
-  // layer mid connect/bond â€?either way a tap must cancel, not start a second
+  // layer mid connect/bond éˆ¥?either way a tap must cancel, not start a second
   // connect.
-  const pairingReadiness = useToolkitSnapshot(toolkit.pairing.readiness, (onChange) =>
-    toolkit.pairing.onReadiness(onChange),
+  const pairingReadiness = useEngineSnapshot(engine.pairing.readiness, (onChange) =>
+    engine.pairing.onReadiness(onChange),
   )
   const busy = isSearching || pairingReadiness.nativeLinkBusy
 
@@ -47,10 +47,10 @@ export const ConnectDeviceButton = () => {
 
       // A `paired` identity snapshot does not imply a native device to connect
       // to (the settings echo can outlive the native pairing). Without a
-      // device, connectDefault() throws â€?route back into pairing for the
+      // device, connectDefault() throws éˆ¥?route back into pairing for the
       // already-selected model instead of surfacing an error alert. Fail open
       // on a read error: connectDefault()'s catch is the pre-guard behavior.
-      if (!(await toolkit.glasses.hasDefaultDevice().catch(() => true))) {
+      if (!(await engine.glasses.hasDefaultDevice().catch(() => true))) {
         if (pairedModel === DeviceTypes.AR99) {
           push("/pairing/select-glasses-model")
         } else {
@@ -59,7 +59,7 @@ export const ConnectDeviceButton = () => {
         return
       }
 
-      await toolkit.glasses.connectDefault()
+      await engine.glasses.connectDefault()
     } catch (err) {
       console.error("connect to glasses error:", err)
       showAlert("Connection Error", "Failed to connect to glasses. Please try again.", [{text: "OK"}])
@@ -70,7 +70,7 @@ export const ConnectDeviceButton = () => {
   const handleConnectOrDisconnect = async () => {
     const action = decideConnectButtonAction({hasDefaultWearable: !!pairedModel, busy})
     if (action === "cancel") {
-      await toolkit.glasses.disconnect()
+      await engine.glasses.disconnect()
     } else {
       await connectGlasses()
     }
@@ -123,12 +123,12 @@ export const ConnectControllerButton = () => {
   const {theme} = useAppTheme()
   const {push} = useNavigationStore.getState()
   const [defaultController] = useSetting(SETTINGS.default_controller.key)
-  const controllerStatus = useToolkitSnapshot(toolkit.glasses.controller.status, (onChange) =>
-    toolkit.glasses.controller.onStatus(onChange),
+  const controllerStatus = useEngineSnapshot(engine.glasses.controller.status, (onChange) =>
+    engine.glasses.controller.onStatus(onChange),
   )
   const controllerConnected = controllerStatus.connected
-  const isSearching = useToolkitSnapshot(toolkit.pairing.scanningController, (onChange) =>
-    toolkit.pairing.onScanningController(onChange),
+  const isSearching = useEngineSnapshot(engine.pairing.scanningController, (onChange) =>
+    engine.pairing.onScanningController(onChange),
   )
 
   if (controllerConnected) {
@@ -149,7 +149,7 @@ export const ConnectControllerButton = () => {
         return
       }
 
-      await toolkit.glasses.controller.connectDefault()
+      await engine.glasses.controller.connectDefault()
     } catch (err) {
       console.error("connect to glasses error:", err)
       showAlert("Connection Error", "Failed to connect to glasses. Please try again.", [{text: "OK"}])
@@ -160,7 +160,7 @@ export const ConnectControllerButton = () => {
   const handleConnectOrDisconnect = async () => {
     const action = decideConnectButtonAction({hasDefaultWearable: !!defaultController, busy: isSearching})
     if (action === "cancel") {
-      await toolkit.glasses.controller.disconnect()
+      await engine.glasses.controller.disconnect()
     } else {
       await connectController()
     }

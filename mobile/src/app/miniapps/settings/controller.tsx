@@ -4,16 +4,16 @@ import {ConnectControllerButton} from "@/components/glasses/ConnectDeviceButton"
 import {Header, Screen, Icon} from "@/components/ignite"
 import {Spacer} from "@/components/ui/Spacer"
 import {useAppTheme} from "@/contexts/ThemeContext"
-import {useToolkitSnapshot} from "@/hooks/useToolkitSnapshot"
+import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n/translate"
-import {SETTINGS, useSetting} from "@/stores/settings"
+import {SETTINGS, useSetting} from "@mentra/engine"
 import {getGlassesImage} from "@/utils/getGlassesImage"
 import {Group} from "@/components/ui"
 import {RouteButton} from "@/components/ui/RouteButton"
 
 import {DeviceTypes} from "@/../../cloud/packages/types/src"
-import {toolkit} from "@mentra/island"
+import {engine} from "@mentra/engine"
 
 import {EmptyState} from "@/components/glasses/info/EmptyState"
 import {showAlert} from "@/contexts/ModalContext"
@@ -21,8 +21,8 @@ import {showAlert} from "@/contexts/ModalContext"
 function DeviceSettings() {
   const {theme} = useAppTheme()
   const [defaultController] = useSetting(SETTINGS.default_controller.key)
-  const controllerConnected = useToolkitSnapshot(toolkit.glasses.controller.status, (onChange) =>
-    toolkit.glasses.controller.onStatus(onChange),
+  const controllerConnected = useEngineSnapshot(engine.glasses.controller.status, (onChange) =>
+    engine.glasses.controller.onStatus(onChange),
   ).connected
   const [superMode] = useSetting(SETTINGS.super_mode.key)
 
@@ -37,7 +37,7 @@ function DeviceSettings() {
     })
     if (result === 1) {
       try {
-        await toolkit.glasses.controller.forget()
+        await engine.glasses.controller.forget()
         // give us a second to forget the glasses before going back
         setTimeout(() => {
           goBack()
@@ -60,7 +60,7 @@ function DeviceSettings() {
 
     if (result === 1) {
       try {
-        await toolkit.glasses.controller.disconnect()
+        await engine.glasses.controller.disconnect()
       } catch (e) {
         console.log(e)
       }
@@ -106,8 +106,8 @@ export default function ControllerSettings() {
   const {theme} = useAppTheme()
   const [defaultController] = useSetting(SETTINGS.default_controller.key)
   const {goBack} = useNavigationStore.getState()
-  const controllerConnected = useToolkitSnapshot(toolkit.glasses.controller.status, (onChange) =>
-    toolkit.glasses.controller.onStatus(onChange),
+  const controllerConnected = useEngineSnapshot(engine.glasses.controller.status, (onChange) =>
+    engine.glasses.controller.onStatus(onChange),
   ).connected
 
   const formatGlassesTitle = (title: string) => title.replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase())

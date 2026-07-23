@@ -2,7 +2,7 @@ import {useState} from "react"
 import {Image} from "expo-image"
 import {StyleSheet, View} from "react-native"
 
-import {SETTINGS, useSetting} from "@/stores/settings"
+import {SETTINGS, useSetting} from "@mentra/engine"
 
 export function CustomBackground() {
   const [background] = useSetting<string>(SETTINGS.home_background.key)

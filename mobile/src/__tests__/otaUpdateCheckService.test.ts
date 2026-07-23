@@ -1,5 +1,5 @@
-import {checkCurrentGlassesForUpdate} from "../../modules/island/src/services/OtaUpdateCheckService"
-import {useGlassesStore} from "../../modules/island/src/stores/glasses"
+import {checkCurrentGlassesForUpdate} from "../../modules/engine/src/services/OtaUpdateCheckService"
+import {useGlassesStore} from "../../modules/engine/src/stores/glasses"
 import {resetBluetoothSdkMock} from "@/test-utils/mockBluetoothSdk"
 
 describe("OtaUpdateCheckService", () => {

@@ -236,7 +236,7 @@ export function LocationSearch({selected, onSelect, onClear, disabled, devFrozen
     <div className="relative mt-4 mx-3 flex flex-col mr-26">
       <div className="relative flex flex-col">
         {/* Search pill */}
-        <div className={`relative z-90 flex items-center h-[52px] rounded-[20px] px-3.5 gap-2.5 bg-[#FFFFFFA6] border border-[#FFFFFF99] [backdrop-filter:blur(30px)_saturate(180%)] [box-shadow:#FFFFFF80_0px_1px_0px_inset,#0000001A_0px_6px_22px] ${safeHeadingSearchPill}`}>
+        <div className={`relative z-90 flex items-center h-[52px] rounded-[20px] px-3.5 gap-2.5 bg-[#FFFFFFA6] dark:bg-[#161619CC] border border-[#FFFFFF99] dark:border-[#FFFFFF1A] [backdrop-filter:blur(30px)_saturate(180%)] [box-shadow:#FFFFFF80_0px_1px_0px_inset,#0000001A_0px_6px_22px] ${safeHeadingSearchPill}`}>
           {/* Search icon */}
           {/* <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{flexShrink: 0}}>
             <circle cx="11" cy="11" r="7" stroke="#0000008C" strokeWidth="2" />
@@ -245,7 +245,7 @@ export function LocationSearch({selected, onSelect, onClear, disabled, devFrozen
 
           <input
             ref={inputRef}
-            className="grow shrink basis-0 min-w-0 bg-transparent font-sans text-[#000000E6] text-base/5 placeholder-[#0000008C] focus:outline-none border-none"
+            className="grow shrink basis-0 min-w-0 bg-transparent font-sans text-[#000000E6] dark:text-zinc-50 text-base/5 placeholder-[#0000008C] dark:placeholder-[#FFFFFF8C] focus:outline-none border-none"
             value={query}
             onChange={(e) => handleChange(e.target.value)}
             onFocus={() => {
@@ -272,7 +272,7 @@ export function LocationSearch({selected, onSelect, onClear, disabled, devFrozen
               onMouseDown={(e) => e.preventDefault()}
               onClick={handleClear}
               disabled={disabled}
-              className="w-6.5 h-6.5 flex items-center justify-center shrink-0 rounded-full bg-[#00000014]"
+              className="w-6.5 h-6.5 flex items-center justify-center shrink-0 rounded-full bg-[#00000014] dark:bg-[#FFFFFF1F]"
               aria-label="Clear">
               <CloseIcon />
             </button>
@@ -294,9 +294,9 @@ export function LocationSearch({selected, onSelect, onClear, disabled, devFrozen
               // <input> is exempt — browsers always allow selection
               // inside form controls so the user can still edit their
               // query normally.
-              className={`fixed z-40 inset-x-0 bottom-0 top-0 bg-white overflow-auto select-none [-webkit-touch-callout:none] [-webkit-user-select:none] ${safeHeadingSearchResults}`}>
+              className={`fixed z-40 inset-x-0 bottom-0 top-0 bg-white dark:bg-zinc-950 overflow-auto select-none [-webkit-touch-callout:none] [-webkit-user-select:none] ${safeHeadingSearchResults}`}>
               {loading ? (
-                <div className="flex items-center justify-center gap-2 px-3 py-8 text-neutral-500">
+                <div className="flex items-center justify-center gap-2 px-3 py-8 text-neutral-500 dark:text-zinc-400">
                   <Loader2 size={16} className="animate-spin" />
                   <span className="text-[13px]">Searching…</span>
                 </div>
@@ -305,20 +305,20 @@ export function LocationSearch({selected, onSelect, onClear, disabled, devFrozen
                 <>
                   {/* Saved places grid */}
                   {savedPlaces.length > 0 && (
-                    <div className="grid grid-cols-4 gap-3 px-4 py-4 border-b border-[#0000000A]">
+                    <div className="grid grid-cols-4 gap-3 px-4 py-4 border-b border-[#0000000A] dark:border-[#FFFFFF14]">
                       {savedPlaces.map(({label, place, type}) => (
                         <button
                           key={place.placeId + label}
                           type="button"
                           onMouseDown={(e) => e.preventDefault()}
                           onClick={() => pickRecent(place)}
-                          className="flex flex-col items-center gap-2 rounded-2xl bg-[#F5F5F5] border border-[#0000000A] p-3">
-                          <div className="flex items-center justify-center size-10 rounded-xl bg-[#1A1A1A] shrink-0">
+                          className="flex flex-col items-center gap-2 rounded-2xl bg-[#F5F5F5] dark:bg-zinc-900 border border-[#0000000A] dark:border-[#FFFFFF14] p-3">
+                          <div className="flex items-center justify-center size-10 rounded-xl bg-[#1A1A1A] dark:bg-zinc-700 shrink-0">
                             <SavedPlaceIcon type={type} />
                           </div>
                           <div className="w-full text-center">
-                            <div className="text-[#000000E6] font-sans font-semibold text-[13px] leading-4 truncate">{label}</div>
-                            <div className="text-[#0000008C] font-sans text-[11px] leading-3.5 truncate">{place.name || place.address}</div>
+                            <div className="text-[#000000E6] dark:text-zinc-50 font-sans font-semibold text-[13px] leading-4 truncate">{label}</div>
+                            <div className="text-[#0000008C] dark:text-zinc-400 font-sans text-[11px] leading-3.5 truncate">{place.name || place.address}</div>
                           </div>
                         </button>
                       ))}
@@ -336,10 +336,10 @@ export function LocationSearch({selected, onSelect, onClear, disabled, devFrozen
                             type="button"
                             onMouseDown={(e) => e.preventDefault()}
                             onClick={() => pickRecent(place)}
-                            className="w-full text-left flex items-center gap-3 px-4 hover:bg-[#0000000A] active:bg-[#0000001A] transition-colors border-b border-[#0000000A] last:border-b-0"
+                            className="w-full text-left flex items-center gap-3 px-4 hover:bg-[#0000000A] dark:hover:bg-[#FFFFFF0F] active:bg-[#0000001A] dark:active:bg-[#FFFFFF1F] transition-colors border-b border-[#0000000A] last:border-b-0"
                             style={{paddingTop: isFirst ? 14 : 12, paddingBottom: isFirst ? 14 : 12}}>
                             {isFirst ? (
-                              <div className="flex items-center justify-center shrink-0 rounded-[18px] bg-[#1A1A1A] size-9">
+                              <div className="flex items-center justify-center shrink-0 rounded-[18px] bg-[#1A1A1A] dark:bg-zinc-700 size-9">
                                 <PinIconFilled />
                               </div>
                             ) : (
@@ -349,7 +349,7 @@ export function LocationSearch({selected, onSelect, onClear, disabled, devFrozen
                             )}
                             <div className="grow shrink basis-0 min-w-0">
                               <div
-                                className="truncate font-sans text-[#000000E6]"
+                                className="truncate font-sans text-[#000000E6] dark:text-zinc-50"
                                 style={{
                                   fontSize: isFirst ? 16 : 15,
                                   fontWeight: isFirst ? 600 : 500,
@@ -358,7 +358,7 @@ export function LocationSearch({selected, onSelect, onClear, disabled, devFrozen
                                 }}>
                                 {place.name || place.address}
                               </div>
-                              <div className="text-[#0000008C] font-sans text-xs leading-4 truncate">{place.address}</div>
+                              <div className="text-[#0000008C] dark:text-zinc-400 font-sans text-xs leading-4 truncate">{place.address}</div>
                             </div>
                           </button>
                         </li>
@@ -366,7 +366,7 @@ export function LocationSearch({selected, onSelect, onClear, disabled, devFrozen
                     })}
                   </ul>
                   ) : savedPlaces.length === 0 ? (
-                  <div className="flex items-center justify-center px-3 py-8 text-neutral-400">
+                  <div className="flex items-center justify-center px-3 py-8 text-neutral-400 dark:text-zinc-500">
                     <span className="text-[13px]">No recent searches</span>
                   </div>
                   ) : null}
@@ -384,14 +384,14 @@ export function LocationSearch({selected, onSelect, onClear, disabled, devFrozen
                         type="button"
                         onMouseDown={(e) => e.preventDefault()}
                         onClick={() => pick(s)}
-                        className="w-full text-left flex items-center gap-3 px-4 py-3 hover:bg-[#0000000A] border-b border-[#0000000A] last:border-b-0">
+                        className="w-full text-left flex items-center gap-3 px-4 py-3 hover:bg-[#0000000A] dark:hover:bg-[#FFFFFF0F] border-b border-[#0000000A] dark:border-[#FFFFFF14] last:border-b-0">
                         <div className="flex items-center justify-center shrink-0 size-8">
                           <PinIconOutline />
                         </div>
                         <div className="grow shrink basis-0 min-w-0">
-                          <div className="text-[15px] font-medium text-[#000000E6] truncate">{s.mainText}</div>
+                          <div className="text-[15px] font-medium text-[#000000E6] dark:text-zinc-50 truncate">{s.mainText}</div>
                           {s.secondaryText ? (
-                            <div className="text-xs text-[#0000008C] truncate">{s.secondaryText}</div>
+                            <div className="text-xs text-[#0000008C] dark:text-zinc-400 truncate">{s.secondaryText}</div>
                           ) : null}
                         </div>
                       </button>

@@ -7,12 +7,13 @@ module.exports = {
     "^@/(.*)$": "<rootDir>/src/$1",
     "^@assets/(.*)$": "<rootDir>/assets/$1",
     "^@mentra/bluetooth-sdk-internal$": "<rootDir>/modules/bluetooth-sdk/src/_internal.ts",
-    // Mirror metro: the @mentra/island entry points resolve to SOURCE, not the
+    "^@mentra/bluetooth-sdk/internal$": "<rootDir>/modules/bluetooth-sdk/src/_internal.ts",
+    // Mirror metro: the @mentra/engine entry points resolve to SOURCE, not the
     // (stale) build/ output — tests must exercise the same code the app
     // bundles. jest.setup.js mocks all three entries.
-    "^@mentra/island$": "<rootDir>/modules/island/src/index.ts",
-    "^@mentra/island/internal$": "<rootDir>/modules/island/src/internal.ts",
-    "^@mentra/island/devtools$": "<rootDir>/modules/island/src/devtools.ts",
+    "^@mentra/engine$": "<rootDir>/modules/engine/src/index.ts",
+    "^@mentra/engine/internal$": "<rootDir>/modules/engine/src/internal.ts",
+    "^@mentra/engine/devtools$": "<rootDir>/modules/engine/src/devtools.ts",
     "^expo/virtual/env$": "<rootDir>/src/test-utils/expoVirtualEnvMock.ts",
     "^react-native$": "<rootDir>/node_modules/react-native",
     "^crust$": "<rootDir>/modules/crust/src",
@@ -23,7 +24,7 @@ module.exports = {
     "bluetooth-sdk/build/_internal$": "<rootDir>/modules/bluetooth-sdk/src/_internal.ts",
   },
   testPathIgnorePatterns: [
-    "<rootDir>/modules/island/",
+    "<rootDir>/modules/engine/",
     "<rootDir>/modules/jspolyfill/",
     "<rootDir>/modules/miniapp/",
     "<rootDir>/src/services/photo/",

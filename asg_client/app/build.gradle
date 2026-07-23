@@ -246,6 +246,16 @@ android {
     testOptions {
         unitTests {
             includeAndroidResources = true
+            all {
+                def textDetectInputDir = System.getProperty('textdetect.inputDir')
+                if (textDetectInputDir != null) {
+                    systemProperty 'textdetect.inputDir', textDetectInputDir
+                }
+                def textDetectOutputDir = System.getProperty('textdetect.outputDir')
+                if (textDetectOutputDir != null) {
+                    systemProperty 'textdetect.outputDir', textDetectOutputDir
+                }
+            }
         }
     }
 
@@ -355,6 +365,9 @@ dependencies {
 
     //location services
     implementation 'com.google.android.gms:play-services-location:18.0.0'
+
+    // Bundled/offline text localization for Mentra Live text-mode photos.
+    implementation 'com.google.mlkit:text-recognition:16.0.1'
 
     //websocket
     implementation 'com.squareup.okhttp3:okhttp:4.9.3'

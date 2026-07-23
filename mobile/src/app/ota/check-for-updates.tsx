@@ -1,3 +1,4 @@
+import {engine, SETTINGS, useSetting} from "@mentra/engine"
 import {useFocusEffect} from "expo-router"
 import {useEffect, useState, useCallback, useRef} from "react"
 import {View, ActivityIndicator} from "react-native"
@@ -6,18 +7,17 @@ import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
 import {Screen, Header, Button, Text, Icon} from "@/components/ignite"
 import {focusEffectPreventBack} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
-import {useToolkitSnapshot} from "@/hooks/useToolkitSnapshot"
+import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {translate} from "@/i18n/translate"
 import {useNavigationStore} from "@/stores/navigation"
-import {SETTINGS, useSetting} from "@/stores/settings"
-import {toolkit} from "@mentra/island"
+import {getNextOnboardingRoute} from "@/utils/onboarding/getNextOnboardingRoute"
 
 type CheckState = "checking" | "update_available" | "no_update" | "error"
 
 export default function OtaCheckForUpdatesScreen() {
   const {theme} = useAppTheme()
   const {replace, clearHistoryAndGoHome, push} = useNavigationStore.getState()
-  const otaSnapshot = useToolkitSnapshot(toolkit.ota.snapshot, toolkit.ota.onSnapshot)
+  const otaSnapshot = useEngineSnapshot(engine.ota.snapshot, engine.ota.onSnapshot)
   const currentBuildNumber = otaSnapshot.buildNumber
   const mtkFirmwareVersion = otaSnapshot.mtkFirmwareVersion
   const besFirmwareVersion = otaSnapshot.besFirmwareVersion
@@ -26,6 +26,7 @@ export default function OtaCheckForUpdatesScreen() {
   const deviceName = defaultWearable || "Glasses"
   const glassesConnected = otaSnapshot.connected
   const [onboardingLiveCompleted] = useSetting(SETTINGS.onboarding_live_completed.key)
+  const [onboardingOsCompleted] = useSetting(SETTINGS.onboarding_os_completed.key)
 
   const [checkState, setCheckState] = useState<CheckState>("checking")
   const [isUpdateRequired, setIsUpdateRequired] = useState(true) // Default to required if not specified
@@ -82,8 +83,8 @@ export default function OtaCheckForUpdatesScreen() {
       const startTime = Date.now()
 
       try {
-        console.log("OTA: Checking current glasses via toolkit OTA")
-        const result = await toolkit.ota.checkForUpdates({
+        console.log("OTA: Checking current glasses via engine OTA")
+        const result = await engine.ota.checkForUpdates({
           waitForBuildNumberMs: MAX_WAIT_FOR_VERSION_INFO_MS,
           waitForBesVersionMs: 5000,
           waitForMtkVersionMs: 2000,
@@ -132,7 +133,7 @@ export default function OtaCheckForUpdatesScreen() {
         } else {
           console.log("📱 No updates available - setting no_update state")
           checkCompletedRef.current = true
-          toolkit.ota.clearUpdateAvailable()
+          engine.ota.clearUpdateAvailable()
           setCheckState("no_update")
         }
       } catch (error) {
@@ -163,16 +164,23 @@ export default function OtaCheckForUpdatesScreen() {
 
   // Navigate to next step based on onboarding status
   const handleContinue = () => {
-    console.log("OTA: handleContinue() - onboardingLiveCompleted:", onboardingLiveCompleted)
-    if (!onboardingLiveCompleted) {
-      // Fresh pairing - go to onboarding (replace so back from onboarding goes home, not back to OTA)
-      console.log("OTA: Fresh pairing - navigating to onboarding")
-      replace("/onboarding/live")
-    } else {
-      // Not fresh pairing - go home
-      console.log("OTA: Onboarding already done - navigating home")
-      clearHistoryAndGoHome()
+    const nextRoute = getNextOnboardingRoute({
+      includeMentraLive: true,
+      onboardingLiveCompleted,
+      onboardingOsCompleted,
+    })
+    console.log("OTA: handleContinue() - onboarding status:", {
+      nextRoute,
+      onboardingLiveCompleted,
+      onboardingOsCompleted,
+    })
+    if (nextRoute) {
+      // Replace so leaving onboarding returns home instead of returning to OTA.
+      replace(nextRoute)
+      return
     }
+    console.log("OTA: Onboarding already completed - navigating home")
+    clearHistoryAndGoHome()
   }
 
   // Retry OTA check
@@ -183,12 +191,12 @@ export default function OtaCheckForUpdatesScreen() {
   }
 
   const handleUpdateNow = () => {
-    if (!toolkit.ota.snapshot().wifiConnected) {
+    if (!engine.ota.snapshot().wifiConnected) {
       console.log("OTA: Update Now pressed but glasses not on WiFi - pushing /wifi/scan")
       push("/wifi/scan")
       return
     }
-    const otaProgressBefore = toolkit.ota.snapshot().legacyProgress
+    const otaProgressBefore = engine.ota.snapshot().legacyProgress
     console.log(
       "OTA_TRACK: navigate_to_progress",
       JSON.stringify({
@@ -203,7 +211,7 @@ export default function OtaCheckForUpdatesScreen() {
           : null,
       }),
     )
-    toolkit.ota.clearProgress()
+    engine.ota.clearProgress()
     // One unified progress route: old-build (< MINIMUM_OTA_STATUS_BUILD)
     // compatibility now lives inside the island install coordinator (WP 8C/8D).
     replace("/ota/progress")

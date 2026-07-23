@@ -78,10 +78,15 @@ public class CommunicationManager
 
     @Override
     public void sendWifiStatusOverBle(boolean isConnected) {
+        sendWifiStatusOverBle(isConnected, null);
+    }
+
+    @Override
+    public void sendWifiStatusOverBle(boolean isConnected, String error) {
         Log.d(TAG, "🔄 =========================================");
         Log.d(TAG, "🔄 SEND WIFI STATUS OVER BLE");
         Log.d(TAG, "🔄 =========================================");
-        Log.d(TAG, "🔄 WiFi connected: " + isConnected);
+        Log.d(TAG, "🔄 WiFi connected: " + isConnected + (error != null ? ", error: " + error : ""));
 
         if (transport != null && transport.isConnected()) {
             Log.d(TAG, "🔄 ✅ Transport available and connected");
@@ -91,6 +96,9 @@ public class CommunicationManager
                 // Use proper type for reliable sending
                 wifiStatus.put("type", "wifi_status");
                 wifiStatus.put("connected", isConnected);
+                if (error != null && !error.isEmpty()) {
+                    wifiStatus.put("error", error);
+                }
                 if (isConnected && networkManager != null) {
                     String ssid = networkManager.getCurrentWifiSsid();
                     String localIp = networkManager.getLocalIpAddress();
@@ -150,8 +158,19 @@ public class CommunicationManager
         }
     }
 
+    /** Build a wifi_scan_result envelope echoing the originating scan's correlation id. */
+    private JSONObject newWifiScanResultMessage(String scanId) throws JSONException {
+        JSONObject response = new JSONObject();
+        response.put("type", "wifi_scan_result");
+        response.put("timestamp", System.currentTimeMillis());
+        if (scanId != null && !scanId.isEmpty()) {
+            response.put("scanId", scanId);
+        }
+        return response;
+    }
+
     @Override
-    public void sendWifiScanResultsOverBle(List<String> networks) {
+    public void sendWifiScanResultsOverBle(List<String> networks, String scanId) {
         Log.d(TAG, "📡 =========================================");
         Log.d(TAG, "📡 SEND WIFI SCAN RESULTS OVER BLE");
         Log.d(TAG, "📡 =========================================");
@@ -172,9 +191,7 @@ public class CommunicationManager
                     List<String> chunk = scanNetworks.subList(i, endIdx);
                     boolean scanComplete = endIdx >= scanNetworks.size();
 
-                    JSONObject response = new JSONObject();
-                    response.put("type", "wifi_scan_result");
-                    response.put("timestamp", System.currentTimeMillis());
+                    JSONObject response = newWifiScanResultMessage(scanId);
 
                     org.json.JSONArray networksArray = new org.json.JSONArray();
                     for (String network : chunk) {
@@ -210,9 +227,7 @@ public class CommunicationManager
                     }
                 }
                 if (scanNetworks.isEmpty()) {
-                    JSONObject response = new JSONObject();
-                    response.put("type", "wifi_scan_result");
-                    response.put("timestamp", System.currentTimeMillis());
+                    JSONObject response = newWifiScanResultMessage(scanId);
                     response.put("networks", new org.json.JSONArray());
                     response.put("scan_complete", true);
 
@@ -239,7 +254,7 @@ public class CommunicationManager
 
     @Override
     public void sendWifiScanResultsOverBleEnhanced(
-            List<NetworkInfo> networks, boolean scanComplete) {
+            List<NetworkInfo> networks, boolean scanComplete, String scanId) {
         Log.d(TAG, "📡 =========================================");
         Log.d(TAG, "📡 SEND ENHANCED WIFI SCAN RESULTS OVER BLE");
         Log.d(TAG, "📡 =========================================");
@@ -254,9 +269,7 @@ public class CommunicationManager
 
                 // Send one network at a time to keep message size minimal
                 for (NetworkInfo network : scanNetworks) {
-                    JSONObject response = new JSONObject();
-                    response.put("type", "wifi_scan_result");
-                    response.put("timestamp", System.currentTimeMillis());
+                    JSONObject response = newWifiScanResultMessage(scanId);
                     response.put("scan_complete", false);
 
                     // Legacy format for backwards compatibility
@@ -304,9 +317,7 @@ public class CommunicationManager
                     }
                 }
                 if (scanComplete) {
-                    JSONObject response = new JSONObject();
-                    response.put("type", "wifi_scan_result");
-                    response.put("timestamp", System.currentTimeMillis());
+                    JSONObject response = newWifiScanResultMessage(scanId);
                     response.put("scan_complete", scanComplete);
                     response.put("networks", new org.json.JSONArray());
                     response.put("networks_neo", new org.json.JSONArray());

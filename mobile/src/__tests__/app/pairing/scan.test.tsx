@@ -43,16 +43,6 @@ jest.mock("@/utils/AlertUtils", () => ({
   default: jest.fn(),
 }))
 
-jest.mock("@/services/RestComms", () => ({
-  __esModule: true,
-  default: {
-    writeUserSettings: jest.fn(async () => ({
-      is_ok: () => true,
-      is_error: () => false,
-    })),
-  },
-}))
-
 jest.mock("@/i18n", () => ({
   translate: jest.fn((key: string, vars?: Record<string, string>) => {
     if (vars?.model) {
@@ -141,19 +131,20 @@ jest.mock("@/components/ignite", () => {
   }
 })
 
-import {render, fireEvent, waitFor} from "@testing-library/react-native"
+import {act, render, fireEvent, waitFor} from "@testing-library/react-native"
 import type {ReactNode} from "react"
 import {Platform} from "react-native"
 
-import {toolkit} from "@mentra/island"
+import {engine} from "@mentra/engine"
 import {useLocalSearchParams} from "expo-router"
 import {focusEffectPreventBack, usePushUnder} from "@/contexts/NavigationHistoryContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {requestFeaturePermissions} from "@/utils/PermissionsUtils"
 import SelectGlassesBluetoothScreen from "@/app/pairing/scan"
-import {useCoreStore} from "@/stores/core"
-import {useGlassesStore} from "../../../../modules/island/src/stores/glasses"
-import {SETTINGS, useSettingsStore} from "@/stores/settings"
+import {useCoreStore} from "@mentra/engine/internal"
+import {useGlassesStore} from "../../../../modules/engine/src/stores/glasses"
+import {SETTINGS} from "@mentra/engine"
+import {useSettingsStore} from "@mentra/engine/internal"
 import {resetBluetoothSdkMock} from "@/test-utils/mockBluetoothSdk"
 
 const originalPlatformOS = Platform.OS
@@ -176,21 +167,29 @@ describe("pairing scan screen", () => {
     useSettingsStore.getState().resetAllSettingsLocally()
     // The screen reads scan results through the pairing facade now; delegate the
     // mocked facade to the real core store this test seeds via setState().
-    ;(toolkit.pairing.searchResults as jest.Mock).mockImplementation(() => [
+    ;(engine.pairing.searchResults as jest.Mock).mockImplementation(() => [
       ...useCoreStore.getState().searchResults,
     ])
-    ;(toolkit.pairing.onFound as jest.Mock).mockImplementation((cb: (results: unknown) => void) =>
+    ;(engine.pairing.onFound as jest.Mock).mockImplementation((cb: (results: unknown) => void) =>
       useCoreStore.subscribe((s) => s.searchResults, cb),
     )
-    ;(toolkit.glasses.hasDefaultDevice as jest.Mock).mockResolvedValue(true)
+    ;(engine.glasses.hasDefaultDevice as jest.Mock).mockResolvedValue(true)
     ;(useLocalSearchParams as jest.Mock).mockReturnValue({deviceModel: "Mentra Live"})
-    ;(useNavigationStore.getState as jest.Mock).mockReturnValue({replace, push, goBack})
+    // history models the stack after push("/pairing/loading") 鈥?only the
+    // kickoff-failure guard reads it.
+    ;(useNavigationStore.getState as jest.Mock).mockReturnValue({
+      replace,
+      push,
+      goBack,
+      history: ["/pairing/scan", "/pairing/loading"],
+    })
     ;(usePushUnder as jest.Mock).mockReturnValue(pushUnder)
     ;(requestFeaturePermissions as jest.Mock).mockResolvedValue(true)
     setPlatformOS("ios")
   })
 
   afterEach(() => {
+    jest.useRealTimers()
     setPlatformOS(originalPlatformOS)
   })
 
@@ -205,7 +204,7 @@ describe("pairing scan screen", () => {
     const {getByText} = render(<SelectGlassesBluetoothScreen />)
 
     await waitFor(() => {
-      expect(toolkit.pairing.scan).toHaveBeenCalledWith("Mentra Live")
+      expect(engine.pairing.scan).toHaveBeenCalledWith("Mentra Live")
     })
 
     fireEvent.press(getByText("001"))
@@ -222,7 +221,7 @@ describe("pairing scan screen", () => {
 
     // Two-phase identity: picking a device must NOT write the default identity -
     // the scan marks the model pending and the native layer promotes on success.
-    expect(toolkit.pairing.setDefault).not.toHaveBeenCalled()
+    expect(engine.pairing.setDefault).not.toHaveBeenCalled()
     expect(useSettingsStore.getState().getSetting(SETTINGS.device_name.key)).toBe("")
     expect(useSettingsStore.getState().getSetting(SETTINGS.pending_wearable.key)).toBe("Mentra Live")
   })
@@ -245,7 +244,7 @@ describe("pairing scan screen", () => {
     backHandler({actionType: "GO_BACK"})
 
     await waitFor(() => {
-      expect(toolkit.pairing.abandonAttempt).toHaveBeenCalledWith()
+      expect(engine.pairing.abandonAttempt).toHaveBeenCalledWith()
     })
     expect(goBack).toHaveBeenCalled()
     expect(useSettingsStore.getState().getSetting(SETTINGS.pending_wearable.key)).toBe("Mentra Live")
@@ -257,8 +256,77 @@ describe("pairing scan screen", () => {
     const backHandler = (focusEffectPreventBack as jest.Mock).mock.calls[0][0]
     backHandler({actionType: "REPLACE"})
 
-    expect(toolkit.pairing.abandonAttempt).not.toHaveBeenCalled()
+    expect(engine.pairing.abandonAttempt).not.toHaveBeenCalled()
     expect(goBack).not.toHaveBeenCalled()
+  })
+
+  it("routes a pair kickoff rejection to the failure screen instead of leaving loading stuck", async () => {
+    jest.useFakeTimers()
+    setPlatformOS("android")
+    ;(engine.pairing.pair as jest.Mock).mockRejectedValueOnce(new Error("bluetooth powered off"))
+    useCoreStore.setState({
+      searchResults: [{id: "a", model: "Mentra Live", name: "MENTRA_LIVE_BLE_001", address: "a"}],
+    })
+
+    const {getByText} = render(<SelectGlassesBluetoothScreen />)
+
+    fireEvent.press(getByText("001"))
+
+    await waitFor(() => {
+      expect(push).toHaveBeenCalledWith("/pairing/loading", {
+        deviceModel: "Mentra Live",
+        deviceName: "MENTRA_LIVE_BLE_001",
+      })
+    })
+
+    // The pair kickoff fires 2s after navigating to loading; its rejection
+    // must surface as a failure route, not just a console.error.
+    act(() => {
+      jest.advanceTimersByTime(2_000)
+    })
+
+    await waitFor(() => {
+      expect(replace).toHaveBeenCalledWith("/pairing/failure", {
+        error: "errors:pairingCouldNotStart",
+        deviceModel: "Mentra Live",
+      })
+    })
+    // Parity with loading.tsx's handlePairFailure: the failed attempt is
+    // cleared before the failure screen shows.
+    expect(engine.pairing.abandonAttempt).toHaveBeenCalled()
+  })
+
+  it("suppresses the kickoff-failure route when the user already left loading", async () => {
+    jest.useFakeTimers()
+    setPlatformOS("android")
+    // The user backed out of /pairing/loading during the 2s kickoff delay 鈥?
+    // the stale rejection must not yank them to the failure screen.
+    ;(useNavigationStore.getState as jest.Mock).mockReturnValue({
+      replace,
+      push,
+      goBack,
+      history: ["/pairing/scan"],
+    })
+    ;(engine.pairing.pair as jest.Mock).mockRejectedValueOnce(new Error("bluetooth powered off"))
+    useCoreStore.setState({
+      searchResults: [{id: "a", model: "Mentra Live", name: "MENTRA_LIVE_BLE_001", address: "a"}],
+    })
+
+    const {getByText} = render(<SelectGlassesBluetoothScreen />)
+
+    fireEvent.press(getByText("001"))
+
+    await waitFor(() => {
+      expect(push).toHaveBeenCalled()
+    })
+
+    act(() => {
+      jest.advanceTimersByTime(2_000)
+    })
+    await act(async () => {})
+
+    expect(replace).not.toHaveBeenCalledWith("/pairing/failure", expect.anything())
+    expect(engine.pairing.abandonAttempt).not.toHaveBeenCalled()
   })
 
   it("auto-skips directly into pairing when NOTREQUIREDSKIP is discovered", async () => {
@@ -291,7 +359,7 @@ describe("pairing scan screen", () => {
     const {getByText, queryByText} = render(<SelectGlassesBluetoothScreen />)
 
     await waitFor(() => {
-      expect(toolkit.pairing.scan).toHaveBeenCalledWith("AR99")
+      expect(engine.pairing.scan).toHaveBeenCalledWith("AR99")
     })
 
     expect(getByText("Xingyi AR99")).toBeTruthy()
@@ -311,7 +379,7 @@ describe("pairing scan screen", () => {
     const {queryByText} = render(<SelectGlassesBluetoothScreen />)
 
     await waitFor(() => {
-      expect(toolkit.pairing.scan).toHaveBeenCalledWith("AR99")
+      expect(engine.pairing.scan).toHaveBeenCalledWith("AR99")
     })
 
     expect(queryByText("Xingyi AR99")).toBeNull()

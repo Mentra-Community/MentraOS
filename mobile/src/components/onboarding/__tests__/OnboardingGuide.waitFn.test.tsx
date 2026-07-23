@@ -47,11 +47,6 @@ jest.mock("@/stores/navigation", () => ({
   useNavigationStore: {getState: () => ({clearHistoryAndGoHome: jest.fn()})},
 }))
 
-jest.mock("@/stores/settings", () => ({
-  SETTINGS: {super_mode: {key: "super_mode"}},
-  useSetting: () => [false, jest.fn()],
-}))
-
 jest.mock("@/components/ignite", () => {
   const {Text: RNText, TouchableOpacity} = require("react-native")
   const React = require("react")

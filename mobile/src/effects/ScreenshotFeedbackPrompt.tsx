@@ -8,7 +8,7 @@ import {showAlert} from "@/contexts/ModalContext"
 import {translate} from "@/i18n"
 
 export function ScreenshotFeedbackPrompt() {
-  const {push} = useNavigationStore.getState()
+  const {getCurrentRoute, push} = useNavigationStore.getState()
   useEffect(() => {
     if (Platform.OS !== "ios") return
 
@@ -28,7 +28,11 @@ export function ScreenshotFeedbackPrompt() {
         })
 
         if (result === 1) {
-          push("/miniapps/settings/feedback")
+          push("/miniapps/settings/feedback", {
+            triggerSource: "screenshot_feedback_prompt",
+            triggerReason: "screenshot_detected",
+            sourceRoute: getCurrentRoute() ?? undefined,
+          })
         }
       })
     })
@@ -36,7 +40,7 @@ export function ScreenshotFeedbackPrompt() {
     return () => {
       subscription?.remove()
     }
-  }, [])
+  }, [getCurrentRoute, push])
 
   return null
 }

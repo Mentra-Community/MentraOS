@@ -29,18 +29,17 @@ import {PhotoImage} from "@/components/glasses/Gallery/PhotoImage"
 import {ProgressRing} from "@/components/glasses/Gallery/ProgressRing"
 import {Header, Icon, Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
-import {useToolkitSnapshot} from "@/hooks/useToolkitSnapshot"
+import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
-import {MediaLibraryPermissions, toolkit} from "@mentra/island"
-import {localStorageService} from "@mentra/island/internal"
-import {SETTINGS, useSetting} from "@/stores/settings"
+import {engine, MediaLibraryPermissions, SETTINGS, useSetting} from "@mentra/engine"
+import {cameraRollExportCoordinator, localStorageService} from "@mentra/engine/internal"
 import {spacing, ThemedStyle} from "@/theme"
 import {PhotoInfo} from "@/types/asg"
 import Share from "react-native-share"
-import showAlert from "@/utils/AlertUtils"
+import showAlert, {showBluetoothAlert} from "@/utils/AlertUtils"
+import {canShareGallerySelection, MAX_GALLERY_SHARE_ITEMS} from "@/utils/galleryShareLimits"
 import {SettingsNavigationUtils} from "@/utils/SettingsNavigationUtils"
-import {checkConnectivityRequirementsUI} from "@/utils/PermissionsUtils"
 import {ENABLE_TEST_GALLERY_DATA, TEST_GALLERY_ITEMS} from "@/utils/testGalleryData"
 import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
 
@@ -70,7 +69,7 @@ interface GalleryItem {
 }
 
 export function GalleryScreen() {
-  const {goBack, push} = useNavigationStore.getState()
+  const {push} = useNavigationStore.getState()
   const {theme, themed} = useAppTheme()
   const insets = useSaferAreaInsets()
 
@@ -83,9 +82,9 @@ export function GalleryScreen() {
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
   const features = getModelCapabilities(defaultWearable)
   const glassesConnected =
-    useToolkitSnapshot(toolkit.glasses.status, (onChange) => toolkit.glasses.onStatus(onChange)).state === "connected"
+    useEngineSnapshot(engine.glasses.status, (onChange) => engine.glasses.onStatus(onChange)).state === "connected"
 
-  const galleryStatus = useToolkitSnapshot(toolkit.gallery.status, (onChange) => toolkit.gallery.onStatus(onChange))
+  const galleryStatus = useEngineSnapshot(engine.gallery.status, (onChange) => engine.gallery.onStatus(onChange))
   const syncState = galleryStatus.syncState
   const currentFile = galleryStatus.currentFile
   const currentFileProgress = galleryStatus.currentFileProgress
@@ -134,7 +133,7 @@ export function GalleryScreen() {
   // Render the island gallery sync's structured notices (it no longer shows its own
   // alerts). The host owns the alert text/buttons/i18n + the OS-settings deep-links.
   useEffect(() => {
-    return toolkit.gallery.onNotice((notice) => {
+    return engine.gallery.onNotice((notice) => {
       switch (notice.code) {
         case "glasses_disconnected":
           showAlert("Glasses Disconnected", "Please connect your glasses before syncing the gallery.", [{text: "OK"}])
@@ -180,6 +179,23 @@ export function GalleryScreen() {
               {text: "Enable", onPress: () => void SettingsNavigationUtils.showLocationServicesDialog()},
             ],
             {cancelable: false},
+          )
+          break
+        case "camera_roll_permission_required":
+          showAlert(
+            "Camera Roll Access Required",
+            "Automatic saving is enabled. Allow photo-library access, or turn automatic saving off in Gallery Settings before syncing.",
+            [
+              {text: "Cancel", style: "cancel"},
+              {text: "Open Settings", onPress: () => void SettingsNavigationUtils.openAppSettings()},
+            ],
+          )
+          break
+        case "bluetooth_off":
+          // Same copy the host's old pre-sync connectivity gate showed.
+          showBluetoothAlert(
+            translate("pairing:connectionIssueTitle"),
+            "Bluetooth is required to connect to glasses. Please enable Bluetooth and try again.",
           )
           break
         case "connect_to_glasses": {
@@ -302,9 +318,9 @@ export function GalleryScreen() {
         }
       }
 
-      // Clean up stale metadata entries (files that no longer exist on disk)
+      // Preserve stale metadata for path recovery/support instead of deleting the only record.
       for (const fileName of staleFileNames) {
-        await localStorageService.deleteDownloadedFile(fileName)
+        await localStorageService.quarantineDownloadedFile(fileName, "local media missing or empty during gallery load")
       }
 
       // Also unlink zero-byte files from disk so they don't accumulate.
@@ -588,12 +604,10 @@ export function GalleryScreen() {
       return
     }
 
-    // Connectivity gate (BT + Android location) — host-side UI; the island sync no
-    // longer runs it. Shows the right alert + aborts if requirements aren't met.
-    const connectivityOk = await checkConnectivityRequirementsUI()
-    if (!connectivityOk) return
-
-    void toolkit.gallery.sync()
+    // Connectivity preconditions (BT adapter, Android location) live in the island
+    // sync pre-flight now — it emits structured notices that the onNotice handler
+    // above renders as alerts.
+    void engine.gallery.sync()
   }
 
   // Handle deletion of selected photos
@@ -602,8 +616,15 @@ export function GalleryScreen() {
 
     const selectedCount = selectedPhotos.size
     const itemText = selectedCount === 1 ? "item" : "items"
+    const notExportedCount = await cameraRollExportCoordinator.countNotExported(Array.from(selectedPhotos))
+    const exportWarning =
+      notExportedCount > 0
+        ? ` ${notExportedCount} ${
+            notExportedCount === 1 ? "item has" : "items have"
+          } not been confirmed in your camera roll and may be permanently lost.`
+        : " Copies already saved to your camera roll will not be affected."
 
-    showAlert("Delete Photos", `Are you sure you want to delete ${selectedCount} ${itemText}?`, [
+    showAlert("Delete Photos", `Are you sure you want to delete ${selectedCount} ${itemText}?${exportWarning}`, [
       {text: translate("common:cancel"), style: "cancel"},
       {
         text: translate("common:delete"),
@@ -623,7 +644,7 @@ export function GalleryScreen() {
             if (localPhotos.length > 0) {
               for (const photoName of localPhotos) {
                 try {
-                  const deleted = await localStorageService.deleteDownloadedFile(photoName)
+                  const deleted = await cameraRollExportCoordinator.deleteLocalMedia(photoName)
                   if (deleted) {
                     deletedPhotoNames.push(photoName)
                   } else {
@@ -639,7 +660,7 @@ export function GalleryScreen() {
 
             if (deletedPhotoNames.length > 0) {
               setDownloadedPhotos((prev) => prev.filter((photo) => !deletedPhotoNames.includes(photo.name)))
-              toolkit.gallery.removeFilesFromQueue(deletedPhotoNames)
+              engine.gallery.removeFilesFromQueue(deletedPhotoNames)
             }
 
             // Refresh gallery
@@ -667,6 +688,14 @@ export function GalleryScreen() {
   // Handle sharing multiple selected photos/videos
   const handleShareSelectedPhotos = async () => {
     if (selectedPhotos.size === 0) return
+    if (!canShareGallerySelection(selectedPhotos.size)) {
+      showAlert(
+        "Share Limit",
+        `You can share up to ${MAX_GALLERY_SHARE_ITEMS} items at a time. You currently have ${selectedPhotos.size} selected.`,
+        [{text: translate("common:ok")}],
+      )
+      return
+    }
 
     try {
       const photosToShare = allPhotos.filter((p) => p.photo && selectedPhotos.has(p.photo.name)).map((p) => p.photo!)
@@ -791,7 +820,7 @@ export function GalleryScreen() {
     // Only query glasses if we have glasses info (meaning glasses are connected) AND glasses have gallery capability
     if (glassesConnected && features?.hasCamera) {
       console.log("[GalleryScreen] Glasses connected with gallery capability - querying gallery status")
-      void toolkit.gallery.refreshStatus()
+      void engine.gallery.refreshStatus()
     }
 
     // Note: Sync service is initialized globally in GallerySyncEffect
@@ -801,7 +830,7 @@ export function GalleryScreen() {
   useEffect(() => {
     if (!glassesConnected) {
       console.log("[GalleryScreen] Glasses disconnected - clearing gallery state")
-      toolkit.gallery.clearGlassesGalleryStatus()
+      engine.gallery.clearGlassesGalleryStatus()
     }
   }, [glassesConnected])
 
@@ -1041,12 +1070,12 @@ export function GalleryScreen() {
                       ? "item"
                       : "items"
                     : glassesGalleryStatus.photos > 0
-                    ? glassesGalleryStatus.photos === 1
-                      ? "photo"
-                      : "photos"
-                    : glassesGalleryStatus.videos === 1
-                    ? "video"
-                    : "videos"}
+                      ? glassesGalleryStatus.photos === 1
+                        ? "photo"
+                        : "photos"
+                      : glassesGalleryStatus.videos === 1
+                        ? "video"
+                        : "videos"}
                 </Text>
               </View>
             </View>

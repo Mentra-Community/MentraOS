@@ -203,7 +203,7 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
                 }
                 canvasElements[i].value.rect = rect
             }
-            sendCanvasCommand { $0.canvasUpdateText = .with { $0.id = fid; $0.text = text } }
+            sendCanvasCommand { $0.canvasUpdateText = .with { $0.id = fid; $0.text = self.sanitizeDisplayText(text) } }
             return
         }
         guard let fid = allocFirmwareId(isBitmap: false) else {
@@ -221,7 +221,7 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
                 $0.borderRadius = UInt32(max(0, borderRadius))
             }
         }
-        sendCanvasCommand { $0.canvasUpdateText = .with { $0.id = fid; $0.text = text } }
+        sendCanvasCommand { $0.canvasUpdateText = .with { $0.id = fid; $0.text = self.sanitizeDisplayText(text) } }
     }
 
     func drawLayoutBitmap(
@@ -376,7 +376,7 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
     func dbg1() {}
     func dbg2() {}
 
-    func requestWifiScan() {}
+    func requestWifiScan(scanId _: String?) {}
 
     func sendWifiCredentials(_: String, _: String) {}
 
@@ -454,6 +454,11 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
     private var servicesReady = false
     private var serviceReadyWaiters: [CheckedContinuation<Void, Never>] = []
     private var pendingWriteContinuation: CheckedContinuation<Void, Never>?
+    // Separate from pendingWriteContinuation (which is flow-control for
+    // .withoutResponse): this one is resumed by didWriteValueFor, i.e. the ATT
+    // ack for a .withResponse write. Kept distinct so a peripheralIsReady
+    // flow-control callback can't spuriously resume an in-flight acked write.
+    private var pendingAckContinuation: CheckedContinuation<Void, Never>?
 
     // MARK: - Published Properties (G1-compatible)
 
@@ -567,11 +572,16 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
         let chunks: [[UInt8]]
         let waitTimeMs: Int
         let chunkDelayMs: Int
+        // true → fragments written .withResponse (firmware ATT-acks each, worker
+        // waits for the ack before the next). false → .withoutResponse (captions):
+        // fire-and-forget for throughput, newest caption supersedes the last.
+        let ack: Bool
 
-        init(chunks: [[UInt8]], waitTimeMs: Int = 0, chunkDelayMs: Int = 8) {
+        init(chunks: [[UInt8]], waitTimeMs: Int = 0, chunkDelayMs: Int = 8, ack: Bool = true) {
             self.chunks = chunks
             self.waitTimeMs = waitTimeMs
             self.chunkDelayMs = chunkDelayMs
+            self.ack = ack
         }
     }
 
@@ -663,9 +673,9 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
         }
     }
 
-    private func queueChunks(_ chunks: [[UInt8]], waitTimeMs: Int = 0, chunkDelayMs: Int = 10) {
+    private func queueChunks(_ chunks: [[UInt8]], waitTimeMs: Int = 0, chunkDelayMs: Int = 10, ack: Bool = true) {
         let cmd = BufferedCommand(
-            chunks: chunks, waitTimeMs: waitTimeMs, chunkDelayMs: chunkDelayMs
+            chunks: chunks, waitTimeMs: waitTimeMs, chunkDelayMs: chunkDelayMs, ack: ack
         )
         Task { [weak self] in
             await self?.commandQueue.enqueue(cmd)
@@ -707,6 +717,20 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
         pendingWriteContinuation = nil
     }
 
+    /// Suspends until the ATT ack for a .withResponse write arrives (resumed by
+    /// didWriteValueFor, or by the disconnect handlers so an in-flight acked
+    /// write can't wedge the queue across a drop).
+    private func waitUntilAcked() async {
+        await withCheckedContinuation { continuation in
+            pendingAckContinuation = continuation
+        }
+    }
+
+    private func resumePendingAck() {
+        pendingAckContinuation?.resume()
+        pendingAckContinuation = nil
+    }
+
     private func emitBleCommandSent(_ packetData: Data) {
         guard packetData.first == PACKET_TYPE_PROTOBUF else { return }
         guard packetData.count > 1 else { return }
@@ -737,7 +761,7 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
     /// reassemble messages larger than one MTU. Single-fragment messages set totalChunks = 1
     /// and are decoded directly by the firmware's fast path.
     private func queueDataWithOptimalChunking(
-        _ data: Data, packetType: UInt8 = 0x02, waitTimeMs: Int = 0, emitTelemetry: Bool = true
+        _ data: Data, packetType: UInt8 = 0x02, waitTimeMs: Int = 0, emitTelemetry: Bool = true, ack: Bool = true
     ) {
         // Telemetry: report the full logical command (type byte + protobuf) before fragmenting.
         // Callers on high-rate paths (caption text walls, up to 10/sec) pass
@@ -783,7 +807,7 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
         // Bridge.log(
         //     "NEX: 📦 Fragmented protobuf into \(chunks.count) chunk(s) (seq=\(seq), max payload \(effectiveChunkSize) bytes)"
         // )
-        queueChunks(chunks, waitTimeMs: waitTimeMs)
+        queueChunks(chunks, waitTimeMs: waitTimeMs, ack: ack)
     }
 
     private func processCommand(_ command: BufferedCommand) async {
@@ -806,18 +830,22 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
             //     "NEX: 📦 Sending chunk \(index) of \(command.chunks.count) to \(peripheral.name ?? "Unknown")"
             // )
             // Bridge.log("NEX: 📦 Chunk data: \(data.toHexString())")
-            // // Write WITHOUT response: a write-with-response is one outstanding request at a
-            // // time gated on a remote round trip, which puts the (screen-off-throttled) app
-            // // thread in the path of every fragment and makes captions crawl in the background.
-            // // .withoutResponse lets CoreBluetooth batch fragments into connection events.
-            // // CoreBluetooth does NOT call didWriteValueFor for .withoutResponse, so we use its
-            // // flow-control flag instead of an ack — gating prevents dropped fragments (which
-            // // would make the firmware discard the whole reassembled caption). See
-            // // docs/ble-disconnects-during-captions.md in the firmware repo.
-            // if !peripheral.canSendWriteWithoutResponse {
-            //     await waitUntilReadyToWrite()
-            // }
-            peripheral.writeValue(data, for: writeCharacteristic, type: .withoutResponse)
+            if command.ack {
+                // Acked path (everything except captions): write WITH response so the
+                // firmware ATT-acks each fragment, then wait for that ack
+                // (didWriteValueFor) before sending the next — reliable delivery, one
+                // outstanding write at a time.
+                peripheral.writeValue(data, for: writeCharacteristic, type: .withResponse)
+                await waitUntilAcked()
+            } else {
+                // Captions: write WITHOUT response. A write-with-response is one
+                // outstanding request gated on a remote round trip, which puts the
+                // (screen-off-throttled) app thread in the path of every fragment and
+                // makes captions crawl in the background. .withoutResponse lets
+                // CoreBluetooth batch fragments into connection events; the newest
+                // caption supersedes the last, so a dropped fragment self-heals.
+                peripheral.writeValue(data, for: writeCharacteristic, type: .withoutResponse)
+            }
 
             // // Delay between chunks except maybe after the last chunk if waitTime will handle it
             // if index < command.chunks.count - 1 {
@@ -1198,10 +1226,23 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
         }
     }
 
+    // Characters the Nex font can render: letters, digits, whitespace, and a small
+    // punctuation set. Everything else (CJK, emoji, smart quotes, …) is stripped when
+    // Chinese captions are off. Matches UNSUPPORTED_GLYPH_REGEX in NexSGCUtils.kt.
+    private static let unsupportedGlyphPattern = #"[^A-Za-z0-9 \r\n\.,!\?;:\-\[\]\(\)\{\}'"\+=/]"#
+
+    /// Sanitize text bound for the glasses. When Chinese captions are disabled (the
+    /// default) the Nex font can't render CJK/emoji/etc., so em-dashes are normalised
+    /// to hyphens and unsupported glyphs are dropped; when enabled, text passes through
+    /// untouched. Every text path to the display funnels through here so captions and
+    /// layout text filter identically. Mirrors sanitizeDisplayText in NexSGCUtils.kt.
     private func sanitizeDisplayText(_ text: String) -> String {
+        let chineseCaptionsEnabled = DeviceStore.shared.get("bluetooth", "nex_chinese_captions") as? Bool ?? false
+        if chineseCaptionsEnabled { return text }
         let normalized = text.replacingOccurrences(of: "—", with: "-")
-        let pattern = #"[^A-Za-z0-9 \r\n\.,!\?;:\-\[\]\(\)\{\}'"\+=/]"#
-        return normalized.replacingOccurrences(of: pattern, with: "", options: .regularExpression)
+        return normalized.replacingOccurrences(
+            of: MentraNexSGC.unsupportedGlyphPattern, with: "", options: .regularExpression
+        )
     }
 
     func sendTextWall(_ text: String) async {
@@ -1210,10 +1251,9 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
             return
         }
 
-        // When Chinese captions are disabled (default), strip characters the Nex font
-        // can't render (CJK etc.). When enabled, pass the text through unmodified.
-        let chineseCaptionsEnabled = DeviceStore.shared.get("bluetooth", "nex_chinese_captions") as? Bool ?? false
-        let sanitizedText = chineseCaptionsEnabled ? text : sanitizeDisplayText(text)
+        // sanitizeDisplayText applies the Chinese-captions gate internally: off (default)
+        // strips glyphs the Nex font can't render, on passes the text through unmodified.
+        let sanitizedText = sanitizeDisplayText(text)
         // No per-call log: this runs for every interim transcript (several/sec
         // during continuous speech) and each Bridge.log costs the JS thread.
         // Bridge.log("NEX: Displaying text wall: '\(sanitizedText)'")
@@ -1274,7 +1314,9 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
         }
         textWallLock.unlock()
         guard let toSend else { return }
-        queueDataWithOptimalChunking(toSend, packetType: PACKET_TYPE_PROTOBUF, emitTelemetry: false)
+        // Captions go out unacked (.withoutResponse) for throughput; every other
+        // command uses acked writes. Mirrors MentraNex.kt.
+        queueDataWithOptimalChunking(toSend, packetType: PACKET_TYPE_PROTOBUF, emitTelemetry: false, ack: false)
     }
 
     @objc func displayTextLine(_ text: String) {
@@ -2473,6 +2515,7 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
         releaseServiceWaiters()
         Task { await commandQueue.clear() }
         resumePendingWrite()
+        resumePendingAck()
         stopReconnectionTimer()
         stopTextWallDrain()
     }
@@ -2523,6 +2566,7 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
         releaseServiceWaiters()
         Task { await commandQueue.clear() }
         resumePendingWrite()
+        resumePendingAck()
 
         Bridge.log("NEX: ✅ MentraNexSGC destroyed successfully")
         // Reset initialization flags
@@ -2790,6 +2834,7 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
         releaseServiceWaiters()
         Task { await commandQueue.clear() }
         resumePendingWrite()
+        resumePendingAck()
         self.peripheral = nil // Reset peripheral on failure to allow reconnection
         // Optionally, start reconnection attempts here
         if !isDisconnecting, !isKilled {
@@ -2823,6 +2868,7 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
         releaseServiceWaiters()
         Task { await commandQueue.clear() }
         resumePendingWrite()
+        resumePendingAck()
 
         // Reset protobuf version posted flag for next connection (like Java implementation)
         protobufVersionPosted = false
@@ -3135,10 +3181,10 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
             Bridge.log(
                 "NEX-CONN: ❌ Error writing value to \(characteristic.uuid): \(error.localizedDescription)"
             )
-            resumePendingWrite()
+            resumePendingAck()
             return
         }
-        resumePendingWrite()
+        resumePendingAck()
     }
 
     func peripheralIsReady(toSendWriteWithoutResponse _: CBPeripheral) {

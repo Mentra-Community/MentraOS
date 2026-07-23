@@ -88,8 +88,8 @@ For one-shot manual capture tuning, pass `exposureTimeNs` and `iso` together. `e
 | `iso` | React Native, Android, iOS | Optional manual ISO. Used only when `exposureTimeNs` enables manual exposure. |
 | `aeExposureDivisor` | React Native, Android, iOS | Optional scan-style auto-exposure divisor. Values must be greater than `1`. |
 | `isoCap` | React Native, Android, iOS | Optional scan-style ISO cap. Values must be greater than `0`. |
-| `mfnr` | React Native, Android, iOS | Optional per-request multi-frame noise reduction preference. |
-| `zsl` | React Native, Android, iOS | Optional per-request zero-shutter-lag preference. |
+| `zsl` | React Native, Android, iOS | ZSL preview/capture buffering. Enabled by default; pass `false` to disable. Honored in text/scan/manual exposure modes. |
+| `mfnr` | React Native, Android, iOS | Vendor multi-frame noise reduction on still capture. Enabled by default; pass `false` for the single-frame pipeline. Honored in text/scan/manual exposure modes. MFNR arms ZSL buffering in preview even when `zsl` is false. |
 | `noiseReduction` | React Native, Android, iOS | Optional per-request noise-reduction preference. Some firmware may report that this tuning is not implemented. |
 | `edgeEnhancement` | React Native, Android, iOS | Optional per-request edge-enhancement preference. Some firmware may report that this tuning is not implemented. |
 | `ispDigitalGain` | React Native, Android, iOS | Optional per-request ISP digital gain hint. Some firmware may report that this tuning is not implemented. |
@@ -167,6 +167,8 @@ try await sdk.warmUpCamera(
 </Tabs>
 
 `warmUpCamera(...)` returns the matching `camera_status` `ready` event. It throws or rejects when the glasses send `camera_status` `error`, when the command cannot be sent, or when the response times out. Listen for `camera_status` if you want progress events: `warming` means the warm-up was accepted, `ready` means the camera is open/configured for reuse, `stopped` means the warm lease expired or the camera closed, and `error` includes `errorCode` / `errorMessage` when available.
+
+Warm-up holds default to 15 seconds and are capped at 60 seconds. When your UI leaves the foreground, call `stopCameraWarmUp(requestId)` with the explicit request ID used to start the lease. Stopping while the camera is still opening rejects the original warm-up with `camera_warm_up_cancelled`; stopping a ready lease emits `stopped`. Compatible request-owned leases share the camera, so releasing one does not close it while another remains.
 
 The `stopped` event is not a promise settlement; it is the lifecycle end for a warm lease that already reached `ready`. If multiple callers warmed or refreshed the same camera session and received `ready`, each request ID receives its own `stopped` event when that lease expires or the camera service tears down. If the camera service tears down before a warm-up reaches `ready`, the pending warm-up rejects with `error` instead.
 
@@ -261,12 +263,16 @@ print("video uploaded: \(stopped.status)")
 
 Mentra Live has gallery mode for the right action button. When gallery mode is enabled, a short press takes a photo, a long press starts video recording, and a short press stops the active video recording. Button and touch events are still reported to your app.
 
+<Warning>
+  `setPhotoCaptureDefaults(...)` in the samples below is **deprecated**. Prefer per-request `requestPhoto(...)` options for capture tuning. The call still configures action-button size for now.
+</Warning>
+
 <Tabs>
   <Tab title="React Native">
 
 ```ts
 await BluetoothSdk.setGalleryModeEnabled(true);
-await BluetoothSdk.setPhotoCaptureDefaults({size: 'medium'});
+await BluetoothSdk.setPhotoCaptureDefaults({size: 'medium'}); // deprecated
 await BluetoothSdk.setVideoRecordingDefaults({width: 1280, height: 720, fps: 30});
 await BluetoothSdk.setMaxVideoRecordingDuration(3);
 const cameraFov = await BluetoothSdk.setCameraFov({fov: 102, roiPosition: 'center'});
@@ -278,7 +284,8 @@ console.log(`Camera ready at ${cameraFov.fov}°`);
 
 ```kotlin
 sdk.setGalleryModeEnabled(true)
-sdk.setPhotoCaptureDefaults(PhotoCaptureDefaults(size = PhotoSize.MEDIUM))
+@Suppress("DEPRECATION")
+sdk.setPhotoCaptureDefaults(PhotoCaptureDefaults(size = PhotoSize.MEDIUM)) // deprecated
 sdk.setVideoRecordingDefaults(VideoRecordingDefaults(width = 1280, height = 720, fps = 30))
 sdk.setMaxVideoRecordingDuration(minutes = 3)
 val cameraFov = sdk.setCameraFov(CameraFov(fov = 102, roiPosition = CameraRoiPosition.CENTER))
@@ -290,7 +297,7 @@ println("Camera ready at ${cameraFov.fov}°")
 
 ```swift
 try await sdk.setGalleryModeEnabled(true)
-try await sdk.setPhotoCaptureDefaults(PhotoCaptureDefaults(size: .medium))
+try await sdk.setPhotoCaptureDefaults(PhotoCaptureDefaults(size: .medium)) // deprecated
 try await sdk.setVideoRecordingDefaults(VideoRecordingDefaults(width: 1280, height: 720, fps: 30))
 try await sdk.setMaxVideoRecordingDuration(minutes: 3)
 let cameraFov = try await sdk.setCameraFov(CameraFov(fov: 102, roiPosition: .center))
@@ -304,13 +311,74 @@ Use `setGalleryModeEnabled(false)` when you want the action button to report eve
 
 Action-button photos emitted by the glasses use the same `photo_status` metadata shape when the phone SDK is connected. These local captures report `resolvedConfig.source: "button"` and `resolvedConfig.transferMethod: "local"`, then expose `requestedCaptureConfig` / `meteredPreview` on `capturing` and `captureMetadata` on `captured`.
 
+### Gallery Photo Request IDs
+
+In gallery mode, photos are saved on the glasses instead of being uploaded to a webhook. Because nothing is uploaded, there is no response that returns the `requestId`. Instead, read the `requestId` from `photo_status` events. Action-button captures set `resolvedConfig.source` to `"button"`, so you can filter for them. When your own app starts the capture, you set the `requestId` yourself by passing it to `requestPhoto({requestId, save: true, webhookUrl: null})`.
+
+<Tabs>
+  <Tab title="React Native">
+
+```ts
+import {useBluetoothEvent} from '@mentra/bluetooth-sdk/react';
+
+useBluetoothEvent('photo_status', (event) => {
+  if (event.resolvedConfig?.source === 'button') {
+    console.log('gallery photo requestId', event.requestId);
+  }
+});
+```
+
+  </Tab>
+  <Tab title="Android">
+
+```kotlin
+override fun onPhotoStatus(event: PhotoStatusEvent) {
+    if (event.resolvedConfig?.source == "button") {
+        Log.d("Mentra", "gallery photo requestId: ${event.requestId}")
+    }
+}
+```
+
+  </Tab>
+  <Tab title="iOS">
+
+```swift
+func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didReceive event: BluetoothEvent) {
+    if case let .photoStatus(status) = event,
+       status.resolvedConfig?.source == "button" {
+        print("gallery photo requestId: \(status.requestId)")
+    }
+}
+```
+
+  </Tab>
+</Tabs>
+
+To find the saved photo file, connect to the glasses Wi-Fi hotspot and request the gallery list. Each photo includes `request_id`, `name`, `url`, `mime_type`, and `size`. Match on `request_id` to find your capture:
+
+```ts
+const gallery = await fetch(`${galleryBaseUrl}/api/gallery?limit=100`).then((res) => res.json());
+const savedPhoto = gallery.data.photos.find((p) => p.request_id === requestId);
+console.log('saved as', savedPhoto?.name, 'at', savedPhoto?.url);
+```
+
+<Warning>
+  The gallery server is only reachable over the glasses Wi-Fi hotspot. Connect the phone to that hotspot before querying `/api/gallery`.
+</Warning>
+
+### Action-Button Photo Defaults
+
+<Warning>
+  `setPhotoCaptureDefaults(...)` is **deprecated**. Prefer per-request `requestPhoto(...)` options (for example `mode: "text"` for text sensor size/crop, or explicit `aeExposureDivisor`) instead of sticky button-photo presets. The method still works but will be removed in a future release.
+</Warning>
+
 `setPhotoCaptureDefaults(...)` controls action-button photo defaults. Omitted fields leave the existing defaults unchanged. Pass `resetCaptureTuning: true` to restore the optional tuning fields to standard capture behavior; this does not change photo size unless you also pass `size`. If you include other fields in the same call, those fields become the new defaults after the reset.
 
 | Default field | Behavior |
 | --- | --- |
 | `size` | Action-button photo size tier: `low`, `medium`, `high`, or `max`. |
-| `mfnr` | Multi-frame noise reduction preference for action-button photos. |
-| `zsl` | Zero-shutter-lag preference for action-button photos. |
+| `zsl` | Persisted ZSL override for physical camera-button photos. When omitted, button photos inherit the global ZSL default. |
+| `mfnr` | Persisted MFNR override for physical camera-button photos. When omitted, button photos inherit the global MFNR default. |
 | `noiseReduction` | Noise-reduction preference for action-button photos. |
 | `edgeEnhancement` | Edge-enhancement preference for action-button photos. |
 | `ispDigitalGain` | ISP digital gain hint for action-button photos. |

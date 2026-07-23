@@ -1,0 +1,379 @@
+---
+title: "Mentra OEM Integration Engine API"
+description: "The engine.* API an OEM host calls to drive MentraOS on its glasses — connection, pairing, device + user settings, wifi, speech, display, cloud session, miniapps, permissions, notifications, and reports, over a device-agnostic runtime."
+---
+
+<Note>
+**Status: preview (Phase 1).** The Mentra OEM Integration Engine covers the full Phase-1 surface
+documented below. Firmware **OTA** and the media **gallery** are intentionally
+deferred to a later phase. The runtime is not yet packaged for external install —
+reach out to [help@mentra.glass](mailto:help@mentra.glass) to integrate today.
+</Note>
+
+## What it is
+
+The **Mentra OEM Integration Engine** is the API an OEM host app (the phone-side app
+that talks to your glasses) calls to run MentraOS. It ships as the `@mentra/engine` module and
+exposes a single namespaced object, **`engine`**:
+
+```ts
+import {engine} from "@mentra/engine"
+```
+
+The dividing line:
+
+- **The host owns UI, navigation, and login.** Your screens, your router, your auth.
+- **The engine owns the runtime and the device.** Connection, device state, wifi,
+  on-device speech models, the display pipeline, the miniapp runtime.
+
+So an OEM builds its own UI and calls `engine.<domain>.<method>()` for everything
+device- and runtime-related. The engine is device-agnostic: the same calls work
+across glasses models.
+
+## Lifecycle
+
+The host hands the engine its auth + config once, then starts it.
+
+```ts
+import {engine} from "@mentra/engine"
+
+engine.configure({
+  // REQUIRED — the host owns login; the engine owns the rest.
+  auth: {
+    // Return your current (auto-refreshed) backend token.
+    getSubjectToken: async () => ({token: await getToken(), type: "supabase"}),
+  },
+  // Optional cloud endpoints + OEM identity.
+  config: {coreUrl, runtimeUrl, oemId},
+  // Optional analytics sink.
+  analytics: (event, props) => track(event, props),
+})
+
+await engine.start() // idempotent
+// …
+await engine.stop()  // idempotent
+```
+
+| Call | Purpose |
+|---|---|
+| `engine.configure(opts)` | Hand the engine `auth` (required), `config`, `analytics`. Call once, before `start()`. |
+| `engine.start()` | Mark the runtime started. Idempotent. |
+| `engine.stop()` | Tear down. Idempotent. |
+
+`auth.getSubjectToken()` is the only must-have seam — the host owns login and returns
+a fresh token on demand; the engine owns everything downstream.
+
+## `engine.glasses`
+
+Connection actions, a curated status/info read-model, capabilities, version, and the
+discrete input events.
+
+### Connection
+
+```ts
+await engine.glasses.connectDefault()   // connect the last-paired glasses
+await engine.glasses.connect(device)    // connect a specific (discovered) device
+await engine.glasses.connectSimulated() // built-in simulated glasses (dev)
+await engine.glasses.setDefault(device) // make it the connectDefault() target
+await engine.glasses.disconnect()
+await engine.glasses.forget()
+
+// optional ring controller:
+await engine.glasses.controller.connectDefault()
+await engine.glasses.controller.disconnect()
+await engine.glasses.controller.forget()
+```
+
+### Status & info (read-models)
+
+`status()` returns a snapshot projected from the runtime's glasses store, in a stable
+shape that doesn't leak the internal store layout:
+
+```ts
+const s = engine.glasses.status()
+// { state, fullyBooted, battery, charging,
+//   case: {battery, charging, open, removed},
+//   signal, micEnabled, vadEnabled, btClassic }
+
+const unsubscribe = engine.glasses.onStatus((s) => render(s))
+
+const info = engine.glasses.info()
+// { model, style, color, firmwareVersion, mtkFirmware, besFirmware,
+//   serialNumber, buildNumber, btMac }
+
+const caps = engine.glasses.capabilities() // model capability table
+await engine.glasses.requestVersionInfo()  // ask glasses to report fresh version info
+```
+
+### Input events
+
+```ts
+const offButton = engine.glasses.onButtonPress((e) => { /* ButtonPressEvent */ })
+const offTouch  = engine.glasses.onTouchGesture((e) => { /* TouchEvent */ })
+```
+
+Every `on*()` returns an unsubscribe function.
+
+### `engine.glasses.wifi`
+
+```ts
+const networks = await engine.glasses.wifi.scan()            // WifiSearchResult[]
+await engine.glasses.wifi.connect(ssid, password)            // rejects with a coded error on failure
+await engine.glasses.wifi.forget(ssid)
+const status = engine.glasses.wifi.status()                  // WifiStatus snapshot
+const off = engine.glasses.wifi.onStatus((status) => { … })  // subscribe
+```
+
+`connect()` propagates the bluetooth layer's coded errors (`bluetooth_powered_off`,
+`request_timeout`, …) unchanged, so your UI keeps its own error mapping.
+
+### `engine.glasses.settings`
+
+Keyed **device** settings (brightness, head-up angle, dashboard, camera/button,
+sensing, …). `set()` persists *and* auto-syncs to the connected glasses.
+
+```ts
+engine.glasses.settings.get(key)
+engine.glasses.settings.set(key, value)        // also pushes to the device
+engine.glasses.settings.onChanged(key, (v) => { … })
+engine.glasses.settings.descriptor(key)
+engine.glasses.settings.available()            // the device-setting keys (live list)
+```
+
+`available()` is the authoritative list at runtime (it varies by model/capabilities).
+The current keys, their types, and defaults:
+
+| Key | Type | Default | Notes / values |
+|---|---|---|---|
+| `brightness` | number | `50` | display brightness, `0`–`100` |
+| `auto_brightness` | boolean | `true` | auto-adjust brightness |
+| `head_up_angle` | number | `45` | head-up activation angle in degrees, `0`–`60` |
+| `screen_disabled` | boolean | `false` | turn the display off |
+| `contextual_dashboard` | boolean | `true` | show the dashboard on head-up |
+| `dashboard_height` | number | `4` | dashboard vertical position |
+| `dashboard_depth` | number | `2` | dashboard distance |
+| `use_native_dashboard` | boolean | `true` | native dashboard vs JS |
+| `menu_apps` | `string[] \| null` | `null` | button-menu app package names |
+| `button_photo_size` | enum | `"max"` | `low` (960×720) \| `medium` (1440×1088) \| `high` (3264×2448) \| `max` (camera maximum) |
+| `button_video_settings` | object | `{ width: 1920, height: 1080, fps: 30 }` | button video recording |
+| `button_camera_led` | boolean | `true` | capture LED indicator |
+| `button_max_recording_time` | number | `10` | max button-triggered video length, in **minutes** (e.g. `3`, `5`, `10`, `15`, `20`) |
+| `camera_fov` | object | `{ fov: 102, roi_position: 0 }` | persistent camera field of view base |
+| `preferred_mic` | enum | `"auto"` | `auto` \| `glasses` \| `phone` |
+| `lc3_frame_size` | enum (bytes) | `60` | `20` \| `40` \| `60` |
+| `sensing_enabled` | boolean | `true` | onboard sensors |
+| `voice_activity_detection_enabled` | boolean | `true` | voice-activity detection |
+| `power_saving_mode` | boolean | `false` | low-power mode |
+| `offline_mode` | boolean | `false` | offline operation |
+| `gallery_mode` | boolean | `true` | capture-to-gallery enabled — when `true`, a camera-button press takes a photo to the on-device gallery. The Mentra App auto-manages this (enabled when the camera app is running or no other app is claiming button events); set it directly only if your host has no equivalent button-routing logic |
+| `calendar_events` | array | `[]` | synced calendar events |
+| `twelve_hour_time` | boolean | `true` | 12-hour vs 24-hour clock |
+| `metric_system` | boolean | `false` | metric vs imperial |
+| `nex_chinese_captions` | boolean | `false` | Mentra Nex: Chinese captions |
+| `nex_audio_playback` | boolean | `false` | Mentra Nex: audio playback |
+
+<Note>
+Device **identity** (paired-device id/name/address, controller address) and internal
+**runtime flags** (e.g. STT-fallback state) are intentionally *not* in this surface —
+read the connected device via `engine.glasses.info()`.
+</Note>
+
+## `engine.pairing`
+
+First-time glasses discovery + pairing. (Reconnecting the already-paired default is
+`engine.glasses.connectDefault()`.)
+
+```ts
+engine.pairing.scan()                          // start scanning
+engine.pairing.scanning()                      // is a scan in progress?
+engine.pairing.searchResults()                 // discovered devices (snapshot)
+const off = engine.pairing.onFound((r) => { … }) // subscribe; returns unsubscribe
+await engine.pairing.pair(device)              // connect to a discovered device (from searchResults)
+await engine.pairing.setDefault(device)        // make it the connectDefault() target
+engine.pairing.onPairFailure((e) => { … })
+engine.pairing.onGlassesNotReady((e) => { … })
+```
+
+## `engine.speech`
+
+On-device STT/TTS model management.
+
+```ts
+engine.speech.stt.currentLanguage()
+engine.speech.stt.languages()
+engine.speech.stt.languageInfo()
+await engine.speech.stt.download(/* model args */)
+engine.speech.stt.activate(code)
+engine.speech.stt.cancelDownload()
+await engine.speech.stt.deleteModel(/* model args */)
+engine.speech.stt.status()                       // offline-model auto-download status
+engine.speech.stt.onStatusChanged((s) => { … })  // subscribe; returns unsubscribe
+
+// engine.speech.tts mirrors stt (no auto-download status stream).
+```
+
+## `engine.display.mirror`
+
+A typed read facade for a phone-side preview of the glasses screen.
+
+```ts
+const event = engine.display.mirror.current()             // current display event snapshot
+const off   = engine.display.mirror.onMirror((e) => { … }) // subscribe; returns unsubscribe
+```
+
+## `engine.session`
+
+The cloud (cloud-v2) live-session surface. engine owns the cloud client — it
+constructs it from engine-owned transports + the `auth` you passed to
+`configure()` — so this reads the session it manages.
+
+```ts
+const s = engine.session.status()            // { status, audioTransport }
+const off = engine.session.onStatus((s) => { … }) // subscribe; returns unsubscribe
+const live = engine.session.isConnected()    // handshake completed?
+```
+
+`status` is one of `connected | connecting | reconnecting | disconnected`;
+`audioTransport` is `udp | ws | offline | none`.
+
+```ts
+await engine.session.account.delete()                       // backend emails a confirmation code
+await engine.session.account.confirmDelete(requestId, code) // confirm the deletion
+```
+
+## `engine.settings`
+
+Typed keyed user settings over the engine-owned settings store.
+
+```ts
+engine.settings.get(key)               // current value (or default)
+engine.settings.set(key, value)        // also syncs to backend (pass false to skip)
+engine.settings.onChanged(key, (v) => { … }) // subscribe; returns unsubscribe
+engine.settings.descriptor(key)        // schema (type/default/options)
+engine.settings.keys()                 // all known keys
+```
+
+## `engine.reports`
+
+Bug report and feedback submission. The OEM writes its own report screen,
+trigger labels, rating controls, and screenshot picker UX; engine owns runtime
+context collection, recent phone logs, Cloud V2 submission, artifact upload,
+dedupe, and glasses notification.
+
+```ts
+const bug = await engine.reports.submit({
+  kind: "bug",
+  trigger,
+  report,
+  screenshots,
+})
+
+const automatic = await engine.reports.submit({
+  kind: "automatic",
+  trigger: {type: "automatic", source, reason},
+  report,
+  screenshots,
+  dedupeKey,
+})
+
+const feedback = await engine.reports.submit({
+  kind: "feedback",
+  feedback: {type, message, experienceRating},
+})
+```
+
+## `engine.dev`
+
+Developer/debug surface — backend + cloud-v2 URL overrides, reconnect, version gate.
+
+```ts
+engine.dev.minimumClientVersion()
+engine.dev.backendUrl(); engine.dev.setBackendUrl(url)
+engine.dev.cloudUrls(); engine.dev.setCloudUrls({core, runtime}) // sets + reconnects
+engine.dev.savedUrls()
+engine.dev.reconnectCloud()
+```
+
+## `engine.permissions`
+
+OS permissions — the raw check/request ops (your UI adds the rationale dialogs).
+
+```ts
+await engine.permissions.check("microphone")   // granted?
+await engine.permissions.request("location")   // -> granted?
+await engine.permissions.openSettings()        // open OS settings
+await engine.permissions.requirementsForMiniapp(pkg) // -> AppletPermission[]
+```
+
+Feature keys: `microphone · camera · calendar · location · background_location · bluetooth · phone_state · post_notifications`.
+
+## `engine.phoneNotifications`
+
+Forward phone notifications to the glasses, with a per-app blocklist. **Android-only**
+(getters return safe defaults on iOS).
+
+```ts
+engine.phoneNotifications.enabled(); engine.phoneNotifications.setEnabled(true)
+await engine.phoneNotifications.installedApps()      // [{packageName, appName, icon}]
+engine.phoneNotifications.blocklist(); engine.phoneNotifications.setBlocklist([...])
+await engine.phoneNotifications.hasListenerPermission()
+await engine.phoneNotifications.requestListenerPermission()
+```
+
+## `engine.notifications`
+
+Inbound alerts engine→host — conditions engine detects, your UI renders.
+
+```ts
+const off = engine.notifications.onNotification((n) => {
+  // n.kind: "miniapp_crashloop" | "version_incompatible" | "connection_failed_persistent"
+  // n.packageName, n.reason, n.timestamp, n.metadata
+})
+```
+
+## `engine.miniapps`
+
+Miniapp lifecycle. The miniapp **WebView is a host component** — engine ships the
+bridge primitives (`buildMiniappGlobalsScript`, `buildMentraUiShim`, the MentraJS
+router), exported from `@mentra/engine` directly; your app mounts the `<WebView>` and
+wires it to those. This facade is the lifecycle half.
+
+```ts
+engine.miniapps.list()                          // installed miniapps (snapshot)
+const off = engine.miniapps.onChanged((apps) => { … }) // subscribe; returns unsubscribe
+await engine.miniapps.refresh()                 // re-fetch the installed list
+await engine.miniapps.start(app, opts?)         // start + foreground a miniapp
+await engine.miniapps.stop(packageName)
+await engine.miniapps.setForeground(packageName)
+engine.miniapps.clearForeground()
+await engine.miniapps.stopAll()
+await engine.miniapps.install(url, opts?)
+await engine.miniapps.uninstall(packageName, version?)
+```
+
+## `engine.stores.*` — escape hatch (not the OEM contract)
+
+The raw device-state stores are also exposed under `engine.stores`
+(`glasses`, `display`, `core`, `connection`, `gallerySync`, `cloudClientStatus`,
+`settings`) so the first-party Mentra App can keep using them directly during migration.
+
+<Warning>
+`engine.stores.*` is a **Mentra-app convenience, not the OEM contract.** It exposes
+the internal store shape, which can change. OEMs should use the typed facades above;
+prefer a facade wherever one exists.
+</Warning>
+
+## What the host provides
+
+The boundary is small and explicit: the host provides its **UI**, its **login**, and
+optional **config** — engine owns the entire runtime. The only required seam is
+`auth.getSubjectToken` (passed to `configure()`); engine owns token exchange, refresh,
+storage, the cloud client, glasses/BLE, settings, speech, display, and the miniapp
+runtime from there.
+
+<Note>
+You may see internal `configureRuntime(...)` wiring in the first-party Mentra App —
+that's **transitional** scaffolding for migrating Mentra's own screens, not part of
+the OEM contract. It deletes itself as each domain lands in engine. An OEM only ever
+calls `configure({auth, config?})` + `start()`.
+</Note>

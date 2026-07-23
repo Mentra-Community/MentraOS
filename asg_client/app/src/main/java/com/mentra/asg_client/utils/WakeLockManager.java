@@ -3,272 +3,312 @@ package com.mentra.asg_client.utils;
 import android.app.ActivityManager;
 import android.content.Context;
 import android.content.Intent;
+import android.os.Handler;
+import android.os.Looper;
 import android.os.PowerManager;
+import android.os.SystemClock;
 import android.util.Log;
 
 import androidx.annotation.NonNull;
 
 import com.mentra.asg_client.MainActivity;
+import com.mentra.asg_client.logging.BleTraceLogger;
 
+import org.json.JSONObject;
+
+import java.util.EnumMap;
 import java.util.List;
+import java.util.Map;
 
 /**
- * Utility class for managing wake locks across the application.
- * Provides methods to acquire and release different types of wake locks
- * to keep the device CPU running or screen on for specific operations.
+ * Owner-keyed wake leases. Every subsystem that needs the SoC (or screen) awake holds its
+ * OWN lease, backed by its own {@link PowerManager.WakeLock}: the kernel keeps the CPU up
+ * while ANY lease is held and lets it sleep when the last one ends, so no arbitration logic
+ * lives here. {@link #release(WakeOwner)} can only end that owner's leases — the historical
+ * single shared lock let any subsystem's release (notably the old releaseAllWakeLocks())
+ * silently revoke every other subsystem's protection, which is exactly what put the SoC to
+ * sleep mid-OTA and mid-upload.
+ *
+ * Acquires are extend-only per owner: a shorter acquire never cuts short a longer-lived
+ * lease already held by the same owner; a longer one pushes the deadline out.
+ *
+ * Every lease transition (acquire / extend / release / expiry) is emitted on the lifecycle
+ * trace channel (BleTraceLogger.logLifecycle, component "WakeLockManager") with the full
+ * set of currently-held leases, so incident logs show exactly which lease died and what
+ * was left holding when the device slept.
  */
 public class WakeLockManager {
     private static final String TAG = "WakeLockManager";
-    
-    // Default tag prefixes for wake locks
-    private static final String DEFAULT_CPU_WAKE_LOCK_TAG = "AugmentOS:CpuWakeLock";
-    private static final String DEFAULT_SCREEN_WAKE_LOCK_TAG = "AugmentOS:ScreenWakeLock";
-    
-    // Default timeouts
-    private static final long DEFAULT_CPU_TIMEOUT_MS = 60000; // 60 seconds
-    private static final long DEFAULT_SCREEN_TIMEOUT_MS = 15000; // 15 seconds
-    
-    // Static wake lock instances for sharing across the app
-    private static PowerManager.WakeLock sCpuWakeLock;
-    private static PowerManager.WakeLock sScreenWakeLock;
 
     /**
-     * Acquire a CPU wake lock to keep the processor running.
-     * This is useful for background operations that need to continue
-     * even when the screen is off.
-     *
-     * @param context Application context
-     * @return true if the wake lock was successfully acquired
+     * Every wake-lease owner in asg_client. One entry per subsystem: release(owner) can
+     * only end that owner's leases, and per-owner lock tags (AugmentOS:Cpu:CAMERA, ...)
+     * make dumpsys power / batterystats attribute wake time to the right subsystem.
      */
-    public static boolean acquireCpuWakeLock(@NonNull Context context) {
-        return acquireCpuWakeLock(context, DEFAULT_CPU_TIMEOUT_MS, DEFAULT_CPU_WAKE_LOCK_TAG);
+    public enum WakeOwner {
+        /** Wake-flagged (W:1) phone command grant — see AsgConstants.PHONE_WAKE_COMMAND_WINDOW_MS. */
+        PHONE_COMMAND,
+        /** Camera open/capture window (CameraNeoService). */
+        CAMERA,
+        /** RTMP/SRT/WHIP streaming session. */
+        STREAMING,
+        /** BES firmware UART transfer (BesOtaManager). */
+        BES_OTA,
+        /** MTK/APK OTA install (OtaHelper). */
+        MTK_OTA,
+        /** Battery announcement while asleep (ButtonEventSubscriber). */
+        BATTERY_ANNOUNCE,
+        /** Boot-time service startup window (BootstrapActivity). */
+        BOOTSTRAP,
     }
 
-    /**
-     * Acquire a CPU wake lock with a custom timeout.
-     *
-     * @param context Application context
-     * @param timeoutMs Timeout in milliseconds
-     * @return true if the wake lock was successfully acquired
-     */
-    public static boolean acquireCpuWakeLock(@NonNull Context context, long timeoutMs) {
-        return acquireCpuWakeLock(context, timeoutMs, DEFAULT_CPU_WAKE_LOCK_TAG);
-    }
+    private static final class Lease {
+        final PowerManager.WakeLock lock;
+        final long deadlineMs; // SystemClock.elapsedRealtime()-based
 
-    /**
-     * Acquire a CPU wake lock with a custom timeout and tag.
-     *
-     * @param context Application context
-     * @param timeoutMs Timeout in milliseconds
-     * @param tag Tag for the wake lock (for debugging)
-     * @return true if the wake lock was successfully acquired
-     */
-    public static boolean acquireCpuWakeLock(@NonNull Context context, long timeoutMs, String tag) {
-        try {
-            PowerManager powerManager = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
-            if (powerManager == null) {
-                Log.e(TAG, "PowerManager is null");
-                return false;
-            }
-
-            // Release existing wake lock if it's held
-            if (sCpuWakeLock != null && sCpuWakeLock.isHeld()) {
-                sCpuWakeLock.release();
-                Log.d(TAG, "Released existing CPU wake lock");
-            }
-
-            // Create and acquire a new wake lock
-            sCpuWakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, tag);
-            sCpuWakeLock.acquire(timeoutMs);
-            Log.d(TAG, "CPU wake lock acquired with timeout: " + timeoutMs + "ms");
-            return true;
-        } catch (Exception e) {
-            Log.e(TAG, "Error acquiring CPU wake lock", e);
-            return false;
+        Lease(PowerManager.WakeLock lock, long deadlineMs) {
+            this.lock = lock;
+            this.deadlineMs = deadlineMs;
         }
     }
 
+    // Guards the lease maps so extend-only deadline checks are race-free across the
+    // threads that acquire (command processors, camera/streaming/OTA workers).
+    private static final Object LOCK = new Object();
+
+    private static final Map<WakeOwner, Lease> sCpuLeases = new EnumMap<>(WakeOwner.class);
+    private static final Map<WakeOwner, Lease> sScreenLeases = new EnumMap<>(WakeOwner.class);
+
+    // Expiry watcher: WakeLock.acquire(timeout) expires inside the OS with no callback,
+    // so a main-looper check at each lease's deadline emits the wake_expire trace event.
+    private static final Handler sExpiryHandler = new Handler(Looper.getMainLooper());
+
+    // Application context captured on first acquire so release()/expiry can emit trace
+    // events without every caller having to thread a Context through.
+    private static volatile Context sAppContext;
+
     /**
-     * Acquire a screen wake lock to turn on and keep the screen on.
-     * This is useful for operations that require the screen to be on
-     * such as camera operations on some Android devices.
+     * Acquire (or extend) the owner's CPU lease. Extend-only: if the owner already holds
+     * a CPU lease whose deadline is at or beyond the requested one, the existing lease is
+     * kept and this call is a no-op.
      *
-     * @param context Application context
-     * @return true if the wake lock was successfully acquired
+     * @return true if the owner holds a CPU lease covering at least timeoutMs on return
      */
-    public static boolean acquireScreenWakeLock(@NonNull Context context) {
-        return acquireScreenWakeLock(context, DEFAULT_SCREEN_TIMEOUT_MS, DEFAULT_SCREEN_WAKE_LOCK_TAG);
+    public static boolean acquireCpu(@NonNull Context context, @NonNull WakeOwner owner, long timeoutMs) {
+        return acquire(context, owner, timeoutMs, false);
     }
 
     /**
-     * Acquire a screen wake lock with a custom timeout.
-     *
-     * @param context Application context
-     * @param timeoutMs Timeout in milliseconds
-     * @return true if the wake lock was successfully acquired
+     * Acquire (or extend) the owner's screen lease (turns the screen on and keeps it on).
+     * Same extend-only semantics as {@link #acquireCpu}.
      */
-    public static boolean acquireScreenWakeLock(@NonNull Context context, long timeoutMs) {
-        return acquireScreenWakeLock(context, timeoutMs, DEFAULT_SCREEN_WAKE_LOCK_TAG);
+    public static boolean acquireScreen(@NonNull Context context, @NonNull WakeOwner owner, long timeoutMs) {
+        return acquire(context, owner, timeoutMs, true);
+    }
+
+    /** Acquire both CPU and screen leases for the owner. */
+    public static boolean acquireFull(@NonNull Context context, @NonNull WakeOwner owner,
+                                      long cpuTimeoutMs, long screenTimeoutMs) {
+        boolean cpu = acquireCpu(context, owner, cpuTimeoutMs);
+        boolean screen = acquireScreen(context, owner, screenTimeoutMs);
+        return cpu && screen;
     }
 
     /**
-     * Acquire a screen wake lock with a custom timeout and tag.
+     * Release the owner's leases (CPU and screen). Other owners' leases are untouched —
+     * the device stays awake until the LAST lease is released or expires.
      *
-     * @param context Application context
-     * @param timeoutMs Timeout in milliseconds
-     * @param tag Tag for the wake lock (for debugging)
-     * @return true if the wake lock was successfully acquired
+     * @return true if no lease remains held by this owner on return
      */
-    public static boolean acquireScreenWakeLock(@NonNull Context context, long timeoutMs, String tag) {
+    public static boolean release(@NonNull WakeOwner owner) {
+        boolean cpuOk = releaseOne(owner, false);
+        boolean screenOk = releaseOne(owner, true);
+        return cpuOk && screenOk;
+    }
+
+    /**
+     * Acquire both leases for the owner and bring the app to the foreground if needed.
+     * Camera operations require the app to be in the foreground to avoid "Camera disabled
+     * by policy" errors.
+     */
+    public static boolean acquireFullWakeLockAndBringToForeground(@NonNull Context context,
+                                                                  @NonNull WakeOwner owner,
+                                                                  long cpuTimeoutMs,
+                                                                  long screenTimeoutMs) {
         try {
-            PowerManager powerManager = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
-            if (powerManager == null) {
-                Log.e(TAG, "PowerManager is null");
-                return false;
-            }
-
-            // Release existing wake lock if it's held
-            if (sScreenWakeLock != null && sScreenWakeLock.isHeld()) {
-                sScreenWakeLock.release();
-                Log.d(TAG, "Released existing screen wake lock");
-            }
-
-            // Create and acquire a new wake lock with flags to turn screen on
-            sScreenWakeLock = powerManager.newWakeLock(
-                    PowerManager.FULL_WAKE_LOCK |
-                    PowerManager.ACQUIRE_CAUSES_WAKEUP |
-                    PowerManager.ON_AFTER_RELEASE,
-                    tag);
-            sScreenWakeLock.acquire(timeoutMs);
-            Log.d(TAG, "Screen wake lock acquired with timeout: " + timeoutMs + "ms");
-            return true;
-        } catch (Exception e) {
-            Log.e(TAG, "Error acquiring screen wake lock", e);
-            return false;
-        }
-    }
-
-    /**
-     * Acquire both CPU and screen wake locks at once.
-     * This is a convenience method for operations that need
-     * both the CPU to stay active and the screen to stay on.
-     *
-     * @param context Application context
-     * @param cpuTimeoutMs Timeout for CPU wake lock in milliseconds
-     * @param screenTimeoutMs Timeout for screen wake lock in milliseconds
-     * @return true if both wake locks were successfully acquired
-     */
-    public static boolean acquireFullWakeLock(@NonNull Context context, long cpuTimeoutMs, long screenTimeoutMs) {
-        boolean cpuSuccess = acquireCpuWakeLock(context, cpuTimeoutMs);
-        boolean screenSuccess = acquireScreenWakeLock(context, screenTimeoutMs);
-        return cpuSuccess && screenSuccess;
-    }
-
-    /**
-     * Acquire both CPU and screen wake locks with default timeouts.
-     *
-     * @param context Application context
-     * @return true if both wake locks were successfully acquired
-     */
-    public static boolean acquireFullWakeLock(@NonNull Context context) {
-        return acquireFullWakeLock(context, DEFAULT_CPU_TIMEOUT_MS, DEFAULT_SCREEN_TIMEOUT_MS);
-    }
-
-    /**
-     * Release the CPU wake lock if it is currently held.
-     *
-     * @return true if the wake lock was released or wasn't held
-     */
-    public static boolean releaseCpuWakeLock() {
-        try {
-            if (sCpuWakeLock != null && sCpuWakeLock.isHeld()) {
-                sCpuWakeLock.release();
-                sCpuWakeLock = null;
-                Log.d(TAG, "CPU wake lock released");
-            }
-            return true;
-        } catch (Exception e) {
-            Log.e(TAG, "Error releasing CPU wake lock", e);
-            return false;
-        }
-    }
-
-    /**
-     * Release the screen wake lock if it is currently held.
-     *
-     * @return true if the wake lock was released or wasn't held
-     */
-    public static boolean releaseScreenWakeLock() {
-        try {
-            if (sScreenWakeLock != null && sScreenWakeLock.isHeld()) {
-                sScreenWakeLock.release();
-                sScreenWakeLock = null;
-                Log.d(TAG, "Screen wake lock released");
-            }
-            return true;
-        } catch (Exception e) {
-            Log.e(TAG, "Error releasing screen wake lock", e);
-            return false;
-        }
-    }
-
-    /**
-     * Release all wake locks (both CPU and screen).
-     *
-     * @return true if all wake locks were released successfully
-     */
-    public static boolean releaseAllWakeLocks() {
-        boolean cpuSuccess = releaseCpuWakeLock();
-        boolean screenSuccess = releaseScreenWakeLock();
-        return cpuSuccess && screenSuccess;
-    }
-
-    /**
-     * Acquire both CPU and screen wake locks and bring the app to foreground if needed.
-     * This is specifically designed for camera operations that require the app to be
-     * in the foreground to avoid "Camera disabled by policy" errors.
-     *
-     * @param context Application context
-     * @param cpuTimeoutMs Timeout for CPU wake lock in milliseconds
-     * @param screenTimeoutMs Timeout for screen wake lock in milliseconds
-     * @return true if wake locks were acquired and app brought to foreground successfully
-     */
-    public static boolean acquireFullWakeLockAndBringToForeground(@NonNull Context context, long cpuTimeoutMs, long screenTimeoutMs) {
-        try {
-            // First, try to bring app to foreground if not already there
             if (!isAppInForeground(context)) {
                 Log.d(TAG, "App not in foreground, attempting to bring to front");
                 if (!bringAppToForeground(context)) {
-                    Log.w(TAG, "Failed to bring app to foreground, continuing with wake locks");
+                    Log.w(TAG, "Failed to bring app to foreground, continuing with wake leases");
                 }
-            } else {
-                Log.d(TAG, "App already in foreground");
             }
-
-            // Then acquire the wake locks as usual
-            return acquireFullWakeLock(context, cpuTimeoutMs, screenTimeoutMs);
         } catch (Exception e) {
-            Log.e(TAG, "Error in acquireFullWakeLockAndBringToForeground", e);
-            // Fallback to just acquiring wake locks
-            return acquireFullWakeLock(context, cpuTimeoutMs, screenTimeoutMs);
+            Log.e(TAG, "Error checking/bringing app to foreground", e);
         }
+        return acquireFull(context, owner, cpuTimeoutMs, screenTimeoutMs);
+    }
+
+    private static boolean acquire(@NonNull Context context, @NonNull WakeOwner owner,
+                                   long timeoutMs, boolean screen) {
+        sAppContext = context.getApplicationContext();
+        synchronized (LOCK) {
+            try {
+                PowerManager powerManager =
+                        (PowerManager) context.getSystemService(Context.POWER_SERVICE);
+                if (powerManager == null) {
+                    Log.e(TAG, "PowerManager is null");
+                    return false;
+                }
+
+                Map<WakeOwner, Lease> leases = screen ? sScreenLeases : sCpuLeases;
+                long now = SystemClock.elapsedRealtime();
+                long requestedDeadlineMs = now + timeoutMs;
+
+                Lease existing = leases.get(owner);
+                boolean extend = existing != null && existing.lock.isHeld();
+                if (extend && requestedDeadlineMs <= existing.deadlineMs) {
+                    // Extend-only: a shorter acquire must not cut short the owner's
+                    // longer-lived lease (e.g. a 60s utility acquire during a 10-min OTA).
+                    Log.d(TAG, kind(screen) + " lease for " + owner + " keeps existing deadline (remaining "
+                            + (existing.deadlineMs - now) + "ms >= requested " + timeoutMs + "ms)");
+                    return true;
+                }
+                if (extend) {
+                    existing.lock.release();
+                }
+
+                int flags = screen
+                        ? PowerManager.FULL_WAKE_LOCK
+                                | PowerManager.ACQUIRE_CAUSES_WAKEUP
+                                | PowerManager.ON_AFTER_RELEASE
+                        : PowerManager.PARTIAL_WAKE_LOCK;
+                String tag = "AugmentOS:" + (screen ? "Screen:" : "Cpu:") + owner;
+                PowerManager.WakeLock lock = powerManager.newWakeLock(flags, tag);
+                lock.acquire(timeoutMs);
+                leases.put(owner, new Lease(lock, requestedDeadlineMs));
+                scheduleExpiryCheck(owner, screen, requestedDeadlineMs);
+
+                traceLease(extend ? "wake_extend" : "wake_acquire", owner, screen, timeoutMs);
+                return true;
+            } catch (Exception e) {
+                Log.e(TAG, "Error acquiring " + kind(screen) + " lease for " + owner, e);
+                return false;
+            }
+        }
+    }
+
+    private static boolean releaseOne(@NonNull WakeOwner owner, boolean screen) {
+        synchronized (LOCK) {
+            try {
+                Map<WakeOwner, Lease> leases = screen ? sScreenLeases : sCpuLeases;
+                Lease lease = leases.remove(owner);
+                if (lease == null) {
+                    return true;
+                }
+                long remainingMs =
+                        Math.max(0, lease.deadlineMs - SystemClock.elapsedRealtime());
+                if (lease.lock.isHeld()) {
+                    lease.lock.release();
+                    traceLease("wake_release", owner, screen, remainingMs);
+                }
+                return true;
+            } catch (Exception e) {
+                Log.e(TAG, "Error releasing " + kind(screen) + " lease for " + owner, e);
+                return false;
+            }
+        }
+    }
+
+    // OBSERVATIONAL ONLY: if the expiring CPU lease was the last partial wake lock, the
+    // device can suspend right at the kernel deadline and this main-looper callback runs
+    // only on the next wake (lateMs in the event shows the gap), or not at all if a
+    // re-acquire lands first. The authoritative expiry moment is the deadlineWallMs
+    // advertised in the wake_acquire / wake_extend event; treat wake_expire as a
+    // best-effort confirmation, never as the primary signal.
+    private static void scheduleExpiryCheck(WakeOwner owner, boolean screen, long deadlineMs) {
+        long delayMs = Math.max(0, deadlineMs - SystemClock.elapsedRealtime()) + 250;
+        sExpiryHandler.postDelayed(() -> {
+            synchronized (LOCK) {
+                Map<WakeOwner, Lease> leases = screen ? sScreenLeases : sCpuLeases;
+                Lease lease = leases.get(owner);
+                // Only the watcher for the lease's CURRENT deadline reports; an extend
+                // re-schedules its own watcher and this stale one must stay silent.
+                if (lease != null && lease.deadlineMs == deadlineMs && !lease.lock.isHeld()) {
+                    leases.remove(owner);
+                    traceLease(
+                            "wake_expire",
+                            owner,
+                            screen,
+                            0,
+                            SystemClock.elapsedRealtime() - deadlineMs);
+                }
+            }
+        }, delayMs);
+    }
+
+    /** Emit a lease transition on the lifecycle trace channel. Never throws. */
+    private static void traceLease(String event, WakeOwner owner, boolean screen, long timeoutOrRemainingMs) {
+        traceLease(event, owner, screen, timeoutOrRemainingMs, null);
+    }
+
+    private static void traceLease(
+            String event, WakeOwner owner, boolean screen, long timeoutOrRemainingMs, Long lateMs) {
+        try {
+            JSONObject extra = new JSONObject();
+            extra.put("owner", owner.name());
+            extra.put("kind", kind(screen));
+            extra.put("ms", timeoutOrRemainingMs);
+            if ("wake_acquire".equals(event) || "wake_extend".equals(event)) {
+                // Authoritative expiry moment for this lease; wake_expire is observational
+                // (may fire late across a suspend, or be absorbed by a re-acquire).
+                extra.put("deadlineWallMs", System.currentTimeMillis() + timeoutOrRemainingMs);
+            }
+            if (lateMs != null) {
+                extra.put("lateMs", lateMs);
+            }
+            extra.put("held", heldLeasesLocked());
+            BleTraceLogger.logLifecycle(sAppContext, "WakeLockManager", event, extra);
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to trace lease event " + event, e);
+        }
+    }
+
+    /** Comma-joined "OWNER:kind" list of currently held leases. Caller holds LOCK. */
+    private static String heldLeasesLocked() {
+        StringBuilder held = new StringBuilder();
+        for (Map.Entry<WakeOwner, Lease> e : sCpuLeases.entrySet()) {
+            if (e.getValue().lock.isHeld()) {
+                if (held.length() > 0) held.append(',');
+                held.append(e.getKey().name()).append(":cpu");
+            }
+        }
+        for (Map.Entry<WakeOwner, Lease> e : sScreenLeases.entrySet()) {
+            if (e.getValue().lock.isHeld()) {
+                if (held.length() > 0) held.append(',');
+                held.append(e.getKey().name()).append(":screen");
+            }
+        }
+        return held.length() == 0 ? "none" : held.toString();
+    }
+
+    private static String kind(boolean screen) {
+        return screen ? "screen" : "cpu";
     }
 
     /**
      * Check if the application is currently in the foreground.
-     *
-     * @param context Application context
-     * @return true if the app is in the foreground, false otherwise
      */
     private static boolean isAppInForeground(@NonNull Context context) {
         try {
-            ActivityManager activityManager = (ActivityManager) context.getSystemService(Context.ACTIVITY_SERVICE);
+            ActivityManager activityManager =
+                    (ActivityManager) context.getSystemService(Context.ACTIVITY_SERVICE);
             if (activityManager == null) {
                 Log.w(TAG, "ActivityManager is null, assuming app not in foreground");
                 return false;
             }
 
-            List<ActivityManager.RunningAppProcessInfo> processes = activityManager.getRunningAppProcesses();
+            List<ActivityManager.RunningAppProcessInfo> processes =
+                    activityManager.getRunningAppProcesses();
             if (processes == null) {
                 Log.w(TAG, "Running processes list is null");
                 return false;
@@ -277,8 +317,10 @@ public class WakeLockManager {
             String packageName = context.getPackageName();
             for (ActivityManager.RunningAppProcessInfo process : processes) {
                 if (packageName.equals(process.processName)) {
-                    boolean isInForeground = process.importance == ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND;
-                    Log.d(TAG, "App foreground status: " + isInForeground + " (importance: " + process.importance + ")");
+                    boolean isInForeground = process.importance
+                            == ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND;
+                    Log.d(TAG, "App foreground status: " + isInForeground
+                            + " (importance: " + process.importance + ")");
                     return isInForeground;
                 }
             }
@@ -292,15 +334,12 @@ public class WakeLockManager {
 
     /**
      * Bring the application to the foreground by starting the MainActivity.
-     *
-     * @param context Application context
-     * @return true if the intent was successfully started, false otherwise
      */
     private static boolean bringAppToForeground(@NonNull Context context) {
         try {
             Intent intent = new Intent(context, MainActivity.class);
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
-            
+
             context.startActivity(intent);
             Log.d(TAG, "Started MainActivity to bring app to foreground");
             return true;

@@ -133,20 +133,39 @@ public enum WifiStatus: CustomStringConvertible, Equatable {
 public struct WifiStatusEvent: CustomStringConvertible {
     public let status: WifiStatus
 
-    public init(status: WifiStatus) {
+    /// Glasses-reported provisioning failure reason when THIS event is the verdict of a
+    /// failed connect attempt; nil for routine link-state updates. An attempt property,
+    /// not a link property — which is why it lives on the event and not on `WifiStatus`:
+    /// "connect_timeout" arrives with a disconnected status (never associated), while
+    /// "connected_to_other_network" arrives with a *connected* status — the attempt
+    /// failed and Android's auto-join left the glasses on (or returned them to) a
+    /// different SSID than requested, so the link is genuinely up while the request
+    /// genuinely failed. Sent by ASG client builds that include the WiFi error
+    /// surfacing (v40+); older glasses never set it.
+    public let error: String?
+
+    public init(status: WifiStatus, error: String? = nil) {
         self.status = status
+        self.error = error
     }
 
     init(connected: Bool, ssid: String?, localIp: String?) {
         status = WifiStatus.fromStoreFields(connected: connected, ssid: ssid, localIp: localIp) ?? .disconnected
+        error = nil
     }
 
     init(values: [String: Any]) {
         status = WifiStatus(values: values) ?? .disconnected
+        let rawError = stringValue(values, "error")
+        error = rawError?.isEmpty == false ? rawError : nil
     }
 
     public var values: [String: Any] {
-        status.values.merging(["type": "wifi_status_change"]) { _, new in new }
+        var body = status.values.merging(["type": "wifi_status_change"]) { _, new in new }
+        if let error {
+            body["error"] = error
+        }
+        return body
     }
 
     public var description: String {

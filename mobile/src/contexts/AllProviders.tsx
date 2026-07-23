@@ -16,7 +16,7 @@ import {AuthProvider} from "@/contexts/AuthContext"
 import {DeeplinkProvider} from "@/contexts/DeeplinkContext"
 import {SplashLoaderProvider} from "@/contexts/SplashLoaderProvider"
 import {ThemeProvider} from "@/contexts/ThemeContext"
-import {SETTINGS, useSetting, useSettingsStore} from "@/stores/settings"
+import {SETTINGS, useSetting, engine} from "@mentra/engine"
 import {ModalProvider as LegacyModalProvider} from "@/utils/AlertUtils"
 import {ModalProvider} from "@/contexts/ModalContext"
 import {KonamiCodeProvider} from "@/utils/dev/konami"
@@ -89,7 +89,7 @@ export const AllProviders = withWrappers(
   BottomSheetModalProvider,
   (props) => {
     const posthogApiKey = process.env.EXPO_PUBLIC_POSTHOG_API_KEY
-    const isChina = useSettingsStore.getState().getSetting(SETTINGS.china_deployment.key)
+    const isChina = engine.settings.get(SETTINGS.china_deployment.key)
 
     // If no API key is provided, disable PostHog to prevent errors
     if (!posthogApiKey) {

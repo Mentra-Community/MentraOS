@@ -46,10 +46,10 @@ export function Header({
 
       {/* Connection error banner */}
       {error && (
-        <div className="w-full px-4 py-2 bg-amber-50 border-b border-amber-200 flex justify-between items-center gap-2">
+        <div className="w-full px-4 py-2 bg-amber-50 dark:bg-amber-950 border-b border-amber-200 dark:border-amber-900 flex justify-between items-center gap-2">
           <div className="flex items-center gap-2 flex-1 min-w-0">
             <div className="w-2 h-2 rounded-full bg-amber-500 flex-shrink-0" />
-            <span className="text-amber-800 text-sm font-medium truncate">{error}</span>
+            <span className="text-amber-800 dark:text-amber-200 text-sm font-medium truncate">{error}</span>
           </div>
           <button
             onClick={onReconnect}
@@ -63,7 +63,7 @@ export function Header({
       {!isLanguageSelectorOpen && (
         <button
           onClick={onToggleLanguageSelector}
-          className="w-full px-3 py-3 bg-white rounded-bl-2xl rounded-br-2xl backdrop-blur-lg hover:bg-gray-50 transition-colors flex items-center gap-2 shadow-md">
+          className="w-full px-3 py-3 bg-white dark:bg-zinc-900 rounded-bl-2xl rounded-br-2xl backdrop-blur-lg hover:bg-gray-50 dark:hover:bg-zinc-800 transition-colors flex items-center gap-2 shadow-md">
           {settings && (
             <>
               {/* Connection status indicator - before all chips */}
@@ -78,7 +78,7 @@ export function Header({
               {/* Scrollable chips container with fade-out edges */}
               <div className="relative flex-1 min-w-0">
                 {/* Left fade gradient */}
-                <div className="absolute left-0 top-0 bottom-0 w-1 bg-gradient-to-r from-white to-transparent pointer-events-none z-10" />
+                <div className="absolute left-0 top-0 bottom-0 w-1 bg-gradient-to-r from-white dark:from-zinc-900 to-transparent pointer-events-none z-10" />
 
                 {/* Scrollable chips */}
                 <div className="flex items-center gap-3 overflow-x-auto scrollbar-hide">
@@ -112,7 +112,7 @@ export function Header({
                 </div>
 
                 {/* Right fade gradient */}
-                <div className="absolute right-0 top-0 bottom-0 w-1 bg-gradient-to-l from-white to-transparent pointer-events-none z-10" />
+                <div className="absolute right-0 top-0 bottom-0 w-1 bg-gradient-to-l from-white dark:from-zinc-900 to-transparent pointer-events-none z-10" />
               </div>
 
               {/* Dropdown arrow - fixed at right edge, always visible */}
@@ -129,7 +129,7 @@ export function Header({
                   strokeWidth="2"
                   strokeLinecap="round"
                   strokeLinejoin="round"
-                  className="text-gray-600"
+                  className="text-gray-600 dark:text-zinc-300"
                 />
               </svg>
             </>

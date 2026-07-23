@@ -91,7 +91,7 @@ Rules:
 - `rect` compiles to an **empty bordered text box on BOTH primary targets** — G2 bordered container and Mentra Display bordered TEXTBOX (**[FW]**: `CanvasComponentType` = BITMAP | TEXTBOX | SCROLL_TEXTBOX; no shape primitive). Rects share the 6-text pool on both; `maxTextElements` documents the shared pool.
 - The full scene is always present, so an SGC never needs to retain a previous scene — and can **self-heal locally** (repaint from the frame in hand) without a host round-trip.
 
-This is morally the [DESIGN] §3.2 DrawOp IR; aligning field names with `docs/glasses-oems/firmware-spec.md` is cosmetic and can happen when the OEM side needs it.
+This is morally the [DESIGN] §3.2 DrawOp IR; aligning field names with `mintlify-docs/glasses-oems/firmware-spec.mdx` is cosmetic and can happen when the OEM side needs it.
 
 ## 5. Host pipeline (island, all generic TS, Jest-tested)
 

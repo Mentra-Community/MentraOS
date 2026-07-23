@@ -8,34 +8,30 @@ import {bootstrapMentraJS} from "@/services/mentraJsBootstrap"
 import {preinstalledMiniappSync} from "@/services/miniapps/preinstalledMiniappSync"
 import builtInMiniappCatalog from "@/services/miniapps/BuiltInMiniappCatalog"
 import {BUNDLED_MINIAPPS} from "@/generated/bundledMiniapps"
-import {CHINA_HIDDEN_APPS, isChinaBuild} from "@/constants/miniapps"
+import {CHINA_HIDDEN_APPS, isChinaBuild, notifyPackageName} from "@/constants/miniapps"
 import {migrate} from "@/services/Migrations"
-import restComms from "@/services/RestComms"
-import socketComms from "@/services/SocketComms"
 import {cloudConfigValues} from "@/services/cloudClient"
-import {toolkit, BgTimer} from "@mentra/island"
+import {engine, BgTimer, SETTINGS} from "@mentra/engine"
 import {
   appRegistry,
-  configureRuntime,
   displayProcessor,
   gallerySyncService,
-  phoneLocationService,
   localDisplayManager,
   localMiniappRuntime,
-  miniappLauncher,
   localSttFallbackCoordinator,
   micStateCoordinator,
+  miniappLauncher,
   offlineSpeechModelService,
+  phoneLocationService,
   useAppStatusStore,
-} from "@mentra/island/internal"
-import {useDisplayStore} from "@/stores/display"
-import {useSettingsStore, SETTINGS} from "@/stores/settings"
+} from "@mentra/engine/internal"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 import {useDebugStore} from "@/stores/debug"
 import {checkFeaturePermissions, PermissionFeatures} from "@/utils/PermissionsUtils"
 import {attemptReconnectToDefaultWearable} from "@/effects/Reconnect"
 import {ensureDevModeForUser} from "@/utils/dev/devModeAllowlist"
 import mentraAuth from "@/utils/auth/authClient"
+import {showAlert} from "@/utils/AlertUtils"
 import {Buffer} from "@craftzdog/react-native-buffer"
 
 /**
@@ -81,6 +77,7 @@ class MantleManager {
   private lastMicDataAt: number = 0
   private subs: Array<any> = []
   private initialized: boolean = false
+  private activePhoneNotificationId: string | null = null
 
   public static getInstance(): MantleManager {
     if (!MantleManager.instance) {
@@ -136,29 +133,48 @@ class MantleManager {
     // Island front door: hand island the host's auth provider and config, then
     // start the runtime. The remaining work below is Mentra-app UI/v1-cloud
     // startup, not an island configuration seam.
-    toolkit.configure({
+    engine.configure({
       auth: {
         getSubjectToken: async () => {
-          const res = await mentraAuth.getSession()
+          // Cloud V2 (issue 019): the provider mints a fresh `mentra` OEM subject
+          // token which cloud-client exchanges at /api/client/auth/exchange.
+          const res = await mentraAuth.getSubjectToken()
           if (res.is_error() || !res.value.token) {
-            throw new Error("toolkit.configure: no session token available")
+            throw new Error("engine.configure: no subject token available")
           }
-          return {token: res.value.token, type: "supabase"}
+          return {token: res.value.token, type: res.value.type}
         },
         onStateChange: (callback) => mentraAuth.onAuthStateChange((event, session) => callback(event, session)),
       },
       // Resolved cloud endpoints + LC3 frame size. island builds its cloud
       // client from these; the host keeps the dev/settings URL resolution.
       config: cloudConfigValues(),
-    })
-    configureRuntime({
-      wifiSetup: {
-        requestSetup: (reason?: string) => {
-          router.push({pathname: "/wifi/scan" as any, params: (reason ? {reason} : {}) as any})
-        },
+      // Named host-UI seams: island dispatches the miniapp request, the host
+      // owns the screen (branding/navigation).
+      ui: {
+        requestWifiSetup: (reason?: string, packageName?: string) =>
+          new Promise<void>((resolve) => {
+            showAlert("Connect to Wi-Fi", reason || "This miniapp needs your glasses to be connected to Wi-Fi.", [
+              {text: "Cancel", style: "cancel", onPress: resolve},
+              {
+                text: "OK",
+                onPress: () => {
+                  // The Compositor is an app-wide overlay, so navigating
+                  // without clearing foreground leaves the Wi-Fi route
+                  // rendered underneath the requesting miniapp.
+                  engine.miniapps.clearForeground()
+                  router.push({
+                    pathname: "/wifi/scan" as any,
+                    params: packageName ? {returnToMiniapp: packageName} : {},
+                  })
+                  resolve()
+                },
+              },
+            ])
+          }),
       },
     })
-    await toolkit.start()
+    await engine.start()
 
     // iOS: require a second swipe across the bottom edge to invoke the Home
     // indicator / app switcher, so users don't accidentally background the
@@ -185,38 +201,20 @@ class MantleManager {
     builtInMiniappCatalog.init()
 
     await migrate() // do any local migrations here
-    const res = await restComms.loadUserSettings() // get settings from server
-    if (res.is_ok()) {
-      let loadedSettings = res.value
-      // Device/pairing identity and core_token are phone-local state and are now
-      // saveOnServer: false, so they should never come back from the server. These
-      // deletes guard legacy values persisted before those flags flipped.
-      delete loadedSettings["core_token"]
-      delete loadedSettings["default_wearable"]
-      delete loadedSettings["pending_wearable"]
-      delete loadedSettings["device_name"]
-      delete loadedSettings["device_address"]
-      delete loadedSettings["default_controller"]
-      delete loadedSettings["pending_controller"]
-      delete loadedSettings["controller_device_name"]
-      delete loadedSettings["controller_address"]
 
-      await useSettingsStore.getState().setManyLocally(loadedSettings) // write settings to local storage
-    } else {
-      console.error("MANTLE: No settings received from server")
-    }
+    // Cloud V1 settings pull removed with the login cutover: the endpoint only
+    // exists on V1 and authenticated with a token the app no longer mints.
+    // Settings are local-first until a V2 sync lands (tracked in the ripout
+    // issue; island's per-change server write is the island-side cleanup).
 
     const userRes = await mentraAuth.getUser()
     if (userRes.is_ok()) {
       await ensureDevModeForUser(userRes.value.email)
     }
 
-    // Send device timezone to cloud (used for calendar/time display)
-    this.syncTimezone()
-
     offlineSpeechModelService.startBackgroundDownloads()
 
-    // Spacing only, not a correctness barrier: toolkit.start() already awaited
+    // Spacing only, not a correctness barrier: engine.start() already awaited
     // the device-store hydration (the persisted-settings seed to native), so the
     // reconnect decision's hasDefaultDevice read is trustworthy whenever this
     // fires. The delay just keeps auto-connect off the critical boot path.
@@ -224,22 +222,12 @@ class MantleManager {
       attemptReconnectToDefaultWearable()
     }, 1000)
     // (Initial notification-config push now happens in island's
-    // PhoneNotificationsSync, started by toolkit.start().)
+    // PhoneNotificationsSync, started by engine.start().)
 
     this.initServices()
     this.initMiniapps()
     this.setupPeriodicTasks()
     this.setupSubscriptions()
-  }
-
-  private async syncTimezone() {
-    const timezone = useSettingsStore.getState().getSetting(SETTINGS.time_zone.key)
-    const result = await restComms.writeUserSettings({time_zone: timezone})
-    if (result.is_error()) {
-      console.error("MANTLE: Failed to sync timezone:", result.error)
-    } else {
-      console.log("MANTLE: Timezone synced:", timezone)
-    }
   }
 
   public async cleanup() {
@@ -251,14 +239,12 @@ class MantleManager {
     // Remove all event subscriptions
     this.subs.forEach((sub) => sub.remove())
     this.subs = []
+    this.activePhoneNotificationId = null
 
     phoneLocationService.stopPhoneLocation()
 
     localMiniappRuntime.cleanup()
     micStateCoordinator.cleanup()
-
-    await socketComms.cleanup()
-    restComms.goodbye()
 
     // Allow a later init() to rebuild everything this cleanup tore down — the
     // logout→login-in-the-same-process path and the dev backend-URL
@@ -267,7 +253,6 @@ class MantleManager {
   }
 
   private async initServices() {
-    socketComms.connectWebsocket()
     gallerySyncService.initialize()
 
     // Bootstrap MentraJS — wires MentraJSRouter + MentraUIRouter +
@@ -341,7 +326,7 @@ class MantleManager {
           continue
         }
 
-        let superMode = await useSettingsStore.getState().getSetting(SETTINGS.super_mode.key)
+        let superMode = await engine.settings.get(SETTINGS.super_mode.key)
         if (!superMode && packageName === "com.mentra.example") {
           // skip installing the example miniapp if super mode is not enabled
           continue
@@ -368,24 +353,27 @@ class MantleManager {
   private async setupPeriodicTasks() {
     this.sendCalendarEvents()
     // Calendar sync every hour
-    this.calendarSyncTimer = BgTimer.setInterval(() => {
-      this.sendCalendarEvents()
-    }, 60 * 60 * 1000) // 1 hour
+    this.calendarSyncTimer = BgTimer.setInterval(
+      () => {
+        this.sendCalendarEvents()
+      },
+      60 * 60 * 1000,
+    ) // 1 hour
 
     try {
       // only start location updates if we have the location permission (host UI gate);
       // the island PhoneLocationService owns the background task + accuracy at the saved tier.
       const hasLocation = await checkFeaturePermissions(PermissionFeatures.LOCATION)
       if (hasLocation) {
-        const savedTier = await useSettingsStore.getState().getSetting(SETTINGS.location_tier.key)
-        await phoneLocationService.setLocationTier(savedTier)
+        const savedTier = await engine.settings.get<string>(SETTINGS.location_tier.key)
+        await phoneLocationService.setLocationTier(savedTier as string)
       }
     } catch (error) {
       console.error("MANTLE: Error starting location updates", error)
     }
 
     // check for requirements immediately, but only if we've passed through onboarding:
-    // const onboardingCompleted = await useSettingsStore.getState().getSetting(SETTINGS.onboarding_completed.key)
+    // const onboardingCompleted = await engine.settings.get(SETTINGS.onboarding_completed.key)
     // if (onboardingCompleted) {
     //   try {
     //     const requirementsCheck = await checkConnectivityRequirementsUI()
@@ -406,17 +394,31 @@ class MantleManager {
   private async setupSubscriptions() {
     // (Device-settings -> glasses BLE sync AND phone-notification config -> the
     // native listener now live in island's GlassesSettingsSync / PhoneNotificationsSync,
-    // started by toolkit.start(), so toolkit.glasses.settings.set() /
-    // toolkit.phoneNotifications.* reach the device for any host. Removed here to
+    // started by engine.start(), so engine.glasses.settings.set() /
+    // engine.phoneNotifications.* reach the device for any host. Removed here to
     // avoid a double-sync.)
 
     // Remove old event subscriptions
     this.subs.forEach((sub) => sub.remove())
     this.subs = []
 
+    // LocalDisplayManager arbitrates foreground miniapp frames against
+    // temporary background frames (notably phone notifications). Keep its
+    // core owner projected from the app store so a notification can briefly
+    // replace Captions and then restore the latest caption frame.
+    const syncCoreDisplayOwner = () => {
+      const coreApp = useAppStatusStore
+        .getState()
+        .apps.find((app) => app.running && (app.type === "standard" || !app.type))
+      localDisplayManager.onCoreAppChange(coreApp?.packageName ?? null)
+    }
+    syncCoreDisplayOwner()
+    const unsubscribeCoreDisplayOwner = useAppStatusStore.subscribe(syncCoreDisplayOwner)
+    this.subs.push({remove: unsubscribeCoreDisplayOwner})
+
     // (The device-status projection — onBluetoothStatus -> core store and
     // onGlassesStatus -> glasses store — moved into island's GlassesStatusProjection,
-    // started by toolkit.start(), so the device->store feed reaches ANY host. Removed
+    // started by engine.start(), so the device->store feed reaches ANY host. Removed
     // here to avoid a double-projection.)
 
     // Subscribe to individual Bluetooth SDK events.
@@ -429,13 +431,13 @@ class MantleManager {
       )
 
       // wifi_status_change / glasses_wifi / hotspot_status_change:
-      // moved to island DeviceEventRouter (started by toolkit.start())
+      // moved to island DeviceEventRouter (started by engine.start())
 
-      // hotspot_error: moved to island DeviceEventRouter (started by toolkit.start())
+      // hotspot_error: moved to island DeviceEventRouter (started by engine.start())
 
-      // gallery_status: moved to island DeviceEventRouter (started by toolkit.start())
+      // gallery_status: moved to island DeviceEventRouter (started by engine.start())
 
-      // photo_response: moved to island DeviceEventRouter (started by toolkit.start())
+      // photo_response: moved to island DeviceEventRouter (started by engine.start())
 
       this.subs.push(
         BluetoothSdk.addListener("heartbeat_sent", (event) => {
@@ -478,7 +480,7 @@ class MantleManager {
       )
 
       // button_press / touch_event / accel_event: local-miniapp forwarding lives in
-      // island DeviceEventRouter (started by toolkit.start()). The Cloud V1 relays
+      // island DeviceEventRouter (started by engine.start()). The Cloud V1 relays
       // (button/touch/swipe/switch/rgb-led-response) were removed with Cloud V1 app
       // end-of-life.
 
@@ -494,61 +496,71 @@ class MantleManager {
       // live further down (head_up there is the superset — it also forwards to miniapps).
 
       const forwardPhoneNotification = async (event: any) => {
+        const notificationId = String(event.notificationId ?? "")
+        const app = String(event.app ?? "").trim()
+        const title = String(event.title ?? "").trim()
+        const content = String(event.content ?? "").trim()
+
         // Direct forward to local miniapps subscribed to phone_notification.
         // Gated by READ_NOTIFICATIONS in miniapp.json at subscribe time.
         localMiniappRuntime.forwardEvent("phone_notification", {
-          notificationId: event.notificationId,
-          app: event.app,
-          title: event.title,
-          content: event.content,
+          notificationId,
+          app,
+          title,
+          content,
           priority: event.priority?.toString?.() ?? String(event.priority ?? ""),
           timestamp: parseInt(event.timestamp?.toString?.() ?? "0"),
           packageName: event.packageName,
         })
-        const res = await restComms.sendPhoneNotification({
-          notificationId: event.notificationId,
-          app: event.app,
-          title: event.title,
-          content: event.content,
-          priority: event.priority.toString(),
-          timestamp: parseInt(event.timestamp.toString()),
-          packageName: event.packageName,
-        })
-        if (res.is_error()) {
-          console.error("Failed to send phone notification:", res.error)
+
+        // Cloud V1 used to relay this event to the Notify miniapp, which then
+        // painted the glasses. Notify is now an offline built-in, so render the
+        // temporary card locally through the same display arbiter as miniapps.
+        // As a background owner it overlays the foreground app briefly; expiry
+        // restores that app's retained frame instead of stopping it.
+        const displayTitle = title && title !== app ? [app, title].filter(Boolean).join(": ") : title || app
+        if (displayTitle || content) {
+          this.activePhoneNotificationId = notificationId || null
+          localDisplayManager.request(notifyPackageName, {
+            layout: {
+              layoutType: "reference_card",
+              title: displayTitle || "Notification",
+              text: content,
+            },
+            durationMs: 5_000,
+          })
         }
       }
 
       // Android: Crust's NotificationListenerService reads notifications.
       this.subs.push((CrustModule.addListener as any)("phone_notification", forwardPhoneNotification))
 
-      // iOS: the phone can't read other apps' notifications, but connected
-      // glasses can (ANCS) — the G2 SGC reports the source app on its
-      // notification service and pipes it up as the SAME event (empty
-      // title/content; app identity only). Feeds the identical path.
-      this.subs.push(BluetoothSdk.addListener("phone_notification" as any, forwardPhoneNotification))
+      // iOS: connected glasses consume ANCS and relay notifications through
+      // the Bluetooth SDK, which feeds the identical local event path.
+      this.subs.push(BluetoothSdk.addListener("phone_notification", forwardPhoneNotification))
+
+      const forwardPhoneNotificationDismissed = async (event: any) => {
+        // Direct forward to local miniapps subscribed to
+        // phone_notification_dismissed. Gated by READ_NOTIFICATIONS at
+        // subscribe time.
+        localMiniappRuntime.forwardEvent("phone_notification_dismissed", {
+          notificationId: event.notificationId,
+          notificationKey: event.notificationKey,
+          packageName: event.packageName,
+          timestamp: event.timestamp ?? Date.now(),
+        })
+
+        const notificationId = String(event.notificationId ?? "")
+        if (notificationId && notificationId === this.activePhoneNotificationId) {
+          this.activePhoneNotificationId = null
+          localDisplayManager.dismiss(notifyPackageName)
+        }
+      }
 
       this.subs.push(
-        (CrustModule.addListener as any)("phone_notification_dismissed", async (event: any) => {
-          // Direct forward to local miniapps subscribed to
-          // phone_notification_dismissed (Android only — iOS never emits this).
-          // Gated by READ_NOTIFICATIONS at subscribe time.
-          localMiniappRuntime.forwardEvent("phone_notification_dismissed", {
-            notificationId: event.notificationId,
-            notificationKey: event.notificationKey,
-            packageName: event.packageName,
-            timestamp: Date.now(),
-          })
-          const res = await restComms.sendPhoneNotificationDismissed({
-            notificationKey: event.notificationKey,
-            packageName: event.packageName,
-            notificationId: event.notificationId,
-          })
-          if (res.is_error()) {
-            console.error("Failed to send phone notification dismissal:", res.error)
-          }
-        }),
+        (CrustModule.addListener as any)("phone_notification_dismissed", forwardPhoneNotificationDismissed),
       )
+      this.subs.push(BluetoothSdk.addListener("phone_notification_dismissed", forwardPhoneNotificationDismissed))
 
       this.subs.push(
         BluetoothSdk.addListener("audio_pairing_needed", (event) => {
@@ -572,7 +584,7 @@ class MantleManager {
         }),
       )
 
-      // save_setting: moved to island DeviceEventRouter (started by toolkit.start())
+      // save_setting: moved to island DeviceEventRouter (started by engine.start())
 
       this.subs.push(
         BluetoothSdk.addListener("head_up", (event) => {
@@ -588,9 +600,9 @@ class MantleManager {
       //   }),
       // )
 
-      // miniapp_selected: moved to island DeviceEventRouter (started by toolkit.start())
+      // miniapp_selected: moved to island DeviceEventRouter (started by engine.start())
 
-      // local_transcription: moved to island DeviceEventRouter (started by toolkit.start());
+      // local_transcription: moved to island DeviceEventRouter (started by engine.start());
       // its offline-captions display path was removed with the pseudo captions renderer.
 
       // ws_text: was a raw relay onto the Cloud V1 socket — removed with Cloud V1
@@ -602,7 +614,7 @@ class MantleManager {
 
           // console.log("MANTLE: Received mic_lc3 event from Bluetooth SDK", event.lc3.length)
 
-          // Cloud upload moved to island's AudioCloudUplink (started by toolkit.start()).
+          // Cloud upload moved to island's AudioCloudUplink (started by engine.start()).
           // This host-side listener only keeps the debug mic-activity flag current.
         }),
       )
@@ -637,11 +649,11 @@ class MantleManager {
       // path; update discovery now comes from the phone-side manifest check. The
       // remaining OTA BLE handlers (mtk_update_complete / ota_start_ack /
       // ota_status -> island stores + clock-skew auto-fix) moved into island's
-      // OtaService, started by toolkit.start(), behind the toolkit.ota read surface.
+      // OtaService, started by engine.start(), behind the engine.ota read surface.
     }
 
     // One-time core/glasses status hydration moved into island's
-    // GlassesStatusProjection, started by toolkit.start().
+    // GlassesStatusProjection, started by engine.start().
   }
 
   private async sendCalendarEvents() {
@@ -693,26 +705,10 @@ class MantleManager {
           endDate: Math.floor(end.getTime() / 1000),
         }
       })
-      void BluetoothSdk.setCalendarEvents(shapedEvents).catch((error) => {
+      try {
+        await BluetoothSdk.setCalendarEvents(shapedEvents)
+      } catch (error) {
         console.warn("MANTLE: Failed to sync calendar events to glasses", error)
-      })
-      restComms.sendCalendarData({events, calendars})
-
-      // Direct forward to local miniapps. Emit one event per calendar entry
-      // so miniapps can treat them as a stream rather than a digest.
-      // Gated by CALENDAR in miniapp.json at subscribe time.
-      for (const ev of events) {
-        localMiniappRuntime.forwardEvent("calendar_event", {
-          eventId: ev.id,
-          title: ev.title,
-          dtStart: ev.startDate,
-          dtEnd: ev.endDate,
-          timezone: ev.timeZone ?? "",
-          allDay: !!ev.allDay,
-          location: ev.location ?? "",
-          notes: ev.notes ?? "",
-          calendarId: ev.calendarId,
-        })
       }
     } catch (error) {
       // it's fine if this fails
@@ -728,12 +724,12 @@ class MantleManager {
   public async handle_head_up(isUp: boolean) {
     // Only switch to dashboard view if contextual dashboard is enabled
     // Otherwise, always show main view regardless of head position
-    const contextualDashboardEnabled = await useSettingsStore.getState().getSetting(SETTINGS.contextual_dashboard.key)
+    const contextualDashboardEnabled = await engine.settings.get(SETTINGS.contextual_dashboard.key)
 
     if (isUp && contextualDashboardEnabled) {
-      useDisplayStore.getState().setView("dashboard")
+      engine.display.mirror.setView("dashboard")
     } else {
-      useDisplayStore.getState().setView("main")
+      engine.display.mirror.setView("main")
     }
   }
 }

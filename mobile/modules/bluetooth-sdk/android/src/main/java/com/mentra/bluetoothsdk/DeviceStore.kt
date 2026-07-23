@@ -292,6 +292,11 @@ object DeviceStore {
             "bluetooth" to "camera_fov" -> {
                 DeviceManager.getInstance().sgc?.sendCameraFovSetting()
             }
+            "bluetooth" to "button_video_settings" -> {
+                DeviceManager.getInstance().sgc?.sendButtonVideoRecordingSettings()
+            }
+            // Legacy scalar keys remain supported for older hosts. New code should write the
+            // canonical button_video_settings object so width/height/fps update atomically.
             "bluetooth" to "button_video_width",
             "bluetooth" to "button_video_height",
             "bluetooth" to "button_video_fps" -> {
@@ -300,12 +305,6 @@ object DeviceStore {
             "bluetooth" to "preferred_mic" -> {
                 (value as? String)?.let { mic ->
                     apply("bluetooth", "micRanking", MicMap.map[mic] ?: MicMap.map["auto"]!!)
-                    DeviceManager.getInstance().setMicState()
-                }
-            }
-            "bluetooth" to "offline_captions_running" -> {
-                (value as? Boolean)?.let { running ->
-                    Bridge.log("DeviceStore: offline_captions_running changed to $running")
                     DeviceManager.getInstance().setMicState()
                 }
             }

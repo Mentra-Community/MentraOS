@@ -11,6 +11,7 @@ import { DeveloperOrgInvitationModel } from "../models/developer-org-invitation.
 import { DeveloperOrgMembershipModel } from "../models/developer-org-membership.model";
 import { RefreshTokenModel } from "../models/refresh-token.model";
 import { UserModel } from "../models/user.model";
+import { OemModel } from "../models/oem.model";
 
 const logger = createLogger("core").child({ component: "startup-migrations" });
 
@@ -41,6 +42,8 @@ export async function runStartupMigrations(): Promise<void> {
   await dropLegacyUserIdentityIndex();
   await dedupeUserIdentityRows();
   await UserModel.createIndexes();
+  // prevTokenHash recovery-lookup index (OS-1703). Idempotent; sparse.
+  await RefreshTokenModel.createIndexes();
   await dropLegacyMembershipEmailIndex();
   await dedupeDeveloperOrgMemberships();
   // Build the unique index BEFORE any upserts so concurrent Core startups can't
@@ -49,6 +52,28 @@ export async function runStartupMigrations(): Promise<void> {
   await safeCreateInvitationIndexes();
   await backfillDeveloperOrgOwners();
   await backfillMembersFromWorkos();
+  await ensureMentraAccountOem();
+}
+
+// Mentra's first-party account backend (issue 019) signs subject tokens that
+// are verified through the normal OEM path, which needs a `mentra` oems row
+// carrying the account signing public key (static mode). Idempotent upsert;
+// skipped (non-fatal) if the account key env var is not configured yet.
+async function ensureMentraAccountOem(): Promise<void> {
+  const pubB64 = process.env.MENTRA_ACCOUNT_JWT_PUBLIC_KEY?.trim();
+  if (!pubB64) {
+    logger.warn("MENTRA_ACCOUNT_JWT_PUBLIC_KEY not set; skipping mentra account OEM seed");
+    return;
+  }
+  const publicKey = `-----BEGIN PUBLIC KEY-----\n${pubB64}\n-----END PUBLIC KEY-----`;
+  await OemModel.updateOne(
+    { tenantId: "mentra" },
+    {
+      $set: { displayName: "Mentra", publicKeyMode: "static", publicKey, disabled: false },
+    },
+    { upsert: true },
+  );
+  logger.info("ensured mentra account OEM row");
 }
 
 // The invitation collection's (orgId,email) index moved to a partial-unique
@@ -130,7 +155,12 @@ async function backfillLegacyRefreshTokenTenant(): Promise<void> {
 
 async function dropLegacyUserIdentityIndex(): Promise<void> {
   const collection = mongoose.connection.collection(USERS_COLLECTION);
-  const indexes = await collection.indexes();
+  let indexes;
+  try {
+    indexes = await collection.indexes();
+  } catch {
+    return; // collection does not exist yet (fresh database)
+  }
   const hasLegacyIndex = indexes.some(
     (index) => index.name === LEGACY_USER_IDENTITY_INDEX,
   );

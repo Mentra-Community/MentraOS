@@ -110,14 +110,32 @@ public class BesWireFormatTest {
 
     @Test
     public void setFilePackSizeFromMtu_clampsToValidRange() {
-        BesWireFormat.setFilePackSizeFromMtu(23);
+        BesWireFormat.setFilePackSizeFromMtu(23, true);
         assertThat(BesWireFormat.getFilePackSize()).isEqualTo(BesWireFormat.FILE_PACK_SIZE_MIN);
 
-        BesWireFormat.setFilePackSizeFromMtu(512);
-        assertThat(BesWireFormat.getFilePackSize()).isEqualTo(BesWireFormat.FILE_PACK_SIZE_DEFAULT);
+        BesWireFormat.setFilePackSizeFromMtu(509, true);
+        assertThat(BesWireFormat.getFilePackSize()).isEqualTo(474);
 
-        BesWireFormat.setFilePackSizeFromMtu(200);
+        BesWireFormat.setFilePackSizeFromMtu(509, false);
+        assertThat(BesWireFormat.getFilePackSize()).isEqualTo(400);
+
+        BesWireFormat.setFilePackSizeFromMtu(200, true);
         assertThat(BesWireFormat.getFilePackSize()).isEqualTo(165);
+    }
+
+    @Test
+    public void setFilePackSize_clampsToNegotiatedMaximum() {
+        BesWireFormat.setFilePackSize(832);
+        assertThat(BesWireFormat.getFilePackSize()).isEqualTo(800);
+
+        BesWireFormat.setFilePackSize(640);
+        assertThat(BesWireFormat.getFilePackSize()).isEqualTo(640);
+    }
+
+    @Test
+    public void fileAckPacketIndex_usesAsymmetricBesSemantics() {
+        assertThat(BesWireFormat.fileAckPacketIndex(1, 16)).isEqualTo(15);
+        assertThat(BesWireFormat.fileAckPacketIndex(0, 16)).isEqualTo(16);
     }
 
     @Test
@@ -230,6 +248,33 @@ public class BesWireFormatTest {
                         payload, BesWireFormat.CMD_TYPE_STRING, K900LengthCodec.Endian.LE);
 
         assertThat(BesWireFormat.extractPayloadAuto(le)).isEqualTo(payload);
+    }
+
+    @Test
+    public void linkHealthFrame_rejectsMarkerShapedGarbage() {
+        byte[] markerShapedGarbage = {'#', '#', 0x30, 0x00, 0x01, 'x', '$', '$'};
+
+        assertThat(BesWireFormat.extractPayloadAuto(markerShapedGarbage))
+                .containsExactly((byte) 'x');
+        assertThat(BesWireFormat.isValidLinkHealthFrame(markerShapedGarbage)).isFalse();
+    }
+
+    @Test
+    public void linkHealthFrame_acceptsExactJsonAndBinaryFrames() {
+        byte[] jsonPayload = "{\"C\":\"sr_syvr\"}".getBytes(StandardCharsets.UTF_8);
+        byte[] jsonFrame =
+                BesWireFormat.packDataCommand(
+                        jsonPayload, BesWireFormat.CMD_TYPE_STRING, K900LengthCodec.Endian.BE);
+        byte[] binaryFrame =
+                BesWireFormat.packBinaryFragment(
+                        (byte) (BesWireFormat.FLAG_FIRST_FRAG | BesWireFormat.FLAG_LAST_FRAG),
+                        7,
+                        0,
+                        1,
+                        new byte[] {1, 2, 3});
+
+        assertThat(BesWireFormat.isValidLinkHealthFrame(jsonFrame)).isTrue();
+        assertThat(BesWireFormat.isValidLinkHealthFrame(binaryFrame)).isTrue();
     }
 
     @Test

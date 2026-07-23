@@ -14,8 +14,7 @@ import {focusEffectPreventBack} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
-import {useApps, useRefresh} from "@mentra/island"
-import {useAppStatusStore} from "@mentra/island/internal"
+import {engine, useApps, useRefresh} from "@mentra/engine"
 
 import {SYSTEM_APPS} from "@/constants/miniapps"
 import {ThemedStyle} from "@/theme"
@@ -92,7 +91,7 @@ export default function AppSettings() {
         quality: 0.5,
       })
       console.log("saving screenshot for", packageName)
-      await useAppStatusStore.getState().saveScreenshot(packageName as string, uri)
+      await engine.miniapps.saveScreenshot(packageName as string, uri)
     } catch (e) {
       console.warn("screenshot failed:", e)
     }
@@ -129,14 +128,13 @@ export default function AppSettings() {
           onPress: async () => {
             try {
               setIsUninstalling(true)
-              const store = useAppStatusStore.getState()
               // First stop the app if it's running
               if (appInfo?.running) {
-                await store.stop(packageName)
+                await engine.miniapps.stop(packageName)
               }
 
               // Then uninstall it via the island app store
-              const res = await store.uninstall(packageName)
+              const res = await engine.miniapps.uninstall(packageName)
               if (res.is_error()) {
                 throw res.error
               }

@@ -1,6 +1,6 @@
 import {useEffect, useState} from "react"
 
-export function App(): JSX.Element {
+export function App() {
   const [roundtripMs, setRoundtripMs] = useState<number | null>(null)
 
   useEffect(() => {

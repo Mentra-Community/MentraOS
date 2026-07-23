@@ -4,7 +4,7 @@ import {scheduleOnRN} from "react-native-worklets"
 
 import {Screen} from "@/components/ignite"
 import {SplashVideo} from "@/components/splash/SplashVideo"
-import {SETTINGS, useSetting} from "@/stores/settings"
+import {SETTINGS, useSetting} from "@mentra/engine"
 
 interface SplashLoaderContextType {
   splashEnabled: boolean

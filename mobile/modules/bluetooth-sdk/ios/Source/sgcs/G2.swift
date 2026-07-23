@@ -587,15 +587,19 @@ private enum DevSettingsProto {
     /// TimeSync submessage: f1 = (Unix seconds + TZ offset seconds) as Int32, no TZ field.
     /// Firmware appears to ignore the TZ field, so we pre-shift the timestamp itself
     /// to make UTC interpretation read as local. Empirically confirmed via probe variants in dbg1().
-    static func timeSync(magicRandom: Int32) -> Data {
+    static func timeSync(
+        magicRandom: Int32,
+        timestampMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000)
+    ) -> Data {
         var w = ProtobufWriter()
         w.writeInt32Field(1, DevCfgCommandId.timeSync.rawValue)
         w.writeInt32Field(2, magicRandom)
 
         var tsW = ProtobufWriter()
-        let nowSec = Int64(Date().timeIntervalSince1970)
-        let tzSec = Int64(TimeZone.current.secondsFromGMT())
-        tsW.writeInt32Field(1, Int32(truncatingIfNeeded: nowSec + tzSec))
+        let timestamp = Date(timeIntervalSince1970: Double(timestampMs) / 1000)
+        let timestampSec = timestampMs / 1000
+        let tzSec = Int64(TimeZone.current.secondsFromGMT(for: timestamp))
+        tsW.writeInt32Field(1, Int32(truncatingIfNeeded: timestampSec + tzSec))
         w.writeMessageField(128, tsW.data)  // timeSync (field 128 in DevCfgDataPackage)
         return w.data
     }
@@ -1908,7 +1912,7 @@ class G2: NSObject, SGCManager {
         let timeSync = DevSettingsProto.timeSync(
             magicRandom: self.sendManager.nextMagicRandom()
         )
-        self.sendDevSettingsCommand(timeSync)
+        self.sendDevSettingsCommand(timeSync, left: true, right: true)
 
         // Skip onboarding on connect
         try? await Task.sleep(nanoseconds: 200_000_000)
@@ -3941,7 +3945,15 @@ class G2: NSObject, SGCManager {
     /// time-zone travel, or a long sleep where the glasses' clock has drifted.
     func syncTime() {
         Bridge.log("G2: syncTime()")
-        let msg = DevSettingsProto.timeSync(magicRandom: sendManager.nextMagicRandom())
+        sendSetSystemTime(Int64(Date().timeIntervalSince1970 * 1000))
+    }
+
+    func sendSetSystemTime(_ timestampMs: Int64) {
+        Bridge.log("G2: sendSetSystemTime()")
+        let msg = DevSettingsProto.timeSync(
+            magicRandom: sendManager.nextMagicRandom(),
+            timestampMs: timestampMs
+        )
         sendDevSettingsCommand(msg, left: true, right: true)
     }
 
@@ -3975,7 +3987,7 @@ class G2: NSObject, SGCManager {
 
     // MARK: - SGCManager: Network (G2 has no WiFi)
 
-    func requestWifiScan() {}
+    func requestWifiScan(scanId _: String?) {}
     func sendWifiCredentials(_: String, _: String) {}
     func forgetWifiNetwork(_: String) {}
     func sendHotspotState(_: Bool) {}

@@ -2,7 +2,6 @@ package com.mentra.bluetoothsdk
 
 import com.mentra.bluetoothsdk.utils.ControllerTypes
 import com.mentra.bluetoothsdk.utils.DeviceTypes
-import expo.modules.kotlin.exception.CodedException
 
 data class MentraBluetoothSdkConfig @JvmOverloads constructor(
     val deliverCallbacksOnMainThread: Boolean = true,
@@ -10,10 +9,10 @@ data class MentraBluetoothSdkConfig @JvmOverloads constructor(
 )
 
 class BluetoothSdkException(
-    code: String,
+    val code: String,
     message: String,
     cause: Throwable? = null,
-) : CodedException(code, message, cause)
+) : IllegalStateException(message, cause)
 
 enum class DeviceModel(val deviceType: String) {
     G1(DeviceTypes.G1),

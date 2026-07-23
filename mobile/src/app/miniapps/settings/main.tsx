@@ -10,16 +10,17 @@ import {Spacer} from "@/components/ui/Spacer"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
-import {SETTINGS, useSetting} from "@/stores/settings"
+import {SETTINGS, useSetting} from "@mentra/engine"
 import {useRef} from "react"
 import {useRegisterCapsule} from "@/stores/capsule"
 
 export default function MainSettingsPage() {
-  const {theme, themed} = useAppTheme()
+  const {theme} = useAppTheme()
   const {push} = useNavigationStore.getState()
   const [debugMode] = useSetting(SETTINGS.debug_mode.key)
   const [superMode] = useSetting(SETTINGS.super_mode.key)
   const [appearanceMenuEnabled] = useSetting(SETTINGS.appearance_menu_enabled.key)
+  const [miniappDevMode] = useSetting(SETTINGS.miniapp_dev_mode.key)
   const viewShotRef = useRef<View>(null)
 
   useRegisterCapsule({
@@ -42,7 +43,12 @@ export default function MainSettingsPage() {
             <RouteButton
               icon={<Icon name="message-2-star" size={24} color={theme.colors.secondary_foreground} />}
               label={translate("settings:feedback")}
-              onPress={() => push("/miniapps/settings/feedback")}
+              onPress={() =>
+                push("/miniapps/settings/feedback", {
+                  triggerSource: "settings",
+                  sourceRoute: "/miniapps/settings/",
+                })
+              }
             />
           </Group>
 
@@ -86,11 +92,13 @@ export default function MainSettingsPage() {
                 onLongPress={() => superMode && push("/miniapps/settings/super")}
               />
             )}
-            <RouteButton
-              icon={<Icon name="user-code" size={24} color={theme.colors.secondary_foreground} />}
-              label={translate("settings:miniappDeveloperSettings")}
-              onPress={() => push("/miniapps/settings/miniapp-dev")}
-            />
+            {miniappDevMode && (
+              <RouteButton
+                icon={<Icon name="user-code" size={24} color={theme.colors.secondary_foreground} />}
+                label={translate("settings:miniappDeveloperSettings")}
+                onPress={() => push("/miniapps/settings/miniapp-dev")}
+              />
+            )}
           </Group>
         </View>
 

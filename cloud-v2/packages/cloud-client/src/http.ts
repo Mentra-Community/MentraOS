@@ -14,6 +14,7 @@
  */
 import { HttpError } from "./errors";
 import type { Logger } from "./logger";
+import type { HttpTransport } from "./transports";
 
 /**
  * Per-request options.
@@ -56,6 +57,7 @@ export interface CreateHttpClientDeps {
   // default Bearer source, usually cloud.auth.getRuntimeToken/getCoreToken
   getToken?: () => Promise<string>;
   logger: Logger;
+  fetch?: HttpTransport;
 }
 
 /** How many times to retry a transient failure on an idempotent call. */
@@ -82,6 +84,7 @@ function joinUrl(baseUrl: string, path: string): string {
 
 export function createHttpClient(deps: CreateHttpClientDeps): HttpClient {
   const { baseUrl, getToken, logger } = deps;
+  const executeFetch = deps.fetch ?? globalThis.fetch;
 
   /**
    * Resolve the Bearer to attach: a per-call override wins, otherwise the
@@ -95,35 +98,26 @@ export function createHttpClient(deps: CreateHttpClientDeps): HttpClient {
   }
 
   /**
+   * The one retry loop behind every request shape (JSON, form, bodyless).
+   *
    * A network-level failure (DNS, reset, timeout) is transient and worth a
    * retry on an idempotent call. A non-2xx response is NOT transient here: it is
    * a definite answer from the server, mapped to an `HttpError` for the caller
    * to branch on (auth handles its own 401 refresh-and-retry a layer up).
+   * The thrown exhaustion error keeps the network-error detail out of its
+   * message to avoid leaking anything host-specific into a string a host might
+   * surface to a user.
    */
-  async function requestRaw(
-    method: "GET" | "POST" | "PUT" | "DELETE" | "HEAD",
-    path: string,
-    body: unknown,
-    opts?: ReqOpts,
-  ): Promise<Response> {
+  async function fetchWithRetry(args: {
+    method: "GET" | "POST" | "PUT" | "DELETE" | "HEAD";
+    path: string;
+    headers: Record<string, string>;
+    body: string | FormData | undefined;
+    idempotent: boolean;
+  }): Promise<Response> {
+    const { method, path, headers, body, idempotent } = args;
     const url = joinUrl(baseUrl, path);
-    const bearer = await resolveBearer(opts);
 
-    const headers: Record<string, string> = {};
-    if (bearer) headers["Authorization"] = `Bearer ${bearer}`;
-
-    let payload: string | undefined;
-    if (body !== undefined) {
-      headers["Content-Type"] = "application/json";
-      payload = JSON.stringify(body);
-    }
-
-    // GET and DELETE are idempotent by HTTP semantics, so safe to retry; other
-    // verbs opt in via the flag.
-    const idempotent =
-      opts?.idempotent ?? (method === "GET" || method === "DELETE" || method === "HEAD");
-
-    let lastNetworkError: unknown;
     for (let attempt = 0; attempt <= (idempotent ? MAX_RETRIES : 0); attempt++) {
       if (attempt > 0) {
         const backoff = RETRY_BASE_MS * 2 ** (attempt - 1);
@@ -133,10 +127,9 @@ export function createHttpClient(deps: CreateHttpClientDeps): HttpClient {
 
       let res: Response;
       try {
-        res = await fetch(url, { method, headers, body: payload });
-      } catch (err) {
-        // Transient network failure: remember it and let the loop retry.
-        lastNetworkError = err;
+        res = await executeFetch(url, { method, headers, body });
+      } catch {
+        // Transient network failure: let the loop retry.
         logger.warn("http network error", { method, path, attempt });
         continue;
       }
@@ -150,15 +143,31 @@ export function createHttpClient(deps: CreateHttpClientDeps): HttpClient {
     }
 
     // Exhausted retries on a transient failure.
-    throw new HttpError(
-      `Network request failed: ${method} ${path}`,
-      0,
-      "NETWORK_ERROR",
-    );
-    // `lastNetworkError` is intentionally referenced for the logger above; the
-    // thrown error keeps the original detail out of the message to avoid leaking
-    // anything host-specific into a string a host might surface to a user.
-    void lastNetworkError;
+    throw new HttpError(`Network request failed: ${method} ${path}`, 0, "NETWORK_ERROR");
+  }
+
+  async function requestRaw(
+    method: "GET" | "POST" | "PUT" | "DELETE" | "HEAD",
+    path: string,
+    body: unknown,
+    opts?: ReqOpts,
+  ): Promise<Response> {
+    const bearer = await resolveBearer(opts);
+
+    const headers: Record<string, string> = {};
+    if (bearer) headers["Authorization"] = `Bearer ${bearer}`;
+
+    let payload: string | undefined;
+    if (body !== undefined) {
+      headers["Content-Type"] = "application/json";
+      payload = JSON.stringify(body);
+    }
+
+    // GET and DELETE are idempotent by HTTP semantics, so safe to retry; other
+    // verbs opt in via the flag.
+    const idempotent = opts?.idempotent ?? (method === "GET" || method === "DELETE" || method === "HEAD");
+
+    return await fetchWithRetry({ method, path, headers, body: payload, idempotent });
   }
 
   async function request<T>(
@@ -171,48 +180,22 @@ export function createHttpClient(deps: CreateHttpClientDeps): HttpClient {
     return await parseJson<T>(res);
   }
 
-  async function requestForm<T>(
-    path: string,
-    form: FormData,
-    opts?: ReqOpts,
-  ): Promise<T> {
-    const url = joinUrl(baseUrl, path);
+  async function requestForm<T>(path: string, form: FormData, opts?: ReqOpts): Promise<T> {
     const bearer = await resolveBearer(opts);
+
+    // No Content-Type here: fetch/FormData must generate the multipart
+    // boundary. POST is not idempotent, so retries stay opt-in.
     const headers: Record<string, string> = {};
     if (bearer) headers["Authorization"] = `Bearer ${bearer}`;
 
-    let lastNetworkError: unknown;
-    for (let attempt = 0; attempt <= (opts?.idempotent ? MAX_RETRIES : 0); attempt++) {
-      if (attempt > 0) {
-        const backoff = RETRY_BASE_MS * 2 ** (attempt - 1);
-        logger.debug("http retrying form request", { method: "POST", path, attempt });
-        await delay(backoff);
-      }
-
-      let res: Response;
-      try {
-        // Do not set Content-Type here: fetch/FormData must generate the
-        // multipart boundary.
-        res = await fetch(url, { method: "POST", headers, body: form });
-      } catch (err) {
-        lastNetworkError = err;
-        logger.warn("http form network error", { method: "POST", path, attempt });
-        continue;
-      }
-
-      if (!res.ok) {
-        throw await toHttpError(res, "POST", path);
-      }
-
-      return await parseJson<T>(res);
-    }
-
-    throw new HttpError(
-      `Network request failed: POST ${path}`,
-      0,
-      "NETWORK_ERROR",
-    );
-    void lastNetworkError;
+    const res = await fetchWithRetry({
+      method: "POST",
+      path,
+      headers,
+      body: form,
+      idempotent: opts?.idempotent ?? false,
+    });
+    return await parseJson<T>(res);
   }
 
   /**
@@ -221,11 +204,7 @@ export function createHttpClient(deps: CreateHttpClientDeps): HttpClient {
    * parse failure here because the status is the load-bearing signal and we do
    * not want a malformed error body to mask the real status.
    */
-  async function toHttpError(
-    res: Response,
-    method: string,
-    path: string,
-  ): Promise<HttpError> {
+  async function toHttpError(res: Response, method: string, path: string): Promise<HttpError> {
     let code: string | undefined;
     let detail = "";
     try {
@@ -241,11 +220,7 @@ export function createHttpClient(deps: CreateHttpClientDeps): HttpClient {
     } catch {
       // No JSON body, or unparseable: fall back to status alone.
     }
-    return new HttpError(
-      `HTTP ${res.status} on ${method} ${path}${detail}`,
-      res.status,
-      code,
-    );
+    return new HttpError(`HTTP ${res.status} on ${method} ${path}${detail}`, res.status, code);
   }
 
   /**

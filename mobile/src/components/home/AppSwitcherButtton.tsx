@@ -6,13 +6,7 @@ import {Icon, Text} from "@/components/ignite"
 import AppIcon from "@/components/home/AppIcon"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
-import {
-  sortAppsByLastOpenTime,
-  useActiveApps,
-  useActiveBackgroundApps,
-  useActiveForegroundApp,
-  type ClientApp,
-} from "@mentra/island"
+import {sortAppsByLastOpenTime, useActiveBackgroundApps, useActiveForegroundApp, type ClientApp} from "@mentra/engine"
 import {RefObject, useEffect, useRef, useState} from "react"
 import {scheduleOnRN} from "react-native-worklets"
 import {BlurView} from "expo-blur"
@@ -21,7 +15,7 @@ import MaskedView from "@react-native-masked-view/masked-view"
 import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
 import GlassView from "@/components/ui/GlassView"
 import {OPEN_SPRING, SWIPE_DISTANCE_THRESHOLD, SWIPE_PERCENT_THRESHOLD} from "@/stores/appSwitcher"
-import {SETTINGS, useSetting} from "@/stores/settings"
+import {SETTINGS, useSetting} from "@mentra/engine"
 import {hapticBuzz} from "@/utils/utils"
 import showAlert from "@/contexts/ModalContext"
 
@@ -38,8 +32,12 @@ export default function AppSwitcherButton({swipeProgress, onGridButtonPress, blu
   const {theme} = useAppTheme()
   const backgroundApps = useActiveBackgroundApps()
   const foregroundApp = useActiveForegroundApp()
-  const apps = useActiveApps()
-  const appsCount = apps.length
+  // Once the Compositor starts opening a standard app, keep it out of the
+  // home tray underneath the sliding surface. It enters the tray when the app
+  // is minimized (foregrounded=false), which avoids the icon/count visibly
+  // popping in before the opening animation has covered Home.
+  const trayForegroundApp = foregroundApp?.foregrounded ? null : foregroundApp
+  const appsCount = backgroundApps.length + (trayForegroundApp ? 1 : 0)
   const hasBuzzedRef = useRef(false)
   const [appsList, setAppsList] = useState<ClientApp[]>([])
   const insets = useSaferAreaInsets()
@@ -48,14 +46,14 @@ export default function AppSwitcherButton({swipeProgress, onGridButtonPress, blu
 
   useEffect(() => {
     let cancelled = false
-    const list = foregroundApp ? [...backgroundApps, foregroundApp] : [...backgroundApps]
+    const list = trayForegroundApp ? [...backgroundApps, trayForegroundApp] : [...backgroundApps]
     sortAppsByLastOpenTime(list).then((sorted) => {
       if (!cancelled) setAppsList(sorted)
     })
     return () => {
       cancelled = true
     }
-  }, [backgroundApps, foregroundApp])
+  }, [backgroundApps, trayForegroundApp])
 
   const panGesture = Gesture.Pan()
     .activeOffsetY([-10, 10])

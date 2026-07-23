@@ -3,7 +3,7 @@ import {
   CLOCK_SKEW_TOLERANCE_MS,
   detectClockSkew,
   isSyncManifestEmpty,
-} from "../../../modules/island/src/services/gallerySyncClock"
+} from "../../../modules/engine/src/services/gallerySyncClock"
 
 describe("gallerySyncClock", () => {
   const phoneNow = 1_700_000_000_000
@@ -43,6 +43,16 @@ describe("gallerySyncClock", () => {
       expect(
         isSyncManifestEmpty({
           api_version: 2,
+          captures: [{capture_id: "IMG_1"}],
+          changed_files: [],
+        }),
+      ).toBe(false)
+    })
+
+    it("returns false when captures are present in a newer manifest version", () => {
+      expect(
+        isSyncManifestEmpty({
+          api_version: 3,
           captures: [{capture_id: "IMG_1"}],
           changed_files: [],
         }),

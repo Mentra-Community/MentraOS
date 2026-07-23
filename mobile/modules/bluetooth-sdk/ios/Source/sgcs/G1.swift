@@ -300,7 +300,7 @@ class G1: NSObject, SGCManager {
 
     func setSilentMode(_: Bool) {}
 
-    func requestWifiScan() {}
+    func requestWifiScan(scanId _: String?) {}
 
     func sendWifiCredentials(_: String, _: String) {}
 
@@ -739,7 +739,7 @@ class G1: NSObject, SGCManager {
 
     @objc func RN_sendText(_ text: String) {
         Task {
-            let displayText = "\(text)"
+            let displayText = G1Text.sanitizeForDisplay(text)
             guard let textData = displayText.data(using: .utf8) else { return }
 
             var command: [UInt8] = [

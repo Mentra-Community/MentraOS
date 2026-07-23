@@ -46,6 +46,8 @@ abstract class SGCManager {
 
     // Audio Control
     abstract fun setMicEnabled(enabled: Boolean)
+    open val isMicSuspendedForAudio: Boolean
+        get() = false
     abstract fun sortMicRanking(list: MutableList<String>): MutableList<String>
 
     // Camera & Media
@@ -296,12 +298,12 @@ abstract class SGCManager {
     abstract fun dbg2()
 
     // Network Management
-    abstract fun requestWifiScan()
+    abstract fun requestWifiScan(scanId: String?)
     abstract fun sendWifiCredentials(ssid: String, password: String)
     abstract fun forgetWifiNetwork(ssid: String)
     abstract fun sendHotspotState(enabled: Boolean)
 
-    /** Set glasses system clock (Mentra Live only; no-op on other devices). */
+    /** Set glasses system clock (Mentra Live and G2; no-op on other devices). */
     open fun sendSetSystemTime(timestampMs: Long) {
         Bridge.log("SGC: sendSetSystemTime not supported on $type")
     }

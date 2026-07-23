@@ -1,16 +1,15 @@
-import {ControllerTypes, DeviceTypes, getModelCapabilities} from "@/../../cloud/packages/types/src"
-import {Platform} from "react-native"
+import {engine, SETTINGS, useSetting} from "@mentra/engine"
 import {useRoute} from "@react-navigation/native"
+import {useCallback, useEffect, useRef, useState} from "react"
+import {Platform} from "react-native"
 
+import {ControllerTypes, DeviceTypes, getModelCapabilities} from "@/../../cloud/packages/types/src"
 import {Screen} from "@/components/ignite"
+import {OnboardingGuide, OnboardingStep} from "@/components/onboarding/OnboardingGuide"
 import {focusEffectPreventBack, usePushUnder} from "@/contexts/NavigationHistoryContext"
-import {SETTINGS, useSetting} from "@/stores/settings"
+import {translate} from "@/i18n"
 import {useNavigationStore} from "@/stores/navigation"
 import {getAr99DisplayName, getAr99ImageSource, getGlassesImage} from "@/utils/getGlassesImage"
-import {OnboardingGuide, OnboardingStep} from "@/components/onboarding/OnboardingGuide"
-import {translate} from "@/i18n"
-import {useCallback, useEffect, useRef, useState} from "react"
-import {toolkit} from "@mentra/island"
 
 export default function PairingSuccessScreen() {
   const {clearHistoryAndGoHome, push} = useNavigationStore.getState()
@@ -18,9 +17,10 @@ export default function PairingSuccessScreen() {
   const route = useRoute()
   const {deviceModel: routeDeviceModel, ar99ProjectName} = (route.params as {deviceModel?: string; ar99ProjectName?: string}) || {}
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
-  const [buttonText, setButtonText] = useState<string>(translate("common:continue"))
-  const [isStackReady, setIsStackReady] = useState(false)
+  const [onboardingOsCompleted] = useSetting<boolean>(SETTINGS.onboarding_os_completed.key)
+  const [hasSetupRoutes, setHasSetupRoutes] = useState(false)
   const stackPromiseRef = useRef<Promise<string[]> | null>(null)
+  const buttonText = translate(hasSetupRoutes ? "onboarding:continueSetup" : "common:continue")
 
   focusEffectPreventBack()
 
@@ -34,16 +34,16 @@ export default function PairingSuccessScreen() {
 
   const glassesImage = deviceModel === DeviceTypes.AR99 ? getAr99ImageSource(ar99ProjectName) : getGlassesImage(deviceModel)
 
-  const buildLiveStack = useCallback(async (): Promise<string[]> => {
+  const buildSetupStack = useCallback(async (): Promise<string[]> => {
     if (deviceModel === DeviceTypes.AR99) {
       return []
     }
     const features = getModelCapabilities(deviceModel as DeviceTypes)
     if (!features.hasOta) {
-      return []
+      return onboardingOsCompleted ? [] : ["/onboarding/os"]
     }
     // OTA check runs on the phone; WiFi is only required after an update is confirmed (see check-for-updates).
-    let bluetoothClassicConnected = await toolkit.pairing.waitForBluetoothClassic({timeoutMs: 1000})
+    let bluetoothClassicConnected = await engine.pairing.waitForBluetoothClassic({timeoutMs: 1000})
     // Android pairs Bluetooth Classic at the native stack level, so that screen is never needed there.
     if (Platform.OS === "android") {
       bluetoothClassicConnected = true
@@ -56,17 +56,17 @@ export default function PairingSuccessScreen() {
     newStack.push("/ota/check-for-updates")
     newStack.sort((a, b) => order.indexOf(a) - order.indexOf(b))
     return newStack
-  }, [deviceModel])
+  }, [deviceModel, onboardingOsCompleted])
 
   useEffect(() => {
-    stackPromiseRef.current = buildLiveStack().then((routes) => {
-      setIsStackReady(true)
+    stackPromiseRef.current = buildSetupStack().then((routes) => {
+      setHasSetupRoutes(routes.length > 0)
       return routes
     })
-  }, [buildLiveStack])
+  }, [buildSetupStack])
 
   const handleContinue = async () => {
-    const routes = await (stackPromiseRef.current ?? buildLiveStack())
+    const routes = await (stackPromiseRef.current ?? buildSetupStack())
     console.log("PAIR_SUCCESS: stack", routes)
     clearHistoryAndGoHome()
     if (routes.length === 0) {
@@ -199,12 +199,6 @@ export default function PairingSuccessScreen() {
       ]
       break
   }
-
-  useEffect(() => {
-    if (isStackReady) {
-      setButtonText(translate("onboarding:continueSetup"))
-    }
-  }, [isStackReady])
 
   return (
     <Screen preset="fixed" safeAreaEdges={["bottom"]} extraAndroidInsets>
