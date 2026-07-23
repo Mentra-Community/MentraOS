@@ -45,16 +45,24 @@ concurrency:
   group: staging-builds
   cancel-in-progress: false
 
-# These URLs are used to publish and verify the staging OTA manifest below.
-# Deliberately NOT baked into the mobile builds (e.g. via
-# EXPO_PUBLIC_ASG_OTA_VERSION_URL): the TestFlight / Play internal binaries
-# built here are the exact binaries later promoted to public beta and the
-# app stores, so a compiled-in staging manifest URL would ship to customers
-# and point their glasses OTA at staging builds. Staging testers opt in via
-# the developer-settings "Custom OTA Manifest URL" Staging preset instead.
+# These URLs are used to publish and verify the rolling staging OTA manifest
+# below. The MUTABLE rolling manifest is deliberately not baked into the
+# mobile builds — but each build DOES bake ASG_PINNED_OTA_MANIFEST_URL, an
+# IMMUTABLE per-run manifest pinning the paired ASG built from the same
+# commit. The TestFlight / Play binaries are the exact binaries later
+# promoted to the app stores, and under the phone-owned-manifest model that
+# is the point: the promoted app carries its pin, so store rollout waves
+# stage the glasses fleet. Cleanup retains pinned manifests and their APKs
+# for PINNED_OTA_RETENTION_DAYS (promotion to durable storage before that
+# window lapses is a release-process step).
 env:
   ASG_STAGING_OTA_VERSION_URL: https://mentra-live-ota-staging.pages.dev/staging_live_version.json
   ASG_STAGING_OTA_CUSTOM_DOMAIN_URL: https://staging.ota.mentraglass.com/staging_live_version.json
+  # Known to every job up front (run_id is run-wide), so the parallel mobile
+  # jobs can bake it without waiting for the ASG build. If the ASG build
+  # fails, the manifest is never uploaded and the baked URL 404s — a failed
+  # pairing means no OTA, never a wrong pin.
+  ASG_PINNED_OTA_MANIFEST_URL: https://github.com/${{ github.repository }}/releases/download/staging-builds/asg-staging-r${{ github.run_id }}-version.json
 
 # All jobs check out `ref: ${{ github.sha }}` so each run builds the exact
 # commit that triggered it. If we used `ref: staging` instead, concurrent
@@ -167,6 +175,9 @@ jobs:
           else
             echo "::warning::MAPBOX_PUBLIC_TOKEN secret not set — Android build will use the dummy token and on-device navigation will not work."
           fi
+          # Pin this app build's glasses OTA manifest to the ASG paired with it
+          # (immutable per-run asset uploaded by upload-releases).
+          echo "EXPO_PUBLIC_ASG_OTA_VERSION_URL=$ASG_PINNED_OTA_MANIFEST_URL" >> .env
 
       - name: Fix React Native symlinks
         working-directory: ./mobile
@@ -384,6 +395,9 @@ jobs:
           else
             echo "::warning::MAPBOX_PUBLIC_TOKEN secret not set — iOS build will use the dummy token and on-device navigation will not work."
           fi
+          # Pin this app build's glasses OTA manifest to the ASG paired with it
+          # (immutable per-run asset uploaded by upload-releases).
+          echo "EXPO_PUBLIC_ASG_OTA_VERSION_URL=$ASG_PINNED_OTA_MANIFEST_URL" >> .env
 
       - name: Configure Mapbox SPM credentials (~/.netrc)
         # The Mapbox Navigation SDK (v3) is a Swift Package fetched from
@@ -957,7 +971,11 @@ jobs:
             const releaseId = release.data.id;
 
             const uploads = [
-              { path: './asg-manifest/staging_live_version.json', latestName: 'staging_live_version.json', datedName: `staging_live_version-${date}-${sha}.json` }
+              { path: './asg-manifest/staging_live_version.json', latestName: 'staging_live_version.json', datedName: `staging_live_version-${date}-${sha}.json` },
+              // Immutable per-run pin baked into this run's mobile app builds
+              // (EXPO_PUBLIC_ASG_OTA_VERSION_URL). Name derives from run_id so
+              // the parallel mobile jobs know it up front.
+              { path: './asg-manifest/staging_live_version.json', latestName: null, datedName: 'asg-staging-r${{ github.run_id }}-version.json' }
             ];
 
             for (const upload of uploads) {
@@ -966,36 +984,31 @@ jobs:
               }
               const data = fs.readFileSync(upload.path);
 
-              // Delete existing -latest asset if present.
+              // Delete existing same-name assets first: the rolling latestName is
+              // replaced every run, and a re-run attempt of the same run_id
+              // re-uploads its pinned name (same commit, same pairing).
+              const names = [upload.latestName, upload.datedName].filter(Boolean);
               for (const asset of release.data.assets) {
-                if (asset.name === upload.latestName) {
-                  console.log(`Deleting existing ${upload.latestName}`);
+                if (names.includes(asset.name)) {
+                  console.log(`Deleting existing ${asset.name}`);
                   await github.rest.repos.deleteReleaseAsset({
                     owner: context.repo.owner,
                     repo: context.repo.repo,
                     asset_id: asset.id
                   });
-                  break;
                 }
               }
 
-              console.log(`Uploading ${upload.latestName} (${data.length} bytes)...`);
-              await github.rest.repos.uploadReleaseAsset({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                release_id: releaseId,
-                name: upload.latestName,
-                data
-              });
-
-              console.log(`Uploading ${upload.datedName} (${data.length} bytes)...`);
-              await github.rest.repos.uploadReleaseAsset({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                release_id: releaseId,
-                name: upload.datedName,
-                data
-              });
+              for (const name of names) {
+                console.log(`Uploading ${name} (${data.length} bytes)...`);
+                await github.rest.repos.uploadReleaseAsset({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  release_id: releaseId,
+                  name,
+                  data
+                });
+              }
             }
 
             await github.rest.repos.updateRelease({
@@ -1067,6 +1080,13 @@ jobs:
         with:
           script: |
             const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+            // Per-run pinned manifests (asg-staging-r<run_id>-version.json) are baked
+            // into that run's mobile app builds, which may be promoted to TestFlight /
+            // the app stores. Keep them and the ASG APKs they reference well beyond
+            // the rolling window; promoting a build to durable storage before this
+            // window lapses is a release-process step.
+            const pinnedRetentionAgo = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000);
+            const pinnedManifestPattern = /^asg-staging-r\d+-version\.json$/;
 
             try {
               const release = await github.rest.repos.getReleaseByTag({
@@ -1080,6 +1100,32 @@ jobs:
                 'asg-latest.apk',
                 'staging_live_version.json'
               ]);
+
+              // Fail closed, same as the rolling-manifest logic below: if any
+              // retained pinned manifest can't be read, don't delete ASG APKs at
+              // all this run — we might delete an APK a shipped app still pins.
+              let pinnedApksResolved = true;
+              for (const asset of release.data.assets) {
+                if (!pinnedManifestPattern.test(asset.name)) continue;
+                if (new Date(asset.created_at) < pinnedRetentionAgo) continue; // expired: deletable below
+                keepAssetNames.add(asset.name);
+                try {
+                  const response = await fetch(asset.browser_download_url);
+                  if (!response.ok) {
+                    throw new Error(`pinned manifest fetch returned HTTP ${response.status}`);
+                  }
+                  const manifest = await response.json();
+                  const apkUrl = manifest.apps?.['com.mentra.asg_client']?.apkUrl;
+                  const apkAssetName = apkUrl ? decodeURIComponent(new URL(apkUrl).pathname.split('/').pop() || '') : '';
+                  if (apkAssetName) {
+                    keepAssetNames.add(apkAssetName);
+                    console.log(`Keeping pinned manifest ${asset.name} and its APK ${apkAssetName}`);
+                  }
+                } catch (error) {
+                  pinnedApksResolved = false;
+                  console.log(`Could not read pinned manifest ${asset.name}:`, error.message);
+                }
+              }
 
               // Fail closed: only delete dated ASG APKs once we know which one
               // the live manifest references. If the manifest can't be read we
@@ -1111,8 +1157,8 @@ jobs:
 
               for (const asset of release.data.assets) {
                 if (keepAssetNames.has(asset.name)) continue;
-                if (!liveApkResolved && asset.name.startsWith('asg-') && asset.name.endsWith('.apk')) {
-                  console.log(`Keeping ${asset.name}: live manifest unreadable, not deleting ASG APKs`);
+                if ((!liveApkResolved || !pinnedApksResolved) && asset.name.startsWith('asg-') && asset.name.endsWith('.apk')) {
+                  console.log(`Keeping ${asset.name}: a manifest was unreadable, not deleting ASG APKs`);
                   continue;
                 }
 
