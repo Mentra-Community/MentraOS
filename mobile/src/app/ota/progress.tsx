@@ -32,6 +32,7 @@ export default function OtaProgressScreen() {
     otaProgress,
     mtkInstallStallSimulatedPercent,
     isVersionChange,
+    versionChangeConverged,
     versionChangePhase,
   } = install
 
@@ -215,14 +216,14 @@ export default function OtaProgressScreen() {
             <Icon name="check" size={64} color={theme.colors.primary} />
             <View className="h-6" />
             <Text
-              tx={isVersionChange ? "ota:versionChangeComplete" : undefined}
-              text={isVersionChange ? undefined : "Update complete!"}
+              tx={versionChangeConverged ? "ota:versionChangeComplete" : undefined}
+              text={versionChangeConverged ? undefined : "Update complete!"}
               className="font-semibold text-xl text-center"
             />
             <View className="h-2" />
             <Text
-              tx={isVersionChange ? "ota:versionChangeCompleteMessage" : undefined}
-              text={isVersionChange ? undefined : "Your glasses are up to date."}
+              tx={versionChangeConverged ? "ota:versionChangeCompleteMessage" : undefined}
+              text={versionChangeConverged ? undefined : "Your glasses are up to date."}
               className="text-sm text-center"
               style={{color: theme.colors.textDim}}
             />

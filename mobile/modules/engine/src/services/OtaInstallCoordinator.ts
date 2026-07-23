@@ -136,6 +136,8 @@ export interface OtaInstallSnapshot {
   mtkInstallStallSimulatedPercent: number | null
   /** True for a downgrade (version-change) session — the UI narrates it differently. */
   isVersionChange: boolean
+  /** True once the glasses reported the exact pinned target (the downgrade truly completed). */
+  versionChangeConverged: boolean
   /**
    * Sub-phase of the downgrade detour for the progress narrative, or null when not
    * in one: "installing" before the handoff, "restarting" while the glasses are dark
@@ -364,6 +366,7 @@ class OtaInstallCoordinator {
       otaProgress: otaProgress ? {...otaProgress} : null,
       mtkInstallStallSimulatedPercent: this.mtkSimulatedPercent,
       isVersionChange: this.versionChangeSession,
+      versionChangeConverged: this.versionChangeConverged,
       versionChangePhase: this.deriveVersionChangePhase(connected),
     }
   }
