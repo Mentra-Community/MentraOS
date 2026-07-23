@@ -3330,6 +3330,10 @@ class MentraLive: NSObject, SGCManager {
         DeviceStore.shared.apply("glasses", "appVersion", "")
         DeviceStore.shared.apply("glasses", "besFirmwareVersion", "")
         DeviceStore.shared.apply("glasses", "mtkFirmwareVersion", "")
+        // Modern ASG builds omit ota_version_url entirely (the phone owns manifest selection),
+        // and the chunked parser only writes present fields — clear it here so a URL reported
+        // by a previous build cannot leak into this session.
+        DeviceStore.shared.apply("glasses", "otaVersionUrl", "")
         Bridge.log("LIVE: Cleared cached version_info fields before refresh")
 
         // Perform SOC-dependent initialization

@@ -821,6 +821,10 @@ class MentraLive : SGCManager() {
             DeviceStore.apply("glasses", "appVersion", "")
             DeviceStore.apply("glasses", "besFirmwareVersion", "")
             DeviceStore.apply("glasses", "mtkFirmwareVersion", "")
+            // Modern ASG builds omit ota_version_url entirely (the phone owns manifest
+            // selection), and the chunked parser only writes present fields — clear it here so
+            // a URL reported by a previous build cannot leak into this session.
+            DeviceStore.apply("glasses", "otaVersionUrl", "")
             Bridge.log("LIVE: Cleared cached version_info fields for fresh session")
         }
 

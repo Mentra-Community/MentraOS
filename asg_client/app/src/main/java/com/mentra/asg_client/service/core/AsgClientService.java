@@ -1105,10 +1105,11 @@ public class AsgClientService extends Service implements NetworkStateListener, T
     }
 
     /**
-     * Send version information to phone in two chunks to work around BLE MTU limitations. Chunk 1
-     * (version_info_1): app_version, build_number, device_model, android_version Chunk 2
-     * (version_info_2): ota_version_url, firmware_version, bt_mac_address Phone will accumulate
-     * both chunks and process when complete.
+     * Send version information to phone in chunks to work around BLE MTU limitations. Chunk 1
+     * (version_info_1): app_version, build_number, device_model, android_version. Chunk 3
+     * (version_info_3): bes_fw_version, mtk_fw_version, bt_mac_address. The phone parses any
+     * version_info* message field-by-field, so chunk numbering gaps are fine (version_info_2
+     * used to carry ota_version_url; the glasses no longer advertise a manifest).
      */
     public void sendVersionInfo() {
         Log.i(TAG, "📊 Sending version information (chunked for MTU)");
@@ -1138,9 +1139,6 @@ public class AsgClientService extends Service implements NetworkStateListener, T
 
             String deviceModel = ServiceUtils.getDeviceTypeString(this);
             String androidVersion = android.os.Build.VERSION.RELEASE;
-            // The glasses no longer advertise a manifest: the phone owns manifest selection and
-            // supplies it via ota_start. Reported empty for phone-side backwards compatibility.
-            String otaVersionUrl = "";
 
             // Include BES firmware version (cached from hs_syvr command)
             String besFirmwareVersion = "";
@@ -1170,9 +1168,7 @@ public class AsgClientService extends Service implements NetworkStateListener, T
                             + ", MTK Firmware: "
                             + mtkFirmwareVersion
                             + ", BT MAC: "
-                            + besBtMac
-                            + ", OTA URL: "
-                            + otaVersionUrl);
+                            + besBtMac);
 
             if (serviceInitializer.getServiceManager().getBluetoothManager() != null
                     && serviceInitializer.getServiceManager().getBluetoothManager().isConnected()) {
@@ -1191,24 +1187,6 @@ public class AsgClientService extends Service implements NetworkStateListener, T
                         .getServiceManager()
                         .getBluetoothManager()
                         .sendMessage(chunk1.toString().getBytes(StandardCharsets.UTF_8));
-
-                // Small delay between chunks to ensure proper ordering
-                try {
-                    Thread.sleep(100);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                }
-
-                // Chunk 2: OTA URL only (isolated due to length)
-                JSONObject chunk2 = new JSONObject();
-                chunk2.put("type", "version_info_2");
-                chunk2.put("ota_version_url", otaVersionUrl);
-
-                Log.d(TAG, "📤 Sending version_info_2: " + chunk2.toString());
-                serviceInitializer
-                        .getServiceManager()
-                        .getBluetoothManager()
-                        .sendMessage(chunk2.toString().getBytes(StandardCharsets.UTF_8));
 
                 // Small delay between chunks to ensure proper ordering
                 try {
