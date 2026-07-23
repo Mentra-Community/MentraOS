@@ -14,7 +14,11 @@ export const phoneNotifications = {
   /** Is phone-notification forwarding enabled? (false on iOS) */
   enabled: (): boolean => {
     if (Platform.OS !== "android") return false
-    return useSettingsStore.getState().getSetting(SETTINGS.notifications_enabled.key) ?? true
+    const settings = useSettingsStore.getState()
+    return (
+      Boolean(settings.getSetting(SETTINGS.android_notification_listener_enabled.key)) &&
+      Boolean(settings.getSetting(SETTINGS.notifications_enabled.key))
+    )
   },
   /** Enable/disable phone-notification forwarding. (no-op on iOS) */
   setEnabled: (enabled: boolean) => {

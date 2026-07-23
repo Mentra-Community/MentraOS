@@ -20,6 +20,7 @@ import {getModelCapabilities} from "../types/hardware"
 import {HardwareCompatibility, type CompatibilityResult} from "../utils/hardware/hardware"
 import {storage} from "../utils/storage/storage"
 import appRegistry from "../services/AppRegistry"
+import localDisplayManager from "../services/LocalDisplayManager"
 import {islandNotifications} from "../services/NotificationsEmitter"
 import sttModelManager from "../services/STTModelManager"
 import {miniappLauncher} from "../services/MiniappLauncher"
@@ -538,6 +539,17 @@ miniappRunningRegistry.subscribe(() => {
   if (changed) {
     useAppStatusStore.setState({apps: updated})
   }
+})
+
+// The display-manager's core (foreground) slot is DERIVED state: always the
+// currently-running standard app, no matter HOW it came to run — user tap
+// (start()), boot restore (autostartLocalMiniapps → registry projection
+// above), crash-respawn, or interop. One reconciler instead of per-path call
+// sites, so no launch/stop path can forget to claim or release the slot.
+// onCoreAppChange is idempotent, so firing on every store write is free.
+useAppStatusStore.subscribe((state) => {
+  const core = state.apps.find((a) => a.running && (a.type === "standard" || !a.type))
+  localDisplayManager.onCoreAppChange(core?.packageName ?? null)
 })
 
 // AppRegistry change events trigger a store refresh.

@@ -19,6 +19,7 @@ class NotificationListener private constructor(private val context: Context) {
   companion object {
     private const val TAG = "CrustNotificationListener"
     private const val PREFS_NAME = "mentra_crust_notification_prefs"
+    private const val PREF_LISTENER_ENABLED = "notification_listener_enabled"
     private const val PREF_NOTIFICATIONS_ENABLED = "notifications_enabled"
     private const val PREF_NOTIFICATIONS_BLOCKLIST = "notifications_blocklist"
 
@@ -32,6 +33,57 @@ class NotificationListener private constructor(private val context: Context) {
               instance = it
             }
         }
+    }
+
+    /**
+     * Persist the developer gate without constructing the listener singleton.
+     * When the gate is off (the default), app startup must not create the
+     * notification HandlerThread merely to disable it.
+     */
+    fun setNotificationConfig(
+      context: Context,
+      listenerEnabled: Boolean,
+      notificationsEnabled: Boolean,
+      blocklist: List<String>,
+    ) {
+      val applicationContext = context.applicationContext
+      val blocklistSet = blocklist.toSet()
+      applicationContext
+        .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        .edit()
+        .putBoolean(PREF_LISTENER_ENABLED, listenerEnabled)
+        .putBoolean(PREF_NOTIFICATIONS_ENABLED, notificationsEnabled)
+        .putStringSet(PREF_NOTIFICATIONS_BLOCKLIST, blocklistSet)
+        .apply()
+
+      synchronized(this) {
+        instance?.applyConfig(listenerEnabled, notificationsEnabled, blocklistSet)
+      }
+
+      val component = ComponentName(applicationContext, NotificationListenerServiceImpl::class.java)
+      val newState =
+        if (listenerEnabled) {
+          PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+        } else {
+          PackageManager.COMPONENT_ENABLED_STATE_DISABLED
+        }
+      val packageManager = applicationContext.packageManager
+      if (packageManager.getComponentEnabledSetting(component) != newState) {
+        packageManager.setComponentEnabledSetting(
+          component,
+          newState,
+          PackageManager.DONT_KILL_APP,
+        )
+        if (listenerEnabled) {
+          NotificationListenerService.requestRebind(component)
+        }
+      }
+    }
+
+    fun isListenerEnabled(context: Context): Boolean {
+      return context
+        .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        .getBoolean(PREF_LISTENER_ENABLED, false)
     }
 
     /** Dispose the process singleton so a service rebind gets a live HandlerThread. */
@@ -54,21 +106,20 @@ class NotificationListener private constructor(private val context: Context) {
 
   private val preferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
+  @Volatile private var listenerEnabled = preferences.getBoolean(PREF_LISTENER_ENABLED, false)
   @Volatile private var notificationsEnabled = preferences.getBoolean(PREF_NOTIFICATIONS_ENABLED, false)
   @Volatile
   private var notificationsBlocklist =
     preferences.getStringSet(PREF_NOTIFICATIONS_BLOCKLIST, emptySet())?.toSet() ?: emptySet()
 
-  /** Keep MentraOS notification settings in Crust instead of Bluetooth SDK state. */
-  fun setNotificationConfig(enabled: Boolean, blocklist: List<String>) {
-    val blocklistSet = blocklist.toSet()
-    notificationsEnabled = enabled
-    notificationsBlocklist = blocklistSet
-    preferences
-      .edit()
-      .putBoolean(PREF_NOTIFICATIONS_ENABLED, enabled)
-      .putStringSet(PREF_NOTIFICATIONS_BLOCKLIST, blocklistSet)
-      .apply()
+  private fun applyConfig(
+    listenerEnabled: Boolean,
+    notificationsEnabled: Boolean,
+    blocklist: Set<String>,
+  ) {
+    this.listenerEnabled = listenerEnabled
+    this.notificationsEnabled = notificationsEnabled
+    notificationsBlocklist = blocklist
   }
 
   /** Check if notification listener permission is granted. */
@@ -129,6 +180,11 @@ class NotificationListener private constructor(private val context: Context) {
 
   /** Called internally by the service when a notification is posted. */
   internal fun onNotificationPosted(sbn: StatusBarNotification) {
+    if (!listenerEnabled || !notificationsEnabled) {
+      Log.d(TAG, "Notification listener disabled")
+      return
+    }
+
     val packageName = sbn.packageName
     Log.d(TAG, "Received notification from $packageName (key: ${sbn.key})")
 
@@ -139,11 +195,6 @@ class NotificationListener private constructor(private val context: Context) {
 
     if (notificationsBlocklist.contains(packageName)) {
       Log.d(TAG, "Notification in blocklist, returning")
-      return
-    }
-
-    if (!notificationsEnabled) {
-      Log.d(TAG, "Notifications disabled globally")
       return
     }
 
@@ -221,6 +272,10 @@ class NotificationListener private constructor(private val context: Context) {
 
   /** Called internally by the service when a notification is removed. */
   internal fun onNotificationRemoved(sbn: StatusBarNotification) {
+    if (!listenerEnabled || !notificationsEnabled) {
+      return
+    }
+
     val packageName = sbn.packageName
     val notificationKey = sbn.key
 
@@ -315,8 +370,10 @@ class NotificationListenerServiceImpl : NotificationListenerService() {
 
   override fun onListenerDisconnected() {
     super.onListenerDisconnected()
-    Log.d("CrustNotificationListener", "NotificationListenerService disconnected, requesting rebind")
-    requestRebind(ComponentName(this, NotificationListenerServiceImpl::class.java))
+    Log.d("CrustNotificationListener", "NotificationListenerService disconnected")
+    if (NotificationListener.isListenerEnabled(applicationContext)) {
+      requestRebind(ComponentName(this, NotificationListenerServiceImpl::class.java))
+    }
   }
 
   override fun onDestroy() {

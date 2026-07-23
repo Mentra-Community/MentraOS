@@ -167,7 +167,7 @@ describe("MantleManager", () => {
         twelve_hour_time: true,
       }),
     )
-    expect(crustModuleMock.setNotificationConfig).toHaveBeenCalledWith(true, [])
+    expect(crustModuleMock.setNotificationConfig).toHaveBeenCalledWith(false, true, [])
     expect(getBluetoothSdkListenerCount("local_transcription")).toBe(1)
 
     emitBluetoothSdkEvent("bluetooth_status", {searching: true, otherBtConnected: true})
@@ -221,7 +221,7 @@ describe("MantleManager", () => {
     await useSettingsStore.getState().setSetting(SETTINGS.notifications_blocklist.key, ["com.blocked"], false)
 
     await waitFor(() => {
-      expect(crustModuleMock.setNotificationConfig).toHaveBeenLastCalledWith(false, ["com.blocked"])
+      expect(crustModuleMock.setNotificationConfig).toHaveBeenLastCalledWith(false, false, ["com.blocked"])
     })
     expect(bluetoothSdkMock.updateBluetoothSettings).not.toHaveBeenCalledWith(
       expect.objectContaining({
