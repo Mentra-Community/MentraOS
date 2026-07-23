@@ -56,6 +56,31 @@ describe("OtaUpdateCheckService", () => {
 
     expect(result.hasCheckCompleted).toBe(false)
     expect(result.updateAvailable).toBe(false)
+    expect(result.checkFailureReason).toBe("pin_unavailable")
+  })
+
+  it("classifies a 404 pin as pin_unavailable and a network error as network", async () => {
+    const check = () =>
+      checkCurrentGlassesForUpdate({
+        refreshVersionInfo: false,
+        fixClockBeforeCheck: false,
+        waitForBesVersionMs: 0,
+        waitForMtkVersionMs: 0,
+      })
+
+    global.fetch = jest.fn(() => Promise.resolve({ok: false, status: 404} as unknown as Response)) as unknown as typeof fetch
+    let result = await check()
+    expect(result.hasCheckCompleted).toBe(false)
+    expect(result.checkFailureReason).toBe("pin_unavailable")
+
+    global.fetch = jest.fn(() => Promise.reject(new Error("offline"))) as unknown as typeof fetch
+    result = await check()
+    expect(result.hasCheckCompleted).toBe(false)
+    expect(result.checkFailureReason).toBe("network")
+
+    global.fetch = jest.fn(() => Promise.resolve({ok: false, status: 503} as unknown as Response)) as unknown as typeof fetch
+    result = await check()
+    expect(result.checkFailureReason).toBe("network")
   })
 
   it("skips (missing_build) for an unparseable or zero glasses build number", async () => {

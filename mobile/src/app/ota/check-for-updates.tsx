@@ -31,6 +31,8 @@ export default function OtaCheckForUpdatesScreen() {
   const [checkState, setCheckState] = useState<CheckState>("checking")
   const [isUpdateRequired, setIsUpdateRequired] = useState(true) // Default to required if not specified
   const [isDowngradeUpdate, setIsDowngradeUpdate] = useState(false)
+  /** Distinguishes retryable network trouble from a dead pin (remedy: update the app). */
+  const [errorKind, setErrorKind] = useState<"network" | "pin_unavailable">("network")
   const [checkKey, setCheckKey] = useState(0)
   /** Incremented each effect run so stale async performCheck exits before mutating state. */
   const performCheckGenerationRef = useRef(0)
@@ -130,8 +132,9 @@ export default function OtaCheckForUpdatesScreen() {
         }
 
         if (!result.hasCheckCompleted) {
-          console.log("📱 OTA check did not complete - setting error state")
+          console.log(`📱 OTA check did not complete (${result.checkFailureReason ?? "network"}) - setting error state`)
           checkCompletedRef.current = true
+          setErrorKind(result.checkFailureReason === "pin_unavailable" ? "pin_unavailable" : "network")
           setCheckState("error")
           return
         }
@@ -326,7 +329,32 @@ export default function OtaCheckForUpdatesScreen() {
       )
     }
 
-    // Error state - retry only, no skip (except dev mode)
+    // Dead pin: retrying cannot help — the update info for this app build does not
+    // exist; the remedy is a newer app. Let the user continue rather than trapping
+    // them on a retry loop.
+    if (checkState === "error" && errorKind === "pin_unavailable") {
+      return (
+        <>
+          <View className="flex-1 items-center justify-center px-6">
+            <Icon name="alert-triangle" size={64} color={theme.colors.error} />
+            <View className="h-6" />
+            <Text tx="ota:updateInfoUnavailable" className="font-semibold text-xl text-center" />
+            <View className="h-2" />
+            <Text
+              tx="ota:updateInfoUnavailableMessage"
+              className="text-sm text-center"
+              style={{color: theme.colors.textDim}}
+            />
+          </View>
+
+          <View className="justify-center items-center mb-6">
+            <Button preset="primary" tx="common:continue" flexContainer onPress={handleContinue} />
+          </View>
+        </>
+      )
+    }
+
+    // Network-ish error state - retry only, no skip (except dev mode)
     return (
       <>
         <View className="flex-1 items-center justify-center px-6">

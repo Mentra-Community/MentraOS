@@ -345,7 +345,8 @@ const en = {
     updateConnectWifi: "Connect your {{deviceName}} to WiFi to install the update.",
     updateDescription: "A new update is available for your glasses. We recommend updating now for the best experience.",
     downgradeAvailable: "{{deviceName}} Version Change Required",
-    downgradeDescriptionShort: "This app requires an earlier glasses software version.",
+    downgradeDescriptionShort:
+      "This app requires an earlier glasses software version. Photos and videos are kept; glasses settings will be reset and restored automatically.",
     downgradeDescription:
       "This app requires an earlier glasses software version. Your photos and videos will be preserved, but glasses settings will be reset and restored automatically after the change.",
     updateNow: "Update Now",
@@ -357,7 +358,10 @@ const en = {
     devBuildNoOta: "These glasses run a development build, so automatic updates are disabled. Use the developer settings manifest override to update them manually.",
     noUpdatesAvailable: "Your glasses are running the latest version.",
     checkFailed: "Check Failed",
-    checkFailedMessage: "Unable to check for updates. You can try again later from Settings.",
+    checkFailedMessage: "Couldn't check for updates. Please check your connection and try again.",
+    updateInfoUnavailable: "Update Info Unavailable",
+    updateInfoUnavailableMessage:
+      "Update information for this version of the app is unavailable. Please check the app store for a newer version of the Mentra App.",
     startingUpdate: "Starting Update",
     /** Legacy multi-step OTA: shown while reconnecting / advancing past the first sequence step (not first launch). */
     preparingNextUpdate: "Preparing next update…",

@@ -55,6 +55,12 @@ export interface OtaCheckResult {
    * instead of racing it with a second fetch of the same URL.
    */
   manifestBody: string | null
+  /**
+   * Why the check failed, when it did. "network" is retryable (connection/server
+   * trouble); "pin_unavailable" is permanent for this app build (manifest 404/gone,
+   * unparseable, or carrying no valid ASG pin) — the remedy is updating the app.
+   */
+  checkFailureReason?: "network" | "pin_unavailable"
 }
 
 export type OtaCheckSkippedReason = "disconnected" | "missing_build" | "dev_build"
@@ -97,18 +103,32 @@ function glassesConnectedNow(): boolean {
   return isGlassesConnected(useGlassesStore.getState().connection)
 }
 
-export async function fetchVersionInfo(url: string): Promise<VersionJson | null> {
+type ManifestFetchResult = {json: VersionJson | null; failureReason?: "network" | "pin_unavailable"}
+
+async function fetchVersionInfoDetailed(url: string): Promise<ManifestFetchResult> {
   try {
     const response = await fetch(url)
     if (!response.ok) {
       console.error("Failed to fetch version info:", response.status)
-      return null
+      // 4xx: the manifest does not exist (or is gone) — permanent for this app
+      // build, retrying cannot help. Everything else is transient server/network
+      // trouble and retryable.
+      return {json: null, failureReason: response.status >= 400 && response.status < 500 ? "pin_unavailable" : "network"}
     }
-    return await response.json()
+    try {
+      return {json: await response.json()}
+    } catch (parseError) {
+      console.error("OTA: manifest is not valid JSON:", parseError)
+      return {json: null, failureReason: "pin_unavailable"}
+    }
   } catch (error) {
     console.error("OTA: Error fetching version info:", error)
-    return null
+    return {json: null, failureReason: "network"}
   }
+}
+
+export async function fetchVersionInfo(url: string): Promise<VersionJson | null> {
+  return (await fetchVersionInfoDetailed(url)).json
 }
 
 export function checkVersionUpdateAvailable(
@@ -244,7 +264,21 @@ export async function checkForOtaUpdate(
 ): Promise<OtaCheckResult> {
   try {
     console.log("OTA: Checking for OTA update - URL: " + otaVersionUrl + ", current build: " + currentBuildNumber)
-    const versionJson = await fetchVersionInfo(otaVersionUrl)
+    const fetched = await fetchVersionInfoDetailed(otaVersionUrl)
+    const versionJson = fetched.json
+    if (!versionJson) {
+      return {
+        hasCheckCompleted: false,
+        updateAvailable: false,
+        latestVersionInfo: null,
+        updates: [],
+        mtkPatch: null,
+        besVersion: null,
+        isApkDowngrade: false,
+        manifestBody: null,
+        checkFailureReason: fetched.failureReason ?? "network",
+      }
+    }
     const latestVersionInfo = getLatestVersionInfo(versionJson)
 
     // A manifest whose ASG pin is missing/zeroed cannot verify anything for modern
@@ -272,6 +306,8 @@ export async function checkForOtaUpdate(
         mtkPatch: null,
         besVersion: null,
         isApkDowngrade: false,
+        manifestBody: null,
+        checkFailureReason: "pin_unavailable",
       }
     }
 
@@ -321,6 +357,7 @@ export async function checkForOtaUpdate(
       besVersion: null,
       isApkDowngrade: false,
       manifestBody: null,
+      checkFailureReason: "network",
     }
   }
 }
