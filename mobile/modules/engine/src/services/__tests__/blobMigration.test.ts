@@ -43,6 +43,31 @@ class MemoryMigrationBackend {
 }
 
 describe("migrateLegacyBlobScope", () => {
+  it("recognizes a blob-only namespace after a same-session token refresh", () => {
+    const backend = new MemoryMigrationBackend()
+    const sessionId = "sess_01K123456789ABCDEFGHJKMNPQ"
+    const oldToken = testCoreAccessToken("mu_123", sessionId, "jti_old", 100)
+    const refreshedToken = testCoreAccessToken("mu_123", sessionId, "jti_new", 200)
+    expect(sanitizeSegment(refreshedToken)).toBe(sanitizeSegment(oldToken))
+    addBlob(backend, oldToken, "recording", "legacy.wav", "legacy")
+
+    expect(
+      migrateLegacyBlobScope({
+        userId: "mu_123",
+        packageName: PACKAGE_NAME,
+        currentAccessToken: refreshedToken,
+        storage: backend.storage,
+        files: backend.fileHooks,
+      }),
+    ).toBe(true)
+    expect(storedMeta(backend, "mu_123", "recording")?.fileName).toBe("legacy.wav")
+    expect(backend.files.get(backend.fileKey("mu_123", "legacy.wav"))).toBe("legacy")
+    expect(backend.values.get(`${LEGACY_BLOB_OWNER_KEY_ROOT}${sanitizeSegment(refreshedToken)}`)).toEqual({
+      userId: "mu_123",
+      issuedAt: 200,
+    })
+  })
+
   it("moves the newest same-user token namespace and leaves another user untouched", () => {
     const backend = new MemoryMigrationBackend()
     const oldSegment = "legacy.old.token"
@@ -151,4 +176,26 @@ function storedMeta(backend: MemoryMigrationBackend, identity: string, key: stri
       `${BLOB_META_KEY_ROOT}${sanitizeSegment(identity)}_${PACKAGE_NAME}_${key}`,
     ) as MigratableBlobMeta) ?? null
   )
+}
+
+function testCoreAccessToken(userId: string, sessionId: string, jti: string, issuedAt: number): string {
+  // Match Core's jose claim insertion order. tenant_id + session_id occupy the
+  // old 120-character filesystem prefix and session_id is deliberately reused
+  // by /refresh, while jti/iat/exp rotate later in the payload.
+  const header = base64UrlJson({alg: "EdDSA", kid: "mentra-access-1"})
+  const payload = base64UrlJson({
+    tenant_id: "mentra",
+    session_id: sessionId,
+    iss: "cloud-core",
+    aud: "cloud-core",
+    sub: userId,
+    jti,
+    iat: issuedAt,
+    exp: issuedAt + 3600,
+  })
+  return `${header}.${payload}.${"s".repeat(86)}`
+}
+
+function base64UrlJson(value: unknown): string {
+  return btoa(JSON.stringify(value)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "")
 }

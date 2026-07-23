@@ -35,6 +35,18 @@ export interface LegacyTokenIdentity {
   issuedAt: number
 }
 
+/** Persist only the old 120-character path prefix, never the access token. */
+export function rememberLegacyBlobOwner(
+  backend: Pick<LocalMiniappStorageBackend, "set">,
+  token: string,
+  expectedUserId: string,
+): LegacyTokenIdentity | null {
+  const claims = accessTokenIdentity(token)
+  if (!claims || claims.userId !== expectedUserId) return null
+  backend.set(`${LEGACY_BLOB_OWNER_KEY_ROOT}${sanitizeSegment(token)}`, claims)
+  return claims
+}
+
 export class LocalMiniappStorage {
   private readonly migratedScopes = new Set<string>()
 
@@ -118,10 +130,8 @@ export class LocalMiniappStorage {
       if (markerIndex < KEY_ROOT.length) continue
 
       const token = fullKey.slice(KEY_ROOT.length, markerIndex)
-      const claims = accessTokenIdentity(token)
-      if (!claims || claims.userId !== userId) continue
-
-      this.hooks.backend.set(`${LEGACY_BLOB_OWNER_KEY_ROOT}${sanitizeSegment(token)}`, claims)
+      const claims = rememberLegacyBlobOwner(this.hooks.backend, token, userId)
+      if (!claims) continue
 
       const key = fullKey.slice(markerIndex + packageMarker.length)
       if (!key) continue
