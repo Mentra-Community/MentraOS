@@ -1333,8 +1333,12 @@ export class AsgCameraApiClient {
     abortSignal?: AbortSignal,
   ): Promise<string | undefined> {
     const partialPath = `${thumbnailPath}.partial`
+    const parentDir = thumbnailPath.substring(0, thumbnailPath.lastIndexOf("/"))
 
     try {
+      if (parentDir && !(await RNFS.exists(parentDir))) {
+        await RNFS.mkdir(parentDir)
+      }
       await RNFS.unlink(partialPath).catch(() => {})
       const {jobId, promise} = localNetworkTransport.downloadFile({
         fromUrl: `${this.baseUrl}/api/photo?file=${encodeURIComponent(sourceFileName)}`,

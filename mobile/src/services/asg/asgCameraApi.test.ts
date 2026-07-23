@@ -5,6 +5,8 @@ import {AsgCameraApiClient} from "../../../modules/engine/src/services/asg/asgCa
 import {localNetworkTransport} from "../../../modules/engine/src/services/asg/localNetworkTransport"
 
 jest.mock("@dr.pogodin/react-native-fs", () => ({
+  exists: jest.fn(() => Promise.resolve(false)),
+  mkdir: jest.fn(() => Promise.resolve()),
   unlink: jest.fn(() => Promise.resolve()),
   moveFile: jest.fn(() => Promise.resolve()),
 }))
@@ -58,6 +60,7 @@ describe("AsgCameraApiClient video thumbnails", () => {
         toFile: "/tmp/VID_20260723_021413_958_665/.thumb.jpg.partial",
       }),
     )
+    expect(RNFS.mkdir).toHaveBeenCalledWith("/tmp/VID_20260723_021413_958_665")
     expect(RNFS.moveFile).toHaveBeenCalledWith(
       "/tmp/VID_20260723_021413_958_665/.thumb.jpg.partial",
       "/tmp/VID_20260723_021413_958_665/.thumb.jpg",
