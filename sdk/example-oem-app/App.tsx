@@ -61,12 +61,20 @@ export default function App() {
 
   // --- Pairing ---
   const scanForGlasses = useCallback(async () => {
+    // Without BLUETOOTH_SCAN/CONNECT (Android 12+) the OS silently withholds
+    // scan results — the native scan "starts" but never reports a device, so
+    // the button spins on "Scanning…" forever with no error. Request first.
+    const granted = await run("permissions.request(bluetooth)", () => engine.permissions.request("bluetooth"))
+    if (!granted) {
+      logger.logError("Bluetooth permission denied — can't scan for glasses.")
+      return
+    }
     // Mark the model as the pending selection (the scan-entry write of the
     // two-phase identity contract), then start scanning. Results stream into
     // `devices` via onFound.
     engine.pairing.markPendingSelection(GLASSES_MODEL)
     await run(`scan(${GLASSES_MODEL})`, () => engine.pairing.scan(GLASSES_MODEL))
-  }, [run])
+  }, [run, logger])
 
   const pairDevice = useCallback(
     async (device: ScanResult) => {
