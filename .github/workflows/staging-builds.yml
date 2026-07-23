@@ -1,7 +1,7 @@
 name: Staging Builds
 
 # Builds the mobile app (Android + iOS) and ASG client from the staging branch
-# and publishes to THREE places:
+# and publishes to TWO places:
 #
 #   1. The versioned release tag (`v2.10` etc.) with `_Beta_N` numbering.
 #      This is what `bun run release:android` / `release:ios` produce.
@@ -9,15 +9,15 @@ name: Staging Builds
 #
 #   2. The rolling-latest tag (`staging-builds`) with stable filenames:
 #        - mobile-latest.apk / mobile-latest.ipa / asg-latest.apk
-#        - staging_live_version.json
-#        - Dated copies kept for 7 days.
+#        - staging_live_version.json (rolling head: last-published ASG record
+#          for the OS-1689 reuse check; not consumed by any shipped binary)
+#        - asg-staging-r<run_id>-version.json pins + ASG APKs (permanent)
+#        - Dated mobile builds kept for 7 days.
 #
-#   3. The dedicated Cloudflare Pages staging OTA site:
-#        - https://mentra-live-ota-staging.pages.dev/staging_live_version.json
-#        - https://staging.ota.mentraglass.com/staging_live_version.json
-#          once the custom domain is attached.
-#      This intentionally does not deploy to the production ota.mentraglass.com
-#      project or include test_bes_ota_prod_live_version.json.
+# There is no staging OTA "track": app binaries carry their own pinned
+# manifest, and ad-hoc development uses the super-mode custom manifest URL
+# override. (The former Cloudflare Pages staging OTA site and its
+# staging.ota.mentraglass.com domain are no longer deployed.)
 #
 # Mobile also uploads to TestFlight (iOS) and Play Store internal track
 # (Android), as the release scripts already do, IF the runner has the creds
@@ -38,15 +38,14 @@ on:
 permissions:
   contents: write
 
-# Serialize runs: two staging pushes in quick succession must not deploy OTA
-# manifests to Cloudflare Pages out of order (the older manifest could land
-# last and stay live) or race the delete/re-upload of rolling release assets.
+# Serialize runs: two staging pushes in quick succession must not publish the
+# rolling OTA manifest out of order (the older manifest could land last and
+# stay live) or race the delete/re-upload of rolling release assets.
 concurrency:
   group: staging-builds
   cancel-in-progress: false
 
-# These URLs are used to publish and verify the rolling staging OTA manifest
-# below. The MUTABLE rolling manifest is deliberately not baked into the
+# The MUTABLE rolling manifest is deliberately not baked into the
 # mobile builds — but each build DOES bake ASG_PINNED_OTA_MANIFEST_URL, an
 # IMMUTABLE per-run manifest pinning the paired ASG built from the same
 # commit. The TestFlight / Play binaries are the exact binaries later
@@ -56,8 +55,6 @@ concurrency:
 # are permanent release assets; APK growth is bounded by the OS-1689 reuse
 # check (app-only releases re-pin the previous artifact).
 env:
-  ASG_STAGING_OTA_VERSION_URL: https://mentra-live-ota-staging.pages.dev/staging_live_version.json
-  ASG_STAGING_OTA_CUSTOM_DOMAIN_URL: https://staging.ota.mentraglass.com/staging_live_version.json
   # Known to every job up front (run_id is run-wide), so the parallel mobile
   # jobs can bake it without waiting for the ASG build. If the ASG build
   # fails, the manifest is never uploaded and the baked URL 404s — a failed
@@ -833,7 +830,7 @@ jobs:
             const date = '${{ steps.build-info.outputs.date }}';
             const sha = '${{ steps.build-info.outputs.sha }}';
 
-            const releaseBody = `Automated builds from the \`staging\` branch.\n\n**Latest builds:** ${date} (${sha})\n\n## Download Links\n\n- [Mobile App Android (latest)](https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/staging-builds/mobile-latest.apk)\n- [Mobile App iOS (latest)](https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/staging-builds/mobile-latest.ipa)\n- [ASG Client (latest)](https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/staging-builds/asg-latest.apk)\n- [ASG OTA manifest (release asset)](https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/staging-builds/staging_live_version.json)\n- [ASG OTA manifest (Cloudflare Pages staging)](https://mentra-live-ota-staging.pages.dev/staging_live_version.json)\n\nVersioned builds with \`_Beta_N\` numbering are also published under the per-version release tag (e.g. \`v2.10\`).\n\n---\n\n*Builds older than 7 days in this rolling-latest channel are automatically cleaned up.*`;
+            const releaseBody = `Automated builds from the \`staging\` branch.\n\n**Latest builds:** ${date} (${sha})\n\n## Download Links\n\n- [Mobile App Android (latest)](https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/staging-builds/mobile-latest.apk)\n- [Mobile App iOS (latest)](https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/staging-builds/mobile-latest.ipa)\n- [ASG Client (latest)](https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/staging-builds/asg-latest.apk)\n- [ASG OTA manifest (release asset)](https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/staging-builds/staging_live_version.json)\n\nVersioned builds with \`_Beta_N\` numbering are also published under the per-version release tag (e.g. \`v2.10\`).\n\n---\n\n*Builds older than 7 days in this rolling-latest channel are automatically cleaned up.*`;
 
             let release;
             try {
@@ -969,49 +966,6 @@ jobs:
             }
             + (if .remediation then {remediation: .remediation} else {} end)' "$FIRMWARE_MANIFEST" > asg-manifest/staging_live_version.json
 
-      - name: Build ASG OTA staging Pages site
-        if: needs.build-asg.result == 'success'
-        run: |
-          mkdir -p asg-pages-site
-          cp asg-manifest/staging_live_version.json asg-pages-site/staging_live_version.json
-
-          cat > asg-pages-site/index.html <<'HTML'
-          <!doctype html>
-          <html lang="en">
-            <head>
-              <meta charset="UTF-8" />
-              <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-              <title>MentraOS ASG Staging OTA</title>
-            </head>
-            <body>
-              <h1>MentraOS ASG Staging OTA</h1>
-              <p><a href="./staging_live_version.json">View staging OTA manifest</a></p>
-            </body>
-          </html>
-          HTML
-
-          printf '%s\n' \
-            '/*' \
-            '  Access-Control-Allow-Origin: *' \
-            '  X-Content-Type-Options: nosniff' \
-            '  X-Robots-Tag: noindex' \
-            '' \
-            '/staging_live_version.json' \
-            '  Content-Type: application/json' \
-            '  Cache-Control: public, max-age=0, must-revalidate' \
-            > asg-pages-site/_headers
-
-          if [ -e asg-pages-site/test_bes_ota_prod_live_version.json ]; then
-            echo "Staging OTA payload must not contain test_bes_ota_prod_live_version.json." >&2
-            exit 1
-          fi
-
-          jq -e '
-            (.apps["com.mentra.asg_client"].versionCode | type == "number")
-            and (.mtk_patches | type == "array" and length > 0)
-            and (.bes_firmware | type == "object")
-          ' asg-pages-site/staging_live_version.json >/dev/null
-
       - name: Upload ASG OTA manifest to staging-builds release
         # Same ref guard as the Pages deploy: a workflow_dispatch run from a
         # non-staging branch must not overwrite the release-asset manifest the
@@ -1024,7 +978,7 @@ jobs:
             const date = '${{ steps.build-info.outputs.date }}';
             const sha = '${{ steps.build-info.outputs.sha }}';
 
-            const releaseBody = `Automated builds from the \`staging\` branch.\n\n**Latest builds:** ${date} (${sha})\n\n## Download Links\n\n- [Mobile App Android (latest)](https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/staging-builds/mobile-latest.apk)\n- [Mobile App iOS (latest)](https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/staging-builds/mobile-latest.ipa)\n- [ASG Client (latest)](https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/staging-builds/asg-latest.apk)\n- [ASG OTA manifest (release asset)](https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/staging-builds/staging_live_version.json)\n- [ASG OTA manifest (Cloudflare Pages staging)](https://mentra-live-ota-staging.pages.dev/staging_live_version.json)\n\nVersioned builds with \`_Beta_N\` numbering are also published under the per-version release tag (e.g. \`v2.10\`).\n\n---\n\n*Builds older than 7 days in this rolling-latest channel are automatically cleaned up.*`;
+            const releaseBody = `Automated builds from the \`staging\` branch.\n\n**Latest builds:** ${date} (${sha})\n\n## Download Links\n\n- [Mobile App Android (latest)](https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/staging-builds/mobile-latest.apk)\n- [Mobile App iOS (latest)](https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/staging-builds/mobile-latest.ipa)\n- [ASG Client (latest)](https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/staging-builds/asg-latest.apk)\n- [ASG OTA manifest (release asset)](https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/staging-builds/staging_live_version.json)\n\nVersioned builds with \`_Beta_N\` numbering are also published under the per-version release tag (e.g. \`v2.10\`).\n\n---\n\n*Builds older than 7 days in this rolling-latest channel are automatically cleaned up.*`;
 
             let release;
             try {
@@ -1102,60 +1056,6 @@ jobs:
             });
 
             console.log('Successfully uploaded ASG OTA manifest');
-
-      - name: Publish ASG OTA staging site to Cloudflare Pages
-        if: needs.build-asg.result == 'success' && github.ref_name == 'staging'
-        env:
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_PAGES_API_TOKEN }}
-          BUILD_SHORT_SHA: ${{ steps.build-info.outputs.sha }}
-          VERSION_CODE: ${{ needs.build-asg.outputs.version_code }}
-        run: |
-          if [ -z "$CLOUDFLARE_ACCOUNT_ID" ] || [ -z "$CLOUDFLARE_API_TOKEN" ]; then
-            echo "Cloudflare credentials are required to publish the staging OTA manifest." >&2
-            exit 1
-          fi
-
-          npx --yes wrangler@4.86.0 pages deploy asg-pages-site \
-            --project-name mentra-live-ota-staging \
-            --branch staging \
-            --commit-hash "$GITHUB_SHA" \
-            --commit-dirty=true \
-            --commit-message "Publish staging OTA manifest ${BUILD_SHORT_SHA}"
-
-          echo "Verifying $ASG_STAGING_OTA_VERSION_URL"
-          for attempt in {1..12}; do
-            if curl --fail --silent --show-error --location "$ASG_STAGING_OTA_VERSION_URL" -o /tmp/staging_live_version.json \
-              && jq -e --argjson versionCode "$VERSION_CODE" \
-                '.apps["com.mentra.asg_client"].versionCode == $versionCode' \
-                /tmp/staging_live_version.json >/dev/null; then
-              break
-            fi
-            if [ "$attempt" -eq 12 ]; then
-              echo "Staging OTA manifest was not reachable at $ASG_STAGING_OTA_VERSION_URL after deploy." >&2
-              exit 1
-            fi
-            sleep 10
-          done
-
-          echo "Checking optional custom domain $ASG_STAGING_OTA_CUSTOM_DOMAIN_URL"
-          custom_domain_ready=false
-          for attempt in {1..12}; do
-            if curl --fail --silent --show-error --location "$ASG_STAGING_OTA_CUSTOM_DOMAIN_URL" -o /tmp/staging_custom_domain_live_version.json \
-              && jq -e --argjson versionCode "$VERSION_CODE" \
-                '.apps["com.mentra.asg_client"].versionCode == $versionCode' \
-                /tmp/staging_custom_domain_live_version.json >/dev/null; then
-              custom_domain_ready=true
-              break
-            fi
-            if [ "$attempt" -eq 12 ]; then
-              break
-            fi
-            sleep 10
-          done
-          if [ "$custom_domain_ready" != "true" ]; then
-            echo "Custom staging OTA domain is not serving this manifest yet after retries; Pages.dev URL is healthy." >&2
-          fi
 
       - name: Cleanup old staging builds
         if: ${{ github.event.inputs.skip_cleanup != 'true' }}
