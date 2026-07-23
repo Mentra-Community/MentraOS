@@ -613,7 +613,7 @@ public class Ar99 extends SGCManager {
   public void dbg2() {}
 
   @Override
-  public void requestWifiScan() {}
+  public void requestWifiScan(String scanId) {}
 
   @Override
   public void sendWifiCredentials(String ssid, String password) {}
