@@ -69,8 +69,8 @@ public class MlKitTextRoiDetectorTest {
                         1000,
                         800);
 
-        // Union is [100,200]-[420,300]. Padding is max(32px, 12%/25% of union size).
-        assertThat(roi).isEqualTo(new Rect(62, 168, 458, 332));
+        // Union is [100,200]-[420,300]. Padding is max(32px, 12%/35% of union size).
+        assertThat(roi).isEqualTo(new Rect(62, 165, 458, 335));
     }
 
     @Test
