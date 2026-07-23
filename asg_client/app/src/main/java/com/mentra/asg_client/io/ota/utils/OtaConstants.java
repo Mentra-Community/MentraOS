@@ -82,6 +82,13 @@ public class OtaConstants {
     public static final String EXTRA_DOWNGRADE_APK_SHA256 = "apk_sha256";
     public static final String DOWNGRADE_APK_FILENAME = "asg_client_downgrade.apk";
     /**
+     * Grace period after a downgrade handoff before ASG concludes the recovery worker did not
+     * take the transaction. A successful handoff uninstalls ASG well within this window; the
+     * watchdog only fires when the handoff was rejected/dropped, clearing the OTA-in-progress
+     * latch so future OTAs are not blocked.
+     */
+    public static final long DOWNGRADE_HANDOFF_TIMEOUT_MS = 60_000L;
+    /**
      * Oldest recovery worker versionCode that understands the downgrade handoff
      * ({@code ACTION_REQUEST_DOWNGRADE}). ASG deploys its bundled recovery worker asynchronously
      * at startup, so a downgrade must not be staged until the installed recovery worker is at

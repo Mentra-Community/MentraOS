@@ -327,7 +327,13 @@ public class OtaHelper {
                 if (!apps.has(pkg)) continue;
                 long current = getInstalledVersion(pkg, context);
                 long server = apps.getJSONObject(pkg).getLong("versionCode");
-                if (server > current) {
+                boolean asgDowngrade = OtaConstants.ASG_PACKAGE.equals(pkg)
+                        && DowngradeGate.shouldDowngrade(
+                                current, server, OtaConstants.DOWNGRADE_FLOOR_VERSION_CODE);
+                // Count the ASG step in either direction so the session's step accounting matches
+                // the work the pass actually performs (a pinned downgrade replaces the APK via the
+                // recovery-worker detour, same as an upgrade installs one).
+                if (server > current || asgDowngrade) {
                     steps.add("apk");
                     break;
                 }
@@ -1081,6 +1087,23 @@ public class OtaHelper {
             context.sendBroadcast(handoff, OtaConstants.RECOVERY_CONTROL_PERMISSION);
             Log.i(TAG, "Downgrade handed off to recovery worker (target " + targetVersion
                     + "); expecting uninstall shortly");
+
+            // The handoff is fire-and-forget: a successful transaction uninstalls ASG (killing
+            // this process) within seconds. If the recovery worker instead rejects the request
+            // (e.g. floor disabled) or never enqueues, this process stays alive with isUpdating
+            // latched, which would block every future OTA. Arm a watchdog that clears the flag
+            // and reports failure to the phone if no uninstall has arrived — it only fires when
+            // the handoff did not take.
+            final Context appContext = context.getApplicationContext();
+            new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                if (isUpdating) {
+                    Log.e(TAG, "Downgrade handoff watchdog: no uninstall after "
+                            + (OtaConstants.DOWNGRADE_HANDOFF_TIMEOUT_MS / 1000)
+                            + "s - recovery worker did not take the transaction");
+                    isUpdating = false;
+                    sendProgressToPhone("install", 0, 0, 0, "FAILED", "downgrade_handoff_failed");
+                }
+            }, OtaConstants.DOWNGRADE_HANDOFF_TIMEOUT_MS);
             return true;
         } catch (Exception e) {
             Log.e(TAG, "Failed to stage downgrade handoff", e);

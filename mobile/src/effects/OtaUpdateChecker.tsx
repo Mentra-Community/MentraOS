@@ -364,11 +364,15 @@ export function OtaUpdateChecker() {
               return
             }
             console.log("OTA: Update available and glasses are not on WiFi - prompting WiFi setup")
-            const wifiMessage = superMode
-              ? `Updates available: ${updateList}\n\nConnect your ${deviceName} to WiFi to install.`
-              : `${updateMessage}\n\nConnect your ${deviceName} to WiFi to install.`
+            const wifiMessage =
+              superMode && !isApkDowngrade
+                ? `Updates available: ${updateList}\n\nConnect your ${deviceName} to WiFi to install.`
+                : `${updateMessage}\n\nConnect your ${deviceName} to WiFi to install.`
             hasPromptedOtaWifiSetup.current = true
-            showAlert(translate("ota:updateAvailable", {deviceName}), wifiMessage, [
+            showAlert(
+              translate(isApkDowngrade ? "ota:downgradeAvailable" : "ota:updateAvailable", {deviceName}),
+              wifiMessage,
+              [
               {
                 text: translate("ota:updateLater"),
                 style: "cancel",
@@ -378,7 +382,8 @@ export function OtaUpdateChecker() {
                 },
               },
               {text: translate("ota:setupWifi"), onPress: () => push("/wifi/scan")},
-            ])
+              ],
+            )
           },
         )
         .catch((error) => {
