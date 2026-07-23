@@ -179,7 +179,7 @@ export class BlobStore {
   private migrateLegacyTokenScope(userId: string, packageName: string, scope: string): void {
     if (this.migratedScopes.has(scope)) return
     this.usageCache.delete(scope)
-    const completed = migrateLegacyBlobScope({
+    const result = migrateLegacyBlobScope({
       userId,
       packageName,
       currentAccessToken: this.hooks.getAccessToken?.(),
@@ -208,7 +208,8 @@ export class BlobStore {
       },
       warn: (message, error) => console.warn(`${LOG_TAG}: ${message}`, error),
     })
-    if (completed) this.migratedScopes.add(scope)
+    if (result.complete) this.migratedScopes.add(scope)
+    if (result.blocked) throw new Error("Legacy blob migration could not complete safely")
   }
 
   /** Public API shape: stored meta + derived file:// uri. */

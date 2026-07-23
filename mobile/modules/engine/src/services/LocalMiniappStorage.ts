@@ -47,6 +47,19 @@ export function rememberLegacyBlobOwner(
   return claims
 }
 
+/** Index every full legacy SimpleStorage token before blob requests can race it. */
+export function indexLegacyBlobOwners(backend: Pick<LocalMiniappStorageBackend, "keys" | "set">): void {
+  for (const fullKey of backend.keys()) {
+    if (!fullKey.startsWith(KEY_ROOT)) continue
+    // Core JWTs are longer than BlobStore's old 120-character segment, so the
+    // remainder starts with the complete header + payload even though it also
+    // contains the package/key suffix. accessTokenIdentity reads only payload.
+    const tokenAndSuffix = fullKey.slice(KEY_ROOT.length)
+    const claims = accessTokenIdentity(tokenAndSuffix)
+    if (claims) rememberLegacyBlobOwner(backend, tokenAndSuffix, claims.userId)
+  }
+}
+
 export class LocalMiniappStorage {
   private readonly migratedScopes = new Set<string>()
 
