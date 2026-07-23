@@ -52,9 +52,9 @@ concurrency:
 # commit. The TestFlight / Play binaries are the exact binaries later
 # promoted to the app stores, and under the phone-owned-manifest model that
 # is the point: the promoted app carries its pin, so store rollout waves
-# stage the glasses fleet. Cleanup retains pinned manifests and their APKs
-# for PINNED_OTA_RETENTION_DAYS (promotion to durable storage before that
-# window lapses is a release-process step).
+# stage the glasses fleet. Pinned manifests and the ASG APKs they reference
+# are permanent release assets; APK growth is bounded by the OS-1689 reuse
+# check (app-only releases re-pin the previous artifact).
 env:
   ASG_STAGING_OTA_VERSION_URL: https://mentra-live-ota-staging.pages.dev/staging_live_version.json
   ASG_STAGING_OTA_CUSTOM_DOMAIN_URL: https://staging.ota.mentraglass.com/staging_live_version.json
@@ -580,10 +580,13 @@ jobs:
     runs-on: blacksmith-4vcpu-ubuntu-2404
 
     outputs:
-      version_code: ${{ steps.asg-build-info.outputs.version_code }}
-      version_name: ${{ steps.asg-build-info.outputs.version_name }}
-      apk_sha256: ${{ steps.asg-apk-info.outputs.sha256 }}
-      apk_size: ${{ steps.asg-apk-info.outputs.size }}
+      version_code: ${{ steps.asg-reuse.outputs.reuse == 'true' && steps.asg-reuse.outputs.version_code || steps.asg-build-info.outputs.version_code }}
+      version_name: ${{ steps.asg-reuse.outputs.reuse == 'true' && steps.asg-reuse.outputs.version_name || steps.asg-build-info.outputs.version_name }}
+      apk_sha256: ${{ steps.asg-reuse.outputs.reuse == 'true' && steps.asg-reuse.outputs.apk_sha256 || steps.asg-apk-info.outputs.sha256 }}
+      apk_size: ${{ steps.asg-reuse.outputs.reuse == 'true' && steps.asg-reuse.outputs.apk_size || steps.asg-apk-info.outputs.size }}
+      reuse: ${{ steps.asg-reuse.outputs.reuse }}
+      apk_url: ${{ steps.asg-reuse.outputs.apk_url }}
+      tree_hash: ${{ steps.asg-reuse.outputs.tree_hash }}
 
     steps:
       - name: Get cache week number
@@ -599,7 +602,61 @@ jobs:
         with:
           ref: ${{ github.sha }}
 
+      # OS-1689: skip the whole ASG build when asg_client/ is unchanged since the
+      # last published staging ASG. The rolling manifest records the git tree hash
+      # of asg_client/ it was built from; a match means this commit would produce
+      # a functionally identical APK, so this run's manifests reuse the previous
+      # artifact verbatim. That keeps the pin stable across app-only releases
+      # (no phantom glasses updates under exact-pin semantics) and bounds APK
+      # storage growth to actual ASG changes.
+      - name: Check ASG artifact reuse
+        id: asg-reuse
+        run: |
+          set -euo pipefail
+          TREE_HASH=$(git rev-parse "HEAD:asg_client")
+          echo "tree_hash=${TREE_HASH}" >> "$GITHUB_OUTPUT"
+          echo "reuse=false" >> "$GITHUB_OUTPUT"
+
+          MANIFEST_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/staging-builds/staging_live_version.json"
+          if ! manifest=$(curl --fail --silent --location "$MANIFEST_URL"); then
+            echo "No published staging manifest readable; building fresh."
+            exit 0
+          fi
+
+          PREV_HASH=$(jq -r '.sourceTreeHash // ""' <<<"$manifest")
+          if [ -z "$PREV_HASH" ] || [ "$PREV_HASH" != "$TREE_HASH" ]; then
+            echo "asg_client/ changed (prev=${PREV_HASH:-none}, now=${TREE_HASH}); building fresh."
+            exit 0
+          fi
+
+          VERSION_CODE=$(jq -r '.apps["com.mentra.asg_client"].versionCode // empty' <<<"$manifest")
+          VERSION_NAME=$(jq -r '.apps["com.mentra.asg_client"].versionName // empty' <<<"$manifest")
+          APK_SHA256=$(jq -r '.apps["com.mentra.asg_client"].sha256 // empty' <<<"$manifest")
+          APK_SIZE=$(jq -r '.apps["com.mentra.asg_client"].apkSize // empty' <<<"$manifest")
+          APK_URL=$(jq -r '.apps["com.mentra.asg_client"].apkUrl // empty' <<<"$manifest")
+          if [ -z "$VERSION_CODE" ] || [ -z "$VERSION_NAME" ] || [ -z "$APK_SHA256" ] || [ -z "$APK_SIZE" ] || [ -z "$APK_URL" ]; then
+            echo "Previous manifest entry incomplete; building fresh."
+            exit 0
+          fi
+
+          # The reused pin is only valid if the artifact is still downloadable.
+          if ! curl --fail --silent --head --location "$APK_URL" >/dev/null; then
+            echo "Previous APK asset missing (${APK_URL}); building fresh."
+            exit 0
+          fi
+
+          echo "asg_client/ unchanged; reusing published ASG ${VERSION_NAME} (${VERSION_CODE})"
+          {
+            echo "reuse=true"
+            echo "version_code=${VERSION_CODE}"
+            echo "version_name=${VERSION_NAME}"
+            echo "apk_sha256=${APK_SHA256}"
+            echo "apk_size=${APK_SIZE}"
+            echo "apk_url=${APK_URL}"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Free up disk space
+        if: steps.asg-reuse.outputs.reuse != 'true'
         run: |
           echo "Before:"; df -h / | tail -1
           sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup \
@@ -610,6 +667,7 @@ jobs:
 
       - name: Compute ASG build info
         id: asg-build-info
+        if: steps.asg-reuse.outputs.reuse != 'true'
         run: |
           EPOCH_OFFSET_SECONDS=1735689600
           BASELINE=100000
@@ -622,19 +680,23 @@ jobs:
           echo "version_name=${VERSION_NAME}" >> "$GITHUB_OUTPUT"
 
       - name: Setup Java
+        if: steps.asg-reuse.outputs.reuse != 'true'
         uses: actions/setup-java@v3
         with:
           java-version: "17"
           distribution: "temurin"
 
       - name: Setup Android SDK
+        if: steps.asg-reuse.outputs.reuse != 'true'
         uses: android-actions/setup-android@v2
 
       - name: Setup environment
         working-directory: ./asg_client
+        if: steps.asg-reuse.outputs.reuse != 'true'
         run: cp .env.example .env
 
       - name: Clone StreamPackLite dependency
+        if: steps.asg-reuse.outputs.reuse != 'true'
         working-directory: ./asg_client
         run: |
           git clone https://github.com/Mentra-Community/StreamPackLite.git
@@ -642,6 +704,7 @@ jobs:
           git checkout working
 
       - name: Cache Gradle dependencies
+        if: steps.asg-reuse.outputs.reuse != 'true'
         uses: actions/cache@v4
         with:
           path: |
@@ -658,6 +721,7 @@ jobs:
       # so it must run after injection or it falls back to ~/.mentra (the disk
       # dependency this PR removes) and fails on a clean runner.
       - name: Inject release signing key
+        if: steps.asg-reuse.outputs.reuse != 'true'
         uses: ./.github/actions/inject-signing
         with:
           asg: "true"
@@ -667,6 +731,7 @@ jobs:
           asg-key-alias: ${{ secrets.ASG_KEY_ALIAS }}
 
       - name: Build recovery worker asset
+        if: steps.asg-reuse.outputs.reuse != 'true'
         working-directory: ./asg_client/recovery_worker
         run: |
           chmod +x ./build_and_deploy.sh
@@ -675,6 +740,7 @@ jobs:
 
       - name: Build Release APK
         id: gradle-build
+        if: steps.asg-reuse.outputs.reuse != 'true'
         working-directory: ./asg_client
         run: ./gradlew -PASG_VERSION_CODE="${{ steps.asg-build-info.outputs.version_code }}" -PASG_VERSION_NAME="${{ steps.asg-build-info.outputs.version_name }}" assembleRelease --build-cache --parallel
         continue-on-error: true
@@ -690,6 +756,7 @@ jobs:
 
       - name: Collect ASG APK info
         id: asg-apk-info
+        if: steps.asg-reuse.outputs.reuse != 'true'
         run: |
           APK="asg_client/app/build/outputs/apk/release/app-release.apk"
           if command -v shasum >/dev/null 2>&1; then
@@ -701,6 +768,7 @@ jobs:
           echo "size=$(wc -c < "$APK" | tr -d ' ')" >> "$GITHUB_OUTPUT"
 
       - name: Upload artifact
+        if: steps.asg-reuse.outputs.reuse != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: asg-staging
@@ -743,7 +811,9 @@ jobs:
           path: ./mobile-ipa
 
       - name: Download ASG artifact
-        if: needs.build-asg.result == 'success'
+        # Reuse mode (OS-1689) builds and uploads no artifact — the manifests
+        # re-pin the previously published APK, and asg-latest.apk stays as-is.
+        if: needs.build-asg.result == 'success' && needs.build-asg.outputs.reuse != 'true'
         uses: actions/download-artifact@v4
         with:
           name: asg-staging
@@ -857,9 +927,18 @@ jobs:
           VERSION_NAME: ${{ needs.build-asg.outputs.version_name }}
           APK_SHA256: ${{ needs.build-asg.outputs.apk_sha256 }}
           APK_SIZE: ${{ needs.build-asg.outputs.apk_size }}
+          ASG_REUSE: ${{ needs.build-asg.outputs.reuse }}
+          REUSED_APK_URL: ${{ needs.build-asg.outputs.apk_url }}
+          ASG_TREE_HASH: ${{ needs.build-asg.outputs.tree_hash }}
         run: |
           mkdir -p asg-manifest
-          APK_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/staging-builds/asg-staging-${BUILD_DATE}-${BUILD_SHORT_SHA}.apk"
+          if [ "$ASG_REUSE" = "true" ]; then
+            # asg_client/ unchanged: the manifest re-pins the previously published
+            # artifact so app-only releases never move the glasses pin (OS-1689).
+            APK_URL="$REUSED_APK_URL"
+          else
+            APK_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/staging-builds/asg-staging-${BUILD_DATE}-${BUILD_SHORT_SHA}.apk"
+          fi
           FIRMWARE_MANIFEST="asg_client/ota_manifests/firmware_live.json"
 
           jq -e '
@@ -871,9 +950,11 @@ jobs:
             --arg apkUrl "$APK_URL" \
             --arg versionName "$VERSION_NAME" \
             --arg sha256 "$APK_SHA256" \
+            --arg treeHash "$ASG_TREE_HASH" \
             --argjson versionCode "$VERSION_CODE" \
             --argjson apkSize "$APK_SIZE" \
             '{
+              sourceTreeHash: $treeHash,
               apps: {
                 "com.mentra.asg_client": {
                   versionCode: $versionCode,
@@ -1080,13 +1161,17 @@ jobs:
         with:
           script: |
             const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-            // Per-run pinned manifests (asg-staging-r<run_id>-version.json) are baked
-            // into that run's mobile app builds, which may be promoted to TestFlight /
-            // the app stores. Keep them and the ASG APKs they reference well beyond
-            // the rolling window; promoting a build to durable storage before this
-            // window lapses is a release-process step.
-            const pinnedRetentionAgo = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000);
-            const pinnedManifestPattern = /^asg-staging-r\d+-version\.json$/;
+            // Pinned OTA assets are permanent: per-run pinned manifests
+            // (asg-staging-r<run_id>-version.json, a few KB each) are baked into
+            // that run's mobile app builds, which may be promoted to TestFlight /
+            // the app stores, and the ASG APKs they reference must stay
+            // downloadable for as long as any such app lives. APK growth is
+            // bounded by the OS-1689 reuse check: app-only releases re-pin the
+            // previous artifact, so new APKs only appear when asg_client/ changed.
+            const permanentAssetPatterns = [
+              /^asg-staging-r\d+-version\.json$/,
+              /^asg-staging-.*\.apk$/
+            ];
 
             try {
               const release = await github.rest.repos.getReleaseByTag({
@@ -1101,66 +1186,13 @@ jobs:
                 'staging_live_version.json'
               ]);
 
-              // Fail closed, same as the rolling-manifest logic below: if any
-              // retained pinned manifest can't be read, don't delete ASG APKs at
-              // all this run — we might delete an APK a shipped app still pins.
-              let pinnedApksResolved = true;
-              for (const asset of release.data.assets) {
-                if (!pinnedManifestPattern.test(asset.name)) continue;
-                if (new Date(asset.created_at) < pinnedRetentionAgo) continue; // expired: deletable below
-                keepAssetNames.add(asset.name);
-                try {
-                  const response = await fetch(asset.browser_download_url);
-                  if (!response.ok) {
-                    throw new Error(`pinned manifest fetch returned HTTP ${response.status}`);
-                  }
-                  const manifest = await response.json();
-                  const apkUrl = manifest.apps?.['com.mentra.asg_client']?.apkUrl;
-                  const apkAssetName = apkUrl ? decodeURIComponent(new URL(apkUrl).pathname.split('/').pop() || '') : '';
-                  if (apkAssetName) {
-                    keepAssetNames.add(apkAssetName);
-                    console.log(`Keeping pinned manifest ${asset.name} and its APK ${apkAssetName}`);
-                  }
-                } catch (error) {
-                  pinnedApksResolved = false;
-                  console.log(`Could not read pinned manifest ${asset.name}:`, error.message);
-                }
-              }
-
-              // Fail closed: only delete dated ASG APKs once we know which one
-              // the live manifest references. If the manifest can't be read we
-              // might otherwise delete the APK that staging glasses still
-              // download via the deployed Pages manifest.
-              let liveApkResolved = false;
-              const manifestAsset = release.data.assets.find((asset) => asset.name === 'staging_live_version.json');
-              if (manifestAsset) {
-                try {
-                  const response = await fetch(manifestAsset.browser_download_url);
-                  if (!response.ok) {
-                    throw new Error(`manifest fetch returned HTTP ${response.status}`);
-                  }
-                  const manifest = await response.json();
-                  const apkUrl = manifest.apps?.['com.mentra.asg_client']?.apkUrl;
-                  const liveApkAssetName = apkUrl ? decodeURIComponent(new URL(apkUrl).pathname.split('/').pop() || '') : '';
-                  if (liveApkAssetName) {
-                    keepAssetNames.add(liveApkAssetName);
-                    console.log(`Keeping live ASG OTA APK asset: ${liveApkAssetName}`);
-                  }
-                  liveApkResolved = true;
-                } catch (error) {
-                  console.log('Could not determine live ASG OTA APK asset:', error.message);
-                }
-              } else {
-                // No manifest published yet, so no APK can be referenced by it.
-                liveApkResolved = true;
-              }
-
               for (const asset of release.data.assets) {
                 if (keepAssetNames.has(asset.name)) continue;
-                if ((!liveApkResolved || !pinnedApksResolved) && asset.name.startsWith('asg-') && asset.name.endsWith('.apk')) {
-                  console.log(`Keeping ${asset.name}: a manifest was unreadable, not deleting ASG APKs`);
-                  continue;
-                }
+                // ASG APKs and per-run pinned manifests are permanent: shipped app
+                // binaries pin them, and there is no reliable way to know from here
+                // which builds were (or will be) promoted. Covers the rolling
+                // manifest's live APK too, so no manifest fetch is needed.
+                if (permanentAssetPatterns.some((pattern) => pattern.test(asset.name))) continue;
 
                 const createdAt = new Date(asset.created_at);
                 if (createdAt < sevenDaysAgo) {
