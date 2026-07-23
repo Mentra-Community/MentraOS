@@ -1,6 +1,6 @@
 import {DeviceTypes} from "@/../../cloud/packages/types/src"
 import {useEffect, useRef, useState} from "react"
-import {ScrollView, View} from "react-native"
+import {Platform, ScrollView, View} from "react-native"
 
 import CloudUrl from "@/components/dev/CloudUrl"
 import OtaVersionUrl from "@/components/dev/OtaVersionUrl"
@@ -33,6 +33,9 @@ export default function DebugSettingsScreen() {
   const {goBack, push, replaceAll, clearHistoryAndGoHome} = useNavigationStore.getState()
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
   const [debugMode, setDebugMode] = useSetting(SETTINGS.debug_mode.key)
+  const [androidNotificationListenerEnabled, setAndroidNotificationListenerEnabled] = useSetting(
+    SETTINGS.android_notification_listener_enabled.key,
+  )
   const [superMode] = useSetting(SETTINGS.super_mode.key)
   const [powerSavingMode, setPowerSavingMode] = useSetting(SETTINGS.power_saving_mode.key)
   const [reconnectOnAppForeground, setReconnectOnAppForeground] = useSetting(SETTINGS.reconnect_on_app_foreground.key)
@@ -75,6 +78,14 @@ export default function DebugSettingsScreen() {
               value={debugMode}
               onValueChange={(value) => setDebugMode(value)}
             />
+            {Platform.OS === "android" && (
+              <ToggleSetting
+                label="Android Notification Listener"
+                subtitle="Allow Android notifications to be read and forwarded (experimental)"
+                value={androidNotificationListenerEnabled}
+                onValueChange={(value) => setAndroidNotificationListenerEnabled(value)}
+              />
+            )}
             <ToggleSetting
               label={translate("settings:reconnectOnAppForeground")}
               subtitle={translate("settings:reconnectOnAppForegroundSubtitle")}
