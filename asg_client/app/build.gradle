@@ -51,12 +51,16 @@ if (envFile.exists()) {
 def asgBuildEpochMs = 1735689600000L
 def asgBuildBaseline = 100000
 
+def pinnedAsgVersionCode = (
+        project.findProperty("ASG_VERSION_CODE")
+                ?: System.getenv("ASG_VERSION_CODE")
+                ?: System.getenv("MENTRAOS_PINNED_BUILD_NUMBER")
+)
+def isPinnedCiBuild = pinnedAsgVersionCode != null && !pinnedAsgVersionCode.toString().trim().isEmpty()
+
 def resolveAsgVersionCode = {
-    def pinned = project.findProperty("ASG_VERSION_CODE")
-            ?: System.getenv("ASG_VERSION_CODE")
-            ?: System.getenv("MENTRAOS_PINNED_BUILD_NUMBER")
-    if (pinned != null && !pinned.toString().trim().isEmpty()) {
-        def parsed = pinned.toString().trim().toInteger()
+    if (isPinnedCiBuild) {
+        def parsed = pinnedAsgVersionCode.toString().trim().toInteger()
         if (parsed <= 0) {
             throw new GradleException("ASG_VERSION_CODE must be a positive integer")
         }
@@ -67,10 +71,14 @@ def resolveAsgVersionCode = {
 }
 
 def asgVersionCodeValue = resolveAsgVersionCode()
+// Unpinned builds are development builds regardless of buildType (local installRelease is the
+// common dev workflow for performance): the "-dev" versionName suffix makes the phone skip OTA
+// for them, so a sideloaded build is never prompted to roll back to the app's pinned release.
+// CI always pins ASG_VERSION_CODE, so CI artifacts get clean version names and full OTA.
 def asgVersionNameValue = (
         project.findProperty("ASG_VERSION_NAME")
                 ?: System.getenv("ASG_VERSION_NAME")
-                ?: asgVersionCodeValue.toString()
+                ?: (asgVersionCodeValue.toString() + (isPinnedCiBuild ? "" : "-dev"))
 ).toString()
 
 /**
@@ -301,11 +309,6 @@ android {
     buildTypes {
         debug {
             signingConfig signingConfigs.debug
-            // Debug builds self-identify as development builds: the phone skips OTA checks for
-            // glasses whose reported version carries this suffix, so a sideloaded debug build
-            // is never prompted to roll back to the app's pinned release. Release builds
-            // (installRelease), local or CI, participate in OTA normally.
-            versionNameSuffix "-dev"
             // Third-party developers (without Mentra's signing key) get a different
             // package name so their build can coexist with the stock system app.
             // This is required because Android won't allow installing a differently-signed
