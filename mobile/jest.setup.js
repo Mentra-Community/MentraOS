@@ -35,6 +35,9 @@ jest.mock("@mentra/bluetooth-sdk/internal", () => {
     default: bluetoothSdkMock,
     ...bluetoothSdkMock,
     MentraLocalNetwork: mentraLocalNetworkMock,
+    BLUETOOTH_SDK_VERSION: "0.0.0-test",
+    sdkPinnedOtaManifestUrl: () =>
+      "https://github.com/Mentra-Community/MentraOS/releases/download/bluetooth-sdk-ota/bluetooth-sdk-0.0.0-test-version.json",
   }
 })
 

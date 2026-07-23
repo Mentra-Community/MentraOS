@@ -108,8 +108,10 @@ describe("checkVersionUpdateAvailable", () => {
     expect(checkVersionUpdateAvailable("100", newFormatJson)).toBe(false)
   })
 
-  it("returns false when current is newer in new format", () => {
-    expect(checkVersionUpdateAvailable("200", newFormatJson)).toBe(false)
+  it("flags a downgrade when current is newer than the pin in new format", () => {
+    // Every apps-shaped manifest is an exact pin: a newer installed build means the pinned
+    // (older) version is the required one, so this is an actionable version change.
+    expect(checkVersionUpdateAvailable("200", newFormatJson)).toBe(true)
   })
 
   it("detects update available in legacy format", () => {

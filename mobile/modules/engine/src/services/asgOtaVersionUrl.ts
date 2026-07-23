@@ -1,3 +1,5 @@
+import {sdkPinnedOtaManifestUrl} from "@mentra/bluetooth-sdk/internal"
+
 import {SETTINGS, useSettingsStore} from "../stores/settings"
 
 const OTA_VERSION_URL_PROD = "https://ota.mentraglass.com/prod_live_version.json"
@@ -37,5 +39,10 @@ export function getAsgOtaVersionUrl(glassesUrl?: string | null, glassesBuildNumb
   if (envUrl) {
     return envUrl
   }
-  return deviceUrl || OTA_VERSION_URL_PROD
+
+  // The phone owns manifest selection: modern glasses are driven with the manifest pinned to
+  // this app's Bluetooth SDK version. Modern ASG builds report no manifest URL of their own;
+  // a glasses-reported URL (older modern builds advertising their baked fleet default) is only
+  // a last resort when the SDK version is somehow unavailable.
+  return sdkPinnedOtaManifestUrl() || deviceUrl || OTA_VERSION_URL_PROD
 }
