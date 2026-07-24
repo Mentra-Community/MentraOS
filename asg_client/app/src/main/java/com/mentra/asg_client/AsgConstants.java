@@ -16,8 +16,11 @@ public class AsgConstants {
     /** Maximum wait for the LocalOnlyHotspot gateway interface to become ready. */
     public static final long LOCAL_HOTSPOT_READINESS_TIMEOUT_MS = 12_000L;
 
-    /** Overall startup deadline, kept below the phone's 15-second hotspot request timeout. */
-    public static final long LOCAL_HOTSPOT_STARTUP_TIMEOUT_MS = 14_000L;
+    /** Overall startup deadline matching the phone's hotspot request timeout. */
+    public static final long LOCAL_HOTSPOT_STARTUP_TIMEOUT_MS = 15_000L;
+
+    /** Time reserved to publish hotspot readiness to the phone before its request expires. */
+    public static final long LOCAL_HOTSPOT_RESPONSE_MARGIN_MS = 1_000L;
 
     /** Delay after enabling the WiFi radio before requesting a LocalOnlyHotspot. */
     public static final long LOCAL_HOTSPOT_WIFI_ENABLE_DELAY_MS = 500L;

@@ -364,12 +364,9 @@ public class K900NetworkManager extends BaseNetworkManager {
             if (generation != localHotspotGeneration || localHotspotReservation == null) {
                 return;
             }
-            if (SystemClock.elapsedRealtime() >= localHotspotReadinessDeadlineMs) {
-                failLocalHotspotStartup(
-                        generation, "Local-only hotspot gateway did not become ready");
-                return;
-            }
-            if (!gatewayIp.isEmpty()) {
+            long nowMs = SystemClock.elapsedRealtime();
+            if (canPublishLocalHotspotReady(
+                    !gatewayIp.isEmpty(), nowMs, localHotspotStartupDeadlineMs)) {
                 onHotspotStarted(
                         pendingLocalHotspotSsid, pendingLocalHotspotPassword, gatewayIp);
                 notificationManager.showHotspotStateNotification(true);
@@ -383,6 +380,11 @@ public class K900NetworkManager extends BaseNetworkManager {
                                 + gatewayIp);
                 return;
             }
+            if (nowMs >= localHotspotReadinessDeadlineMs) {
+                failLocalHotspotStartup(
+                        generation, "Local-only hotspot gateway did not become ready");
+                return;
+            }
             pendingLocalHotspotReadiness = () -> checkLocalHotspotReadiness(generation);
             localHotspotHandler.postDelayed(
                     pendingLocalHotspotReadiness,
@@ -393,7 +395,13 @@ public class K900NetworkManager extends BaseNetworkManager {
     static long calculateLocalHotspotReadinessDeadline(
             long startupDeadlineMs, long nowMs) {
         return Math.min(
-                startupDeadlineMs, nowMs + AsgConstants.LOCAL_HOTSPOT_READINESS_TIMEOUT_MS);
+                startupDeadlineMs - AsgConstants.LOCAL_HOTSPOT_RESPONSE_MARGIN_MS,
+                nowMs + AsgConstants.LOCAL_HOTSPOT_READINESS_TIMEOUT_MS);
+    }
+
+    static boolean canPublishLocalHotspotReady(
+            boolean gatewayReady, long nowMs, long startupDeadlineMs) {
+        return gatewayReady && nowMs < startupDeadlineMs;
     }
 
     private String findLocalHotspotGatewayIp() {
