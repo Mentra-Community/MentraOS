@@ -258,6 +258,7 @@ function withAndroidManifestModifications(config: any) {
       {name: "android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE"},
       {name: "android.permission.FOREGROUND_SERVICE_DATA_SYNC"},
       {name: "android.permission.FOREGROUND_SERVICE_LOCATION"},
+      {name: "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"},
       {name: "android.permission.FOREGROUND_SERVICE_MICROPHONE"},
       {name: "android.permission.NEARBY_DEVICES"},
       {name: "android.permission.POST_NOTIFICATIONS"},

@@ -81,6 +81,14 @@ class ForegroundService : Service() {
 
         var serviceType = 0
 
+        // Audio prompts can be initiated by glasses while the host Activity is
+        // backgrounded. mediaPlayback has no runtime prerequisite, so keep it
+        // active on the existing Mentra service for the entire connected
+        // session rather than trying to launch a second service after a wake
+        // phrase arrives.
+        serviceType = serviceType or ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
+        Bridge.log("ForegroundService: Added mediaPlayback (supports background audio)")
+
         // Check Bluetooth permissions
         val hasBluetoothPermission =
                 when {
@@ -174,6 +182,8 @@ class ForegroundService : Service() {
                 (serviceType and ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE) != 0
         val hasMicrophone = (serviceType and ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE) != 0
         val hasLocation = (serviceType and ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION) != 0
+        val hasMediaPlayback =
+                (serviceType and ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK) != 0
 
         return when {
             hasConnectedDevice && hasMicrophone && hasLocation ->
@@ -184,6 +194,7 @@ class ForegroundService : Service() {
             hasConnectedDevice && hasMicrophone -> "Glasses & microphone active"
             hasConnectedDevice -> "Smart glasses connected"
             hasMicrophone -> "Microphone active"
+            hasMediaPlayback -> "Audio playback active"
             else -> "Syncing data"
         }
     }
@@ -200,6 +211,8 @@ class ForegroundService : Service() {
                 types.add("microphone")
         if (serviceType and ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION != 0)
                 types.add("location")
+        if (serviceType and ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK != 0)
+                types.add("mediaPlayback")
 
         return types.joinToString("|")
     }

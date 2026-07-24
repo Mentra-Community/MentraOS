@@ -9,7 +9,7 @@
  * management (connect/disconnect/ping).
  */
 
-import {Linking} from "react-native"
+import {AppState, Linking} from "react-native"
 import Share from "react-native-share"
 import * as Battery from "expo-battery"
 import * as Clipboard from "expo-clipboard"
@@ -74,6 +74,8 @@ import {NavigationHandlers} from "./NavigationHandlers"
 import type {ClientApp} from "../types/applet"
 import {useAppStatusStore} from "../stores/apps"
 import {getDevAppAttestation, getDevAppSourcePackage} from "./AppRegistry"
+import {resolveForegroundLocationPermission} from "./ForegroundLocationPermission"
+import {advanceMiniappPingLiveness} from "./MiniappLiveness"
 import {listPhoneCalendarEvents, PhoneCalendarError} from "./PhoneCalendarService"
 
 // =============================================================================
@@ -105,6 +107,7 @@ interface ConnectedMiniapp {
   cloudTranscriptionStreams: Set<string>
   sendMessage: (raw: string) => void
   lastPongAt: number
+  unansweredPingRounds: number
   installedManifest?: InstalledMiniappManifest
   authRefreshTimerId: number | null
   /**
@@ -740,6 +743,7 @@ class LocalMiniappRuntime {
       cloudTranscriptionStreams: new Set(),
       sendMessage: sendFn,
       lastPongAt: Date.now(),
+      unansweredPingRounds: 0,
       installedManifest,
       authRefreshTimerId: null,
       authRetryTimerId: null,
@@ -1295,6 +1299,7 @@ class LocalMiniappRuntime {
 
     // Update lastPongAt so it doesn't time out right away
     existing.lastPongAt = Date.now()
+    existing.unansweredPingRounds = 0
 
     // Read current glasses capabilities from the settings store
     const defaultWearable = useSettingsStore.getState().getSetting(ISLAND_SETTINGS_KEYS.defaultWearable) as
@@ -2450,7 +2455,17 @@ class LocalMiniappRuntime {
 
   private async handleLocationPoll(packageName: string, requestId?: string): Promise<void> {
     try {
-      const {status} = await Location.requestForegroundPermissionsAsync()
+      // Expo's Android requestForegroundPermissionsAsync always delegates to
+      // Activity.requestPermissions(), even when permission is already granted.
+      // Calling it after the user presses Home therefore waits until the Activity
+      // resumes. Read the current grant first, and only enter the prompt flow
+      // while the Activity is actually foregrounded.
+      const permissionStartedAt = Date.now()
+      const permission = await resolveForegroundLocationPermission(Location, () => AppState.currentState)
+      const {status} = permission
+      console.log(
+        `${LOG_TAG}: location poll permission status=${status} appState=${AppState.currentState} elapsed=${Date.now() - permissionStartedAt}ms`,
+      )
       if (status !== "granted") {
         this.sendResult(packageName, requestId, false, undefined, {
           code: MiniappErrorCode.PERMISSION_NOT_DECLARED,
@@ -2463,8 +2478,13 @@ class LocalMiniappRuntime {
       // a fresh fix if the cache is empty. Use Low accuracy on the fresh
       // path so we get a cell/wifi-tower fix in ~1s instead of waiting
       // for full GPS warm-up.
+      const locationStartedAt = Date.now()
       const cached = await Location.getLastKnownPositionAsync({maxAge: 60_000})
+      console.log(
+        `${LOG_TAG}: location poll cache hit=${cached !== null} elapsed=${Date.now() - locationStartedAt}ms`,
+      )
       const location = cached ?? (await Location.getCurrentPositionAsync({accuracy: Location.Accuracy.Low}))
+      console.log(`${LOG_TAG}: location poll resolved elapsed=${Date.now() - locationStartedAt}ms`)
 
       this.sendResult(packageName, requestId, true, {
         lat: location.coords.latitude,
@@ -4291,17 +4311,16 @@ class LocalMiniappRuntime {
   }
 
   private doPingRound(): void {
-    const now = Date.now()
-    const staleThreshold = PING_INTERVAL_MS * PING_TIMEOUT_THRESHOLD
-
     const toRemove: string[] = []
 
     for (const [packageName, app] of this.connectedApps) {
-      if (now - app.lastPongAt > staleThreshold) {
+      const liveness = advanceMiniappPingLiveness(app.unansweredPingRounds, PING_TIMEOUT_THRESHOLD)
+      if (liveness.shouldUnregister) {
         console.warn(`${LOG_TAG}: ${packageName} missed ${PING_TIMEOUT_THRESHOLD} pings, unregistering`)
         toRemove.push(packageName)
         continue
       }
+      app.unansweredPingRounds = liveness.unansweredPingRounds
 
       // Send PING — SDK auto-replies with PONG
       this.sendToMiniapp(packageName, {
@@ -4325,6 +4344,7 @@ class LocalMiniappRuntime {
     const app = this.connectedApps.get(packageName)
     if (app) {
       app.lastPongAt = Date.now()
+      app.unansweredPingRounds = 0
       this.clearForegroundProbe(packageName)
     }
   }
