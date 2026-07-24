@@ -21,6 +21,7 @@ import androidx.work.Worker;
 import androidx.work.WorkerParameters;
 
 import com.mentra.recovery.R;
+import com.mentra.recovery.backup.BackupStore;
 import com.mentra.recovery.downgrade.DowngradeTransactionStore;
 import com.mentra.recovery.health.InstallPauseNotifier;
 import com.mentra.recovery.reset.RecoveryStateStore;
@@ -110,12 +111,16 @@ public class RecoveryWorker extends Worker {
         "RESTART_FAILED",
         attempt,
         false);
-    // Install boundary: the check and the reinstall it authorizes must be one atomic unit.
-    // Holding the install lock across both means a downgrade handoff can only land before the
-    // check (we see it and stand down) or after the reinstall finished (the downgrade proceeds
-    // against the reinstalled backup) — a bare re-check would still race begin() by a hair.
-    // The lock is released before the pong waits below: the mutation is done by then, and a
-    // downgrade beginning during the wait simply supersedes the reinstalled build.
+    // Install boundary: the check, the reinstall it authorizes, and the OBSERVED completion of
+    // that reinstall must be one lock-held unit. The OEM install is an asynchronous broadcast:
+    // releasing at dispatch would let a downgrade begin while the higher backup install is still
+    // in flight, and that install could then commit over the pinned target. So after dispatch we
+    // keep the lock until the installed versionCode reaches the backup's (bounded wait). A
+    // downgrade beginning after that simply supersedes the reinstalled build; one beginning
+    // during the wait blocks in DowngradeWorker on this same lock. If the observe window times
+    // out with the install still unobserved, the downgrade path is not stuck forever: its own
+    // WAIT_FOR_REVERT loop re-dispatches the uninstall whenever a higher build (re)appears, so
+    // even a straggler install that commits later is driven back off the device.
     boolean reinstallDispatched;
     DowngradeTransactionStore.installLock().lock();
     try {
@@ -128,6 +133,18 @@ public class RecoveryWorker extends Worker {
 
       notifyInstallInProgress(context);
       reinstallDispatched = new ReinstallStrategy(context).execute();
+      if (reinstallDispatched) {
+        long backupVersion = new BackupStore(context).getBackupVersionCode();
+        if (backupVersion > 0
+            && !waitForInstalledAsgVersion(
+                context, backupVersion, RecoveryConstants.REINSTALL_OBSERVE_TIMEOUT_MS)) {
+          Log.w(
+              RecoveryConstants.TAG,
+              "Backup install not observed within "
+                  + RecoveryConstants.REINSTALL_OBSERVE_TIMEOUT_MS
+                  + "ms; releasing install lock (downgrade WAIT_FOR_REVERT self-heals stragglers)");
+        }
+      }
     } finally {
       DowngradeTransactionStore.installLock().unlock();
     }
@@ -184,6 +201,28 @@ public class RecoveryWorker extends Worker {
     store.setState(RecoveryConstants.STATE_COOLDOWN, reason);
     telemetry.emit("mentra_recovery_recovered", RecoveryConstants.STATE_HEALTHY, reason, attempt, true);
     return Result.success();
+  }
+
+  /** Bounded poll for the installed ASG versionCode to reach {@code expectedVersion}. */
+  private boolean waitForInstalledAsgVersion(Context context, long expectedVersion, long timeoutMs) {
+    long deadline = SystemClock.elapsedRealtime() + timeoutMs;
+    while (SystemClock.elapsedRealtime() < deadline) {
+      try {
+        android.content.pm.PackageInfo info =
+            context.getPackageManager().getPackageInfo(RecoveryConstants.ASG_PACKAGE, 0);
+        long installed =
+            android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P
+                ? info.getLongVersionCode()
+                : info.versionCode;
+        if (installed == expectedVersion) {
+          return true;
+        }
+      } catch (Exception ignored) {
+        // Package briefly unresolvable mid-install; keep polling.
+      }
+      SystemClock.sleep(1000L);
+    }
+    return false;
   }
 
   private boolean waitForPong(Context context, long timeoutMs) {

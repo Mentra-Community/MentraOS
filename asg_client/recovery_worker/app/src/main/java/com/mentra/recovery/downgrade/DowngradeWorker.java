@@ -67,6 +67,13 @@ public class DowngradeWorker extends Worker {
       return giveUp(store, telemetry, target, "TRANSACTION_STALE", attempt);
     }
 
+    // Serialize with heartbeat recovery's reinstall: RecoveryWorker holds this lock across its
+    // liveness check, backup-install dispatch, AND a bounded wait for that install to be
+    // observed. Taking it here (WorkManager thread — blocking is fine) means this state machine
+    // never starts while a higher backup install is in flight; combined with WAIT_FOR_REVERT
+    // re-dispatching the uninstall whenever a higher build (re)appears, a stale install cannot
+    // defeat the pin.
+    DowngradeTransactionStore.installLock().lock();
     // Pause heartbeat monitoring for the whole detour so the uninstall/install windows are not
     // mistaken for an ASG crash and remediated mid-transaction.
     InstallPauseNotifier.notifyInstallInProgress();
@@ -144,6 +151,7 @@ public class DowngradeWorker extends Worker {
       }
     } finally {
       InstallPauseNotifier.notifyInstallCompleted();
+      DowngradeTransactionStore.installLock().unlock();
     }
   }
 
