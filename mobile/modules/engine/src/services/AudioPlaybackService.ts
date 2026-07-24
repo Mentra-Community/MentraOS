@@ -3,6 +3,7 @@ import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
 import {AppState, Platform} from "react-native"
 import {BgTimer} from "../utils/timers"
 import {setAudioCloudUplinkSuppressed} from "./AudioCloudUplink"
+import {SILENT_AUDIO_SOURCE} from "./audioPlaybackAssets"
 
 const RESTORE_GLASSES_VOLUME_AFTER_PLAYBACK = false
 
@@ -28,6 +29,7 @@ type AudioPlaybackCompletion = (
 
 interface PlaybackState {
   requestId: string
+  audioUrl: string
   uplinkSuppressionId: string
   appId?: string
   startTime: number
@@ -38,6 +40,9 @@ interface PlaybackState {
 
 interface PendingPlaybackState {
   cancelled: boolean
+  audioUrl: string
+  appId?: string
+  createdAt: number
 }
 
 /** Open request for a live PCM output stream (miniapp speaker.createStream). */
@@ -102,13 +107,15 @@ class AudioPlaybackService {
   private static readonly AUDIO_ROUTE_WARM_WINDOW_MS = 1500
   private static readonly AUDIO_ROUTE_PREWARM_MS = 200
   private static readonly AUDIO_ROUTE_PREWARM_SAMPLE_RATE = 16_000
+  /** Break accidental same-app replay storms without affecting deliberate later replays. */
+  private static readonly DUPLICATE_PLAY_WINDOW_MS = 750
   private static readonly AUDIO_ROUTE_PREWARM_PCM_BASE64 =
-    "AAAA".repeat(Math.floor(
-      (AudioPlaybackService.AUDIO_ROUTE_PREWARM_MS *
-        AudioPlaybackService.AUDIO_ROUTE_PREWARM_SAMPLE_RATE *
-        2) /
-        (1000 * 3),
-    )) + "AA=="
+    "AAAA".repeat(
+      Math.floor(
+        (AudioPlaybackService.AUDIO_ROUTE_PREWARM_MS * AudioPlaybackService.AUDIO_ROUTE_PREWARM_SAMPLE_RATE * 2) /
+          (1000 * 3),
+      ),
+    ) + "AA=="
   /** If glasses report step volume at or below this, bump to FLOOR before A2DP playback. */
   private static readonly GLASSES_VOLUME_LOW_THRESHOLD = 2
   private static readonly GLASSES_VOLUME_FLOOR = 9
@@ -330,21 +337,30 @@ class AudioPlaybackService {
   }
 
   private unloadPlaybackSource(playback: PlaybackState, reason: string): void {
-    if (!this.player) return
     if (this.loadedPlayback !== playback) return
+    const player = this.player
+    if (!player) {
+      this.loadedPlayback = null
+      return
+    }
 
     try {
-      this.player.pause()
+      player.pause()
     } catch (e) {
       console.warn(`AUDIO: Error pausing ${playback.requestId} during ${reason}:`, e)
     }
 
     try {
-      this.player.replace(null)
-      this.loadedPlayback = null
-      console.log(`AUDIO: Cleared player for ${playback.requestId} during ${reason}`)
+      // replace(null) fails native argument casting on iOS, while remove()
+      // destroys the ExoPlayer that Android must reuse to avoid AudioTrack
+      // exhaustion. Replacing with bundled silence detaches the previous media
+      // item on both platforms and leaves the native player alive.
+      player.replace(SILENT_AUDIO_SOURCE)
+      console.log(`AUDIO: Cleared source for ${playback.requestId} during ${reason}`)
     } catch (e) {
       console.warn(`AUDIO: Error clearing ${playback.requestId} during ${reason}:`, e)
+    } finally {
+      if (this.loadedPlayback === playback) this.loadedPlayback = null
     }
   }
 
@@ -376,7 +392,27 @@ class AudioPlaybackService {
    */
   public async play(request: AudioPlayRequest, onComplete: AudioPlaybackCompletion): Promise<void> {
     const {requestId, audioUrl, appId, volume = 1.0, stopOtherAudio = true, suppressCloudUplink = false} = request
-    const pending: PendingPlaybackState = {cancelled: false}
+    const now = Date.now()
+    const activeDuplicate =
+      this.currentPlayback &&
+      !this.currentPlayback.completed &&
+      this.currentPlayback.appId === appId &&
+      this.currentPlayback.audioUrl === audioUrl &&
+      now - this.currentPlayback.startTime < AudioPlaybackService.DUPLICATE_PLAY_WINDOW_MS
+    const pendingDuplicate = [...this.pendingPlaybacks.values()].some(
+      (candidate) =>
+        !candidate.cancelled &&
+        candidate.appId === appId &&
+        candidate.audioUrl === audioUrl &&
+        now - candidate.createdAt < AudioPlaybackService.DUPLICATE_PLAY_WINDOW_MS,
+    )
+    if (activeDuplicate || pendingDuplicate) {
+      console.warn(`AUDIO: Suppressed duplicate play request ${requestId}${appId ? ` from ${appId}` : ""}`)
+      onComplete(requestId, false, "Duplicate audio request suppressed", 0, "error")
+      return
+    }
+
+    const pending: PendingPlaybackState = {cancelled: false, audioUrl, appId, createdAt: now}
     this.pendingPlaybacks.set(requestId, pending)
 
     console.log(`AUDIO: Play request ${requestId}${appId ? ` from ${appId}` : ""}: ${audioUrl}`)
@@ -424,6 +460,7 @@ class AudioPlaybackService {
       // Store the new playback state
       const playback: PlaybackState = {
         requestId,
+        audioUrl,
         uplinkSuppressionId: `url:${requestId}`,
         appId,
         startTime: Date.now(),

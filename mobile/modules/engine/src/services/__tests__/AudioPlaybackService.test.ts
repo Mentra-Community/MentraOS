@@ -16,6 +16,7 @@ import {
 const setAudioModeAsync = mock(async () => {})
 const tailTimerCallbacks: Array<() => void> = []
 const appState = {currentState: "active"}
+const silentAudioSource = 9001
 
 const audioPlayer = {
   addListener: mock(() => ({remove: () => {}})),
@@ -29,6 +30,10 @@ const audioPlayer = {
 mock.module("expo-audio", () => ({
   createAudioPlayer: () => audioPlayer,
   setAudioModeAsync,
+}))
+
+mock.module("../audioPlaybackAssets", () => ({
+  SILENT_AUDIO_SOURCE: silentAudioSource,
 }))
 
 mock.module("react-native", () => ({
@@ -66,6 +71,7 @@ describe("AudioPlaybackService live PCM streams", () => {
     setAudioModeAsync.mockImplementation(async () => {})
     audioPlayer.pause.mockClear()
     audioPlayer.play.mockClear()
+    audioPlayer.remove.mockClear()
     audioPlayer.replace.mockClear()
   })
 
@@ -232,7 +238,37 @@ describe("AudioPlaybackService live PCM streams", () => {
 
     expect(firstComplete).toHaveBeenCalledTimes(1)
     expect(firstComplete).toHaveBeenCalledWith("first-url", true, null, expect.any(Number), "interrupted")
-    expect(audioPlayer.replace.mock.calls).toEqual([[{uri: "file://first.wav"}], [null], [{uri: "file://second.wav"}]])
+    expect(audioPlayer.replace.mock.calls).toEqual([
+      [{uri: "file://first.wav"}],
+      [silentAudioSource],
+      [{uri: "file://second.wav"}],
+    ])
+    expect(audioPlayer.remove).not.toHaveBeenCalled()
+  })
+
+  test("suppresses a rapid duplicate from the same miniapp before it can create an interruption storm", async () => {
+    const firstComplete = mock(() => {})
+    const duplicateComplete = mock(() => {})
+
+    await audioPlaybackService.play(
+      {requestId: "processing-one", audioUrl: "file://processing.wav", appId: "com.mentra.ai"},
+      firstComplete,
+    )
+    await audioPlaybackService.play(
+      {requestId: "processing-two", audioUrl: "file://processing.wav", appId: "com.mentra.ai"},
+      duplicateComplete,
+    )
+
+    expect(firstComplete).not.toHaveBeenCalled()
+    expect(duplicateComplete).toHaveBeenCalledWith(
+      "processing-two",
+      false,
+      "Duplicate audio request suppressed",
+      0,
+      "error",
+    )
+    expect(audioPlayer.replace).toHaveBeenCalledTimes(1)
+    expect(audioPlayer.remove).not.toHaveBeenCalled()
   })
 
   test("keeps native audio marked active when URL playback finishes beside a live PCM stream", async () => {
@@ -336,7 +372,8 @@ describe("AudioPlaybackService live PCM streams", () => {
 
     expect(audioPlayer.replace).toHaveBeenLastCalledWith({uri: "file://speech.wav"})
     for (const callback of tailTimerCallbacks.splice(0)) callback()
-    expect(audioPlayer.replace).toHaveBeenLastCalledWith(null)
+    expect(audioPlayer.replace).toHaveBeenLastCalledWith(silentAudioSource)
+    expect(audioPlayer.remove).not.toHaveBeenCalled()
   })
 
   test("does not let an older tail timer unload a newer completed URL", async () => {
@@ -356,7 +393,8 @@ describe("AudioPlaybackService live PCM streams", () => {
 
     const secondTail = tailTimerCallbacks.shift()
     secondTail?.()
-    expect(audioPlayer.replace).toHaveBeenLastCalledWith(null)
+    expect(audioPlayer.replace).toHaveBeenLastCalledWith(silentAudioSource)
+    expect(audioPlayer.remove).not.toHaveBeenCalled()
   })
 
   test("cancels active URL playback immediately by request id", async () => {
@@ -369,7 +407,8 @@ describe("AudioPlaybackService live PCM streams", () => {
     audioPlaybackService.cancelPlayback("active-tts")
 
     expect(audioPlayer.pause).toHaveBeenCalledTimes(1)
-    expect(audioPlayer.replace).toHaveBeenLastCalledWith(null)
+    expect(audioPlayer.replace).toHaveBeenLastCalledWith(silentAudioSource)
+    expect(audioPlayer.remove).not.toHaveBeenCalled()
     expect(onComplete).toHaveBeenCalledWith("active-tts", true, null, expect.any(Number), "interrupted")
     expect(audioPlaybackService.isPlaying()).toBe(false)
   })
@@ -382,7 +421,8 @@ describe("AudioPlaybackService live PCM streams", () => {
 
     await audioPlaybackService.stopForApp("app-one")
 
-    expect(audioPlayer.replace).toHaveBeenLastCalledWith(null)
+    expect(audioPlayer.replace).toHaveBeenLastCalledWith(silentAudioSource)
+    expect(audioPlayer.remove).not.toHaveBeenCalled()
     expect(audioPlaybackService.isPlaying()).toBe(false)
   })
 
@@ -397,7 +437,8 @@ describe("AudioPlaybackService live PCM streams", () => {
       onComplete,
     )
 
-    expect(audioPlayer.replace).toHaveBeenLastCalledWith(null)
+    expect(audioPlayer.replace).toHaveBeenLastCalledWith(silentAudioSource)
+    expect(audioPlayer.remove).not.toHaveBeenCalled()
     expect(onComplete).toHaveBeenCalledWith("failed-tts", false, "native start failed", null, "error")
     expect(audioPlaybackService.isPlaying()).toBe(false)
   })
@@ -431,7 +472,8 @@ describe("AudioPlaybackService live PCM streams", () => {
       dateNow.mockRestore()
     }
 
-    expect(audioPlayer.replace).toHaveBeenLastCalledWith(null)
+    expect(audioPlayer.replace).toHaveBeenLastCalledWith(silentAudioSource)
+    expect(audioPlayer.remove).not.toHaveBeenCalled()
     expect(onComplete).toHaveBeenCalledWith("idle-tts", false, "Playback failed (player went idle)", null, "error")
     expect(audioPlaybackService.isPlaying()).toBe(false)
   })
