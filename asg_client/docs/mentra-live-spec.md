@@ -87,13 +87,15 @@ Mentra Live supports photo capture and video recording from the glasses camera.
 
 ### Gallery-mode behavior
 
-The phone controls whether a physical button press should capture locally through `save_in_gallery_mode`:
+The phone controls whether a physical button press should capture locally through `save_in_gallery_mode`. The "phone connected" input to that decision is the **BES-reported phone BLE presence** (BES firmware >= 17.26.7.23 reports `sr_phble` connect/disconnect edges and syncs `phone_ble` in every `sr_syvr` reply), which is a tri-state: `PRESENT`, `ABSENT`, or `UNKNOWN` when no signal has arrived — old BES firmware never reports presence, so on the deployed fleet the value stays `UNKNOWN`.
 
-| Gallery mode | Phone connected | Local capture behavior |
+| Gallery mode | Phone presence | Local capture behavior |
 | --- | --- | --- |
-| Enabled | Either | Capture locally. |
-| Disabled | Connected | Do not capture locally; forward the press and let the phone/app flow handle it. |
-| Disabled | Disconnected | Capture locally as a fallback so the user action is not lost. |
+| Enabled | Any | Capture locally. |
+| Disabled | `PRESENT` | Do not capture locally; forward the press and let the phone/app flow handle it. |
+| Disabled | `ABSENT` or `UNKNOWN` | Capture locally so the user action is not lost. |
+
+`UNKNOWN` is deliberately treated as "no phone": the accepted trade-off is a possible duplicate capture (glasses and phone app both capture) rather than a lost photo. In particular, on BES firmware without presence reporting, disabling gallery mode does **not** suppress local capture even while a phone is connected.
 
 Every camera-button press should still be forwarded to the phone as a `button_press` event regardless of the local-capture decision.
 
