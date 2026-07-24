@@ -3,6 +3,7 @@ import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
 import {AppState, Platform} from "react-native"
 import {BgTimer} from "../utils/timers"
 import {setAudioCloudUplinkSuppressed} from "./AudioCloudUplink"
+import {SILENT_AUDIO_SOURCE} from "./audioPlaybackAssets"
 
 const RESTORE_GLASSES_VOLUME_AFTER_PLAYBACK = false
 
@@ -350,15 +351,15 @@ class AudioPlaybackService {
     }
 
     try {
-      // expo-audio's native replace() requires a real AudioSource; passing null
-      // throws ERR_ARGUMENT_CAST on iOS. remove() is the supported way to unload
-      // and release the source. ensurePlayer() creates the next reusable player.
-      player.remove()
-      console.log(`AUDIO: Released player for ${playback.requestId} during ${reason}`)
+      // replace(null) fails native argument casting on iOS, while remove()
+      // destroys the ExoPlayer that Android must reuse to avoid AudioTrack
+      // exhaustion. Replacing with bundled silence detaches the previous media
+      // item on both platforms and leaves the native player alive.
+      player.replace(SILENT_AUDIO_SOURCE)
+      console.log(`AUDIO: Cleared source for ${playback.requestId} during ${reason}`)
     } catch (e) {
-      console.warn(`AUDIO: Error releasing ${playback.requestId} during ${reason}:`, e)
+      console.warn(`AUDIO: Error clearing ${playback.requestId} during ${reason}:`, e)
     } finally {
-      if (this.player === player) this.player = null
       if (this.loadedPlayback === playback) this.loadedPlayback = null
     }
   }

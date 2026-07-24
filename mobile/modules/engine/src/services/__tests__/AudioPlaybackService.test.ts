@@ -16,6 +16,7 @@ import {
 const setAudioModeAsync = mock(async () => {})
 const tailTimerCallbacks: Array<() => void> = []
 const appState = {currentState: "active"}
+const silentAudioSource = 9001
 
 const audioPlayer = {
   addListener: mock(() => ({remove: () => {}})),
@@ -29,6 +30,10 @@ const audioPlayer = {
 mock.module("expo-audio", () => ({
   createAudioPlayer: () => audioPlayer,
   setAudioModeAsync,
+}))
+
+mock.module("../audioPlaybackAssets", () => ({
+  SILENT_AUDIO_SOURCE: silentAudioSource,
 }))
 
 mock.module("react-native", () => ({
@@ -233,8 +238,12 @@ describe("AudioPlaybackService live PCM streams", () => {
 
     expect(firstComplete).toHaveBeenCalledTimes(1)
     expect(firstComplete).toHaveBeenCalledWith("first-url", true, null, expect.any(Number), "interrupted")
-    expect(audioPlayer.replace.mock.calls).toEqual([[{uri: "file://first.wav"}], [{uri: "file://second.wav"}]])
-    expect(audioPlayer.remove).toHaveBeenCalledTimes(1)
+    expect(audioPlayer.replace.mock.calls).toEqual([
+      [{uri: "file://first.wav"}],
+      [silentAudioSource],
+      [{uri: "file://second.wav"}],
+    ])
+    expect(audioPlayer.remove).not.toHaveBeenCalled()
   })
 
   test("suppresses a rapid duplicate from the same miniapp before it can create an interruption storm", async () => {
@@ -363,7 +372,8 @@ describe("AudioPlaybackService live PCM streams", () => {
 
     expect(audioPlayer.replace).toHaveBeenLastCalledWith({uri: "file://speech.wav"})
     for (const callback of tailTimerCallbacks.splice(0)) callback()
-    expect(audioPlayer.remove).toHaveBeenCalled()
+    expect(audioPlayer.replace).toHaveBeenLastCalledWith(silentAudioSource)
+    expect(audioPlayer.remove).not.toHaveBeenCalled()
   })
 
   test("does not let an older tail timer unload a newer completed URL", async () => {
@@ -383,7 +393,8 @@ describe("AudioPlaybackService live PCM streams", () => {
 
     const secondTail = tailTimerCallbacks.shift()
     secondTail?.()
-    expect(audioPlayer.remove).toHaveBeenCalled()
+    expect(audioPlayer.replace).toHaveBeenLastCalledWith(silentAudioSource)
+    expect(audioPlayer.remove).not.toHaveBeenCalled()
   })
 
   test("cancels active URL playback immediately by request id", async () => {
@@ -396,7 +407,8 @@ describe("AudioPlaybackService live PCM streams", () => {
     audioPlaybackService.cancelPlayback("active-tts")
 
     expect(audioPlayer.pause).toHaveBeenCalledTimes(1)
-    expect(audioPlayer.remove).toHaveBeenCalled()
+    expect(audioPlayer.replace).toHaveBeenLastCalledWith(silentAudioSource)
+    expect(audioPlayer.remove).not.toHaveBeenCalled()
     expect(onComplete).toHaveBeenCalledWith("active-tts", true, null, expect.any(Number), "interrupted")
     expect(audioPlaybackService.isPlaying()).toBe(false)
   })
@@ -409,7 +421,8 @@ describe("AudioPlaybackService live PCM streams", () => {
 
     await audioPlaybackService.stopForApp("app-one")
 
-    expect(audioPlayer.remove).toHaveBeenCalled()
+    expect(audioPlayer.replace).toHaveBeenLastCalledWith(silentAudioSource)
+    expect(audioPlayer.remove).not.toHaveBeenCalled()
     expect(audioPlaybackService.isPlaying()).toBe(false)
   })
 
@@ -424,7 +437,8 @@ describe("AudioPlaybackService live PCM streams", () => {
       onComplete,
     )
 
-    expect(audioPlayer.remove).toHaveBeenCalled()
+    expect(audioPlayer.replace).toHaveBeenLastCalledWith(silentAudioSource)
+    expect(audioPlayer.remove).not.toHaveBeenCalled()
     expect(onComplete).toHaveBeenCalledWith("failed-tts", false, "native start failed", null, "error")
     expect(audioPlaybackService.isPlaying()).toBe(false)
   })
@@ -458,7 +472,8 @@ describe("AudioPlaybackService live PCM streams", () => {
       dateNow.mockRestore()
     }
 
-    expect(audioPlayer.remove).toHaveBeenCalled()
+    expect(audioPlayer.replace).toHaveBeenLastCalledWith(silentAudioSource)
+    expect(audioPlayer.remove).not.toHaveBeenCalled()
     expect(onComplete).toHaveBeenCalledWith("idle-tts", false, "Playback failed (player went idle)", null, "error")
     expect(audioPlaybackService.isPlaying()).toBe(false)
   })
