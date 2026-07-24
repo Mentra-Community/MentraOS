@@ -1,5 +1,8 @@
 package com.mentra.asg_client.io.bluetooth.managers.mentralive.internal;
 
+import android.util.Log;
+
+import java.util.ArrayDeque;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -40,9 +43,11 @@ import java.util.concurrent.CopyOnWriteArrayList;
  *
  * <p>Thread safety: transitions arrive from the serial RX thread, the baud-switch executor, and
  * binder threads. All state mutation and listener notification happen under the internal monitor,
- * so every listener observes transitions in a single global order and replay-on-subscribe cannot
- * interleave with a concurrent transition. Listeners must therefore be fast and must not block on
- * locks that transition callers might hold.
+ * and deliveries go through a FIFO dispatch queue (reentrant transitions from inside a callback
+ * are queued behind the pass in flight), so every listener observes transitions in a single global
+ * order — always ending on the machine's final state — and replay-on-subscribe cannot interleave
+ * with a concurrent transition. Listeners must therefore be fast and must not block on locks that
+ * transition callers might hold.
  */
 public final class LinkStateMachine {
 
@@ -158,18 +163,41 @@ public final class LinkStateMachine {
     public interface Listener {
         /**
          * Called under the machine's monitor on every observable change, and synchronously from
-         * {@link #addListener} with the current state.
+         * {@link #addListener} with the current state. Transitions are delivered in one global
+         * FIFO order: a transition performed from inside a callback is queued behind the pass in
+         * flight, so every listener's LAST observation always matches the machine's final state.
+         * A thrown exception is logged and does not affect other listeners or the caller.
          *
-         * @param state the current link state
+         * @param state the link state at the time of the transition being delivered
          * @param provenCaps the trusted caps snapshot; non-null exactly when {@code state} is
          *     {@link LinkState#LINK_PROVEN}
          */
         void onLinkStateChanged(LinkState state, BesCaps provenCaps);
     }
 
+    /** One queued delivery: the state pair at transition time plus its audience. */
+    private static final class Notification {
+        final LinkState state;
+        final BesCaps provenCaps;
+        final List<Listener> audience;
+
+        Notification(LinkState state, BesCaps provenCaps, List<Listener> audience) {
+            this.state = state;
+            this.provenCaps = provenCaps;
+            this.audience = audience;
+        }
+    }
+
+    private static final String TAG = "LinkStateMachine";
+
     // Copy-on-write so a listener may add/remove listeners from inside a callback without
     // corrupting the iteration that is notifying it.
     private final List<Listener> listeners = new CopyOnWriteArrayList<>();
+
+    // FIFO dispatch queue (guarded by the monitor): transitions performed from inside a listener
+    // callback are enqueued behind the pass currently being delivered instead of nesting.
+    private final ArrayDeque<Notification> pendingNotifications = new ArrayDeque<>();
+    private boolean dispatching = false;
 
     private LinkState state = LinkState.SERIAL_CLOSED;
     private BesCaps negotiatedCaps = BesCaps.NONE;
@@ -184,7 +212,11 @@ public final class LinkStateMachine {
             return;
         }
         listeners.add(listener);
-        listener.onLinkStateChanged(state, provenCapsLocked());
+        // Replay the CURRENT state directly, not through the queue: the state field always
+        // reflects every transition already performed (only their deliveries can lag), and queued
+        // passes snapshot their audience at transition time, so this listener will never also
+        // receive an older pass after this newer replay.
+        deliverSafely(listener, state, provenCapsLocked());
     }
 
     /** Unregister a listener; no-op if it was never added. */
@@ -318,18 +350,44 @@ public final class LinkStateMachine {
     }
 
     /**
-     * Must hold the monitor. Snapshots BOTH state and caps before the loop: the monitor is
-     * reentrant, so a listener may perform a transition from inside its callback, and reading the
-     * {@code state} field live per iteration would then hand later listeners in this pass a torn
-     * pair (e.g. {@code SERIAL_CLOSED} with non-null caps). With the snapshot, every listener in
-     * one pass sees the consistent pair of the transition that triggered it; the reentrant
-     * transition delivers its own pass.
+     * Must hold the monitor. Enqueues the current (state, provenCaps) pair and drains the queue
+     * in FIFO order. The monitor is reentrant, so a listener may perform a transition from inside
+     * its callback; delivering that nested transition inline would either tear the pair for later
+     * listeners in the outer pass or hand them the passes out of order (a stale pair delivered
+     * last). Queueing instead means every listener observes transitions in the same global order
+     * and its LAST observation always matches the machine's final state. The audience is
+     * snapshotted at transition time: a listener added mid-dispatch replays the (already final)
+     * current state on subscribe and must not also receive older queued passes afterwards.
      */
     private void notifyListenersLocked() {
-        LinkState snapshotState = state;
-        BesCaps snapshotProvenCaps = provenCapsLocked();
-        for (Listener listener : listeners) {
-            listener.onLinkStateChanged(snapshotState, snapshotProvenCaps);
+        pendingNotifications.add(
+                new Notification(state, provenCapsLocked(), List.copyOf(listeners)));
+        if (dispatching) {
+            return; // The drain below us on the stack will deliver this pass after its own.
+        }
+        dispatching = true;
+        try {
+            Notification notification;
+            while ((notification = pendingNotifications.poll()) != null) {
+                for (Listener listener : notification.audience) {
+                    deliverSafely(listener, notification.state, notification.provenCaps);
+                }
+            }
+        } finally {
+            dispatching = false;
+        }
+    }
+
+    /**
+     * Must hold the monitor. A throwing listener must not starve later listeners or propagate
+     * into the transport caller (which would misreport a parse failure after the machine already
+     * mutated), so exceptions end here.
+     */
+    private void deliverSafely(Listener listener, LinkState state, BesCaps provenCaps) {
+        try {
+            listener.onLinkStateChanged(state, provenCaps);
+        } catch (RuntimeException e) {
+            Log.e(TAG, "Link state listener threw for " + state + "; continuing delivery", e);
         }
     }
 }

@@ -330,11 +330,11 @@ public class LinkStateMachineTest {
     }
 
     @Test
-    public void reentrantTransitionInListener_neverTearsThePairForLaterListeners() {
-        // Listener A closes the serial port from inside its LINK_PROVEN callback. The monitor is
-        // reentrant, so without snapshotting BOTH state and caps before the loop, listener B
-        // would receive the mutated SERIAL_CLOSED state paired with the pre-transition non-null
-        // caps — a torn pair violating the non-null-exactly-in-LINK_PROVEN contract.
+    public void reentrantTransitionInListener_deliversInGlobalOrderEndingOnFinalState() {
+        // Listener A closes the serial port from inside its LINK_PROVEN callback. The reentrant
+        // transition must be QUEUED behind the pass in flight, so B observes the transitions in
+        // global FIFO order (proven, then closed) with consistent pairs throughout — never a torn
+        // pair, and never a stale proven pair delivered after the close.
         RecordingListener b = new RecordingListener();
         machine.serialReady();
         machine.addListener(
@@ -354,16 +354,51 @@ public class LinkStateMachineTest {
                     .as("pair %d: state=%s caps=%s", i, b.states.get(i), b.caps.get(i))
                     .isEqualTo(proven);
         }
-        // B sees A's reentrant close pass first (delivered from inside A's callback), then the
-        // outer pass with the original consistent proven pair.
+        // Global FIFO order: replay, the outer proven pass, then A's queued reentrant close.
         assertThat(b.states)
                 .containsExactly(
-                        LinkState.SERIAL_OPEN, LinkState.SERIAL_CLOSED, LinkState.LINK_PROVEN);
-        assertThat(b.caps.get(1)).isNull();
-        assertThat(b.caps.get(2)).isEqualTo(FULL_CAPS);
-        // The machine itself ends in the state A's reentrant transition left it in.
+                        LinkState.SERIAL_OPEN, LinkState.LINK_PROVEN, LinkState.SERIAL_CLOSED);
+        assertThat(b.caps.get(1)).isEqualTo(FULL_CAPS);
+        assertThat(b.caps.get(2)).isNull();
+        // B's LAST observation matches the machine's final state, so a consumer keyed off the
+        // latest callback can never re-enable work after the close.
         assertThat(machine.getState()).isEqualTo(LinkState.SERIAL_CLOSED);
-        assertThat(machine.getProvenCaps()).isNull();
+        assertThat(b.lastState()).isEqualTo(machine.getState());
+        assertThat(b.lastCaps()).isEqualTo(machine.getProvenCaps());
+    }
+
+    @Test
+    public void throwingListener_doesNotStarveLaterListenersOrPropagateToTheCaller() {
+        machine.serialReady();
+        machine.addListener(
+                (state, provenCaps) -> {
+                    throw new IllegalStateException("listener bug");
+                });
+        RecordingListener survivor = new RecordingListener();
+        machine.addListener(survivor);
+
+        // Must not throw into the transport caller (which would misreport a parse failure).
+        machine.srSyvrParsed(FULL_CAPS);
+
+        assertThat(survivor.lastState()).isEqualTo(LinkState.LINK_PROVEN);
+        assertThat(survivor.lastCaps()).isEqualTo(FULL_CAPS);
+        assertThat(machine.getState()).isEqualTo(LinkState.LINK_PROVEN);
+    }
+
+    @Test
+    public void throwingListener_duringReplayOnSubscribe_doesNotPropagate() {
+        machine.serialReady();
+
+        machine.addListener(
+                (state, provenCaps) -> {
+                    throw new IllegalStateException("replay bug");
+                });
+
+        // The add itself survives and later transitions still reach healthy listeners.
+        RecordingListener survivor = new RecordingListener();
+        machine.addListener(survivor);
+        machine.srSyvrParsed(FULL_CAPS);
+        assertThat(survivor.lastState()).isEqualTo(LinkState.LINK_PROVEN);
     }
 
     @Test
