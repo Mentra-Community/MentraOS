@@ -666,6 +666,24 @@ class OtaInstallCoordinator {
       this.emitInternalChange()
     }
 
+    // Ownership refuted: ASG emits install/STARTED BEFORE handing off, so the latch above can
+    // be set even when recovery then REFUSES the handoff (install lock busy, transaction
+    // already active) and no transaction exists. ASG's handoff watchdog reports that exact
+    // condition as downgrade_handoff_failed — an explicit statement from the glasses that
+    // nothing owns the detour. Clear the latch so Retry re-drives normally; without this,
+    // the detour gate + ota_start backstop would hold the session in failed forever with
+    // nothing able to converge.
+    if (
+      this.versionChangeInstallStarted &&
+      !this.versionChangeConverged &&
+      otaStatus?.status === "failed" &&
+      otaStatus.error === "downgrade_handoff_failed"
+    ) {
+      console.log("[OTA_PROGRESS] version-change: handoff refused by recovery — releasing detour latch")
+      this.versionChangeInstallStarted = false
+      this.emitInternalChange()
+    }
+
     // Version-change convergence: the reconnected glasses report exactly the pinned
     // target. This is the ONLY completion signal for a downgrade (lower build, no
     // increase, wiped session). Mirrors the legacy build-increase latch but by equality.

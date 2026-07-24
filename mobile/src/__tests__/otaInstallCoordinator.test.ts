@@ -244,6 +244,32 @@ describe("OtaInstallCoordinator version-change detour retry gate", () => {
     expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
   })
 
+  it("a refused handoff (downgrade_handoff_failed) releases the latch so retry can re-drive", async () => {
+    setGlassesConnected()
+    useGlassesStore.getState().setOtaUpdateAvailable({
+      updateAvailable: true,
+      isDowngrade: true,
+      versionCode: 49000000,
+    } as never)
+    otaInstallCoordinator.attach()
+    GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
+    useGlassesStore.getState().setOtaStatus(inProgressStatus({phase: "install", stepPercent: 100}))
+    expect(otaInstallCoordinator.snapshot().versionChangePhase).not.toBeNull()
+    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
+
+    // ASG emits install/STARTED BEFORE the handoff, so the latch is set even when recovery
+    // then refuses (lock busy / transaction active) and nothing owns the detour. The handoff
+    // watchdog reports that exact condition; the phone must release ownership on it —
+    // otherwise the retry gate + ota_start backstop hold the session in failed forever.
+    useGlassesStore
+      .getState()
+      .setOtaStatus(inProgressStatus({phase: "install", status: "failed", error: "downgrade_handoff_failed"}))
+    expect(otaInstallCoordinator.snapshot().displayState).toBe("failed")
+
+    otaInstallCoordinator.retry()
+    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(2)
+  })
+
   it("backstop: a direct (ungated) send during a latched detour is refused and logged", async () => {
     setGlassesConnected()
     useGlassesStore.getState().setOtaUpdateAvailable({
