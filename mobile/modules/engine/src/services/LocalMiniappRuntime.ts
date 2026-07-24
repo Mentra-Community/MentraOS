@@ -2306,7 +2306,6 @@ class LocalMiniappRuntime {
                     appId: packageName,
                     volume,
                     stopOtherAudio,
-                    suppressCloudUplink: true,
                   },
                   (_responseId, success, error, duration, completionReason) => {
                     if (run.playbackRequestId === sentenceRequestId) run.playbackRequestId = undefined
@@ -2355,7 +2354,6 @@ class LocalMiniappRuntime {
             appId: packageName,
             volume,
             stopOtherAudio,
-            suppressCloudUplink: true,
           },
           (_respId, success, error, duration, completionReason) => {
             if (run.playbackRequestId === audioRequestId) run.playbackRequestId = undefined
@@ -2408,7 +2406,6 @@ class LocalMiniappRuntime {
               appId: packageName,
               volume,
               stopOtherAudio,
-              suppressCloudUplink: true,
             },
             (_respId, success, error, duration, completionReason) => {
               if (run.playbackRequestId === audioRequestId) run.playbackRequestId = undefined
