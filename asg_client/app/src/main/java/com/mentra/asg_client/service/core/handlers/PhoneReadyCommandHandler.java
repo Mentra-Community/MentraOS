@@ -92,10 +92,6 @@ public class PhoneReadyCommandHandler implements ICommandHandler {
                                     ? "✅ Glasses ready response sent successfully"
                                     : "❌ Failed to send glasses ready response"));
 
-            if (sent && serviceManager != null) {
-                serviceManager.onPhoneReadyHandshakeComplete();
-            }
-
             // Wire v2 activation is RESPONDER-ONLY on the glasses side. glasses_ready
             // advertises wire_caps (a harmless JSON key to old phones); a v2-capable
             // phone then initiates the binary handshake (maybeSendWireHandshake in the
