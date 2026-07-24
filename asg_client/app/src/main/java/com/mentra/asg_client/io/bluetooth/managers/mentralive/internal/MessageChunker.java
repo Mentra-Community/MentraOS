@@ -1,6 +1,7 @@
 package com.mentra.asg_client.io.bluetooth.managers.mentralive.internal;
 
 import android.util.Log;
+import com.mentra.asg_client.AsgConstants;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
@@ -19,7 +20,16 @@ public class MessageChunker {
     private static final int MESSAGE_SIZE_THRESHOLD_V1 = 200;
     private static final int INITIAL_CHUNK_DATA_SIZE = 80;
     private static final int MIN_CHUNK_DATA_SIZE = 4;
+    /** Budget for v2 binary fragments — these are reassembled phone-side, so MTU_TARGET holds. */
     public static final int MAX_PACKED_CHUNK_SIZE = BesWireFormat.MAX_PACKED_FRAME_SIZE;
+    /**
+     * Budget for v1 STRING ck chunks. Unlike binary fragments, a v1 string frame must
+     * survive the phone leg as ONE BLE notification (the BES relays it unfragmented and
+     * the phone parses per-notification) — so the real ceiling is the ATT payload cap,
+     * not MTU_TARGET. See {@link AsgConstants#K900_STRING_CHUNK_MAX_FRAME_BYTES}.
+     */
+    public static final int MAX_PACKED_STRING_CHUNK_SIZE =
+            AsgConstants.K900_STRING_CHUNK_MAX_FRAME_BYTES;
     private static final AtomicLong CHUNK_SEQUENCE = new AtomicLong();
 
     public static boolean needsChunking(String message) {
@@ -79,7 +89,7 @@ public class MessageChunker {
         }
 
         throw new JSONException(
-                "Unable to create K900 chunks within " + MAX_PACKED_CHUNK_SIZE + " bytes");
+                "Unable to create K900 chunks within " + MAX_PACKED_STRING_CHUNK_SIZE + " bytes");
     }
 
     /**
@@ -165,7 +175,7 @@ public class MessageChunker {
     private static boolean allChunksFit(List<JSONObject> chunks) {
         for (int i = 0; i < chunks.size(); i++) {
             byte[] packed = BesWireFormat.formatMessageForTransmission(chunks.get(i).toString());
-            if (packed == null || packed.length > MAX_PACKED_CHUNK_SIZE) {
+            if (packed == null || packed.length > MAX_PACKED_STRING_CHUNK_SIZE) {
                 Log.d(
                         TAG,
                         "Chunk "
@@ -173,7 +183,7 @@ public class MessageChunker {
                                 + " packed to "
                                 + (packed != null ? packed.length : 0)
                                 + " bytes, exceeding "
-                                + MAX_PACKED_CHUNK_SIZE);
+                                + MAX_PACKED_STRING_CHUNK_SIZE);
                 return false;
             }
         }

@@ -7,7 +7,7 @@
  *   UserSession        -> start() lifecycle + transcription subscription
  *   SettingsManager    -> storage-backed settings (load on start, persist on change)
  *   TranscriptsManager -> transcript list bookkeeping + UI broadcast
- *   DisplayManager     -> CaptionsFormatter-driven glasses rendering + 40s clear
+ *   DisplayManager     -> CaptionsFormatter-driven glasses rendering + configurable inactivity clear
  *
  * Transport seam swaps vs. the cloud app:
  *   appSession.events.onTranscriptionForLanguage(locale, h, {hints})
@@ -33,7 +33,14 @@
  * full snapshot on every session.ui.onOpen.
  */
 
-import type {CloudClientStatus, LanguageHint, MiniappSession, TranscriptionData, TranscriptionLanguage, UnsubscribeFn} from "@mentra/miniapp/background"
+import type {
+  CloudClientStatus,
+  LanguageHint,
+  MiniappSession,
+  TranscriptionData,
+  TranscriptionLanguage,
+  UnsubscribeFn,
+} from "@mentra/miniapp/background"
 
 import {
   CaptionsFormatter,
@@ -45,7 +52,14 @@ import {
 } from "../../core/CaptionsFormatter"
 import {convertToPinyin} from "../../core/ChineseUtils"
 import type {Channels} from "../../shared/channels"
-import type {CaptionSettings, CaptionsSnapshot, DisplayPreview, Transcript} from "../../shared/types"
+import {
+  CAPTION_TIMEOUT_OPTIONS_SECONDS,
+  DEFAULT_CAPTION_TIMEOUT_SECONDS,
+  type CaptionSettings,
+  type CaptionsSnapshot,
+  type DisplayPreview,
+  type Transcript,
+} from "../../shared/types"
 
 type Send = <C extends keyof Channels & string>(channel: C, payload: Channels[C]) => void
 type On = <C extends keyof Channels & string>(channel: C, cb: (payload: Channels[C]) => void) => () => void
@@ -67,6 +81,7 @@ const DEFAULT_SETTINGS: CaptionSettings = {
   displayLines: 3,
   displayWidth: 1, // 0=Narrow, 1=Medium, 2=Wide
   wordBreaking: false,
+  captionTimeoutSeconds: DEFAULT_CAPTION_TIMEOUT_SECONDS,
 }
 
 const STORAGE_KEYS = {
@@ -75,6 +90,7 @@ const STORAGE_KEYS = {
   displayLines: "displayLines",
   displayWidth: "displayWidth",
   wordBreaking: "wordBreaking",
+  captionTimeoutSeconds: "captionTimeoutSeconds",
 } as const
 const TRANSCRIPT_TIMING_TELEMETRY = (globalThis as {__DEV__?: boolean}).__DEV__ === true
 
@@ -252,6 +268,11 @@ export class CaptionsController {
       }),
     )
     this.unsubs.push(
+      this.ui.on("captions:set-caption-timeout", ({seconds}) => {
+        void this.setCaptionTimeoutSeconds(seconds)
+      }),
+    )
+    this.unsubs.push(
       this.ui.on("captions:clear", () => {
         this.clearTranscripts()
       }),
@@ -274,12 +295,13 @@ export class CaptionsController {
 
   private async loadSettings(): Promise<void> {
     try {
-      const [language, hintsRaw, linesRaw, widthRaw, wbRaw] = await Promise.all([
+      const [language, hintsRaw, linesRaw, widthRaw, wbRaw, timeoutRaw] = await Promise.all([
         this.session.storage.get(STORAGE_KEYS.language),
         this.session.storage.get(STORAGE_KEYS.languageHints),
         this.session.storage.get(STORAGE_KEYS.displayLines),
         this.session.storage.get(STORAGE_KEYS.displayWidth),
         this.session.storage.get(STORAGE_KEYS.wordBreaking),
+        this.session.storage.get(STORAGE_KEYS.captionTimeoutSeconds),
       ])
 
       this.settings.language = language || "auto"
@@ -308,6 +330,12 @@ export class CaptionsController {
       })()
 
       this.settings.wordBreaking = wbRaw == null ? DEFAULT_SETTINGS.wordBreaking : wbRaw === "true"
+
+      this.settings.captionTimeoutSeconds = (() => {
+        if (!timeoutRaw) return DEFAULT_CAPTION_TIMEOUT_SECONDS
+        const parsed = parseInt(timeoutRaw, 10)
+        return isSupportedCaptionTimeoutSeconds(parsed) ? parsed : DEFAULT_CAPTION_TIMEOUT_SECONDS
+      })()
     } catch (err) {
       console.log("LocalCaptions: failed to load settings, using defaults", err)
       this.settings = {...DEFAULT_SETTINGS}
@@ -349,6 +377,16 @@ export class CaptionsController {
     this.settings.wordBreaking = enabled
     await this.persist(STORAGE_KEYS.wordBreaking, enabled.toString())
     this.applySettingsToDisplay()
+    this.broadcastSettings()
+  }
+
+  private async setCaptionTimeoutSeconds(seconds: number): Promise<void> {
+    if (!isSupportedCaptionTimeoutSeconds(seconds)) return
+    this.settings.captionTimeoutSeconds = seconds
+    await this.persist(STORAGE_KEYS.captionTimeoutSeconds, seconds.toString())
+    if (this.inactivityTimer !== null) {
+      this.resetInactivityTimer()
+    }
     this.broadcastSettings()
   }
 
@@ -405,10 +443,7 @@ export class CaptionsController {
         // throw MiniappValidationError (caught below). The old local
         // name->locale mapping table is gone — its silent en-US default is
         // exactly what broke language selection (OS-1746).
-        this.transcriptionCleanup = this.session.transcription.forLanguage(
-          language as TranscriptionLanguage,
-          handler,
-        )
+        this.transcriptionCleanup = this.session.transcription.forLanguage(language as TranscriptionLanguage, handler)
       }
     } catch (err) {
       // Fall back to AUTO, not en-US: auto still captions whatever is spoken,
@@ -699,12 +734,13 @@ export class CaptionsController {
     if (this.inactivityTimer) {
       clearTimeout(this.inactivityTimer)
     }
-    // Clear the formatter + glasses display after 40s of inactivity.
+    // Clear the formatter + glasses display after the configured period of inactivity.
     this.inactivityTimer = setTimeout(() => {
+      this.inactivityTimer = null
       this.formatter.clear()
       this.lastSpeakerId = undefined
       void this.session.display.render([])
-    }, 40000)
+    }, this.settings.captionTimeoutSeconds * 1000)
   }
 
   private broadcastDisplayPreview(text: string, lines: string[], isFinal: boolean): void {
@@ -712,4 +748,8 @@ export class CaptionsController {
     this.lastDisplayPreview = preview
     this.ui.send("captions:display-preview", preview)
   }
+}
+
+export function isSupportedCaptionTimeoutSeconds(seconds: number): boolean {
+  return CAPTION_TIMEOUT_OPTIONS_SECONDS.some((option) => option === seconds)
 }

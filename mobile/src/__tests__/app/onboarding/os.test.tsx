@@ -1,20 +1,15 @@
-import {fireEvent, render} from "@testing-library/react-native"
+import {SETTINGS} from "@mentra/engine"
+import {useSettingsStore} from "@mentra/engine/internal"
+import {act, fireEvent, render} from "@testing-library/react-native"
 import type {ReactNode} from "react"
 import {Linking} from "react-native"
 
 import MentraOSOnboarding from "@/app/onboarding/os"
-import {SETTINGS} from "@mentra/engine"
-import {useSettingsStore} from "@mentra/engine/internal"
+import showAlertMock from "@/utils/AlertUtils"
 
 const mockPushPrevious = jest.fn()
 const mockScreen = jest.fn()
-
-jest.mock("expo-image", () => {
-  const {View} = require("react-native")
-  return {
-    Image: ({testID}: {testID?: string}) => <View testID={testID} />,
-  }
-})
+const mockOnboardingGuide = jest.fn()
 
 jest.mock("@/components/ignite", () => {
   const {Text: RNText, View} = require("react-native")
@@ -31,13 +26,39 @@ jest.mock("@/components/ignite", () => {
   return {Icon: MockIcon, Screen: MockScreen, Text: MockText}
 })
 
+jest.mock("@/components/onboarding/OnboardingGuide", () => {
+  const {Text, TouchableOpacity, View} = require("react-native")
+  function MockOnboardingGuide(props: {endButtonFn: () => void; skipFn: () => void}) {
+    mockOnboardingGuide(props)
+    return (
+      <View>
+        <TouchableOpacity testID="skip-os-onboarding" onPress={props.skipFn}>
+          <Text>Skip</Text>
+        </TouchableOpacity>
+        <TouchableOpacity testID="finish-os-onboarding" onPress={props.endButtonFn}>
+          <Text>Finish</Text>
+        </TouchableOpacity>
+      </View>
+    )
+  }
+  return {OnboardingGuide: MockOnboardingGuide}
+})
+
 jest.mock("@/contexts/NavigationHistoryContext", () => ({
-  focusEffectPreventBack: jest.fn(),
   usePushPrevious: () => mockPushPrevious,
+}))
+
+jest.mock("@/contexts/ThemeContext", () => ({
+  useAppTheme: () => ({theme: {colors: {primary: "#00b869"}}}),
 }))
 
 jest.mock("@/i18n", () => ({
   translate: (key: string) => key,
+}))
+
+jest.mock("@/utils/AlertUtils", () => ({
+  __esModule: true,
+  default: jest.fn(),
 }))
 
 describe("MentraOS onboarding", () => {
@@ -46,32 +67,85 @@ describe("MentraOS onboarding", () => {
     useSettingsStore.getState().resetAllSettingsLocally()
   })
 
-  it("renders the full-screen Figma flow and supports back navigation", () => {
-    const {getByText, getByTestId, queryByTestId} = render(<MentraOSOnboarding />)
+  it("uses the shared Mentra Live onboarding preset for the full tutorial", () => {
+    render(<MentraOSOnboarding />)
 
-    expect(getByText("onboarding:osStartMiniappTitle")).toBeTruthy()
-    expect(getByTestId("mentraos-onboarding-hero-1")).toBeTruthy()
-    expect(queryByTestId("mentraos-onboarding-back")).toBeNull()
     expect(mockScreen).toHaveBeenCalledWith(
       expect.objectContaining({
         extraAndroidInsets: true,
-        safeAreaEdges: ["top", "bottom"],
-        StatusBarProps: {hidden: true},
+        safeAreaEdges: ["bottom"],
+      }),
+    )
+    expect(mockOnboardingGuide).toHaveBeenCalledWith(
+      expect.objectContaining({
+        autoStart: false,
+        endButtonText: "common:continue",
+        preventBack: true,
+        showCloseButton: true,
+        startButtonText: "onboarding:continueOnboarding",
       }),
     )
 
-    fireEvent.press(getByTestId("mentraos-onboarding-next"))
-    expect(getByText("onboarding:osMinimizeCloseTitle")).toBeTruthy()
-    expect(getByTestId("mentraos-onboarding-back")).toBeTruthy()
-
-    fireEvent.press(getByTestId("mentraos-onboarding-back"))
-    expect(getByText("onboarding:osStartMiniappTitle")).toBeTruthy()
+    const {steps} = mockOnboardingGuide.mock.calls[0][0]
+    expect(steps).toHaveLength(6)
+    expect(steps.map((step: {title: string}) => step.title)).toEqual([
+      "onboarding:osWelcomeTitle",
+      "onboarding:osStartMiniappTitle",
+      "onboarding:osMinimizeCloseTitle",
+      "onboarding:osSwitchMiniappsTitle",
+      "onboarding:osMiniappDrawerTitle",
+      "onboarding:osMovedMiniappsTitle",
+    ])
+    expect(steps[0]).toEqual(
+      expect.objectContaining({
+        type: "image",
+        transition: true,
+        title: "onboarding:osWelcomeTitle",
+        subtitle: "onboarding:osWelcomeSubtitle",
+        titleCentered: true,
+        subtitleCentered: true,
+        content: expect.anything(),
+      }),
+    )
+    expect(steps[0].source).toBeUndefined()
+    expect(steps[0].compactHeader).toBeUndefined()
+    expect(steps.slice(1).every((step: {compactHeader?: boolean}) => step.compactHeader)).toBe(true)
+    expect(steps[1]).toEqual(
+      expect.objectContaining({
+        type: "image",
+        testID: "mentraos-onboarding-hero-1",
+        details: [
+          {
+            title: "onboarding:osTapToLaunchTitle",
+            description: "onboarding:osTapToLaunchDescription",
+          },
+        ],
+      }),
+    )
+    expect(steps[5]).toEqual(
+      expect.objectContaining({
+        type: "image",
+        testID: "mentraos-onboarding-hero-5",
+        details: expect.arrayContaining([
+          expect.objectContaining({title: "onboarding:osMissingMiniappTitle"}),
+          expect.objectContaining({title: "onboarding:osMentraOsLegacyTitle"}),
+        ]),
+      }),
+    )
   })
 
-  it("persists completion when the user skips", () => {
+  it("confirms before persisting completion when the user skips", () => {
     const {getByTestId} = render(<MentraOSOnboarding />)
 
-    fireEvent.press(getByTestId("mentraos-onboarding-skip"))
+    fireEvent.press(getByTestId("skip-os-onboarding"))
+    expect(showAlertMock).toHaveBeenCalledWith(
+      "onboarding:osEndOnboardingTitle",
+      "onboarding:osEndOnboardingMessage",
+      expect.any(Array),
+    )
+
+    const confirmSkip = (showAlertMock as jest.Mock).mock.calls[0][2][1]
+    act(() => confirmSkip.onPress())
 
     expect(useSettingsStore.getState().getSetting(SETTINGS.onboarding_os_completed.key)).toBe(true)
     expect(mockPushPrevious).toHaveBeenCalledTimes(1)
@@ -80,30 +154,20 @@ describe("MentraOS onboarding", () => {
   it("persists completion after the final page", () => {
     const {getByTestId} = render(<MentraOSOnboarding />)
 
-    fireEvent.press(getByTestId("mentraos-onboarding-next"))
-    fireEvent.press(getByTestId("mentraos-onboarding-next"))
-    fireEvent.press(getByTestId("mentraos-onboarding-next"))
-    fireEvent.press(getByTestId("mentraos-onboarding-next"))
-    fireEvent.press(getByTestId("mentraos-onboarding-done"))
+    fireEvent.press(getByTestId("finish-os-onboarding"))
 
     expect(useSettingsStore.getState().getSetting(SETTINGS.onboarding_os_completed.key)).toBe(true)
     expect(mockPushPrevious).toHaveBeenCalledTimes(1)
   })
 
-  it("opens the MentraOS Legacy page from the moved miniapps page", () => {
+  it("opens the MentraOS Legacy page from the moved miniapps step", () => {
     const openUrl = jest.spyOn(Linking, "openURL").mockResolvedValueOnce(undefined)
-    const {getByTestId, getByText} = render(<MentraOSOnboarding />)
+    render(<MentraOSOnboarding />)
 
-    fireEvent.press(getByTestId("mentraos-onboarding-next"))
-    fireEvent.press(getByTestId("mentraos-onboarding-next"))
-    fireEvent.press(getByTestId("mentraos-onboarding-next"))
-    fireEvent.press(getByTestId("mentraos-onboarding-next"))
+    const {steps} = mockOnboardingGuide.mock.calls[0][0]
+    act(() => steps[5].action.onPress())
 
-    expect(getByText("onboarding:osMovedMiniappsTitle")).toBeTruthy()
-    expect(getByText("onboarding:osMissingMiniappTitle")).toBeTruthy()
-    expect(getByTestId("mentraos-onboarding-hero-5")).toBeTruthy()
-    fireEvent.press(getByTestId("mentraos-onboarding-open-legacy"))
-
+    expect(steps[5].action.testID).toBe("mentraos-onboarding-open-legacy")
     expect(openUrl).toHaveBeenCalledWith("https://mentraglass.com/legacy")
   })
 })

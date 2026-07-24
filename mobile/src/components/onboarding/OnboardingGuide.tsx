@@ -1,6 +1,6 @@
 import {Image, ImageSource} from "expo-image"
 import {useVideoPlayer, VideoView, VideoSource, VideoPlayer} from "expo-video"
-import {useState, useCallback, useEffect, useMemo, useRef} from "react"
+import {ReactNode, useState, useCallback, useEffect, useMemo, useRef} from "react"
 import {View, ViewStyle, ActivityIndicator, Platform, Animated, ScrollView} from "react-native"
 
 import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
@@ -15,8 +15,10 @@ import {BgTimer} from "@mentra/engine"
 interface BaseStep {
   name: string
   transition: boolean
+  testID?: string
   title?: string
   titleCentered?: boolean
+  compactHeader?: boolean // Auto-size the title area so content begins directly below it.
   subtitle?: string
   subtitleCentered?: boolean
   subtitle2?: string
@@ -24,6 +26,15 @@ interface BaseStep {
   info?: string
   bullets?: string[]
   numberedBullets?: string[]
+  details?: {
+    title: string
+    description: string
+  }[]
+  action?: {
+    label: string
+    onPress: () => void
+    testID?: string
+  }
   fadeOut?: boolean // if true, the step will fade out after the duration
   // Resolves when the step's required user action is detected. Receives an
   // AbortSignal that fires when the step is left or the component re-renders;
@@ -46,7 +57,8 @@ interface VideoStep extends BaseStep {
 
 interface ImageStep extends BaseStep {
   type: "image"
-  source: ImageSource
+  source?: ImageSource
+  content?: ReactNode
   containerStyle?: ViewStyle
   containerClassName?: string
   duration?: number // ms before showing next button, undefined = immediate
@@ -72,8 +84,9 @@ interface OnboardingGuideProps {
 // Find next video step's source for preloading
 const findNextVideoSource = (steps: OnboardingStep[], fromIndex: number): VideoSource | null => {
   for (let i = fromIndex; i < steps.length; i++) {
-    if (steps[i].type === "video") {
-      return steps[i].source
+    const candidate = steps[i]
+    if (candidate.type === "video") {
+      return candidate.source
     }
   }
   return null
@@ -362,8 +375,9 @@ export function OnboardingGuide({
 
     fadeOpacity.setValue(1)
 
-    // The start is a special case
-    if (currentIndex === 0 || currentIndex === 1) {
+    // Transition intros act as a welcome gate, so backing into them returns to
+    // the unstarted state. Peer instructional steps should navigate normally.
+    if (currentIndex === 0 || (currentIndex === 1 && steps[0].transition)) {
       resettingRef.current = true
       setHasStarted(autoStart) // if autoStart is true, we don't want to reset the hasStarted state (because it's already started)
       setCurrentIndex(0)
@@ -736,15 +750,19 @@ export function OnboardingGuide({
   const renderContent = () => {
     if (isCurrentStepImage) {
       return (
-        <View style={step.containerStyle} className={step.containerClassName}>
-          <Image
-            source={step.source}
-            style={{
-              width: "100%",
-              height: "100%",
-            }}
-            contentFit="contain"
-          />
+        <View style={step.containerStyle} className={`h-full w-full ${step.containerClassName ?? ""}`}>
+          {step.content ??
+            (step.source && (
+              <Image
+                source={step.source}
+                style={{
+                  width: "100%",
+                  height: "100%",
+                }}
+                contentFit="contain"
+                testID={step.testID}
+              />
+            ))}
         </View>
       )
     }
@@ -899,7 +917,9 @@ export function OnboardingGuide({
     // }
 
     return (
-      <View id="step-content" className="flex mb-4 h-34 pt-3 gap-3 w-full justify-start">
+      <View
+        id="step-content"
+        className={`flex mb-4 pt-3 gap-3 w-full justify-start ${step.compactHeader ? "" : "h-34"}`}>
         {step.title && (
           <Text
             className={`${
@@ -964,6 +984,31 @@ export function OnboardingGuide({
     )
   }
 
+  const renderDetails = () => {
+    if (!step.details && !step.action) {
+      return null
+    }
+
+    return (
+      <View className="gap-5 px-2 pb-5">
+        {step.details?.map((detail) => (
+          <View key={detail.title} className="gap-1">
+            <Text className="text-lg font-semibold text-foreground" text={detail.title} />
+            <Text className="text-[15px] text-muted-foreground" text={detail.description} />
+          </View>
+        ))}
+        {step.action && (
+          <Button
+            preset="secondary"
+            text={step.action.label}
+            onPress={step.action.onPress}
+            testID={step.action.testID}
+          />
+        )}
+      </View>
+    )
+  }
+
   // don't show the counter on the last step:
   const showCounter = hasStarted && steps.length > 1 && uiIndex != nonTransitionVideoFiles.length
   const showContent = step.title || step.subtitle || step.info
@@ -1009,6 +1054,7 @@ export function OnboardingGuide({
             )}
           </View>
           <View className="flex-shrink">{renderStepCheck()}</View>
+          {renderDetails()}
           {renderBullets()}
           {renderNumberedBullets()}
         </ScrollView>

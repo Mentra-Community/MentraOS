@@ -1,0 +1,6 @@
+version: 2
+secret:
+  # Vendor-published AR99 OTA client credentials shipped in the app — not private
+  # secrets. Ignore so Generic High Entropy Secret does not fail CI.
+  ignored_paths:
+    - "mobile/src/services/ar99ApiConfig.ts"
