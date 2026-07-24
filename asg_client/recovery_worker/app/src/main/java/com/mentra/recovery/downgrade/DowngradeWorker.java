@@ -35,8 +35,13 @@ import java.util.TreeSet;
  * lost broadcast at any point.
  *
  * <p>If the transaction gives up after the revert, the device is left on the factory build with the
- * transaction cleared; the existing periodic remediation path then restores the fleet build, so the
- * device converges to a supported (if unpinned) state rather than staying stranded.
+ * transaction cleared. There is deliberately no autonomous path back to a fleet build: the factory
+ * build is a functioning, pairable baseline, and on the next phone connection the version check
+ * sees factory != pin and re-offers the target through the normal phone-driven flow — which from
+ * the factory floor is a plain OEM upgrade install, a simpler and independently exercised
+ * mechanism than the recovery-side install that just failed. Heartbeat recovery does not fight
+ * this state either: a responsive factory ASG is healthy, so the fleet backup is not reinstalled
+ * over it.
  */
 public class DowngradeWorker extends Worker {
 
@@ -115,7 +120,8 @@ public class DowngradeWorker extends Worker {
 
           case SEND_INSTALL:
             // Re-validate against the archive only: after the revert the wipe is already done, so
-            // an unusable APK here means giving up to the factory build (remediation recovers it).
+            // an unusable APK here means giving up to the factory build (the phone re-offers
+            // the pin as a plain upgrade on its next check).
             if (!isStagedApkValid(context, store)) {
               return giveUp(store, telemetry, target, "STAGED_APK_INVALID_POST_REVERT", attempt);
             }
