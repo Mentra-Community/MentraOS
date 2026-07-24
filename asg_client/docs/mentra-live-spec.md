@@ -164,6 +164,18 @@ The MTK↔BES UART always starts at 460800 baud. Firmware that supports the nego
 3. For Mentra Live, MTK claims RGB status LED authority as soon as the BES UART transport is ready, then reasserts it after phone readiness.
 4. Ongoing commands are dispatched through command handlers and responses are sent back over BLE.
 
+### Process session identity
+
+Each `asg_client` process generates a session id (`sid`, 8 hex chars) at startup and
+carries it in `glasses_ready` and `version_info_1`. The BES keeps the phone's BLE link
+alive across `asg_client` restarts (APK OTA, crash recovery), so the phone cannot detect
+a restart from transport state; a changed — or newly appearing — `sid` is the explicit
+restart signal. On observing it, the phone re-runs its readiness flow (`phone_ready` →
+`glasses_ready`, wire re-negotiation) and treats it as the OTA reconnect edge. Builds
+without the field get the phone's legacy behavior; the field first appearing right after
+an update from such a build is itself treated as a restart (that transition is the
+upgrade OTA completing).
+
 ### Camera button photo flow
 
 1. User short-presses the camera button.
