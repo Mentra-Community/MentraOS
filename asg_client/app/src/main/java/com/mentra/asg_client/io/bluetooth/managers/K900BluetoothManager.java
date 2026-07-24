@@ -2290,24 +2290,36 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     }
 
     private void parkRuntimeRecoveryAtRendezvous(int generation, long retryDelayMs) {
-        clearMessageParser();
-        boolean reopened = true;
         synchronized (baudSwitchLock) {
             if (!runtimeBaudRecoveryInProgress
                     || generation != runtimeBaudRecoveryGeneration
                     || generation != recoveryProbeGeneration) {
+                // Stale park: a newer recovery (or a valid frame that ended this one) owns the
+                // link now — touch nothing, especially not the proven link state.
                 return;
             }
             baudSwitchAttempted = false;
-            if (comManager.getCurrentBaud() != SerialPortBridge.DEFAULT_BAUDRATE) {
-                try {
-                    reopened = reopenSerial(SerialPortBridge.DEFAULT_BAUDRATE);
-                } catch (Exception e) {
-                    reopened = false;
-                    Log.e(BAUD_TAG, "Runtime recovery rendezvous reopen failed", e);
-                }
+        }
+        // Outside baudSwitchLock: both clearMessageParser() and reopenSerial() can notify link
+        // state listeners under the machine's monitor and must never do so while holding the
+        // baud lock. All reopen paths run on the single-threaded baud executor, so no other
+        // reopen can interleave here.
+        clearMessageParser();
+        boolean reopened = true;
+        if (comManager.getCurrentBaud() != SerialPortBridge.DEFAULT_BAUDRATE) {
+            try {
+                reopened = reopenSerial(SerialPortBridge.DEFAULT_BAUDRATE);
+            } catch (Exception e) {
+                reopened = false;
+                Log.e(BAUD_TAG, "Runtime recovery rendezvous reopen failed", e);
             }
-            scheduleRuntimeBaudRecoveryLocked(generation, retryDelayMs);
+        }
+        synchronized (baudSwitchLock) {
+            if (runtimeBaudRecoveryInProgress
+                    && generation == runtimeBaudRecoveryGeneration
+                    && generation == recoveryProbeGeneration) {
+                scheduleRuntimeBaudRecoveryLocked(generation, retryDelayMs);
+            }
         }
         Log.w(
                 BAUD_TAG,
