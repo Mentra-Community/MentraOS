@@ -122,4 +122,25 @@ public final class RecoveryConstants {
    * transaction legitimately spans the uninstall revert, an install, and process restarts.
    */
   public static final long DOWNGRADE_TRANSACTION_STALE_MS = 30 * 60 * 1000L;
+
+  /**
+   * Verdict broadcast sent back to ASG synchronously from the handoff decision: ASG cannot
+   * otherwise distinguish a refused handoff from an accepted-but-slow transaction (its
+   * watchdog only observes "still alive"), and that ambiguity is what made blind retry
+   * dangerous. Guarded like the heartbeat channel.
+   */
+  public static final String ACTION_DOWNGRADE_HANDOFF_RESULT =
+      "com.mentra.recovery.ACTION_DOWNGRADE_HANDOFF_RESULT";
+
+  public static final String EXTRA_HANDOFF_ACCEPTED = "accepted";
+  public static final String EXTRA_HANDOFF_TARGET_VERSION = "target_version";
+  public static final String EXTRA_HANDOFF_REASON = "reason";
+
+  /**
+   * Suffix appended when the accepted transaction claims the staged APK by rename. Renaming
+   * (atomic within the filesystem) transfers artifact ownership to the transaction, so a
+   * later ASG re-stage writes a DIFFERENT file and can never corrupt the bytes a live
+   * DowngradeWorker validates and installs.
+   */
+  public static final String DOWNGRADE_CLAIMED_APK_SUFFIX = ".txn";
 }

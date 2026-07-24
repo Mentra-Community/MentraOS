@@ -92,6 +92,21 @@ public class OtaConstants {
      * queued behind an in-flight reinstall is not misreported as failed.
      */
     public static final long DOWNGRADE_HANDOFF_TIMEOUT_MS = 180_000L;
+
+    /** Verdict broadcast from the recovery worker's handoff decision (see RecoveryConstants). */
+    public static final String ACTION_DOWNGRADE_HANDOFF_RESULT =
+            "com.mentra.recovery.ACTION_DOWNGRADE_HANDOFF_RESULT";
+
+    public static final String EXTRA_HANDOFF_ACCEPTED = "accepted";
+    public static final String EXTRA_HANDOFF_REASON = "reason";
+
+    /**
+     * Long-stop after an ACCEPTED handoff: the transaction owns the detour, so the short
+     * watchdog is cancelled — but if ASG is somehow still alive this long after acceptance,
+     * the transaction has necessarily hit its own stale give-up (recovery's
+     * DOWNGRADE_TRANSACTION_STALE_MS is 30 min) and the OTA latch must not stay stuck.
+     */
+    public static final long DOWNGRADE_SUPERVISION_TIMEOUT_MS = 40 * 60 * 1000L;
     /**
      * Oldest recovery worker versionCode that understands the downgrade handoff
      * ({@code ACTION_REQUEST_DOWNGRADE}). ASG deploys its bundled recovery worker asynchronously
@@ -99,7 +114,11 @@ public class OtaConstants {
      * least this new — an older receiver would silently drop the handoff after ASG already
      * reported the install as started.
      */
-    public static final long MIN_RECOVERY_VERSION_FOR_DOWNGRADE = 7L;
+    // v8 = first worker that answers every handoff with an accepted/refused verdict and claims
+    // the staged APK by rename. The verdict is load-bearing: the watchdog treats "no answer" as
+    // "no transaction exists", which is only true when the worker is verdict-capable — an older
+    // silent worker could accept without answering and the timeout would misreport refusal.
+    public static final long MIN_RECOVERY_VERSION_FOR_DOWNGRADE = 8L;
     /**
      * Oldest ASG versionCode a pinned downgrade may target. Builds below this floor predate the
      * downgrade-safe contract — most importantly the shared media root
