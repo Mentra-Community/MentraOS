@@ -1,7 +1,7 @@
 import {DeviceTypes} from "@/../../cloud/packages/types/src"
 import {SETTINGS, useSetting} from "@mentra/engine"
-import {Image, TouchableOpacity, View} from "react-native"
-import type {ImageSourcePropType} from "react-native"
+import {Image, TouchableOpacity, useWindowDimensions, View} from "react-native"
+import type {ImageSourcePropType, ImageStyle, ViewStyle} from "react-native"
 
 import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
 import {Screen, Text} from "@/components/ignite"
@@ -23,21 +23,30 @@ const CardButton = ({
   onPress: () => void
   testID: string
   tx: TxKeyPath
-}) => (
-  <TouchableOpacity accessibilityRole="button" activeOpacity={0.6} className="w-full" onPress={onPress} testID={testID}>
-    <GlassView className="h-[190px] flex-row items-center justify-between overflow-hidden rounded-2xl bg-primary-foreground px-8 py-6">
-      <Text tx={tx} className="text-[20px] leading-7 tracking-[-0.05px] text-secondary_foreground" />
-      <Image
-        resizeMode="contain"
-        source={imageSource}
-        style={{
-          height: imageHeight,
-          width: imageWidth,
-        }}
-      />
-    </GlassView>
-  </TouchableOpacity>
-)
+}) => {
+  const {width: screenWidth} = useWindowDimensions()
+  const horizontalPadding = screenWidth < 390 ? 16 : 32
+
+  return (
+    <TouchableOpacity
+      accessibilityRole="button"
+      activeOpacity={0.6}
+      className="w-full"
+      onPress={onPress}
+      testID={testID}>
+      <GlassView
+        className="h-[190px] flex-row items-center justify-between gap-2 overflow-hidden rounded-2xl bg-primary-foreground py-6"
+        style={{paddingHorizontal: horizontalPadding}}>
+        <Text tx={tx} className="shrink text-[20px] leading-7 tracking-[-0.05px] text-secondary_foreground" />
+        <Image
+          resizeMode="contain"
+          source={imageSource}
+          style={[$shrinkableImage, {height: imageHeight, width: imageWidth}]}
+        />
+      </GlassView>
+    </TouchableOpacity>
+  )
+}
 
 export default function OnboardingWelcome() {
   const {push} = useNavigationStore.getState()
@@ -61,7 +70,7 @@ export default function OnboardingWelcome() {
   }
 
   return (
-    <Screen preset="fixed" className="px-6" safeAreaEdges={["top"]}>
+    <Screen preset="auto" className="px-6" contentContainerStyle={$content} safeAreaEdges={["top"]}>
       <View className="mb-12 mt-6 items-center justify-center">
         <MentraLogoStandalone width={108} height={58} />
       </View>
@@ -97,4 +106,12 @@ export default function OnboardingWelcome() {
       />
     </Screen>
   )
+}
+
+const $content: ViewStyle = {
+  paddingBottom: 24,
+}
+
+const $shrinkableImage: ImageStyle = {
+  flexShrink: 1,
 }

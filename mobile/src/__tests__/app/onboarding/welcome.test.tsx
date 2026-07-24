@@ -31,8 +31,12 @@ jest.mock("@/components/brands/MentraLogoStandalone", () => {
 jest.mock("@/components/ignite", () => {
   const {Text: RNText, View} = require("react-native")
 
-  function MockScreen({children}: {children: ReactNode}) {
-    return <View>{children}</View>
+  function MockScreen({children, preset}: {children: ReactNode; preset: string}) {
+    return (
+      <View accessibilityLabel={preset} testID="welcome-screen">
+        {children}
+      </View>
+    )
   }
 
   function MockText({tx}: {tx: string}) {
@@ -58,7 +62,7 @@ describe("onboarding welcome", () => {
   })
 
   it("uses the updated MentraOS welcome copy", () => {
-    const {getByText} = render(<OnboardingWelcome />)
+    const {getByLabelText, getByText} = render(<OnboardingWelcome />)
 
     expect(en.onboarding.welcome).toBe("Welcome to MentraOS")
     expect(en.onboarding.setupWithGlasses).toBe("Set up\nwith glasses")
@@ -66,6 +70,7 @@ describe("onboarding welcome", () => {
     expect(getByText("onboarding:welcome")).toBeTruthy()
     expect(getByText("onboarding:setupWithGlasses")).toBeTruthy()
     expect(getByText("onboarding:setupWithoutGlasses")).toBeTruthy()
+    expect(getByLabelText("auto")).toBeTruthy()
   })
 
   it("starts glasses pairing from the glasses card", async () => {
