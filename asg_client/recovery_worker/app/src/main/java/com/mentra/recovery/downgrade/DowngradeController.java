@@ -1,6 +1,7 @@
 package com.mentra.recovery.downgrade;
 
 import android.content.Context;
+import android.content.Intent;
 import android.util.Log;
 
 import androidx.work.ExistingWorkPolicy;
@@ -27,6 +28,7 @@ public final class DowngradeController {
               + ", target="
               + targetVersion
               + ")");
+      sendHandoffResult(context, false, targetVersion, "floor_rejected");
       return;
     }
     DowngradeTransactionStore store = new DowngradeTransactionStore(context);
@@ -46,6 +48,7 @@ public final class DowngradeController {
           "Refusing downgrade handoff: an install worker is running (target="
               + targetVersion
               + ")");
+      sendHandoffResult(context, false, targetVersion, "worker_busy");
       return;
     }
     try {
@@ -57,12 +60,25 @@ public final class DowngradeController {
                 + ", new target="
                 + targetVersion
                 + ")");
+        sendHandoffResult(context, false, targetVersion, "transaction_active");
         return;
       }
-      if (!store.begin(targetVersion, apkPath, apkSha256)) {
+      // Claim the staged artifact by rename BEFORE persisting the transaction: from here the
+      // bytes belong to this transaction, and any later ASG re-stage writes the original
+      // (unclaimed) filename — a retry can never corrupt what the worker installs.
+      String claimedPath = claimStagedApk(apkPath);
+      if (claimedPath == null) {
         Log.e(
             RecoveryConstants.TAG,
-            "Rejected downgrade handoff (target=" + targetVersion + ", path=" + apkPath + ")");
+            "Refusing downgrade handoff: could not claim staged APK at " + apkPath);
+        sendHandoffResult(context, false, targetVersion, "artifact_claim_failed");
+        return;
+      }
+      if (!store.begin(targetVersion, claimedPath, apkSha256)) {
+        Log.e(
+            RecoveryConstants.TAG,
+            "Rejected downgrade handoff (target=" + targetVersion + ", path=" + claimedPath + ")");
+        sendHandoffResult(context, false, targetVersion, "invalid_request");
         return;
       }
     } finally {
@@ -72,6 +88,44 @@ public final class DowngradeController {
         RecoveryConstants.TAG,
         "Downgrade transaction begun: target=" + targetVersion + ", apk=" + apkPath);
     enqueue(context, ExistingWorkPolicy.REPLACE);
+    sendHandoffResult(context, true, targetVersion, "accepted");
+  }
+
+  /** Renames the staged APK to its transaction-owned name; returns the new path or null. */
+  private static String claimStagedApk(String apkPath) {
+    try {
+      java.io.File staged = new java.io.File(apkPath);
+      if (!staged.isFile()) {
+        return null;
+      }
+      java.io.File claimed =
+          new java.io.File(apkPath + RecoveryConstants.DOWNGRADE_CLAIMED_APK_SUFFIX);
+      if (claimed.exists() && !claimed.delete()) {
+        return null;
+      }
+      return staged.renameTo(claimed) ? claimed.getAbsolutePath() : null;
+    } catch (Exception e) {
+      Log.e(RecoveryConstants.TAG, "Failed to claim staged APK", e);
+      return null;
+    }
+  }
+
+  /** Synchronous verdict back to ASG so it can tell refused from accepted-but-slow. */
+  private static void sendHandoffResult(
+      Context context, boolean accepted, long targetVersion, String reason) {
+    try {
+      Intent result = new Intent(RecoveryConstants.ACTION_DOWNGRADE_HANDOFF_RESULT);
+      result.setPackage(RecoveryConstants.ASG_PACKAGE);
+      result.putExtra(RecoveryConstants.EXTRA_HANDOFF_ACCEPTED, accepted);
+      result.putExtra(RecoveryConstants.EXTRA_HANDOFF_TARGET_VERSION, targetVersion);
+      result.putExtra(RecoveryConstants.EXTRA_HANDOFF_REASON, reason);
+      context.sendBroadcast(result, RecoveryConstants.RECOVERY_HEARTBEAT_PERMISSION);
+      Log.i(
+          RecoveryConstants.TAG,
+          "Handoff verdict sent: accepted=" + accepted + ", reason=" + reason);
+    } catch (Exception e) {
+      Log.e(RecoveryConstants.TAG, "Failed to send handoff verdict", e);
+    }
   }
 
   /** Re-arms the worker for a transaction that survived a reboot or process death. */

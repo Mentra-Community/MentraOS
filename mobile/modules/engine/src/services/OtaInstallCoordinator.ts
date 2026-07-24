@@ -667,19 +667,23 @@ class OtaInstallCoordinator {
     }
 
     // Ownership refuted: ASG emits install/STARTED BEFORE handing off, so the latch above can
-    // be set even when recovery then REFUSES the handoff (install lock busy, transaction
-    // already active) and no transaction exists. ASG's handoff watchdog reports that exact
-    // condition as downgrade_handoff_failed — an explicit statement from the glasses that
-    // nothing owns the detour. Clear the latch so Retry re-drives normally; without this,
-    // the detour gate + ota_start backstop would hold the session in failed forever with
-    // nothing able to converge.
+    // be set even when no transaction ends up owning the detour. Recovery answers every
+    // handoff synchronously, so exactly three error codes prove non-ownership and release the
+    // latch: downgrade_handoff_refused (recovery's explicit verdict),
+    // downgrade_handoff_failed (no verdict at all — recovery dead/missing, so it never began),
+    // and downgrade_transaction_stalled (the long-stop past recovery's own stale give-up).
+    // An accepted-but-slow transaction emits NONE of these (acceptance cancels the short
+    // watchdog), so the latch is never released while a live worker owns the staged artifact
+    // — which recovery additionally claims by rename at acceptance.
     if (
       this.versionChangeInstallStarted &&
       !this.versionChangeConverged &&
       otaStatus?.status === "failed" &&
-      otaStatus.error === "downgrade_handoff_failed"
+      (otaStatus.error === "downgrade_handoff_refused" ||
+        otaStatus.error === "downgrade_handoff_failed" ||
+        otaStatus.error === "downgrade_transaction_stalled")
     ) {
-      console.log("[OTA_PROGRESS] version-change: handoff refused by recovery — releasing detour latch")
+      console.log(`[OTA_PROGRESS] version-change: no transaction owns the detour (${otaStatus.error}) — releasing latch`)
       this.versionChangeInstallStarted = false
       this.emitInternalChange()
     }

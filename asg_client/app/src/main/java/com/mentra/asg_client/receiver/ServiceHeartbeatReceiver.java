@@ -4,6 +4,8 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.util.Log;
+import com.mentra.asg_client.io.ota.helpers.OtaHelper;
+import com.mentra.asg_client.io.ota.utils.OtaConstants;
 import com.mentra.asg_client.service.core.AsgClientService;
 import java.text.SimpleDateFormat;
 import java.util.Date;
@@ -23,6 +25,13 @@ public class ServiceHeartbeatReceiver extends BroadcastReceiver {
     @Override
     public void onReceive(Context context, Intent intent) {
         String action = intent.getAction();
+        if (OtaConstants.ACTION_DOWNGRADE_HANDOFF_RESULT.equals(action)) {
+            boolean accepted = intent.getBooleanExtra(OtaConstants.EXTRA_HANDOFF_ACCEPTED, false);
+            String reason = intent.getStringExtra(OtaConstants.EXTRA_HANDOFF_REASON);
+            Log.i(TAG, "Downgrade handoff verdict: accepted=" + accepted + ", reason=" + reason);
+            OtaHelper.onDowngradeHandoffResult(accepted, reason == null ? "" : reason);
+            return;
+        }
         if (ACTION_HEARTBEAT_LEGACY.equals(action) || ACTION_PING.equals(action)) {
             if (!AsgClientService.isServiceRunning()) {
                 Log.w(TAG, "Ignoring recovery heartbeat because AsgClientService is not running");

@@ -83,6 +83,13 @@ public class OtaHelper {
     private static final String TAG = OtaConstants.TAG;
     private static final ReentrantLock versionCheckLock = new ReentrantLock();
     private static volatile boolean isUpdating = false;  // Tracks download/install in progress
+
+    // Downgrade handoff verdict plumbing: the watchdog must be cancellable because recovery
+    // answers every handoff synchronously (accepted/refused); "no answer" is reserved for a
+    // dead/missing recovery worker. Guarded by OtaHelper.class.
+    private static final Handler HANDOFF_HANDLER = new Handler(Looper.getMainLooper());
+    private static Runnable handoffWatchdog;
+    private static OtaHelper handoffOwner;
     private static volatile boolean isMtkOtaInProgress = false;  // Tracks MTK firmware update in progress
 
     private Handler handler;
@@ -1095,31 +1102,85 @@ public class OtaHelper {
             handoff.putExtra(OtaConstants.EXTRA_DOWNGRADE_TARGET_VERSION, targetVersion);
             handoff.putExtra(OtaConstants.EXTRA_DOWNGRADE_APK_PATH, apkFile.getAbsolutePath());
             handoff.putExtra(OtaConstants.EXTRA_DOWNGRADE_APK_SHA256, expectedSha);
-            context.sendBroadcast(handoff, OtaConstants.RECOVERY_CONTROL_PERMISSION);
-            Log.i(TAG, "Downgrade handed off to recovery worker (target " + targetVersion
-                    + "); expecting uninstall shortly");
+            // Arm before broadcasting: the verdict arrives on the main looper and must always
+            // find an armed watchdog to cancel.
+            Log.i(TAG, "Handing downgrade off to recovery worker (target " + targetVersion
+                    + "); expecting verdict, then uninstall");
 
-            // The handoff is fire-and-forget: a successful transaction uninstalls ASG (killing
-            // this process) within seconds. If the recovery worker instead rejects the request
-            // (e.g. floor disabled) or never enqueues, this process stays alive with isUpdating
-            // latched, which would block every future OTA. Arm a watchdog that clears the flag
-            // and reports failure to the phone if no uninstall has arrived — it only fires when
-            // the handoff did not take.
-            final Context appContext = context.getApplicationContext();
-            new Handler(Looper.getMainLooper()).postDelayed(() -> {
-                if (isUpdating) {
-                    Log.e(TAG, "Downgrade handoff watchdog: no uninstall after "
-                            + (OtaConstants.DOWNGRADE_HANDOFF_TIMEOUT_MS / 1000)
-                            + "s - recovery worker did not take the transaction");
-                    isUpdating = false;
-                    sendProgressToPhone("install", 0, 0, 0, "FAILED", "downgrade_handoff_failed");
-                }
-            }, OtaConstants.DOWNGRADE_HANDOFF_TIMEOUT_MS);
+            // Recovery answers every handoff synchronously with an accepted/refused verdict
+            // (ACTION_DOWNGRADE_HANDOFF_RESULT -> onDowngradeHandoffResult), which cancels this
+            // watchdog: accepted arms a long-stop instead, refused fails fast with a distinct
+            // error. The timeout below therefore only fires when recovery never answered at all
+            // (dead, missing, or pre-verdict version) — in which case no transaction exists and
+            // reporting failure is safe.
+            armHandoffWatchdog(
+                    OtaConstants.DOWNGRADE_HANDOFF_TIMEOUT_MS,
+                    "downgrade_handoff_failed",
+                    "no verdict from recovery worker");
+            context.sendBroadcast(handoff, OtaConstants.RECOVERY_CONTROL_PERMISSION);
             return true;
         } catch (Exception e) {
             Log.e(TAG, "Failed to stage downgrade handoff", e);
             isUpdating = false;
             return false;
+        }
+    }
+
+    /** Arms (replacing any previous) the handoff watchdog; synchronized on the class. */
+    private void armHandoffWatchdog(long delayMs, String errorCode, String logReason) {
+        synchronized (OtaHelper.class) {
+            if (handoffWatchdog != null) {
+                HANDOFF_HANDLER.removeCallbacks(handoffWatchdog);
+            }
+            handoffOwner = this;
+            handoffWatchdog = () -> {
+                synchronized (OtaHelper.class) {
+                    handoffWatchdog = null;
+                }
+                if (isUpdating) {
+                    Log.e(TAG, "Downgrade watchdog (" + logReason + ") after " + (delayMs / 1000)
+                            + "s - clearing OTA latch");
+                    isUpdating = false;
+                    sendProgressToPhone("install", 0, 0, 0, "FAILED", errorCode);
+                }
+            };
+            HANDOFF_HANDLER.postDelayed(handoffWatchdog, delayMs);
+        }
+    }
+
+    /**
+     * Recovery's synchronous verdict on a downgrade handoff, delivered via
+     * {@link OtaConstants#ACTION_DOWNGRADE_HANDOFF_RESULT}. Refused fails fast with a
+     * distinct error (the phone releases its detour latch ONLY on authenticated refusal or
+     * verdict-timeout — never on an accepted-but-slow transaction). Accepted swaps the short
+     * watchdog for a long-stop sized past recovery's own stale give-up, so a wedged
+     * transaction cannot pin the OTA latch forever.
+     */
+    public static void onDowngradeHandoffResult(boolean accepted, String reason) {
+        OtaHelper owner;
+        synchronized (OtaHelper.class) {
+            owner = handoffOwner;
+            if (owner == null || handoffWatchdog == null) {
+                Log.w(TAG, "Handoff verdict (accepted=" + accepted + ") with no pending handoff");
+                return;
+            }
+            HANDOFF_HANDLER.removeCallbacks(handoffWatchdog);
+            handoffWatchdog = null;
+        }
+        if (accepted) {
+            Log.i(TAG, "Recovery accepted the downgrade handoff (" + reason
+                    + "); transaction owns the detour");
+            owner.armHandoffWatchdog(
+                    OtaConstants.DOWNGRADE_SUPERVISION_TIMEOUT_MS,
+                    "downgrade_transaction_stalled",
+                    "accepted transaction never uninstalled");
+        } else {
+            Log.e(TAG, "Recovery refused the downgrade handoff: " + reason);
+            if (isUpdating) {
+                isUpdating = false;
+                owner.sendProgressToPhone(
+                        "install", 0, 0, 0, "FAILED", "downgrade_handoff_refused");
+            }
         }
     }
 
