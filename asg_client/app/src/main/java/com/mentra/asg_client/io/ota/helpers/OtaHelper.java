@@ -348,7 +348,9 @@ public class OtaHelper {
             if (rootJson.has("bes_firmware")) {
                 String besVer = "";
                 try { besVer = new AsgSettings(context).getBesFirmwareVersion(); } catch (Exception ignored) {}
-                if (checkBesUpdate(rootJson.getJSONObject("bes_firmware"), besVer)) steps.add("bes");
+                if (besUpdateApplicableForSession(rootJson.getJSONObject("bes_firmware"), besVer, rootJson, context)) {
+                    steps.add("bes");
+                }
             }
         } catch (Exception e) {
             Log.w(TAG, "Failed to build step sequence", e);
@@ -775,7 +777,9 @@ public class OtaHelper {
                     } catch (Exception e) {
                         Log.e(TAG, "Error getting BES firmware version from AsgSettings", e);
                     }
-                    besUpdateAvailable = checkBesUpdate(rootJson.getJSONObject("bes_firmware"), currentBesVersion);
+                    besUpdateAvailable =
+                            besUpdateApplicableForSession(
+                                    rootJson.getJSONObject("bes_firmware"), currentBesVersion, rootJson, context);
                 }
 
                 // Apply updates in correct order
@@ -963,6 +967,47 @@ public class OtaHelper {
      * downgrade is handed off, so the newest ASG drives the flashes and the replacement is
      * the final step.
      */
+    /** True when this manifest pins the ASG below the installed build and the gate allows it. */
+    private boolean isPinnedDowngradePending(JSONObject rootJson, Context context) {
+        try {
+            JSONObject apps = rootJson.optJSONObject("apps");
+            if (apps == null) return false;
+            JSONObject asg = apps.optJSONObject(OtaConstants.ASG_PACKAGE);
+            if (asg == null) return false;
+            long server = asg.optLong("versionCode", 0);
+            long current = getInstalledVersion(OtaConstants.ASG_PACKAGE, context);
+            return DowngradeGate.shouldDowngrade(
+                    current, server, OtaConstants.DOWNGRADE_FLOOR_VERSION_CODE);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /**
+     * Session-scoped BES decision. {@link #checkBesUpdate} deliberately treats an unknown
+     * cached BES version as "flash to be safe" — correct for plain upgrade sessions. In a
+     * session whose manifest also pins an ASG downgrade that policy is wrong in BOTH
+     * directions: counting unknown-BES as applicable would defer the handoff forever while
+     * the cache stays empty, and flashing blind would let the detour's uninstall kill ASG —
+     * the UART flasher — mid-transfer. So with a pinned downgrade pending and no cached BES
+     * version, BES is out of scope for this session everywhere (ordering gate, step
+     * sequence, apply decision). The detour reboots the glasses, BES reports its real
+     * version at boot (hs_syvr), and the phone's next check re-offers the firmware with a
+     * known version.
+     */
+    private boolean besUpdateApplicableForSession(
+            JSONObject besFirmware, String currentBesVersion, JSONObject rootJson, Context context) {
+        if ((currentBesVersion == null || currentBesVersion.isEmpty())
+                && isPinnedDowngradePending(rootJson, context)) {
+            Log.i(
+                    TAG,
+                    "BES version unknown and a pinned downgrade is pending — BES out of scope"
+                            + " this session (re-offered after the detour)");
+            return false;
+        }
+        return checkBesUpdate(besFirmware, currentBesVersion);
+    }
+
     private boolean hasApplicableFirmwareUpdate(JSONObject rootJson, Context context) {
         try {
             if (!wasMtkUpdatedThisSession() && !isMtkOtaInProgress() && rootJson.has("mtk_patches")) {
@@ -978,7 +1023,8 @@ public class OtaHelper {
                 } catch (Exception e) {
                     Log.e(TAG, "Error getting BES firmware version from AsgSettings", e);
                 }
-                if (checkBesUpdate(rootJson.getJSONObject("bes_firmware"), currentBesVersion)) {
+                if (besUpdateApplicableForSession(
+                        rootJson.getJSONObject("bes_firmware"), currentBesVersion, rootJson, context)) {
                     return true;
                 }
             }
