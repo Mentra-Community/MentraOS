@@ -2528,9 +2528,7 @@ class LocalMiniappRuntime {
       // for full GPS warm-up.
       const locationStartedAt = Date.now()
       const cached = await Location.getLastKnownPositionAsync({maxAge: 60_000})
-      console.log(
-        `${LOG_TAG}: location poll cache hit=${cached !== null} elapsed=${Date.now() - locationStartedAt}ms`,
-      )
+      console.log(`${LOG_TAG}: location poll cache hit=${cached !== null} elapsed=${Date.now() - locationStartedAt}ms`)
       const location = cached ?? (await Location.getCurrentPositionAsync({accuracy: Location.Accuracy.Low}))
       console.log(`${LOG_TAG}: location poll resolved elapsed=${Date.now() - locationStartedAt}ms`)
 
@@ -2575,7 +2573,6 @@ class LocalMiniappRuntime {
     sendResult: (packageName, requestId, ok, result, error) =>
       this.sendResult(packageName, requestId, ok, result, error),
     getUserId: () => cloudClientService.getMentraUserId(),
-    getAccessToken: () => cloudClientService.getCoreAccessToken(),
   })
   private readonly blobRequestQueues = new Map<string, Promise<void>>()
 
