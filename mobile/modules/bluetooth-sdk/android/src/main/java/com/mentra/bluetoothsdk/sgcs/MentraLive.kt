@@ -233,6 +233,11 @@ class MentraLive : SGCManager() {
     private var peerK900Le = false
     private var peerWireCapsBinary = false
     private var peerFilePayloadV2 = false
+    // Last observed glasses process session id (`sid` in glasses_ready / version_info_1).
+    // The BES keeps the BLE link alive across asg_client restarts, so transport state
+    // cannot signal a restart - a CHANGED (or newly appearing) sid is the restart signal.
+    // Null = no sid observed this BLE session (legacy glasses, or none seen yet).
+    private var glassesSessionId: String? = null
     // Note: appVersion, buildNumber, deviceModel, androidVersion
     // are inherited from SGCManager parent class
 
@@ -1561,6 +1566,7 @@ class MentraLive : SGCManager() {
 
                             connectedDevice = null
                             glassesReady = false // Reset ready state on disconnect
+                            glassesSessionId = null // Fresh BLE session starts with no sid known
 
                             // Reset audio pairing flags
                             glassesReadyReceived = false
@@ -1625,6 +1631,7 @@ class MentraLive : SGCManager() {
                         isConnected = false
                         isConnecting = false
                         glassesReady = false
+                        glassesSessionId = null
                         glassesReadyReceived = false
                         audioConnected = false
 
@@ -3515,6 +3522,10 @@ class MentraLive : SGCManager() {
                 resetWireNegotiationState()
                 parsePeerWireCaps(json)
                 maybeSendWireHandshake()
+                // Record the session id BEFORE marking ready: an unsolicited glasses_ready
+                // already runs this full remote-reset flow, so recording (not re-triggering)
+                // is correct here; version_info detection covers the restart case.
+                json.optString("sid", "").takeIf { it.isNotEmpty() }?.let { glassesSessionId = it }
 
                 // Set the ready flag to stop any future readiness checks
                 glassesReady = true
@@ -3981,6 +3992,7 @@ class MentraLive : SGCManager() {
                     // running them per chunk is safe.
                     parsePeerWireCaps(json)
                     maybeSendWireHandshake()
+                    handleGlassesSessionId(json)
 
                     Bridge.log("LIVE: Processed version_info fields and sent to RN")
                     Bridge.sendVersionInfo(fields)
@@ -4332,15 +4344,7 @@ class MentraLive : SGCManager() {
                             // The glassesReady flag is reset on disconnect/reconnect, so this won't
                             // prevent proper reconnection
                             if (!glassesReady) {
-                                Bridge.log(
-                                        "LIVE: 📱 Sending phone_ready to glasses - waiting for glasses_ready response"
-                                )
-                                val readyMsg = JSONObject()
-                                readyMsg.put("type", "phone_ready")
-                                readyMsg.put("timestamp", System.currentTimeMillis())
-
-                                // Send it through our data channel
-                                sendJson(readyMsg, true)
+                                sendPhoneReady("SOC ready")
                             } else {
                                 Bridge.log(
                                         "LIVE: ✅ Glasses already marked as ready, skipping phone_ready"
@@ -4421,6 +4425,7 @@ class MentraLive : SGCManager() {
                 updateConnectionState(ConnTypes.DISCONNECTED)
                 glassesReady = false
                 glassesReadyReceived = false
+                glassesSessionId = null
             }
             "sr_adota" -> {
                 // BES chip OTA progress — K900 path (serial busy during BES flash). Emit ota_status
@@ -7255,6 +7260,62 @@ class MentraLive : SGCManager() {
         peerFilePayloadV2 = false
         BleJsonCompact.resetSession()
         wireHandshakeSentGeneration = -1
+    }
+
+    /** Sends phone_ready to (re)start the glasses-driven readiness flow. */
+    private fun sendPhoneReady(reason: String) {
+        Bridge.log("LIVE: 📱 Sending phone_ready to glasses ($reason) - waiting for glasses_ready response")
+        val readyMsg = JSONObject()
+        readyMsg.put("type", "phone_ready")
+        readyMsg.put("timestamp", System.currentTimeMillis())
+        sendJson(readyMsg, true)
+    }
+
+    /**
+     * Tracks the glasses process session id (`sid`) and re-runs the phone-driven readiness
+     * flow when it changes under a live BLE link. The BES holds the link across asg_client
+     * restarts (APK OTA, crash recovery), so a restarted glasses process is invisible to
+     * transport state; the sid is the explicit protocol signal.
+     *
+     * Tri-state by design (retro-compat with pre-sid glasses builds):
+     * - no `sid` key: legacy glasses - do nothing, today's behavior;
+     * - sid appears where none was known on an ESTABLISHED session: the glasses just
+     *   updated from a pre-sid build and restarted - treat as a restart (this is the
+     *   upgrade OTA itself);
+     * - sid differs from the recorded one: the glasses restarted - treat as a restart;
+     * - same sid: same process, no action.
+     *
+     * A restart is handled as a LOGICAL session reset: send phone_ready immediately
+     * (instead of waiting for the next sr_hrt heartbeat, and bypassing its stale
+     * glassesReady suppression); the returning glasses_ready runs the full existing
+     * remote-wire-reset flow. glassesReady/fullyBooted are deliberately left untouched -
+     * the physical link never dropped, so the connection UI must not flap. The RN layer
+     * is notified so the OTA coordinator can treat it as its reconnect edge.
+     */
+    private fun handleGlassesSessionId(json: JSONObject) {
+        val sid = json.optString("sid", "")
+        if (sid.isEmpty()) return
+        val previous = glassesSessionId
+        if (sid == previous) return
+        glassesSessionId = sid
+        if (previous == null && !glassesReady) {
+            // First sid of a fresh BLE session before readiness completes: the normal
+            // pairing/readiness flow is already running - just record it.
+            return
+        }
+        Bridge.log(
+                "LIVE: 🔁 Glasses session changed (${previous ?: "<pre-sid build>"} -> $sid) - " +
+                        "asg restarted under a live link, re-running readiness"
+        )
+        sendPhoneReady("glasses session changed")
+        try {
+            val payload = HashMap<String, Any>()
+            payload["previous_sid"] = previous ?: ""
+            payload["sid"] = sid
+            Bridge.sendTypedMessage("glasses_session_changed", payload)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error emitting glasses_session_changed", e)
+        }
     }
 
     private fun parsePeerWireCaps(json: JSONObject) {
