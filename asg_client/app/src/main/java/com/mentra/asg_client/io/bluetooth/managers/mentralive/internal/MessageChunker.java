@@ -46,9 +46,12 @@ public class MessageChunker {
     /**
      * Adopt the BES-measured notification cap ({@code wire_caps.notify_cap}) as the v1 string
      * chunk ceiling, keeping the same re-framing safety margin the 240-byte fallback encodes
-     * (240 = 253 - {@link AsgConstants#K900_STRING_CHUNK_BUDGET_MARGIN_BYTES}). Values below the
-     * firmware contract floor (253) are malformed and ignored so a buggy advertisement can never
-     * shrink the budget below the hardware-validated fallback.
+     * (240 = 253 - {@link AsgConstants#K900_STRING_CHUNK_BUDGET_MARGIN_BYTES}). The advertised
+     * value is validated against the firmware contract range [253, 509] rather than trusted
+     * blindly: below the floor it is malformed and ignored (the budget must never shrink below
+     * the hardware-validated fallback), above the ceiling it is clamped down (an oversized
+     * advertisement would size chunks beyond what the transport carries — the exact silent
+     * truncation class this budget exists to prevent).
      */
     public static void setStringChunkBudgetFromNotifyCap(int notifyCap) {
         if (notifyCap < AsgConstants.K900_BLE_NOTIFY_CAP_FLOOR_BYTES) {
@@ -60,8 +63,18 @@ public class MessageChunker {
                             + AsgConstants.K900_BLE_NOTIFY_CAP_FLOOR_BYTES);
             return;
         }
+        int accepted = notifyCap;
+        if (accepted > AsgConstants.K900_BLE_NOTIFY_CAP_CEILING_BYTES) {
+            Log.w(
+                    TAG,
+                    "Clamping notify_cap="
+                            + notifyCap
+                            + " to the contract ceiling "
+                            + AsgConstants.K900_BLE_NOTIFY_CAP_CEILING_BYTES);
+            accepted = AsgConstants.K900_BLE_NOTIFY_CAP_CEILING_BYTES;
+        }
         STRING_CHUNK_BUDGET.set(
-                notifyCap - AsgConstants.K900_STRING_CHUNK_BUDGET_MARGIN_BYTES);
+                accepted - AsgConstants.K900_STRING_CHUNK_BUDGET_MARGIN_BYTES);
     }
 
     /** Restore the conservative fallback budget (serial close: the negotiated cap died). */

@@ -155,6 +155,15 @@ public class AsgConstants {
      */
     public static final int K900_BLE_NOTIFY_CAP_FLOOR_BYTES = 253;
 
+    /**
+     * Contract ceiling of {@code wire_caps.notify_cap} (see
+     * {@link #K900_BLE_NOTIFY_CAP_FLOOR_BYTES}: the BES computes max(253, min(ATT MTU - 3,
+     * 509))). An advertised value above this is malformed; it is clamped down so a buggy
+     * advertisement can never size chunks beyond what the transport carries — the exact silent
+     * truncation class the notification budget exists to prevent.
+     */
+    public static final int K900_BLE_NOTIFY_CAP_CEILING_BYTES = 509;
+
     /** Delay before probing the alternate UART baud after ASG starts at the rendezvous rate. */
     public static final long UART_BOOT_RECOVERY_INITIAL_DELAY_MS = 8000;
 

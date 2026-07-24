@@ -113,6 +113,24 @@ public class StringChunkBudgetTest {
     }
 
     @Test
+    public void notifyCapAboveTheContractCeilingIsClampedToTheCeiling() {
+        // The BES contract is max(253, min(ATT MTU - 3, 509)); an oversized advertisement must
+        // not size chunks beyond what the transport carries.
+        MessageChunker.setStringChunkBudgetFromNotifyCap(1000);
+
+        assertThat(MessageChunker.maxPackedStringChunkSize()).isEqualTo(509 - 13);
+    }
+
+    @Test
+    public void notifyCapContractBoundariesAreAcceptedExactly() {
+        MessageChunker.setStringChunkBudgetFromNotifyCap(253);
+        assertThat(MessageChunker.maxPackedStringChunkSize()).isEqualTo(253 - 13);
+
+        MessageChunker.setStringChunkBudgetFromNotifyCap(509);
+        assertThat(MessageChunker.maxPackedStringChunkSize()).isEqualTo(509 - 13);
+    }
+
+    @Test
     public void notifyCapBelowTheContractFloorIsIgnored() {
         MessageChunker.setStringChunkBudgetFromNotifyCap(509);
         MessageChunker.setStringChunkBudgetFromNotifyCap(200);
