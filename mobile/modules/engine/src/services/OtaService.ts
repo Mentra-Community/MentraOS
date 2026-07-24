@@ -15,11 +15,7 @@ import type {OtaStatus} from "@mentra/bluetooth-sdk/internal"
 import GlobalEventEmitter from "../utils/GlobalEventEmitter"
 import {useGlassesStore} from "../stores/glasses"
 import {handleOtaClockSkewFromGlasses} from "./glassesClockSync"
-import {
-  legacyOtaProgressFromOtaStatusEvent,
-  normalizeOtaStatusEvent,
-  otaStatusFromNormalized,
-} from "./otaLegacyMapping"
+import {legacyOtaProgressFromOtaStatusEvent, normalizeOtaStatusEvent, otaStatusFromNormalized} from "./otaLegacyMapping"
 
 let subs: Array<{remove: () => void}> = []
 
@@ -37,6 +33,15 @@ export function startOtaService(): void {
   subs.push(
     BluetoothSdk.addListener("ota_start_ack", (event) => {
       GlobalEventEmitter.emit("ota_start_ack", {timestamp: event.timestamp})
+    }),
+  )
+
+  // The glasses process restarted under a live BLE link (sid changed in
+  // glasses_ready/version_info_1). The physical connection never dropped, so this is
+  // the ONLY reconnect-edge signal the OTA coordinator gets after an APK install.
+  subs.push(
+    BluetoothSdk.addListener("glasses_session_changed", (event) => {
+      GlobalEventEmitter.emit("glasses_session_changed", {previousSid: event.previous_sid, sid: event.sid})
     }),
   )
 

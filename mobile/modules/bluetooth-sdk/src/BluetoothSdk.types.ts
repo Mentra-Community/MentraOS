@@ -800,6 +800,17 @@ export type MtkUpdateCompleteEvent = {
   timestamp: number
 }
 
+/**
+ * The glasses process restarted while the BES kept the BLE link alive (its `sid`
+ * changed, or first appeared after an update from a pre-sid build). There is no
+ * physical disconnect for this — treat it as the logical reconnect edge.
+ */
+export type GlassesSessionChangedEvent = {
+  type: "glasses_session_changed"
+  previous_sid: string
+  sid: string
+}
+
 /** @deprecated Glasses no longer emit ota_progress; use {@link OtaStatusEvent} and status-store mapping. */
 export type OtaProgressEvent = {
   type: "ota_progress"
@@ -904,6 +915,7 @@ export type BluetoothSdkModuleEvents = {
   stream_status: (event: StreamStatusEvent) => void
   keep_alive_ack: (event: KeepAliveAckEvent) => void
   mtk_update_complete: (event: MtkUpdateCompleteEvent) => void
+  glasses_session_changed: (event: GlassesSessionChangedEvent) => void
   ota_update_available: (event: OtaUpdateAvailableEvent) => void
   ota_start_ack: (event: OtaStartAckEvent) => void
   ota_status: (event: OtaStatusEvent) => void

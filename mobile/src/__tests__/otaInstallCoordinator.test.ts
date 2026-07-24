@@ -24,6 +24,7 @@ import {
   MTK_INSTALL_TIMEOUT_MS,
   OtaProgressMessages,
   PING_INTERVAL_MS,
+  POST_APK_OTA_START_DELAY_MS,
   PROGRESS_TIMEOUT_MS,
   QUERY_REPLY_TIMEOUT_MS,
   RETRY_INTERVAL_MS,
@@ -403,6 +404,44 @@ describe("OtaInstallCoordinator legacy ota_progress normalization (WP 8C-a)", ()
     emitLegacyOtaProgress({stage: "install", status: "PROGRESS", progress: 50, currentUpdate: "bes"})
     emitLegacyOtaProgress({stage: "install", status: "FINISHED", progress: 100, currentUpdate: "bes"})
     expect(otaInstallCoordinator.snapshot().displayState).toBe("restarting")
+  })
+
+  it("glasses_session_changed acts as the reconnect edge: queries status and falls back to ota_start", async () => {
+    // The BES keeps the BLE link alive across the asg restart, so no physical
+    // connect edge fires; the sid change is the only restart signal.
+    setGlassesConnected()
+    otaInstallCoordinator.attach()
+    GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
+    useGlassesStore.getState().setOtaStatus(inProgressStatus({phase: "install", stepPercent: 0, overallPercent: 100}))
+    bluetoothSdkMock.sendOtaQueryStatus.mockClear()
+    bluetoothSdkMock.startOtaUpdate.mockClear()
+
+    GlobalEventEmitter.emit("glasses_session_changed", {previousSid: "", sid: "abcd1234"})
+    expect(bluetoothSdkMock.sendOtaQueryStatus).toHaveBeenCalledTimes(1)
+
+    // No useful reply (session lost on the glasses): the fallback re-sends ota_start.
+    useGlassesStore.getState().setOtaStatus(null)
+    await jest.advanceTimersByTimeAsync(QUERY_REPLY_TIMEOUT_MS)
+    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalled()
+  })
+
+  it("glasses_session_changed mid multi-step session arms the post-APK ota_start delay", async () => {
+    setGlassesConnected()
+    otaInstallCoordinator.attach()
+    GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
+    // APK step finished as part of a 2-step session: the restart is the expected
+    // post-APK reboot, so the session-change edge must arm the POST_APK delay.
+    useGlassesStore
+      .getState()
+      .setOtaStatus(
+        inProgressStatus({stepType: "apk", status: "step_complete", totalSteps: 2, currentStep: 1, stepPercent: 100}),
+      )
+    bluetoothSdkMock.startOtaUpdate.mockClear()
+
+    GlobalEventEmitter.emit("glasses_session_changed", {previousSid: "old0", sid: "new1"})
+    expect(bluetoothSdkMock.startOtaUpdate).not.toHaveBeenCalled()
+    await jest.advanceTimersByTimeAsync(POST_APK_OTA_START_DELAY_MS)
+    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
   })
 
   it("legacy bes install FINISHED then disconnect/reconnect edge completes", () => {
