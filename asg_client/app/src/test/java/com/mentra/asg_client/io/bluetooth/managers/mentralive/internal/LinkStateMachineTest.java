@@ -330,6 +330,43 @@ public class LinkStateMachineTest {
     }
 
     @Test
+    public void reentrantTransitionInListener_neverTearsThePairForLaterListeners() {
+        // Listener A closes the serial port from inside its LINK_PROVEN callback. The monitor is
+        // reentrant, so without snapshotting BOTH state and caps before the loop, listener B
+        // would receive the mutated SERIAL_CLOSED state paired with the pre-transition non-null
+        // caps — a torn pair violating the non-null-exactly-in-LINK_PROVEN contract.
+        RecordingListener b = new RecordingListener();
+        machine.serialReady();
+        machine.addListener(
+                (state, provenCaps) -> {
+                    if (state == LinkState.LINK_PROVEN) {
+                        machine.serialClosed();
+                    }
+                });
+        machine.addListener(b);
+
+        machine.srSyvrParsed(FULL_CAPS);
+
+        // Every pair B ever observed must be internally consistent.
+        for (int i = 0; i < b.states.size(); i++) {
+            boolean proven = b.states.get(i) == LinkState.LINK_PROVEN;
+            assertThat(b.caps.get(i) != null)
+                    .as("pair %d: state=%s caps=%s", i, b.states.get(i), b.caps.get(i))
+                    .isEqualTo(proven);
+        }
+        // B sees A's reentrant close pass first (delivered from inside A's callback), then the
+        // outer pass with the original consistent proven pair.
+        assertThat(b.states)
+                .containsExactly(
+                        LinkState.SERIAL_OPEN, LinkState.SERIAL_CLOSED, LinkState.LINK_PROVEN);
+        assertThat(b.caps.get(1)).isNull();
+        assertThat(b.caps.get(2)).isEqualTo(FULL_CAPS);
+        // The machine itself ends in the state A's reentrant transition left it in.
+        assertThat(machine.getState()).isEqualTo(LinkState.SERIAL_CLOSED);
+        assertThat(machine.getProvenCaps()).isNull();
+    }
+
+    @Test
     public void listener_mayRemoveItselfDuringNotification() {
         AtomicInteger calls = new AtomicInteger();
         LinkStateMachine.Listener selfRemoving =

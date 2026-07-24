@@ -317,11 +317,19 @@ public final class LinkStateMachine {
         return state == LinkState.LINK_PROVEN ? negotiatedCaps : null;
     }
 
-    /** Must hold the monitor. */
+    /**
+     * Must hold the monitor. Snapshots BOTH state and caps before the loop: the monitor is
+     * reentrant, so a listener may perform a transition from inside its callback, and reading the
+     * {@code state} field live per iteration would then hand later listeners in this pass a torn
+     * pair (e.g. {@code SERIAL_CLOSED} with non-null caps). With the snapshot, every listener in
+     * one pass sees the consistent pair of the transition that triggered it; the reentrant
+     * transition delivers its own pass.
+     */
     private void notifyListenersLocked() {
-        BesCaps provenCaps = provenCapsLocked();
+        LinkState snapshotState = state;
+        BesCaps snapshotProvenCaps = provenCapsLocked();
         for (Listener listener : listeners) {
-            listener.onLinkStateChanged(state, provenCaps);
+            listener.onLinkStateChanged(snapshotState, snapshotProvenCaps);
         }
     }
 }
