@@ -15,6 +15,7 @@ import {
 
 const setAudioModeAsync = mock(async () => {})
 const tailTimerCallbacks: Array<() => void> = []
+const appState = {currentState: "active"}
 
 const audioPlayer = {
   addListener: mock(() => ({remove: () => {}})),
@@ -31,6 +32,7 @@ mock.module("expo-audio", () => ({
 }))
 
 mock.module("react-native", () => ({
+  AppState: appState,
   Platform: {OS: "android"},
 }))
 
@@ -56,6 +58,8 @@ describe("AudioPlaybackService live PCM streams", () => {
     await audioPlaybackService.stopAll()
     stopAudioCloudUplink()
     resetAudioTestMocks()
+    appState.currentState = "active"
+    Object.assign(audioPlaybackService, {audioRouteWarmUntil: 0})
     tailTimerCallbacks.length = 0
     startAudioCloudUplink()
     setAudioModeAsync.mockClear()
@@ -77,6 +81,20 @@ describe("AudioPlaybackService live PCM streams", () => {
     expect(pcmStreamWrite).toHaveBeenCalledTimes(1)
     expect(pcmStreamAbort).toHaveBeenCalledTimes(1)
     expect(pcmStreamClose).not.toHaveBeenCalled()
+    expect(audioPlayer.play).toHaveBeenCalledTimes(1)
+  })
+
+  test("skips optional route prewarm so background URL playback cannot stall", async () => {
+    appState.currentState = "background"
+    await audioPlaybackService.play(
+      {audioUrl: "https://example.test/background.wav", requestId: "background"},
+      () => {},
+    )
+    audioPlaybackService.cancelPlayback("background")
+
+    expect(pcmStreamOpen).not.toHaveBeenCalled()
+    expect(pcmStreamWrite).not.toHaveBeenCalled()
+    expect(pcmStreamAbort).not.toHaveBeenCalled()
     expect(audioPlayer.play).toHaveBeenCalledTimes(1)
   })
 

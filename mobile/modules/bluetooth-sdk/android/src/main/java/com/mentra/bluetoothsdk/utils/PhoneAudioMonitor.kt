@@ -26,6 +26,14 @@ class PhoneAudioMonitor private constructor(private val context: Context) {
         @Volatile
         private var instance: PhoneAudioMonitor? = null
 
+        internal fun shouldKeepOwnAppAudioSignal(
+            signalledPlaying: Boolean,
+            systemAudioPlaying: Boolean,
+            nowMs: Long,
+            holdoffUntilMs: Long,
+        ): Boolean =
+            signalledPlaying && (systemAudioPlaying || nowMs < holdoffUntilMs)
+
         @JvmStatic
         fun getInstance(context: Context): PhoneAudioMonitor {
             return instance ?: synchronized(this) {
@@ -82,7 +90,36 @@ class PhoneAudioMonitor private constructor(private val context: Context) {
         return audioManager.isMusicActive
     }
 
-    fun isOwnAppAudioPlaying(): Boolean = ownAppAudioPlaying
+    /**
+     * Return the explicit React Native playback hint, reconciling it with
+     * Android's actual media state.
+     *
+     * Expo can miss a completion callback while its Activity is backgrounded,
+     * leaving the explicit hint stuck at PLAYING. The hint only protects the
+     * short A2DP codec transition; after that hold-off, Android's
+     * isMusicActive is authoritative. Clearing a stale hint lets the glasses
+     * mic watchdog recover instead of suppressing recovery forever.
+     */
+    @Synchronized
+    fun isOwnAppAudioPlaying(): Boolean {
+        val systemAudioPlaying = isPlaying()
+        if (
+            shouldKeepOwnAppAudioSignal(
+                ownAppAudioPlaying,
+                systemAudioPlaying,
+                System.currentTimeMillis(),
+                audioStartHoldoffUntil,
+            )
+        ) {
+            return true
+        }
+
+        if (ownAppAudioPlaying) {
+            ownAppAudioPlaying = false
+            Bridge.log("$TAG: Cleared stale own-app audio flag (system audio is inactive)")
+        }
+        return false
+    }
 
     /**
      * Notify the monitor that our own app started/stopped playing audio
@@ -93,6 +130,7 @@ class PhoneAudioMonitor private constructor(private val context: Context) {
      * there's a brief gap where the system reports 0 active configs (codec is switching).
      * The hold-off prevents us from reporting STOPPED during this transition.
      */
+    @Synchronized
     fun setOwnAppAudioPlaying(playing: Boolean) {
         ownAppAudioPlaying = playing
         Bridge.log("$TAG: Own app audio -> ${if (playing) "PLAYING" else "STOPPED"}")
