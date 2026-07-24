@@ -56,6 +56,16 @@ public class K900NetworkManagerGatewayTest {
     }
 
     @Test
+    public void restoresStationWifiAfterActiveReservationReportsStopped() {
+        assertThat(K900NetworkManager.shouldReconnectStationWifiImmediately(true, true))
+                .isFalse();
+        assertThat(K900NetworkManager.shouldReconnectStationWifiImmediately(false, true))
+                .isTrue();
+        assertThat(K900NetworkManager.shouldReconnectStationWifiImmediately(false, false))
+                .isFalse();
+    }
+
+    @Test
     public void doesNotRetryUnrelatedHotspotFailures() {
         assertThat(
                         K900NetworkManager.shouldRetryLocalHotspotAfterDisconnect(
