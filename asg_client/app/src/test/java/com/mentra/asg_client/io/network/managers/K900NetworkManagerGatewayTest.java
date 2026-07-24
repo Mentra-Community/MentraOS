@@ -66,6 +66,13 @@ public class K900NetworkManagerGatewayTest {
     }
 
     @Test
+    public void queuesRestartOnlyWhileAnActiveReservationIsClosing() {
+        assertThat(K900NetworkManager.shouldQueueLocalHotspotRestart(true, true)).isTrue();
+        assertThat(K900NetworkManager.shouldQueueLocalHotspotRestart(true, false)).isFalse();
+        assertThat(K900NetworkManager.shouldQueueLocalHotspotRestart(false, true)).isFalse();
+    }
+
+    @Test
     public void doesNotRetryUnrelatedHotspotFailures() {
         assertThat(
                         K900NetworkManager.shouldRetryLocalHotspotAfterDisconnect(
