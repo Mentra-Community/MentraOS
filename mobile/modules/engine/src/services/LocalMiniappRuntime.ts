@@ -2609,19 +2609,30 @@ class LocalMiniappRuntime {
       // identity resolution was pending. Never replay an old context's request
       // against its replacement.
       if (!app || this.connectedApps.get(packageName) !== app) return
+
+      // Invoke in request order, but do not keep the queue occupied for the
+      // lifetime of an async picker, download, or share sheet. CREATE/WRITE/
+      // COMMIT are synchronous and therefore still dispatch strictly in order.
       try {
-        await operation()
+        const pending = operation()
+        if (pending) {
+          void pending.catch((err) => this.handleBlobRequestError(packageName, requestId, err))
+        }
       } catch (err) {
-        console.error(`${LOG_TAG}: blob request error:`, err)
-        this.sendResult(packageName, requestId, false, undefined, {
-          code: MiniappErrorCode.INTERNAL,
-          message: err instanceof Error ? err.message : "Blob storage error",
-        })
+        this.handleBlobRequestError(packageName, requestId, err)
       }
     })
     this.blobRequestQueues.set(packageName, queued)
     void queued.finally(() => {
       if (this.blobRequestQueues.get(packageName) === queued) this.blobRequestQueues.delete(packageName)
+    })
+  }
+
+  private handleBlobRequestError(packageName: string, requestId: string | undefined, err: unknown): void {
+    console.error(`${LOG_TAG}: blob request error:`, err)
+    this.sendResult(packageName, requestId, false, undefined, {
+      code: MiniappErrorCode.INTERNAL,
+      message: err instanceof Error ? err.message : "Blob storage error",
     })
   }
 
