@@ -374,6 +374,8 @@ const en = {
     versionChangeKeepNearby: "Keep your glasses nearby and connected. They will restart on their own.",
     versionChangeComplete: "Version Change Complete",
     versionChangeCompleteMessage: "Your glasses are now on the required version. Their settings were reset and are being restored automatically.",
+    versionChangeFirmwarePassComplete: "Firmware updated",
+    versionChangeFirmwarePassCompleteMessage: "Your glasses restarted with new firmware. One more step: they'll now continue to the required version.",
     updateComplete: "Update Complete",
     updateCompleteMessage: "Your glasses have been updated successfully.",
     updateFailed: "Update Failed",

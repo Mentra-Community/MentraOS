@@ -216,20 +216,40 @@ export default function OtaProgressScreen() {
             <Icon name="check" size={64} color={theme.colors.primary} />
             <View className="h-6" />
             <Text
-              tx={versionChangeConverged ? "ota:versionChangeComplete" : undefined}
-              text={versionChangeConverged ? undefined : "Update complete!"}
+              tx={
+                versionChangeConverged
+                  ? "ota:versionChangeComplete"
+                  : isVersionChange
+                    ? "ota:versionChangeFirmwarePassComplete"
+                    : undefined
+              }
+              text={versionChangeConverged || isVersionChange ? undefined : "Update complete!"}
               className="font-semibold text-xl text-center"
             />
             <View className="h-2" />
             <Text
-              tx={versionChangeConverged ? "ota:versionChangeCompleteMessage" : undefined}
-              text={versionChangeConverged ? undefined : "Your glasses are up to date."}
+              // A complete inside a version-change session that has NOT converged is the
+              // firmware-first pass: firmware installed, the APK downgrade still pending. Saying
+              // "up to date" here would be false — name the state and point at the next step.
+              tx={
+                versionChangeConverged
+                  ? "ota:versionChangeCompleteMessage"
+                  : isVersionChange
+                    ? "ota:versionChangeFirmwarePassCompleteMessage"
+                    : undefined
+              }
+              text={versionChangeConverged || isVersionChange ? undefined : "Your glasses are up to date."}
               className="text-sm text-center"
               style={{color: theme.colors.textDim}}
             />
           </View>
           <View className="justify-center items-center">
-            <Button preset="primary" text="Done" flexContainer onPress={handleDone} />
+            <Button
+              preset="primary"
+              text={isVersionChange && !versionChangeConverged ? "Continue" : "Done"}
+              flexContainer
+              onPress={handleDone}
+            />
           </View>
         </>
       )

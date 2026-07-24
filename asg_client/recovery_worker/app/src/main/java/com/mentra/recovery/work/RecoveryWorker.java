@@ -110,18 +110,29 @@ public class RecoveryWorker extends Worker {
         "RESTART_FAILED",
         attempt,
         false);
-    // Re-check at the install boundary: the transaction may have begun during the restart/pong
-    // waits above, after this worker was already enqueued.
-    if (new DowngradeTransactionStore(context).isActive()) {
-      Log.i(RecoveryConstants.TAG, "Downgrade transaction began during recovery; aborting reinstall");
-      store.setState(RecoveryConstants.STATE_COOLDOWN, "DOWNGRADE_ACTIVE_SKIP_REINSTALL");
-      return Result.success();
+    // Install boundary: the check and the reinstall it authorizes must be one atomic unit.
+    // Holding the install lock across both means a downgrade handoff can only land before the
+    // check (we see it and stand down) or after the reinstall finished (the downgrade proceeds
+    // against the reinstalled backup) — a bare re-check would still race begin() by a hair.
+    // The lock is released before the pong waits below: the mutation is done by then, and a
+    // downgrade beginning during the wait simply supersedes the reinstalled build.
+    boolean reinstallDispatched;
+    DowngradeTransactionStore.installLock().lock();
+    try {
+      if (new DowngradeTransactionStore(context).isActive()) {
+        Log.i(
+            RecoveryConstants.TAG, "Downgrade transaction began during recovery; aborting reinstall");
+        store.setState(RecoveryConstants.STATE_COOLDOWN, "DOWNGRADE_ACTIVE_SKIP_REINSTALL");
+        return Result.success();
+      }
+
+      notifyInstallInProgress(context);
+      reinstallDispatched = new ReinstallStrategy(context).execute();
+    } finally {
+      DowngradeTransactionStore.installLock().unlock();
     }
 
-    notifyInstallInProgress(context);
-
-    ReinstallStrategy reinstall = new ReinstallStrategy(context);
-    if (!reinstall.execute()) {
+    if (!reinstallDispatched) {
       notifyInstallCompleted(context);
       if (waitForPong(context, RecoveryConstants.RESTART_GRACE_MS)) {
         store.setState(RecoveryConstants.STATE_COOLDOWN, "ASG_ALIVE_SKIP_REINSTALL");
