@@ -81,9 +81,9 @@ Implications for development:
    ```
 
 3. Initialize the RTMP streaming library submodule (skip if you cloned with
-   `--recurse-submodules`)
+   `--recurse-submodules`); from this `asg_client/` directory:
    ```
-   git submodule update --init asg_client/StreamPackLite
+   git submodule update --init StreamPackLite
    ```
 
 ### Development on Mentra Live

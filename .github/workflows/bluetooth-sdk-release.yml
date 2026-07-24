@@ -156,7 +156,12 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
-          submodules: recursive
+
+      - name: Init StreamPackLite submodule
+        # Path-scoped on purpose: .gitmodules also carries a dangling
+        # mcu_client/peripheral_uart_next/nrf5340 entry with an unfetchable relative
+        # self-URL; a blanket recursive init would break if its gitlink ever lands.
+        run: git submodule update --init asg_client/StreamPackLite
 
       - name: Setup Node.js
         uses: actions/setup-node@v4

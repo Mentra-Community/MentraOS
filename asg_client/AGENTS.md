@@ -54,7 +54,7 @@ Camera sources live in `com.mentra.asg_client.camera` subpackages (`lifecycle/`,
 
 - **StreamPackLite**: RTMP streaming library, vendored as a git submodule at
   `asg_client/StreamPackLite`. A fresh clone with `--recurse-submodules` already has it;
-  otherwise initialize it once:
+  otherwise initialize it once (from the repository root):
   ```bash
   git submodule update --init asg_client/StreamPackLite
   ```

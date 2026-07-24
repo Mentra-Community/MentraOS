@@ -32,7 +32,7 @@ run_asg() {
     cat >&2 <<'MSG'
 error: asg_client/StreamPackLite is missing.
 
-StreamPackLite is a git submodule. Initialize it first:
+StreamPackLite is a git submodule. Initialize it first (from the repository root):
   git submodule update --init asg_client/StreamPackLite
 MSG
     return 1
