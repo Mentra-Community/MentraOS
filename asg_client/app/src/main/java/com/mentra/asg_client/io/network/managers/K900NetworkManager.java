@@ -44,6 +44,8 @@ public class K900NetworkManager extends BaseNetworkManager {
     private WifiManager.LocalOnlyHotspotReservation localHotspotReservation;
     private Runnable pendingLocalHotspotReadiness;
     private boolean localHotspotStarting;
+    private boolean localHotspotIncompatibleModeRetried;
+    private boolean localHotspotDisconnectedStationWifi;
     private int localHotspotGeneration;
     private long localHotspotReadinessDeadlineMs;
     private String pendingLocalHotspotSsid = "";
@@ -201,6 +203,7 @@ public class K900NetworkManager extends BaseNetworkManager {
                 return;
             }
             localHotspotStarting = true;
+            localHotspotIncompatibleModeRetried = false;
             generation = ++localHotspotGeneration;
         }
 
@@ -253,9 +256,7 @@ public class K900NetworkManager extends BaseNetworkManager {
 
                         @Override
                         public void onFailed(int reason) {
-                            failLocalHotspotStartup(
-                                    generation,
-                                    "Local-only hotspot failed with reason " + reason);
+                            handleLocalHotspotFailure(generation, reason);
                         }
                     },
                     localHotspotHandler);
@@ -264,6 +265,56 @@ public class K900NetworkManager extends BaseNetworkManager {
             Log.e(TAG, "🔥 Error requesting local-only hotspot", e);
             failLocalHotspotStartup(generation, "Failed to start: " + e.getMessage());
         }
+    }
+
+    private void handleLocalHotspotFailure(int generation, int reason) {
+        boolean retryAfterDisconnect;
+        synchronized (localHotspotLock) {
+            if (generation != localHotspotGeneration || !localHotspotStarting) {
+                Log.d(TAG, "🔥 Ignoring failure from a stale hotspot generation");
+                return;
+            }
+            retryAfterDisconnect =
+                    shouldRetryLocalHotspotAfterDisconnect(
+                            reason, localHotspotIncompatibleModeRetried);
+            if (retryAfterDisconnect) {
+                localHotspotIncompatibleModeRetried = true;
+            }
+        }
+
+        if (!retryAfterDisconnect) {
+            failLocalHotspotStartup(
+                    generation, "Local-only hotspot failed with reason " + reason);
+            return;
+        }
+
+        Log.w(TAG, "🔥 WiFi station mode blocked the hotspot; disconnecting and retrying once");
+        try {
+            if (!wifiManager.disconnect()) {
+                failLocalHotspotStartup(
+                        generation, "Failed to disconnect WiFi before hotspot retry");
+                return;
+            }
+            synchronized (localHotspotLock) {
+                if (generation != localHotspotGeneration || !localHotspotStarting) {
+                    reconnectStationWifi();
+                    return;
+                }
+                localHotspotDisconnectedStationWifi = true;
+            }
+            localHotspotHandler.postDelayed(
+                    () -> requestLocalOnlyHotspot(generation),
+                    AsgConstants.LOCAL_HOTSPOT_WIFI_DISCONNECT_DELAY_MS);
+        } catch (Exception e) {
+            Log.e(TAG, "🔥 Error disconnecting WiFi before hotspot retry", e);
+            failLocalHotspotStartup(
+                    generation, "Failed to disconnect WiFi before hotspot retry: " + e.getMessage());
+        }
+    }
+
+    static boolean shouldRetryLocalHotspotAfterDisconnect(int reason, boolean alreadyRetried) {
+        return reason == WifiManager.LocalOnlyHotspotCallback.ERROR_INCOMPATIBLE_MODE
+                && !alreadyRetried;
     }
 
     private void handleLocalHotspotStarted(
@@ -385,6 +436,7 @@ public class K900NetworkManager extends BaseNetworkManager {
     private void failLocalHotspotStartup(int generation, String errorMessage) {
         Log.e(TAG, "🔥 " + errorMessage);
         WifiManager.LocalOnlyHotspotReservation reservation;
+        boolean reconnectStationWifi;
         synchronized (localHotspotLock) {
             if (generation != localHotspotGeneration) {
                 Log.d(TAG, "🔥 Ignoring failure from a stale hotspot generation");
@@ -394,9 +446,14 @@ public class K900NetworkManager extends BaseNetworkManager {
             cancelLocalHotspotReadinessLocked();
             reservation = localHotspotReservation;
             localHotspotReservation = null;
+            reconnectStationWifi = localHotspotDisconnectedStationWifi;
+            localHotspotDisconnectedStationWifi = false;
         }
         if (reservation != null) {
             reservation.close();
+        }
+        if (reconnectStationWifi) {
+            reconnectStationWifi();
         }
         onHotspotStopped();
         notifyHotspotError(errorMessage);
@@ -404,6 +461,7 @@ public class K900NetworkManager extends BaseNetworkManager {
     }
 
     private void handleLocalHotspotStopped(int generation) {
+        boolean reconnectStationWifi;
         synchronized (localHotspotLock) {
             if (generation != localHotspotGeneration) {
                 Log.d(TAG, "🔥 Ignoring stop callback from a stale hotspot generation");
@@ -412,6 +470,11 @@ public class K900NetworkManager extends BaseNetworkManager {
             localHotspotStarting = false;
             localHotspotReservation = null;
             cancelLocalHotspotReadinessLocked();
+            reconnectStationWifi = localHotspotDisconnectedStationWifi;
+            localHotspotDisconnectedStationWifi = false;
+        }
+        if (reconnectStationWifi) {
+            reconnectStationWifi();
         }
         onHotspotStopped();
         notificationManager.showHotspotStateNotification(false);
@@ -435,6 +498,16 @@ public class K900NetworkManager extends BaseNetworkManager {
         return value;
     }
 
+    private void reconnectStationWifi() {
+        try {
+            if (!wifiManager.reconnect()) {
+                Log.w(TAG, "📶 Failed to request WiFi reconnection after local hotspot");
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "📶 Error reconnecting WiFi after local hotspot", e);
+        }
+    }
+
     @Override
     public void stopHotspot() {
         Log.d(TAG, "🔥 =========================================");
@@ -442,15 +515,21 @@ public class K900NetworkManager extends BaseNetworkManager {
         Log.d(TAG, "🔥 =========================================");
 
         WifiManager.LocalOnlyHotspotReservation reservation;
+        boolean reconnectStationWifi;
         synchronized (localHotspotLock) {
             localHotspotStarting = false;
             localHotspotGeneration++;
             cancelLocalHotspotReadinessLocked();
             reservation = localHotspotReservation;
             localHotspotReservation = null;
+            reconnectStationWifi = localHotspotDisconnectedStationWifi;
+            localHotspotDisconnectedStationWifi = false;
         }
         if (reservation != null) {
             reservation.close();
+        }
+        if (reconnectStationWifi) {
+            reconnectStationWifi();
         }
         onHotspotStopped();
         notificationManager.showHotspotStateNotification(false);
