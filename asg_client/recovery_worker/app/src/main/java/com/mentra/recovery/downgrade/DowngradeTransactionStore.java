@@ -16,14 +16,19 @@ import com.mentra.recovery.util.RecoveryConstants;
  */
 public final class DowngradeTransactionStore {
   /**
-   * Serializes ASG (re)install decisions inside the recovery process. A double-check of
+   * Serializes ASG (re)install work inside the recovery process. A double-check of
    * {@link #isActive()} narrows but cannot close the window in which heartbeat recovery decides
    * ASG is dead just before a downgrade handoff persists a transaction — recovery would then
-   * reinstall the higher fleet backup while the downgrade runs. Every path that mutates the
-   * installed ASG based on transaction state must hold this lock across its check AND the
-   * dispatch it guards: {@code RecoveryWorker} across its pre-reinstall check + reinstall, and
-   * {@code DowngradeController} around {@link #begin(long, String, String)}. Both run in the
-   * recovery app's single process, so a process-wide lock is a true serialization.
+   * reinstall the higher fleet backup while the downgrade runs. Because the OEM install is an
+   * asynchronous broadcast, holders must keep the lock until their install is OBSERVABLY
+   * complete, not merely dispatched: {@code RecoveryWorker} holds it across its pre-reinstall
+   * check, the reinstall dispatch, and a bounded wait for the backup versionCode to be installed;
+   * {@code DowngradeWorker} holds it for its whole state-machine run. The handoff itself
+   * ({@link #begin(long, String, String)}) deliberately does NOT take the lock — it runs on a
+   * broadcast receiver's main thread where blocking risks an ANR, and persisting the transaction
+   * is safe at any time because the workers, not the handoff, dispatch installs. Both workers run
+   * on WorkManager threads in the recovery app's single process, so a process-wide lock is a true
+   * serialization.
    */
   private static final ReentrantLock INSTALL_LOCK = new ReentrantLock();
 

@@ -48,6 +48,14 @@ public final class RecoveryConstants {
   public static final int MAX_MISSED_HEARTBEATS = 3;
   public static final long RESTART_GRACE_MS = 20000L;
   public static final long REINSTALL_GRACE_MS = 60000L;
+
+  /**
+   * How long the reinstall path keeps the install lock after dispatching the backup install,
+   * waiting for the installed versionCode to reach the backup's. The OEM install is asynchronous;
+   * releasing the lock at dispatch would let a downgrade begin while the higher backup install is
+   * still in flight.
+   */
+  public static final long REINSTALL_OBSERVE_TIMEOUT_MS = 60000L;
   public static final long REINSTALL_LATE_PONG_GRACE_MS = 30000L;
   public static final long RECOVERY_WINDOW_MS = 30 * 60 * 1000L;
   public static final int MAX_RECOVERIES_PER_WINDOW = 3;
