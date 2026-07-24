@@ -2430,6 +2430,12 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     @Override
     public void onBesOtaApplied() {
         Log.i(BAUD_TAG, "BES OTA applied; scheduling reconnect at rendezvous baud");
+        // The BES is rebooting, so the sr_syvr proof is invalid NOW: demote synchronously with
+        // the lastSrSyvrTime reset below instead of waiting for the async rendezvous path, whose
+        // clearMessageParser can be skipped entirely by a generation-mismatch early return.
+        // Idempotent if that path does run it. Called outside baudSwitchLock so listener
+        // callbacks never execute under it.
+        linkState.streamDiscontinuity();
         int generation;
         synchronized (baudSwitchLock) {
             generation = ++recoveryProbeGeneration;
