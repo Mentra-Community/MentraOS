@@ -13,7 +13,12 @@ interface AudioPlayRequest {
   appId?: string
   volume?: number
   stopOtherAudio?: boolean
-  /** Suppress microphone audio sent to cloud STT while this audio is audible. */
+  /**
+   * Suppress microphone audio sent to cloud STT while this audio is audible.
+   * Opt-in and off by default: the suppression is global to the uplink, so a
+   * caller that sets this silences STT for every running app, not just itself.
+   * No platform path sets it today (see AudioCloudUplink and OS-1741).
+   */
   suppressCloudUplink?: boolean
 }
 
@@ -96,9 +101,9 @@ class AudioPlaybackService {
   // window after actual audio so we only pre-roll the first sound after idle.
   private audioRouteWarmUntil = 0
   private audioRouteWarmupPromise: Promise<void> | null = null
-  // Spoken playback remains suppressed briefly while its A2DP tail drains.
-  // Track those completed sources so a new non-spoken sound can resume
-  // listening immediately instead of inheriting the previous TTS gate.
+  // Playback that opted into suppression stays suppressed briefly while its
+  // A2DP tail drains. Track those completed sources so a later unsuppressed
+  // sound can resume listening immediately instead of inheriting that gate.
   private tailUplinkSuppressions = new Set<string>()
   // Original glasses media volume captured before we bump it for A2DP playback.
   private glassesVolumeRestoreLevel: number | null = null
