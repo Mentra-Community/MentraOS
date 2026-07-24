@@ -1,5 +1,6 @@
 package com.mentra.asg_client.io.bluetooth.managers.mentralive.internal;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 
@@ -25,5 +26,17 @@ public class SerialPortBridgeOtaCallbackTest {
         bridge.notifyBesOtaApplied();
 
         verify(listener).onBesOtaApplied();
+    }
+
+    @Test
+    public void reopenOnClosedPort_failsAndReportsClosed() {
+        SerialPortBridge bridge =
+                new SerialPortBridge(ApplicationProvider.getApplicationContext());
+
+        // A closed port refuses reopen and stays closed — and fires NO serial callback, which is
+        // why link-state owners must consult isOpen() after every reopen instead of assuming.
+        assertThat(bridge.isOpen()).isFalse();
+        assertThat(bridge.reopen(SerialPortBridge.DEFAULT_BAUDRATE)).isFalse();
+        assertThat(bridge.isOpen()).isFalse();
     }
 }

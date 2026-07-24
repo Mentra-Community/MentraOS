@@ -367,6 +367,7 @@ class BluetoothSdkModule : Module() {
             "stream_status",
             "keep_alive_ack",
             "mtk_update_complete",
+            "glasses_session_changed",
             "ota_progress",
             "ota_start_ack",
             "ota_status",
