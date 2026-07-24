@@ -47,9 +47,34 @@ describe("SpeakerModule.speak", () => {
         stopOtherAudio: false,
         enableSanitization: true,
         forceLocal: true,
+        muteMicWhileSpeaking: false,
       },
     ])
     expect(requestOptions).toEqual([{timeoutMs: 0}])
+  })
+
+  test("does not mute the microphone unless the caller asks", async () => {
+    const {session, requestCalls} = mockSession([{completed: true}])
+    const speaker = new SpeakerModule(session)
+
+    await speaker.speak("An ordinary spoken reply.")
+
+    // The suppression is device-wide, so silence has to be the default no
+    // matter which overload or option set a miniapp uses.
+    expect(requestCalls[0]).toMatchObject({muteMicWhileSpeaking: false})
+  })
+
+  test("forwards an explicit microphone mute opt-in", async () => {
+    const {session, requestCalls} = mockSession([{completed: true}])
+    const speaker = new SpeakerModule(session)
+
+    await speaker.speak(["Answering now.", "Here is the result."], {muteMicWhileSpeaking: true})
+
+    expect(requestCalls[0]).toMatchObject({
+      type: MiniappRequestType.SPEAK,
+      text: ["Answering now.", "Here is the result."],
+      muteMicWhileSpeaking: true,
+    })
   })
 
   test("sends an explicit sentence list through the normal SPEAK request", async () => {

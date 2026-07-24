@@ -26,10 +26,13 @@ const suppressionSources = new Set<string>()
  * reopen the uplink until every active source has released.
  *
  * Suppression is global to the uplink: one source silences STT for every app.
- * That is why no platform path arms it any more (spoken TTS used to, which made
- * every assistant reply punch a hole in Live Translation and Captions). The
- * mechanism stays because it is the right primitive for an explicit,
- * caller-scoped mute; see OS-1741 for the per-app opt-in that will use it.
+ * That is why nothing arms it by default. Spoken TTS used to, unconditionally,
+ * which made every assistant reply punch a hole in Live Translation and
+ * Captions. The only way in now is a miniapp explicitly passing
+ * `speaker.speak(text, {muteMicWhileSpeaking: true})`, which LocalMiniappRuntime
+ * logs on every arming because the blast radius reaches apps that never asked
+ * for it. See OS-1741 for the mic.status work that would make it visible to
+ * the apps being muted rather than only in the logs.
  */
 export function setAudioCloudUplinkSuppressed(sourceId: string, suppressed: boolean): void {
   if (suppressed) suppressionSources.add(sourceId)

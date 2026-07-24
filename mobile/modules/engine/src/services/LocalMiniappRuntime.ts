@@ -2196,6 +2196,17 @@ class LocalMiniappRuntime {
     const audioRequestId = requestId || `tts_${Date.now()}`
     const volume = typeof payload.volume === "number" ? payload.volume : 1.0
     const stopOtherAudio = payload.stopOtherAudio !== false
+    // Opt-in only, and deliberately opt-in: the uplink suppression is
+    // device-wide, so honouring this silences cloud STT for every running
+    // miniapp, not just this one. Log every arming so a support case that
+    // starts "captions stopped for no reason" is traceable to the caller.
+    const muteMicWhileSpeaking = payload.muteMicWhileSpeaking === true
+    if (muteMicWhileSpeaking) {
+      console.warn(
+        `${LOG_TAG}: ${packageName} requested muteMicWhileSpeaking; cloud STT is suppressed ` +
+          `device-wide for the duration of this playback`,
+      )
+    }
     const voiceSettings =
       payload.voice_settings && typeof payload.voice_settings === "object"
         ? (payload.voice_settings as Record<string, unknown>)
@@ -2306,6 +2317,7 @@ class LocalMiniappRuntime {
                     appId: packageName,
                     volume,
                     stopOtherAudio,
+                    suppressCloudUplink: muteMicWhileSpeaking,
                   },
                   (_responseId, success, error, duration, completionReason) => {
                     if (run.playbackRequestId === sentenceRequestId) run.playbackRequestId = undefined
@@ -2354,6 +2366,7 @@ class LocalMiniappRuntime {
             appId: packageName,
             volume,
             stopOtherAudio,
+            suppressCloudUplink: muteMicWhileSpeaking,
           },
           (_respId, success, error, duration, completionReason) => {
             if (run.playbackRequestId === audioRequestId) run.playbackRequestId = undefined
@@ -2406,6 +2419,7 @@ class LocalMiniappRuntime {
               appId: packageName,
               volume,
               stopOtherAudio,
+              suppressCloudUplink: muteMicWhileSpeaking,
             },
             (_respId, success, error, duration, completionReason) => {
               if (run.playbackRequestId === audioRequestId) run.playbackRequestId = undefined

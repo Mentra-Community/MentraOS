@@ -16,7 +16,8 @@ interface AudioPlayRequest {
    * Suppress microphone audio sent to cloud STT while this audio is audible.
    * Opt-in and off by default: the suppression is global to the uplink, so a
    * caller that sets this silences STT for every running app, not just itself.
-   * No platform path sets it today (see AudioCloudUplink and OS-1741).
+   * Reaches here only from a miniapp's explicit
+   * `speaker.speak(text, {muteMicWhileSpeaking: true})`.
    */
   suppressCloudUplink?: boolean
 }

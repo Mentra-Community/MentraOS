@@ -61,6 +61,23 @@ export interface SpeakOptions {
    * if the offline model isn't ready instead of falling back to cloud.
    */
   forceLocal?: boolean
+  /**
+   * Drop microphone audio before cloud speech-to-text for as long as this
+   * playback is audible, so the TTS is not transcribed as if the user had
+   * said it. Defaults to false.
+   *
+   * READ THIS BEFORE SETTING IT. The suppression is device-wide, not scoped
+   * to the calling miniapp. There is one microphone uplink and one cloud STT
+   * stream shared by every running miniapp, so setting this silences
+   * transcription for all of them: Captions stops, Live Translation stops,
+   * and nothing can be barged in on until the playback plus its audio tail
+   * has finished. The user is given no indication that this happened.
+   *
+   * Only reach for this when self-transcription would actively break your
+   * miniapp (an assistant re-hearing its own answer and replying to it), and
+   * prefer keeping spoken replies short so the blackout window stays small.
+   */
+  muteMicWhileSpeaking?: boolean
 }
 
 export interface SpeakResult {
@@ -276,6 +293,7 @@ export class SpeakerModule {
           stopOtherAudio: options.stopOtherAudio ?? false,
           enableSanitization: options.enableSanitization ?? true,
           forceLocal: options.forceLocal ?? false,
+          muteMicWhileSpeaking: options.muteMicWhileSpeaking ?? false,
         },
         {timeoutMs: 0},
       )
