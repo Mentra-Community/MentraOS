@@ -285,6 +285,18 @@ class OtaInstallCoordinator {
 
   /** Retry after a failure: clear state and re-send ota_start (if connected). */
   retry(): void {
+    // While the recovery worker owns the detour (apk install latched, not yet
+    // converged), the phone must not drive: an ota_start now would push the
+    // factory/surviving build into a parallel download-install, and a second
+    // handoff would begin()/REPLACE the live transaction under the running
+    // worker. Retry just re-enters the reconcile wait — convergence or the
+    // session timeout decides the real outcome.
+    if (this.isInVersionChangeDetour()) {
+      console.log("[OTA_PROGRESS] retry during version-change detour — re-entering wait (no ota_start)")
+      this.setErrorMsg("")
+      this.emitInternalChange()
+      return
+    }
     console.log("[OTA_PROGRESS] retry pressed, clearing state and re-sending ota_start")
     // Batch like the old event handler: React ran the whole handler (including
     // the ota_start send) before re-rendering + re-running effects.

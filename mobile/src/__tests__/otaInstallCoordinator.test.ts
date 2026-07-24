@@ -216,6 +216,43 @@ describe("OtaInstallCoordinator query-status arbitration with an existing sessio
   })
 })
 
+describe("OtaInstallCoordinator version-change detour retry gate", () => {
+  it("retry during a latched detour re-enters the wait without sending ota_start", async () => {
+    setGlassesConnected()
+    useGlassesStore.getState().setOtaUpdateAvailable({
+      updateAvailable: true,
+      isDowngrade: true,
+      versionCode: 49000000,
+    } as never)
+    otaInstallCoordinator.attach()
+    expect(otaInstallCoordinator.snapshot().isVersionChange).toBe(true)
+    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
+
+    // Ack + apk/install status latch the detour: recovery now owns the transaction.
+    GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
+    useGlassesStore.getState().setOtaStatus(inProgressStatus({phase: "install", stepPercent: 100}))
+    expect(otaInstallCoordinator.snapshot().versionChangePhase).not.toBeNull()
+
+    // Retry must NOT re-drive the glasses (a second ota_start would start a
+    // parallel install and a second handoff would REPLACE the live transaction);
+    // it only clears the surfaced error and re-enters the reconcile wait.
+    otaInstallCoordinator.retry()
+    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
+    expect(otaInstallCoordinator.snapshot().errorMsg).toBe("")
+
+    await jest.advanceTimersByTimeAsync(RETRY_INTERVAL_MS * 3)
+    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
+  })
+
+  it("retry outside a detour still re-sends ota_start", async () => {
+    setGlassesConnected()
+    otaInstallCoordinator.attach()
+    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
+    otaInstallCoordinator.retry()
+    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(2)
+  })
+})
+
 describe("OtaInstallCoordinator stuck-at-zero watchdog", () => {
   it("fails after DOWNLOAD_STUCK_TIMEOUT_MS at 0%", async () => {
     setGlassesConnected()

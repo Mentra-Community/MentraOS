@@ -53,7 +53,11 @@ public final class DowngradeTransactionStore {
             .getSharedPreferences(RecoveryConstants.DOWNGRADE_PREFS, Context.MODE_PRIVATE);
   }
 
-  /** Replaces any previous transaction; a fresh handoff always supersedes a stale one. */
+  /**
+   * Starts a transaction. Callers must ensure no transaction is active and no install worker is
+   * running (see DowngradeController.requestDowngrade): the clear+rewrite would otherwise pull
+   * the store out from under a live worker.
+   */
   @SuppressWarnings("ApplySharedPref")
   public boolean begin(long targetVersion, String apkPath, String apkSha256) {
     if (targetVersion <= 0 || apkPath == null || apkPath.isEmpty()) {

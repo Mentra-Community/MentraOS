@@ -30,17 +30,43 @@ public final class DowngradeController {
       return;
     }
     DowngradeTransactionStore store = new DowngradeTransactionStore(context);
-    // No lock here on purpose: this runs on a broadcast receiver's main thread, where blocking
-    // behind a worker that legitimately holds the install lock for tens of seconds would ANR.
-    // Persisting the transaction is safe at any time — install serialization lives in the
-    // workers: RecoveryWorker holds the install lock across its check + reinstall + observed
-    // completion, and DowngradeWorker takes the same lock before dispatching anything, so it
-    // blocks until any in-flight recovery install has observably finished.
-    if (!store.begin(targetVersion, apkPath, apkSha256)) {
-      Log.e(
+    // Never REPLACE a live transaction: begin() clears and rewrites the store, and a running
+    // DowngradeWorker caches its target once but reads apkPath/sha/attempts from the store
+    // dynamically — an overwrite mid-run would make it mix the old target with the new
+    // transaction's fields and later clear the replacement. A handoff that arrives while a
+    // transaction is active (or while a worker holds the install lock) is refused; ASG's
+    // handoff watchdog then reports failure to the phone, whose reconciliation loop re-offers
+    // the pin once the current transaction has converged or given up. tryLock (non-blocking,
+    // we are on a broadcast receiver's main thread — no waiting allowed) doubles as the
+    // is-a-worker-running probe; stale transactions cannot wedge this path forever because
+    // resumeIfActive re-arms them and DOWNGRADE_TRANSACTION_STALE_MS forces give-up.
+    if (!DowngradeTransactionStore.installLock().tryLock()) {
+      Log.w(
           RecoveryConstants.TAG,
-          "Rejected downgrade handoff (target=" + targetVersion + ", path=" + apkPath + ")");
+          "Refusing downgrade handoff: an install worker is running (target="
+              + targetVersion
+              + ")");
       return;
+    }
+    try {
+      if (store.isActive()) {
+        Log.w(
+            RecoveryConstants.TAG,
+            "Refusing downgrade handoff: a transaction is already active (existing target="
+                + store.getTargetVersion()
+                + ", new target="
+                + targetVersion
+                + ")");
+        return;
+      }
+      if (!store.begin(targetVersion, apkPath, apkSha256)) {
+        Log.e(
+            RecoveryConstants.TAG,
+            "Rejected downgrade handoff (target=" + targetVersion + ", path=" + apkPath + ")");
+        return;
+      }
+    } finally {
+      DowngradeTransactionStore.installLock().unlock();
     }
     Log.i(
         RecoveryConstants.TAG,
