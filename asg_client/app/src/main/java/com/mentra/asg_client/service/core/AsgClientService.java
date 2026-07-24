@@ -44,6 +44,7 @@ import com.mentra.asg_client.service.system.interfaces.IConfigurationManager;
 import com.mentra.asg_client.service.system.interfaces.IServiceLifecycle;
 import com.mentra.asg_client.service.system.interfaces.IStateManager;
 import com.mentra.asg_client.service.system.managers.AsgNotificationManager;
+import com.mentra.asg_client.service.utils.ProcessSessionId;
 import com.mentra.asg_client.service.utils.ServiceUtils;
 import com.mentra.asg_client.service.utils.SysProp;
 import dagger.hilt.android.AndroidEntryPoint;
@@ -1182,6 +1183,9 @@ public class AsgClientService extends Service implements NetworkStateListener, T
                 chunk1.put("device_model", deviceModel);
                 chunk1.put("android_version", androidVersion);
                 chunk1.put("system_time_ms", System.currentTimeMillis());
+                // Process session id: lets the phone detect an asg restart under a
+                // surviving BLE link (the boot version_info push is the announcement).
+                chunk1.put("sid", ProcessSessionId.SID);
 
                 Log.d(TAG, "📤 Sending version_info_1: " + chunk1.toString());
                 serviceInitializer

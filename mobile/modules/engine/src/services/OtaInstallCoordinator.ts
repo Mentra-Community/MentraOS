@@ -248,6 +248,7 @@ class OtaInstallCoordinator {
     }
     GlobalEventEmitter.off("ota_start_ack", this.handleAck)
     GlobalEventEmitter.off("mtk_update_complete", this.handleMtkComplete)
+    GlobalEventEmitter.off("glasses_session_changed", this.handleGlassesSessionChanged)
     this.clearAllOtaTimers()
     this.clearContinueLockoutTimer()
     this.resetSessionState()
@@ -444,11 +445,7 @@ class OtaInstallCoordinator {
    */
   private isLegacySessionShapeNow(): boolean {
     const state = useGlassesStore.getState()
-    return isLegacyShapedOtaSession(
-      state.otaStatus,
-      state.otaProgress,
-      this.initialBuildNumber || state.buildNumber,
-    )
+    return isLegacyShapedOtaSession(state.otaStatus, state.otaProgress, this.initialBuildNumber || state.buildNumber)
   }
 
   private react(): void {
@@ -631,6 +628,7 @@ class OtaInstallCoordinator {
     if (isMount) {
       GlobalEventEmitter.on("ota_start_ack", this.handleAck)
       GlobalEventEmitter.on("mtk_update_complete", this.handleMtkComplete)
+      GlobalEventEmitter.on("glasses_session_changed", this.handleGlassesSessionChanged)
     }
 
     // Ping keepalive while an OTA is actively running (legacy sessions pinged on the
@@ -724,6 +722,58 @@ class OtaInstallCoordinator {
     }
   }
 
+  /**
+   * Reconnect arbitration shared by the physical BLE connect edge and the
+   * glasses_session_changed signal. The latter exists because the BES keeps the BLE
+   * link alive across asg_client restarts (APK OTA): no physical edge ever fires, so
+   * the changed process session id is the only reconnect signal the coordinator gets
+   * (incident rep_01KY6BJ0B7A4RBMQ7VN39KAE5E). Always returns true (the caller's
+   * edge handling is complete).
+   */
+  private runReconnectArbitration(label: string): boolean {
+    console.log(`[OTA_PROGRESS] ${label}: false->true, flipping sawReconnectEdge=true`)
+    // A physical reconnect passed through the disconnect branch first, which cleared
+    // these timers; a session-change edge never disconnects, so a fallback armed by an
+    // earlier mount/query could otherwise fire alongside the arbitration below and send
+    // a duplicate ota_start. Clearing here is a no-op on the physical path.
+    this.clearPostApkDelay()
+    this.clearQueryReplyTimeout()
+    this.setSawReconnectEdge(true)
+
+    // Legacy apk settle window (WP 8C): the glasses restarting into the new build is
+    // the EXPECTED reconnect here — the legacy screen took no action on it. Skip the
+    // query/fallback; the settle timer (or the build-number increase) completes.
+    if (this.legacyApkSettleHold) {
+      console.log(`[OTA_PROGRESS] ${label}: reconnect during legacy apk settle hold — no query`)
+      return true
+    }
+
+    const storeState = useGlassesStore.getState()
+    const s = storeState.otaStatus
+    const postApkAwaiting =
+      s?.stepType === "apk" && (s?.totalSteps ?? 0) > 1 && (s.status === "step_complete" || s.status === "complete")
+
+    if (postApkAwaiting) {
+      console.log(`[OTA_PROGRESS] ${label}: post-APK reboot detected, arming POST_APK delay for sendOtaStart`)
+      this.clearPostApkDelay()
+      this.postApkDelay = setTimeout(() => {
+        this.postApkDelay = null
+        this.retryCount = 0
+        this.hasFirstActivity = false
+        this.hasFirstNonZeroProgress = false
+        this.hasReceivedAck = false
+        console.log("[OTA_PROGRESS] POST_APK delay fired, sending ota_start")
+        void this.sendOtaStartWithWatchdogs()
+      }, POST_APK_OTA_START_DELAY_MS)
+      return true
+    }
+
+    console.log(`[OTA_PROGRESS] ${label}: reconnected, sending ota_query_status`)
+    void BluetoothSdk.sendOtaQueryStatus()
+    this.armQueryReplyFallback("reconnect")
+    return true
+  }
+
   private runConnectEdge(connected: boolean): void {
     const prev = this.prevConnected
     this.prevConnected = connected
@@ -739,45 +789,11 @@ class OtaInstallCoordinator {
     }
 
     const becameConnected = prev === false && connected === true
-    if (becameConnected) {
-      console.log("[OTA_PROGRESS] connect-edge: false->true, flipping sawReconnectEdge=true")
-      this.setSawReconnectEdge(true)
-    }
-
-    // Legacy apk settle window (WP 8C): the glasses restarting into the new build is
-    // the EXPECTED reconnect here — the legacy screen took no action on it. Skip the
-    // query/fallback; the settle timer (or the build-number increase) completes.
-    if (becameConnected && this.legacyApkSettleHold) {
-      console.log("[OTA_PROGRESS] connect-edge: reconnect during legacy apk settle hold — no query")
+    if (becameConnected && this.runReconnectArbitration("connect-edge")) {
       return
     }
 
     const storeState = useGlassesStore.getState()
-    const s = storeState.otaStatus
-    const postApkAwaiting =
-      s?.stepType === "apk" && (s?.totalSteps ?? 0) > 1 && (s.status === "step_complete" || s.status === "complete")
-
-    if (becameConnected && postApkAwaiting) {
-      console.log("[OTA_PROGRESS] connect-edge: post-APK reboot detected, arming POST_APK delay for sendOtaStart")
-      this.clearPostApkDelay()
-      this.postApkDelay = setTimeout(() => {
-        this.postApkDelay = null
-        this.retryCount = 0
-        this.hasFirstActivity = false
-        this.hasFirstNonZeroProgress = false
-        this.hasReceivedAck = false
-        console.log("[OTA_PROGRESS] POST_APK delay fired, sending ota_start")
-        void this.sendOtaStartWithWatchdogs()
-      }, POST_APK_OTA_START_DELAY_MS)
-      return
-    }
-
-    if (becameConnected) {
-      console.log("[OTA_PROGRESS] connect-edge: reconnected, sending ota_query_status")
-      void BluetoothSdk.sendOtaQueryStatus()
-      this.armQueryReplyFallback("reconnect")
-      return
-    }
 
     // Initial mount (prev === current === true). If no session yet, kick off ota_start.
     // An idle ota_status has an empty sessionId; treat it as no session so ota_start
@@ -811,6 +827,14 @@ class OtaInstallCoordinator {
     this.clearRetryTimeout()
   }
 
+  /**
+   * The asg process restarted while the BES kept the BLE link up (sid change observed
+   * by the bridge): treat it exactly like a physical reconnect edge.
+   */
+  private readonly handleGlassesSessionChanged = (): void => {
+    this.runReconnectArbitration("session-change")
+  }
+
   private readonly handleMtkComplete = (): void => {
     console.log("[OTA_PROGRESS] mtk_update_complete received")
     this.clearProgressTimeout()
@@ -838,7 +862,9 @@ class OtaInstallCoordinator {
     }
 
     if (this.errorMsg) {
-      console.log("[OTA_PROGRESS] legacy install complete arrived after a failure — completing (legacy last-write-wins)")
+      console.log(
+        "[OTA_PROGRESS] legacy install complete arrived after a failure — completing (legacy last-write-wins)",
+      )
       this.setErrorMsg("")
       this.clearLegacyApkSettleTimer()
       this.setLegacyApkSettleHold(false)

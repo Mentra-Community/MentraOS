@@ -163,7 +163,7 @@ class BlePhotoUploadService {
         let bytes = [UInt8](data.prefix(12))
         if bytes.count >= 2, bytes[0] == 0xFF, bytes[1] == 0xD8 { return "jpeg" }
         if bytes.count >= 12, bytes[4] == 0x66, bytes[5] == 0x74, bytes[6] == 0x79, bytes[7] == 0x70 {
-            let brand = String(bytes: bytes[8..<12], encoding: .ascii) ?? "?"
+            let brand = String(bytes: bytes[8 ..< 12], encoding: .ascii) ?? "?"
             return "iso_bmff/ftyp=\(brand)"
         }
         return "unknown"
@@ -173,8 +173,8 @@ class BlePhotoUploadService {
         let marker: [UInt8] = [0x45, 0x78, 0x69, 0x66, 0, 0]
         let bytes = [UInt8](data)
         guard bytes.count >= marker.count else { return false }
-        for i in 0...(bytes.count - marker.count) {
-            if Array(bytes[i..<(i + marker.count)]) == marker { return true }
+        for i in 0 ... (bytes.count - marker.count) {
+            if Array(bytes[i ..< (i + marker.count)]) == marker { return true }
         }
         return false
     }
@@ -182,7 +182,7 @@ class BlePhotoUploadService {
     private static func readImuJsonFromImageData(_ imageData: Data) -> String? {
         // Primary: ImageIO EXIF (works for JPEG and well-formed AVIF)
         if let source = CGImageSourceCreateWithData(imageData as CFData, nil),
-            let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [String: Any]
+           let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [String: Any]
         {
             let exif = properties[kCGImagePropertyExifDictionary as String] as? [String: Any]
             let userComment = exif?[kCGImagePropertyExifUserComment as String] as? String
@@ -223,8 +223,8 @@ class BlePhotoUploadService {
             guard magic == 0x002A else { searchFrom = exifOff + 1; continue }
             let ifd0Off = Int(readU32(bytes, at: tiff + 4, le: littleEndian))
             if let result = readTagFromIfd(
-                bytes, tiff: tiff, ifdOff: tiff + ifd0Off, tag: 0x9286, le: littleEndian)
-            {
+                bytes, tiff: tiff, ifdOff: tiff + ifd0Off, tag: 0x9286, le: littleEndian
+            ) {
                 return result
             }
             searchFrom = exifOff + 1
@@ -238,7 +238,7 @@ class BlePhotoUploadService {
         guard ifdOff + 2 <= bytes.count else { return nil }
         let count = Int(readU16(bytes, at: ifdOff, le: le))
         var off = ifdOff + 2
-        for _ in 0..<count {
+        for _ in 0 ..< count {
             guard off + 12 <= bytes.count else { break }
             let entryTag = readU16(bytes, at: off, le: le)
             let type = readU16(bytes, at: off + 2, le: le)
@@ -255,7 +255,7 @@ class BlePhotoUploadService {
                 let startOff = (tag == 0x9286 && byteLen > 8) ? valueOff + 8 : valueOff
                 let len = (tag == 0x9286 && byteLen > 8) ? byteLen - 8 : byteLen
                 guard startOff + len <= bytes.count else { return nil }
-                return String(bytes: Array(bytes[startOff..<startOff + len]), encoding: .utf8)?
+                return String(bytes: Array(bytes[startOff ..< startOff + len]), encoding: .utf8)?
                     .trimmingCharacters(in: .init(charactersIn: "\0"))
             }
             // Follow Exif IFD pointer
@@ -272,8 +272,8 @@ class BlePhotoUploadService {
 
     private static func findBytes(_ needle: [UInt8], in haystack: [UInt8], from: Int) -> Int? {
         guard haystack.count >= needle.count else { return nil }
-        for i in from...(haystack.count - needle.count) {
-            if Array(haystack[i..<i + needle.count]) == needle { return i }
+        for i in from ... (haystack.count - needle.count) {
+            if Array(haystack[i ..< i + needle.count]) == needle { return i }
         }
         return nil
     }
@@ -298,8 +298,8 @@ class BlePhotoUploadService {
 
     private static func writeImuJsonToJpegData(_ jpegData: Data, imuJson: String) throws -> Data {
         guard let source = CGImageSourceCreateWithData(jpegData as CFData, nil),
-            let imageType = CGImageSourceGetType(source),
-            let cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil)
+              let imageType = CGImageSourceGetType(source),
+              let cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil)
         else {
             throw PhotoUploadError.decodingFailed
         }
@@ -373,8 +373,8 @@ class BlePhotoUploadService {
 
         // Find last Exif marker
         var lastExif = -1
-        for i in 0...(bytes.count - marker.count) {
-            if Array(bytes[i..<i + marker.count]) == marker { lastExif = i }
+        for i in 0 ... (bytes.count - marker.count) {
+            if Array(bytes[i ..< i + marker.count]) == marker { lastExif = i }
         }
         guard lastExif >= 0 else { return data }
 
@@ -383,7 +383,7 @@ class BlePhotoUploadService {
         while off + 8 <= bytes.count {
             let boxSize = Int(readU32BE(bytes, at: off))
             guard boxSize >= 8, off + boxSize <= bytes.count else { break }
-            let boxType = String(bytes: Array(bytes[off + 4..<off + 8]), encoding: .ascii) ?? ""
+            let boxType = String(bytes: Array(bytes[off + 4 ..< off + 8]), encoding: .ascii) ?? ""
             if boxType == "mdat" {
                 let payloadStart = off + 8
                 let payloadEnd = off + boxSize
@@ -393,7 +393,7 @@ class BlePhotoUploadService {
 
                 var result = Data()
                 // Everything up to mdat header
-                result.append(contentsOf: bytes[0..<off])
+                result.append(contentsOf: bytes[0 ..< off])
                 // New mdat box header with updated size
                 let newMdatSize = UInt32(8 + newPayloadLen)
                 result.append(UInt8((newMdatSize >> 24) & 0xFF))
@@ -401,7 +401,7 @@ class BlePhotoUploadService {
                 result.append(UInt8((newMdatSize >> 8) & 0xFF))
                 result.append(UInt8(newMdatSize & 0xFF))
                 result.append(contentsOf: [0x6D, 0x64, 0x61, 0x74]) // "mdat"
-                result.append(contentsOf: bytes[payloadStart..<payloadStart + newPayloadLen])
+                result.append(contentsOf: bytes[payloadStart ..< payloadStart + newPayloadLen])
                 return result
             }
             off += boxSize
@@ -824,7 +824,7 @@ private final class BleIncidentLogRelayEntry {
 // MARK: - CBCentralManagerDelegate
 
 extension MentraLive: CBCentralManagerDelegate {
-    // CoreBluetooth delivers these callbacks on `bluetoothQueue`; hop back before touching MainActor state.
+    /// CoreBluetooth delivers these callbacks on `bluetoothQueue`; hop back before touching MainActor state.
     nonisolated func centralManagerDidUpdateState(_ central: CBCentralManager) {
         let state = central.state
         DispatchQueue.main.async { [weak self] in
@@ -950,6 +950,8 @@ extension MentraLive: CBCentralManagerDelegate {
             self.connectedPeripheral = nil
             self.fullyBooted = false
             self.connected = false
+            self.glassesSessionId = nil // Fresh BLE session starts with no sid known
+            self.readinessCompletedThisBleSession = false
             self.updateConnectionState(ConnTypes.DISCONNECTED)
             self.rgbLedAuthorityClaimed = false
 
@@ -1313,6 +1315,7 @@ class MentraLive: NSObject, SGCManager {
     func sendText(_ text: String) async {
         await sendTextWall(text)
     }
+
     func sendTextWall(_: String) async {}
     func ping() {
         Bridge.log("LIVE: ping()")
@@ -1425,7 +1428,10 @@ class MentraLive: NSObject, SGCManager {
     // So we temporarily suspend the LC3 mic during phone audio playback
     private var micIntentEnabled = false // User/system WANTS mic enabled
     private var micSuspendedForAudio = false // Mic temporarily suspended due to phone audio
-    var isMicSuspendedForAudio: Bool { micSuspendedForAudio }
+    var isMicSuspendedForAudio: Bool {
+        micSuspendedForAudio
+    }
+
     private var phoneAudioMonitor: PhoneAudioMonitor?
 
     // Timing Constants
@@ -1470,12 +1476,12 @@ class MentraLive: NSObject, SGCManager {
     private var useBinaryWireProtocol = false
     private var wireHandshakeQueued = false
     private var wireHandshakeAttempts = 0
-    // Session generation in which the LAST outgoing v2 handshake was sent; a reply only
-    // activates v2 when it answers a handshake from the CURRENT epoch (see PendingMessage
-    // .generation for the queue-side guard).
+    /// Session generation in which the LAST outgoing v2 handshake was sent; a reply only
+    /// activates v2 when it answers a handshake from the CURRENT epoch (see PendingMessage
+    /// .generation for the queue-side guard).
     private var wireHandshakeSentGeneration = -1
-    // Bumped on every BLE session reset; scheduled handshake-retry callbacks capture it
-    // and no-op if the session changed, so a timer from a dead session can't poke a new one.
+    /// Bumped on every BLE session reset; scheduled handshake-retry callbacks capture it
+    /// and no-op if the session changed, so a timer from a dead session can't poke a new one.
     private var wireSessionGeneration = 0
     // Grace period before an unanswered BLE wire v2 handshake is re-armed for retry,
     // and the per-session cap on automatic retries (see sendWireHandshake).
@@ -1489,6 +1495,16 @@ class MentraLive: NSObject, SGCManager {
     private var ancsRelayEnableRequested = false
     private var peerWireCapsBinary = false
     private var peerFilePayloadV2 = false
+    /// Last observed glasses process session id (`sid` in glasses_ready / version_info_1).
+    /// The BES keeps the BLE link alive across asg_client restarts, so transport state
+    /// cannot signal a restart - a CHANGED (or newly appearing) sid is the restart signal.
+    /// Nil = no sid observed this BLE session (legacy glasses, or none seen yet).
+    private var glassesSessionId: String?
+    // True once a glasses_ready completed on THIS physical BLE session. Unlike
+    // fullyBooted, this never flaps on sr_hrt ready=0 heartbeats — it only resets with
+    // the physical connection — so a first-seen sid after an upgrade OTA cannot be
+    // mistaken for a fresh pairing just because a not-ready heartbeat slipped in first.
+    private var readinessCompletedThisBleSession = false
     private var globalMessageId = 0
     private var lastReceivedMessageId = 0
     private var bleWriteTraceSequence = 0
@@ -1880,11 +1896,11 @@ class MentraLive: NSObject, SGCManager {
         let retries: Int
         let id: String
         let trace: BleWriteTrace?
-        // Wire-session generation at enqueue time; the drain loop drops entries from a
-        // previous session so a stale write (worst case: an old handshake whose reply
-        // would activate v2 pre-negotiation) can never cross a session boundary. This is
-        // the deterministic guard - the async removeAll() on disconnect is best-effort
-        // cleanup that may land after a reconnect has already resumed the drain loop.
+        /// Wire-session generation at enqueue time; the drain loop drops entries from a
+        /// previous session so a stale write (worst case: an old handshake whose reply
+        /// would activate v2 pre-negotiation) can never cross a session boundary. This is
+        /// the deterministic guard - the async removeAll() on disconnect is best-effort
+        /// cleanup that may land after a reconnect has already resumed the drain loop.
         let generation: Int
     }
 
@@ -2165,6 +2181,10 @@ class MentraLive: NSObject, SGCManager {
             updateConnectionState(ConnTypes.DISCONNECTED)
             connected = false
             fullyBooted = false
+            glassesSessionId = nil
+            readinessCompletedThisBleSession = false
+            readinessCompletedThisBleSession = false // Fresh BLE session starts with no sid known
+            readinessCompletedThisBleSession = false
             return
         }
 
@@ -2423,6 +2443,11 @@ class MentraLive: NSObject, SGCManager {
             resetWireNegotiationState()
             parsePeerWireCaps(json)
             maybeSendWireHandshake()
+            // Record the session id BEFORE marking ready: an unsolicited glasses_ready
+            // already runs this full remote-reset flow, so recording (not re-triggering)
+            // is correct here; version_info detection covers the restart case.
+            if let sid = json["sid"] as? String, !sid.isEmpty { glassesSessionId = sid }
+            readinessCompletedThisBleSession = true
             handleGlassesReady()
 
         case "battery_status":
@@ -2741,6 +2766,7 @@ class MentraLive: NSObject, SGCManager {
                 // running them per chunk is safe.
                 parsePeerWireCaps(json)
                 maybeSendWireHandshake()
+                handleGlassesSessionId(json)
 
                 Bridge.sendVersionInfo(fields)
             } else {
@@ -3285,7 +3311,8 @@ class MentraLive: NSObject, SGCManager {
             "timestamp": Int(Date().timeIntervalSince1970 * 1000),
         ]
         if let otaVersionUrl = otaVersionUrl?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !otaVersionUrl.isEmpty {
+           !otaVersionUrl.isEmpty
+        {
             json["ota_version_url"] = otaVersionUrl
         }
 
@@ -4005,8 +4032,8 @@ class MentraLive: NSObject, SGCManager {
         responseBody: String
     ) {
         guard !responseBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-            let data = responseBody.data(using: .utf8),
-            let response = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+              let data = responseBody.data(using: .utf8),
+              let response = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else {
             return
         }
@@ -5049,6 +5076,7 @@ class MentraLive: NSObject, SGCManager {
         readinessCheckCounter = 0
         fullyBooted = false
         connected = false
+        glassesSessionId = nil
 
         Bridge.log("LIVE: 🔄 Starting glasses SOC readiness check loop")
 
@@ -5360,6 +5388,49 @@ extension MentraLive {
     private func resetAncsRelayState() {
         ancsAppIdentifiers.removeAll()
         ancsRelayEnableRequested = false
+    }
+
+    /// Sends phone_ready to (re)start the glasses-driven readiness flow.
+    private func sendPhoneReady(reason: String) {
+        Bridge.log("LIVE: 📱 Sending phone_ready to glasses (\(reason)) - waiting for glasses_ready response")
+        let readyMsg: [String: Any] = [
+            "type": "phone_ready",
+            "timestamp": Int64(Date().timeIntervalSince1970 * 1000),
+        ]
+        sendJson(readyMsg, wakeUp: true)
+    }
+
+    /// Tracks the glasses process session id (`sid`) and re-runs the phone-driven readiness
+    /// flow when it changes under a live BLE link. The BES holds the link across asg_client
+    /// restarts (APK OTA, crash recovery), so a restarted glasses process is invisible to
+    /// transport state; the sid is the explicit protocol signal.
+    ///
+    /// Tri-state by design (retro-compat with pre-sid glasses builds): no `sid` key = legacy
+    /// glasses, do nothing; sid appearing on an ESTABLISHED session (upgrade OTA from a
+    /// pre-sid build) or differing from the recorded one = restart; same sid = no action.
+    /// A restart is a LOGICAL session reset: send phone_ready immediately (bypassing the
+    /// sr_hrt heartbeat's stale-readiness suppression); the returning glasses_ready runs
+    /// the full existing remote-wire-reset flow. fullyBooted is deliberately untouched -
+    /// the physical link never dropped, so the connection UI must not flap.
+    private func handleGlassesSessionId(_ json: [String: Any]) {
+        guard let sid = json["sid"] as? String, !sid.isEmpty else { return }
+        let previous = glassesSessionId
+        if sid == previous { return }
+        glassesSessionId = sid
+        if previous == nil, !readinessCompletedThisBleSession {
+            // First sid of a fresh BLE session before readiness completes: the normal
+            // pairing/readiness flow is already running - just record it.
+            return
+        }
+        Bridge.log(
+            "LIVE: 🔁 Glasses session changed (\(previous ?? "<pre-sid build>") -> \(sid)) - " +
+                "asg restarted under a live link, re-running readiness"
+        )
+        sendPhoneReady(reason: "glasses session changed")
+        Bridge.sendTypedMessage(
+            "glasses_session_changed",
+            body: ["previous_sid": previous ?? "", "sid": sid]
+        )
     }
 
     private func parsePeerWireCaps(_ json: [String: Any]) {
