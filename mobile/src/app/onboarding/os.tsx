@@ -51,6 +51,7 @@ export default function MentraOSOnboarding() {
         fadeOut: true,
         testID: "mentraos-onboarding-hero-1",
         title: translate("onboarding:osStartMiniappTitle"),
+        compactHeader: true,
         details: [
           {
             title: translate("onboarding:osTapToLaunchTitle"),
@@ -66,6 +67,7 @@ export default function MentraOSOnboarding() {
         fadeOut: true,
         testID: "mentraos-onboarding-hero-2",
         title: translate("onboarding:osMinimizeCloseTitle"),
+        compactHeader: true,
         details: [
           {
             title: translate("onboarding:osMinimizeTitle"),
@@ -85,6 +87,7 @@ export default function MentraOSOnboarding() {
         fadeOut: true,
         testID: "mentraos-onboarding-hero-3",
         title: translate("onboarding:osSwitchMiniappsTitle"),
+        compactHeader: true,
         details: [
           {
             title: translate("onboarding:osRunningMiniappsTitle"),
@@ -104,6 +107,7 @@ export default function MentraOSOnboarding() {
         fadeOut: true,
         testID: "mentraos-onboarding-hero-4",
         title: translate("onboarding:osMiniappDrawerTitle"),
+        compactHeader: true,
         details: [
           {
             title: translate("onboarding:osTapGridTitle"),
@@ -121,6 +125,7 @@ export default function MentraOSOnboarding() {
         transition: false,
         testID: "mentraos-onboarding-hero-5",
         title: translate("onboarding:osMovedMiniappsTitle"),
+        compactHeader: true,
         content: (
           <View
             className="m-6 flex-1 items-center justify-center rounded-3xl bg-secondary px-7"
