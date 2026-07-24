@@ -24,7 +24,7 @@ import {
 import * as RNFS from "@dr.pogodin/react-native-fs"
 import {createShimmerPlaceholder} from "react-native-shimmer-placeholder"
 
-import {MediaViewer} from "@/components/glasses/Gallery/MediaViewer"
+import {createMediaViewerSnapshot, MediaViewer} from "@/components/glasses/Gallery/MediaViewer"
 import {PhotoImage} from "@/components/glasses/Gallery/PhotoImage"
 import {ProgressRing} from "@/components/glasses/Gallery/ProgressRing"
 import {Header, Icon, Text} from "@/components/ignite"
@@ -102,6 +102,9 @@ export function GalleryScreen() {
   // Data state
   const [downloadedPhotos, setDownloadedPhotos] = useState<PhotoInfo[]>([])
   const [selectedPhoto, setSelectedPhoto] = useState<PhotoInfo | null>(null)
+  const [viewerPhotos, setViewerPhotos] = useState<PhotoInfo[]>([])
+  const [viewerInitialIndex, setViewerInitialIndex] = useState(0)
+  const galleryPhotosRef = useRef<GalleryItem[]>([])
 
   // Photo sync states for UI (progress rings on thumbnails)
   const [photoSyncStates, setPhotoSyncStates] = useState<
@@ -525,15 +528,25 @@ export function GalleryScreen() {
       }
 
       // Open MediaViewer directly (no floating transition)
-      // Index will be calculated from photo name when rendering MediaViewer
-      console.log("[GalleryScreen] 🚀 Opening MediaViewer for photo:", item.photo.name)
+      // Snapshot the list so background gallery polling does not continually
+      // rebuild and re-render full-resolution viewer items.
+      const snapshot = createMediaViewerSnapshot(
+        galleryPhotosRef.current.map((galleryItem) => galleryItem.photo),
+        item.photo.name,
+      )
+      if (!snapshot) {
+        console.warn(`[GalleryScreen] Ignoring stale media selection: ${item.photo.name}`)
+        return
+      }
+      setViewerPhotos(snapshot.photos)
+      setViewerInitialIndex(snapshot.initialIndex)
       setSelectedPhoto(item.photo)
     },
     [isSelectionMode, photoSyncStates, togglePhotoSelection],
   )
 
   // Handle photo sharing — copies to cache dir for Android FileProvider compatibility
-  const handleSharePhoto = async (photo: PhotoInfo) => {
+  const handleSharePhoto = useCallback(async (photo: PhotoInfo) => {
     if (!photo) {
       console.error("No photo provided to share")
       return
@@ -589,7 +602,11 @@ export function GalleryScreen() {
       console.error("Error sharing photo:", error)
       showAlert("Error", "Failed to share. Please try again.", [{text: translate("common:ok")}])
     }
-  }
+  }, [])
+
+  const handleCloseMediaViewer = useCallback(() => {
+    setSelectedPhoto(null)
+  }, [])
 
   // Handle sync button press - delegate to the island gallery service.
   const handleSyncPress = async () => {
@@ -954,6 +971,7 @@ export function GalleryScreen() {
 
     return items
   }, [syncState, syncQueue, downloadedPhotos])
+  galleryPhotosRef.current = allPhotos
 
   // Create placeholder items during initial load (only if loading is taking a while)
   const placeholderItems = useMemo(() => {
@@ -1432,35 +1450,16 @@ export function GalleryScreen() {
         {renderStatusBar()}
 
         {/* Gallery viewer - direct open (no floating transition) */}
-        {selectedPhoto &&
-          (() => {
-            // Calculate the actual index in the flattened photos array
-            // GalleryItem.index includes sync queue offsets, so we need to find the real position
-            const flatPhotos = allPhotos.map((item) => item.photo).filter((p): p is PhotoInfo => p !== undefined)
-            const actualIndex = flatPhotos.findIndex((p) => p?.name === selectedPhoto.name)
-
-            if (actualIndex === -1) {
-              console.error("[GalleryScreen] ❌ Selected photo not found in photos array:", selectedPhoto.name)
-              return null
-            }
-
-            console.log("[GalleryScreen] 🎬 Rendering MediaViewer with", flatPhotos.length, "photos")
-            console.log("[GalleryScreen] 🎬 actualIndex for", selectedPhoto.name, ":", actualIndex)
-
-            return (
-              <MediaViewer
-                visible={true}
-                photo={selectedPhoto}
-                photos={flatPhotos}
-                initialIndex={actualIndex}
-                onClose={() => {
-                  console.log("[GalleryScreen] 🎬 MediaViewer closed by user")
-                  setSelectedPhoto(null)
-                }}
-                onShare={handleSharePhoto}
-              />
-            )
-          })()}
+        {selectedPhoto && viewerPhotos.length > 0 && (
+          <MediaViewer
+            visible
+            photo={selectedPhoto}
+            photos={viewerPhotos}
+            initialIndex={viewerInitialIndex}
+            onClose={handleCloseMediaViewer}
+            onShare={handleSharePhoto}
+          />
+        )}
       </View>
     </>
   )

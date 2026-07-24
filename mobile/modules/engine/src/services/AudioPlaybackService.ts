@@ -1,6 +1,6 @@
 import {createAudioPlayer, AudioPlayer, AudioStatus, setAudioModeAsync} from "expo-audio"
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
-import {Platform} from "react-native"
+import {AppState, Platform} from "react-native"
 import {BgTimer} from "../utils/timers"
 import {setAudioCloudUplinkSuppressed} from "./AudioCloudUplink"
 
@@ -189,6 +189,14 @@ class AudioPlaybackService {
    */
   private async prewarmAudioRouteIfCold(): Promise<void> {
     if (Platform.OS !== "android" || this.isAudioRouteWarm()) return
+    // This silent PCM pre-roll is only an anti-clipping optimization. Some
+    // Android devices defer opening its AudioTrack until the host Activity
+    // resumes even though the real URL player supports background playback.
+    // Never let that optional pre-roll block a glasses-initiated prompt.
+    if (AppState.currentState !== "active") {
+      console.log(`AUDIO: Skipping cold-route prewarm while app is ${AppState.currentState}`)
+      return
+    }
     if (this.audioRouteWarmupPromise) return this.audioRouteWarmupPromise
 
     const streamId = `audio-route-prewarm-${Date.now()}-${Math.random().toString(36).slice(2)}`

@@ -101,8 +101,11 @@ export function MediaMetadataSheet({bottomSheetRef, photo, dimensions, onChange}
       ref={bottomSheetRef}
       index={-1}
       snapPoints={snapPoints}
+      animateOnMount={false}
       enableDynamicSizing={false}
       enablePanDownToClose
+      enableContentPanningGesture
+      enableHandlePanningGesture
       backdropComponent={renderBackdrop}
       onChange={handleChange}
       style={{zIndex: 200}}
