@@ -380,7 +380,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                         + ")");
         try {
             clearMessageParser();
-            boolean reopened = comManager.reopen(candidate);
+            boolean reopened = reopenSerial(candidate);
             if (reopened) {
                 int generation;
                 synchronized (baudSwitchLock) {
@@ -423,7 +423,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         }
         try {
             clearMessageParser();
-            boolean reopened = comManager.reopen(defaultBaud);
+            boolean reopened = reopenSerial(defaultBaud);
             if (reopened) {
                 Log.w(
                         BAUD_TAG,
@@ -1767,7 +1767,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     private void reopenAtTargetBaudAndProbe() {
         try {
             clearMessageParser();
-            boolean reopened = comManager.reopen(TARGET_UART_BAUD);
+            boolean reopened = reopenSerial(TARGET_UART_BAUD);
             if (!reopened) {
                 Log.e(
                         BAUD_TAG,
@@ -1831,7 +1831,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         }
         try {
             clearMessageParser();
-            boolean ok = comManager.reopen(SerialPortBridge.DEFAULT_BAUDRATE);
+            boolean ok = reopenSerial(SerialPortBridge.DEFAULT_BAUDRATE);
             Log.e(
                     BAUD_TAG,
                     "Revert to "
@@ -2263,7 +2263,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
         try {
             clearMessageParser();
-            if (comManager.getCurrentBaud() != candidate && !comManager.reopen(candidate)) {
+            if (comManager.getCurrentBaud() != candidate && !reopenSerial(candidate)) {
                 Log.e(BAUD_TAG, "Runtime recovery could not reopen " + candidate + " baud");
             } else {
                 Log.i(
@@ -2301,7 +2301,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             baudSwitchAttempted = false;
             if (comManager.getCurrentBaud() != SerialPortBridge.DEFAULT_BAUDRATE) {
                 try {
-                    reopened = comManager.reopen(SerialPortBridge.DEFAULT_BAUDRATE);
+                    reopened = reopenSerial(SerialPortBridge.DEFAULT_BAUDRATE);
                 } catch (Exception e) {
                     reopened = false;
                     Log.e(BAUD_TAG, "Runtime recovery rendezvous reopen failed", e);
@@ -2468,7 +2468,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         }
         try {
             clearMessageParser();
-            if (!comManager.reopen(SerialPortBridge.DEFAULT_BAUDRATE)) {
+            if (!reopenSerial(SerialPortBridge.DEFAULT_BAUDRATE)) {
                 Log.e(BAUD_TAG, "Initial rendezvous reopen failed after BES OTA");
             }
         } catch (Exception e) {
@@ -2516,7 +2516,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         }
         try {
             clearMessageParser();
-            boolean reopened = comManager.reopen(SerialPortBridge.DEFAULT_BAUDRATE);
+            boolean reopened = reopenSerial(SerialPortBridge.DEFAULT_BAUDRATE);
             if (!reopened) {
                 scheduleBesOtaReconnect(
                         generation,
@@ -2542,6 +2542,24 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                     attempt + 1,
                     AsgConstants.UART_BOOT_RECOVERY_RETRY_DELAY_MS,
                     "reconnect exception");
+        }
+    }
+
+    /**
+     * Reopen the UART through the bridge and propagate the ACTUAL post-reopen port state into the
+     * link state machine. {@code SerialPortBridge.reopen()} falls back to the default baud
+     * internally, but when both opens fail it leaves the port closed WITHOUT firing any serial
+     * callback — the machine (now the source of truth for serial-open) must not keep reporting an
+     * open link while every send fails. The bridge refuses further reopens once closed, so the
+     * only way back to open is a fresh {@code start()}, which fires the normal serial callbacks.
+     */
+    private boolean reopenSerial(int baud) {
+        try {
+            return comManager.reopen(baud);
+        } finally {
+            if (!comManager.isOpen()) {
+                linkState.serialClosed();
+            }
         }
     }
 
