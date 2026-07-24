@@ -43,8 +43,4 @@ export class LocalMiniappUserIdentity {
     this.current = null
     this.backend.remove()
   }
-
-  resetMemory(): void {
-    this.current = null
-  }
 }
