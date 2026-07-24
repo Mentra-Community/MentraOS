@@ -10,6 +10,7 @@ import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.BesMessag
 import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.BesWireFormat;
 import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.CsFltsAckPayload;
 import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.K900LengthCodec;
+import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.LinkStateMachine;
 import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.MessageChunker;
 import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.SerialPortBridge;
 import com.mentra.asg_client.io.bluetooth.utils.DebugNotificationManager;
@@ -45,7 +46,11 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     private static final String TAG = "K900BluetoothManager";
 
     private final SerialPortBridge comManager;
-    private boolean isSerialOpen = false;
+
+    // Single owner of the transport-side link facts (serial open, link proven at current baud,
+    // negotiated BES wire caps). The legacy isSerialOpen/besWireCaps* booleans are derived from it
+    // through thin getters so external call sites keep their existing surface.
+    private final LinkStateMachine linkState = new LinkStateMachine();
     private final DebugNotificationManager notificationManager;
     // Keep normal K900 messages contiguous on the shared ASG-to-BES UART stream.
     private final Object outboundSendLock = new Object();
@@ -61,10 +66,6 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     // interleaves messages. Bounded: abandoned reassemblies would leak entries, so the set
     // is cleared when it exceeds a size no legitimate interleave reaches.
     private final java.util.Set<Integer> pendingBinaryWakeMsgIds = new java.util.LinkedHashSet<>();
-    private volatile boolean besWireCapsK900Le = false;
-    private volatile boolean besWireCapsBinary = false;
-    private volatile boolean besWireCapsFilePayloadV2 = false;
-    private volatile int besWireCapsProto = BesWireFormat.PROTOCOL_VERSION_V1;
     private volatile int gattFilePackSize = BesWireFormat.FILE_PACK_SIZE_DEFAULT;
     private volatile int lastNegotiatedMtu = 0;
     private volatile boolean phoneSupportsFilePayloadV2 = false;
@@ -109,10 +110,9 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     // first ACK repeatedly overran the BES parser on hardware and triggered 150 ms retries.
     private static final int FILE_PUSH_WINDOW_BIG_PACKS = 8;
     private volatile boolean besSupportsBatchedAcks = false;
-    private volatile boolean besSupportsBigPacks = false;
 
     private int effectivePushWindow() {
-        if (besSupportsBigPacks) {
+        if (linkState.getNegotiatedCaps().bigPacks) {
             return FILE_PUSH_WINDOW_BIG_PACKS;
         }
         return besSupportsBatchedAcks ? FILE_PUSH_WINDOW_BATCHED : FILE_PUSH_WINDOW;
@@ -458,7 +458,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             return false;
         }
 
-        if (!isSerialOpen) {
+        if (!linkState.isSerialOpen()) {
             Log.w(TAG, "📡 ❌ Cannot send data - serial port not open");
             notificationManager.showDebugNotification(
                     "Bluetooth Error", "Cannot send data - serial port not open");
@@ -564,23 +564,22 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         wireV2HandshakeSent = false;
     }
 
-    /** Reset all negotiated wire protocol state when the BES UART link is closed. */
+    /**
+     * Reset the remaining wire protocol state when the BES UART link is closed. The negotiated BES
+     * caps are cleared by {@code linkState.serialClosed()}; this covers the phone-facing state and
+     * the UART length endianness, which live outside the link state machine.
+     */
     public void resetWireProtocolState() {
         resetPhoneWireProtocolState();
-        besWireCapsK900Le = false;
-        besWireCapsBinary = false;
-        besWireCapsFilePayloadV2 = false;
-        besSupportsBigPacks = false;
-        besWireCapsProto = BesWireFormat.PROTOCOL_VERSION_V1;
         uartToBesEndian = K900LengthCodec.Endian.BE;
     }
 
     /** Send BLE Wire v2 handshake frame (payload "v2"). */
     public boolean sendWireV2Handshake() {
-        if (!isSerialOpen) {
+        if (!linkState.isSerialOpen()) {
             return false;
         }
-        if (!besWireCapsBinary) {
+        if (!linkState.getNegotiatedCaps().binary) {
             Log.i(TAG, "📡 Skipping BLE wire v2 handshake; BES has not advertised binary relay");
             return false;
         }
@@ -684,10 +683,8 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         if (!header.valid) {
             return false;
         }
-        besWireCapsBinary = true;
-        if (besWireCapsProto < BesWireFormat.PROTOCOL_VERSION_V2) {
-            besWireCapsProto = BesWireFormat.PROTOCOL_VERSION_V2;
-        }
+        // A valid binary frame proves binary relay support even without a wire_caps advert.
+        linkState.binaryRelayObserved();
 
         if ((header.flags & BesWireFormat.FLAG_HANDSHAKE) != 0) {
             if (BesWireFormat.isV2HandshakePayload(header.payload)) {
@@ -762,20 +759,20 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
      * reachable.
      */
     public void addPhoneWireCapsIfSupported(JSONObject response) {
-        if (response == null
-                || (!besWireCapsK900Le && !besWireCapsBinary && !besWireCapsFilePayloadV2)) {
+        LinkStateMachine.BesCaps besCaps = linkState.getNegotiatedCaps();
+        if (response == null || (!besCaps.k900Le && !besCaps.binary && !besCaps.filePayloadV2)) {
             return;
         }
         try {
             JSONObject caps = new JSONObject();
-            if (besWireCapsK900Le) {
+            if (besCaps.k900Le) {
                 caps.put("k900_le", true);
             }
-            if (besWireCapsBinary) {
+            if (besCaps.binary) {
                 caps.put("binary", true);
-                caps.put("proto", Math.max(besWireCapsProto, BesWireFormat.PROTOCOL_VERSION_V2));
+                caps.put("proto", Math.max(besCaps.proto, BesWireFormat.PROTOCOL_VERSION_V2));
             }
-            if (besWireCapsFilePayloadV2) {
+            if (besCaps.filePayloadV2) {
                 caps.put("file_payload_v2", true);
                 caps.put("file_payload_gatt_max", BesWireFormat.FILE_PACK_SIZE_GATT_MAX);
                 caps.put("file_payload_coc_max", BesWireFormat.FILE_PACK_SIZE_COC_MAX);
@@ -786,8 +783,18 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         }
     }
 
+    /** Whether the BES has proven binary relay support (wire_caps advert or an observed frame). */
     public boolean isBesBinaryRelaySupported() {
-        return besWireCapsBinary;
+        return linkState.getNegotiatedCaps().binary;
+    }
+
+    /**
+     * Observable transport link state (serial open, link proven, negotiated BES caps). New
+     * consumers should subscribe here: {@code addListener} replays the current state
+     * synchronously, so subscribing late cannot miss the only edge.
+     */
+    public LinkStateMachine getLinkStateMachine() {
+        return linkState;
     }
 
     /** Queues an internal command without broadcasting it as a phone-facing command response. */
@@ -1317,9 +1324,10 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     }
 
     /**
-     * Inspect a message from the BES for a {@code wire_caps} object and upgrade the UART link to
-     * little-endian K900 STRING lengths when the firmware advertises it. {@code wire_caps} may sit
-     * at the top level or inside the {@code B} body.
+     * Inspect an sr_syvr message from the BES for a {@code wire_caps} object, record the
+     * advertisement in the link state machine (any sr_syvr also proves the link at the current
+     * baud), and upgrade the UART link to little-endian K900 STRING lengths when the firmware
+     * advertises it. {@code wire_caps} may sit at the top level or inside the {@code B} body.
      */
     private void applyBesWireCaps(JSONObject json) {
         if (json == null) {
@@ -1341,21 +1349,29 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                 }
             }
         }
-        if (caps != null && caps.optBoolean("k900_le", false)) {
-            besWireCapsK900Le = true;
+        LinkStateMachine.BesCaps advertised = null;
+        if (caps != null) {
+            boolean filePayloadV2 = caps.optBoolean("file_payload_v2", false);
+            advertised =
+                    new LinkStateMachine.BesCaps(
+                            caps.optBoolean("k900_le", false),
+                            caps.optBoolean("binary", false),
+                            filePayloadV2,
+                            // Big-pack support ships with the file_payload_v2 advertisement.
+                            filePayloadV2,
+                            caps.optInt("proto", BesWireFormat.PROTOCOL_VERSION_V2));
+        }
+        linkState.srSyvrParsed(advertised);
+        if (advertised != null && advertised.k900Le) {
             if (uartToBesEndian != K900LengthCodec.Endian.LE) {
                 uartToBesEndian = K900LengthCodec.Endian.LE;
                 Log.i(TAG, "🔤 UART K900 endian negotiated to LE via wire_caps");
             }
         }
-        if (caps != null && caps.optBoolean("binary", false)) {
-            besWireCapsBinary = true;
-            besWireCapsProto = caps.optInt("proto", BesWireFormat.PROTOCOL_VERSION_V2);
-            Log.i(TAG, "📡 BES wire_caps advertised binary relay proto=" + besWireCapsProto);
+        if (advertised != null && advertised.binary) {
+            Log.i(TAG, "📡 BES wire_caps advertised binary relay proto=" + advertised.proto);
         }
-        if (caps != null && caps.optBoolean("file_payload_v2", false)) {
-            besWireCapsFilePayloadV2 = true;
-            besSupportsBigPacks = true;
+        if (advertised != null && advertised.filePayloadV2) {
             Log.i(TAG, "📦 BES wire_caps advertised negotiated file payloads");
         }
     }
@@ -1379,7 +1395,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                 phoneSupportsFilePayloadV2 = true;
             }
             if ("coc".equals(transport)
-                    && besWireCapsFilePayloadV2
+                    && linkState.getNegotiatedCaps().filePayloadV2
                     && phoneSupportsFilePayloadV2) {
                 if (fileTransportCoc
                         && currentFileTransfer != null
@@ -1397,7 +1413,8 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                 if (lastNegotiatedMtu > 0) {
                     BesWireFormat.setFilePackSizeFromMtu(
                             lastNegotiatedMtu,
-                            besWireCapsFilePayloadV2 && phoneSupportsFilePayloadV2);
+                            linkState.getNegotiatedCaps().filePayloadV2
+                                    && phoneSupportsFilePayloadV2);
                     gattFilePackSize = BesWireFormat.getFilePackSize();
                 } else {
                     BesWireFormat.setFilePackSize(gattFilePackSize);
@@ -1866,7 +1883,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                     "📦 Batched-ack push mode "
                             + (besSupportsBatchedAcks ? "ENABLED" : "disabled")
                             + ", big packs "
-                            + (besSupportsBigPacks ? "ENABLED" : "disabled")
+                            + (linkState.getNegotiatedCaps().bigPacks ? "ENABLED" : "disabled")
                             + " (fw " + version + ", window " + effectivePushWindow()
                             + ", packSize " + effectiveUartPackSize() + ")");
         } catch (Exception e) {
@@ -1908,7 +1925,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     @Override
     public boolean isConnected() {
         // For K900, we consider the device connected if the serial port is open
-        return isSerialOpen && super.isConnected();
+        return linkState.isSerialOpen() && super.isConnected();
     }
 
     @Override
@@ -1926,7 +1943,9 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         Log.d(TAG, "🔌 =========================================");
         Log.d(TAG, "🔌 Serial path: " + serialPath);
 
-        isSerialOpen = false;
+        // serialClosed() also clears the negotiated BES caps (the legacy resetWireProtocolState
+        // caps reset); resetWireProtocolState() covers the phone-facing state and UART endianness.
+        linkState.serialClosed();
         resetWireProtocolState();
         Log.d(TAG, "🔌 ✅ Serial port marked as closed");
 
@@ -2390,7 +2409,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         Log.d(TAG, "🔌 =========================================");
         Log.d(TAG, "🔌 Serial path: " + serialPath);
 
-        isSerialOpen = true;
+        linkState.serialReady();
         Log.d(TAG, "🔌 ✅ Serial port marked as open");
 
         // For K900, when the serial port is ready, we consider ourselves "connected"
@@ -2520,7 +2539,14 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         }
     }
 
+    /**
+     * Shared prelude of every reopen/baud-switch path: the byte stream is about to be
+     * discontinuous, so drop any partially parsed frame and tell the link state machine the link
+     * is no longer proven at the current baud ({@code SerialPortBridge.reopen()} fires no serial
+     * close/ready callbacks, so this is the only signal those paths emit).
+     */
     private void clearMessageParser() {
+        linkState.streamDiscontinuity();
         synchronized (messageParserLock) {
             if (messageParser != null) {
                 messageParser.clear();
@@ -2538,7 +2564,11 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         Log.d(TAG, "🔌 Serial path: " + serialPath);
         Log.d(TAG, "🔌 Message: " + msg);
 
-        isSerialOpen = bSucc;
+        if (bSucc) {
+            linkState.serialReady();
+        } else {
+            linkState.serialClosed();
+        }
         Log.d(TAG, "🔌 Serial port open state set to: " + bSucc);
 
         if (bSucc) {
@@ -2569,7 +2599,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
      */
     @Override
     protected boolean sendFileInternal(String filePath) {
-        if (!isSerialOpen) {
+        if (!linkState.isSerialOpen()) {
             Log.e(TAG, "Cannot send file - serial port not open");
 
             // Report file transfer failure
@@ -2633,7 +2663,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
      */
     @Override
     protected boolean sendFileInternal(byte[] data, String fileName) {
-        if (!isSerialOpen) {
+        if (!linkState.isSerialOpen()) {
             Log.e(TAG, "Cannot send in-memory file - serial port not open");
             BluetoothReporting.reportFileTransferFailure(
                     context, memoryReportPath(fileName), "send_file", "serial_port_not_open", null);
@@ -2679,7 +2709,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                             fileName,
                             fileData,
                             effectiveUartPackSize(),
-                            besWireCapsFilePayloadV2);
+                            linkState.getNegotiatedCaps().filePayloadV2);
         }
         pendingPackets.clear();
         consecutiveFailures = 0; // Reset failure counter for new transfer
@@ -2812,7 +2842,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         // Advertise push-mode/batched-ack support to firmware that understands it
         // (bit 0 of the flags field; older firmware never reads flags).
         int flags = besSupportsBatchedAcks ? BesWireFormat.FILE_FLAG_PUSH_BATCH_ACK : 0;
-        if (besWireCapsFilePayloadV2) {
+        if (linkState.getNegotiatedCaps().filePayloadV2) {
             flags |= BesWireFormat.FILE_FLAG_DYNAMIC_PAYLOAD;
         }
         byte[] packet =
@@ -2954,7 +2984,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         lastNegotiatedMtu = mtu;
         int cocFilePackSize = fileTransportCoc ? BesWireFormat.getFilePackSize() : 0;
         BesWireFormat.setFilePackSizeFromMtu(
-                mtu, besWireCapsFilePayloadV2 && phoneSupportsFilePayloadV2);
+                mtu, linkState.getNegotiatedCaps().filePayloadV2 && phoneSupportsFilePayloadV2);
         gattFilePackSize = BesWireFormat.getFilePackSize();
         if (fileTransportCoc) {
             BesWireFormat.setFilePackSize(cocFilePackSize);
