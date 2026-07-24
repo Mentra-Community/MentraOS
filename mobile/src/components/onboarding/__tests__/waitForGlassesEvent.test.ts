@@ -1,4 +1,4 @@
-import {waitForButtonPress, waitForTouchGesture} from "@/components/onboarding/waitForGlassesEvent"
+import {waitForButtonPress, waitForHeadUp, waitForTouchGesture} from "@/components/onboarding/waitForGlassesEvent"
 import {emitBluetoothSdkEvent, getBluetoothSdkListenerCount, resetBluetoothSdkMock} from "@/test-utils/mockBluetoothSdk"
 
 describe("waitForGlassesEvent", () => {
@@ -71,6 +71,40 @@ describe("waitForGlassesEvent", () => {
 
       controller.abort()
       expect(getBluetoothSdkListenerCount("touch_event")).toBe(0)
+    })
+  })
+
+  describe("waitForHeadUp", () => {
+    it("resolves when the wearer looks up and removes its listener", async () => {
+      const controller = new AbortController()
+      const done = waitForHeadUp(controller.signal)
+
+      emitBluetoothSdkEvent("head_up", {up: true})
+
+      await expect(done).resolves.toBeUndefined()
+      expect(getBluetoothSdkListenerCount("head_up")).toBe(0)
+    })
+
+    it("ignores head-down events", () => {
+      const controller = new AbortController()
+      let resolved = false
+      waitForHeadUp(controller.signal).then(() => {
+        resolved = true
+      })
+
+      emitBluetoothSdkEvent("head_up", {up: false})
+
+      expect(resolved).toBe(false)
+      expect(getBluetoothSdkListenerCount("head_up")).toBe(1)
+    })
+
+    it("removes its listener when the signal aborts", () => {
+      const controller = new AbortController()
+      waitForHeadUp(controller.signal)
+      expect(getBluetoothSdkListenerCount("head_up")).toBe(1)
+
+      controller.abort()
+      expect(getBluetoothSdkListenerCount("head_up")).toBe(0)
     })
   })
 })

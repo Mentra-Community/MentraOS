@@ -132,7 +132,7 @@ describe("pairing success screen", () => {
   })
 
   it("finishes non-Live pairing without adding setup routes", async () => {
-    ;(useRoute as jest.Mock).mockReturnValue({params: {deviceModel: "Even Realities G1"}})
+    ;(useRoute as jest.Mock).mockReturnValue({params: {deviceModel: "Vuzix Z100"}})
     await useSettingsStore.getState().setSetting(SETTINGS.onboarding_os_completed.key, true, false)
 
     const {getAllByText} = render(<PairingSuccessScreen />)
@@ -145,7 +145,7 @@ describe("pairing success screen", () => {
     expect(pushUnder).not.toHaveBeenCalled()
   })
 
-  it("opens MentraOS onboarding after pairing non-Live glasses when it is incomplete", async () => {
+  it("stacks G1 onboarding before MentraOS onboarding", async () => {
     ;(useRoute as jest.Mock).mockReturnValue({params: {deviceModel: "Even Realities G1"}})
 
     const {getAllByText} = render(<PairingSuccessScreen />)
@@ -154,7 +154,36 @@ describe("pairing success screen", () => {
     fireEvent.press(getAllByText("onboarding:continueSetup")[1])
 
     await waitFor(() => expect(clearHistoryAndGoHome).toHaveBeenCalled())
-    expect(push).toHaveBeenCalledWith("/onboarding/os")
+    expect(push).toHaveBeenCalledWith("/onboarding/even-realities")
+    expect(pushUnder).toHaveBeenCalledWith("/onboarding/os")
+  })
+
+  it("opens G2 onboarding even when MentraOS onboarding is already complete", async () => {
+    ;(useRoute as jest.Mock).mockReturnValue({params: {deviceModel: "Even Realities G2"}})
+    await useSettingsStore.getState().setSetting(SETTINGS.onboarding_os_completed.key, true, false)
+
+    const {getAllByText} = render(<PairingSuccessScreen />)
+
+    await waitFor(() => expect(getAllByText("onboarding:continueSetup").length).toBeGreaterThan(0))
+    fireEvent.press(getAllByText("onboarding:continueSetup")[1])
+
+    await waitFor(() => expect(clearHistoryAndGoHome).toHaveBeenCalled())
+    expect(push).toHaveBeenCalledWith("/onboarding/even-realities")
+    expect(pushUnder).not.toHaveBeenCalled()
+  })
+
+  it("does not replay completed G1 onboarding", async () => {
+    ;(useRoute as jest.Mock).mockReturnValue({params: {deviceModel: "Even Realities G1"}})
+    await useSettingsStore.getState().setSetting(SETTINGS.onboarding_even_realities_completed.key, true, false)
+    await useSettingsStore.getState().setSetting(SETTINGS.onboarding_os_completed.key, true, false)
+
+    const {getAllByText} = render(<PairingSuccessScreen />)
+
+    await waitFor(() => expect(getAllByText("common:continue").length).toBeGreaterThan(0))
+    fireEvent.press(getAllByText("common:continue")[1])
+
+    await waitFor(() => expect(clearHistoryAndGoHome).toHaveBeenCalled())
+    expect(push).not.toHaveBeenCalled()
     expect(pushUnder).not.toHaveBeenCalled()
   })
 })

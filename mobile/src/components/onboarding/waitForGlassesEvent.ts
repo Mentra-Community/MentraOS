@@ -53,3 +53,24 @@ export const waitForTouchGesture = (signal: AbortSignal, gestureNames: string[])
     signal.addEventListener("abort", onAbort)
   })
 }
+
+// Resolve once the glasses report that the wearer has looked up.
+export const waitForHeadUp = (signal: AbortSignal): Promise<void> => {
+  return new Promise<void>((resolve) => {
+    if (signal.aborted) {
+      resolve()
+      return
+    }
+    const unsub = engine.glasses.onHeadUp((data) => {
+      if (data?.up) {
+        unsub()
+        signal.removeEventListener("abort", onAbort)
+        resolve()
+      }
+    })
+    const onAbort = () => {
+      unsub()
+    }
+    signal.addEventListener("abort", onAbort)
+  })
+}

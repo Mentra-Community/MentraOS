@@ -413,6 +413,7 @@ const mockIslandEntries = () => {
         requestVersionInfo: jest.fn(() => Promise.resolve()),
         onButtonPress: subscribeVia("button_press"),
         onTouchGesture: subscribeVia("touch_event"),
+        onHeadUp: subscribeVia("head_up"),
         wifi: {
           scan: jest.fn(() => Promise.resolve([])),
           onScanResult: jest.fn(() => () => {}),

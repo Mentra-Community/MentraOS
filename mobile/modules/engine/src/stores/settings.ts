@@ -341,6 +341,13 @@ export const SETTINGS: Record<string, Setting> = {
     saveOnServer: true,
     persist: true,
   },
+  onboarding_even_realities_completed: {
+    key: "onboarding_even_realities_completed",
+    defaultValue: () => false,
+    writable: true,
+    saveOnServer: true,
+    persist: true,
+  },
   onboarding_os_completed: {
     key: "onboarding_os_completed",
     defaultValue: () => false,

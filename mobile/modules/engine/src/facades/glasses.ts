@@ -11,7 +11,7 @@
 // surface, not the public entry. Relative path (the alias doesn't resolve in engine's
 // standalone build); jest moduleNameMapper + tsconfig both resolve it.
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
-import type {ButtonPressEvent, TouchEvent} from "@mentra/bluetooth-sdk/internal"
+import type {ButtonPressEvent, HeadUpEvent, TouchEvent} from "@mentra/bluetooth-sdk/internal"
 import {useGlassesStore} from "../stores/glasses"
 import {useSettingsStore, SETTINGS} from "../stores/settings"
 import {hasDefaultDevice} from "../services/DeviceStoreHydration"
@@ -169,6 +169,10 @@ export const glasses = {
   },
   onTouchGesture: (cb: (event: TouchEvent) => void): (() => void) => {
     const sub = BluetoothSdk.addListener("touch_event", cb)
+    return () => sub.remove()
+  },
+  onHeadUp: (cb: (event: HeadUpEvent) => void): (() => void) => {
+    const sub = BluetoothSdk.addListener("head_up", cb)
     return () => sub.remove()
   },
 

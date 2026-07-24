@@ -17,6 +17,7 @@ export default function PairingSuccessScreen() {
   const route = useRoute()
   const {deviceModel: routeDeviceModel} = (route.params as {deviceModel?: string}) || {}
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
+  const [onboardingEvenRealitiesCompleted] = useSetting<boolean>(SETTINGS.onboarding_even_realities_completed.key)
   const [onboardingOsCompleted] = useSetting<boolean>(SETTINGS.onboarding_os_completed.key)
   const [hasSetupRoutes, setHasSetupRoutes] = useState(false)
   const stackPromiseRef = useRef<Promise<string[]> | null>(null)
@@ -37,7 +38,14 @@ export default function PairingSuccessScreen() {
   const buildSetupStack = useCallback(async (): Promise<string[]> => {
     const features = getModelCapabilities(deviceModel as DeviceTypes)
     if (!features.hasOta) {
-      return onboardingOsCompleted ? [] : ["/onboarding/os"]
+      const routes: string[] = []
+      if (!onboardingEvenRealitiesCompleted && (deviceModel === DeviceTypes.G1 || deviceModel === DeviceTypes.G2)) {
+        routes.push("/onboarding/even-realities")
+      }
+      if (!onboardingOsCompleted) {
+        routes.push("/onboarding/os")
+      }
+      return routes
     }
     // OTA check runs on the phone; WiFi is only required after an update is confirmed (see check-for-updates).
     let bluetoothClassicConnected = await engine.pairing.waitForBluetoothClassic({timeoutMs: 1000})
@@ -53,7 +61,7 @@ export default function PairingSuccessScreen() {
     newStack.push("/ota/check-for-updates")
     newStack.sort((a, b) => order.indexOf(a) - order.indexOf(b))
     return newStack
-  }, [deviceModel, onboardingOsCompleted])
+  }, [deviceModel, onboardingEvenRealitiesCompleted, onboardingOsCompleted])
 
   useEffect(() => {
     stackPromiseRef.current = buildSetupStack().then((routes) => {

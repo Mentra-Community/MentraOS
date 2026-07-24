@@ -233,6 +233,22 @@ const en = {
     liveEndOnboardingHomeMessage: "You'll finish setup and go to the home screen.",
     g1Connected: "Even Realities G1 connected",
     g2Connected: "Even Realities G2 connected",
+    evenExploreTitle: "Explore HeadUp Display",
+    evenExploreDescription:
+      "See how your {{model}} projects key info in your line of sight. Try looking up to bring it to life.",
+    evenLookUpDescription: "See key information appear in your field of view.",
+    evenLookUpTitle: "Look up to explore the HeadUp Display.",
+    evenAdjustInstruction: "Drag the slider to adjust your HeadUp angle.",
+    evenAdjustNote: "Note: 0° is the position when you look ahead naturally.",
+    evenAdjustTitle: "Adjust Your View",
+    evenAdjustDescription:
+      "Tilt your head naturally and fine-tune the HeadUp angle until the display feels just right.",
+    evenConnectAppsTitle: "Connect Your Apps",
+    evenConnectAppsDescription:
+      "Link your favorite apps to see live updates, reminders, and smart prompts projected directly into your HeadUp view.",
+    evenEndOnboardingTitle: "Skip the Even Realities tutorial?",
+    evenEndOnboardingMessage: "You'll continue to the MentraOS tutorial.",
+    evenEndOnboardingHomeMessage: "You'll finish setup and go to the home screen.",
     r1Connected: "Even Realities R1 connected",
     nimoConnected: "NIMO connected",
     osWelcomeTitle: "Welcome to Mentra",
