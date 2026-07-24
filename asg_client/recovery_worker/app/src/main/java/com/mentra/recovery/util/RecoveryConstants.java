@@ -56,6 +56,18 @@ public final class RecoveryConstants {
    * still in flight.
    */
   public static final long REINSTALL_OBSERVE_TIMEOUT_MS = 60000L;
+
+  /**
+   * How long the downgrade worker keeps its transaction alive after first observing the target
+   * version, re-checking that the version holds. A recovery backup install that outlived the
+   * reinstall observe window could otherwise commit right after convergence, with the
+   * transaction already cleared and no WAIT_FOR_REVERT left to re-uninstall it. During the
+   * linger any higher build that (re)appears resumes the state machine instead.
+   */
+  public static final long DOWNGRADE_CONVERGENCE_LINGER_MS = 60000L;
+
+  /** Poll cadence while lingering at the converged target version. */
+  public static final long DOWNGRADE_LINGER_POLL_MS = 5000L;
   public static final long REINSTALL_LATE_PONG_GRACE_MS = 30000L;
   public static final long RECOVERY_WINDOW_MS = 30 * 60 * 1000L;
   public static final int MAX_RECOVERIES_PER_WINDOW = 3;

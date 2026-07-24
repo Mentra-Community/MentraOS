@@ -34,6 +34,18 @@ import java.util.TreeSet;
  * from observable package state, so the worker is safe to re-run after process death, reboot, or a
  * lost broadcast at any point.
  *
+ * <p><b>Reliability invariant — where correctness lives.</b> The OEM installer is an asynchronous
+ * broadcast with no completion callback and no cancellation, so no glasses-side protocol (locks,
+ * observe windows, the convergence linger) can close every race — they only bound how long a
+ * divergence can last. Correctness is therefore NOT claimed here: it lives in the phone's
+ * reconciliation loop, which compares {@code version_info} against the pinned manifest on every
+ * connect and poll, and re-offers the pin whenever they differ. Every glasses-side race, however
+ * exotic, resolves to at-most-temporary divergence that the next phone check heals. Review changes
+ * to this package against that frame: a new race window is a latency/UX bug, not a correctness
+ * bug, PROVIDED nothing here installs a build the phone did not sanction (the sole exception is
+ * heartbeat recovery's backup reinstall, which exists precisely for the ASG-dead case where no
+ * phone channel is possible, and which serializes with this transaction via the install lock).
+ *
  * <p>If the transaction gives up after the revert, the device is left on the factory build with the
  * transaction cleared. There is deliberately no autonomous path back to a fleet build: the factory
  * build is a functioning, pairable baseline, and on the next phone connection the version check
@@ -94,6 +106,18 @@ public class DowngradeWorker extends Worker {
 
         switch (action) {
           case ALREADY_AT_TARGET:
+            // Linger before clearing: an OEM install dispatched earlier (e.g. a recovery backup
+            // reinstall that outlived its observe window) commits asynchronously and could land
+            // right after convergence — with the transaction cleared there would be no
+            // WAIT_FOR_REVERT left to re-uninstall it. Keep the transaction alive for a bounded
+            // window re-checking the version; any change resumes the state machine, which
+            // re-derives (higher build -> re-uninstall) instead of completing.
+            if (!versionHeldThroughLinger(context, target)) {
+              Log.w(
+                  RecoveryConstants.TAG,
+                  "Installed version moved off target during convergence linger; resuming");
+              continue;
+            }
             deleteStagedApk(store);
             store.clear();
             telemetry.emit(
@@ -170,6 +194,23 @@ public class DowngradeWorker extends Worker {
 
   private interface VersionPredicate {
     boolean test(long installedVersion);
+  }
+
+  /**
+   * True when the installed version stays exactly at {@code target} for the whole convergence
+   * linger window; false the moment it changes (including briefly unresolvable — the caller's
+   * re-derivation distinguishes a real regression from a transient).
+   */
+  private static boolean versionHeldThroughLinger(Context context, long target) {
+    long deadline =
+        SystemClock.elapsedRealtime() + RecoveryConstants.DOWNGRADE_CONVERGENCE_LINGER_MS;
+    while (SystemClock.elapsedRealtime() < deadline) {
+      SystemClock.sleep(RecoveryConstants.DOWNGRADE_LINGER_POLL_MS);
+      if (installedAsgVersion(context) != target) {
+        return false;
+      }
+    }
+    return true;
   }
 
   private boolean waitForInstalledVersion(

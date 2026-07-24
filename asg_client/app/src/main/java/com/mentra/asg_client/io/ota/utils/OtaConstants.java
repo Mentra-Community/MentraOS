@@ -83,11 +83,15 @@ public class OtaConstants {
     public static final String DOWNGRADE_APK_FILENAME = "asg_client_downgrade.apk";
     /**
      * Grace period after a downgrade handoff before ASG concludes the recovery worker did not
-     * take the transaction. A successful handoff uninstalls ASG well within this window; the
-     * watchdog only fires when the handoff was rejected/dropped, clearing the OTA-in-progress
-     * latch so future OTAs are not blocked.
+     * take the transaction. The watchdog only fires when the handoff was rejected/dropped,
+     * clearing the OTA-in-progress latch so future OTAs are not blocked. The window must cover
+     * the WORST-CASE legitimate queue time, not just the happy path: DowngradeWorker serializes
+     * behind the recovery install lock, which a backup reinstall may hold for up to its 60s
+     * observe window (recovery worker REINSTALL_OBSERVE_TIMEOUT_MS) before the uninstall can
+     * even be dispatched. 3 minutes = that hold + dispatch/uninstall time + margin, so a handoff
+     * queued behind an in-flight reinstall is not misreported as failed.
      */
-    public static final long DOWNGRADE_HANDOFF_TIMEOUT_MS = 60_000L;
+    public static final long DOWNGRADE_HANDOFF_TIMEOUT_MS = 180_000L;
     /**
      * Oldest recovery worker versionCode that understands the downgrade handoff
      * ({@code ACTION_REQUEST_DOWNGRADE}). ASG deploys its bundled recovery worker asynchronously
