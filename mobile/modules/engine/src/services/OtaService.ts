@@ -41,6 +41,7 @@ export function startOtaService(): void {
   // the ONLY reconnect-edge signal the OTA coordinator gets after an APK install.
   subs.push(
     BluetoothSdk.addListener("glasses_session_changed", (event) => {
+      console.log(`[OTA] glasses_session_changed ${event.previous_sid || "<none>"} -> ${event.sid}`)
       GlobalEventEmitter.emit("glasses_session_changed", {previousSid: event.previous_sid, sid: event.sid})
     }),
   )
