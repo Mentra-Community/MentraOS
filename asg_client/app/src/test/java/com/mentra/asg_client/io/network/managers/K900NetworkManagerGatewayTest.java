@@ -38,6 +38,14 @@ public class K900NetworkManagerGatewayTest {
     }
 
     @Test
+    public void capsReadinessAtTheOverallPhoneResponseDeadline() {
+        assertThat(K900NetworkManager.calculateLocalHotspotReadinessDeadline(14_000L, 3_000L))
+                .isEqualTo(14_000L);
+        assertThat(K900NetworkManager.calculateLocalHotspotReadinessDeadline(20_000L, 3_000L))
+                .isEqualTo(15_000L);
+    }
+
+    @Test
     public void doesNotRetryUnrelatedHotspotFailures() {
         assertThat(
                         K900NetworkManager.shouldRetryLocalHotspotAfterDisconnect(

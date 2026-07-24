@@ -47,6 +47,7 @@ public class K900NetworkManager extends BaseNetworkManager {
     private boolean localHotspotIncompatibleModeRetried;
     private boolean localHotspotDisconnectedStationWifi;
     private int localHotspotGeneration;
+    private long localHotspotStartupDeadlineMs;
     private long localHotspotReadinessDeadlineMs;
     private String pendingLocalHotspotSsid = "";
     private String pendingLocalHotspotPassword = "";
@@ -204,6 +205,9 @@ public class K900NetworkManager extends BaseNetworkManager {
             }
             localHotspotStarting = true;
             localHotspotIncompatibleModeRetried = false;
+            localHotspotStartupDeadlineMs =
+                    SystemClock.elapsedRealtime()
+                            + AsgConstants.LOCAL_HOTSPOT_STARTUP_TIMEOUT_MS;
             generation = ++localHotspotGeneration;
         }
 
@@ -216,6 +220,11 @@ public class K900NetworkManager extends BaseNetworkManager {
                 Log.d(TAG, "🔥 Ignoring hotspot request from a stale generation");
                 return;
             }
+        }
+
+        if (SystemClock.elapsedRealtime() >= localHotspotStartupDeadlineMs) {
+            failLocalHotspotStartup(generation, "Local-only hotspot startup timed out");
+            return;
         }
 
         try {
@@ -342,8 +351,8 @@ public class K900NetworkManager extends BaseNetworkManager {
             pendingLocalHotspotSsid = ssid;
             pendingLocalHotspotPassword = password;
             localHotspotReadinessDeadlineMs =
-                    SystemClock.elapsedRealtime()
-                            + AsgConstants.LOCAL_HOTSPOT_READINESS_TIMEOUT_MS;
+                    calculateLocalHotspotReadinessDeadline(
+                            localHotspotStartupDeadlineMs, SystemClock.elapsedRealtime());
         }
         checkLocalHotspotReadiness(generation);
     }
@@ -353,6 +362,11 @@ public class K900NetworkManager extends BaseNetworkManager {
         synchronized (localHotspotLock) {
             pendingLocalHotspotReadiness = null;
             if (generation != localHotspotGeneration || localHotspotReservation == null) {
+                return;
+            }
+            if (SystemClock.elapsedRealtime() >= localHotspotReadinessDeadlineMs) {
+                failLocalHotspotStartup(
+                        generation, "Local-only hotspot gateway did not become ready");
                 return;
             }
             if (!gatewayIp.isEmpty()) {
@@ -369,16 +383,17 @@ public class K900NetworkManager extends BaseNetworkManager {
                                 + gatewayIp);
                 return;
             }
-            if (SystemClock.elapsedRealtime() >= localHotspotReadinessDeadlineMs) {
-                failLocalHotspotStartup(
-                        generation, "Local-only hotspot gateway did not become ready");
-                return;
-            }
             pendingLocalHotspotReadiness = () -> checkLocalHotspotReadiness(generation);
             localHotspotHandler.postDelayed(
                     pendingLocalHotspotReadiness,
                     AsgConstants.LOCAL_HOTSPOT_READINESS_POLL_MS);
         }
+    }
+
+    static long calculateLocalHotspotReadinessDeadline(
+            long startupDeadlineMs, long nowMs) {
+        return Math.min(
+                startupDeadlineMs, nowMs + AsgConstants.LOCAL_HOTSPOT_READINESS_TIMEOUT_MS);
     }
 
     private String findLocalHotspotGatewayIp() {
