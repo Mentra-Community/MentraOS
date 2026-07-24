@@ -38,11 +38,21 @@ public class K900NetworkManagerGatewayTest {
     }
 
     @Test
-    public void capsReadinessAtTheOverallPhoneResponseDeadline() {
-        assertThat(K900NetworkManager.calculateLocalHotspotReadinessDeadline(14_000L, 3_000L))
+    public void reservesTimeToPublishReadinessBeforeThePhoneDeadline() {
+        assertThat(K900NetworkManager.calculateLocalHotspotReadinessDeadline(15_000L, 3_000L))
                 .isEqualTo(14_000L);
         assertThat(K900NetworkManager.calculateLocalHotspotReadinessDeadline(20_000L, 3_000L))
                 .isEqualTo(15_000L);
+    }
+
+    @Test
+    public void publishesAReadyGatewayOnlyBeforeThePhoneDeadline() {
+        assertThat(K900NetworkManager.canPublishLocalHotspotReady(true, 14_500L, 15_000L))
+                .isTrue();
+        assertThat(K900NetworkManager.canPublishLocalHotspotReady(true, 15_000L, 15_000L))
+                .isFalse();
+        assertThat(K900NetworkManager.canPublishLocalHotspotReady(false, 14_500L, 15_000L))
+                .isFalse();
     }
 
     @Test
