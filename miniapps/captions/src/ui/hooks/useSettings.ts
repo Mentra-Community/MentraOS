@@ -75,6 +75,12 @@ export function useSettings() {
     return true
   }
 
+  const updateCaptionTimeoutSeconds = async (seconds: number): Promise<boolean> => {
+    setSettings((prev) => (prev ? {...prev, captionTimeoutSeconds: seconds} : prev))
+    mentra.send("captions:set-caption-timeout", {seconds})
+    return true
+  }
+
   return {
     settings,
     loading,
@@ -84,5 +90,6 @@ export function useSettings() {
     updateDisplayLines,
     updateDisplayWidth,
     updateWordBreaking,
+    updateCaptionTimeoutSeconds,
   }
 }
