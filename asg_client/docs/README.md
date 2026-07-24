@@ -22,6 +22,11 @@ Android application that runs on Mentra Live smart glasses, bridging hardware an
 - [File manager integration](features/file-manager-integration.md) — package-namespaced media storage
 - [BES MCU firmware OTA](features/bes-ota.md) — pushing new BES firmware over UART
 
+## Testing and characterization
+
+- [Mentra Live WHIP battery and thermal characterization](mentra-live-whip-battery-tests.md) — runtime, stability, bitrate, and peak internal-temperature matrix
+- [Recording FPS vs. thermals](fps-thermal-test/README.md) — controlled local-recording thermal sweep
+
 ## Compatibility
 
 - **Mentra Live** is the only officially supported device. The codebase uses `K900` as the internal codename for Mentra Live's hardware platform — see [overview.md → K900 = Mentra Live](overview.md#a-naming-note-k900--mentra-live).
