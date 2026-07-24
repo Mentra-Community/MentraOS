@@ -30,11 +30,20 @@ public final class DowngradeController {
       return;
     }
     DowngradeTransactionStore store = new DowngradeTransactionStore(context);
-    if (!store.begin(targetVersion, apkPath, apkSha256)) {
-      Log.e(
-          RecoveryConstants.TAG,
-          "Rejected downgrade handoff (target=" + targetVersion + ", path=" + apkPath + ")");
-      return;
+    // Serialize with heartbeat recovery: if RecoveryWorker is mid reinstall-decision it holds
+    // this lock across its check + install dispatch, so the transaction can only begin before
+    // its check (recovery then sees it and stands down) or after its reinstall completed (the
+    // downgrade then runs against the reinstalled backup) — never interleaved.
+    DowngradeTransactionStore.installLock().lock();
+    try {
+      if (!store.begin(targetVersion, apkPath, apkSha256)) {
+        Log.e(
+            RecoveryConstants.TAG,
+            "Rejected downgrade handoff (target=" + targetVersion + ", path=" + apkPath + ")");
+        return;
+      }
+    } finally {
+      DowngradeTransactionStore.installLock().unlock();
     }
     Log.i(
         RecoveryConstants.TAG,

@@ -3,6 +3,8 @@ package com.mentra.recovery.downgrade;
 import android.content.Context;
 import android.content.SharedPreferences;
 
+import java.util.concurrent.locks.ReentrantLock;
+
 import com.mentra.recovery.util.RecoveryConstants;
 
 /**
@@ -13,6 +15,18 @@ import com.mentra.recovery.util.RecoveryConstants;
  * transaction survives the process death the very next step is expected to cause.
  */
 public final class DowngradeTransactionStore {
+  /**
+   * Serializes ASG (re)install decisions inside the recovery process. A double-check of
+   * {@link #isActive()} narrows but cannot close the window in which heartbeat recovery decides
+   * ASG is dead just before a downgrade handoff persists a transaction — recovery would then
+   * reinstall the higher fleet backup while the downgrade runs. Every path that mutates the
+   * installed ASG based on transaction state must hold this lock across its check AND the
+   * dispatch it guards: {@code RecoveryWorker} across its pre-reinstall check + reinstall, and
+   * {@code DowngradeController} around {@link #begin(long, String, String)}. Both run in the
+   * recovery app's single process, so a process-wide lock is a true serialization.
+   */
+  private static final ReentrantLock INSTALL_LOCK = new ReentrantLock();
+
   private static final String KEY_TARGET_VERSION = "target_version_code";
   private static final String KEY_APK_PATH = "apk_path";
   private static final String KEY_APK_SHA256 = "apk_sha256";
@@ -21,6 +35,11 @@ public final class DowngradeTransactionStore {
   private static final String KEY_STARTED_AT_MS = "started_at_ms";
 
   private final SharedPreferences preferences;
+
+  /** The process-wide install serialization lock; see {@link #INSTALL_LOCK}. */
+  public static ReentrantLock installLock() {
+    return INSTALL_LOCK;
+  }
 
   public DowngradeTransactionStore(Context context) {
     preferences =
