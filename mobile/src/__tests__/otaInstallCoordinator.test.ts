@@ -425,6 +425,25 @@ describe("OtaInstallCoordinator legacy ota_progress normalization (WP 8C-a)", ()
     expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalled()
   })
 
+  it("glasses_session_changed cancels a stale query-reply fallback (no duplicate ota_start)", async () => {
+    // Attach with an existing session: initial mount queries and arms the reply
+    // fallback. The session change then arms the post-APK delay; the stale fallback
+    // must not fire a second ota_start alongside it.
+    setGlassesConnected()
+    useGlassesStore
+      .getState()
+      .setOtaStatus(
+        inProgressStatus({stepType: "apk", status: "step_complete", totalSteps: 2, currentStep: 1, stepPercent: 100}),
+      )
+    otaInstallCoordinator.attach()
+    expect(bluetoothSdkMock.sendOtaQueryStatus).toHaveBeenCalledTimes(1)
+    bluetoothSdkMock.startOtaUpdate.mockClear()
+
+    GlobalEventEmitter.emit("glasses_session_changed", {previousSid: "old0", sid: "new1"})
+    await jest.advanceTimersByTimeAsync(Math.max(QUERY_REPLY_TIMEOUT_MS, POST_APK_OTA_START_DELAY_MS) + 1000)
+    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
+  })
+
   it("glasses_session_changed mid multi-step session arms the post-APK ota_start delay", async () => {
     setGlassesConnected()
     otaInstallCoordinator.attach()

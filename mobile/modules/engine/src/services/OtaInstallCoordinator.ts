@@ -732,6 +732,12 @@ class OtaInstallCoordinator {
    */
   private runReconnectArbitration(label: string): boolean {
     console.log(`[OTA_PROGRESS] ${label}: false->true, flipping sawReconnectEdge=true`)
+    // A physical reconnect passed through the disconnect branch first, which cleared
+    // these timers; a session-change edge never disconnects, so a fallback armed by an
+    // earlier mount/query could otherwise fire alongside the arbitration below and send
+    // a duplicate ota_start. Clearing here is a no-op on the physical path.
+    this.clearPostApkDelay()
+    this.clearQueryReplyTimeout()
     this.setSawReconnectEdge(true)
 
     // Legacy apk settle window (WP 8C): the glasses restarting into the new build is
