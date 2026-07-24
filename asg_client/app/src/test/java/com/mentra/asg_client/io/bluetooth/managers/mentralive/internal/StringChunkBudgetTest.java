@@ -28,11 +28,13 @@ public class StringChunkBudgetTest {
     public void setUp() {
         // v1 string mode — the post-APK-restart steady state until a BLE reconnect.
         BesWireFormat.resetBinaryProtocol();
+        MessageChunker.resetStringChunkBudget();
     }
 
     @After
     public void tearDown() {
         BesWireFormat.resetBinaryProtocol();
+        MessageChunker.resetStringChunkBudget();
     }
 
     /** The 251-byte ota_status completion shape from the incident, quote-dense like the real payload. */
@@ -65,7 +67,7 @@ public class StringChunkBudgetTest {
             // measure the packed frame exactly as the send path produces it.
             byte[] packed = BesWireFormat.formatMessageForTransmission(chunk.toString());
             assertThat(packed).isNotNull();
-            assertThat(packed.length).isLessThanOrEqualTo(MessageChunker.MAX_PACKED_STRING_CHUNK_SIZE);
+            assertThat(packed.length).isLessThanOrEqualTo(MessageChunker.maxPackedStringChunkSize());
 
             reassembled =
                     reassembler.addChunk(
@@ -89,6 +91,48 @@ public class StringChunkBudgetTest {
 
     @Test
     public void fiveHundredByteMessageChunksFitTheNotificationBudget() throws Exception {
+        assertAllPackedChunksFitAndRoundTrip(largeQuoteDenseJson(500));
+    }
+
+    // ---- negotiated notify_cap budget (BES firmware >= 17.26.7.23) ----
+
+    @Test
+    public void budgetDefaultsToTheConservativeFallback() {
+        assertThat(MessageChunker.maxPackedStringChunkSize())
+                .isEqualTo(com.mentra.asg_client.AsgConstants.K900_STRING_CHUNK_MAX_FRAME_BYTES)
+                .isEqualTo(240);
+    }
+
+    @Test
+    public void advertisedNotifyCapRaisesTheBudgetByTheSameMargin() {
+        MessageChunker.setStringChunkBudgetFromNotifyCap(509);
+        assertThat(MessageChunker.maxPackedStringChunkSize()).isEqualTo(509 - 13);
+
+        MessageChunker.setStringChunkBudgetFromNotifyCap(253);
+        assertThat(MessageChunker.maxPackedStringChunkSize()).isEqualTo(253 - 13);
+    }
+
+    @Test
+    public void notifyCapBelowTheContractFloorIsIgnored() {
+        MessageChunker.setStringChunkBudgetFromNotifyCap(509);
+        MessageChunker.setStringChunkBudgetFromNotifyCap(200);
+
+        // The malformed advertisement must not shrink the budget below the validated fallback.
+        assertThat(MessageChunker.maxPackedStringChunkSize()).isEqualTo(509 - 13);
+    }
+
+    @Test
+    public void resetRestoresTheFallbackBudget() {
+        MessageChunker.setStringChunkBudgetFromNotifyCap(509);
+
+        MessageChunker.resetStringChunkBudget();
+
+        assertThat(MessageChunker.maxPackedStringChunkSize()).isEqualTo(240);
+    }
+
+    @Test
+    public void chunksStillFitAndRoundTripUnderARaisedBudget() throws Exception {
+        MessageChunker.setStringChunkBudgetFromNotifyCap(509);
         assertAllPackedChunksFitAndRoundTrip(largeQuoteDenseJson(500));
     }
 }

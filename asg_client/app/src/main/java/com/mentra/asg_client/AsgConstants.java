@@ -127,16 +127,33 @@ public class AsgConstants {
     public static final int OTA_COMPLETION_RESEND_ATTEMPTS = 15;
 
     /**
-     * Maximum packed frame size for a v1 K900 STRING ck chunk. The BES relays v1 string
-     * frames to the phone in a single unfragmented BLE notification, and the effective ATT
-     * payload on that link is 253 bytes (ATT MTU 256) regardless of the MTU the phone
-     * requested — a packed chunk over that cap is silently truncated on the wire and the
-     * phone drops it as unparseable (incident rep_01KY6BJ0B7A4RBMQ7VN39KAE5E: OTA
-     * completion ck chunks packed to 256-263 bytes and none survived). The previous budget
-     * was MTU_TARGET (509), which only holds for v2 binary fragments with phone-side
-     * reassembly. 240 leaves margin for BES re-framing variance.
+     * FALLBACK maximum packed frame size for a v1 K900 STRING ck chunk, used until the BES
+     * advertises its true notification cap. The BES relays v1 string frames to the phone in a
+     * single unfragmented BLE notification, and the worst-case ATT payload on that link is 253
+     * bytes (ATT MTU 256) regardless of the MTU the phone requested — a packed chunk over that
+     * cap is silently truncated on the wire and the phone drops it as unparseable (incident
+     * rep_01KY6BJ0B7A4RBMQ7VN39KAE5E: OTA completion ck chunks packed to 256-263 bytes and none
+     * survived). 240 = 253 - {@link #K900_STRING_CHUNK_BUDGET_MARGIN_BYTES}. BES firmware >=
+     * 17.26.7.23 advertises {@code wire_caps.notify_cap} (the measured single-notification
+     * payload cap) and the budget becomes notify_cap minus the same margin — see
+     * MessageChunker.setStringChunkBudgetFromNotifyCap.
      */
     public static final int K900_STRING_CHUNK_MAX_FRAME_BYTES = 240;
+
+    /**
+     * Safety margin subtracted from the BLE notification payload cap when sizing packed v1
+     * STRING ck chunks, absorbing BES re-framing variance between the UART frame we send and
+     * the notification the BES actually emits (240 = 253 - 13 was the hardware-validated
+     * budget for the worst-case 253-byte cap).
+     */
+    public static final int K900_STRING_CHUNK_BUDGET_MARGIN_BYTES = 13;
+
+    /**
+     * Contract floor of {@code wire_caps.notify_cap} (BES firmware >= 17.26.7.23 computes
+     * max(253, min(ATT MTU - 3, 509))). An advertised value below this is malformed and is
+     * ignored in favor of the fallback budget.
+     */
+    public static final int K900_BLE_NOTIFY_CAP_FLOOR_BYTES = 253;
 
     /** Delay before probing the alternate UART baud after ASG starts at the rendezvous rate. */
     public static final long UART_BOOT_RECOVERY_INITIAL_DELAY_MS = 8000;

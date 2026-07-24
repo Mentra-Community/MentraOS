@@ -572,6 +572,9 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     public void resetWireProtocolState() {
         resetPhoneWireProtocolState();
         uartToBesEndian = K900LengthCodec.Endian.BE;
+        // The negotiated notify_cap dies with the caps snapshot (serialClosed), so the string
+        // chunk budget must fall back to the conservative default at the same lifecycle point.
+        MessageChunker.resetStringChunkBudget();
     }
 
     /** Send BLE Wire v2 handshake frame (payload "v2"). */
@@ -1379,6 +1382,9 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             Log.i(TAG, "📦 BES wire_caps advertised negotiated file payloads");
         }
         if (advertised != null && advertised.notifyCap > 0) {
+            // Size v1 string ck chunks against the TRUE notification cap the BES measured from
+            // the negotiated ATT MTU, instead of the conservative 253-byte assumption.
+            MessageChunker.setStringChunkBudgetFromNotifyCap(advertised.notifyCap);
             Log.i(TAG, "📏 BES wire_caps advertised notify_cap=" + advertised.notifyCap);
         }
     }
