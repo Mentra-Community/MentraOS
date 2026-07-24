@@ -629,19 +629,18 @@ jobs:
         run: echo "week=$(date +%Y-%U)" >> $GITHUB_OUTPUT
 
       - name: Clean build artifacts (preserve caches)
+        # The submodule worktree is cleaned here too: actions/checkout does not clean
+        # submodule worktrees and submodule init does not remove ignored build outputs,
+        # so on a persistent runner stale Gradle products would survive across runs.
+        # Removal is cheap — the submodule's git dir lives under .git/modules, so init
+        # re-checks-out locally instead of re-cloning.
         run: |
-          rm -rf asg_client/app/build asg_client/.gradle
+          rm -rf asg_client/app/build asg_client/.gradle asg_client/StreamPackLite
 
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
-
-      - name: Init StreamPackLite submodule
-        # Path-scoped on purpose: .gitmodules also carries a dangling
-        # mcu_client/peripheral_uart_next/nrf5340 entry with an unfetchable relative
-        # self-URL; a blanket recursive init would break if its gitlink ever lands.
-        run: git submodule update --init asg_client/StreamPackLite
 
       # OS-1689: skip the whole ASG build when asg_client/ is unchanged since the
       # last published staging ASG. The rolling manifest records the git tree hash
@@ -750,6 +749,16 @@ jobs:
         working-directory: ./asg_client
         if: steps.asg-reuse.outputs.reuse != 'true'
         run: cp .env.example .env
+
+      - name: Init StreamPackLite submodule
+        # After (and gated on) the reuse decision: reuse only needs the gitlink from
+        # HEAD:asg_client, not the worktree, so app-only releases neither fetch
+        # StreamPackLite nor can they fail on a transient submodule fetch.
+        # Path-scoped on purpose: .gitmodules also carries a dangling
+        # mcu_client/peripheral_uart_next/nrf5340 entry with an unfetchable relative
+        # self-URL; a blanket recursive init would break if its gitlink ever lands.
+        if: steps.asg-reuse.outputs.reuse != 'true'
+        run: git submodule update --init asg_client/StreamPackLite
 
       - name: Cache Gradle dependencies
         if: steps.asg-reuse.outputs.reuse != 'true'

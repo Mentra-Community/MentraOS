@@ -78,7 +78,7 @@ jobs:
       - name: Clean build artifacts (preserve caches)
         run: |
           # Only clean build outputs, NOT dependency caches
-          rm -rf asg_client/app/build asg_client/.gradle
+          rm -rf asg_client/app/build asg_client/.gradle asg_client/StreamPackLite
 
       - name: Checkout code
         uses: actions/checkout@v4

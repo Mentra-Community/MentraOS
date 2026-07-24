@@ -149,19 +149,19 @@ jobs:
         run: echo "week=$(date +%Y-%U)" >> "$GITHUB_OUTPUT"
 
       - name: Clean build artifacts (preserve caches)
+        # Includes the submodule worktree: this job runs on a persistent self-hosted
+        # runner, actions/checkout does not clean submodule worktrees, and submodule
+        # init does not remove ignored build outputs (core/build, extensions/*/build)
+        # — stale StreamPackLite products would survive across release runs. Removal
+        # is cheap: the submodule git dir lives under .git/modules, so init
+        # re-checks-out locally instead of re-cloning.
         run: |
-          rm -rf asg_client/app/build asg_client/.gradle
+          rm -rf asg_client/app/build asg_client/.gradle asg_client/StreamPackLite
 
       - name: Checkout source
         uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
-
-      - name: Init StreamPackLite submodule
-        # Path-scoped on purpose: .gitmodules also carries a dangling
-        # mcu_client/peripheral_uart_next/nrf5340 entry with an unfetchable relative
-        # self-URL; a blanket recursive init would break if its gitlink ever lands.
-        run: git submodule update --init asg_client/StreamPackLite
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -260,6 +260,16 @@ jobs:
         if: steps.existing-sdk-ota.outputs.exists != 'true'
         working-directory: ./asg_client
         run: cp .env.example .env
+
+      - name: Init StreamPackLite submodule
+        # After (and gated on) the existing-manifest check: a reused SDK OTA manifest
+        # needs no ASG build, so no StreamPackLite fetch and no exposure to a
+        # transient submodule fetch failure.
+        # Path-scoped on purpose: .gitmodules also carries a dangling
+        # mcu_client/peripheral_uart_next/nrf5340 entry with an unfetchable relative
+        # self-URL; a blanket recursive init would break if its gitlink ever lands.
+        if: steps.existing-sdk-ota.outputs.exists != 'true'
+        run: git submodule update --init asg_client/StreamPackLite
 
       - name: Cache Gradle dependencies
         if: steps.existing-sdk-ota.outputs.exists != 'true'
