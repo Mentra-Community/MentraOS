@@ -1,7 +1,7 @@
 import BluetoothSdk from "@mentra/bluetooth-sdk"
 import {createAudioPlayer, setAudioModeAsync} from "expo-audio"
 
-import audioPlaybackService from "../../modules/engine/src/services/AudioPlaybackService"
+import audioPlaybackService from "@/../modules/engine/src/services/AudioPlaybackService"
 import {resetBluetoothSdkMock} from "@/test-utils/mockBluetoothSdk"
 
 jest.mock("@mentra/bluetooth-sdk", () => {
@@ -93,7 +93,7 @@ describe("AudioPlaybackService", () => {
 
     jest.advanceTimersByTime(900)
     expect(mockPlayer.pause).toHaveBeenCalled()
-    expect(mockPlayer.replace).toHaveBeenLastCalledWith(null)
+    expect(mockPlayer.remove).toHaveBeenCalled()
 
     jest.advanceTimersByTime(600)
     await Promise.resolve()
@@ -110,13 +110,12 @@ describe("AudioPlaybackService", () => {
     await flushAsyncVolumeGuard()
 
     expect(firstComplete).toHaveBeenCalledWith("first", true, null, expect.any(Number), "interrupted")
-    expect(mockPlayer.replace.mock.calls.slice(0, 3)).toEqual([
+    expect(mockPlayer.replace.mock.calls.slice(0, 2)).toEqual([
       [{uri: "https://example.com/one.mp3"}],
-      [null],
       [{uri: "https://example.com/two.mp3"}],
     ])
     expect(BluetoothSdk.setGlassesMediaVolume).toHaveBeenCalledTimes(1)
-    expect(createAudioPlayer).toHaveBeenCalledTimes(1)
+    expect(createAudioPlayer).toHaveBeenCalledTimes(2)
 
     const statusListener = getLatestStatusListener()
     statusListener({didJustFinish: true, duration: 1})
@@ -139,7 +138,7 @@ describe("AudioPlaybackService", () => {
     expect(mockPlayer.replace).toHaveBeenLastCalledWith({uri: "https://example.com/two.mp3"})
 
     jest.advanceTimersByTime(300)
-    expect(mockPlayer.replace).toHaveBeenLastCalledWith(null)
+    expect(mockPlayer.remove).toHaveBeenCalled()
   })
 
   it("unloads cancelled playback so Bluetooth media play cannot resume it", async () => {
@@ -152,7 +151,7 @@ describe("AudioPlaybackService", () => {
     audioPlaybackService.cancelPlayback("cancelled")
 
     expect(mockPlayer.pause).toHaveBeenCalled()
-    expect(mockPlayer.replace).toHaveBeenLastCalledWith(null)
+    expect(mockPlayer.remove).toHaveBeenCalled()
     expect(onComplete).toHaveBeenCalledWith("cancelled", true, null, expect.any(Number), "interrupted")
   })
 
