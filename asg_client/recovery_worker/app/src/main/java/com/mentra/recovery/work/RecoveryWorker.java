@@ -132,17 +132,27 @@ public class RecoveryWorker extends Worker {
       }
 
       notifyInstallInProgress(context);
+      // Capture the package generation BEFORE dispatching: the backup normally archives the
+      // currently installed build, so after a same-version replace the versionCode alone is
+      // indistinguishable from the pre-existing install — the first poll would "observe"
+      // completion at dispatch time. lastUpdateTime advances only when the replacement
+      // actually commits, so requiring a newer generation observes the operation itself.
+      long preDispatchGeneration = installedAsgLastUpdateTime(context);
       reinstallDispatched = new ReinstallStrategy(context).execute();
       if (reinstallDispatched) {
         long backupVersion = new BackupStore(context).getBackupVersionCode();
         if (backupVersion > 0
-            && !waitForInstalledAsgVersion(
-                context, backupVersion, RecoveryConstants.REINSTALL_OBSERVE_TIMEOUT_MS)) {
+            && !waitForAsgReplacementCommit(
+                context,
+                backupVersion,
+                preDispatchGeneration,
+                RecoveryConstants.REINSTALL_OBSERVE_TIMEOUT_MS)) {
           Log.w(
               RecoveryConstants.TAG,
-              "Backup install not observed within "
+              "Backup install commit not observed within "
                   + RecoveryConstants.REINSTALL_OBSERVE_TIMEOUT_MS
-                  + "ms; releasing install lock (downgrade WAIT_FOR_REVERT self-heals stragglers)");
+                  + "ms; releasing install lock (downgrade WAIT_FOR_REVERT + convergence linger"
+                  + " self-heal stragglers)");
         }
       }
     } finally {
@@ -203,8 +213,26 @@ public class RecoveryWorker extends Worker {
     return Result.success();
   }
 
-  /** Bounded poll for the installed ASG versionCode to reach {@code expectedVersion}. */
-  private boolean waitForInstalledAsgVersion(Context context, long expectedVersion, long timeoutMs) {
+  /** {@code lastUpdateTime} of the installed ASG package, or {@code 0} when unresolvable. */
+  private static long installedAsgLastUpdateTime(Context context) {
+    try {
+      return context
+          .getPackageManager()
+          .getPackageInfo(RecoveryConstants.ASG_PACKAGE, 0)
+          .lastUpdateTime;
+    } catch (Exception e) {
+      return 0L;
+    }
+  }
+
+  /**
+   * Bounded poll for the dispatched replacement to COMMIT: the installed package must carry the
+   * backup's versionCode AND a {@code lastUpdateTime} newer than the pre-dispatch generation.
+   * Version equality alone is satisfied by the pre-existing install in the common
+   * backup-equals-installed case.
+   */
+  private boolean waitForAsgReplacementCommit(
+      Context context, long expectedVersion, long preDispatchGeneration, long timeoutMs) {
     long deadline = SystemClock.elapsedRealtime() + timeoutMs;
     while (SystemClock.elapsedRealtime() < deadline) {
       try {
@@ -214,7 +242,7 @@ public class RecoveryWorker extends Worker {
             android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P
                 ? info.getLongVersionCode()
                 : info.versionCode;
-        if (installed == expectedVersion) {
+        if (installed == expectedVersion && info.lastUpdateTime > preDispatchGeneration) {
           return true;
         }
       } catch (Exception ignored) {
