@@ -1570,9 +1570,7 @@ class MentraLive : SGCManager() {
 
                             connectedDevice = null
                             glassesReady = false // Reset ready state on disconnect
-                            glassesSessionId = null
-                readinessCompletedThisBleSession = false
-                        readinessCompletedThisBleSession = false // Fresh BLE session starts with no sid known
+                            glassesSessionId = null // Fresh BLE session starts with no sid known
                             readinessCompletedThisBleSession = false
 
                             // Reset audio pairing flags
@@ -1639,6 +1637,7 @@ class MentraLive : SGCManager() {
                         isConnecting = false
                         glassesReady = false
                         glassesSessionId = null
+                        readinessCompletedThisBleSession = false
                         glassesReadyReceived = false
                         audioConnected = false
 
@@ -4434,6 +4433,7 @@ class MentraLive : SGCManager() {
                 glassesReady = false
                 glassesReadyReceived = false
                 glassesSessionId = null
+                readinessCompletedThisBleSession = false
             }
             "sr_adota" -> {
                 // BES chip OTA progress — K900 path (serial busy during BES flash). Emit ota_status

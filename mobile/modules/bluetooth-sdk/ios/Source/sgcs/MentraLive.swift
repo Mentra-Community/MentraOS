@@ -2182,6 +2182,7 @@ class MentraLive: NSObject, SGCManager {
             connected = false
             fullyBooted = false
             glassesSessionId = nil
+            readinessCompletedThisBleSession = false
             readinessCompletedThisBleSession = false // Fresh BLE session starts with no sid known
             readinessCompletedThisBleSession = false
             return
