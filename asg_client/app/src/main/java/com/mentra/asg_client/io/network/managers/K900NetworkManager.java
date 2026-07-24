@@ -404,6 +404,11 @@ public class K900NetworkManager extends BaseNetworkManager {
         return gatewayReady && nowMs < startupDeadlineMs;
     }
 
+    static boolean shouldReconnectStationWifiImmediately(
+            boolean reservationActive, boolean stationWifiDisconnected) {
+        return !reservationActive && stationWifiDisconnected;
+    }
+
     private String findLocalHotspotGatewayIp() {
         try {
             NetworkInterface interfaceInfo = NetworkInterface.getByName("ap0");
@@ -468,9 +473,12 @@ public class K900NetworkManager extends BaseNetworkManager {
             localHotspotStarting = false;
             cancelLocalHotspotReadinessLocked();
             reservation = localHotspotReservation;
-            localHotspotReservation = null;
-            reconnectStationWifi = localHotspotDisconnectedStationWifi;
-            localHotspotDisconnectedStationWifi = false;
+            reconnectStationWifi =
+                    shouldReconnectStationWifiImmediately(
+                            reservation != null, localHotspotDisconnectedStationWifi);
+            if (reservation == null) {
+                localHotspotDisconnectedStationWifi = false;
+            }
         }
         if (reservation != null) {
             reservation.close();
@@ -541,12 +549,15 @@ public class K900NetworkManager extends BaseNetworkManager {
         boolean reconnectStationWifi;
         synchronized (localHotspotLock) {
             localHotspotStarting = false;
-            localHotspotGeneration++;
             cancelLocalHotspotReadinessLocked();
             reservation = localHotspotReservation;
-            localHotspotReservation = null;
-            reconnectStationWifi = localHotspotDisconnectedStationWifi;
-            localHotspotDisconnectedStationWifi = false;
+            reconnectStationWifi =
+                    shouldReconnectStationWifiImmediately(
+                            reservation != null, localHotspotDisconnectedStationWifi);
+            if (reservation == null) {
+                localHotspotGeneration++;
+                localHotspotDisconnectedStationWifi = false;
+            }
         }
         if (reservation != null) {
             reservation.close();
