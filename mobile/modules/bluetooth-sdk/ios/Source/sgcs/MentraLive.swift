@@ -951,6 +951,7 @@ extension MentraLive: CBCentralManagerDelegate {
             self.fullyBooted = false
             self.connected = false
             self.glassesSessionId = nil // Fresh BLE session starts with no sid known
+            self.readinessCompletedThisBleSession = false
             self.updateConnectionState(ConnTypes.DISCONNECTED)
             self.rgbLedAuthorityClaimed = false
 
@@ -1494,11 +1495,16 @@ class MentraLive: NSObject, SGCManager {
     private var ancsRelayEnableRequested = false
     private var peerWireCapsBinary = false
     private var peerFilePayloadV2 = false
-    // Last observed glasses process session id (`sid` in glasses_ready / version_info_1).
-    // The BES keeps the BLE link alive across asg_client restarts, so transport state
-    // cannot signal a restart - a CHANGED (or newly appearing) sid is the restart signal.
-    // Nil = no sid observed this BLE session (legacy glasses, or none seen yet).
+    /// Last observed glasses process session id (`sid` in glasses_ready / version_info_1).
+    /// The BES keeps the BLE link alive across asg_client restarts, so transport state
+    /// cannot signal a restart - a CHANGED (or newly appearing) sid is the restart signal.
+    /// Nil = no sid observed this BLE session (legacy glasses, or none seen yet).
     private var glassesSessionId: String?
+    // True once a glasses_ready completed on THIS physical BLE session. Unlike
+    // fullyBooted, this never flaps on sr_hrt ready=0 heartbeats — it only resets with
+    // the physical connection — so a first-seen sid after an upgrade OTA cannot be
+    // mistaken for a fresh pairing just because a not-ready heartbeat slipped in first.
+    private var readinessCompletedThisBleSession = false
     private var globalMessageId = 0
     private var lastReceivedMessageId = 0
     private var bleWriteTraceSequence = 0
@@ -2175,7 +2181,9 @@ class MentraLive: NSObject, SGCManager {
             updateConnectionState(ConnTypes.DISCONNECTED)
             connected = false
             fullyBooted = false
-            glassesSessionId = nil // Fresh BLE session starts with no sid known
+            glassesSessionId = nil
+            readinessCompletedThisBleSession = false // Fresh BLE session starts with no sid known
+            readinessCompletedThisBleSession = false
             return
         }
 
@@ -2438,6 +2446,7 @@ class MentraLive: NSObject, SGCManager {
             // already runs this full remote-reset flow, so recording (not re-triggering)
             // is correct here; version_info detection covers the restart case.
             if let sid = json["sid"] as? String, !sid.isEmpty { glassesSessionId = sid }
+            readinessCompletedThisBleSession = true
             handleGlassesReady()
 
         case "battery_status":
@@ -5407,7 +5416,7 @@ extension MentraLive {
         let previous = glassesSessionId
         if sid == previous { return }
         glassesSessionId = sid
-        if previous == nil, !fullyBooted {
+        if previous == nil, !readinessCompletedThisBleSession {
             // First sid of a fresh BLE session before readiness completes: the normal
             // pairing/readiness flow is already running - just record it.
             return

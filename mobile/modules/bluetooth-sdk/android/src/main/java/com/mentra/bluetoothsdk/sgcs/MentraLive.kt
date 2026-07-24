@@ -238,6 +238,10 @@ class MentraLive : SGCManager() {
     // cannot signal a restart - a CHANGED (or newly appearing) sid is the restart signal.
     // Null = no sid observed this BLE session (legacy glasses, or none seen yet).
     private var glassesSessionId: String? = null
+    // True once a glasses_ready completed on THIS physical BLE session; resets only with
+    // the physical connection (never on heartbeat readiness flaps), so a first-seen sid
+    // after an upgrade OTA is always detected as a restart.
+    private var readinessCompletedThisBleSession = false
     // Note: appVersion, buildNumber, deviceModel, androidVersion
     // are inherited from SGCManager parent class
 
@@ -1566,7 +1570,10 @@ class MentraLive : SGCManager() {
 
                             connectedDevice = null
                             glassesReady = false // Reset ready state on disconnect
-                            glassesSessionId = null // Fresh BLE session starts with no sid known
+                            glassesSessionId = null
+                readinessCompletedThisBleSession = false
+                        readinessCompletedThisBleSession = false // Fresh BLE session starts with no sid known
+                            readinessCompletedThisBleSession = false
 
                             // Reset audio pairing flags
                             glassesReadyReceived = false
@@ -3526,6 +3533,7 @@ class MentraLive : SGCManager() {
                 // already runs this full remote-reset flow, so recording (not re-triggering)
                 // is correct here; version_info detection covers the restart case.
                 json.optString("sid", "").takeIf { it.isNotEmpty() }?.let { glassesSessionId = it }
+                readinessCompletedThisBleSession = true
 
                 // Set the ready flag to stop any future readiness checks
                 glassesReady = true
@@ -7298,7 +7306,7 @@ class MentraLive : SGCManager() {
         val previous = glassesSessionId
         if (sid == previous) return
         glassesSessionId = sid
-        if (previous == null && !glassesReady) {
+        if (previous == null && !readinessCompletedThisBleSession) {
             // First sid of a fresh BLE session before readiness completes: the normal
             // pairing/readiness flow is already running - just record it.
             return
