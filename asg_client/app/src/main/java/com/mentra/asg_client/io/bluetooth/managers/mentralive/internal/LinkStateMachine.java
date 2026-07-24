@@ -28,6 +28,10 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * stream, so the link is no longer proven at the current baud) drops back to {@code SERIAL_OPEN},
  * and {@link #serialClosed()} resets everything.
  *
+ * <p>Orthogonal to the ladder, {@link PhonePresence} tracks whether the BES currently holds a
+ * phone BLE connection (see the enum Javadoc for the firmware contract and the tri-state
+ * degradation rule for old firmware).
+ *
  * <p>Caps have two views on purpose:
  *
  * <ul>
@@ -62,13 +66,29 @@ public final class LinkStateMachine {
     }
 
     /**
+     * BES-reported phone BLE presence, orthogonal to the UART ladder. Firmware >= 17.26.7.23
+     * reports edges spontaneously ({@code sr_phble}) and syncs the current value in every
+     * {@code sr_syvr} reply ({@code phone_ble}). Older firmware sends neither, so presence is a
+     * tri-state: it stays {@code UNKNOWN} until a signal arrives and every consumer must degrade
+     * gracefully on {@code UNKNOWN}.
+     */
+    public enum PhonePresence {
+        /** No presence signal since the last reset (old BES firmware, boot, or BES reboot). */
+        UNKNOWN,
+        /** The BES reported a phone BLE connection (first CCC enable). */
+        PRESENT,
+        /** The BES reported the phone BLE link down. */
+        ABSENT
+    }
+
+    /**
      * Immutable snapshot of the wire capabilities negotiated with the BES. Instances are values:
      * mutation happens by replacing the machine's current snapshot, never in place.
      */
     public static final class BesCaps {
         /** No capabilities negotiated: the state before any BES advertisement. */
         public static final BesCaps NONE =
-                new BesCaps(false, false, false, false, BesWireFormat.PROTOCOL_VERSION_V1);
+                new BesCaps(false, false, false, false, BesWireFormat.PROTOCOL_VERSION_V1, 0);
 
         /** BES accepts little-endian K900 STRING lengths (wire_caps.k900_le). */
         public final boolean k900Le;
@@ -85,20 +105,35 @@ public final class LinkStateMachine {
         /** Highest wire protocol version the BES advertised. */
         public final int proto;
 
+        /**
+         * Max single-notification payload the BES delivers to the phone
+         * (wire_caps.notify_cap = max(253, min(negotiated ATT MTU - 3, 509))). 0 when the
+         * firmware predates the advertisement.
+         */
+        public final int notifyCap;
+
         public BesCaps(
-                boolean k900Le, boolean binary, boolean filePayloadV2, boolean bigPacks, int proto) {
+                boolean k900Le,
+                boolean binary,
+                boolean filePayloadV2,
+                boolean bigPacks,
+                int proto,
+                int notifyCap) {
             this.k900Le = k900Le;
             this.binary = binary;
             this.filePayloadV2 = filePayloadV2;
             this.bigPacks = bigPacks;
             this.proto = proto;
+            this.notifyCap = notifyCap;
         }
 
         /**
          * Merge an sr_syvr wire_caps advertisement into this snapshot using the legacy accrual
-         * rules: flags only ever turn on, and {@code proto} is overwritten only when the
+         * rules: flags only ever turn on, {@code proto} is overwritten only when the
          * advertisement carries the binary flag (an advertisement without {@code binary} says
-         * nothing about the protocol version).
+         * nothing about the protocol version), and {@code notifyCap} takes the newest advertised
+         * value (it tracks the CURRENT negotiated ATT MTU, which can renegotiate per phone
+         * session) while an absent advertisement keeps the previous one.
          */
         BesCaps mergeAdvertised(BesCaps advertised) {
             return new BesCaps(
@@ -106,7 +141,8 @@ public final class LinkStateMachine {
                     binary || advertised.binary,
                     filePayloadV2 || advertised.filePayloadV2,
                     bigPacks || advertised.bigPacks,
-                    advertised.binary ? advertised.proto : proto);
+                    advertised.binary ? advertised.proto : proto,
+                    advertised.notifyCap > 0 ? advertised.notifyCap : notifyCap);
         }
 
         /**
@@ -119,7 +155,8 @@ public final class LinkStateMachine {
                     true,
                     filePayloadV2,
                     bigPacks,
-                    Math.max(proto, BesWireFormat.PROTOCOL_VERSION_V2));
+                    Math.max(proto, BesWireFormat.PROTOCOL_VERSION_V2),
+                    notifyCap);
         }
 
         @Override
@@ -135,12 +172,13 @@ public final class LinkStateMachine {
                     && binary == other.binary
                     && filePayloadV2 == other.filePayloadV2
                     && bigPacks == other.bigPacks
-                    && proto == other.proto;
+                    && proto == other.proto
+                    && notifyCap == other.notifyCap;
         }
 
         @Override
         public int hashCode() {
-            return Objects.hash(k900Le, binary, filePayloadV2, bigPacks, proto);
+            return Objects.hash(k900Le, binary, filePayloadV2, bigPacks, proto, notifyCap);
         }
 
         @Override
@@ -155,6 +193,8 @@ public final class LinkStateMachine {
                     + bigPacks
                     + ", proto="
                     + proto
+                    + ", notifyCap="
+                    + notifyCap
                     + "}";
         }
     }
@@ -171,19 +211,26 @@ public final class LinkStateMachine {
          * @param state the link state at the time of the transition being delivered
          * @param provenCaps the trusted caps snapshot; non-null exactly when {@code state} is
          *     {@link LinkState#LINK_PROVEN}
+         * @param phonePresence the BES-reported phone BLE presence at the time of the transition
          */
-        void onLinkStateChanged(LinkState state, BesCaps provenCaps);
+        void onLinkStateChanged(LinkState state, BesCaps provenCaps, PhonePresence phonePresence);
     }
 
-    /** One queued delivery: the state pair at transition time plus its audience. */
+    /** One queued delivery: the state snapshot at transition time plus its audience. */
     private static final class Notification {
         final LinkState state;
         final BesCaps provenCaps;
+        final PhonePresence phonePresence;
         final List<Listener> audience;
 
-        Notification(LinkState state, BesCaps provenCaps, List<Listener> audience) {
+        Notification(
+                LinkState state,
+                BesCaps provenCaps,
+                PhonePresence phonePresence,
+                List<Listener> audience) {
             this.state = state;
             this.provenCaps = provenCaps;
+            this.phonePresence = phonePresence;
             this.audience = audience;
         }
     }
@@ -201,6 +248,7 @@ public final class LinkStateMachine {
 
     private LinkState state = LinkState.SERIAL_CLOSED;
     private BesCaps negotiatedCaps = BesCaps.NONE;
+    private PhonePresence phonePresence = PhonePresence.UNKNOWN;
 
     /**
      * Register a listener and synchronously replay the current state to it. Replay-on-subscribe is
@@ -216,7 +264,7 @@ public final class LinkStateMachine {
         // reflects every transition already performed (only their deliveries can lag), and queued
         // passes snapshot their audience at transition time, so this listener will never also
         // receive an older pass after this newer replay.
-        deliverSafely(listener, state, provenCapsLocked());
+        deliverSafely(listener, state, provenCapsLocked(), phonePresence);
     }
 
     /** Unregister a listener; no-op if it was never added. */
@@ -253,6 +301,15 @@ public final class LinkStateMachine {
     }
 
     /**
+     * BES-reported phone BLE presence. {@code UNKNOWN} until the BES sends a signal (sr_phble
+     * edge or the phone_ble field of an sr_syvr reply) — which old firmware never does, so
+     * consumers must treat {@code UNKNOWN} as "no trustworthy phone link".
+     */
+    public synchronized PhonePresence getPhonePresence() {
+        return phonePresence;
+    }
+
+    /**
      * The serial port opened (onSerialReady / successful onSerialOpen). Promotes
      * {@code SERIAL_CLOSED} to {@code SERIAL_OPEN}; a redundant ready on an already-open link
      * changes nothing.
@@ -269,18 +326,55 @@ public final class LinkStateMachine {
 
     /**
      * The serial port closed (onSerialClose / failed onSerialOpen). Resets everything: state back
-     * to {@code SERIAL_CLOSED} and the negotiated caps to {@link BesCaps#NONE}, matching the
-     * legacy {@code resetWireProtocolState()} reset that ran on serial close.
+     * to {@code SERIAL_CLOSED}, the negotiated caps to {@link BesCaps#NONE} (matching the legacy
+     * {@code resetWireProtocolState()} reset that ran on serial close), and phone presence to
+     * {@code UNKNOWN} — with no UART link there is no way to hear about presence edges, so the
+     * last report cannot be trusted.
      */
     public void serialClosed() {
         synchronized (this) {
-            boolean changed = state != LinkState.SERIAL_CLOSED
-                    || !negotiatedCaps.equals(BesCaps.NONE);
+            boolean changed =
+                    state != LinkState.SERIAL_CLOSED
+                            || !negotiatedCaps.equals(BesCaps.NONE)
+                            || phonePresence != PhonePresence.UNKNOWN;
             state = LinkState.SERIAL_CLOSED;
             negotiatedCaps = BesCaps.NONE;
+            phonePresence = PhonePresence.UNKNOWN;
             if (changed) {
                 notifyListenersLocked();
             }
+        }
+    }
+
+    /**
+     * The BES reported phone BLE presence: an {@code sr_phble} edge or the {@code phone_ble}
+     * field of an {@code sr_syvr} reply. Orthogonal to the UART ladder — a baud reopen does not
+     * touch the BES-to-phone BLE link, so presence deliberately survives
+     * {@link #streamDiscontinuity()}.
+     */
+    public void phonePresenceReported(boolean present) {
+        synchronized (this) {
+            PhonePresence updated = present ? PhonePresence.PRESENT : PhonePresence.ABSENT;
+            if (phonePresence == updated) {
+                return;
+            }
+            phonePresence = updated;
+            notifyListenersLocked();
+        }
+    }
+
+    /**
+     * The last presence report can no longer be trusted (the BES is rebooting after an OTA and
+     * drops its phone link on the way down). Presence returns to {@code UNKNOWN} until the
+     * rebooted BES sends a fresh signal.
+     */
+    public void phonePresenceInvalidated() {
+        synchronized (this) {
+            if (phonePresence == PhonePresence.UNKNOWN) {
+                return;
+            }
+            phonePresence = PhonePresence.UNKNOWN;
+            notifyListenersLocked();
         }
     }
 
@@ -361,7 +455,8 @@ public final class LinkStateMachine {
      */
     private void notifyListenersLocked() {
         pendingNotifications.add(
-                new Notification(state, provenCapsLocked(), List.copyOf(listeners)));
+                new Notification(
+                        state, provenCapsLocked(), phonePresence, List.copyOf(listeners)));
         if (dispatching) {
             return; // The drain below us on the stack will deliver this pass after its own.
         }
@@ -370,7 +465,11 @@ public final class LinkStateMachine {
             Notification notification;
             while ((notification = pendingNotifications.poll()) != null) {
                 for (Listener listener : notification.audience) {
-                    deliverSafely(listener, notification.state, notification.provenCaps);
+                    deliverSafely(
+                            listener,
+                            notification.state,
+                            notification.provenCaps,
+                            notification.phonePresence);
                 }
             }
         } finally {
@@ -383,9 +482,10 @@ public final class LinkStateMachine {
      * into the transport caller (which would misreport a parse failure after the machine already
      * mutated), so exceptions end here.
      */
-    private void deliverSafely(Listener listener, LinkState state, BesCaps provenCaps) {
+    private void deliverSafely(
+            Listener listener, LinkState state, BesCaps provenCaps, PhonePresence phonePresence) {
         try {
-            listener.onLinkStateChanged(state, provenCaps);
+            listener.onLinkStateChanged(state, provenCaps, phonePresence);
         } catch (RuntimeException e) {
             Log.e(TAG, "Link state listener threw for " + state + "; continuing delivery", e);
         }
