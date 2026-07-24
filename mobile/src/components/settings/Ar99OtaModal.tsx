@@ -7,6 +7,7 @@ import {engine} from "@mentra/engine"
 import {Text} from "@/components/ignite"
 import {Ar99VersionInfo, checkAr99OtaVersion, clearAr99OtaFiles, downloadAr99Firmware} from "@/services/ar99Ota"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {translate} from "@/i18n"
 import {getAr99DisplayName} from "@/utils/getGlassesImage"
 
 type OtaPhase = "checking" | "no_update" | "confirm" | "downloading" | "transferring" | "paused" | "success" | "failed"
@@ -84,7 +85,7 @@ export function Ar99OtaModal({visible, onClose}: Ar99OtaModalProps) {
       setCurrentVersion(firmwareVersion)
       setSerialNumber(sn)
       if (!firmwareVersion || !sn) {
-        throw new Error(`${deviceDisplayName} device information is not ready.`)
+        throw new Error(translate("ar99Ota:deviceInfoNotReady", {deviceName: deviceDisplayName}))
       }
       const defaultDevice = await BluetoothSdk.getDefaultDevice()
       const projectName = defaultDevice?.projectName?.trim() || "AR99"
@@ -93,7 +94,7 @@ export function Ar99OtaModal({visible, onClose}: Ar99OtaModalProps) {
       setVersionInfo(result)
       setPhase(result.hasUpdate ? "confirm" : "no_update")
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Failed to check firmware update.")
+      setErrorMessage(error instanceof Error ? error.message : translate("ar99Ota:checkFailed"))
       setPhase("failed")
     }
   }, [])
@@ -132,8 +133,8 @@ export function Ar99OtaModal({visible, onClose}: Ar99OtaModalProps) {
         setTotal(event.total ?? 0)
         setErrorMessage(
           nativePhase === "cancelled"
-            ? `${deviceDisplayName} OTA was cancelled. You can retry the update after reconnecting the glasses.`
-            : event.errorMessage || event.error_message || `${deviceDisplayName} OTA failed.`,
+            ? translate("ar99Ota:cancelled", {deviceName: deviceDisplayName})
+            : event.errorMessage || event.error_message || translate("ar99Ota:failed", {deviceName: deviceDisplayName}),
         )
         setPhase("failed")
         await cleanupDownloadedFile()
@@ -163,10 +164,10 @@ export function Ar99OtaModal({visible, onClose}: Ar99OtaModalProps) {
       setTotal(0)
       const started = await BluetoothSdk.startAr99OtaFromFile(path)
       if (!started) {
-        throw new Error(`Unable to start ${deviceDisplayName} OTA.`)
+        throw new Error(translate("ar99Ota:unableToStart", {deviceName: deviceDisplayName}))
       }
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Firmware update failed.")
+      setErrorMessage(error instanceof Error ? error.message : translate("ar99Ota:firmwareUpdateFailed"))
       setPhase("failed")
       await cleanupDownloadedFile()
     }
@@ -176,7 +177,7 @@ export function Ar99OtaModal({visible, onClose}: Ar99OtaModalProps) {
     try {
       await BluetoothSdk.cancelAr99Ota()
     } finally {
-      setErrorMessage(`${deviceDisplayName} OTA was cancelled. You can retry the update after reconnecting the glasses.`)
+      setErrorMessage(translate("ar99Ota:cancelled", {deviceName: deviceDisplayName}))
       setPhase("failed")
       await cleanupDownloadedFile()
     }
@@ -190,33 +191,33 @@ export function Ar99OtaModal({visible, onClose}: Ar99OtaModalProps) {
   const title = useMemo(() => {
     switch (phase) {
       case "checking":
-        return "Checking firmware"
+        return translate("ar99Ota:checkingFirmware")
       case "no_update":
-        return "Firmware is up to date"
+        return translate("ar99Ota:firmwareUpToDate")
       case "confirm":
-        return "Firmware update available"
+        return translate("ar99Ota:firmwareUpdateAvailable")
       case "downloading":
-        return "Downloading firmware"
+        return translate("ar99Ota:downloadingFirmware")
       case "transferring":
-        return `Updating ${deviceDisplayName}`
+        return translate("ar99Ota:updatingDevice", {deviceName: deviceDisplayName})
       case "paused":
-        return "Waiting for reconnect"
+        return translate("ar99Ota:waitingForReconnect")
       case "success":
-        return "Update complete"
+        return translate("ar99Ota:updateComplete")
       case "failed":
-        return "Update failed"
+        return translate("ar99Ota:updateFailed")
     }
-  }, [phase])
+  }, [deviceDisplayName, phase])
 
   const progressDetail = useMemo(() => {
     if (phase === "downloading") {
-      return "Downloading firmware package"
+      return translate("ar99Ota:downloadingFirmwarePackage")
     }
     if ((phase === "transferring" || phase === "paused") && total > 0) {
       return `${formatBytes(offset)} / ${formatBytes(total)}`
     }
     if (phase === "paused") {
-      return "Waiting for glasses to reconnect"
+      return translate("ar99Ota:waitingForGlassesReconnect")
     }
     return ""
   }, [offset, phase, total])
@@ -234,17 +235,28 @@ export function Ar99OtaModal({visible, onClose}: Ar99OtaModalProps) {
             {phase === "checking" && <ActivityIndicator color={theme.colors.foreground} />}
 
             {phase === "no_update" && (
-              <Text className="text-sm text-muted-foreground" text={`Current version: ${displayCurrentVersion || "--"}`} />
+              <Text
+                className="text-sm text-muted-foreground"
+                text={translate("ar99Ota:currentVersion", {version: displayCurrentVersion || "--"})}
+              />
             )}
 
             {phase === "confirm" && versionInfo && (
               <View style={{gap: theme.spacing.s2}}>
-                <Text className="text-sm text-secondary-foreground" text={`Current: ${displayCurrentVersion || "--"}`} />
                 <Text
                   className="text-sm text-secondary-foreground"
-                  text={`Latest: ${displayLatestVersion || "--"}`}
+                  text={translate("ar99Ota:current", {version: displayCurrentVersion || "--"})}
                 />
-                {!!serialNumber && <Text className="text-xs text-muted-foreground" text={`SN: ${serialNumber}`} />}
+                <Text
+                  className="text-sm text-secondary-foreground"
+                  text={translate("ar99Ota:latest", {version: displayLatestVersion || "--"})}
+                />
+                {!!serialNumber && (
+                  <Text
+                    className="text-xs text-muted-foreground"
+                    text={translate("ar99Ota:serialNumber", {serialNumber})}
+                  />
+                )}
                 {!!versionInfo.changeLog && (
                   <Text className="text-sm text-muted-foreground" text={versionInfo.changeLog.trim()} />
                 )}
@@ -253,7 +265,9 @@ export function Ar99OtaModal({visible, onClose}: Ar99OtaModalProps) {
 
             {(phase === "downloading" || phase === "transferring" || phase === "paused") && (
               <View style={{gap: theme.spacing.s2}}>
-                <View className="h-2 w-full overflow-hidden rounded-full" style={{backgroundColor: theme.colors.border}}>
+                <View
+                  className="h-2 w-full overflow-hidden rounded-full"
+                  style={{backgroundColor: theme.colors.border}}>
                   <View
                     className="h-2 rounded-full"
                     style={{
@@ -265,33 +279,38 @@ export function Ar99OtaModal({visible, onClose}: Ar99OtaModalProps) {
                 <Text className="text-sm text-muted-foreground" text={`${Math.max(0, Math.min(100, progress))}%`} />
                 {!!progressDetail && <Text className="text-sm text-muted-foreground" text={progressDetail} />}
                 {phase === "paused" && (
-                  <Text
-                    className="text-sm text-muted-foreground"
-                    text="Reconnect the glasses to continue, or cancel and retry later."
-                  />
+                  <Text className="text-sm text-muted-foreground" tx="ar99Ota:reconnectToContinue" />
                 )}
               </View>
             )}
 
             {phase === "success" && (
-              <Text className="text-sm text-muted-foreground" text={`The ${deviceDisplayName} firmware update finished.`} />
+              <Text
+                className="text-sm text-muted-foreground"
+                text={translate("ar99Ota:updateFinished", {deviceName: deviceDisplayName})}
+              />
             )}
 
             {phase === "failed" && (
-              <Text className="text-sm text-destructive" text={errorMessage || "Firmware update failed."} />
+              <Text
+                className="text-sm text-destructive"
+                text={errorMessage || translate("ar99Ota:firmwareUpdateFailed")}
+              />
             )}
           </ScrollView>
 
           <View className="flex-row justify-end gap-3">
             {phase === "confirm" && canDismiss && (
-              <ModalButton label={forceUpdate ? "Close" : "Later"} onPress={close} muted />
+              <ModalButton label={translate(forceUpdate ? "ar99Ota:close" : "ar99Ota:later")} onPress={close} muted />
             )}
-            {phase === "confirm" && <ModalButton label="Upgrade" onPress={startUpgrade} />}
-            {phase === "no_update" && <ModalButton label="Done" onPress={close} />}
-            {phase === "paused" && <ModalButton label="Cancel" onPress={cancelPausedUpgrade} muted />}
-            {phase === "success" && <ModalButton label="Done" onPress={close} />}
-            {phase === "failed" && <ModalButton label="Retry" onPress={checkVersion} muted />}
-            {phase === "failed" && canDismiss && <ModalButton label="Close" onPress={close} />}
+            {phase === "confirm" && <ModalButton label={translate("ar99Ota:upgrade")} onPress={startUpgrade} />}
+            {phase === "no_update" && <ModalButton label={translate("ar99Ota:done")} onPress={close} />}
+            {phase === "paused" && (
+              <ModalButton label={translate("ar99Ota:cancel")} onPress={cancelPausedUpgrade} muted />
+            )}
+            {phase === "success" && <ModalButton label={translate("ar99Ota:done")} onPress={close} />}
+            {phase === "failed" && <ModalButton label={translate("ar99Ota:retry")} onPress={checkVersion} muted />}
+            {phase === "failed" && canDismiss && <ModalButton label={translate("ar99Ota:close")} onPress={close} />}
           </View>
         </View>
       </View>

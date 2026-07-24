@@ -453,14 +453,8 @@ export default function PairingPrepScreen() {
             />
           </View>
           <Text tx="pairing:instructions" className="text-2xl font-bold mb-4 text-secondary-foreground" />
-          <Text
-            className="text-lg text-secondary-foreground mb-2"
-            text="1. Confirm that the Bluetooth switch of the mobile phone is turned on."
-          />
-          <Text
-            className="text-lg text-secondary-foreground mb-2"
-            text="2. Press and hold the power button for 3 to 5 seconds to turn on the glasses."
-          />
+          <Text className="text-lg text-secondary-foreground mb-2" tx="pairing:ar99Step1" />
+          <Text className="text-lg text-secondary-foreground mb-2" tx="pairing:ar99Step2" />
         </ScrollView>
       </View>
     )
@@ -517,6 +511,3 @@ export default function PairingPrepScreen() {
     </Screen>
   )
 }
-
-
-
