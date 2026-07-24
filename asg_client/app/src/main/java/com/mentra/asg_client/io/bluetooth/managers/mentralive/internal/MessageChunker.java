@@ -77,9 +77,32 @@ public class MessageChunker {
                 accepted - AsgConstants.K900_STRING_CHUNK_BUDGET_MARGIN_BYTES);
     }
 
-    /** Restore the conservative fallback budget (serial close: the negotiated cap died). */
+    /** Restore the conservative fallback budget (the negotiated cap died with the caps). */
     public static void resetStringChunkBudget() {
         STRING_CHUNK_BUDGET.set(AsgConstants.K900_STRING_CHUNK_MAX_FRAME_BYTES);
+    }
+
+    /**
+     * Couple the string chunk budget to the link state machine's negotiated caps lifecycle: on
+     * every observable transition the budget is re-derived from the current caps snapshot —
+     * notify_cap advertised means the negotiated budget, caps cleared means the fallback. Tying
+     * the budget to the machine (rather than to one serial callback) guarantees it can never go
+     * stale on ANY path that clears the caps: {@code onSerialClose}, a failed
+     * {@code onSerialOpen}, and reopen failures all drive the machine's serialClosed transition
+     * directly, and a subsequent reconnect to firmware that omits notify_cap must not inherit a
+     * previous session's larger budget (that would reintroduce silent notification truncation).
+     * Replay-on-subscribe applies the current caps immediately. Call once per machine.
+     */
+    public static void followLinkState(LinkStateMachine linkState) {
+        linkState.addListener(
+                (state, provenCaps, phonePresence) -> {
+                    int notifyCap = linkState.getNegotiatedCaps().notifyCap;
+                    if (notifyCap > 0) {
+                        setStringChunkBudgetFromNotifyCap(notifyCap);
+                    } else {
+                        resetStringChunkBudget();
+                    }
+                });
     }
 
     public static boolean needsChunking(String message) {

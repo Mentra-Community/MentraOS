@@ -153,4 +153,32 @@ public class StringChunkBudgetTest {
         MessageChunker.setStringChunkBudgetFromNotifyCap(509);
         assertAllPackedChunksFitAndRoundTrip(largeQuoteDenseJson(500));
     }
+
+    @Test
+    public void budgetFollowsTheCapsLifecycleThroughTheLinkStateMachine() {
+        LinkStateMachine machine = new LinkStateMachine();
+        MessageChunker.followLinkState(machine);
+
+        machine.serialReady();
+        machine.srSyvrParsed(
+                new LinkStateMachine.BesCaps(
+                        false, false, false, false, BesWireFormat.PROTOCOL_VERSION_V1, 509));
+        assertThat(MessageChunker.maxPackedStringChunkSize()).isEqualTo(509 - 13);
+
+        // A discontinuity (baud reopen) keeps the negotiated caps — and the budget with them.
+        machine.streamDiscontinuity();
+        assertThat(MessageChunker.maxPackedStringChunkSize()).isEqualTo(509 - 13);
+
+        // EVERY close path (onSerialClose, failed onSerialOpen, reopen failures) funnels
+        // through the machine's serialClosed transition: caps cleared MUST mean fallback
+        // budget, or a later session against firmware without notify_cap would inherit a
+        // stale oversized budget and silently truncate notifications again.
+        machine.serialClosed();
+        assertThat(MessageChunker.maxPackedStringChunkSize()).isEqualTo(240);
+
+        // Reconnect to old firmware (sr_syvr without wire_caps): the fallback must hold.
+        machine.serialReady();
+        machine.srSyvrParsed(null);
+        assertThat(MessageChunker.maxPackedStringChunkSize()).isEqualTo(240);
+    }
 }
