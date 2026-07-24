@@ -78,10 +78,12 @@ jobs:
       - name: Clean build artifacts (preserve caches)
         run: |
           # Only clean build outputs, NOT dependency caches
-          rm -rf asg_client/app/build asg_client/.gradle asg_client/StreamPackLite
+          rm -rf asg_client/app/build asg_client/.gradle
 
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Free up disk space
         # GitHub-hosted ubuntu ships ~14GB free; a full ASG release build (NDK +
@@ -109,16 +111,6 @@ jobs:
         run: |
           # Create .env from example
           cp .env.example .env
-
-      - name: Clone StreamPackLite dependency
-        working-directory: ./asg_client
-        run: |
-          # Clone StreamPackLite repository
-          git clone https://github.com/Mentra-Community/StreamPackLite.git
-
-          # Checkout the working branch
-          cd StreamPackLite
-          git checkout working
 
       - name: Cache Gradle dependencies
         uses: actions/cache@v4

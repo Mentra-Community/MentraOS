@@ -150,12 +150,13 @@ jobs:
 
       - name: Clean build artifacts (preserve caches)
         run: |
-          rm -rf asg_client/app/build asg_client/.gradle asg_client/StreamPackLite
+          rm -rf asg_client/app/build asg_client/.gradle
 
       - name: Checkout source
         uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
+          submodules: recursive
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -254,14 +255,6 @@ jobs:
         if: steps.existing-sdk-ota.outputs.exists != 'true'
         working-directory: ./asg_client
         run: cp .env.example .env
-
-      - name: Clone StreamPackLite dependency
-        if: steps.existing-sdk-ota.outputs.exists != 'true'
-        working-directory: ./asg_client
-        run: |
-          git clone https://github.com/Mentra-Community/StreamPackLite.git
-          cd StreamPackLite
-          git checkout working
 
       - name: Cache Gradle dependencies
         if: steps.existing-sdk-ota.outputs.exists != 'true'
