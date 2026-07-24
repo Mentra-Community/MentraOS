@@ -244,6 +244,28 @@ describe("OtaInstallCoordinator version-change detour retry gate", () => {
     expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
   })
 
+  it("backstop: a direct (ungated) send during a latched detour is refused and logged", async () => {
+    setGlassesConnected()
+    useGlassesStore.getState().setOtaUpdateAvailable({
+      updateAvailable: true,
+      isDowngrade: true,
+      versionCode: 49000000,
+    } as never)
+    otaInstallCoordinator.attach()
+    GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
+    useGlassesStore.getState().setOtaStatus(inProgressStatus({phase: "install", stepPercent: 100}))
+    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
+
+    // Simulate a FUTURE entry point that forgot its site gate: call the sender directly.
+    // The invariant backstop must refuse the send and log loudly (it firing in production
+    // means a missed site gate exists — the failure degrades to cosmetic, not corrupting).
+    const errorSpy = jest.spyOn(console, "error").mockImplementation(() => {})
+    await (otaInstallCoordinator as unknown as {sendOtaStartWithWatchdogs: () => Promise<void>}).sendOtaStartWithWatchdogs()
+    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("BACKSTOP"))
+    errorSpy.mockRestore()
+  })
+
   it("retry outside a detour still re-sends ota_start", async () => {
     setGlassesConnected()
     otaInstallCoordinator.attach()

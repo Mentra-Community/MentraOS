@@ -1201,6 +1201,18 @@ class OtaInstallCoordinator {
   }
 
   private async sendOtaStartWithWatchdogs(retryAlreadyCounted = false): Promise<void> {
+    // INVARIANT BACKSTOP — not normal control flow. Every entry point that can drive the
+    // glasses (connect-edge, query fallback, retry, mount) carries its own detour gate with the
+    // right behavior for that site; this final check only exists so that a FUTURE entry point
+    // that forgets its gate degrades to a refused send + loud log instead of a corrupted
+    // transaction (an ota_start mid-detour starts a parallel install on the factory build and
+    // can trigger a second handoff). If this ever fires, a missed site gate exists — fix it.
+    if (this.isInVersionChangeDetour()) {
+      console.error(
+        "[OTA_PROGRESS] BACKSTOP: refused ota_start during a latched version-change detour — a caller is missing its detour gate",
+      )
+      return
+    }
     this.maybeStartGlobalTimeout()
     this.hasReceivedAck = false
     this.armAckAndStuckWatchdogsOnly()
