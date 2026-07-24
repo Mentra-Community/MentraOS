@@ -129,6 +129,16 @@ public class SerialPortBridge {
         return mCurrentBaud;
     }
 
+    /**
+     * Whether the serial port is currently open. Normally tracked through the serial callbacks,
+     * but {@link #reopen(int)} can fail both the requested baud AND the default fallback, leaving
+     * the port closed WITHOUT firing any callback — callers that own link state must consult this
+     * after a reopen instead of assuming the port survived.
+     */
+    public boolean isOpen() {
+        return mbStart;
+    }
+
     /** Whether BES OTA currently owns UART receive routing. */
     public boolean isOtaUpdating() {
         return mbOtaUpdating;
