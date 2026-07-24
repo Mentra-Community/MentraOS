@@ -603,7 +603,11 @@ export const cloudClientService = {
     clearPersistentFailureAlarm()
     const wasConnected = connected
     client = null
-    localMiniappUserIdentity.resetMemory()
+    // stop() is part of the logout lifecycle and runs before the host emits
+    // SIGNED_OUT. Remove the persisted namespace owner here so a later account
+    // can never inherit it. A force-stop/process kill does not call stop(), so
+    // the cached id still survives the offline cold-start case.
+    localMiniappUserIdentity.forget()
     localDevRuntimeToken = null
     connected = false
     resetRuntimeStatus()
