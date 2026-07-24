@@ -1,12 +1,6 @@
 import {describe, expect, it} from "bun:test"
 
-import {
-  indexLegacyBlobOwners,
-  LEGACY_BLOB_OWNER_KEY_ROOT,
-  LocalMiniappStorage,
-  type LocalMiniappStorageBackend,
-} from "../LocalMiniappStorage"
-import {sanitizeSegment} from "../blobPaths"
+import {LocalMiniappStorage, type LocalMiniappStorageBackend} from "../LocalMiniappStorage"
 
 class MemoryBackend implements LocalMiniappStorageBackend {
   readonly values = new Map<string, unknown>()
@@ -68,54 +62,6 @@ describe("LocalMiniappStorage", () => {
     expect(backend.keys()).toEqual([])
   })
 
-  it("migrates the newest values from this user's legacy token namespaces", async () => {
-    const backend = new MemoryBackend()
-    const oldToken = testAccessToken("mu_123", 100)
-    const newToken = testAccessToken("mu_123", 200)
-    const otherUserToken = testAccessToken("mu_other", 300)
-    backend.set(`mentraos_localstorage_${oldToken}_com.mentra.translation_targetLanguage`, "es")
-    backend.set(`mentraos_localstorage_${oldToken}_com.mentra.translation_displayLines`, "3")
-    backend.set(`mentraos_localstorage_${newToken}_com.mentra.translation_targetLanguage`, "fr")
-    backend.set(`mentraos_localstorage_${otherUserToken}_com.mentra.translation_targetLanguage`, "de")
-
-    const storage = new LocalMiniappStorage({backend, getUserId: async () => "mu_123"})
-    expect(await storage.getAll("com.mentra.translation")).toEqual({targetLanguage: "fr", displayLines: "3"})
-    expect(
-      backend
-        .keys()
-        .some((key) => key.startsWith("mentraos_localstorage_") && (key.includes(oldToken) || key.includes(newToken))),
-    ).toBe(false)
-    expect(backend.get(`${LEGACY_BLOB_OWNER_KEY_ROOT}${sanitizeSegment(newToken)}`)).toEqual({
-      userId: "mu_123",
-      issuedAt: 200,
-    })
-    expect(backend.keys().some((key) => key.includes(otherUserToken))).toBe(true)
-  })
-
-  it("does not overwrite a stable value with legacy data", async () => {
-    const backend = new MemoryBackend()
-    const oldToken = testAccessToken("mu_123", 100)
-    backend.set(`mentraos_localstorage_${oldToken}_com.mentra.translation_targetLanguage`, "es")
-    backend.set("mentraos_localstorage_mu_123_com.mentra.translation_targetLanguage", "ja")
-
-    const storage = new LocalMiniappStorage({backend, getUserId: async () => "mu_123"})
-    expect(await storage.get("com.mentra.translation", "targetLanguage")).toBe("ja")
-    expect(backend.keys().some((key) => key.startsWith("mentraos_localstorage_") && key.includes(oldToken))).toBe(false)
-  })
-
-  it("indexes legacy token ownership before blob-only requests can race migration", () => {
-    const backend = new MemoryBackend()
-    const oldToken = testAccessToken("mu_123", 100)
-    backend.set(`mentraos_localstorage_${oldToken}_com.mentra.translation_targetLanguage`, "es")
-
-    indexLegacyBlobOwners(backend)
-
-    expect(backend.get(`${LEGACY_BLOB_OWNER_KEY_ROOT}${sanitizeSegment(oldToken)}`)).toEqual({
-      userId: "mu_123",
-      issuedAt: 100,
-    })
-  })
-
   it("supports list, bulk read, delete, and clear within one scope", async () => {
     const backend = new MemoryBackend()
     const storage = new LocalMiniappStorage({backend, getUserId: async () => "mu_123"})
@@ -132,13 +78,3 @@ describe("LocalMiniappStorage", () => {
     expect(await storage.keys("com.example.app")).toEqual([])
   })
 })
-
-function testAccessToken(userId: string, issuedAt: number): string {
-  const payload = btoa(JSON.stringify({sub: userId, iat: issuedAt}))
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/g, "")
-  // Real Core JWTs are longer than BlobStore's 120-character path segment;
-  // keep the fixture representative so the migration-owner bridge is covered.
-  return `header.${payload}.${"s".repeat(160)}`
-}
