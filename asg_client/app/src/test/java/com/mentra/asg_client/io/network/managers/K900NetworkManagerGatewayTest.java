@@ -2,6 +2,7 @@ package com.mentra.asg_client.io.network.managers;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import android.net.wifi.WifiManager;
 import com.mentra.asg_client.AsgConstants;
 import org.junit.Test;
 
@@ -19,6 +20,28 @@ public class K900NetworkManagerGatewayTest {
     @Test
     public void rejectsTheStationInterfaceAtAnUnrelatedAddress() {
         assertThat(K900NetworkManager.isLocalHotspotAddress("wlan0", "192.168.1.24"))
+                .isFalse();
+    }
+
+    @Test
+    public void retriesIncompatibleModeOnceAfterDisconnectingStationWifi() {
+        int incompatibleMode = WifiManager.LocalOnlyHotspotCallback.ERROR_INCOMPATIBLE_MODE;
+
+        assertThat(
+                        K900NetworkManager.shouldRetryLocalHotspotAfterDisconnect(
+                                incompatibleMode, false))
+                .isTrue();
+        assertThat(
+                        K900NetworkManager.shouldRetryLocalHotspotAfterDisconnect(
+                                incompatibleMode, true))
+                .isFalse();
+    }
+
+    @Test
+    public void doesNotRetryUnrelatedHotspotFailures() {
+        assertThat(
+                        K900NetworkManager.shouldRetryLocalHotspotAfterDisconnect(
+                                WifiManager.LocalOnlyHotspotCallback.ERROR_NO_CHANNEL, false))
                 .isFalse();
     }
 }
