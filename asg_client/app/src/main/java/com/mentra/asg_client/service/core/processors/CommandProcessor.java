@@ -219,7 +219,13 @@ public class CommandProcessor {
                             + commandData.messageId()
                             + ", Data: "
                             + commandData.data());
-            serviceManager.onPhoneCommandReceived();
+            // A synthetic boot-announcement command is glasses-originated: it must not mark
+            // the phone connection active (ButtonEventSubscriber suppresses local photo
+            // capture while isConnected() is true, so a phone-less boot would swallow
+            // camera button presses for the heartbeat-timeout window).
+            if (!json.optBoolean("boot_announce", false)) {
+                serviceManager.onPhoneCommandReceived();
+            }
 
             // Check for duplicate message ID
             if (isDuplicateMessage(commandData.messageId())) {

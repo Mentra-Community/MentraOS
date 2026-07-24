@@ -2541,6 +2541,12 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     }
 
     private void clearMessageParser() {
+        // Every caller is a baud switch / reopen path, and SerialPortBridge.reopen() fires
+        // no serial close/ready callbacks — so this is where the byte stream goes
+        // discontinuous without resetWireProtocolState() running. An sr_syvr parsed at the
+        // OLD rate proves nothing about the link at the new one: invalidate the proof so
+        // hasResolvedBesWireCaps() waits for a fresh sr_syvr before the boot announcement.
+        besSystemVersionSeen = false;
         synchronized (messageParserLock) {
             if (messageParser != null) {
                 messageParser.clear();

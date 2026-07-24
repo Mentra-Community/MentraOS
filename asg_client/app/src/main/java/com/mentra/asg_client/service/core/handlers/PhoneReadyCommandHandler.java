@@ -92,7 +92,12 @@ public class PhoneReadyCommandHandler implements ICommandHandler {
                                     ? "✅ Glasses ready response sent successfully"
                                     : "❌ Failed to send glasses ready response"));
 
-            if (sent && serviceManager != null) {
+            // A synthetic boot announcement proves nothing about the phone: the UART write
+            // succeeding only means the BES accepted it. Marking the phone connection
+            // active here on a phone-less boot suppresses local camera-button capture
+            // (ButtonEventSubscriber checks isConnected()) until the heartbeat timeout.
+            boolean syntheticBootAnnounce = data != null && data.optBoolean("boot_announce", false);
+            if (sent && serviceManager != null && !syntheticBootAnnounce) {
                 serviceManager.onPhoneReadyHandshakeComplete();
             }
 
