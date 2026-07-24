@@ -108,6 +108,8 @@ describe("MentraOS onboarding", () => {
       }),
     )
     expect(steps[0].source).toBeUndefined()
+    expect(steps[0].compactHeader).toBeUndefined()
+    expect(steps.slice(1).every((step: {compactHeader?: boolean}) => step.compactHeader)).toBe(true)
     expect(steps[1]).toEqual(
       expect.objectContaining({
         type: "image",

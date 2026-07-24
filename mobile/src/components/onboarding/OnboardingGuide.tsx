@@ -18,6 +18,7 @@ interface BaseStep {
   testID?: string
   title?: string
   titleCentered?: boolean
+  compactHeader?: boolean // Auto-size the title area so content begins directly below it.
   subtitle?: string
   subtitleCentered?: boolean
   subtitle2?: string
@@ -916,7 +917,9 @@ export function OnboardingGuide({
     // }
 
     return (
-      <View id="step-content" className="flex mb-4 h-34 pt-3 gap-3 w-full justify-start">
+      <View
+        id="step-content"
+        className={`flex mb-4 pt-3 gap-3 w-full justify-start ${step.compactHeader ? "" : "h-34"}`}>
         {step.title && (
           <Text
             className={`${
