@@ -110,6 +110,8 @@ describe("MentraOS onboarding", () => {
     expect(steps[0].source).toBeUndefined()
     expect(steps[0].compactHeader).toBeUndefined()
     expect(steps.slice(1).every((step: {compactHeader?: boolean}) => step.compactHeader)).toBe(true)
+    expect(steps.slice(1).every((step: {compactBody?: boolean}) => step.compactBody)).toBe(true)
+    expect(steps.every((step: {fadeOut?: boolean}) => !step.fadeOut)).toBe(true)
     expect(steps[1]).toEqual(
       expect.objectContaining({
         type: "image",
@@ -165,9 +167,11 @@ describe("MentraOS onboarding", () => {
     render(<MentraOSOnboarding />)
 
     const {steps} = mockOnboardingGuide.mock.calls[0][0]
-    act(() => steps[5].action.onPress())
+    expect(steps[5].action).toBeUndefined()
 
-    expect(steps[5].action.testID).toBe("mentraos-onboarding-open-legacy")
+    const {getByTestId} = render(steps[5].content)
+    fireEvent.press(getByTestId("mentraos-onboarding-open-legacy"))
+
     expect(openUrl).toHaveBeenCalledWith("https://mentraglass.com/legacy")
   })
 })
