@@ -141,6 +141,26 @@ public class CameraCoordinatorTest {
     }
 
     @Test
+    public void isOnCameraThread_reflectsCallingThread() throws InterruptedException {
+        CameraCoordinator coordinator = new CameraCoordinator();
+        Handler handler = coordinator.startBackgroundThread("CameraCoordinatorTest");
+        assertThat(coordinator.isOnCameraThread()).isFalse();
+
+        CountDownLatch done = new CountDownLatch(1);
+        AtomicBoolean onThread = new AtomicBoolean(false);
+        handler.post(
+                () -> {
+                    onThread.set(coordinator.isOnCameraThread());
+                    done.countDown();
+                });
+
+        assertThat(done.await(1, TimeUnit.SECONDS)).isTrue();
+        assertThat(onThread).isTrue();
+        coordinator.stopBackgroundThread();
+        assertThat(coordinator.isOnCameraThread()).isFalse();
+    }
+
+    @Test
     public void runOnCameraThread_withoutCameraThread_runsInline() {
         CameraCoordinator coordinator = new CameraCoordinator();
         AtomicBoolean ran = new AtomicBoolean(false);

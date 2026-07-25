@@ -1368,8 +1368,37 @@ public class CameraNeoService extends LifecycleService {
         stopSelf();
     }
 
-    @SuppressLint("MissingPermission")
     private void openCameraInternal(String filePath, boolean forVideo) {
+        // The open belongs on the camera thread with the rest of the lifecycle work;
+        // callers dispatch from the BLE command thread, web-server workers, or main.
+        // The camera-thread body re-takes SERVICE_LOCK to keep the open's session/state
+        // mutations under the same lock the dispatch decision was made under.
+        if (!cameraCoordinator.isOnCameraThread()) {
+            cameraCoordinator.runOnCameraThread(
+                    () -> {
+                        synchronized (SERVICE_LOCK) {
+                            openCameraOnCameraThread(filePath, forVideo);
+                        }
+                    });
+            return;
+        }
+        openCameraOnCameraThread(filePath, forVideo);
+    }
+
+    @SuppressLint("MissingPermission")
+    private void openCameraOnCameraThread(String filePath, boolean forVideo) {
+        if (cameraCoordinator.state() == CameraCoordinator.LifecycleState.OPENING) {
+            // An open is already in flight. Its callbacks run on this thread, so
+            // blocking on the open/close permit here could only delay them and then
+            // time out anyway — fail fast instead.
+            Log.w(TAG, "Camera open requested while another open is in flight");
+            if (forVideo)
+                notifyVideoError(videoSession.currentVideoId(), "Camera busy opening");
+            else photoSession.notifyHostPhotoError("Camera busy opening");
+            conditionalStopSelf();
+            return;
+        }
+
         CameraManager manager = (CameraManager) getSystemService(Context.CAMERA_SERVICE);
         if (manager == null) {
             Log.e(TAG, "Could not get camera manager");
