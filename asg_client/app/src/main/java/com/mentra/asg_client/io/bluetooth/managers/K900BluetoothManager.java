@@ -292,6 +292,11 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         messageParser = new BesMessageParser();
         fileTransferExecutor = Executors.newSingleThreadScheduledExecutor();
 
+        // Couple the v1 string chunk budget to the caps lifecycle before any transition can
+        // fire: every path that clears the caps (including reopen failures that never reach the
+        // serial callbacks) then also restores the fallback budget.
+        MessageChunker.followLinkState(linkState);
+
         // Create the communication manager
         comManager = new SerialPortBridge(context);
         comManager.registerListener(this);
@@ -747,7 +752,9 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                 0,
                 BesWireFormat.getActiveProtocolVersion());
 
-        if (!handleSrSyvrResponse(reassembled) && !handleFileTransportResponse(reassembled)) {
+        if (!handleSrSyvrResponse(reassembled)
+                && !handleSrPhbleResponse(reassembled)
+                && !handleFileTransportResponse(reassembled)) {
             notifyDataReceived(reassembled);
         }
         return true;
@@ -1298,9 +1305,6 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
             Log.i(TAG, "📋 Handling sr_syvr response directly in K900BluetoothManager");
 
-            // Negotiate UART length endianness from the BES's advertised wire_caps.
-            applyBesWireCaps(json);
-
             // Parse the B field: prefer "version" (matches factory / hs_syvr) then "dpj"
             String bFieldStr = json.optString("B", "");
             org.json.JSONObject bData;
@@ -1309,6 +1313,16 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             } else {
                 bData = new org.json.JSONObject(bFieldStr);
             }
+
+            // Presence sync MUST run before the wire_caps merge: a presence edge drops the
+            // cached notify_cap (phone session boundary => stale MTU-derived value), while the
+            // notify_cap advertised in THIS reply was measured for the current session and must
+            // survive the merge that follows.
+            applyPhonePresenceFromSyvr(bData);
+
+            // Negotiate UART length endianness from the BES's advertised wire_caps.
+            applyBesWireCaps(json);
+
             cacheBesBaudSwitchVersion(bData);
             cacheBesVersionFromSyvrBField(bData);
 
@@ -1359,7 +1373,8 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                             filePayloadV2,
                             // Big-pack support ships with the file_payload_v2 advertisement.
                             filePayloadV2,
-                            caps.optInt("proto", BesWireFormat.PROTOCOL_VERSION_V2));
+                            caps.optInt("proto", BesWireFormat.PROTOCOL_VERSION_V2),
+                            caps.optInt("notify_cap", 0));
         }
         linkState.srSyvrParsed(advertised);
         if (advertised != null && advertised.k900Le) {
@@ -1373,6 +1388,11 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         }
         if (advertised != null && advertised.filePayloadV2) {
             Log.i(TAG, "📦 BES wire_caps advertised negotiated file payloads");
+        }
+        if (advertised != null && advertised.notifyCap > 0) {
+            // The string chunk budget follows the caps automatically: the MessageChunker
+            // subscription (followLinkState in the constructor) re-derives it on this transition.
+            Log.i(TAG, "📏 BES wire_caps advertised notify_cap=" + advertised.notifyCap);
         }
     }
 
@@ -1448,6 +1468,62 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         } catch (Exception e) {
             Log.w(TAG, "Failed to parse sr_file_transport", e);
             return false;
+        }
+    }
+
+    /**
+     * Sync phone BLE presence from the {@code phone_ble} field the BES adds to its sr_syvr reply
+     * body (firmware >= 17.26.7.23). This is the boot/wake/recovery sync for the initial value;
+     * live edges arrive as spontaneous {@code sr_phble} commands. Old firmware omits the key, so
+     * presence stays in whatever tri-state it already had (UNKNOWN until a signal ever arrives).
+     */
+    private void applyPhonePresenceFromSyvr(JSONObject bData) {
+        if (bData == null || !bData.has("phone_ble")) {
+            return;
+        }
+        linkState.phonePresenceReported(bData.optInt("phone_ble", 0) == 1);
+    }
+
+    /**
+     * Handle a spontaneous {@code sr_phble} phone-presence edge from the BES (firmware >=
+     * 17.26.7.23): {@code {"C":"sr_phble","S":0,"B":{"on":1}}} on phone BLE connect (first CCC
+     * enable) and {@code {"on":0}} on disconnect. Handled directly here, like sr_syvr, so the
+     * presence fact lands in the link state machine before any CommandProcessor timing concerns.
+     *
+     * @param payload The JSON payload bytes
+     * @return true if this was an sr_phble command and was consumed, false otherwise
+     */
+    private boolean handleSrPhbleResponse(byte[] payload) {
+        try {
+            String jsonStr = new String(payload, java.nio.charset.StandardCharsets.UTF_8);
+            org.json.JSONObject json = new org.json.JSONObject(jsonStr);
+            if (!"sr_phble".equals(json.optString("C", ""))) {
+                return false;
+            }
+
+            org.json.JSONObject bData = json.optJSONObject("B");
+            if (bData == null) {
+                String bFieldStr = json.optString("B", "");
+                if (!bFieldStr.isEmpty()) {
+                    bData = new org.json.JSONObject(bFieldStr);
+                }
+            }
+            if (bData == null || !bData.has("on")) {
+                Log.w(TAG, "📱 sr_phble without an 'on' field - ignoring");
+                return true; // Still consumed: a malformed edge must not reach CommandProcessor.
+            }
+
+            boolean present = bData.optInt("on", 0) == 1;
+            Log.i(
+                    TAG,
+                    "📱 BES reported phone BLE "
+                            + (present ? "connected" : "disconnected")
+                            + " (sr_phble)");
+            linkState.phonePresenceReported(present);
+            return true;
+        } catch (Exception e) {
+            Log.e(TAG, "💥 Error parsing sr_phble", e);
+            return false; // Let it fall through to normal processing
         }
     }
 
@@ -2053,8 +2129,9 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                             // CommandProcessor initialization
                             if (!handleSrSyvrResponse(payload)
                                     && !handleSrBaudResponse(payload)
+                                    && !handleSrPhbleResponse(payload)
                                     && !handleFileTransportResponse(payload)) {
-                                // Not a sr_syvr/sr_baud response, forward to listeners
+                                // Not a BES-owned sr_* response, forward to listeners
                                 notifyDataReceived(payload);
                             }
                         } else {
@@ -2446,8 +2523,10 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         // the lastSrSyvrTime reset below instead of waiting for the async rendezvous path, whose
         // clearMessageParser can be skipped entirely by a generation-mismatch early return.
         // Idempotent if that path does run it. Called outside baudSwitchLock so listener
-        // callbacks never execute under it.
+        // callbacks never execute under it. The reboot also drops the BES's phone BLE link, so
+        // the last presence report is stale until the new firmware sends a fresh signal.
         linkState.streamDiscontinuity();
+        linkState.phonePresenceInvalidated();
         int generation;
         synchronized (baudSwitchLock) {
             generation = ++recoveryProbeGeneration;

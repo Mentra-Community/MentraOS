@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.LinkStateMachine.BesCaps;
 import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.LinkStateMachine.LinkState;
+import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.LinkStateMachine.PhonePresence;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
@@ -24,11 +25,14 @@ public class LinkStateMachineTest {
     private static final class RecordingListener implements LinkStateMachine.Listener {
         final List<LinkState> states = new ArrayList<>();
         final List<BesCaps> caps = new ArrayList<>();
+        final List<PhonePresence> presences = new ArrayList<>();
 
         @Override
-        public void onLinkStateChanged(LinkState state, BesCaps provenCaps) {
+        public void onLinkStateChanged(
+                LinkState state, BesCaps provenCaps, PhonePresence phonePresence) {
             states.add(state);
             caps.add(provenCaps);
+            presences.add(phonePresence);
         }
 
         LinkState lastState() {
@@ -41,7 +45,7 @@ public class LinkStateMachineTest {
     }
 
     private static final BesCaps FULL_CAPS =
-            new BesCaps(true, true, true, true, BesWireFormat.PROTOCOL_VERSION_V2);
+            new BesCaps(true, true, true, true, BesWireFormat.PROTOCOL_VERSION_V2, 509);
 
     private LinkStateMachine machine;
 
@@ -246,9 +250,9 @@ public class LinkStateMachineTest {
     public void srSyvrParsed_mergesFlagsAcrossAdvertisements() {
         machine.serialReady();
         machine.srSyvrParsed(
-                new BesCaps(true, false, false, false, BesWireFormat.PROTOCOL_VERSION_V1));
+                new BesCaps(true, false, false, false, BesWireFormat.PROTOCOL_VERSION_V1, 0));
         machine.srSyvrParsed(
-                new BesCaps(false, true, false, false, BesWireFormat.PROTOCOL_VERSION_V2));
+                new BesCaps(false, true, false, false, BesWireFormat.PROTOCOL_VERSION_V2, 0));
 
         BesCaps caps = machine.getNegotiatedCaps();
         assertThat(caps.k900Le).isTrue();
@@ -265,7 +269,7 @@ public class LinkStateMachineTest {
 
         // An advertisement without the binary flag says nothing about the protocol version.
         machine.srSyvrParsed(
-                new BesCaps(true, false, false, false, BesWireFormat.PROTOCOL_VERSION_V1));
+                new BesCaps(true, false, false, false, BesWireFormat.PROTOCOL_VERSION_V1, 0));
 
         assertThat(machine.getNegotiatedCaps().proto)
                 .isEqualTo(BesWireFormat.PROTOCOL_VERSION_V2);
@@ -306,6 +310,176 @@ public class LinkStateMachineTest {
         assertThat(listener.states).hasSize(2);
     }
 
+    // ---- phone presence tri-state ----
+
+    @Test
+    public void phonePresence_defaultsToUnknownAndReplaysOnSubscribe() {
+        RecordingListener listener = new RecordingListener();
+
+        machine.addListener(listener);
+
+        assertThat(machine.getPhonePresence()).isEqualTo(PhonePresence.UNKNOWN);
+        assertThat(listener.presences).containsExactly(PhonePresence.UNKNOWN);
+    }
+
+    @Test
+    public void phonePresenceReported_movesThroughPresentAndAbsent() {
+        machine.serialReady();
+        RecordingListener listener = new RecordingListener();
+        machine.addListener(listener);
+
+        machine.phonePresenceReported(true);
+        assertThat(machine.getPhonePresence()).isEqualTo(PhonePresence.PRESENT);
+
+        machine.phonePresenceReported(false);
+        assertThat(machine.getPhonePresence()).isEqualTo(PhonePresence.ABSENT);
+
+        assertThat(listener.presences)
+                .containsExactly(
+                        PhonePresence.UNKNOWN, PhonePresence.PRESENT, PhonePresence.ABSENT);
+    }
+
+    @Test
+    public void phonePresenceReported_duplicateReport_doesNotRenotify() {
+        machine.serialReady();
+        machine.phonePresenceReported(true);
+        RecordingListener listener = new RecordingListener();
+        machine.addListener(listener);
+
+        machine.phonePresenceReported(true);
+
+        assertThat(listener.presences).containsExactly(PhonePresence.PRESENT);
+    }
+
+    @Test
+    public void addListener_afterPresenceEdge_replaysPresenceSynchronously() {
+        machine.serialReady();
+        machine.phonePresenceReported(true);
+
+        RecordingListener lateListener = new RecordingListener();
+        machine.addListener(lateListener);
+
+        assertThat(lateListener.presences).containsExactly(PhonePresence.PRESENT);
+    }
+
+    @Test
+    public void serialClosed_resetsPresenceToUnknown() {
+        machine.serialReady();
+        machine.phonePresenceReported(true);
+        RecordingListener listener = new RecordingListener();
+        machine.addListener(listener);
+
+        machine.serialClosed();
+
+        assertThat(machine.getPhonePresence()).isEqualTo(PhonePresence.UNKNOWN);
+        assertThat(listener.presences)
+                .containsExactly(PhonePresence.PRESENT, PhonePresence.UNKNOWN);
+    }
+
+    @Test
+    public void phonePresenceInvalidated_dropsToUnknown() {
+        machine.serialReady();
+        machine.phonePresenceReported(false);
+
+        machine.phonePresenceInvalidated();
+
+        assertThat(machine.getPhonePresence()).isEqualTo(PhonePresence.UNKNOWN);
+        // Idempotent: a second invalidation is a no-op.
+        RecordingListener listener = new RecordingListener();
+        machine.addListener(listener);
+        machine.phonePresenceInvalidated();
+        assertThat(listener.presences).containsExactly(PhonePresence.UNKNOWN);
+    }
+
+    @Test
+    public void streamDiscontinuity_keepsPresence() {
+        // A baud reopen invalidates the ASG-to-BES byte stream, not the BES-to-phone BLE link:
+        // presence must survive the discontinuity.
+        machine.serialReady();
+        machine.srSyvrParsed(FULL_CAPS);
+        machine.phonePresenceReported(true);
+
+        machine.streamDiscontinuity();
+
+        assertThat(machine.getPhonePresence()).isEqualTo(PhonePresence.PRESENT);
+    }
+
+    // ---- notify_cap lifecycle: UART session ∩ phone BLE session ∩ firmware generation ----
+
+    @Test
+    public void presenceEdge_dropsNotifyCapButKeepsTheOtherCaps() {
+        machine.serialReady();
+        machine.srSyvrParsed(FULL_CAPS);
+        machine.phonePresenceReported(true);
+        machine.srSyvrParsed(
+                new BesCaps(false, false, false, false, BesWireFormat.PROTOCOL_VERSION_V1, 509));
+        assertThat(machine.getNegotiatedCaps().notifyCap).isEqualTo(509);
+
+        // The phone disconnected: its session's negotiated ATT MTU (and thus notify_cap) died
+        // with it, but the UART-session caps are still valid.
+        machine.phonePresenceReported(false);
+
+        assertThat(machine.getNegotiatedCaps().notifyCap).isEqualTo(0);
+        assertThat(machine.getNegotiatedCaps().binary).isTrue();
+        assertThat(machine.getNegotiatedCaps().filePayloadV2).isTrue();
+
+        // A NEW phone session renegotiates the MTU: reconnecting must NOT restore the old cap.
+        machine.phonePresenceReported(true);
+        assertThat(machine.getNegotiatedCaps().notifyCap).isEqualTo(0);
+
+        // Only a fresh advertisement re-arms it.
+        machine.srSyvrParsed(
+                new BesCaps(false, false, false, false, BesWireFormat.PROTOCOL_VERSION_V1, 260));
+        assertThat(machine.getNegotiatedCaps().notifyCap).isEqualTo(260);
+    }
+
+    @Test
+    public void duplicatePresenceReport_keepsNotifyCap() {
+        machine.serialReady();
+        machine.phonePresenceReported(true);
+        machine.srSyvrParsed(
+                new BesCaps(false, false, false, false, BesWireFormat.PROTOCOL_VERSION_V1, 509));
+
+        // Same-session syncs (phone_ble repeating the current value) are not session boundaries.
+        machine.phonePresenceReported(true);
+
+        assertThat(machine.getNegotiatedCaps().notifyCap).isEqualTo(509);
+    }
+
+    @Test
+    public void phonePresenceInvalidated_dropsNotifyCapEvenWhenPresenceAlreadyUnknown() {
+        machine.serialReady();
+        machine.srSyvrParsed(
+                new BesCaps(false, false, false, false, BesWireFormat.PROTOCOL_VERSION_V1, 509));
+        assertThat(machine.getPhonePresence()).isEqualTo(PhonePresence.UNKNOWN);
+
+        // BES OTA: firmware-generation boundary — the cached cap must die regardless of what
+        // the presence tri-state happens to be.
+        machine.phonePresenceInvalidated();
+
+        assertThat(machine.getNegotiatedCaps().notifyCap).isEqualTo(0);
+    }
+
+    // ---- notify_cap accrual ----
+
+    @Test
+    public void srSyvrParsed_notifyCapTakesNewestAdvertisedValue() {
+        machine.serialReady();
+        machine.srSyvrParsed(
+                new BesCaps(false, false, false, false, BesWireFormat.PROTOCOL_VERSION_V1, 509));
+        assertThat(machine.getNegotiatedCaps().notifyCap).isEqualTo(509);
+
+        // notify_cap tracks the CURRENT negotiated ATT MTU, so a newer advertisement wins...
+        machine.srSyvrParsed(
+                new BesCaps(false, false, false, false, BesWireFormat.PROTOCOL_VERSION_V1, 253));
+        assertThat(machine.getNegotiatedCaps().notifyCap).isEqualTo(253);
+
+        // ...but an advertisement without notify_cap keeps the previous value.
+        machine.srSyvrParsed(
+                new BesCaps(true, false, false, false, BesWireFormat.PROTOCOL_VERSION_V1, 0));
+        assertThat(machine.getNegotiatedCaps().notifyCap).isEqualTo(253);
+    }
+
     // ---- listener ordering / thread safety basics ----
 
     @Test
@@ -338,7 +512,7 @@ public class LinkStateMachineTest {
         RecordingListener b = new RecordingListener();
         machine.serialReady();
         machine.addListener(
-                (state, provenCaps) -> {
+                (state, provenCaps, phonePresence) -> {
                     if (state == LinkState.LINK_PROVEN) {
                         machine.serialClosed();
                     }
@@ -371,7 +545,7 @@ public class LinkStateMachineTest {
     public void throwingListener_doesNotStarveLaterListenersOrPropagateToTheCaller() {
         machine.serialReady();
         machine.addListener(
-                (state, provenCaps) -> {
+                (state, provenCaps, phonePresence) -> {
                     throw new IllegalStateException("listener bug");
                 });
         RecordingListener survivor = new RecordingListener();
@@ -390,7 +564,7 @@ public class LinkStateMachineTest {
         machine.serialReady();
 
         machine.addListener(
-                (state, provenCaps) -> {
+                (state, provenCaps, phonePresence) -> {
                     throw new IllegalStateException("replay bug");
                 });
 
@@ -407,7 +581,8 @@ public class LinkStateMachineTest {
         LinkStateMachine.Listener selfRemoving =
                 new LinkStateMachine.Listener() {
                     @Override
-                    public void onLinkStateChanged(LinkState state, BesCaps provenCaps) {
+                    public void onLinkStateChanged(
+                            LinkState state, BesCaps provenCaps, PhonePresence phonePresence) {
                         calls.incrementAndGet();
                         machine.removeListener(this);
                     }
@@ -426,7 +601,7 @@ public class LinkStateMachineTest {
         // machine from two threads and verify no notification ever violates it.
         AtomicBoolean invariantViolated = new AtomicBoolean(false);
         machine.addListener(
-                (state, provenCaps) -> {
+                (state, provenCaps, phonePresence) -> {
                     if ((provenCaps != null) != (state == LinkState.LINK_PROVEN)) {
                         invariantViolated.set(true);
                     }

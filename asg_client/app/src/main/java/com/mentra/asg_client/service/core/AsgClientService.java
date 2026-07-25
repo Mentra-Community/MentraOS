@@ -129,11 +129,6 @@ public class AsgClientService extends Service implements NetworkStateListener, T
             "com.mentra.recovery.ACTION_INSTALLATION_PROGRESS";
     public static final String ACTION_OTA_HEARTBEAT = "com.mentra.recovery.ACTION_PING";
 
-    // Service health monitoring
-    private static final String ACTION_HEARTBEAT = "com.mentra.asg_client.ACTION_HEARTBEAT";
-    private static final String ACTION_HEARTBEAT_ACK = "com.mentra.asg_client.ACTION_HEARTBEAT_ACK";
-    private static final long HEARTBEAT_TIMEOUT_MS = 35000; // 35 seconds timeout
-
     /** Solid white RGB LED duration while USB UVC streaming (same as video recording). */
     private static final int UVC_STREAMING_LED_DURATION_MS = 1_800_000;
 
@@ -158,7 +153,6 @@ public class AsgClientService extends Service implements NetworkStateListener, T
     private static final AtomicBoolean serviceRunning = new AtomicBoolean(false);
     private boolean lastI2sPlaying = false;
     private boolean lastUvcStreaming = false;
-    private boolean isConnected = false; // Track connection state based on heartbeat
 
     /**
      * Used before {@link ServiceInitializer} exists so FGS promotion is not delayed by heavy init.
@@ -183,12 +177,6 @@ public class AsgClientService extends Service implements NetworkStateListener, T
     private BroadcastReceiver restartReceiver;
     private BroadcastReceiver otaProgressReceiver;
     private BroadcastReceiver mtkUpdateReceiver;
-
-    // ---------------------------------------------
-    // Heartbeat Timeout Management
-    // ---------------------------------------------
-    private Handler heartbeatTimeoutHandler;
-    private Runnable heartbeatTimeoutRunnable;
 
     // ---------------------------------------------
     // Lifecycle Methods
@@ -257,10 +245,6 @@ public class AsgClientService extends Service implements NetworkStateListener, T
             // Send version info
             Log.d(TAG, "📋 Sending initial version information");
             sendVersionInfo();
-
-            // Start heartbeat monitoring
-            Log.d(TAG, "💓 Starting heartbeat monitoring");
-            startHeartbeatMonitoring();
 
             // Clean up orphaned BLE transfer files from previous sessions
             Log.d(TAG, "🗑️ Cleaning up orphaned BLE transfer files");
@@ -847,9 +831,6 @@ public class AsgClientService extends Service implements NetworkStateListener, T
             } else {
                 Log.d(TAG, "⏭️ MTK update receiver is null - skipping");
             }
-
-            // Stop heartbeat monitoring
-            stopHeartbeatMonitoring();
 
             Log.d(TAG, "✅ All receivers unregistered successfully");
         } catch (IllegalArgumentException e) {
@@ -1495,103 +1476,11 @@ public class AsgClientService extends Service implements NetworkStateListener, T
         }
     }
 
-    /** Reset heartbeat timeout - called when heartbeat is received */
-    private void resetHeartbeatTimeout() {
-        Log.d(TAG, "💓 Resetting heartbeat timeout");
-
-        try {
-            // Cancel any existing timeout
-            heartbeatTimeoutHandler.removeCallbacks(heartbeatTimeoutRunnable);
-
-            // Mark as connected
-            isConnected = true;
-            Log.d(TAG, "🔌 Connection state changed to CONNECTED");
-
-            // Schedule new timeout
-            heartbeatTimeoutHandler.postDelayed(heartbeatTimeoutRunnable, HEARTBEAT_TIMEOUT_MS);
-            Log.d(TAG, "⏰ Heartbeat timeout scheduled for " + HEARTBEAT_TIMEOUT_MS + "ms");
-
-        } catch (Exception e) {
-            Log.e(TAG, "💥 Error resetting heartbeat timeout", e);
-        }
-    }
-
-    /** Start heartbeat monitoring - call this when service becomes active */
-    public void startHeartbeatMonitoring() {
-        Log.d(TAG, "💓 Starting heartbeat monitoring");
-
-        try {
-            // Initialize heartbeat timeout handler if not already done
-            if (heartbeatTimeoutHandler == null) {
-                Log.d(TAG, "💓 Initializing heartbeat timeout handler");
-                heartbeatTimeoutHandler = new Handler(Looper.getMainLooper());
-                heartbeatTimeoutRunnable =
-                        () -> {
-                            Log.w(TAG, "⚠️ Heartbeat timeout - marking as disconnected");
-                            isConnected = false;
-                            Log.i(
-                                    TAG,
-                                    "🔌 Connection state changed to DISCONNECTED due to heartbeat"
-                                            + " timeout");
-                        };
-            }
-
-            // Cancel any existing timeout
-            heartbeatTimeoutHandler.removeCallbacks(heartbeatTimeoutRunnable);
-
-            // Don't set connected state - wait for first heartbeat
-            isConnected = false;
-            Log.d(
-                    TAG,
-                    "🔌 Connection state initialized as DISCONNECTED - waiting for first"
-                            + " heartbeat");
-
-            // Schedule initial timeout to detect if no heartbeat comes
-            heartbeatTimeoutHandler.postDelayed(heartbeatTimeoutRunnable, HEARTBEAT_TIMEOUT_MS);
-            Log.d(TAG, "⏰ Initial heartbeat timeout scheduled for " + HEARTBEAT_TIMEOUT_MS + "ms");
-
-        } catch (Exception e) {
-            Log.e(TAG, "💥 Error starting heartbeat monitoring", e);
-        }
-    }
-
-    /** Stop heartbeat monitoring - call this when service becomes inactive */
-    public void stopHeartbeatMonitoring() {
-        Log.d(TAG, "💓 Stopping heartbeat monitoring");
-
-        try {
-            heartbeatTimeoutHandler.removeCallbacks(heartbeatTimeoutRunnable);
-            isConnected = false;
-            Log.d(TAG, "🔌 Connection state changed to DISCONNECTED (monitoring stopped)");
-        } catch (Exception e) {
-            Log.e(TAG, "💥 Error stopping heartbeat monitoring", e);
-        }
-    }
-
-    /** Get current connection state */
-    public boolean isConnected() {
-        return isConnected;
-    }
-
-    /** Handle the phone_ready/glasses_ready handshake completing over Bluetooth. */
-    public void onPhoneReadyHandshakeComplete() {
-        Log.d(TAG, "📱 Phone ready handshake complete - marking phone connection active");
-        resetHeartbeatTimeout();
-    }
-
-    /** Handle any standard command received from the phone over Bluetooth. */
-    public void onPhoneCommandReceived() {
-        Log.d(TAG, "📱 Phone command received - marking phone connection active");
-        resetHeartbeatTimeout();
-    }
-
-    /** Handle service heartbeat received from MentraLiveSGC */
-    public void onServiceHeartbeatReceived() {
-        Log.d(TAG, "💓 Service heartbeat received from MentraLiveSGC");
-
-        // Reset heartbeat timeout and mark as connected
-        resetHeartbeatTimeout();
-    }
+    // The heartbeat-inferred phone "connected" flag (isConnected / resetHeartbeatTimeout /
+    // start/stopHeartbeatMonitoring) was deleted: its only consumer was the button-press local
+    // capture gate, which now reads the BES-reported phone BLE presence from the transport
+    // LinkStateMachine. Ping/heartbeat commands still get their acks; they just no longer feed
+    // an inference.
 
     private void registerRestartReceiver() {
         Log.d(TAG, "🔄 registerRestartReceiver() started");

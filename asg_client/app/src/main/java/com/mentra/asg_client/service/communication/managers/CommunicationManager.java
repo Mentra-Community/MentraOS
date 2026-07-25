@@ -3,6 +3,8 @@ package com.mentra.asg_client.service.communication.managers;
 import android.util.Log;
 import com.mentra.asg_client.io.bluetooth.interfaces.IBluetoothManager;
 import com.mentra.asg_client.io.bluetooth.interfaces.ICompanionTransport;
+import com.mentra.asg_client.io.bluetooth.managers.K900BluetoothManager;
+import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.LinkStateMachine;
 import com.mentra.asg_client.io.network.interfaces.INetworkManager;
 import com.mentra.asg_client.io.network.models.NetworkInfo;
 import com.mentra.asg_client.io.ota.helpers.OtaHelper;
@@ -603,9 +605,21 @@ public class CommunicationManager
     /**
      * Check if phone is currently connected via BLE. Part of OtaHelper.PhoneConnectionProvider
      * interface.
+     *
+     * <p>When the BES has reported phone BLE presence (firmware >= 17.26.7.23: sr_phble edges,
+     * phone_ble in sr_syvr), that report is authoritative. When presence is UNKNOWN — the entire
+     * deployed fleet today — this keeps the historical transport-based answer: OTA (and the wifi
+     * scan/set flows that ride the same provider) must keep working against old BES firmware.
      */
     @Override
     public boolean isPhoneConnected() {
+        if (transport instanceof K900BluetoothManager) {
+            LinkStateMachine.PhonePresence presence =
+                    ((K900BluetoothManager) transport).getLinkStateMachine().getPhonePresence();
+            if (presence != LinkStateMachine.PhonePresence.UNKNOWN) {
+                return presence == LinkStateMachine.PhonePresence.PRESENT;
+            }
+        }
         return transport != null && transport.isConnected();
     }
 
