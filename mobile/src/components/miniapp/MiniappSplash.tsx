@@ -81,34 +81,36 @@ export default function MiniappSplash({
         {backgroundColor: bgColor, justifyContent: "center", alignItems: "center"},
         animatedStyle,
       ]}>
-      {(iconUrl || devApp) && (
-        <View style={{position: "relative"}}>
-          <SquircleView
-            cornerSmoothing={100}
-            preserveSmoothing={true}
-            style={{
-              width: size,
-              height: size,
-              borderRadius,
-              overflow: "hidden",
-              alignItems: "center",
-              justifyContent: "center",
-            }}>
-            {iconUrl ? (
-              <Image
-                source={iconUrl}
-                style={{width: "100%", height: "100%"}}
-                contentFit="cover"
-                transition={200}
-                cachePolicy="memory-disk"
-              />
-            ) : (
-              <DevIcon size={size} />
-            )}
-          </SquircleView>
-          {devApp && <DevMiniappBadge size={18} />}
-        </View>
-      )}
+      {/* Always mounted: iconUrl can resolve a beat after the splash appears
+          (lazy icon resolution), and conditionally mounting this block made
+          the name text jump down when the icon landed. An empty squircle is
+          invisible, so reserving the space costs nothing. */}
+      <View style={{position: "relative"}}>
+        <SquircleView
+          cornerSmoothing={100}
+          preserveSmoothing={true}
+          style={{
+            width: size,
+            height: size,
+            borderRadius,
+            overflow: "hidden",
+            alignItems: "center",
+            justifyContent: "center",
+          }}>
+          {iconUrl ? (
+            <Image
+              source={iconUrl}
+              style={{width: "100%", height: "100%"}}
+              contentFit="cover"
+              transition={200}
+              cachePolicy="memory-disk"
+            />
+          ) : devApp ? (
+            <DevIcon size={size} />
+          ) : null}
+        </SquircleView>
+        {devApp && <DevMiniappBadge size={18} />}
+      </View>
 
       <View className="h-16 items-center justify-center w-full mt-4">
         {name && <Text className="text-lg h-10 font-semibold text-center" text={name} />}
