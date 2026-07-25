@@ -142,7 +142,7 @@ export default function MentraOSOnboarding() {
             style={$legacyHero}
             testID="mentraos-onboarding-hero-5">
             <View className="mb-5 h-20 w-20 items-center justify-center rounded-full bg-white/70">
-              <MentraLogoStandalone width={52} height={28} />
+              <MentraLogoStandalone width={52} height={28} colorOverride="#00B869" />
             </View>
             <Pressable
               accessibilityLabel="Open MentraOS Legacy"
