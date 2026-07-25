@@ -44,8 +44,8 @@
     }
   ],
   "bes_firmware": {
-    "version": "17.26.07.22",
-    "url": "https://firmwarecdn.mentraglass.com/bes_firmware_26.07.23.bin",
-    "sha256": "c853166f6fdccb4cc1dd8fe9cb3c8cfebaffbb183aa7197ba3e9300b96b866c2"
+    "version": "17.26.07.23",
+    "url": "https://firmwarecdn.mentraglass.com/bes_firmware_26.07.24.bin",
+    "sha256": "e1e5ecc67a5cf3ad0092a6a044c5aecaaaee8ab19ed1b61c3b47e3c0efcd4f6f"
   }
 }
