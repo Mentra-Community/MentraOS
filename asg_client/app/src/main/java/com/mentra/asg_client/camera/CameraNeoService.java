@@ -1550,10 +1550,17 @@ public class CameraNeoService extends LifecycleService {
             @Override
             public void onOpened(@NonNull CameraDevice camera) {
                 Log.d(TAG, "Camera device opened successfully");
-                cameraCoordinator.releaseOpenCloseLock();
                 cameraCoordinator.setDevice(camera);
 
-                createCameraSessionInternal(forVideo);
+                // Hold the open/close lock until the session surfaces have been handed to
+                // the framework: releasing it first lets closeCamera() close the
+                // ImageReaders on another thread mid-setup, abandoning the surfaces this
+                // session is about to wrap (OS-1816).
+                try {
+                    createCameraSessionInternal(forVideo);
+                } finally {
+                    cameraCoordinator.releaseOpenCloseLock();
+                }
             }
 
             @Override
@@ -1768,6 +1775,16 @@ public class CameraNeoService extends LifecycleService {
             Log.e(TAG, "Illegal state in createCameraSessionInternal", e);
             if (forVideo) notifyVideoError(videoSession.currentVideoId(), "Camera illegal state");
             else photoSession.notifyHostPhotoError("Camera illegal state");
+            conditionalStopSelf();
+        } catch (IllegalArgumentException e) {
+            // A teardown that raced this setup abandons the reader/recorder surfaces;
+            // OutputConfiguration and createCaptureSession then throw
+            // IllegalArgumentException ("Surface was abandoned"). Fail the request
+            // instead of crashing the process (OS-1816).
+            Log.e(TAG, "Camera surface no longer valid in createCameraSessionInternal", e);
+            if (forVideo)
+                notifyVideoError(videoSession.currentVideoId(), "Camera surface no longer valid");
+            else photoSession.notifyHostPhotoError("Camera surface no longer valid");
             conditionalStopSelf();
         }
     }
