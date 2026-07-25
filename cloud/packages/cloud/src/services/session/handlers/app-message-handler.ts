@@ -65,6 +65,9 @@ export enum AppErrorCode {
   WIFI_NOT_CONNECTED = "WIFI_NOT_CONNECTED",
 }
 
+// Errors about one request rather than the connection. Reported to the App without closing the socket.
+const NON_FATAL_ERROR_CODES: ReadonlySet<AppErrorCode> = new Set([AppErrorCode.WIFI_NOT_CONNECTED]);
+
 // Debouncing for subscription changes to prevent rapid stream recreation
 const subscriptionChangeTimers = new Map<string, NodeJS.Timeout>();
 const SUBSCRIPTION_DEBOUNCE_MS = 500;
@@ -805,7 +808,7 @@ async function checkCameraPermission(packageName: string, userSession: UserSessi
 /**
  * Send an error response to the App client
  */
-function sendError(ws: IWebSocket, code: AppErrorCode, message: string, logger: Logger): void {
+export function sendError(ws: IWebSocket, code: AppErrorCode, message: string, logger: Logger): void {
   try {
     const errorResponse = {
       type: CloudToAppMessageType.CONNECTION_ERROR,
@@ -814,6 +817,12 @@ function sendError(ws: IWebSocket, code: AppErrorCode, message: string, logger: 
       timestamp: new Date(),
     };
     ws.send(JSON.stringify(errorResponse));
+
+    if (NON_FATAL_ERROR_CODES.has(code)) {
+      return;
+    }
+
+    // The SDK reads 1008 as a deliberate close and will not reconnect from it.
     ws.close(1008, message);
   } catch (error) {
     logger.error(error, "Failed to send error response");
