@@ -68,6 +68,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class CameraNeoService extends LifecycleService {
     private static final String TAG = "CameraNeo";
@@ -1556,6 +1557,20 @@ public class CameraNeoService extends LifecycleService {
      */
     private CameraDevice.StateCallback newCameraOpenStateCallback(final boolean forVideo) {
         return new CameraDevice.StateCallback() {
+            // The in-flight open owns exactly one open/close permit, surrendered to the
+            // FIRST terminal callback. onDisconnected/onError also fire long after
+            // onOpened (HAL eviction, cable events); an unconditional release there
+            // inflated the Semaphore(1) past one permit, after which the open/close
+            // lock excluded nothing and teardown could interleave with any open — the
+            // cheap way to hit the OS-1816 crash repeatedly.
+            private final AtomicBoolean openPermitReleased = new AtomicBoolean(false);
+
+            private void releaseOpenPermitOnce() {
+                if (openPermitReleased.compareAndSet(false, true)) {
+                    cameraCoordinator.releaseOpenCloseLock();
+                }
+            }
+
             @Override
             public void onOpened(@NonNull CameraDevice camera) {
                 Log.d(TAG, "Camera device opened successfully");
@@ -1568,14 +1583,14 @@ public class CameraNeoService extends LifecycleService {
                 try {
                     createCameraSessionInternal(forVideo);
                 } finally {
-                    cameraCoordinator.releaseOpenCloseLock();
+                    releaseOpenPermitOnce();
                 }
             }
 
             @Override
             public void onDisconnected(@NonNull CameraDevice camera) {
                 Log.d(TAG, "Camera device disconnected");
-                cameraCoordinator.releaseOpenCloseLock();
+                releaseOpenPermitOnce();
                 camera.close();
                 cameraCoordinator.clearDevice();
                 if (forVideo) {
@@ -1597,7 +1612,7 @@ public class CameraNeoService extends LifecycleService {
                                 + " (Android code "
                                 + error
                                 + ")");
-                cameraCoordinator.releaseOpenCloseLock();
+                releaseOpenPermitOnce();
                 camera.close();
                 cameraCoordinator.clearDevice();
                 if (forVideo) {
