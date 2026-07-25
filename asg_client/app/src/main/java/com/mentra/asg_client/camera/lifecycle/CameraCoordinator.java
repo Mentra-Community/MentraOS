@@ -11,12 +11,27 @@ import java.util.TimerTask;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BooleanSupplier;
 
 /** Coordinates camera-adjacent lifecycle resources that outlive a single capture. */
 public final class CameraCoordinator {
 
     private static final String TAG = "CameraCoordinator";
+
+    /**
+     * Coarse camera lifecycle, tracked for logging and stale-callback detection. The
+     * authoritative guard is {@link #generation()}: every open attempt and every
+     * device/session close bump it, and async work captures the generation it was
+     * issued under so late callbacks can detect that the camera they belong to is gone
+     * (or worse, replaced — a null-check cannot tell a reopened camera from its own).
+     */
+    public enum LifecycleState {
+        CLOSED,
+        OPENING,
+        OPENED,
+        CONFIGURED
+    }
 
     // Volatile: mutated on the camera thread but still read from caller threads
     // (advisory state checks, keep-alive TimerTask) — plain fields gave those
@@ -28,6 +43,34 @@ public final class CameraCoordinator {
     private volatile Timer keepAliveTimer;
     private volatile boolean cameraKeptAlive;
     private final Semaphore openCloseLock = new Semaphore(1);
+    private volatile LifecycleState state = LifecycleState.CLOSED;
+    private final AtomicLong generation = new AtomicLong();
+
+    public LifecycleState state() {
+        return state;
+    }
+
+    /** The current camera generation; see {@link LifecycleState}. */
+    public long generation() {
+        return generation.get();
+    }
+
+    /** Whether async work issued under {@code observedGeneration} still owns the camera. */
+    public boolean isCurrentGeneration(long observedGeneration) {
+        return generation.get() == observedGeneration;
+    }
+
+    /**
+     * Marks the start of a new open attempt and returns its generation. Callbacks of
+     * this open must capture the returned value and drop themselves via
+     * {@link #isCurrentGeneration} once a newer open or a close has superseded them.
+     */
+    public long beginOpen() {
+        state = LifecycleState.OPENING;
+        long next = generation.incrementAndGet();
+        Log.d(TAG, "Camera open attempt, generation " + next);
+        return next;
+    }
 
     public Handler startBackgroundThread(String name) {
         backgroundThread = new HandlerThread(name);
@@ -123,10 +166,12 @@ public final class CameraCoordinator {
 
     public void setDevice(CameraDevice device) {
         this.device = device;
+        state = LifecycleState.OPENED;
     }
 
     public void clearDevice() {
         device = null;
+        state = LifecycleState.CLOSED;
     }
 
     public CameraCaptureSession session() {
@@ -135,6 +180,7 @@ public final class CameraCoordinator {
 
     public void setSession(CameraCaptureSession session) {
         this.session = session;
+        state = LifecycleState.CONFIGURED;
     }
 
     public void clearSession() {
@@ -146,6 +192,10 @@ public final class CameraCoordinator {
     }
 
     public void closeDeviceAndSession() {
+        // Bump first: anything still in flight for the old camera must see itself
+        // stale before the device handles start closing.
+        generation.incrementAndGet();
+        state = LifecycleState.CLOSED;
         if (session != null) {
             session.close();
             session = null;
@@ -160,11 +210,21 @@ public final class CameraCoordinator {
         Log.d(TAG, "Starting camera keep-alive timer for " + delayMs + "ms");
         cancelKeepAlive();
         cameraKeptAlive = true;
+        // The expiry closes the camera this keep-alive was armed for — not whatever
+        // camera exists when it finally runs. Timer.cancel() cannot dequeue an expiry
+        // already posted to the camera thread, so a close+reopen (or a capture that
+        // cancelled this timer) otherwise gets its fresh camera torn down by a stale
+        // expiry.
+        long armedGeneration = generation.get();
         keepAliveTimer = new Timer();
         keepAliveTimer.schedule(new TimerTask() {
             @Override
             public void run() {
                 Runnable expiry = () -> {
+                    if (!isCurrentGeneration(armedGeneration)) {
+                        Log.d(TAG, "Keep-alive expiry is stale (camera reopened); skipping");
+                        return;
+                    }
                     if (shouldExtend.getAsBoolean()) {
                         Log.w(TAG, "Keep-alive expired but capture in progress - extending timer");
                         startKeepAlive(delayMs, shouldExtend, onExpire);

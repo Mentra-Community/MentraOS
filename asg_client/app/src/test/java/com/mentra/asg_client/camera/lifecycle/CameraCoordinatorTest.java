@@ -213,6 +213,62 @@ public class CameraCoordinatorTest {
     }
 
     @Test
+    public void beginOpen_bumpsGenerationAndMarksOpening() {
+        CameraCoordinator coordinator = new CameraCoordinator();
+        long before = coordinator.generation();
+
+        long gen = coordinator.beginOpen();
+
+        assertThat(gen).isEqualTo(before + 1);
+        assertThat(coordinator.isCurrentGeneration(gen)).isTrue();
+        assertThat(coordinator.state()).isEqualTo(CameraCoordinator.LifecycleState.OPENING);
+    }
+
+    @Test
+    public void closeDeviceAndSession_retiresTheOpenGeneration() {
+        CameraCoordinator coordinator = new CameraCoordinator();
+        long gen = coordinator.beginOpen();
+
+        coordinator.closeDeviceAndSession();
+
+        assertThat(coordinator.isCurrentGeneration(gen)).isFalse();
+        assertThat(coordinator.state()).isEqualTo(CameraCoordinator.LifecycleState.CLOSED);
+    }
+
+    @Test
+    public void lifecycleState_tracksOpenConfigureClose() {
+        CameraCoordinator coordinator = new CameraCoordinator();
+        assertThat(coordinator.state()).isEqualTo(CameraCoordinator.LifecycleState.CLOSED);
+
+        coordinator.beginOpen();
+        assertThat(coordinator.state()).isEqualTo(CameraCoordinator.LifecycleState.OPENING);
+
+        coordinator.setDevice(Mockito.mock(CameraDevice.class));
+        assertThat(coordinator.state()).isEqualTo(CameraCoordinator.LifecycleState.OPENED);
+
+        coordinator.setSession(Mockito.mock(CameraCaptureSession.class));
+        assertThat(coordinator.state()).isEqualTo(CameraCoordinator.LifecycleState.CONFIGURED);
+
+        coordinator.closeDeviceAndSession();
+        assertThat(coordinator.state()).isEqualTo(CameraCoordinator.LifecycleState.CLOSED);
+    }
+
+    @Test
+    public void keepAliveExpiry_staleGeneration_skipsTeardown() throws InterruptedException {
+        CameraCoordinator coordinator = new CameraCoordinator();
+        coordinator.startBackgroundThread("CameraCoordinatorTest");
+        CountDownLatch expired = new CountDownLatch(1);
+
+        coordinator.startKeepAlive(50, () -> false, expired::countDown);
+        // Reopen before the timer fires: the expiry was armed for the old camera and
+        // must not tear down its successor.
+        coordinator.closeDeviceAndSession();
+
+        assertThat(expired.await(400, TimeUnit.MILLISECONDS)).isFalse();
+        coordinator.stopBackgroundThread();
+    }
+
+    @Test
     public void closeDeviceAndSession_closesAndClearsBoth() {
         CameraCoordinator coordinator = new CameraCoordinator();
         CameraDevice device = Mockito.mock(CameraDevice.class);

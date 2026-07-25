@@ -1551,14 +1551,19 @@ public class CameraNeoService extends LifecycleService {
             }
 
             Log.d(TAG, "Opening camera ID: " + this.cameraId);
+            final long openGeneration = cameraCoordinator.beginOpen();
             try {
                 manager.openCamera(
-                        this.cameraId, newCameraOpenStateCallback(forVideo), backgroundHandler);
+                        this.cameraId,
+                        newCameraOpenStateCallback(forVideo, openGeneration),
+                        backgroundHandler);
             } catch (Exception e) {
                 // The state callback owns the permit only once the open is in flight. If
                 // openCamera throws synchronously no callback will ever fire, so release
                 // here or every later open times out and every close falls into the
-                // 5s proceed-anyway teardown.
+                // 5s proceed-anyway teardown. closeDeviceAndSession() retires the failed
+                // generation (no handles exist yet, so it only bumps the guard).
+                cameraCoordinator.closeDeviceAndSession();
                 cameraCoordinator.releaseOpenCloseLock();
                 throw e;
             }
@@ -1605,8 +1610,14 @@ public class CameraNeoService extends LifecycleService {
     /**
      * Single camera-open callback for both photo and video; behavior matches the former {@code
      * photoStateCallback} / {@code videoStateCallback} pair (Phase 2f prep).
+     *
+     * <p>{@code openGeneration} is the generation returned by {@link
+     * CameraCoordinator#beginOpen()} for this open attempt. Every callback checks it before
+     * touching shared camera state: after a close (or close+reopen) these callbacks still
+     * fire for the old device, and a null-check cannot tell a reopened camera from its own.
      */
-    private CameraDevice.StateCallback newCameraOpenStateCallback(final boolean forVideo) {
+    private CameraDevice.StateCallback newCameraOpenStateCallback(
+            final boolean forVideo, final long openGeneration) {
         return new CameraDevice.StateCallback() {
             // The in-flight open owns exactly one open/close permit, surrendered to the
             // FIRST terminal callback. onDisconnected/onError also fire long after
@@ -1624,15 +1635,22 @@ public class CameraNeoService extends LifecycleService {
 
             @Override
             public void onOpened(@NonNull CameraDevice camera) {
-                Log.d(TAG, "Camera device opened successfully");
-                cameraCoordinator.setDevice(camera);
-
-                // Hold the open/close lock until the session surfaces have been handed to
-                // the framework: releasing it first lets closeCamera() close the
-                // ImageReaders on another thread mid-setup, abandoning the surfaces this
-                // session is about to wrap (OS-1816).
                 try {
-                    createCameraSessionInternal(forVideo);
+                    if (!cameraCoordinator.isCurrentGeneration(openGeneration)) {
+                        // A proceed-anyway teardown retired this open while the HAL was
+                        // still working on it. The device is real but unwanted.
+                        Log.w(TAG, "Stale onOpened (generation " + openGeneration + "); closing");
+                        camera.close();
+                        return;
+                    }
+                    Log.d(TAG, "Camera device opened successfully");
+                    cameraCoordinator.setDevice(camera);
+
+                    // Hold the open/close lock until the session surfaces have been
+                    // handed to the framework: releasing it first lets closeCamera()
+                    // close the ImageReaders on another thread mid-setup, abandoning the
+                    // surfaces this session is about to wrap (OS-1816).
+                    createCameraSessionInternal(forVideo, openGeneration);
                 } finally {
                     releaseOpenPermitOnce();
                 }
@@ -1643,6 +1661,12 @@ public class CameraNeoService extends LifecycleService {
                 Log.d(TAG, "Camera device disconnected");
                 releaseOpenPermitOnce();
                 camera.close();
+                if (!cameraCoordinator.isCurrentGeneration(openGeneration)) {
+                    // The disconnect belongs to a camera that was already closed or
+                    // replaced; wiping current state would hit the successor.
+                    Log.d(TAG, "Stale onDisconnected (generation " + openGeneration + ")");
+                    return;
+                }
                 cameraCoordinator.clearDevice();
                 if (forVideo) {
                     notifyVideoError(videoSession.currentVideoId(), "Camera disconnected");
@@ -1665,6 +1689,10 @@ public class CameraNeoService extends LifecycleService {
                                 + ")");
                 releaseOpenPermitOnce();
                 camera.close();
+                if (!cameraCoordinator.isCurrentGeneration(openGeneration)) {
+                    Log.d(TAG, "Stale onError (generation " + openGeneration + ")");
+                    return;
+                }
                 cameraCoordinator.clearDevice();
                 if (forVideo) {
                     notifyVideoError(videoSession.currentVideoId(), cameraError.message());
@@ -1676,7 +1704,7 @@ public class CameraNeoService extends LifecycleService {
         };
     }
 
-    private void createCameraSessionInternal(boolean forVideo) {
+    private void createCameraSessionInternal(boolean forVideo, long openGeneration) {
         try {
             CameraDevice activeCameraDevice = cameraCoordinator.device();
             if (activeCameraDevice == null) {
@@ -1755,7 +1783,13 @@ public class CameraNeoService extends LifecycleService {
                             synchronized (SERVICE_LOCK) {
                                 handler = backgroundHandler;
                                 device = cameraCoordinator.device();
-                                if (handler == null || device == null) {
+                                // The generation check is the authoritative staleness
+                                // test: after a close+reopen the null-checks pass again
+                                // but device/session belong to the successor camera.
+                                if (handler == null
+                                        || device == null
+                                        || !cameraCoordinator.isCurrentGeneration(
+                                                openGeneration)) {
                                     Log.w(
                                             TAG,
                                             "onConfigured after camera teardown; closing session");
@@ -1808,11 +1842,13 @@ public class CameraNeoService extends LifecycleService {
                         public void onConfigureFailed(@NonNull CameraCaptureSession session) {
                             Handler handler;
                             CameraDevice device;
+                            boolean stale;
                             synchronized (SERVICE_LOCK) {
                                 handler = backgroundHandler;
                                 device = cameraCoordinator.device();
+                                stale = !cameraCoordinator.isCurrentGeneration(openGeneration);
                             }
-                            if (handler == null || device == null) {
+                            if (handler == null || device == null || stale) {
                                 Log.w(TAG, "onConfigureFailed after camera teardown; ignoring");
                                 session.close();
                                 return;
