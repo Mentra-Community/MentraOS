@@ -1338,10 +1338,6 @@ public class CameraNeoService extends LifecycleService {
         warmLeaseDeadlineMs = latest;
     }
 
-    private void setupCameraForQueuedRequest(QueuedPhotoRequest request) {
-        photoSession.setupCameraForQueuedRequest(request);
-    }
-
     private void setupCameraAndStartRecording(
             String videoId, String filePath, VideoSettings settings) {
         videoSession.setCallback(videoSessionCallback);
