@@ -1504,8 +1504,17 @@ public class CameraNeoService extends LifecycleService {
             }
 
             Log.d(TAG, "Opening camera ID: " + this.cameraId);
-            manager.openCamera(
-                    this.cameraId, newCameraOpenStateCallback(forVideo), backgroundHandler);
+            try {
+                manager.openCamera(
+                        this.cameraId, newCameraOpenStateCallback(forVideo), backgroundHandler);
+            } catch (Exception e) {
+                // The state callback owns the permit only once the open is in flight. If
+                // openCamera throws synchronously no callback will ever fire, so release
+                // here or every later open times out and every close falls into the
+                // 5s proceed-anyway teardown.
+                cameraCoordinator.releaseOpenCloseLock();
+                throw e;
+            }
 
         } catch (CameraAccessException e) {
             // Handle camera access exceptions more specifically
@@ -1694,7 +1703,13 @@ public class CameraNeoService extends LifecycleService {
                                 try {
                                     videoSession.startRecording(
                                             cameraCoordinator.session(), previewBuilder);
-                                } catch (CameraAccessException ce) {
+                                } catch (CameraAccessException
+                                        | IllegalArgumentException
+                                        | IllegalStateException ce) {
+                                    // IllegalArgumentException: the recorder surface was
+                                    // released by a racing teardown. IllegalStateException:
+                                    // the session was closed under us. Same crash family as
+                                    // the photo path (OS-1816).
                                     Log.e(TAG, "Failed to start video recording", ce);
                                     notifyVideoError(
                                             videoSession.currentVideoId(),
