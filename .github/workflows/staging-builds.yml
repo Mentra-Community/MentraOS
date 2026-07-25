@@ -622,7 +622,6 @@ jobs:
       reuse: ${{ steps.asg-reuse.outputs.reuse }}
       apk_url: ${{ steps.asg-reuse.outputs.apk_url }}
       tree_hash: ${{ steps.asg-reuse.outputs.tree_hash }}
-      spl_sha: ${{ steps.asg-reuse.outputs.spl_sha }}
 
     steps:
       - name: Get cache week number
@@ -630,6 +629,11 @@ jobs:
         run: echo "week=$(date +%Y-%U)" >> $GITHUB_OUTPUT
 
       - name: Clean build artifacts (preserve caches)
+        # The submodule worktree is cleaned here too: actions/checkout does not clean
+        # submodule worktrees and submodule init does not remove ignored build outputs,
+        # so on a persistent runner stale Gradle products would survive across runs.
+        # Removal is cheap — the submodule's git dir lives under .git/modules, so init
+        # re-checks-out locally instead of re-cloning.
         run: |
           rm -rf asg_client/app/build asg_client/.gradle asg_client/StreamPackLite
 
@@ -657,27 +661,15 @@ jobs:
           # fleet-visible phantom update). git ls-tree lists every remaining file
           # with its blob SHA in stable path order, so hashing the listing is a
           # deterministic content hash.
-          asg_tree=$(git ls-tree -r "HEAD:asg_client" \
+          # StreamPackLite is a submodule under asg_client/, so its pinned commit appears as a
+          # gitlink in this listing — a StreamPackLite bump changes HEAD:asg_client and forces a
+          # fresh build for free, with no out-of-tree SHA sampling to keep in sync.
+          TREE_HASH=$(git ls-tree -r "HEAD:asg_client" \
             | grep -vE $'\t(docs/|ota_manifests/|ota_website/|archive/)' \
             | grep -vE '/src/(test|androidTest)/' \
             | grep -vE '\.md$' \
             | sha256sum | awk '{print $1}')
-          # StreamPackLite is cloned from its floating 'working' branch outside asg_client/, so an
-          # upstream change with no asg_client diff would otherwise reuse the stale APK. Fold the
-          # current 'working' SHA into the reuse key so such a change forces a fresh build.
-          spl_sha=$(git ls-remote https://github.com/Mentra-Community/StreamPackLite.git working \
-            | awk '{print $1}')
-          if [ -z "$spl_sha" ]; then
-            # No resolvable SHA means the fresh-build path can't check out a pinned
-            # StreamPackLite either — fail loudly rather than pretend the build can proceed.
-            echo "::error::Could not resolve the StreamPackLite 'working' SHA via git ls-remote; the ASG build cannot pin its StreamPackLite input."
-            exit 1
-          fi
-          TREE_HASH=$(printf '%s\n%s\n' "$asg_tree" "$spl_sha" | sha256sum | awk '{print $1}')
           echo "tree_hash=${TREE_HASH}" >> "$GITHUB_OUTPUT"
-          # Export the exact SHA that entered the hash so the clone step builds from it (not a
-          # later 'working' tip), keeping the recorded key and the built input atomic.
-          echo "spl_sha=${spl_sha}" >> "$GITHUB_OUTPUT"
           echo "reuse=false" >> "$GITHUB_OUTPUT"
 
           MANIFEST_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/staging-builds/staging_live_version.json"
@@ -758,14 +750,15 @@ jobs:
         if: steps.asg-reuse.outputs.reuse != 'true'
         run: cp .env.example .env
 
-      - name: Clone StreamPackLite dependency
+      - name: Init StreamPackLite submodule
+        # After (and gated on) the reuse decision: reuse only needs the gitlink from
+        # HEAD:asg_client, not the worktree, so app-only releases neither fetch
+        # StreamPackLite nor can they fail on a transient submodule fetch.
+        # Path-scoped on purpose: .gitmodules also carries a dangling
+        # mcu_client/peripheral_uart_next/nrf5340 entry with an unfetchable relative
+        # self-URL; a blanket recursive init would break if its gitlink ever lands.
         if: steps.asg-reuse.outputs.reuse != 'true'
-        working-directory: ./asg_client
-        run: |
-          git clone https://github.com/Mentra-Community/StreamPackLite.git
-          cd StreamPackLite
-          # Build from the exact SHA that entered the reuse hash, not a later 'working' tip.
-          git checkout "${{ steps.asg-reuse.outputs.spl_sha }}"
+        run: git submodule update --init asg_client/StreamPackLite
 
       - name: Cache Gradle dependencies
         if: steps.asg-reuse.outputs.reuse != 'true'

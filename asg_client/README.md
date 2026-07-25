@@ -80,11 +80,10 @@ Implications for development:
    MENTRAOS_SECURE=true
    ```
 
-3. Clone the RTMP streaming library in this directory
+3. Initialize the RTMP streaming library submodule (skip if you cloned with
+   `--recurse-submodules`); from this `asg_client/` directory:
    ```
-   git clone git@github.com:Mentra-Community/StreamPackLite.git
-   cd StreamPackLite
-   git checkout working
+   git submodule update --init StreamPackLite
    ```
 
 ### Development on Mentra Live
