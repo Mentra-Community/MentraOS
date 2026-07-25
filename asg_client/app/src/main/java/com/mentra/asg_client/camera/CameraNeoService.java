@@ -504,15 +504,36 @@ public class CameraNeoService extends LifecycleService {
      * @return true if camera was closed, false if camera was busy or not open
      */
     public static boolean closeKeptAliveCamera() {
-        if (sInstance != null
-                && sInstance.cameraCoordinator.isCameraKeptAlive()
-                && sInstance.photoSession.shotState() == AeStateMachine.ShotState.IDLE) {
-            Log.d(TAG, "Force closing kept-alive camera for other operation");
-            sInstance.cameraCoordinator.closeIfKeptAlive(sInstance::closeCamera);
-            sInstance.stopSelf();
-            return true;
+        // Snapshot: onDestroy nulls sInstance concurrently with this caller-thread check.
+        CameraNeoService instance = sInstance;
+        if (instance == null
+                || !instance.cameraCoordinator.isCameraKeptAlive()
+                || instance.photoSession.shotState() != AeStateMachine.ShotState.IDLE) {
+            return false;
         }
-        return false;
+        Log.d(TAG, "Force closing kept-alive camera for other operation");
+        // The close runs on the camera thread so it cannot interleave with an in-flight
+        // open/session setup there. Callers (video/stream starts) rely on the eviction
+        // having completed before they open their own camera, so wait for it. The
+        // SERVICE_LOCK re-check drops the eviction if a photo raced in since the
+        // advisory check above — previously that race tore the camera down mid-dispatch.
+        boolean[] closed = {false};
+        instance.cameraCoordinator.awaitOnCameraThread(
+                () -> {
+                    synchronized (SERVICE_LOCK) {
+                        if (instance.photoSession.shotState() != AeStateMachine.ShotState.IDLE) {
+                            Log.d(TAG, "Kept-alive eviction dropped; a capture started");
+                            return;
+                        }
+                        closed[0] =
+                                instance.cameraCoordinator.closeIfKeptAlive(instance::closeCamera);
+                        if (closed[0]) {
+                            instance.stopSelf();
+                        }
+                    }
+                },
+                AsgConstants.CAMERA_TEARDOWN_AWAIT_MS);
+        return closed[0];
     }
 
     @Override
@@ -565,8 +586,14 @@ public class CameraNeoService extends LifecycleService {
 
                 @Override
                 public void onSessionTerminated() {
-                    closeCamera();
-                    conditionalStopSelf();
+                    // Video stop paths land here on the main thread (stop intent,
+                    // MediaRecorder info listener, onDestroy); the close itself must run
+                    // on the camera thread so it cannot race session setup there.
+                    cameraCoordinator.runOnCameraThread(
+                            () -> {
+                                closeCamera();
+                                conditionalStopSelf();
+                            });
                 }
             };
 
@@ -971,14 +998,12 @@ public class CameraNeoService extends LifecycleService {
                     sInstance.openingWarmMode = null;
                     sInstance.photoSession.cancelWarmUp();
                     sInstance.cancelKeepAliveTimer();
-                    sInstance.closeCamera();
-                    sInstance.stopSelf();
+                    sInstance.closeCameraFromWarmTeardown();
                 } else if (lease != null) {
                     if (sInstance.warmLeases.isEmpty()) {
                         sInstance.warmLeaseMode = null;
                         sInstance.cancelKeepAliveTimer();
-                        sInstance.closeCamera();
-                        sInstance.stopSelf();
+                        sInstance.closeCameraFromWarmTeardown();
                     } else {
                         sInstance.armWarmLeaseTimer();
                     }
@@ -992,6 +1017,27 @@ public class CameraNeoService extends LifecycleService {
         if (stopped != null) {
             stopped.onCameraStopped();
         }
+    }
+
+    /**
+     * Warm-up teardown: the bookkeeping that decided to close ran under SERVICE_LOCK on
+     * the caller's thread, but the close itself belongs on the camera thread. Re-check
+     * there — a warm-up or photo that raced in after the decision must keep its camera.
+     */
+    private void closeCameraFromWarmTeardown() {
+        cameraCoordinator.runOnCameraThread(
+                () -> {
+                    synchronized (SERVICE_LOCK) {
+                        if (!warmCallbacks.isEmpty()
+                                || !warmLeases.isEmpty()
+                                || photoSession.shotState() != AeStateMachine.ShotState.IDLE) {
+                            Log.d(TAG, "Warm teardown superseded; leaving camera open");
+                            return;
+                        }
+                        closeCamera();
+                        stopSelf();
+                    }
+                });
     }
 
     private static long clampWarmUpDuration(long durationMs) {
@@ -1848,7 +1894,10 @@ public class CameraNeoService extends LifecycleService {
             if (videoSession != null && videoSession.isRecording()) {
                 videoSession.stopRecording(videoSession.currentVideoId());
             }
-            closeCamera();
+            // The close runs on the camera thread; stopBackgroundThread() below drains
+            // the queue before joining, so the close is guaranteed to have completed
+            // before onDestroy returns.
+            cameraCoordinator.runOnCameraThread(this::closeCamera);
             releaseWakeLocks();
 
             sInstance = null;
@@ -1989,8 +2038,10 @@ public class CameraNeoService extends LifecycleService {
             if (close) {
                 warmLeaseMode = null;
                 if (closeWhenEmpty) {
-                    closeCamera();
-                    stopSelf();
+                    // Post-capture completion paths reach here on the StillCaptureCb or
+                    // dispatch threads; the confined close also re-checks that no new
+                    // capture/warm-up raced in before actually closing.
+                    closeCameraFromWarmTeardown();
                 }
             } else {
                 armWarmLeaseTimer();
@@ -2049,19 +2100,28 @@ public class CameraNeoService extends LifecycleService {
 
     /** Attempt to restart the camera service with different parameters if needed */
     private void restartCameraServiceIfNeeded() {
+        // The helper's delayed retry runs on the main looper; route the device/session
+        // close it performs onto the camera thread — a bare main-thread close here was
+        // one of the unguarded teardowns that raced session setup (OS-1816 family).
         CameraRecoveryHelper.restartCameraServiceIfNeeded(
                 this::releaseCameraResources,
                 this,
                 () -> cameraId,
                 id -> cameraId = id,
                 this::wakeUpScreen,
-                () -> cameraCoordinator.closeDeviceAndSession());
+                () ->
+                        cameraCoordinator.runOnCameraThread(
+                                () -> cameraCoordinator.closeDeviceAndSession()));
     }
 
     /** Release all camera system resources */
     private void releaseCameraResources() {
         CameraRecoveryHelper.releaseCameraResources(
-                this::closeCamera, () -> cameraCoordinator.closeDeviceAndSession(), this);
+                () -> cameraCoordinator.runOnCameraThread(this::closeCamera),
+                () ->
+                        cameraCoordinator.runOnCameraThread(
+                                () -> cameraCoordinator.closeDeviceAndSession()),
+                this);
     }
 
     // -----------------------------------------------------------------------------------

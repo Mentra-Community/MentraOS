@@ -8,6 +8,7 @@ import android.util.Log;
 
 import java.util.Timer;
 import java.util.TimerTask;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BooleanSupplier;
@@ -17,11 +18,14 @@ public final class CameraCoordinator {
 
     private static final String TAG = "CameraCoordinator";
 
-    private HandlerThread backgroundThread;
-    private Handler backgroundHandler;
-    private CameraDevice device;
-    private CameraCaptureSession session;
-    private Timer keepAliveTimer;
+    // Volatile: mutated on the camera thread but still read from caller threads
+    // (advisory state checks, keep-alive TimerTask) — plain fields gave those
+    // readers no visibility guarantee at all.
+    private volatile HandlerThread backgroundThread;
+    private volatile Handler backgroundHandler;
+    private volatile CameraDevice device;
+    private volatile CameraCaptureSession session;
+    private volatile Timer keepAliveTimer;
     private volatile boolean cameraKeptAlive;
     private final Semaphore openCloseLock = new Semaphore(1);
 
@@ -34,6 +38,60 @@ public final class CameraCoordinator {
 
     public Handler backgroundHandler() {
         return backgroundHandler;
+    }
+
+    /**
+     * Runs {@code action} on the camera background thread, where all camera lifecycle
+     * mutations (device, session, readers, recorder) belong — Camera2 already delivers
+     * the open/session callbacks there, so posting serializes teardown against setup
+     * without locks. Runs inline when already on the camera thread, and also when the
+     * thread is gone (service teardown) so a close is never dropped.
+     */
+    public void runOnCameraThread(Runnable action) {
+        Handler handler = backgroundHandler;
+        if (handler == null || handler.getLooper().isCurrentThread()) {
+            action.run();
+            return;
+        }
+        if (!handler.post(action)) {
+            // Looper is quitting; teardown work must still happen.
+            action.run();
+        }
+    }
+
+    /**
+     * Like {@link #runOnCameraThread} but waits up to {@code timeoutMs} for the action
+     * to finish. For callers that need the camera actually released before proceeding
+     * (e.g. evicting a kept-alive camera before starting video). Returns false when the
+     * wait timed out or was interrupted; the action still runs in that case, just later.
+     * Never call while holding a lock the action also takes.
+     */
+    public boolean awaitOnCameraThread(Runnable action, long timeoutMs) {
+        Handler handler = backgroundHandler;
+        if (handler == null || handler.getLooper().isCurrentThread()) {
+            action.run();
+            return true;
+        }
+        CountDownLatch done = new CountDownLatch(1);
+        boolean posted =
+                handler.post(
+                        () -> {
+                            try {
+                                action.run();
+                            } finally {
+                                done.countDown();
+                            }
+                        });
+        if (!posted) {
+            action.run();
+            return true;
+        }
+        try {
+            return done.await(timeoutMs, TimeUnit.MILLISECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
     }
 
     public void stopBackgroundThread() {
@@ -120,7 +178,11 @@ public final class CameraCoordinator {
                 if (handler != null) {
                     handler.post(expiry);
                 } else {
-                    expiry.run();
+                    // A null handler means the camera thread was already stopped, which
+                    // only happens on service teardown — the camera is closed (or being
+                    // closed) by that path. Running the teardown here would mutate camera
+                    // state on a raw Timer thread.
+                    Log.w(TAG, "Keep-alive expired after camera thread stopped; skipping");
                 }
             }
         }, delayMs);

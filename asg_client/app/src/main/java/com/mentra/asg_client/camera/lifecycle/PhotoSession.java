@@ -2401,7 +2401,16 @@ public final class PhotoSession {
 
                                 @Override
                                 public void closeCamera() {
-                                    hooks.closeCamera();
+                                    // These hooks run on the dedicated StillCaptureCb
+                                    // thread; the close itself belongs on the camera
+                                    // thread where the rest of teardown is serialized.
+                                    Handler cameraHandler = hooks.backgroundHandler();
+                                    if (cameraHandler == null
+                                            || cameraHandler.getLooper().isCurrentThread()) {
+                                        hooks.closeCamera();
+                                    } else {
+                                        cameraHandler.post(hooks::closeCamera);
+                                    }
                                 }
 
                                 @Override

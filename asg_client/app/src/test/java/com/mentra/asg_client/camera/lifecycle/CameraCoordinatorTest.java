@@ -15,6 +15,7 @@ import org.robolectric.annotation.Config;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 33)
@@ -68,14 +69,119 @@ public class CameraCoordinatorTest {
     }
 
     @Test
-    public void keepAliveExpiry_runsExpireAction() throws InterruptedException {
+    public void keepAliveExpiry_runsExpireActionOnCameraThread() throws InterruptedException {
+        CameraCoordinator coordinator = new CameraCoordinator();
+        coordinator.startBackgroundThread("CameraCoordinatorTest");
+        CountDownLatch expired = new CountDownLatch(1);
+        AtomicReference<String> expiredOn = new AtomicReference<>();
+
+        coordinator.startKeepAlive(
+                1,
+                () -> false,
+                () -> {
+                    expiredOn.set(Thread.currentThread().getName());
+                    expired.countDown();
+                });
+
+        assertThat(expired.await(1, TimeUnit.SECONDS)).isTrue();
+        assertThat(coordinator.isCameraKeptAlive()).isFalse();
+        assertThat(expiredOn.get()).isEqualTo("CameraCoordinatorTest");
+        coordinator.stopBackgroundThread();
+    }
+
+    @Test
+    public void keepAliveExpiry_withoutCameraThread_skipsTeardown() throws InterruptedException {
         CameraCoordinator coordinator = new CameraCoordinator();
         CountDownLatch expired = new CountDownLatch(1);
 
         coordinator.startKeepAlive(1, () -> false, expired::countDown);
 
-        assertThat(expired.await(1, TimeUnit.SECONDS)).isTrue();
-        assertThat(coordinator.isCameraKeptAlive()).isFalse();
+        // No camera thread means service teardown already owns the close; the raw
+        // Timer thread must never run camera teardown itself.
+        assertThat(expired.await(300, TimeUnit.MILLISECONDS)).isFalse();
+    }
+
+    @Test
+    public void runOnCameraThread_offThread_postsToCameraThread() throws InterruptedException {
+        CameraCoordinator coordinator = new CameraCoordinator();
+        coordinator.startBackgroundThread("CameraCoordinatorTest");
+        CountDownLatch ran = new CountDownLatch(1);
+        AtomicReference<String> ranOn = new AtomicReference<>();
+
+        coordinator.runOnCameraThread(
+                () -> {
+                    ranOn.set(Thread.currentThread().getName());
+                    ran.countDown();
+                });
+
+        assertThat(ran.await(1, TimeUnit.SECONDS)).isTrue();
+        assertThat(ranOn.get()).isEqualTo("CameraCoordinatorTest");
+        coordinator.stopBackgroundThread();
+    }
+
+    @Test
+    public void runOnCameraThread_onCameraThread_runsInline() throws InterruptedException {
+        CameraCoordinator coordinator = new CameraCoordinator();
+        Handler handler = coordinator.startBackgroundThread("CameraCoordinatorTest");
+        CountDownLatch done = new CountDownLatch(1);
+        AtomicBoolean ranInline = new AtomicBoolean(false);
+
+        handler.post(
+                () -> {
+                    AtomicBoolean ran = new AtomicBoolean(false);
+                    coordinator.runOnCameraThread(() -> ran.set(true));
+                    // Inline execution means the action completed before this returns.
+                    ranInline.set(ran.get());
+                    done.countDown();
+                });
+
+        assertThat(done.await(1, TimeUnit.SECONDS)).isTrue();
+        assertThat(ranInline).isTrue();
+        coordinator.stopBackgroundThread();
+    }
+
+    @Test
+    public void runOnCameraThread_withoutCameraThread_runsInline() {
+        CameraCoordinator coordinator = new CameraCoordinator();
+        AtomicBoolean ran = new AtomicBoolean(false);
+
+        coordinator.runOnCameraThread(() -> ran.set(true));
+
+        assertThat(ran).isTrue();
+    }
+
+    @Test
+    public void awaitOnCameraThread_waitsForCompletion() throws InterruptedException {
+        CameraCoordinator coordinator = new CameraCoordinator();
+        coordinator.startBackgroundThread("CameraCoordinatorTest");
+        AtomicBoolean ran = new AtomicBoolean(false);
+
+        boolean completed = coordinator.awaitOnCameraThread(() -> ran.set(true), 1_000);
+
+        assertThat(completed).isTrue();
+        assertThat(ran).isTrue();
+        coordinator.stopBackgroundThread();
+    }
+
+    @Test
+    public void awaitOnCameraThread_timesOutOnBusyThread() throws InterruptedException {
+        CameraCoordinator coordinator = new CameraCoordinator();
+        Handler handler = coordinator.startBackgroundThread("CameraCoordinatorTest");
+        CountDownLatch release = new CountDownLatch(1);
+        handler.post(
+                () -> {
+                    try {
+                        release.await(5, TimeUnit.SECONDS);
+                    } catch (InterruptedException ignored) {
+                        Thread.currentThread().interrupt();
+                    }
+                });
+
+        boolean completed = coordinator.awaitOnCameraThread(() -> {}, 100);
+
+        assertThat(completed).isFalse();
+        release.countDown();
+        coordinator.stopBackgroundThread();
     }
 
     @Test

@@ -47,6 +47,13 @@ public class AsgConstants {
     public static final long CAMERA_FOV_OVERRIDE_DEFAULT_TTL_MS = 300_000L;
     public static final long CAMERA_FOV_OVERRIDE_MAX_TTL_MS = 600_000L;
 
+    /**
+     * How long a caller evicting the kept-alive camera waits for the camera-thread close
+     * to finish before proceeding. Slightly above closeCamera's own 5s open/close-lock
+     * timeout so the wait can only expire after the close itself gave up.
+     */
+    public static final long CAMERA_TEARDOWN_AWAIT_MS = 6_000L;
+
     public static String appName = "AugmentOS ASG Client";
     public static int augmentOsSdkVerion = 1;
     public static int asgServiceNotificationId = 3540;
