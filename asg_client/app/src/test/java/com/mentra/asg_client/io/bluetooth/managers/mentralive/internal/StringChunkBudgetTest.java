@@ -181,4 +181,52 @@ public class StringChunkBudgetTest {
         machine.srSyvrParsed(null);
         assertThat(MessageChunker.maxPackedStringChunkSize()).isEqualTo(240);
     }
+
+    @Test
+    public void budgetFollowsThePhoneSessionLifecycle() {
+        // notify_cap derives from the phone BLE session's negotiated ATT MTU, so the budget
+        // must not outlive that session: a reconnecting phone can negotiate a SMALLER MTU, and
+        // the old 496 budget would silently truncate its notifications.
+        LinkStateMachine machine = new LinkStateMachine();
+        MessageChunker.followLinkState(machine);
+        machine.serialReady();
+        machine.phonePresenceReported(true);
+        machine.srSyvrParsed(
+                new LinkStateMachine.BesCaps(
+                        false, false, false, false, BesWireFormat.PROTOCOL_VERSION_V1, 509));
+        assertThat(MessageChunker.maxPackedStringChunkSize()).isEqualTo(509 - 13);
+
+        // Phone disconnects: back to the fallback.
+        machine.phonePresenceReported(false);
+        assertThat(MessageChunker.maxPackedStringChunkSize()).isEqualTo(240);
+
+        // Phone reconnects WITHOUT a fresh advertisement: the fallback must hold.
+        machine.phonePresenceReported(true);
+        assertThat(MessageChunker.maxPackedStringChunkSize()).isEqualTo(240);
+
+        // A fresh advertisement (measured for the new session's MTU) re-arms the budget.
+        machine.srSyvrParsed(
+                new LinkStateMachine.BesCaps(
+                        false, false, false, false, BesWireFormat.PROTOCOL_VERSION_V1, 260));
+        assertThat(MessageChunker.maxPackedStringChunkSize()).isEqualTo(260 - 13);
+    }
+
+    @Test
+    public void budgetFallsBackOnBesOta() {
+        // A BES OTA is a firmware-generation boundary AND kills the phone session: the new
+        // firmware may advertise a different notify_cap or none at all.
+        LinkStateMachine machine = new LinkStateMachine();
+        MessageChunker.followLinkState(machine);
+        machine.serialReady();
+        machine.srSyvrParsed(
+                new LinkStateMachine.BesCaps(
+                        false, false, false, false, BesWireFormat.PROTOCOL_VERSION_V1, 509));
+        assertThat(MessageChunker.maxPackedStringChunkSize()).isEqualTo(509 - 13);
+
+        // onBesOtaApplied drives exactly these two machine transitions.
+        machine.streamDiscontinuity();
+        machine.phonePresenceInvalidated();
+
+        assertThat(MessageChunker.maxPackedStringChunkSize()).isEqualTo(240);
+    }
 }

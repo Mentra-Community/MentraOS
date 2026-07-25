@@ -404,6 +404,62 @@ public class LinkStateMachineTest {
         assertThat(machine.getPhonePresence()).isEqualTo(PhonePresence.PRESENT);
     }
 
+    // ---- notify_cap lifecycle: UART session ∩ phone BLE session ∩ firmware generation ----
+
+    @Test
+    public void presenceEdge_dropsNotifyCapButKeepsTheOtherCaps() {
+        machine.serialReady();
+        machine.srSyvrParsed(FULL_CAPS);
+        machine.phonePresenceReported(true);
+        machine.srSyvrParsed(
+                new BesCaps(false, false, false, false, BesWireFormat.PROTOCOL_VERSION_V1, 509));
+        assertThat(machine.getNegotiatedCaps().notifyCap).isEqualTo(509);
+
+        // The phone disconnected: its session's negotiated ATT MTU (and thus notify_cap) died
+        // with it, but the UART-session caps are still valid.
+        machine.phonePresenceReported(false);
+
+        assertThat(machine.getNegotiatedCaps().notifyCap).isEqualTo(0);
+        assertThat(machine.getNegotiatedCaps().binary).isTrue();
+        assertThat(machine.getNegotiatedCaps().filePayloadV2).isTrue();
+
+        // A NEW phone session renegotiates the MTU: reconnecting must NOT restore the old cap.
+        machine.phonePresenceReported(true);
+        assertThat(machine.getNegotiatedCaps().notifyCap).isEqualTo(0);
+
+        // Only a fresh advertisement re-arms it.
+        machine.srSyvrParsed(
+                new BesCaps(false, false, false, false, BesWireFormat.PROTOCOL_VERSION_V1, 260));
+        assertThat(machine.getNegotiatedCaps().notifyCap).isEqualTo(260);
+    }
+
+    @Test
+    public void duplicatePresenceReport_keepsNotifyCap() {
+        machine.serialReady();
+        machine.phonePresenceReported(true);
+        machine.srSyvrParsed(
+                new BesCaps(false, false, false, false, BesWireFormat.PROTOCOL_VERSION_V1, 509));
+
+        // Same-session syncs (phone_ble repeating the current value) are not session boundaries.
+        machine.phonePresenceReported(true);
+
+        assertThat(machine.getNegotiatedCaps().notifyCap).isEqualTo(509);
+    }
+
+    @Test
+    public void phonePresenceInvalidated_dropsNotifyCapEvenWhenPresenceAlreadyUnknown() {
+        machine.serialReady();
+        machine.srSyvrParsed(
+                new BesCaps(false, false, false, false, BesWireFormat.PROTOCOL_VERSION_V1, 509));
+        assertThat(machine.getPhonePresence()).isEqualTo(PhonePresence.UNKNOWN);
+
+        // BES OTA: firmware-generation boundary — the cached cap must die regardless of what
+        // the presence tri-state happens to be.
+        machine.phonePresenceInvalidated();
+
+        assertThat(machine.getNegotiatedCaps().notifyCap).isEqualTo(0);
+    }
+
     // ---- notify_cap accrual ----
 
     @Test

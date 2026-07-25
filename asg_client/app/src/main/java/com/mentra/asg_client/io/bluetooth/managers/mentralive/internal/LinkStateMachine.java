@@ -108,7 +108,13 @@ public final class LinkStateMachine {
         /**
          * Max single-notification payload the BES delivers to the phone
          * (wire_caps.notify_cap = max(253, min(negotiated ATT MTU - 3, 509))). 0 when the
-         * firmware predates the advertisement.
+         * firmware predates the advertisement or the cached value was invalidated.
+         *
+         * <p>Unlike the other caps, notify_cap derives from the PHONE BLE session's negotiated
+         * ATT MTU, so its validity is the intersection of the UART session, the phone BLE
+         * session, and the BES firmware generation: the machine clears it on serial close, on
+         * every phone-presence edge (a new session renegotiates the MTU), and on BES OTA — it
+         * re-arms only from a fresh wire_caps advertisement.
          */
         public final int notifyCap;
 
@@ -143,6 +149,17 @@ public final class LinkStateMachine {
                     bigPacks || advertised.bigPacks,
                     advertised.binary ? advertised.proto : proto,
                     advertised.notifyCap > 0 ? advertised.notifyCap : notifyCap);
+        }
+
+        /**
+         * Drop the cached notify_cap: a phone BLE session boundary or a BES reboot made the
+         * MTU-derived value stale. Invalidated behaves exactly like never-advertised (the
+         * tri-state degradation rule), until a fresh wire_caps advertisement re-arms it.
+         */
+        BesCaps withoutNotifyCap() {
+            return notifyCap == 0
+                    ? this
+                    : new BesCaps(k900Le, binary, filePayloadV2, bigPacks, proto, 0);
         }
 
         /**
@@ -351,6 +368,13 @@ public final class LinkStateMachine {
      * field of an {@code sr_syvr} reply. Orthogonal to the UART ladder — a baud reopen does not
      * touch the BES-to-phone BLE link, so presence deliberately survives
      * {@link #streamDiscontinuity()}.
+     *
+     * <p>A presence EDGE (the value actually changing, in either direction) is a phone BLE
+     * session boundary, and {@code notify_cap} derives from that session's negotiated ATT MTU:
+     * a new session renegotiates the MTU, so the cached cap is dropped on every edge and only a
+     * fresh wire_caps advertisement re-arms it. Callers syncing presence from an sr_syvr reply
+     * must therefore apply the presence BEFORE merging that reply's own wire_caps, so the
+     * advertisement measured for the current session survives.
      */
     public void phonePresenceReported(boolean present) {
         synchronized (this) {
@@ -359,6 +383,7 @@ public final class LinkStateMachine {
                 return;
             }
             phonePresence = updated;
+            negotiatedCaps = negotiatedCaps.withoutNotifyCap();
             notifyListenersLocked();
         }
     }
@@ -366,15 +391,21 @@ public final class LinkStateMachine {
     /**
      * The last presence report can no longer be trusted (the BES is rebooting after an OTA and
      * drops its phone link on the way down). Presence returns to {@code UNKNOWN} until the
-     * rebooted BES sends a fresh signal.
+     * rebooted BES sends a fresh signal, and the cached {@code notify_cap} is dropped too: the
+     * reboot is a firmware-generation boundary AND kills the phone session whose MTU produced
+     * the value — the new firmware may advertise differently or not at all.
      */
     public void phonePresenceInvalidated() {
         synchronized (this) {
-            if (phonePresence == PhonePresence.UNKNOWN) {
-                return;
-            }
+            BesCaps updatedCaps = negotiatedCaps.withoutNotifyCap();
+            boolean changed =
+                    phonePresence != PhonePresence.UNKNOWN
+                            || !updatedCaps.equals(negotiatedCaps);
             phonePresence = PhonePresence.UNKNOWN;
-            notifyListenersLocked();
+            negotiatedCaps = updatedCaps;
+            if (changed) {
+                notifyListenersLocked();
+            }
         }
     }
 

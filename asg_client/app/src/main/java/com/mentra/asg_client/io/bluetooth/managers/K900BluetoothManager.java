@@ -1305,9 +1305,6 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
             Log.i(TAG, "📋 Handling sr_syvr response directly in K900BluetoothManager");
 
-            // Negotiate UART length endianness from the BES's advertised wire_caps.
-            applyBesWireCaps(json);
-
             // Parse the B field: prefer "version" (matches factory / hs_syvr) then "dpj"
             String bFieldStr = json.optString("B", "");
             org.json.JSONObject bData;
@@ -1316,9 +1313,18 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             } else {
                 bData = new org.json.JSONObject(bFieldStr);
             }
+
+            // Presence sync MUST run before the wire_caps merge: a presence edge drops the
+            // cached notify_cap (phone session boundary => stale MTU-derived value), while the
+            // notify_cap advertised in THIS reply was measured for the current session and must
+            // survive the merge that follows.
+            applyPhonePresenceFromSyvr(bData);
+
+            // Negotiate UART length endianness from the BES's advertised wire_caps.
+            applyBesWireCaps(json);
+
             cacheBesBaudSwitchVersion(bData);
             cacheBesVersionFromSyvrBField(bData);
-            applyPhonePresenceFromSyvr(bData);
 
             // Runtime UART baud switch: sr_syvr either confirms our post-reopen probe or,
             // if the firmware is new enough, kicks off the cs_baud negotiation.
