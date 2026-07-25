@@ -6,10 +6,20 @@ import android.content.Intent;
 import android.util.Log;
 
 import com.mentra.recovery.downgrade.DowngradeController;
+
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import com.mentra.recovery.util.RecoveryConstants;
 
 /** Handles permission-guarded control broadcasts from ASG (recovery start, downgrade handoff). */
 public class RecoveryControlReceiver extends BroadcastReceiver {
+  /**
+   * Handoff decisions run off the main thread: the controller hashes the staged APK and blocks
+   * on a confirmed WorkManager enqueue, both of which would ANR a receiver. goAsync() keeps the
+   * broadcast alive while the executor works.
+   */
+  private static final ExecutorService HANDOFF_EXECUTOR = Executors.newSingleThreadExecutor();
+
   @Override
   public void onReceive(Context context, Intent intent) {
     if (intent == null || intent.getAction() == null) {
@@ -28,7 +38,15 @@ public class RecoveryControlReceiver extends BroadcastReceiver {
         Log.i(
             RecoveryConstants.TAG,
             "Received downgrade handoff: target=" + targetVersion + ", apk=" + apkPath);
-        DowngradeController.requestDowngrade(context, targetVersion, apkPath, apkSha256);
+        final PendingResult pending = goAsync();
+        HANDOFF_EXECUTOR.execute(
+            () -> {
+              try {
+                DowngradeController.requestDowngrade(context, targetVersion, apkPath, apkSha256);
+              } finally {
+                pending.finish();
+              }
+            });
         break;
       default:
         break;

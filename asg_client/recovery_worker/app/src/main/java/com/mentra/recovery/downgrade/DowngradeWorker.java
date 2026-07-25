@@ -179,6 +179,17 @@ public class DowngradeWorker extends Worker {
     }
   }
 
+  private void deleteStagedApk(DowngradeTransactionStore store) {
+    String path = store.getApkPath();
+    if (path == null || path.isEmpty()) {
+      return;
+    }
+    File apk = new File(path);
+    if (apk.exists() && !apk.delete()) {
+      Log.w(RecoveryConstants.TAG, "Failed to delete staged downgrade APK: " + path);
+    }
+  }
+
   private Result giveUp(
       DowngradeTransactionStore store,
       RecoveryTelemetry telemetry,
@@ -189,6 +200,14 @@ public class DowngradeWorker extends Worker {
     deleteStagedApk(store);
     store.clear();
     telemetry.emit("mentra_downgrade_failed", String.valueOf(target), reason, attempt, false);
+    // Terminal non-ownership verdict: a give-up BEFORE the uninstall leaves the original ASG
+    // installed, alive, and sitting on its long supervision timer — telemetry alone would
+    // strand it (and the phone's latch) for the full 40 minutes. The verdict finds ASG's
+    // armed supervision watchdog and releases everything immediately. Post-revert give-ups
+    // send it too: the factory build has no verdict receiver (or no pending handoff), so the
+    // broadcast is dropped harmlessly there.
+    DowngradeController.sendHandoffResult(
+        getApplicationContext(), false, target, "gave_up:" + reason);
     return Result.failure();
   }
 
@@ -249,104 +268,19 @@ public class DowngradeWorker extends Worker {
    * present (the factory build shares the release signers, so this holds across the revert).
    */
   private boolean isStagedApkValid(Context context, DowngradeTransactionStore store) {
-    File apk = new File(store.getApkPath());
-    if (!apk.exists() || !apk.canRead() || apk.length() <= 0) {
-      Log.e(RecoveryConstants.TAG, "Staged downgrade APK missing/unreadable: " + store.getApkPath());
+    String invalid =
+        StagedApkValidator.validate(
+            context, store.getApkPath(), store.getApkSha256(), store.getTargetVersion());
+    if (invalid != null) {
+      Log.e(RecoveryConstants.TAG, "Staged downgrade APK invalid: " + invalid);
       return false;
     }
-    String expectedSha = store.getApkSha256();
-    if (expectedSha != null && !expectedSha.isEmpty()) {
-      String actual = sha256Of(apk);
-      if (!expectedSha.equalsIgnoreCase(actual)) {
-        Log.e(RecoveryConstants.TAG, "Staged downgrade APK sha256 mismatch");
-        return false;
-      }
-    }
-    try {
-      PackageManager pm = context.getPackageManager();
-      PackageInfo archive =
-          pm.getPackageArchiveInfo(
-              apk.getAbsolutePath(),
-              PackageManager.GET_ACTIVITIES | PackageManager.GET_SIGNING_CERTIFICATES);
-      if (archive == null || !RecoveryConstants.ASG_PACKAGE.equals(archive.packageName)) {
-        Log.e(RecoveryConstants.TAG, "Staged downgrade APK is not the ASG package");
-        return false;
-      }
-      long archiveVersion =
-          Build.VERSION.SDK_INT >= Build.VERSION_CODES.P
-              ? archive.getLongVersionCode()
-              : archive.versionCode;
-      if (archiveVersion != store.getTargetVersion()) {
-        Log.e(
-            RecoveryConstants.TAG,
-            "Staged downgrade APK version "
-                + archiveVersion
-                + " does not match target "
-                + store.getTargetVersion());
-        return false;
-      }
-      ApplicationInfo appInfo = archive.applicationInfo;
-      if (appInfo == null) {
-        return false;
-      }
-      appInfo.sourceDir = apk.getAbsolutePath();
-      appInfo.publicSourceDir = apk.getAbsolutePath();
-      if ((appInfo.flags & ApplicationInfo.FLAG_TEST_ONLY) != 0) {
-        Log.e(RecoveryConstants.TAG, "Staged downgrade APK is testOnly; OEM installer will reject it");
-        return false;
-      }
-      Set<String> archiveSigners = signerDigests(archive);
-      if (archiveSigners.isEmpty()) {
-        return false;
-      }
-      try {
-        PackageInfo installedInfo =
-            pm.getPackageInfo(
-                RecoveryConstants.ASG_PACKAGE, PackageManager.GET_SIGNING_CERTIFICATES);
-        Set<String> installedSigners = signerDigests(installedInfo);
-        if (!installedSigners.isEmpty() && !archiveSigners.equals(installedSigners)) {
-          Log.e(RecoveryConstants.TAG, "Staged downgrade APK signer mismatch with installed build");
-          return false;
-        }
-      } catch (PackageManager.NameNotFoundException e) {
-        Log.w(RecoveryConstants.TAG, "ASG not installed; validating archive signature only");
-      }
-      return true;
-    } catch (Exception e) {
-      Log.e(RecoveryConstants.TAG, "Failed to validate staged downgrade APK", e);
-      return false;
-    }
+    return true;
   }
 
-  private void deleteStagedApk(DowngradeTransactionStore store) {
-    String path = store.getApkPath();
-    if (path == null || path.isEmpty()) {
-      return;
-    }
-    File apk = new File(path);
-    if (apk.exists() && !apk.delete()) {
-      Log.w(RecoveryConstants.TAG, "Failed to delete staged downgrade APK: " + path);
-    }
-  }
 
-  private static String sha256Of(File file) {
-    try (FileInputStream in = new FileInputStream(file)) {
-      MessageDigest digest = MessageDigest.getInstance("SHA-256");
-      byte[] buffer = new byte[8192];
-      int read;
-      while ((read = in.read(buffer)) != -1) {
-        digest.update(buffer, 0, read);
-      }
-      StringBuilder sb = new StringBuilder();
-      for (byte b : digest.digest()) {
-        sb.append(String.format("%02x", b));
-      }
-      return sb.toString();
-    } catch (Exception e) {
-      Log.e(RecoveryConstants.TAG, "Failed to hash staged downgrade APK", e);
-      return "";
-    }
-  }
+
+
 
   private static Set<String> signerDigests(PackageInfo info) {
     Set<String> digests = new TreeSet<>();

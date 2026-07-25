@@ -6,7 +6,11 @@ import android.util.Log;
 
 import androidx.work.ExistingWorkPolicy;
 import androidx.work.OneTimeWorkRequest;
+import androidx.work.Operation;
 import androidx.work.WorkManager;
+
+import java.io.File;
+import java.util.concurrent.TimeUnit;
 
 import com.mentra.recovery.util.RecoveryConstants;
 
@@ -38,9 +42,11 @@ public final class DowngradeController {
     // transaction's fields and later clear the replacement. A handoff that arrives while a
     // transaction is active (or while a worker holds the install lock) is refused; ASG's
     // handoff watchdog then reports failure to the phone, whose reconciliation loop re-offers
-    // the pin once the current transaction has converged or given up. tryLock (non-blocking,
-    // we are on a broadcast receiver's main thread — no waiting allowed) doubles as the
-    // is-a-worker-running probe; stale transactions cannot wedge this path forever because
+    // the pin once the current transaction has converged or given up. tryLock stays
+    // non-blocking by design even though we now run on the handoff executor: refusal-with-
+    // verdict IS the protocol (the phone re-offers), and queueing behind a worker would just
+    // delay the verdict ASG's watchdog is timing. It doubles as the is-a-worker-running
+    // probe; stale transactions cannot wedge this path forever because
     // resumeIfActive re-arms them and DOWNGRADE_TRANSACTION_STALE_MS forces give-up.
     if (!DowngradeTransactionStore.installLock().tryLock()) {
       Log.w(
@@ -66,19 +72,45 @@ public final class DowngradeController {
       // Claim the staged artifact by rename BEFORE persisting the transaction: from here the
       // bytes belong to this transaction, and any later ASG re-stage writes the original
       // (unclaimed) filename — a retry can never corrupt what the worker installs.
-      String claimedPath = claimStagedApk(apkPath);
-      if (claimedPath == null) {
+      File claimed = ArtifactClaims.claim(apkPath == null ? null : new File(apkPath));
+      if (claimed == null) {
         Log.e(
             RecoveryConstants.TAG,
             "Refusing downgrade handoff: could not claim staged APK at " + apkPath);
         sendHandoffResult(context, false, targetVersion, "artifact_claim_failed");
         return;
       }
-      if (!store.begin(targetVersion, claimedPath, apkSha256)) {
+      // "Accepted" is a promise of ownership: everything that can be known to fail must fail
+      // BEFORE the verdict. Run the worker's full validation (bytes + archive: sha256, package,
+      // exact version, testOnly, signer match) here — a mis-published or wrongly-signed
+      // artifact is refused instead of accepted-then-abandoned on the supervision timer. We
+      // run on the receiver's handoff executor (not the main thread), so hashing is fine.
+      String invalid =
+          StagedApkValidator.validate(
+              context, claimed.getAbsolutePath(), apkSha256, targetVersion);
+      if (invalid != null) {
+        Log.e(RecoveryConstants.TAG, "Refusing downgrade handoff: staged APK " + invalid);
+        ArtifactClaims.unclaim(claimed);
+        sendHandoffResult(context, false, targetVersion, "staged_apk_" + invalid);
+        return;
+      }
+      if (!store.begin(targetVersion, claimed.getAbsolutePath(), apkSha256)) {
         Log.e(
             RecoveryConstants.TAG,
-            "Rejected downgrade handoff (target=" + targetVersion + ", path=" + claimedPath + ")");
+            "Rejected downgrade handoff (target=" + targetVersion + ", path=" + claimed + ")");
+        ArtifactClaims.unclaim(claimed);
         sendHandoffResult(context, false, targetVersion, "invalid_request");
+        return;
+      }
+      // Acceptance must follow a CONFIRMED enqueue: a begun transaction with no worker is
+      // unrecoverable from the outside (handoffs refuse on transaction_active, and the stale
+      // give-up only runs inside a worker). On enqueue failure, roll everything back and
+      // refuse so ownership never dangles.
+      if (!enqueueConfirmed(context)) {
+        store.clear();
+        ArtifactClaims.unclaim(claimed);
+        Log.e(RecoveryConstants.TAG, "Refusing downgrade handoff: could not enqueue worker");
+        sendHandoffResult(context, false, targetVersion, "enqueue_failed");
         return;
       }
     } finally {
@@ -87,31 +119,31 @@ public final class DowngradeController {
     Log.i(
         RecoveryConstants.TAG,
         "Downgrade transaction begun: target=" + targetVersion + ", apk=" + apkPath);
-    enqueue(context, ExistingWorkPolicy.REPLACE);
     sendHandoffResult(context, true, targetVersion, "accepted");
   }
 
-  /** Renames the staged APK to its transaction-owned name; returns the new path or null. */
-  private static String claimStagedApk(String apkPath) {
+  /**
+   * Blocking enqueue with confirmation, run on the handoff executor. WorkManager's enqueue is
+   * asynchronous under the hood; observing the Operation result is the only way to know the
+   * worker will actually exist before promising ownership.
+   */
+  private static boolean enqueueConfirmed(Context context) {
     try {
-      java.io.File staged = new java.io.File(apkPath);
-      if (!staged.isFile()) {
-        return null;
-      }
-      java.io.File claimed =
-          new java.io.File(apkPath + RecoveryConstants.DOWNGRADE_CLAIMED_APK_SUFFIX);
-      if (claimed.exists() && !claimed.delete()) {
-        return null;
-      }
-      return staged.renameTo(claimed) ? claimed.getAbsolutePath() : null;
+      OneTimeWorkRequest request = new OneTimeWorkRequest.Builder(DowngradeWorker.class).build();
+      Operation op =
+          WorkManager.getInstance(context)
+              .enqueueUniqueWork(
+                  RecoveryConstants.UNIQUE_DOWNGRADE_WORK, ExistingWorkPolicy.REPLACE, request);
+      op.getResult().get(10, TimeUnit.SECONDS);
+      return true;
     } catch (Exception e) {
-      Log.e(RecoveryConstants.TAG, "Failed to claim staged APK", e);
-      return null;
+      Log.e(RecoveryConstants.TAG, "Downgrade work enqueue failed/unconfirmed", e);
+      return false;
     }
   }
 
   /** Synchronous verdict back to ASG so it can tell refused from accepted-but-slow. */
-  private static void sendHandoffResult(
+  static void sendHandoffResult(
       Context context, boolean accepted, long targetVersion, String reason) {
     try {
       Intent result = new Intent(RecoveryConstants.ACTION_DOWNGRADE_HANDOFF_RESULT);
