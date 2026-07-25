@@ -13,14 +13,7 @@ public interface IOtaHelper {
      * @param context Application context
      */
     void initialize(Context context);
-    
-    /**
-     * Start version checking
-     * @param context Application context
-     * @return true if version check started successfully, false otherwise
-     */
-    boolean startVersionCheck(Context context);
-    
+
     /**
      * Check if update is in progress
      * @return true if updating, false otherwise

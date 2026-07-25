@@ -827,16 +827,6 @@ export type OtaStartAckEvent = {
   type: "ota_start_ack"
   timestamp: number
 }
-
-export type OtaUpdateAvailableEvent = {
-  type: "ota_update_available"
-  version_code?: number
-  version_name?: string
-  updates?: string[]
-  total_size?: number
-  cache_ready?: boolean
-}
-
 export type OtaStatusEvent = {
   type: "ota_status"
   session_id: string
@@ -916,7 +906,6 @@ export type BluetoothSdkModuleEvents = {
   keep_alive_ack: (event: KeepAliveAckEvent) => void
   mtk_update_complete: (event: MtkUpdateCompleteEvent) => void
   glasses_session_changed: (event: GlassesSessionChangedEvent) => void
-  ota_update_available: (event: OtaUpdateAvailableEvent) => void
   ota_start_ack: (event: OtaStartAckEvent) => void
   ota_status: (event: OtaStatusEvent) => void
   version_info: (event: VersionInfoEvent) => void
@@ -1004,7 +993,6 @@ export type BluetoothSdkEventMap = {
   mic_pcm: MicPcmEvent
   mic_lc3: MicLc3Event
   stream_status: StreamStatusEvent
-  ota_update_available: OtaUpdateAvailableEvent
   ota_start_ack: OtaStartAckEvent
   ota_status: OtaStatusEvent
   version_info: VersionInfoEvent
@@ -1195,6 +1183,8 @@ export interface OtaUpdateInfo {
   updates: string[] // ["apk", "mtk", "bes"]
   totalSize: number
   cacheReady?: boolean
+  /** True when the APK step installs an older build than the glasses currently run (exact-pin manifests only). */
+  isDowngrade?: boolean
 }
 
 export interface OtaProgress {

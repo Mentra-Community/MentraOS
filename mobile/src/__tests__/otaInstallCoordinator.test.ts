@@ -217,6 +217,109 @@ describe("OtaInstallCoordinator query-status arbitration with an existing sessio
   })
 })
 
+describe("OtaInstallCoordinator version-change detour retry gate", () => {
+  it("retry during a latched detour re-enters the wait without sending ota_start", async () => {
+    setGlassesConnected()
+    useGlassesStore.getState().setOtaUpdateAvailable({
+      updateAvailable: true,
+      isDowngrade: true,
+      versionCode: 49000000,
+    } as never)
+    otaInstallCoordinator.attach()
+    expect(otaInstallCoordinator.snapshot().isVersionChange).toBe(true)
+    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
+
+    // Ack + apk/install status latch the detour: recovery now owns the transaction.
+    GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
+    useGlassesStore.getState().setOtaStatus(inProgressStatus({phase: "install", stepPercent: 100}))
+    expect(otaInstallCoordinator.snapshot().versionChangePhase).not.toBeNull()
+
+    // Retry must NOT re-drive the glasses (a second ota_start would start a
+    // parallel install and a second handoff would REPLACE the live transaction);
+    // it only clears the surfaced error and re-enters the reconcile wait.
+    otaInstallCoordinator.retry()
+    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
+    expect(otaInstallCoordinator.snapshot().errorMsg).toBe("")
+
+    await jest.advanceTimersByTimeAsync(RETRY_INTERVAL_MS * 3)
+    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
+  })
+
+  it.each(["downgrade_handoff_refused", "downgrade_handoff_failed", "downgrade_transaction_stalled"])(
+    "non-ownership error %s releases the latch so retry can re-drive",
+    async (errorCode) => {
+      setGlassesConnected()
+      useGlassesStore.getState().setOtaUpdateAvailable({
+        updateAvailable: true,
+        isDowngrade: true,
+        versionCode: 49000000,
+      } as never)
+      otaInstallCoordinator.attach()
+      GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
+      useGlassesStore.getState().setOtaStatus(inProgressStatus({phase: "install", stepPercent: 100}))
+      expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
+
+      useGlassesStore
+        .getState()
+        .setOtaStatus(inProgressStatus({phase: "install", status: "failed", error: errorCode}))
+      expect(otaInstallCoordinator.snapshot().displayState).toBe("failed")
+      otaInstallCoordinator.retry()
+      expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(2)
+    },
+  )
+
+  it("a generic failure during a latched detour does NOT release the latch (accepted-but-slow)", async () => {
+    setGlassesConnected()
+    useGlassesStore.getState().setOtaUpdateAvailable({
+      updateAvailable: true,
+      isDowngrade: true,
+      versionCode: 49000000,
+    } as never)
+    otaInstallCoordinator.attach()
+    GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
+    useGlassesStore.getState().setOtaStatus(inProgressStatus({phase: "install", stepPercent: 100}))
+    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
+
+    // Some other failure (not a non-ownership code): the transaction may well be alive and
+    // own the staged artifact — retry must stay in reconcile mode, not re-drive.
+    useGlassesStore
+      .getState()
+      .setOtaStatus(inProgressStatus({phase: "install", status: "failed", error: "install_failed"}))
+    otaInstallCoordinator.retry()
+    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
+  })
+
+  it("backstop: a direct (ungated) send during a latched detour is refused and logged", async () => {
+    setGlassesConnected()
+    useGlassesStore.getState().setOtaUpdateAvailable({
+      updateAvailable: true,
+      isDowngrade: true,
+      versionCode: 49000000,
+    } as never)
+    otaInstallCoordinator.attach()
+    GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
+    useGlassesStore.getState().setOtaStatus(inProgressStatus({phase: "install", stepPercent: 100}))
+    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
+
+    // Simulate a FUTURE entry point that forgot its site gate: call the sender directly.
+    // The invariant backstop must refuse the send and log loudly (it firing in production
+    // means a missed site gate exists — the failure degrades to cosmetic, not corrupting).
+    const errorSpy = jest.spyOn(console, "error").mockImplementation(() => {})
+    await (otaInstallCoordinator as unknown as {sendOtaStartWithWatchdogs: () => Promise<void>}).sendOtaStartWithWatchdogs()
+    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("BACKSTOP"))
+    errorSpy.mockRestore()
+  })
+
+  it("retry outside a detour still re-sends ota_start", async () => {
+    setGlassesConnected()
+    otaInstallCoordinator.attach()
+    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
+    otaInstallCoordinator.retry()
+    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(2)
+  })
+})
+
 describe("OtaInstallCoordinator stuck-at-zero watchdog", () => {
   it("fails after DOWNLOAD_STUCK_TIMEOUT_MS at 0%", async () => {
     setGlassesConnected()

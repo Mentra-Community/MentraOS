@@ -1,4 +1,4 @@
-import {useEffect, useRef} from "react"
+import {useEffect, useRef, useState} from "react"
 
 import {useNavigationStore} from "@/stores/navigation"
 import {Capabilities, getModelCapabilities} from "@/../../cloud/packages/types/src"
@@ -8,6 +8,7 @@ import showAlert from "@/utils/AlertUtils"
 import {translate} from "@/i18n/translate"
 import {usePathname} from "expo-router"
 import {BgTimer, engine, type VersionInfo} from "@mentra/engine"
+import {fetchVersionInfo} from "@mentra/engine/internal"
 
 export {
   fetchVersionInfo,
@@ -21,6 +22,10 @@ export {
 function areGlassesConnectedNow(): boolean {
   return engine.ota.snapshot().connected
 }
+
+// How often to re-fetch the OTA manifest while glasses stay connected, so a
+// server-side manifest change surfaces the update prompt without a reconnect.
+const MANIFEST_POLL_INTERVAL_MS = 60_000
 
 export function OtaUpdateChecker() {
   const {push} = useNavigationStore.getState()
@@ -54,8 +59,14 @@ export function OtaUpdateChecker() {
   const pendingUpdate = useRef<{
     latestVersionInfo: VersionInfo
     updates: string[]
+    isDowngrade: boolean
   } | null>(null)
   const otaCheckTimeoutRef = useRef<number | null>(null)
+
+  // Bumped when the OTA manifest changes server-side; re-arms the main check
+  // effect the same way a fresh glasses connection does.
+  const [manifestGeneration, setManifestGeneration] = useState(0)
+  const manifestBaselineRef = useRef<{url: string; body: string} | null>(null)
 
   // Reset OTA check flag when glasses disconnect (allows fresh check on reconnect)
   useEffect(() => {
@@ -123,6 +134,57 @@ export function OtaUpdateChecker() {
     if (besFirmwareVersion) last.bes = besFirmwareVersion
   }, [buildNumber, mtkFirmwareVersion, besFirmwareVersion])
 
+  // Watch the OTA manifest for server-side changes while glasses stay connected.
+  // The baseline is the manifest body the last completed check actually fetched
+  // (set in the main check effect below), so the watcher can never disagree with
+  // what was prompted on; polls do nothing until the first check completes. A
+  // later difference in content resets the per-connection check latches and
+  // bumps manifestGeneration so the main check effect runs again and surfaces
+  // the same prompt flow as a fresh connection.
+  useEffect(() => {
+    if (!glassesConnected || !buildNumber) {
+      manifestBaselineRef.current = null
+      return
+    }
+    if (otaSnapshot.inProgress) {
+      // Pause polling during an install but keep the baseline: a manifest edit
+      // made during the install window must still re-arm the prompt if the
+      // install ends without a disconnect (failed/abandoned session).
+      return
+    }
+    const features: Capabilities = getModelCapabilities(defaultWearable)
+    if (!features?.hasOta) {
+      return
+    }
+
+    let cancelled = false
+    const pollManifest = async () => {
+      if (!manifestBaselineRef.current) return // no completed check yet to compare against
+      const url = engine.ota.snapshot().manifestUrl
+      const versionJson = await fetchVersionInfo(url)
+      if (cancelled || !versionJson) return
+      // Re-read after the await: a check completing mid-fetch refreshes the baseline.
+      const baseline = manifestBaselineRef.current
+      if (!baseline) return
+      const body = JSON.stringify(versionJson)
+      if (baseline.url === url && baseline.body === body) return
+
+      console.log("OTA: manifest changed on server - re-arming update check")
+      manifestBaselineRef.current = {url, body}
+      pendingUpdate.current = null
+      hasCheckedOta.current = false
+      hasPromptedOta.current = false
+      hasPromptedOtaWifiSetup.current = false
+      setManifestGeneration((generation) => generation + 1)
+    }
+
+    const intervalId = BgTimer.setInterval(() => void pollManifest(), MANIFEST_POLL_INTERVAL_MS)
+    return () => {
+      cancelled = true
+      BgTimer.clearInterval(intervalId)
+    }
+  }, [glassesConnected, buildNumber, otaSnapshot.inProgress, defaultWearable])
+
   // Show pending update alert when user navigates back to /home.
   const wasAwayFromHomeRef = useRef(false)
   useEffect(() => {
@@ -153,16 +215,19 @@ export function OtaUpdateChecker() {
     console.log("OTA: User returned to home with pending update - showing alert")
     const deviceName = defaultWearable || "Glasses"
     const updateCount = pending.updates.length
-    const updateMessage = superMode
-      ? `Updates available: ${pending.updates.join(", ").toUpperCase()}`
-      : updateCount === 1
-      ? "1 update available"
-      : `${updateCount} updates available`
+    const isDowngrade = pending.isDowngrade
+    const updateMessage = isDowngrade
+      ? translate("ota:downgradeDescriptionShort") + (superMode ? ` (${pending.updates.join(", ").toUpperCase()})` : "")
+      : superMode
+        ? `Updates available: ${pending.updates.join(", ").toUpperCase()}`
+        : updateCount === 1
+          ? "1 update available"
+          : `${updateCount} updates available`
     pendingUpdate.current = null
     hasPromptedOta.current = true
     hasPromptedOtaWifiSetup.current = false
 
-    showAlert(translate("ota:updateAvailable", {deviceName}), updateMessage, [
+    showAlert(translate(isDowngrade ? "ota:downgradeAvailable" : "ota:updateAvailable", {deviceName}), updateMessage, [
       {text: translate("ota:updateLater"), style: "cancel"},
       {text: translate("ota:install"), onPress: () => push("/ota/check-for-updates")},
     ])
@@ -203,7 +268,7 @@ export function OtaUpdateChecker() {
 
     // Delay OTA check by 500ms to allow all version_info chunks to arrive
     // (version_info_1, version_info_2, version_info_3 arrive sequentially with ~100ms gaps)
-    console.log("OTA: check scheduled - waiting 500ms for firmware version info...")
+    console.log(`OTA: check scheduled (manifest generation ${manifestGeneration}) - waiting 500ms for version info...`)
     otaCheckTimeoutRef.current = BgTimer.setTimeout(async () => {
       // Re-check conditions after delay (glasses might have disconnected)
       if (!areGlassesConnectedNow()) {
@@ -225,84 +290,102 @@ export function OtaUpdateChecker() {
           waitForMtkVersionMs: 0,
           refreshVersionInfo: false,
         })
-        .then(({updateAvailable, latestVersionInfo, updates, skippedReason}) => {
-          if (skippedReason) {
-            console.log(`OTA: check skipped - ${skippedReason}`)
-            return
-          }
-          console.log(
-            `OTA: check completed - updateAvailable: ${updateAvailable}, updates: ${updates?.join(", ") || "none"}`,
-          )
+        .then(
+          ({updateAvailable, latestVersionInfo, updates, isApkDowngrade, skippedReason, manifestUrl, manifestBody}) => {
+            if (skippedReason) {
+              console.log(`OTA: check skipped - ${skippedReason}`)
+              return
+            }
+            // Baseline the manifest watcher on exactly what this check fetched,
+            // so later polls only re-arm for content the check has not seen.
+            if (manifestUrl && manifestBody) {
+              manifestBaselineRef.current = {url: manifestUrl, body: manifestBody}
+            }
+            console.log(
+              `OTA: check completed - updateAvailable: ${updateAvailable}, updates: ${updates?.join(", ") || "none"}`,
+            )
 
-          if (updates.length === 0 || !latestVersionInfo) {
-            console.log("OTA: check result: No updates available")
-            return
-          }
+            if (updates.length === 0 || !latestVersionInfo) {
+              console.log("OTA: check result: No updates available")
+              return
+            }
 
-          // Verify glasses are still connected before showing alert
-          const currentlyConnected = areGlassesConnectedNow()
-          if (!currentlyConnected) {
-            console.log("OTA: update found but glasses disconnected - skipping alert")
-            return
-          }
-          if (hasPromptedOta.current) {
-            console.log("OTA: update found but prompt already shown - skipping duplicate alert")
-            return
-          }
+            // Verify glasses are still connected before showing alert
+            const currentlyConnected = areGlassesConnectedNow()
+            if (!currentlyConnected) {
+              console.log("OTA: update found but glasses disconnected - skipping alert")
+              return
+            }
+            if (hasPromptedOta.current) {
+              console.log("OTA: update found but prompt already shown - skipping duplicate alert")
+              return
+            }
 
-          // Only show update alert on the homepage - user may have navigated away during async check
-          if (pathnameRef.current !== "/home") {
-            console.log(`OTA: update found but not on homepage (${pathnameRef.current}) - caching for later`)
-            pendingUpdate.current = {latestVersionInfo, updates}
-            return
-          }
+            // Only show update alert on the homepage - user may have navigated away during async check
+            if (pathnameRef.current !== "/home") {
+              console.log(`OTA: update found but not on homepage (${pathnameRef.current}) - caching for later`)
+              pendingUpdate.current = {latestVersionInfo, updates, isDowngrade: isApkDowngrade}
+              return
+            }
 
-          const deviceName = defaultWearable || "Glasses"
-          // Super mode shows technical details (APK, MTK, BES), normal mode shows simple count
-          const updateCount = updates.length
-          const updateList = updates.join(", ").toUpperCase() // "APK, MTK, BES"
-          const updateMessage = superMode
-            ? `Updates available: ${updateList}`
-            : updateCount === 1
-            ? "1 update available"
-            : `${updateCount} updates available`
+            const deviceName = defaultWearable || "Glasses"
+            // Super mode shows technical details (APK, MTK, BES), normal mode shows simple count
+            const updateCount = updates.length
+            const updateList = updates.join(", ").toUpperCase() // "APK, MTK, BES"
+            const updateMessage = isApkDowngrade
+              ? translate("ota:downgradeDescriptionShort") + (superMode ? ` (${updateList})` : "")
+              : superMode
+                ? `Updates available: ${updateList}`
+                : updateCount === 1
+                  ? "1 update available"
+                  : `${updateCount} updates available`
 
-          pendingUpdate.current = {latestVersionInfo, updates}
+            pendingUpdate.current = {latestVersionInfo, updates, isDowngrade: isApkDowngrade}
 
-          if (engine.ota.snapshot().wifiConnected) {
-            console.log("OTA: Update available and glasses are on WiFi - prompting install")
-            pendingUpdate.current = null
-            hasPromptedOta.current = true
-            hasPromptedOtaWifiSetup.current = false
-            showAlert(translate("ota:updateAvailable", {deviceName}), updateMessage, [
-              {text: translate("ota:updateLater"), style: "cancel"},
-              {text: translate("ota:install"), onPress: () => push("/ota/check-for-updates")},
-            ])
-            return
-          }
+            if (engine.ota.snapshot().wifiConnected) {
+              console.log("OTA: Update available and glasses are on WiFi - prompting install")
+              pendingUpdate.current = null
+              hasPromptedOta.current = true
+              hasPromptedOtaWifiSetup.current = false
+              showAlert(
+                translate(isApkDowngrade ? "ota:downgradeAvailable" : "ota:updateAvailable", {deviceName}),
+                updateMessage,
+                [
+                  {text: translate("ota:updateLater"), style: "cancel"},
+                  {text: translate("ota:install"), onPress: () => push("/ota/check-for-updates")},
+                ],
+              )
+              return
+            }
 
-          // No WiFi path: prompt user to connect/setup WiFi.
-          if (hasPromptedOtaWifiSetup.current) {
-            console.log("OTA: WiFi setup prompt already shown for pending update - skipping duplicate")
-            return
-          }
-          console.log("OTA: Update available and glasses are not on WiFi - prompting WiFi setup")
-          const wifiMessage = superMode
-            ? `Updates available: ${updateList}\n\nConnect your ${deviceName} to WiFi to install.`
-            : `${updateMessage}\n\nConnect your ${deviceName} to WiFi to install.`
-          hasPromptedOtaWifiSetup.current = true
-          showAlert(translate("ota:updateAvailable", {deviceName}), wifiMessage, [
-            {
-              text: translate("ota:updateLater"),
-              style: "cancel",
-              onPress: () => {
-                pendingUpdate.current = null // Clear pending on dismiss
-                hasPromptedOtaWifiSetup.current = false
+            // No WiFi path: prompt user to connect/setup WiFi.
+            if (hasPromptedOtaWifiSetup.current) {
+              console.log("OTA: WiFi setup prompt already shown for pending update - skipping duplicate")
+              return
+            }
+            console.log("OTA: Update available and glasses are not on WiFi - prompting WiFi setup")
+            const wifiMessage =
+              superMode && !isApkDowngrade
+                ? `Updates available: ${updateList}\n\nConnect your ${deviceName} to WiFi to install.`
+                : `${updateMessage}\n\nConnect your ${deviceName} to WiFi to install.`
+            hasPromptedOtaWifiSetup.current = true
+            showAlert(
+              translate(isApkDowngrade ? "ota:downgradeAvailable" : "ota:updateAvailable", {deviceName}),
+              wifiMessage,
+              [
+              {
+                text: translate("ota:updateLater"),
+                style: "cancel",
+                onPress: () => {
+                  pendingUpdate.current = null // Clear pending on dismiss
+                  hasPromptedOtaWifiSetup.current = false
+                },
               },
-            },
-            {text: translate("ota:setupWifi"), onPress: () => push("/wifi/scan")},
-          ])
-        })
+              {text: translate("ota:setupWifi"), onPress: () => push("/wifi/scan")},
+              ],
+            )
+          },
+        )
         .catch((error) => {
           console.log(`OTA: check failed with error: ${error?.message || error}`)
         })
@@ -325,6 +408,7 @@ export function OtaUpdateChecker() {
     pathname,
     push,
     superMode,
+    manifestGeneration,
   ])
 
   return null

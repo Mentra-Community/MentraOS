@@ -15,6 +15,8 @@ jest.mock("@mentra/bluetooth-sdk-internal", () => ({
     setSystemTime: jest.fn().mockResolvedValue(undefined),
     startOtaUpdate: jest.fn().mockResolvedValue({type: "ota_start_ack", timestamp: 1_700_000_000_000}),
   },
+  sdkPinnedOtaManifestUrl: () =>
+    "https://github.com/Mentra-Community/MentraOS/releases/download/bluetooth-sdk-ota/bluetooth-sdk-0.0.0-test-version.json",
 }))
 
 jest.mock("../../../../modules/engine/src/utils/timers", () => ({
@@ -68,7 +70,11 @@ describe("glassesClockSync", () => {
     const fixed = await handleOtaClockSkewFromGlasses("clock_skew", glassesTime)
     expect(fixed).toBe(true)
     expect(mockSetSystemTime).toHaveBeenCalled()
-    expect(mockStartOta).toHaveBeenCalledWith("https://example.com/live_version.json")
+    // The phone owns manifest selection: the retry drives the SDK-pinned manifest URL, not the
+    // glasses-reported one (which is only a legacy fallback).
+    expect(mockStartOta).toHaveBeenCalledWith(
+      "https://github.com/Mentra-Community/MentraOS/releases/download/bluetooth-sdk-ota/bluetooth-sdk-0.0.0-test-version.json",
+    )
   })
 
   it("handleOtaClockSkewFromGlasses maps ssl_error with drift to clock fix", async () => {
