@@ -48,6 +48,7 @@
             android:permission="com.mentra.recovery.permission.CONTROL">
             <intent-filter>
                 <action android:name="com.mentra.recovery.ACTION_START_RECOVERY" />
+                <action android:name="com.mentra.recovery.ACTION_REQUEST_DOWNGRADE" />
             </intent-filter>
         </receiver>
     </application>

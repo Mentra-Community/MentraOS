@@ -24,7 +24,7 @@ import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
 import type {OtaProgress, OtaStatus} from "@mentra/bluetooth-sdk/internal"
 import GlobalEventEmitter from "../utils/GlobalEventEmitter"
 import {isGlassesConnected, useGlassesStore} from "../stores/glasses"
-import {getAsgOtaVersionUrl} from "./asgOtaVersionUrl"
+import {resolveOtaManifestUrl} from "./otaManifestUrl"
 import {deriveDisplayState, type DisplayState} from "./otaDisplayState"
 import {
   BES_CONTINUE_LOCKOUT_MS,
@@ -134,6 +134,17 @@ export interface OtaInstallSnapshot {
    * +1% ticks up to 60% purely to reassure the user. Render max(real, simulated).
    */
   mtkInstallStallSimulatedPercent: number | null
+  /** True for a downgrade (version-change) session — the UI narrates it differently. */
+  isVersionChange: boolean
+  /** True once the glasses reported the exact pinned target (the downgrade truly completed). */
+  versionChangeConverged: boolean
+  /**
+   * Sub-phase of the downgrade detour for the progress narrative, or null when not
+   * in one: "installing" before the handoff, "restarting" while the glasses are dark
+   * (uninstall / factory flicker / target install), "verifying" once reconnected and
+   * checking the version. Completion is the "complete" displayState.
+   */
+  versionChangePhase: "installing" | "restarting" | "verifying" | null
 }
 
 class OtaInstallCoordinator {
@@ -157,6 +168,19 @@ class OtaInstallCoordinator {
   private apkExpectedInSession = false
   // Latched when the legacy build-number completion fires; projected as "complete".
   private apkCompletedViaBuildIncrease = false
+
+  // Downgrade detour (version-change mode). Captured at attach from the selected
+  // update: the pinned target is a LOWER build, executed by the recovery worker via
+  // uninstall->reinstall, so the phone must NOT drive ota_start on the intermediate
+  // reconnect (the passive factory build) and completion is exact-version
+  // convergence, not a build-number increase.
+  private versionChangeSession = false
+  private versionChangeTarget: number | null = null
+  // Set once ASG reports the apk install has started (the handoff point after which
+  // ASG dies and the recovery worker owns the transaction).
+  private versionChangeInstallStarted = false
+  // Latched when a reconnect reports buildNumber === versionChangeTarget.
+  private versionChangeConverged = false
   // Holds a legacy apk install FINISHED out of "complete" for the settle window.
   private legacyApkSettleHold = false
   // Display-only legacy MTK install stall simulation.
@@ -218,6 +242,12 @@ class OtaInstallCoordinator {
     if (this.attached) return
     this.attached = true
     this.resetSessionState()
+    const selected = useGlassesStore.getState().otaUpdateAvailable
+    if (selected?.isDowngrade && typeof selected.versionCode === "number" && selected.versionCode > 0) {
+      this.versionChangeSession = true
+      this.versionChangeTarget = selected.versionCode
+      console.log(`[OTA_PROGRESS] version-change (downgrade) session, target=${selected.versionCode}`)
+    }
     this.prevConnected = isGlassesConnected(useGlassesStore.getState().connection)
     this.storeUnsubscribe = useGlassesStore.subscribe(() => this.react())
     // Mount pass: every reaction block runs once (like all effects on mount),
@@ -248,6 +278,7 @@ class OtaInstallCoordinator {
     }
     GlobalEventEmitter.off("ota_start_ack", this.handleAck)
     GlobalEventEmitter.off("mtk_update_complete", this.handleMtkComplete)
+    GlobalEventEmitter.off("glasses_session_changed", this.handleGlassesSessionChanged)
     this.clearAllOtaTimers()
     this.clearContinueLockoutTimer()
     this.resetSessionState()
@@ -255,6 +286,18 @@ class OtaInstallCoordinator {
 
   /** Retry after a failure: clear state and re-send ota_start (if connected). */
   retry(): void {
+    // While the recovery worker owns the detour (apk install latched, not yet
+    // converged), the phone must not drive: an ota_start now would push the
+    // factory/surviving build into a parallel download-install, and a second
+    // handoff would begin()/REPLACE the live transaction under the running
+    // worker. Retry just re-enters the reconcile wait — convergence or the
+    // session timeout decides the real outcome.
+    if (this.isInVersionChangeDetour()) {
+      console.log("[OTA_PROGRESS] retry during version-change detour — re-entering wait (no ota_start)")
+      this.setErrorMsg("")
+      this.emitInternalChange()
+      return
+    }
     console.log("[OTA_PROGRESS] retry pressed, clearing state and re-sending ota_start")
     // Batch like the old event handler: React ran the whole handler (including
     // the ota_start send) before re-rendering + re-running effects.
@@ -325,6 +368,8 @@ class OtaInstallCoordinator {
         sawReconnectEdge: this.sawReconnectEdge,
         legacyApkSettleHold: this.legacyApkSettleHold,
         apkCompletedViaBuildIncrease: this.apkCompletedViaBuildIncrease,
+        versionChangeConverged: this.versionChangeConverged,
+        versionChangeSession: this.versionChangeSession,
       }),
       errorMsg: this.errorMsg,
       continueButtonDisabled: this.continueButtonDisabled,
@@ -333,7 +378,28 @@ class OtaInstallCoordinator {
       otaStatus: otaStatus ? {...otaStatus} : null,
       otaProgress: otaProgress ? {...otaProgress} : null,
       mtkInstallStallSimulatedPercent: this.mtkSimulatedPercent,
+      isVersionChange: this.versionChangeSession,
+      versionChangeConverged: this.versionChangeConverged,
+      versionChangePhase: this.deriveVersionChangePhase(connected),
     }
+  }
+
+  /**
+   * True while the recovery worker owns the downgrade transaction (after the apk install
+   * started, before convergence). During this window ASG is being uninstalled/reinstalled and
+   * cannot answer the phone, so the coordinator must not ping, poll ota_query_status, or arm the
+   * progress-stall watchdog — doing so drives the passive factory build and fails the session
+   * before the target reconnects. Completion is exact-version convergence, detected separately.
+   */
+  private isInVersionChangeDetour(): boolean {
+    return this.versionChangeSession && this.versionChangeInstallStarted && !this.versionChangeConverged
+  }
+
+  /** Downgrade-detour sub-phase for the progress narrative (see OtaInstallSnapshot). */
+  private deriveVersionChangePhase(connected: boolean): "installing" | "restarting" | "verifying" | null {
+    if (!this.versionChangeSession || this.versionChangeConverged) return null
+    if (!this.versionChangeInstallStarted) return "installing"
+    return connected ? "verifying" : "restarting"
   }
 
   /**
@@ -369,6 +435,10 @@ class OtaInstallCoordinator {
     this.initialBuildNumber = null
     this.apkExpectedInSession = false
     this.apkCompletedViaBuildIncrease = false
+    this.versionChangeSession = false
+    this.versionChangeTarget = null
+    this.versionChangeInstallStarted = false
+    this.versionChangeConverged = false
     this.legacyApkSettleHold = false
     this.mtkSimulatedPercent = null
     this.lastRealMtkProgress = 0
@@ -444,11 +514,7 @@ class OtaInstallCoordinator {
    */
   private isLegacySessionShapeNow(): boolean {
     const state = useGlassesStore.getState()
-    return isLegacyShapedOtaSession(
-      state.otaStatus,
-      state.otaProgress,
-      this.initialBuildNumber || state.buildNumber,
-    )
+    return isLegacyShapedOtaSession(state.otaStatus, state.otaProgress, this.initialBuildNumber || state.buildNumber)
   }
 
   private react(): void {
@@ -510,6 +576,8 @@ class OtaInstallCoordinator {
       sawReconnectEdge: this.sawReconnectEdge,
       legacyApkSettleHold: this.legacyApkSettleHold,
       apkCompletedViaBuildIncrease: this.apkCompletedViaBuildIncrease,
+      versionChangeConverged: this.versionChangeConverged,
+      versionChangeSession: this.versionChangeSession,
     })
     const stallSig = buildProgressStalenessSignature(otaStatus, otaProgress, displayState)
     const stallDuration = progressTimeoutDurationMs(otaStatus, otaProgress, legacySession)
@@ -575,6 +643,71 @@ class OtaInstallCoordinator {
       useGlassesStore.getState().setMtkUpdatedThisSession(true)
     }
 
+    // Version-change (downgrade) install started: once ASG reports the apk install
+    // phase, the handoff to the recovery worker has happened. From here the phone
+    // stops driving ota_start (see runConnectEdge) and waits for exact-version
+    // convergence — the wipe means no resumable ASG session and no build increase.
+    if (
+      this.versionChangeSession &&
+      !this.versionChangeInstallStarted &&
+      // Only latch from a status that belongs to THIS session: an install/apk status is a
+      // response to our own ota_start (hasReceivedAck), so a leftover from a prior session
+      // sitting in the store at mount cannot prematurely enter the detour wait (which would
+      // suppress ota_start and hang the fresh downgrade until the global timeout).
+      this.hasReceivedAck &&
+      otaStatus?.stepType === "apk" &&
+      otaStatus.phase === "install"
+    ) {
+      console.log("[OTA_PROGRESS] version-change: apk install started — entering detour wait")
+      this.versionChangeInstallStarted = true
+      this.emitInternalChange()
+    }
+
+    // Ownership refuted: ASG emits install/STARTED BEFORE handing off, so the latch above can
+    // be set even when no transaction ends up owning the detour. Recovery answers every
+    // handoff synchronously, so exactly three error codes prove non-ownership and release the
+    // latch: downgrade_handoff_refused (recovery's explicit verdict),
+    // downgrade_handoff_failed (no verdict at all — recovery dead/missing, so it never began),
+    // and downgrade_transaction_stalled (the long-stop past recovery's own stale give-up).
+    // An accepted-but-slow transaction emits NONE of these (acceptance cancels the short
+    // watchdog), so the latch is never released while a live worker owns the staged artifact
+    // — which recovery additionally claims by rename at acceptance.
+    if (
+      this.versionChangeInstallStarted &&
+      !this.versionChangeConverged &&
+      otaStatus?.status === "failed" &&
+      (otaStatus.error === "downgrade_handoff_refused" ||
+        otaStatus.error === "downgrade_handoff_failed" ||
+        otaStatus.error === "downgrade_transaction_stalled")
+    ) {
+      console.log(`[OTA_PROGRESS] version-change: no transaction owns the detour (${otaStatus.error}) — releasing latch`)
+      this.versionChangeInstallStarted = false
+      this.emitInternalChange()
+    }
+
+    // Version-change convergence: the reconnected glasses report exactly the pinned
+    // target. This is the ONLY completion signal for a downgrade (lower build, no
+    // increase, wiped session). Mirrors the legacy build-increase latch but by equality.
+    if (
+      this.versionChangeSession &&
+      this.versionChangeInstallStarted &&
+      !this.versionChangeConverged &&
+      this.versionChangeTarget !== null &&
+      buildNumberChanged &&
+      buildNumber
+    ) {
+      const currentBuild = Number.parseInt(buildNumber, 10)
+      if (Number.isFinite(currentBuild) && currentBuild === this.versionChangeTarget) {
+        console.log(`[OTA_PROGRESS] version-change converged: glasses report target ${currentBuild}, completing`)
+        this.clearPerStepTimers()
+        this.clearGlobalTimeout()
+        this.apkStepSeen = true
+        this.setErrorMsg("")
+        this.versionChangeConverged = true
+        this.emitInternalChange()
+      }
+    }
+
     // Legacy APK completion by build-number increase (WP 8C-c): old builds reboot into
     // the new build without a reliable explicit reconnect status; the fresh version_info
     // build number is the completion signal (ported from progress-legacy.tsx, which
@@ -631,13 +764,17 @@ class OtaInstallCoordinator {
     if (isMount) {
       GlobalEventEmitter.on("ota_start_ack", this.handleAck)
       GlobalEventEmitter.on("mtk_update_complete", this.handleMtkComplete)
+      GlobalEventEmitter.on("glasses_session_changed", this.handleGlassesSessionChanged)
     }
 
     // Ping keepalive while an OTA is actively running (legacy sessions pinged on the
     // padded interval — old builds slept less eagerly and pings are costlier for them).
     if (connectedChanged || displayStateChanged) {
       this.clearPingInterval()
-      const active = connected && (displayState === "starting" || displayState === "updating")
+      const active =
+        connected &&
+        (displayState === "starting" || displayState === "updating") &&
+        !this.isInVersionChangeDetour()
       if (active) {
         void BluetoothSdk.ping().catch(() => {})
         const pingIntervalMs = legacySession ? LEGACY_PING_INTERVAL_MS : PING_INTERVAL_MS
@@ -671,7 +808,10 @@ class OtaInstallCoordinator {
     // update that doesn't change the signature keeps the same timer running
     // instead of forever re-extending the deadline.
     if (stallSigChanged || displayStateChanged) {
-      if (displayState !== "starting" && displayState !== "updating") {
+      if (this.isInVersionChangeDetour()) {
+        // Recovery worker owns the transaction; there are no progress events to stall on.
+        this.clearProgressTimeout()
+      } else if (displayState !== "starting" && displayState !== "updating") {
         this.clearProgressTimeout()
       } else if (!stallSig) {
         this.clearProgressTimeout()
@@ -724,6 +864,58 @@ class OtaInstallCoordinator {
     }
   }
 
+  /**
+   * Reconnect arbitration shared by the physical BLE connect edge and the
+   * glasses_session_changed signal. The latter exists because the BES keeps the BLE
+   * link alive across asg_client restarts (APK OTA): no physical edge ever fires, so
+   * the changed process session id is the only reconnect signal the coordinator gets
+   * (incident rep_01KY6BJ0B7A4RBMQ7VN39KAE5E). Always returns true (the caller's
+   * edge handling is complete).
+   */
+  private runReconnectArbitration(label: string): boolean {
+    console.log(`[OTA_PROGRESS] ${label}: false->true, flipping sawReconnectEdge=true`)
+    // A physical reconnect passed through the disconnect branch first, which cleared
+    // these timers; a session-change edge never disconnects, so a fallback armed by an
+    // earlier mount/query could otherwise fire alongside the arbitration below and send
+    // a duplicate ota_start. Clearing here is a no-op on the physical path.
+    this.clearPostApkDelay()
+    this.clearQueryReplyTimeout()
+    this.setSawReconnectEdge(true)
+
+    // Legacy apk settle window (WP 8C): the glasses restarting into the new build is
+    // the EXPECTED reconnect here — the legacy screen took no action on it. Skip the
+    // query/fallback; the settle timer (or the build-number increase) completes.
+    if (this.legacyApkSettleHold) {
+      console.log(`[OTA_PROGRESS] ${label}: reconnect during legacy apk settle hold — no query`)
+      return true
+    }
+
+    const storeState = useGlassesStore.getState()
+    const s = storeState.otaStatus
+    const postApkAwaiting =
+      s?.stepType === "apk" && (s?.totalSteps ?? 0) > 1 && (s.status === "step_complete" || s.status === "complete")
+
+    if (postApkAwaiting) {
+      console.log(`[OTA_PROGRESS] ${label}: post-APK reboot detected, arming POST_APK delay for sendOtaStart`)
+      this.clearPostApkDelay()
+      this.postApkDelay = setTimeout(() => {
+        this.postApkDelay = null
+        this.retryCount = 0
+        this.hasFirstActivity = false
+        this.hasFirstNonZeroProgress = false
+        this.hasReceivedAck = false
+        console.log("[OTA_PROGRESS] POST_APK delay fired, sending ota_start")
+        void this.sendOtaStartWithWatchdogs()
+      }, POST_APK_OTA_START_DELAY_MS)
+      return true
+    }
+
+    console.log(`[OTA_PROGRESS] ${label}: reconnected, sending ota_query_status`)
+    void BluetoothSdk.sendOtaQueryStatus()
+    this.armQueryReplyFallback("reconnect")
+    return true
+  }
+
   private runConnectEdge(connected: boolean): void {
     const prev = this.prevConnected
     this.prevConnected = connected
@@ -739,45 +931,21 @@ class OtaInstallCoordinator {
     }
 
     const becameConnected = prev === false && connected === true
-    if (becameConnected) {
-      console.log("[OTA_PROGRESS] connect-edge: false->true, flipping sawReconnectEdge=true")
-      this.setSawReconnectEdge(true)
+    if (becameConnected && this.runReconnectArbitration("connect-edge")) {
+      return
     }
 
-    // Legacy apk settle window (WP 8C): the glasses restarting into the new build is
-    // the EXPECTED reconnect here — the legacy screen took no action on it. Skip the
-    // query/fallback; the settle timer (or the build-number increase) completes.
-    if (becameConnected && this.legacyApkSettleHold) {
-      console.log("[OTA_PROGRESS] connect-edge: reconnect during legacy apk settle hold — no query")
+    // Version-change detour: after the install started, EVERY reconnect is expected
+    // (the passive factory build, then the target). Do NOT send ota_start/query — the
+    // factory build would treat the pin as a plain upgrade and start a redundant
+    // download racing the recovery worker. Convergence (buildNumber === target) is
+    // detected in the reaction pass; here we simply take no action.
+    if (this.versionChangeSession && this.versionChangeInstallStarted && !this.versionChangeConverged) {
+      console.log("[OTA_PROGRESS] connect-edge: reconnect during version-change detour — no query (expected)")
       return
     }
 
     const storeState = useGlassesStore.getState()
-    const s = storeState.otaStatus
-    const postApkAwaiting =
-      s?.stepType === "apk" && (s?.totalSteps ?? 0) > 1 && (s.status === "step_complete" || s.status === "complete")
-
-    if (becameConnected && postApkAwaiting) {
-      console.log("[OTA_PROGRESS] connect-edge: post-APK reboot detected, arming POST_APK delay for sendOtaStart")
-      this.clearPostApkDelay()
-      this.postApkDelay = setTimeout(() => {
-        this.postApkDelay = null
-        this.retryCount = 0
-        this.hasFirstActivity = false
-        this.hasFirstNonZeroProgress = false
-        this.hasReceivedAck = false
-        console.log("[OTA_PROGRESS] POST_APK delay fired, sending ota_start")
-        void this.sendOtaStartWithWatchdogs()
-      }, POST_APK_OTA_START_DELAY_MS)
-      return
-    }
-
-    if (becameConnected) {
-      console.log("[OTA_PROGRESS] connect-edge: reconnected, sending ota_query_status")
-      void BluetoothSdk.sendOtaQueryStatus()
-      this.armQueryReplyFallback("reconnect")
-      return
-    }
 
     // Initial mount (prev === current === true). If no session yet, kick off ota_start.
     // An idle ota_status has an empty sessionId; treat it as no session so ota_start
@@ -811,6 +979,14 @@ class OtaInstallCoordinator {
     this.clearRetryTimeout()
   }
 
+  /**
+   * The asg process restarted while the BES kept the BLE link up (sid change observed
+   * by the bridge): treat it exactly like a physical reconnect edge.
+   */
+  private readonly handleGlassesSessionChanged = (): void => {
+    this.runReconnectArbitration("session-change")
+  }
+
   private readonly handleMtkComplete = (): void => {
     console.log("[OTA_PROGRESS] mtk_update_complete received")
     this.clearProgressTimeout()
@@ -838,7 +1014,9 @@ class OtaInstallCoordinator {
     }
 
     if (this.errorMsg) {
-      console.log("[OTA_PROGRESS] legacy install complete arrived after a failure — completing (legacy last-write-wins)")
+      console.log(
+        "[OTA_PROGRESS] legacy install complete arrived after a failure — completing (legacy last-write-wins)",
+      )
       this.setErrorMsg("")
       this.clearLegacyApkSettleTimer()
       this.setLegacyApkSettleHold(false)
@@ -939,6 +1117,8 @@ class OtaInstallCoordinator {
       sawReconnectEdge: this.sawReconnectEdge,
       legacyApkSettleHold: this.legacyApkSettleHold,
       apkCompletedViaBuildIncrease: this.apkCompletedViaBuildIncrease,
+      versionChangeConverged: this.versionChangeConverged,
+      versionChangeSession: this.versionChangeSession,
     })
   }
 
@@ -960,6 +1140,7 @@ class OtaInstallCoordinator {
    * this poll exists for) and rejections are swallowed: the next tick retries.
    */
   private maybePollApkInstallStatus(): void {
+    if (this.isInVersionChangeDetour()) return
     if (this.apkInstallPollInFlight) return
     const s = useGlassesStore.getState().otaStatus
     if (s?.stepType === "apk" && s.phase === "install" && s.status === "in_progress") {
@@ -1002,7 +1183,10 @@ class OtaInstallCoordinator {
     // Legacy-shape check happens once, when the session cap is armed at the first
     // ota_start send (WP 8C-b): old builds get the padded legacy cap for the whole
     // session; a session that starts unified keeps the unified cap.
-    const globalTimeoutMs = this.isLegacySessionShapeNow() ? LEGACY_GLOBAL_OTA_TIMEOUT_MS : GLOBAL_OTA_TIMEOUT_MS
+    const globalTimeoutMs =
+      this.versionChangeSession || this.isLegacySessionShapeNow()
+        ? LEGACY_GLOBAL_OTA_TIMEOUT_MS
+        : GLOBAL_OTA_TIMEOUT_MS
     this.globalTimeout = setTimeout(() => {
       this.globalTimeout = null
       this.globalTimeoutStarted = false
@@ -1065,12 +1249,24 @@ class OtaInstallCoordinator {
   }
 
   private async sendOtaStartWithWatchdogs(retryAlreadyCounted = false): Promise<void> {
+    // INVARIANT BACKSTOP — not normal control flow. Every entry point that can drive the
+    // glasses (connect-edge, query fallback, retry, mount) carries its own detour gate with the
+    // right behavior for that site; this final check only exists so that a FUTURE entry point
+    // that forgets its gate degrades to a refused send + loud log instead of a corrupted
+    // transaction (an ota_start mid-detour starts a parallel install on the factory build and
+    // can trigger a second handoff). If this ever fires, a missed site gate exists — fix it.
+    if (this.isInVersionChangeDetour()) {
+      console.error(
+        "[OTA_PROGRESS] BACKSTOP: refused ota_start during a latched version-change detour — a caller is missing its detour gate",
+      )
+      return
+    }
     this.maybeStartGlobalTimeout()
     this.hasReceivedAck = false
     this.armAckAndStuckWatchdogsOnly()
     try {
       const state = useGlassesStore.getState()
-      const otaVersionUrl = getAsgOtaVersionUrl(state.otaVersionUrl, state.buildNumber)
+      const otaVersionUrl = resolveOtaManifestUrl(state.otaVersionUrl, state.buildNumber)
       console.log(`[OTA_PROGRESS] sending ota_start with manifest URL: ${otaVersionUrl}`)
       await BluetoothSdk.startOtaUpdate(otaVersionUrl)
     } catch (err) {

@@ -62,12 +62,6 @@ public class PingCommandHandler implements ICommandHandler {
         Log.d(TAG, "🏓 Received ping data: " + (data != null ? data.toString() : "null"));
 
         try {
-            // Reset heartbeat timeout - ping proves phone is connected
-            if (serviceManager != null) {
-                serviceManager.onServiceHeartbeatReceived();
-                Log.d(TAG, "🏓 💓 Connection state refreshed via ping");
-            }
-
             Log.d(TAG, "🏓 🔨 Building ping response...");
             JSONObject pingResponse = responseBuilder.buildPingResponse();
             Log.d(TAG, "🏓 📤 Sending ping response: " + pingResponse.toString());

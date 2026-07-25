@@ -37,18 +37,23 @@ Whether the button _also_ captures a photo/video locally is governed by a single
 
 ### Decision rules
 
+The "connected" input is the **BES-reported phone BLE presence** read from the transport `LinkStateMachine` (`ButtonEventSubscriber.phonePresence()`), a tri-state — not the old heartbeat-inferred flag (deleted):
+
 ```
-isSaveInGalleryMode  isConnected       Local capture?
-       true               *                 yes
-       false              true              no — phone app handles it
-       false              false             yes — fallback so disconnected glasses still capture
+isSaveInGalleryMode  phone presence      Local capture?
+       true               *                  yes
+       false              PRESENT            no — phone app handles it
+       false              ABSENT             yes — so the press isn't lost
+       false              UNKNOWN            yes — treated as no phone (safe default)
 ```
 
 In words:
 
 - **Gallery mode active** → always capture locally.
-- **Gallery mode inactive but glasses connected to phone** → skip local capture (the phone routes the press to apps).
-- **Gallery mode inactive and glasses disconnected** → still capture locally so a press isn't lost.
+- **Gallery mode inactive and the BES reports a phone present** → skip local capture (the phone routes the press to apps).
+- **Gallery mode inactive, phone absent or presence unknown** → capture locally so a press isn't lost.
+
+Presence is reported by BES firmware >= 17.26.7.23 (`sr_phble` edges, `phone_ble` sync in `sr_syvr`). **Older BES firmware never reports presence, so on the deployed fleet presence stays `UNKNOWN` and the glasses always capture locally when gallery mode is off** — the accepted trade-off is a possible duplicate capture (glasses and phone app both capture), never a lost photo. Presence resets to `UNKNOWN` on serial close and BES OTA.
 
 ### Persistence
 
@@ -124,7 +129,7 @@ The phone app sets button-related settings via the [API commands](../ASG_CLIENT_
 
 ## Troubleshooting
 
-- **Press doesn't capture locally** — check `📸 Photo capture decision` log line in `K900CommandHandler` for `Gallery Mode` and `Connection State`. If gallery mode is INACTIVE and connection state is CONNECTED, that's expected — the phone will route the press to apps but won't capture locally. Toggle gallery mode on the phone or disconnect to verify.
+- **Press doesn't capture locally** — check the `📸 Photo capture decision` log line in `ButtonEventSubscriber` for `Gallery Mode` and `Phone presence`. If gallery mode is INACTIVE and presence is PRESENT, that's expected — the phone routes the press to apps but the glasses don't capture. Toggle gallery mode on the phone or disconnect to verify. Note: PRESENT requires BES firmware >= 17.26.7.23; on older firmware presence is UNKNOWN and local capture always happens.
 - **Press doesn't reach apps** — verify a `button_press` JSON is being sent over BLE. If not, check that the `cs_pho` / `cs_vdo` / `hs_ntfy` packet is arriving at all (TAG: `K900CommandHandler`, `📦 Received K900 command`).
 - **Long press doesn't start video** — check battery level; recording is rejected below `BatteryConstants.MIN_BATTERY_LEVEL` (10%) with an audio cue.
 - **Recording auto-stops too soon** — check `button_max_recording_time` setting; the default is 10 minutes.

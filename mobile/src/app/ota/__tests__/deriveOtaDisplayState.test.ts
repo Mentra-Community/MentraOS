@@ -235,6 +235,36 @@ describe("deriveDisplayState", () => {
       {otaStatus: {...apkComplete, phase: "download" as const}},
       "complete",
     ],
+    [
+      "Version-change: convergence completes despite a stale in-flight install status",
+      {otaStatus: apkInProgress, versionChangeConverged: true},
+      "complete",
+    ],
+    [
+      "Version-change: convergence completes even while disconnected",
+      {versionChangeConverged: true, connected: false},
+      "complete",
+    ],
+    [
+      "Version-change: convergence outranks a stale failed status (wipe cleared the session)",
+      {otaStatus: apkFailed, versionChangeConverged: true, errorMsg: ""},
+      "complete",
+    ],
+    [
+      "Version-change: a bare complete before convergence is NOT success (refusal/stale)",
+      {otaStatus: apkComplete, versionChangeSession: true, versionChangeConverged: false},
+      "updating",
+    ],
+    [
+      "Version-change: bare complete before convergence while disconnected -> disconnected",
+      {otaStatus: apkComplete, versionChangeSession: true, versionChangeConverged: false, connected: false},
+      "disconnected",
+    ],
+    [
+      "Non-version-change complete is unaffected by the guard",
+      {otaStatus: apkComplete},
+      "complete",
+    ],
   ]
 
   it.each(cases)("%s", (_name, overrides, expected) => {

@@ -44,6 +44,7 @@ import java.util.stream.Collectors;
 import java.util.concurrent.locks.ReentrantLock;
 
 import com.mentra.asg_client.io.ota.session.OtaSessionManager;
+import com.mentra.asg_client.io.ota.utils.DowngradeGate;
 import com.mentra.asg_client.io.ota.utils.FirmwareDownloadException;
 import com.mentra.asg_client.io.ota.utils.OtaConstants;
 import com.mentra.asg_client.service.system.core.SystemControllerFactory;
@@ -82,6 +83,13 @@ public class OtaHelper {
     private static final String TAG = OtaConstants.TAG;
     private static final ReentrantLock versionCheckLock = new ReentrantLock();
     private static volatile boolean isUpdating = false;  // Tracks download/install in progress
+
+    // Downgrade handoff verdict plumbing: the watchdog must be cancellable because recovery
+    // answers every handoff synchronously (accepted/refused); "no answer" is reserved for a
+    // dead/missing recovery worker. Guarded by OtaHelper.class.
+    private static final Handler HANDOFF_HANDLER = new Handler(Looper.getMainLooper());
+    private static Runnable handoffWatchdog;
+    private static OtaHelper handoffOwner;
     private static volatile boolean isMtkOtaInProgress = false;  // Tracks MTK firmware update in progress
 
     private Handler handler;
@@ -114,8 +122,9 @@ public class OtaHelper {
     // Track phone-initiated vs glasses-initiated OTA
     private static volatile boolean isPhoneInitiatedOta = false;
 
-    // The version JSON URL used for the current/last phone-started OTA check.
-    private volatile String lastVersionJsonUrl = OtaConstants.VERSION_JSON_URL;
+    // The manifest URL of the current/last phone-started OTA check. Always phone-supplied:
+    // the glasses have no baked default manifest and never originate an OTA decision.
+    private volatile String lastVersionJsonUrl = null;
 
     /**
      * Set the phone-initiated OTA flag. Used by DebugApkOtaReceiver to force
@@ -325,7 +334,15 @@ public class OtaHelper {
                 if (!apps.has(pkg)) continue;
                 long current = getInstalledVersion(pkg, context);
                 long server = apps.getJSONObject(pkg).getLong("versionCode");
-                if (server > current) {
+                // Count the ASG step in either direction so the session's step accounting
+                // matches the work the pass actually performs. For a downgrade the handoff is
+                // deferred while firmware is applicable (firmware-first ordering), so only plan
+                // the apk step on the pass that will actually hand off (no applicable firmware).
+                boolean asgDowngrade = OtaConstants.ASG_PACKAGE.equals(pkg)
+                        && DowngradeGate.shouldDowngrade(
+                                current, server, OtaConstants.DOWNGRADE_FLOOR_VERSION_CODE)
+                        && !hasApplicableFirmwareUpdate(rootJson, context);
+                if (server > current || asgDowngrade) {
                     steps.add("apk");
                     break;
                 }
@@ -338,7 +355,9 @@ public class OtaHelper {
             if (rootJson.has("bes_firmware")) {
                 String besVer = "";
                 try { besVer = new AsgSettings(context).getBesFirmwareVersion(); } catch (Exception ignored) {}
-                if (checkBesUpdate(rootJson.getJSONObject("bes_firmware"), besVer)) steps.add("bes");
+                if (besUpdateApplicableForSession(rootJson.getJSONObject("bes_firmware"), besVer, rootJson, context)) {
+                    steps.add("bes");
+                }
             }
         } catch (Exception e) {
             Log.w(TAG, "Failed to build step sequence", e);
@@ -393,18 +412,17 @@ public class OtaHelper {
     }
 
     /**
-     * Start OTA update from phone command (onboarding or background approval).
-     * Called by OtaCommandHandler when phone sends ota_start command.
-     */
-    public void startOtaFromPhone() {
-        startOtaFromPhone(null);
-    }
-
-    /**
-     * Start OTA update from phone command using a caller-supplied version JSON URL when provided.
+     * Start OTA update from phone command (onboarding or background approval). Called by
+     * OtaCommandHandler when phone sends ota_start with its mandatory manifest URL. Every manifest
+     * the glasses act on is phone-supplied and exact-pin shaped; there is no baked fallback.
      */
     public void startOtaFromPhone(String versionJsonUrl) {
-        String requestedVersionJsonUrl = resolveVersionJsonUrl(versionJsonUrl);
+        String requestedVersionJsonUrl = requireVersionJsonUrl(versionJsonUrl);
+        if (requestedVersionJsonUrl == null) {
+            // OtaCommandHandler already rejects URL-less ota_start; this is a defensive guard.
+            Log.e(TAG, "Refusing ota_start without a manifest URL");
+            return;
+        }
         Log.i(TAG, "📱 Starting OTA from phone request");
 
         // Immediately acknowledge receipt so the phone cancels its retry timer.
@@ -433,15 +451,11 @@ public class OtaHelper {
         startVersionCheckWithUrl(context, requestedVersionJsonUrl);
     }
 
-    private String resolveVersionJsonUrl(String versionJsonUrl) {
+    private String requireVersionJsonUrl(String versionJsonUrl) {
         if (versionJsonUrl == null || versionJsonUrl.trim().isEmpty()) {
-            return OtaConstants.VERSION_JSON_URL;
+            return null;
         }
         return versionJsonUrl.trim();
-    }
-
-    public void startVersionCheck(Context context) {
-        startVersionCheckWithUrl(context, OtaConstants.VERSION_JSON_URL);
     }
 
     /**
@@ -451,7 +465,11 @@ public class OtaHelper {
      * @param versionJsonUrl URL to fetch the version JSON from (http, https)
      */
     public void startVersionCheckWithUrl(Context context, String versionJsonUrl) {
-        String resolvedVersionJsonUrl = resolveVersionJsonUrl(versionJsonUrl);
+        String resolvedVersionJsonUrl = requireVersionJsonUrl(versionJsonUrl);
+        if (resolvedVersionJsonUrl == null) {
+            Log.e(TAG, "Refusing OTA version check without a manifest URL");
+            return;
+        }
         Log.d(TAG, "Check OTA update method init");
         Log.i(TAG, "OTA check trigger -> phoneInitiated=" + isPhoneInitiatedOta
                 + ", lockHeld=" + versionCheckLock.isLocked()
@@ -507,17 +525,6 @@ public class OtaHelper {
                 Log.i(TAG, "OTA execution mode -> phone-started install");
                 stage[0] = "process_updates";
                 if (json.has("apps")) {
-                    // If the installed ASG version is in the remediation range, the recovery
-                    // worker sidecar owns the ASG update for this device. Remove ASG from the
-                    // apps map so the normal OTA loop skips it; the recovery worker will install
-                    // it autonomously. Once installed, the version exceeds maxVersionCode and
-                    // normal OTA resumes ownership on the next ota_start.
-                    // TODO: re-enable once remediation is activated in the prod manifest.
-                    // if (isAsgDeferredToRemediation(json, context)) {
-                    //     json.getJSONObject("apps").remove("com.mentra.asg_client");
-                    //     Log.i(TAG, "ASG is in remediation range — skipping normal OTA for "
-                    //             + "com.mentra.asg_client; recovery worker will handle it");
-                    // }
                     processAppsSequentially(json, context);
                 } else {
                     Log.d(TAG, "Using legacy version.json format");
@@ -618,8 +625,9 @@ public class OtaHelper {
         if (sessionManager != null) {
             List<String> steps = buildStepSequence(rootJson, apps, context);
             if (!steps.isEmpty()) {
-                String versionUrl = lastVersionJsonUrl != null ? lastVersionJsonUrl : OtaConstants.VERSION_JSON_URL;
-                sessionManager.createSession(steps.toArray(new String[0]), versionUrl);
+                // Non-null: every check runs through startVersionCheckWithUrl, which stores the
+                // phone-supplied URL under the version-check lock before reaching here.
+                sessionManager.createSession(steps.toArray(new String[0]), lastVersionJsonUrl);
                 Log.i(TAG, "OTA session created with steps: " + steps);
             }
         }
@@ -662,6 +670,36 @@ public class OtaHelper {
                     apkUpdateFailed = true;
                     failedApkPackage = packageName;
                     break; // Stop install sequence if update fails
+                }
+            } else if (OtaConstants.ASG_PACKAGE.equals(packageName)
+                    && DowngradeGate.shouldDowngrade(
+                            currentVersion,
+                            serverVersion,
+                            OtaConstants.DOWNGRADE_FLOOR_VERSION_CODE)) {
+                if (hasApplicableFirmwareUpdate(rootJson, context)) {
+                    // Firmware first, ASG replacement last (the spec's downgrade ordering):
+                    // the current -- newer -- ASG applies MTK/BES this session, and the phone's
+                    // next check re-offers the still-mismatched pin, handing off the downgrade
+                    // once no firmware remains. Multi-pass by design: each pass converges one
+                    // layer and the phone re-checks after each.
+                    Log.i(TAG, "Pinned downgrade pending for " + packageName
+                            + " but firmware updates are applicable - applying firmware first,"
+                            + " downgrade on the next pass");
+                } else {
+                    Log.i(TAG, "Pinned downgrade requested for " + packageName +
+                             " (current: " + currentVersion + ", target: " + serverVersion + ")");
+
+                    boolean handedOff = stageAndHandoffDowngrade(appInfo, context);
+                    if (handedOff) {
+                        // The recovery worker owns the transaction from here; the uninstall it
+                        // sends will kill this process shortly. Do not plan further steps.
+                        apkUpdateNeeded = true;
+                        break;
+                    }
+                    Log.e(TAG, "Failed to stage downgrade for " + packageName);
+                    apkUpdateFailed = true;
+                    failedApkPackage = packageName;
+                    break;
                 }
             } else {
                 Log.d(TAG, packageName + " is up to date (version " + currentVersion + ")");
@@ -746,7 +784,9 @@ public class OtaHelper {
                     } catch (Exception e) {
                         Log.e(TAG, "Error getting BES firmware version from AsgSettings", e);
                     }
-                    besUpdateAvailable = checkBesUpdate(rootJson.getJSONObject("bes_firmware"), currentBesVersion);
+                    besUpdateAvailable =
+                            besUpdateApplicableForSession(
+                                    rootJson.getJSONObject("bes_firmware"), currentBesVersion, rootJson, context);
                 }
 
                 // Apply updates in correct order
@@ -817,32 +857,6 @@ public class OtaHelper {
         } catch (PackageManager.NameNotFoundException e) {
             Log.d(TAG, packageName + " not installed");
             return 0;
-        }
-    }
-
-    /**
-     * Returns {@code true} when the installed ASG version falls within the remediation range
-     * declared in the manifest's {@code remediation} block, meaning the recovery worker sidecar
-     * owns the ASG update for this device.
-     *
-     * <p>When this returns true, the normal OTA loop removes {@code com.mentra.asg_client} from
-     * the apps map so it is not downloaded or installed by the phone-triggered OTA path.
-     * Once the recovery worker installs the target version, {@code installedVersion} exceeds
-     * {@code maxVersionCode} and this method returns {@code false}, handing ownership back to
-     * the normal OTA path automatically.
-     */
-    private boolean isAsgDeferredToRemediation(JSONObject rootJson, Context context) {
-        try {
-            JSONObject remediation = rootJson.optJSONObject("remediation");
-            if (remediation == null) return false;
-            if (!remediation.optBoolean("enabled", false)) return false;
-            long maxVersionCode = remediation.optLong("maxVersionCode", -1);
-            if (maxVersionCode < 0) return false;
-            long installed = getInstalledVersion("com.mentra.asg_client", context);
-            return installed <= maxVersionCode;
-        } catch (Exception e) {
-            Log.w(TAG, "Could not evaluate remediation block; proceeding with normal OTA", e);
-            return false;
         }
     }
 
@@ -934,6 +948,239 @@ public class OtaHelper {
             Log.e(TAG, "Failed to update " + packageName, e);
             isUpdating = false;
             return false;
+        }
+    }
+
+    /**
+     * Stages a pinned lower-version ASG APK and hands the install transaction to the recovery
+     * worker.
+     *
+     * <p>The OEM installer refuses direct downgrades, so the recovery worker performs the detour:
+     * uninstall the system-app update (reverting to the passive factory build and wiping ASG
+     * state — the deterministic reset a downgrade requires), then install the staged APK as an
+     * ordinary upgrade from the factory floor. ASG cannot supervise any of that itself because the
+     * uninstall kills this process and destroys every ASG-owned preference store, so the handoff
+     * is the last thing ASG does. The phone observes convergence by comparing the reported build
+     * number against the pinned manifest after reconnection.
+     *
+     * @return {@code true} when the APK was staged, checksum-verified, and the handoff broadcast
+     *     was dispatched. The device is untouched when this returns {@code false}.
+     */
+    /**
+     * True when this manifest carries firmware the device would actually apply right now,
+     * mirroring the phase-2 decisions exactly: an MTK patch matching the current firmware
+     * (unless MTK already updated this session or is in progress) or a BES image newer than
+     * the cached BES version. Used to order combined sessions: firmware runs before an ASG
+     * downgrade is handed off, so the newest ASG drives the flashes and the replacement is
+     * the final step.
+     */
+    /** True when this manifest pins the ASG below the installed build and the gate allows it. */
+    private boolean isPinnedDowngradePending(JSONObject rootJson, Context context) {
+        try {
+            JSONObject apps = rootJson.optJSONObject("apps");
+            if (apps == null) return false;
+            JSONObject asg = apps.optJSONObject(OtaConstants.ASG_PACKAGE);
+            if (asg == null) return false;
+            long server = asg.optLong("versionCode", 0);
+            long current = getInstalledVersion(OtaConstants.ASG_PACKAGE, context);
+            return DowngradeGate.shouldDowngrade(
+                    current, server, OtaConstants.DOWNGRADE_FLOOR_VERSION_CODE);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /**
+     * Session-scoped BES decision. {@link #checkBesUpdate} deliberately treats an unknown
+     * cached BES version as "flash to be safe" — correct for plain upgrade sessions. In a
+     * session whose manifest also pins an ASG downgrade that policy is wrong in BOTH
+     * directions: counting unknown-BES as applicable would defer the handoff forever while
+     * the cache stays empty, and flashing blind would let the detour's uninstall kill ASG —
+     * the UART flasher — mid-transfer. So with a pinned downgrade pending and no cached BES
+     * version, BES is out of scope for this session everywhere (ordering gate, step
+     * sequence, apply decision). The detour reboots the glasses, BES reports its real
+     * version at boot (hs_syvr), and the phone's next check re-offers the firmware with a
+     * known version.
+     */
+    private boolean besUpdateApplicableForSession(
+            JSONObject besFirmware, String currentBesVersion, JSONObject rootJson, Context context) {
+        if ((currentBesVersion == null || currentBesVersion.isEmpty())
+                && isPinnedDowngradePending(rootJson, context)) {
+            Log.i(
+                    TAG,
+                    "BES version unknown and a pinned downgrade is pending — BES out of scope"
+                            + " this session (re-offered after the detour)");
+            return false;
+        }
+        return checkBesUpdate(besFirmware, currentBesVersion);
+    }
+
+    private boolean hasApplicableFirmwareUpdate(JSONObject rootJson, Context context) {
+        try {
+            if (!wasMtkUpdatedThisSession() && !isMtkOtaInProgress() && rootJson.has("mtk_patches")) {
+                String currentMtkVersion = SysProp.getProperty(context, "ro.custom.ota.version");
+                if (findMatchingMtkPatch(rootJson.getJSONArray("mtk_patches"), currentMtkVersion) != null) {
+                    return true;
+                }
+            }
+            if (rootJson.has("bes_firmware")) {
+                String currentBesVersion = "";
+                try {
+                    currentBesVersion = new AsgSettings(context).getBesFirmwareVersion();
+                } catch (Exception e) {
+                    Log.e(TAG, "Error getting BES firmware version from AsgSettings", e);
+                }
+                if (besUpdateApplicableForSession(
+                        rootJson.getJSONObject("bes_firmware"), currentBesVersion, rootJson, context)) {
+                    return true;
+                }
+            }
+        } catch (Exception e) {
+            // Ordering is best-effort: on any evaluation error fall through to the downgrade
+            // handoff rather than deferring it forever.
+            Log.w(TAG, "Could not evaluate firmware applicability; proceeding with downgrade", e);
+        }
+        return false;
+    }
+
+    private boolean stageAndHandoffDowngrade(JSONObject appInfo, Context context) {
+        try {
+            currentUpdateType = "apk";
+            lastApkFailureErrorCode = null;
+
+            if (isBesOtaInProgress()) {
+                Log.w(TAG, "BES firmware update in progress - skipping downgrade");
+                return false;
+            }
+            if (isMtkOtaInProgress) {
+                Log.w(TAG, "MTK firmware update in progress - skipping downgrade");
+                return false;
+            }
+
+            long targetVersion = appInfo.getLong("versionCode");
+            String apkUrl = appInfo.getString("apkUrl");
+            String expectedSha = appInfo.optString("sha256", "");
+            if (expectedSha.isEmpty()) {
+                // The recovery worker re-verifies the staged bytes against this hash after ASG is
+                // gone; never hand over bytes that cannot be re-verified.
+                Log.e(TAG, "Refusing downgrade: manifest entry has no sha256");
+                return false;
+            }
+
+            // The recovery worker owns the transaction after the handoff; an older worker would
+            // silently ignore the broadcast. ASG deploys its bundled worker asynchronously at
+            // startup, so a too-old worker here usually means that deploy has not landed yet —
+            // fail this attempt and let the phone's next OTA check retry.
+            long recoveryVersion =
+                    getInstalledVersion(OtaConstants.RECOVERY_PACKAGE, context);
+            if (recoveryVersion < OtaConstants.MIN_RECOVERY_VERSION_FOR_DOWNGRADE) {
+                Log.e(TAG, "Refusing downgrade: recovery worker version " + recoveryVersion
+                        + " < required " + OtaConstants.MIN_RECOVERY_VERSION_FOR_DOWNGRADE);
+                return false;
+            }
+
+            isUpdating = true;
+            File apkFile = new File(OtaConstants.BASE_DIR, OtaConstants.DOWNGRADE_APK_FILENAME);
+            if (apkFile.exists() && !apkFile.delete()) {
+                Log.w(TAG, "Failed deleting stale downgrade APK: " + apkFile.getAbsolutePath());
+                isUpdating = false;
+                return false;
+            }
+
+            boolean downloadOk =
+                    downloadApk(apkUrl, appInfo, context, OtaConstants.DOWNGRADE_APK_FILENAME);
+            if (!downloadOk) {
+                isUpdating = false;
+                return false;
+            }
+
+            currentUpdateStage = "install";
+            sendProgressToPhone("install", 0, 0, 0, "STARTED", null);
+
+            Intent handoff = new Intent(OtaConstants.RECOVERY_REQUEST_DOWNGRADE);
+            handoff.setPackage(OtaConstants.RECOVERY_PACKAGE);
+            handoff.putExtra(OtaConstants.EXTRA_DOWNGRADE_TARGET_VERSION, targetVersion);
+            handoff.putExtra(OtaConstants.EXTRA_DOWNGRADE_APK_PATH, apkFile.getAbsolutePath());
+            handoff.putExtra(OtaConstants.EXTRA_DOWNGRADE_APK_SHA256, expectedSha);
+            // Arm before broadcasting: the verdict arrives on the main looper and must always
+            // find an armed watchdog to cancel.
+            Log.i(TAG, "Handing downgrade off to recovery worker (target " + targetVersion
+                    + "); expecting verdict, then uninstall");
+
+            // Recovery answers every handoff synchronously with an accepted/refused verdict
+            // (ACTION_DOWNGRADE_HANDOFF_RESULT -> onDowngradeHandoffResult), which cancels this
+            // watchdog: accepted arms a long-stop instead, refused fails fast with a distinct
+            // error. The timeout below therefore only fires when recovery never answered at all
+            // (dead, missing, or pre-verdict version) — in which case no transaction exists and
+            // reporting failure is safe.
+            armHandoffWatchdog(
+                    OtaConstants.DOWNGRADE_HANDOFF_TIMEOUT_MS,
+                    "downgrade_handoff_failed",
+                    "no verdict from recovery worker");
+            context.sendBroadcast(handoff, OtaConstants.RECOVERY_CONTROL_PERMISSION);
+            return true;
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to stage downgrade handoff", e);
+            isUpdating = false;
+            return false;
+        }
+    }
+
+    /** Arms (replacing any previous) the handoff watchdog; synchronized on the class. */
+    private void armHandoffWatchdog(long delayMs, String errorCode, String logReason) {
+        synchronized (OtaHelper.class) {
+            if (handoffWatchdog != null) {
+                HANDOFF_HANDLER.removeCallbacks(handoffWatchdog);
+            }
+            handoffOwner = this;
+            handoffWatchdog = () -> {
+                synchronized (OtaHelper.class) {
+                    handoffWatchdog = null;
+                }
+                if (isUpdating) {
+                    Log.e(TAG, "Downgrade watchdog (" + logReason + ") after " + (delayMs / 1000)
+                            + "s - clearing OTA latch");
+                    isUpdating = false;
+                    sendProgressToPhone("install", 0, 0, 0, "FAILED", errorCode);
+                }
+            };
+            HANDOFF_HANDLER.postDelayed(handoffWatchdog, delayMs);
+        }
+    }
+
+    /**
+     * Recovery's synchronous verdict on a downgrade handoff, delivered via
+     * {@link OtaConstants#ACTION_DOWNGRADE_HANDOFF_RESULT}. Refused fails fast with a
+     * distinct error (the phone releases its detour latch ONLY on authenticated refusal or
+     * verdict-timeout — never on an accepted-but-slow transaction). Accepted swaps the short
+     * watchdog for a long-stop sized past recovery's own stale give-up, so a wedged
+     * transaction cannot pin the OTA latch forever.
+     */
+    public static void onDowngradeHandoffResult(boolean accepted, String reason) {
+        OtaHelper owner;
+        synchronized (OtaHelper.class) {
+            owner = handoffOwner;
+            if (owner == null || handoffWatchdog == null) {
+                Log.w(TAG, "Handoff verdict (accepted=" + accepted + ") with no pending handoff");
+                return;
+            }
+            HANDOFF_HANDLER.removeCallbacks(handoffWatchdog);
+            handoffWatchdog = null;
+        }
+        if (accepted) {
+            Log.i(TAG, "Recovery accepted the downgrade handoff (" + reason
+                    + "); transaction owns the detour");
+            owner.armHandoffWatchdog(
+                    OtaConstants.DOWNGRADE_SUPERVISION_TIMEOUT_MS,
+                    "downgrade_transaction_stalled",
+                    "accepted transaction never uninstalled");
+        } else {
+            Log.e(TAG, "Recovery refused the downgrade handoff: " + reason);
+            if (isUpdating) {
+                isUpdating = false;
+                owner.sendProgressToPhone(
+                        "install", 0, 0, 0, "FAILED", "downgrade_handoff_refused");
+            }
         }
     }
 
@@ -2556,13 +2803,17 @@ public class OtaHelper {
         sessionManager.advanceStep(nextStep, "download");
         sendOtaStatus();
 
-        // Kick off the next step's download/install cycle.
-        setPhoneInitiatedOta(true);
-        if (versionJsonUrl != null && !versionJsonUrl.isEmpty()) {
-            startVersionCheckWithUrl(context, versionJsonUrl);
-        } else {
-            startVersionCheck(context);
+        // Kick off the next step's download/install cycle. Sessions always carry the
+        // phone-supplied manifest URL; a session without one is unrecoverable by design
+        // (the glasses have no fallback manifest and never originate an OTA decision).
+        if (versionJsonUrl == null || versionJsonUrl.isEmpty()) {
+            Log.e(TAG, "Session has no manifest URL - failing instead of guessing a manifest");
+            sessionManager.setFailed("Session missing manifest URL");
+            sendOtaStatus();
+            return false;
         }
+        setPhoneInitiatedOta(true);
+        startVersionCheckWithUrl(context, versionJsonUrl);
         return true;
     }
 

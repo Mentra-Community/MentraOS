@@ -42,11 +42,41 @@ export function deriveDisplayState(args: {
   legacyApkSettleHold?: boolean
   /** Legacy APK completion detected by build-number increase (WP 8C). */
   apkCompletedViaBuildIncrease?: boolean
+  /** Downgrade detour: the reconnected glasses reported exactly the pinned target version. */
+  versionChangeConverged?: boolean
+  /** True for the whole downgrade (version-change) session. */
+  versionChangeSession?: boolean
 }): DisplayState {
-  const {otaStatus, otaProgress, connected, errorMsg, sawReconnectEdge, legacyApkSettleHold, apkCompletedViaBuildIncrease} =
-    args
+  const {
+    otaStatus,
+    otaProgress,
+    connected,
+    errorMsg,
+    sawReconnectEdge,
+    legacyApkSettleHold,
+    apkCompletedViaBuildIncrease,
+    versionChangeConverged,
+    versionChangeSession,
+  } = args
 
   if (errorMsg) return "failed"
+
+  // Downgrade detour completion: exact-version convergence after reconnect is the
+  // only completion signal (the wipe destroys ASG's ota_session, and the target is
+  // a LOWER build so no build-number increase fires). Outranks the stale install
+  // status still sitting in the store from before the handoff.
+  if (versionChangeConverged) return "complete"
+
+  // In a version-change session, convergence (above) is the ONLY completion for the ASG
+  // downgrade. A bare non-firmware "complete" before convergence — the glasses refusing
+  // the downgrade (floor/gate) with no install, or a stale pre-handoff status — must never
+  // present as success. Firmware-step completions (mtk/bes) DO pass through: a combined
+  // downgrade+firmware manifest applies firmware first on its own pass, which must finish
+  // so the phone re-checks and re-offers the now-firmware-free downgrade.
+  const isFirmwareComplete = otaStatus?.stepType === "mtk" || otaStatus?.stepType === "bes"
+  if (versionChangeSession && otaStatus?.status === "complete" && !isFirmwareComplete) {
+    return connected ? "updating" : "disconnected"
+  }
 
   const besTerminal = isBesTerminal(otaStatus, otaProgress)
   if (besTerminal && connected && sawReconnectEdge) return "complete"

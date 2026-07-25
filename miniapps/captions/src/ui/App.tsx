@@ -25,8 +25,15 @@ export function App() {
   const isDark = useColorScheme() === "dark"
   const {insets} = useSafeArea()
   const {developerMode, holdHandlers} = useDeveloperMode()
-  const {settings, updateLanguage, updateHints, updateDisplayLines, updateDisplayWidth, updateWordBreaking} =
-    useSettings()
+  const {
+    settings,
+    updateLanguage,
+    updateHints,
+    updateDisplayLines,
+    updateDisplayWidth,
+    updateWordBreaking,
+    updateCaptionTimeoutSeconds,
+  } = useSettings()
   const {
     transcripts,
     connected,
@@ -104,6 +111,7 @@ export function App() {
               onUpdateDisplayLines={updateDisplayLines}
               onUpdateDisplayWidth={updateDisplayWidth}
               onUpdateWordBreaking={updateWordBreaking}
+              onUpdateCaptionTimeoutSeconds={updateCaptionTimeoutSeconds}
             />
           ) : (
             <TranscriptList
@@ -227,7 +235,8 @@ function CloudStatusFooter({
         />
         <span className="text-sm font-semibold truncate">{label}</span>
       </div>
-      <span className={`text-xs font-medium flex-shrink-0 ${dark ? "text-zinc-300" : "text-zinc-500 dark:text-zinc-400"}`}>
+      <span
+        className={`text-xs font-medium flex-shrink-0 ${dark ? "text-zinc-300" : "text-zinc-500 dark:text-zinc-400"}`}>
         {detail}
       </span>
     </div>

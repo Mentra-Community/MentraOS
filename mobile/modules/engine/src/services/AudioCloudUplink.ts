@@ -21,9 +21,15 @@ let sub: {remove: () => void} | null = null
 const suppressionSources = new Set<string>()
 
 /**
- * Keep the glasses LC3 transport alive while preventing spoken TTS from being
- * ingested by cloud STT. Sources are reference-counted by id so overlapping
- * speech playback cannot reopen the uplink until every active prompt has ended.
+ * Keep the glasses LC3 transport alive while dropping mic audio before cloud
+ * STT. Sources are reference-counted by id so overlapping playback cannot
+ * reopen the uplink until every active source has released.
+ *
+ * Suppression is global to the uplink: one source silences STT for every app.
+ * That is why no platform path arms it any more (spoken TTS used to, which made
+ * every assistant reply punch a hole in Live Translation and Captions). The
+ * mechanism stays because it is the right primitive for an explicit,
+ * caller-scoped mute; see OS-1741 for the per-app opt-in that will use it.
  */
 export function setAudioCloudUplinkSuppressed(sourceId: string, suppressed: boolean): void {
   if (suppressed) suppressionSources.add(sourceId)

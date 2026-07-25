@@ -367,7 +367,6 @@ server/auth/serviceAccountKey.json
 .env.development
 .env.production
 .env.staging
-asg_client/StreamPackLite/
 
 
 ### iOS Large Files - XCFrameworks and Models

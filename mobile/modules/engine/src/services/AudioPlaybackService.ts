@@ -1,8 +1,9 @@
 import {createAudioPlayer, AudioPlayer, AudioStatus, setAudioModeAsync} from "expo-audio"
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
-import {Platform} from "react-native"
+import {AppState, Platform} from "react-native"
 import {BgTimer} from "../utils/timers"
 import {setAudioCloudUplinkSuppressed} from "./AudioCloudUplink"
+import {SILENT_AUDIO_SOURCE} from "./audioPlaybackAssets"
 
 const RESTORE_GLASSES_VOLUME_AFTER_PLAYBACK = false
 
@@ -12,7 +13,12 @@ interface AudioPlayRequest {
   appId?: string
   volume?: number
   stopOtherAudio?: boolean
-  /** Suppress microphone audio sent to cloud STT while this audio is audible. */
+  /**
+   * Suppress microphone audio sent to cloud STT while this audio is audible.
+   * Opt-in and off by default: the suppression is global to the uplink, so a
+   * caller that sets this silences STT for every running app, not just itself.
+   * No platform path sets it today (see AudioCloudUplink and OS-1741).
+   */
   suppressCloudUplink?: boolean
 }
 
@@ -28,6 +34,7 @@ type AudioPlaybackCompletion = (
 
 interface PlaybackState {
   requestId: string
+  audioUrl: string
   uplinkSuppressionId: string
   appId?: string
   startTime: number
@@ -38,6 +45,9 @@ interface PlaybackState {
 
 interface PendingPlaybackState {
   cancelled: boolean
+  audioUrl: string
+  appId?: string
+  createdAt: number
 }
 
 /** Open request for a live PCM output stream (miniapp speaker.createStream). */
@@ -91,9 +101,9 @@ class AudioPlaybackService {
   // window after actual audio so we only pre-roll the first sound after idle.
   private audioRouteWarmUntil = 0
   private audioRouteWarmupPromise: Promise<void> | null = null
-  // Spoken playback remains suppressed briefly while its A2DP tail drains.
-  // Track those completed sources so a new non-spoken sound can resume
-  // listening immediately instead of inheriting the previous TTS gate.
+  // Playback that opted into suppression stays suppressed briefly while its
+  // A2DP tail drains. Track those completed sources so a later unsuppressed
+  // sound can resume listening immediately instead of inheriting that gate.
   private tailUplinkSuppressions = new Set<string>()
   // Original glasses media volume captured before we bump it for A2DP playback.
   private glassesVolumeRestoreLevel: number | null = null
@@ -102,13 +112,15 @@ class AudioPlaybackService {
   private static readonly AUDIO_ROUTE_WARM_WINDOW_MS = 1500
   private static readonly AUDIO_ROUTE_PREWARM_MS = 200
   private static readonly AUDIO_ROUTE_PREWARM_SAMPLE_RATE = 16_000
+  /** Break accidental same-app replay storms without affecting deliberate later replays. */
+  private static readonly DUPLICATE_PLAY_WINDOW_MS = 750
   private static readonly AUDIO_ROUTE_PREWARM_PCM_BASE64 =
-    "AAAA".repeat(Math.floor(
-      (AudioPlaybackService.AUDIO_ROUTE_PREWARM_MS *
-        AudioPlaybackService.AUDIO_ROUTE_PREWARM_SAMPLE_RATE *
-        2) /
-        (1000 * 3),
-    )) + "AA=="
+    "AAAA".repeat(
+      Math.floor(
+        (AudioPlaybackService.AUDIO_ROUTE_PREWARM_MS * AudioPlaybackService.AUDIO_ROUTE_PREWARM_SAMPLE_RATE * 2) /
+          (1000 * 3),
+      ),
+    ) + "AA=="
   /** If glasses report step volume at or below this, bump to FLOOR before A2DP playback. */
   private static readonly GLASSES_VOLUME_LOW_THRESHOLD = 2
   private static readonly GLASSES_VOLUME_FLOOR = 9
@@ -189,6 +201,14 @@ class AudioPlaybackService {
    */
   private async prewarmAudioRouteIfCold(): Promise<void> {
     if (Platform.OS !== "android" || this.isAudioRouteWarm()) return
+    // This silent PCM pre-roll is only an anti-clipping optimization. Some
+    // Android devices defer opening its AudioTrack until the host Activity
+    // resumes even though the real URL player supports background playback.
+    // Never let that optional pre-roll block a glasses-initiated prompt.
+    if (AppState.currentState !== "active") {
+      console.log(`AUDIO: Skipping cold-route prewarm while app is ${AppState.currentState}`)
+      return
+    }
     if (this.audioRouteWarmupPromise) return this.audioRouteWarmupPromise
 
     const streamId = `audio-route-prewarm-${Date.now()}-${Math.random().toString(36).slice(2)}`
@@ -322,21 +342,30 @@ class AudioPlaybackService {
   }
 
   private unloadPlaybackSource(playback: PlaybackState, reason: string): void {
-    if (!this.player) return
     if (this.loadedPlayback !== playback) return
+    const player = this.player
+    if (!player) {
+      this.loadedPlayback = null
+      return
+    }
 
     try {
-      this.player.pause()
+      player.pause()
     } catch (e) {
       console.warn(`AUDIO: Error pausing ${playback.requestId} during ${reason}:`, e)
     }
 
     try {
-      this.player.replace(null)
-      this.loadedPlayback = null
-      console.log(`AUDIO: Cleared player for ${playback.requestId} during ${reason}`)
+      // replace(null) fails native argument casting on iOS, while remove()
+      // destroys the ExoPlayer that Android must reuse to avoid AudioTrack
+      // exhaustion. Replacing with bundled silence detaches the previous media
+      // item on both platforms and leaves the native player alive.
+      player.replace(SILENT_AUDIO_SOURCE)
+      console.log(`AUDIO: Cleared source for ${playback.requestId} during ${reason}`)
     } catch (e) {
       console.warn(`AUDIO: Error clearing ${playback.requestId} during ${reason}:`, e)
+    } finally {
+      if (this.loadedPlayback === playback) this.loadedPlayback = null
     }
   }
 
@@ -368,7 +397,27 @@ class AudioPlaybackService {
    */
   public async play(request: AudioPlayRequest, onComplete: AudioPlaybackCompletion): Promise<void> {
     const {requestId, audioUrl, appId, volume = 1.0, stopOtherAudio = true, suppressCloudUplink = false} = request
-    const pending: PendingPlaybackState = {cancelled: false}
+    const now = Date.now()
+    const activeDuplicate =
+      this.currentPlayback &&
+      !this.currentPlayback.completed &&
+      this.currentPlayback.appId === appId &&
+      this.currentPlayback.audioUrl === audioUrl &&
+      now - this.currentPlayback.startTime < AudioPlaybackService.DUPLICATE_PLAY_WINDOW_MS
+    const pendingDuplicate = [...this.pendingPlaybacks.values()].some(
+      (candidate) =>
+        !candidate.cancelled &&
+        candidate.appId === appId &&
+        candidate.audioUrl === audioUrl &&
+        now - candidate.createdAt < AudioPlaybackService.DUPLICATE_PLAY_WINDOW_MS,
+    )
+    if (activeDuplicate || pendingDuplicate) {
+      console.warn(`AUDIO: Suppressed duplicate play request ${requestId}${appId ? ` from ${appId}` : ""}`)
+      onComplete(requestId, false, "Duplicate audio request suppressed", 0, "error")
+      return
+    }
+
+    const pending: PendingPlaybackState = {cancelled: false, audioUrl, appId, createdAt: now}
     this.pendingPlaybacks.set(requestId, pending)
 
     console.log(`AUDIO: Play request ${requestId}${appId ? ` from ${appId}` : ""}: ${audioUrl}`)
@@ -416,6 +465,7 @@ class AudioPlaybackService {
       // Store the new playback state
       const playback: PlaybackState = {
         requestId,
+        audioUrl,
         uplinkSuppressionId: `url:${requestId}`,
         appId,
         startTime: Date.now(),

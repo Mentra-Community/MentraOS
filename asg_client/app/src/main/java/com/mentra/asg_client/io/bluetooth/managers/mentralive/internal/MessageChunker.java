@@ -1,6 +1,7 @@
 package com.mentra.asg_client.io.bluetooth.managers.mentralive.internal;
 
 import android.util.Log;
+import com.mentra.asg_client.AsgConstants;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
@@ -19,8 +20,90 @@ public class MessageChunker {
     private static final int MESSAGE_SIZE_THRESHOLD_V1 = 200;
     private static final int INITIAL_CHUNK_DATA_SIZE = 80;
     private static final int MIN_CHUNK_DATA_SIZE = 4;
+    /** Budget for v2 binary fragments — these are reassembled phone-side, so MTU_TARGET holds. */
     public static final int MAX_PACKED_CHUNK_SIZE = BesWireFormat.MAX_PACKED_FRAME_SIZE;
+
+    /**
+     * Budget for v1 STRING ck chunks. Unlike binary fragments, a v1 string frame must survive
+     * the phone leg as ONE BLE notification (the BES relays it unfragmented and the phone parses
+     * per-notification) — so the real ceiling is the notification payload cap, not MTU_TARGET.
+     * Defaults to the conservative worst-case budget
+     * ({@link AsgConstants#K900_STRING_CHUNK_MAX_FRAME_BYTES}); BES firmware >= 17.26.7.23
+     * advertises the true cap via {@code wire_caps.notify_cap} and
+     * {@link #setStringChunkBudgetFromNotifyCap(int)} raises the budget accordingly.
+     */
+    private static final java.util.concurrent.atomic.AtomicInteger STRING_CHUNK_BUDGET =
+            new java.util.concurrent.atomic.AtomicInteger(
+                    AsgConstants.K900_STRING_CHUNK_MAX_FRAME_BYTES);
+
     private static final AtomicLong CHUNK_SEQUENCE = new AtomicLong();
+
+    /** Current maximum packed frame size for a v1 STRING ck chunk. */
+    public static int maxPackedStringChunkSize() {
+        return STRING_CHUNK_BUDGET.get();
+    }
+
+    /**
+     * Adopt the BES-measured notification cap ({@code wire_caps.notify_cap}) as the v1 string
+     * chunk ceiling, keeping the same re-framing safety margin the 240-byte fallback encodes
+     * (240 = 253 - {@link AsgConstants#K900_STRING_CHUNK_BUDGET_MARGIN_BYTES}). The advertised
+     * value is validated against the firmware contract range [253, 509] rather than trusted
+     * blindly: below the floor it is malformed and ignored (the budget must never shrink below
+     * the hardware-validated fallback), above the ceiling it is clamped down (an oversized
+     * advertisement would size chunks beyond what the transport carries — the exact silent
+     * truncation class this budget exists to prevent).
+     */
+    public static void setStringChunkBudgetFromNotifyCap(int notifyCap) {
+        if (notifyCap < AsgConstants.K900_BLE_NOTIFY_CAP_FLOOR_BYTES) {
+            Log.w(
+                    TAG,
+                    "Ignoring notify_cap="
+                            + notifyCap
+                            + " below the contract floor "
+                            + AsgConstants.K900_BLE_NOTIFY_CAP_FLOOR_BYTES);
+            return;
+        }
+        int accepted = notifyCap;
+        if (accepted > AsgConstants.K900_BLE_NOTIFY_CAP_CEILING_BYTES) {
+            Log.w(
+                    TAG,
+                    "Clamping notify_cap="
+                            + notifyCap
+                            + " to the contract ceiling "
+                            + AsgConstants.K900_BLE_NOTIFY_CAP_CEILING_BYTES);
+            accepted = AsgConstants.K900_BLE_NOTIFY_CAP_CEILING_BYTES;
+        }
+        STRING_CHUNK_BUDGET.set(
+                accepted - AsgConstants.K900_STRING_CHUNK_BUDGET_MARGIN_BYTES);
+    }
+
+    /** Restore the conservative fallback budget (the negotiated cap died with the caps). */
+    public static void resetStringChunkBudget() {
+        STRING_CHUNK_BUDGET.set(AsgConstants.K900_STRING_CHUNK_MAX_FRAME_BYTES);
+    }
+
+    /**
+     * Couple the string chunk budget to the link state machine's negotiated caps lifecycle: on
+     * every observable transition the budget is re-derived from the current caps snapshot —
+     * notify_cap advertised means the negotiated budget, caps cleared means the fallback. Tying
+     * the budget to the machine (rather than to one serial callback) guarantees it can never go
+     * stale on ANY path that clears the caps: {@code onSerialClose}, a failed
+     * {@code onSerialOpen}, and reopen failures all drive the machine's serialClosed transition
+     * directly, and a subsequent reconnect to firmware that omits notify_cap must not inherit a
+     * previous session's larger budget (that would reintroduce silent notification truncation).
+     * Replay-on-subscribe applies the current caps immediately. Call once per machine.
+     */
+    public static void followLinkState(LinkStateMachine linkState) {
+        linkState.addListener(
+                (state, provenCaps, phonePresence) -> {
+                    int notifyCap = linkState.getNegotiatedCaps().notifyCap;
+                    if (notifyCap > 0) {
+                        setStringChunkBudgetFromNotifyCap(notifyCap);
+                    } else {
+                        resetStringChunkBudget();
+                    }
+                });
+    }
 
     public static boolean needsChunking(String message) {
         if (message == null) {
@@ -79,7 +162,7 @@ public class MessageChunker {
         }
 
         throw new JSONException(
-                "Unable to create K900 chunks within " + MAX_PACKED_CHUNK_SIZE + " bytes");
+                "Unable to create K900 chunks within " + maxPackedStringChunkSize() + " bytes");
     }
 
     /**
@@ -163,9 +246,10 @@ public class MessageChunker {
     }
 
     private static boolean allChunksFit(List<JSONObject> chunks) {
+        int budget = maxPackedStringChunkSize();
         for (int i = 0; i < chunks.size(); i++) {
             byte[] packed = BesWireFormat.formatMessageForTransmission(chunks.get(i).toString());
-            if (packed == null || packed.length > MAX_PACKED_CHUNK_SIZE) {
+            if (packed == null || packed.length > budget) {
                 Log.d(
                         TAG,
                         "Chunk "
@@ -173,7 +257,7 @@ public class MessageChunker {
                                 + " packed to "
                                 + (packed != null ? packed.length : 0)
                                 + " bytes, exceeding "
-                                + MAX_PACKED_CHUNK_SIZE);
+                                + budget);
                 return false;
             }
         }

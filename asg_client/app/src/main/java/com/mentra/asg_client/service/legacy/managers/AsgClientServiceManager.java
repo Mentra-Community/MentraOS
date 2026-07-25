@@ -826,32 +826,8 @@ public class AsgClientServiceManager {
         }
     }
 
-    /**
-     * Get the current connection status from AsgClientService
-     *
-     * @return true if connected to phone, false if disconnected
-     */
-    public boolean isConnected() {
-        boolean connected = service.isConnected();
-        Log.d(TAG, "🔌 Connection status: " + (connected ? "CONNECTED" : "DISCONNECTED"));
-        return connected;
-    }
-
-    /** Mark the phone connection active after the phone_ready/glasses_ready handshake completes. */
-    public void onPhoneReadyHandshakeComplete() {
-        Log.d(TAG, "📱 Phone ready handshake complete");
-        service.onPhoneReadyHandshakeComplete();
-    }
-
-    /** Mark the phone connection active after any standard command arrives from the phone. */
-    public void onPhoneCommandReceived() {
-        Log.d(TAG, "📱 Phone command received");
-        service.onPhoneCommandReceived();
-    }
-
-    /** Handle service heartbeat received from MentraLiveSGC */
-    public void onServiceHeartbeatReceived() {
-        Log.d(TAG, "💓 Service heartbeat received from MentraLiveSGC");
-        service.onServiceHeartbeatReceived();
-    }
+    // The heartbeat-inference pass-throughs (isConnected / onPhoneReadyHandshakeComplete /
+    // onPhoneCommandReceived / onServiceHeartbeatReceived) were deleted with the underlying
+    // machinery in AsgClientService; phone presence now comes from the BES via the transport
+    // LinkStateMachine.
 }

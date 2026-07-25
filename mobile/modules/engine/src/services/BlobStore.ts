@@ -97,22 +97,33 @@ interface ActiveReader {
 export class BlobStore {
   private readonly uploads = new Map<string, ActiveUpload>() // key: `${pkg} ${key}`
   private readonly readers = new Map<string, ActiveReader>() // key: host handle id
-  /** packageName → committed usage bytes, cached; invalidated on commit/delete/clear. */
+  /** user + package → committed usage bytes, cached; invalidated on commit/delete/clear. */
   private readonly usageCache = new Map<string, number>()
 
   constructor(private readonly hooks: BlobStoreHooks) {}
 
   // ---- path / meta helpers -------------------------------------------------
 
+  private currentIdentity(packageName: string): {userId: string; scope: string} {
+    const userId = this.hooks.getUserId().trim()
+    if (!userId) throw new Error("Mentra user identity is unavailable")
+    const scope = `${userId}\0${packageName}`
+    return {userId, scope}
+  }
+
   private dirFor(packageName: string): Directory {
-    const userId = sanitizeSegment(this.hooks.getUserId())
-    const dir = new Directory(Paths.document, ROOT_DIR_NAME, userId, sanitizeSegment(packageName))
+    const dir = new Directory(
+      Paths.document,
+      ROOT_DIR_NAME,
+      sanitizeSegment(this.currentIdentity(packageName).userId),
+      sanitizeSegment(packageName),
+    )
     if (!dir.exists) dir.create({intermediates: true})
     return dir
   }
 
   private metaPrefix(packageName: string): string {
-    return `${META_KEY_ROOT}${sanitizeSegment(this.hooks.getUserId())}_${packageName}_`
+    return `${META_KEY_ROOT}${sanitizeSegment(this.currentIdentity(packageName).userId)}_${packageName}_`
   }
 
   private metaKey(packageName: string, key: string): string {
@@ -163,17 +174,19 @@ export class BlobStore {
   }
 
   private committedUsage(packageName: string): number {
-    const cached = this.usageCache.get(packageName)
+    const {scope} = this.currentIdentity(packageName)
+    const cached = this.usageCache.get(scope)
     if (cached !== undefined) return cached
     let total = 0
     for (const m of this.allMeta(packageName)) total += m.bytes || 0
-    this.usageCache.set(packageName, total)
+    this.usageCache.set(scope, total)
     return total
   }
 
   private bumpUsage(packageName: string, delta: number): void {
-    const cur = this.usageCache.get(packageName)
-    if (cur !== undefined) this.usageCache.set(packageName, Math.max(0, cur + delta))
+    const {scope} = this.currentIdentity(packageName)
+    const cur = this.usageCache.get(scope)
+    if (cur !== undefined) this.usageCache.set(scope, Math.max(0, cur + delta))
   }
 
   private safeMd5(file: File, bytes: number): string | undefined {
@@ -509,7 +522,7 @@ export class BlobStore {
       } catch {
         /* best-effort */
       }
-      this.usageCache.set(packageName, 0)
+      this.usageCache.set(this.currentIdentity(packageName).scope, 0)
       this.hooks.sendResult(packageName, requestId, true)
     } catch (err) {
       this.fail(packageName, requestId, MiniappErrorCode.INTERNAL, err)
