@@ -46,6 +46,7 @@ public final class CameraCoordinator {
     private volatile LifecycleState state = LifecycleState.CLOSED;
     private final AtomicLong generation = new AtomicLong();
 
+    /** Coarse lifecycle position; see {@link LifecycleState}. Advisory for off-thread readers. */
     public LifecycleState state() {
         return state;
     }
@@ -81,6 +82,12 @@ public final class CameraCoordinator {
 
     public Handler backgroundHandler() {
         return backgroundHandler;
+    }
+
+    /** Whether the calling thread is the camera background thread. */
+    public boolean isOnCameraThread() {
+        Handler handler = backgroundHandler;
+        return handler != null && handler.getLooper().isCurrentThread();
     }
 
     /**
@@ -249,9 +256,12 @@ public final class CameraCoordinator {
     }
 
     public void cancelKeepAlive() {
-        if (keepAliveTimer != null) {
+        // Snapshot: cancel is called from several threads and the field is cleared
+        // concurrently; a check-then-cancel on the field itself can NPE.
+        Timer timer = keepAliveTimer;
+        if (timer != null) {
             Log.d(TAG, "Cancelling camera keep-alive timer");
-            keepAliveTimer.cancel();
+            timer.cancel();
             keepAliveTimer = null;
         }
     }

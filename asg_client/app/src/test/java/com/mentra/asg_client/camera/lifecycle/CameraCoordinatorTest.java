@@ -177,11 +177,13 @@ public class CameraCoordinatorTest {
                     }
                 });
 
-        boolean completed = coordinator.awaitOnCameraThread(() -> {}, 100);
-
-        assertThat(completed).isFalse();
-        release.countDown();
-        coordinator.stopBackgroundThread();
+        try {
+            boolean completed = coordinator.awaitOnCameraThread(() -> {}, 100);
+            assertThat(completed).isFalse();
+        } finally {
+            release.countDown();
+            coordinator.stopBackgroundThread();
+        }
     }
 
     @Test
@@ -259,13 +261,17 @@ public class CameraCoordinatorTest {
         coordinator.startBackgroundThread("CameraCoordinatorTest");
         CountDownLatch expired = new CountDownLatch(1);
 
-        coordinator.startKeepAlive(50, () -> false, expired::countDown);
-        // Reopen before the timer fires: the expiry was armed for the old camera and
-        // must not tear down its successor.
-        coordinator.closeDeviceAndSession();
+        try {
+            coordinator.startKeepAlive(250, () -> false, expired::countDown);
+            // Reopen before the timer fires: the expiry was armed for the old camera
+            // and must not tear down its successor. The 250ms arm gives the bump a
+            // wide margin over Timer scheduling jitter.
+            coordinator.closeDeviceAndSession();
 
-        assertThat(expired.await(400, TimeUnit.MILLISECONDS)).isFalse();
-        coordinator.stopBackgroundThread();
+            assertThat(expired.await(800, TimeUnit.MILLISECONDS)).isFalse();
+        } finally {
+            coordinator.stopBackgroundThread();
+        }
     }
 
     @Test

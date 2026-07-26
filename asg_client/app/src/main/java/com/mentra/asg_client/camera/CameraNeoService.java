@@ -1030,8 +1030,22 @@ public class CameraNeoService extends LifecycleService {
                     synchronized (SERVICE_LOCK) {
                         if (!warmCallbacks.isEmpty()
                                 || !warmLeases.isEmpty()
-                                || photoSession.shotState() != AeStateMachine.ShotState.IDLE) {
+                                || hasPendingCameraWork()
+                                || (videoSession != null && videoSession.isRecording())) {
+                            // A queued photo or live video owns the camera lifecycle now;
+                            // closing + stopSelf here would fail it with "Camera service
+                            // terminated unexpectedly" — the first-shot failure reported
+                            // against the OS-1816 point-fix build.
                             Log.d(TAG, "Warm teardown superseded; leaving camera open");
+                            // A request queued during the cancelled warm-up may have no
+                            // other dispatcher once the camera is parked (the stale
+                            // AE-ready callback drops itself); kick it here. Mid-open
+                            // cases are dispatched by onConfigured instead.
+                            if (photoSession.shotState() == AeStateMachine.ShotState.IDLE
+                                    && cameraCoordinator.hasConfiguredCamera()
+                                    && !QueuedPhotoRequestQueue.getInstance().isEmpty()) {
+                                photoSession.dispatchNextPhotoRequest();
+                            }
                             return;
                         }
                         closeCamera();
@@ -1976,6 +1990,17 @@ public class CameraNeoService extends LifecycleService {
     /** Close camera resources */
     private void closeCamera() {
         warmLeaseDeadlineMs = 0;
+        if (cameraCoordinator.isOnCameraThread()
+                && cameraCoordinator.state() == CameraCoordinator.LifecycleState.OPENING) {
+            // The open/close permit is held by the in-flight open, and its releasing
+            // callback is queued behind this very message on the camera looper —
+            // waiting would deterministically burn the full 5s and then proceed
+            // anyway. Retire the generation instead: the stale onOpened closes its
+            // own device and releases the permit.
+            Log.w(TAG, "closeCamera during in-flight open; retiring generation without permit");
+            closeCameraResources();
+            return;
+        }
         boolean lockAcquired = false;
         try {
             lockAcquired = cameraCoordinator.tryAcquireOpenCloseLock(5000);
@@ -1985,16 +2010,7 @@ public class CameraNeoService extends LifecycleService {
                         "closeCamera: Failed to acquire lock within 5 seconds, proceeding with"
                                 + " cleanup anyway");
             }
-            cameraCoordinator.closeDeviceAndSession();
-            photoSession.closeImageReadersIfPresent();
-            photoSession.onCameraClosed();
-            if (videoSession != null) {
-                videoSession.release();
-            }
-            // Reset keep-alive flag when camera is actually closed
-            cameraCoordinator.markCameraClosed();
-
-            releaseWakeLocks();
+            closeCameraResources();
         } catch (InterruptedException e) {
             Log.e(TAG, "Interrupted while closing camera", e);
         } finally {
@@ -2004,11 +2020,35 @@ public class CameraNeoService extends LifecycleService {
         }
     }
 
+    private void closeCameraResources() {
+        cameraCoordinator.closeDeviceAndSession();
+        photoSession.closeImageReadersIfPresent();
+        photoSession.onCameraClosed();
+        if (videoSession != null) {
+            videoSession.release();
+        }
+        // Reset keep-alive flag when camera is actually closed
+        cameraCoordinator.markCameraClosed();
+
+        releaseWakeLocks();
+    }
+
+    /**
+     * Keep-alive extension predicate: never tear down under an in-flight capture OR
+     * while photo requests are still queued — a queued request whose service gets
+     * stopped is failed with "Camera service terminated unexpectedly" in onDestroy,
+     * which callers see as a first-shot failure (OS-1816 follow-up report).
+     */
+    private boolean hasPendingCameraWork() {
+        return photoSession.shotState() != AeStateMachine.ShotState.IDLE
+                || !QueuedPhotoRequestQueue.getInstance().isEmpty();
+    }
+
     /** Start the keep-alive timer to keep camera open for rapid successive shots */
     private void startKeepAliveTimer() {
         cameraCoordinator.startKeepAlive(
                 CAMERA_KEEP_ALIVE_MS,
-                () -> photoSession.shotState() != AeStateMachine.ShotState.IDLE,
+                this::hasPendingCameraWork,
                 () -> {
                     // Tear down under SERVICE_LOCK so this background-thread close is atomic with
                     // respect to isCameraWarm() and enqueuePhotoRequest(), which both take the same
@@ -2032,10 +2072,7 @@ public class CameraNeoService extends LifecycleService {
      */
     private void startWarmKeepAliveTimer(long durationMs) {
         long ttl = clampWarmUpDuration(durationMs);
-        cameraCoordinator.startKeepAlive(
-                ttl,
-                () -> photoSession.shotState() != AeStateMachine.ShotState.IDLE,
-                this::expireWarmLeases);
+        cameraCoordinator.startKeepAlive(ttl, this::hasPendingCameraWork, this::expireWarmLeases);
     }
 
     /** Arm the next per-owner lease deadline while leaving later compatible leases intact. */
@@ -2049,10 +2086,7 @@ public class CameraNeoService extends LifecycleService {
             earliest = Math.min(earliest, lease.deadlineMs);
         }
         long delay = Math.max(1L, earliest - now);
-        cameraCoordinator.startKeepAlive(
-                delay,
-                () -> photoSession.shotState() != AeStateMachine.ShotState.IDLE,
-                this::expireWarmLeases);
+        cameraCoordinator.startKeepAlive(delay, this::hasPendingCameraWork, this::expireWarmLeases);
     }
 
     private void expireWarmLeases() {
@@ -2150,18 +2184,27 @@ public class CameraNeoService extends LifecycleService {
                 () -> cameraId,
                 id -> cameraId = id,
                 this::wakeUpScreen,
-                () ->
-                        cameraCoordinator.runOnCameraThread(
-                                () -> cameraCoordinator.closeDeviceAndSession()));
+                () -> cameraCoordinator.runOnCameraThread(this::nudgeCloseIfStillClosed));
+    }
+
+    /**
+     * The 1s-delayed recovery nudge fires regardless of what happened since the open
+     * failure; closing when a fresh open is already in flight (or succeeded) would
+     * retire a healthy generation. Only nudge a camera that is still down.
+     */
+    private void nudgeCloseIfStillClosed() {
+        if (cameraCoordinator.state() == CameraCoordinator.LifecycleState.CLOSED) {
+            cameraCoordinator.closeDeviceAndSession();
+        } else {
+            Log.d(TAG, "Skipping recovery close nudge; camera no longer closed");
+        }
     }
 
     /** Release all camera system resources */
     private void releaseCameraResources() {
         CameraRecoveryHelper.releaseCameraResources(
                 () -> cameraCoordinator.runOnCameraThread(this::closeCamera),
-                () ->
-                        cameraCoordinator.runOnCameraThread(
-                                () -> cameraCoordinator.closeDeviceAndSession()),
+                () -> cameraCoordinator.runOnCameraThread(this::nudgeCloseIfStillClosed),
                 this);
     }
 
