@@ -1176,7 +1176,11 @@ public class CameraNeoService extends LifecycleService {
                     }
                 case ACTION_STOP_VIDEO_RECORDING:
                     String videoIdToStop = intent.getStringExtra(EXTRA_VIDEO_ID);
-                    videoSession.stopRecording(videoIdToStop);
+                    // The recorder is created on the camera thread (its onInfo/onError
+                    // listeners fire there); stopping from main would race them inside
+                    // the lock-free VideoRecordingSession. Stop on the camera thread.
+                    cameraCoordinator.runOnCameraThread(
+                            () -> videoSession.stopRecording(videoIdToStop));
                     SystemControllerFactory.get(this).setEisEnabled(false);
                     break;
                 case ACTION_WARM_UP_CAMERA:
@@ -1390,12 +1394,13 @@ public class CameraNeoService extends LifecycleService {
         if (cameraCoordinator.state() == CameraCoordinator.LifecycleState.OPENING) {
             // An open is already in flight. Its callbacks run on this thread, so
             // blocking on the open/close permit here could only delay them and then
-            // time out anyway — fail fast instead.
+            // time out anyway — fail fast instead. Do NOT stop the service: the
+            // in-flight open still owns it, and its request would be failed by
+            // onDestroy with "Camera service terminated unexpectedly".
             Log.w(TAG, "Camera open requested while another open is in flight");
             if (forVideo)
                 notifyVideoError(videoSession.currentVideoId(), "Camera busy opening");
             else photoSession.notifyHostPhotoError("Camera busy opening");
-            conditionalStopSelf();
             return;
         }
 
@@ -1976,10 +1981,15 @@ public class CameraNeoService extends LifecycleService {
             // Cancel keep-alive timer if it's running
             cancelKeepAliveTimer();
             if (videoSession != null && videoSession.isRecording()) {
-                videoSession.stopRecording(videoSession.currentVideoId());
+                // Stop on the camera thread: the recorder's own listeners fire there,
+                // and VideoRecordingSession has no internal locking. Posted before the
+                // close below, so stop-then-close order is preserved on that thread.
+                String recordingVideoId = videoSession.currentVideoId();
+                cameraCoordinator.runOnCameraThread(
+                        () -> videoSession.stopRecording(recordingVideoId));
             }
             // The close runs on the camera thread; stopBackgroundThread() below drains
-            // the queue before joining, so the close is guaranteed to have completed
+            // the queue before joining, so both are guaranteed to have completed
             // before onDestroy returns.
             cameraCoordinator.runOnCameraThread(this::closeCamera);
             releaseWakeLocks();
