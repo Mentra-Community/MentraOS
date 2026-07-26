@@ -19,6 +19,7 @@ interface BaseStep {
   title?: string
   titleCentered?: boolean
   compactHeader?: boolean // Auto-size the title area so content begins directly below it.
+  compactBody?: boolean // Inset the hero and keep supporting copy directly below it.
   subtitle?: string
   subtitleCentered?: boolean
   subtitle2?: string
@@ -955,6 +956,9 @@ export function OnboardingGuide({
 
     const showDebug = superMode && waitState && step.waitFn
     if (!showCheck && !showDebug) {
+      if (step.compactBody) {
+        return null
+      }
       // still show a small height if there is a waitFn so the text doesn't move around:
       // if (step.waitFn) {
       return <View className="h-12" />
@@ -1037,7 +1041,7 @@ export function OnboardingGuide({
         )}
         <ScrollView id="top" className="flex-1 -mx-6 px-6">
           {showContent && renderStepContent()}
-          <View className="-mx-6">
+          <View className={step.compactBody ? "" : "-mx-6"}>
             <Animated.View
               className="relative"
               style={{
