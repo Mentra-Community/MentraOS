@@ -450,6 +450,34 @@ public class PhotoSessionTest {
     }
 
     @Test
+    public void flushPendingCapturedPhotoNow_emitsSavedPhotoWithoutMetadata() throws Exception {
+        PhotoSession.Hooks hooks = mockConfiguredCameraHooks();
+        CameraNeoService.PhotoCaptureCallback callback =
+                mock(CameraNeoService.PhotoCaptureCallback.class);
+        QueuedPhotoRequest request =
+                new QueuedPhotoRequest("/tmp/salvage.jpg", "large", false, true, null, callback);
+        PhotoSession session = new PhotoSession(hooks);
+        activateQueuedRequest(session, request);
+
+        // Photo saved, waiting for HAL metadata — then the device disconnects.
+        notifyPhotoCaptured(session, "/tmp/salvage.jpg", null);
+
+        assertThat(session.flushPendingCapturedPhotoNow("camera disconnected")).isTrue();
+        verify(callback)
+                .onPhotoCaptured(
+                        eq("/tmp/salvage.jpg"), (JSONObject) isNull(), (CapturedPhoto) isNull());
+        // Already emitted: a second flush must not double-fire.
+        assertThat(session.flushPendingCapturedPhotoNow("again")).isFalse();
+    }
+
+    @Test
+    public void flushPendingCapturedPhotoNow_withoutPendingPhoto_returnsFalse() {
+        PhotoSession session = new PhotoSession(mockConfiguredCameraHooks());
+
+        assertThat(session.flushPendingCapturedPhotoNow("camera disconnected")).isFalse();
+    }
+
+    @Test
     public void copyJsonPayload_isolatesRamCallbackFromPersistencePayload() throws Exception {
         JSONObject persistencePayload = new JSONObject().put("sampleCount", 2);
         Method copy =

@@ -1718,6 +1718,8 @@ public class CameraNeoService extends LifecycleService {
                 cameraCoordinator.clearDevice();
                 if (forVideo) {
                     notifyVideoError(videoSession.currentVideoId(), "Camera disconnected");
+                } else if (salvageCapturedPhotoAfterDeviceLoss("camera disconnected")) {
+                    return;
                 } else {
                     photoSession.notifyHostPhotoError("Camera disconnected");
                 }
@@ -1744,12 +1746,48 @@ public class CameraNeoService extends LifecycleService {
                 cameraCoordinator.clearDevice();
                 if (forVideo) {
                     notifyVideoError(videoSession.currentVideoId(), cameraError.message());
+                } else if (salvageCapturedPhotoAfterDeviceLoss(
+                        "camera error " + cameraError.code())) {
+                    return;
                 } else {
                     photoSession.notifyHostPhotoError(cameraError);
                 }
                 stopSelf();
             }
         };
+    }
+
+    /**
+     * Device-loss recovery for the observed field failure: the MediaTek camera service
+     * can disconnect the client right after a first-in-session capture completes — the
+     * still image is already saved and waiting only for HAL metadata. Failing it (and
+     * stopping the service, whose onDestroy error could outrun the queued success
+     * callback) threw away a delivered photo. Close local camera state, emit the saved
+     * photo, and stop only after the delivery callback has drained — and only if no new
+     * request took over the service in the meantime.
+     *
+     * @return true when a saved photo was salvaged and the caller must not report an
+     *     error or stop the service itself.
+     */
+    private boolean salvageCapturedPhotoAfterDeviceLoss(String reason) {
+        // Clean local state first: if the flush's completion dispatches a queued
+        // request, it must cold-open against a closed camera, not a dead handle.
+        closeCamera();
+        if (!photoSession.flushPendingCapturedPhotoNow(reason)) {
+            return false;
+        }
+        Log.i(TAG, "Delivered captured photo despite device loss (" + reason + ")");
+        // The success callback is queued on `executor`; routing the stop behind it
+        // guarantees onDestroy's failAllPending cannot error the job first.
+        executor.execute(
+                () -> {
+                    synchronized (SERVICE_LOCK) {
+                        if (!hasPendingCameraWork()) {
+                            stopSelf();
+                        }
+                    }
+                });
+        return true;
     }
 
     private void createCameraSessionInternal(boolean forVideo, long openGeneration) {

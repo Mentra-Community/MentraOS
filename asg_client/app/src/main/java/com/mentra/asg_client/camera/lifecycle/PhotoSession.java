@@ -1543,6 +1543,40 @@ public final class PhotoSession {
         emitPhotoCaptured(filePath, metadataToSend, capturedPhoto, callback, startMs);
     }
 
+    /**
+     * Emits the pending captured photo immediately, without waiting for HAL metadata.
+     * For camera-device loss after the still image was already saved: the photo is on
+     * disk and deliverable, so a disconnect must not fail the request (observed on the
+     * MediaTek stack, which can disconnect the client right after a first-in-session
+     * capture completes). Returns true when a pending photo was flushed; the active
+     * capture is then complete and the disconnect path must not report an error for it.
+     */
+    public boolean flushPendingCapturedPhotoNow(String reason) {
+        String filePath;
+        CameraNeoService.PhotoCaptureCallback callback;
+        CapturedPhoto capturedPhoto;
+        long startMs;
+        synchronized (captureMetadataLock) {
+            if (pendingCapturedFilePath == null || photoCapturedCallbackSent) {
+                return false;
+            }
+            filePath = pendingCapturedFilePath;
+            callback = pendingCapturedCallback;
+            capturedPhoto = pendingCapturedPhoto;
+            startMs = pendingCapturedStartTimeMs;
+            pendingCapturedFilePath = null;
+            pendingCapturedCallback = null;
+            pendingCapturedPhoto = null;
+            pendingCapturedStartTimeMs = 0L;
+            // The delayed timeout no-ops once photoCapturedCallbackSent is set.
+            pendingCaptureMetadataTimeout = null;
+            photoCapturedCallbackSent = true;
+        }
+        Log.w(TAG, "Emitting captured photo without metadata: " + reason);
+        emitPhotoCaptured(filePath, null, capturedPhoto, callback, startMs);
+        return true;
+    }
+
     private void scheduleCaptureMetadataTimeoutLocked(String filePath) {
         if (pendingCaptureMetadataTimeout != null) {
             return;
