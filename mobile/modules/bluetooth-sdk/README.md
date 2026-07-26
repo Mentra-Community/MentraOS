@@ -152,11 +152,13 @@ reordering rows just because RSSI metadata arrives later.
 
 ## Mentra SDK Usage Analytics
 
-The SDK sends two anonymous usage events to Mentra's PostHog project by default
-so Mentra can understand SDK adoption and successful glasses connections:
+The SDK sends three usage events to Mentra's PostHog project by default so
+Mentra can understand SDK adoption, successful glasses connections, and
+enterprise device deployments:
 
 - `bluetooth_sdk_started`: sent once per app runtime after the native SDK starts.
 - `bluetooth_sdk_glasses_connected`: sent when SDK status transitions from not connected to connected.
+- `bluetooth_sdk_glasses_identified`: sent once per connection after the SDK receives a valid manufacturing serial from the glasses. Mentra Live requires compatible BES firmware and `asg_client` software for this event.
 
 Analytics delivery is fire-and-forget: events are submitted asynchronously, do
 not block Bluetooth SDK behavior, and are not retried if delivery fails.
@@ -190,14 +192,20 @@ write token, not a private PostHog personal API key. Apps do not configure the
 analytics destination; these SDK usage events are always sent to Mentra's
 PostHog project unless analytics are disabled.
 
-Captured properties are limited to non-sensitive SDK/app metadata:
-`event_source`, `sdk_platform`, `sdk_surface`, `sdk_version`, the app package or
-bundle identifier, OS platform/version, `event_kind`, and for connection events
-only `fully_booted` plus a glasses model value when the SDK knows it. The SDK
-does not upload BLE MAC addresses, CoreBluetooth identifiers, serial numbers,
-Bluetooth device names, user ids, tokens, Wi-Fi credentials, microphone data,
-photos, or transcripts. PostHog receives a locally generated anonymous SDK
-install id as `distinct_id`, and events include `$process_person_profile: false`.
+Captured properties include `event_source`, `sdk_platform`, `sdk_surface`,
+`sdk_version`, `app_identifier` (the Android package or iOS bundle identifier),
+the platform-specific `app_package` or `app_bundle_identifier`, OS
+platform/version, and `event_kind`. Connection events also include
+`fully_booted` and a glasses model value when known. The identification event
+intentionally includes the provisioned manufacturing serial as
+`glasses_device_id`, with `glasses_device_id_type=manufacturing_serial`, so
+Mentra can correlate enterprise fleet deployments.
+
+The SDK does not upload BLE MAC addresses, CoreBluetooth identifiers, Android
+device serials, Bluetooth device names, user ids, tokens, Wi-Fi credentials,
+microphone data, photos, or transcripts. PostHog receives a locally generated
+anonymous SDK install id as `distinct_id`, and events include
+`$process_person_profile: false`.
 
 ## React Hooks
 

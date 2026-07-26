@@ -1280,6 +1280,11 @@ class MentraLive: NSObject, SGCManager {
 
     /// Mirrors Android `updateConnectionState` — RN home reads `glasses.connectionState` for reconnecting UI.
     private func updateConnectionState(_ state: String) {
+        if state == ConnTypes.CONNECTED || state == ConnTypes.DISCONNECTED {
+            // Clear before publishing the transition so a previous pair's serial cannot be
+            // associated with this connection while fresh version info is still in flight.
+            DeviceStore.shared.apply("glasses", "serialNumber", "")
+        }
         connectionState = state
         DeviceStore.shared.apply("glasses", "connectionState", state)
         // Drop OTA caches when fully disconnected — avoids leaking session/step state from
@@ -2709,7 +2714,7 @@ class MentraLive: NSObject, SGCManager {
         default:
             // Flexible version_info parsing - handle any version_info* message
             if type.hasPrefix("version_info") {
-                Bridge.log("LIVE: Received \(type): \(json)")
+                Bridge.log("LIVE: Received \(type)")
 
                 // Extract all fields from JSON (except "type")
                 var fields: [String: Any] = [:]
@@ -2752,6 +2757,9 @@ class MentraLive: NSObject, SGCManager {
                 }
                 if let bluetoothMacAddress = fields["bt_mac_address"] as? String {
                     DeviceStore.shared.apply("glasses", "bluetoothMacAddress", bluetoothMacAddress)
+                }
+                if let serialNumber = fields["serial_number"] as? String, !serialNumber.isEmpty {
+                    DeviceStore.shared.apply("glasses", "serialNumber", serialNumber)
                 }
                 if let systemTimeMs = fields["system_time_ms"] as? NSNumber {
                     DeviceStore.shared.apply("glasses", "systemTimeMs", systemTimeMs.int64Value)
@@ -3429,12 +3437,16 @@ class MentraLive: NSObject, SGCManager {
         let otaVersionUrl = json["ota_version_url"] as? String ?? ""
         let firmwareVersion = json["firmware_version"] as? String ?? ""
         let bluetoothMacAddress = json["bt_mac_address"] as? String ?? ""
+        let serialNumber = json["serial_number"] as? String ?? ""
 
         DeviceStore.shared.apply("glasses", "appVersion", appVersion)
         DeviceStore.shared.apply("glasses", "buildNumber", buildNumber)
         DeviceStore.shared.apply("glasses", "otaVersionUrl", otaVersionUrl)
         DeviceStore.shared.apply("glasses", "firmwareVersion", firmwareVersion)
         DeviceStore.shared.apply("glasses", "bluetoothMacAddress", bluetoothMacAddress)
+        if !serialNumber.isEmpty {
+            DeviceStore.shared.apply("glasses", "serialNumber", serialNumber)
+        }
         isNewVersion = (Int(buildNumber) ?? 0) >= 5
         maybeSendWireHandshake()
         DeviceStore.shared.apply("glasses", "deviceModel", deviceModel)

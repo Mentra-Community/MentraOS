@@ -1089,9 +1089,9 @@ public class AsgClientService extends Service implements NetworkStateListener, T
     /**
      * Send version information to phone in chunks to work around BLE MTU limitations. Chunk 1
      * (version_info_1): app_version, build_number, device_model, android_version. Chunk 3
-     * (version_info_3): bes_fw_version, mtk_fw_version, bt_mac_address. The phone parses any
-     * version_info* message field-by-field, so chunk numbering gaps are fine (version_info_2
-     * used to carry ota_version_url; the glasses no longer advertise a manifest).
+     * (version_info_3): bes_fw_version, mtk_fw_version, bt_mac_address, serial_number. The phone
+     * parses any version_info* message field-by-field, so chunk numbering gaps are fine
+     * (version_info_2 used to carry ota_version_url; the glasses no longer advertise a manifest).
      */
     public void sendVersionInfo() {
         Log.i(TAG, "📊 Sending version information (chunked for MTU)");
@@ -1138,6 +1138,15 @@ public class AsgClientService extends Service implements NetworkStateListener, T
 
             // Include BES BT MAC address as unique device identifier (stored in system properties)
             String besBtMac = SysProp.getBesBtMac(this);
+            String manufacturingSerial = "";
+            if (serviceInitializer.getServiceManager() != null
+                    && serviceInitializer.getServiceManager().getAsgSettings() != null) {
+                manufacturingSerial =
+                        serviceInitializer
+                                .getServiceManager()
+                                .getAsgSettings()
+                                .getBesManufacturingSerial();
+            }
 
             Log.d(
                     TAG,
@@ -1150,7 +1159,9 @@ public class AsgClientService extends Service implements NetworkStateListener, T
                             + ", MTK Firmware: "
                             + mtkFirmwareVersion
                             + ", BT MAC: "
-                            + besBtMac);
+                            + besBtMac
+                            + ", Manufacturing serial available: "
+                            + !manufacturingSerial.isEmpty());
 
             if (serviceInitializer.getServiceManager().getBluetoothManager() != null
                     && serviceInitializer.getServiceManager().getBluetoothManager().isConnected()) {
@@ -1186,9 +1197,12 @@ public class AsgClientService extends Service implements NetworkStateListener, T
                 chunk3.put("bes_fw_version", besFirmwareVersion);
                 chunk3.put("mtk_fw_version", mtkFirmwareVersion);
                 chunk3.put("bt_mac_address", besBtMac);
+                if (!manufacturingSerial.isEmpty()) {
+                    chunk3.put("serial_number", manufacturingSerial);
+                }
                 addPhoneWireCapsIfSupported(chunk3);
 
-                Log.d(TAG, "📤 Sending version_info_3: " + chunk3.toString());
+                Log.d(TAG, "📤 Sending version_info_3");
                 serviceInitializer
                         .getServiceManager()
                         .getBluetoothManager()

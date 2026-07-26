@@ -48,10 +48,12 @@ internal class BluetoothSdkAnalytics(
     private val config = initialConfig.toRuntimeConfig().resolvedForApp(appContext)
     private var startedCaptured = false
     private var lastConnected = false
+    private var identifiedCapturedForConnection = false
 
     @Synchronized
     fun initializeGlassesStatus(status: GlassesStatus) {
         lastConnected = status.analyticsConnected
+        identifiedCapturedForConnection = status.analyticsConnected
     }
 
     @Synchronized
@@ -67,12 +69,33 @@ internal class BluetoothSdkAnalytics(
         val wasConnected = lastConnected
         lastConnected = isConnected
         if (!config.isReady) return
+        if (!isConnected) {
+            identifiedCapturedForConnection = false
+            return
+        }
         if (isConnected && !wasConnected) {
+            identifiedCapturedForConnection = false
             capture(
                 "bluetooth_sdk_glasses_connected",
                 buildMap {
                     put("event_kind", "glasses_connected")
                     put("fully_booted", status.fullyBooted)
+                    status.deviceModel.takeIf { it.isNotBlank() }?.let { put("glasses_model", it) }
+                },
+            )
+            return
+        }
+
+        val serialNumber = status.serialNumber.validManufacturingSerial() ?: return
+        if (!identifiedCapturedForConnection) {
+            identifiedCapturedForConnection = true
+            capture(
+                "bluetooth_sdk_glasses_identified",
+                buildMap {
+                    put("event_kind", "glasses_identified")
+                    put("fully_booted", status.fullyBooted)
+                    put("glasses_device_id", serialNumber)
+                    put("glasses_device_id_type", "manufacturing_serial")
                     status.deviceModel.takeIf { it.isNotBlank() }?.let { put("glasses_model", it) }
                 },
             )
@@ -131,6 +154,7 @@ internal class BluetoothSdkAnalytics(
             put("sdk_platform", "android")
             put("sdk_surface", activeConfig.surface)
             put("sdk_version", BuildConfig.SDK_VERSION)
+            put("app_identifier", appContext.packageName)
             put("app_package", appContext.packageName)
             put("os_platform", "android")
             put("os_version", Build.VERSION.SDK_INT)
@@ -180,3 +204,6 @@ private fun BluetoothSdkAnalyticsRuntimeConfig.resolvedForApp(context: Context):
 
 private val GlassesStatus.analyticsConnected: Boolean
     get() = connectionState.isConnected || connected || fullyBooted
+
+private fun String.validManufacturingSerial(): String? =
+    trim().takeIf { it.isNotEmpty() && !it.matches(Regex("0+")) }
