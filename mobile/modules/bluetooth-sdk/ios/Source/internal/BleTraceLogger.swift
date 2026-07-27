@@ -6,7 +6,7 @@ enum BleTraceLogger {
     private static let log = OSLog(subsystem: "com.mentra.bluetoothsdk", category: "MentraBleTrace")
     private static let maxPayloadChars = 3000
     private static let k900Type = "k900"
-    private static let sensitiveKeyParts = ["password", "pass", "token", "secret", "authorization", "auth", "email"]
+    private static let sensitiveKeyParts = ["password", "pass", "token", "secret", "authorization", "auth", "email", "serial"]
 
     static func logJson(
         direction: String,

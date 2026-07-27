@@ -815,6 +815,15 @@ class MentraLive : SGCManager() {
             return
         }
 
+        if (state == ConnTypes.DISCONNECTED) {
+            // A manufacturing serial is session-bound. Clear it on disconnect so a previous
+            // pair's serial can never be associated with the next connection. Connect must NOT
+            // clear it: DeviceManager.disconnect already wipes it before any new connection, and
+            // clearing on CONNECTED would wipe a still-valid serial mid-session when a same-link
+            // glasses_ready (e.g. ASG restart) re-publishes CONNECTED.
+            DeviceStore.apply("glasses", "serialNumber", "")
+        }
+
         // Actually update the connection state!
         DeviceStore.apply("glasses", "connectionState", state)
 
@@ -3696,7 +3705,7 @@ class MentraLive : SGCManager() {
 
             "version_info" -> {
                 // Process version information from ASG client (legacy single-message format)
-                Bridge.log("LIVE: Received version info from ASG client: " + json.toString())
+                Bridge.log("LIVE: Received version info from ASG client")
 
                 // Extract version information
                 val appVersionLegacy = json.optString("app_version", "")
@@ -3706,6 +3715,7 @@ class MentraLive : SGCManager() {
                 val otaVersionUrlLegacy: String? = json.optString("ota_version_url", null)
                 val firmwareVersionLegacy = json.optString("firmware_version", "")
                 val btMacAddressLegacy = json.optString("bt_mac_address", "")
+                val serialNumberLegacy = json.optString("serial_number", "")
 
                 // Update parent SGCManager fields
                 DeviceStore.apply("glasses", "appVersion", appVersionLegacy)
@@ -3719,6 +3729,9 @@ class MentraLive : SGCManager() {
                 )
                 DeviceStore.apply("glasses", "firmwareVersion", firmwareVersionLegacy)
                 DeviceStore.apply("glasses", "bluetoothMacAddress", btMacAddressLegacy)
+                if (serialNumberLegacy.isNotBlank()) {
+                    DeviceStore.apply("glasses", "serialNumber", serialNumberLegacy)
+                }
 
                 val versionInfoLegacy = HashMap<String, Any>()
                 versionInfoLegacy["appVersion"] = appVersionLegacy
@@ -3900,7 +3913,7 @@ class MentraLive : SGCManager() {
             else -> {
                 // Flexible version_info parsing - handle any version_info* message
                 if (type.startsWith("version_info")) {
-                    Bridge.log("LIVE: Received " + type + ": " + json.toString())
+                    Bridge.log("LIVE: Received " + type)
 
                     // Extract all fields from JSON (except "type")
                     val fields = HashMap<String, Any>()
@@ -3986,6 +3999,10 @@ class MentraLive : SGCManager() {
                                 "bluetoothMacAddress",
                                 fields["bt_mac_address"] as String
                         )
+                    }
+                    val serialNumber = fields["serial_number"] as? String
+                    if (!serialNumber.isNullOrBlank()) {
+                        DeviceStore.apply("glasses", "serialNumber", serialNumber)
                     }
                     if (fields.containsKey("system_time_ms")) {
                         val v = fields["system_time_ms"]

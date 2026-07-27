@@ -12,7 +12,7 @@ object BleTraceLogger {
     private const val MAX_PAYLOAD_CHARS = 3000
     private const val K900_TYPE = "k900"
     private val sensitiveKeyParts =
-        listOf("password", "pass", "token", "secret", "authorization", "auth", "email")
+        listOf("password", "pass", "token", "secret", "authorization", "auth", "email", "serial")
 
     @JvmStatic
     fun logJson(direction: String, layer: String, payload: JSONObject?, bytes: Int? = null) {
