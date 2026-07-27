@@ -157,6 +157,10 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   checkForOtaUpdate(): Promise<boolean>
   startOtaUpdate(otaVersionUrl?: string | null): Promise<OtaStartAckEvent>
   sendOtaQueryStatus(): Promise<OtaQueryResult>
+  startAr99OtaFromFile(path: string): Promise<boolean>
+  cancelAr99Ota(): Promise<void>
+  sendAr99FactoryReset(): Promise<void>
+  buildAr99OtaSignature(secret: string, appName: string, currentVersion: string, serialNumber: string, nonce: string): string
 
   // Version Info Commands
   requestVersionInfo(): Promise<VersionInfoResult>
@@ -209,7 +213,7 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
 
   /** Mentra Live only: K900 `cs_getvol` / `sr_getvol`. */
   getGlassesMediaVolume(): Promise<GlassesMediaVolumeGetResult>
-  /** Mentra Live only: K900 `cs_vol` / `sr_vol`; level clamped 0â€“15 on native. */
+  /** Mentra Live only: K900 `cs_vol` / `sr_vol`; level clamped 0â€?5 on native. */
   setGlassesMediaVolume(level: number): Promise<GlassesMediaVolumeSetResult>
 
   // RGB LED Control
@@ -270,7 +274,7 @@ const DEFAULT_SCAN_TIMEOUT_MS = 15_000
 function bindNativeMethod<T extends (...args: never[]) => unknown>(module: Record<string, unknown>, name: string): T {
   const method = module[name]
   if (typeof method !== "function") {
-    console.warn(`[BluetoothSdk] Native method "${name}" is unavailable â€” rebuild the app (bun android / bun ios)`)
+    console.warn(`[BluetoothSdk] Native method "${name}" is unavailable â€?rebuild the app (bun android / bun ios)`)
     return (async () => {
       throw new Error(`BluetoothSdk.${name} is not available in this native build. Rebuild the app.`)
     }) as T
@@ -639,3 +643,7 @@ NativeBluetoothSdkModule.warmUpCamera = function (params: WarmUpCameraParams) {
 
 export default NativeBluetoothSdkModule
 export const BluetoothSdk = NativeBluetoothSdkModule as BluetoothSdkInternalModule
+
+
+
+

@@ -167,6 +167,9 @@ export interface Capabilities {
   // WiFi capability
   hasWifi: boolean;
 
+  // OTA capability
+  hasOta?: boolean;
+
   // Native dashboard capability
   // True when the device renders its own dashboard in firmware (e.g. Even
   // Realities' built-in dashboard on G2). MentraOS does not manage or expose
@@ -188,6 +191,20 @@ export const HARDWARE_CAPABILITIES: Record<string, Capabilities> = {
   [simulatedGlasses.modelName]: simulatedGlasses,
   [vuzixZ100.modelName]: vuzixZ100,
   [DeviceTypes.MACH1]: vuzixZ100, // Mach1 uses same Vuzix Ultralite hardware as Z100
+  [DeviceTypes.AR99]: {
+    ...evenRealitiesG1,
+    modelName: DeviceTypes.AR99,
+    display: {
+      ...evenRealitiesG1.display,
+      canDisplayBitmap: false,
+    },
+    hasMicrophone: true,
+    hasOta: true,
+    microphone: {
+      count: 1,
+      hasVAD: false,
+    },
+  },
   [none.modelName]: none,
 };
 

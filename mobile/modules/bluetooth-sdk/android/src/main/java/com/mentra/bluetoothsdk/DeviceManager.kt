@@ -14,6 +14,7 @@ import com.mentra.bluetoothsdk.controllers.ControllerManager
 import com.mentra.bluetoothsdk.controllers.R1
 import com.mentra.bluetoothsdk.services.ForegroundService
 import com.mentra.bluetoothsdk.services.PhoneMic
+import com.mentra.bluetoothsdk.sgcs.Ar99
 import com.mentra.bluetoothsdk.sgcs.G1
 import com.mentra.bluetoothsdk.sgcs.G2
 import com.mentra.bluetoothsdk.sgcs.SceneElement
@@ -700,7 +701,7 @@ class DeviceManager {
         var borderRadius: Int? = null
     )
 
-    // Scene slots — one whole SceneFrame per view (main/dashboard), parallel to
+    // Scene slots —one whole SceneFrame per view (main/dashboard), parallel to
     // viewStates. When a slot holds a scene, viewStates carries a "scene"
     // sentinel so sendCurrentState routes here. Holding the WHOLE frame keeps
     // native re-dispatch coherent (dashboard exit re-applies a complete scene,
@@ -738,7 +739,7 @@ class DeviceManager {
     /**
      * Marks glasses-mic audio as alive for the 10s reinit watchdog. SGCs that decode
      * audio themselves and feed [handlePcm] directly (e.g. Nimo's Opus path) must call
-     * this per uplink packet — otherwise the watchdog keeps re-enabling a working mic.
+     * this per uplink packet —otherwise the watchdog keeps re-enabling a working mic.
      */
     fun reportGlassesAudioActivity() {
         lastLc3Event = System.currentTimeMillis()
@@ -1158,6 +1159,8 @@ class DeviceManager {
             sgc = MentraLive()
         } else if (wearable.contains(DeviceTypes.NEX)) {
             sgc = MentraNex()
+        } else if (wearable.contains(DeviceTypes.AR99)) {
+            sgc = Ar99()
         } else if (wearable.contains(DeviceTypes.MACH1)) {
             sgc = createOptionalMach1Sgc(DeviceTypes.MACH1)
         } else if (wearable.contains(DeviceTypes.Z100)) {
@@ -1325,6 +1328,10 @@ class DeviceManager {
         Bridge.saveSetting("default_wearable", defaultWearable)
         Bridge.saveSetting("device_name", deviceName)
         Bridge.saveSetting("device_address", deviceAddress)
+        if (defaultWearable.contains(DeviceTypes.AR99)) {
+            val projectName = (DeviceStore.store.get("bluetooth", "project_name") as? String)?.trim().orEmpty()
+            Bridge.saveSetting("project_name", projectName)
+        }
     }
 
     private fun syncSystemTimeOnceForConnection(connectionKey: String) {
@@ -1439,7 +1446,7 @@ class DeviceManager {
         val title = parsePlaceholders(layout.getString("title", " "))
         val data = layout["data"] as? String
 
-        // Optional container position/size — used by bitmap_view and positioned_text (G2).
+        // Optional container position/size —used by bitmap_view and positioned_text (G2).
         val bmpX = (layout["x"] as? Number)?.toInt()
         val bmpY = (layout["y"] as? Number)?.toInt()
         val bmpWidth = (layout["width"] as? Number)?.toInt()
@@ -1491,7 +1498,7 @@ class DeviceManager {
             // Legacy→scene handoff: stale legacy content (e.g. a cloud app's
             // text wall) must not linger under the scene's elements.
             // clearDisplay is the per-device "wipe what's there" (blank-in-place
-            // on G2 — no page rebuild).
+            // on G2 —no page rebuild).
             val prevLegacyType = viewStates[stateIndex].layoutType
             if (prevLegacyType.isNotEmpty() && prevLegacyType != "clear_view" && prevLegacyType != "scene") {
                 sgc?.clearDisplay()
@@ -1508,7 +1515,7 @@ class DeviceManager {
         }
 
         // Store the REDISPATCH form: any later sendCurrentState (dashboard
-        // exit, head-up return) must repaint the whole frame — the original
+        // exit, head-up return) must repaint the whole frame —the original
         // annotations are only valid for the first dispatch right now.
         sceneStates[stateIndex] =
             frame.copy(replay = true, elements = frame.elements.map { it.copy(change = "created") })
@@ -1520,7 +1527,7 @@ class DeviceManager {
         }
     }
 
-    /** Guarded scene dispatch — mirrors sendCurrentState's send conditions. */
+    /** Guarded scene dispatch —mirrors sendCurrentState's send conditions. */
     private fun dispatchSceneFrame(frame: SceneFrame) {
         if (screenDisabled) return
         if (sgc?.type?.contains(DeviceTypes.SIMULATED) == true) return
@@ -1651,6 +1658,20 @@ class DeviceManager {
         (sgc as? MentraLive)?.sendOtaQueryStatus()
     }
 
+    fun startAr99OtaFromFile(path: String): Boolean {
+        val ar99 = sgc as? Ar99 ?: throw IllegalStateException("unsupported_device")
+        return ar99.startOtaFromFile(path)
+    }
+
+    fun cancelAr99Ota() {
+        (sgc as? Ar99)?.cancelAr99Ota()
+    }
+
+    fun sendAr99FactoryReset() {
+        val ar99 = sgc as? Ar99 ?: throw IllegalStateException("unsupported_device")
+        ar99.sendFactoryReset()
+    }
+
     fun sendGalleryMode(requestId: String, enabled: Boolean) {
         val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
         live.sendGalleryMode(requestId, enabled)
@@ -1757,7 +1778,7 @@ class DeviceManager {
     }
 
     /**
-     * Read glasses media step volume (0–15) via K900 on Mentra Live only. Blocks until response,
+     * Read glasses media step volume (0—5) via K900 on Mentra Live only. Blocks until response,
      * error, or timeout (used from JS AsyncFunction on a worker thread).
      */
     fun getGlassesMediaVolumeBlocking(): Map<String, Any> {
@@ -1783,7 +1804,7 @@ class DeviceManager {
         return result ?: throw IllegalStateException("glasses_volume_empty")
     }
 
-    /** Set glasses media step volume (0–15) via K900 on Mentra Live only. */
+    /** Set glasses media step volume (0—5) via K900 on Mentra Live only. */
     fun setGlassesMediaVolumeBlocking(level: Int): Map<String, Any> {
         val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
         val latch = CountDownLatch(1)
@@ -1890,7 +1911,7 @@ class DeviceManager {
         val activeSgc = sgc
         if (activeSgc == null) {
             Bridge.log(
-                "MAN: PHOTO PIPELINE — sgc is null (glasses not connected); dropping requestId=${routed.requestId}"
+                "MAN: PHOTO PIPELINE —sgc is null (glasses not connected); dropping requestId=${routed.requestId}"
             )
             return
         }
@@ -1915,20 +1936,26 @@ class DeviceManager {
             Bridge.log("MAN: No default wearable, returning")
             return
         }
-        if (deviceName.isEmpty()) {
-            Bridge.log("MAN: No device name, returning")
+        val reconnectTarget =
+            if (defaultWearable.contains(DeviceTypes.AR99) && deviceAddress.isNotBlank()) {
+                deviceAddress
+            } else {
+                deviceName
+            }
+        if (reconnectTarget.isEmpty()) {
+            Bridge.log("MAN: No reconnect target, returning")
             return
         }
         if (!hasBluetoothPermissions()) {
             // Auto-reconnect paths (boot, BT toggle, app launch before perm flow)
             // may fire before user has granted runtime Bluetooth permissions on Android 12+.
             // Bail out instead of crashing with SecurityException on startScan / getRemoteName.
-            Bridge.log("MAN: connectDefault skipped — bluetooth runtime permissions not granted")
+            Bridge.log("MAN: connectDefault skipped —bluetooth runtime permissions not granted")
             return
         }
         initSGC(defaultWearable)
         searching = true
-        sgc?.connectById(deviceName)
+        sgc?.connectById(reconnectTarget)
         connectDefaultController()
     }
 
@@ -1942,7 +1969,7 @@ class DeviceManager {
             return
         }
         if (!hasBluetoothPermissions()) {
-            Bridge.log("MAN: connectDefaultController skipped — bluetooth runtime permissions not granted")
+            Bridge.log("MAN: connectDefaultController skipped —bluetooth runtime permissions not granted")
             return
         }
         initController(defaultController)
@@ -2061,6 +2088,7 @@ class DeviceManager {
         Bridge.saveSetting("default_wearable", "")
         Bridge.saveSetting("device_name", "")
         Bridge.saveSetting("device_address", "")
+        Bridge.saveSetting("project_name", "")
     }
 
     fun forgetController() {
@@ -2131,3 +2159,4 @@ class DeviceManager {
         }
     }
 }
+

@@ -23,8 +23,8 @@ export interface Setting {
   persist: boolean
   // Pairing-identity keys are NATIVE-authoritative: the native layer writes
   // them on pairing success (handleDeviceReady) / forget and echoes them down
-  // via save_setting; JS→native they travel only in the explicit SEEDS
-  // (hydration, pre-connect, post-demotion, abandon re-seed) — never the
+  // via save_setting; JS鈫抧ative they travel only in the explicit SEEDS
+  // (hydration, pre-connect, post-demotion, abandon re-seed) 鈥?never the
   // change-push and never the on-connect replay, whose mid-relay snapshot can
   // overwrite a just-promoted identity. PAIRING_IDENTITY_KEYS is derived from
   // this flag so the sync exclusions can't drift from the descriptors.
@@ -175,7 +175,7 @@ export const SETTINGS: Record<string, Setting> = {
     persist: true,
   },
   // Bookmarked Cloud V2 endpoint pairs. Each entry is {label, coreUrl,
-  // runtimeUrl} — core + runtime are saved together because they are always
+  // runtimeUrl} 鈥?core + runtime are saved together because they are always
   // applied as a matched set (presets fill both; Save & Test verifies both).
   saved_cloud_url_pairs: {
     key: "saved_cloud_url_pairs",
@@ -216,7 +216,7 @@ export const SETTINGS: Record<string, Setting> = {
   auth_email: {key: "auth_email", defaultValue: () => "", writable: true, saveOnServer: false, persist: true},
   // Pairing identity is per-phone, not per-account: two phones on one account
   // can be paired to different glasses, so none of these keys may sync to the
-  // server (saveOnServer: false — a stale server copy resurrecting a local
+  // server (saveOnServer: false 鈥?a stale server copy resurrecting a local
   // pairing identity is exactly the desync this group's flags prevent).
   //
   // Two-phase identity: pending_wearable is the model the user last STARTED
@@ -251,6 +251,14 @@ export const SETTINGS: Record<string, Setting> = {
   },
   device_address: {
     key: "device_address",
+    defaultValue: () => "",
+    writable: true,
+    saveOnServer: false,
+    persist: true,
+    nativeAuthoritative: true,
+  },
+  project_name: {
+    key: "project_name",
     defaultValue: () => "",
     writable: true,
     saveOnServer: false,
@@ -567,7 +575,7 @@ export const SETTINGS: Record<string, Setting> = {
   // offline applets
   offline_mode: {key: "offline_mode", defaultValue: () => false, writable: true, saveOnServer: true, persist: true},
   // Runtime flag: coordinator flips this on when cloud STT has failed and fallback is active.
-  // Native GlassesStore watches it to gate PCM → Sherpa feeding. Not user-facing.
+  // Native GlassesStore watches it to gate PCM 鈫?Sherpa feeding. Not user-facing.
   local_stt_fallback_active: {
     key: "local_stt_fallback_active",
     defaultValue: () => false,
@@ -705,6 +713,7 @@ export const BLUETOOTH_SETTING_KEYS: string[] = [
   SETTINGS.default_wearable.key,
   SETTINGS.device_name.key,
   SETTINGS.device_address.key,
+  SETTINGS.project_name.key,
   SETTINGS.default_controller.key,
   SETTINGS.pending_controller.key,
   SETTINGS.controller_device_name.key,
@@ -712,7 +721,7 @@ export const BLUETOOTH_SETTING_KEYS: string[] = [
   // offline applets:
   SETTINGS.offline_mode.key,
   // Runtime flag flipped by LocalSttFallbackCoordinator. Native reads it from
-  // GlassesStore to gate PCM → Sherpa feeding in handlePcm and to keep the
+  // GlassesStore to gate PCM 鈫?Sherpa feeding in handlePcm and to keep the
   // mic on while local STT is the active engine.
   SETTINGS.local_stt_fallback_active.key,
   SETTINGS.gallery_mode.key,
@@ -723,12 +732,12 @@ export const BLUETOOTH_SETTING_KEYS: string[] = [
 
 // Pairing identity is NATIVE-authoritative: the native layer writes it on
 // pairing success (handleDeviceReady) / forget and echoes it down via
-// save_setting; JS persists those echoes. JS→native, identity travels ONLY in
+// save_setting; JS persists those echoes. JS鈫抧ative, identity travels ONLY in
 // the explicit full seeds (device-store hydration, pre-connect push,
-// post-demotion re-push) — never in the change-push subscription. Relaying an
+// post-demotion re-push) 鈥?never in the change-push subscription. Relaying an
 // echoed identity change back up would make the sync bidirectional with loop
 // gain 1: two identity values in flight (e.g. a boot demotion crossing a
-// native promotion) then chase each other through push→apply→echo→push
+// native promotion) then chase each other through push鈫抋pply鈫抏cho鈫抪ush
 // forever, flapping the UI.
 //
 // Derived from the `nativeAuthoritative` descriptor flag (not maintained as a
@@ -766,7 +775,7 @@ const getDefaultSettings = () =>
   )
 
 // Single-flight for loadAllSettings: the host fires it at module load and
-// engine.start()'s device-store hydration awaits it — without the memo the
+// engine.start()'s device-store hydration awaits it 鈥?without the memo the
 // second caller runs a duplicate full disk load while the first is still in
 // flight. Cleared on failure so a later call can retry.
 let loadAllSettingsInFlight: AsyncResult<void, Error> | null = null
@@ -943,10 +952,10 @@ export const useSettingsStore = create<SettingsState>()(
         // The dimezisBlurViewSdk31Plus blur each costs ~5-10ms/frame; with
         // multiple blurs on home (top fade + AppSwitcherButton x2) a low-end
         // device misses the 16ms budget consistently. Users can turn it back
-        // on under Settings → Appearance once we've optimized further.
+        // on under Settings 鈫?Appearance once we've optimized further.
         //
         // The setSetting call also pushes to the server (saveOnServer: true)
-        // so the server-stored value flips too — otherwise the next sync
+        // so the server-stored value flips too 鈥?otherwise the next sync
         // from the user's server-stored prefs would re-enable blur.
         // Best-effort: a server failure (offline, 5xx) shouldn't block boot;
         // we still mark the migration done locally so we don't loop.
@@ -964,15 +973,15 @@ export const useSettingsStore = create<SettingsState>()(
               console.log("SETTINGS: android_blur migration server-push failed:", result.error)
             }
           }
-          // Mark done unconditionally — even on server-push failure we don't
+          // Mark done unconditionally 鈥?even on server-push failure we don't
           // want to retry the migration on every boot. The local value is
           // already correct.
           storage.save(MIGRATION_KEY, true)
         }
 
-        // The old camera default cropped the sensor to 102°. Move existing
-        // default-shaped values to the full 118° sensor once; named miniapp
-        // requests for the 102° "standard" preset remain available.
+        // The old camera default cropped the sensor to 102掳. Move existing
+        // default-shaped values to the full 118掳 sensor once; named miniapp
+        // requests for the 102掳 "standard" preset remain available.
         const CAMERA_FOV_MIGRATION_KEY = "migration:camera_fov_full_sensor_v1"
         const cameraFovMigrationDone = storage.load<boolean>(CAMERA_FOV_MIGRATION_KEY)
         if (cameraFovMigrationDone.is_error() || !cameraFovMigrationDone.value) {
@@ -1029,3 +1038,8 @@ export const useSetting = <T = any>(key: string): [T, (value: T) => AsyncResult<
   const setSetting = useSettingsStore((state) => state.setSetting)
   return [value, (newValue: T) => setSetting(key, newValue)]
 }
+
+
+
+
+

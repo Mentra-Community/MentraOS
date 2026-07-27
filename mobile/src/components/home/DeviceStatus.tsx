@@ -14,6 +14,8 @@ import {SETTINGS, useSetting} from "@mentra/engine"
 import {showAlert} from "@/utils/AlertUtils"
 import {checkConnectivityRequirementsUI} from "@/utils/PermissionsUtils"
 import {
+  getAr99DisplayName,
+  getAr99ImageSource,
   getEvenRealitiesG1Image,
   getGlassesClosedImage,
   getGlassesImage,
@@ -81,6 +83,7 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
   const caseOpen = glassesStatus.case.open
   const batteryLevel = glassesStatus.battery
   const charging = glassesStatus.charging
+  const [projectName] = useSetting<string>(SETTINGS.project_name.key)
   const wifiConnected = wifiStatus.state === "connected"
   const searching = useEngineSnapshot(engine.pairing.scanning, (onChange) => engine.pairing.onScanning(onChange))
   const [showGlassesBooting, setShowGlassesBooting] = useState(false)
@@ -132,7 +135,11 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
       // window where the link is up but promotion hasn't echoed yet); only a
       // truly identity-less state starts over at model selection.
       if (identity.kind === "pending") {
-        push("/pairing/scan", {deviceModel: identity.model})
+        if (identity.model === DeviceTypes.AR99) {
+          push("/pairing/select-glasses-model", {transition: "simple_push"})
+        } else {
+          push("/pairing/scan", {deviceModel: identity.model})
+        }
       } else {
         push("/pairing/select-glasses-model", {transition: "simple_push"})
       }
@@ -147,11 +154,15 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
       }
       // A `paired` identity snapshot does not imply a native device to connect
       // to (the settings echo can outlive the native pairing). Without a
-      // native default device, connectDefault() throws — route back into
+      // native default device, connectDefault() throws 鈥?route back into
       // pairing for the already-selected model instead of erroring. Fail open
       // on a read error: connectDefault()'s catch is the pre-guard behavior.
       if (!(await engine.glasses.hasDefaultDevice().catch(() => true))) {
-        push("/pairing/scan", {deviceModel: pairedModel})
+        if (pairedModel === DeviceTypes.AR99) {
+          push("/pairing/select-glasses-model", {transition: "simple_push"})
+        } else {
+          push("/pairing/scan", {deviceModel: pairedModel})
+        }
         return
       }
       await engine.glasses.connectDefault()
@@ -174,19 +185,23 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
 
   // Pending selection: a model was chosen but pairing never completed (abandoned
   // mid-flow, or an orphaned identity demoted at boot). Offer to finish pairing
-  // that model — or start over with a different one — instead of a Connect
+  // that model 鈥?or start over with a different one 鈥?instead of a Connect
   // button that has no device to connect to.
   //
   // NOT when the glasses are already connected: right after a promotion, the
   // BLE link is up while the save_setting echoes are still landing, so the JS
-  // identity is momentarily still `pending` — render the normal connected card
+  // identity is momentarily still `pending` 鈥?render the normal connected card
   // (with the pending model as its display name) instead of finish-pairing
   // actions for a device that is already paired and connected.
   if (identity.kind === "pending" && !glassesConnected) {
     return (
       <View style={style}>
         <DeviceStatus
-          onPress={() => push("/pairing/scan", {deviceModel: identity.model})}
+          onPress={() =>
+            identity.model === DeviceTypes.AR99
+              ? push("/pairing/select-glasses-model", {transition: "simple_push"})
+              : push("/pairing/scan", {deviceModel: identity.model})
+          }
           image={getGlassesImage(identity.model)}>
           <View className="flex-row items-center gap-3">
             <Icon name="bluetooth-off" size={18} color={theme.colors.foreground} />
@@ -198,7 +213,11 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
             className="max-h-10"
             tx="home:finishPairingGlasses"
             preset="primary"
-            onPress={() => push("/pairing/scan", {deviceModel: identity.model})}
+            onPress={() =>
+              identity.model === DeviceTypes.AR99
+                ? push("/pairing/select-glasses-model", {transition: "simple_push"})
+                : push("/pairing/scan", {deviceModel: identity.model})
+            }
           />
         </DeviceStatus>
         <Button
@@ -212,12 +231,13 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
     )
   }
 
-  // The card body's model name/image: the paired model, or — in the mid-relay
-  // window above (connected while the promotion echoes land) — the pending one.
+  // The card body's model name/image: the paired model, or 鈥?in the mid-relay
+  // window above (connected while the promotion echoes land) 鈥?the pending one.
   const displayModel = pairedModel || (identity.kind === "pending" ? identity.model : "")
+  const displayName = displayModel === DeviceTypes.AR99 ? getAr99DisplayName(projectName) : displayModel
 
   const getCurrentGlassesImage = () => {
-    let image = getGlassesImage(displayModel)
+    let image = displayModel === DeviceTypes.AR99 ? getAr99ImageSource(projectName) : getGlassesImage(displayModel)
 
     if (displayModel === DeviceTypes.G1) {
       let state = "folded"
@@ -251,7 +271,7 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
       <DeviceStatus onPress={onPress} image={getCurrentGlassesImage()}>
         <View className="flex-row items-center gap-3">
           <Icon name="bluetooth-off" size={18} color={theme.colors.foreground} />
-          <Text className="font-semibold text-secondary-foreground text-end self-end" text={displayModel} />
+          <Text className="font-semibold text-secondary-foreground text-end self-end" text={displayName} />
         </View>
         {!isSearching && (
           <Button
@@ -282,7 +302,7 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
 
   return (
     <DeviceStatus onPress={onPress} image={getCurrentGlassesImage()}>
-      <Text className="font-semibold text-secondary-foreground text-base" text={displayModel} />
+      <Text className="font-semibold text-secondary-foreground text-base" text={displayName} />
       <View className="flex-row items-center gap-3">
         {batteryLevel !== -1 && (
           <View className="flex-row items-center gap-1">
@@ -396,3 +416,11 @@ export const ControllerStatus = ({style}: {style?: ViewStyle}) => {
     </DeviceStatus>
   )
 }
+
+
+
+
+
+
+
+
