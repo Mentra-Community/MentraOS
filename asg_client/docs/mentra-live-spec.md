@@ -17,7 +17,7 @@ Mentra Live consists of:
 
 - Smart glasses hardware with camera, microphone/audio path, physical camera button, temple touch/swipe input, battery, sensors, WiFi/Bluetooth connectivity, privacy/status LEDs, and firmware-updatable components.
 - An Android runtime on the glasses, powered by a Mediatek (**MTK**) SoC.
-- A dedicated Bluetooth/audio microcontroller (**BES**) that handles low-level Bluetooth/audio behavior, button/touch events, battery-related signaling, RGB LED defaults, and BES firmware OTA.
+- A dedicated Bluetooth/audio microcontroller (**BES**) that handles low-level Bluetooth/audio behavior, button/touch events, battery reporting, pre-handoff and forced RGB status LED signaling, and BES firmware OTA.
 - The `com.mentra.asg_client` Android app, shipped as a system app on production devices, which exposes the device to MentraOS.
 - The MentraOS phone app, which pairs with the glasses over BLE, configures device behavior, syncs media, routes app events, and connects the user session to MentraOS Cloud.
 
@@ -62,8 +62,8 @@ For some outbound commands, `B` is a JSON object serialized as a string inside t
 
 - Detecting and classifying camera-button presses.
 - Reporting touch/swipe/power-button events.
-- Battery and default LED signaling.
-- RGB LED ring ownership when MTK has not claimed control.
+- Battery reporting and forced charger status LED signaling.
+- RGB status LED ownership when MTK has not claimed control.
 - BES firmware OTA.
 - Bluetooth/audio responsibilities specific to the glasses firmware.
 
@@ -87,13 +87,15 @@ Mentra Live supports photo capture and video recording from the glasses camera.
 
 ### Gallery-mode behavior
 
-The phone controls whether a physical button press should capture locally through `save_in_gallery_mode`:
+The phone controls whether a physical button press should capture locally through `save_in_gallery_mode`. The "phone connected" input to that decision is the **BES-reported phone BLE presence** (BES firmware >= 17.26.7.23 reports `sr_phble` connect/disconnect edges and syncs `phone_ble` in every `sr_syvr` reply), which is a tri-state: `PRESENT`, `ABSENT`, or `UNKNOWN` when no signal has arrived — old BES firmware never reports presence, so on the deployed fleet the value stays `UNKNOWN`.
 
-| Gallery mode | Phone connected | Local capture behavior |
+| Gallery mode | Phone presence | Local capture behavior |
 | --- | --- | --- |
-| Enabled | Either | Capture locally. |
-| Disabled | Connected | Do not capture locally; forward the press and let the phone/app flow handle it. |
-| Disabled | Disconnected | Capture locally as a fallback so the user action is not lost. |
+| Enabled | Any | Capture locally. |
+| Disabled | `PRESENT` | Do not capture locally; forward the press and let the phone/app flow handle it. |
+| Disabled | `ABSENT` or `UNKNOWN` | Capture locally so the user action is not lost. |
+
+`UNKNOWN` is deliberately treated as "no phone": the accepted trade-off is a possible duplicate capture (glasses and phone app both capture) rather than a lost photo. In particular, on BES firmware without presence reporting, disabling gallery mode does **not** suppress local capture even while a phone is connected.
 
 Every camera-button press should still be forwarded to the phone as a `button_press` event regardless of the local-capture decision.
 
@@ -114,7 +116,7 @@ Mentra Live exposes microphone/audio paths used for recording, streaming, and de
 Mentra Live has two LED systems:
 
 1. **Local MTK recording/privacy LED** — controlled directly by MTK through native APIs; used for camera-in-use feedback.
-2. **BES RGB LED ring** — controlled by BES by default for battery, Bluetooth, and firmware status; MTK can claim authority and send RGB commands over UART.
+2. **BES RGB status LED** — controlled by BES during early boot and by forced/direct BES paths for charger transitions, firmware updates, and shutdown; MTK claims authority once UART is ready and sends camera or app-requested RGB commands.
 
 Camera and streaming features must leave LEDs in a safe state on stop, error, service shutdown, or command cancellation. User-visible privacy indication should not be bypassed accidentally.
 
@@ -161,8 +163,20 @@ The MTK↔BES UART always starts at 460800 baud. Firmware that supports the nego
 
 1. Phone connects over BLE and sends readiness/configuration commands.
 2. `asg_client` responds with device status and applies persisted or received settings.
-3. For Mentra Live, after phone readiness, MTK claims RGB LED authority from BES when it needs programmatic LED control.
+3. For Mentra Live, MTK claims RGB status LED authority as soon as the BES UART transport is ready, then reasserts it after phone readiness.
 4. Ongoing commands are dispatched through command handlers and responses are sent back over BLE.
+
+### Process session identity
+
+Each `asg_client` process generates a session id (`sid`, 8 hex chars) at startup and
+carries it in `glasses_ready` and `version_info_1`. The BES keeps the phone's BLE link
+alive across `asg_client` restarts (APK OTA, crash recovery), so the phone cannot detect
+a restart from transport state; a changed — or newly appearing — `sid` is the explicit
+restart signal. On observing it, the phone re-runs its readiness flow (`phone_ready` →
+`glasses_ready`, wire re-negotiation) and treats it as the OTA reconnect edge. Builds
+without the field get the phone's legacy behavior; the field first appearing right after
+an update from such a build is itself treated as a restart (that transition is the
+upgrade OTA completing).
 
 ### Camera button photo flow
 
@@ -216,7 +230,7 @@ When changing Mentra Live behavior:
 - [`overview.md`](overview.md) — `asg_client` architecture and K900 naming notes.
 - [`ASG_CLIENT_API.md`](ASG_CLIENT_API.md) — phone/glasses command protocol.
 - [`features/button-press-system.md`](features/button-press-system.md) — camera button and gallery-mode behavior.
-- [`features/led-control.md`](features/led-control.md) — local privacy LED and BES RGB LED ring behavior.
+- [`features/led-control.md`](features/led-control.md) — local privacy LED and BES RGB status LED behavior.
 - [`features/rtmp-streaming.md`](features/rtmp-streaming.md) — live streaming lifecycle.
 - [`features/camera-web-server.md`](features/camera-web-server.md) — local media sync server.
 - [`features/bes-ota.md`](features/bes-ota.md) — BES firmware update flow.

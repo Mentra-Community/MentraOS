@@ -51,7 +51,11 @@ export const ConnectDeviceButton = () => {
       // already-selected model instead of surfacing an error alert. Fail open
       // on a read error: connectDefault()'s catch is the pre-guard behavior.
       if (!(await engine.glasses.hasDefaultDevice().catch(() => true))) {
-        push("/pairing/scan", {deviceModel: pairedModel})
+        if (pairedModel === DeviceTypes.AR99) {
+          push("/pairing/select-glasses-model")
+        } else {
+          push("/pairing/scan", {deviceModel: pairedModel})
+        }
         return
       }
 
@@ -81,9 +85,10 @@ export const ConnectDeviceButton = () => {
     // A pending selection (chosen model, pairing never completed) resumes the
     // scan for that model instead of restarting from model selection.
     if (identity.kind === "pending") {
-      return (
-        <Button onPress={() => push("/pairing/scan", {deviceModel: identity.model})} tx="home:finishPairingGlasses" />
-      )
+      if (identity.model === DeviceTypes.AR99) {
+        return <Button onPress={() => push("/pairing/select-glasses-model")} tx="home:finishPairingGlasses" />
+      }
+      return <Button onPress={() => push("/pairing/scan", {deviceModel: identity.model})} tx="home:finishPairingGlasses" />
     }
     return <Button onPress={() => push("/pairing/select-glasses-model")} tx="home:pairGlasses" />
   }
@@ -201,3 +206,5 @@ export const ConnectControllerButton = () => {
 
   return null
 }
+
+

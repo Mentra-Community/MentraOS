@@ -13,6 +13,7 @@
 
 import displayProcessor from "./DisplayProcessor"
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
+import {useDisplayStore} from "../stores/display"
 import {SETTINGS, useSettingsStore} from "../stores/settings"
 import {useGlassesStore} from "../stores/glasses"
 import {DeviceTypes, getModelCapabilities} from "../types"
@@ -268,6 +269,21 @@ class SceneRenderer {
       // wiring the deleted MantleManager hook provided).
       void Promise.resolve(BluetoothSdk.displayEvent({view: frame.view, scene: frame})).catch((err) => {
         console.error(`${LOG_TAG}: native scene send failed:`, err)
+      })
+
+      // Keep the phone-side glasses mirror on the same frame as native. Legacy
+      // layouts update this store in LocalDisplayManager.sendToNative; scene
+      // frames bypass that method, so without an explicit write every
+      // positioning device (including G2) leaves the mirror blank/stale.
+      const caps = this.currentCapabilities()
+      useDisplayStore.getState().setDisplayEvent({
+        view: frame.view,
+        layout: {
+          layoutType: "scene",
+          width: caps?.width,
+          height: caps?.height,
+          elements: frame.elements,
+        },
       })
     } catch (err) {
       console.error(`${LOG_TAG}: native scene send failed:`, err)

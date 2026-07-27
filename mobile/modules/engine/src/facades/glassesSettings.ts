@@ -22,6 +22,7 @@ const INTERNAL_KEYS = new Set<string>([
   SETTINGS.default_wearable.key,
   SETTINGS.device_name.key,
   SETTINGS.device_address.key,
+  SETTINGS.project_name.key,
   SETTINGS.pending_controller.key,
   SETTINGS.default_controller.key,
   SETTINGS.controller_device_name.key,
@@ -54,3 +55,7 @@ export const glassesSettings = {
   // Copy: callers must not be able to mutate the module-level key list.
   available: (): string[] => [...DEVICE_KEYS],
 }
+
+
+
+

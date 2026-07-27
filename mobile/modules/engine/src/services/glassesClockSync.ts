@@ -6,7 +6,7 @@ import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
 import {BgTimer} from "../utils/timers"
 import {useGlassesStore} from "../stores/glasses"
 
-import {getAsgOtaVersionUrl} from "./asgOtaVersionUrl"
+import {resolveOtaManifestUrl} from "./otaManifestUrl"
 import {detectClockSkew} from "./gallerySyncClock"
 
 export const CLOCK_SETTLE_MS = 500
@@ -86,7 +86,7 @@ export async function handleOtaClockSkewFromGlasses(
 
       lastOtaClockFixAt = Date.now()
       const {buildNumber, otaVersionUrl} = useGlassesStore.getState()
-      const manifestUrl = getAsgOtaVersionUrl(otaVersionUrl, buildNumber)
+      const manifestUrl = resolveOtaManifestUrl(otaVersionUrl, buildNumber)
       console.log("[GlassesClockSync] ⏰ Restarting OTA with ota_start after clock fix")
       await BluetoothSdk.startOtaUpdate(manifestUrl)
       return true

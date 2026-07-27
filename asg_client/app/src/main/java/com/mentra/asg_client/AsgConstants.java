@@ -126,6 +126,44 @@ public class AsgConstants {
     /** Number of post-APK-restart completion resend attempts (see {@link #OTA_COMPLETION_RESEND_INTERVAL_MS}). */
     public static final int OTA_COMPLETION_RESEND_ATTEMPTS = 15;
 
+    /**
+     * FALLBACK maximum packed frame size for a v1 K900 STRING ck chunk, used until the BES
+     * advertises its true notification cap. The BES relays v1 string frames to the phone in a
+     * single unfragmented BLE notification, and the worst-case ATT payload on that link is 253
+     * bytes (ATT MTU 256) regardless of the MTU the phone requested — a packed chunk over that
+     * cap is silently truncated on the wire and the phone drops it as unparseable (incident
+     * rep_01KY6BJ0B7A4RBMQ7VN39KAE5E: OTA completion ck chunks packed to 256-263 bytes and none
+     * survived). 240 = 253 - {@link #K900_STRING_CHUNK_BUDGET_MARGIN_BYTES}. BES firmware >=
+     * 17.26.7.23 advertises {@code wire_caps.notify_cap} (the measured single-notification
+     * payload cap) and the budget becomes notify_cap minus the same margin — see
+     * MessageChunker.setStringChunkBudgetFromNotifyCap.
+     */
+    public static final int K900_STRING_CHUNK_MAX_FRAME_BYTES = 240;
+
+    /**
+     * Safety margin subtracted from the BLE notification payload cap when sizing packed v1
+     * STRING ck chunks, absorbing BES re-framing variance between the UART frame we send and
+     * the notification the BES actually emits (240 = 253 - 13 was the hardware-validated
+     * budget for the worst-case 253-byte cap).
+     */
+    public static final int K900_STRING_CHUNK_BUDGET_MARGIN_BYTES = 13;
+
+    /**
+     * Contract floor of {@code wire_caps.notify_cap} (BES firmware >= 17.26.7.23 computes
+     * max(253, min(ATT MTU - 3, 509))). An advertised value below this is malformed and is
+     * ignored in favor of the fallback budget.
+     */
+    public static final int K900_BLE_NOTIFY_CAP_FLOOR_BYTES = 253;
+
+    /**
+     * Contract ceiling of {@code wire_caps.notify_cap} (see
+     * {@link #K900_BLE_NOTIFY_CAP_FLOOR_BYTES}: the BES computes max(253, min(ATT MTU - 3,
+     * 509))). An advertised value above this is malformed; it is clamped down so a buggy
+     * advertisement can never size chunks beyond what the transport carries — the exact silent
+     * truncation class the notification budget exists to prevent.
+     */
+    public static final int K900_BLE_NOTIFY_CAP_CEILING_BYTES = 509;
+
     /** Delay before probing the alternate UART baud after ASG starts at the rendezvous rate. */
     public static final long UART_BOOT_RECOVERY_INITIAL_DELAY_MS = 8000;
 
@@ -265,9 +303,9 @@ public class AsgConstants {
     public static final int TEXT_MODE_BLE_JPEG_QUALITY = 80;
 
     /** Long-edge size used for on-glasses ML Kit text localization. */
-    // 1280 is the smallest tested size that consistently retained stylized/low-contrast label
-    // text on real 4032x3024 Mentra Live captures while remaining below the 1s detector budget.
-    public static final int TEXT_MODE_MLKIT_ANALYSIS_LONG_EDGE = 1280;
+    // 1600 reliably retained small label/instruction text on real 4032x3024 Mentra Live captures
+    // while remaining comfortably below the detector timeout.
+    public static final int TEXT_MODE_MLKIT_ANALYSIS_LONG_EDGE = 1600;
 
     /** Minimum source-pixel padding around the union of ML Kit text lines. */
     public static final int TEXT_MODE_MLKIT_MIN_PADDING_PX = 32;
@@ -276,7 +314,7 @@ public class AsgConstants {
     public static final float TEXT_MODE_MLKIT_PADDING_X_FRACTION = 0.12f;
 
     /** Vertical padding relative to the detected text-union height. */
-    public static final float TEXT_MODE_MLKIT_PADDING_Y_FRACTION = 0.25f;
+    public static final float TEXT_MODE_MLKIT_PADDING_Y_FRACTION = 0.35f;
 
     // A lone OCR line is weak evidence for the complete text-bearing object. Keep generous
     // surrounding context so a small conventional label can pull in nearby stylized text that

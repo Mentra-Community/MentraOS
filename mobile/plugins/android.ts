@@ -5,7 +5,6 @@ import path from "path"
 import {
   ConfigPlugin,
   withAppBuildGradle,
-  withProjectBuildGradle,
   withSettingsGradle,
   withGradleProperties,
   withAndroidManifest,
@@ -259,6 +258,7 @@ function withAndroidManifestModifications(config: any) {
       {name: "android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE"},
       {name: "android.permission.FOREGROUND_SERVICE_DATA_SYNC"},
       {name: "android.permission.FOREGROUND_SERVICE_LOCATION"},
+      {name: "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"},
       {name: "android.permission.FOREGROUND_SERVICE_MICROPHONE"},
       {name: "android.permission.NEARBY_DEVICES"},
       {name: "android.permission.POST_NOTIFICATIONS"},
@@ -331,18 +331,18 @@ function withAndroidManifestModifications(config: any) {
       // the Google Navigation SDK), so the Google geo API_KEY meta-data is
       // no longer injected here. iOS still uses the Google Nav SDK
       // (GoogleNavigation pod + GOOGLE_NAV_API_KEY in Info.plist) until the
-      // iOS migration lands — that path is untouched. See
+      // iOS migration lands -- that path is untouched. See
       // issues/mapbox-navigation-migration.md.
       const isChinaBuild = process.env.EXPO_PUBLIC_DEPLOYMENT_REGION === "china"
       if (!app["meta-data"]) {
         app["meta-data"] = []
       }
 
-      // Inject the Mapbox runtime token (pk.…) as manifest meta-data
+      // Inject the Mapbox runtime token (pk....) as manifest meta-data
       // `com.mapbox.token`. NavigationManager.kt reads this tag from the
       // merged manifest at boot and passes it to MapboxOptions.accessToken —
       // the same provisioning shape the Google geo key above uses. Public
-      // token, safe to ship. The secret Downloads:Read token (sk.…) is
+      // token, safe to ship. The secret Downloads:Read token (sk....) is
       // build-time-only (~/.gradle/gradle.properties) and never reaches the
       // manifest. Fail loudly in CI/EAS; warn in local dev.
       // See issues/mapbox-navigation-migration.md.
@@ -355,7 +355,7 @@ function withAndroidManifestModifications(config: any) {
             process.env.EAS_BUILD === "true" ||
             process.env.NODE_ENV === "production"
           const msg =
-            "EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN is not set. Android navigation will fail at runtime — " +
+            "EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN is not set. Android navigation will fail at runtime -- " +
             "set it in mobile/.env (see mobile/.env.example) before building."
           if (isCiOrEas) {
             throw new Error(msg)
@@ -494,6 +494,12 @@ function withGradlePropertiesModifications(config: any) {
         key: "sentryUploadEnabled",
         value: "false",
       })
+    }
+
+    // On Windows, leave node resolution to PATH to avoid malformed JVM args under Program Files.
+    if (process.platform === "win32") {
+      config.modResults = props
+      return config
     }
 
     // Get node path and add to org.gradle.jvmargs

@@ -6,6 +6,7 @@ import android.app.Service
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
+import android.location.LocationManager
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
@@ -17,7 +18,11 @@ class ForegroundService : Service() {
     companion object {
         const val CHANNEL_ID = "MentraServiceChannel"
         const val NOTIFICATION_ID = 1001
+        const val ACTION_REFRESH_TYPES =
+                "com.mentra.bluetoothsdk.services.action.REFRESH_FOREGROUND_SERVICE_TYPES"
     }
+
+    private var locationTypeRequested = false
 
     override fun onCreate() {
         super.onCreate()
@@ -34,6 +39,11 @@ class ForegroundService : Service() {
                 "service_start_command",
                 mapOf("action" to intent?.action, "flags" to flags, "startId" to startId)
         )
+        if (intent?.action == ACTION_REFRESH_TYPES) {
+            // This action is only sent while the host Activity is foregrounded. Android 14+
+            // rejects adding a while-in-use location type from the background.
+            locationTypeRequested = true
+        }
         // Re-check permissions in case they changed
         startForegroundWithAutoDetectedType()
         return START_STICKY
@@ -70,6 +80,14 @@ class ForegroundService : Service() {
         }
 
         var serviceType = 0
+
+        // Audio prompts can be initiated by glasses while the host Activity is
+        // backgrounded. mediaPlayback has no runtime prerequisite, so keep it
+        // active on the existing Mentra service for the entire connected
+        // session rather than trying to launch a second service after a wake
+        // phrase arrives.
+        serviceType = serviceType or ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
+        Bridge.log("ForegroundService: Added mediaPlayback (supports background audio)")
 
         // Check Bluetooth permissions
         val hasBluetoothPermission =
@@ -124,6 +142,28 @@ class ForegroundService : Service() {
             Bridge.log("ForegroundService: No microphone permission")
         }
 
+        val hasLocationPermission =
+                ContextCompat.checkSelfPermission(
+                        this,
+                        android.Manifest.permission.ACCESS_FINE_LOCATION
+                ) == PackageManager.PERMISSION_GRANTED ||
+                        ContextCompat.checkSelfPermission(
+                                this,
+                                android.Manifest.permission.ACCESS_COARSE_LOCATION
+                        ) == PackageManager.PERMISSION_GRANTED
+        val locationManager = getSystemService(LocationManager::class.java)
+        val isLocationEnabled = locationManager?.isLocationEnabled == true
+
+        if (locationTypeRequested && hasLocationPermission && isLocationEnabled) {
+            serviceType = serviceType or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+            Bridge.log("ForegroundService: Added location (has foreground location permission)")
+        } else {
+            Bridge.log(
+                    "ForegroundService: No location type " +
+                            "(requested=$locationTypeRequested, permission=$hasLocationPermission, enabled=$isLocationEnabled)"
+            )
+        }
+
         // Only use dataSync as absolute last resort fallback if no other types were added.
         // WARNING: dataSync has a 6-hour timeout on Android 14+ which will crash the app.
         // This should rarely happen since CHANGE_NETWORK_STATE is a normal permission.
@@ -141,11 +181,20 @@ class ForegroundService : Service() {
         val hasConnectedDevice =
                 (serviceType and ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE) != 0
         val hasMicrophone = (serviceType and ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE) != 0
+        val hasLocation = (serviceType and ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION) != 0
+        val hasMediaPlayback =
+                (serviceType and ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK) != 0
 
         return when {
+            hasConnectedDevice && hasMicrophone && hasLocation ->
+                    "Glasses, microphone & location active"
+            hasConnectedDevice && hasLocation -> "Smart glasses & location active"
+            hasMicrophone && hasLocation -> "Microphone & location active"
+            hasLocation -> "Location active"
             hasConnectedDevice && hasMicrophone -> "Glasses & microphone active"
             hasConnectedDevice -> "Smart glasses connected"
             hasMicrophone -> "Microphone active"
+            hasMediaPlayback -> "Audio playback active"
             else -> "Syncing data"
         }
     }
@@ -160,6 +209,10 @@ class ForegroundService : Service() {
                 types.add("connectedDevice")
         if (serviceType and ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE != 0)
                 types.add("microphone")
+        if (serviceType and ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION != 0)
+                types.add("location")
+        if (serviceType and ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK != 0)
+                types.add("mediaPlayback")
 
         return types.joinToString("|")
     }

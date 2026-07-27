@@ -1329,7 +1329,7 @@ class GallerySyncService {
       }
     }
     // Old firmware remains on the exact v2 endpoint/schema. Avoid expensive inline thumbnails;
-    // the UI can request them lazily after the primary transfer is safe.
+    // video thumbnails are fetched as small side downloads with their primary media.
     const syncResponse = await asgCameraApi.syncWithServer(clientId, lastSyncTime, false)
     const data = (syncResponse.data || syncResponse) as SyncManifestData
     if (data.captures) {
@@ -1923,6 +1923,7 @@ class GallerySyncService {
             bracketPaths: result.bracketPaths,
             sidecarPath: result.sidecarPath,
             thumbnailData: capture.thumbnail_data,
+            thumbnailPath: result.thumbnailPath,
             captureDir: result.captureDir,
             timestamp: capture.timestamp,
             totalSize: capture.total_size,

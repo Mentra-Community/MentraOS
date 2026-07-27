@@ -35,6 +35,9 @@ jest.mock("@mentra/bluetooth-sdk/internal", () => {
     default: bluetoothSdkMock,
     ...bluetoothSdkMock,
     MentraLocalNetwork: mentraLocalNetworkMock,
+    BLUETOOTH_SDK_VERSION: "0.0.0-test",
+    sdkPinnedOtaManifestUrl: () =>
+      "https://github.com/Mentra-Community/MentraOS/releases/download/bluetooth-sdk-ota/bluetooth-sdk-0.0.0-test-version.json",
   }
 })
 
@@ -295,7 +298,7 @@ const mockIslandEntries = () => {
   // from @mentra/engine, so expose the real (pure) implementations through the mock.
   const realGlassesClockSync = jest.requireActual("./modules/engine/src/services/glassesClockSync")
   const realGallerySyncClock = jest.requireActual("./modules/engine/src/services/gallerySyncClock")
-  const realAsgOtaVersionUrl = jest.requireActual("./modules/engine/src/services/asgOtaVersionUrl")
+  const realOtaManifestUrl = jest.requireActual("./modules/engine/src/services/otaManifestUrl")
   const realOtaUpdateCheck = jest.requireActual("./modules/engine/src/services/OtaUpdateCheckService")
   // OTA install policy constants + display-state derivation + the install state
   // machine (WP 8B) — real implementations so the host shim
@@ -340,7 +343,7 @@ const mockIslandEntries = () => {
       besFirmwareVersion: state.besFirmwareVersion || null,
       wifiConnected: state.wifi.state === "connected",
       wifiStatusKnown: state.wifiStatusKnown,
-      manifestUrl: realAsgOtaVersionUrl.getAsgOtaVersionUrl(state.otaVersionUrl, state.buildNumber),
+      manifestUrl: realOtaManifestUrl.resolveOtaManifestUrl(state.otaVersionUrl, state.buildNumber),
       updateAvailable: state.otaUpdateAvailable,
       status: state.otaStatus,
       legacyProgress: state.otaProgress,
@@ -771,7 +774,7 @@ const mockIslandEntries = () => {
     fixGlassesClockIfSkewed: realGlassesClockSync.fixGlassesClockIfSkewed,
     maybeFixGlassesClockFromVersionInfo: realGlassesClockSync.maybeFixGlassesClockFromVersionInfo,
     // OTA manifest-URL resolution (real, pure).
-    getAsgOtaVersionUrl: realAsgOtaVersionUrl.getAsgOtaVersionUrl,
+    resolveOtaManifestUrl: realOtaManifestUrl.resolveOtaManifestUrl,
     fetchVersionInfo: realOtaUpdateCheck.fetchVersionInfo,
     checkVersionUpdateAvailable: realOtaUpdateCheck.checkVersionUpdateAvailable,
     getLatestVersionInfo: realOtaUpdateCheck.getLatestVersionInfo,

@@ -26,10 +26,12 @@ import {useSettingsStore, SETTINGS} from "../stores/settings"
 import {type CloudClientStatusSnapshot, type MiniappAuthToken} from "../runtime/config"
 import {createCloudUdpSocket} from "../utils/cloudClient/RnUdpAdapter"
 import {cloudSecureStore} from "../utils/cloudClient/cloudSecureStore"
+import {storage as mmkvStorage} from "../utils/storage"
 import {useCloudClientStatusStore} from "../stores/cloudClientStatus"
 import {islandNotifications} from "./NotificationsEmitter"
 import {BgTimer} from "../utils/timers"
 import {logCloudV2TranscriptMetric} from "./CloudTranscriptE2EMetrics"
+import {LocalMiniappUserIdentity} from "./LocalMiniappUserIdentity"
 import {nativeHttpResponseBody} from "./NativeHttpResponse"
 
 const LOG_TAG = "cloudClient"
@@ -40,6 +42,7 @@ type CloudCore = NonNullable<CloudClient["core"]>
 // been continuously NOT connected for this long. A quick reconnect cancels it; brief
 // flaps that recover don't fire. Raised as engine.notifications(connection_failed_persistent).
 const CLOUD_PERSISTENT_FAILURE_MS = 60_000
+const LOCAL_MINIAPP_USER_ID_KEY = "mentra.localMiniapp.userId"
 
 /** Cancel the pending persistent-failure alarm + re-arm for the next outage. */
 function clearPersistentFailureAlarm(): void {
@@ -74,6 +77,21 @@ let authStateUnsubscribe: (() => void) | null = null
 let localDevRuntimeToken: {runtimeUrl: string; token: string; expiresAtMs: number} | null = null
 let lc3FrameSizeUnsubscribe: (() => void) | null = null
 let coreTokenSyncPromise: Promise<string> | null = null
+
+const localMiniappUserIdentity = new LocalMiniappUserIdentity({
+  get(): string | null {
+    const result = mmkvStorage.load<string>(LOCAL_MINIAPP_USER_ID_KEY)
+    return result.is_ok() ? result.value : null
+  },
+  set(userId: string): void {
+    const result = mmkvStorage.save(LOCAL_MINIAPP_USER_ID_KEY, userId)
+    if (result.is_error()) throw result.error
+  },
+  remove(): void {
+    const result = mmkvStorage.remove(LOCAL_MINIAPP_USER_ID_KEY)
+    if (result.is_error()) throw result.error
+  },
+})
 
 const transcriptListeners = new Set<(d: TranscriptionData) => void>()
 const translationListeners = new Set<(d: TranslationData) => void>()
@@ -114,6 +132,7 @@ async function syncCoreAccessTokenToBluetoothInternal(): Promise<string> {
   if (c !== client) {
     throw new Error("cloud client changed while syncing core token")
   }
+  localMiniappUserIdentity.remember(c.auth.identity.mentraUserId)
   const result = await useSettingsStore.getState().setSetting(SETTINGS.core_token.key, token, false)
   if (result.is_error()) {
     throw result.error
@@ -264,6 +283,13 @@ function ensureAuthWatch(): void {
   let reconnectPending = false
   try {
     const sub = auth.onStateChange((event, session) => {
+      if (event === "SIGNED_OUT") {
+        localMiniappUserIdentity.forget()
+        return
+      }
+      // A new sign-in may belong to a different account. Force the next
+      // storage request to resolve and persist that account's Core identity.
+      if (event === "SIGNED_IN") localMiniappUserIdentity.forget()
       if (!session?.token) return
       if (connected || reconnectPending) return
 
@@ -518,6 +544,34 @@ export const cloudClientService = {
     return c.core.miniapps.getRegistry()
   },
 
+  /**
+   * Resolve the stable Core-owned Mentra user id.
+   *
+   * Storage must use this identity rather than the short-lived Core access
+   * token. A previously verified id is restored from MMKV so local miniapps
+   * remain available after an offline process restart. On first sign-in,
+   * callers join the auth module's single-flight exchange/refresh instead of
+   * falling back to an anonymous namespace.
+   */
+  async resolveMentraUserId(): Promise<string> {
+    return localMiniappUserIdentity.resolve(async () => {
+      if (!client) this.init()
+      const c = client
+      if (!c) throw new Error("cloud client not initialized")
+
+      await c.auth.getCoreToken()
+      if (c !== client) throw new Error("cloud client changed while resolving user identity")
+      return c.auth.identity.mentraUserId
+    })
+  },
+
+  /** Read the stable Mentra user id after async identity resolution. */
+  getMentraUserId(): string {
+    const userId = localMiniappUserIdentity.get()
+    if (!userId) throw new Error("Mentra user identity is unavailable")
+    return userId
+  },
+
   async getMiniappAuthToken(
     packageName: string,
     opts?: {minTtlMs?: number; devAttestation?: string},
@@ -549,6 +603,11 @@ export const cloudClientService = {
     clearPersistentFailureAlarm()
     const wasConnected = connected
     client = null
+    // stop() is part of the logout lifecycle and runs before the host emits
+    // SIGNED_OUT. Remove the persisted namespace owner here so a later account
+    // can never inherit it. A force-stop/process kill does not call stop(), so
+    // the cached id still survives the offline cold-start case.
+    localMiniappUserIdentity.forget()
     localDevRuntimeToken = null
     connected = false
     resetRuntimeStatus()

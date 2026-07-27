@@ -14,6 +14,7 @@ import com.mentra.bluetoothsdk.controllers.ControllerManager
 import com.mentra.bluetoothsdk.controllers.R1
 import com.mentra.bluetoothsdk.services.ForegroundService
 import com.mentra.bluetoothsdk.services.PhoneMic
+import com.mentra.bluetoothsdk.sgcs.Ar99
 import com.mentra.bluetoothsdk.sgcs.G1
 import com.mentra.bluetoothsdk.sgcs.G2
 import com.mentra.bluetoothsdk.sgcs.SceneElement
@@ -582,6 +583,36 @@ class DeviceManager {
         }
     }
 
+    /**
+     * Re-evaluate the active foreground-service types while the host Activity is visible.
+     *
+     * Location is a while-in-use permission, so Android 14+ only allows the service to add
+     * the location type from the foreground. Sending a command to the existing service
+     * updates its type mask without tearing down the glasses connection.
+     */
+    fun refreshForegroundServiceTypes() {
+        val context = Bridge.getContext()
+
+        try {
+            Bridge.log("MAN: Refreshing foreground service types")
+            val serviceIntent =
+                Intent(context, ForegroundService::class.java).apply {
+                    action = ForegroundService.ACTION_REFRESH_TYPES
+                }
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(serviceIntent)
+            } else {
+                context.startService(serviceIntent)
+            }
+
+            serviceStarted = true
+            Bridge.log("MAN: Foreground service types refreshed")
+        } catch (e: Exception) {
+            Bridge.log("MAN: Failed to refresh foreground service types: ${e.message}")
+        }
+    }
+
     private fun restartForegroundService() {
         val context = Bridge.getContext()
 
@@ -1128,6 +1159,8 @@ class DeviceManager {
             sgc = MentraLive()
         } else if (wearable.contains(DeviceTypes.NEX)) {
             sgc = MentraNex()
+        } else if (wearable.contains(DeviceTypes.AR99)) {
+            sgc = Ar99()
         } else if (wearable.contains(DeviceTypes.MACH1)) {
             sgc = createOptionalMach1Sgc(DeviceTypes.MACH1)
         } else if (wearable.contains(DeviceTypes.Z100)) {
@@ -1295,6 +1328,10 @@ class DeviceManager {
         Bridge.saveSetting("default_wearable", defaultWearable)
         Bridge.saveSetting("device_name", deviceName)
         Bridge.saveSetting("device_address", deviceAddress)
+        if (defaultWearable.contains(DeviceTypes.AR99)) {
+            val projectName = (DeviceStore.store.get("bluetooth", "project_name") as? String)?.trim().orEmpty()
+            Bridge.saveSetting("project_name", projectName)
+        }
     }
 
     private fun syncSystemTimeOnceForConnection(connectionKey: String) {
@@ -1621,6 +1658,20 @@ class DeviceManager {
         (sgc as? MentraLive)?.sendOtaQueryStatus()
     }
 
+    fun startAr99OtaFromFile(path: String): Boolean {
+        val ar99 = sgc as? Ar99 ?: throw IllegalStateException("unsupported_device")
+        return ar99.startOtaFromFile(path)
+    }
+
+    fun cancelAr99Ota() {
+        (sgc as? Ar99)?.cancelAr99Ota()
+    }
+
+    fun sendAr99FactoryReset() {
+        val ar99 = sgc as? Ar99 ?: throw IllegalStateException("unsupported_device")
+        ar99.sendFactoryReset()
+    }
+
     fun sendGalleryMode(requestId: String, enabled: Boolean) {
         val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
         live.sendGalleryMode(requestId, enabled)
@@ -1727,7 +1778,7 @@ class DeviceManager {
     }
 
     /**
-     * Read glasses media step volume (0–15) via K900 on Mentra Live only. Blocks until response,
+     * Read glasses media step volume (0—5) via K900 on Mentra Live only. Blocks until response,
      * error, or timeout (used from JS AsyncFunction on a worker thread).
      */
     fun getGlassesMediaVolumeBlocking(): Map<String, Any> {
@@ -1753,7 +1804,7 @@ class DeviceManager {
         return result ?: throw IllegalStateException("glasses_volume_empty")
     }
 
-    /** Set glasses media step volume (0–15) via K900 on Mentra Live only. */
+    /** Set glasses media step volume (0—5) via K900 on Mentra Live only. */
     fun setGlassesMediaVolumeBlocking(level: Int): Map<String, Any> {
         val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
         val latch = CountDownLatch(1)
@@ -1885,8 +1936,14 @@ class DeviceManager {
             Bridge.log("MAN: No default wearable, returning")
             return
         }
-        if (deviceName.isEmpty()) {
-            Bridge.log("MAN: No device name, returning")
+        val reconnectTarget =
+            if (defaultWearable.contains(DeviceTypes.AR99) && deviceAddress.isNotBlank()) {
+                deviceAddress
+            } else {
+                deviceName
+            }
+        if (reconnectTarget.isEmpty()) {
+            Bridge.log("MAN: No reconnect target, returning")
             return
         }
         if (!hasBluetoothPermissions()) {
@@ -1898,7 +1955,7 @@ class DeviceManager {
         }
         initSGC(defaultWearable)
         searching = true
-        sgc?.connectById(deviceName)
+        sgc?.connectById(reconnectTarget)
         connectDefaultController()
     }
 
@@ -2031,6 +2088,7 @@ class DeviceManager {
         Bridge.saveSetting("default_wearable", "")
         Bridge.saveSetting("device_name", "")
         Bridge.saveSetting("device_address", "")
+        Bridge.saveSetting("project_name", "")
     }
 
     fun forgetController() {
@@ -2101,3 +2159,4 @@ class DeviceManager {
         }
     }
 }
+

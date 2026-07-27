@@ -2,6 +2,8 @@
 
 package com.mentra.bluetoothsdk
 
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleOwner
 import com.mentra.bluetoothsdk.debug.BleTraceLogger
 import com.mentra.bluetoothsdk.utils.DeviceTypes
 import com.mentra.bluetoothsdk.utils.audio.PcmStreamManager
@@ -12,6 +14,7 @@ import expo.modules.kotlin.modules.ModuleDefinition
 import expo.modules.kotlin.modules.ModuleDefinitionBuilder
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.security.MessageDigest
 
 // Expo has no module-level error mapper, so SDK-backed registrations translate
 // core exceptions here while keeping Expo types out of the native SDK API.
@@ -365,10 +368,12 @@ class BluetoothSdkModule : Module() {
             "stream_status",
             "keep_alive_ack",
             "mtk_update_complete",
+            "glasses_session_changed",
             "ota_progress",
             "ota_start_ack",
             "ota_status",
-            // Nex / BLE debug (NexEventUtils → Bridge.sendTypedMessage)
+            "ar99_ota_status",
+            // Nex / BLE debug (NexEventUtils —Bridge.sendTypedMessage)
             "send_command_to_ble",
             "receive_command_from_ble",
             "miniapp_selected",
@@ -391,6 +396,21 @@ class BluetoothSdkModule : Module() {
                             sdkListener,
                     )
             deviceManager = DeviceManager.getInstance()
+            val activity = appContext.currentActivity
+            val activityIsResumed =
+                    (activity as? LifecycleOwner)
+                            ?.lifecycle
+                            ?.currentState
+                            ?.isAtLeast(Lifecycle.State.RESUMED) == true
+            if (activityIsResumed) {
+                deviceManager?.refreshForegroundServiceTypes()
+            }
+        }
+
+        OnActivityEntersForeground {
+            // Re-run after runtime permission dialogs and every app resume. This is the safe
+            // point to add Android's while-in-use location foreground-service type.
+            deviceManager?.refreshForegroundServiceTypes()
         }
 
         OnDestroy {
@@ -677,6 +697,18 @@ class BluetoothSdkModule : Module() {
 
         SdkCoroutineFunction("sendOtaQueryStatus") { -> requireSdk().sendOtaQueryStatus().values }
 
+        AsyncFunction("startAr99OtaFromFile") { path: String -> requireSdk().startAr99OtaFromFile(path) }
+
+        AsyncFunction("cancelAr99Ota") { requireSdk().cancelAr99Ota() }
+
+        AsyncFunction("sendAr99FactoryReset") { requireSdk().sendAr99FactoryReset() }
+
+
+        Function("buildAr99OtaSignature") { secret: String, appName: String, currentVersion: String, serialNumber: String, nonce: String ->
+            val raw = secret + appName + "juxinOTA" + currentVersion + serialNumber.trim() + nonce
+            val digest = MessageDigest.getInstance("MD5").digest(raw.toByteArray(Charsets.UTF_8))
+            digest.joinToString("") { "%02x".format(it.toInt() and 0xff) }
+        }
         // MARK: - Version Info Commands
 
         SdkCoroutineFunction("requestVersionInfo") { -> requireSdk().requestVersionInfo().toMap() }
@@ -860,7 +892,7 @@ class BluetoothSdkModule : Module() {
         }
 
         // Runs on Dispatchers.IO, not the shared Expo AsyncFunctionQueue: bz2/tar
-        // extraction of the 100–350MB model is a multi-minute, CPU-bound job. On the
+        // extraction of the 100—50MB model is a multi-minute, CPU-bound job. On the
         // shared queue it froze every other native call in the app until it finished.
         AsyncFunction("extractTarBz2") Coroutine { sourcePath: String, destinationPath: String ->
             withContext(Dispatchers.IO) {
@@ -937,12 +969,14 @@ private fun Map<String, Any>?.toMentraDevice(): Device? {
     val model = values["model"] as? String ?: return null
     val name = values["name"] as? String ?: return null
     val address = values["address"] as? String
+    val projectName = values["projectName"] as? String
     val rssi = (values["rssi"] as? Number)?.toInt()
     val id = values["id"] as? String
     return Device(
             model = DeviceModel.fromDeviceType(model),
             name = name,
             address = address?.takeIf { it.isNotBlank() },
+            projectName = projectName?.takeIf { it.isNotBlank() },
             rssi = rssi,
             id = id?.takeIf { it.isNotBlank() } ?: address?.takeIf { it.isNotBlank() } ?: "$model:$name",
     )

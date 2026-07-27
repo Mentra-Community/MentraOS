@@ -68,7 +68,7 @@ class MentraBluetoothSdk private constructor(
     }
 
     companion object {
-        private val DEFAULT_DEVICE_KEYS = setOf("default_wearable", "device_name", "device_address")
+        private val DEFAULT_DEVICE_KEYS = setOf("default_wearable", "device_name", "device_address", "project_name")
         private val SCAN_STATE_KEYS = setOf("searching", "searchingController", "searchResults")
         private const val DEFAULT_SCAN_TIMEOUT_MS = 15_000L
         private const val DEFAULT_REQUEST_TIMEOUT_MS = 15_000L
@@ -257,6 +257,7 @@ class MentraBluetoothSdk private constructor(
             DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "default_wearable", device.model.deviceType)
             DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "device_name", device.name)
             DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "device_address", device.address ?: "")
+            DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "project_name", device.projectName ?: "")
         } finally {
             suppressDefaultDeviceEvents = false
         }
@@ -269,6 +270,7 @@ class MentraBluetoothSdk private constructor(
             DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "default_wearable", "")
             DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "device_name", "")
             DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "device_address", "")
+            DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "project_name", "")
         } finally {
             suppressDefaultDeviceEvents = false
         }
@@ -1203,6 +1205,20 @@ class MentraBluetoothSdk private constructor(
 
     internal suspend fun sendOtaQueryStatus(): OtaQueryResult = queryOtaStatus()
 
+    fun startAr99OtaFromFile(path: String): Boolean {
+        requireGlassesConnected("start AR99 OTA")
+        return deviceManager.startAr99OtaFromFile(path)
+    }
+
+    fun cancelAr99Ota() {
+        deviceManager.cancelAr99Ota()
+    }
+
+    fun sendAr99FactoryReset() {
+        requireGlassesConnected("factory reset AR99")
+        deviceManager.sendAr99FactoryReset()
+    }
+
     private suspend fun getFreshGlassesStatus(): GlassesStatus {
         val status = getRawGlassesStatus()
         if (!status.connected || status.buildNumber.isNotBlank()) {
@@ -1348,10 +1364,12 @@ class MentraBluetoothSdk private constructor(
         val name = core["device_name"] as? String ?: return null
         if (model.isBlank() || name.isBlank()) return null
         val address = (core["device_address"] as? String)?.takeIf { it.isNotBlank() }
+        val projectName = (core["project_name"] as? String)?.takeIf { it.isNotBlank() }
         return Device(
             model = DeviceModel.fromDeviceType(model),
             name = name,
             address = address,
+            projectName = projectName,
         )
     }
 
@@ -2138,3 +2156,7 @@ class MentraBluetoothSdk private constructor(
         }
     }
 }
+
+
+
+

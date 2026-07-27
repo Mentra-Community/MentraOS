@@ -12,7 +12,7 @@ import {translate} from "@/i18n/translate"
 import {useNavigationStore} from "@/stores/navigation"
 import {getNextOnboardingRoute} from "@/utils/onboarding/getNextOnboardingRoute"
 
-type CheckState = "checking" | "update_available" | "no_update" | "error"
+type CheckState = "checking" | "update_available" | "no_update" | "dev_build" | "error"
 
 export default function OtaCheckForUpdatesScreen() {
   const {theme} = useAppTheme()
@@ -30,6 +30,9 @@ export default function OtaCheckForUpdatesScreen() {
 
   const [checkState, setCheckState] = useState<CheckState>("checking")
   const [isUpdateRequired, setIsUpdateRequired] = useState(true) // Default to required if not specified
+  const [isDowngradeUpdate, setIsDowngradeUpdate] = useState(false)
+  /** Distinguishes retryable network trouble from a dead pin (remedy: update the app). */
+  const [errorKind, setErrorKind] = useState<"network" | "pin_unavailable">("network")
   const [checkKey, setCheckKey] = useState(0)
   /** Incremented each effect run so stale async performCheck exits before mutating state. */
   const performCheckGenerationRef = useRef(0)
@@ -118,9 +121,20 @@ export default function OtaCheckForUpdatesScreen() {
           return
         }
 
-        if (!result.hasCheckCompleted) {
-          console.log("📱 OTA check did not complete - setting error state")
+        if (result.skippedReason === "dev_build") {
+          // Development builds are exempt from OTA. Shown as its own state — NOT
+          // "up to date", which would be an unverified claim.
+          console.log("OTA: Check skipped (dev_build) - glasses run a development build")
           checkCompletedRef.current = true
+          engine.ota.clearUpdateAvailable()
+          setCheckState("dev_build")
+          return
+        }
+
+        if (!result.hasCheckCompleted) {
+          console.log(`📱 OTA check did not complete (${result.checkFailureReason ?? "network"}) - setting error state`)
+          checkCompletedRef.current = true
+          setErrorKind(result.checkFailureReason === "pin_unavailable" ? "pin_unavailable" : "network")
           setCheckState("error")
           return
         }
@@ -129,6 +143,7 @@ export default function OtaCheckForUpdatesScreen() {
           console.log("📱 Updates available - setting update_available state")
           checkCompletedRef.current = true
           setIsUpdateRequired(result.isRequired)
+          setIsDowngradeUpdate(result.updateInfo.isDowngrade === true)
           setCheckState("update_available")
         } else {
           console.log("📱 No updates available - setting no_update state")
@@ -245,12 +260,15 @@ export default function OtaCheckForUpdatesScreen() {
           <View className="flex-1 items-center justify-center px-6">
             <Icon name="world-download" size={64} color={theme.colors.primary} />
             <View className="h-6" />
-            <Text text={translate("ota:updateAvailable", {deviceName})} className="font-semibold text-xl text-center" />
+            <Text
+              text={translate(isDowngradeUpdate ? "ota:downgradeAvailable" : "ota:updateAvailable", {deviceName})}
+              className="font-semibold text-xl text-center"
+            />
             <View className="h-4" />
             <Text
               text={
                 glassesWifiConnected
-                  ? translate("ota:updateDescription")
+                  ? translate(isDowngradeUpdate ? "ota:downgradeDescription" : "ota:updateDescription")
                   : translate("ota:updateConnectWifi", {deviceName})
               }
               className="text-sm text-center"
@@ -268,6 +286,25 @@ export default function OtaCheckForUpdatesScreen() {
             {__DEV__ && isUpdateRequired && (
               <Button preset="secondary" text="Skip (dev only)" onPress={handleContinue} />
             )}
+          </View>
+        </>
+      )
+    }
+
+    // Development build: OTA exempt — distinct from "up to date" (unverified claim).
+    if (checkState === "dev_build") {
+      return (
+        <>
+          <View className="flex-1 items-center justify-center px-6">
+            <Icon name="settings" size={64} color={theme.colors.primary} />
+            <View className="h-6" />
+            <Text tx="ota:devBuild" className="font-semibold text-xl text-center" />
+            <View className="h-2" />
+            <Text tx="ota:devBuildNoOta" className="text-sm text-center" style={{color: theme.colors.textDim}} />
+          </View>
+
+          <View className="justify-center items-center mb-6">
+            <Button preset="primary" tx="common:continue" flexContainer onPress={handleContinue} />
           </View>
         </>
       )
@@ -292,7 +329,32 @@ export default function OtaCheckForUpdatesScreen() {
       )
     }
 
-    // Error state - retry only, no skip (except dev mode)
+    // Dead pin: retrying cannot help — the update info for this app build does not
+    // exist; the remedy is a newer app. Let the user continue rather than trapping
+    // them on a retry loop.
+    if (checkState === "error" && errorKind === "pin_unavailable") {
+      return (
+        <>
+          <View className="flex-1 items-center justify-center px-6">
+            <Icon name="alert-triangle" size={64} color={theme.colors.error} />
+            <View className="h-6" />
+            <Text tx="ota:updateInfoUnavailable" className="font-semibold text-xl text-center" />
+            <View className="h-2" />
+            <Text
+              tx="ota:updateInfoUnavailableMessage"
+              className="text-sm text-center"
+              style={{color: theme.colors.textDim}}
+            />
+          </View>
+
+          <View className="justify-center items-center mb-6">
+            <Button preset="primary" tx="common:continue" flexContainer onPress={handleContinue} />
+          </View>
+        </>
+      )
+    }
+
+    // Network-ish error state - retry only, no skip (except dev mode)
     return (
       <>
         <View className="flex-1 items-center justify-center px-6">

@@ -19,6 +19,7 @@ public enum DeviceModel: String {
     case z100
     case frame
     case nimo
+    case ar99
     case simulated
     case r1
 
@@ -40,6 +41,8 @@ public enum DeviceModel: String {
             DeviceTypes.FRAME
         case .nimo:
             DeviceTypes.NIMO
+        case .ar99:
+            DeviceTypes.AR99
         case .simulated:
             DeviceTypes.SIMULATED
         case .r1:
@@ -65,6 +68,8 @@ public enum DeviceModel: String {
             .frame
         case DeviceTypes.NIMO:
             .nimo
+        case DeviceTypes.AR99:
+            .ar99
         case DeviceTypes.SIMULATED:
             .simulated
         case ControllerTypes.R1:
@@ -80,6 +85,7 @@ public struct Device: Identifiable, Equatable, CustomStringConvertible {
     public let name: String
     /// CoreBluetooth identifier when available.
     public let identifier: String?
+    public let projectName: String?
     public let rssi: Int?
     /// Stable app-facing scan-result key. Do not parse; use typed fields instead.
     public let id: String
@@ -88,12 +94,14 @@ public struct Device: Identifiable, Equatable, CustomStringConvertible {
         model: DeviceModel,
         name: String,
         identifier: String? = nil,
+        projectName: String? = nil,
         rssi: Int? = nil,
         id: String? = nil
     ) {
         self.model = model
         self.name = name
         self.identifier = identifier
+        self.projectName = projectName
         self.rssi = rssi
         self.id = id ?? identifier.flatMap { $0.isEmpty ? nil : $0 } ?? "\(model.deviceType):\(name)"
     }
@@ -111,6 +119,9 @@ public struct Device: Identifiable, Equatable, CustomStringConvertible {
         if let identifier, !identifier.isEmpty {
             values["address"] = identifier
         }
+        if let projectName, !projectName.isEmpty {
+            values["projectName"] = projectName
+        }
         if let rssi {
             values["rssi"] = rssi
         }
@@ -121,11 +132,13 @@ public struct Device: Identifiable, Equatable, CustomStringConvertible {
         guard let model = stringValue(values, "model") else { return nil }
         guard let name = stringValue(values, "name") else { return nil }
         let identifier = stringValue(values, "address").flatMap { $0.isEmpty ? nil : $0 }
+        let projectName = stringValue(values, "projectName").flatMap { $0.isEmpty ? nil : $0 }
         let rssi = intValue(values["rssi"])
         self.init(
             model: DeviceModel.fromDeviceType(model),
             name: name,
             identifier: identifier,
+            projectName: projectName,
             rssi: rssi,
             id: stringValue(values, "id")
         )

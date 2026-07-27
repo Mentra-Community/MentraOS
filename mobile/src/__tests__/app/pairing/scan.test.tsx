@@ -17,6 +17,7 @@ jest.mock("@/../../cloud/packages/types/src", () => ({
     LIVE: "Mentra Live",
     G1: "Even Realities G1",
     G2: "Even Realities G2",
+    AR99: "AR99",
   },
 }))
 
@@ -93,6 +94,11 @@ jest.mock("@/components/ui/GlassView", () => {
   return MockGlassView
 })
 jest.mock("@/utils/getGlassesImage", () => ({
+  AR99_MODEL_OPTIONS: [{projectName: "AR99", displayName: "Xingyi AR99"}],
+  getAr99DisplayName: jest.fn((projectName?: string) => {
+    return projectName === "AR99" ? "Xingyi AR99" : "AR99"
+  }),
+  getAr99ImageSource: jest.fn(() => 1),
   getGlassesOpenImage: jest.fn(() => 1),
 }))
 jest.mock("@/components/ignite", () => {
@@ -231,7 +237,7 @@ describe("pairing scan screen", () => {
   it("back-out delegates cleanup to the live abandonAttempt and keeps the pending marker", async () => {
     // No entry snapshot: the abandon decision must come from the LIVE
     // default-device read, because a pairing can promote while the flow is
-    // open — an entry snapshot would forget that brand-new pairing.
+    // open - an entry snapshot would forget that brand-new pairing.
     render(<SelectGlassesBluetoothScreen />)
 
     const backHandler = (focusEffectPreventBack as jest.Mock).mock.calls[0][0]
@@ -338,5 +344,44 @@ describe("pairing scan screen", () => {
         deviceName: "NOTREQUIREDSKIP",
       })
     })
+  })
+  it("filters AR99 scan results to the selected AR99 project", async () => {
+    ;(useLocalSearchParams as jest.Mock).mockReturnValue({deviceModel: "AR99", ar99ProjectName: "AR99"})
+    useCoreStore.setState({
+      searchResults: [
+        {id: "ar99", model: "AR99", projectName: "AR99", name: "SN: 123456", address: "AA:BB:CC:DD:EE:11"},
+        {id: "af99", model: "AR99", projectName: "AF99", name: "SN: 654321", address: "AA:BB:CC:DD:EE:22"},
+        {id: "hvxf", model: "AR99", projectName: "HVXF", name: "MAC: 22:33:44:55:66:77", address: "AA:BB:CC:DD:EE:33"},
+        {id: "missing", model: "AR99", name: "AR99_123456", address: "AA:BB:CC:DD:EE:44"},
+      ],
+    })
+
+    const {getByText, queryByText} = render(<SelectGlassesBluetoothScreen />)
+
+    await waitFor(() => {
+      expect(engine.pairing.scan).toHaveBeenCalledWith("AR99")
+    })
+
+    expect(getByText("Xingyi AR99")).toBeTruthy()
+    expect(queryByText("Xingyi AR99 CAT")).toBeNull()
+    expect(queryByText("HOLOVOX Luna")).toBeNull()
+    expect(queryByText("AR99_123456")).toBeNull()
+  })
+
+  it("does not wildcard AR99 results when no project was selected", async () => {
+    ;(useLocalSearchParams as jest.Mock).mockReturnValue({deviceModel: "AR99"})
+    useCoreStore.setState({
+      searchResults: [
+        {id: "ar99", model: "AR99", projectName: "AR99", name: "SN: 123456", address: "AA:BB:CC:DD:EE:55"},
+      ],
+    })
+
+    const {queryByText} = render(<SelectGlassesBluetoothScreen />)
+
+    await waitFor(() => {
+      expect(engine.pairing.scan).toHaveBeenCalledWith("AR99")
+    })
+
+    expect(queryByText("Xingyi AR99")).toBeNull()
   })
 })

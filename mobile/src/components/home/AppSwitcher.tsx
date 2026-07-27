@@ -301,12 +301,23 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
   //   return useAppletStatusStore.getState().apps.filter((a) => activePackageNames.includes(a.packageName))
   // }, [activePackageNames])
 
+  // While a card tap is mid-flight (selection → app opens under the drawer →
+  // drawer closes ~750ms later), the store updates several times
+  // (last-open-time save, foregrounded flip) and each poll would re-sort the
+  // VISIBLE card stack — the tapped card jumps to the end of the list and the
+  // whole strip thrashes left/right ("seizure" during open,
+  // rep_01KY6D2EMFXC8JQKZH9EGMZ5G3). Freeze the rendered order for the whole
+  // selection window and apply the final order once, after the close finishes.
+  const selectionInFlight = useRef(false)
+  const directAppsRef = useRef(directApps)
+  directAppsRef.current = directApps
+
   useEffect(() => {
+    if (selectionInFlight.current) return
     let cancelled = false
     sortAppsByLastOpenTime(directApps).then((sorted) => {
-      if (!cancelled) setApps(sorted)
+      if (!cancelled && !selectionInFlight.current) setApps(sorted)
     })
-    // console.log("apps screenshot", apps.map((a) => a.screenshot))
     return () => {
       cancelled = true
     }
@@ -637,6 +648,10 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
       return
     }
 
+    // Freeze the visible card order until the drawer has fully closed (see
+    // the sort effect above). Released in handleClose's settle timeout.
+    selectionInFlight.current = true
+
     // Handle apps with custom routes (offline or online with offlineRoute override)
     if (applet.offlineRoute && isOfflineHosted(applet.packageName)) {
       // Registry-hosted offline apps render in the Compositor overlay like
@@ -672,6 +687,14 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
     setTimeout(() => {
       swipeProgress.value = 0
       // goToIndex(apps.length - 1, true)
+      // Selection window over (drawer is fully hidden): unfreeze the card
+      // order and apply the sort that was suppressed during the open/close.
+      if (selectionInFlight.current) {
+        selectionInFlight.current = false
+        sortAppsByLastOpenTime(directAppsRef.current).then((sorted) => {
+          if (!selectionInFlight.current) setApps(sorted)
+        })
+      }
     }, 250)
   }, [apps.length])
 
