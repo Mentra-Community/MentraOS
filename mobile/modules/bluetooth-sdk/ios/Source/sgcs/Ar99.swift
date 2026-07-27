@@ -754,7 +754,7 @@ final class Ar99: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SGCM
 
     // MARK: - Network and misc
 
-    func requestWifiScan() {}
+    func requestWifiScan(scanId _: String?) {}
     func sendWifiCredentials(_: String, _: String) {}
     func forgetWifiNetwork(_: String) {}
     func sendHotspotState(_: Bool) {}
