@@ -48,7 +48,12 @@ final class BluetoothSdkAnalytics {
     func initializeGlassesStatus(_ status: GlassesStatus) {
         stateQueue.sync {
             lastConnected = status.analyticsConnected
-            identifiedCapturedForConnection = status.analyticsConnected
+            // Only treat identification as already captured when a valid serial is
+            // present at init. If the glasses are connected but the serial has not
+            // arrived yet (Mentra Live fills it via version_info after connect), leave
+            // this false so the identify event still fires once the serial arrives.
+            identifiedCapturedForConnection =
+                status.analyticsConnected && status.serialNumber.validManufacturingSerial != nil
         }
     }
 
@@ -88,7 +93,9 @@ final class BluetoothSdkAnalytics {
                     properties["glasses_model"] = status.deviceModel
                 }
                 capture(event: "bluetooth_sdk_glasses_connected", properties: properties, configuration: configuration)
-                return
+                // Fall through: a serial already present at connect time (G1/Ar99
+                // report it in the advertisement) should be identified now rather than
+                // waiting for some later, unrelated glasses-store update to run.
             }
 
             guard !identifiedCapturedForConnection,

@@ -2023,6 +2023,11 @@ class DeviceManager {
         shouldSendBootingMessage = true // Reset for next first connect
         // clear glasses properties:
         DeviceStore.apply("glasses", "deviceModel", "")
+        // A manufacturing serial is session-bound. Clear it on every disconnect so a
+        // previously connected pair's serial can never be reported for the next
+        // connection (e.g. switching from G1/Ar99, which populate it from the
+        // advertisement, to a model that never writes it, like G2).
+        DeviceStore.apply("glasses", "serialNumber", "")
         DeviceStore.apply("glasses", "fullyBooted", false)
         DeviceStore.apply("glasses", "connected", false)
         DeviceStore.apply(
