@@ -35,6 +35,7 @@ describe("diffBluetoothSettingsForPush", () => {
         SETTINGS.default_wearable.key,
         SETTINGS.device_name.key,
         SETTINGS.device_address.key,
+        SETTINGS.project_name.key,
         SETTINGS.default_controller.key,
         SETTINGS.pending_controller.key,
         SETTINGS.controller_device_name.key,

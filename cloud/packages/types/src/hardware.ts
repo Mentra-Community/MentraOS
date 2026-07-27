@@ -176,6 +176,20 @@ export const HARDWARE_CAPABILITIES: Record<string, Capabilities> = {
   [vuzixZ100.modelName]: vuzixZ100,
   [DeviceTypes.MACH1]: vuzixZ100, // Mach1 uses same Vuzix Ultralite hardware as Z100
   [nimo.modelName]: nimo,
+  [DeviceTypes.AR99]: {
+    ...evenRealitiesG1,
+    modelName: DeviceTypes.AR99,
+    display: {
+      ...evenRealitiesG1.display,
+      canDisplayBitmap: false,
+    },
+    hasMicrophone: true,
+    hasOta: true,
+    microphone: {
+      count: 1,
+      hasVAD: false,
+    },
+  },
   [none.modelName]: none,
 };
 
