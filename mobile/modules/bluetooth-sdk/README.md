@@ -158,7 +158,7 @@ enterprise device deployments:
 
 - `bluetooth_sdk_started`: sent once per app runtime after the native SDK starts.
 - `bluetooth_sdk_glasses_connected`: sent when SDK status transitions from not connected to connected.
-- `bluetooth_sdk_glasses_identified`: sent once per connection after the SDK receives a valid manufacturing serial from the glasses. Mentra Live requires compatible BES firmware and `asg_client` software for this event.
+- `bluetooth_sdk_glasses_identified`: sent once per connection after the SDK receives a valid manufacturing serial from the glasses. This fires for every supported model that reports a serial. G1 and Ar99 decode the serial from the glasses' BLE advertisement, so they emit this event as soon as this SDK version ships. Mentra Live instead reports the serial provisioned in BES NV storage, which requires compatible BES firmware and `asg_client` software.
 
 Analytics delivery is fire-and-forget: events are submitted asynchronously, do
 not block Bluetooth SDK behavior, and are not retried if delivery fails.
@@ -197,15 +197,18 @@ Captured properties include `event_source`, `sdk_platform`, `sdk_surface`,
 the platform-specific `app_package` or `app_bundle_identifier`, OS
 platform/version, and `event_kind`. Connection events also include
 `fully_booted` and a glasses model value when known. The identification event
-intentionally includes the provisioned manufacturing serial as
-`glasses_device_id`, with `glasses_device_id_type=manufacturing_serial`, so
-Mentra can correlate enterprise fleet deployments.
+intentionally includes the glasses manufacturing serial as `glasses_device_id`,
+with `glasses_device_id_type=manufacturing_serial`, so Mentra can correlate
+fleet deployments across supported models. This serial identifies the glasses
+hardware, not the user or the host phone. Its source depends on the model:
+Mentra Live reports the serial provisioned in BES NV storage, while G1 and Ar99
+decode it from the glasses' BLE advertisement / manufacturer data.
 
-The SDK does not upload BLE MAC addresses, CoreBluetooth identifiers, Android
-device serials, Bluetooth device names, user ids, tokens, Wi-Fi credentials,
-microphone data, photos, or transcripts. PostHog receives a locally generated
-anonymous SDK install id as `distinct_id`, and events include
-`$process_person_profile: false`.
+Apart from that glasses serial, the SDK does not upload BLE MAC addresses,
+CoreBluetooth identifiers, the host phone's Android device serial, Bluetooth
+device names, user ids, tokens, Wi-Fi credentials, microphone data, photos, or
+transcripts. PostHog receives a locally generated anonymous SDK install id as
+`distinct_id`, and events include `$process_person_profile: false`.
 
 ## React Hooks
 
