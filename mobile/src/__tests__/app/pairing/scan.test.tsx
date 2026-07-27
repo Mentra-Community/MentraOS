@@ -175,7 +175,7 @@ describe("pairing scan screen", () => {
     )
     ;(engine.glasses.hasDefaultDevice as jest.Mock).mockResolvedValue(true)
     ;(useLocalSearchParams as jest.Mock).mockReturnValue({deviceModel: "Mentra Live"})
-    // history models the stack after push("/pairing/loading") 鈥?only the
+    // history models the stack after push("/pairing/loading") — only the
     // kickoff-failure guard reads it.
     ;(useNavigationStore.getState as jest.Mock).mockReturnValue({
       replace,
@@ -219,7 +219,7 @@ describe("pairing scan screen", () => {
       })
     })
 
-    // Two-phase identity: picking a device must NOT write the default identity -
+    // Two-phase identity: picking a device must NOT write the default identity —
     // the scan marks the model pending and the native layer promotes on success.
     expect(engine.pairing.setDefault).not.toHaveBeenCalled()
     expect(useSettingsStore.getState().getSetting(SETTINGS.device_name.key)).toBe("")
@@ -299,7 +299,7 @@ describe("pairing scan screen", () => {
   it("suppresses the kickoff-failure route when the user already left loading", async () => {
     jest.useFakeTimers()
     setPlatformOS("android")
-    // The user backed out of /pairing/loading during the 2s kickoff delay 鈥?
+    // The user backed out of /pairing/loading during the 2s kickoff delay —
     // the stale rejection must not yank them to the failure screen.
     ;(useNavigationStore.getState as jest.Mock).mockReturnValue({
       replace,

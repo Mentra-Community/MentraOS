@@ -200,6 +200,8 @@ class Bridge {
                 if let rssi {
                     newResult["rssi"] = rssi
                 }
+                // Keep the public searchResults array stable as glasses are added or removed.
+                // Duplicate discoveries refresh their existing row; only new glasses append.
                 let uniqueResults = mergeStableSearchResults(
                     searchResults,
                     newResult: newResult,
@@ -209,6 +211,7 @@ class Bridge {
             }
         }
     }
+
     private static func mergeStableSearchResults(
         _ currentResults: [[String: Any]],
         newResult: [String: Any],

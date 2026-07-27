@@ -20,7 +20,7 @@ export const ConnectDeviceButton = () => {
   const glassesConnected = glassesStatus.state === "connected"
   const isSearching = useEngineSnapshot(engine.pairing.scanning, (onChange) => engine.pairing.onScanning(onChange))
   // Same busy source as home's DeviceStatus: an active scan OR the native link
-  // layer mid connect/bond 鈥?either way a tap must cancel, not start a second
+  // layer mid connect/bond — either way a tap must cancel, not start a second
   // connect.
   const pairingReadiness = useEngineSnapshot(engine.pairing.readiness, (onChange) =>
     engine.pairing.onReadiness(onChange),
@@ -47,7 +47,7 @@ export const ConnectDeviceButton = () => {
 
       // A `paired` identity snapshot does not imply a native device to connect
       // to (the settings echo can outlive the native pairing). Without a
-      // device, connectDefault() throws 鈥?route back into pairing for the
+      // device, connectDefault() throws — route back into pairing for the
       // already-selected model instead of surfacing an error alert. Fail open
       // on a read error: connectDefault()'s catch is the pre-guard behavior.
       if (!(await engine.glasses.hasDefaultDevice().catch(() => true))) {

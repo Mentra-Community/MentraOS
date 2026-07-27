@@ -340,7 +340,7 @@ function withAndroidManifestModifications(config: any) {
 
       // Inject the Mapbox runtime token (pk....) as manifest meta-data
       // `com.mapbox.token`. NavigationManager.kt reads this tag from the
-      // merged manifest at boot and passes it to MapboxOptions.accessToken --
+      // merged manifest at boot and passes it to MapboxOptions.accessToken —
       // the same provisioning shape the Google geo key above uses. Public
       // token, safe to ship. The secret Downloads:Read token (sk....) is
       // build-time-only (~/.gradle/gradle.properties) and never reaches the
@@ -546,7 +546,7 @@ function withGradlePropertiesModifications(config: any) {
  * The native LC3 codec lives inside `modules/bluetooth-sdk/android/lc3Lib`
  * (it moved from the legacy `core` module during the bluetooth-sdk refactor).
  * The bluetooth-sdk's build.gradle references `implementation project(':lc3Lib')`,
- * so we have to register that gradle subproject pointing at the right path --
+ * so we have to register that gradle subproject pointing at the right path —
  * Expo prebuild doesn't generate this on its own.
  */
 function withSettingsGradleModifications(config: any) {

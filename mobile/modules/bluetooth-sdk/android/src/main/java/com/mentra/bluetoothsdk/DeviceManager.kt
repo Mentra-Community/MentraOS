@@ -701,7 +701,7 @@ class DeviceManager {
         var borderRadius: Int? = null
     )
 
-    // Scene slots —one whole SceneFrame per view (main/dashboard), parallel to
+    // Scene slots — one whole SceneFrame per view (main/dashboard), parallel to
     // viewStates. When a slot holds a scene, viewStates carries a "scene"
     // sentinel so sendCurrentState routes here. Holding the WHOLE frame keeps
     // native re-dispatch coherent (dashboard exit re-applies a complete scene,
@@ -739,7 +739,7 @@ class DeviceManager {
     /**
      * Marks glasses-mic audio as alive for the 10s reinit watchdog. SGCs that decode
      * audio themselves and feed [handlePcm] directly (e.g. Nimo's Opus path) must call
-     * this per uplink packet —otherwise the watchdog keeps re-enabling a working mic.
+     * this per uplink packet — otherwise the watchdog keeps re-enabling a working mic.
      */
     fun reportGlassesAudioActivity() {
         lastLc3Event = System.currentTimeMillis()
@@ -1446,7 +1446,7 @@ class DeviceManager {
         val title = parsePlaceholders(layout.getString("title", " "))
         val data = layout["data"] as? String
 
-        // Optional container position/size —used by bitmap_view and positioned_text (G2).
+        // Optional container position/size — used by bitmap_view and positioned_text (G2).
         val bmpX = (layout["x"] as? Number)?.toInt()
         val bmpY = (layout["y"] as? Number)?.toInt()
         val bmpWidth = (layout["width"] as? Number)?.toInt()
@@ -1498,7 +1498,7 @@ class DeviceManager {
             // Legacy→scene handoff: stale legacy content (e.g. a cloud app's
             // text wall) must not linger under the scene's elements.
             // clearDisplay is the per-device "wipe what's there" (blank-in-place
-            // on G2 —no page rebuild).
+            // on G2 — no page rebuild).
             val prevLegacyType = viewStates[stateIndex].layoutType
             if (prevLegacyType.isNotEmpty() && prevLegacyType != "clear_view" && prevLegacyType != "scene") {
                 sgc?.clearDisplay()
@@ -1515,7 +1515,7 @@ class DeviceManager {
         }
 
         // Store the REDISPATCH form: any later sendCurrentState (dashboard
-        // exit, head-up return) must repaint the whole frame —the original
+        // exit, head-up return) must repaint the whole frame — the original
         // annotations are only valid for the first dispatch right now.
         sceneStates[stateIndex] =
             frame.copy(replay = true, elements = frame.elements.map { it.copy(change = "created") })
@@ -1527,7 +1527,7 @@ class DeviceManager {
         }
     }
 
-    /** Guarded scene dispatch —mirrors sendCurrentState's send conditions. */
+    /** Guarded scene dispatch — mirrors sendCurrentState's send conditions. */
     private fun dispatchSceneFrame(frame: SceneFrame) {
         if (screenDisabled) return
         if (sgc?.type?.contains(DeviceTypes.SIMULATED) == true) return
@@ -1911,7 +1911,7 @@ class DeviceManager {
         val activeSgc = sgc
         if (activeSgc == null) {
             Bridge.log(
-                "MAN: PHOTO PIPELINE —sgc is null (glasses not connected); dropping requestId=${routed.requestId}"
+                "MAN: PHOTO PIPELINE — sgc is null (glasses not connected); dropping requestId=${routed.requestId}"
             )
             return
         }
@@ -1950,7 +1950,7 @@ class DeviceManager {
             // Auto-reconnect paths (boot, BT toggle, app launch before perm flow)
             // may fire before user has granted runtime Bluetooth permissions on Android 12+.
             // Bail out instead of crashing with SecurityException on startScan / getRemoteName.
-            Bridge.log("MAN: connectDefault skipped —bluetooth runtime permissions not granted")
+            Bridge.log("MAN: connectDefault skipped — bluetooth runtime permissions not granted")
             return
         }
         initSGC(defaultWearable)
@@ -1969,7 +1969,7 @@ class DeviceManager {
             return
         }
         if (!hasBluetoothPermissions()) {
-            Bridge.log("MAN: connectDefaultController skipped —bluetooth runtime permissions not granted")
+            Bridge.log("MAN: connectDefaultController skipped — bluetooth runtime permissions not granted")
             return
         }
         initController(defaultController)

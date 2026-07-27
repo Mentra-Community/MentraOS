@@ -657,7 +657,7 @@ public class Bridge private constructor() {
             sendTypedMessage("mtk_update_complete", eventBody as Map<String, Any>)
         }
 
-        /** Send ota_start_ack —glasses confirmed receipt of ota_start command */
+        /** Send ota_start_ack — glasses confirmed receipt of ota_start command */
         @JvmStatic
         fun sendOtaStartAck() {
             val eventBody = HashMap<String, Any>()

@@ -154,7 +154,7 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
       }
       // A `paired` identity snapshot does not imply a native device to connect
       // to (the settings echo can outlive the native pairing). Without a
-      // native default device, connectDefault() throws 鈥?route back into
+      // native default device, connectDefault() throws — route back into
       // pairing for the already-selected model instead of erroring. Fail open
       // on a read error: connectDefault()'s catch is the pre-guard behavior.
       if (!(await engine.glasses.hasDefaultDevice().catch(() => true))) {
@@ -185,12 +185,12 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
 
   // Pending selection: a model was chosen but pairing never completed (abandoned
   // mid-flow, or an orphaned identity demoted at boot). Offer to finish pairing
-  // that model 鈥?or start over with a different one 鈥?instead of a Connect
+  // that model — or start over with a different one — instead of a Connect
   // button that has no device to connect to.
   //
   // NOT when the glasses are already connected: right after a promotion, the
   // BLE link is up while the save_setting echoes are still landing, so the JS
-  // identity is momentarily still `pending` 鈥?render the normal connected card
+  // identity is momentarily still `pending` — render the normal connected card
   // (with the pending model as its display name) instead of finish-pairing
   // actions for a device that is already paired and connected.
   if (identity.kind === "pending" && !glassesConnected) {
@@ -231,8 +231,8 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
     )
   }
 
-  // The card body's model name/image: the paired model, or 鈥?in the mid-relay
-  // window above (connected while the promotion echoes land) 鈥?the pending one.
+  // The card body's model name/image: the paired model, or — in the mid-relay
+  // window above (connected while the promotion echoes land) — the pending one.
   const displayModel = pairedModel || (identity.kind === "pending" ? identity.model : "")
   const displayName = displayModel === DeviceTypes.AR99 ? getAr99DisplayName(projectName) : displayModel
 

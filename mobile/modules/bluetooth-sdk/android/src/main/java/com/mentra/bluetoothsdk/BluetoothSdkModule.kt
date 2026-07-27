@@ -546,7 +546,7 @@ class BluetoothSdkModule : Module() {
             deviceManager?.sgc?.dbg2()
         }
 
-        // Stub on Android —iOS uses this for the jetsam stress test.
+        // Stub on Android — iOS uses this for the jetsam stress test.
         Function("getMemoryMB") { -> 0.0 }
 
         // MARK: - Incident Reporting

@@ -86,7 +86,7 @@ class MentraBluetoothSdk private constructor(
         private const val MAX_MISSED_STREAM_KEEP_ALIVE_ACKS = 3
 
         // Stream states the glasses only reach after start_stream has run past
-        // stopAllServices() —the point where every older start is actually
+        // stopAllServices() — the point where every older start is actually
         // preempted. ERROR and STOPPED are deliberately absent: an ERROR can be
         // a command-level preflight rejection emitted before stopAllServices,
         // and a STOPPED is a stop ack; neither proves older starts were killed.
@@ -1372,6 +1372,7 @@ class MentraBluetoothSdk private constructor(
             projectName = projectName,
         )
     }
+
     private fun requireBluetoothReady(operation: String) {
         val bluetoothManager = appContext.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
         val adapter =
@@ -1665,7 +1666,7 @@ class MentraBluetoothSdk private constructor(
             // start_stream has run stopAllServices() (see PREEMPTION_PROVEN_STATES).
             // ERROR must not fire it: a command-level preflight rejection (missing
             // URL, low battery, no WiFi) carries this start's streamId but is sent
-            // BEFORE stopAllServices, so older starts were not preempted —and
+            // BEFORE stopAllServices, so older starts were not preempted — and
             // rejecting one that already resolved and started its keep-alive
             // monitor would strand a live stream without keep-alives. STOPPED
             // must not fire it either: it is the stop-ack shape and proves
@@ -1693,7 +1694,7 @@ class MentraBluetoothSdk private constructor(
                     if (!event.streamId.isNullOrBlank() && event.willRetry == true) {
                         // The glasses flag errors their publisher will retry with
                         // `willRetry` (emitting side lands in PR #3488), so keep the
-                        // start pending for the retry's verdict —`reconnected` or
+                        // start pending for the retry's verdict — `reconnected` or
                         // `streaming` on success, `reconnect_failed` or the
                         // streamId-less `stopped` wind-down (which reports these
                         // stashed details) on failure.
@@ -1704,7 +1705,7 @@ class MentraBluetoothSdk private constructor(
                         // publisher starts; an id-carrying error without `willRetry`
                         // is terminal (`camera_busy` emits an error and nothing else).
                         // Old firmware never sends `willRetry`, so its errors always
-                        // fail fast here —the shipped pre-#3487 Android behavior.
+                        // fail fast here — the shipped pre-#3487 Android behavior.
                         pendingStreamStarts.remove(streamId, start)
                         start.pending.reject(streamStatusException(event, "stream_start_failed"))
                     }
@@ -1742,7 +1743,7 @@ class MentraBluetoothSdk private constructor(
     // stopping whatever runs, so an id-carrying status for start X in one of
     // these states proves every lower-seq start has already been preempted.
     // Their only verdict on current firmware is a streamId-less stopped, which
-    // the id-less heuristic deliberately ignores —without this they would run
+    // the id-less heuristic deliberately ignores — without this they would run
     // out the 30s timeout instead of failing fast.
     private fun rejectPreemptedStreamStarts(winnerSeq: Long) {
         for ((streamId, start) in pendingStreamStarts) {
@@ -1785,7 +1786,7 @@ class MentraBluetoothSdk private constructor(
         if (event.state == StreamState.ERROR) {
             // An id-less error is a command-level preflight rejection (missing
             // URL, low battery, no WiFi) emitted synchronously, while lifecycle
-            // statuses arrive async —so with overlapping starts the wire is
+            // statuses arrive async — so with overlapping starts the wire is
             // genuinely ambiguous about which start it answers. Attribute it to
             // the newest pending start: the common case is a later start
             // failing preflight while an earlier one is already emitting
@@ -1801,7 +1802,7 @@ class MentraBluetoothSdk private constructor(
             val entry = pendingStreamStarts.entries.firstOrNull() ?: return null
             // A streamId-less STOPPED is the glasses' stop-ack for a PREVIOUS
             // stream (their stop ack carries no streamId), not a verdict on the
-            // pending start —a start_stream that replaces a running publisher
+            // pending start — a start_stream that replaces a running publisher
             // emits exactly this sequence (stopped -> initializing -> streaming).
             // Attributing it here would reject a start that is about to succeed.
             // After a stashed `willRetry` error for the pending start, though,
@@ -1998,7 +1999,7 @@ class MentraBluetoothSdk private constructor(
         val request = synchronized(oneShotLock) { pendingWifiStatus } ?: return
         // A wifi_status carrying the explicit error field is the glasses' failure
         // verdict for the in-flight connect: reject now instead of running out the
-        // request timeout. Only the error field counts as failure —the glasses'
+        // request timeout. Only the error field counts as failure — the glasses'
         // connect sequence emits a debounced bare connected=false ~1-2s after
         // credentials while association is still in progress, and rejecting on that
         // would kill every connect attempt early.

@@ -1,6 +1,6 @@
 /**
- * glasses.settings facade 鈥?`engine.glasses.settings`: the keyed DEVICE-settings
- * surface (brightness, head-up angle, dashboard, camera/button, sensing, 鈥?. These
+ * glasses.settings facade — `engine.glasses.settings`: the keyed DEVICE-settings
+ * surface (brightness, head-up angle, dashboard, camera/button, sensing, …). These
  * are the settings the engine store auto-syncs to the glasses over the bluetooth-sdk
  * (`BLUETOOTH_SETTING_KEYS`), so `set()` both persists and pushes to the device.
  *
@@ -11,7 +11,7 @@
 import {useSettingsStore, SETTINGS, BLUETOOTH_SETTING_KEYS} from "../stores/settings"
 
 // Keys carried on BLUETOOTH_SETTING_KEYS for the device handshake that are NOT
-// user-tunable settings 鈥?auth, device/controller IDENTITY (set by pairing), and
+// user-tunable settings — auth, device/controller IDENTITY (set by pairing), and
 // internal RUNTIME flags. Kept out of the OEM-facing `available()` surface.
 const INTERNAL_KEYS = new Set<string>([
   // auth
@@ -44,12 +44,12 @@ export const glassesSettings = {
   /** Read a device setting by key (object/array values are shallow copies). */
   get: <T = unknown>(key: string): T | undefined =>
     copySettingValue(useSettingsStore.getState().getSetting(key) as T | undefined),
-  /** Write a device setting 鈥?persists and auto-syncs to the connected glasses. */
+  /** Write a device setting — persists and auto-syncs to the connected glasses. */
   set: <T = unknown>(key: string, value: T) => useSettingsStore.getState().setSetting(key, value),
   /** Subscribe to changes for one device-setting key; returns an unsubscribe. */
   onChanged: <T = unknown>(key: string, cb: (value: T | undefined) => void): (() => void) =>
     useSettingsStore.subscribe((s) => s.getSetting(key) as T | undefined, cb),
-  /** The schema descriptor for a key (type, default, options鈥?, or undefined. */
+  /** The schema descriptor for a key (type, default, options…), or undefined. */
   descriptor: (key: string) => SETTINGS[key],
   /** The device-setting keys synced to the glasses (excludes internal sync keys). */
   // Copy: callers must not be able to mutate the module-level key list.
