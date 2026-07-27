@@ -815,9 +815,12 @@ class MentraLive : SGCManager() {
             return
         }
 
-        if (state == ConnTypes.CONNECTED || state == ConnTypes.DISCONNECTED) {
-            // A manufacturing serial is session-bound. Clear it before publishing the state
-            // transition so analytics can never associate a previous pair with this connection.
+        if (state == ConnTypes.DISCONNECTED) {
+            // A manufacturing serial is session-bound. Clear it on disconnect so a previous
+            // pair's serial can never be associated with the next connection. Connect must NOT
+            // clear it: DeviceManager.disconnect already wipes it before any new connection, and
+            // clearing on CONNECTED would wipe a still-valid serial mid-session when a same-link
+            // glasses_ready (e.g. ASG restart) re-publishes CONNECTED.
             DeviceStore.apply("glasses", "serialNumber", "")
         }
 
