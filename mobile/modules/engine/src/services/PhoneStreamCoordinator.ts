@@ -88,6 +88,8 @@ export interface StartUnmanagedOptions {
   video?: StreamStartRequest["video"]
   audio?: StreamStartRequest["audio"]
   sound?: boolean
+  /** Optional Bearer token for WHIP Authorization (custom authenticated endpoints). */
+  authToken?: string
 }
 
 export interface StartManagedOptions {
@@ -314,6 +316,7 @@ export class PhoneStreamCoordinator {
           // undefined, expected an Object") — only include what was provided.
           ...(opts.video !== undefined ? {video: opts.video} : {}),
           ...(opts.audio !== undefined ? {audio: opts.audio} : {}),
+          ...(opts.authToken ? {authToken: opts.authToken} : {}),
         })
         const result = publisherStartResult(streamId, event)
         this.startLifecycle(streamId)
