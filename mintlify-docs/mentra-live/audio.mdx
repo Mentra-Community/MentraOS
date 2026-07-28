@@ -142,7 +142,8 @@ loudness gate, also called Barrier:
 - When enabled, quiet input is represented as silence while audio frames
   continue. This preserves a continuous audio timeline for voice agents.
 - When disabled, quiet center-microphone input passes through unchanged.
-- The public Bluetooth SDK default is enabled.
+- The standalone public Bluetooth SDK default is enabled. The Mentra App
+  manages separate persisted OS-level microphone preferences.
 - The SDK retains the setting and reapplies it when Mentra Live reconnects.
 
 For a voice-to-voice agent that needs continuous audio without low-level

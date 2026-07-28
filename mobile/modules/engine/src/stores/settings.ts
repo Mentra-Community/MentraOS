@@ -379,6 +379,9 @@ export const SETTINGS: Record<string, Setting> = {
     saveOnServer: true,
     persist: true,
   },
+  // The Mentra App intentionally preserves Mentra Live's historical VAD-on
+  // product default. Standalone public Bluetooth SDK hosts default VAD off so
+  // their microphone audio remains continuous.
   voice_activity_detection_enabled: {
     key: "voice_activity_detection_enabled",
     defaultValue: () => true,
@@ -1047,7 +1050,6 @@ export const useSetting = <T = any>(key: string): [T, (value: T) => AsyncResult<
   const setSetting = useSettingsStore((state) => state.setSetting)
   return [value, (newValue: T) => setSetting(key, newValue)]
 }
-
 
 
 

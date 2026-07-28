@@ -1059,7 +1059,6 @@ export interface BluetoothSdkPublicModule {
 
   setGalleryModeEnabled(enabled: boolean): Promise<SettingsAckSuccessEvent>
   setVoiceActivityDetectionEnabled(enabled: boolean): Promise<void>
-  /** Mentra Live center-mic loudness / Barrier gate (cs_swit type 10). */
   setLoudnessGateEnabled(enabled: boolean): Promise<void>
   /**
    * @deprecated Sticky action-button photo presets are deprecated. Prefer per-request
@@ -1380,7 +1379,6 @@ export type BluetoothSettingsUpdate = Partial<{
   twelve_hour_time: boolean
   gallery_mode: boolean
   voice_activity_detection_enabled: boolean
-  /** Mentra Live center-mic loudness / Barrier gate (cs_swit type 10). */
   loudness_gate_enabled: boolean
   button_photo_size: ButtonPhotoSize
   button_video_settings: {width: number; height: number; fps: number}
