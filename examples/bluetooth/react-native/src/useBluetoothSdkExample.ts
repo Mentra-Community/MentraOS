@@ -735,6 +735,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   const otaChainStartFailuresRef = useRef(0);
   const otaChainGenerationRef = useRef(0);
   const otaStartInFlightRef = useRef(false);
+  const otaCheckGenerationRef = useRef(0);
   const otaNoUpdateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const connectedDeviceKeyRef = useRef<string | null>(null);
   const otaAppIdentityRef = useRef<string | null>(null);
@@ -925,8 +926,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     void runAction('Auto-check OTA', async () => {
       let checkSucceeded = false;
       try {
-        await checkForOtaUpdateResult();
-        checkSucceeded = true;
+        checkSucceeded = (await checkForOtaUpdateResult()) !== null;
       } finally {
         autoOtaCheckInProgressRef.current = false;
         if (!checkSucceeded) {
@@ -1319,8 +1319,13 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     });
   }
 
-  async function checkForOtaUpdateResult(showNoUpdateCard = false): Promise<boolean> {
+  async function checkForOtaUpdateResult(showNoUpdateCard = false): Promise<boolean | null> {
+    const checkGeneration = otaCheckGenerationRef.current;
     const updateAvailable = await BluetoothSdk.checkForOtaUpdate();
+    if (checkGeneration !== otaCheckGenerationRef.current || !glassesConnectedRef.current) {
+      addEvent('LIVE', 'OTA check result ignored after connection changed');
+      return null;
+    }
     if (otaStartInFlightRef.current || isOtaEventInProgress(otaStatusRef.current)) {
       addEvent('LIVE', 'OTA check result ignored while update is in progress');
       return updateAvailable;
@@ -1471,8 +1476,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
           addEvent('LIVE', 'OTA complete; skipped verification because glasses Wi-Fi is unavailable');
           return;
         }
-        await checkForOtaUpdateResult(true);
-        checkSucceeded = true;
+        checkSucceeded = (await checkForOtaUpdateResult(true)) !== null;
       } finally {
         postOtaCheckInProgressRef.current = false;
         autoOtaCheckInProgressRef.current = false;
@@ -3916,6 +3920,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     }
     otaStatusRef.current = null;
     otaStartingAppIdentityRef.current = null;
+    otaCheckGenerationRef.current += 1;
     setOtaStartInFlight(false);
     hideOtaNoUpdateCard();
     setOtaStatus(null);

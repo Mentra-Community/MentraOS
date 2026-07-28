@@ -471,6 +471,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     private var otaStartingAppIdentity: String?
     private var postOtaCheckInProgress = false
     private var postOtaCheckedSessionKey: String?
+    private var otaCheckGeneration = 0
     private var otaNoUpdateHideTask: Task<Void, Never>?
     private var scanSession: ScanSession?
     private var micStartedAt: Date?
@@ -2266,11 +2267,14 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         }
     }
 
-    private func checkForOtaUpdateResult(showNoUpdateCard: Bool = false) async throws -> Bool {
-        handleOtaCheckResult(
-            try await mentraBluetoothSdk.checkForOtaUpdate(),
-            showNoUpdateCard: showNoUpdateCard
-        )
+    private func checkForOtaUpdateResult(showNoUpdateCard: Bool = false) async throws -> Bool? {
+        let checkGeneration = otaCheckGeneration
+        let updateAvailable = try await mentraBluetoothSdk.checkForOtaUpdate()
+        guard checkGeneration == otaCheckGeneration, glassesConnected else {
+            append(tag: "LIVE", text: "OTA check result ignored after connection changed")
+            return nil
+        }
+        return handleOtaCheckResult(updateAvailable, showNoUpdateCard: showNoUpdateCard)
     }
 
     private func applyVersionInfo(_ event: VersionInfoResult) {
@@ -2412,8 +2416,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                 append(tag: "LIVE", text: "OTA complete; skipped verification because glasses Wi-Fi is unavailable")
                 return
             }
-            _ = try await checkForOtaUpdateResult(showNoUpdateCard: true)
-            checkSucceeded = true
+            checkSucceeded = (try await checkForOtaUpdateResult(showNoUpdateCard: true)) != nil
         }
     }
 
@@ -2462,8 +2465,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             }
             try requireConnected("check OTA")
             try requireGlassesWifi("check for OTA updates")
-            _ = try await checkForOtaUpdateResult()
-            checkSucceeded = true
+            checkSucceeded = (try await checkForOtaUpdateResult()) != nil
         }
     }
 
@@ -2826,6 +2828,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         otaStartingAppIdentity = nil
         otaStartPending = false
         latestVersionInfo = nil
+        otaCheckGeneration += 1
         mentraLiveVersions = MentraLiveVersions()
         resetOtaDisplayProgress()
         otaStatus = nil
