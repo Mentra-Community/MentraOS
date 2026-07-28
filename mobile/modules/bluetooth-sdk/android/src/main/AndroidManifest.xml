@@ -36,6 +36,9 @@
   <uses-permission android:name="android.permission.WAKE_LOCK"/>
   <uses-permission android:name="android.permission.VIBRATE"/>
 
+  <!-- Camera-roll export of phone-delivered photos (MediaStore needs this only pre-Q) -->
+  <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28"/>
+
   <application>
     <service android:name="com.mentra.bluetoothsdk.services.ForegroundService" android:exported="false" android:foregroundServiceType="dataSync|connectedDevice|location|mediaPlayback|microphone"/>
   </application>

@@ -236,6 +236,9 @@ public final class MentraBluetoothSDK {
     // A photo response is terminal only after capture, encoding, transport, and upload.
     // Max-quality BLE fallback can legitimately exceed the generic command deadline.
     private static let photoRequestTimeoutMs = 30000
+    // Phone delivery always rides BLE end to end (capture, encode, transfer, JPEG
+    // conversion, optional camera-roll export), so it gets a longer terminal deadline.
+    private static let phoneDeliveryRequestTimeoutMs = 60000
     private static let otaBesVersionWaitMs = 5000
     private static let otaMtkVersionWaitMs = 2000
     private static let otaVersionPollMs = 100
@@ -1083,11 +1086,15 @@ public final class MentraBluetoothSDK {
         Bridge.log(
             "NATIVE: PHOTO PIPELINE [3b/6] MentraBluetoothSdk.requestPhoto requestId=\(routedRequest.requestId)"
         )
+        let deliverToPhone = routedRequest.destinationKind == .phone
         let pending = PendingResponse<PhotoResponseEvent>(operation: "photo request \(routedRequest.requestId)")
         pendingPhotoRequests[routedRequest.requestId] = pending
         DeviceManager.shared.requestPhoto(routedRequest)
         do {
-            let event = try await pending.wait(timeoutMs: MentraBluetoothSDK.photoRequestTimeoutMs)
+            let timeoutMs = deliverToPhone
+                ? MentraBluetoothSDK.phoneDeliveryRequestTimeoutMs
+                : MentraBluetoothSDK.photoRequestTimeoutMs
+            let event = try await pending.wait(timeoutMs: timeoutMs)
             pendingPhotoRequests.removeValue(forKey: routedRequest.requestId)
             return event
         } catch {

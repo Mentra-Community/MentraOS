@@ -265,6 +265,7 @@ export type {
   PhotoCaptureMetadata,
   PhotoResolvedConfig,
   PhotoCompression,
+  PhotoDestination,
   PhotoFpsRange,
   PhotoMeteredPreview,
   PhotoMode,

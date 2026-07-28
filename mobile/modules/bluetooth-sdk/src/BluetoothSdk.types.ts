@@ -260,6 +260,23 @@ export type PhotoResponseEvent =
       contentType?: string
       fileSizeBytes?: number
       timestamp: number
+      /**
+       * Local JPEG delivered for `destination: {kind: "phone"}` requests.
+       * The SDK's retention sweep (run once per transport session) deletes files
+       * older than 24 hours, and if the SDK's photo directory exceeds 256 MB it
+       * also evicts the oldest files first — so the file is normally kept for
+       * 24 hours but a burst of large captures can shorten that. Copy it
+       * elsewhere if you need it beyond the current session.
+       */
+      fileUri?: string
+      /** MIME type of {@link fileUri} (phone delivery always produces `image/jpeg`). */
+      mimeType?: string
+      /** Size of {@link fileUri} in bytes. */
+      byteCount?: number
+      /** Whether the photo was exported to the OS camera roll (phone delivery with `saveToCameraRoll`). */
+      savedToCameraRoll?: boolean
+      /** Short reason when the camera-roll export failed (e.g. permission denied); delivery still succeeded. */
+      cameraRollError?: string
     }
   | {
       type: "photo_response"
@@ -652,16 +669,58 @@ type NativeCameraFovSetting = {
 export type MicPreference = "auto" | "phone" | "glasses" | "bluetooth"
 export type MicMode = "phone" | "glasses" | "bluetoothClassic" | "bluetooth"
 
+/**
+ * Where a requested photo ends up. Exactly one arm per request; mixing an arm
+ * with the deprecated flat delivery fields throws at request time.
+ */
+export type PhotoDestination =
+  | {
+      kind: "webhook"
+      url: string
+      authToken?: string
+      /** auto|direct|ble — only meaningful for webhook delivery. */
+      transferMethod?: PhotoTransferMethod
+      /** Also keep a copy in the glasses gallery. */
+      keepOnGlasses?: boolean
+      /** Compression for the webhook upload; advisory when the BLE fallback kicks in. */
+      compress?: PhotoCompression
+    }
+  | {
+      kind: "phone"
+      /**
+       * Also export the delivered photo to the OS camera roll. The SDK never prompts
+       * for permission inside a capture: the app must already hold add-only Photos
+       * access (iOS, plus `NSPhotoLibraryAddUsageDescription`) or storage access
+       * (Android < 10); otherwise delivery still succeeds with `savedToCameraRoll: false`
+       * and a `cameraRollError`.
+       */
+      saveToCameraRoll?: boolean
+      /** Also keep a copy in the glasses gallery (requires the PR-2a firmware gate). */
+      keepOnGlasses?: boolean
+    }
+  | {
+      kind: "glasses"
+    }
+
 export type PhotoRequestParams = {
   requestId?: string
   appId?: string
   size: PhotoSize
   mode?: PhotoMode
-  /** `direct` disables BLE fallback; `ble` skips direct upload and forces phone-relayed transfer. */
+  /** Where the photo ends up. Preferred over the deprecated flat delivery fields. */
+  destination?: PhotoDestination
+  /**
+   * `direct` disables BLE fallback; `ble` skips direct upload and forces phone-relayed transfer.
+   * @deprecated Use `destination: {kind: "webhook", transferMethod}` instead.
+   */
   transferMethod?: PhotoTransferMethod
-  webhookUrl: string | null
-  authToken: string | null
-  compress: PhotoCompression
+  /** @deprecated Use `destination: {kind: "webhook", url}` instead. */
+  webhookUrl?: string | null
+  /** @deprecated Use `destination: {kind: "webhook", authToken}` instead. */
+  authToken?: string | null
+  /** @deprecated Use `destination: {kind: "webhook", compress}` instead. */
+  compress?: PhotoCompression
+  /** @deprecated Use `destination: {kind: "glasses"}` or the `keepOnGlasses` arm fields instead. */
   save?: boolean
   sound: boolean
   exposureTimeNs?: number | null
