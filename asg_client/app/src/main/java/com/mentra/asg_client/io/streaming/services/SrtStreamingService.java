@@ -1,5 +1,7 @@
 package com.mentra.asg_client.io.streaming.services;
 
+import com.mentra.asg_client.BuildConfig;
+
 import android.Manifest;
 import android.annotation.SuppressLint;
 import android.app.Notification;
@@ -98,8 +100,8 @@ public class SrtStreamingService extends Service {
   private String mCurrentStreamId;
   private boolean mIsStreamingActive = false;
   private static final long STREAM_TIMEOUT_MS = 60000;
-  /** Local testing: never kill the stream for missing phone/cloud keep-alives. */
-  private static final boolean DISABLE_KEEP_ALIVE_TIMEOUT = true;
+  /** Local testing only: never kill the stream for missing phone/cloud keep-alives. Debug builds only. */
+  private static final boolean DISABLE_KEEP_ALIVE_TIMEOUT = BuildConfig.DEBUG;
   private Handler mTimeoutHandler;
 
   private boolean mHasShownReconnectingNotification = false;
