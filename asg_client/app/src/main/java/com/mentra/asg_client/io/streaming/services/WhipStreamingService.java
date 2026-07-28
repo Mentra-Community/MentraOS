@@ -106,6 +106,8 @@ public class WhipStreamingService extends Service {
 
   // Stream parameters
   private String mWhipUrl;
+  /** Optional Bearer token for WHIP Authorization header (custom authenticated endpoints). */
+  private String mAuthToken;
   /** Resource URL returned by the WHIP server in the Location header, used for teardown. */
   private String mWhipResourceUrl;
   private String mCurrentStreamId;
@@ -138,6 +140,8 @@ public class WhipStreamingService extends Service {
 
   // ---- Stream timeout (keep-alive) ----
   private static final long STREAM_TIMEOUT_MS = 60000; // 60 seconds
+  /** Local testing: never kill the stream for missing phone/cloud keep-alives. */
+  private static final boolean DISABLE_KEEP_ALIVE_TIMEOUT = true;
   private Timer mStreamTimeoutTimer;
 
   // ---- Battery monitoring ----
@@ -218,13 +222,17 @@ public class WhipStreamingService extends Service {
         PeriodicStreamMetricsReporter.logQuality(
             "whip",
             mCurrentStreamId,
-            mStreamConfig.getVideoWidth(),
-            mStreamConfig.getVideoHeight(),
-            videoBitrateBps,
-            fps,
-            droppedFrames,
-            durationSeconds,
-            temperatureC);
+            new PeriodicStreamMetricsReporter.MetricsSample(
+                mStreamConfig.getVideoWidth(),
+                mStreamConfig.getVideoHeight(),
+                mStreamConfig.getVideoBitrate(),
+                videoBitrateBps,
+                mStreamConfig.getVideoFps(),
+                Double.isFinite(measuredFps) ? measuredFps : Double.NaN,
+                mStreamConfig.getMeasuredCameraFps(),
+                droppedFrames,
+                durationSeconds,
+                temperatureC));
         Log.d(TAG, String.format(
             "↑ video: %d B/s (%d pkts total)  audio: %d B/s (%d pkts total)",
             elapsedMs > 0 ? videoDelta * 1000 / elapsedMs : 0, videoPackets,
@@ -279,6 +287,7 @@ public class WhipStreamingService extends Service {
       String streamId = intent.getStringExtra("stream_id");
       mLedEnabled = intent.getBooleanExtra("enable_led", true);
       mSoundEnabled = intent.getBooleanExtra("enable_sound", true);
+      mAuthToken = intent.getStringExtra("auth_token");
 
       if (whipUrl != null && !whipUrl.isEmpty()) {
         mWhipUrl = whipUrl;
@@ -687,11 +696,15 @@ public class WhipStreamingService extends Service {
     RequestBody body = RequestBody.create(
         offer.description, MediaType.parse("application/sdp"));
 
-    Request request = new Request.Builder()
+    Request.Builder requestBuilder = new Request.Builder()
         .url(mWhipUrl)
         .post(body)
-        .addHeader("Content-Type", "application/sdp")
-        .build();
+        .addHeader("Content-Type", "application/sdp");
+    if (mAuthToken != null && !mAuthToken.isEmpty()) {
+      String token = mAuthToken.startsWith("Bearer ") ? mAuthToken : "Bearer " + mAuthToken;
+      requestBuilder.addHeader("Authorization", token);
+    }
+    Request request = requestBuilder.build();
 
     mHttpClient.newCall(request).enqueue(new Callback() {
       @Override
@@ -1090,6 +1103,11 @@ public class WhipStreamingService extends Service {
   private void scheduleStreamTimeout(String streamId) {
     cancelStreamTimeout();
 
+    if (DISABLE_KEEP_ALIVE_TIMEOUT) {
+      Log.i(TAG, "Keep-alive timeout disabled; stream will not auto-stop: " + streamId);
+      return;
+    }
+
     mStreamTimeoutTimer = new Timer("WhipStreamTimeout-" + streamId);
     mStreamTimeoutTimer.schedule(new TimerTask() {
       @Override
@@ -1193,10 +1211,19 @@ public class WhipStreamingService extends Service {
    */
   public static void startStreaming(Context context, String whipUrl, String streamId,
       boolean enableLed, boolean enableSound, WhipStreamConfig config) {
+    startStreaming(context, whipUrl, streamId, enableLed, enableSound, config, null);
+  }
+
+  /**
+   * Start streaming to the given WHIP URL with an optional Authorization bearer token.
+   */
+  public static void startStreaming(Context context, String whipUrl, String streamId,
+      boolean enableLed, boolean enableSound, WhipStreamConfig config, String authToken) {
     setStreamConfig(config);
 
     if (sInstance != null) {
       sInstance.mWhipUrl = whipUrl;
+      sInstance.mAuthToken = authToken;
       sInstance.mCurrentStreamId = streamId;
       sInstance.mLedEnabled = enableLed;
       sInstance.mSoundEnabled = enableSound;
@@ -1209,6 +1236,9 @@ public class WhipStreamingService extends Service {
       if (streamId != null) intent.putExtra("stream_id", streamId);
       intent.putExtra("enable_led", enableLed);
       intent.putExtra("enable_sound", enableSound);
+      if (authToken != null && !authToken.isEmpty()) {
+        intent.putExtra("auth_token", authToken);
+      }
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
         context.startForegroundService(intent);
       } else {
@@ -1219,7 +1249,7 @@ public class WhipStreamingService extends Service {
 
   public static void startStreaming(Context context, String whipUrl, String streamId,
       boolean enableLed, boolean enableSound) {
-    startStreaming(context, whipUrl, streamId, enableLed, enableSound, null);
+    startStreaming(context, whipUrl, streamId, enableLed, enableSound, null, null);
   }
 
   /**
