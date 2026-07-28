@@ -33,12 +33,7 @@ export default function SelectGlassesModelScreen() {
   const getManufacturerLogo = (option: GlassesOption) => {
     if (option.manufacturerName) {
       if (option.projectName?.trim().toUpperCase() === "AR99") {
-        return (
-          <View className="flex-row items-center gap-2">
-            <XingyiLogo color={theme.colors.text} />
-            <Text text={option.manufacturerName} className="text-foreground font-semibold text-lg" />
-          </View>
-        )
+        return <XingyiLogo color={theme.colors.text} />
       }
       return <Text text={option.manufacturerName} className="text-foreground font-semibold text-lg" />
     }

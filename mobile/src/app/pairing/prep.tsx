@@ -1,7 +1,7 @@
 import {DeviceTypes} from "@/../../cloud/packages/types/src"
 import {useRoute} from "@react-navigation/native"
 import {Linking, PermissionsAndroid, Image, Platform, ScrollView, View} from "react-native"
-import type {Permission} from "react-native"
+import type {ImageStyle, Permission, ViewStyle} from "react-native"
 
 import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
 import {Button, Header, Icon, Screen, Text} from "@/components/ignite"
@@ -16,7 +16,8 @@ import GlassesTroubleshootingModal from "@/components/glasses/GlassesTroubleshoo
 import {OnboardingGuide, OnboardingStep} from "@/components/onboarding/OnboardingGuide"
 import {CDN_BASE_URL} from "@/constants/appConfig"
 import {engine} from "@mentra/engine"
-import {getAr99DisplayName} from "@/utils/getGlassesImage"
+import {getAr99DisplayName, getAr99ImageSource} from "@/utils/getGlassesImage"
+import {ThemedStyle} from "@/theme"
 
 type BluetoothPermission = Permission | "android.permission.BLUETOOTH" | "android.permission.BLUETOOTH_ADMIN"
 
@@ -25,6 +26,7 @@ export default function PairingPrepScreen() {
   const {deviceModel, ar99ProjectName} = route.params as {deviceModel: string; ar99ProjectName?: string}
   const displayName = deviceModel === DeviceTypes.AR99 ? getAr99DisplayName(ar99ProjectName) : deviceModel
   const {goBack, push, clearHistoryAndGoHome} = useNavigationStore.getState()
+  const {themed} = useAppTheme()
 
   const advanceToPairing = async () => {
     if (deviceModel == null || deviceModel == "") {
@@ -445,12 +447,10 @@ export default function PairingPrepScreen() {
     return (
       <View className="flex-1 mt-6">
         <ScrollView showsVerticalScrollIndicator={false}>
-          <View className="self-center w-[320px] h-[320px] flex-col items-center justify-center bg-primary-foreground rounded-xl mb-6 overflow-hidden">
-            <Image
-              source={require("../../../assets/guide/image_ar99_pair.png")}
-              resizeMode="contain"
-              className="w-full h-full"
-            />
+          <View
+            className="self-center flex-col items-center justify-center bg-primary-foreground rounded-xl mb-6 overflow-hidden"
+            style={themed($ar99ImageContainer)}>
+            <Image source={getAr99ImageSource(ar99ProjectName)} resizeMode="contain" style={themed($ar99Image)} />
           </View>
           <Text tx="pairing:instructions" className="text-2xl font-bold mb-4 text-secondary-foreground" />
           <Text className="text-lg text-secondary-foreground mb-2" tx="pairing:ar99Step1" />
@@ -511,3 +511,13 @@ export default function PairingPrepScreen() {
     </Screen>
   )
 }
+
+const $ar99Image: ThemedStyle<ImageStyle> = () => ({
+  height: "100%",
+  width: "100%",
+})
+
+const $ar99ImageContainer: ThemedStyle<ViewStyle> = () => ({
+  height: 240,
+  width: 320,
+})

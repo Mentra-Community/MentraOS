@@ -5,7 +5,7 @@ export const AR99_MODEL_OPTIONS = [
     key: "xingyi_ar99",
     deviceModel: DeviceTypes.AR99,
     projectName: "AR99",
-    manufacturerName: "Xingyi",
+    manufacturerName: "Xingyi Intelligent",
     displayName: "Xingyi AR99",
     imageSource: require("../../assets/glasses/ar99_display.png"),
   },
