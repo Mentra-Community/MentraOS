@@ -6,6 +6,7 @@ import {MentraLogo} from "@/components/brands/MentraLogo"
 import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
 import {NimoLogo} from "@/components/brands/NimoLogo"
 import {VuzixLogo} from "@/components/brands/VuzixLogo"
+import {XingyiLogo} from "@/components/brands/XingyiLogo"
 import {Text, Header} from "@/components/ignite"
 import {Screen} from "@/components/ignite/Screen"
 import {Spacer} from "@/components/ui/Spacer"
@@ -14,8 +15,6 @@ import {useNavigationStore} from "@/stores/navigation"
 import {SETTINGS, useSetting} from "@mentra/engine"
 import {AR99_MODEL_OPTIONS, type Ar99ProjectName, getGlassesImage} from "@/utils/getGlassesImage"
 import GlassView from "@/components/ui/GlassView"
-
-const AR99_LOGO = require("../../../assets/logo/ar99_logo.png")
 
 type GlassesOption = {
   key: string
@@ -31,21 +30,12 @@ export default function SelectGlassesModelScreen() {
   const {push, goBack} = useNavigationStore.getState()
   const [superMode] = useSetting(SETTINGS.super_mode.key)
 
-  const getTitleLogoSource = (option: GlassesOption) => {
-    const normalizedProjectName = option.projectName?.trim().toUpperCase()
-    if (normalizedProjectName === "AR99") {
-      return AR99_LOGO
-    }
-    return null
-  }
-
   const getManufacturerLogo = (option: GlassesOption) => {
-    const titleLogoSource = getTitleLogoSource(option)
     if (option.manufacturerName) {
-      if (titleLogoSource) {
+      if (option.projectName?.trim().toUpperCase() === "AR99") {
         return (
           <View className="flex-row items-center gap-2">
-            <Image source={titleLogoSource} className="h-5 w-5" resizeMode="contain" />
+            <XingyiLogo color={theme.colors.text} />
             <Text text={option.manufacturerName} className="text-foreground font-semibold text-lg" />
           </View>
         )
@@ -85,10 +75,10 @@ export default function SelectGlassesModelScreen() {
   }))
 
   const sharedOptions: GlassesOption[] = [
+    {deviceModel: DeviceTypes.LIVE, key: "mentra_live"},
     ...ar99Options,
     {deviceModel: DeviceTypes.G1, key: "evenrealities_g1"},
     {deviceModel: DeviceTypes.G2, key: "evenrealities_g2"},
-    {deviceModel: DeviceTypes.LIVE, key: "mentra_live"},
     {deviceModel: DeviceTypes.MACH1, key: "mentra_mach1"},
     {deviceModel: DeviceTypes.Z100, key: "vuzix-z100"},
     {deviceModel: DeviceTypes.NEX, key: "mentra_nex"},
