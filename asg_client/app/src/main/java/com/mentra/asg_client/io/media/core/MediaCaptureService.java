@@ -851,6 +851,10 @@ public class MediaCaptureService {
             return;
         }
         synchronized (mPhotoFeedbackLock) {
+            if (mPhotoFeedbackGeneration != riserToken) {
+                Log.d(TAG, "📸 Leaving newer photo feedback playing instead of a stale snap");
+                return;
+            }
             ++mPhotoFeedbackGeneration;
             if (hardwareManager != null && hardwareManager.supportsAudioPlayback()) {
                 hardwareManager.playAudioAsset(AudioAssets.TAKE_PHOTO_HOT);
