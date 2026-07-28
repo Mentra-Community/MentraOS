@@ -513,8 +513,8 @@ export default function PairingPrepScreen() {
 }
 
 const $ar99Image: ThemedStyle<ImageStyle> = () => ({
-  height: "100%",
-  width: "100%",
+  height: "88%",
+  width: "88%",
 })
 
 const $ar99ImageContainer: ThemedStyle<ViewStyle> = () => ({
