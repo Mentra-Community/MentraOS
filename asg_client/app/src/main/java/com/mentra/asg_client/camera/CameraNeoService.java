@@ -1782,7 +1782,13 @@ public class CameraNeoService extends LifecycleService {
         executor.execute(
                 () -> {
                     synchronized (SERVICE_LOCK) {
-                        if (!hasPendingCameraWork()) {
+                        if (hasPendingCameraWork()) {
+                            // A request enqueued after the salvage sees a live service
+                            // with a closed camera, and that enqueue branch neither
+                            // dispatches nor sends a start intent — without a kick here
+                            // it would sit queued forever (review finding on this PR).
+                            photoSession.dispatchNextPhotoRequest();
+                        } else {
                             stopSelf();
                         }
                     }
