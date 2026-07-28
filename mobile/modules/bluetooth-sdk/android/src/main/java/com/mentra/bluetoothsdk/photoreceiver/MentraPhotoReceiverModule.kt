@@ -4,11 +4,10 @@ import android.content.Context
 import android.net.Uri
 import android.util.Log
 import com.mentra.bluetoothsdk.debug.BleTraceLogger
+import com.mentra.bluetoothsdk.net.LocalIpv4
 import expo.modules.kotlin.exception.Exceptions
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
-import java.net.Inet4Address
-import java.net.NetworkInterface
 
 class MentraPhotoReceiverModule : Module() {
   private var photoUploadServer: LocalPhotoUploadServer? = null
@@ -45,7 +44,7 @@ class MentraPhotoReceiverModule : Module() {
       photoUploadServer = it
     }
 
-    val host = bestLocalIpv4Address()
+    val host = LocalIpv4.bestLocalIpv4Address()
       ?: throw IllegalStateException("No Wi-Fi/LAN IPv4 address found for this phone.")
 
     server.activePort?.let { activePort ->
@@ -128,39 +127,6 @@ class MentraPhotoReceiverModule : Module() {
       ?: throw Exceptions.ReactContextLost()
   }
 
-  private fun bestLocalIpv4Address(): String? {
-    val wifiPrivateCandidates = mutableListOf<Inet4Address>()
-    val wifiCandidates = mutableListOf<Inet4Address>()
-    val privateCandidates = mutableListOf<Inet4Address>()
-    val otherCandidates = mutableListOf<Inet4Address>()
-    val interfaces = NetworkInterface.getNetworkInterfaces()?.toList().orEmpty()
-    for (networkInterface in interfaces) {
-      if (!networkInterface.isUp || networkInterface.isLoopback) {
-        continue
-      }
-      val addresses = networkInterface.inetAddresses.toList()
-        .filterIsInstance<Inet4Address>()
-        .filter { address ->
-          !address.isLoopbackAddress &&
-            !address.isLinkLocalAddress
-        }
-      if (isWifiInterface(networkInterface.name)) {
-        wifiPrivateCandidates += addresses.filter { isPrivateIpv4(it.hostAddress.orEmpty()) }
-        wifiCandidates += addresses
-      } else {
-        privateCandidates += addresses.filter { isPrivateIpv4(it.hostAddress.orEmpty()) }
-        otherCandidates += addresses
-      }
-    }
-
-    return (
-      wifiPrivateCandidates.firstOrNull() ?:
-        wifiCandidates.firstOrNull() ?:
-        privateCandidates.firstOrNull() ?:
-        otherCandidates.firstOrNull()
-      )?.hostAddress
-  }
-
   private fun receiverEndpoint(host: String, port: Int): ReceiverEndpoint {
     return ReceiverEndpoint(
       uploadUrl = "http://$host:$port/upload",
@@ -175,19 +141,6 @@ class MentraPhotoReceiverModule : Module() {
       "host" to endpoint.host,
       "port" to endpoint.port,
     )
-  }
-
-  private fun isWifiInterface(name: String): Boolean {
-    return name.startsWith("wlan") ||
-      name.startsWith("p2p") ||
-      name.startsWith("ap") ||
-      name.startsWith("swlan")
-  }
-
-  private fun isPrivateIpv4(host: String): Boolean {
-    return host.startsWith("192.168.") ||
-      host.startsWith("10.") ||
-      host.matches(Regex("^172\\.(1[6-9]|2[0-9]|3[0-1])\\..*"))
   }
 
   private companion object {
