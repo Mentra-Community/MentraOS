@@ -30,17 +30,17 @@ public final class AudioAssets {
     public static final String STORAGE_FULL = "storage_full.mp3";
 
     /**
-     * Shutter sound for a "cold" photo capture — the camera was not already running, so it must
-     * spin up (1–2s on Mentra Live due to slow ISP startup) before the shot lands. This is a
-     * longer clip whose duration spans the warmup so the user keeps their head still until the
-     * photo is actually taken.
+     * Riser played at request time for a "cold" photo capture — the camera was not already
+     * running, so it must spin up (1–2s on Mentra Live due to slow ISP startup) before the shot
+     * lands. The riser (5s) tells the user to hold still; the {@link #TAKE_PHOTO_HOT} snap plays
+     * — cutting the riser off — only when the photo has actually been captured.
      */
-    public static final String TAKE_PHOTO_COLD = "take_photo_cold.wav";
+    public static final String CAMERA_RISER = "camera_riser.wav";
 
     /**
-     * Shutter sound for a "hot" photo capture — the camera was already running (kept alive after a
-     * recent shot), so the capture is near-instant. This is a short clip for snappy, responsive
-     * feedback on rapid-fire shots.
+     * Camera snap sound: the photo has been taken. Played immediately for a "hot" capture (camera
+     * already running, near-instant shot) and as the completion snap after a {@link #CAMERA_RISER}
+     * on cold captures.
      */
     public static final String TAKE_PHOTO_HOT = "take_photo_hot.wav";
 
