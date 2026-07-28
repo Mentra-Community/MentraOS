@@ -3230,6 +3230,7 @@ class LocalMiniappRuntime {
         video: normalizeStreamVideoConfig(payload.video),
         audio: normalizeStreamAudioConfig(payload.audio),
         sound: payload.sound as boolean | undefined,
+        authToken: typeof payload.authToken === "string" ? payload.authToken : undefined,
       })
       this.sendResult(packageName, requestId, true, result)
     } catch (err) {
