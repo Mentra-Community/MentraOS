@@ -21,6 +21,9 @@ concurrency:
 jobs:
   build:
     runs-on: [self-hosted, macOS, ARM64]
+    env:
+      EXPO_PUBLIC_AR99_RELEASE_DEVELOPER_ID: ${{ secrets.EXPO_PUBLIC_AR99_RELEASE_DEVELOPER_ID }}
+      EXPO_PUBLIC_AR99_RELEASE_CLIENT_KEY: ${{ secrets.EXPO_PUBLIC_AR99_RELEASE_CLIENT_KEY }}
 
     steps:
       - name: Kill stale build processes (this runner's prior job only)
