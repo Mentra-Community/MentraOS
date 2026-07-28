@@ -420,8 +420,9 @@ class BlePhotoUploadService {
         webhookUrl: String,
         authToken: String?
     ) async throws -> String {
-        guard let url = URL(string: webhookUrl) else {
-            Bridge.log("LIVE: Invalid webhook URL: \(webhookUrl)")
+        let effectiveWebhookUrl = LocalPhotoReceiverRegistry.loopbackUploadUrl(for: webhookUrl) ?? webhookUrl
+        guard let url = URL(string: effectiveWebhookUrl) else {
+            Bridge.log("LIVE: Invalid webhook URL: \(effectiveWebhookUrl)")
             throw PhotoUploadError.uploadFailed("Invalid webhook URL")
         }
 
@@ -469,7 +470,11 @@ class BlePhotoUploadService {
 
         request.httpBody = body
 
-        print("LIVE: Uploading photo to webhook: \(webhookUrl)")
+        if effectiveWebhookUrl != webhookUrl {
+            print("LIVE: Uploading BLE fallback photo to local receiver via loopback: \(effectiveWebhookUrl)")
+        } else {
+            print("LIVE: Uploading photo to webhook: \(webhookUrl)")
+        }
 
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
