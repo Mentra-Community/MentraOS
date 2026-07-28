@@ -1,6 +1,7 @@
 # Local MediaMTX stack for Mentra Live testing.
 #
 # Primary:  RTMP on 1935/tcp (low friction — one TCP port, no ICE).
+# Also:     SRT on 8890/udp (MediaMTX streamid=publish:live/stream).
 # Fallback: WHIP/WHEP on 8889/tcp + 8189/udp (needs MTX_WEBRTCADDITIONALHOSTS
 #           from start-local-stream.sh so ICE candidates reach Docker Desktop/macOS).
 services:
@@ -14,9 +15,10 @@ services:
       - "8888:8888" # HLS watch (browser)
       - "8889:8889" # WHIP / WHEP fallback (HTTP signaling + WebRTC page)
       - "8189:8189/udp" # WHIP ICE / media (most common failure if blocked)
+      - "8890:8890/udp" # SRT publish / read
       - "9997:9997" # MediaMTX API
     environment:
-      # Only required for WHIP ICE; harmless for RTMP-only runs.
+      # Only required for WHIP ICE; harmless for RTMP/SRT-only runs.
       MTX_WEBRTCADDITIONALHOSTS: ${MTX_WEBRTCADDITIONALHOSTS:?set by start-local-stream.sh}
     volumes:
       - ./mediamtx.yml:/mediamtx.yml:ro

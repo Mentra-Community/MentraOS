@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # start-local-stream.sh — stand up MediaMTX on this laptop for Mentra Live
-# same-WiFi testing. RTMP is the primary path; WHIP/WHEP is a documented fallback.
+# same-WiFi testing. RTMP is primary; SRT and WHIP/WHEP are also available.
 #
 # Detects the LAN IP fresh every run (DHCP-safe), exports it as
 # MTX_WEBRTCADDITIONALHOSTS for WHIP ICE candidates, prints publish/watch
@@ -12,7 +12,7 @@ cd "$SCRIPT_DIR"
 
 POLL_SECONDS="${POLL_SECONDS:-1}"
 MTX_API="${MTX_API:-http://127.0.0.1:9997}"
-PATH_NAME="${PATH_NAME:-live/stream}"
+PATH_NAMES="${PATH_NAMES:-live/stream,live}"
 
 detect_lan_ip() {
   local ip=""
@@ -55,38 +55,56 @@ monitor_receive_stats() {
 
   echo "────────────────────────────────────────────────────────"
   echo "RECEIVE STATS (from MediaMTX — what this laptop gets)"
-  echo "  Path: ${PATH_NAME}"
+  echo "  Paths: ${PATH_NAMES}"
   echo "  Poll: every ${POLL_SECONDS}s"
   echo "  Ctrl-C stops this monitor (MediaMTX keeps running)."
   echo "────────────────────────────────────────────────────────"
   echo ""
   echo "[RECV] waiting for glasses to publish…"
 
-  # API-first monitor: no ffprobe hang / no extra RTMP reader flap.
-  POLL_SECONDS="$POLL_SECONDS" MTX_API="$MTX_API" PATH_NAME="$PATH_NAME" \
-    STREAM_URL="rtmp://127.0.0.1:1935/live/stream" python3 - <<'PY'
-import json, os, re, subprocess, sys, time, urllib.request
+  # API-first monitor. FPS via ffprobe packet sample over RTSP/TCP
+  # (decode undercounts; bare metadata is often 0/0 or 90000).
+  POLL_SECONDS="$POLL_SECONDS" MTX_API="$MTX_API" PATH_NAMES="$PATH_NAMES" \
+    python3 - <<'PY'
+import json, os, shutil, subprocess, sys, time, urllib.request
 
 api = os.environ.get("MTX_API", "http://127.0.0.1:9997").rstrip("/")
-path = os.environ.get("PATH_NAME", "live/stream")
+paths = [p.strip() for p in os.environ.get("PATH_NAMES", "live/stream,live").split(",") if p.strip()]
 poll = float(os.environ.get("POLL_SECONDS", "1"))
-stream_url = os.environ.get("STREAM_URL", "rtmp://127.0.0.1:1935/live/stream")
-url = f"{api}/v3/paths/get/{path}"
 
 was_online = False
+active_path = None
 prev_bytes = None
 prev_t = None
 cached_fps = None
+fps_failures = 0
 next_fps_probe_at = 0.0
-FPS_RETRY_SECONDS = 5.0
+# Read packets briefly so ffprobe can estimate rate (needs TCP + sample window).
+FPS_SAMPLE_SECONDS = 2.0
+FPS_RETRY_BASE = 8.0
+FPS_RETRY_MAX = 60.0
+FPS_MIN, FPS_MAX = 1.0, 120.0
 
 
-def fetch():
+def fetch(path):
+    url = f"{api}/v3/paths/get/{path}"
     try:
         with urllib.request.urlopen(url, timeout=1.5) as resp:
             return json.load(resp)
     except Exception:
         return None
+
+
+def fetch_active():
+    reachable = False
+    for path in paths:
+        data = fetch(path)
+        if data is None:
+            continue
+        reachable = True
+        if data.get("ready") or data.get("online"):
+            return path, data, True
+    return None, None, reachable
 
 
 def parse_rate(rate):
@@ -104,20 +122,30 @@ def parse_rate(rate):
         return None
 
 
-def probe_declared_fps():
-    """ffprobe bitstream timing (declared fps). Avoid frequent calls — flaps RTMP readers."""
+def sane_fps(fps):
+    return fps is not None and FPS_MIN <= fps <= FPS_MAX
+
+
+def probe_measured_fps(path):
+    """Sample RTSP/TCP packets; prefer estimated frame rate, else packets/sec."""
+    if not shutil.which("ffprobe"):
+        return None
+    stream_url = f"rtsp://127.0.0.1:8554/{path}"
     try:
         proc = subprocess.run(
             [
-                "ffprobe", "-v", "error", "-rw_timeout", "2000000",
+                "ffprobe", "-v", "error",
+                "-rtsp_transport", "tcp",
                 "-select_streams", "v:0",
-                "-show_entries", "stream=avg_frame_rate,r_frame_rate",
+                "-count_packets",
+                "-read_intervals", f"%+{FPS_SAMPLE_SECONDS:g}",
+                "-show_entries", "stream=avg_frame_rate,r_frame_rate,nb_read_packets",
                 "-of", "json",
                 stream_url,
             ],
             capture_output=True,
             text=True,
-            timeout=5,
+            timeout=FPS_SAMPLE_SECONDS + 10,
         )
         data = json.loads(proc.stdout or "{}")
         streams = data.get("streams") or []
@@ -126,7 +154,12 @@ def probe_declared_fps():
         s = streams[0]
         for key in ("avg_frame_rate", "r_frame_rate"):
             fps = parse_rate(s.get(key))
-            if fps is not None and fps > 0:
+            if sane_fps(fps):
+                return fps
+        packets = s.get("nb_read_packets")
+        if packets is not None and FPS_SAMPLE_SECONDS > 0:
+            fps = float(packets) / FPS_SAMPLE_SECONDS
+            if sane_fps(fps):
                 return fps
     except Exception:
         return None
@@ -134,34 +167,56 @@ def probe_declared_fps():
 
 
 while True:
-    data = fetch()
+    path, data, api_reachable = fetch_active()
     ts = time.strftime("%H:%M:%S")
-    if not data:
-        print(f"[RECV {ts}] MediaMTX API unreachable at {url}", flush=True)
+    if not api_reachable:
+        print(f"[RECV {ts}] MediaMTX API unreachable at {api}", flush=True)
         time.sleep(poll)
         continue
 
-    online = bool(data.get("ready") or data.get("online"))
-    if not online:
+    if data is None or path is None:
         if was_online:
-            print(f"[RECV {ts}] stream offline", flush=True)
+            print(f"[RECV {ts}] stream offline path={active_path}", flush=True)
             was_online = False
+            active_path = None
             prev_bytes = None
             prev_t = None
             cached_fps = None
+            fps_failures = 0
             next_fps_probe_at = 0.0
         time.sleep(poll)
         continue
 
+    if path != active_path:
+        active_path = path
+        prev_bytes = None
+        prev_t = None
+        cached_fps = None
+        fps_failures = 0
+        next_fps_probe_at = 0.0
+        source = data.get("source") or {}
+        transport = source.get("type") if isinstance(source, dict) else None
+        print(
+            f"[RECV {ts}] publisher online path={path} transport={transport or 'unknown'}",
+            flush=True,
+        )
+
     now = time.monotonic()
     if cached_fps is None and now >= next_fps_probe_at:
-        print(f"[RECV {ts}] probing fps via ffprobe…", flush=True)
-        cached_fps = probe_declared_fps()
-        next_fps_probe_at = now + (0 if cached_fps is not None else FPS_RETRY_SECONDS)
+        print(f"[RECV {ts}] sampling fps (~{FPS_SAMPLE_SECONDS:.0f}s RTSP packets)…", flush=True)
+        cached_fps = probe_measured_fps(path)
         if cached_fps is not None:
-            print(f"[RECV {ts}] fps={cached_fps:.2f} (bitstream declared)", flush=True)
+            fps_failures = 0
+            print(f"[RECV {ts}] fps={cached_fps:.1f} (packet sample)", flush=True)
         else:
-            print(f"[RECV {ts}] fps probe failed — retry in {FPS_RETRY_SECONDS:.0f}s", flush=True)
+            fps_failures += 1
+            retry = min(FPS_RETRY_MAX, FPS_RETRY_BASE * (2 ** min(fps_failures - 1, 3)))
+            next_fps_probe_at = now + retry
+            print(
+                f"[RECV {ts}] fps measure failed — retry in {retry:.0f}s "
+                f"(resolution/bitrate below still valid)",
+                flush=True,
+            )
 
     width = height = None
     codec = "?"
@@ -185,9 +240,9 @@ while True:
 
     res = f"{width}x{height}" if width and height else "n/a"
     br = f"{bitrate_kbps:.0f}" if bitrate_kbps is not None else "n/a"
-    fps = f"{cached_fps:.2f}" if cached_fps is not None else "n/a"
+    fps = f"{cached_fps:.1f}" if cached_fps is not None else "n/a"
     print(
-        f"[RECV {ts}] online resolution={res} codec={codec} "
+        f"[RECV {ts}] online path={path} resolution={res} codec={codec} "
         f"fps={fps} recvBitrateKbps={br} bytesReceived={bytes_rx}",
         flush=True,
     )
@@ -212,6 +267,9 @@ export MTX_WEBRTCADDITIONALHOSTS="$LAN_IP"
 
 # StreamPack requires /app/streamKey (two path segments). MediaMTX path becomes live/stream.
 RTMP_PUBLISH_URL="rtmp://${LAN_IP}:1935/live/stream"
+# MediaMTX SRT uses streamid=publish:<path> (not a path after the host).
+SRT_PUBLISH_URL="srt://${LAN_IP}:8890?streamid=publish:live/stream"
+SRT_WATCH_URL="srt://${LAN_IP}:8890?streamid=read:live/stream"
 HLS_WATCH_URL="http://${LAN_IP}:8888/live/stream"
 WHIP_PUBLISH_URL="http://${LAN_IP}:8889/live/whip"
 WHIP_WATCH_URL="http://${LAN_IP}:8889/live"
@@ -219,7 +277,7 @@ WHIP_WATCH_URL="http://${LAN_IP}:8889/live"
 echo "LAN IP                  : $LAN_IP"
 echo "MTX_WEBRTCADDITIONALHOSTS=$MTX_WEBRTCADDITIONALHOSTS"
 echo ""
-echo "Starting MediaMTX (RTMP primary, WHIP fallback)…"
+echo "Starting MediaMTX (RTMP primary, SRT + WHIP available)…"
 docker compose -f "$SCRIPT_DIR/docker-compose.yml" up -d
 
 echo ""
@@ -232,6 +290,14 @@ echo "    Browser HLS:  ${HLS_WATCH_URL}/"
 echo "    VLC → Open Network: $RTMP_PUBLISH_URL"
 echo "    VLC → Open Network: rtsp://${LAN_IP}:8554/live/stream"
 echo ""
+echo "ALSO — SRT (UDP 8890; MediaMTX streamid syntax)"
+echo "  Publish (Livestreamer Custom + protocol SRT):"
+echo "    $SRT_PUBLISH_URL"
+echo "  Watch SRT:"
+echo "    $SRT_WATCH_URL"
+echo "  Or watch the same stream over HLS after SRT publish:"
+echo "    ${HLS_WATCH_URL}/"
+echo ""
 echo "FALLBACK — WHIP / WHEP (WebRTC; needs TCP 8889 + UDP 8189)"
 echo "  Publish:"
 echo "    $WHIP_PUBLISH_URL"
@@ -243,6 +309,7 @@ echo "Note: Livestreamer Local-network mode shows 'No preview available'"
 echo "on the phone by design — watch on the laptop URLs above."
 echo ""
 echo "Firewall tip (RTMP): allow inbound TCP 1935 for Docker."
+echo "Firewall tip (SRT): allow inbound UDP 8890 for Docker."
 echo "Firewall/ICE tip (WHIP): allow inbound TCP 8889 and UDP 8189 —"
 echo "  if WHIP returns 201 but no video appears, ICE/UDP is blocked."
 echo ""

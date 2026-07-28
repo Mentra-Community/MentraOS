@@ -1,14 +1,15 @@
 ###############################################
-# Local RTMP (+ WHIP fallback) ingest for Mentra Live testing
+# Local RTMP / SRT / WHIP ingest for Mentra Live testing
 #
 # Primary:   RTMP publish on :1935  →  rtmp://<LAN_IP>:1935/live/stream
 #            (StreamPack requires /app/streamKey; MediaMTX path = live/stream)
+# Also:      SRT publish on :8890   →  srt://<LAN_IP>:8890?streamid=publish:live/stream
 # Fallback:  WHIP/WHEP on :8889     →  http://<LAN_IP>:8889/live/whip
 #
 # For WHIP only: webrtcAdditionalHosts is NOT hardcoded here. The start
 # script exports MTX_WEBRTCADDITIONALHOSTS=<LAN_IP> and MediaMTX picks it
 # up as an override (env wins over this file). That keeps ICE DHCP-safe.
-# RTMP does not need that env at all.
+# RTMP/SRT do not need that env.
 ###############################################
 
 logLevel: info
@@ -38,7 +39,11 @@ authInternalUsers:
 rtmp: yes
 rtmpAddress: :1935
 
-# HLS viewer (recommended watch URL for RTMP publishers).
+# SRT publish/read (UDP). MediaMTX streamid syntax: publish:<path> / read:<path>
+srt: yes
+srtAddress: :8890
+
+# HLS viewer (recommended watch URL for RTMP/SRT publishers).
 hls: yes
 hlsAddress: :8888
 
@@ -49,12 +54,13 @@ webrtcLocalUDPAddress: :8189
 
 paths:
   # Glasses publish RTMP to rtmp://<LAN_IP>:1935/live/stream
+  #             or SRT to  srt://<LAN_IP>:8890?streamid=publish:live/stream
   # Watch HLS at           http://<LAN_IP>:8888/live/stream
   # WHIP fallback publish: http://<LAN_IP>:8889/live/whip
   live:
     source: publisher
 
-  # Preferred RTMP publish path for StreamPack (/app/streamKey).
+  # Preferred RTMP/SRT publish path for StreamPack (/app/streamKey).
   live/stream:
     source: publisher
 
