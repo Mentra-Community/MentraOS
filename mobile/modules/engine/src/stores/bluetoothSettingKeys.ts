@@ -5,6 +5,8 @@ export const MENTRA_LIVE_SETTING_KEYS: string[] = [
   "sensing_enabled",
   "lc3_frame_size",
   "preferred_mic",
+  "voice_activity_detection_enabled",
+  "loudness_gate_enabled",
   "core_token",
   "auth_email",
   "button_photo_size",

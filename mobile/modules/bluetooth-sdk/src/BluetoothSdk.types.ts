@@ -1059,6 +1059,7 @@ export interface BluetoothSdkPublicModule {
 
   setGalleryModeEnabled(enabled: boolean): Promise<SettingsAckSuccessEvent>
   setVoiceActivityDetectionEnabled(enabled: boolean): Promise<void>
+  setLoudnessGateEnabled(enabled: boolean): Promise<void>
   /**
    * @deprecated Sticky action-button photo presets are deprecated. Prefer per-request
    * `requestPhoto(...)` options (e.g. `mode: "text"` for text sensor size/crop, or explicit per-shot
@@ -1378,6 +1379,7 @@ export type BluetoothSettingsUpdate = Partial<{
   twelve_hour_time: boolean
   gallery_mode: boolean
   voice_activity_detection_enabled: boolean
+  loudness_gate_enabled: boolean
   button_photo_size: ButtonPhotoSize
   button_video_settings: {width: number; height: number; fps: number}
   button_video_width: number

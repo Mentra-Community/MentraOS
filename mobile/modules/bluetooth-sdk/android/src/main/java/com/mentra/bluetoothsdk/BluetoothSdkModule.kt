@@ -585,6 +585,10 @@ class BluetoothSdkModule : Module() {
             sdk?.setVoiceActivityDetectionEnabled(enabled)
         }
 
+        SdkAsyncFunction("setLoudnessGateEnabled") { enabled: Boolean ->
+            sdk?.setLoudnessGateEnabled(enabled)
+        }
+
         @Suppress("DEPRECATION")
         SdkCoroutineFunction("setPhotoCaptureDefaults") { params: Map<String, Any?> ->
             requireSdk().setPhotoCaptureDefaults(params.toPhotoCaptureDefaults()).values

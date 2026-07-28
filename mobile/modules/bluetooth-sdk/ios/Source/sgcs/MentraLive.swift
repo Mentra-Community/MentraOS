@@ -1275,6 +1275,7 @@ class MentraLive: NSObject, SGCManager {
     // to avoid overloading the MCU. Set to false to allow simultaneous A2DP + LC3 mic.
     private let BLOCK_AUDIO_DUPLEX = false
     private static let voiceActivityDetectionSwitchType = 8
+    private static let loudnessGateSwitchType = 10
 
     var connectionState: String = ConnTypes.DISCONNECTED
 
@@ -6125,6 +6126,9 @@ extension MentraLive {
 
         // Send glasses-side Voice Activity Detection setting.
         sendVoiceActivityDetectionSetting()
+
+        // Send glasses-side loudness / Barrier gate setting.
+        sendLoudnessGateSetting()
     }
 
     func sendVoiceActivityDetectionSetting() {
@@ -6158,6 +6162,38 @@ extension MentraLive {
             }
         } catch {
             Bridge.log("LIVE: Error encoding Voice Activity Detection payload: \(error)")
+        }
+    }
+
+    func sendLoudnessGateSetting() {
+        let enabled = DeviceStore.shared.get("bluetooth", "loudness_gate_enabled") as? Bool
+            ?? BluetoothSdkDefaults.loudnessGateEnabled
+        Bridge.log("LIVE: 🎚️ Sending loudness/Barrier gate setting to glasses: \(enabled)")
+
+        guard connectedPeripheral != nil, txCharacteristic != nil else {
+            Bridge.log("Cannot send loudness gate setting - BLE write path not ready")
+            return
+        }
+
+        do {
+            let bodyData = try JSONSerialization.data(withJSONObject: [
+                "type": Self.loudnessGateSwitchType,
+                "switch": enabled ? 1 : 0,
+            ])
+            guard let bodyString = String(data: bodyData, encoding: .utf8) else {
+                Bridge.log("LIVE: Failed to encode loudness gate payload")
+                return
+            }
+            let command: [String: Any] = [
+                "C": "cs_swit",
+                "V": 1,
+                "B": bodyString,
+            ]
+            if !sendRawK900Command(command, wakeUp: true) {
+                Bridge.log("LIVE: Failed to send loudness gate setting command")
+            }
+        } catch {
+            Bridge.log("LIVE: Error encoding loudness gate payload: \(error)")
         }
     }
 

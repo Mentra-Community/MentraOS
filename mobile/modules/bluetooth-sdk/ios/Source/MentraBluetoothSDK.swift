@@ -536,6 +536,10 @@ public final class MentraBluetoothSDK {
         DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "voice_activity_detection_enabled", enabled)
     }
 
+    public func setLoudnessGateEnabled(_ enabled: Bool) async throws {
+        DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "loudness_gate_enabled", enabled)
+    }
+
     @available(*, deprecated, message: "Sticky action-button photo presets are deprecated. Prefer per-request requestPhoto(...) options (e.g. mode .text for text sensor size/crop, or explicit per-shot fields). This method still works but will be removed in a future release.")
     public func setPhotoCaptureDefaults(_ settings: PhotoCaptureDefaults) async throws -> SettingsAckEvent {
         try await performSettingsCommand(

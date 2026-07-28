@@ -210,6 +210,10 @@ protocol SGCManager {
 
     func sendVoiceActivityDetectionSetting()
 
+    // MARK: - Loudness / Barrier Gate
+
+    func sendLoudnessGateSetting()
+
     // MARK: - Version Info
 
     func requestVersionInfo()
@@ -364,6 +368,10 @@ extension SGCManager {
     // MARK: - Voice Activity Detection (default no-op — Mentra Live supports this)
 
     func sendVoiceActivityDetectionSetting() {}
+
+    // MARK: - Loudness / Barrier Gate (default no-op — Mentra Live supports this)
+
+    func sendLoudnessGateSetting() {}
 
     /// Default no-op; Mentra Live and G2 override to handle phone-detected clock skew.
     func sendSetSystemTime(_: Int64) {
