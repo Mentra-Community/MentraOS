@@ -109,8 +109,8 @@ export function cloudConfigValues(): {
 /**
  * Host-facing handle to island's cloud client. Construction and live runtime
  * methods live in island (`cloudClientService`); this delegates so existing consumers
- * (PhonePhotoCoordinator, cloudStreamApi, the dev Cloud-URL switcher) are
- * untouched. `reconnect()` re-resolves the host endpoints before rebuilding.
+ * (cloudStreamApi, the dev Cloud-URL switcher) are untouched. `reconnect()`
+ * re-resolves the host endpoints before rebuilding.
  */
 export const cloudClient = {
   init: (): void => cloudClientService.init(),
@@ -118,8 +118,6 @@ export const cloudClient = {
   getPreinstalledMiniappRegistry: () => cloudClientService.getPreinstalledMiniappRegistry(),
   getMiniappAuthToken: (packageName: string, opts?: {minTtlMs?: number; devAttestation?: string}) =>
     cloudClientService.getMiniappAuthToken(packageName, opts),
-  startManagedPhoto: (opts: Record<string, unknown> = {}) => cloudClientService.startManagedPhoto(opts),
-  awaitManagedPhotoReady: (requestId: string) => cloudClientService.awaitManagedPhotoReady(requestId),
   startManagedStream: (opts: Record<string, unknown> = {}) => cloudClientService.startManagedStream(opts),
   getManagedStreamStatus: (streamId: string) => cloudClientService.getManagedStreamStatus(streamId),
   stopManagedStream: (streamId: string) => cloudClientService.stopManagedStream(streamId),

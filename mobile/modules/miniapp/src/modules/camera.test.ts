@@ -116,6 +116,17 @@ describe("CameraModule", () => {
     expect(requestCalls[0]).toMatchObject({transferMethod: ""})
   })
 
+  test("takePhoto forwards saveToCameraRoll and omits it when unset", async () => {
+    const {session, requestCalls} = mockSession({})
+    const camera = new CameraModule(session)
+
+    await camera.takePhoto({saveToCameraRoll: true})
+    await camera.takePhoto({})
+
+    expect(requestCalls[0]).toMatchObject({saveToCameraRoll: true})
+    expect(Object.keys(requestCalls[1] as Record<string, unknown>)).not.toContain("saveToCameraRoll")
+  })
+
   test("takePhoto forwards zsl and mfnr", async () => {
     const {session, requestCalls} = mockSession({})
     const camera = new CameraModule(session)

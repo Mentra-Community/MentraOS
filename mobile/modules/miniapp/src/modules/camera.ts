@@ -34,13 +34,20 @@ export interface TakePhotoOptions {
   /** Capture at maximum source quality and optimize BLE delivery for readable text. */
   mode?: "photo" | "text"
   /**
-   * Image delivery path. `auto` tries direct Wi-Fi upload and falls back to
-   * BLE; `direct` disables BLE fallback; `ble` always relays through the phone.
+   * @deprecated Miniapp photos always ride BLE to the phone; the value is
+   * accepted for compatibility but no longer affects delivery.
    */
   transferMethod?: "auto" | "direct" | "ble"
+  /**
+   * @deprecated Compression only applied to webhook uploads. BLE phone
+   * delivery is governed by the transport codec, so this is ignored.
+   */
   compress?: "none" | "low" | "medium" | "high"
   sound?: boolean
+  /** Keep a copy of the capture in the glasses gallery. */
   saveToGallery?: boolean
+  /** Also export the delivered photo to the phone's OS camera roll. */
+  saveToCameraRoll?: boolean
   /**
    * Manual shutter / exposure time in nanoseconds. Omit (or pass undefined)
    * to let the glasses auto-expose. Honored only on cameras that support
@@ -161,10 +168,14 @@ export class CameraModule {
    * Take a photo via the glasses camera. Returns a URL to the captured image.
    * Requires CAMERA permission declared in miniapp.json.
    *
-   * The photo is uploaded to cloud storage; the returned URL is a short-TTL
-   * (~30 minute) signed download URL. If the glasses don't have a camera,
-   * the phone-side handler rejects with an error. Check
-   * `session.capabilities.hasCamera` before calling.
+   * The photo rides BLE from the glasses to the phone (no cloud upload is in
+   * the byte path) and is published through the Mentra runtime; the returned
+   * URL is short-TTL (~30 minutes) — fetch it promptly, or copy the bytes if
+   * you need them longer. Because delivery is BLE-only, large sizes
+   * (`size: "max"`) transfer more slowly, and final quality is governed by the
+   * BLE transport codec. If the glasses don't have a camera, the phone-side
+   * handler rejects with an error. Check `session.capabilities.hasCamera`
+   * before calling.
    */
   async takePhoto(options: TakePhotoOptions = {}): Promise<PhotoTaken> {
     return this.session.sendRequest<PhotoTaken>(
@@ -176,6 +187,7 @@ export class CameraModule {
         compress: options.compress ?? "none",
         sound: options.sound ?? true,
         saveToGallery: options.saveToGallery ?? false,
+        ...(options.saveToCameraRoll !== undefined ? {saveToCameraRoll: options.saveToCameraRoll} : {}),
         exposureTimeNs: options.exposureTimeNs,
         iso: options.iso,
         aeExposureDivisor: options.aeExposureDivisor,

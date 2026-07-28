@@ -73,10 +73,17 @@ export const photoOptionsSchema = z.object({
   size: photoSizeInputSchema
     .optional()
     .transform((value) => (value === undefined ? undefined : normalizePhotoSizeTier(value))),
+  /**
+   * Webhook-upload compression. Not applied to phone-delivered (BLE) photos,
+   * where the transport codec governs final quality.
+   */
   compress: photoCompressInputSchema
     .optional()
     .transform((value) => (value === undefined ? undefined : normalizePhotoCompress(value))),
+  /** Keep a copy in the glasses gallery (`keepOnGlasses` on the capture command). */
   saveToGallery: z.boolean().optional(),
+  /** Also export a phone-delivered photo to the phone's OS camera roll. */
+  saveToCameraRoll: z.boolean().optional(),
   sound: z.boolean().optional(),
 });
 export type PhotoOptions = z.infer<typeof photoOptionsSchema>;

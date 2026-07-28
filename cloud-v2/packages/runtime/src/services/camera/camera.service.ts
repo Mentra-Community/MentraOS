@@ -45,6 +45,13 @@ interface PendingPhoto {
   mentraUserId: string;
   key: string;
   readUrl: string;
+  /**
+   * Normalized capture options as requested. The device controller (the phone)
+   * carries them onto the capture command itself; the runtime records them so
+   * completion handling and logs keep what was asked for. Optional because
+   * records written before this field existed may still be pending.
+   */
+  options?: PhotoOptions;
 }
 
 function photoKey(requestId: string): string {
@@ -73,7 +80,6 @@ export async function requestPhoto(
   opts: PhotoOptions,
   origin: string,
 ): Promise<PhotoRequestResult> {
-  void opts; // size/compress/etc. are passed to a real provider later
   const provider = getStorageProvider();
   const requestId = `photo_${ulid()}`;
   const key = photoKey(requestId);
@@ -84,7 +90,7 @@ export async function requestPhoto(
   });
   const readUrl = await provider.presignDownload(key, { origin });
 
-  const pending: PendingPhoto = { mentraUserId, key, readUrl };
+  const pending: PendingPhoto = { mentraUserId, key, readUrl, options: opts };
   await getRedis().set(
     pendingRedisKey(requestId),
     JSON.stringify(pending),
@@ -92,7 +98,10 @@ export async function requestPhoto(
     PHOTO_REQUEST_TTL_SEC,
   );
 
-  logger.info({ mentraUserId, requestId, provider: provider.name }, "managed photo requested");
+  logger.info(
+    { mentraUserId, requestId, provider: provider.name, options: opts },
+    "managed photo requested",
+  );
 
   // The device (glasses) uploads the captured image to `uploadUrl` out of band.
   // Completion arrives via the local upload handler (local provider) or the
