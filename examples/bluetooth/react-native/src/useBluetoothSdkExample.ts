@@ -1491,20 +1491,20 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   }
 
   async function startOtaUpdate() {
+    if (otaStartInFlightRef.current) {
+      addEvent('TX', 'OTA start skipped; a start is already in flight');
+      return;
+    }
+    setOtaStartInFlight(true);
     await runAction('Start OTA', async () => {
-      if (!glassesConnected) {
-        throw new Error('Connect glasses first.');
-      }
-      requireGlassesWifi('start OTA updates');
-      if (otaStartInFlightRef.current) {
-        addEvent('TX', 'OTA start skipped; a start is already in flight');
-        return;
-      }
-      postOtaCheckedSessionRef.current = null;
-      otaStartingAppIdentityRef.current = otaAppIdentity(glasses);
-      clearOtaDisplayProgress();
-      setOtaStartInFlight(true);
       try {
+        if (!glassesConnected) {
+          throw new Error('Connect glasses first.');
+        }
+        requireGlassesWifi('start OTA updates');
+        postOtaCheckedSessionRef.current = null;
+        otaStartingAppIdentityRef.current = otaAppIdentity(glasses);
+        clearOtaDisplayProgress();
         await BluetoothSdk.startOtaUpdate();
       } catch (error) {
         setOtaStartInFlight(false);
