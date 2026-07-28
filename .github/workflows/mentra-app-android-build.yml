@@ -30,6 +30,9 @@ jobs:
     # staging/release builds. Blacksmith (more vCPU + NVMe) is faster than the
     # free ubuntu-latest tier; same provider we already use for cloud builds.
     runs-on: blacksmith-4vcpu-ubuntu-2404
+    env:
+      EXPO_PUBLIC_AR99_RELEASE_DEVELOPER_ID: ${{ secrets.EXPO_PUBLIC_AR99_RELEASE_DEVELOPER_ID }}
+      EXPO_PUBLIC_AR99_RELEASE_CLIENT_KEY: ${{ secrets.EXPO_PUBLIC_AR99_RELEASE_CLIENT_KEY }}
 
     steps:
       - name: Update PR comment - Build started
