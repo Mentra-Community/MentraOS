@@ -134,6 +134,14 @@ public class OtaHelper {
         isPhoneInitiatedOta = value;
     }
 
+    /**
+     * Whether a version check currently holds the check lock. Used by the post-APK-restart
+     * resume path to stand down when a phone-initiated check has superseded it.
+     */
+    public boolean isVersionCheckInProgress() {
+        return versionCheckLock.isLocked();
+    }
+
     // Progress throttling - send every 2s OR every 5% change
     private long lastProgressSentTime = 0;
     private int lastProgressSentPercent = 0;

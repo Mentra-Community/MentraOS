@@ -12,8 +12,10 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.util.Log;
 import androidx.core.app.NotificationCompat;
+import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.events.BatteryStatusEvent;
 import com.mentra.asg_client.io.bes.events.BesOtaProgressEvent;
 import com.mentra.asg_client.io.ota.events.DownloadProgressEvent;
@@ -24,6 +26,8 @@ import com.mentra.asg_client.io.ota.session.OtaSessionManager;
 import com.mentra.asg_client.io.ota.utils.OtaConstants;
 import com.mentra.asg_client.service.system.core.SystemControllerFactory;
 import dagger.hilt.android.AndroidEntryPoint;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import javax.inject.Inject;
 import org.greenrobot.eventbus.EventBus;
 import org.greenrobot.eventbus.Subscribe;
@@ -479,11 +483,110 @@ public class OtaService extends Service {
                 return;
             }
 
-            otaHelper.setPhoneInitiatedOta(true);
-            otaHelper.startVersionCheckWithUrl(this, versionJsonUrl);
+            resumeWhenManifestReachable(sessionManager, versionJsonUrl);
         } catch (Exception e) {
             Log.e(TAG, "Error resuming OTA from session", e);
             sessionManager.setFailed("Resume error: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Run the resume version check once the session's manifest URL answers, waiting up to
+     * {@link AsgConstants#OTA_RESUME_MANIFEST_PROBE_WINDOW_MS} for it.
+     *
+     * <p>On the hotspot-served OTA path the manifest host is the phone on the glasses' own
+     * hotspot, which died with this process's restart — resuming immediately would burn the
+     * session on a guaranteed connect timeout. The phone re-establishes the hotspot and
+     * normally supersedes this wait with a fresh ota_start (whose check this loop detects via
+     * the check lock or session movement, and stands down). On the glasses-WiFi path the
+     * first probe succeeds immediately and the resume proceeds as before. If the window
+     * expires the check runs anyway so failures surface with today's exact semantics.
+     */
+    private void resumeWhenManifestReachable(
+            OtaSessionManager sessionManager, String versionJsonUrl) {
+        final int entryStepIndex = sessionManager.getCurrentStepIndex();
+        final String entryPhase = sessionManager.getCurrentPhase();
+
+        Thread probeThread =
+                new Thread(
+                        () -> {
+                            long deadline =
+                                    SystemClock.elapsedRealtime()
+                                            + AsgConstants.OTA_RESUME_MANIFEST_PROBE_WINDOW_MS;
+                            while (SystemClock.elapsedRealtime() < deadline) {
+                                if (otaHelper.isVersionCheckInProgress()) {
+                                    Log.i(
+                                            TAG,
+                                            "Resume probe: version check in progress elsewhere -"
+                                                    + " standing down");
+                                    return;
+                                }
+                                if (!sessionManager.hasActiveSession()) {
+                                    Log.i(
+                                            TAG,
+                                            "Resume probe: session no longer active - standing"
+                                                    + " down");
+                                    return;
+                                }
+                                if (sessionManager.getCurrentStepIndex() != entryStepIndex
+                                        || !entryPhase.equals(sessionManager.getCurrentPhase())) {
+                                    Log.i(
+                                            TAG,
+                                            "Resume probe: session advanced by another check -"
+                                                    + " standing down");
+                                    return;
+                                }
+                                if (isManifestReachable(versionJsonUrl)) {
+                                    Log.i(
+                                            TAG,
+                                            "Resume probe: manifest reachable - starting resume"
+                                                    + " check");
+                                    otaHelper.setPhoneInitiatedOta(true);
+                                    otaHelper.startVersionCheckWithUrl(
+                                            OtaService.this, versionJsonUrl);
+                                    return;
+                                }
+                                try {
+                                    Thread.sleep(
+                                            AsgConstants.OTA_RESUME_MANIFEST_PROBE_INTERVAL_MS);
+                                } catch (InterruptedException e) {
+                                    return;
+                                }
+                            }
+                            Log.w(
+                                    TAG,
+                                    "Resume probe: manifest still unreachable after "
+                                            + AsgConstants.OTA_RESUME_MANIFEST_PROBE_WINDOW_MS
+                                            + "ms - running resume check anyway");
+                            otaHelper.setPhoneInitiatedOta(true);
+                            otaHelper.startVersionCheckWithUrl(OtaService.this, versionJsonUrl);
+                        },
+                        "OtaResumeManifestProbe");
+        probeThread.setDaemon(true);
+        probeThread.start();
+    }
+
+    /**
+     * One cheap reachability probe of the manifest URL. Any HTTP response counts as reachable
+     * (a live host with a broken path should fail through the real check's error
+     * classification, not stall here); only connect-level failures count as unreachable.
+     */
+    private boolean isManifestReachable(String url) {
+        HttpURLConnection connection = null;
+        try {
+            connection = (HttpURLConnection) new URL(url).openConnection();
+            connection.setRequestMethod("HEAD");
+            connection.setConnectTimeout(AsgConstants.OTA_RESUME_MANIFEST_PROBE_TIMEOUT_MS);
+            connection.setReadTimeout(AsgConstants.OTA_RESUME_MANIFEST_PROBE_TIMEOUT_MS);
+            connection.getResponseCode();
+            return true;
+        } catch (Exception e) {
+            Log.d(TAG, "Manifest probe failed: " + e.getMessage());
+            return false;
+        } finally {
+            if (connection != null) {
+                connection.disconnect();
+            }
         }
     }
 }

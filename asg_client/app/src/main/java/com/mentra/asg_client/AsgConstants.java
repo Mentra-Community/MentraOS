@@ -130,6 +130,22 @@ public class AsgConstants {
     public static final int OTA_COMPLETION_RESEND_ATTEMPTS = 15;
 
     /**
+     * Post-APK-restart resume: how long to wait for the session's manifest URL to become
+     * reachable before running the resume version check anyway. On the hotspot-served OTA
+     * path (OS-1676) the manifest host is the phone on the glasses' hotspot, and the hotspot
+     * dies with the APK install's process restart — the phone needs time to re-establish it
+     * (and typically supersedes the resume with a fresh ota_start carrying a new URL). Must
+     * stay below the phone's 70s download-stall watchdog.
+     */
+    public static final long OTA_RESUME_MANIFEST_PROBE_WINDOW_MS = 60_000L;
+
+    /** Interval between manifest reachability probes during the resume wait window. */
+    public static final long OTA_RESUME_MANIFEST_PROBE_INTERVAL_MS = 5_000L;
+
+    /** Connect/read timeout for a single resume manifest reachability probe. */
+    public static final int OTA_RESUME_MANIFEST_PROBE_TIMEOUT_MS = 3_000;
+
+    /**
      * FALLBACK maximum packed frame size for a v1 K900 STRING ck chunk, used until the BES
      * advertises its true notification cap. The BES relays v1 string frames to the phone in a
      * single unfragmented BLE notification, and the worst-case ATT payload on that link is 253

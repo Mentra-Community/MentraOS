@@ -189,6 +189,16 @@
             </intent-filter>
         </receiver>
 
+        <!-- Debug receiver for driving the hotspot via adb (hotspot-served OTA bench work) -->
+        <receiver
+            android:name="com.mentra.asg_client.receiver.DebugHotspotReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.mentra.DEBUG_HOTSPOT" />
+            </intent-filter>
+        </receiver>
+
         <!-- Debug receiver for testing MTK OTA via adb -->
         <receiver
             android:name="com.mentra.asg_client.receiver.DebugMtkOtaReceiver"

@@ -10,8 +10,11 @@ apply plugin: 'com.diffplug.spotless'
 def hasSpotlessRatchetGitDir = {
     def dir = rootProject.projectDir
     while (dir != null) {
-        if (new File(dir, ".git").isDirectory()) {
-            return true
+        def gitEntry = new File(dir, ".git")
+        if (gitEntry.exists()) {
+            // A .git *file* means a linked git worktree, whose layout Spotless's jgit
+            // cannot resolve — treat it like a non-git checkout and skip the ratchet.
+            return gitEntry.isDirectory()
         }
         dir = dir.parentFile
     }
