@@ -3203,6 +3203,7 @@ class LocalMiniappRuntime {
         compress: payload.compress as "none" | "low" | "medium" | "high" | undefined,
         sound: payload.sound as boolean | undefined,
         saveToGallery: payload.saveToGallery as boolean | undefined,
+        saveToCameraRoll: payload.saveToCameraRoll as boolean | undefined,
         exposureTimeNs: payload.exposureTimeNs as number | undefined,
         iso: payload.iso as number | null | undefined,
         aeExposureDivisor: payload.aeExposureDivisor as number | undefined,

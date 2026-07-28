@@ -614,14 +614,13 @@ export const cloudClientService = {
     if (wasConnected) notifyConnectionListeners(false)
   },
 
-  /** Device-side managed photo (cloud-v2): presign now, deliver bytes, await ready. */
-  startManagedPhoto(opts: Record<string, unknown> = {}) {
-    if (!client) throw new Error("cloud client not connected")
-    return client.runtime.startManagedPhoto(opts)
-  },
-  awaitManagedPhotoReady(requestId: string) {
-    if (!client) throw new Error("cloud client not connected")
-    return client.runtime.awaitManagedPhotoReady(requestId)
+  /**
+   * Resolved cloud-v2 runtime base URL (scheme://host[:port]) for direct
+   * runtime REST outside the CloudClient — e.g. the camera local-blob path the
+   * photo coordinator publishes BLE-delivered photos through.
+   */
+  getRuntimeBaseUrl(): string {
+    return resolveEndpoints().runtime
   },
 
   /** Managed stream (cloud-v2): provision ingest+playback on the runtime. */

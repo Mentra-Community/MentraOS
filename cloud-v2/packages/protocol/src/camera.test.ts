@@ -52,6 +52,21 @@ describe("photoOptionsSchema", () => {
     expect(photoOptionsSchema.parse({ compress: "high" }).compress).toBe("heavy");
     expect(photoOptionsSchema.parse({ compress: "none" }).compress).toBe("none");
   });
+
+  test("accepts the phone-side flags", () => {
+    const parsed = photoOptionsSchema.parse({
+      saveToGallery: true,
+      saveToCameraRoll: true,
+      sound: false,
+    });
+    expect(parsed.saveToGallery).toBe(true);
+    expect(parsed.saveToCameraRoll).toBe(true);
+    expect(parsed.sound).toBe(false);
+  });
+
+  test("rejects a non-boolean saveToCameraRoll", () => {
+    expect(photoOptionsSchema.safeParse({ saveToCameraRoll: "yes" }).success).toBe(false);
+  });
 });
 
 describe("normalizePhotoCompress", () => {
