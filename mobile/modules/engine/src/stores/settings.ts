@@ -23,7 +23,7 @@ export interface Setting {
   persist: boolean
   // Pairing-identity keys are NATIVE-authoritative: the native layer writes
   // them on pairing success (handleDeviceReady) / forget and echoes them down
-  // via save_setting; JS→native they travel only in the explicit SEEDS
+  // via save_setting; JS鈫抧ative they travel only in the explicit SEEDS
   // (hydration, pre-connect, post-demotion, abandon re-seed) — never the
   // change-push and never the on-connect replay, whose mid-relay snapshot can
   // overwrite a just-promoted identity. PAIRING_IDENTITY_KEYS is derived from
@@ -257,6 +257,14 @@ export const SETTINGS: Record<string, Setting> = {
     persist: true,
     nativeAuthoritative: true,
   },
+  project_name: {
+    key: "project_name",
+    defaultValue: () => "",
+    writable: true,
+    saveOnServer: false,
+    persist: true,
+    nativeAuthoritative: true,
+  },
   default_controller: {
     key: "default_controller",
     defaultValue: () => "",
@@ -371,12 +379,23 @@ export const SETTINGS: Record<string, Setting> = {
     saveOnServer: true,
     persist: true,
   },
+  // The Mentra App intentionally preserves Mentra Live's historical VAD-on
+  // product default. Standalone public Bluetooth SDK hosts default VAD off so
+  // their microphone audio remains continuous.
   voice_activity_detection_enabled: {
     key: "voice_activity_detection_enabled",
     defaultValue: () => true,
     writable: true,
-    saveOnServer: false,
-    persist: false,
+    saveOnServer: true,
+    persist: true,
+  },
+  // Mentra Live center-mic loudness / "Barrier" gate (cs_swit type 10). Default on.
+  loudness_gate_enabled: {
+    key: "loudness_gate_enabled",
+    defaultValue: () => true,
+    writable: true,
+    saveOnServer: true,
+    persist: true,
   },
   always_on_status_bar: {
     key: "always_on_status_bar",
@@ -567,7 +586,7 @@ export const SETTINGS: Record<string, Setting> = {
   // offline applets
   offline_mode: {key: "offline_mode", defaultValue: () => false, writable: true, saveOnServer: true, persist: true},
   // Runtime flag: coordinator flips this on when cloud STT has failed and fallback is active.
-  // Native GlassesStore watches it to gate PCM → Sherpa feeding. Not user-facing.
+  // Native GlassesStore watches it to gate PCM 鈫?Sherpa feeding. Not user-facing.
   local_stt_fallback_active: {
     key: "local_stt_fallback_active",
     defaultValue: () => false,
@@ -677,6 +696,7 @@ export const BLUETOOTH_SETTING_KEYS: string[] = [
   SETTINGS.sensing_enabled.key,
   SETTINGS.power_saving_mode.key,
   SETTINGS.voice_activity_detection_enabled.key,
+  SETTINGS.loudness_gate_enabled.key,
   SETTINGS.lc3_frame_size.key,
   SETTINGS.preferred_mic.key,
   SETTINGS.screen_disabled.key,
@@ -705,6 +725,7 @@ export const BLUETOOTH_SETTING_KEYS: string[] = [
   SETTINGS.default_wearable.key,
   SETTINGS.device_name.key,
   SETTINGS.device_address.key,
+  SETTINGS.project_name.key,
   SETTINGS.default_controller.key,
   SETTINGS.pending_controller.key,
   SETTINGS.controller_device_name.key,
@@ -712,7 +733,7 @@ export const BLUETOOTH_SETTING_KEYS: string[] = [
   // offline applets:
   SETTINGS.offline_mode.key,
   // Runtime flag flipped by LocalSttFallbackCoordinator. Native reads it from
-  // GlassesStore to gate PCM → Sherpa feeding in handlePcm and to keep the
+  // GlassesStore to gate PCM 鈫?Sherpa feeding in handlePcm and to keep the
   // mic on while local STT is the active engine.
   SETTINGS.local_stt_fallback_active.key,
   SETTINGS.gallery_mode.key,
@@ -723,12 +744,12 @@ export const BLUETOOTH_SETTING_KEYS: string[] = [
 
 // Pairing identity is NATIVE-authoritative: the native layer writes it on
 // pairing success (handleDeviceReady) / forget and echoes it down via
-// save_setting; JS persists those echoes. JS→native, identity travels ONLY in
+// save_setting; JS persists those echoes. JS鈫抧ative, identity travels ONLY in
 // the explicit full seeds (device-store hydration, pre-connect push,
 // post-demotion re-push) — never in the change-push subscription. Relaying an
 // echoed identity change back up would make the sync bidirectional with loop
 // gain 1: two identity values in flight (e.g. a boot demotion crossing a
-// native promotion) then chase each other through push→apply→echo→push
+// native promotion) then chase each other through push鈫抋pply鈫抏cho鈫抪ush
 // forever, flapping the UI.
 //
 // Derived from the `nativeAuthoritative` descriptor flag (not maintained as a
@@ -943,7 +964,7 @@ export const useSettingsStore = create<SettingsState>()(
         // The dimezisBlurViewSdk31Plus blur each costs ~5-10ms/frame; with
         // multiple blurs on home (top fade + AppSwitcherButton x2) a low-end
         // device misses the 16ms budget consistently. Users can turn it back
-        // on under Settings → Appearance once we've optimized further.
+        // on under Settings 鈫?Appearance once we've optimized further.
         //
         // The setSetting call also pushes to the server (saveOnServer: true)
         // so the server-stored value flips too — otherwise the next sync
@@ -970,9 +991,9 @@ export const useSettingsStore = create<SettingsState>()(
           storage.save(MIGRATION_KEY, true)
         }
 
-        // The old camera default cropped the sensor to 102°. Move existing
-        // default-shaped values to the full 118° sensor once; named miniapp
-        // requests for the 102° "standard" preset remain available.
+        // The old camera default cropped the sensor to 102掳. Move existing
+        // default-shaped values to the full 118掳 sensor once; named miniapp
+        // requests for the 102掳 "standard" preset remain available.
         const CAMERA_FOV_MIGRATION_KEY = "migration:camera_fov_full_sensor_v1"
         const cameraFovMigrationDone = storage.load<boolean>(CAMERA_FOV_MIGRATION_KEY)
         if (cameraFovMigrationDone.is_error() || !cameraFovMigrationDone.value) {
@@ -1029,3 +1050,7 @@ export const useSetting = <T = any>(key: string): [T, (value: T) => AsyncResult<
   const setSetting = useSettingsStore((state) => state.setSetting)
   return [value, (newValue: T) => setSetting(key, newValue)]
 }
+
+
+
+

@@ -14,6 +14,7 @@ import expo.modules.kotlin.modules.ModuleDefinition
 import expo.modules.kotlin.modules.ModuleDefinitionBuilder
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.security.MessageDigest
 
 // Expo has no module-level error mapper, so SDK-backed registrations translate
 // core exceptions here while keeping Expo types out of the native SDK API.
@@ -371,7 +372,8 @@ class BluetoothSdkModule : Module() {
             "ota_progress",
             "ota_start_ack",
             "ota_status",
-            // Nex / BLE debug (NexEventUtils → Bridge.sendTypedMessage)
+            "ar99_ota_status",
+            // Nex / BLE debug (NexEventUtils —Bridge.sendTypedMessage)
             "send_command_to_ble",
             "receive_command_from_ble",
             "miniapp_selected",
@@ -583,6 +585,10 @@ class BluetoothSdkModule : Module() {
             sdk?.setVoiceActivityDetectionEnabled(enabled)
         }
 
+        SdkAsyncFunction("setLoudnessGateEnabled") { enabled: Boolean ->
+            sdk?.setLoudnessGateEnabled(enabled)
+        }
+
         @Suppress("DEPRECATION")
         SdkCoroutineFunction("setPhotoCaptureDefaults") { params: Map<String, Any?> ->
             requireSdk().setPhotoCaptureDefaults(params.toPhotoCaptureDefaults()).values
@@ -695,6 +701,18 @@ class BluetoothSdkModule : Module() {
 
         SdkCoroutineFunction("sendOtaQueryStatus") { -> requireSdk().sendOtaQueryStatus().values }
 
+        AsyncFunction("startAr99OtaFromFile") { path: String -> requireSdk().startAr99OtaFromFile(path) }
+
+        AsyncFunction("cancelAr99Ota") { requireSdk().cancelAr99Ota() }
+
+        AsyncFunction("sendAr99FactoryReset") { requireSdk().sendAr99FactoryReset() }
+
+
+        Function("buildAr99OtaSignature") { secret: String, appName: String, currentVersion: String, serialNumber: String, nonce: String ->
+            val raw = secret + appName + "juxinOTA" + currentVersion + serialNumber.trim() + nonce
+            val digest = MessageDigest.getInstance("MD5").digest(raw.toByteArray(Charsets.UTF_8))
+            digest.joinToString("") { "%02x".format(it.toInt() and 0xff) }
+        }
         // MARK: - Version Info Commands
 
         SdkCoroutineFunction("requestVersionInfo") { -> requireSdk().requestVersionInfo().toMap() }
@@ -878,7 +896,7 @@ class BluetoothSdkModule : Module() {
         }
 
         // Runs on Dispatchers.IO, not the shared Expo AsyncFunctionQueue: bz2/tar
-        // extraction of the 100–350MB model is a multi-minute, CPU-bound job. On the
+        // extraction of the 100—50MB model is a multi-minute, CPU-bound job. On the
         // shared queue it froze every other native call in the app until it finished.
         AsyncFunction("extractTarBz2") Coroutine { sourcePath: String, destinationPath: String ->
             withContext(Dispatchers.IO) {
@@ -955,12 +973,14 @@ private fun Map<String, Any>?.toMentraDevice(): Device? {
     val model = values["model"] as? String ?: return null
     val name = values["name"] as? String ?: return null
     val address = values["address"] as? String
+    val projectName = values["projectName"] as? String
     val rssi = (values["rssi"] as? Number)?.toInt()
     val id = values["id"] as? String
     return Device(
             model = DeviceModel.fromDeviceType(model),
             name = name,
             address = address?.takeIf { it.isNotBlank() },
+            projectName = projectName?.takeIf { it.isNotBlank() },
             rssi = rssi,
             id = id?.takeIf { it.isNotBlank() } ?: address?.takeIf { it.isNotBlank() } ?: "$model:$name",
     )

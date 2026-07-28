@@ -20,9 +20,10 @@ jest.mock("@/../../cloud/packages/types/src", () => ({
     Z100: "Vuzix Z100",
     MACH1: "Mach1",
     NEX: "Mentra Nex",
+    AR99: "AR99",
   },
   getModelCapabilities: jest.fn((deviceModel: string) => ({
-    hasOta: deviceModel === "Mentra Live",
+    hasOta: deviceModel === "Mentra Live" || deviceModel === "AR99",
   })),
 }))
 
@@ -40,6 +41,8 @@ jest.mock("@/stores/navigation", () => ({
 }))
 
 jest.mock("@/utils/getGlassesImage", () => ({
+  getAr99DisplayName: jest.fn(() => "Xingyi AR99"),
+  getAr99ImageSource: jest.fn(() => 1),
   getGlassesImage: jest.fn(() => 1),
 }))
 
@@ -143,6 +146,20 @@ describe("pairing success screen", () => {
     await waitFor(() => expect(clearHistoryAndGoHome).toHaveBeenCalled())
     expect(push).not.toHaveBeenCalled()
     expect(pushUnder).not.toHaveBeenCalled()
+  })
+
+  it("finishes AR99 pairing without entering the generic OTA setup route", async () => {
+    ;(useRoute as jest.Mock).mockReturnValue({params: {deviceModel: "AR99", ar99ProjectName: "AR99"}})
+
+    const {getAllByText} = render(<PairingSuccessScreen />)
+
+    await waitFor(() => expect(getAllByText("common:continue").length).toBeGreaterThan(0))
+    fireEvent.press(getAllByText("common:continue")[1])
+
+    await waitFor(() => expect(clearHistoryAndGoHome).toHaveBeenCalled())
+    expect(push).not.toHaveBeenCalledWith("/ota/check-for-updates")
+    expect(pushUnder).not.toHaveBeenCalled()
+    expect(engine.pairing.waitForBluetoothClassic).not.toHaveBeenCalled()
   })
 
   it("opens MentraOS onboarding after pairing non-Live glasses when it is incomplete", async () => {

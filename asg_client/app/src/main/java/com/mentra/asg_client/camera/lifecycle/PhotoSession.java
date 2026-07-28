@@ -1824,7 +1824,10 @@ public final class PhotoSession {
 
             startPrecaptureSequence();
 
-        } catch (CameraAccessException e) {
+        } catch (CameraAccessException | IllegalArgumentException | IllegalStateException e) {
+            // IllegalArgumentException: a teardown racing this call abandoned the preview
+            // surface ("Surface was abandoned", OS-1816). IllegalStateException: the session
+            // was closed under us. Both must fail the request, not crash the process.
             Log.e(TAG, "Error starting preview with AE monitoring", e);
             if (warmUpRequest != null) {
                 failWarmUp(
@@ -2409,7 +2412,9 @@ public final class PhotoSession {
                     // Dedicated thread: ImageReader JPEG work must not delay HAL timing callbacks.
                     stillCaptureCallbackHandler());
 
-        } catch (CameraAccessException e) {
+        } catch (CameraAccessException | IllegalArgumentException | IllegalStateException e) {
+            // IllegalArgumentException: the still surface was abandoned by a racing
+            // teardown (OS-1816). IllegalStateException: the session was closed under us.
             Log.e(TAG, "Error during photo capture", e);
             notifyPhotoError("Error capturing photo: " + e.getMessage());
             hooks.cancelImuRecording();
@@ -2476,7 +2481,9 @@ public final class PhotoSession {
                         }
                     });
 
-        } catch (CameraAccessException e) {
+        } catch (CameraAccessException | IllegalArgumentException | IllegalStateException e) {
+            // Same teardown races as capturePhoto(): abandoned still surface or closed
+            // session must fail the burst, not crash the process (OS-1816).
             Log.e(TAG, "Error during HDR burst capture", e);
             hdrBurstCapture.cancel();
             hooks.cancelImuRecording();

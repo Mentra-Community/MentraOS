@@ -68,6 +68,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class CameraNeoService extends LifecycleService {
     private static final String TAG = "CameraNeo";
@@ -1504,8 +1505,17 @@ public class CameraNeoService extends LifecycleService {
             }
 
             Log.d(TAG, "Opening camera ID: " + this.cameraId);
-            manager.openCamera(
-                    this.cameraId, newCameraOpenStateCallback(forVideo), backgroundHandler);
+            try {
+                manager.openCamera(
+                        this.cameraId, newCameraOpenStateCallback(forVideo), backgroundHandler);
+            } catch (Exception e) {
+                // The state callback owns the permit only once the open is in flight. If
+                // openCamera throws synchronously no callback will ever fire, so release
+                // here or every later open times out and every close falls into the
+                // 5s proceed-anyway teardown.
+                cameraCoordinator.releaseOpenCloseLock();
+                throw e;
+            }
 
         } catch (CameraAccessException e) {
             // Handle camera access exceptions more specifically
@@ -1547,19 +1557,40 @@ public class CameraNeoService extends LifecycleService {
      */
     private CameraDevice.StateCallback newCameraOpenStateCallback(final boolean forVideo) {
         return new CameraDevice.StateCallback() {
+            // The in-flight open owns exactly one open/close permit, surrendered to the
+            // FIRST terminal callback. onDisconnected/onError also fire long after
+            // onOpened (HAL eviction, cable events); an unconditional release there
+            // inflated the Semaphore(1) past one permit, after which the open/close
+            // lock excluded nothing and teardown could interleave with any open — the
+            // cheap way to hit the OS-1816 crash repeatedly.
+            private final AtomicBoolean openPermitReleased = new AtomicBoolean(false);
+
+            private void releaseOpenPermitOnce() {
+                if (openPermitReleased.compareAndSet(false, true)) {
+                    cameraCoordinator.releaseOpenCloseLock();
+                }
+            }
+
             @Override
             public void onOpened(@NonNull CameraDevice camera) {
                 Log.d(TAG, "Camera device opened successfully");
-                cameraCoordinator.releaseOpenCloseLock();
                 cameraCoordinator.setDevice(camera);
 
-                createCameraSessionInternal(forVideo);
+                // Hold the open/close lock until the session surfaces have been handed to
+                // the framework: releasing it first lets closeCamera() close the
+                // ImageReaders on another thread mid-setup, abandoning the surfaces this
+                // session is about to wrap (OS-1816).
+                try {
+                    createCameraSessionInternal(forVideo);
+                } finally {
+                    releaseOpenPermitOnce();
+                }
             }
 
             @Override
             public void onDisconnected(@NonNull CameraDevice camera) {
                 Log.d(TAG, "Camera device disconnected");
-                cameraCoordinator.releaseOpenCloseLock();
+                releaseOpenPermitOnce();
                 camera.close();
                 cameraCoordinator.clearDevice();
                 if (forVideo) {
@@ -1581,7 +1612,7 @@ public class CameraNeoService extends LifecycleService {
                                 + " (Android code "
                                 + error
                                 + ")");
-                cameraCoordinator.releaseOpenCloseLock();
+                releaseOpenPermitOnce();
                 camera.close();
                 cameraCoordinator.clearDevice();
                 if (forVideo) {
@@ -1687,11 +1718,22 @@ public class CameraNeoService extends LifecycleService {
                                 try {
                                     videoSession.startRecording(
                                             cameraCoordinator.session(), previewBuilder);
-                                } catch (CameraAccessException ce) {
+                                } catch (CameraAccessException
+                                        | IllegalArgumentException
+                                        | IllegalStateException ce) {
+                                    // IllegalArgumentException: the recorder surface was
+                                    // released by a racing teardown. IllegalStateException:
+                                    // the session was closed under us. Same crash family as
+                                    // the photo path (OS-1816). Tear down like
+                                    // onConfigureFailed does — reporting the error while
+                                    // leaving device/session/recorder alive would hold the
+                                    // camera hostage for every later open.
                                     Log.e(TAG, "Failed to start video recording", ce);
                                     notifyVideoError(
                                             videoSession.currentVideoId(),
                                             "Failed to start recording: " + ce.getMessage());
+                                    closeCamera();
+                                    conditionalStopSelf();
                                 }
                             } else {
                                 Log.d(TAG, "Camera session configured and ready");
@@ -1768,6 +1810,16 @@ public class CameraNeoService extends LifecycleService {
             Log.e(TAG, "Illegal state in createCameraSessionInternal", e);
             if (forVideo) notifyVideoError(videoSession.currentVideoId(), "Camera illegal state");
             else photoSession.notifyHostPhotoError("Camera illegal state");
+            conditionalStopSelf();
+        } catch (IllegalArgumentException e) {
+            // A teardown that raced this setup abandons the reader/recorder surfaces;
+            // OutputConfiguration and createCaptureSession then throw
+            // IllegalArgumentException ("Surface was abandoned"). Fail the request
+            // instead of crashing the process (OS-1816).
+            Log.e(TAG, "Camera surface no longer valid in createCameraSessionInternal", e);
+            if (forVideo)
+                notifyVideoError(videoSession.currentVideoId(), "Camera surface no longer valid");
+            else photoSession.notifyHostPhotoError("Camera surface no longer valid");
             conditionalStopSelf();
         }
     }

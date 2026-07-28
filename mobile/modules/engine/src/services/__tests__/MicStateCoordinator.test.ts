@@ -19,7 +19,15 @@ const flushMicWrite = () => new Promise((r) => setTimeout(r, 320))
 
 describe("MicStateCoordinator", () => {
   beforeEach(async () => {
-    MicStateCoordinator.setLocalRequirements({pcm: false, lc3: false, vadEnabled: true})
+    for (const packageName of ["com.a", "com.b", "com.voice"]) {
+      MicStateCoordinator.clearMiniappGateOverrides(packageName)
+    }
+    MicStateCoordinator.setLocalRequirements({
+      pcm: false,
+      lc3: false,
+      vadEnabled: true,
+      loudnessGateEnabled: true,
+    })
     // Drain the baseline write before clearing the mock.
     await flushMicWrite()
     mockUpdateBluetoothSettings.mockClear()
@@ -151,6 +159,104 @@ describe("MicStateCoordinator", () => {
 
     expect(MicStateCoordinator.applyRuntimeOverrides(queuedPatch)).toEqual({
       voice_activity_detection_enabled: true,
+    })
+  })
+
+  test("keeps miniapp gate overrides active during settings replay", async () => {
+    await MicStateCoordinator.setMiniappGateOverride("com.voice", "vad", false, {
+      vadEnabled: true,
+      loudnessGateEnabled: true,
+    })
+    await MicStateCoordinator.setMiniappGateOverride("com.voice", "loudnessGate", true)
+
+    expect(
+      MicStateCoordinator.applyRuntimeOverrides({
+        brightness: 50,
+        voice_activity_detection_enabled: true,
+        loudness_gate_enabled: false,
+      }),
+    ).toEqual({
+      brightness: 50,
+      voice_activity_detection_enabled: false,
+      loudness_gate_enabled: true,
+    })
+  })
+
+  test("restores OS gate preferences when the miniapp disconnects", async () => {
+    await MicStateCoordinator.setMiniappGateOverride("com.voice", "vad", false, {
+      vadEnabled: true,
+      loudnessGateEnabled: false,
+    })
+    await MicStateCoordinator.setMiniappGateOverride("com.voice", "loudnessGate", true)
+    mockUpdateBluetoothSettings.mockClear()
+
+    expect(MicStateCoordinator.clearMiniappGateOverrides("com.voice")).toBe(true)
+    await MicStateCoordinator.syncEffectiveGatePolicy()
+
+    expect(mockUpdateBluetoothSettings).toHaveBeenLastCalledWith({
+      voice_activity_detection_enabled: true,
+      loudness_gate_enabled: false,
+    })
+  })
+
+  test("restores an OS preference changed while a miniapp override is active", async () => {
+    await MicStateCoordinator.setMiniappGateOverride("com.voice", "vad", true, {vadEnabled: true})
+
+    expect(
+      MicStateCoordinator.applyRuntimeOverrides({
+        voice_activity_detection_enabled: false,
+      }),
+    ).toEqual({
+      voice_activity_detection_enabled: true,
+    })
+
+    MicStateCoordinator.clearMiniappGateOverrides("com.voice")
+    await MicStateCoordinator.syncEffectiveGatePolicy()
+
+    expect(mockUpdateBluetoothSettings).toHaveBeenLastCalledWith(
+      expect.objectContaining({voice_activity_detection_enabled: false}),
+    )
+  })
+
+  test("restores the previous live miniapp override when the latest owner disconnects", async () => {
+    await MicStateCoordinator.setMiniappGateOverride("com.a", "vad", false, {vadEnabled: true})
+    await MicStateCoordinator.setMiniappGateOverride("com.b", "vad", true)
+    mockUpdateBluetoothSettings.mockClear()
+
+    expect(MicStateCoordinator.clearMiniappGateOverrides("com.b")).toBe(true)
+    await MicStateCoordinator.syncEffectiveGatePolicy()
+
+    expect(mockUpdateBluetoothSettings).toHaveBeenLastCalledWith(
+      expect.objectContaining({voice_activity_detection_enabled: false}),
+    )
+  })
+
+  test("queued mic writes cannot reapply a released miniapp override", async () => {
+    await MicStateCoordinator.setMiniappGateOverride("com.voice", "vad", false, {vadEnabled: true})
+    MicStateCoordinator.setLocalRequirements({pcm: false, lc3: true})
+    MicStateCoordinator.clearMiniappGateOverrides("com.voice")
+    mockUpdateBluetoothSettings.mockClear()
+
+    await flushMicWrite()
+
+    expect(mockUpdateBluetoothSettings).toHaveBeenLastCalledWith(
+      expect.objectContaining({voice_activity_detection_enabled: true}),
+    )
+  })
+
+  test("raw PCM keeps VAD disabled over a miniapp override", async () => {
+    MicStateCoordinator.setLocalRequirements({pcm: true, lc3: false, vadEnabled: true})
+    await MicStateCoordinator.setMiniappGateOverride("com.voice", "vad", true)
+
+    expect(mockUpdateBluetoothSettings).toHaveBeenLastCalledWith(
+      expect.objectContaining({voice_activity_detection_enabled: false}),
+    )
+    expect(
+      MicStateCoordinator.applyRuntimeOverrides({
+        voice_activity_detection_enabled: true,
+      }),
+    ).toEqual({
+      voice_activity_detection_enabled: false,
     })
   })
 })

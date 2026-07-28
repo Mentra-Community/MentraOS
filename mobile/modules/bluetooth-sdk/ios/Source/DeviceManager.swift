@@ -22,7 +22,7 @@ struct ViewState {
     var text: String
     var data: String?
     var animationData: [String: Any]?
-    // Optional container position/size — used by bitmap_view and positioned_text (G2; ignored by others)
+    // Optional container position/size - used by bitmap_view and positioned_text (G2; ignored by others)
     var bmpX: Int32? = nil
     var bmpY: Int32? = nil
     var bmpWidth: Int32? = nil
@@ -76,7 +76,7 @@ struct ViewState {
 
         if isPaired {
             // Device is paired! Don't activate it - let PhoneMic.swift activate when recording starts
-            Bridge.log("Audio: ✅ Mentra Live is paired (preserving A2DP for music)")
+            Bridge.log("Audio: Mentra Live is paired (preserving A2DP for music)")
             glassesBluetoothClassicConnected = true
         } else {
             glassesBluetoothClassicConnected = false
@@ -88,7 +88,7 @@ struct ViewState {
                 guard let self = self else { return }
 
                 if connected {
-                    Bridge.log("Audio: ✅ Device paired and connected")
+                    Bridge.log("Audio: Device paired and connected")
                     // Don't activate - let PhoneMic.swift handle that when recording starts
                     self.glassesBluetoothClassicConnected = true
                 } else {
@@ -320,7 +320,7 @@ struct ViewState {
         ),
     ]
 
-    // Scene slots — one whole SceneFrame per view (main/dashboard), parallel to
+    // Scene slots - one whole SceneFrame per view (main/dashboard), parallel to
     // viewStates. When a slot holds a scene, viewStates carries a "scene"
     // sentinel so sendCurrentState routes here. Holding the WHOLE frame keeps
     // native re-dispatch coherent (dashboard exit re-applies a complete scene).
@@ -415,6 +415,10 @@ struct ViewState {
         }
         // Forward to handlePcm which handles SDK audio events and encoding.
         handlePcm(pcmData)
+    }
+
+    func reportGlassesAudioActivity() {
+        lastLc3Event = Date()
     }
 
     func handlePcm(_ pcmData: Data) {
@@ -626,6 +630,8 @@ struct ViewState {
             sgc = MentraLive()
         } else if wearable.contains(DeviceTypes.NIMO) {
             sgc = Nimo()
+        } else if wearable.contains(DeviceTypes.AR99) {
+            sgc = Ar99()
         } else if wearable.contains(DeviceTypes.FRAME) {
             // sgc = FrameManager()
         }
@@ -722,7 +728,7 @@ struct ViewState {
                 )
             case "positioned_text":
                 Bridge.log(
-                    "MAN: positioned_text → text='\(currentViewState.text)' rect=\(currentViewState.bmpX ?? 0),\(currentViewState.bmpY ?? 0) \(currentViewState.bmpWidth ?? 576)x\(currentViewState.bmpHeight ?? 288)"
+                    "MAN: positioned_text -> text='\(currentViewState.text)' rect=\(currentViewState.bmpX ?? 0),\(currentViewState.bmpY ?? 0) \(currentViewState.bmpWidth ?? 576)x\(currentViewState.bmpHeight ?? 288)"
                 )
                 await sgc?.sendPositionedText(
                     currentViewState.text,
@@ -866,7 +872,7 @@ struct ViewState {
             let deviceName = session.availableInputs?.first(where: {
                 $0.portName.localizedCaseInsensitiveContains(audioDevicePattern)
             })?.portName
-            Bridge.log("MAN: ✅ Successfully detected newly paired device '\(deviceName)'")
+            Bridge.log("MAN: Successfully detected newly paired device '\(deviceName)'")
             glassesBluetoothClassicConnected = true
         } else {
             glassesBluetoothClassicConnected = false
@@ -933,7 +939,7 @@ struct ViewState {
             // stale/torn-down connection.
             guard let sgc = self?.sgc else { return }
             let h = DeviceStore.shared.get("bluetooth", "dashboard_height") as? Int ?? 4
-            // Fall back to the canonical default (2), matching DeviceStore — not 1.
+            // Fall back to the canonical default (2), matching DeviceStore, not 1.
             let rawDepth = DeviceStore.shared.get("bluetooth", "dashboard_depth") as? Int ?? 2
             let d = min(max(rawDepth, 1), 4)
             sgc.setDashboardPosition(h, d)
@@ -967,6 +973,10 @@ struct ViewState {
         Bridge.saveSetting("default_wearable", defaultWearable)
         Bridge.saveSetting("device_name", deviceName)
         Bridge.saveSetting("device_address", deviceAddress)
+        if defaultWearable.contains(DeviceTypes.AR99) {
+            let projectName = (DeviceStore.shared.get("bluetooth", "project_name") as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            Bridge.saveSetting("project_name", projectName)
+        }
 
     }
 
@@ -1173,7 +1183,7 @@ struct ViewState {
             // Legacy→scene handoff: stale legacy content (e.g. a cloud app's
             // text wall) must not linger under the scene's elements.
             // clearDisplay is the per-device "wipe what's there" (blank-in-place
-            // on G2 — no page rebuild).
+            // on G2 - no page rebuild).
             let prevLegacyType = viewStates[stateIndex].layoutType
             if !prevLegacyType.isEmpty, prevLegacyType != "clear_view", prevLegacyType != "scene" {
                 sgc?.clearDisplay()
@@ -1192,7 +1202,7 @@ struct ViewState {
         }
 
         // Store the REDISPATCH form: any later sendCurrentState (dashboard
-        // exit, head-up return) must repaint the whole frame — the original
+        // exit, head-up return) must repaint the whole frame - the original
         // annotations are only valid for the first dispatch right now.
         sceneStates[stateIndex] = frame.asReplay()
         viewStates[stateIndex] = ViewState(
@@ -1206,7 +1216,7 @@ struct ViewState {
         }
     }
 
-    /// Guarded scene dispatch — mirrors sendCurrentState's send conditions.
+    /// Guarded scene dispatch - mirrors sendCurrentState's send conditions.
     private func dispatchSceneFrame(_ frame: SceneFrame) {
         if screenDisabled { return }
         if sgc?.type.contains(DeviceTypes.SIMULATED) ?? true { return }
@@ -1333,6 +1343,24 @@ struct ViewState {
     func sendOtaQueryStatus() {
         Bridge.log("MAN: 📱 Sending OTA query status command to glasses")
         (sgc as? MentraLive)?.sendOtaQueryStatus()
+    }
+
+    func startAr99OtaFromFile(_ path: String) throws -> Bool {
+        guard let ar99 = sgc as? Ar99 else {
+            throw BluetoothSdkError(code: "unsupported_device", message: "This command requires AR99 glasses.")
+        }
+        return ar99.startOtaFromFile(path)
+    }
+
+    func cancelAr99Ota() {
+        (sgc as? Ar99)?.cancelAr99Ota()
+    }
+
+    func sendAr99FactoryReset() throws {
+        guard let ar99 = sgc as? Ar99 else {
+            throw BluetoothSdkError(code: "unsupported_device", message: "This command requires AR99 glasses.")
+        }
+        ar99.sendFactoryReset()
     }
 
     private func liveSgc() throws -> MentraLive {
@@ -1507,7 +1535,7 @@ struct ViewState {
         )
     }
 
-    /// Mentra Live only: K900 `cs_getvol` / `sr_getvol` (step volume 0–15).
+    /// Mentra Live only: K900 `cs_getvol` / `sr_getvol` (step volume 0-5).
     func getGlassesMediaVolume() async throws -> [String: Any] {
         guard let live = sgc as? MentraLive else {
             throw NSError(
@@ -1570,7 +1598,7 @@ struct ViewState {
         )
         guard let sgc else {
             Bridge.log(
-                "MAN: PHOTO PIPELINE — sgc is null (glasses not connected); dropping requestId=\(routed.requestId)"
+                "MAN: PHOTO PIPELINE - sgc is null (glasses not connected); dropping requestId=\(routed.requestId)"
             )
             return
         }
@@ -1582,13 +1610,19 @@ struct ViewState {
             Bridge.log("MAN: No default wearable, returning")
             return
         }
-        if deviceName.isEmpty {
-            Bridge.log("MAN: No device name, returning")
+        let reconnectTarget =
+            if defaultWearable.contains(DeviceTypes.AR99), !deviceAddress.isEmpty {
+                deviceAddress
+            } else {
+                deviceName
+            }
+        if reconnectTarget.isEmpty {
+            Bridge.log("MAN: No reconnect target, returning")
             return
         }
         initSGC(defaultWearable)
         searching = true
-        sgc?.connectById(deviceName)
+        sgc?.connectById(reconnectTarget)
         connectDefaultController()
     }
 
@@ -1678,6 +1712,11 @@ struct ViewState {
         shouldSendBootingMessage = true // Reset for next first connect
         // clear glasses properties:
         DeviceStore.shared.apply("glasses", "deviceModel", "")
+        // A manufacturing serial is session-bound. Clear it on every disconnect so a
+        // previously connected pair's serial can never be reported for the next
+        // connection (e.g. switching from G1/Ar99, which populate it from the
+        // advertisement, to a model that never writes it, like G2).
+        DeviceStore.shared.apply("glasses", "serialNumber", "")
         DeviceStore.shared.apply("glasses", "fullyBooted", false)
         DeviceStore.shared.apply("glasses", "connected", false)
         DeviceStore.shared.apply("glasses", "connectionState", ConnTypes.DISCONNECTED)
@@ -1709,6 +1748,7 @@ struct ViewState {
         Bridge.saveSetting("default_wearable", "")
         Bridge.saveSetting("device_name", "")
         Bridge.saveSetting("device_address", "")
+        Bridge.saveSetting("project_name", "")
     }
 
     func forgetController() {
@@ -1767,3 +1807,4 @@ struct ViewState {
         cancellables.removeAll()
     }
 }
+

@@ -16,7 +16,7 @@ Use `setMicState` when your app wants microphone audio from the connected glasse
 
 `enabled` turns microphone capture on or off. `useGlassesMic` selects the glasses microphone when `true`, or the phone microphone when `false`.
 
-Microphone audio events are emitted continuously from the selected microphone path while capture is enabled. The SDK does not apply phone-side Voice Activity Detection gating to PCM or LC3 events. Glasses-side Voice Activity Detection can be enabled or disabled with `setVoiceActivityDetectionEnabled(...)`; the current setting is reported through `voice_activity_detection_status`. When supported by the connected glasses, `speaking_status` reports whether the glasses currently detect speech. Microphone events also include the latest `voiceActivityDetectionEnabled` value.
+Microphone audio events are emitted continuously from the selected microphone path while capture is enabled. The SDK does not apply phone-side Voice Activity Detection gating to PCM or LC3 events. Glasses-side Voice Activity Detection can be enabled or disabled with `setVoiceActivityDetectionEnabled(...)`; the current setting is reported through `voice_activity_detection_status`. Mentra Live's center-microphone loudness gate ("Barrier") is controlled separately with `setLoudnessGateEnabled(...)`. When supported by the connected glasses, `speaking_status` reports whether the glasses currently detect speech. Microphone events also include the latest `voiceActivityDetectionEnabled` value.
 
 <Tabs>
   <Tab title="React Native">
@@ -24,6 +24,7 @@ Microphone audio events are emitted continuously from the selected microphone pa
 ```ts
 await BluetoothSdk.setMicState(true);
 await BluetoothSdk.setVoiceActivityDetectionEnabled(false);
+await BluetoothSdk.setLoudnessGateEnabled(true);
 ```
 
   </Tab>
@@ -32,6 +33,7 @@ await BluetoothSdk.setVoiceActivityDetectionEnabled(false);
 ```kotlin
 sdk.setMicState(enabled = true)
 sdk.setVoiceActivityDetectionEnabled(false)
+sdk.setLoudnessGateEnabled(true)
 ```
 
   </Tab>
@@ -40,6 +42,7 @@ sdk.setVoiceActivityDetectionEnabled(false)
 ```swift
 sdk.setMicState(enabled: true)
 try await sdk.setVoiceActivityDetectionEnabled(false)
+try await sdk.setLoudnessGateEnabled(true)
 ```
 
   </Tab>
@@ -115,7 +118,7 @@ Native Android and iOS apps receive `MicPcmEvent` and `MicLc3Event` objects with
 
 Voice Activity Detection means the glasses firmware is detecting whether the microphone signal currently contains speech. Use it as a signal, not as a replacement for microphone capture:
 
-- `setVoiceActivityDetectionEnabled(false)` keeps app-facing PCM and LC3 audio continuous for external STT, recording, and playback.
+- `setVoiceActivityDetectionEnabled(false)` disables VAD packet suppression. App-facing PCM and LC3 remain continuous for external STT, recording, and voice-agent use.
 - `voice_activity_detection_status` reports whether glasses-side Voice Activity Detection is enabled.
 - `speaking_status` reports the current speaking/not-speaking state when the connected glasses provide it.
 
@@ -129,6 +132,26 @@ export function SpeakingLogger() {
 
   return null;
 }
+```
+
+## Quiet Audio Barrier
+
+`setLoudnessGateEnabled(enabled)` controls Mentra Live's center-microphone
+loudness gate, also called Barrier:
+
+- When enabled, quiet input is represented as silence while audio frames
+  continue. This preserves a continuous audio timeline for voice agents.
+- When disabled, quiet center-microphone input passes through unchanged.
+- The standalone public Bluetooth SDK default is enabled. The Mentra App
+  manages separate persisted OS-level microphone preferences.
+- The SDK retains the setting and reapplies it when Mentra Live reconnects.
+
+For a voice-to-voice agent that needs continuous audio without low-level
+self-talk or background input, disable VAD and keep Barrier enabled:
+
+```ts
+await BluetoothSdk.setVoiceActivityDetectionEnabled(false);
+await BluetoothSdk.setLoudnessGateEnabled(true);
 ```
 
 ## Mentra Live Speaker Playback

@@ -33,6 +33,7 @@ config.resolver.assetExts = [...config.resolver.assetExts, "html"]
 config.watchFolders = [
   path.resolve(__dirname, "./modules/bluetooth-sdk"),
   path.resolve(__dirname, "./modules/engine"),
+  path.resolve(__dirname, "./modules/crust"),
   path.resolve(__dirname, "./modules/miniapp"),
   path.resolve(__dirname, "../cloud/packages/types/src"),
   path.resolve(__dirname, "../cloud/packages/display-utils/src"),
@@ -81,6 +82,15 @@ const CLOUD_V2_ALIASES = {
 // fast refresh. (The build/ output is still what gets published for consumers;
 // only local dev bundling is redirected here.)
 const ENGINE_SRC = path.resolve(__dirname, "./modules/engine/src")
+const CRUST_SRC = path.resolve(__dirname, "./modules/crust/src")
+const MINIAPP_SRC = path.resolve(__dirname, "./modules/miniapp/src")
+const MINIAPP_ALIASES = {
+  "@mentra/miniapp": path.join(MINIAPP_SRC, "index"),
+  "@mentra/miniapp/background": path.join(MINIAPP_SRC, "background/index"),
+  "@mentra/miniapp/ui": path.join(MINIAPP_SRC, "ui/index"),
+  "@mentra/miniapp/react": path.join(MINIAPP_SRC, "react/index"),
+  "@mentra/miniapp/protocol": path.join(MINIAPP_SRC, "protocol"),
+}
 
 // Singleton packages that must NEVER resolve to a nested copy. bun installs
 // duplicate react-native/expo under local expo-modules (e.g.
@@ -117,6 +127,11 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
   // so future engine internals do not become implicit app import surface area.
   if (moduleName === "@mentra/engine") {
     return (baseResolveRequest ?? context.resolveRequest)(context, path.join(ENGINE_SRC, "index"), platform)
+  }
+  const miniappAlias = MINIAPP_ALIASES[moduleName]
+  if (miniappAlias) return (baseResolveRequest ?? context.resolveRequest)(context, miniappAlias, platform)
+  if (moduleName === "@mentra/crust") {
+    return (baseResolveRequest ?? context.resolveRequest)(context, path.join(CRUST_SRC, "index"), platform)
   }
   return (baseResolveRequest ?? context.resolveRequest)(context, moduleName, platform)
 }

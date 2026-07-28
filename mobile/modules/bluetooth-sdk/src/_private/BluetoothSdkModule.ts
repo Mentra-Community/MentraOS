@@ -125,6 +125,8 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   // Gallery Commands
   setGalleryModeEnabled(enabled: boolean): Promise<SettingsAckSuccessEvent>
   setVoiceActivityDetectionEnabled(enabled: boolean): Promise<void>
+  /** Mentra Live center-mic loudness / Barrier gate (cs_swit type 10). */
+  setLoudnessGateEnabled(enabled: boolean): Promise<void>
   /**
    * @deprecated Sticky action-button photo presets are deprecated. Prefer per-request
    * `requestPhoto(...)` options (e.g. `mode: "text"` for text sensor size/crop).
@@ -157,6 +159,10 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   checkForOtaUpdate(): Promise<boolean>
   startOtaUpdate(otaVersionUrl?: string | null): Promise<OtaStartAckEvent>
   sendOtaQueryStatus(): Promise<OtaQueryResult>
+  startAr99OtaFromFile(path: string): Promise<boolean>
+  cancelAr99Ota(): Promise<void>
+  sendAr99FactoryReset(): Promise<void>
+  buildAr99OtaSignature(secret: string, appName: string, currentVersion: string, serialNumber: string, nonce: string): string
 
   // Version Info Commands
   requestVersionInfo(): Promise<VersionInfoResult>
@@ -191,7 +197,7 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   setOwnAppAudioPlaying(playing: boolean): Promise<void>
 
   // Live PCM output stream (miniapp speaker.createStream). MentraOS-internal
-  // — 16-bit LE PCM chunks into a streaming AudioTrack (USAGE_MEDIA, so it
+  // ? 16-bit LE PCM chunks into a streaming AudioTrack (USAGE_MEDIA, so it
   // follows the phone's media route, e.g. A2DP to glasses). Implemented with
   // AudioTrack on Android and AVAudioEngine on iOS.
   /** Open a PCM stream session. One AudioTrack per id; caller manages ids. */
@@ -209,7 +215,7 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
 
   /** Mentra Live only: K900 `cs_getvol` / `sr_getvol`. */
   getGlassesMediaVolume(): Promise<GlassesMediaVolumeGetResult>
-  /** Mentra Live only: K900 `cs_vol` / `sr_vol`; level clamped 0–15 on native. */
+  /** Mentra Live only: K900 `cs_vol` / `sr_vol`; level clamped 0??5 on native. */
   setGlassesMediaVolume(level: number): Promise<GlassesMediaVolumeSetResult>
 
   // RGB LED Control
@@ -270,7 +276,7 @@ const DEFAULT_SCAN_TIMEOUT_MS = 15_000
 function bindNativeMethod<T extends (...args: never[]) => unknown>(module: Record<string, unknown>, name: string): T {
   const method = module[name]
   if (typeof method !== "function") {
-    console.warn(`[BluetoothSdk] Native method "${name}" is unavailable — rebuild the app (bun android / bun ios)`)
+    console.warn(`[BluetoothSdk] Native method "${name}" is unavailable ??rebuild the app (bun android / bun ios)`)
     return (async () => {
       throw new Error(`BluetoothSdk.${name} is not available in this native build. Rebuild the app.`)
     }) as T
@@ -287,7 +293,7 @@ const CAMERA_ROI_POSITION_VALUES: Record<CameraRoiPosition, CameraFovSetting["ro
 }
 
 // Named presets are a convenience layer over the numeric {fov, roiPosition} API.
-// The default is the full sensor; "standard" preserves the historical 102° crop.
+// The default is the full sensor; "standard" preserves the historical 102� crop.
 const CAMERA_FOV_PRESETS: Record<CameraFovPreset, CameraFovSetting> = {
   narrow: {fov: 82, roiPosition: 0},
   standard: {fov: 102, roiPosition: 0},
@@ -486,6 +492,10 @@ NativeBluetoothSdkModule.setVoiceActivityDetectionEnabled = function (enabled: b
   return this.updateBluetoothSettings({voice_activity_detection_enabled: enabled})
 }
 
+NativeBluetoothSdkModule.setLoudnessGateEnabled = function (enabled: boolean) {
+  return this.updateBluetoothSettings({loudness_gate_enabled: enabled})
+}
+
 const nativeSetCameraFov = bindNativeMethod<(fov: CameraFovSetting) => MaybePromise<CameraFovResult>>(
   NativeBluetoothSdkModule as unknown as Record<string, unknown>,
   "setCameraFov",
@@ -639,3 +649,7 @@ NativeBluetoothSdkModule.warmUpCamera = function (params: WarmUpCameraParams) {
 
 export default NativeBluetoothSdkModule
 export const BluetoothSdk = NativeBluetoothSdkModule as BluetoothSdkInternalModule
+
+
+
+

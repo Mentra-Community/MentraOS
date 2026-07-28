@@ -177,12 +177,15 @@ class Bridge {
         _ deviceModel: String,
         _ deviceName: String,
         deviceAddress: String = "",
-        rssi: Int? = nil
+        rssi: Int? = nil,
+        projectName: String? = nil
     ) {
         Task {
             await MainActor.run {
                 let searchResults = DeviceStore.shared.get("bluetooth", "searchResults") as? [[String: Any]] ?? []
-                let id = "\(deviceModel):\(deviceName)"
+                let id = [deviceModel, projectName?.isEmpty == false ? projectName! : nil, deviceName]
+                    .compactMap { $0 }
+                    .joined(separator: ":")
                 var newResult: [String: Any] = [
                     "id": id,
                     "model": deviceModel,
@@ -190,6 +193,9 @@ class Bridge {
                 ]
                 if !deviceAddress.isEmpty {
                     newResult["address"] = deviceAddress
+                }
+                if let projectName, !projectName.isEmpty {
+                    newResult["projectName"] = projectName
                 }
                 if let rssi {
                     newResult["rssi"] = rssi
@@ -495,7 +501,7 @@ class Bridge {
         Bridge.sendTypedMessage("mtk_update_complete", body: eventBody)
     }
 
-    /// Send ota_start_ack — glasses confirmed receipt of ota_start command
+    /// Send ota_start_ack —glasses confirmed receipt of ota_start command
     static func sendOtaStartAck() {
         let eventBody: [String: Any] = [
             "timestamp": Int64(Date().timeIntervalSince1970 * 1000),
@@ -607,3 +613,9 @@ class Bridge {
         return payload
     }
 }
+
+
+
+
+
+

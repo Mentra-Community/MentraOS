@@ -16,12 +16,14 @@ import GlassesTroubleshootingModal from "@/components/glasses/GlassesTroubleshoo
 import {OnboardingGuide, OnboardingStep} from "@/components/onboarding/OnboardingGuide"
 import {CDN_BASE_URL} from "@/constants/appConfig"
 import {engine} from "@mentra/engine"
+import {getAr99DisplayName} from "@/utils/getGlassesImage"
 
 type BluetoothPermission = Permission | "android.permission.BLUETOOTH" | "android.permission.BLUETOOTH_ADMIN"
 
 export default function PairingPrepScreen() {
   const route = useRoute()
-  const {deviceModel} = route.params as {deviceModel: string}
+  const {deviceModel, ar99ProjectName} = route.params as {deviceModel: string; ar99ProjectName?: string}
+  const displayName = deviceModel === DeviceTypes.AR99 ? getAr99DisplayName(ar99ProjectName) : deviceModel
   const {goBack, push, clearHistoryAndGoHome} = useNavigationStore.getState()
 
   const advanceToPairing = async () => {
@@ -206,7 +208,7 @@ export default function PairingPrepScreen() {
       return
     }
 
-    push("/pairing/scan", {deviceModel})
+    push("/pairing/scan", {deviceModel, ar99ProjectName})
   }
 
   const SimulatedPairingGuide = () => {
@@ -439,6 +441,25 @@ export default function PairingPrepScreen() {
     )
   }
 
+  const Ar99PairingGuide = () => {
+    return (
+      <View className="flex-1 mt-6">
+        <ScrollView showsVerticalScrollIndicator={false}>
+          <View className="self-center w-[320px] h-[320px] flex-col items-center justify-center bg-primary-foreground rounded-xl mb-6 overflow-hidden">
+            <Image
+              source={require("../../../assets/guide/image_ar99_pair.png")}
+              resizeMode="contain"
+              className="w-full h-full"
+            />
+          </View>
+          <Text tx="pairing:instructions" className="text-2xl font-bold mb-4 text-secondary-foreground" />
+          <Text className="text-lg text-secondary-foreground mb-2" tx="pairing:ar99Step1" />
+          <Text className="text-lg text-secondary-foreground mb-2" tx="pairing:ar99Step2" />
+        </ScrollView>
+      </View>
+    )
+  }
+
   const renderGuide = () => {
     switch (deviceModel) {
       case DeviceTypes.SIMULATED:
@@ -457,6 +478,8 @@ export default function PairingPrepScreen() {
         return <MentraDisplayGlassesPairingGuide />
       case DeviceTypes.NIMO:
         return <NimoPairingGuide />
+      case DeviceTypes.AR99:
+        return <Ar99PairingGuide />
     }
 
     throw new Error(`Unknown model name: ${deviceModel}`)
@@ -478,7 +501,7 @@ export default function PairingPrepScreen() {
   return (
     <Screen preset="fixed" safeAreaEdges={["bottom"]} extraAndroidInsets>
       <Header
-        title={deviceModel}
+        title={displayName}
         leftIcon="chevron-left"
         onLeftPress={goBack}
         RightActionComponent={<MentraLogoStandalone />}

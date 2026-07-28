@@ -190,7 +190,7 @@ public final class MentraBluetoothSDK {
     private var shouldRestoreControllerOnBluetoothRestore = false
     private var bridgeEventSinkId: String?
     private var storeListenerId: String?
-    private let defaultDeviceKeys: Set<String> = ["default_wearable", "device_name", "device_address"]
+    private let defaultDeviceKeys: Set<String> = ["default_wearable", "device_name", "device_address", "project_name"]
     private let videoUploadStopTimeoutMs = 10 * 60 * 1000
     private var suppressDefaultDeviceEvents = false
     private var defaultDeviceApplyGeneration = 0
@@ -308,6 +308,7 @@ public final class MentraBluetoothSDK {
         DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "default_wearable", device.model.deviceType)
         DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "device_name", device.name)
         DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "device_address", device.identifier ?? "")
+        DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "project_name", device.projectName ?? "")
         finishDefaultDeviceApply(generation: generation)
     }
 
@@ -318,6 +319,7 @@ public final class MentraBluetoothSDK {
         DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "default_wearable", "")
         DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "device_name", "")
         DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "device_address", "")
+        DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "project_name", "")
         finishDefaultDeviceApply(generation: generation)
     }
 
@@ -532,6 +534,10 @@ public final class MentraBluetoothSDK {
 
     public func setVoiceActivityDetectionEnabled(_ enabled: Bool) async throws {
         DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "voice_activity_detection_enabled", enabled)
+    }
+
+    public func setLoudnessGateEnabled(_ enabled: Bool) async throws {
+        DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "loudness_gate_enabled", enabled)
     }
 
     @available(*, deprecated, message: "Sticky action-button photo presets are deprecated. Prefer per-request requestPhoto(...) options (e.g. mode .text for text sensor size/crop, or explicit per-shot fields). This method still works but will be removed in a future release.")
@@ -1265,6 +1271,20 @@ public final class MentraBluetoothSDK {
 
     func sendOtaQueryStatus() async throws -> OtaQueryResult { try await queryOtaStatus() }
 
+    func startAr99OtaFromFile(_ path: String) throws -> Bool {
+        try requireGlassesConnected(operation: "start AR99 OTA")
+        return try DeviceManager.shared.startAr99OtaFromFile(path)
+    }
+
+    func cancelAr99Ota() {
+        DeviceManager.shared.cancelAr99Ota()
+    }
+
+    func sendAr99FactoryReset() throws {
+        try requireGlassesConnected(operation: "factory reset AR99")
+        try DeviceManager.shared.sendAr99FactoryReset()
+    }
+
     private func getFreshGlassesStatus() async -> GlassesStatus {
         let status = glassesStatus
         if !status.connected || !status.buildNumber.isEmpty {
@@ -1971,14 +1991,15 @@ public final class MentraBluetoothSDK {
         guard let model = core["default_wearable"] as? String, !model.isEmpty else { return nil }
         guard let name = core["device_name"] as? String, !name.isEmpty else { return nil }
         let identifier = (core["device_address"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        let projectName = (core["project_name"] as? String).flatMap { $0.isEmpty ? nil : $0 }
         return Device(
             model: DeviceModel.fromDeviceType(model),
             name: name,
-            identifier: identifier
+            identifier: identifier,
+            projectName: projectName
         )
     }
-
-    private func dispatchDiscoveredDevices(_ rawSearchResults: Any?) {
+private func dispatchDiscoveredDevices(_ rawSearchResults: Any?) {
         guard let results = rawSearchResults as? [[String: Any]] else { return }
         for result in results {
             guard let name = result["name"] as? String else { continue }
@@ -2150,3 +2171,7 @@ public final class MentraBluetoothSDK {
         }
     }
 }
+
+
+
+

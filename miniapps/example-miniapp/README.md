@@ -42,5 +42,5 @@ Manual signer only: `bun run signer` (loads `.env.local`). Miniapp-only (no sign
 
 - Glasses must already be connected via MentraOS (no scan/pair UI).
 - Do not run the `session.mic` tester and ElevenLabs at the same time (both own the mic).
-- Glasses VAD disable (`setVoiceActivityDetectionEnabled(false)`) is not exposed on the miniapp mic API; this stream uses whatever PCM the host delivers after LC3 decode (~16 kHz mono).
+- The `session.mic` tester can toggle glasses-side VAD and the loudness Barrier via `setVoiceActivityDetectionEnabled` / `setLoudnessGateEnabled` (Mentra Live). Audio chunks are whatever PCM the host delivers after LC3 decode (~16 kHz mono).
 - The signing server binds `0.0.0.0` with an unauthenticated `/signed-url` endpoint so a phone on the LAN can reach it. **Keep it on a trusted network only** — never expose it beyond your LAN / VPN.

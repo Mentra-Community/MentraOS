@@ -5,7 +5,7 @@ export type GlassesNotReadyEvent = {
 }
 
 // NOTE: unlike most events below, the native module does NOT include a `type`
-// field on the button_press payload — it sends only {buttonId, pressType,
+// field on the button_press payload 闂?it sends only {buttonId, pressType,
 // timestamp} (see BluetoothSdkModule on both iOS and Android). Consumers must
 // filter on `pressType` / the "button_press" listener name, never `event.type`.
 export type ButtonPressEvent = {
@@ -85,7 +85,7 @@ export function createDisconnectedGlassesStatus(): Partial<GlassesStatus> {
   }
 }
 
-/** K900 `sr_getvol` response (Mentra Live glasses media step volume 0–15). */
+/** K900 `sr_getvol` response (Mentra Live glasses media step volume 0闂?5). */
 export type GlassesMediaVolumeGetResult = {
   level: number
   statusCode: number
@@ -119,11 +119,11 @@ export type WifiStatusChangeEvent = WifiStatus & {
   /**
    * Glasses-reported provisioning failure reason when THIS event is the verdict of a
    * failed connect attempt; absent on routine link-state updates. An attempt property,
-   * not a link property — which is why it lives on the event, not on WifiStatus:
+   * not a link property 闂?which is why it lives on the event, not on WifiStatus:
    * "connect_timeout" arrives on a disconnected status (never associated), while
    * "connected_to_other_network" arrives on a *connected* status (the attempt failed
    * and the glasses ended up on / fell back to a different SSID than requested).
-   * Requires ASG client v40+ — older glasses never send it.
+   * Requires ASG client v40+ 闂?older glasses never send it.
    */
   error?: string
 }
@@ -513,6 +513,7 @@ export const DeviceModels = {
   Z100: "Vuzix Z100",
   Frame: "Brilliant Frame",
   Nimo: "NIMO",
+  Ar99: "AR99",
   R1: "Even Realities R1",
 } as const
 
@@ -740,7 +741,7 @@ export type StreamLiveStats = {
   droppedFrames?: number
   /** Seconds since the stream started. */
   duration?: number
-  /** Device temperature in °C, if the hardware reports it. */
+  /** Device temperature in 闂佺娅ｉ悡? if the hardware reports it. */
   temperatureC?: number
 }
 
@@ -908,6 +909,7 @@ export type BluetoothSdkModuleEvents = {
   glasses_session_changed: (event: GlassesSessionChangedEvent) => void
   ota_start_ack: (event: OtaStartAckEvent) => void
   ota_status: (event: OtaStatusEvent) => void
+  ar99_ota_status: (event: Ar99OtaStatusEvent) => void
   version_info: (event: VersionInfoEvent) => void
   send_command_to_ble: (event: BleCommandTraceEvent) => void
   receive_command_from_ble: (event: BleCommandTraceEvent) => void
@@ -919,6 +921,16 @@ export interface ExtractionProgressEvent {
   percentage: number
   bytesRead: number
   totalBytes: number
+}
+
+export interface Ar99OtaStatusEvent {
+  type: "ar99_ota_status"
+  phase: string
+  progress: number
+  offset: number
+  total: number
+  errorMessage?: string
+  error_message?: string
 }
 
 export interface PhoneNotificationEvent {
@@ -995,6 +1007,7 @@ export type BluetoothSdkEventMap = {
   stream_status: StreamStatusEvent
   ota_start_ack: OtaStartAckEvent
   ota_status: OtaStatusEvent
+  ar99_ota_status: Ar99OtaStatusEvent
   version_info: VersionInfoEvent
   extraction_progress: ExtractionProgressEvent
 }
@@ -1046,6 +1059,7 @@ export interface BluetoothSdkPublicModule {
 
   setGalleryModeEnabled(enabled: boolean): Promise<SettingsAckSuccessEvent>
   setVoiceActivityDetectionEnabled(enabled: boolean): Promise<void>
+  setLoudnessGateEnabled(enabled: boolean): Promise<void>
   /**
    * @deprecated Sticky action-button photo presets are deprecated. Prefer per-request
    * `requestPhoto(...)` options (e.g. `mode: "text"` for text sensor size/crop, or explicit per-shot
@@ -1088,7 +1102,7 @@ export interface BluetoothSdkPublicModule {
    * Stop the active recording. When {@link webhookUrl} is provided, the glasses
    * upload the recorded video to it (multipart) using {@link authToken}. These
    * are supplied at stop time (not start) so the token is fresh when the upload
-   * runs — a recording can last arbitrarily long. An empty/omitted webhook keeps
+   * runs 闂?a recording can last arbitrarily long. An empty/omitted webhook keeps
    * the video on device (no upload).
    */
   stopVideoRecording(
@@ -1121,6 +1135,10 @@ export interface BluetoothSdkPublicModule {
   checkForOtaUpdate(): Promise<boolean>
   /** Start the OTA flow with the same configured manifest URL used by checkForOtaUpdate(). */
   startOtaUpdate(): Promise<OtaStartAckEvent>
+  startAr99OtaFromFile(path: string): Promise<boolean>
+  cancelAr99Ota(): Promise<void>
+  sendAr99FactoryReset(): Promise<void>
+  buildAr99OtaSignature(secret: string, appName: string, currentVersion: string, serialNumber: string, nonce: string): string
 
   // // stt commands (MOVE TO CRUST)
   // setSttModelDetails(path: string, languageCode: string): Promise<void>
@@ -1269,13 +1287,15 @@ export interface Device {
   /**
    * Stable app-facing key for this scan result, within the limits of the
    * platform identifier available to the SDK. Do not parse this value; use the
-   * typed model, name, address, and rssi fields instead.
+   * typed model, name, address, projectName, and rssi fields instead.
    */
   id: string
   model: DeviceModel
   name: string
   /** Platform address/identifier when available: Android Bluetooth address, iOS CoreBluetooth identifier. */
   address?: string
+  /** Optional AR99 project discriminator. Supported value: AR99. */
+  projectName?: string
   /**
    * Optional scan signal strength. It may be undefined at first discovery and
    * appear in a later scan update when the platform reports RSSI metadata.
@@ -1306,7 +1326,7 @@ export interface WifiSearchResult {
   ssid: string
   requiresPassword: boolean
   signalStrength: number
-  /** Frequency in MHz (from glasses scan). 5 GHz band is typically 5170–5825. Omitted if unknown. */
+  /** Frequency in MHz (from glasses scan). 5 GHz band is typically 5170闂?825. Omitted if unknown. */
   frequency?: number
 }
 
@@ -1359,6 +1379,7 @@ export type BluetoothSettingsUpdate = Partial<{
   twelve_hour_time: boolean
   gallery_mode: boolean
   voice_activity_detection_enabled: boolean
+  loudness_gate_enabled: boolean
   button_photo_size: ButtonPhotoSize
   button_video_settings: {width: number; height: number; fps: number}
   button_video_width: number

@@ -11,4 +11,9 @@ describe("MENTRA_LIVE_SETTING_KEYS", () => {
     expect(MENTRA_LIVE_SETTING_KEYS).not.toContain("button_video_height")
     expect(MENTRA_LIVE_SETTING_KEYS).not.toContain("button_video_fps")
   })
+
+  test("includes Mentra Live mic gate toggles", () => {
+    expect(MENTRA_LIVE_SETTING_KEYS).toContain("voice_activity_detection_enabled")
+    expect(MENTRA_LIVE_SETTING_KEYS).toContain("loudness_gate_enabled")
+  })
 })
