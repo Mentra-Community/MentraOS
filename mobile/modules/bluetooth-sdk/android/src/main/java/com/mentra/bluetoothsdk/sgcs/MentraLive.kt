@@ -23,6 +23,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
+import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
@@ -32,6 +33,7 @@ import androidx.core.app.ActivityCompat
 import com.mentra.bluetoothsdk.BluetoothSdkDefaults
 import com.mentra.bluetoothsdk.Bridge
 import com.mentra.bluetoothsdk.DeviceManager
+import com.mentra.bluetoothsdk.PhotoDestinationKind
 import com.mentra.bluetoothsdk.PhotoRequest
 import com.mentra.bluetoothsdk.PhotoSize
 import com.mentra.bluetoothsdk.PhotoMode
@@ -39,6 +41,7 @@ import com.mentra.bluetoothsdk.DeviceStore
 import com.mentra.bluetoothsdk.ObservableStore
 import com.mentra.bluetoothsdk.debug.BleTraceLogger
 import com.mentra.bluetoothsdk.utils.BlePhotoUploadService
+import com.mentra.bluetoothsdk.utils.CameraRollExporter
 import com.mentra.bluetoothsdk.utils.ConnTypes
 import com.mentra.bluetoothsdk.utils.DeviceTypes
 import com.mentra.bluetoothsdk.utils.IncidentLogBleRelayNaming
@@ -180,6 +183,10 @@ class MentraLive : SGCManager() {
 
         // File transfer management
         private const val FILE_SAVE_DIR = "MentraLive_Images"
+        // Received-photo retention: delivered fileUris stay valid for at least this long
+        // (documented on the TS type); the sweep runs once per transport session.
+        private const val FILE_SAVE_MAX_AGE_MS = 24L * 60L * 60L * 1000L
+        private const val FILE_SAVE_MAX_TOTAL_BYTES = 256L * 1024L * 1024L
 
         // Glasses media volume (K900 cs_getvol / cs_vol, sr_getvol / sr_vol)
         private const val GLASSES_MEDIA_VOLUME_TIMEOUT_MS = 2000
@@ -389,6 +396,9 @@ class MentraLive : SGCManager() {
             var webhookUrl: String?
     ) {
         var authToken: String? = null
+        // destinationKind "phone": deliver the JPEG to JS as a fileUri, never any webhook upload
+        var deliverToPhone = false
+        var saveToCameraRoll = false
         var session: FileTransferSession? = null
         var phoneStartTime: Long = System.currentTimeMillis() // When phone received the request
         var bleTransferStartTime: Long = 0 // When BLE transfer actually started
@@ -663,6 +673,9 @@ class MentraLive : SGCManager() {
 
         // Initialize connection state
         DeviceStore.apply("glasses", "connectionState", ConnTypes.DISCONNECTED)
+
+        // Retention sweep for received photos (24h TTL, then 256MB cap), once per session
+        fileProcessingHandler.post { sweepSavedImages() }
 
         // Initialize CTKD bonding receiver
         initializeBondingReceiver()
@@ -5463,10 +5476,15 @@ class MentraLive : SGCManager() {
         val requestId = request.requestId
         val size = request.size.value
         val mode = request.mode.value
-        val webhookUrl = request.webhookUrl
-        val authToken = request.authToken
+        val destinationKind = request.destinationKind
+        val deliverToPhone = destinationKind == PhotoDestinationKind.PHONE
+        val glassesOnly = destinationKind == PhotoDestinationKind.GLASSES
+        // Phone and glasses destinations never carry webhook credentials on the wire.
+        val webhookUrl = if (deliverToPhone || glassesOnly) "" else request.webhookUrl
+        val authToken = if (deliverToPhone || glassesOnly) null else request.authToken
         val compress = request.compress.value
-        val save = request.save
+        // A glasses-only capture IS the save; the archival route on the glasses keys off it.
+        val save = if (glassesOnly) true else request.save
         val sound = request.sound
         val exposureTimeNs = request.exposureTimeNs
         val iso = request.iso
@@ -5495,7 +5513,11 @@ class MentraLive : SGCManager() {
                         ", aeDivisor=" +
                         request.aeExposureDivisor +
                         ", isoCap=" +
-                        request.isoCap
+                        request.isoCap +
+                        ", destinationKind=" +
+                        (destinationKind?.value ?: "legacy") +
+                        ", saveToCameraRoll=" +
+                        request.saveToCameraRoll
         )
         Bridge.log(
                 "LIVE: PHOTO PIPELINE [5/6] requestPhoto() entry — requestId=" +
@@ -5539,23 +5561,35 @@ class MentraLive : SGCManager() {
             }
             PhotoRequest.appendScanFields(json, request)
 
-            // Always generate BLE ID for potential fallback
-            val bleImgId = "I" + String.format("%09d", System.currentTimeMillis() % 1000000000)
-            json.put("bleImgId", bleImgId)
+            if (glassesOnly) {
+                // Gallery-only capture: no bleImgId and no transfer registration - nothing
+                // ever leaves the glasses; the terminal photo_response resolves the request.
+                Bridge.log("LIVE: Using glasses-only capture (no transfer) for: " + requestId)
+            } else {
+                // Generate BLE ID for the phone delivery / potential webhook fallback
+                val bleImgId = "I" + String.format("%09d", System.currentTimeMillis() % 1000000000)
+                json.put("bleImgId", bleImgId)
 
-            // Miniapps may explicitly skip direct Wi-Fi upload and force the
-            // phone-relayed BLE path. Auto remains the default.
-            json.put("transferMethod", request.transferMethod)
+                // Phone delivery always rides BLE; miniapps may otherwise explicitly skip
+                // direct Wi-Fi upload and force the phone-relayed BLE path. Auto remains
+                // the default.
+                val transferMethod = if (deliverToPhone) "ble" else request.transferMethod
+                json.put("transferMethod", transferMethod)
 
-            // Always prepare for potential BLE transfer
-            if (webhookUrl != null && !webhookUrl.isEmpty()) {
-                // Store the transfer info for BLE route - include authToken
-                val transfer = BlePhotoTransfer(bleImgId, requestId, webhookUrl)
-                transfer.authToken = authToken // Store authToken for BLE transfer
-                blePhotoTransfers[bleImgId] = transfer
+                if (deliverToPhone) {
+                    val transfer = BlePhotoTransfer(bleImgId, requestId, null)
+                    transfer.deliverToPhone = true
+                    transfer.saveToCameraRoll = request.saveToCameraRoll
+                    blePhotoTransfers[bleImgId] = transfer
+                } else if (webhookUrl != null && !webhookUrl.isEmpty()) {
+                    // Store the transfer info for BLE route - include authToken
+                    val transfer = BlePhotoTransfer(bleImgId, requestId, webhookUrl)
+                    transfer.authToken = authToken // Store authToken for BLE transfer
+                    blePhotoTransfers[bleImgId] = transfer
+                }
+
+                Bridge.log("LIVE: Using " + transferMethod + " transfer mode with BLE fallback ID: " + bleImgId)
             }
-
-            Bridge.log("LIVE: Using " + request.transferMethod + " transfer mode with BLE fallback ID: " + bleImgId)
             Bridge.log(
                     "LIVE: PHOTO PIPELINE [5b/6] JSON ready mode=" +
                             mode +
@@ -8776,6 +8810,11 @@ class MentraLive : SGCManager() {
 
     /** Process and upload a BLE photo transfer */
     private fun processAndUploadBlePhoto(transfer: BlePhotoTransfer, imageData: ByteArray) {
+        if (transfer.deliverToPhone) {
+            deliverBlePhotoToPhone(transfer, imageData)
+            return
+        }
+
         Bridge.log("LIVE: Processing BLE photo for upload. RequestId: " + transfer.requestId)
         val uploadStartTime = System.currentTimeMillis()
 
@@ -8840,6 +8879,115 @@ class MentraLive : SGCManager() {
                     }
                 }
         )
+    }
+
+    /**
+     * Deliver a completed BLE photo transfer to the phone itself (destinationKind
+     * "phone"): convert to JPEG exactly as the webhook path does, persist the JPEG
+     * under MentraLive_Images as the deliverable (no raw AVIF debug copy), optionally
+     * export it to the camera roll, and emit the terminal photo_response with the
+     * fileUri. No upload service involved.
+     */
+    private fun deliverBlePhotoToPhone(transfer: BlePhotoTransfer, imageData: ByteArray) {
+        Bridge.log("LIVE: Processing BLE photo for phone delivery. RequestId: " + transfer.requestId)
+        Thread {
+            try {
+                val jpegData = BlePhotoUploadService.convertToJpegPreservingExif(imageData)
+
+                val dir = File(context!!.getExternalFilesDir(null), FILE_SAVE_DIR)
+                if (!dir.exists()) {
+                    dir.mkdirs()
+                }
+                val file =
+                        File(
+                                dir,
+                                "PHONE_" +
+                                        transfer.requestId +
+                                        "_" +
+                                        System.currentTimeMillis() +
+                                        ".jpg"
+                        )
+                FileOutputStream(file).use { fos -> fos.write(jpegData) }
+                Bridge.log("LIVE: 💾 Saved BLE photo for phone delivery: " + file.absolutePath)
+
+                var savedToCameraRoll = false
+                var cameraRollError: String? = null
+                if (transfer.saveToCameraRoll) {
+                    try {
+                        CameraRollExporter.exportJpeg(context!!, jpegData, file.name)
+                        savedToCameraRoll = true
+                    } catch (e: Exception) {
+                        // Camera-roll export is best-effort: report the reason, keep the success.
+                        cameraRollError = e.message ?: e.javaClass.simpleName
+                        Log.w(TAG, "Camera roll export failed for requestId: " + transfer.requestId, e)
+                    }
+                }
+
+                val event = HashMap<String, Any>()
+                event["type"] = "photo_response"
+                event["state"] = "success"
+                event["success"] = true
+                event["requestId"] = transfer.requestId
+                event["timestamp"] = System.currentTimeMillis()
+                event["fileUri"] = Uri.fromFile(file).toString()
+                event["mimeType"] = "image/jpeg"
+                event["byteCount"] = jpegData.size.toLong()
+                event["savedToCameraRoll"] = savedToCameraRoll
+                if (cameraRollError != null) {
+                    event["cameraRollError"] = cameraRollError
+                }
+                Bridge.sendPhotoResponse(event)
+            } catch (e: Exception) {
+                Log.e(TAG, "❌ BLE photo phone delivery failed for requestId: " + transfer.requestId, e)
+                Bridge.sendPhotoError(
+                        transfer.requestId,
+                        "PHONE_DELIVERY_FAILED",
+                        "BLE photo phone delivery failed: " + e.message
+                )
+            }
+        }.start()
+    }
+
+    /**
+     * Enforce the received-photo retention contract on MentraLive_Images: drop files
+     * older than FILE_SAVE_MAX_AGE_MS, then oldest-first until the directory holds at
+     * most FILE_SAVE_MAX_TOTAL_BYTES.
+     */
+    private fun sweepSavedImages() {
+        try {
+            val dir = File(context!!.getExternalFilesDir(null), FILE_SAVE_DIR)
+            val files = dir.listFiles()?.filter { it.isFile } ?: return
+            val cutoffMs = System.currentTimeMillis() - FILE_SAVE_MAX_AGE_MS
+            var removedCount = 0
+            val survivors = ArrayList<File>()
+            for (file in files) {
+                if (file.lastModified() < cutoffMs && file.delete()) {
+                    removedCount++
+                } else {
+                    survivors.add(file)
+                }
+            }
+            survivors.sortBy { it.lastModified() }
+            var totalBytes = survivors.sumOf { it.length() }
+            for (file in survivors) {
+                if (totalBytes <= FILE_SAVE_MAX_TOTAL_BYTES) break
+                val fileBytes = file.length()
+                if (file.delete()) {
+                    totalBytes -= fileBytes
+                    removedCount++
+                }
+            }
+            if (removedCount > 0) {
+                Bridge.log(
+                        "LIVE: 🧹 Retention sweep removed " +
+                                removedCount +
+                                " file(s) from " +
+                                FILE_SAVE_DIR
+                )
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error sweeping " + FILE_SAVE_DIR, e)
+        }
     }
 
     private fun sendPhotoTerminalSuccessResponse(

@@ -37,7 +37,7 @@ Pod::Spec.new do |s|
   }
 
   # iOS frameworks required by Bluetooth SDK
-  ios_frameworks = ['AVFoundation', 'CoreBluetooth', 'UIKit', 'CoreGraphics']
+  ios_frameworks = ['AVFoundation', 'CoreBluetooth', 'UIKit', 'CoreGraphics', 'Photos']
   ios_frameworks << 'Network' if include_expo_adapter
   s.frameworks = ios_frameworks
 

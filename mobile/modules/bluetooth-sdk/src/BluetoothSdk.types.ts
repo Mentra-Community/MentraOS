@@ -178,6 +178,20 @@ export type PhotoResponseEvent =
       contentType?: string
       fileSizeBytes?: number
       timestamp: number
+      /**
+       * Local JPEG delivered for `destination: {kind: "phone"}` requests.
+       * The SDK keeps the file for at least 24 hours after delivery (a retention
+       * sweep then reclaims old files) — copy it elsewhere to keep it longer.
+       */
+      fileUri?: string
+      /** MIME type of {@link fileUri} (phone delivery always produces `image/jpeg`). */
+      mimeType?: string
+      /** Size of {@link fileUri} in bytes. */
+      byteCount?: number
+      /** Whether the photo was exported to the OS camera roll (phone delivery with `saveToCameraRoll`). */
+      savedToCameraRoll?: boolean
+      /** Short reason when the camera-roll export failed (e.g. permission denied); delivery still succeeded. */
+      cameraRollError?: string
     }
   | {
       type: "photo_response"
@@ -570,31 +584,94 @@ type NativeCameraFovSetting = {
 export type MicPreference = "auto" | "phone" | "glasses" | "bluetooth"
 export type MicMode = "phone" | "glasses" | "bluetoothClassic" | "bluetooth"
 
+/**
+ * Where a requested photo ends up. Exactly one arm per request; mixing an arm
+ * with the deprecated flat delivery fields throws at request time.
+ */
+export type PhotoDestination =
+  | {
+      kind: "webhook"
+      url: string
+      authToken?: string
+      /** auto|direct|ble — only meaningful for webhook delivery. */
+      transferMethod?: PhotoTransferMethod
+      /** Also keep a copy in the glasses gallery. */
+      keepOnGlasses?: boolean
+      /** Compression for the webhook upload; advisory when the BLE fallback kicks in. */
+      compress?: PhotoCompression
+    }
+  | {
+      kind: "phone"
+      /** Also export the delivered photo to the OS camera roll. */
+      saveToCameraRoll?: boolean
+      /** Also keep a copy in the glasses gallery (requires the PR-2a firmware gate). */
+      keepOnGlasses?: boolean
+    }
+  | {
+      kind: "glasses"
+    }
+
+/**
+ * How the capture is exposed. Exactly one arm per request; mixing an arm with
+ * the deprecated flat exposure fields throws at request time.
+ */
+export type PhotoExposure =
+  | {kind: "auto"; zsl?: boolean; mfnr?: boolean}
+  | {kind: "manual"; timeNs: number; iso?: number}
+  | {kind: "scan"; aeExposureDivisor?: number; isoCap?: number}
+
 export type PhotoRequestParams = {
   requestId?: string
   appId?: string
   size: PhotoSize
   mode?: PhotoMode
-  /** `direct` disables BLE fallback; `ble` skips direct upload and forces phone-relayed transfer. */
+  /** Where the photo ends up. Preferred over the deprecated flat delivery fields. */
+  destination?: PhotoDestination
+  /** How the capture is exposed. Preferred over the deprecated flat exposure fields. */
+  exposure?: PhotoExposure
+  /**
+   * `direct` disables BLE fallback; `ble` skips direct upload and forces phone-relayed transfer.
+   * @deprecated Use `destination: {kind: "webhook", transferMethod}` instead.
+   */
   transferMethod?: PhotoTransferMethod
-  webhookUrl: string | null
-  authToken: string | null
-  compress: PhotoCompression
+  /** @deprecated Use `destination: {kind: "webhook", url}` instead. */
+  webhookUrl?: string | null
+  /** @deprecated Use `destination: {kind: "webhook", authToken}` instead. */
+  authToken?: string | null
+  /** @deprecated Use `destination: {kind: "webhook", compress}` instead. */
+  compress?: PhotoCompression
+  /** @deprecated Use `destination: {kind: "glasses"}` or the `keepOnGlasses` arm fields instead. */
   save?: boolean
   sound: boolean
+  /** @deprecated Use `exposure: {kind: "manual", timeNs}` instead. */
   exposureTimeNs?: number | null
-  /** Sensor ISO for this capture only. Only used when exposureTimeNs enables manual exposure. */
+  /**
+   * Sensor ISO for this capture only. Only used when exposureTimeNs enables manual exposure.
+   * @deprecated Use `exposure: {kind: "manual", iso}` instead.
+   */
   iso?: number | null
-  /** After AE convergence, divide metered exposure by this factor (scan mode). */
+  /**
+   * After AE convergence, divide metered exposure by this factor (scan mode).
+   * @deprecated Use `exposure: {kind: "scan", aeExposureDivisor}` instead.
+   */
   aeExposureDivisor?: number
-  /** Cap ISO after AE metering (scan mode). */
+  /**
+   * Cap ISO after AE metering (scan mode).
+   * @deprecated Use `exposure: {kind: "scan", isoCap}` instead.
+   */
   isoCap?: number
   /** Requested on wire; glasses may log not_implemented. */
   noiseReduction?: boolean
   edgeEnhancement?: boolean
-  /** ZSL buffering. Forced off for manual/scan stills because fixed sensor controls take priority. */
+  /**
+   * ZSL buffering. Forced off for manual/scan stills because fixed sensor controls take priority.
+   * @deprecated Use `exposure: {kind: "auto", zsl}` instead.
+   */
   zsl?: boolean
-  /** MFNR still capture. Forced off for manual/scan stills because fixed sensor controls take priority. */
+  /**
+   * MFNR still capture. Forced off for manual/scan stills because fixed sensor controls take priority.
+   * @deprecated Use `exposure: {kind: "auto", mfnr}` instead.
+   */
   mfnr?: boolean
   ispDigitalGain?: number
   ispAnalogGain?: string
@@ -1138,7 +1215,13 @@ export interface BluetoothSdkPublicModule {
   startAr99OtaFromFile(path: string): Promise<boolean>
   cancelAr99Ota(): Promise<void>
   sendAr99FactoryReset(): Promise<void>
-  buildAr99OtaSignature(secret: string, appName: string, currentVersion: string, serialNumber: string, nonce: string): string
+  buildAr99OtaSignature(
+    secret: string,
+    appName: string,
+    currentVersion: string,
+    serialNumber: string,
+    nonce: string,
+  ): string
 
   // // stt commands (MOVE TO CRUST)
   // setSttModelDetails(path: string, languageCode: string): Promise<void>

@@ -1,27 +1,12 @@
 import BluetoothSdk, {DeviceModels} from "@mentra/bluetooth-sdk"
-import type {
-  PhotoCaptureMetadata,
-  PhotoRequestParams,
-  PhotoSize,
-  PhotoStatusEvent,
-} from "@mentra/bluetooth-sdk"
+import type {PhotoCaptureMetadata, PhotoRequestParams, PhotoSize, PhotoStatusEvent} from "@mentra/bluetooth-sdk"
 import PhotoReceiver from "@mentra/bluetooth-sdk/photo-receiver"
 import * as MediaLibrary from "expo-media-library"
 import type {ReactNode} from "react"
 import {useCallback, useEffect, useRef, useState} from "react"
 // The SDK example intentionally uses plain React Native primitives outside the mobile app shell.
 // eslint-disable-next-line no-restricted-imports
-import {
-  ActivityIndicator,
-  Button,
-  Image,
-  Pressable,
-  SafeAreaView,
-  ScrollView,
-  Switch,
-  Text,
-  View,
-} from "react-native"
+import {ActivityIndicator, Button, Image, Pressable, SafeAreaView, ScrollView, Switch, Text, View} from "react-native"
 
 type TabId = "connection" | "camera"
 
@@ -62,6 +47,8 @@ export default function App() {
   const [mfnr, setMfnr] = useState(true)
   const [aeDivisor, setAeDivisor] = useState<3 | 5>(3)
   const [isoCap, setIsoCap] = useState(800)
+  const [deliverToPhone, setDeliverToPhone] = useState(true)
+  const [saveToCameraRoll, setSaveToCameraRoll] = useState(false)
   const [capturing, setCapturing] = useState(false)
   const [lastCapture, setLastCapture] = useState<CaptureResult | null>(null)
   const [statusMessage, setStatusMessage] = useState<string | null>(null)
@@ -93,7 +80,7 @@ export default function App() {
         }
       }
     })
-    const uploadSub = PhotoReceiver.addListener("photoUpload", event => {
+    const uploadSub = PhotoReceiver.addListener("photoUpload", (event) => {
       if (!pendingRequestId.current) return
       if (event.requestId && event.requestId !== pendingRequestId.current) return
       uploadedUriRef.current = event.fileUri
@@ -166,7 +153,7 @@ export default function App() {
     if (!scanMode) {
       return
     }
-    void pushScanButtonPreset().catch(err => {
+    void pushScanButtonPreset().catch((err) => {
       setStatusMessage(err instanceof Error ? err.message : "failed to sync scan preset")
     })
   }, [aeDivisor, isoCap, pushScanButtonPreset, scanMode])
@@ -179,28 +166,38 @@ export default function App() {
     const requestId = `scan-${Date.now()}`
     pendingRequestId.current = requestId
     try {
-      const webhookUrl = await ensureReceiver()
-      const fields = scanFields()
-      const response = await BluetoothSdk.requestPhoto({
+      // The destination union rejects mixed old/new fields, so keep compress out
+      // of the flat params and put it on the webhook arm.
+      const {compress, ...fields} = scanFields()
+      const capture = {
         requestId,
-        webhookUrl,
-        authToken: null,
         ...fields,
-        size: fields.size ?? "medium",
-        compress: fields.compress ?? "none",
+        size: fields.size ?? ("medium" as const),
         sound: fields.sound ?? true,
         // Always send explicit booleans so the glasses never inherit an ambiguous default.
         zsl: fields.zsl ?? zsl,
         mfnr: fields.mfnr ?? mfnr,
-      })
+      }
+      const response = deliverToPhone
+        ? await BluetoothSdk.requestPhoto({
+            ...capture,
+            destination: {kind: "phone", saveToCameraRoll},
+          })
+        : await BluetoothSdk.requestPhoto({
+            ...capture,
+            destination: {kind: "webhook", url: await ensureReceiver(), compress: compress ?? "none"},
+          })
       setLastCapture({
-        fileUri: uploadedUriRef.current ?? "",
-        byteCount: response.fileSizeBytes ?? 0,
+        fileUri: response.fileUri ?? uploadedUriRef.current ?? "",
+        byteCount: response.byteCount ?? response.fileSizeBytes ?? 0,
         requestId,
         captureMetadata: metadataRef.current,
         photoResponse: response as unknown as Record<string, unknown>,
       })
-      setStatusMessage("complete")
+      let status = "complete"
+      if (response.savedToCameraRoll) status = "complete — saved to camera roll"
+      if (response.cameraRollError) status = `complete — camera roll: ${response.cameraRollError}`
+      setStatusMessage(status)
     } catch (err) {
       setStatusMessage(err instanceof Error ? err.message : "capture failed")
     } finally {
@@ -245,7 +242,7 @@ export default function App() {
           <>
             <Group name={`Button photo quality (${photoSize})`}>
               <Text style={styles.hint}>Hardware button capture size (not used when Scan Mode is on).</Text>
-              {PHOTO_SIZE_OPTIONS.map(option => (
+              {PHOTO_SIZE_OPTIONS.map((option) => (
                 <View key={option.key} style={styles.buttonSpacing}>
                   <Button
                     title={option.key === photoSize ? `${option.label} (selected)` : option.label}
@@ -253,6 +250,25 @@ export default function App() {
                   />
                 </View>
               ))}
+            </Group>
+            <Group name="Delivery">
+              <View style={styles.row}>
+                <View style={styles.labelBlock}>
+                  <Text style={styles.label}>Deliver to phone</Text>
+                  <Text style={styles.hintInline}>
+                    BLE transfer straight to this phone (destination kind &quot;phone&quot;). Off — upload to the local
+                    webhook receiver.
+                  </Text>
+                </View>
+                <Switch value={deliverToPhone} onValueChange={setDeliverToPhone} />
+              </View>
+              <View style={styles.row}>
+                <View style={styles.labelBlock}>
+                  <Text style={styles.label}>Save to camera roll</Text>
+                  <Text style={styles.hintInline}>Also export delivered photos to the OS photo library.</Text>
+                </View>
+                <Switch value={saveToCameraRoll} disabled={!deliverToPhone} onValueChange={setSaveToCameraRoll} />
+              </View>
             </Group>
             <Group name="Scan Mode capture">
               <View style={styles.row}>
@@ -281,8 +297,8 @@ export default function App() {
               {scanMode ? (
                 <>
                   <Text style={styles.hint}>
-                    Preset: max, AE÷{aeDivisor}, ISO cap {isoCap}, compress none, sound off. Sends granular
-                    requestPhoto fields only (never scanMode:true).
+                    Preset: max, AE÷{aeDivisor}, ISO cap {isoCap}, compress none, sound off. Sends granular requestPhoto
+                    fields only (never scanMode:true).
                   </Text>
                   <View style={styles.row}>
                     <Text style={styles.label}>AE divisor</Text>
@@ -306,10 +322,7 @@ export default function App() {
                 {capturing ? (
                   <ActivityIndicator />
                 ) : (
-                  <Button
-                    title={scanMode ? "Take Scan Photo" : "Take Photo"}
-                    onPress={handleTakePhoto}
-                  />
+                  <Button title={scanMode ? "Take Scan Photo" : "Take Photo"} onPress={handleTakePhoto} />
                 )}
               </View>
               {statusMessage ? <Text style={styles.status}>Status: {statusMessage}</Text> : null}
@@ -335,9 +348,7 @@ export default function App() {
 
 function TabButton(props: {label: string; active: boolean; onPress: () => void}) {
   return (
-    <Pressable
-      onPress={props.onPress}
-      style={[styles.tabButton, props.active ? styles.tabButtonActive : null]}>
+    <Pressable onPress={props.onPress} style={[styles.tabButton, props.active ? styles.tabButtonActive : null]}>
       <Text style={[styles.tabLabel, props.active ? styles.tabLabelActive : null]}>{props.label}</Text>
     </Pressable>
   )
