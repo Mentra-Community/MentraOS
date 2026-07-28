@@ -74,6 +74,9 @@ jobs:
     # (per-runner git config, Mentra credentials at ~/.mentra/credentials).
     # ASG client below stays unconstrained because it's a clean gradle build.
     runs-on: [self-hosted, macOS, ARM64]
+    env:
+      EXPO_PUBLIC_AR99_RELEASE_DEVELOPER_ID: ${{ secrets.EXPO_PUBLIC_AR99_RELEASE_DEVELOPER_ID }}
+      EXPO_PUBLIC_AR99_RELEASE_CLIENT_KEY: ${{ secrets.EXPO_PUBLIC_AR99_RELEASE_CLIENT_KEY }}
 
     # Surface release-status.json fields as job outputs so slack-notify can
     # build a per-platform status section. See mobile/scripts/release-android.mjs.
@@ -287,6 +290,9 @@ jobs:
   build-mobile-ios:
     name: Build Mobile App (iOS)
     runs-on: [self-hosted, macOS, ARM64]
+    env:
+      EXPO_PUBLIC_AR99_RELEASE_DEVELOPER_ID: ${{ secrets.EXPO_PUBLIC_AR99_RELEASE_DEVELOPER_ID }}
+      EXPO_PUBLIC_AR99_RELEASE_CLIENT_KEY: ${{ secrets.EXPO_PUBLIC_AR99_RELEASE_CLIENT_KEY }}
 
     outputs:
       ipa_name: ${{ steps.release-status.outputs.ipa_name }}
