@@ -81,9 +81,9 @@ public class BlePhotoUploadService {
 
     /**
      * Decode incoming AVIF/JPEG, re-encode as JPEG, and re-attach IMU EXIF when present.
+     * Public so phone-delivery (destinationKind "phone") reuses the exact webhook conversion.
      */
-    @VisibleForTesting
-    static byte[] convertToJpegPreservingExif(byte[] imageData) throws Exception {
+    public static byte[] convertToJpegPreservingExif(byte[] imageData) throws Exception {
         long conversionStartMs = System.currentTimeMillis();
         if (isJpeg(imageData)) {
             Log.d(

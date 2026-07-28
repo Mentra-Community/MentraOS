@@ -16,6 +16,7 @@ import Combine
 import CoreBluetooth
 import Foundation
 import ImageIO
+import Photos
 import UIKit
 
 // MARK: - Supporting Types
@@ -23,6 +24,84 @@ import UIKit
 struct MentraLiveDevice {
     let name: String
     let address: String
+}
+
+// MARK: - MentraLivePhotoStorage
+
+/// App-private storage for photos received from the glasses (`Documents/MentraLive_Images`).
+/// Phone-delivered files stay valid for at least `MAX_FILE_AGE_SECONDS`; consumers copy
+/// the file to keep it beyond the retention sweep.
+enum MentraLivePhotoStorage {
+    static let TAG = "MentraLivePhotoStorage"
+
+    static let DIRECTORY_NAME = "MentraLive_Images"
+    static let MAX_FILE_AGE_SECONDS: TimeInterval = 24 * 60 * 60
+    static let MAX_TOTAL_BYTES = 256 * 1024 * 1024
+
+    static func directoryUrl(createIfNeeded: Bool = false) throws -> URL {
+        let documentsDirectory = FileManager.default.urls(
+            for: .documentDirectory, in: .userDomainMask
+        ).first!
+        let directory = documentsDirectory.appendingPathComponent(DIRECTORY_NAME)
+        if createIfNeeded, !FileManager.default.fileExists(atPath: directory.path) {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        }
+        return directory
+    }
+
+    static func writePhoneDeliveredPhoto(_ jpegData: Data, requestId: String) throws -> URL {
+        let timestamp = Int(Date().timeIntervalSince1970 * 1000)
+        let fileUrl = try directoryUrl(createIfNeeded: true)
+            .appendingPathComponent("PHONE_\(requestId)_\(timestamp).jpg")
+        try jpegData.write(to: fileUrl)
+        return fileUrl
+    }
+
+    /// Retention sweep, run once per transport session: delete files older than 24h,
+    /// then oldest-first until the directory is within the 256 MB budget.
+    static func sweep() {
+        DispatchQueue.global(qos: .utility).async {
+            let fileManager = FileManager.default
+            guard let directory = try? directoryUrl(),
+                  fileManager.fileExists(atPath: directory.path),
+                  let files = try? fileManager.contentsOfDirectory(
+                      at: directory,
+                      includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey]
+                  )
+            else { return }
+
+            var entries: [(url: URL, modified: Date, size: Int)] = files.map { url in
+                let values = try? url.resourceValues(
+                    forKeys: [.contentModificationDateKey, .fileSizeKey]
+                )
+                return (url, values?.contentModificationDate ?? .distantPast, values?.fileSize ?? 0)
+            }
+            entries.sort { $0.modified < $1.modified }
+
+            var totalBytes = entries.reduce(0) { $0 + $1.size }
+            let cutoff = Date().addingTimeInterval(-MAX_FILE_AGE_SECONDS)
+            var removedCount = 0
+            var removedBytes = 0
+            for entry in entries {
+                // Entries are oldest-first, so once we reach a fresh file with the
+                // directory inside budget there is nothing left to delete.
+                if entry.modified >= cutoff, totalBytes <= MAX_TOTAL_BYTES { break }
+                do {
+                    try fileManager.removeItem(at: entry.url)
+                    totalBytes -= entry.size
+                    removedCount += 1
+                    removedBytes += entry.size
+                } catch {
+                    Bridge.log("\(TAG): Failed to delete \(entry.url.lastPathComponent): \(error)")
+                }
+            }
+            if removedCount > 0 {
+                Bridge.log(
+                    "\(TAG): Retention sweep removed \(removedCount) file(s) (\(removedBytes) bytes); \(totalBytes) bytes remain"
+                )
+            }
+        }
+    }
 }
 
 // MARK: - BlePhotoUploadService
@@ -99,6 +178,91 @@ class BlePhotoUploadService {
                 )
                 onError?(requestId, error.localizedDescription)
             }
+        }
+    }
+
+    struct PhoneDelivery {
+        let fileUri: String
+        let byteCount: Int
+        let savedToCameraRoll: Bool
+        let cameraRollError: String?
+    }
+
+    /**
+     * Process image data for phone-destination delivery: convert to JPEG preserving
+     * EXIF, persist under MentraLive_Images, and optionally export to the camera roll.
+     * Camera-roll failures never fail the photo; they surface as
+     * `savedToCameraRoll: false` plus `cameraRollError`.
+     */
+    static func processAndStorePhotoOnPhone(
+        imageData: Data,
+        requestId: String,
+        saveToCameraRoll: Bool,
+        onSuccess: @escaping (String, PhoneDelivery) -> Void,
+        onError: @escaping (String, String) -> Void
+    ) {
+        Task {
+            do {
+                Bridge.log(
+                    "\(TAG): Processing BLE photo for phone delivery. Image size: \(imageData.count) bytes"
+                )
+
+                let jpegData = try convertToJpegPreservingExif(imageData: imageData)
+                let fileUrl = try MentraLivePhotoStorage.writePhoneDeliveredPhoto(
+                    jpegData, requestId: requestId
+                )
+
+                var saved = false
+                var cameraRollError: String?
+                if saveToCameraRoll {
+                    (saved, cameraRollError) = await exportToCameraRoll(jpegData: jpegData)
+                    if let cameraRollError {
+                        Bridge.log(
+                            "\(TAG): Camera roll export skipped for requestId: \(requestId): \(cameraRollError)"
+                        )
+                    }
+                }
+
+                Bridge.log(
+                    "\(TAG): Photo delivered to phone for requestId: \(requestId) (\(jpegData.count) bytes)"
+                )
+                onSuccess(
+                    requestId,
+                    PhoneDelivery(
+                        fileUri: fileUrl.absoluteString,
+                        byteCount: jpegData.count,
+                        savedToCameraRoll: saved,
+                        cameraRollError: cameraRollError
+                    )
+                )
+            } catch {
+                Bridge.log(
+                    "\(TAG): Error delivering BLE photo to phone for requestId: \(requestId), error: \(error)"
+                )
+                onError(requestId, error.localizedDescription)
+            }
+        }
+    }
+
+    private static func exportToCameraRoll(jpegData: Data) async -> (saved: Bool, error: String?) {
+        // Requesting Photos access without the plist key crashes the app; degrade to
+        // a delivered-but-not-exported success instead.
+        guard Bundle.main.object(forInfoDictionaryKey: "NSPhotoLibraryAddUsageDescription") != nil
+        else {
+            return (false, "NSPhotoLibraryAddUsageDescription missing from Info.plist")
+        }
+        let status = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
+        guard status == .authorized || status == .limited else {
+            return (false, "Photo library add permission not granted")
+        }
+        do {
+            try await PHPhotoLibrary.shared().performChanges {
+                let creationRequest = PHAssetCreationRequest.forAsset()
+                creationRequest.addResource(with: .photo, data: jpegData, options: nil)
+            }
+            return (true, nil)
+        } catch {
+            return (false, error.localizedDescription)
         }
     }
 
@@ -789,14 +953,17 @@ private struct FileTransferSession {
 private struct BlePhotoTransfer {
     let bleImgId: String
     let requestId: String
-    let webhookUrl: String
+    let webhookUrl: String?
     var authToken: String?
+    /// destinationKind "phone": deliver the JPEG to JS as a fileUri, never any webhook upload
+    var deliverToPhone = false
+    var saveToCameraRoll = false
     var session: FileTransferSession?
     let phoneStartTime: Date
     var bleTransferStartTime: Date?
     var glassesCompressionDurationMs: Int64 = 0
 
-    init(bleImgId: String, requestId: String, webhookUrl: String) {
+    init(bleImgId: String, requestId: String, webhookUrl: String?) {
         self.bleImgId = bleImgId
         self.requestId = requestId
         self.webhookUrl = webhookUrl
@@ -1414,7 +1581,7 @@ class MentraLive: NSObject, SGCManager {
     private let LC3_READ_UUID = CBUUID(string: "6E400002-B5A3-F393-E0A9-E50E24DCCA9E")
     private let LC3_WRITE_UUID = CBUUID(string: "6E400003-B5A3-F393-E0A9-E50E24DCCA9E")
 
-    private let FILE_SAVE_DIR = "MentraLive_Images"
+    private let FILE_SAVE_DIR = MentraLivePhotoStorage.DIRECTORY_NAME
 
     // NEW: File transfer properties
     private var fileReadCharacteristic: CBCharacteristic?
@@ -1573,6 +1740,9 @@ class MentraLive: NSObject, SGCManager {
     override init() {
         super.init()
         setupCommandQueue()
+
+        // Retention sweep for received photos (24h TTL, then 256MB cap), once per session
+        MentraLivePhotoStorage.sweep()
 
         // Initialize phone audio monitor for LC3 mic suspend/resume (if enabled)
         // This detects when phone is playing audio and temporarily suspends LC3 mic
@@ -1753,8 +1923,11 @@ class MentraLive: NSObject, SGCManager {
     }
 
     func requestPhoto(_ request: PhotoRequest) {
+        let deliverToPhone = request.destinationKind == .phone
+        let glassesOnly = request.destinationKind == .glasses
+
         Bridge.log(
-            "LIVE: PHOTO PIPELINE [5/6] requestPhoto() entry requestId=\(request.requestId) mode=\(request.mode.rawValue) save=\(request.save) sound=\(request.sound) iso=\(request.iso.map { String($0) } ?? "auto") aeDivisor=\(request.aeExposureDivisor.map { String($0) } ?? "nil")"
+            "LIVE: PHOTO PIPELINE [5/6] requestPhoto() entry requestId=\(request.requestId) destination=\(request.destinationKind?.rawValue ?? "legacy") mode=\(request.mode.rawValue) save=\(request.save) sound=\(request.sound) iso=\(request.iso.map { String($0) } ?? "auto") aeDivisor=\(request.aeExposureDivisor.map { String($0) } ?? "nil")"
         )
 
         var json: [String: Any] = [
@@ -1762,30 +1935,52 @@ class MentraLive: NSObject, SGCManager {
             "requestId": request.requestId,
         ]
 
-        // Always generate BLE ID for potential fallback
-        let bleImgId =
-            "I" + String(format: "%09d", Int(Date().timeIntervalSince1970 * 1000) % 100_000_000)
-        json["bleImgId"] = bleImgId
-        json["transferMethod"] = request.transferMethod
+        if glassesOnly {
+            // Gallery-only capture: no bleImgId and no transfer registration - nothing
+            // ever leaves the glasses; the terminal photo_response resolves the request.
+            Bridge.log("LIVE: Using glasses-only capture (no transfer) for: \(request.requestId)")
+        } else {
+            // Generate BLE ID for the phone delivery / potential webhook fallback
+            let bleImgId =
+                "I" + String(format: "%09d", Int(Date().timeIntervalSince1970 * 1000) % 100_000_000)
+            json["bleImgId"] = bleImgId
 
-        if let webhookUrl = request.webhookUrl, !webhookUrl.isEmpty {
-            json["webhookUrl"] = webhookUrl
+            // Phone delivery always rides BLE; miniapps may otherwise explicitly skip
+            // direct Wi-Fi upload and force the phone-relayed BLE path. Auto remains
+            // the default.
+            let transferMethod = deliverToPhone ? "ble" : request.transferMethod
+            json["transferMethod"] = transferMethod
 
-            var transfer = BlePhotoTransfer(
-                bleImgId: bleImgId, requestId: request.requestId, webhookUrl: webhookUrl
-            )
+            if deliverToPhone {
+                var transfer = BlePhotoTransfer(
+                    bleImgId: bleImgId, requestId: request.requestId, webhookUrl: nil
+                )
+                transfer.deliverToPhone = true
+                transfer.saveToCameraRoll = request.saveToCameraRoll
+                blePhotoTransfers[bleImgId] = transfer
+            } else if let webhookUrl = request.webhookUrl, !webhookUrl.isEmpty {
+                json["webhookUrl"] = webhookUrl
 
-            // Store authToken for BLE transfer if provided
-            if let authToken = request.authToken, !authToken.isEmpty {
-                transfer.authToken = authToken
+                var transfer = BlePhotoTransfer(
+                    bleImgId: bleImgId, requestId: request.requestId, webhookUrl: webhookUrl
+                )
+
+                // Store authToken for BLE transfer if provided
+                if let authToken = request.authToken, !authToken.isEmpty {
+                    transfer.authToken = authToken
+                }
+
+                blePhotoTransfers[bleImgId] = transfer
             }
 
-            blePhotoTransfers[bleImgId] = transfer
-        }
+            // Phone delivery never carries webhook credentials on the wire.
+            if !deliverToPhone, let authToken = request.authToken, !authToken.isEmpty {
+                json["authToken"] = authToken
+            }
 
-        // Add authToken to JSON if provided
-        if let authToken = request.authToken, !authToken.isEmpty {
-            json["authToken"] = authToken
+            Bridge.log(
+                "LIVE: PHOTO PIPELINE [5b/6] take_photo JSON ready bleImgId=\(bleImgId) transferMethod=\(transferMethod)"
+            )
         }
 
         let allowedSizes = ["low", "medium", "high", "max"]
@@ -1794,7 +1989,8 @@ class MentraLive: NSObject, SGCManager {
         json["mode"] = request.mode.rawValue
 
         json["compress"] = request.compress?.rawValue ?? "none"
-        json["save"] = request.save
+        // A glasses-only capture IS the save; the archival route on the glasses keys off it.
+        json["save"] = glassesOnly ? true : request.save
         json["sound"] = request.sound
 
         if let e = request.exposureTimeNs, e.isFinite, e > 0, e <= Double(Int64.max) {
@@ -1807,9 +2003,6 @@ class MentraLive: NSObject, SGCManager {
         }
         request.appendScanFields(to: &json)
 
-        Bridge.log(
-            "LIVE: PHOTO PIPELINE [5b/6] take_photo JSON ready bleImgId=\(bleImgId) transferMethod=\(request.transferMethod)"
-        )
         Bridge.log("LIVE: PHOTO PIPELINE [6/6] Dispatching take_photo to sendJson()")
 
         sendJson(json, wakeUp: true)
@@ -4016,15 +4209,29 @@ class MentraLive: NSObject, SGCManager {
     }
 
     private func processAndUploadBlePhoto(_ transfer: BlePhotoTransfer, imageData: Data) {
+        if transfer.deliverToPhone {
+            deliverBlePhotoToPhone(transfer, imageData: imageData)
+            return
+        }
+
+        guard let webhookUrl = transfer.webhookUrl, !webhookUrl.isEmpty else {
+            Bridge.sendPhotoError(
+                requestId: transfer.requestId,
+                errorCode: "PHONE_UPLOAD_FAILED",
+                errorMessage: "BLE photo transfer has no webhook destination"
+            )
+            return
+        }
+
         Bridge.log("LIVE: Processing BLE photo for upload. RequestId: \(transfer.requestId)")
 
         BlePhotoUploadService.processAndUploadPhoto(
-            imageData: imageData, requestId: transfer.requestId, webhookUrl: transfer.webhookUrl,
+            imageData: imageData, requestId: transfer.requestId, webhookUrl: webhookUrl,
             authToken: transfer.authToken
         ) { [weak self] requestId, responseBody in
             self?.sendPhotoTerminalSuccessResponse(
                 requestId: requestId,
-                uploadUrl: transfer.webhookUrl,
+                uploadUrl: webhookUrl,
                 responseBody: responseBody
             )
         } onError: { requestId, error in
@@ -4032,6 +4239,43 @@ class MentraLive: NSObject, SGCManager {
                 requestId: requestId,
                 errorCode: "PHONE_UPLOAD_FAILED",
                 errorMessage: "BLE photo upload failed: \(error)"
+            )
+        }
+    }
+
+    /// Deliver a completed BLE photo transfer to the phone itself (destinationKind
+    /// "phone"): convert to JPEG exactly as the webhook path does, persist the JPEG
+    /// under MentraLive_Images as the deliverable, optionally export it to the camera
+    /// roll, and emit the terminal photo_response with the fileUri. No upload service
+    /// involved.
+    private func deliverBlePhotoToPhone(_ transfer: BlePhotoTransfer, imageData: Data) {
+        Bridge.log("LIVE: Processing BLE photo for phone delivery. RequestId: \(transfer.requestId)")
+
+        BlePhotoUploadService.processAndStorePhotoOnPhone(
+            imageData: imageData,
+            requestId: transfer.requestId,
+            saveToCameraRoll: transfer.saveToCameraRoll
+        ) { requestId, delivery in
+            var event: [String: Any] = [
+                "type": "photo_response",
+                "state": "success",
+                "success": true,
+                "requestId": requestId,
+                "timestamp": Int(Date().timeIntervalSince1970 * 1000),
+                "fileUri": delivery.fileUri,
+                "mimeType": "image/jpeg",
+                "byteCount": delivery.byteCount,
+                "savedToCameraRoll": delivery.savedToCameraRoll,
+            ]
+            if let cameraRollError = delivery.cameraRollError {
+                event["cameraRollError"] = cameraRollError
+            }
+            Bridge.sendPhotoResponse(event)
+        } onError: { requestId, error in
+            Bridge.sendPhotoError(
+                requestId: requestId,
+                errorCode: "PHONE_DELIVERY_FAILED",
+                errorMessage: "BLE photo phone delivery failed: \(error)"
             )
         }
     }
