@@ -10,9 +10,12 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {translate} from "@/i18n/translate"
 import {useNavigationStore} from "@/stores/navigation"
+import {showAlert} from "@/utils/AlertUtils"
 import {getNextOnboardingRoute} from "@/utils/onboarding/getNextOnboardingRoute"
 
-type CheckState = "checking" | "update_available" | "no_update" | "dev_build" | "error"
+type CheckState = "checking" | "update_available" | "preparing" | "no_update" | "dev_build" | "error"
+
+type CheckResult = Awaited<ReturnType<typeof engine.ota.checkForUpdates>>
 
 export default function OtaCheckForUpdatesScreen() {
   const {theme} = useAppTheme()
@@ -34,6 +37,11 @@ export default function OtaCheckForUpdatesScreen() {
   /** Distinguishes retryable network trouble from a dead pin (remedy: update the app). */
   const [errorKind, setErrorKind] = useState<"network" | "pin_unavailable">("network")
   const [checkKey, setCheckKey] = useState(0)
+  /** Hotspot-served path (no glasses WiFi): phone-download percent + link phase. */
+  const [preparingPercent, setPreparingPercent] = useState<number | null>(null)
+  const [preparingPhase, setPreparingPhase] = useState<"downloading" | "connecting">("downloading")
+  /** Full check result of the update currently offered — the hotspot path serves its manifest. */
+  const lastCheckResultRef = useRef<CheckResult | null>(null)
   /** Incremented each effect run so stale async performCheck exits before mutating state. */
   const performCheckGenerationRef = useRef(0)
   const activeCheckKeyRef = useRef<number | null>(null)
@@ -142,6 +150,7 @@ export default function OtaCheckForUpdatesScreen() {
         if (result.updateAvailable && result.updateInfo) {
           console.log("📱 Updates available - setting update_available state")
           checkCompletedRef.current = true
+          lastCheckResultRef.current = result
           setIsUpdateRequired(result.isRequired)
           setIsDowngradeUpdate(result.updateInfo.isDowngrade === true)
           setCheckState("update_available")
@@ -205,9 +214,47 @@ export default function OtaCheckForUpdatesScreen() {
     setCheckKey((k) => k + 1)
   }
 
+  /**
+   * Hotspot-served install (OS-1676): glasses have no WiFi, so the phone downloads the
+   * artifacts over its own connection (the user's tap here is the consent), brings the
+   * glasses hotspot up, and serves the update locally. Once the session is active the
+   * progress screen's install coordinator drives ota_start through it automatically.
+   */
+  const startHotspotUpdate = async (result: CheckResult) => {
+    setPreparingPercent(null)
+    setPreparingPhase("downloading")
+    setCheckState("preparing")
+    const offPhase = engine.ota.hotspotSession.onPhase((phase) => {
+      if (phase === "connecting" || phase === "serving") setPreparingPhase("connecting")
+    })
+    try {
+      await engine.ota.hotspotSession.begin(result, (progress) => {
+        setPreparingPercent(progress.artifactPercent)
+      })
+      engine.ota.clearProgress()
+      replace("/ota/progress")
+    } catch (error) {
+      console.error("OTA: hotspot session bring-up failed:", error)
+      await engine.ota.hotspotSession.end().catch(() => {})
+      setCheckState("update_available")
+      showAlert(translate("ota:hotspotPrepareFailedTitle"), translate("ota:hotspotPrepareFailedMessage"), [
+        {text: translate("common:ok")},
+        {text: translate("ota:setupWifi"), onPress: () => push("/wifi/scan")},
+      ])
+    } finally {
+      offPhase()
+    }
+  }
+
   const handleUpdateNow = () => {
     if (!engine.ota.snapshot().wifiConnected) {
-      console.log("OTA: Update Now pressed but glasses not on WiFi - pushing /wifi/scan")
+      const result = lastCheckResultRef.current
+      if (result?.manifestBody) {
+        console.log("OTA: Update Now without glasses WiFi - starting hotspot-served update")
+        void startHotspotUpdate(result)
+        return
+      }
+      console.log("OTA: Update Now pressed but glasses not on WiFi and no manifest - pushing /wifi/scan")
       push("/wifi/scan")
       return
     }
@@ -253,6 +300,35 @@ export default function OtaCheckForUpdatesScreen() {
       )
     }
 
+    // Hotspot-served install bring-up: phone-side download, then the hotspot join
+    // (the OS shows its own connection dialog during the "connecting" phase).
+    if (checkState === "preparing") {
+      return (
+        <>
+          <View className="flex-1 items-center justify-center px-6">
+            <Icon name="world-download" size={64} color={theme.colors.primary} />
+            <View className="h-6" />
+            <Text
+              tx={preparingPhase === "downloading" ? "ota:preparingDownloadTitle" : "ota:preparingConnectTitle"}
+              className="font-semibold text-xl text-center"
+            />
+            <View className="h-2" />
+            {preparingPhase === "downloading" ? (
+              <Text className="text-sm text-center">
+                {translate("ota:preparingDownloadMessage")}
+                {preparingPercent != null ? ` (${preparingPercent}%)` : ""}
+              </Text>
+            ) : (
+              <Text tx="ota:preparingConnectMessage" className="text-sm text-center" />
+            )}
+            <View className="h-6" />
+            <ActivityIndicator size="large" color={theme.colors.foreground} />
+          </View>
+          <View className="h-12" />
+        </>
+      )
+    }
+
     // Update available state
     if (checkState === "update_available") {
       return (
@@ -269,6 +345,8 @@ export default function OtaCheckForUpdatesScreen() {
               text={
                 glassesWifiConnected
                   ? translate(isDowngradeUpdate ? "ota:downgradeDescription" : "ota:updateDescription")
+                  : lastCheckResultRef.current?.manifestBody
+                  ? translate("ota:updateViaHotspot", {deviceName})
                   : translate("ota:updateConnectWifi", {deviceName})
               }
               className="text-sm text-center"
@@ -279,7 +357,7 @@ export default function OtaCheckForUpdatesScreen() {
           <View className="gap-3">
             <Button
               preset="primary"
-              tx={glassesWifiConnected ? "ota:updateNow" : "ota:setupWifi"}
+              tx={glassesWifiConnected || lastCheckResultRef.current?.manifestBody ? "ota:updateNow" : "ota:setupWifi"}
               onPress={handleUpdateNow}
             />
             {!isUpdateRequired && <Button preset="secondary" tx="ota:updateLater" onPress={handleContinue} />}

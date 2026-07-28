@@ -207,10 +207,8 @@ export function OtaUpdateChecker() {
     // Last-moment imperative check: reactive glassesConnected can be stale if
     // disconnect and navigation happen in the same render cycle.
     if (!areGlassesConnectedNow()) return
-    if (!engine.ota.snapshot().wifiConnected) {
-      console.log("OTA: Pending update is waiting for glasses WiFi before showing install prompt")
-      return
-    }
+    // No glasses-WiFi gate: without WiFi the update runs over the glasses hotspot
+    // (OS-1676), served from this phone. The check screen picks the transport.
 
     console.log("OTA: User returned to home with pending update - showing alert")
     const deviceName = defaultWearable || "Glasses"
@@ -219,10 +217,10 @@ export function OtaUpdateChecker() {
     const updateMessage = isDowngrade
       ? translate("ota:downgradeDescriptionShort") + (superMode ? ` (${pending.updates.join(", ").toUpperCase()})` : "")
       : superMode
-        ? `Updates available: ${pending.updates.join(", ").toUpperCase()}`
-        : updateCount === 1
-          ? "1 update available"
-          : `${updateCount} updates available`
+      ? `Updates available: ${pending.updates.join(", ").toUpperCase()}`
+      : updateCount === 1
+      ? "1 update available"
+      : `${updateCount} updates available`
     pendingUpdate.current = null
     hasPromptedOta.current = true
     hasPromptedOtaWifiSetup.current = false
@@ -335,10 +333,10 @@ export function OtaUpdateChecker() {
             const updateMessage = isApkDowngrade
               ? translate("ota:downgradeDescriptionShort") + (superMode ? ` (${updateList})` : "")
               : superMode
-                ? `Updates available: ${updateList}`
-                : updateCount === 1
-                  ? "1 update available"
-                  : `${updateCount} updates available`
+              ? `Updates available: ${updateList}`
+              : updateCount === 1
+              ? "1 update available"
+              : `${updateCount} updates available`
 
             pendingUpdate.current = {latestVersionInfo, updates, isDowngrade: isApkDowngrade}
 
@@ -358,30 +356,19 @@ export function OtaUpdateChecker() {
               return
             }
 
-            // No WiFi path: prompt user to connect/setup WiFi.
-            if (hasPromptedOtaWifiSetup.current) {
-              console.log("OTA: WiFi setup prompt already shown for pending update - skipping duplicate")
-              return
-            }
-            console.log("OTA: Update available and glasses are not on WiFi - prompting WiFi setup")
-            const wifiMessage =
-              superMode && !isApkDowngrade
-                ? `Updates available: ${updateList}\n\nConnect your ${deviceName} to WiFi to install.`
-                : `${updateMessage}\n\nConnect your ${deviceName} to WiFi to install.`
-            hasPromptedOtaWifiSetup.current = true
+            // No glasses-WiFi path: the update still installs — served from this phone
+            // over the glasses hotspot (OS-1676). Same install prompt; the check screen
+            // picks the transport.
+            console.log("OTA: Update available without glasses WiFi - prompting hotspot-served install")
+            pendingUpdate.current = null
+            hasPromptedOta.current = true
+            hasPromptedOtaWifiSetup.current = false
             showAlert(
               translate(isApkDowngrade ? "ota:downgradeAvailable" : "ota:updateAvailable", {deviceName}),
-              wifiMessage,
+              updateMessage,
               [
-              {
-                text: translate("ota:updateLater"),
-                style: "cancel",
-                onPress: () => {
-                  pendingUpdate.current = null // Clear pending on dismiss
-                  hasPromptedOtaWifiSetup.current = false
-                },
-              },
-              {text: translate("ota:setupWifi"), onPress: () => push("/wifi/scan")},
+                {text: translate("ota:updateLater"), style: "cancel"},
+                {text: translate("ota:install"), onPress: () => push("/ota/check-for-updates")},
               ],
             )
           },

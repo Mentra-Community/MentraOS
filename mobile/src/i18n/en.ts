@@ -395,10 +395,21 @@ const en = {
     updateNow: "Update Now",
     install: "Install",
     setupWifi: "Setup WiFi",
+    updateViaHotspot:
+      "Your {{deviceName}} isn't on WiFi, so the update will be downloaded to your phone first and transferred directly.",
+    preparingDownloadTitle: "Downloading update",
+    preparingDownloadMessage: "Downloading the update to your phone using its internet connection",
+    preparingConnectTitle: "Connecting to your glasses",
+    preparingConnectMessage:
+      "Transferring over your glasses' hotspot. If your phone asks to join a network, approve it.",
+    hotspotPrepareFailedTitle: "Could not start the update",
+    hotspotPrepareFailedMessage:
+      "The update could not be transferred to your glasses. Try again, or connect your glasses to WiFi instead.",
     updateLater: "Later",
     upToDate: "Up to Date",
     devBuild: "Development Build",
-    devBuildNoOta: "These glasses run a development build, so automatic updates are disabled. Use the developer settings manifest override to update them manually.",
+    devBuildNoOta:
+      "These glasses run a development build, so automatic updates are disabled. Use the developer settings manifest override to update them manually.",
     noUpdatesAvailable: "Your glasses are running the latest version.",
     checkFailed: "Check Failed",
     checkFailedMessage: "Couldn't check for updates. Please check your connection and try again.",
@@ -416,9 +427,11 @@ const en = {
     versionChangeVerifying: "Verifying your glasses\u2026",
     versionChangeKeepNearby: "Keep your glasses nearby and connected. They will restart on their own.",
     versionChangeComplete: "Version Change Complete",
-    versionChangeCompleteMessage: "Your glasses are now on the required version. Their settings were reset and are being restored automatically.",
+    versionChangeCompleteMessage:
+      "Your glasses are now on the required version. Their settings were reset and are being restored automatically.",
     versionChangeFirmwarePassComplete: "Firmware updated",
-    versionChangeFirmwarePassCompleteMessage: "Your glasses restarted with new firmware. One more step: they'll now continue to the required version.",
+    versionChangeFirmwarePassCompleteMessage:
+      "Your glasses restarted with new firmware. One more step: they'll now continue to the required version.",
     updateComplete: "Update Complete",
     updateCompleteMessage: "Your glasses have been updated successfully.",
     updateFailed: "Update Failed",
