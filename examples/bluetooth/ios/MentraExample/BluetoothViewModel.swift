@@ -302,6 +302,8 @@ func deviceModelLabel(_ model: DeviceModel) -> String {
         return "Z100"
     case .nimo:
         return "Nimo"
+    case .ar99:
+        return "AR99"
     case .frame:
         return "Frame"
     case .r1:
