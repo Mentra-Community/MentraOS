@@ -112,6 +112,8 @@ public class RtmpStreamingService extends Service {
     private String mCurrentStreamId;
     private boolean mIsStreamingActive = false;
     private static final long STREAM_TIMEOUT_MS = 60000; // 60 seconds timeout
+    /** Local testing: never kill the stream for missing phone/cloud keep-alives. */
+    private static final boolean DISABLE_KEEP_ALIVE_TIMEOUT = true;
     private Handler mTimeoutHandler;
 
     // Notification management
@@ -1296,20 +1298,37 @@ public class RtmpStreamingService extends Service {
                                 && !mReconnecting;
                     }
                 },
-                () ->
-                        new PeriodicStreamMetricsReporter.MetricsSample(
-                                mStreamConfig.getVideoWidth(),
-                                mStreamConfig.getVideoHeight(),
-                                mStreamConfig.getVideoBitrate(),
-                                mStreamConfig.getVideoFps(),
-                                0,
-                                mStreamStartTime > 0
-                                        ? Math.max(
-                                                0,
-                                                (System.currentTimeMillis() - mStreamStartTime)
-                                                        / 1_000L)
-                                        : 0,
-                                StreamThermalReader.readCpuTemperatureC()),
+                () -> {
+                    double measuredFps = Double.NaN;
+                    long measuredBitrateBps = -1L;
+                    double cameraFps = Double.NaN;
+                    try {
+                        if (mStreamer != null) {
+                            measuredFps = mStreamer.getSettings().getVideo().getMeasuredFps();
+                            measuredBitrateBps =
+                                    mStreamer.getSettings().getVideo().getMeasuredBitrateBps();
+                            cameraFps = mStreamer.getSettings().getMeasuredCaptureFps();
+                        }
+                    } catch (Exception ignored) {
+                        // Keep n/a measured fields
+                    }
+                    return new PeriodicStreamMetricsReporter.MetricsSample(
+                            mStreamConfig.getVideoWidth(),
+                            mStreamConfig.getVideoHeight(),
+                            mStreamConfig.getVideoBitrate(),
+                            measuredBitrateBps,
+                            mStreamConfig.getVideoFps(),
+                            measuredFps,
+                            cameraFps,
+                            0,
+                            mStreamStartTime > 0
+                                    ? Math.max(
+                                            0,
+                                            (System.currentTimeMillis() - mStreamStartTime)
+                                                    / 1_000L)
+                                    : 0,
+                            StreamThermalReader.readCpuTemperatureC());
+                },
                 new PeriodicStreamMetricsReporter.CallbackProvider() {
                     @Override
                     public StreamingStatusCallback getCallback() {
@@ -1359,6 +1378,11 @@ public class RtmpStreamingService extends Service {
 
         mCurrentStreamId = streamId;
         mIsStreamingActive = true;
+
+        if (DISABLE_KEEP_ALIVE_TIMEOUT) {
+            Log.i(TAG, "Keep-alive timeout disabled; stream will not auto-stop: " + streamId);
+            return;
+        }
 
         mRtmpStreamTimeoutTimer = new Timer("RtmpStreamTimeout-" + streamId);
         mRtmpStreamTimeoutTimer.schedule(new TimerTask() {
