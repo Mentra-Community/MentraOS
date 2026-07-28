@@ -1724,11 +1724,16 @@ public class CameraNeoService extends LifecycleService {
                                     // IllegalArgumentException: the recorder surface was
                                     // released by a racing teardown. IllegalStateException:
                                     // the session was closed under us. Same crash family as
-                                    // the photo path (OS-1816).
+                                    // the photo path (OS-1816). Tear down like
+                                    // onConfigureFailed does — reporting the error while
+                                    // leaving device/session/recorder alive would hold the
+                                    // camera hostage for every later open.
                                     Log.e(TAG, "Failed to start video recording", ce);
                                     notifyVideoError(
                                             videoSession.currentVideoId(),
                                             "Failed to start recording: " + ce.getMessage());
+                                    closeCamera();
+                                    conditionalStopSelf();
                                 }
                             } else {
                                 Log.d(TAG, "Camera session configured and ready");
