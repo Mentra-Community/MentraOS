@@ -94,8 +94,48 @@ public interface IHardwareManager {
      */
     void playAudioAsset(String assetName);
 
+    /**
+     * Play a primary audio asset and return a token identifying that exact playback.
+     *
+     * <p>Implementations that do not support tracked playback return {@code 0}.
+     *
+     * @param assetName Name of the asset in the application's assets directory
+     * @return a positive playback token, or {@code 0} when tracking is unavailable
+     */
+    default long playAudioAssetTracked(String assetName) {
+        playAudioAsset(assetName);
+        return 0L;
+    }
+
+    /**
+     * Replace the primary audio only when {@code playbackToken} still owns it.
+     *
+     * @return {@code true} when the asset was replaced
+     */
+    default boolean replaceAudioAssetIfCurrent(long playbackToken, String assetName) {
+        return false;
+    }
+
+    /**
+     * Play a short asset without replacing the primary audio cue.
+     *
+     * <p>The default preserves legacy behavior for hardware without overlay support.
+     */
+    default void playAudioAssetOverlay(String assetName) {
+        playAudioAsset(assetName);
+    }
+
     /** Stop any active MCU-managed audio playback. */
     void stopAudioPlayback();
+
+    /**
+     * Stop primary audio only when {@code playbackToken} still owns it.
+     *
+     * @return {@code true} when the owned playback was stopped
+     */
+    default boolean stopAudioPlaybackIfCurrent(long playbackToken) {
+        return false;
+    }
 
     /** Release any resources held by the hardware manager */
     void shutdown();

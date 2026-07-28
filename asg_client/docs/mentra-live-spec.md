@@ -84,6 +84,9 @@ Mentra Live supports photo capture and video recording from the glasses camera.
 - **Long camera-button press**: starts video recording unless video is already recording, in which case it stops.
 - Photo/video resolution, FPS, max recording duration, and privacy LED behavior are configurable by commands from the phone app.
 - Captured media is stored locally in package-namespaced storage and exposed to the phone through the camera web server for gallery sync.
+- **Warm photo capture** (camera already running): plays the camera snap immediately because exposure is near-instant.
+- **Cold photo capture** (camera startup required): starts a five-second hold-still riser at request time, then plays a snap when that specific photo is captured. A failed capture stops its riser only while that riser still owns primary audio.
+- Every accepted cold capture keeps its completion snap. If a newer photo cue or an unrelated prompt has taken primary-audio ownership, the snap overlays that audio instead of cutting it short.
 
 ### Gallery-mode behavior
 

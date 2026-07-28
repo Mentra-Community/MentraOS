@@ -599,6 +599,16 @@ public class MediaCaptureService {
     private final Object mPhotoFeedbackLock = new Object();
     private long mPhotoFeedbackGeneration;
 
+    private static final class PhotoRiserToken {
+        private final long mGeneration;
+        private final long mPlaybackToken;
+
+        private PhotoRiserToken(long generation, long playbackToken) {
+            mGeneration = generation;
+            mPlaybackToken = playbackToken;
+        }
+    }
+
     /**
      * Capture IDs blocked from Wi‑Fi sync from the moment the output path is created until
      * post-stop integrity validation completes (or the capture is cleaned up on error).
@@ -798,10 +808,10 @@ public class MediaCaptureService {
      * <ul>
      *   <li><b>Warm</b> — capture is near-instant; the snap plays immediately.
      *   <li><b>Cold</b> — the capture pays the 1–2s camera/ISP startup; the riser plays now and
-     *       the caller owes a snap via {@link #playCaptureCompleteSnap(long)} when the photo
-     *       actually lands (or {@link #stopRiserForFailedCapture(long)} on error). {@code
-     *       I2SAudioController} stops the current clip when a new one starts, so the snap cuts the
-     *       riser off.
+     *       the caller owes a snap via {@link #playCaptureCompleteSnap(PhotoRiserToken)} when the
+     *       photo actually lands (or {@link #stopRiserForFailedCapture(PhotoRiserToken)} on error).
+     *       {@code I2SAudioController} stops the owned riser when the snap starts, or overlays the
+     *       snap when another cue has taken ownership.
      * </ul>
      *
      * The decision is made synchronously here, at request time and before the request is
@@ -813,21 +823,22 @@ public class MediaCaptureService {
      * @param isFromSdk whether the upcoming capture is an SDK request (vs. a button photo)
      * @param exposureTimeNs requested manual exposure for the upcoming capture, or null for auto
      * @param captureSettings per-request tuning (including resolved {@code zsl}/{@code mfnr}) for warmth
-     * @return a positive riser token when a completion snap is owed, or {@code 0} otherwise
+     * @return a riser token when a completion snap is owed, or {@code null} otherwise
      */
-    private long playShutterSound(
+    @Nullable
+    private PhotoRiserToken playShutterSound(
             String size,
             boolean isFromSdk,
             Long exposureTimeNs,
             @Nullable PhotoCaptureSettings captureSettings) {
         if (hardwareManager == null) {
             Log.w(TAG, "⚠️ hardwareManager is null, cannot play shutter sound");
-            return 0L;
+            return null;
         }
 
         if (!hardwareManager.supportsAudioPlayback()) {
             Log.w(TAG, "⚠️ hardwareManager does not support audio playback");
-            return 0L;
+            return null;
         }
 
         boolean cameraWarm =
@@ -836,45 +847,60 @@ public class MediaCaptureService {
             long feedbackGeneration = ++mPhotoFeedbackGeneration;
             if (cameraWarm) {
                 Log.d(TAG, "📸 Warm capture — playing snap immediately");
-                hardwareManager.playAudioAsset(AudioAssets.TAKE_PHOTO_HOT);
-                return 0L;
+                hardwareManager.playAudioAssetTracked(AudioAssets.TAKE_PHOTO_HOT);
+                return null;
             }
             Log.d(TAG, "📸 Cold capture — playing riser; snap plays when the photo lands");
-            hardwareManager.playAudioAsset(AudioAssets.CAMERA_RISER);
-            return feedbackGeneration;
+            long playbackToken =
+                    hardwareManager.playAudioAssetTracked(AudioAssets.CAMERA_RISER);
+            return new PhotoRiserToken(feedbackGeneration, playbackToken);
         }
     }
 
-    /** Plays the completion snap owed after a cold-capture riser (cuts the riser off). */
-    private void playCaptureCompleteSnap(long riserToken) {
-        if (riserToken == 0L) {
+    /**
+     * Plays the completion snap owed after a cold-capture riser.
+     *
+     * <p>The snap replaces its own riser. If newer or unrelated primary audio took ownership, the
+     * snap plays as an overlay so every accepted cold capture keeps capture-time feedback without
+     * cutting another cue short.
+     */
+    private void playCaptureCompleteSnap(@Nullable PhotoRiserToken riserToken) {
+        if (riserToken == null) {
             return;
         }
         synchronized (mPhotoFeedbackLock) {
-            if (mPhotoFeedbackGeneration != riserToken) {
-                Log.d(TAG, "📸 Leaving newer photo feedback playing instead of a stale snap");
+            if (hardwareManager == null || !hardwareManager.supportsAudioPlayback()) {
                 return;
             }
-            ++mPhotoFeedbackGeneration;
-            if (hardwareManager != null && hardwareManager.supportsAudioPlayback()) {
-                hardwareManager.playAudioAsset(AudioAssets.TAKE_PHOTO_HOT);
+            if (hardwareManager.replaceAudioAssetIfCurrent(
+                    riserToken.mPlaybackToken, AudioAssets.TAKE_PHOTO_HOT)) {
+                if (mPhotoFeedbackGeneration == riserToken.mGeneration) {
+                    ++mPhotoFeedbackGeneration;
+                }
+                return;
             }
+            Log.d(TAG, "📸 Playing completion snap over newer or unrelated audio");
+            hardwareManager.playAudioAssetOverlay(AudioAssets.TAKE_PHOTO_HOT);
         }
     }
 
     /** Silences a failed capture's riser only if no newer photo cue has replaced it. */
-    private void stopRiserForFailedCapture(long riserToken) {
-        if (riserToken == 0L) {
+    private void stopRiserForFailedCapture(@Nullable PhotoRiserToken riserToken) {
+        if (riserToken == null) {
             return;
         }
         synchronized (mPhotoFeedbackLock) {
-            if (mPhotoFeedbackGeneration != riserToken) {
+            if (mPhotoFeedbackGeneration != riserToken.mGeneration) {
                 Log.d(TAG, "📸 Leaving newer photo feedback playing after stale capture failure");
                 return;
             }
-            ++mPhotoFeedbackGeneration;
-            if (hardwareManager != null && hardwareManager.supportsAudioPlayback()) {
-                hardwareManager.stopAudioPlayback();
+            if (hardwareManager != null
+                    && hardwareManager.supportsAudioPlayback()
+                    && hardwareManager.stopAudioPlaybackIfCurrent(
+                            riserToken.mPlaybackToken)) {
+                ++mPhotoFeedbackGeneration;
+            } else {
+                Log.d(TAG, "📸 Riser no longer owns primary audio; nothing to stop");
             }
         }
     }
@@ -2045,7 +2071,7 @@ public class MediaCaptureService {
         PhotoCaptureTestHooks.addFakeDelay("CAMERA_INIT");
 
         // Skip sound and flash during camera HAL restart cooldown (e.g. after FOV change)
-        long riserToken = 0L;
+        PhotoRiserToken riserToken = null;
         if (!shouldSuppressPhotoFeedback()) {
             // RGB LED always flashes for photos (user visibility indicator)
             triggerPhotoFlashLed();
@@ -2058,7 +2084,7 @@ public class MediaCaptureService {
                 flashPrivacyLedForPhoto(); // Flash privacy LED
             }
         }
-        final long captureRiserToken = riserToken;
+        final PhotoRiserToken captureRiserToken = riserToken;
 
         // TESTING: Check for fake camera capture failure
         if (PhotoCaptureTestHooks.shouldFail("CAMERA_CAPTURE")) {
@@ -2255,7 +2281,7 @@ public class MediaCaptureService {
         File captureDirFile = new File(photoFilePath).getParentFile();
         final String captureId = captureDirFile != null ? captureDirFile.getName() : "";
 
-        long riserToken = 0L;
+        PhotoRiserToken riserToken = null;
         if (!shouldSuppressPhotoFeedback()) {
             triggerPhotoFlashLed();
             if (enableSound) {
@@ -2267,7 +2293,7 @@ public class MediaCaptureService {
                 flashPrivacyLedForPhoto();
             }
         }
-        final long captureRiserToken = riserToken;
+        final PhotoRiserToken captureRiserToken = riserToken;
 
         try {
             CameraNeoService.enqueuePhotoRequest(
@@ -2640,7 +2666,7 @@ public class MediaCaptureService {
         // TESTING: Add fake delay for camera capture
         PhotoCaptureTestHooks.addFakeDelay("CAMERA_CAPTURE");
 
-        long riserToken = 0L;
+        PhotoRiserToken riserToken = null;
         try {
             // Skip sound and flash during camera HAL restart cooldown (e.g. after FOV change)
             if (!shouldSuppressPhotoFeedback()) {
@@ -2655,7 +2681,7 @@ public class MediaCaptureService {
                     flashPrivacyLedForPhoto();
                 }
             }
-            final long captureRiserToken = riserToken;
+            final PhotoRiserToken captureRiserToken = riserToken;
 
             // Use the new enqueuePhotoRequest for thread-safe rapid capture
             // isFromSdk=true because this is an SDK-requested photo (take_photo command)
@@ -5009,7 +5035,7 @@ public class MediaCaptureService {
         PhotoCaptureTestHooks.addFakeDelay("CAMERA_CAPTURE");
 
         // Skip sound and flash during camera HAL restart cooldown (e.g. after FOV change)
-        long riserToken = 0L;
+        PhotoRiserToken riserToken = null;
         if (!shouldSuppressPhotoFeedback()) {
             triggerPhotoFlashLed();
             if (enableSound) {
@@ -5022,7 +5048,7 @@ public class MediaCaptureService {
                 flashPrivacyLedForPhoto();
             }
         }
-        final long captureRiserToken = riserToken;
+        final PhotoRiserToken captureRiserToken = riserToken;
 
         try {
             // Use CameraNeoService for photo capture
