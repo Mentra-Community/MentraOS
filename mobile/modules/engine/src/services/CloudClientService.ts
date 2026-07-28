@@ -644,16 +644,6 @@ export const cloudClientService = {
     if (wasConnected) notifyConnectionListeners(false)
   },
 
-  /** Device-side managed photo (cloud-v2): presign now, deliver bytes, await ready. */
-  startManagedPhoto(opts: Record<string, unknown> = {}) {
-    if (!client) throw new Error("cloud client not connected")
-    return client.runtime.startManagedPhoto(opts)
-  },
-  awaitManagedPhotoReady(requestId: string) {
-    if (!client) throw new Error("cloud client not connected")
-    return client.runtime.awaitManagedPhotoReady(requestId)
-  },
-
   /** Managed stream (cloud-v2): provision ingest+playback on the runtime. */
   startManagedStream(opts: Record<string, unknown> = {}) {
     if (!isFeatureEnabled("managedStreams")) throw new Error("managed streams are disabled by this deployment")

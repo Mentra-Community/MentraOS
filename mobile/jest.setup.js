@@ -888,8 +888,6 @@ const mockIslandEntries = () => {
     cloudClientService: {
       init: jest.fn(),
       reconnect: jest.fn(),
-      startManagedPhoto: jest.fn(() => Promise.resolve({})),
-      awaitManagedPhotoReady: jest.fn(() => Promise.resolve({})),
       startManagedStream: jest.fn(() => Promise.resolve({})),
       getManagedStreamStatus: jest.fn(() => Promise.resolve({})),
       stopManagedStream: jest.fn(() => Promise.resolve()),

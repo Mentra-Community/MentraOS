@@ -1,8 +1,8 @@
 # `session.camera`
 
 Glasses camera control and photo capture for miniapps. `takePhoto()` captures
-a frame on the glasses, uploads it to cloud storage (24h TTL), and returns
-the URL. `setFov()` writes camera field-of-view tuning to the device.
+a frame on the glasses, transfers it to the phone over Bluetooth, and returns
+the image inline as a data URL — no cloud request is involved. `setFov()` writes camera field-of-view tuning to the device.
 
 Whether a connected pair of glasses actually has a camera is exposed
 separately via `session.capabilities.hasCamera` — gate calls on that before
@@ -33,12 +33,11 @@ if (!session.capabilities.hasCamera) {
 const photo = await session.camera.takePhoto({
   size: "medium",
   mode: "text",
-  compress: "none",
   sound: true,
   saveToGallery: false,
 })
 
-console.log(photo.photoUrl, photo.mimeType, photo.size)
+console.log(photo.dataUrl?.slice(0, 32), photo.mimeType, photo.size)
 ```
 
 ---
@@ -95,12 +94,18 @@ the host side.
 
 ### `takePhoto(options?)` — `Promise<PhotoTaken>`
 
-Take a photo via the glasses camera. Returns a URL to the captured image.
-Requires `CAMERA` declared in `miniapp.json`.
+Take a photo via the glasses camera and get the image back inline. Requires
+`CAMERA` declared in `miniapp.json`.
 
-The photo is uploaded to cloud storage (24h TTL) and the URL is returned.
-If the glasses don't have a camera, the phone-side handler rejects with an
-error. Check `session.capabilities.hasCamera` before calling.
+The photo rides Bluetooth from the glasses to the phone — no cloud or network
+request is in the path, so this also works air-gapped — and resolves with the
+JPEG as `dataUrl` (`photoUrl` carries the same data URL, so code that renders
+`photoUrl` keeps working; the background runtime's `fetch` does not accept data
+URLs, so decode `dataUrl` with `base64ToBytes` when you need bytes). Large sizes
+(`size: "max"`) transfer more slowly over Bluetooth, and final quality is
+governed by the Bluetooth transport codec. If the glasses don't have a camera,
+the phone-side handler rejects with an error. Check
+`session.capabilities.hasCamera` before calling.
 
 **Parameters:** `TakePhotoOptions` (optional)
 
@@ -108,10 +113,13 @@ error. Check `session.capabilities.hasCamera` before calling.
 interface TakePhotoOptions {
   size?: "low" | "medium" | "high" | "max"
   mode?: "photo" | "text"
-  transferMethod?: "auto" | "direct" | "ble"
-  compress?: "none" | "low" | "medium" | "high"
   sound?: boolean
   saveToGallery?: boolean
+  saveToCameraRoll?: boolean
+  /** @deprecated ignored — delivery is always Bluetooth to the phone */
+  transferMethod?: "auto" | "direct" | "ble"
+  /** @deprecated ignored — the Bluetooth transport codec governs quality */
+  compress?: "none" | "low" | "medium" | "high"
 }
 ```
 
@@ -121,28 +129,28 @@ Defaults (applied client-side before the request is sent):
 | --- | --- |
 | `size` | `"medium"` |
 | `mode` | `"photo"` |
-| `transferMethod` | `"auto"` |
-| `compress` | `"none"` |
 | `sound` | `true` |
 | `saveToGallery` | `false` |
+| `saveToCameraRoll` | unset (no camera-roll export) |
 
-Use `transferMethod: "ble"` when you need to skip the glasses' direct Wi-Fi
-upload attempt and always relay the image through the phone over Bluetooth.
-Use `"direct"` to attempt only the direct upload, without BLE fallback.
-`"auto"` tries direct upload first and falls back to BLE.
-Unknown runtime values are rejected instead of being treated as `"auto"`.
+`saveToGallery` keeps a copy in the glasses gallery; `saveToCameraRoll` also
+exports the delivered photo to the phone's OS camera roll. `transferMethod`
+and `compress` are still accepted for compatibility but no longer affect
+delivery (an unknown `transferMethod` value is still rejected).
 
 **Returns:** `PhotoTaken`
 
 ```ts
 interface PhotoTaken {
-  photoUrl: string
+  requestId: string
+  dataUrl?: string // data:image/jpeg;base64,... — the image itself
+  photoUrl: string // same data URL (older hosts: a short-lived download URL)
   mimeType: string
   size: number
 }
 ```
 
-`size` is the byte length of the uploaded asset.
+`size` is the byte length of the delivered JPEG.
 
 ---
 
@@ -224,7 +232,7 @@ For host implementors — request/response message types this module emits:
 | Method | Request type | Response |
 | --- | --- | --- |
 | `setFov` | `CAMERA_FOV` (`{horizontal, vertical}`, one-shot) | — |
-| `takePhoto` | `PHOTO` (`{size, mode, compress, sound, saveToGallery}`) | `REQUEST_RESULT` with `data: PhotoTaken` |
+| `takePhoto` | `PHOTO` (`{size, mode, sound, saveToGallery, saveToCameraRoll?}`) | `REQUEST_RESULT` with `data: PhotoTaken` |
 | `startVideoRecording` | `VIDEO_RECORDING_START` (`{width, height, fps, sound, save}`) | `REQUEST_RESULT` with `data: VideoRecordingStarted` |
 | `stopVideoRecording` | `VIDEO_RECORDING_STOP` (`{recordingId}`) | `REQUEST_RESULT` |
 

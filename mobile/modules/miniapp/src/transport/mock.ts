@@ -21,6 +21,10 @@ import {parseEnvelope, serializeEnvelope, type MiniappEnvelope} from "../envelop
 import {MiniappRequestType, MiniappResponseType} from "../protocol"
 import type {Transport, TransportDisconnectHandler, TransportMessageHandler} from "./types"
 
+/** 1×1 transparent PNG so consumers that try to render a mock photo don't 404. */
+const MOCK_PHOTO_DATA_URL =
+  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkAAIAAAoAAv/lxKUAAAAASUVORK5CYII="
+
 const LOG_PREFIX = "[mock-transport]"
 
 /**
@@ -216,10 +220,11 @@ function syntheticDataFor(requestId: string, requestType: string, requestPayload
     }
 
     case MiniappRequestType.PHOTO:
-      // 1×1 transparent PNG so consumers that try to render don't 404.
       return {
-        photoUrl:
-          "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkAAIAAAoAAv/lxKUAAAAASUVORK5CYII=",
+        dataUrl: MOCK_PHOTO_DATA_URL,
+        photoUrl: MOCK_PHOTO_DATA_URL,
+        mimeType: "image/png",
+        size: 68,
         requestId: "mock-photo",
       }
 

@@ -1,31 +1,38 @@
 /**
  * PhonePhotoCoordinator — owns local-miniapp takePhoto() end-to-end.
  *
+ * Local-miniapp photos are BLE-only and never touch the cloud: no presigned
+ * upload/read URLs, no runtime publish, no network request anywhere in the
+ * flow (OS-1796). The glasses deliver the JPEG to the phone over BLE
+ * (`destination: {kind: "phone"}`); the coordinator reads the delivered file
+ * and hands the miniapp the image itself as an inline data URL.
+ *
  * Architecture:
  *   miniapp → SDK → LocalMiniappRuntime → photo runtime hook
  *          → coordinator.takePhoto(packageName, opts)
- *            ├── (precheck) glasses connected + hasCamera
- *            ├── cloudClientService.startManagedPhoto → {requestId, uploadUrl, readUrl}  (cloud-v2 runtime presign)
- *            ├── BluetoothSdk.requestPhoto(requestId, size, uploadUrl, compress, sound)
+ *            ├── (precheck) glasses connected
+ *            ├── BluetoothSdk.requestPhoto({destination: {kind: "phone"}, ...})
+ *            │     resolves at terminal photo_response success with the local fileUri
+ *            ├── read fileUri as base64 → data:image/jpeg;base64,... (file deleted after)
  *            └── race:
- *                  - cloudClientService.awaitManagedPhotoReady(requestId) resolves on photo.ready push
- *                  - BluetoothSdk.requestPhoto rejects if terminal photo_response is an error
- *                  - handlePhotoError(requestId, code, message) rejects if MantleManager observes
- *                    the same BLE photo_response error before the native promise crosses the bridge
+ *                  - the native promise (capture + BLE transfer + local write)
+ *                  - handlePhotoError(requestId, code, message) rejects if
+ *                    MantleManager observes a BLE photo_response error before
+ *                    the native promise crosses the bridge
  *
  * `activeRequests` lets MantleManager's gated `photo_response` listener
- * short-circuit our long-poll with a typed error (CAMERA_BUSY, BATTERY_LOW,
- * etc.) instead of waiting 30s for cloud's timeout.
+ * short-circuit the in-flight capture with a typed error (CAMERA_BUSY,
+ * BATTERY_LOW, etc.) instead of waiting for the pipeline watchdog.
  */
 
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
-import type {PhotoSize, PhotoTransferMethod} from "@mentra/bluetooth-sdk/internal"
-import {cloudClientService} from "./CloudClientService"
+import type {PhotoSize, PhotoSuccessResponseEvent, PhotoTransferMethod} from "@mentra/bluetooth-sdk/internal"
+import {File} from "expo-file-system"
 import {isGlassesConnected} from "./GlassesReadiness"
 import {useGlassesStore} from "../stores/glasses"
 
 interface PhotoResult {
-  photoUrl: string
+  dataUrl: string
   mimeType: string
   size: number
 }
@@ -49,11 +56,21 @@ export interface PhotoOpts {
   /** Legacy cloud size names are normalized before the native take_photo command. */
   size?: "low" | "medium" | "high" | "max" | "small" | "large" | "full"
   mode?: "photo" | "text"
-  /** Select direct-only, phone-relayed BLE, or the default Wi-Fi/BLE fallback policy. */
+  /**
+   * @deprecated Local-miniapp photos always ride BLE (`destination: {kind: "phone"}`);
+   * the value is validated for shape but otherwise ignored.
+   */
   transferMethod?: PhotoTransferMethod
+  /**
+   * @deprecated Compression only applies to webhook uploads. BLE phone delivery
+   * is governed by the transport codec, so this is ignored.
+   */
   compress?: "none" | "low" | "medium" | "high"
   sound?: boolean
+  /** Keep a copy in the glasses gallery (maps to the phone arm's `keepOnGlasses`). */
   saveToGallery?: boolean
+  /** Also export the delivered photo to the phone's OS camera roll. */
+  saveToCameraRoll?: boolean
   exposureTimeNs?: number
   iso?: number | null
   aeExposureDivisor?: number
@@ -69,6 +86,13 @@ export interface PhotoOpts {
 }
 
 export interface PhotoTaken {
+  /** The photo itself, inline: `data:image/jpeg;base64,...`. */
+  dataUrl: string
+  /**
+   * Same data URL as `dataUrl`, so code that renders `photoUrl` (display
+   * images, `<img src>`) keeps working. Not fetchable through the background
+   * runtime's `fetch` (it is a native HTTP bridge); decode `dataUrl` instead.
+   */
   photoUrl: string
   mimeType: string
   size: number
@@ -77,9 +101,9 @@ export interface PhotoTaken {
 
 /** Pipeline stage a photo request failed at — surfaced to the miniapp so a dev
  *  sees exactly where it broke, not just a flattened message. */
-export type PhotoStage = "presign" | "command" | "capture" | "upload" | "push"
+export type PhotoStage = "command" | "capture" | "deliver"
 /** Transport in play at the point of failure. */
-export type PhotoTransport = "cloud-rest" | "ble" | "wifi" | "ws"
+export type PhotoTransport = "ble" | "local-file"
 
 export class PhotoError extends Error {
   constructor(
@@ -110,40 +134,41 @@ interface ActiveRequest {
 }
 
 /**
- * Last-resort ceiling for the complete capture + encode + transfer + upload
- * pipeline. This must exceed the managed-photo service's 30s ready-push
- * timeout so the cloud can return its more specific failure first.
- *
- * Text mode commonly spends several seconds detecting/cropping the region and
- * can take another 10s+ to transfer over BLE. A 15s ceiling incorrectly
- * rejected successful captures while their upload was still in progress.
+ * Last-resort ceiling for the complete capture + encode + BLE transfer +
+ * local-read pipeline. The Bluetooth SDK's own terminal deadline for phone
+ * delivery is 60 s (PHONE_DELIVERY_REQUEST_TIMEOUT_MS / phoneDeliveryRequestTimeoutMs)
+ * and normally rejects first with a typed error; this watchdog sits above it
+ * so it only fires if the native promise never settles at all. The miniapp
+ * SDK's default takePhoto deadline (PHOTO_REQUEST_TIMEOUT_MS, 90 s) sits above
+ * this in turn, so the miniapp sees the typed error rather than ACTION_TIMEOUT.
  */
-export const CAPTURE_PIPELINE_TIMEOUT_MS = 45_000
+export const NATIVE_PHONE_DELIVERY_TIMEOUT_MS = 60_000
+export const CAPTURE_PIPELINE_TIMEOUT_MS = NATIVE_PHONE_DELIVERY_TIMEOUT_MS + 15_000
 export const CAMERA_WARM_UP_DEFAULT_DURATION_MS = 15_000
 export const CAMERA_WARM_UP_MAX_DURATION_MS = 60_000
 
 let bleRequestCounter = 0
 
-/** Short 4-hex-char correlation id sent over BLE instead of the full cloud
- *  requestId UUID (wire v2 keeps BLE JSON small). */
+/** Short 4-hex-char correlation id sent over BLE instead of the full
+ *  requestId (wire v2 keeps BLE JSON small). */
 function mintBleRequestId(): string {
   bleRequestCounter = (bleRequestCounter + 1) & 0xffff
   return bleRequestCounter.toString(16).padStart(4, "0")
 }
 
-function toNativeCompression(compress: PhotoOpts["compress"]): "none" | "medium" | "heavy" {
-  if (compress === "high") return "heavy"
-  if (compress === "low" || compress === "medium") return "medium"
-  return "none"
+/** Phone-minted photo id, mirroring the cloud's `photo_` prefix so logs
+ *  and miniapps see one id shape regardless of where the photo came from. */
+function mintPhotoRequestId(): string {
+  return `photo_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`
 }
 
 export class PhonePhotoCoordinator {
-  // Cloud requestId → in-flight slot. The gated photo_response listener
-  // (DeviceEventRouter) resolves short BLE ids via bleIdToCloud before calling
-  // owns() / handlePhotoError().
+  // requestId → in-flight slot. The gated photo_response listener
+  // (DeviceEventRouter) resolves short BLE ids via bleIdToRequest before
+  // calling owns() / handlePhotoError().
   private readonly activeRequests = new Map<string, ActiveRequest>()
-  /** Short BLE correlation id (4-char hex) → full cloud requestId. */
-  private readonly bleIdToCloud = new Map<string, string>()
+  /** Short BLE correlation id (4-char hex) → full phone-minted requestId. */
+  private readonly bleIdToRequest = new Map<string, string>()
   private readonly activeWarmUps = new Map<
     string,
     {requestId: string; durationMs: number; expiryTimer?: ReturnType<typeof setTimeout>}
@@ -159,11 +184,13 @@ export class PhonePhotoCoordinator {
   }
 
   async takePhoto(packageName: string, opts: PhotoOpts): Promise<PhotoTaken> {
-    const transferMethod = parsePhotoTransferMethod(opts.transferMethod)
+    // transferMethod is a legacy input: validate its shape (fail fast on
+    // garbage) but ignore the value — phone delivery always rides BLE.
+    parsePhotoTransferMethod(opts.transferMethod)
 
     // Pre-check: if glasses aren't even connected, the BLE photo command
-    // would be sent into the void and we'd wait 30s for the cloud long-poll
-    // to time out. Fail fast with a typed error.
+    // would be sent into the void and we'd wait for the native deadline or
+    // the pipeline watchdog. Fail fast with a typed error.
     //
     // We DON'T pre-check `hasCamera` here — the canonical capability data
     // lives in `getModelCapabilities(deviceModel)` from @mentra/engine and
@@ -171,67 +198,35 @@ export class PhonePhotoCoordinator {
     // cameraless device receives the BLE photo command, the glasses-side
     // handler will return a photo_response error within ~1s and the gated
     // photo_response listener in MantleManager will short-circuit our
-    // long-poll. Slower but correct.
+    // pipeline. Slower but correct.
     if (!isGlassesConnected(useGlassesStore.getState().connection)) {
       throw new PhotoError("GLASSES_NOT_CONNECTED", "Glasses are not connected", "command", "ble")
     }
 
-    // Text-mode sensor resolution is owned by ASG constants; keep cloud metadata on a stable
-    // high-capacity tier and let the glasses ignore the public size when mode=text.
+    // Text-mode sensor resolution is owned by ASG constants; the glasses
+    // ignore the public size when mode=text.
     const captureSize = opts.size ?? "medium"
 
-    // 1) Presign via the cloud-v2 managed-photo service. Local miniapps use
-    //    ONLY the cloud-v2 path: the runtime presigns upload+read URLs and the
-    //    phone (as the device controller) delivers the bytes; the legacy
-    //    backend_url mint is gone from this flow.
-    let requestId: string
-    let uploadUrl: string
-    let readUrl: string
     const flowStarted = performance.now()
-    try {
-      const presignStarted = performance.now()
-      const r = await cloudClientService.startManagedPhoto({
-        size: opts.mode === "text" ? "max" : captureSize,
-      })
-      const presignMs = Math.round(performance.now() - presignStarted)
-      if (typeof __DEV__ !== "undefined" && __DEV__) {
-        console.debug(
-          `[PhonePhotoCoordinator] presign ${presignMs}ms size=${opts.mode === "text" ? "max" : captureSize} mode=${
-            opts.mode ?? "photo"
-          }`,
-        )
-      }
-      requestId = r.requestId
-      uploadUrl = r.uploadUrl
-      readUrl = r.readUrl
-    } catch (err) {
-      throw this.toPhotoError(err, "PHOTO_REQUEST_FAILED", "presign", "cloud-rest")
-    }
 
-    // 2) Build the outcome Promise FIRST so both resolve+reject handles
+    // 1) Build the outcome Promise FIRST so both resolve+reject handles
     //    are wired into activeRequests BEFORE any code path can produce
     //    an error. Without this, a fast BLE photo_response (BATTERY_LOW
     //    etc.) racing with the Promise constructor could fire
     //    handlePhotoError() against a no-op rejectFn and silently drop
     //    the error.
-    // When the managed-photo upload URL is loopback (the local storage provider
-    // reached over `adb reverse`), the glasses cannot reach it over WiFi —
-    // localhost on the glasses is the glasses. Force BLE transfer so the phone
-    // (which CAN reach the reversed runtime) relays the bytes; a public r2/s3
-    // presigned URL stays on "auto".
-    const isLoopbackUpload = /^https?:\/\/(localhost|127\.0\.0\.1|10\.0\.2\.2)\b/.test(uploadUrl)
-
+    const requestId = mintPhotoRequestId()
     const abort = new AbortController()
     const bleRequestId = mintBleRequestId()
-    this.bleIdToCloud.set(bleRequestId, requestId)
+    this.bleIdToRequest.set(bleRequestId, requestId)
 
     const outcome = new Promise<PhotoResult>((resolve, reject) => {
       this.activeRequests.set(requestId, {packageName, abort, resolve, reject})
     })
 
-    // Last-resort watchdog for a wedged pipeline. The managed-photo ready push
-    // normally resolves or rejects first; this only prevents an indefinite hang
-    // if both the native terminal response and cloud push disappear.
+    // Last-resort watchdog for a wedged pipeline. The native terminal
+    // photo_response normally resolves or rejects first; this only prevents an
+    // indefinite hang if that response disappears mid-pipeline.
     const captureWatchdog = setTimeout(() => {
       const e = this.activeRequests.get(requestId)
       if (!e) return
@@ -239,9 +234,9 @@ export class PhonePhotoCoordinator {
       e.reject(
         new PhotoError(
           "CAPTURE_TIMEOUT",
-          "Photo capture did not complete. The take_photo command, media processing, transfer, or upload may have stalled.",
+          "Photo capture did not complete. The take_photo command, media processing, or BLE transfer may have stalled.",
           "capture",
-          isLoopbackUpload ? "ble" : "wifi",
+          "ble",
         ),
       )
     }, CAPTURE_PIPELINE_TIMEOUT_MS)
@@ -251,21 +246,21 @@ export class PhonePhotoCoordinator {
     const clearWatchdog = () => clearTimeout(captureWatchdog)
     void outcome.then(clearWatchdog, clearWatchdog)
 
-    // 3) Drive glasses over BLE. requestPhoto now resolves at terminal
-    //    photo_response success, so run it beside the cloud poll instead of
-    //    awaiting it before polling. Native defaults transferMethod to "auto"
-    //    (Wi-Fi direct with BLE fallback) unless the miniapp forces BLE.
+    // 2) Drive glasses over BLE. `destination: {kind: "phone"}` forces the BLE
+    //    transfer with no webhook anywhere: the native promise resolves at the
+    //    terminal photo_response success carrying the delivered fileUri, which
+    //    we then read into the inline data URL handed to the miniapp.
     try {
       void BluetoothSdk.requestPhoto({
         requestId: bleRequestId,
         appId: packageName,
         size: normalizePhotoSize(captureSize),
         mode: opts.mode ?? "photo",
-        webhookUrl: uploadUrl,
-        authToken: null,
-        ...(isLoopbackUpload ? {transferMethod: "ble" as const} : transferMethod ? {transferMethod} : {}),
-        compress: toNativeCompression(opts.compress),
-        save: opts.saveToGallery ?? false,
+        destination: {
+          kind: "phone",
+          ...(opts.saveToCameraRoll ? {saveToCameraRoll: true} : {}),
+          ...(opts.saveToGallery ? {keepOnGlasses: true} : {}),
+        },
         sound: opts.sound ?? true,
         exposureTimeNs: opts.exposureTimeNs ?? null,
         iso: opts.iso,
@@ -277,32 +272,20 @@ export class PhonePhotoCoordinator {
         ...(opts.mfnr != null ? {mfnr: opts.mfnr} : {}),
         ispDigitalGain: opts.ispDigitalGain,
         ispAnalogGain: opts.ispAnalogGain,
-      }).catch((err) => {
-        const e = this.activeRequests.get(requestId)
-        if (!e) return
-        e.abort.abort()
-        e.reject(this.toPhotoError(err, "BLE_SEND_FAILED", "command", "ble"))
       })
+        .then((event) => this.completePhoneDelivery(requestId, event))
+        .catch((err) => {
+          const e = this.activeRequests.get(requestId)
+          if (!e) return // already settled by handlePhotoError
+          e.abort.abort()
+          e.reject(this.toPhotoError(err, "PHOTO_FAILED", "capture", "ble"))
+        })
     } catch (err) {
       this.activeRequests.delete(requestId)
-      this.bleIdToCloud.delete(bleRequestId)
+      this.bleIdToRequest.delete(bleRequestId)
+      clearTimeout(captureWatchdog)
       throw this.toPhotoError(err, "BLE_SEND_FAILED", "command", "ble")
     }
-
-    // 4) Await the runtime's photo.ready push (replaces the legacy long-poll).
-    //    handlePhotoError races against it and uses the same entry to reject
-    //    first.
-    cloudClientService
-      .awaitManagedPhotoReady(requestId)
-      .then((res) => {
-        const e = this.activeRequests.get(requestId)
-        if (!e) return // already settled by handlePhotoError
-        e.resolve({photoUrl: res.readUrl ?? readUrl, mimeType: "image/jpeg", size: -1})
-      })
-      .catch((err) => {
-        const e = this.activeRequests.get(requestId)
-        if (e) e.reject(this.toPhotoError(err, "POLL_FAILED", "push", "ws"))
-      })
 
     try {
       const result = await outcome
@@ -314,27 +297,87 @@ export class PhonePhotoCoordinator {
         )
       }
       return {
-        photoUrl: result.photoUrl,
+        dataUrl: result.dataUrl,
+        photoUrl: result.dataUrl,
         mimeType: result.mimeType,
         size: result.size,
         requestId,
       }
     } finally {
       this.activeRequests.delete(requestId)
-      this.bleIdToCloud.delete(bleRequestId)
+      this.bleIdToRequest.delete(bleRequestId)
     }
   }
 
-  /** Map a short BLE requestId from photo_response back to the cloud requestId. */
-  resolveCloudRequestId(bleOrCloudId: string): string {
-    return this.bleIdToCloud.get(bleOrCloudId) ?? bleOrCloudId
+  /**
+   * Terminal success from the Bluetooth SDK: the JPEG is on the phone at
+   * `fileUri`. Read it into an inline data URL and resolve the miniapp with it.
+   */
+  private async completePhoneDelivery(requestId: string, event: PhotoSuccessResponseEvent): Promise<void> {
+    if (!this.activeRequests.has(requestId)) return // already settled by handlePhotoError
+    try {
+      const fileUri = event?.fileUri
+      if (!fileUri) {
+        throw new PhotoError(
+          "PHOTO_DELIVERY_INCOMPLETE",
+          "Glasses reported success but the phone delivery carried no fileUri.",
+          "capture",
+          "ble",
+        )
+      }
+      const mimeType = event.mimeType ?? "image/jpeg"
+      const {dataUrl, size} = await this.readDeliveredPhoto(fileUri, mimeType)
+      const e = this.activeRequests.get(requestId)
+      if (!e) return
+      e.resolve({dataUrl, mimeType, size: size ?? event.byteCount ?? -1})
+    } catch (err) {
+      const e = this.activeRequests.get(requestId)
+      if (!e) return
+      e.abort.abort()
+      e.reject(this.toPhotoError(err, "PHOTO_DELIVERY_FAILED", "deliver", "local-file"))
+    }
+  }
+
+  /**
+   * Read the SDK-delivered JPEG into an inline data URL. The miniapp gets the
+   * bytes (OS-1796: no download URL, no cloud in the path), so the delivered
+   * file has served its purpose once read and is deleted; the SDK's retention
+   * sweep would reclaim it anyway. Camera-roll copies are the user's and are
+   * never touched here.
+   */
+  private async readDeliveredPhoto(fileUri: string, mimeType: string): Promise<{dataUrl: string; size: number | null}> {
+    const file = new File(fileUri)
+    let base64: string
+    let size: number | null
+    try {
+      base64 = await file.base64()
+      size = file.size
+    } catch (err) {
+      throw new PhotoError(
+        "PHOTO_DELIVERY_FAILED",
+        `Delivered photo could not be read: ${err instanceof Error ? err.message : String(err)}`,
+        "deliver",
+        "local-file",
+      )
+    }
+    try {
+      file.delete()
+    } catch {
+      // Best effort: the SDK retention sweep reclaims stragglers.
+    }
+    return {dataUrl: `data:${mimeType};base64,${base64}`, size}
+  }
+
+  /** Map a short BLE requestId from photo_response back to the phone-minted requestId. */
+  resolveRequestId(bleOrFullId: string): string {
+    return this.bleIdToRequest.get(bleOrFullId) ?? bleOrFullId
   }
 
   /**
    * Pre-warm the glasses camera so the next takePhoto() is near-instant.
    *
-   * Pure BLE — NO cloud presign, NO upload, NO long-poll. The phone mints and owns
-   * the requestId, sends the warm-up command, and resolves when the camera reports
+   * Pure BLE — NO upload, NO cloud involvement. The phone mints and owns the
+   * requestId, sends the warm-up command, and resolves when the camera reports
    * ready (the native promise resolves on the ready status event).
    */
   async warmUpCamera(
@@ -401,10 +444,10 @@ export class PhonePhotoCoordinator {
     }
   }
 
-  /** True iff this requestId (short BLE id or cloud id) is one we're currently waiting on. */
+  /** True iff this requestId (short BLE id or full id) is one we're currently waiting on. */
   owns(requestId: string): boolean {
-    const cloudId = this.resolveCloudRequestId(requestId)
-    return this.activeRequests.has(cloudId)
+    const fullId = this.resolveRequestId(requestId)
+    return this.activeRequests.has(fullId)
   }
 
   /**
@@ -413,14 +456,13 @@ export class PhonePhotoCoordinator {
    * requestId. Rejects the in-flight takePhoto Promise immediately.
    */
   handlePhotoError(requestId: string, errorCode: string, errorMessage: string): void {
-    const cloudId = this.resolveCloudRequestId(requestId)
-    const entry = this.activeRequests.get(cloudId)
+    const fullId = this.resolveRequestId(requestId)
+    const entry = this.activeRequests.get(fullId)
     if (!entry) return
-    this.bleIdToCloud.delete(requestId)
-    // Abort the in-flight long-poll first so we don't double-resolve.
+    this.bleIdToRequest.delete(requestId)
+    // Abort first so a native completion racing in can't double-resolve.
     entry.abort.abort()
     entry.reject(new PhotoError(errorCode || "GLASSES_ERROR", errorMessage || "Glasses error", "capture", "ble"))
-    // cloud-v2 pending photo requests TTL out on their own; nothing to free.
   }
 
   private toPhotoError(err: unknown, fallbackCode: string, stage?: PhotoStage, transport?: PhotoTransport): PhotoError {
