@@ -433,6 +433,8 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     @Published private(set) var lastMicBytes = 0
     @Published private(set) var micPlaybackHint: String?
     @Published private(set) var otaDisplayPercent: Int?
+    @Published private(set) var otaNoUpdateVisible = false
+    @Published private(set) var otaStartPending = false
     @Published private(set) var otaStatus: OtaStatusEvent?
     @Published private(set) var otaStatusMessage: String?
     @Published private(set) var otaUpdateAvailable = false
@@ -469,6 +471,8 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     private var otaStartingAppIdentity: String?
     private var postOtaCheckInProgress = false
     private var postOtaCheckedSessionKey: String?
+    private var otaCheckGeneration = 0
+    private var otaNoUpdateHideTask: Task<Void, Never>?
     private var scanSession: ScanSession?
     private var micStartedAt: Date?
     private var micElapsedTask: Task<Void, Never>?
@@ -575,6 +579,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         directStreamStartTask?.cancel()
         directStreamStopTask?.cancel()
         micElapsedTask?.cancel()
+        otaNoUpdateHideTask?.cancel()
         directWhipProxy.stop()
         directWhipReceiver.stop()
         photoUploadServer?.stop()
@@ -688,6 +693,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     }
 
     func checkForOtaUpdate() {
+        hideOtaNoUpdateCard()
         runAsyncAction("Check OTA") { [self] in
             try requireConnected("check OTA")
             try requireGlassesWifi("check for OTA updates")
@@ -695,20 +701,30 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                 append(tag: "TX", text: "OTA check skipped while update is in progress")
                 return
             }
-            _ = try await checkForOtaUpdateResult()
+            _ = try await checkForOtaUpdateResult(showNoUpdateCard: true)
         }
     }
 
     func startOtaUpdate() {
+        guard !otaStartPending else {
+            append(tag: "TX", text: "OTA start skipped; a start is already in flight")
+            return
+        }
+        otaStartPending = true
         runAsyncAction("Start OTA") { [self] in
-            try requireConnected("start OTA")
-            try requireGlassesWifi("start OTA updates")
-            postOtaCheckedSessionKey = nil
-            otaStartingAppIdentity = otaAppIdentity(glassesValues)
-            resetOtaDisplayProgress()
-            otaDisplayPercent = nil
-            _ = try await mentraBluetoothSdk.startOtaUpdate()
-            append(tag: "LIVE", text: "OTA start acknowledged")
+            do {
+                try requireConnected("start OTA")
+                try requireGlassesWifi("start OTA updates")
+                postOtaCheckedSessionKey = nil
+                otaStartingAppIdentity = otaAppIdentity(glassesValues)
+                resetOtaDisplayProgress()
+                otaDisplayPercent = nil
+                _ = try await mentraBluetoothSdk.startOtaUpdate()
+                append(tag: "LIVE", text: "OTA start acknowledged")
+            } catch {
+                otaStartPending = false
+                throw error
+            }
         }
     }
 
@@ -2235,6 +2251,8 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                 self.otaStartingAppIdentity = nil
                 resetOtaDisplayProgress()
                 autoOtaCheckedConnectionKey = nil
+                hideOtaNoUpdateCard()
+                otaStartPending = false
                 otaStatus = nil
                 otaDisplayPercent = nil
                 otaStatusMessage = "OTA installed; checking for additional updates"
@@ -2249,8 +2267,14 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         }
     }
 
-    private func checkForOtaUpdateResult() async throws -> Bool {
-        handleOtaCheckResult(try await mentraBluetoothSdk.checkForOtaUpdate())
+    private func checkForOtaUpdateResult(showNoUpdateCard: Bool = false) async throws -> Bool? {
+        let checkGeneration = otaCheckGeneration
+        let updateAvailable = try await mentraBluetoothSdk.checkForOtaUpdate()
+        guard checkGeneration == otaCheckGeneration, glassesConnected else {
+            append(tag: "LIVE", text: "OTA check result ignored after connection changed")
+            return nil
+        }
+        return handleOtaCheckResult(updateAvailable, showNoUpdateCard: showNoUpdateCard)
     }
 
     private func applyVersionInfo(_ event: VersionInfoResult) {
@@ -2278,7 +2302,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         }
     }
 
-    private func handleOtaCheckResult(_ updateAvailable: Bool) -> Bool {
+    private func handleOtaCheckResult(_ updateAvailable: Bool, showNoUpdateCard: Bool = false) -> Bool {
         if isOtaInProgress() {
             append(tag: "LIVE", text: "OTA check result ignored while update is in progress")
             return updateAvailable
@@ -2286,6 +2310,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         otaStartingAppIdentity = nil
         resetOtaDisplayProgress()
         if updateAvailable {
+            hideOtaNoUpdateCard()
             otaStatus = nil
             otaDisplayPercent = nil
             otaStatusMessage = nil
@@ -2298,14 +2323,36 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         otaDisplayPercent = nil
         otaStatusMessage = "Glasses firmware is up to date"
         otaUpdateAvailable = false
+        if showNoUpdateCard {
+            showOtaNoUpdateCard()
+        }
         append(tag: "LIVE", text: "OTA up to date")
         return false
     }
 
+    private func showOtaNoUpdateCard() {
+        hideOtaNoUpdateCard()
+        otaNoUpdateVisible = true
+        otaNoUpdateHideTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 10_000_000_000)
+            guard !Task.isCancelled else { return }
+            self?.otaNoUpdateVisible = false
+            self?.otaNoUpdateHideTask = nil
+        }
+    }
+
+    private func hideOtaNoUpdateCard() {
+        otaNoUpdateHideTask?.cancel()
+        otaNoUpdateHideTask = nil
+        otaNoUpdateVisible = false
+    }
+
     private func applyOtaStatus(_ event: OtaStatusEvent) {
+        hideOtaNoUpdateCard()
         guard isDisplayableOtaStatus(event) else {
             otaStartingAppIdentity = nil
             resetOtaDisplayProgress()
+            otaStartPending = false
             otaStatus = nil
             otaDisplayPercent = nil
             otaStatusMessage = "No active OTA"
@@ -2314,6 +2361,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         }
 
         otaDisplayPercent = updateOtaDisplayPercent(event)
+        otaStartPending = false
         otaStatus = event
         otaStatusMessage = nil
         if event.status == "complete" || event.status == "failed" {
@@ -2368,8 +2416,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                 append(tag: "LIVE", text: "OTA complete; skipped verification because glasses Wi-Fi is unavailable")
                 return
             }
-            _ = try await checkForOtaUpdateResult()
-            checkSucceeded = true
+            checkSucceeded = (try await checkForOtaUpdateResult(showNoUpdateCard: true)) != nil
         }
     }
 
@@ -2418,8 +2465,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             }
             try requireConnected("check OTA")
             try requireGlassesWifi("check for OTA updates")
-            _ = try await checkForOtaUpdateResult()
-            checkSucceeded = true
+            checkSucceeded = (try await checkForOtaUpdateResult()) != nil
         }
     }
 
@@ -2508,7 +2554,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     }
 
     private func isOtaInProgress() -> Bool {
-        otaStatus?.status == "in_progress" || otaStatus?.status == "step_complete"
+        otaStartPending || otaStatus?.status == "in_progress" || otaStatus?.status == "step_complete"
     }
 
     private func startCameraWarmUpLoop() {
@@ -2760,6 +2806,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
 
     private func applyDisconnectedState(status: String) {
         glassesValues = .disconnected(connection: .disconnected)
+        hideOtaNoUpdateCard()
         stopPreviewHealthPoll()
         activeStreamId = nil
         streamRequested = false
@@ -2779,7 +2826,9 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         galleryServerReachable = nil
         galleryServerStatus = "Gallery server: connect glasses first"
         otaStartingAppIdentity = nil
+        otaStartPending = false
         latestVersionInfo = nil
+        otaCheckGeneration += 1
         mentraLiveVersions = MentraLiveVersions()
         resetOtaDisplayProgress()
         otaStatus = nil

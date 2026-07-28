@@ -19,7 +19,7 @@ struct DeviceScreen: View {
                         .padding(.horizontal, 16)
                         .padding(.top, 12)
 
-                    if model.otaStatus != nil || model.otaUpdateAvailable {
+                    if model.otaStatus != nil || model.otaUpdateAvailable || model.otaNoUpdateVisible {
                         otaCard
                             .padding(.horizontal, 16)
                             .padding(.top, 10)
@@ -150,7 +150,7 @@ struct DeviceScreen: View {
                 }
                 HStack(spacing: 8) {
                     LightActionButton(icon: "arrow.triangle.2.circlepath", title: otaWifiRequired ? "Connect Wi-Fi" : "Check OTA", enabled: canCheckOta, action: model.checkForOtaUpdate)
-                    LightActionButton(icon: "arrow.down.to.line", title: "Start OTA", enabled: canStartOta(model: model), action: model.startOtaUpdate)
+                    LightActionButton(icon: "arrow.down.to.line", title: model.otaStartPending ? "Starting OTA..." : "Start OTA", enabled: canStartOta(model: model), action: model.startOtaUpdate)
                 }
                 HStack(spacing: 8) {
                     LightActionButton(icon: "trash", title: "Clear Default", enabled: hasDefaultTarget, action: model.clearDefaultDevice)
@@ -353,7 +353,7 @@ struct DeviceScreen: View {
                     }
                 }
                 Spacer()
-                if installing {
+                if model.otaStartPending || installing {
                     ProgressView()
                         .tint(AppColor.greenPrimary)
                         .controlSize(.small)
@@ -383,7 +383,7 @@ struct DeviceScreen: View {
                     HStack(spacing: 8) {
                         Image(systemName: "arrow.down.to.line")
                             .font(.system(size: 15, weight: .bold))
-                        Text(canStartOta(model: model) ? "Start OTA" : "Connect Wi-Fi first")
+                        Text(model.otaStartPending ? "Starting OTA..." : canStartOta(model: model) ? "Start OTA" : "Connect Wi-Fi first")
                             .font(.system(size: 13, weight: .bold))
                     }
                     .foregroundColor(.white)
@@ -445,11 +445,14 @@ private func canStartOta(model: BluetoothViewModel) -> Bool {
 
 @MainActor
 private func isOtaInProgress(model: BluetoothViewModel) -> Bool {
-    model.otaStatus?.status == "in_progress" || model.otaStatus?.status == "step_complete"
+    model.otaStartPending || model.otaStatus?.status == "in_progress" || model.otaStatus?.status == "step_complete"
 }
 
 @MainActor
 private func otaStatusLine(model: BluetoothViewModel) -> String {
+    if model.otaStartPending {
+        return "starting update"
+    }
     if isOtaInstalling(model: model) {
         return "installing update"
     }
@@ -472,6 +475,9 @@ private func otaDisplayPercent(model: BluetoothViewModel, status: OtaStatusEvent
 
 @MainActor
 private func otaCardTitle(model: BluetoothViewModel) -> String {
+    if model.otaStartPending {
+        return "Starting update"
+    }
     if model.otaStatus?.status == "failed" {
         return "Update failed"
     }
@@ -484,11 +490,17 @@ private func otaCardTitle(model: BluetoothViewModel) -> String {
     if model.otaUpdateAvailable {
         return "Firmware update available"
     }
+    if model.otaNoUpdateVisible {
+        return "No OTA available"
+    }
     return "OTA status"
 }
 
 @MainActor
 private func otaCardDetail(model: BluetoothViewModel) -> String {
+    if model.otaStartPending {
+        return "Sending the OTA start request to the glasses."
+    }
     if let error = model.otaStatus?.errorMessage {
         return error
     }
@@ -500,6 +512,9 @@ private func otaCardDetail(model: BluetoothViewModel) -> String {
     }
     if model.otaUpdateAvailable {
         return "A newer firmware version is available for these glasses."
+    }
+    if model.otaNoUpdateVisible {
+        return "Your glasses firmware is up to date."
     }
     return "Tap Check OTA to compare the current glasses version with the SDK OTA manifest."
 }

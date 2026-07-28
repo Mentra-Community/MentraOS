@@ -255,6 +255,8 @@ data class MentraExampleState(
     val micPlaying: Boolean = false,
     val micRecording: Boolean = false,
     val otaDisplayPercent: Int? = null,
+    val otaNoUpdateVisible: Boolean = false,
+    val otaStartPending: Boolean = false,
     val otaStatus: OtaStatusEvent? = null,
     val otaStatusMessage: String? = null,
     val otaUpdateAvailable: Boolean = false,
@@ -379,6 +381,8 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     private var otaStartingAppIdentity: String? = null
     private var postOtaCheckInProgress = false
     private var postOtaCheckedSessionKey: String? = null
+    private var otaCheckGeneration = 0
+    private var otaNoUpdateHideJob: Job? = null
 
     private val micSampleRate = 16_000
     private val micChannelCount = 1
@@ -397,6 +401,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         private const val CLOUD_URLS_STREAM_KEY = "stream_url"
         private const val CLOUD_URLS_WEBHOOK_KEY = "webhook_url"
         private const val CLOUD_URLS_SAVED_AT_KEY = "saved_at"
+        private const val OTA_NO_UPDATE_CARD_DURATION_MS = 10_000L
     }
 
     private val audioDeviceCallback = object : AudioDeviceCallback() {
@@ -2468,7 +2473,9 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             otaStartingAppIdentity = null
             resetOtaDisplayProgress()
             autoOtaCheckedConnectionKey = null
+            hideOtaNoUpdateCard()
             state = state.copy(
+                otaStartPending = false,
                 otaStatus = null,
                 otaDisplayPercent = null,
                 otaStatusMessage = "OTA installed; checking for additional updates",
@@ -2511,13 +2518,24 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         }
     }
 
-    private fun handleOtaCheckResult(updateAvailable: Boolean): Boolean {
+    private suspend fun checkForOtaUpdateResult(showNoUpdateCard: Boolean = false): Boolean? {
+        val checkGeneration = otaCheckGeneration
+        val updateAvailable = withContext(Dispatchers.IO) { mentraBluetoothSdk.checkForOtaUpdate() }
+        if (checkGeneration != otaCheckGeneration || !isGlassesConnected()) {
+            addEvent("LIVE", "OTA check result ignored after connection changed")
+            return null
+        }
+        return handleOtaCheckResult(updateAvailable, showNoUpdateCard)
+    }
+
+    private fun handleOtaCheckResult(updateAvailable: Boolean, showNoUpdateCard: Boolean): Boolean {
         if (isOtaInProgress()) {
             addEvent("LIVE", "OTA check result ignored while update is in progress")
             return updateAvailable
         }
         otaStartingAppIdentity = null
         if (updateAvailable) {
+            hideOtaNoUpdateCard()
             resetOtaDisplayProgress()
             state = state.copy(
                 otaStatus = null,
@@ -2536,8 +2554,29 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             otaStatusMessage = "Glasses firmware is up to date",
             otaUpdateAvailable = false,
         )
+        if (showNoUpdateCard) {
+            showOtaNoUpdateCard()
+        }
         addEvent("LIVE", "OTA up to date")
         return false
+    }
+
+    private fun showOtaNoUpdateCard() {
+        hideOtaNoUpdateCard()
+        state = state.copy(otaNoUpdateVisible = true)
+        otaNoUpdateHideJob = scope.launch {
+            delay(OTA_NO_UPDATE_CARD_DURATION_MS)
+            otaNoUpdateHideJob = null
+            state = state.copy(otaNoUpdateVisible = false)
+        }
+    }
+
+    private fun hideOtaNoUpdateCard() {
+        otaNoUpdateHideJob?.cancel()
+        otaNoUpdateHideJob = null
+        if (state.otaNoUpdateVisible) {
+            state = state.copy(otaNoUpdateVisible = false)
+        }
     }
 
     override fun onMicPcm(event: MicPcmEvent) {
@@ -2584,14 +2623,17 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         addEvent("LIVE", "audio output ${state.phoneAudioRoute}; ${state.audioMediaStatus}")
     }
 
-    fun checkForOtaUpdate() = runAction("Check OTA") {
-        requireConnected("check OTA")
-        requireGlassesWifi("check for OTA updates")
-        if (isOtaInProgress()) {
-            addEvent("TX", "OTA check skipped while update is in progress")
-            return@runAction
+    fun checkForOtaUpdate() {
+        hideOtaNoUpdateCard()
+        runAction("Check OTA") {
+            requireConnected("check OTA")
+            requireGlassesWifi("check for OTA updates")
+            if (isOtaInProgress()) {
+                addEvent("TX", "OTA check skipped while update is in progress")
+                return@runAction
+            }
+            checkForOtaUpdateResult(showNoUpdateCard = true)
         }
-        handleOtaCheckResult(withContext(Dispatchers.IO) { mentraBluetoothSdk.checkForOtaUpdate() })
     }
 
     private fun maybeAutoCheckOta() {
@@ -2619,8 +2661,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             try {
                 requireConnected("check OTA")
                 requireGlassesWifi("check for OTA updates")
-                handleOtaCheckResult(withContext(Dispatchers.IO) { mentraBluetoothSdk.checkForOtaUpdate() })
-                checkSucceeded = true
+                checkSucceeded = checkForOtaUpdateResult() != null
             } finally {
                 autoOtaCheckInProgress = false
                 if (checkSucceeded) {
@@ -2639,15 +2680,27 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         }
     }
 
-    fun startOtaUpdate() = runAction("Start OTA") {
-        requireConnected("start OTA")
-        requireGlassesWifi("start OTA updates")
-        postOtaCheckedSessionKey = null
-        otaStartingAppIdentity = state.glassesStatus.otaAppIdentity()
-        resetOtaDisplayProgress()
-        state = state.copy(otaDisplayPercent = null)
-        withContext(Dispatchers.IO) { mentraBluetoothSdk.startOtaUpdate() }
-        addEvent("LIVE", "OTA start acknowledged")
+    fun startOtaUpdate() {
+        if (state.otaStartPending) {
+            addEvent("TX", "OTA start skipped; a start is already in flight")
+            return
+        }
+        state = state.copy(otaStartPending = true)
+        runAction("Start OTA") {
+            try {
+                requireConnected("start OTA")
+                requireGlassesWifi("start OTA updates")
+                postOtaCheckedSessionKey = null
+                otaStartingAppIdentity = state.glassesStatus.otaAppIdentity()
+                resetOtaDisplayProgress()
+                state = state.copy(otaDisplayPercent = null)
+                withContext(Dispatchers.IO) { mentraBluetoothSdk.startOtaUpdate() }
+                addEvent("LIVE", "OTA start acknowledged")
+            } catch (error: Throwable) {
+                state = state.copy(otaStartPending = false)
+                throw error
+            }
+        }
     }
 
     fun openBluetoothSettings() = runAction("Open Bluetooth settings") {
@@ -2747,6 +2800,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         unregisterAudioStateObservers()
         glassesHotspotConnector.disconnect()
         volumeRefreshJob?.cancel()
+        otaNoUpdateHideJob?.cancel()
         controllerJob.cancel()
         mentraBluetoothSdk.close()
     }
@@ -2944,7 +2998,9 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     private fun isGlassesConnected(): Boolean = isGlassesConnected(state.glassesStatus)
 
     private fun isOtaInProgress(): Boolean =
-        state.otaStatus?.status == "in_progress" || state.otaStatus?.status == "step_complete"
+        state.otaStartPending ||
+            state.otaStatus?.status == "in_progress" ||
+            state.otaStatus?.status == "step_complete"
 
     private fun startCameraWarmUpLoop() {
         if (cameraWarmUpJob?.isActive == true) {
@@ -3082,7 +3138,9 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         glassesHotspotConnector.disconnect()
         otaStartingAppIdentity = null
         latestVersionInfo = null
+        otaCheckGeneration += 1
         resetOtaDisplayProgress()
+        hideOtaNoUpdateCard()
         if (hadPhotoRequest) {
             pollGeneration += 1
         }
@@ -3101,6 +3159,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             streamStatus = status,
             hotspotEnabled = false,
             mentraLiveVersions = MentraLiveVersions(),
+            otaStartPending = false,
             otaStatus = null,
             otaDisplayPercent = null,
             otaStatusMessage = null,
@@ -3131,10 +3190,12 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     }
 
     private fun applyOtaStatus(event: OtaStatusEvent) {
+        hideOtaNoUpdateCard()
         if (!isDisplayableOtaStatus(event)) {
             otaStartingAppIdentity = null
             resetOtaDisplayProgress()
             state = state.copy(
+                otaStartPending = false,
                 otaStatus = null,
                 otaDisplayPercent = null,
                 otaStatusMessage = "No active OTA",
@@ -3145,6 +3206,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
 
         val displayPercent = updateOtaDisplayPercent(event)
         state = state.copy(
+            otaStartPending = false,
             otaStatus = event,
             otaDisplayPercent = displayPercent,
             otaStatusMessage = null,
@@ -3191,8 +3253,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
                     addEvent("LIVE", "OTA complete; skipped verification because glasses Wi-Fi is unavailable")
                     return@runAction
                 }
-                handleOtaCheckResult(withContext(Dispatchers.IO) { mentraBluetoothSdk.checkForOtaUpdate() })
-                checkSucceeded = true
+                checkSucceeded = checkForOtaUpdateResult(showNoUpdateCard = true) != null
             } finally {
                 postOtaCheckInProgress = false
                 autoOtaCheckInProgress = false
