@@ -1157,6 +1157,12 @@ class LocalMiniappRuntime {
       case MiniappRequestType.IMU_SET_ENABLED:
         this.handleImuSetEnabled(packageName, payload, requestId)
         break
+      case MiniappRequestType.MIC_SET_VAD_ENABLED:
+        void this.handleMicSetVadEnabled(packageName, payload, requestId)
+        break
+      case MiniappRequestType.MIC_SET_LOUDNESS_GATE_ENABLED:
+        void this.handleMicSetLoudnessGateEnabled(packageName, payload, requestId)
+        break
       case MiniappRequestType.PING:
         // SDK should handle this itself; reply PONG just in case
         this.sendToMiniapp(packageName, {type: MiniappResponseType.PONG}, requestId)
@@ -2937,6 +2943,80 @@ class LocalMiniappRuntime {
       this.sendResult(packageName, requestId, false, undefined, {
         code: MiniappErrorCode.INTERNAL,
         message: err instanceof Error ? err.message : "IMU set-enabled error",
+      })
+    }
+  }
+
+  /**
+   * Explicit glasses-side VAD enable/disable from a miniapp
+   * (session.mic.setVoiceActivityDetectionEnabled). Requires MICROPHONE in the
+   * miniapp manifest. Mentra Live only today — other models no-op via DeviceStore.
+   */
+  private async handleMicSetVadEnabled(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    const app = this.connectedApps.get(packageName)
+    const hasMicPermission = app?.installedManifest?.permissions?.some((p) => p.type === "MICROPHONE")
+    if (!hasMicPermission) {
+      logPermissionNotDeclared(packageName, "MICROPHONE", "to set VAD enabled", `{"type": "MICROPHONE"}`)
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.PERMISSION_NOT_DECLARED,
+        message: `MICROPHONE permission not declared in miniapp.json. Add {"type": "MICROPHONE"} to the "permissions" array.`,
+        permission: "MICROPHONE",
+        operation: MiniappRequestType.MIC_SET_VAD_ENABLED,
+      })
+      return
+    }
+
+    try {
+      const enabled = !!payload.enabled
+      console.log(`${LOG_TAG}: mic_set_vad_enabled ${enabled} (by ${packageName})`)
+      await BluetoothSdk.setVoiceActivityDetectionEnabled(enabled)
+      this.sendResult(packageName, requestId, true)
+    } catch (err) {
+      console.error(`${LOG_TAG}: mic_set_vad_enabled error:`, err)
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: err instanceof Error ? err.message : "VAD set-enabled error",
+      })
+    }
+  }
+
+  /**
+   * Explicit center-mic loudness gate ("Barrier") enable/disable from a miniapp
+   * (session.mic.setLoudnessGateEnabled). Requires MICROPHONE in the miniapp
+   * manifest. Mentra Live only today — other models no-op via DeviceStore.
+   */
+  private async handleMicSetLoudnessGateEnabled(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    const app = this.connectedApps.get(packageName)
+    const hasMicPermission = app?.installedManifest?.permissions?.some((p) => p.type === "MICROPHONE")
+    if (!hasMicPermission) {
+      logPermissionNotDeclared(packageName, "MICROPHONE", "to set loudness gate enabled", `{"type": "MICROPHONE"}`)
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.PERMISSION_NOT_DECLARED,
+        message: `MICROPHONE permission not declared in miniapp.json. Add {"type": "MICROPHONE"} to the "permissions" array.`,
+        permission: "MICROPHONE",
+        operation: MiniappRequestType.MIC_SET_LOUDNESS_GATE_ENABLED,
+      })
+      return
+    }
+
+    try {
+      const enabled = !!payload.enabled
+      console.log(`${LOG_TAG}: mic_set_loudness_gate_enabled ${enabled} (by ${packageName})`)
+      await BluetoothSdk.setLoudnessGateEnabled(enabled)
+      this.sendResult(packageName, requestId, true)
+    } catch (err) {
+      console.error(`${LOG_TAG}: mic_set_loudness_gate_enabled error:`, err)
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: err instanceof Error ? err.message : "Loudness gate set-enabled error",
       })
     }
   }

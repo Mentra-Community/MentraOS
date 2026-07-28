@@ -15,7 +15,7 @@
  * PERMISSION_NOT_DECLARED otherwise.
  */
 
-import {MiniappStreamType} from "../protocol"
+import {MiniappRequestType, MiniappStreamType} from "../protocol"
 import {MiniappSession} from "../session"
 import type {AudioChunkData, UnsubscribeFn, VadData} from "./events"
 
@@ -39,6 +39,33 @@ export class MicModule {
    */
   onAudioChunk(handler: (data: AudioChunkData) => void): UnsubscribeFn {
     return this.track(this.session._subscribe(MiniappStreamType.AUDIO_CHUNK, handler as (data: unknown) => void))
+  }
+
+  /**
+   * Explicitly enable or disable glasses-side voice activity detection (GX8002).
+   * Mirrors the toggle in the Mentra App's microphone settings. When disabled,
+   * mic gating falls back to the loudness gate only (if it is enabled).
+   *
+   * Requires `MICROPHONE` in the miniapp manifest.
+   */
+  setVoiceActivityDetectionEnabled(enabled: boolean): Promise<void> {
+    return this.session.sendRequest<void>({
+      type: MiniappRequestType.MIC_SET_VAD_ENABLED,
+      enabled,
+    })
+  }
+
+  /**
+   * Explicitly enable or disable the center-mic loudness gate ("Barrier"),
+   * which blocks quiet/self-talk audio independent of VAD.
+   *
+   * Requires `MICROPHONE` in the miniapp manifest.
+   */
+  setLoudnessGateEnabled(enabled: boolean): Promise<void> {
+    return this.session.sendRequest<void>({
+      type: MiniappRequestType.MIC_SET_LOUDNESS_GATE_ENABLED,
+      enabled,
+    })
   }
 
   /**

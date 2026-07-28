@@ -383,8 +383,16 @@ export const SETTINGS: Record<string, Setting> = {
     key: "voice_activity_detection_enabled",
     defaultValue: () => true,
     writable: true,
-    saveOnServer: false,
-    persist: false,
+    saveOnServer: true,
+    persist: true,
+  },
+  // Mentra Live center-mic loudness / "Barrier" gate (cs_swit type 10). Default on.
+  loudness_gate_enabled: {
+    key: "loudness_gate_enabled",
+    defaultValue: () => true,
+    writable: true,
+    saveOnServer: true,
+    persist: true,
   },
   always_on_status_bar: {
     key: "always_on_status_bar",
@@ -685,6 +693,7 @@ export const BLUETOOTH_SETTING_KEYS: string[] = [
   SETTINGS.sensing_enabled.key,
   SETTINGS.power_saving_mode.key,
   SETTINGS.voice_activity_detection_enabled.key,
+  SETTINGS.loudness_gate_enabled.key,
   SETTINGS.lc3_frame_size.key,
   SETTINGS.preferred_mic.key,
   SETTINGS.screen_disabled.key,

@@ -95,6 +95,7 @@ class MentraLive : SGCManager() {
         // LC3 frame size for Mentra Live
         private const val LC3_FRAME_SIZE = 40
         private const val VOICE_ACTIVITY_DETECTION_SWITCH_TYPE = 8
+        private const val LOUDNESS_GATE_SWITCH_TYPE = 10
         private const val BES2700_MTU_LIMIT = 509
 
         // L2CAP CoC fast path: new BES2700 firmware registers an LE L2CAP CoC server on this
@@ -8985,6 +8986,9 @@ class MentraLive : SGCManager() {
 
         // Send glasses-side Voice Activity Detection setting.
         sendVoiceActivityDetectionSetting()
+
+        // Send glasses-side loudness / Barrier gate setting.
+        sendLoudnessGateSetting()
     }
 
     override fun sendVoiceActivityDetectionSetting() {
@@ -9024,6 +9028,45 @@ class MentraLive : SGCManager() {
             Bridge.sendVoiceActivityDetectionStatus(enabled)
         } catch (e: JSONException) {
             Log.e(TAG, "Error creating Voice Activity Detection setting command", e)
+        }
+    }
+
+    override fun sendLoudnessGateSetting() {
+        val value = DeviceStore.get("bluetooth", "loudness_gate_enabled")
+        val enabled =
+                if (value is Boolean) value
+                else BluetoothSdkDefaults.LOUDNESS_GATE_ENABLED
+
+        Bridge.log("LIVE: 🎚️ Sending loudness/Barrier gate setting to glasses: " + enabled)
+
+        if (!isConnected) {
+            Bridge.log("LIVE: Cannot send loudness gate setting - not connected")
+            return
+        }
+
+        try {
+            val body = JSONObject()
+            body.put("type", LOUDNESS_GATE_SWITCH_TYPE)
+            body.put("switch", if (enabled) 1 else 0)
+
+            val cmdObject = JSONObject()
+            cmdObject.put("C", "cs_swit")
+            cmdObject.put("V", 1)
+            cmdObject.put("B", body.toString())
+
+            val packedData =
+                    K900ProtocolUtils.packDataToK900(
+                            cmdObject.toString().toByteArray(StandardCharsets.UTF_8),
+                            K900ProtocolUtils.CMD_TYPE_STRING,
+                            k900LengthEndian()
+                    )
+            if (packedData == null) {
+                Bridge.log("LIVE: Failed to pack loudness gate setting command")
+                return
+            }
+            queueData(packedData)
+        } catch (e: JSONException) {
+            Log.e(TAG, "Error creating loudness gate setting command", e)
         }
     }
 

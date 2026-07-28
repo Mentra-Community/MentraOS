@@ -321,6 +321,9 @@ abstract class SGCManager {
     // Voice Activity Detection
     open fun sendVoiceActivityDetectionSetting() {}
 
+    // Mentra Live center-mic loudness / Barrier gate
+    open fun sendLoudnessGateSetting() {}
+
     // Start/stop LC3 audio playback from glasses based on the nex_lc3_audio_playback flag.
     open fun applyNexAudioPlaybackSetting() {}
 

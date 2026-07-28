@@ -332,6 +332,11 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             try await sdk.setVoiceActivityDetectionEnabled(enabled)
         }
 
+        AsyncFunction("setLoudnessGateEnabled") { (enabled: Bool) in
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            try await sdk.setLoudnessGateEnabled(enabled)
+        }
+
         AsyncFunction("setPhotoCaptureDefaults") { (params: [String: Any]) in
             let sdk = await MainActor.run { self.bluetoothSdk() }
             return try await sdk.setPhotoCaptureDefaults(PhotoCaptureDefaults.from(params: params)).values
