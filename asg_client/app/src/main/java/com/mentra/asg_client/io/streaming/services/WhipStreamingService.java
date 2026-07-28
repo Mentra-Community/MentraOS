@@ -1,7 +1,5 @@
 package com.mentra.asg_client.io.streaming.services;
 
-import com.mentra.asg_client.BuildConfig;
-
 import android.annotation.SuppressLint;
 import android.app.Notification;
 import android.app.NotificationChannel;
@@ -142,8 +140,6 @@ public class WhipStreamingService extends Service {
 
   // ---- Stream timeout (keep-alive) ----
   private static final long STREAM_TIMEOUT_MS = 60000; // 60 seconds
-  /** Local testing only: never kill the stream for missing phone/cloud keep-alives. Debug builds only. */
-  private static final boolean DISABLE_KEEP_ALIVE_TIMEOUT = BuildConfig.DEBUG;
   private Timer mStreamTimeoutTimer;
 
   // ---- Battery monitoring ----
@@ -1105,7 +1101,7 @@ public class WhipStreamingService extends Service {
   private void scheduleStreamTimeout(String streamId) {
     cancelStreamTimeout();
 
-    if (DISABLE_KEEP_ALIVE_TIMEOUT) {
+    if (AsgConstants.DISABLE_STREAM_KEEP_ALIVE_TIMEOUT) {
       Log.i(TAG, "Keep-alive timeout disabled; stream will not auto-stop: " + streamId);
       return;
     }
