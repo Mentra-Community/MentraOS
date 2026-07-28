@@ -884,6 +884,7 @@ class LocalMiniappRuntime {
 
   public unregisterApp(packageName: string): void {
     console.log(`${LOG_TAG}: unregisterApp(${packageName})`)
+    const releasedMicGateOverride = micStateCoordinator.clearMiniappGateOverrides(packageName)
     this.clearForegroundProbe(packageName)
     this.clearMiniappAuthRefresh(packageName)
     this.clearMiniappAuthDeliveryRetry(packageName)
@@ -911,7 +912,14 @@ class LocalMiniappRuntime {
         console.warn(`${LOG_TAG}: failed to release camera FOV override for ${packageName} on unregister`, error)
       })
     const app = this.connectedApps.get(packageName)
-    if (!app) return
+    if (!app) {
+      if (releasedMicGateOverride) {
+        void micStateCoordinator.syncEffectiveGatePolicy(this.getConfiguredMicGates()).catch((error) => {
+          console.warn(`${LOG_TAG}: failed to restore mic gate policy for ${packageName}`, error)
+        })
+      }
+      return
+    }
 
     // Remove from all stream subscriber sets
     this.replaceStreamSubscribers(packageName, app.subscriptions, [])
@@ -981,6 +989,11 @@ class LocalMiniappRuntime {
 
     this.connectedApps.delete(packageName)
     this.recomputeMicRequirements()
+    if (releasedMicGateOverride) {
+      void micStateCoordinator.syncEffectiveGatePolicy(this.getConfiguredMicGates()).catch((error) => {
+        console.warn(`${LOG_TAG}: failed to restore mic gate policy for ${packageName}`, error)
+      })
+    }
     this.updateCloudSubscriptions()
 
     if (this.connectedApps.size === 0) {
@@ -2948,7 +2961,7 @@ class LocalMiniappRuntime {
   }
 
   /**
-   * Explicit glasses-side VAD enable/disable from a miniapp
+   * Lifecycle-scoped glasses-side VAD override from a miniapp
    * (session.mic.setVoiceActivityDetectionEnabled). Requires MICROPHONE in the
    * miniapp manifest. Mentra Live only today — other models no-op via DeviceStore.
    */
@@ -2970,10 +2983,18 @@ class LocalMiniappRuntime {
       return
     }
 
+    if (typeof payload.enabled !== "boolean") {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INVALID_ARGUMENT,
+        message: "enabled must be a boolean",
+      })
+      return
+    }
+
     try {
-      const enabled = !!payload.enabled
+      const enabled = payload.enabled
       console.log(`${LOG_TAG}: mic_set_vad_enabled ${enabled} (by ${packageName})`)
-      await BluetoothSdk.setVoiceActivityDetectionEnabled(enabled)
+      await micStateCoordinator.setMiniappGateOverride(packageName, "vad", enabled, this.getConfiguredMicGates())
       this.sendResult(packageName, requestId, true)
     } catch (err) {
       console.error(`${LOG_TAG}: mic_set_vad_enabled error:`, err)
@@ -2985,7 +3006,7 @@ class LocalMiniappRuntime {
   }
 
   /**
-   * Explicit center-mic loudness gate ("Barrier") enable/disable from a miniapp
+   * Lifecycle-scoped center-mic loudness gate ("Barrier") override from a miniapp
    * (session.mic.setLoudnessGateEnabled). Requires MICROPHONE in the miniapp
    * manifest. Mentra Live only today — other models no-op via DeviceStore.
    */
@@ -3007,10 +3028,23 @@ class LocalMiniappRuntime {
       return
     }
 
+    if (typeof payload.enabled !== "boolean") {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INVALID_ARGUMENT,
+        message: "enabled must be a boolean",
+      })
+      return
+    }
+
     try {
-      const enabled = !!payload.enabled
+      const enabled = payload.enabled
       console.log(`${LOG_TAG}: mic_set_loudness_gate_enabled ${enabled} (by ${packageName})`)
-      await BluetoothSdk.setLoudnessGateEnabled(enabled)
+      await micStateCoordinator.setMiniappGateOverride(
+        packageName,
+        "loudnessGate",
+        enabled,
+        this.getConfiguredMicGates(),
+      )
       this.sendResult(packageName, requestId, true)
     } catch (err) {
       console.error(`${LOG_TAG}: mic_set_loudness_gate_enabled error:`, err)
@@ -3485,6 +3519,16 @@ class LocalMiniappRuntime {
   // Mic requirements
   // ===========================================================================
 
+  private getConfiguredMicGates(): {vadEnabled: boolean | null; loudnessGateEnabled: boolean | null} {
+    const bluetoothSettings = useSettingsStore.getState().getBluetoothSettings()
+    const configuredVad = bluetoothSettings.voice_activity_detection_enabled
+    const configuredLoudnessGate = bluetoothSettings.loudness_gate_enabled
+    return {
+      vadEnabled: typeof configuredVad === "boolean" ? configuredVad : null,
+      loudnessGateEnabled: typeof configuredLoudnessGate === "boolean" ? configuredLoudnessGate : null,
+    }
+  }
+
   private recomputeMicRequirements(): void {
     let anyPcm = false
     let anyLc3 = false
@@ -3493,15 +3537,10 @@ class LocalMiniappRuntime {
       if (stream === "audio_chunk") anyPcm = true
       if (stream.startsWith("transcription:") || stream.startsWith("translation:") || stream === "vad") anyLc3 = true
     }
-    const bluetoothSettings = useSettingsStore.getState().getBluetoothSettings()
-    const configuredVad = bluetoothSettings.voice_activity_detection_enabled
     micStateCoordinator.setLocalRequirements({
       pcm: anyPcm,
       lc3: anyLc3,
-      // Mentra Live intentionally omits VAD from its device settings. Pass
-      // null so MicStateCoordinator disables VAD only while PCM is active and
-      // otherwise leaves the native default untouched.
-      vadEnabled: typeof configuredVad === "boolean" ? configuredVad : null,
+      ...this.getConfiguredMicGates(),
     })
   }
 

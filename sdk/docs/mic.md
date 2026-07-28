@@ -7,7 +7,7 @@ microphone gates (VAD and the loudness "Barrier"). Mirrors cloud SDK v3's
 
 Transcription and translation are **not** on this module — they live at
 `session.transcription` and `session.translation` so authors don't have to
-mentally model "transcription is a microphone thing." Audio *output* (TTS,
+mentally model "transcription is a microphone thing." Audio _output_ (TTS,
 file playback) lives on `session.speaker`.
 
 > Before the v3-alignment round this module was called `MicrophoneModule` /
@@ -118,11 +118,14 @@ tracked by the module so `stop()` can tear it down too.
 
 ### `setVoiceActivityDetectionEnabled(enabled)` — `Promise<void>`
 
-Explicitly enable or disable glasses-side voice activity detection (GX8002).
-Mirrors the toggle in the Mentra App's microphone settings.
+Temporarily override glasses-side voice activity detection (GX8002) for this
+miniapp's lifetime. The Mentra App's configured value is restored when the
+miniapp disconnects.
 
 When VAD is disabled, mic gating falls back to the loudness gate only (if
-that gate is enabled). Mentra Live only today; other models no-op.
+that gate is enabled). With VAD disabled and the loudness gate enabled, Mentra
+Live keeps sending audio frames but represents quiet input as silence. Mentra
+Live only today; other models no-op.
 
 **Requires:** `MICROPHONE` in the miniapp manifest.
 
@@ -134,9 +137,10 @@ await session.mic.setVoiceActivityDetectionEnabled(false)
 
 ### `setLoudnessGateEnabled(enabled)` — `Promise<void>`
 
-Explicitly enable or disable the center-mic loudness gate ("Barrier"), which
-blocks quiet / self-talk audio independent of VAD. Mentra Live only today;
-other models no-op.
+Temporarily override the center-mic loudness gate ("Barrier") for this
+miniapp's lifetime. It blocks quiet / self-talk audio independent of VAD. The
+Mentra App's configured value is restored when the miniapp disconnects.
+Mentra Live only today; other models no-op.
 
 **Requires:** `MICROPHONE` in the miniapp manifest.
 
@@ -152,10 +156,12 @@ Tears down every subscription this module owns in one shot. Useful when a
 component is unmounting and wants to free everything without tracking
 individual unsubscribe functions.
 
-Does **not** change glasses-side VAD / loudness-gate settings — those are
-sticky device settings, not subscription state.
+Does **not** release glasses-side VAD / loudness-gate overrides. Those
+overrides belong to the miniapp session rather than its subscriptions and are
+released when the miniapp disconnects.
 
 **Side effects:**
+
 - Invokes every tracked unsubscribe; errors from individual unsubs are
   swallowed.
 - Clears the module's internal tracking set.
@@ -167,10 +173,11 @@ becomes a no-op.
 
 ## Errors
 
-| Code | Where | Meaning |
-| --- | --- | --- |
+| Code                      | Where                                               | Meaning                                     |
+| ------------------------- | --------------------------------------------------- | ------------------------------------------- |
+| `INVALID_ARGUMENT`        | Phone-side rejection of a gate setter               | `enabled` was not a boolean.                |
 | `PERMISSION_NOT_DECLARED` | Phone-side rejection of `SUBSCRIBE` or gate setters | `MICROPHONE` missing from miniapp manifest. |
-| `INTERNAL` | Phone-side rejection of a gate setter | Native Bluetooth / settings apply failed. |
+| `INTERNAL`                | Phone-side rejection of a gate setter               | Native Bluetooth / settings apply failed.   |
 
 Subscribe permission gating happens at the phone runtime when the `SUBSCRIBE`
 is processed. Gate setters reject with the same code when the manifest is
@@ -183,12 +190,12 @@ missing `MICROPHONE`.
 For host implementors — this module has stream subscriptions plus two
 imperative setters.
 
-| Subscribe / call | Stream / request type | Payload |
-| --- | --- | --- |
-| `onVoiceActivity` | `VAD` | `VadData` |
-| `onAudioChunk` | `AUDIO_CHUNK` | `AudioChunkData` |
-| `setVoiceActivityDetectionEnabled` | `MIC_SET_VAD_ENABLED` (`miniapp_mic_set_vad_enabled`) | `{enabled: boolean}` |
-| `setLoudnessGateEnabled` | `MIC_SET_LOUDNESS_GATE_ENABLED` (`miniapp_mic_set_loudness_gate_enabled`) | `{enabled: boolean}` |
+| Subscribe / call                   | Stream / request type                                                     | Payload              |
+| ---------------------------------- | ------------------------------------------------------------------------- | -------------------- |
+| `onVoiceActivity`                  | `VAD`                                                                     | `VadData`            |
+| `onAudioChunk`                     | `AUDIO_CHUNK`                                                             | `AudioChunkData`     |
+| `setVoiceActivityDetectionEnabled` | `MIC_SET_VAD_ENABLED` (`miniapp_mic_set_vad_enabled`)                     | `{enabled: boolean}` |
+| `setLoudnessGateEnabled`           | `MIC_SET_LOUDNESS_GATE_ENABLED` (`miniapp_mic_set_loudness_gate_enabled`) | `{enabled: boolean}` |
 
 ---
 

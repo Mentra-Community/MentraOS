@@ -42,9 +42,10 @@ export class MicModule {
   }
 
   /**
-   * Explicitly enable or disable glasses-side voice activity detection (GX8002).
-   * Mirrors the toggle in the Mentra App's microphone settings. When disabled,
-   * mic gating falls back to the loudness gate only (if it is enabled).
+   * Temporarily override glasses-side voice activity detection (GX8002) for
+   * this miniapp's lifetime. When disabled, mic gating falls back to the
+   * loudness gate only (if it is enabled). The Mentra App's configured value
+   * is restored when this miniapp disconnects.
    *
    * Requires `MICROPHONE` in the miniapp manifest.
    */
@@ -56,8 +57,9 @@ export class MicModule {
   }
 
   /**
-   * Explicitly enable or disable the center-mic loudness gate ("Barrier"),
-   * which blocks quiet/self-talk audio independent of VAD.
+   * Temporarily override the center-mic loudness gate ("Barrier") for this
+   * miniapp's lifetime. It blocks quiet/self-talk audio independent of VAD.
+   * The Mentra App's configured value is restored when this miniapp disconnects.
    *
    * Requires `MICROPHONE` in the miniapp manifest.
    */
