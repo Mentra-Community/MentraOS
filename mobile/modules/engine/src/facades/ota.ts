@@ -11,6 +11,8 @@
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
 import type {OtaProgress, OtaProgressStatus, OtaStatus, OtaUpdateInfo} from "@mentra/bluetooth-sdk/internal"
 import {isGlassesConnected, useGlassesStore} from "../stores/glasses"
+import {hotspotOtaTransport, type HotspotOtaPhase} from "../services/HotspotOtaTransport"
+import type {OtaArtifactDownloadProgress} from "../services/OtaArtifactDownloader"
 import {resolveOtaManifestUrl} from "../services/otaManifestUrl"
 import {otaInstallCoordinator, type OtaInstallSnapshot} from "../services/OtaInstallCoordinator"
 import {
@@ -129,6 +131,26 @@ export const ota = {
     snapshot: (): OtaInstallSnapshot => otaInstallCoordinator.snapshot(),
     /** Subscribe to install snapshot changes (deduped on projected JSON). Returns an unsubscribe. */
     onSnapshot: (cb: (snapshot: OtaInstallSnapshot) => void): (() => void) => otaInstallCoordinator.onSnapshot(cb),
+  },
+
+  /**
+   * Hotspot-served OTA session (OS-1676) — the fallback when the glasses have no WiFi.
+   * The host calls begin() after the user consents to the update: it downloads the
+   * artifacts over the phone's current network, then brings up the glasses hotspot and
+   * the local file server. Once active, the install coordinator resolves every
+   * ota_start URL through the session automatically (including the post-APK-restart
+   * re-establish) and tears it down from finish()/detach(); end() is only for hosts
+   * aborting between begin() and installSession.attach().
+   */
+  hotspotSession: {
+    isActive: (): boolean => hotspotOtaTransport.isActive(),
+    phase: (): HotspotOtaPhase => hotspotOtaTransport.currentPhase(),
+    onPhase: (cb: (phase: HotspotOtaPhase) => void): (() => void) => hotspotOtaTransport.onPhaseChange(cb),
+    begin: (
+      checkResult: OtaCheckCurrentGlassesResult,
+      onDownloadProgress?: (progress: OtaArtifactDownloadProgress) => void,
+    ): Promise<void> => hotspotOtaTransport.beginSession(checkResult, onDownloadProgress),
+    end: (): Promise<void> => hotspotOtaTransport.endSession({deleteArtifacts: false}),
   },
 
   /** Current available-update info (versionName/updates/totalSize), or null. */

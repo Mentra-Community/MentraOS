@@ -19,6 +19,7 @@ import {PhotoInfo, CaptureGroup} from "../../types/asg"
 import GlobalEventEmitter from "../../utils/GlobalEventEmitter"
 import {BgTimer} from "../../utils/timers"
 import {fixGlassesClockIfSkewed} from "../glassesClockSync"
+import {hotspotOtaTransport} from "../HotspotOtaTransport"
 import {detectClockSkew, isSyncManifestEmpty} from "../gallerySyncClock"
 import {MediaLibraryPermissions} from "../../utils/permissions/MediaLibraryPermissions"
 import {permissions, PermissionFeatures} from "../../facades/permissions"
@@ -382,6 +383,15 @@ class GallerySyncService {
     if (this.syncStartPromise) {
       console.log("[GallerySyncService] ⚠️ Sync start already in progress, joining existing attempt")
       return this.syncStartPromise
+    }
+
+    // The hotspot link is single-tenant: a hotspot-served OTA session owns the glasses
+    // hotspot and the scoped transport, and a sync starting mid-update would tear both
+    // down under the running install.
+    if (hotspotOtaTransport.isActive()) {
+      console.log("[GallerySyncService] ⚠️ Hotspot OTA session active - refusing to start sync")
+      useGallerySyncStore.getState().setSyncError("Glasses update in progress")
+      return
     }
 
     useGallerySyncStore.getState().setSyncStarting(true)

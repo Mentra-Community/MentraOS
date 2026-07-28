@@ -24,6 +24,7 @@ import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
 import type {OtaProgress, OtaStatus} from "@mentra/bluetooth-sdk/internal"
 import GlobalEventEmitter from "../utils/GlobalEventEmitter"
 import {isGlassesConnected, useGlassesStore} from "../stores/glasses"
+import {hotspotOtaTransport} from "./HotspotOtaTransport"
 import {resolveOtaManifestUrl} from "./otaManifestUrl"
 import {deriveDisplayState, type DisplayState} from "./otaDisplayState"
 import {
@@ -282,6 +283,11 @@ class OtaInstallCoordinator {
     this.clearAllOtaTimers()
     this.clearContinueLockoutTimer()
     this.resetSessionState()
+    // Screen abandoned mid-session: drop the hotspot link but keep the verified
+    // artifacts so a later retry skips the re-download.
+    if (hotspotOtaTransport.isActive()) {
+      void hotspotOtaTransport.endSession({deleteArtifacts: false})
+    }
   }
 
   /** Retry after a failure: clear state and re-send ota_start (if connected). */
@@ -338,6 +344,10 @@ class OtaInstallCoordinator {
     if (this.apkStepSeen) {
       BluetoothSdk.updateGlasses({buildNumber: ""})
       useGlassesStore.getState().setGlassesInfo({buildNumber: ""})
+    }
+    // Hotspot-served session: the update is done with the staged artifacts.
+    if (hotspotOtaTransport.isActive()) {
+      void hotspotOtaTransport.endSession({deleteArtifacts: true})
     }
   }
 
@@ -680,7 +690,9 @@ class OtaInstallCoordinator {
         otaStatus.error === "downgrade_handoff_failed" ||
         otaStatus.error === "downgrade_transaction_stalled")
     ) {
-      console.log(`[OTA_PROGRESS] version-change: no transaction owns the detour (${otaStatus.error}) — releasing latch`)
+      console.log(
+        `[OTA_PROGRESS] version-change: no transaction owns the detour (${otaStatus.error}) — releasing latch`,
+      )
       this.versionChangeInstallStarted = false
       this.emitInternalChange()
     }
@@ -772,9 +784,7 @@ class OtaInstallCoordinator {
     if (connectedChanged || displayStateChanged) {
       this.clearPingInterval()
       const active =
-        connected &&
-        (displayState === "starting" || displayState === "updating") &&
-        !this.isInVersionChangeDetour()
+        connected && (displayState === "starting" || displayState === "updating") && !this.isInVersionChangeDetour()
       if (active) {
         void BluetoothSdk.ping().catch(() => {})
         const pingIntervalMs = legacySession ? LEGACY_PING_INTERVAL_MS : PING_INTERVAL_MS
@@ -1184,9 +1194,7 @@ class OtaInstallCoordinator {
     // ota_start send (WP 8C-b): old builds get the padded legacy cap for the whole
     // session; a session that starts unified keeps the unified cap.
     const globalTimeoutMs =
-      this.versionChangeSession || this.isLegacySessionShapeNow()
-        ? LEGACY_GLOBAL_OTA_TIMEOUT_MS
-        : GLOBAL_OTA_TIMEOUT_MS
+      this.versionChangeSession || this.isLegacySessionShapeNow() ? LEGACY_GLOBAL_OTA_TIMEOUT_MS : GLOBAL_OTA_TIMEOUT_MS
     this.globalTimeout = setTimeout(() => {
       this.globalTimeout = null
       this.globalTimeoutStarted = false
@@ -1263,10 +1271,21 @@ class OtaInstallCoordinator {
     }
     this.maybeStartGlobalTimeout()
     this.hasReceivedAck = false
-    this.armAckAndStuckWatchdogsOnly()
     try {
-      const state = useGlassesStore.getState()
-      const otaVersionUrl = resolveOtaManifestUrl(state.otaVersionUrl, state.buildNumber)
+      let otaVersionUrl: string
+      if (hotspotOtaTransport.isActive()) {
+        // Hotspot-served OTA: the manifest lives on this phone. ensureSession()
+        // re-establishes the hotspot link + local server when they are down — which
+        // they always are after the APK step, whose install kills the asg process
+        // owning the LocalOnlyHotspot reservation (credentials rotate on restart).
+        // Watchdogs are armed only once the link is up, so bring-up time doesn't
+        // eat into them; a bring-up failure lands in the normal retry path below.
+        otaVersionUrl = await hotspotOtaTransport.ensureSession()
+      } else {
+        const state = useGlassesStore.getState()
+        otaVersionUrl = resolveOtaManifestUrl(state.otaVersionUrl, state.buildNumber)
+      }
+      this.armAckAndStuckWatchdogsOnly()
       console.log(`[OTA_PROGRESS] sending ota_start with manifest URL: ${otaVersionUrl}`)
       await BluetoothSdk.startOtaUpdate(otaVersionUrl)
     } catch (err) {
