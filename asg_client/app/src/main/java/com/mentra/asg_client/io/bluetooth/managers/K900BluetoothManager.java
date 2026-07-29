@@ -251,12 +251,15 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         }
 
         @Override
-        public boolean reopen(int baud) {
-            boolean reopened = comManager.reopen(baud);
-            if (!comManager.isOpen()) {
+        public boolean openAtBaud(int baud) {
+            boolean wasOpen = comManager.isOpen();
+            boolean opened = comManager.openAtBaud(baud);
+            if (!opened) {
                 linkState.serialClosed();
+            } else if (!wasOpen) {
+                linkState.serialReady();
             }
-            return reopened;
+            return opened;
         }
 
         @Override
@@ -1651,9 +1654,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     }
 
     private void onValidUartFrame(long receiveGeneration) {
-        if (transportCoordinator.onValidFrame(receiveGeneration)) {
-            linkState.srSyvrParsed(null);
-        }
+        transportCoordinator.onValidFrame(receiveGeneration);
     }
 
     private void onUartBytesDiscarded(long discardedBytes, long receiveGeneration) {

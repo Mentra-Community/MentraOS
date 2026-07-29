@@ -32,7 +32,7 @@ public class SerialPortBridge {
     private BesOtaUartListener mOtaListener;
     private RecvThread mRecvThread = null;
     private volatile boolean mbStart = false;
-    // volatile + snapshot-before-use: reopen() nulls these on the baud-switch
+    // volatile + snapshot-before-use: openAtBaud() nulls these on the baud-switch
     // thread while send/recv threads are mid-call. A stale stream throws a
     // handled IOException; a raw field read after the null-check would NPE.
     protected volatile OutputStream mOS;
@@ -122,17 +122,15 @@ public class SerialPortBridge {
     /**
      * Get the baud rate the serial port is currently open at.
      *
-     * @return the current baud rate (DEFAULT_BAUDRATE unless a reopen() changed it)
+     * @return the current baud rate (DEFAULT_BAUDRATE unless openAtBaud() changed it)
      */
     public int getCurrentBaud() {
         return mCurrentBaud;
     }
 
     /**
-     * Whether the serial port is currently open. Normally tracked through the serial callbacks, but
-     * {@link #reopen(int)} can fail both the requested baud AND the default fallback, leaving the
-     * port closed WITHOUT firing any callback — callers that own link state must consult this after
-     * a reopen instead of assuming the port survived.
+     * Whether the serial port is currently open. Runtime baud replacement fires no serial callback,
+     * so the transport owner must consult this after an open attempt.
      */
     public boolean isOpen() {
         return mbStart;
@@ -147,42 +145,33 @@ public class SerialPortBridge {
     }
 
     /**
-     * Close the serial port and reopen /dev/ttyS1 at the given baud rate. Used by the runtime UART
-     * baud switch (cs_baud/sr_baud negotiation with the BES2700). Listener registrations
-     * (mListener/mOtaListener) are instance fields and are preserved across the reopen; no
-     * onSerialClose/onSerialOpen/onSerialReady callbacks are fired so higher layers keep their
-     * negotiated wire-protocol state.
-     *
-     * <p>Defensive: if the port cannot be reopened at the requested baud, this method falls back to
-     * DEFAULT_BAUDRATE so the port is never left closed.
+     * Replace /dev/ttyS1 at exactly the requested baud. This operation is also allowed after a
+     * previous open failure left the descriptor closed. Listener registrations are preserved and no
+     * serial callback is fired; transport state and fallback policy belong to the coordinator.
      *
      * @param baud The new baud rate (must be one of the rates supported by liblhsserial, e.g.
      *     460800, 921600, 1152000, 1500000, 2000000)
-     * @return true if the port is open at the requested baud, false otherwise (including when the
-     *     internal fallback to DEFAULT_BAUDRATE was used)
+     * @return true only when the port is open at the requested baud
      */
-    public synchronized boolean reopen(int baud) {
-        if (!mbStart) {
-            Log.e(BAUD_TAG, "reopen(" + baud + ") requested but serial port was never started");
-            return false;
+    public synchronized boolean openAtBaud(int baud) {
+        Log.i(
+                BAUD_TAG,
+                "Opening "
+                        + COM_PATH
+                        + " at "
+                        + baud
+                        + " (open="
+                        + mbStart
+                        + ", previousBaud="
+                        + mCurrentBaud
+                        + ")");
+
+        if (mbStart || mRecvThread != null) {
+            closeCurrentPort();
         }
 
-        Log.i(BAUD_TAG, "Reopening " + COM_PATH + " at " + baud + " (was " + mCurrentBaud + ")");
-
-        closeCurrentPort();
-
-        boolean bSucc = openAtBaud(baud);
-        boolean atRequestedBaud = bSucc;
-
-        if (!bSucc && baud != DEFAULT_BAUDRATE) {
-            // Never leave the port closed; fall back to the default rate the BES reverts to.
-            Log.e(BAUD_TAG, "Reopen at " + baud + " FAILED - falling back to " + DEFAULT_BAUDRATE);
-            bSucc = openAtBaud(DEFAULT_BAUDRATE);
-            baud = DEFAULT_BAUDRATE;
-        }
-
-        if (!bSucc) {
-            Log.e(BAUD_TAG, "Serial port could not be reopened at any baud - port is CLOSED");
+        if (!openDriverAtBaud(baud)) {
+            Log.e(BAUD_TAG, "Serial port could not be opened at " + baud);
             return false;
         }
 
@@ -194,8 +183,8 @@ public class SerialPortBridge {
         mRecvThread = new RecvThread(mIS);
         mRecvThread.start();
 
-        Log.i(BAUD_TAG, "Serial port reopened at " + baud + " baud");
-        return atRequestedBaud;
+        Log.i(BAUD_TAG, "Serial port opened at " + baud + " baud");
+        return true;
     }
 
     /** Close the descriptor and retire its reader before another stream is published. */
@@ -223,13 +212,13 @@ public class SerialPortBridge {
         mRecvThread = null;
     }
 
-    /** Open COM_PATH at the given baud, catching any exception. Helper for reopen(). */
-    private boolean openAtBaud(int baud) {
+    /** Open COM_PATH at the given baud, catching any exception. */
+    private boolean openDriverAtBaud(int baud) {
         try {
             boolean bSucc = SerialManager.getInstance().openSerial(COM_PATH, baud);
             Log.d(BAUD_TAG, "openSerial dev=" + COM_PATH + " baud=" + baud + " bSucc=" + bSucc);
             return bSucc;
-        } catch (Exception e) {
+        } catch (Exception | LinkageError e) {
             Log.e(BAUD_TAG, "Exception opening serial at baud " + baud, e);
             return false;
         }

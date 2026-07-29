@@ -40,8 +40,7 @@ public class BesUartTransportCoordinatorTest {
 
         BesUartTransportCoordinator.SystemVersionResult result = systemVersion("17.26.7.23");
 
-        assertThat(result)
-                .isEqualTo(BesUartTransportCoordinator.SystemVersionResult.TRANSITIONING);
+        assertThat(result).isEqualTo(BesUartTransportCoordinator.SystemVersionResult.TRANSITIONING);
         assertThat(coordinator.getState())
                 .isEqualTo(BesUartTransportCoordinator.State.SWITCH_REQUESTED);
         assertThat(coordinator.isReady()).isFalse();
@@ -57,9 +56,7 @@ public class BesUartTransportCoordinatorTest {
 
         assertThat(
                         coordinator.onBaudResponse(
-                                1,
-                                AsgConstants.UART_FAST_BAUD,
-                                coordinator.getSerialGeneration()))
+                                1, AsgConstants.UART_FAST_BAUD, coordinator.getSerialGeneration()))
                 .isTrue();
 
         assertThat(coordinator.getState())
@@ -75,9 +72,7 @@ public class BesUartTransportCoordinatorTest {
 
         assertThat(
                         coordinator.onBaudResponse(
-                                0,
-                                AsgConstants.UART_FAST_BAUD,
-                                coordinator.getSerialGeneration()))
+                                0, AsgConstants.UART_FAST_BAUD, coordinator.getSerialGeneration()))
                 .isTrue();
         assertThat(coordinator.isReady()).isFalse();
         awaitState(BesUartTransportCoordinator.State.VERIFYING_FAST);
@@ -86,6 +81,41 @@ public class BesUartTransportCoordinatorTest {
         assertThat(systemVersion("17.26.7.23"))
                 .isEqualTo(BesUartTransportCoordinator.SystemVersionResult.READY);
         assertThat(coordinator.getState()).isEqualTo(BesUartTransportCoordinator.State.READY_FAST);
+    }
+
+    @Test
+    public void duplicateVersionReply_doesNotCancelPendingBaudSwitch() {
+        coordinator.onSerialReady();
+        long generation = coordinator.getSerialGeneration();
+        assertThat(systemVersion("17.26.7.23"))
+                .isEqualTo(BesUartTransportCoordinator.SystemVersionResult.TRANSITIONING);
+
+        assertThat(coordinator.onSystemVersion("17.26.7.23", generation, null))
+                .isEqualTo(BesUartTransportCoordinator.SystemVersionResult.IGNORED);
+
+        assertThat(coordinator.getState())
+                .isEqualTo(BesUartTransportCoordinator.State.SWITCH_REQUESTED);
+        assertThat(countControlCommands("cs_baud")).isEqualTo(1);
+
+        assertThat(coordinator.onBaudResponse(0, AsgConstants.UART_FAST_BAUD, generation)).isTrue();
+        assertThat(coordinator.getState())
+                .isEqualTo(BesUartTransportCoordinator.State.WAITING_FAST_REOPEN);
+        assertThat(coordinator.onSystemVersion("17.26.7.23", generation, null))
+                .isEqualTo(BesUartTransportCoordinator.SystemVersionResult.IGNORED);
+        assertThat(coordinator.getState())
+                .isEqualTo(BesUartTransportCoordinator.State.WAITING_FAST_REOPEN);
+    }
+
+    @Test
+    public void failedBaudRequestWrite_entersRecoveryWithoutPublishingReady() {
+        host.failBaudWrites = true;
+        coordinator.onSerialReady();
+
+        assertThat(systemVersion("17.26.7.23"))
+                .isEqualTo(BesUartTransportCoordinator.SystemVersionResult.TRANSITIONING);
+
+        assertThat(coordinator.getState()).isEqualTo(BesUartTransportCoordinator.State.RECOVERING);
+        assertThat(coordinator.isReady()).isFalse();
     }
 
     @Test
@@ -104,7 +134,8 @@ public class BesUartTransportCoordinatorTest {
 
         coordinator.endFileTransfer();
 
-        awaitState(BesUartTransportCoordinator.State.SWITCH_REQUESTED);
+        assertThat(coordinator.getState())
+                .isEqualTo(BesUartTransportCoordinator.State.SWITCH_REQUESTED);
         assertThat(host.fastReceive).isFalse();
         assertThat(host.controlCommands).anyMatch(command -> command.contains("cs_baud"));
     }
@@ -152,8 +183,64 @@ public class BesUartTransportCoordinatorTest {
                 coordinator.getSerialGeneration());
         assertThat(coordinator.getState()).isEqualTo(BesUartTransportCoordinator.State.RECOVERING);
 
-        assertThat(coordinator.onValidFrame(coordinator.getSerialGeneration())).isTrue();
+        coordinator.onValidFrame(coordinator.getSerialGeneration());
         assertThat(coordinator.getState()).isEqualTo(BesUartTransportCoordinator.State.READY_FAST);
+    }
+
+    @Test
+    public void validFrame_provesBaudWithoutCancellingVersionDiscovery() throws Exception {
+        coordinator.onSerialReady();
+
+        coordinator.onValidFrame(coordinator.getSerialGeneration());
+
+        assertThat(coordinator.getState())
+                .isEqualTo(BesUartTransportCoordinator.State.READY_RENDEZVOUS);
+        awaitControlCommandCount("cs_syvr", 2);
+        assertThat(systemVersion("17.26.7.23"))
+                .isEqualTo(BesUartTransportCoordinator.SystemVersionResult.TRANSITIONING);
+    }
+
+    @Test
+    public void recoveryAtRendezvous_canNegotiateFastAgain() throws Exception {
+        establishFastLink();
+
+        coordinator.onDiscardedBytes(
+                AsgConstants.UART_RUNTIME_RECOVERY_DISCARDED_BYTES,
+                coordinator.getSerialGeneration());
+        awaitBaud(AsgConstants.UART_RENDEZVOUS_BAUD);
+        assertThat(coordinator.getState()).isEqualTo(BesUartTransportCoordinator.State.RECOVERING);
+
+        assertThat(systemVersion("17.26.7.23"))
+                .isEqualTo(BesUartTransportCoordinator.SystemVersionResult.TRANSITIONING);
+        assertThat(coordinator.getState())
+                .isEqualTo(BesUartTransportCoordinator.State.SWITCH_REQUESTED);
+        assertThat(countControlCommands("cs_baud")).isEqualTo(2);
+    }
+
+    @Test
+    public void postOtaRendezvousOpenFailure_remainsRecoverable() {
+        coordinator.onSerialReady();
+        host.openFailuresRemaining = 1;
+
+        coordinator.onBesOtaApplied();
+
+        assertThat(coordinator.getState()).isEqualTo(BesUartTransportCoordinator.State.RECOVERING);
+        assertThat(coordinator.getState()).isNotEqualTo(BesUartTransportCoordinator.State.CLOSED);
+        assertThat(host.openAttempts).contains(AsgConstants.UART_RENDEZVOUS_BAUD);
+    }
+
+    @Test
+    public void recoveryParkOpenFailure_doesNotBecomeClosed() throws Exception {
+        establishFastLink();
+        host.openFailuresRemaining = 2;
+
+        coordinator.onDiscardedBytes(
+                AsgConstants.UART_RUNTIME_RECOVERY_DISCARDED_BYTES,
+                coordinator.getSerialGeneration());
+        awaitOpenAttemptCount(AsgConstants.UART_RENDEZVOUS_BAUD, 2);
+
+        assertThat(coordinator.getState()).isEqualTo(BesUartTransportCoordinator.State.RECOVERING);
+        assertThat(coordinator.getState()).isNotEqualTo(BesUartTransportCoordinator.State.CLOSED);
     }
 
     @Test
@@ -169,8 +256,7 @@ public class BesUartTransportCoordinatorTest {
 
         assertThat(result).isEqualTo(BesUartTransportCoordinator.SystemVersionResult.IGNORED);
         assertThat(prepared[0]).isFalse();
-        assertThat(coordinator.getState())
-                .isEqualTo(BesUartTransportCoordinator.State.DISCOVERING);
+        assertThat(coordinator.getState()).isEqualTo(BesUartTransportCoordinator.State.DISCOVERING);
     }
 
     @Test
@@ -191,6 +277,51 @@ public class BesUartTransportCoordinatorTest {
         assertThat(coordinator.getState()).isEqualTo(expected);
     }
 
+    private void establishFastLink() throws Exception {
+        coordinator.onSerialReady();
+        assertThat(systemVersion("17.26.7.23"))
+                .isEqualTo(BesUartTransportCoordinator.SystemVersionResult.TRANSITIONING);
+        assertThat(
+                        coordinator.onBaudResponse(
+                                0, AsgConstants.UART_FAST_BAUD, coordinator.getSerialGeneration()))
+                .isTrue();
+        awaitState(BesUartTransportCoordinator.State.VERIFYING_FAST);
+        assertThat(systemVersion("17.26.7.23"))
+                .isEqualTo(BesUartTransportCoordinator.SystemVersionResult.READY);
+    }
+
+    private void awaitBaud(int expected) throws Exception {
+        long deadline = System.currentTimeMillis() + 2_000;
+        while (System.currentTimeMillis() < deadline && host.baud != expected) {
+            Thread.sleep(10);
+        }
+        assertThat(host.baud).isEqualTo(expected);
+    }
+
+    private void awaitControlCommandCount(String command, int expected) throws Exception {
+        long deadline = System.currentTimeMillis() + 1_000;
+        while (System.currentTimeMillis() < deadline && countControlCommands(command) < expected) {
+            Thread.sleep(10);
+        }
+        assertThat(countControlCommands(command)).isGreaterThanOrEqualTo(expected);
+    }
+
+    private void awaitOpenAttemptCount(int baud, int expected) throws Exception {
+        long deadline = System.currentTimeMillis() + 2_000;
+        while (System.currentTimeMillis() < deadline && countOpenAttempts(baud) < expected) {
+            Thread.sleep(10);
+        }
+        assertThat(countOpenAttempts(baud)).isGreaterThanOrEqualTo(expected);
+    }
+
+    private long countControlCommands(String command) {
+        return host.controlCommands.stream().filter(value -> value.contains(command)).count();
+    }
+
+    private long countOpenAttempts(int baud) {
+        return host.openAttempts.stream().filter(value -> value == baud).count();
+    }
+
     private BesUartTransportCoordinator.SystemVersionResult systemVersion(String version) {
         return coordinator.onSystemVersion(version, coordinator.getSerialGeneration(), null);
     }
@@ -200,8 +331,11 @@ public class BesUartTransportCoordinatorTest {
         boolean open = true;
         boolean otaRoute;
         boolean fastReceive;
+        boolean failBaudWrites;
+        int openFailuresRemaining;
         int invalidations;
         final List<String> controlCommands = new ArrayList<>();
+        final List<Integer> openAttempts = new ArrayList<>();
         final List<byte[]> rawWrites = new ArrayList<>();
 
         @Override
@@ -215,9 +349,16 @@ public class BesUartTransportCoordinatorTest {
         }
 
         @Override
-        public boolean reopen(int newBaud) {
+        public boolean openAtBaud(int newBaud) {
+            openAttempts.add(newBaud);
+            if (openFailuresRemaining > 0) {
+                openFailuresRemaining--;
+                open = false;
+                return false;
+            }
+            open = true;
             baud = newBaud;
-            return open;
+            return true;
         }
 
         @Override
@@ -230,8 +371,9 @@ public class BesUartTransportCoordinatorTest {
 
         @Override
         public boolean writeControlCommand(byte[] json) {
-            controlCommands.add(new String(json, StandardCharsets.UTF_8));
-            return true;
+            String command = new String(json, StandardCharsets.UTF_8);
+            controlCommands.add(command);
+            return !failBaudWrites || !command.contains("cs_baud");
         }
 
         @Override

@@ -61,8 +61,10 @@ public final class BesUartTransportCoordinator {
 
         boolean isSerialOpen();
 
-        /** Clear the parser and reopen the physical serial port at {@code baud}. */
-        boolean reopen(int baud);
+        /**
+         * Replace the physical serial port at exactly {@code baud}, even if it is currently closed.
+         */
+        boolean openAtBaud(int baud);
 
         /** Invalidate the current link proof before a transition can be observed by consumers. */
         void invalidateLinkProof();
@@ -98,10 +100,10 @@ public final class BesUartTransportCoordinator {
     private Operation operation = Operation.NONE;
     private long serialGeneration = 0;
     private long phaseGeneration = 0;
+    private long versionGeneration = -1;
+    private long fastSwitchAttemptGeneration = -1;
     private int recoveryIndex = 0;
     private int recoveryRetryAttempt = 0;
-    private boolean fastSwitchAttempted = false;
-    private boolean fastSwitchDeferred = false;
     private String firmwareVersion = "";
     private long discardedBytes = 0;
     private int discardEvents = 0;
@@ -166,8 +168,8 @@ public final class BesUartTransportCoordinator {
             host.setOtaReceiveRoute(false);
             host.setFastReceive(false);
             state = State.DISCOVERING;
-            fastSwitchAttempted = false;
-            fastSwitchDeferred = false;
+            versionGeneration = -1;
+            fastSwitchAttemptGeneration = -1;
             firmwareVersion = "";
             discardedBytes = 0;
             discardEvents = 0;
@@ -193,6 +195,9 @@ public final class BesUartTransportCoordinator {
             cancelAllTimersLocked();
             phaseGeneration++;
             serialGeneration++;
+            versionGeneration = -1;
+            fastSwitchAttemptGeneration = -1;
+            firmwareVersion = "";
             state = State.CLOSED;
             operation = Operation.NONE;
             host.setOtaReceiveRoute(false);
@@ -211,6 +216,8 @@ public final class BesUartTransportCoordinator {
         synchronized (monitor) {
             if (receiveGeneration != serialGeneration
                     || state == State.CLOSED
+                    || state == State.SWITCH_REQUESTED
+                    || state == State.WAITING_FAST_REOPEN
                     || !host.isSerialOpen()) {
                 return SystemVersionResult.IGNORED;
             }
@@ -218,6 +225,7 @@ public final class BesUartTransportCoordinator {
                 beforeTransition.run();
             }
             firmwareVersion = version == null ? "" : version.trim();
+            versionGeneration = serialGeneration;
             discardedBytes = 0;
             discardEvents = 0;
             cancelPhaseTimeoutLocked();
@@ -237,23 +245,12 @@ public final class BesUartTransportCoordinator {
                 Log.w(TAG, "Unexpected proven baud " + baud + "; treating as rendezvous-ready");
             }
 
-            boolean canUpgrade =
-                    !fastSwitchAttempted
-                            && !firmwareVersion.isEmpty()
-                            && host.supportsFastBaud(firmwareVersion);
-            if (!canUpgrade) {
+            advanceLocked();
+            if (isReadyLocked()) {
                 Log.i(TAG, "UART link ready at rendezvous baud " + baud);
                 return SystemVersionResult.READY;
             }
-            if (operation != Operation.NONE) {
-                fastSwitchDeferred = true;
-                Log.i(TAG, "Deferring fast-baud switch until " + operation + " completes");
-                return SystemVersionResult.READY;
-            }
-            if (beginFastSwitchLocked()) {
-                return SystemVersionResult.TRANSITIONING;
-            }
-            return SystemVersionResult.READY;
+            return SystemVersionResult.TRANSITIONING;
         }
     }
 
@@ -289,15 +286,11 @@ public final class BesUartTransportCoordinator {
         }
     }
 
-    /**
-     * Reset health accounting for every structurally valid UART frame.
-     *
-     * @return true when this frame itself proved a discovery/recovery candidate stable
-     */
-    public boolean onValidFrame(long receiveGeneration) {
+    /** Reset health accounting and accept a structurally valid frame as current-baud proof. */
+    public void onValidFrame(long receiveGeneration) {
         synchronized (monitor) {
             if (receiveGeneration != serialGeneration) {
-                return false;
+                return;
             }
             discardedBytes = 0;
             discardEvents = 0;
@@ -305,7 +298,6 @@ public final class BesUartTransportCoordinator {
                     || state == State.VERIFYING_FAST
                     || state == State.RECOVERING) {
                 cancelPhaseTimeoutLocked();
-                phaseGeneration++;
                 if (host.currentBaud() == AsgConstants.UART_FAST_BAUD) {
                     state = State.READY_FAST;
                     scheduleHealthCheckLocked();
@@ -314,21 +306,18 @@ public final class BesUartTransportCoordinator {
                 }
                 recoveryRetryAttempt = 0;
                 Log.i(TAG, "Structurally valid frame proved UART link at " + host.currentBaud());
-                return true;
+                return;
             }
             if (state == State.READY_FAST) {
                 scheduleHealthCheckLocked();
             }
-            return false;
         }
     }
 
     /** Trigger recovery after repeated wrong-baud-looking parser discards. */
     public void onDiscardedBytes(long count, long receiveGeneration) {
         synchronized (monitor) {
-            if (receiveGeneration != serialGeneration
-                    || count <= 0
-                    || state != State.READY_FAST) {
+            if (receiveGeneration != serialGeneration || count <= 0 || state != State.READY_FAST) {
                 return;
             }
             discardedBytes += count;
@@ -447,16 +436,24 @@ public final class BesUartTransportCoordinator {
             host.setOtaReceiveRoute(false);
             host.setFastReceive(false);
             operation = Operation.NONE;
-            fastSwitchAttempted = false;
-            fastSwitchDeferred = false;
+            versionGeneration = -1;
+            fastSwitchAttemptGeneration = -1;
             firmwareVersion = "";
             host.invalidateLinkProof();
             serialGeneration++;
             state = State.DISCOVERING;
             long phase = ++phaseGeneration;
             host.resetParser();
-            if (!host.reopen(AsgConstants.UART_RENDEZVOUS_BAUD)) {
-                state = State.CLOSED;
+            if (!host.openAtBaud(AsgConstants.UART_RENDEZVOUS_BAUD)) {
+                state = State.RECOVERING;
+                recoveryIndex = 0;
+                recoveryRetryAttempt = 0;
+                phaseTimeout =
+                        executor.schedule(
+                                () -> runRecoveryCandidate(phase),
+                                AsgConstants.BES_OTA_RECONNECT_DELAY_MS,
+                                TimeUnit.MILLISECONDS);
+                Log.w(TAG, "Rendezvous open failed after BES OTA; recovery will retry");
                 return;
             }
             scheduleProbeBurstLocked(
@@ -500,37 +497,32 @@ public final class BesUartTransportCoordinator {
         if (state == State.READY_FAST) {
             scheduleHealthCheckLocked();
         }
-        if (state == State.READY_RENDEZVOUS
-                && fastSwitchDeferred
-                && !fastSwitchAttempted
-                && host.supportsFastBaud(firmwareVersion)) {
-            fastSwitchDeferred = false;
-            executor.execute(this::beginFastSwitchIfReady);
-        }
+        advanceLocked();
     }
 
-    private void beginFastSwitchIfReady() {
-        synchronized (monitor) {
-            if (state == State.READY_RENDEZVOUS && operation == Operation.NONE) {
-                beginFastSwitchLocked();
-            }
+    /** Advance immediately from current facts; no deferred intent survives outside the monitor. */
+    private void advanceLocked() {
+        if (state != State.READY_RENDEZVOUS
+                || operation != Operation.NONE
+                || versionGeneration != serialGeneration
+                || fastSwitchAttemptGeneration == serialGeneration
+                || firmwareVersion.isEmpty()
+                || !host.supportsFastBaud(firmwareVersion)) {
+            return;
         }
+        beginFastSwitchLocked();
     }
 
-    /**
-     * @return true when a switch was started.
-     */
-    private boolean beginFastSwitchLocked() {
-        fastSwitchAttempted = true;
-        fastSwitchDeferred = false;
+    private void beginFastSwitchLocked() {
+        fastSwitchAttemptGeneration = serialGeneration;
         state = State.SWITCH_REQUESTED;
         host.invalidateLinkProof();
         long phase = ++phaseGeneration;
         boolean sent = host.writeControlCommand(buildBaudRequest());
         if (!sent) {
-            state = State.READY_RENDEZVOUS;
-            Log.e(TAG, "Could not write cs_baud; remaining at rendezvous");
-            return false;
+            Log.e(TAG, "Could not completely write cs_baud; recovering indeterminate UART state");
+            startRecoveryLocked("baud_request_write_failed");
+            return;
         }
         phaseTimeout =
                 executor.schedule(
@@ -538,7 +530,6 @@ public final class BesUartTransportCoordinator {
                         AsgConstants.UART_BAUD_ACK_TIMEOUT_MS,
                         TimeUnit.MILLISECONDS);
         Log.i(TAG, "Requested fast UART baud " + AsgConstants.UART_FAST_BAUD);
-        return true;
     }
 
     private void reopenFastAndVerifyIfCurrent(long phase, String reason) {
@@ -555,7 +546,7 @@ public final class BesUartTransportCoordinator {
             serialGeneration++;
             host.invalidateLinkProof();
             host.resetParser();
-            if (!host.reopen(AsgConstants.UART_FAST_BAUD)) {
+            if (!host.openAtBaud(AsgConstants.UART_FAST_BAUD)) {
                 startRecoveryLocked("fast_reopen_failed");
                 return;
             }
@@ -616,7 +607,7 @@ public final class BesUartTransportCoordinator {
             serialGeneration++;
             host.invalidateLinkProof();
             host.resetParser();
-            if (host.currentBaud() != baud && !host.reopen(baud)) {
+            if ((!host.isSerialOpen() || host.currentBaud() != baud) && !host.openAtBaud(baud)) {
                 executor.execute(() -> runRecoveryCandidate(phase));
                 return;
             }
@@ -650,12 +641,10 @@ public final class BesUartTransportCoordinator {
         serialGeneration++;
         host.invalidateLinkProof();
         host.resetParser();
-        if (host.currentBaud() != AsgConstants.UART_RENDEZVOUS_BAUD
-                && !host.reopen(AsgConstants.UART_RENDEZVOUS_BAUD)) {
-            state = State.CLOSED;
-            return;
+        if ((!host.isSerialOpen() || host.currentBaud() != AsgConstants.UART_RENDEZVOUS_BAUD)
+                && !host.openAtBaud(AsgConstants.UART_RENDEZVOUS_BAUD)) {
+            Log.w(TAG, "Recovery could not open rendezvous baud; retaining retry ownership");
         }
-        fastSwitchAttempted = false;
         recoveryIndex = 0;
         long delay = recoveryRetryDelayMs(recoveryRetryAttempt++);
         long phase = ++phaseGeneration;

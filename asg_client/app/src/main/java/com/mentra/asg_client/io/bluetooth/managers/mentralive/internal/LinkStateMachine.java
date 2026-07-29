@@ -409,10 +409,10 @@ public final class LinkStateMachine {
 
     /**
      * The receive byte stream was invalidated without a serial close/ready cycle: every reopen and
-     * baud switch clears the message parser, and {@code SerialPortBridge.reopen()} fires no serial
-     * callbacks. The link is no longer proven at the current baud, so {@code LINK_PROVEN} drops to
-     * {@code SERIAL_OPEN} and the proven caps view goes null until the next sr_syvr. The negotiated
-     * caps stay (see {@link #getNegotiatedCaps()}).
+     * baud switch clears the message parser, and {@code SerialPortBridge.openAtBaud()} fires no
+     * serial callbacks. The link is no longer proven at the current baud, so {@code LINK_PROVEN}
+     * drops to {@code SERIAL_OPEN} and the proven caps view goes null until the next sr_syvr. The
+     * negotiated caps stay (see {@link #getNegotiatedCaps()}).
      */
     public void streamDiscontinuity() {
         synchronized (this) {
