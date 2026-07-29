@@ -14,6 +14,7 @@ import {cloudConfigValues} from "@/services/cloudClient"
 import {engine, BgTimer, SETTINGS} from "@mentra/engine"
 import {
   appRegistry,
+  audioPlaybackService,
   displayProcessor,
   gallerySyncService,
   localDisplayManager,
@@ -23,6 +24,7 @@ import {
   miniappLauncher,
   offlineSpeechModelService,
   phoneLocationService,
+  ttsModelManager,
   useAppStatusStore,
 } from "@mentra/engine/internal"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
@@ -68,6 +70,12 @@ function parseBundledMiniappName(name: string): {packageName: string; version: s
 // (PhoneLocationService). MantleManager now drives it through the island service
 // (setupSubscriptions / cleanup) instead of defining the task here.
 
+/**
+ * Longest a spoken notification is assumed to take. Only a backstop for a
+ * completion callback that never arrives — not a playback limit.
+ */
+const SPOKEN_NOTIFICATION_MAX_MS = 30_000
+
 class MantleManager {
   private static instance: MantleManager | null = null
   private calendarSyncTimer: ReturnType<typeof BgTimer.setInterval> | null = null
@@ -78,6 +86,8 @@ class MantleManager {
   private subs: Array<any> = []
   private initialized: boolean = false
   private activePhoneNotificationId: string | null = null
+  /** A notification is being read aloud. Later ones are dropped, not queued. */
+  private speakingNotification: boolean = false
 
   public static getInstance(): MantleManager {
     if (!MantleManager.instance) {
@@ -87,6 +97,69 @@ class MantleManager {
   }
 
   private constructor() {}
+
+  /**
+   * Read a phone notification aloud, for glasses that have no screen.
+   *
+   * Mentra Live has a speaker but no display, so the reference card the display
+   * path requests is invisible there and the wearer learns nothing (OS-1821).
+   *
+   * Best effort by design:
+   *  - Silent on glasses that DO have a display; the card is better than speech.
+   *  - Needs an on-device TTS voice. Without one we log and stay quiet rather
+   *    than reaching for the network on every incoming notification.
+   *  - A burst must not become a monologue, so speech already in flight wins and
+   *    later notifications are dropped instead of queued behind it.
+   */
+  private async speakPhoneNotification(title: string, content: string): Promise<void> {
+    let audio: {audioUrl: string; cleanup: () => Promise<void>} | undefined
+    try {
+      const capabilities = engine.glasses.capabilities()
+      if (!capabilities || capabilities.hasDisplay || !capabilities.hasSpeaker) return
+      if (this.speakingNotification) return
+
+      // Long bodies get truncated: past a sentence or two this stops being a
+      // notification and starts being a reading, with no way to skip it.
+      const spoken = [title, content]
+        .map((part) => part.trim())
+        .filter(Boolean)
+        .join(". ")
+        .slice(0, 300)
+      if (!spoken) return
+
+      if (!(await ttsModelManager.isModelAvailable())) {
+        console.warn("MantleManager: no on-device TTS voice available, notification not spoken")
+        return
+      }
+
+      this.speakingNotification = true
+      // Safety valve: if the completion callback never arrives, the flag would
+      // latch and silence every later notification for the rest of the session.
+      // Losing one announcement beats going permanently quiet.
+      const stuckGuard = BgTimer.setTimeout(() => {
+        this.speakingNotification = false
+      }, SPOKEN_NOTIFICATION_MAX_MS)
+
+      audio = await ttsModelManager.synthesizeToFile(spoken)
+      await audioPlaybackService.play(
+        {
+          requestId: `phone_notification_${Date.now()}`,
+          audioUrl: audio.audioUrl,
+          appId: notifyPackageName,
+        },
+        () => {
+          BgTimer.clearTimeout(stuckGuard)
+          this.speakingNotification = false
+          void audio?.cleanup?.()
+        },
+      )
+    } catch (error) {
+      // Never let a failed announcement break notification capture/storage.
+      this.speakingNotification = false
+      void audio?.cleanup?.()
+      console.warn("MantleManager: failed to speak phone notification", error)
+    }
+  }
 
   private noteMicDataReceived() {
     this.lastMicDataAt = Date.now()
@@ -566,6 +639,10 @@ class MantleManager {
             },
             durationMs: 5_000,
           })
+          // Glasses with no screen (Mentra Live) would otherwise get nothing at
+          // all from the card above — the notification arrives and is stored,
+          // but the wearer never learns about it. Read it out instead (OS-1821).
+          void this.speakPhoneNotification(displayTitle, content)
         }
       }
 

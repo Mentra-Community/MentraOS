@@ -270,8 +270,12 @@ class BuiltInMiniappCatalog {
         running: false,
         loading: false,
         local: false,
+        // A display is the nicest way to surface a notification, not the only
+        // one: camera-only glasses (Mentra Live) speak it instead. Requiring
+        // DISPLAY greyed the app out entirely there, so notifications could not
+        // even be captured or stored on those glasses (OS-1821).
         hardwareRequirements: [
-          {type: HardwareType.DISPLAY, level: HardwareRequirementLevel.REQUIRED},
+          {type: HardwareType.DISPLAY, level: HardwareRequirementLevel.OPTIONAL},
           {type: HardwareType.EXIST, level: HardwareRequirementLevel.REQUIRED},
         ],
       })
