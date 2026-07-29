@@ -7,7 +7,6 @@ import android.content.Context;
 
 import androidx.test.core.app.ApplicationProvider;
 
-import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.SerialPortBridge;
 import com.mentra.asg_client.io.ota.interfaces.IBesOtaController;
 import com.mentra.asg_client.service.core.handlers.K900CommandHandler;
 
@@ -33,12 +32,7 @@ public class BesOtaManagerVersionTest {
     @Before
     public void setUp() {
         Context context = ApplicationProvider.getApplicationContext();
-        controller =
-                new BesOtaManager(
-                        mock(SerialPortBridge.class),
-                        null,
-                        context,
-                        mock(K900CommandHandler.class));
+        controller = new BesOtaManager(null, null, context, mock(K900CommandHandler.class));
         previousInProgressFlag = BesOtaManager.isBesOtaInProgress;
     }
 

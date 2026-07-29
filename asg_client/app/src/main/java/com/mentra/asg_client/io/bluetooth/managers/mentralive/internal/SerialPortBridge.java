@@ -5,7 +5,6 @@ import android.util.Log;
 
 import com.lhs.serialport.api.SerialManager;
 import com.mentra.asg_client.AsgConstants;
-import com.mentra.asg_client.io.bes.BesOtaUartListener;
 import com.mentra.asg_client.io.bluetooth.interfaces.SerialListener;
 
 import java.io.IOException;
@@ -29,7 +28,6 @@ public class SerialPortBridge {
     private static final String BAUD_TAG = "BAUD-SWITCH";
 
     private SerialListener mListener;
-    private BesOtaUartListener mOtaListener;
     private RecvThread mRecvThread = null;
     private volatile boolean mbStart = false;
     // volatile + snapshot-before-use: openAtBaud() nulls these on the baud-switch
@@ -39,18 +37,11 @@ public class SerialPortBridge {
     protected volatile InputStream mIS;
     private Context mContext = null;
     private volatile boolean mbRequestFast = false;
-    private volatile ReceiveRoute receiveRoute = ReceiveRoute.NORMAL;
-    private long nextReaderGeneration = 0;
-    private volatile long currentReaderGeneration = -1;
+    private long nextSessionId = 0;
+    private volatile SerialSession currentSession;
 
     /** Baud rate the port is currently open at (DEFAULT_BAUDRATE until a reopen succeeds). */
     private volatile int mCurrentBaud = DEFAULT_BAUDRATE;
-
-    /** Receive destination selected by the transport coordinator. */
-    public enum ReceiveRoute {
-        NORMAL,
-        OTA
-    }
 
     /**
      * Create a new SerialPortBridge
@@ -68,15 +59,6 @@ public class SerialPortBridge {
      */
     public void registerListener(SerialListener listener) {
         mListener = listener;
-    }
-
-    /**
-     * Register a listener for BES OTA UART data
-     *
-     * @param listener The OTA listener to register
-     */
-    public void registerOtaListener(BesOtaUartListener listener) {
-        mOtaListener = listener;
     }
 
     /**
@@ -101,10 +83,10 @@ public class SerialPortBridge {
             mIS = SerialManager.getInstance().getInputStream(COM_PATH);
             mOS = SerialManager.getInstance().getOutputStream(COM_PATH);
 
-            long readerGeneration = ++nextReaderGeneration;
-            currentReaderGeneration = readerGeneration;
-            mRecvThread = new RecvThread(mIS, readerGeneration);
-            if (mListener != null) mListener.onSerialReady(COM_PATH, readerGeneration);
+            SerialSession session = newSession(COM_BAUDRATE);
+            currentSession = session;
+            mRecvThread = new RecvThread(mIS, session);
+            if (mListener != null) mListener.onSerialReady(COM_PATH, session);
             mRecvThread.start();
         }
 
@@ -140,17 +122,9 @@ public class SerialPortBridge {
         return mbStart;
     }
 
-    /** Identity of the reader attached to the current descriptor, or {@code -1} when closed. */
-    public long getCurrentReaderGeneration() {
-        return currentReaderGeneration;
-    }
-
-    /** Notify the normal UART owner that BES accepted an OTA image and is rebooting. */
-    public void notifyBesOtaApplied() {
-        SerialListener listener = mListener;
-        if (listener != null) {
-            listener.onBesOtaApplied();
-        }
+    /** Identity of the current descriptor and reader, or {@code null} when closed. */
+    public SerialSession getCurrentSession() {
+        return currentSession;
     }
 
     /**
@@ -160,9 +134,9 @@ public class SerialPortBridge {
      *
      * @param baud The new baud rate (must be one of the rates supported by liblhsserial, e.g.
      *     460800, 921600, 1152000, 1500000, 2000000)
-     * @return true only when the port is open at the requested baud
+     * @return an unstarted session for the new descriptor, or {@code null} on failure
      */
-    public synchronized boolean openAtBaud(int baud) {
+    public synchronized SerialSession openAtBaud(int baud) {
         Log.i(
                 BAUD_TAG,
                 "Opening "
@@ -181,7 +155,7 @@ public class SerialPortBridge {
 
         if (!openDriverAtBaud(baud)) {
             Log.e(BAUD_TAG, "Serial port could not be opened at " + baud);
-            return false;
+            return null;
         }
 
         mCurrentBaud = baud;
@@ -189,13 +163,40 @@ public class SerialPortBridge {
         mOS = SerialManager.getInstance().getOutputStream(COM_PATH);
         mbStart = true;
 
-        long readerGeneration = ++nextReaderGeneration;
-        currentReaderGeneration = readerGeneration;
-        mRecvThread = new RecvThread(mIS, readerGeneration);
-        mRecvThread.start();
+        SerialSession session = newSession(baud);
+        currentSession = session;
 
         Log.i(BAUD_TAG, "Serial port opened at " + baud + " baud");
+        return session;
+    }
+
+    /** Start the receive reader after the coordinator has adopted this session. */
+    public synchronized boolean startReader(SerialSession session) {
+        if (session == null
+                || session != currentSession
+                || !session.isActive()
+                || !mbStart
+                || mIS == null
+                || mRecvThread != null) {
+            Log.w(BAUD_TAG, "Cannot start reader for inactive or non-current session " + session);
+            return false;
+        }
+        mRecvThread = new RecvThread(mIS, session);
+        mRecvThread.start();
         return true;
+    }
+
+    /** Close the descriptor only if it still belongs to the supplied session. */
+    public synchronized void closeSession(SerialSession session) {
+        if (session != null && session == currentSession) {
+            closeCurrentPort();
+        } else if (session != null) {
+            session.retire();
+        }
+    }
+
+    private SerialSession newSession(int baud) {
+        return new SerialSession(++nextSessionId, COM_PATH, baud);
     }
 
     /** Close the descriptor and retire its reader before another stream is published. */
@@ -204,8 +205,12 @@ public class SerialPortBridge {
         if (oldThread != null) {
             oldThread.setStop();
         }
+        SerialSession oldSession = currentSession;
+        if (oldSession != null) {
+            oldSession.retire();
+        }
         mbStart = false;
-        currentReaderGeneration = -1;
+        currentSession = null;
         mIS = null;
         mOS = null;
 
@@ -215,9 +220,9 @@ public class SerialPortBridge {
             Log.e(BAUD_TAG, "Error closing serial port", e);
         }
 
-        // The old reader owns its stream and buffer. It may finish an already-entered listener
-        // callback, but the transport generation rejects that callback after a reopen; stop also
-        // prevents a completed native read from being delivered or another read from starting.
+        // The session retirement above waits for an already-entered listener callback. The old
+        // reader therefore cannot cross the descriptor replacement, and stop prevents another
+        // completed native read from being delivered or another read from starting.
         if (oldThread != null) {
             oldThread.interrupt();
         }
@@ -332,22 +337,16 @@ public class SerialPortBridge {
         Log.d(TAG, "Fast mode " + (bFast ? "enabled" : "disabled"));
     }
 
-    /** Select the receive parser. Write authorization remains in the transport coordinator. */
-    public void setReceiveRoute(ReceiveRoute route) {
-        receiveRoute = route == null ? ReceiveRoute.NORMAL : route;
-        Log.d(TAG, "Receive route: " + receiveRoute);
-    }
-
     /** Thread for receiving data from the serial port */
     class RecvThread extends Thread {
         private final InputStream input;
-        private final long readerGeneration;
+        private final SerialSession session;
         private final byte[] readBuffer = new byte[1024];
         private volatile boolean mbStop = false;
 
-        RecvThread(InputStream input, long readerGeneration) {
+        RecvThread(InputStream input, SerialSession session) {
             this.input = input;
-            this.readerGeneration = readerGeneration;
+            this.session = session;
         }
 
         public void setStop() {
@@ -363,16 +362,16 @@ public class SerialPortBridge {
                     try {
                         readSize = input.read(readBuffer);
                         if (readSize > 0 && !mbStop) {
-                            // Route data based on OTA state
-                            if (receiveRoute == ReceiveRoute.OTA) {
-                                if (mOtaListener != null) {
-                                    mOtaListener.onOtaRecv(readBuffer, readSize);
-                                }
-                            } else {
-                                if (mListener != null) {
-                                    mListener.onSerialRead(
-                                            COM_PATH, readBuffer, readSize, readerGeneration);
-                                }
+                            SerialListener listener = mListener;
+                            if (listener != null) {
+                                int callbackSize = readSize;
+                                session.dispatch(
+                                        () ->
+                                                listener.onSerialRead(
+                                                        COM_PATH,
+                                                        readBuffer,
+                                                        callbackSize,
+                                                        session));
                             }
                         }
                     } catch (IOException e) {

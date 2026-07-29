@@ -4,6 +4,7 @@ import android.content.Context;
 import android.util.Log;
 
 import com.mentra.asg_client.AsgConstants;
+import com.mentra.asg_client.io.bes.BesOtaUartListener;
 import com.mentra.asg_client.io.bluetooth.core.BaseBluetoothManager;
 import com.mentra.asg_client.io.bluetooth.interfaces.SerialListener;
 import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.BesMessageParser;
@@ -14,6 +15,7 @@ import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.K900Lengt
 import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.LinkStateMachine;
 import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.MessageChunker;
 import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.SerialPortBridge;
+import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.SerialSession;
 import com.mentra.asg_client.io.bluetooth.utils.DebugNotificationManager;
 import com.mentra.asg_client.io.media.core.BlePhotoTimingLog;
 import com.mentra.asg_client.logging.BleTraceLogger;
@@ -47,6 +49,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
     private final SerialPortBridge comManager;
     private final BesUartTransportCoordinator transportCoordinator;
+    private volatile BesOtaUartListener besOtaUartListener;
 
     // Single owner of the transport-side link facts (serial open, link proven at current baud,
     // negotiated BES wire caps). The legacy isSerialOpen/besWireCaps* booleans are derived from it
@@ -251,16 +254,30 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         }
 
         @Override
-        public long openAtBaud(int baud) {
+        public SerialSession openAtBaud(int baud) {
             boolean wasOpen = comManager.isOpen();
-            boolean opened = comManager.openAtBaud(baud);
-            if (!opened) {
+            SerialSession session = comManager.openAtBaud(baud);
+            if (session == null) {
                 linkState.serialClosed();
-                return BesUartTransportCoordinator.INVALID_READER_GENERATION;
+                return null;
             } else if (!wasOpen) {
                 linkState.serialReady();
             }
-            return comManager.getCurrentReaderGeneration();
+            return session;
+        }
+
+        @Override
+        public boolean startReader(SerialSession session) {
+            return comManager.startReader(session);
+        }
+
+        @Override
+        public void closeSession(SerialSession session) {
+            boolean closingCurrent = session != null && session == comManager.getCurrentSession();
+            comManager.closeSession(session);
+            if (closingCurrent) {
+                linkState.serialClosed();
+            }
         }
 
         @Override
@@ -285,14 +302,6 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         @Override
         public boolean writeRawBytes(byte[] data) {
             return comManager.write(data);
-        }
-
-        @Override
-        public void setOtaReceiveRoute(boolean enabled) {
-            comManager.setReceiveRoute(
-                    enabled
-                            ? SerialPortBridge.ReceiveRoute.OTA
-                            : SerialPortBridge.ReceiveRoute.NORMAL);
         }
 
         @Override
@@ -544,7 +553,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                 BesWireFormat.getActiveProtocolVersion());
     }
 
-    private boolean handleInboundBinaryFrame(byte[] message, long receiveGeneration) {
+    private boolean handleInboundBinaryFrame(byte[] message, SerialSession receiveSession) {
         BesWireFormat.BinaryHeader header = BesWireFormat.parseBinaryHeader(message);
         if (!header.valid) {
             return false;
@@ -619,8 +628,8 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                 0,
                 BesWireFormat.getActiveProtocolVersion());
 
-        if (!handleSrSyvrResponse(reassembled, receiveGeneration)
-                && !handleSrPhbleResponse(reassembled, receiveGeneration)
+        if (!handleSrSyvrResponse(reassembled, receiveSession)
+                && !handleSrPhbleResponse(reassembled, receiveSession)
                 && !handleFileTransportResponse(reassembled)) {
             notifyDataReceived(reassembled);
         }
@@ -1042,13 +1051,9 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         Log.d(TAG, "K900BluetoothManager shut down");
     }
 
-    /**
-     * Get the SerialPortBridge instance for BES OTA integration
-     *
-     * @return SerialPortBridge instance, or null if not initialized
-     */
-    public SerialPortBridge getSerialPortBridge() {
-        return comManager;
+    /** Register the raw BES OTA parser; routing remains owned by the transport coordinator. */
+    public void registerBesOtaListener(BesOtaUartListener listener) {
+        besOtaUartListener = listener;
     }
 
     /** Coordinator that owns every UART transition and long-lived transport operation. */
@@ -1063,7 +1068,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
      * @param payload The JSON payload bytes
      * @return true if this was a sr_syvr response and was handled, false otherwise
      */
-    private boolean handleSrSyvrResponse(byte[] payload, long receiveGeneration) {
+    private boolean handleSrSyvrResponse(byte[] payload, SerialSession receiveSession) {
         try {
             String jsonStr = new String(payload, java.nio.charset.StandardCharsets.UTF_8);
             org.json.JSONObject json = new org.json.JSONObject(jsonStr);
@@ -1087,17 +1092,17 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             BesUartTransportCoordinator.SystemVersionResult result =
                     transportCoordinator.onSystemVersion(
                             extractBaudSwitchVersion(bData),
-                            receiveGeneration,
+                            receiveSession,
                             () -> {
                                 // Presence must precede caps: the edge invalidates the previous
                                 // phone session's notify_cap, then this reply installs the current
-                                // session's measured value. The coordinator generation check makes
+                                // session's measured value. The coordinator session check makes
                                 // both mutations atomic with the baud-state transition.
                                 applyPhonePresenceFromSyvr(bData);
                                 linkState.capsAdvertised(applyBesWireCaps(json));
                             });
             if (result == BesUartTransportCoordinator.SystemVersionResult.IGNORED) {
-                Log.i(TAG, "Ignoring sr_syvr from a retired UART reader");
+                Log.i(TAG, "Ignoring sr_syvr from a retired UART session");
                 return true;
             }
 
@@ -1269,7 +1274,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
      * @param payload The JSON payload bytes
      * @return true if this was an sr_phble command and was consumed, false otherwise
      */
-    private boolean handleSrPhbleResponse(byte[] payload, long receiveGeneration) {
+    private boolean handleSrPhbleResponse(byte[] payload, SerialSession receiveSession) {
         try {
             String jsonStr = new String(payload, java.nio.charset.StandardCharsets.UTF_8);
             org.json.JSONObject json = new org.json.JSONObject(jsonStr);
@@ -1295,8 +1300,8 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                     "📱 BES reported phone BLE "
                             + (present ? "connected" : "disconnected")
                             + " (sr_phble)");
-            transportCoordinator.runForCurrentSerialGeneration(
-                    receiveGeneration, () -> linkState.phonePresenceReported(present));
+            transportCoordinator.runForCurrentSerialSession(
+                    receiveSession, () -> linkState.phonePresenceReported(present));
             return true;
         } catch (Exception e) {
             Log.e(TAG, "💥 Error parsing sr_phble", e);
@@ -1386,7 +1391,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
      * @param payload The JSON payload bytes
      * @return true if this was an sr_baud response and was consumed, false otherwise
      */
-    private boolean handleSrBaudResponse(byte[] payload, long receiveGeneration) {
+    private boolean handleSrBaudResponse(byte[] payload, SerialSession receiveSession) {
         try {
             String jsonStr = new String(payload, java.nio.charset.StandardCharsets.UTF_8);
             org.json.JSONObject json = new org.json.JSONObject(jsonStr);
@@ -1407,7 +1412,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             int status = json.optInt("S", -1);
             int ackedBaud = bData != null ? bData.optInt("baud", -1) : -1;
 
-            if (transportCoordinator.onBaudResponse(status, ackedBaud, receiveGeneration)
+            if (transportCoordinator.onBaudResponse(status, ackedBaud, receiveSession)
                     && transportCoordinator.isReady()) {
                 // A rejected switch leaves the already-proven rendezvous stream stable. Accepted
                 // switches remain unproven until sr_syvr arrives after the fast reopen.
@@ -1534,28 +1539,46 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     }
 
     @Override
-    public void onSerialRead(String serialPath, byte[] data, int size, long receiveGeneration) {
-        boolean fileTransferActive = isFileTransferInProgress();
-        if (!fileTransferActive) {
-            Log.d(TAG, "📥 K900 SERIAL READ - " + size + " bytes");
-        }
-
+    public void onSerialRead(
+            String serialPath, byte[] data, int size, SerialSession receiveSession) {
         if (data != null && size > 0) {
-            // Copy the data to avoid issues with buffer reuse
+            // Copy the data before the serial reader reuses its buffer.
             byte[] dataCopy = new byte[size];
             System.arraycopy(data, 0, dataCopy, 0, size);
+
+            BesUartTransportCoordinator.InboundRoute route =
+                    transportCoordinator.inboundRoute(receiveSession);
+            if (route == BesUartTransportCoordinator.InboundRoute.REJECTED) {
+                Log.w(TAG, "Ignoring data from retired UART session " + receiveSession);
+                return;
+            }
+            if (route == BesUartTransportCoordinator.InboundRoute.OTA) {
+                BesOtaUartListener listener = besOtaUartListener;
+                if (listener == null) {
+                    Log.w(TAG, "Dropping BES OTA bytes because no OTA listener is registered");
+                } else {
+                    listener.onOtaRecv(dataCopy, size);
+                }
+                return;
+            }
+
+            boolean fileTransferActive = isFileTransferInProgress();
+            if (!fileTransferActive) {
+                Log.d(TAG, "📥 K900 SERIAL READ - " + size + " bytes");
+            }
 
             // Hex dump suppressed to prevent logcat overflow
             // Enable only when debugging specific issues
 
             SerialParseResult parseResult = new SerialParseResult();
             boolean currentReader =
-                    transportCoordinator.runForCurrentSerialGeneration(
-                            receiveGeneration,
+                    transportCoordinator.runForCurrentSerialSession(
+                            receiveSession,
                             () -> {
                                 synchronized (messageParserLock) {
                                     if (messageParser != null) {
-                                        parseResult.accepted = messageParser.addData(dataCopy, size);
+                                        parseResult.accepted =
+                                                messageParser.addData(dataCopy, size);
                                         if (parseResult.accepted) {
                                             parseResult.messages = messageParser.parseMessages();
                                             parseResult.discardedBytes =
@@ -1565,7 +1588,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                                 }
                             });
             if (!currentReader) {
-                Log.w(TAG, "Ignoring data from retired UART reader " + receiveGeneration);
+                Log.w(TAG, "Ignoring data from retired UART session " + receiveSession);
                 return;
             }
 
@@ -1576,12 +1599,12 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             if (!parserAcceptedData) {
                 // If parser is not available or data couldn't be added, send raw data
                 Log.d(TAG, "📥 📤 Parser unavailable, notifying listeners of raw data...");
-                if (transportCoordinator.isCurrentSerialGeneration(receiveGeneration)) {
+                if (transportCoordinator.isCurrentSerialSession(receiveSession)) {
                     notifyDataReceived(dataCopy);
                 }
             } else if (completeMessages == null || completeMessages.isEmpty()) {
                 if (discardedBytes > 0) {
-                    onUartBytesDiscarded(discardedBytes, receiveGeneration);
+                    onUartBytesDiscarded(discardedBytes, receiveSession);
                 }
                 // No complete messages yet, just accumulating data
                 Log.d(TAG, "📥 Data added to parser, waiting for complete message");
@@ -1589,7 +1612,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                 Log.d(TAG, "📥 Extracted " + completeMessages.size() + " complete messages");
                 // Process each complete message outside the parser lock.
                 for (byte[] message : completeMessages) {
-                    if (!transportCoordinator.isCurrentSerialGeneration(receiveGeneration)) {
+                    if (!transportCoordinator.isCurrentSerialSession(receiveSession)) {
                         break;
                     }
                     BleTraceLogger.logK900Frame("bes_to_asg", "asg_uart_input", message);
@@ -1602,9 +1625,9 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                         BesWireFormat.BinaryHeader header =
                                 BesWireFormat.parseBinaryHeader(message);
                         if (header.valid) {
-                            handleInboundBinaryFrame(message, receiveGeneration);
+                            handleInboundBinaryFrame(message, receiveSession);
                             if (BesWireFormat.isValidLinkHealthFrame(message)) {
-                                onValidUartFrame(receiveGeneration);
+                                onValidUartFrame(receiveSession);
                             }
                         }
                     } else if (BesWireFormat.isK900ProtocolFormat(message)) {
@@ -1624,7 +1647,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                             // that otherwise runs dozens of Log calls per packet window.
                             if (handleCsFltsAckPayload(payload)) {
                                 if (validLinkHealthFrame) {
-                                    onValidUartFrame(receiveGeneration);
+                                    onValidUartFrame(receiveSession);
                                 }
                                 continue;
                             }
@@ -1643,15 +1666,15 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                             // or an sr_baud response (UART baud switch ack).
                             // Handle them directly here to avoid timing issues with
                             // CommandProcessor initialization
-                            if (!handleSrSyvrResponse(payload, receiveGeneration)
-                                    && !handleSrBaudResponse(payload, receiveGeneration)
-                                    && !handleSrPhbleResponse(payload, receiveGeneration)
+                            if (!handleSrSyvrResponse(payload, receiveSession)
+                                    && !handleSrBaudResponse(payload, receiveSession)
+                                    && !handleSrPhbleResponse(payload, receiveSession)
                                     && !handleFileTransportResponse(payload)) {
                                 // Not a BES-owned sr_* response, forward to listeners
                                 notifyDataReceived(payload);
                             }
                             if (validLinkHealthFrame) {
-                                onValidUartFrame(receiveGeneration);
+                                onValidUartFrame(receiveSession);
                             }
                         } else {
                             Log.w(TAG, "📥 Failed to extract payload from K900 message");
@@ -1675,12 +1698,12 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         long discardedBytes;
     }
 
-    private void onValidUartFrame(long receiveGeneration) {
-        transportCoordinator.onValidFrame(receiveGeneration);
+    private void onValidUartFrame(SerialSession receiveSession) {
+        transportCoordinator.onValidFrame(receiveSession);
     }
 
-    private void onUartBytesDiscarded(long discardedBytes, long receiveGeneration) {
-        transportCoordinator.onDiscardedBytes(discardedBytes, receiveGeneration);
+    private void onUartBytesDiscarded(long discardedBytes, SerialSession receiveSession) {
+        transportCoordinator.onDiscardedBytes(discardedBytes, receiveSession);
     }
 
     /**
@@ -1702,14 +1725,14 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     }
 
     @Override
-    public void onSerialReady(String serialPath, long readerGeneration) {
+    public void onSerialReady(String serialPath, SerialSession session) {
         Log.d(TAG, "🔌 =========================================");
         Log.d(TAG, "🔌 K900 SERIAL READY");
         Log.d(TAG, "🔌 =========================================");
         Log.d(TAG, "🔌 Serial path: " + serialPath);
 
         linkState.serialReady();
-        transportCoordinator.onSerialReady(readerGeneration);
+        transportCoordinator.onSerialReady(session);
         Log.d(TAG, "🔌 ✅ Serial port marked as open");
 
         // For K900, when the serial port is ready, we consider ourselves "connected"
@@ -1724,7 +1747,6 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         Log.d(TAG, "🔌 ✅ Bluetooth state notifications sent");
     }
 
-    @Override
     public void onBesOtaApplied() {
         linkState.streamDiscontinuity();
         linkState.phonePresenceInvalidated();

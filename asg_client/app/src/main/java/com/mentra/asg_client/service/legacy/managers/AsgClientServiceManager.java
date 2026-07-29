@@ -10,7 +10,6 @@ import com.mentra.asg_client.io.bes.BesOtaManager;
 import com.mentra.asg_client.io.bluetooth.core.BluetoothManagerFactory;
 import com.mentra.asg_client.io.bluetooth.interfaces.ICompanionTransport;
 import com.mentra.asg_client.io.bluetooth.managers.K900BluetoothManager;
-import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.SerialPortBridge;
 import com.mentra.asg_client.io.file.core.FileManager;
 import com.mentra.asg_client.io.media.core.MediaCaptureService;
 import com.mentra.asg_client.io.media.managers.MediaUploadQueueManager;
@@ -351,20 +350,15 @@ public class AsgClientServiceManager {
                 // Initialize BES OTA Manager for K900 devices
                 Log.d(TAG, "🔧 Initializing BES OTA Manager for firmware updates");
                 try {
-                    SerialPortBridge comManager = k900Manager.getSerialPortBridge();
-                    if (comManager != null) {
-                        besOtaManager =
-                                new BesOtaManager(
-                                        comManager,
-                                        k900Manager.getTransportCoordinator(),
-                                        context,
-                                        besOtaK900CommandHandler);
-                        besOtaRegistry.setInstance(besOtaManager);
-                        comManager.registerOtaListener(besOtaManager);
-                        Log.i(TAG, "✅ BES OTA Manager initialized and registered");
-                    } else {
-                        Log.w(TAG, "⚠️ SerialPortBridge not available - BES OTA disabled");
-                    }
+                    besOtaManager =
+                            new BesOtaManager(
+                                    k900Manager::onBesOtaApplied,
+                                    k900Manager.getTransportCoordinator(),
+                                    context,
+                                    besOtaK900CommandHandler);
+                    besOtaRegistry.setInstance(besOtaManager);
+                    k900Manager.registerBesOtaListener(besOtaManager);
+                    Log.i(TAG, "✅ BES OTA Manager initialized and registered");
                 } catch (Exception e) {
                     Log.e(TAG, "💥 Error initializing BES OTA Manager", e);
                 }

@@ -8,7 +8,6 @@ import com.mentra.asg_client.io.bes.events.BesOtaProgressEvent;
 import com.mentra.asg_client.io.bes.protocol.*;
 import com.mentra.asg_client.io.bes.util.BesOtaUtil;
 import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.BesUartTransportCoordinator;
-import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.SerialPortBridge;
 import com.mentra.asg_client.io.bluetooth.utils.ByteUtil;
 import com.mentra.asg_client.io.ota.interfaces.IBesOtaController;
 import com.mentra.asg_client.logging.BleTraceLogger;
@@ -82,23 +81,23 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
     private boolean bWait4Confirm = false;
     private volatile boolean isWaitingForAuthorization = false;
 
-    private final SerialPortBridge comManager;
+    private final Runnable otaAppliedCallback;
     private final BesUartTransportCoordinator transportCoordinator;
     private BesOtaCommandListener mListener;
     private final K900CommandHandler k900CommandHandler;
 
     /**
-     * @param comManager UART bridge for BES2700
+     * @param otaAppliedCallback notified after BES accepts the image and begins rebooting
      * @param transportCoordinator owner of UART state, writes, and operation routing
      * @param context Application context for wakelock
      * @param k900CommandHandler Handler for BES authorization and phone messaging
      */
     public BesOtaManager(
-            SerialPortBridge comManager,
+            Runnable otaAppliedCallback,
             BesUartTransportCoordinator transportCoordinator,
             Context context,
             K900CommandHandler k900CommandHandler) {
-        this.comManager = comManager;
+        this.otaAppliedCallback = otaAppliedCallback;
         this.transportCoordinator = transportCoordinator;
         this.mContext = context.getApplicationContext();
         this.k900CommandHandler = k900CommandHandler;
@@ -196,7 +195,7 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
 
     /**
      * Callback for firmware version response (outside OTA context) This is called directly from
-     * SerialPortBridge's normal data handling
+     * K900BluetoothManager's normal UART handling
      */
     public void onFirmwareVersionReceived(byte[] data, int size) {
         // Parse the firmware version from raw data
@@ -1196,8 +1195,8 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
             if (msg.len == 1 && msg.body != null && msg.body[0] == 1) {
                 Log.i(TAG, "BES firmware update SUCCESS! BES will reboot.");
                 EventBus.getDefault().post(BesOtaProgressEvent.createFinished());
-                if (comManager != null) {
-                    comManager.notifyBesOtaApplied();
+                if (otaAppliedCallback != null) {
+                    otaAppliedCallback.run();
                 }
             } else {
                 Log.e(TAG, "Apply firmware error");
