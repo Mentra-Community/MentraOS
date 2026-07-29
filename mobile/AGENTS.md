@@ -104,6 +104,12 @@ bun ios
 - Backend server required for local testing
 - Port forwarding: `bun adb` (sets up tcp:9090, tcp:3000, tcp:9001, tcp:8081)
 - Bluetooth functionality for glasses pairing
+- **Background timers on Android are always native** (no env var, dev and
+  release alike). If startup shows a "Background timers unavailable" alert or
+  red-boxes in the nitro module, your dev client's native binary predates
+  `react-native-nitro-bg-timer` — rebuild with `bun android`. Until then,
+  backgrounded behavior is broken: engine timers freeze and local miniapps
+  (captions, wake words) stop whenever the app isn't foregrounded.
 
 ## Mapbox tokens (two different credentials!)
 
