@@ -775,8 +775,8 @@ public class SrtStreamingService extends Service {
         },
         () ->
             new PeriodicStreamMetricsReporter.MetricsSample(
-                mStreamConfig.getVideoBitrate(),
-                mStreamConfig.getVideoFps(),
+                measuredVideoBitrateBps(),
+                measuredVideoFps(),
                 0,
                 mStreamStartTime > 0
                     ? Math.max(0, (System.currentTimeMillis() - mStreamStartTime) / 1_000L)
@@ -793,6 +793,22 @@ public class SrtStreamingService extends Service {
             return mCurrentStreamId;
           }
         });
+  }
+
+  private long measuredVideoBitrateBps() {
+    if (mSrtStreamer != null) {
+      long measured = mSrtStreamer.getSettings().getVideo().getMeasuredBitrateBps();
+      if (measured > 0) return measured;
+    }
+    return mStreamConfig.getVideoBitrate();
+  }
+
+  private double measuredVideoFps() {
+    if (mSrtStreamer != null) {
+      double measured = mSrtStreamer.getSettings().getVideo().getMeasuredFps();
+      if (Double.isFinite(measured) && measured > 0) return measured;
+    }
+    return mStreamConfig.getVideoFps();
   }
 
   private void startMetricsReporting() {

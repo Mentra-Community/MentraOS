@@ -1260,8 +1260,8 @@ public class RtmpStreamingService extends Service {
                 },
                 () ->
                         new PeriodicStreamMetricsReporter.MetricsSample(
-                                mStreamConfig.getVideoBitrate(),
-                                mStreamConfig.getVideoFps(),
+                                measuredVideoBitrateBps(),
+                                measuredVideoFps(),
                                 0,
                                 mStreamStartTime > 0
                                         ? Math.max(
@@ -1281,6 +1281,22 @@ public class RtmpStreamingService extends Service {
                         return mCurrentStreamId;
                     }
                 });
+    }
+
+    private long measuredVideoBitrateBps() {
+        if (mStreamer != null) {
+            long measured = mStreamer.getSettings().getVideo().getMeasuredBitrateBps();
+            if (measured > 0) return measured;
+        }
+        return mStreamConfig.getVideoBitrate();
+    }
+
+    private double measuredVideoFps() {
+        if (mStreamer != null) {
+            double measured = mStreamer.getSettings().getVideo().getMeasuredFps();
+            if (Double.isFinite(measured) && measured > 0) return measured;
+        }
+        return mStreamConfig.getVideoFps();
     }
 
     private void startMetricsReporting() {
