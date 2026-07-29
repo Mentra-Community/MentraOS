@@ -33,6 +33,11 @@ describe("MiniappRequestType wire values", () => {
   test("STORAGE_DELETE", () => expect(MiniappRequestType.STORAGE_DELETE).toBe("miniapp_storage_delete"))
   test("STORAGE_LIST", () => expect(MiniappRequestType.STORAGE_LIST).toBe("miniapp_storage_list"))
   test("CAMERA_FOV", () => expect(MiniappRequestType.CAMERA_FOV).toBe("miniapp_camera_fov"))
+  test("IMU_SET_ENABLED", () => expect(MiniappRequestType.IMU_SET_ENABLED).toBe("miniapp_imu_set_enabled"))
+  test("MIC_SET_VAD_ENABLED", () =>
+    expect(MiniappRequestType.MIC_SET_VAD_ENABLED).toBe("miniapp_mic_set_vad_enabled"))
+  test("MIC_SET_LOUDNESS_GATE_ENABLED", () =>
+    expect(MiniappRequestType.MIC_SET_LOUDNESS_GATE_ENABLED).toBe("miniapp_mic_set_loudness_gate_enabled"))
   test("PING", () => expect(MiniappRequestType.PING).toBe("miniapp_ping"))
   test("DASHBOARD_CONTENT_UPDATE", () =>
     expect(MiniappRequestType.DASHBOARD_CONTENT_UPDATE).toBe("miniapp_dashboard_content_update"))

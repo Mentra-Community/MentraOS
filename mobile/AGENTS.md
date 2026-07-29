@@ -104,6 +104,32 @@ bun ios
 - Backend server required for local testing
 - Port forwarding: `bun adb` (sets up tcp:9090, tcp:3000, tcp:9001, tcp:8081)
 - Bluetooth functionality for glasses pairing
+- **Background timers on Android are always native** (no env var, dev and
+  release alike). If startup shows a "Background timers unavailable" alert or
+  red-boxes in the nitro module, your dev client's native binary predates
+  `react-native-nitro-bg-timer` — rebuild with `bun android`. Until then,
+  backgrounded behavior is broken: engine timers freeze and local miniapps
+  (captions, wake words) stop whenever the app isn't foregrounded.
+
+## Mapbox tokens (two different credentials!)
+
+- **Public token (`pk.…`)** — runtime map rendering. Lives in `.env` as
+  `EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN`. Safe to ship in the app.
+- **Downloads token (`sk.…`, secret scope `Downloads:Read`)** — build time only,
+  authenticates downloading Mapbox's binary SDKs. Never shipped. It must live in:
+  - `~/.netrc` for iOS (SPM reads it): `machine api.mapbox.com login mapbox password sk.…`
+  - `MAPBOX_DOWNLOADS_TOKEN` env var for Android (Gradle maven repo auth)
+  - GitHub Actions secret `MAPBOX_DOWNLOADS_TOKEN` for CI
+
+Gotchas learned the hard way (2026-07):
+
+- Most Mapbox package downloads are unauthenticated, but the **Navigation SDK
+  binaries (`dash-native`) return 401 without a valid token from an account with
+  an active (billing-enabled) subscription** — "an active subscription is
+  required" means add a payment method + activate Navigation, not a token issue.
+- Secret token values are shown **once** at creation. Store them in the company
+  password manager, under a **shared org Mapbox account** — a departed
+  employee's personal account once held our only working token.
 
 ## Sentry Configuration (iOS)
 

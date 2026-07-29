@@ -515,6 +515,10 @@ class MentraBluetoothSdk private constructor(
         DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "voice_activity_detection_enabled", enabled)
     }
 
+    fun setLoudnessGateEnabled(enabled: Boolean) {
+        DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "loudness_gate_enabled", enabled)
+    }
+
     @Deprecated(
         message =
             "Sticky action-button photo presets are deprecated. Prefer per-request " +

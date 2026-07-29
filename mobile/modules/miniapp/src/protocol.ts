@@ -117,6 +117,11 @@ export enum MiniappRequestType {
    */
   IMU_SET_ENABLED = "miniapp_imu_set_enabled",
 
+  /** Explicitly enable/disable glasses-side VAD (GX8002). Mirrors the app's mic settings toggle. */
+  MIC_SET_VAD_ENABLED = "miniapp_mic_set_vad_enabled",
+  /** Explicitly enable/disable the center-mic loudness gate ("Barrier"). */
+  MIC_SET_LOUDNESS_GATE_ENABLED = "miniapp_mic_set_loudness_gate_enabled",
+
   /** Share content via the OS share sheet. */
   SHARE = "miniapp_share",
   /** Open a URL in the system browser. */

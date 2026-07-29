@@ -163,6 +163,7 @@ public final class McuEventParser {
                 b.optString("ble", "unknown"),
                 b.optString("bt", "unknown"),
                 b.optString("btaddr", "unknown"),
-                b.optString("bleaddr", "unknown"));
+                b.optString("bleaddr", "unknown"),
+                b.optString("serial_number", ""));
     }
 }

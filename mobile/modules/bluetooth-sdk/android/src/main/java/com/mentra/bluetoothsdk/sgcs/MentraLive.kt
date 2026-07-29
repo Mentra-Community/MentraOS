@@ -95,6 +95,7 @@ class MentraLive : SGCManager() {
         // LC3 frame size for Mentra Live
         private const val LC3_FRAME_SIZE = 40
         private const val VOICE_ACTIVITY_DETECTION_SWITCH_TYPE = 8
+        private const val LOUDNESS_GATE_SWITCH_TYPE = 10
         private const val BES2700_MTU_LIMIT = 509
 
         // L2CAP CoC fast path: new BES2700 firmware registers an LE L2CAP CoC server on this
@@ -813,6 +814,15 @@ class MentraLive : SGCManager() {
                 sendQueue.clear()
             }
             return
+        }
+
+        if (state == ConnTypes.DISCONNECTED) {
+            // A manufacturing serial is session-bound. Clear it on disconnect so a previous
+            // pair's serial can never be associated with the next connection. Connect must NOT
+            // clear it: DeviceManager.disconnect already wipes it before any new connection, and
+            // clearing on CONNECTED would wipe a still-valid serial mid-session when a same-link
+            // glasses_ready (e.g. ASG restart) re-publishes CONNECTED.
+            DeviceStore.apply("glasses", "serialNumber", "")
         }
 
         // Actually update the connection state!
@@ -3696,7 +3706,7 @@ class MentraLive : SGCManager() {
 
             "version_info" -> {
                 // Process version information from ASG client (legacy single-message format)
-                Bridge.log("LIVE: Received version info from ASG client: " + json.toString())
+                Bridge.log("LIVE: Received version info from ASG client")
 
                 // Extract version information
                 val appVersionLegacy = json.optString("app_version", "")
@@ -3706,6 +3716,7 @@ class MentraLive : SGCManager() {
                 val otaVersionUrlLegacy: String? = json.optString("ota_version_url", null)
                 val firmwareVersionLegacy = json.optString("firmware_version", "")
                 val btMacAddressLegacy = json.optString("bt_mac_address", "")
+                val serialNumberLegacy = json.optString("serial_number", "")
 
                 // Update parent SGCManager fields
                 DeviceStore.apply("glasses", "appVersion", appVersionLegacy)
@@ -3719,6 +3730,9 @@ class MentraLive : SGCManager() {
                 )
                 DeviceStore.apply("glasses", "firmwareVersion", firmwareVersionLegacy)
                 DeviceStore.apply("glasses", "bluetoothMacAddress", btMacAddressLegacy)
+                if (serialNumberLegacy.isNotBlank()) {
+                    DeviceStore.apply("glasses", "serialNumber", serialNumberLegacy)
+                }
 
                 val versionInfoLegacy = HashMap<String, Any>()
                 versionInfoLegacy["appVersion"] = appVersionLegacy
@@ -3900,7 +3914,7 @@ class MentraLive : SGCManager() {
             else -> {
                 // Flexible version_info parsing - handle any version_info* message
                 if (type.startsWith("version_info")) {
-                    Bridge.log("LIVE: Received " + type + ": " + json.toString())
+                    Bridge.log("LIVE: Received " + type)
 
                     // Extract all fields from JSON (except "type")
                     val fields = HashMap<String, Any>()
@@ -3986,6 +4000,10 @@ class MentraLive : SGCManager() {
                                 "bluetoothMacAddress",
                                 fields["bt_mac_address"] as String
                         )
+                    }
+                    val serialNumber = fields["serial_number"] as? String
+                    if (!serialNumber.isNullOrBlank()) {
+                        DeviceStore.apply("glasses", "serialNumber", serialNumber)
                     }
                     if (fields.containsKey("system_time_ms")) {
                         val v = fields["system_time_ms"]
@@ -8968,6 +8986,9 @@ class MentraLive : SGCManager() {
 
         // Send glasses-side Voice Activity Detection setting.
         sendVoiceActivityDetectionSetting()
+
+        // Send glasses-side loudness / Barrier gate setting.
+        sendLoudnessGateSetting()
     }
 
     override fun sendVoiceActivityDetectionSetting() {
@@ -9007,6 +9028,45 @@ class MentraLive : SGCManager() {
             Bridge.sendVoiceActivityDetectionStatus(enabled)
         } catch (e: JSONException) {
             Log.e(TAG, "Error creating Voice Activity Detection setting command", e)
+        }
+    }
+
+    override fun sendLoudnessGateSetting() {
+        val value = DeviceStore.get("bluetooth", "loudness_gate_enabled")
+        val enabled =
+                if (value is Boolean) value
+                else BluetoothSdkDefaults.LOUDNESS_GATE_ENABLED
+
+        Bridge.log("LIVE: 🎚️ Sending loudness/Barrier gate setting to glasses: " + enabled)
+
+        if (!isConnected) {
+            Bridge.log("LIVE: Cannot send loudness gate setting - not connected")
+            return
+        }
+
+        try {
+            val body = JSONObject()
+            body.put("type", LOUDNESS_GATE_SWITCH_TYPE)
+            body.put("switch", if (enabled) 1 else 0)
+
+            val cmdObject = JSONObject()
+            cmdObject.put("C", "cs_swit")
+            cmdObject.put("V", 1)
+            cmdObject.put("B", body.toString())
+
+            val packedData =
+                    K900ProtocolUtils.packDataToK900(
+                            cmdObject.toString().toByteArray(StandardCharsets.UTF_8),
+                            K900ProtocolUtils.CMD_TYPE_STRING,
+                            k900LengthEndian()
+                    )
+            if (packedData == null) {
+                Bridge.log("LIVE: Failed to pack loudness gate setting command")
+                return
+            }
+            queueData(packedData)
+        } catch (e: JSONException) {
+            Log.e(TAG, "Error creating loudness gate setting command", e)
         }
     }
 

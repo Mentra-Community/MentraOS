@@ -62,6 +62,11 @@ const en = {
     infoTitle: "About this setting",
     infoDescription:
       'Most users should leave this set to "Automatic". Only change this if you need to use a Bluetooth lapel microphone to improve transcription quality.',
+    glassesMicGates: "Glasses microphone gates",
+    vadLabel: "Voice activity detection",
+    vadSubtitle: "Only send mic audio when the glasses detect speech (GX8002 VAD).",
+    barrierLabel: "Barrier",
+    barrierSubtitle: "Block quiet audio with the center-mic loudness threshold.",
   },
   positionSettings: {
     title: "Display position",
