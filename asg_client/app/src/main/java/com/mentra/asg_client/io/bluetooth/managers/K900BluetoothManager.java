@@ -2619,6 +2619,9 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                             + ")");
         } catch (Exception e) {
             Log.e(TAG, "Failed to notify phone about transfer failure", e);
+        } finally {
+            // Covers message construction/publishing failures before the terminal-write helper.
+            transportCoordinator.endFileTransfer();
         }
     }
 

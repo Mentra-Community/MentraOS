@@ -429,23 +429,27 @@ public final class BesUartTransportCoordinator {
      * This keeps a deferred baud transition behind the status write.
      */
     public boolean endFileTransferWithFinalWrite(WriteAction finalWrite) {
-        Future<Boolean> write;
-        synchronized (monitor) {
-            if (!isReadyLocked() || operation != Operation.FILE_TRANSFER || finalWrite == null) {
-                return false;
+        try {
+            Future<Boolean> write;
+            synchronized (monitor) {
+                if (operation != Operation.FILE_TRANSFER) {
+                    return false;
+                }
+                if (!isReadyLocked() || finalWrite == null) {
+                    return false;
+                }
+                write = ioLane.submit(finalWrite::write);
             }
-            write = ioLane.submit(finalWrite::write);
-        }
-
-        boolean sent = awaitBoolean(write, "file terminal write");
-        synchronized (monitor) {
-            if (operation == Operation.FILE_TRANSFER) {
-                operation = Operation.NONE;
-                host.setFastReceive(false);
-                resumeAfterOperationLocked();
+            return awaitBoolean(write, "file terminal write");
+        } finally {
+            synchronized (monitor) {
+                if (operation == Operation.FILE_TRANSFER) {
+                    operation = Operation.NONE;
+                    host.setFastReceive(false);
+                    resumeAfterOperationLocked();
+                }
             }
         }
-        return sent;
     }
 
     public boolean beginOtaAuthorization() {

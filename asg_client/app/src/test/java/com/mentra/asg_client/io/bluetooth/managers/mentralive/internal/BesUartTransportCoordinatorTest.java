@@ -177,6 +177,29 @@ public class BesUartTransportCoordinatorTest {
     }
 
     @Test
+    public void fileTerminalWriteFailure_stillReleasesLease() {
+        coordinator.onSerialReady(host.session);
+        assertThat(systemVersion("17.26.7.4"))
+                .isEqualTo(BesUartTransportCoordinator.SystemVersionResult.READY);
+        assertThat(coordinator.beginFileTransfer()).isTrue();
+
+        assertThat(
+                        coordinator.endFileTransferWithFinalWrite(
+                                () -> {
+                                    throw new IllegalStateException("write failed");
+                                }))
+                .isFalse();
+
+        assertThat(coordinator.getOperation())
+                .isEqualTo(BesUartTransportCoordinator.Operation.NONE);
+        assertThat(host.fastReceive).isFalse();
+        assertThat(coordinator.beginFileTransfer()).isTrue();
+        assertThat(coordinator.endFileTransferWithFinalWrite(null)).isFalse();
+        assertThat(coordinator.getOperation())
+                .isEqualTo(BesUartTransportCoordinator.Operation.NONE);
+    }
+
+    @Test
     public void otaAuthorization_promotesToExclusiveRawRouting() {
         coordinator.onSerialReady(host.session);
         assertThat(systemVersion("17.26.7.4"))
