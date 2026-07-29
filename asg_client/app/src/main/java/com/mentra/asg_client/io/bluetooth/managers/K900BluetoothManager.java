@@ -1893,7 +1893,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             return false;
         }
 
-        return startFileTransferSession(filePath, file.getName(), fileData);
+        return startFileTransferSession(filePath, file.getName(), fileData, null);
     }
 
     /**
@@ -1907,6 +1907,11 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
      */
     @Override
     protected boolean sendFileInternal(byte[] data, String fileName) {
+        return sendFileInternal(data, fileName, null);
+    }
+
+    @Override
+    protected boolean sendFileInternal(byte[] data, String fileName, byte[] prelude) {
         if (!linkState.isSerialOpen()) {
             Log.e(TAG, "Cannot send in-memory file - serial port not open");
             BluetoothReporting.reportFileTransferFailure(
@@ -1925,7 +1930,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             return false;
         }
 
-        return startFileTransferSession(null, fileName, data);
+        return startFileTransferSession(null, fileName, data, prelude);
     }
 
     /** Synthetic identifier for Sentry reports on transfers that never touch disk. */
@@ -1954,7 +1959,8 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
      * Create the transfer session and start the packet pump. {@code filePath} is {@code null} for
      * in-memory transfers; it is only used for post-transfer cleanup and failure reporting.
      */
-    private boolean startFileTransferSession(String filePath, String fileName, byte[] fileData) {
+    private boolean startFileTransferSession(
+            String filePath, String fileName, byte[] fileData, byte[] prelude) {
         if (fileName.length() > 16) {
             fileName = fileName.substring(0, 16); // Truncate to 16 chars max
         }
@@ -1964,6 +1970,14 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         if (transportLease == null) {
             Log.w(TAG, "Cannot start file transfer while BES UART is unavailable or busy");
             return false;
+        }
+        if (prelude != null && prelude.length > 0) {
+            publishOutboundMessage(prelude, true);
+            if (!transportCoordinator.runFileWrite(
+                    transportLease, () -> sendMessageInternalLocked(prelude))) {
+                transportCoordinator.endFileTransfer(transportLease);
+                return false;
+            }
         }
         try {
             currentFileTransfer =

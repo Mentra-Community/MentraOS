@@ -591,6 +591,19 @@ public abstract class BaseBluetoothManager implements ICompanionTransport {
         return startFileTransfer(() -> sendFileInternal(data, fileName));
     }
 
+    @Override
+    public final boolean sendFile(byte[] data, String fileName, byte[] prelude) {
+        if (data == null
+                || data.length == 0
+                || fileName == null
+                || fileName.isEmpty()
+                || prelude == null
+                || prelude.length == 0) {
+            return false;
+        }
+        return startFileTransfer(() -> sendFileInternal(data, fileName, prelude));
+    }
+
     private boolean startFileTransfer(Callable<Boolean> startAction) {
         if (Boolean.TRUE.equals(outboundBleWorkerThread.get())) {
             try {
@@ -662,6 +675,11 @@ public abstract class BaseBluetoothManager implements ICompanionTransport {
 
     protected boolean sendFileInternal(byte[] data, String fileName) {
         Log.w(TAG, "sendFile(byte[]) not implemented in " + getClass().getSimpleName());
+        return false;
+    }
+
+    protected boolean sendFileInternal(byte[] data, String fileName, byte[] prelude) {
+        Log.w(TAG, "sendFile(byte[], prelude) not implemented in " + getClass().getSimpleName());
         return false;
     }
 }

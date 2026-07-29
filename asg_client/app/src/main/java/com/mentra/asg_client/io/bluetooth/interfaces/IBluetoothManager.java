@@ -83,6 +83,14 @@ public interface IBluetoothManager {
     }
 
     /**
+     * Send an in-memory payload after an owner-ordered control message. Transports without an
+     * exclusive file lane may reject this operation.
+     */
+    default boolean sendFile(byte[] data, String fileName, byte[] prelude) {
+        return false;
+    }
+
+    /**
      * @return true if a transfer is active, false otherwise
      */
     boolean isFileTransferInProgress();

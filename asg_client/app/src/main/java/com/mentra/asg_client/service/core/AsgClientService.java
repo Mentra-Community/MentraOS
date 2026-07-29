@@ -1415,6 +1415,18 @@ public class AsgClientService extends Service implements NetworkStateListener, T
             }
 
             @Override
+            public boolean sendFileViaBluetooth(byte[] data, String fileName, byte[] prelude) {
+                if (serviceInitializer.getServiceManager().getBluetoothManager() == null) {
+                    Log.w(TAG, "Bluetooth manager is null - cannot send file with prelude");
+                    return false;
+                }
+                return serviceInitializer
+                        .getServiceManager()
+                        .getBluetoothManager()
+                        .sendFile(data, fileName, prelude);
+            }
+
+            @Override
             public boolean isBleTransferInProgress() {
                 Log.d(TAG, "📊 isBleTransferInProgress() called");
 

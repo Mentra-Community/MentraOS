@@ -6181,14 +6181,17 @@ public class MediaCaptureService {
 
                 // Then try to start the file transfer
                 logBlePhotoStep(requestId, "ble_file_transfer_start", "starting UART packet pump");
-                transferStarted = mServiceCallback.sendFileViaBluetooth(compressedData, bleImgId);
+                byte[] transferringStatus = buildPhotoStatusPayload(requestId, "transferring");
+                transferStarted =
+                        transferringStatus != null
+                                && mServiceCallback.sendFileViaBluetooth(
+                                        compressedData, bleImgId, transferringStatus);
 
                 if (transferStarted) {
                     logBlePhotoStep(
                             requestId,
                             "ble_transfer_started",
                             "streaming file to phone; waiting for transfer_complete");
-                    sendPhotoStatus(requestId, "transferring");
                 } else {
                     // This shouldn't happen since we checked above, but handle it anyway
                     Log.e(TAG, "Failed to start BLE file transfer despite availability check");
@@ -6463,6 +6466,23 @@ public class MediaCaptureService {
 
     private void sendPhotoStatus(String requestId, String status) {
         sendPhotoStatus(requestId, status, null, null, null);
+    }
+
+    private byte[] buildPhotoStatusPayload(String requestId, String status) {
+        if (requestId == null || requestId.isEmpty()) {
+            return null;
+        }
+        try {
+            JSONObject json = new JSONObject();
+            json.put("type", "photo_status");
+            json.put("requestId", requestId);
+            json.put("status", status);
+            json.put("timestamp", System.currentTimeMillis());
+            return json.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        } catch (JSONException e) {
+            Log.e(TAG, "Error creating photo status", e);
+            return null;
+        }
     }
 
     private void sendPhotoStatus(
