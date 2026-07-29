@@ -505,6 +505,8 @@ public final class BesUartTransportCoordinator {
             operation = Operation.NONE;
             phaseGeneration++;
             serialGeneration = INVALID_READER_GENERATION;
+            host.setOtaReceiveRoute(false);
+            host.setFastReceive(false);
         }
         ioLane.shutdownNow();
         executor.shutdownNow();

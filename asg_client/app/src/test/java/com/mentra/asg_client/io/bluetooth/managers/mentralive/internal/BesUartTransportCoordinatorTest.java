@@ -335,6 +335,25 @@ public class BesUartTransportCoordinatorTest {
     }
 
     @Test
+    public void serialClose_beforeFileCleanup_doesNotResumeDeferredBaudSwitch() {
+        coordinator.onSerialReady(host.readerGeneration);
+        assertThat(systemVersion("17.26.7.4"))
+                .isEqualTo(BesUartTransportCoordinator.SystemVersionResult.READY);
+        assertThat(coordinator.beginFileTransfer()).isTrue();
+        assertThat(systemVersion("17.26.7.23"))
+                .isEqualTo(BesUartTransportCoordinator.SystemVersionResult.READY);
+
+        coordinator.onSerialClosed();
+        coordinator.endFileTransfer();
+
+        assertThat(coordinator.getState()).isEqualTo(BesUartTransportCoordinator.State.CLOSED);
+        assertThat(coordinator.getOperation())
+                .isEqualTo(BesUartTransportCoordinator.Operation.NONE);
+        assertThat(host.fastReceive).isFalse();
+        assertThat(countControlCommands("cs_baud")).isZero();
+    }
+
+    @Test
     public void recoveryRetry_usesCappedExponentialBackoff() {
         assertThat(BesUartTransportCoordinator.recoveryRetryDelayMs(0)).isEqualTo(3_000);
         assertThat(BesUartTransportCoordinator.recoveryRetryDelayMs(1)).isEqualTo(6_000);

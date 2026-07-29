@@ -1013,6 +1013,10 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     public void shutdown() {
         Log.d(TAG, "Shutting down K900BluetoothManager");
 
+        // Publish terminal transport state before releasing an operation lease. Otherwise file
+        // cleanup can resume a deferred baud transition while the serial port is going down.
+        transportCoordinator.shutdown();
+
         // Cancel any active file transfer
         if (currentFileTransfer != null && currentFileTransfer.isActive) {
             Log.d(TAG, "Cancelling active file transfer");
@@ -1026,8 +1030,6 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         if (fileTransferExecutor != null) {
             fileTransferExecutor.shutdownNow();
         }
-
-        transportCoordinator.shutdown();
 
         // Stop the SerialPortBridge
         if (comManager != null) {
@@ -1506,15 +1508,17 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         Log.d(TAG, "🔌 =========================================");
         Log.d(TAG, "🔌 Serial path: " + serialPath);
 
-        // serialClosed() also clears the negotiated BES caps (the legacy resetWireProtocolState
-        // caps reset); resetWireProtocolState() covers the phone-facing state and UART endianness.
+        // Close transport state before releasing the file lease so cleanup cannot resume a
+        // deferred baud transition on a port that is already going down.
+        linkState.serialClosed();
+        transportCoordinator.onSerialClosed();
         if (currentFileTransfer != null && currentFileTransfer.isActive) {
             Log.w(TAG, "Serial closed during file transfer; cancelling the active session");
             clearFileTransferSession();
             pendingPackets.clear();
         }
-        linkState.serialClosed();
-        transportCoordinator.onSerialClosed();
+        // serialClosed() also clears the negotiated BES caps (the legacy resetWireProtocolState
+        // caps reset); resetWireProtocolState() covers the phone-facing state and UART endianness.
         resetWireProtocolState();
         Log.d(TAG, "🔌 ✅ Serial port marked as closed");
 
