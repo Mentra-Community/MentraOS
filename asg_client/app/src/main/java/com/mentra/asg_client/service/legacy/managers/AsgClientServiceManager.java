@@ -2,7 +2,9 @@ package com.mentra.asg_client.service.legacy.managers;
 
 import android.content.Context;
 import android.util.Log;
+
 import androidx.annotation.NonNull;
+
 import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.io.bes.BesOtaManager;
 import com.mentra.asg_client.io.bluetooth.core.BluetoothManagerFactory;
@@ -29,6 +31,7 @@ import com.mentra.asg_client.service.core.processors.CommandProcessor;
 import com.mentra.asg_client.service.system.interfaces.IStateManager;
 import com.mentra.asg_client.service.utils.DeviceProfile;
 import com.mentra.asg_client.settings.AsgSettings;
+
 import java.util.Objects;
 import java.util.Set;
 
@@ -276,7 +279,8 @@ public class AsgClientServiceManager {
                             + "; MFNR enabled: "
                             + asgSettings.isMfnrEnabled());
 
-            // Seed factory defaults only on first install — never clobber phone button_photo_setting.
+            // Seed factory defaults only on first install — never clobber phone
+            // button_photo_setting.
             if (!asgSettings.hasZslPreference() && !asgSettings.hasMfnrPreference()) {
                 asgSettings.setZslEnabled(AsgConstants.ENABLE_ZSL && AsgConstants.DEFAULT_ZSL);
                 asgSettings.setMfnrEnabled(AsgConstants.ENABLE_MFNR && AsgConstants.DEFAULT_MFNR);
@@ -294,9 +298,15 @@ public class AsgClientServiceManager {
         try {
             if (networkManager == null) {
                 networkManager = NetworkManagerFactory.getNetworkManager(context);
-                Log.d(TAG, "📦 Network manager created from factory: " + networkManager.getClass().getSimpleName());
+                Log.d(
+                        TAG,
+                        "📦 Network manager created from factory: "
+                                + networkManager.getClass().getSimpleName());
             } else {
-                Log.d(TAG, "📦 Network manager pre-injected: " + networkManager.getClass().getSimpleName());
+                Log.d(
+                        TAG,
+                        "📦 Network manager pre-injected: "
+                                + networkManager.getClass().getSimpleName());
             }
 
             networkManager.addWifiListener(service);
@@ -316,9 +326,15 @@ public class AsgClientServiceManager {
         try {
             if (bluetoothManager == null) {
                 bluetoothManager = BluetoothManagerFactory.getBluetoothManager(context);
-                Log.d(TAG, "📦 Bluetooth manager created from factory: " + bluetoothManager.getClass().getSimpleName());
+                Log.d(
+                        TAG,
+                        "📦 Bluetooth manager created from factory: "
+                                + bluetoothManager.getClass().getSimpleName());
             } else {
-                Log.d(TAG, "📦 Bluetooth manager pre-injected: " + bluetoothManager.getClass().getSimpleName());
+                Log.d(
+                        TAG,
+                        "📦 Bluetooth manager pre-injected: "
+                                + bluetoothManager.getClass().getSimpleName());
             }
 
             isK900Device = DeviceProfile.detect(context).isK900();
@@ -338,7 +354,11 @@ public class AsgClientServiceManager {
                     SerialPortBridge comManager = k900Manager.getSerialPortBridge();
                     if (comManager != null) {
                         besOtaManager =
-                                new BesOtaManager(comManager, context, besOtaK900CommandHandler);
+                                new BesOtaManager(
+                                        comManager,
+                                        k900Manager.getTransportCoordinator(),
+                                        context,
+                                        besOtaK900CommandHandler);
                         besOtaRegistry.setInstance(besOtaManager);
                         comManager.registerOtaListener(besOtaManager);
                         Log.i(TAG, "✅ BES OTA Manager initialized and registered");
@@ -386,18 +406,22 @@ public class AsgClientServiceManager {
                                     try {
                                         Log.d(
                                                 TAG,
-                                                "🔧 Attempting to get CommandProcessor for BES system version request");
+                                                "🔧 Attempting to get CommandProcessor for BES"
+                                                        + " system version request");
                                         CommandProcessor commandProcessor =
                                                 service.getCommandProcessor();
                                         if (commandProcessor != null) {
                                             Log.d(
                                                     TAG,
-                                                    "🔧 Requesting BES system version via CommandProcessor");
+                                                    "🔧 Requesting BES system version via"
+                                                            + " CommandProcessor");
                                             commandProcessor.requestSystemVersion();
                                         } else {
                                             Log.w(
                                                     TAG,
-                                                    "⚠️ CommandProcessor not available yet - BES version will be requested when available");
+                                                    "⚠️ CommandProcessor not available yet - BES"
+                                                            + " version will be requested when"
+                                                            + " available");
                                         }
                                     } catch (Exception e) {
                                         Log.w(TAG, "⚠️ Could not request BES system version", e);

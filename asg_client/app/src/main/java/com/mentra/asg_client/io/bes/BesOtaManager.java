@@ -2,22 +2,26 @@ package com.mentra.asg_client.io.bes;
 
 import android.content.Context;
 import android.util.Log;
+
+import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.io.bes.events.BesOtaProgressEvent;
-import com.mentra.asg_client.logging.BleTraceLogger;
 import com.mentra.asg_client.io.bes.protocol.*;
 import com.mentra.asg_client.io.bes.util.BesOtaUtil;
+import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.BesUartTransportCoordinator;
 import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.SerialPortBridge;
 import com.mentra.asg_client.io.bluetooth.utils.ByteUtil;
 import com.mentra.asg_client.io.ota.interfaces.IBesOtaController;
+import com.mentra.asg_client.logging.BleTraceLogger;
 import com.mentra.asg_client.service.core.handlers.K900CommandHandler;
-import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.utils.WakeLockManager;
+
+import org.greenrobot.eventbus.EventBus;
+import org.json.JSONObject;
+
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
-import org.greenrobot.eventbus.EventBus;
-import org.json.JSONObject;
 
 /**
  * Manages BES2700 firmware OTA updates Handles file loading, packet transmission, state tracking,
@@ -76,20 +80,26 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
     private int confirmTimes = 0;
     private int confirmSentPos = 0;
     private boolean bWait4Confirm = false;
-    private boolean isWaitingForAuthorization = false;
+    private volatile boolean isWaitingForAuthorization = false;
 
     private final SerialPortBridge comManager;
+    private final BesUartTransportCoordinator transportCoordinator;
     private BesOtaCommandListener mListener;
     private final K900CommandHandler k900CommandHandler;
 
     /**
      * @param comManager UART bridge for BES2700
+     * @param transportCoordinator owner of UART state, writes, and operation routing
      * @param context Application context for wakelock
      * @param k900CommandHandler Handler for BES authorization and phone messaging
      */
     public BesOtaManager(
-            SerialPortBridge comManager, Context context, K900CommandHandler k900CommandHandler) {
+            SerialPortBridge comManager,
+            BesUartTransportCoordinator transportCoordinator,
+            Context context,
+            K900CommandHandler k900CommandHandler) {
         this.comManager = comManager;
+        this.transportCoordinator = transportCoordinator;
         this.mContext = context.getApplicationContext();
         this.k900CommandHandler = k900CommandHandler;
     }
@@ -164,8 +174,8 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
      * @return true if request sent successfully
      */
     public boolean queryFirmwareVersion() {
-        if (comManager == null) {
-            Log.e(TAG, "Cannot query firmware version - SerialPortBridge is null");
+        if (transportCoordinator == null) {
+            Log.e(TAG, "Cannot query firmware version - UART coordinator is null");
             return false;
         }
 
@@ -174,13 +184,12 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
             return false;
         }
 
-        // Send GetFirmwareVersion command directly via SerialPortBridge
         BesCmd_GetFirmwareVersion cmd = new BesCmd_GetFirmwareVersion();
         byte[] data = cmd.getSendData();
 
         if (data != null) {
             Log.d(TAG, "Querying current firmware version...");
-            return comManager.send(data);
+            return transportCoordinator.writeRawControl(data);
         }
         return false;
     }
@@ -283,13 +292,23 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
             return false;
         }
 
+        if (transportCoordinator == null || !transportCoordinator.beginOtaAuthorization()) {
+            Log.e(TAG, "BES UART is not ready for OTA authorization");
+            EventBus.getDefault()
+                    .post(BesOtaProgressEvent.createFailed("BES UART is busy or not ready"));
+            return false;
+        }
+
         // The transfer needs the vendor "screen on" state, not just CPU: the display-sleep
         // hook wedges the UART transfer state machine mid-flight even with a CPU lock held
         // (2026-07-08 incident, frozen between segments at 80%). Hold BOTH leases; the
         // initial window covers authorization + handshake, then confirmed segments re-arm
         // them (see crc32ConfirmSuccess).
-        WakeLockManager.acquireFull(mContext, WakeLockManager.WakeOwner.BES_OTA,
-                WAKELOCK_TIMEOUT_MS, WAKELOCK_TIMEOUT_MS);
+        WakeLockManager.acquireFull(
+                mContext,
+                WakeLockManager.WakeOwner.BES_OTA,
+                WAKELOCK_TIMEOUT_MS,
+                WAKELOCK_TIMEOUT_MS);
         lastLeaseArmMs = android.os.SystemClock.elapsedRealtime();
         Log.i(TAG, "BES OTA cpu+screen leases acquired for " + WAKELOCK_TIMEOUT_MS + "ms");
 
@@ -309,12 +328,49 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
         Log.i(TAG, "Requesting BES OTA authorization from BES chip");
 
         if (k900CommandHandler != null) {
-            k900CommandHandler.sendBesOtaAuthorizationRequest();
-            // Start authorization timeout — if BES chip never responds, fail gracefully
+            boolean queued =
+                    k900CommandHandler.sendBesOtaAuthorizationRequest(
+                            this::onAuthorizationWriteComplete);
+            if (queued) {
+                return true;
+            }
+            Log.e(TAG, "Failed to queue BES OTA authorization request");
+            EventBus.getDefault()
+                    .post(
+                            BesOtaProgressEvent.createFailed(
+                                    "Failed to send BES OTA authorization request"));
+            cleanup();
+            return false;
+        } else {
+            Log.e(TAG, "❌ K900CommandHandler not available - cannot send authorization request");
+            EventBus.getDefault()
+                    .post(BesOtaProgressEvent.createFailed("K900CommandHandler not available"));
+            cleanup();
+            return false;
+        }
+    }
+
+    private void onAuthorizationWriteComplete(boolean success) {
+        synchronized (mTransferGate) {
+            if (!isWaitingForAuthorization) {
+                return;
+            }
+            if (!success) {
+                EventBus.getDefault()
+                        .post(
+                                BesOtaProgressEvent.createFailed(
+                                        "Failed to write BES OTA authorization request"));
+                cleanupLocked();
+                return;
+            }
+
             authTimeoutHandler = new android.os.Handler(android.os.Looper.getMainLooper());
             authTimeoutRunnable =
                     () -> {
-                        if (isWaitingForAuthorization) {
+                        synchronized (mTransferGate) {
+                            if (!isWaitingForAuthorization) {
+                                return;
+                            }
                             Log.e(
                                     TAG,
                                     "BES OTA authorization timeout after "
@@ -323,18 +379,12 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
                             EventBus.getDefault()
                                     .post(
                                             BesOtaProgressEvent.createFailed(
-                                                    "BES chip did not respond to authorization request"));
-                            cleanup();
+                                                    "BES chip did not respond to authorization"
+                                                            + " request"));
+                            cleanupLocked();
                         }
                     };
             authTimeoutHandler.postDelayed(authTimeoutRunnable, BES_AUTH_TIMEOUT_MS);
-            return true;
-        } else {
-            Log.e(TAG, "❌ K900CommandHandler not available - cannot send authorization request");
-            EventBus.getDefault()
-                    .post(BesOtaProgressEvent.createFailed("K900CommandHandler not available"));
-            cleanup();
-            return false;
         }
     }
 
@@ -388,9 +438,8 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
         }
         Log.i(TAG, "BES OTA wakelock released");
         isWaitingForAuthorization = false;
-        if (comManager != null) {
-            comManager.setOtaUpdating(false);
-            comManager.setFastMode(false);
+        if (transportCoordinator != null) {
+            transportCoordinator.endOta();
         }
         bInit = false;
         fileData = null;
@@ -404,56 +453,63 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
      */
     @Override
     public void onAuthorizationGranted() {
-        if (!isWaitingForAuthorization) {
-            Log.w(TAG, "Received authorization but not waiting for it");
-            return;
-        }
+        synchronized (mTransferGate) {
+            if (!isWaitingForAuthorization) {
+                Log.w(TAG, "Received authorization but not waiting for it");
+                return;
+            }
 
-        Log.i(TAG, "BES OTA authorization GRANTED - starting protocol");
-        isWaitingForAuthorization = false;
-        rearmResponseWatchdog();
+            if (!transportCoordinator.promoteOtaAuthorizationToTransfer()) {
+                Log.e(TAG, "Could not promote UART to BES OTA transfer mode");
+                EventBus.getDefault()
+                        .post(BesOtaProgressEvent.createFailed("BES UART is no longer ready"));
+                cleanupLocked();
+                return;
+            }
 
-        // Cancel authorization timeout
-        if (authTimeoutHandler != null && authTimeoutRunnable != null) {
-            authTimeoutHandler.removeCallbacks(authTimeoutRunnable);
-            authTimeoutHandler = null;
-            authTimeoutRunnable = null;
-        }
+            Log.i(TAG, "BES OTA authorization GRANTED - starting protocol");
+            isWaitingForAuthorization = false;
+            rearmResponseWatchdog();
 
-        // NOW enable OTA mode (routes UART to OTA listener)
-        if (comManager != null) {
-            comManager.setOtaUpdating(true);
-            comManager.setFastMode(true);
-        }
+            // Cancel authorization timeout
+            if (authTimeoutHandler != null && authTimeoutRunnable != null) {
+                authTimeoutHandler.removeCallbacks(authTimeoutRunnable);
+                authTimeoutHandler = null;
+                authTimeoutRunnable = null;
+            }
 
-        // NOW start the actual OTA protocol
-        byte[] data = SCmd_GetProtocolVersion();
-        Log.d(
-                TAG,
-                "Sending GetProtocolVersion command, data="
-                        + (data != null ? ByteUtil.outputHexString(data, 0, data.length) : "null"));
-        if (send(data)) {
-            Log.i(TAG, "BES OTA protocol started successfully");
-        } else {
-            Log.e(TAG, "Failed to send first protocol command");
-            EventBus.getDefault()
-                    .post(BesOtaProgressEvent.createFailed("Failed to start protocol"));
-            cleanup();
+            byte[] data = SCmd_GetProtocolVersion();
+            Log.d(
+                    TAG,
+                    "Sending GetProtocolVersion command, data="
+                            + (data != null
+                                    ? ByteUtil.outputHexString(data, 0, data.length)
+                                    : "null"));
+            if (send(data)) {
+                Log.i(TAG, "BES OTA protocol started successfully");
+            } else {
+                Log.e(TAG, "Failed to send first protocol command");
+                EventBus.getDefault()
+                        .post(BesOtaProgressEvent.createFailed("Failed to start protocol"));
+                cleanupLocked();
+            }
         }
     }
 
     /** Called when BES chip denies OTA authorization */
     @Override
     public void onAuthorizationDenied() {
-        Log.e(TAG, "BES OTA authorization DENIED by BES chip");
-        if (authTimeoutHandler != null && authTimeoutRunnable != null) {
-            authTimeoutHandler.removeCallbacks(authTimeoutRunnable);
-            authTimeoutHandler = null;
-            authTimeoutRunnable = null;
+        synchronized (mTransferGate) {
+            Log.e(TAG, "BES OTA authorization DENIED by BES chip");
+            if (authTimeoutHandler != null && authTimeoutRunnable != null) {
+                authTimeoutHandler.removeCallbacks(authTimeoutRunnable);
+                authTimeoutHandler = null;
+                authTimeoutRunnable = null;
+            }
+            EventBus.getDefault()
+                    .post(BesOtaProgressEvent.createFailed("BES chip denied OTA authorization"));
+            cleanupLocked();
         }
-        EventBus.getDefault()
-                .post(BesOtaProgressEvent.createFailed("BES chip denied OTA authorization"));
-        cleanup();
     }
 
     // ========== Protocol Commands ==========
@@ -562,7 +618,9 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
             if (isBesOtaInProgress
                     && nowMs - lastLeaseArmMs > AsgConstants.BES_OTA_SEGMENT_LEASE_WINDOW_MS / 2) {
                 lastLeaseArmMs = nowMs;
-                WakeLockManager.acquireFull(mContext, WakeLockManager.WakeOwner.BES_OTA,
+                WakeLockManager.acquireFull(
+                        mContext,
+                        WakeLockManager.WakeOwner.BES_OTA,
                         AsgConstants.BES_OTA_SEGMENT_LEASE_WINDOW_MS,
                         AsgConstants.BES_OTA_SEGMENT_LEASE_WINDOW_MS);
             }
@@ -823,32 +881,47 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
         if (responseWatchdogRunnable != null) {
             responseWatchdogHandler.removeCallbacks(responseWatchdogRunnable);
         }
-        Runnable watchdog = () -> {
-          synchronized (mTransferGate) {
-            if (!isBesOtaInProgress) {
-                return;
-            }
-            if (android.os.SystemClock.elapsedRealtime() < responseWatchdogDeadlineMs) {
-                return; // a response re-armed the window after this callback was dispatched
-            }
-            Log.e(TAG, "No BES OTA response for " + AsgConstants.BES_OTA_RESPONSE_TIMEOUT_MS
-                    + "ms - aborting transfer (sentPos=" + sentPos + "/" + fileLen
-                    + ", confirmedSegments=" + confirmTimes + ")");
-            try {
-                JSONObject extra = new JSONObject();
-                extra.put("sentPos", sentPos);
-                extra.put("fileLen", fileLen);
-                extra.put("confirmedSegments", confirmTimes);
-                BleTraceLogger.logLifecycle(mContext, "BesOtaManager", "bes_ota_response_timeout", extra);
-            } catch (Exception ignored) {
-                // Trace logging must never affect the abort itself.
-            }
-            EventBus.getDefault().post(BesOtaProgressEvent.createFailed(
-                    "No response from BES for "
-                            + (AsgConstants.BES_OTA_RESPONSE_TIMEOUT_MS / 1000) + "s"));
-            cleanup();
-          }
-        };
+        Runnable watchdog =
+                () -> {
+                    synchronized (mTransferGate) {
+                        if (!isBesOtaInProgress) {
+                            return;
+                        }
+                        if (android.os.SystemClock.elapsedRealtime() < responseWatchdogDeadlineMs) {
+                            return; // a response re-armed the window after this callback was
+                            // dispatched
+                        }
+                        Log.e(
+                                TAG,
+                                "No BES OTA response for "
+                                        + AsgConstants.BES_OTA_RESPONSE_TIMEOUT_MS
+                                        + "ms - aborting transfer (sentPos="
+                                        + sentPos
+                                        + "/"
+                                        + fileLen
+                                        + ", confirmedSegments="
+                                        + confirmTimes
+                                        + ")");
+                        try {
+                            JSONObject extra = new JSONObject();
+                            extra.put("sentPos", sentPos);
+                            extra.put("fileLen", fileLen);
+                            extra.put("confirmedSegments", confirmTimes);
+                            BleTraceLogger.logLifecycle(
+                                    mContext, "BesOtaManager", "bes_ota_response_timeout", extra);
+                        } catch (Exception ignored) {
+                            // Trace logging must never affect the abort itself.
+                        }
+                        EventBus.getDefault()
+                                .post(
+                                        BesOtaProgressEvent.createFailed(
+                                                "No response from BES for "
+                                                        + (AsgConstants.BES_OTA_RESPONSE_TIMEOUT_MS
+                                                                / 1000)
+                                                        + "s"));
+                        cleanup();
+                    }
+                };
         // Post the local reference: the field is only bookkeeping for removeCallbacks, so
         // a concurrent teardown nulling it can never turn this into postDelayed(null).
         responseWatchdogRunnable = watchdog;
@@ -856,13 +929,13 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
     }
 
     private void dealOtaRecvCmd(BesOtaMessage msg) {
-      synchronized (mTransferGate) {
-        if (!isBesOtaInProgress && !isWaitingForAuthorization) {
-            return; // the watchdog (or an abort) won the gate first - this response is stale
+        synchronized (mTransferGate) {
+            if (!isBesOtaInProgress && !isWaitingForAuthorization) {
+                return; // the watchdog (or an abort) won the gate first - this response is stale
+            }
+            rearmResponseWatchdog();
+            dealOtaRecvCmdLocked(msg);
         }
-        rearmResponseWatchdog();
-        dealOtaRecvCmdLocked(msg);
-      }
     }
 
     private void dealOtaRecvCmdLocked(BesOtaMessage msg) {
@@ -1102,7 +1175,8 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
                                 + (msg.body != null && msg.body.length > 0 ? msg.body[0] : "null"));
                 Log.e(
                         TAG,
-                        "❌ This means the BES chip computed a different CRC32 than what we sent in SetStartInfo");
+                        "❌ This means the BES chip computed a different CRC32 than what we sent in"
+                                + " SetStartInfo");
                 Log.e(TAG, "❌ Possible causes:");
                 Log.e(TAG, "❌   1. Data corruption during UART transfer");
                 Log.e(TAG, "❌   2. File changed between SetStartInfo and data transfer");
@@ -1164,14 +1238,14 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
     }
 
     private boolean send(byte[] data) {
-        if (comManager == null) {
-            Log.e(TAG, "send() failed - comManager is null");
+        if (transportCoordinator == null) {
+            Log.e(TAG, "send() failed - transportCoordinator is null");
             return false;
         }
         if (data == null) {
             Log.e(TAG, "send() failed - data is null");
             return false;
         }
-        return comManager.sendOta(data);
+        return transportCoordinator.writeOta(data);
     }
 }

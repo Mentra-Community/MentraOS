@@ -4,10 +4,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 
 import android.content.Context;
+
 import androidx.test.core.app.ApplicationProvider;
+
 import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.SerialPortBridge;
 import com.mentra.asg_client.io.ota.interfaces.IBesOtaController;
 import com.mentra.asg_client.service.core.handlers.K900CommandHandler;
+
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -32,7 +35,10 @@ public class BesOtaManagerVersionTest {
         Context context = ApplicationProvider.getApplicationContext();
         controller =
                 new BesOtaManager(
-                        mock(SerialPortBridge.class), context, mock(K900CommandHandler.class));
+                        mock(SerialPortBridge.class),
+                        null,
+                        context,
+                        mock(K900CommandHandler.class));
         previousInProgressFlag = BesOtaManager.isBesOtaInProgress;
     }
 

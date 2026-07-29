@@ -2,9 +2,12 @@ package com.mentra.asg_client.io.bluetooth.managers.mentralive.internal;
 
 import android.content.Context;
 import android.util.Log;
+
 import com.lhs.serialport.api.SerialManager;
+import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.io.bes.BesOtaUartListener;
 import com.mentra.asg_client.io.bluetooth.interfaces.SerialListener;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InterruptedIOException;
@@ -18,7 +21,7 @@ public class SerialPortBridge {
     private static final String COM_PATH = "/dev/ttyS1";
 
     /** Default UART baud rate. The BES2700 always boots (and reverts) to this rate. */
-    public static final int DEFAULT_BAUDRATE = 460800;
+    public static final int DEFAULT_BAUDRATE = AsgConstants.UART_RENDEZVOUS_BAUD;
 
     private static final int COM_BAUDRATE = DEFAULT_BAUDRATE;
 
@@ -28,19 +31,24 @@ public class SerialPortBridge {
     private SerialListener mListener;
     private BesOtaUartListener mOtaListener;
     private RecvThread mRecvThread = null;
-    private byte[] mReadBuf = new byte[1024];
-    private boolean mbStart = false;
+    private volatile boolean mbStart = false;
     // volatile + snapshot-before-use: reopen() nulls these on the baud-switch
     // thread while send/recv threads are mid-call. A stale stream throws a
     // handled IOException; a raw field read after the null-check would NPE.
     protected volatile OutputStream mOS;
     protected volatile InputStream mIS;
     private Context mContext = null;
-    private boolean mbRequestFast = false;
-    private volatile boolean mbOtaUpdating = false;
+    private volatile boolean mbRequestFast = false;
+    private volatile ReceiveRoute receiveRoute = ReceiveRoute.NORMAL;
 
     /** Baud rate the port is currently open at (DEFAULT_BAUDRATE until a reopen succeeds). */
     private volatile int mCurrentBaud = DEFAULT_BAUDRATE;
+
+    /** Receive destination selected by the transport coordinator. */
+    public enum ReceiveRoute {
+        NORMAL,
+        OTA
+    }
 
     /**
      * Create a new SerialPortBridge
@@ -74,8 +82,11 @@ public class SerialPortBridge {
      *
      * @return true if started successfully, false otherwise
      */
-    public boolean start() {
+    public synchronized boolean start() {
         if (mbStart) return true;
+        if (mRecvThread != null) {
+            closeCurrentPort();
+        }
 
         boolean bSucc = SerialManager.getInstance().openSerial(COM_PATH, COM_BAUDRATE);
         Log.d(TAG, "openSerial dev=" + COM_PATH + ", bSucc=" + bSucc);
@@ -88,31 +99,19 @@ public class SerialPortBridge {
             mIS = SerialManager.getInstance().getInputStream(COM_PATH);
             mOS = SerialManager.getInstance().getOutputStream(COM_PATH);
 
-            if (mRecvThread != null) {
-                mRecvThread.setStop();
-                mRecvThread = null;
-            }
-
-            mRecvThread = new RecvThread();
-            mRecvThread.start();
-
+            mRecvThread = new RecvThread(mIS);
             if (mListener != null) mListener.onSerialReady(COM_PATH);
+            mRecvThread.start();
         }
 
         return bSucc;
     }
 
     /** Stop the serial communication */
-    public void stop() {
-        if (mbStart) {
+    public synchronized void stop() {
+        if (mbStart || mRecvThread != null) {
             Log.d(TAG, "SerialPortBridge stopping");
-            if (mRecvThread != null) {
-                mRecvThread.setStop();
-                mRecvThread.interrupt();
-                mRecvThread = null;
-            }
-            SerialManager.getInstance().closeSerial(COM_PATH);
-            mbStart = false;
+            closeCurrentPort();
 
             if (mListener != null) mListener.onSerialClose(COM_PATH);
 
@@ -130,18 +129,13 @@ public class SerialPortBridge {
     }
 
     /**
-     * Whether the serial port is currently open. Normally tracked through the serial callbacks,
-     * but {@link #reopen(int)} can fail both the requested baud AND the default fallback, leaving
-     * the port closed WITHOUT firing any callback — callers that own link state must consult this
-     * after a reopen instead of assuming the port survived.
+     * Whether the serial port is currently open. Normally tracked through the serial callbacks, but
+     * {@link #reopen(int)} can fail both the requested baud AND the default fallback, leaving the
+     * port closed WITHOUT firing any callback — callers that own link state must consult this after
+     * a reopen instead of assuming the port survived.
      */
     public boolean isOpen() {
         return mbStart;
-    }
-
-    /** Whether BES OTA currently owns UART receive routing. */
-    public boolean isOtaUpdating() {
-        return mbOtaUpdating;
     }
 
     /** Notify the normal UART owner that BES accepted an OTA image and is rebooting. */
@@ -175,41 +169,14 @@ public class SerialPortBridge {
 
         Log.i(BAUD_TAG, "Reopening " + COM_PATH + " at " + baud + " (was " + mCurrentBaud + ")");
 
-        // Stop the receive thread first so the old and new threads never read the same stream.
-        if (mRecvThread != null) {
-            mRecvThread.setStop();
-            mRecvThread.interrupt();
-            if (Thread.currentThread() != mRecvThread) {
-                try {
-                    mRecvThread.join(1000);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                }
-                if (mRecvThread.isAlive()) {
-                    Log.w(BAUD_TAG, "Old RecvThread did not exit within 1s; continuing reopen");
-                }
-            }
-            mRecvThread = null;
-        }
-
-        mbStart = false;
-        mIS = null;
-        mOS = null;
-
-        try {
-            SerialManager.getInstance().closeSerial(COM_PATH);
-        } catch (Exception e) {
-            Log.e(BAUD_TAG, "Error closing serial port before reopen", e);
-        }
+        closeCurrentPort();
 
         boolean bSucc = openAtBaud(baud);
         boolean atRequestedBaud = bSucc;
 
         if (!bSucc && baud != DEFAULT_BAUDRATE) {
             // Never leave the port closed; fall back to the default rate the BES reverts to.
-            Log.e(
-                    BAUD_TAG,
-                    "Reopen at " + baud + " FAILED - falling back to " + DEFAULT_BAUDRATE);
+            Log.e(BAUD_TAG, "Reopen at " + baud + " FAILED - falling back to " + DEFAULT_BAUDRATE);
             bSucc = openAtBaud(DEFAULT_BAUDRATE);
             baud = DEFAULT_BAUDRATE;
         }
@@ -224,11 +191,36 @@ public class SerialPortBridge {
         mOS = SerialManager.getInstance().getOutputStream(COM_PATH);
         mbStart = true;
 
-        mRecvThread = new RecvThread();
+        mRecvThread = new RecvThread(mIS);
         mRecvThread.start();
 
         Log.i(BAUD_TAG, "Serial port reopened at " + baud + " baud");
         return atRequestedBaud;
+    }
+
+    /** Close the descriptor and retire its reader before another stream is published. */
+    private void closeCurrentPort() {
+        RecvThread oldThread = mRecvThread;
+        if (oldThread != null) {
+            oldThread.setStop();
+        }
+        mbStart = false;
+        mIS = null;
+        mOS = null;
+
+        try {
+            SerialManager.getInstance().closeSerial(COM_PATH);
+        } catch (Exception e) {
+            Log.e(BAUD_TAG, "Error closing serial port", e);
+        }
+
+        // The old reader owns its stream and buffer. It may finish an already-entered listener
+        // callback, but the transport generation rejects that callback after a reopen; stop also
+        // prevents a completed native read from being delivered or another read from starting.
+        if (oldThread != null) {
+            oldThread.interrupt();
+        }
+        mRecvThread = null;
     }
 
     /** Open COM_PATH at the given baud, catching any exception. Helper for reopen(). */
@@ -244,13 +236,13 @@ public class SerialPortBridge {
     }
 
     /**
-     * Write all bytes to the serial port, draining EAGAIN. liblhsserial opens /dev/ttyS1
-     * O_NONBLOCK (verified by disassembly: open flags 0x902), so large bursts overrun the
-     * kernel's ~4KB tty TX buffer and FileOutputStream.write throws EAGAIN after an UNKNOWN
-     * number of bytes already left the process - corrupting the stream on retry. Os.write
-     * gives exact-byte accounting; on EAGAIN we wait for the line to drain (~4KB at 1.152M
-     * is ~36ms) and continue from the precise offset. This is what restores the "write
-     * blocks at line rate" pacing the push-mode file pump is designed around.
+     * Write all bytes to the serial port, draining EAGAIN. liblhsserial opens /dev/ttyS1 O_NONBLOCK
+     * (verified by disassembly: open flags 0x902), so large bursts overrun the kernel's ~4KB tty TX
+     * buffer and FileOutputStream.write throws EAGAIN after an UNKNOWN number of bytes already left
+     * the process - corrupting the stream on retry. Os.write gives exact-byte accounting; on EAGAIN
+     * we wait for the line to drain (~4KB at 1.152M is ~36ms) and continue from the precise offset.
+     * This is what restores the "write blocks at line rate" pacing the push-mode file pump is
+     * designed around.
      *
      * @return true if every byte was written
      */
@@ -314,56 +306,18 @@ public class SerialPortBridge {
         return true;
     }
 
-    /**
-     * Send data over the serial port Blocked during BES OTA updates
-     *
-     * @param data The data to send
-     */
-    public boolean send(byte[] data) {
+    /** Write bytes to the currently open serial stream. Policy is owned by the coordinator. */
+    public boolean write(byte[] data) {
         OutputStream os = mOS;
-        if (mbStart && os != null && !mbOtaUpdating) {
-            // Hot path — avoid Log.d per UART write (file TX + status JSON share this).
+        if (mbStart && os != null) {
             return writeAllToSerial(os, data, "data");
-        } else {
-            if (mbOtaUpdating) {
-                Log.d(TAG, "Cannot send data - BES OTA in progress");
-            } else {
-                Log.d(
-                        TAG,
-                        "Cannot send data - not started or output stream is null. mbStart="
-                                + mbStart
-                                + ", mOS="
-                                + mOS);
-            }
         }
-
-        return false;
-    }
-
-    /**
-     * Send file data over the serial port (without logging the data content) Blocked during BES OTA
-     * updates
-     *
-     * @param data The file data to send
-     * @return true if the write succeeded
-     */
-    public boolean sendFile(byte[] data) {
-        OutputStream os = mOS;
-        if (mbStart && os != null && !mbOtaUpdating) {
-            // Don't log file data content, just write it
-            return writeAllToSerial(os, data, "file");
-        } else {
-            if (mbOtaUpdating) {
-                Log.d(TAG, "Cannot send file - BES OTA in progress");
-            } else {
-                Log.d(
-                        TAG,
-                        "Cannot send file - not started or output stream is null. mbStart="
-                                + mbStart
-                                + ", mOS="
-                                + mOS);
-            }
-        }
+        Log.d(
+                TAG,
+                "Cannot write data - not started or output stream is null. mbStart="
+                        + mbStart
+                        + ", mOS="
+                        + mOS);
         return false;
     }
 
@@ -377,45 +331,21 @@ public class SerialPortBridge {
         Log.d(TAG, "Fast mode " + (bFast ? "enabled" : "disabled"));
     }
 
-    /**
-     * Set BES OTA updating state When true, normal UART traffic is blocked and only OTA commands
-     * pass through
-     *
-     * @param bOtaUpdate true to enable OTA mode, false to return to normal mode
-     */
-    public void setOtaUpdating(boolean bOtaUpdate) {
-        mbOtaUpdating = bOtaUpdate;
-        Log.d(TAG, "BES OTA updating: " + mbOtaUpdating);
-    }
-
-    /**
-     * Send OTA command data over UART Only works when mbOtaUpdating is true
-     *
-     * @param data The OTA command data to send
-     * @return true if sent successfully, false otherwise
-     */
-    public boolean sendOta(byte[] data) {
-        OutputStream os = mOS;
-        if (mbStart && os != null && mbOtaUpdating) {
-            return writeAllToSerial(os, data, "OTA data");
-        } else {
-            Log.e(
-                    TAG,
-                    "Cannot send OTA data - mbStart="
-                            + mbStart
-                            + ", mOS="
-                            + mOS
-                            + ", mbOtaUpdating="
-                            + mbOtaUpdating);
-        }
-        return false;
+    /** Select the receive parser. Write authorization remains in the transport coordinator. */
+    public void setReceiveRoute(ReceiveRoute route) {
+        receiveRoute = route == null ? ReceiveRoute.NORMAL : route;
+        Log.d(TAG, "Receive route: " + receiveRoute);
     }
 
     /** Thread for receiving data from the serial port */
     class RecvThread extends Thread {
-        private boolean mbStop = false;
+        private final InputStream input;
+        private final byte[] readBuffer = new byte[1024];
+        private volatile boolean mbStop = false;
 
-        public RecvThread() {}
+        RecvThread(InputStream input) {
+            this.input = input;
+        }
 
         public void setStop() {
             mbStop = true;
@@ -426,24 +356,25 @@ public class SerialPortBridge {
             int readSize;
 
             while (!mbStop) {
-                InputStream is = mIS;
-                if (is != null) {
+                if (input != null) {
                     try {
-                        readSize = is.read(mReadBuf);
-                        if (readSize > 0) {
+                        readSize = input.read(readBuffer);
+                        if (readSize > 0 && !mbStop) {
                             // Route data based on OTA state
-                            if (mbOtaUpdating) {
+                            if (receiveRoute == ReceiveRoute.OTA) {
                                 if (mOtaListener != null) {
-                                    mOtaListener.onOtaRecv(mReadBuf, readSize);
+                                    mOtaListener.onOtaRecv(readBuffer, readSize);
                                 }
                             } else {
                                 if (mListener != null) {
-                                    mListener.onSerialRead(COM_PATH, mReadBuf, readSize);
+                                    mListener.onSerialRead(COM_PATH, readBuffer, readSize);
                                 }
                             }
                         }
                     } catch (IOException e) {
-                        Log.e(TAG, "Error reading from serial port", e);
+                        if (!mbStop) {
+                            Log.e(TAG, "Error reading from serial port", e);
+                        }
                     }
                 }
 
@@ -453,7 +384,9 @@ public class SerialPortBridge {
                     // 50ms/5ms
                     Thread.sleep(mbRequestFast ? 5 : 50);
                 } catch (InterruptedException e) {
-                    Log.e(TAG, "RecvThread interrupted", e);
+                    if (!mbStop) {
+                        Log.e(TAG, "RecvThread interrupted", e);
+                    }
                     break;
                 }
             }
