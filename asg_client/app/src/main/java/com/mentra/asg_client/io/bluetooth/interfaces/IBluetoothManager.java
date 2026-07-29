@@ -126,6 +126,15 @@ public interface IBluetoothManager {
     default void onFileTransferConfirmation(String fileName, boolean success) {}
 
     /**
+     * Send the reliable-message acknowledgment for a phone file-transfer confirmation while the
+     * transport still owns its file-transfer session. Transports without an exclusive file lane
+     * return false so the caller can use the ordinary message path.
+     */
+    default boolean sendFileTransferConfirmationAck(long messageId) {
+        return false;
+    }
+
+    /**
      * Called when the MCU sends a file-transfer ACK frame. Default is a no-op for transports
      * without file-transfer sessions.
      *

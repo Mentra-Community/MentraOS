@@ -304,6 +304,16 @@ public class CommandProcessor {
 
         if (commandData != null && commandData.messageId() != -1) {
             Log.d(TAG, "📨 Sending ACK for message ID: " + commandData.messageId());
+            if ("transfer_complete".equals(commandData.type())) {
+                var transport = serviceManager.getBluetoothManager();
+                if (transport != null
+                        && transport.sendFileTransferConfirmationAck(commandData.messageId())) {
+                    Log.d(
+                            TAG,
+                            "✅ File transport sent transfer_complete ACK under its active lease");
+                    return;
+                }
+            }
             communicationManager.sendAckResponse(commandData.messageId());
             Log.d(TAG, "✅ ACK sent successfully for message ID: " + commandData.messageId());
         } else {
