@@ -136,6 +136,21 @@ public class BleJsonCompactTest {
     }
 
     @Test
+    public void startStreamPreservesDisabledSound() throws Exception {
+        JSONObject start =
+                new JSONObject(
+                        "{\"type\":\"start_stream\",\"streamUrl\":\"https://example.test/whip\","
+                                + "\"sound\":false}");
+
+        JSONObject wire = BleJsonCompact.encode(start);
+
+        assertEquals("start_stream", wire.getString("t"));
+        assertTrue(wire.has("sound"));
+        assertFalse(wire.getBoolean("sound"));
+        assertFalse(BleJsonCompact.decode(wire).getBoolean("sound"));
+    }
+
+    @Test
     public void streamTelemetryRoundTripsWithCompactKeys() throws Exception {
         JSONObject status =
                 new JSONObject(

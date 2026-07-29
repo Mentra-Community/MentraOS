@@ -193,7 +193,7 @@ enum BleJsonCompact {
             if skipResolvedConfig, key == "resolvedConfig" { continue }
             let shortKey = longToShort[key] ?? key
             guard let compacted = compactValue(longKey: key, value: value, messageType: messageType),
-                  !shouldOmit(compacted)
+                  !shouldOmit(longKey: key, value: compacted, messageType: messageType)
             else {
                 continue
             }
@@ -239,9 +239,13 @@ enum BleJsonCompact {
         return value
     }
 
-    private static func shouldOmit(_ value: Any) -> Bool {
+    private static func shouldOmit(longKey: String, value: Any, messageType: String) -> Bool {
         if value is NSNull { return true }
-        if let boolValue = value as? Bool, !boolValue { return true }
+        if let boolValue = value as? Bool, !boolValue {
+            // start_stream.sound defaults to true on the glasses, so false is an
+            // override rather than an omittable default.
+            return !(messageType == "start_stream" && longKey == "sound")
+        }
         if let dict = value as? [String: Any], dict.isEmpty { return true }
         if let array = value as? [Any], array.isEmpty { return true }
         return false

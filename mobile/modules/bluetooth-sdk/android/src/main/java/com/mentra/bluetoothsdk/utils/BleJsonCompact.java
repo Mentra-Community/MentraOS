@@ -250,7 +250,7 @@ public final class BleJsonCompact {
             Object value = input.get(key);
             String shortKey = LONG_TO_SHORT.getOrDefault(key, key);
             Object compacted = compactValue(key, value, messageType);
-            if (shouldOmit(compacted)) {
+            if (shouldOmit(key, compacted, messageType)) {
                 continue;
             }
             output.put(shortKey, compacted);
@@ -321,12 +321,14 @@ public final class BleJsonCompact {
         return out;
     }
 
-    private static boolean shouldOmit(Object value) {
+    private static boolean shouldOmit(String longKey, Object value, String messageType) {
         if (value == null || value == JSONObject.NULL) {
             return true;
         }
         if (value instanceof Boolean && !((Boolean) value)) {
-            return true;
+            // start_stream.sound defaults to true on the glasses, so false is an
+            // override rather than an omittable default.
+            return !("start_stream".equals(messageType) && "sound".equals(longKey));
         }
         if (value instanceof JSONObject && ((JSONObject) value).length() == 0) {
             return true;
