@@ -130,6 +130,7 @@ public final class BesUartTransportCoordinator {
     private State state = State.CLOSED;
     private Operation operation = Operation.NONE;
     private OperationLease operationLease;
+    private boolean otaRawRouting = false;
     private long nextOperationLeaseId = 1;
     private SerialSession serialSession;
     private long phaseGeneration = 0;
@@ -176,7 +177,7 @@ public final class BesUartTransportCoordinator {
             if (!isCurrentSerialSessionLocked(session) || state == State.CLOSED) {
                 return InboundRoute.REJECTED;
             }
-            return operation == Operation.OTA_TRANSFER ? InboundRoute.OTA : InboundRoute.NORMAL;
+            return otaRawRouting ? InboundRoute.OTA : InboundRoute.NORMAL;
         }
     }
 
@@ -213,6 +214,7 @@ public final class BesUartTransportCoordinator {
             cancelAllTimersLocked();
             operation = Operation.NONE;
             operationLease = null;
+            otaRawRouting = false;
             host.setFastReceive(false);
             state = State.DISCOVERING;
             versionSession = null;
@@ -250,6 +252,7 @@ public final class BesUartTransportCoordinator {
             state = State.CLOSED;
             operation = Operation.NONE;
             operationLease = null;
+            otaRawRouting = false;
             host.setFastReceive(false);
             Log.i(TAG, "Serial closed");
         }
@@ -386,9 +389,7 @@ public final class BesUartTransportCoordinator {
     public boolean runNormalWrite(WriteAction action) {
         Future<Boolean> write;
         synchronized (monitor) {
-            if (!isReadyLocked()
-                    || (operation != Operation.NONE && operation != Operation.OTA_AUTHORIZATION)
-                    || action == null) {
+            if (!isReadyLocked() || operation != Operation.NONE || action == null) {
                 Log.w(TAG, "Rejecting normal write state=" + state + " operation=" + operation);
                 return false;
             }
@@ -480,12 +481,47 @@ public final class BesUartTransportCoordinator {
         return lease;
     }
 
+    /** Write the single normal-framed request owned by the OTA authorization lease. */
+    public boolean runOtaAuthorizationWrite(OperationLease lease, WriteAction action) {
+        Future<Boolean> write;
+        synchronized (monitor) {
+            if (!isReadyLocked()
+                    || !ownsLeaseLocked(lease, Operation.OTA_AUTHORIZATION)
+                    || action == null) {
+                Log.w(
+                        TAG,
+                        "Rejecting OTA authorization write state="
+                                + state
+                                + " operation="
+                                + operation);
+                return false;
+            }
+            write = ioLane.submit(action::write);
+        }
+        return awaitBoolean(write, "OTA authorization write");
+    }
+
     public boolean promoteOtaAuthorizationToTransfer(OperationLease lease) {
+        Future<?> barrier;
         synchronized (monitor) {
             if (!isReadyLocked() || !ownsLeaseLocked(lease, Operation.OTA_AUTHORIZATION)) {
                 return false;
             }
+            // Close authorization writes before placing the barrier. Inbound bytes remain on the
+            // normal parser until every accepted normal-framed write has physically completed.
             operation = Operation.OTA_TRANSFER;
+            barrier = ioLane.submit(() -> {});
+        }
+
+        if (!awaitBarrier(barrier, "OTA promotion barrier")) {
+            return false;
+        }
+
+        synchronized (monitor) {
+            if (!isReadyLocked() || !ownsLeaseLocked(lease, Operation.OTA_TRANSFER)) {
+                return false;
+            }
+            otaRawRouting = true;
             host.setFastReceive(true);
             Log.i(TAG, "BES OTA authorization promoted to raw transfer routing");
             return true;
@@ -499,6 +535,7 @@ public final class BesUartTransportCoordinator {
                             && operation != Operation.OTA_TRANSFER)) {
                 return;
             }
+            otaRawRouting = false;
             host.setFastReceive(false);
             operation = Operation.NONE;
             operationLease = null;
@@ -512,6 +549,7 @@ public final class BesUartTransportCoordinator {
     public void onBesOtaApplied() {
         synchronized (monitor) {
             cancelAllTimersLocked();
+            otaRawRouting = false;
             host.setFastReceive(false);
             operation = Operation.NONE;
             operationLease = null;
@@ -576,6 +614,7 @@ public final class BesUartTransportCoordinator {
             state = State.CLOSED;
             operation = Operation.NONE;
             operationLease = null;
+            otaRawRouting = false;
             phaseGeneration++;
             serialSession = null;
             host.setFastReceive(false);
@@ -630,6 +669,7 @@ public final class BesUartTransportCoordinator {
         }
         operationLease = null;
         operation = Operation.NONE;
+        otaRawRouting = false;
         host.setFastReceive(false);
         resumeAfterOperationLocked();
     }

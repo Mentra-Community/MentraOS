@@ -19,9 +19,9 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.RejectedExecutionException;
-import java.util.concurrent.TimeoutException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -306,8 +306,21 @@ public abstract class BaseBluetoothManager implements ICompanionTransport {
         }
     }
 
-    private static void notifySendMessageCallback(
-            SendMessageCallback callback, boolean success) {
+    /** Queue a transport-owned action behind every previously accepted outbound message. */
+    protected final boolean queueOutboundAction(Runnable action) {
+        if (action == null) {
+            return false;
+        }
+        try {
+            outboundBleExecutor.execute(() -> runOnOutboundBleWorker(action));
+            return true;
+        } catch (RejectedExecutionException e) {
+            Log.e(TAG, "Rejected transport-owned outbound action", e);
+            return false;
+        }
+    }
+
+    private static void notifySendMessageCallback(SendMessageCallback callback, boolean success) {
         if (callback == null) {
             return;
         }
@@ -567,8 +580,8 @@ public abstract class BaseBluetoothManager implements ICompanionTransport {
 
     /**
      * Send an in-memory payload using the file-transfer protocol without requiring it to exist on
-     * disk. Same outbound-worker serialization and start-timeout semantics as the path-based
-     * {@link #sendFile(String)}.
+     * disk. Same outbound-worker serialization and start-timeout semantics as the path-based {@link
+     * #sendFile(String)}.
      */
     @Override
     public final boolean sendFile(byte[] data, String fileName) {

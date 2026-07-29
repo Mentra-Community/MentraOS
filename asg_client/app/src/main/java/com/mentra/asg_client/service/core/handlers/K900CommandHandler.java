@@ -4,7 +4,6 @@ import android.content.Context;
 import android.util.Log;
 
 import com.mentra.asg_client.io.bes.log.BesLogManager;
-import com.mentra.asg_client.io.bluetooth.interfaces.IBluetoothManager;
 import com.mentra.asg_client.io.peripheral.IPeripheralBus;
 import com.mentra.asg_client.io.peripheral.McuEventParser;
 import com.mentra.asg_client.io.peripheral.events.McuEvent;
@@ -365,67 +364,6 @@ public class K900CommandHandler {
             }
         } catch (JSONException e) {
             Log.e(TAG, "💥 Error creating BT MAC address request", e);
-        }
-    }
-
-    /**
-     * Send BES OTA authorization request to BES chip Must be called before starting BES firmware
-     * update
-     */
-    public boolean sendBesOtaAuthorizationRequest(IBluetoothManager.SendMessageCallback callback) {
-        Log.i(TAG, "🔧 Sending BES OTA authorization request");
-
-        try {
-            // Build full K900 format: C, V, B (all three required to avoid double-wrapping!)
-            JSONObject k900Command = new JSONObject();
-            k900Command.put("C", "mh_ota");
-            k900Command.put("V", 1); // Version field - REQUIRED to prevent double-wrapping
-            k900Command.put("B", "{}"); // Empty body for authorization request
-
-            String commandStr = k900Command.toString();
-            Log.i(TAG, "🔧 Sending BES OTA authorization command: " + commandStr);
-
-            if (serviceManager == null || serviceManager.getBluetoothManager() == null) {
-                Log.e(TAG, "❌ ServiceManager or Bluetooth manager unavailable");
-                return false;
-            }
-
-            if (!serviceManager.getBluetoothManager().isConnected()) {
-                Log.e(TAG, "❌ Bluetooth not connected; cannot send BES OTA authorization request");
-                return false;
-            }
-
-            boolean queued =
-                    serviceManager
-                            .getBluetoothManager()
-                            .sendMessage(
-                                    commandStr.getBytes(java.nio.charset.StandardCharsets.UTF_8),
-                                    success -> {
-                                        if (success) {
-                                            Log.i(
-                                                    TAG,
-                                                    "✅ BES OTA authorization request written -"
-                                                            + " waiting for response");
-                                        } else {
-                                            Log.e(
-                                                    TAG,
-                                                    "❌ BES OTA authorization request write failed");
-                                        }
-                                        if (callback != null) {
-                                            callback.onSendComplete(success);
-                                        }
-                                    });
-
-            if (!queued) {
-                Log.e(TAG, "❌ Failed to queue BES OTA authorization request");
-            }
-            return queued;
-        } catch (JSONException e) {
-            Log.e(TAG, "💥 Error creating BES OTA authorization request", e);
-            return false;
-        } catch (Exception e) {
-            Log.e(TAG, "💥 Error sending BES OTA authorization request", e);
-            return false;
         }
     }
 }

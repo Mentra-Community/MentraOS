@@ -24,7 +24,6 @@ import com.mentra.asg_client.logging.Logger;
 import com.mentra.asg_client.sensors.ImuManager;
 import com.mentra.asg_client.service.communication.interfaces.ICommunicationManager;
 import com.mentra.asg_client.service.core.AsgClientService;
-import com.mentra.asg_client.service.core.handlers.K900CommandHandler;
 import com.mentra.asg_client.service.core.handlers.RgbLedCommandHandler;
 import com.mentra.asg_client.service.core.processors.CommandProcessor;
 import com.mentra.asg_client.service.system.interfaces.IStateManager;
@@ -70,9 +69,6 @@ public class AsgClientServiceManager {
     // StateManager for battery monitoring (set after construction)
     private IStateManager stateManager;
 
-    /** Set before {@link #initialize(K900CommandHandler)} so BES OTA can be constructed with it. */
-    private K900CommandHandler besOtaK900CommandHandler;
-
     public AsgClientServiceManager(
             Context context,
             @NonNull AsgClientService service,
@@ -105,14 +101,8 @@ public class AsgClientServiceManager {
         Log.d(TAG, "✅ AsgClientServiceManager instance created successfully");
     }
 
-    /**
-     * Initialize all service components.
-     *
-     * @param k900CommandHandler Required on K900 for {@link BesOtaManager}; may be null on generic
-     *     devices
-     */
-    public void initialize(K900CommandHandler k900CommandHandler) {
-        this.besOtaK900CommandHandler = k900CommandHandler;
+    /** Initialize all service components. */
+    public void initialize() {
         Log.d(
                 TAG,
                 "🚀 initialize() called - Current state: "
@@ -351,11 +341,7 @@ public class AsgClientServiceManager {
                 Log.d(TAG, "🔧 Initializing BES OTA Manager for firmware updates");
                 try {
                     besOtaManager =
-                            new BesOtaManager(
-                                    k900Manager::onBesOtaApplied,
-                                    k900Manager.getTransportCoordinator(),
-                                    context,
-                                    besOtaK900CommandHandler);
+                            new BesOtaManager(k900Manager::onBesOtaApplied, k900Manager, context);
                     besOtaRegistry.setInstance(besOtaManager);
                     k900Manager.registerBesOtaListener(besOtaManager);
                     Log.i(TAG, "✅ BES OTA Manager initialized and registered");

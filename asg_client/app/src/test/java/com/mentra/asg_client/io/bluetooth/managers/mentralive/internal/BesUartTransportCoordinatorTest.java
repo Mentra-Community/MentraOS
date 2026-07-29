@@ -257,6 +257,8 @@ public class BesUartTransportCoordinatorTest {
         BesUartTransportCoordinator.OperationLease otaLease = coordinator.beginOtaAuthorization();
         assertThat(otaLease).isNotNull();
         assertThat(coordinator.beginFileTransfer()).isNull();
+        assertThat(coordinator.runNormalWrite(() -> true)).isFalse();
+        assertThat(coordinator.runOtaAuthorizationWrite(otaLease, () -> true)).isTrue();
         assertThat(coordinator.promoteOtaAuthorizationToTransfer(otaLease)).isTrue();
         assertThat(coordinator.inboundRoute(host.session))
                 .isEqualTo(BesUartTransportCoordinator.InboundRoute.OTA);
@@ -273,6 +275,54 @@ public class BesUartTransportCoordinatorTest {
         assertThat(host.fastReceive).isFalse();
         assertThat(coordinator.getOperation())
                 .isEqualTo(BesUartTransportCoordinator.Operation.NONE);
+    }
+
+    @Test
+    public void otaPromotion_drainsAuthorizationWriteBeforeRawRouting() throws Exception {
+        coordinator.onSerialReady(host.session);
+        assertThat(systemVersion("17.26.7.4"))
+                .isEqualTo(BesUartTransportCoordinator.SystemVersionResult.READY);
+        BesUartTransportCoordinator.OperationLease otaLease = coordinator.beginOtaAuthorization();
+        assertThat(otaLease).isNotNull();
+
+        ExecutorService callers = Executors.newFixedThreadPool(2);
+        CountDownLatch writeStarted = new CountDownLatch(1);
+        CountDownLatch releaseWrite = new CountDownLatch(1);
+        Future<Boolean> write =
+                callers.submit(
+                        () ->
+                                coordinator.runOtaAuthorizationWrite(
+                                        otaLease,
+                                        () -> {
+                                            writeStarted.countDown();
+                                            try {
+                                                return releaseWrite.await(2, TimeUnit.SECONDS);
+                                            } catch (InterruptedException e) {
+                                                Thread.currentThread().interrupt();
+                                                return false;
+                                            }
+                                        }));
+
+        try {
+            assertThat(writeStarted.await(1, TimeUnit.SECONDS)).isTrue();
+            Future<Boolean> promotion =
+                    callers.submit(() -> coordinator.promoteOtaAuthorizationToTransfer(otaLease));
+
+            assertThat(coordinator.runNormalWrite(() -> true)).isFalse();
+            assertThat(coordinator.inboundRoute(host.session))
+                    .isEqualTo(BesUartTransportCoordinator.InboundRoute.NORMAL);
+            assertThat(promotion.isDone()).isFalse();
+
+            releaseWrite.countDown();
+            assertThat(write.get(1, TimeUnit.SECONDS)).isTrue();
+            assertThat(promotion.get(1, TimeUnit.SECONDS)).isTrue();
+            assertThat(coordinator.inboundRoute(host.session))
+                    .isEqualTo(BesUartTransportCoordinator.InboundRoute.OTA);
+        } finally {
+            releaseWrite.countDown();
+            callers.shutdownNow();
+            coordinator.endOta(otaLease);
+        }
     }
 
     @Test

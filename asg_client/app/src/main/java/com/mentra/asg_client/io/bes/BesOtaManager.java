@@ -7,11 +7,11 @@ import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.io.bes.events.BesOtaProgressEvent;
 import com.mentra.asg_client.io.bes.protocol.*;
 import com.mentra.asg_client.io.bes.util.BesOtaUtil;
+import com.mentra.asg_client.io.bluetooth.managers.K900BluetoothManager;
 import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.BesUartTransportCoordinator;
 import com.mentra.asg_client.io.bluetooth.utils.ByteUtil;
 import com.mentra.asg_client.io.ota.interfaces.IBesOtaController;
 import com.mentra.asg_client.logging.BleTraceLogger;
-import com.mentra.asg_client.service.core.handlers.K900CommandHandler;
 import com.mentra.asg_client.utils.WakeLockManager;
 
 import org.greenrobot.eventbus.EventBus;
@@ -85,23 +85,24 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
     private final BesUartTransportCoordinator transportCoordinator;
     private BesUartTransportCoordinator.OperationLease transportLease;
     private BesOtaCommandListener mListener;
-    private final K900CommandHandler k900CommandHandler;
+    private final K900BluetoothManager k900BluetoothManager;
 
     /**
      * @param otaAppliedCallback notified after BES accepts the image and begins rebooting
-     * @param transportCoordinator owner of UART state, writes, and operation routing
+     * @param k900BluetoothManager owner of the ordered K900 outbound queue
      * @param context Application context for wakelock
-     * @param k900CommandHandler Handler for BES authorization and phone messaging
      */
     public BesOtaManager(
             Runnable otaAppliedCallback,
-            BesUartTransportCoordinator transportCoordinator,
-            Context context,
-            K900CommandHandler k900CommandHandler) {
+            K900BluetoothManager k900BluetoothManager,
+            Context context) {
         this.otaAppliedCallback = otaAppliedCallback;
-        this.transportCoordinator = transportCoordinator;
+        this.k900BluetoothManager = k900BluetoothManager;
+        this.transportCoordinator =
+                k900BluetoothManager != null
+                        ? k900BluetoothManager.getTransportCoordinator()
+                        : null;
         this.mContext = context.getApplicationContext();
-        this.k900CommandHandler = k900CommandHandler;
     }
 
     /**
@@ -292,16 +293,6 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
             return false;
         }
 
-        BesUartTransportCoordinator.OperationLease acquiredLease =
-                transportCoordinator != null ? transportCoordinator.beginOtaAuthorization() : null;
-        if (acquiredLease == null) {
-            Log.e(TAG, "BES UART is not ready for OTA authorization");
-            EventBus.getDefault()
-                    .post(BesOtaProgressEvent.createFailed("BES UART is busy or not ready"));
-            return false;
-        }
-        transportLease = acquiredLease;
-
         // The transfer needs the vendor "screen on" state, not just CPU: the display-sleep
         // hook wedges the UART transfer state machine mid-flight even with a CPU lock held
         // (2026-07-08 incident, frozen between segments at 80%). Hold BOTH leases; the
@@ -327,13 +318,33 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
 
         operationStartTime = android.os.SystemClock.elapsedRealtime();
 
-        // STEP 1: Request authorization from BES chip via K900CommandHandler
+        // STEP 1: Request authorization from the ordered K900 transport.
         Log.i(TAG, "Requesting BES OTA authorization from BES chip");
 
-        if (k900CommandHandler != null) {
+        if (k900BluetoothManager != null) {
+            byte[] authorizationRequest = buildAuthorizationRequest();
             boolean queued =
-                    k900CommandHandler.sendBesOtaAuthorizationRequest(
-                            this::onAuthorizationWriteComplete);
+                    authorizationRequest != null
+                            && k900BluetoothManager.queueBesOtaAuthorization(
+                                    authorizationRequest,
+                                    new K900BluetoothManager.BesOtaAuthorizationCallback() {
+                                        @Override
+                                        public boolean onLeaseAcquired(
+                                                BesUartTransportCoordinator.OperationLease lease) {
+                                            synchronized (mTransferGate) {
+                                                if (!isWaitingForAuthorization) {
+                                                    return false;
+                                                }
+                                                transportLease = lease;
+                                                return true;
+                                            }
+                                        }
+
+                                        @Override
+                                        public void onWriteComplete(boolean success) {
+                                            onAuthorizationWriteComplete(success);
+                                        }
+                                    });
             if (queued) {
                 return true;
             }
@@ -345,11 +356,24 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
             cleanup();
             return false;
         } else {
-            Log.e(TAG, "❌ K900CommandHandler not available - cannot send authorization request");
+            Log.e(TAG, "K900 Bluetooth manager unavailable - cannot send authorization request");
             EventBus.getDefault()
-                    .post(BesOtaProgressEvent.createFailed("K900CommandHandler not available"));
+                    .post(BesOtaProgressEvent.createFailed("K900 Bluetooth manager not available"));
             cleanup();
             return false;
+        }
+    }
+
+    private byte[] buildAuthorizationRequest() {
+        try {
+            JSONObject command = new JSONObject();
+            command.put("C", "mh_ota");
+            command.put("V", 1);
+            command.put("B", "{}");
+            return command.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to build BES OTA authorization request", e);
+            return null;
         }
     }
 

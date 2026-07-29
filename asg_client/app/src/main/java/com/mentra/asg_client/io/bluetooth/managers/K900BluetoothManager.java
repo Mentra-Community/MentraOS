@@ -32,6 +32,7 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
@@ -50,6 +51,14 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     private final SerialPortBridge comManager;
     private final BesUartTransportCoordinator transportCoordinator;
     private volatile BesOtaUartListener besOtaUartListener;
+
+    public interface BesOtaAuthorizationCallback {
+        /** Called on the outbound worker before the authorization request is written. */
+        boolean onLeaseAcquired(BesUartTransportCoordinator.OperationLease lease);
+
+        /** Called after the authorization request write attempt finishes. */
+        void onWriteComplete(boolean success);
+    }
 
     // Single owner of the transport-side link facts (serial open, link proven at current baud,
     // negotiated BES wire caps). The legacy isSerialOpen/besWireCaps* booleans are derived from it
@@ -1062,6 +1071,40 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     /** Coordinator that owns every UART transition and long-lived transport operation. */
     public BesUartTransportCoordinator getTransportCoordinator() {
         return transportCoordinator;
+    }
+
+    /**
+     * Queue BES OTA authorization at one exact point in the normal outbound FIFO. Earlier messages
+     * drain before the lease is acquired; later messages cannot enter the exclusive OTA lifetime.
+     */
+    public boolean queueBesOtaAuthorization(byte[] data, BesOtaAuthorizationCallback callback) {
+        if (data == null || data.length == 0 || callback == null) {
+            return false;
+        }
+        byte[] payload = Arrays.copyOf(data, data.length);
+        return queueOutboundAction(
+                () -> {
+                    BesUartTransportCoordinator.OperationLease lease =
+                            transportCoordinator.beginOtaAuthorization();
+                    if (lease == null) {
+                        callback.onWriteComplete(false);
+                        return;
+                    }
+                    if (!callback.onLeaseAcquired(lease)) {
+                        transportCoordinator.endOta(lease);
+                        callback.onWriteComplete(false);
+                        return;
+                    }
+
+                    publishOutboundMessage(payload, true);
+                    boolean sent =
+                            transportCoordinator.runOtaAuthorizationWrite(
+                                    lease, () -> sendMessageInternalLocked(payload));
+                    if (!sent) {
+                        transportCoordinator.endOta(lease);
+                    }
+                    callback.onWriteComplete(sent);
+                });
     }
 
     /**

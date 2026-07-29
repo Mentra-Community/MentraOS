@@ -49,7 +49,7 @@ public class BesOtaResponseWatchdogTest {
 
     @Before
     public void setUp() {
-        manager = new BesOtaManager(null, null, ApplicationProvider.getApplicationContext(), null);
+        manager = new BesOtaManager(null, null, ApplicationProvider.getApplicationContext());
         BesOtaManager.isBesOtaInProgress = false;
         events.clear();
         EventBus.getDefault().register(this);
