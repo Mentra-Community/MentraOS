@@ -20,6 +20,8 @@ import com.mentra.asg_client.service.media.interfaces.IMediaManager;
 import com.mentra.asg_client.service.system.core.SystemControllerFactory;
 import com.mentra.asg_client.service.system.interfaces.IStateManager;
 import com.mentra.asg_client.service.utils.ServiceConstants;
+import com.mentra.asg_client.service.utils.ServiceUtils;
+import io.github.thibaultbee.streampack.internal.sources.camera.CameraController;
 import java.util.Set;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -37,7 +39,7 @@ public class StreamCommandHandler implements ICommandHandler {
      * key). When false, EIS is disabled for the duration of the stream to reduce camera HAL thermal
      * load.
      */
-    private static final boolean EIS_IN_LIVESTREAMS = true;
+    private static final boolean EIS_IN_LIVESTREAMS = false;
 
     /**
      * EIS only kicks in below this pixel budget. Higher resolutions push the camera HAL into
@@ -132,6 +134,10 @@ public class StreamCommandHandler implements ICommandHandler {
                 return false;
             }
 
+            // Mentra Live accepts synthetic [fps,fps] inside a wider AE band; keep the
+            // StreamPackLite workaround off for generic Android HALs (Codex P1).
+            CameraController.forceFixedFpsInsideSupportedBand = ServiceUtils.isK900Device(context);
+
             // BATTERY CHECK
             if (stateManager != null) {
                 int batteryLevel = stateManager.getBatteryLevel();
@@ -181,6 +187,7 @@ public class StreamCommandHandler implements ICommandHandler {
                 case RTMP:
                     {
                         RtmpStreamConfig config = RtmpStreamConfig.fromJson(videoJson, audioJson);
+                        Log.i(TAG, "[VideoQuality] parsed RTMP config " + config);
                         if (!preflightCameraCaptureForPackStreaming(config, streamId)) {
                             return false;
                         }
@@ -198,6 +205,7 @@ public class StreamCommandHandler implements ICommandHandler {
                 case SRT:
                     {
                         RtmpStreamConfig config = RtmpStreamConfig.fromJson(videoJson, audioJson);
+                        Log.i(TAG, "[VideoQuality] parsed SRT config " + config);
                         if (!preflightCameraCaptureForPackStreaming(config, streamId)) {
                             return false;
                         }
@@ -213,6 +221,7 @@ public class StreamCommandHandler implements ICommandHandler {
                 case WHIP:
                     {
                         WhipStreamConfig config = WhipStreamConfig.fromJson(videoJson, audioJson);
+                        Log.i(TAG, "[VideoQuality] parsed WHIP config " + config);
                         if (!preflightCameraCaptureForWhip(config, streamId)) {
                             return false;
                         }
@@ -223,8 +232,16 @@ public class StreamCommandHandler implements ICommandHandler {
                                 "[STREAM_STARTUP] stage=service_start_requested protocol=whip elapsedMs="
                                         + (SystemClock.elapsedRealtime() - startupStartedAtMs));
                         Log.d(TAG, "Starting WHIP stream to: " + streamUrl);
+                        String authToken = null;
+                        if (data.has("authToken")) {
+                            String value = data.optString("authToken", "");
+                            if (!value.isEmpty()) authToken = value;
+                        } else if (data.has("auth_token")) {
+                            String value = data.optString("auth_token", "");
+                            if (!value.isEmpty()) authToken = value;
+                        }
                         WhipStreamingService.startStreaming(
-                                context, streamUrl, streamId, flash, sound, config);
+                                context, streamUrl, streamId, flash, sound, config, authToken);
                         streamStarted = true;
                         WhipStreamingService.setStateManager(stateManager);
                         break;

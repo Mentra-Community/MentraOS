@@ -156,7 +156,7 @@ export async function release(opts: ReleaseOptions = {}): Promise<void> {
   console.log('║  Ctrl+C to stop.                                             ║')
   console.log('╚══════════════════════════════════════════════════════════════╝\n')
 
-  printQR(qrUrl)
+  await printQR(qrUrl)
   console.log(`\n${qrUrl}\n`)
   console.log(`Serving on ${baseUrl}`)
 

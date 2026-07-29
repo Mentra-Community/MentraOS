@@ -2,7 +2,7 @@ import {Button, Icon, Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useCapsuleStore} from "@/stores/capsule"
 
-import {Dimensions, PixelRatio, Platform, Share, View} from "react-native"
+import {Dimensions, InteractionManager, PixelRatio, Platform, Share, View} from "react-native"
 import {Pressable} from "react-native-gesture-handler"
 import {forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState} from "react"
 import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
@@ -165,10 +165,40 @@ export default function CapsuleMenu({forceShow}: {forceShow: boolean}) {
   )
 }
 
+/** Longest we'll delay a close waiting for the UI to go idle before capturing. */
+const CAPTURE_SETTLE_TIMEOUT_MS = 300
+
+/**
+ * Resolve once the UI has settled enough to photograph, or after
+ * CAPTURE_SETTLE_TIMEOUT_MS, whichever comes first. Two nested frames after
+ * interactions finish: the first lets React commit the released pressed state,
+ * the second lets the native view tree draw it.
+ */
+function settleBeforeCapture(): Promise<void> {
+  return new Promise<void>((resolve) => {
+    let settled = false
+    const finish = () => {
+      if (settled) return
+      settled = true
+      resolve()
+    }
+    const guard = setTimeout(finish, CAPTURE_SETTLE_TIMEOUT_MS)
+    InteractionManager.runAfterInteractions(() => {
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => {
+          clearTimeout(guard)
+          finish()
+        }),
+      )
+    })
+  })
+}
+
 export async function captureScreenshot(
   viewShotRef: React.RefObject<View | null>,
   packageName: string,
   topInsetOffset: number = 0,
+  options: {settle?: boolean} = {},
 ) {
   if (!viewShotRef.current) {
     console.warn(`captureScreenshot: viewShotRef is null ${viewShotRef.current}`)
@@ -176,6 +206,11 @@ export async function captureScreenshot(
   }
 
   try {
+    // Capsule presses can leave pressed/layout transients in the image. Gesture
+    // exits must capture immediately because their callers start teardown or a
+    // compositor transform as soon as this function returns.
+    if (options.settle) await settleBeforeCapture()
+
     let screenshotUri = await captureRef(viewShotRef, {
       format: "jpg",
       quality: Platform.OS === "ios" ? 0.1 : 0.5,
@@ -202,9 +237,30 @@ export async function captureScreenshot(
     if (!screenshotDirectory.exists) screenshotDirectory.create()
 
     const safePackageName = packageName.replace(/[^a-zA-Z0-9._-]/g, "_")
-    const persistentFile = new File(screenshotDirectory, `${safePackageName}.jpg`)
-    if (persistentFile.exists) persistentFile.delete()
+    // Unique filename per capture. The app switcher renders this uri through
+    // expo-image, which caches by uri, so reusing one path meant every fresh
+    // capture landed on disk but the card kept showing the first image ever
+    // loaded (OS-1810). Changing the uri is what actually invalidates it.
+    const prefix = `${safePackageName}-`
+    const legacyName = `${safePackageName}.jpg`
+    const persistentFile = new File(screenshotDirectory, `${prefix}${Date.now()}.jpg`)
     new File(screenshotUri).copy(persistentFile)
+
+    // Keep only the capture we just wrote; older ones for this package are
+    // unreachable now that the stored uri points here.
+    for (const entry of screenshotDirectory.list()) {
+      if (
+        entry instanceof File &&
+        (entry.name === legacyName || entry.name.startsWith(prefix)) &&
+        entry.name !== persistentFile.name
+      ) {
+        try {
+          entry.delete()
+        } catch {
+          // A stale file we can't remove is harmless; don't fail the capture.
+        }
+      }
+    }
 
     await engine.miniapps.saveScreenshot(packageName, persistentFile.uri)
   } catch (error) {

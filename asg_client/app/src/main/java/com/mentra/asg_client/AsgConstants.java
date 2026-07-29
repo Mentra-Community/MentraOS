@@ -30,7 +30,15 @@ public class AsgConstants {
     public static final int CAMERA_ROI_POSITION_DEFAULT = 0;
 
     /** Cadence for live stream bitrate, frame-rate, duration, and thermal telemetry. */
-    public static final long STREAM_METRICS_INTERVAL_MS = 2_000L;
+    public static final long STREAM_METRICS_INTERVAL_MS = 1_000L;
+
+    /**
+     * Local-testing stopgap that disables the 60s keep-alive watchdog for RTMP/SRT/WHIP streams.
+     * When true, {@code scheduleStreamTimeout()} early-returns and an orphaned stream (lost
+     * phone/cloud keep-alives via BLE disconnect or killed app) never auto-stops, holding the
+     * camera and draining battery/thermals. MUST stay false for production; flip locally only.
+     */
+    public static final boolean DISABLE_STREAM_KEEP_ALIVE_TIMEOUT = false;
 
     /** Linux thermal sysfs root used to discover the Mentra Live CPU sensor. */
     public static final String THERMAL_SYSFS_ROOT = "/sys/class/thermal";
