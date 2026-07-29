@@ -198,6 +198,7 @@ export async function captureScreenshot(
   viewShotRef: React.RefObject<View | null>,
   packageName: string,
   topInsetOffset: number = 0,
+  options: {settle?: boolean} = {},
 ) {
   if (!viewShotRef.current) {
     console.warn(`captureScreenshot: viewShotRef is null ${viewShotRef.current}`)
@@ -205,15 +206,10 @@ export async function captureScreenshot(
   }
 
   try {
-    // Let the UI settle before grabbing pixels. Every caller invokes this from
-    // a press handler, so at this instant the button still carries its pressed
-    // background and any in-flight entrance/layout animation in the miniapp is
-    // mid-flight. captureRef would bake those transients into the JPG: a grey
-    // "X" in the capsule and half-collapsed content cards (OS-1810). Waiting
-    // for interactions plus two frames lets the pressed style flush and the
-    // layout land; the timeout keeps a never-idle animation from stalling the
-    // close.
-    await settleBeforeCapture()
+    // Capsule presses can leave pressed/layout transients in the image. Gesture
+    // exits must capture immediately because their callers start teardown or a
+    // compositor transform as soon as this function returns.
+    if (options.settle) await settleBeforeCapture()
 
     let screenshotUri = await captureRef(viewShotRef, {
       format: "jpg",
@@ -246,13 +242,18 @@ export async function captureScreenshot(
     // capture landed on disk but the card kept showing the first image ever
     // loaded (OS-1810). Changing the uri is what actually invalidates it.
     const prefix = `${safePackageName}-`
+    const legacyName = `${safePackageName}.jpg`
     const persistentFile = new File(screenshotDirectory, `${prefix}${Date.now()}.jpg`)
     new File(screenshotUri).copy(persistentFile)
 
     // Keep only the capture we just wrote; older ones for this package are
     // unreachable now that the stored uri points here.
     for (const entry of screenshotDirectory.list()) {
-      if (entry instanceof File && entry.name.startsWith(prefix) && entry.name !== persistentFile.name) {
+      if (
+        entry instanceof File &&
+        (entry.name === legacyName || entry.name.startsWith(prefix)) &&
+        entry.name !== persistentFile.name
+      ) {
         try {
           entry.delete()
         } catch {
