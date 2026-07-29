@@ -40,6 +40,8 @@ public class SerialPortBridge {
     private Context mContext = null;
     private volatile boolean mbRequestFast = false;
     private volatile ReceiveRoute receiveRoute = ReceiveRoute.NORMAL;
+    private long nextReaderGeneration = 0;
+    private volatile long currentReaderGeneration = -1;
 
     /** Baud rate the port is currently open at (DEFAULT_BAUDRATE until a reopen succeeds). */
     private volatile int mCurrentBaud = DEFAULT_BAUDRATE;
@@ -99,8 +101,10 @@ public class SerialPortBridge {
             mIS = SerialManager.getInstance().getInputStream(COM_PATH);
             mOS = SerialManager.getInstance().getOutputStream(COM_PATH);
 
-            mRecvThread = new RecvThread(mIS);
-            if (mListener != null) mListener.onSerialReady(COM_PATH);
+            long readerGeneration = ++nextReaderGeneration;
+            currentReaderGeneration = readerGeneration;
+            mRecvThread = new RecvThread(mIS, readerGeneration);
+            if (mListener != null) mListener.onSerialReady(COM_PATH, readerGeneration);
             mRecvThread.start();
         }
 
@@ -134,6 +138,11 @@ public class SerialPortBridge {
      */
     public boolean isOpen() {
         return mbStart;
+    }
+
+    /** Identity of the reader attached to the current descriptor, or {@code -1} when closed. */
+    public long getCurrentReaderGeneration() {
+        return currentReaderGeneration;
     }
 
     /** Notify the normal UART owner that BES accepted an OTA image and is rebooting. */
@@ -180,7 +189,9 @@ public class SerialPortBridge {
         mOS = SerialManager.getInstance().getOutputStream(COM_PATH);
         mbStart = true;
 
-        mRecvThread = new RecvThread(mIS);
+        long readerGeneration = ++nextReaderGeneration;
+        currentReaderGeneration = readerGeneration;
+        mRecvThread = new RecvThread(mIS, readerGeneration);
         mRecvThread.start();
 
         Log.i(BAUD_TAG, "Serial port opened at " + baud + " baud");
@@ -194,6 +205,7 @@ public class SerialPortBridge {
             oldThread.setStop();
         }
         mbStart = false;
+        currentReaderGeneration = -1;
         mIS = null;
         mOS = null;
 
@@ -329,11 +341,13 @@ public class SerialPortBridge {
     /** Thread for receiving data from the serial port */
     class RecvThread extends Thread {
         private final InputStream input;
+        private final long readerGeneration;
         private final byte[] readBuffer = new byte[1024];
         private volatile boolean mbStop = false;
 
-        RecvThread(InputStream input) {
+        RecvThread(InputStream input, long readerGeneration) {
             this.input = input;
+            this.readerGeneration = readerGeneration;
         }
 
         public void setStop() {
@@ -356,7 +370,8 @@ public class SerialPortBridge {
                                 }
                             } else {
                                 if (mListener != null) {
-                                    mListener.onSerialRead(COM_PATH, readBuffer, readSize);
+                                    mListener.onSerialRead(
+                                            COM_PATH, readBuffer, readSize, readerGeneration);
                                 }
                             }
                         }

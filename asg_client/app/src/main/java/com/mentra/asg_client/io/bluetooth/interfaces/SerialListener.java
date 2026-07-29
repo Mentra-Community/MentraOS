@@ -16,16 +16,18 @@ public interface SerialListener {
     /**
      * Called when a serial port is ready for use
      * @param serialPath The path to the serial port
+     * @param readerGeneration Immutable identity of the reader attached to this port
      */
-    void onSerialReady(String serialPath);
+    void onSerialReady(String serialPath, long readerGeneration);
     
     /**
      * Called when data is read from a serial port
      * @param serialPath The path to the serial port
      * @param data The data read
      * @param size The size of the data
+     * @param readerGeneration Immutable identity of the reader that produced the data
      */
-    void onSerialRead(String serialPath, byte[] data, int size);
+    void onSerialRead(String serialPath, byte[] data, int size, long readerGeneration);
     
     /**
      * Called when a serial port is closed

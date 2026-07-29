@@ -251,15 +251,16 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         }
 
         @Override
-        public boolean openAtBaud(int baud) {
+        public long openAtBaud(int baud) {
             boolean wasOpen = comManager.isOpen();
             boolean opened = comManager.openAtBaud(baud);
             if (!opened) {
                 linkState.serialClosed();
+                return BesUartTransportCoordinator.INVALID_READER_GENERATION;
             } else if (!wasOpen) {
                 linkState.serialReady();
             }
-            return opened;
+            return comManager.getCurrentReaderGeneration();
         }
 
         @Override
@@ -1529,8 +1530,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     }
 
     @Override
-    public void onSerialRead(String serialPath, byte[] data, int size) {
-        long receiveGeneration = transportCoordinator.getSerialGeneration();
+    public void onSerialRead(String serialPath, byte[] data, int size, long receiveGeneration) {
         boolean fileTransferActive = isFileTransferInProgress();
         if (!fileTransferActive) {
             Log.d(TAG, "📥 K900 SERIAL READ - " + size + " bytes");
@@ -1544,18 +1544,30 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             // Hex dump suppressed to prevent logcat overflow
             // Enable only when debugging specific issues
 
-            boolean parserAcceptedData = false;
-            List<byte[]> completeMessages = null;
-            long discardedBytes = 0;
-            synchronized (messageParserLock) {
-                if (messageParser != null) {
-                    parserAcceptedData = messageParser.addData(dataCopy, size);
-                    if (parserAcceptedData) {
-                        completeMessages = messageParser.parseMessages();
-                        discardedBytes = messageParser.consumeDiscardedByteCount();
-                    }
-                }
+            SerialParseResult parseResult = new SerialParseResult();
+            boolean currentReader =
+                    transportCoordinator.runForCurrentSerialGeneration(
+                            receiveGeneration,
+                            () -> {
+                                synchronized (messageParserLock) {
+                                    if (messageParser != null) {
+                                        parseResult.accepted = messageParser.addData(dataCopy, size);
+                                        if (parseResult.accepted) {
+                                            parseResult.messages = messageParser.parseMessages();
+                                            parseResult.discardedBytes =
+                                                    messageParser.consumeDiscardedByteCount();
+                                        }
+                                    }
+                                }
+                            });
+            if (!currentReader) {
+                Log.w(TAG, "Ignoring data from retired UART reader " + receiveGeneration);
+                return;
             }
+
+            boolean parserAcceptedData = parseResult.accepted;
+            List<byte[]> completeMessages = parseResult.messages;
+            long discardedBytes = parseResult.discardedBytes;
 
             if (!parserAcceptedData) {
                 // If parser is not available or data couldn't be added, send raw data
@@ -1653,6 +1665,12 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         }
     }
 
+    private static final class SerialParseResult {
+        boolean accepted;
+        List<byte[]> messages;
+        long discardedBytes;
+    }
+
     private void onValidUartFrame(long receiveGeneration) {
         transportCoordinator.onValidFrame(receiveGeneration);
     }
@@ -1680,14 +1698,14 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     }
 
     @Override
-    public void onSerialReady(String serialPath) {
+    public void onSerialReady(String serialPath, long readerGeneration) {
         Log.d(TAG, "🔌 =========================================");
         Log.d(TAG, "🔌 K900 SERIAL READY");
         Log.d(TAG, "🔌 =========================================");
         Log.d(TAG, "🔌 Serial path: " + serialPath);
 
         linkState.serialReady();
-        transportCoordinator.onSerialReady();
+        transportCoordinator.onSerialReady(readerGeneration);
         Log.d(TAG, "🔌 ✅ Serial port marked as open");
 
         // For K900, when the serial port is ready, we consider ourselves "connected"

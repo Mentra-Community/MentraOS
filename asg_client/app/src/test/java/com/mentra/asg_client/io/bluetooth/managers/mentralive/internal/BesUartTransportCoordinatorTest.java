@@ -36,7 +36,7 @@ public class BesUartTransportCoordinatorTest {
 
     @Test
     public void supportedFirmware_startsSwitchWithoutPublishingReadyWindow() {
-        coordinator.onSerialReady();
+        coordinator.onSerialReady(host.readerGeneration);
 
         BesUartTransportCoordinator.SystemVersionResult result = systemVersion("17.26.7.23");
 
@@ -50,7 +50,7 @@ public class BesUartTransportCoordinatorTest {
 
     @Test
     public void rejectedFastSwitch_returnsToStableRendezvousState() {
-        coordinator.onSerialReady();
+        coordinator.onSerialReady(host.readerGeneration);
         assertThat(systemVersion("17.26.7.23"))
                 .isEqualTo(BesUartTransportCoordinator.SystemVersionResult.TRANSITIONING);
 
@@ -66,7 +66,7 @@ public class BesUartTransportCoordinatorTest {
 
     @Test
     public void acceptedFastSwitch_reopensAndRequiresASecondVersionProof() throws Exception {
-        coordinator.onSerialReady();
+        coordinator.onSerialReady(host.readerGeneration);
         assertThat(systemVersion("17.26.7.23"))
                 .isEqualTo(BesUartTransportCoordinator.SystemVersionResult.TRANSITIONING);
 
@@ -85,7 +85,7 @@ public class BesUartTransportCoordinatorTest {
 
     @Test
     public void duplicateVersionReply_doesNotCancelPendingBaudSwitch() {
-        coordinator.onSerialReady();
+        coordinator.onSerialReady(host.readerGeneration);
         long generation = coordinator.getSerialGeneration();
         assertThat(systemVersion("17.26.7.23"))
                 .isEqualTo(BesUartTransportCoordinator.SystemVersionResult.TRANSITIONING);
@@ -109,7 +109,7 @@ public class BesUartTransportCoordinatorTest {
     @Test
     public void failedBaudRequestWrite_entersRecoveryWithoutPublishingReady() {
         host.failBaudWrites = true;
-        coordinator.onSerialReady();
+        coordinator.onSerialReady(host.readerGeneration);
 
         assertThat(systemVersion("17.26.7.23"))
                 .isEqualTo(BesUartTransportCoordinator.SystemVersionResult.TRANSITIONING);
@@ -120,7 +120,7 @@ public class BesUartTransportCoordinatorTest {
 
     @Test
     public void fileTransfer_defersFastSwitchUntilLeaseEnds() throws Exception {
-        coordinator.onSerialReady();
+        coordinator.onSerialReady(host.readerGeneration);
         assertThat(systemVersion("17.26.7.4"))
                 .isEqualTo(BesUartTransportCoordinator.SystemVersionResult.READY);
         assertThat(coordinator.beginFileTransfer()).isTrue();
@@ -142,7 +142,7 @@ public class BesUartTransportCoordinatorTest {
 
     @Test
     public void otaAuthorization_promotesToExclusiveRawRouting() {
-        coordinator.onSerialReady();
+        coordinator.onSerialReady(host.readerGeneration);
         assertThat(systemVersion("17.26.7.4"))
                 .isEqualTo(BesUartTransportCoordinator.SystemVersionResult.READY);
 
@@ -165,11 +165,12 @@ public class BesUartTransportCoordinatorTest {
     }
 
     @Test
-    public void parserRecovery_waitsUntilExclusiveOperationEnds() {
+    public void parserRecovery_reopensAndRejectsRetiredReader() throws Exception {
         host.baud = AsgConstants.UART_FAST_BAUD;
-        coordinator.onSerialReady();
+        coordinator.onSerialReady(host.readerGeneration);
         assertThat(systemVersion("17.26.7.23"))
                 .isEqualTo(BesUartTransportCoordinator.SystemVersionResult.READY);
+        long retiredGeneration = coordinator.getSerialGeneration();
         assertThat(coordinator.beginFileTransfer()).isTrue();
 
         coordinator.onDiscardedBytes(
@@ -182,14 +183,20 @@ public class BesUartTransportCoordinatorTest {
                 AsgConstants.UART_RUNTIME_RECOVERY_DISCARDED_BYTES,
                 coordinator.getSerialGeneration());
         assertThat(coordinator.getState()).isEqualTo(BesUartTransportCoordinator.State.RECOVERING);
+        awaitOpenAttemptCount(AsgConstants.UART_FAST_BAUD, 1);
+        long replacementGeneration = coordinator.getSerialGeneration();
+        assertThat(replacementGeneration).isNotEqualTo(retiredGeneration);
 
-        coordinator.onValidFrame(coordinator.getSerialGeneration());
+        coordinator.onValidFrame(retiredGeneration);
+        assertThat(coordinator.getState()).isEqualTo(BesUartTransportCoordinator.State.RECOVERING);
+
+        coordinator.onValidFrame(replacementGeneration);
         assertThat(coordinator.getState()).isEqualTo(BesUartTransportCoordinator.State.READY_FAST);
     }
 
     @Test
     public void validFrame_provesBaudWithoutCancellingVersionDiscovery() throws Exception {
-        coordinator.onSerialReady();
+        coordinator.onSerialReady(host.readerGeneration);
 
         coordinator.onValidFrame(coordinator.getSerialGeneration());
 
@@ -219,7 +226,7 @@ public class BesUartTransportCoordinatorTest {
 
     @Test
     public void postOtaRendezvousOpenFailure_remainsRecoverable() {
-        coordinator.onSerialReady();
+        coordinator.onSerialReady(host.readerGeneration);
         host.openFailuresRemaining = 1;
 
         coordinator.onBesOtaApplied();
@@ -245,7 +252,7 @@ public class BesUartTransportCoordinatorTest {
 
     @Test
     public void retiredReaderGeneration_cannotMutateNewSession() {
-        coordinator.onSerialReady();
+        coordinator.onSerialReady(host.readerGeneration);
         long retiredGeneration = coordinator.getSerialGeneration();
         coordinator.onBesOtaApplied();
         boolean[] prepared = {false};
@@ -278,7 +285,7 @@ public class BesUartTransportCoordinatorTest {
     }
 
     private void establishFastLink() throws Exception {
-        coordinator.onSerialReady();
+        coordinator.onSerialReady(host.readerGeneration);
         assertThat(systemVersion("17.26.7.23"))
                 .isEqualTo(BesUartTransportCoordinator.SystemVersionResult.TRANSITIONING);
         assertThat(
@@ -334,6 +341,7 @@ public class BesUartTransportCoordinatorTest {
         boolean failBaudWrites;
         int openFailuresRemaining;
         int invalidations;
+        long readerGeneration = 1;
         final List<String> controlCommands = new ArrayList<>();
         final List<Integer> openAttempts = new ArrayList<>();
         final List<byte[]> rawWrites = new ArrayList<>();
@@ -349,16 +357,16 @@ public class BesUartTransportCoordinatorTest {
         }
 
         @Override
-        public boolean openAtBaud(int newBaud) {
+        public long openAtBaud(int newBaud) {
             openAttempts.add(newBaud);
             if (openFailuresRemaining > 0) {
                 openFailuresRemaining--;
                 open = false;
-                return false;
+                return BesUartTransportCoordinator.INVALID_READER_GENERATION;
             }
             open = true;
             baud = newBaud;
-            return true;
+            return ++readerGeneration;
         }
 
         @Override
