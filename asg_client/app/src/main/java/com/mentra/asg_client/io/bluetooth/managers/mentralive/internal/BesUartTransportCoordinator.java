@@ -7,7 +7,10 @@ import com.mentra.asg_client.AsgConstants;
 import org.json.JSONObject;
 
 import java.nio.charset.StandardCharsets;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
@@ -15,9 +18,9 @@ import java.util.concurrent.TimeUnit;
 /**
  * Single policy owner for the ASG-to-BES UART.
  *
- * <p>The coordinator serializes writes, baud changes, parser resets, discovery, recovery,
- * file-transfer ownership, and BES OTA ownership behind one monitor. Timers only enqueue events on
- * the coordinator executor; they never mutate transport state independently.
+ * <p>The monitor serializes transport decisions while a dedicated FIFO lane serializes physical
+ * writes and descriptor transitions. Timers only feed events back through those two owners; they
+ * never mutate transport state independently.
  */
 public final class BesUartTransportCoordinator {
     private static final String TAG = "BES-UART";
@@ -50,7 +53,7 @@ public final class BesUartTransportCoordinator {
         TRANSITIONING
     }
 
-    /** A write performed while the coordinator holds the transport monitor. */
+    /** A physical write performed on the FIFO UART lane without holding the state monitor. */
     @FunctionalInterface
     public interface WriteAction {
         boolean write();
@@ -96,6 +99,7 @@ public final class BesUartTransportCoordinator {
 
     private final Object monitor = new Object();
     private final Host host;
+    private final BesUartIoLane ioLane = new BesUartIoLane();
     private final ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor();
 
     private State state = State.CLOSED;
@@ -109,6 +113,7 @@ public final class BesUartTransportCoordinator {
     private String firmwareVersion = "";
     private long discardedBytes = 0;
     private int discardEvents = 0;
+    private boolean versionProbeDeferred = false;
 
     private ScheduledFuture<?> phaseTimeout;
     private ScheduledFuture<?> healthTimeout;
@@ -178,6 +183,7 @@ public final class BesUartTransportCoordinator {
             firmwareVersion = "";
             discardedBytes = 0;
             discardEvents = 0;
+            versionProbeDeferred = false;
             serialGeneration = readerGeneration;
             long phase = ++phaseGeneration;
             Log.i(TAG, "Serial ready; discovering BES at rendezvous baud");
@@ -203,6 +209,7 @@ public final class BesUartTransportCoordinator {
             versionGeneration = -1;
             fastSwitchAttemptGeneration = -1;
             firmwareVersion = "";
+            versionProbeDeferred = false;
             state = State.CLOSED;
             operation = Operation.NONE;
             host.setOtaReceiveRoute(false);
@@ -231,6 +238,7 @@ public final class BesUartTransportCoordinator {
             }
             firmwareVersion = version == null ? "" : version.trim();
             versionGeneration = serialGeneration;
+            versionProbeDeferred = false;
             discardedBytes = 0;
             discardEvents = 0;
             cancelPhaseTimeoutLocked();
@@ -340,17 +348,23 @@ public final class BesUartTransportCoordinator {
     }
 
     public boolean runNormalWrite(WriteAction action) {
+        Future<Boolean> write;
         synchronized (monitor) {
-            if (!isReadyLocked() || operation == Operation.OTA_TRANSFER) {
+            if (!isReadyLocked()
+                    || (operation != Operation.NONE
+                            && operation != Operation.OTA_AUTHORIZATION)
+                    || action == null) {
                 Log.w(TAG, "Rejecting normal write state=" + state + " operation=" + operation);
                 return false;
             }
-            return action != null && action.write();
+            write = ioLane.submit(action::write);
         }
+        return awaitBoolean(write, "normal write");
     }
 
     /** Raw BES protocol query outside an OTA transfer. */
     public boolean writeRawControl(byte[] data) {
+        Future<Boolean> write;
         synchronized (monitor) {
             if (!isReadyLocked() || operation != Operation.NONE || data == null) {
                 Log.w(
@@ -358,40 +372,37 @@ public final class BesUartTransportCoordinator {
                         "Rejecting raw control write state=" + state + " operation=" + operation);
                 return false;
             }
-            return host.writeRawBytes(data);
+            write = ioLane.submit(() -> host.writeRawBytes(data));
         }
+        return awaitBoolean(write, "raw control write");
     }
 
     public boolean runFileWrite(WriteAction action) {
+        Future<Boolean> write;
         synchronized (monitor) {
-            if (!isReadyLocked() || operation != Operation.FILE_TRANSFER) {
+            if (!isReadyLocked() || operation != Operation.FILE_TRANSFER || action == null) {
                 Log.w(TAG, "Rejecting file write state=" + state + " operation=" + operation);
                 return false;
             }
-            return action != null && action.write();
+            write = ioLane.submit(action::write);
         }
+        return awaitBoolean(write, "file write");
     }
 
     public boolean writeOta(byte[] data) {
+        Future<Boolean> write;
         synchronized (monitor) {
             if (!isReadyLocked() || operation != Operation.OTA_TRANSFER || data == null) {
                 Log.w(TAG, "Rejecting OTA write state=" + state + " operation=" + operation);
                 return false;
             }
-            return host.writeRawBytes(data);
+            write = ioLane.submit(() -> host.writeRawBytes(data));
         }
+        return awaitBoolean(write, "OTA write");
     }
 
     public boolean beginFileTransfer() {
-        synchronized (monitor) {
-            if (!isReadyLocked() || operation != Operation.NONE) {
-                return false;
-            }
-            operation = Operation.FILE_TRANSFER;
-            host.setFastReceive(true);
-            cancelHealthTimeoutLocked();
-            return true;
-        }
+        return beginOperation(Operation.FILE_TRANSFER, true);
     }
 
     public void endFileTransfer() {
@@ -399,15 +410,11 @@ public final class BesUartTransportCoordinator {
     }
 
     public boolean beginOtaAuthorization() {
-        synchronized (monitor) {
-            if (!isReadyLocked() || operation != Operation.NONE) {
-                return false;
-            }
-            operation = Operation.OTA_AUTHORIZATION;
-            cancelHealthTimeoutLocked();
+        boolean acquired = beginOperation(Operation.OTA_AUTHORIZATION, false);
+        if (acquired) {
             Log.i(TAG, "BES OTA authorization owns stable UART");
-            return true;
         }
+        return acquired;
     }
 
     public boolean promoteOtaAuthorizationToTransfer() {
@@ -447,10 +454,20 @@ public final class BesUartTransportCoordinator {
             versionGeneration = -1;
             fastSwitchAttemptGeneration = -1;
             firmwareVersion = "";
+            versionProbeDeferred = false;
             host.invalidateLinkProof();
             serialGeneration = INVALID_READER_GENERATION;
             state = State.DISCOVERING;
             long phase = ++phaseGeneration;
+            ioLane.submit(() -> reconnectAfterOta(phase));
+        }
+    }
+
+    private void reconnectAfterOta(long phase) {
+        synchronized (monitor) {
+            if (phase != phaseGeneration || state != State.DISCOVERING) {
+                return;
+            }
             host.resetParser();
             long readerGeneration = host.openAtBaud(AsgConstants.UART_RENDEZVOUS_BAUD);
             if (readerGeneration == INVALID_READER_GENERATION) {
@@ -489,7 +506,38 @@ public final class BesUartTransportCoordinator {
             phaseGeneration++;
             serialGeneration = INVALID_READER_GENERATION;
         }
+        ioLane.shutdownNow();
         executor.shutdownNow();
+    }
+
+    private boolean beginOperation(Operation requested, boolean fastReceive) {
+        Future<?> barrier;
+        synchronized (monitor) {
+            if (!isReadyLocked() || operation != Operation.NONE) {
+                return false;
+            }
+            operation = requested;
+            cancelHealthTimeoutLocked();
+            barrier = ioLane.submit(() -> {});
+        }
+
+        if (!awaitBarrier(barrier, requested + " barrier")) {
+            synchronized (monitor) {
+                if (operation == requested) {
+                    operation = Operation.NONE;
+                    resumeAfterOperationLocked();
+                }
+            }
+            return false;
+        }
+
+        synchronized (monitor) {
+            if (operation != requested || !isReadyLocked()) {
+                return false;
+            }
+            host.setFastReceive(fastReceive);
+            return true;
+        }
     }
 
     private void endOperation(Operation expected) {
@@ -504,10 +552,40 @@ public final class BesUartTransportCoordinator {
     }
 
     private void resumeAfterOperationLocked() {
+        resumeDeferredVersionProbeLocked();
         if (state == State.READY_FAST) {
             scheduleHealthCheckLocked();
         }
         advanceLocked();
+    }
+
+    private boolean awaitBoolean(Future<Boolean> future, String description) {
+        try {
+            return Boolean.TRUE.equals(future.get());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            Log.w(TAG, "Interrupted while waiting for " + description, e);
+        } catch (ExecutionException e) {
+            Log.e(TAG, "UART lane failed during " + description, e.getCause());
+        } catch (CancellationException e) {
+            Log.w(TAG, "UART lane cancelled " + description);
+        }
+        return false;
+    }
+
+    private boolean awaitBarrier(Future<?> future, String description) {
+        try {
+            future.get();
+            return true;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            Log.w(TAG, "Interrupted while waiting for " + description, e);
+        } catch (ExecutionException e) {
+            Log.e(TAG, "UART lane failed during " + description, e.getCause());
+        } catch (CancellationException e) {
+            Log.w(TAG, "UART lane cancelled " + description);
+        }
+        return false;
     }
 
     /** Advance immediately from current facts; no deferred intent survives outside the monitor. */
@@ -528,18 +606,32 @@ public final class BesUartTransportCoordinator {
         state = State.SWITCH_REQUESTED;
         host.invalidateLinkProof();
         long phase = ++phaseGeneration;
-        boolean sent = host.writeControlCommand(buildBaudRequest());
-        if (!sent) {
-            Log.e(TAG, "Could not completely write cs_baud; recovering indeterminate UART state");
-            startRecoveryLocked("baud_request_write_failed");
-            return;
+        ioLane.submit(
+                () -> {
+                    boolean sent = host.writeControlCommand(buildBaudRequest());
+                    onBaudRequestWriteComplete(phase, sent);
+                });
+    }
+
+    private void onBaudRequestWriteComplete(long phase, boolean sent) {
+        synchronized (monitor) {
+            if (phase != phaseGeneration || state != State.SWITCH_REQUESTED) {
+                return;
+            }
+            if (!sent) {
+                Log.e(
+                        TAG,
+                        "Could not completely write cs_baud; recovering indeterminate UART state");
+                startRecoveryLocked("baud_request_write_failed");
+                return;
+            }
+            phaseTimeout =
+                    executor.schedule(
+                            () -> reopenFastAndVerifyIfCurrent(phase, "sr_baud_timeout"),
+                            AsgConstants.UART_BAUD_ACK_TIMEOUT_MS,
+                            TimeUnit.MILLISECONDS);
+            Log.i(TAG, "Requested fast UART baud " + AsgConstants.UART_FAST_BAUD);
         }
-        phaseTimeout =
-                executor.schedule(
-                        () -> reopenFastAndVerifyIfCurrent(phase, "sr_baud_timeout"),
-                        AsgConstants.UART_BAUD_ACK_TIMEOUT_MS,
-                        TimeUnit.MILLISECONDS);
-        Log.i(TAG, "Requested fast UART baud " + AsgConstants.UART_FAST_BAUD);
     }
 
     private void reopenFastAndVerifyIfCurrent(long phase, String reason) {
@@ -555,6 +647,17 @@ public final class BesUartTransportCoordinator {
             cancelPhaseTimeoutLocked();
             serialGeneration = INVALID_READER_GENERATION;
             host.invalidateLinkProof();
+            state = State.VERIFYING_FAST;
+            long reopenPhase = ++phaseGeneration;
+            ioLane.submit(() -> performFastReopen(reopenPhase, reason));
+        }
+    }
+
+    private void performFastReopen(long reopenPhase, String reason) {
+        synchronized (monitor) {
+            if (reopenPhase != phaseGeneration || state != State.VERIFYING_FAST) {
+                return;
+            }
             host.resetParser();
             long readerGeneration = host.openAtBaud(AsgConstants.UART_FAST_BAUD);
             if (readerGeneration == INVALID_READER_GENERATION) {
@@ -562,7 +665,6 @@ public final class BesUartTransportCoordinator {
                 return;
             }
             serialGeneration = readerGeneration;
-            state = State.VERIFYING_FAST;
             long verifyPhase = ++phaseGeneration;
             scheduleProbeBurstLocked(
                     verifyPhase,
@@ -612,11 +714,20 @@ public final class BesUartTransportCoordinator {
                 return;
             }
             if (recoveryIndex >= RECOVERY_BAUDS.length) {
-                parkRecoveryAtRendezvousLocked();
+                ioLane.submit(() -> parkRecoveryAtRendezvous(phase));
                 return;
             }
 
             int baud = RECOVERY_BAUDS[recoveryIndex++];
+            ioLane.submit(() -> performRecoveryCandidate(phase, baud));
+        }
+    }
+
+    private void performRecoveryCandidate(long phase, int baud) {
+        synchronized (monitor) {
+            if (phase != phaseGeneration || state != State.RECOVERING) {
+                return;
+            }
             host.invalidateLinkProof();
             host.resetParser();
             long readerGeneration = host.openAtBaud(baud);
@@ -651,22 +762,28 @@ public final class BesUartTransportCoordinator {
         }
     }
 
-    private void parkRecoveryAtRendezvousLocked() {
-        serialGeneration = INVALID_READER_GENERATION;
-        host.invalidateLinkProof();
-        host.resetParser();
-        long readerGeneration = host.openAtBaud(AsgConstants.UART_RENDEZVOUS_BAUD);
-        if (readerGeneration == INVALID_READER_GENERATION) {
-            Log.w(TAG, "Recovery could not open rendezvous baud; retaining retry ownership");
-        } else {
-            serialGeneration = readerGeneration;
+    private void parkRecoveryAtRendezvous(long expectedPhase) {
+        synchronized (monitor) {
+            if (expectedPhase != phaseGeneration || state != State.RECOVERING) {
+                return;
+            }
+            serialGeneration = INVALID_READER_GENERATION;
+            host.invalidateLinkProof();
+            host.resetParser();
+            long readerGeneration = host.openAtBaud(AsgConstants.UART_RENDEZVOUS_BAUD);
+            if (readerGeneration == INVALID_READER_GENERATION) {
+                Log.w(TAG, "Recovery could not open rendezvous baud; retaining retry ownership");
+            } else {
+                serialGeneration = readerGeneration;
+            }
+            recoveryIndex = 0;
+            long delay = recoveryRetryDelayMs(recoveryRetryAttempt++);
+            long phase = ++phaseGeneration;
+            phaseTimeout =
+                    executor.schedule(
+                            () -> runRecoveryCandidate(phase), delay, TimeUnit.MILLISECONDS);
+            Log.w(TAG, "Recovery parked at rendezvous; retrying in " + delay + "ms");
         }
-        recoveryIndex = 0;
-        long delay = recoveryRetryDelayMs(recoveryRetryAttempt++);
-        long phase = ++phaseGeneration;
-        phaseTimeout =
-                executor.schedule(() -> runRecoveryCandidate(phase), delay, TimeUnit.MILLISECONDS);
-        Log.w(TAG, "Recovery parked at rendezvous; retrying in " + delay + "ms");
     }
 
     private void scheduleHealthCheckLocked() {
@@ -708,14 +825,46 @@ public final class BesUartTransportCoordinator {
         synchronized (monitor) {
             if (phase != phaseGeneration
                     || state == State.CLOSED
-                    || operation == Operation.OTA_TRANSFER
                     || host.currentBaud() != expectedBaud) {
                 return;
             }
-            if (!host.writeControlCommand(buildSystemVersionRequest())) {
-                Log.w(TAG, "System-version probe write failed at " + expectedBaud);
+            if (operation != Operation.NONE) {
+                versionProbeDeferred = true;
+                return;
+            }
+            ioLane.submit(() -> executeProbeIfCurrent(phase, expectedBaud));
+        }
+    }
+
+    private void executeProbeIfCurrent(long phase, int expectedBaud) {
+        synchronized (monitor) {
+            if (phase != phaseGeneration
+                    || state == State.CLOSED
+                    || host.currentBaud() != expectedBaud) {
+                return;
+            }
+            if (operation != Operation.NONE) {
+                versionProbeDeferred = true;
+                return;
             }
         }
+        if (!host.writeControlCommand(buildSystemVersionRequest())) {
+            Log.w(TAG, "System-version probe write failed at " + expectedBaud);
+        }
+    }
+
+    private void resumeDeferredVersionProbeLocked() {
+        if (!versionProbeDeferred
+                || operation != Operation.NONE
+                || !isReadyLocked()
+                || versionGeneration == serialGeneration
+                || executor.isShutdown()) {
+            return;
+        }
+        versionProbeDeferred = false;
+        long phase = phaseGeneration;
+        int baud = host.currentBaud();
+        executor.execute(() -> sendProbeIfCurrent(phase, baud));
     }
 
     private boolean isReadyLocked() {
