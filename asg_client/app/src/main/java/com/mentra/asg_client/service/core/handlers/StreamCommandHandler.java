@@ -20,6 +20,8 @@ import com.mentra.asg_client.service.media.interfaces.IMediaManager;
 import com.mentra.asg_client.service.system.core.SystemControllerFactory;
 import com.mentra.asg_client.service.system.interfaces.IStateManager;
 import com.mentra.asg_client.service.utils.ServiceConstants;
+import com.mentra.asg_client.service.utils.ServiceUtils;
+import io.github.thibaultbee.streampack.internal.sources.camera.CameraController;
 import java.util.Set;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -131,6 +133,10 @@ public class StreamCommandHandler implements ICommandHandler {
                 sendStreamErrorStatus(streamId, "Unknown stream URL protocol");
                 return false;
             }
+
+            // Mentra Live accepts synthetic [fps,fps] inside a wider AE band; keep the
+            // StreamPackLite workaround off for generic Android HALs (Codex P1).
+            CameraController.forceFixedFpsInsideSupportedBand = ServiceUtils.isK900Device(context);
 
             // BATTERY CHECK
             if (stateManager != null) {
