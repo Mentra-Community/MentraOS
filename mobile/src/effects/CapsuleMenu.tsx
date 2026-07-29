@@ -18,6 +18,7 @@ import AppIcon from "@/components/home/AppIcon"
 import {SETTINGS, useSetting} from "@mentra/engine"
 import {useNavigationStore} from "@/stores/navigation"
 import {SYSTEM_APPS} from "@/constants/miniapps"
+import {enqueueScreenshotPersistence} from "@/effects/screenshotPersistenceQueue"
 
 interface CapsuleButtonProps {
   onRightPress?: () => void
@@ -167,6 +168,7 @@ export default function CapsuleMenu({forceShow}: {forceShow: boolean}) {
 
 /** Longest we'll delay a close waiting for the UI to go idle before capturing. */
 const CAPTURE_SETTLE_TIMEOUT_MS = 300
+let screenshotFileSequence = 0
 
 /**
  * Resolve once the UI has settled enough to photograph, or after
@@ -233,36 +235,39 @@ export async function captureScreenshot(
       screenshotUri = cropped.uri
     }
 
-    const screenshotDirectory = new Directory(Paths.document, "miniapp-screenshots")
-    if (!screenshotDirectory.exists) screenshotDirectory.create()
+    await enqueueScreenshotPersistence(async () => {
+      const screenshotDirectory = new Directory(Paths.document, "miniapp-screenshots")
+      if (!screenshotDirectory.exists) screenshotDirectory.create()
 
-    const safePackageName = packageName.replace(/[^a-zA-Z0-9._-]/g, "_")
-    // Unique filename per capture. The app switcher renders this uri through
-    // expo-image, which caches by uri, so reusing one path meant every fresh
-    // capture landed on disk but the card kept showing the first image ever
-    // loaded (OS-1810). Changing the uri is what actually invalidates it.
-    const prefix = `${safePackageName}-`
-    const legacyName = `${safePackageName}.jpg`
-    const persistentFile = new File(screenshotDirectory, `${prefix}${Date.now()}.jpg`)
-    new File(screenshotUri).copy(persistentFile)
+      const safePackageName = packageName.replace(/[^a-zA-Z0-9._-]/g, "_")
+      // Unique filename per capture. The app switcher renders this uri through
+      // expo-image, which caches by uri, so reusing one path meant every fresh
+      // capture landed on disk but the card kept showing the first image ever
+      // loaded (OS-1810). Changing the uri is what actually invalidates it.
+      const prefix = `${safePackageName}-`
+      const legacyName = `${safePackageName}.jpg`
+      const captureId = `${Date.now()}-${screenshotFileSequence++}`
+      const persistentFile = new File(screenshotDirectory, `${prefix}${captureId}.jpg`)
+      new File(screenshotUri).copy(persistentFile)
 
-    // Keep only the capture we just wrote; older ones for this package are
-    // unreachable now that the stored uri points here.
-    for (const entry of screenshotDirectory.list()) {
-      if (
-        entry instanceof File &&
-        (entry.name === legacyName || entry.name.startsWith(prefix)) &&
-        entry.name !== persistentFile.name
-      ) {
-        try {
-          entry.delete()
-        } catch {
-          // A stale file we can't remove is harmless; don't fail the capture.
+      // Publish the new URI before removing older files. Persistence is
+      // serialized so another capture cannot publish a file this sweep deletes.
+      await engine.miniapps.saveScreenshot(packageName, persistentFile.uri)
+
+      for (const entry of screenshotDirectory.list()) {
+        if (
+          entry instanceof File &&
+          (entry.name === legacyName || entry.name.startsWith(prefix)) &&
+          entry.name !== persistentFile.name
+        ) {
+          try {
+            entry.delete()
+          } catch {
+            // A stale file we can't remove is harmless; don't fail the capture.
+          }
         }
       }
-    }
-
-    await engine.miniapps.saveScreenshot(packageName, persistentFile.uri)
+    })
   } catch (error) {
     console.warn("screenshot failed:", error)
   }
