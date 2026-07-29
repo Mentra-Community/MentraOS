@@ -1,0 +1,103 @@
+# THROWAWAY verification workflow.
+#
+# Proves the Doppler → .env injection for EXPO_PUBLIC_SENTRY_DSN works on both
+# runner families before that step is added to the real mobile builds. It builds
+# nothing and touches no release artifact, so a failure here costs a red check
+# and nothing else.
+#
+# Why this exists: every mobile build does `cp .env.example .env`, and that file
+# ships EXPO_PUBLIC_SENTRY_DSN empty. SentrySetup.tsx bails on an empty DSN
+# *silently*, so CI builds have had crash reporting off with no signal at all —
+# which is why an Android process death during notification work in July 2026
+# could never be root-caused (see PR #3562).
+#
+# Delete this file once the injection lands in the real workflows.
+name: "test: doppler sentry dsn"
+
+on:
+  # Branch-scoped push so this can be proven from a feature branch:
+  # workflow_dispatch is only dispatchable once a workflow is on the default
+  # branch, and the whole point is to verify before touching anything shared.
+  push:
+    branches: [isaiah/test-doppler-sentry-dsn]
+  workflow_dispatch:
+
+jobs:
+  verify:
+    # Both families, because the injection has to survive both: the Android build
+    # runs on Ubuntu (GNU sed) while staging/iOS are macOS-pinned (BSD sed). The
+    # `sed -i ''` form used elsewhere is BSD-only and exits 2 on GNU.
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Doppler CLI
+        uses: dopplerhq/cli-action@v3
+
+      - name: Inject Sentry DSN from Doppler
+        working-directory: ./mobile
+        env:
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN_MOBILE_STG }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${DOPPLER_TOKEN:-}" ]; then
+            echo "::error::DOPPLER_TOKEN_MOBILE_STG is not set — cannot fetch the DSN."
+            exit 1
+          fi
+
+          cp .env.example .env
+
+          # --plain keeps the value off stdout formatting; mask it before it can
+          # reach a log line by way of any later command echoing the file.
+          DSN="$(doppler secrets get EXPO_PUBLIC_SENTRY_DSN --plain)"
+          echo "::add-mask::$DSN"
+
+          if [ -z "$DSN" ] || [ "$DSN" = "secret" ]; then
+            echo "::error::Doppler returned an empty/placeholder DSN. SentrySetup.tsx would silently disable Sentry."
+            exit 1
+          fi
+
+          # Portable in-place edit: `sed -i ''` is BSD/macOS-only and on GNU sed
+          # treats the script as a filename. The temp-file form works on both,
+          # matching mentra-app-android-build.yml.
+          sed "s|^EXPO_PUBLIC_SENTRY_DSN=.*|EXPO_PUBLIC_SENTRY_DSN=$DSN|" .env > .env.tmp && mv .env.tmp .env
+
+      - name: Verify injection (never prints the value)
+        working-directory: ./mobile
+        run: |
+          set -euo pipefail
+
+          LINE="$(grep '^EXPO_PUBLIC_SENTRY_DSN=' .env || true)"
+          if [ -z "$LINE" ]; then
+            echo "::error::EXPO_PUBLIC_SENTRY_DSN line missing from .env after injection."
+            exit 1
+          fi
+
+          VALUE="${LINE#EXPO_PUBLIC_SENTRY_DSN=}"
+          if [ -z "$VALUE" ]; then
+            echo "::error::EXPO_PUBLIC_SENTRY_DSN is still empty — injection did not take."
+            exit 1
+          fi
+
+          # Shape check only. A Sentry DSN is https://<key>@<host>/<projectId>;
+          # asserting the shape catches a wrong-secret mixup without echoing it.
+          case "$VALUE" in
+            https://*@*.ingest.*sentry.io/*) ;;
+            *) echo "::error::Value does not look like a Sentry DSN (masked)."; exit 1 ;;
+          esac
+
+          echo "OK on ${{ matrix.runner }}: DSN injected, length ${#VALUE}, shape valid."
+
+          # Guard the regression this whole exercise is about: the committed
+          # example file must stay empty so no real DSN is ever committed.
+          EXAMPLE="$(grep '^EXPO_PUBLIC_SENTRY_DSN=' .env.example || true)"
+          if [ "$EXAMPLE" != "EXPO_PUBLIC_SENTRY_DSN=" ]; then
+            echo "::error::.env.example should keep an empty EXPO_PUBLIC_SENTRY_DSN; found a value."
+            exit 1
+          fi
+          echo "OK: .env.example still has an empty DSN."
