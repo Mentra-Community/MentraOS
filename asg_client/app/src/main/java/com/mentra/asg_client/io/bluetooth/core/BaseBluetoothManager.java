@@ -323,6 +323,14 @@ public abstract class BaseBluetoothManager implements ICompanionTransport {
      * the subclass-specific send implementation.
      */
     private boolean sendMessageNow(byte[] data, boolean broadcastJsonResponses) {
+        publishOutboundMessage(data, broadcastJsonResponses);
+        return sendMessageInternal(data);
+    }
+
+    /**
+     * Record and locally publish a message that a subclass will send on its owned transport lane.
+     */
+    protected final void publishOutboundMessage(byte[] data, boolean broadcastJsonResponses) {
         BleTraceLogger.logBytes("glasses_to_phone", "asg_ble_output", data);
 
         // Try to broadcast JSON responses to intent listeners
@@ -337,8 +345,6 @@ public abstract class BaseBluetoothManager implements ICompanionTransport {
                 // Not valid JSON; skip broadcast, still send over BLE.
             }
         }
-
-        return sendMessageInternal(data);
     }
 
     private void logOutboundQueueEvent(

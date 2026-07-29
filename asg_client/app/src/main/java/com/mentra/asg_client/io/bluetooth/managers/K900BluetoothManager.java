@@ -1204,8 +1204,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                         && currentFileTransfer != null
                         && currentFileTransfer.packSize > payloadSize) {
                     Log.w(TAG, "CoC MTU shrank during a large-payload transfer; aborting safely");
-                    notifyTransferFailedToPhone("coc_mtu_changed");
-                    clearFileTransferSession();
+                    failFileTransfer("coc_mtu_changed");
                     pendingPackets.clear();
                 }
                 BesWireFormat.setFilePackSize(payloadSize);
@@ -1225,8 +1224,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                         && currentFileTransfer != null
                         && currentFileTransfer.packSize > gattFilePackSize) {
                     Log.w(TAG, "CoC closed during a large-payload transfer; aborting safely");
-                    notifyTransferFailedToPhone("coc_closed");
-                    clearFileTransferSession();
+                    failFileTransfer("coc_closed");
                     pendingPackets.clear();
                 }
                 fileTransportCoc = false;
@@ -1891,12 +1889,17 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
     /** End the active file session and release its exclusive UART operation lease. */
     private void clearFileTransferSession() {
+        detachFileTransferSession();
+        transportCoordinator.endFileTransfer();
+    }
+
+    private FileTransferSession detachFileTransferSession() {
         FileTransferSession session = currentFileTransfer;
         currentFileTransfer = null;
         if (session != null) {
             session.isActive = false;
         }
-        transportCoordinator.endFileTransfer();
+        return session;
     }
 
     /**
@@ -2060,8 +2063,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
         if (packet == null) {
             Log.e(TAG, "Failed to pack file packet " + packetIndex);
-            notifyTransferFailedToPhone("packet_pack_failed");
-            clearFileTransferSession();
+            failFileTransfer("packet_pack_failed");
             return false;
         }
 
@@ -2073,8 +2075,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                     context, transferReportPath(), "send_file", "uart_write_failed", null);
             notificationManager.showDebugNotification(
                     "File Transfer Failed", "UART write failed at packet " + packetIndex);
-            notifyTransferFailedToPhone("uart_write_failed");
-            clearFileTransferSession();
+            failFileTransfer("uart_write_failed");
             pendingPackets.clear();
             consecutiveFailures = 0;
             return false;
@@ -2150,10 +2151,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                 notificationManager.showDebugNotification(
                         "File Transfer Failed", "Packet " + packetIndex + " timeout");
 
-                notifyTransferFailedToPhone("packet_timeout");
-
-                // Cancel transfer
-                clearFileTransferSession();
+                failFileTransfer("packet_timeout");
                 pendingPackets.clear();
             } else {
                 Log.w(
@@ -2337,10 +2335,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                                 + " failures at packet "
                                 + retryPacketIndex);
 
-                notifyTransferFailedToPhone("ble_tx_stuck_consecutive_failures");
-
-                // Abort the transfer
-                clearFileTransferSession();
+                failFileTransfer("ble_tx_stuck_consecutive_failures");
                 pendingPackets.clear();
                 consecutiveFailures = 0;
                 pendingFailureRetryIndex = -1;
@@ -2543,8 +2538,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                         "Max retries exceeded for " + currentFileTransfer.fileName);
 
                 // Clean up but DON'T delete file (might be useful for debugging)
-                notifyTransferFailedToPhone("max_transfer_retries_exceeded");
-                clearFileTransferSession();
+                failFileTransfer("max_transfer_retries_exceeded");
                 pendingPackets.clear();
             }
         }
@@ -2594,8 +2588,9 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         }
     }
 
-    private void notifyTransferFailedToPhone(String reason) {
-        FileTransferSession transfer = currentFileTransfer;
+    /** Send the failure while retaining file ownership, then release the exclusive lease. */
+    private void failFileTransfer(String reason) {
+        FileTransferSession transfer = detachFileTransferSession();
         if (transfer == null) {
             return;
         }
@@ -2608,7 +2603,11 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             json.put("reason", reason);
             json.put("timestamp", System.currentTimeMillis());
 
-            boolean sent = sendMessage(json.toString().getBytes(StandardCharsets.UTF_8));
+            byte[] payload = json.toString().getBytes(StandardCharsets.UTF_8);
+            publishOutboundMessage(payload, true);
+            boolean sent =
+                    transportCoordinator.endFileTransferWithFinalWrite(
+                            () -> sendMessageInternalLocked(payload));
             Log.i(
                     TAG,
                     "📤 transfer_failed sent to phone for "

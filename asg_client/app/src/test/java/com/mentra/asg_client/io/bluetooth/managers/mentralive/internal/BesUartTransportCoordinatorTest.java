@@ -151,6 +151,32 @@ public class BesUartTransportCoordinatorTest {
     }
 
     @Test
+    public void fileTerminalWrite_precedesDeferredFastSwitch() throws Exception {
+        coordinator.onSerialReady(host.session);
+        assertThat(systemVersion("17.26.7.4"))
+                .isEqualTo(BesUartTransportCoordinator.SystemVersionResult.READY);
+        assertThat(coordinator.beginFileTransfer()).isTrue();
+        assertThat(systemVersion("17.26.7.23"))
+                .isEqualTo(BesUartTransportCoordinator.SystemVersionResult.READY);
+
+        assertThat(
+                        coordinator.endFileTransferWithFinalWrite(
+                                () -> {
+                                    assertThat(coordinator.getOperation())
+                                            .isEqualTo(
+                                                    BesUartTransportCoordinator.Operation
+                                                            .FILE_TRANSFER);
+                                    host.controlCommands.add("terminal_status");
+                                    return true;
+                                }))
+                .isTrue();
+
+        awaitControlCommandCount("cs_baud", 1);
+        assertThat(host.controlCommands.indexOf("terminal_status"))
+                .isLessThan(indexOfControlCommand("cs_baud"));
+    }
+
+    @Test
     public void otaAuthorization_promotesToExclusiveRawRouting() {
         coordinator.onSerialReady(host.session);
         assertThat(systemVersion("17.26.7.4"))
@@ -412,6 +438,15 @@ public class BesUartTransportCoordinatorTest {
 
     private long countControlCommands(String command) {
         return host.controlCommands.stream().filter(value -> value.contains(command)).count();
+    }
+
+    private int indexOfControlCommand(String command) {
+        for (int i = 0; i < host.controlCommands.size(); i++) {
+            if (host.controlCommands.get(i).contains(command)) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     private long countOpenAttempts(int baud) {

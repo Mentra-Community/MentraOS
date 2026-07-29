@@ -424,6 +424,30 @@ public final class BesUartTransportCoordinator {
         endOperation(Operation.FILE_TRANSFER);
     }
 
+    /**
+     * Write one terminal status while retaining exclusive file ownership, then release the lease.
+     * This keeps a deferred baud transition behind the status write.
+     */
+    public boolean endFileTransferWithFinalWrite(WriteAction finalWrite) {
+        Future<Boolean> write;
+        synchronized (monitor) {
+            if (!isReadyLocked() || operation != Operation.FILE_TRANSFER || finalWrite == null) {
+                return false;
+            }
+            write = ioLane.submit(finalWrite::write);
+        }
+
+        boolean sent = awaitBoolean(write, "file terminal write");
+        synchronized (monitor) {
+            if (operation == Operation.FILE_TRANSFER) {
+                operation = Operation.NONE;
+                host.setFastReceive(false);
+                resumeAfterOperationLocked();
+            }
+        }
+        return sent;
+    }
+
     public boolean beginOtaAuthorization() {
         boolean acquired = beginOperation(Operation.OTA_AUTHORIZATION, false);
         if (acquired) {
