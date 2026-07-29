@@ -877,7 +877,8 @@ public final class BesUartTransportCoordinator {
             if (expectedPhase != phaseGeneration || state != State.RECOVERING) {
                 closeOpened = opened != null;
             } else {
-                if (!adoptAndStartSessionLocked(opened)) {
+                boolean adopted = adoptAndStartSessionLocked(opened);
+                if (!adopted) {
                     closeOpened = opened != null;
                     Log.w(
                             TAG,
@@ -886,6 +887,14 @@ public final class BesUartTransportCoordinator {
                 recoveryIndex = 0;
                 long delay = recoveryRetryDelayMs(recoveryRetryAttempt++);
                 long phase = ++phaseGeneration;
+                if (adopted) {
+                    scheduleProbeBurstLocked(
+                            phase,
+                            AsgConstants.UART_RENDEZVOUS_BAUD,
+                            0,
+                            AsgConstants.UART_RUNTIME_RECOVERY_PROBES_PER_BAUD,
+                            AsgConstants.UART_RUNTIME_RECOVERY_PROBE_SPACING_MS);
+                }
                 phaseTimeout =
                         executor.schedule(
                                 () -> runRecoveryCandidate(phase), delay, TimeUnit.MILLISECONDS);

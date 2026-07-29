@@ -364,6 +364,25 @@ public class BesUartTransportCoordinatorTest {
     }
 
     @Test
+    public void validFrameAtParkedRendezvous_doesNotCancelVersionDiscovery() throws Exception {
+        establishFastLink();
+        host.controlCommands.clear();
+        host.openFailuresRemaining = 2;
+
+        coordinator.onDiscardedBytes(
+                AsgConstants.UART_RUNTIME_RECOVERY_DISCARDED_BYTES, coordinator.getSerialSession());
+        awaitOpenAttemptCount(AsgConstants.UART_RENDEZVOUS_BAUD, 2);
+        coordinator.onValidFrame(coordinator.getSerialSession());
+
+        assertThat(coordinator.getState())
+                .isEqualTo(BesUartTransportCoordinator.State.READY_RENDEZVOUS);
+        awaitControlCommandCount("cs_syvr", AsgConstants.UART_RUNTIME_RECOVERY_PROBES_PER_BAUD);
+        assertThat(systemVersion("17.26.7.23"))
+                .isEqualTo(BesUartTransportCoordinator.SystemVersionResult.TRANSITIONING);
+        awaitControlCommandCount("cs_baud", 1);
+    }
+
+    @Test
     public void retiredSession_cannotMutateNewSession() {
         coordinator.onSerialReady(host.session);
         SerialSession retiredSession = coordinator.getSerialSession();
