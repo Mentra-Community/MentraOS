@@ -140,6 +140,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
     // Inner class to track file transfer state
     private static class FileTransferSession {
+        final BesUartTransportCoordinator.OperationLease transportLease;
         String filePath;
         String fileName;
         byte[] fileData;
@@ -165,11 +166,13 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         private static final int BES_HARDCODED_PACK_SIZE = 400;
 
         FileTransferSession(
+                BesUartTransportCoordinator.OperationLease transportLease,
                 String filePath,
                 String fileName,
                 byte[] fileData,
                 int packSize,
                 boolean dynamicPayloadSupported) {
+            this.transportLease = transportLease;
             this.filePath = filePath;
             this.fileName = fileName;
             this.fileData = fileData;
@@ -1889,8 +1892,10 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
     /** End the active file session and release its exclusive UART operation lease. */
     private void clearFileTransferSession() {
-        detachFileTransferSession();
-        transportCoordinator.endFileTransfer();
+        FileTransferSession transfer = detachFileTransferSession();
+        if (transfer != null) {
+            transportCoordinator.endFileTransfer(transfer.transportLease);
+        }
     }
 
     private FileTransferSession detachFileTransferSession() {
@@ -1911,17 +1916,25 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             fileName = fileName.substring(0, 16); // Truncate to 16 chars max
         }
 
-        if (!transportCoordinator.beginFileTransfer()) {
+        BesUartTransportCoordinator.OperationLease transportLease =
+                transportCoordinator.beginFileTransfer();
+        if (transportLease == null) {
             Log.w(TAG, "Cannot start file transfer while BES UART is unavailable or busy");
             return false;
         }
-        currentFileTransfer =
-                new FileTransferSession(
-                        filePath,
-                        fileName,
-                        fileData,
-                        effectiveUartPackSize(),
-                        linkState.getNegotiatedCaps().filePayloadV2);
+        try {
+            currentFileTransfer =
+                    new FileTransferSession(
+                            transportLease,
+                            filePath,
+                            fileName,
+                            fileData,
+                            effectiveUartPackSize(),
+                            linkState.getNegotiatedCaps().filePayloadV2);
+        } catch (RuntimeException e) {
+            transportCoordinator.endFileTransfer(transportLease);
+            throw e;
+        }
         pendingPackets.clear();
         consecutiveFailures = 0; // Reset failure counter for new transfer
         pendingFailureRetryIndex = -1;
@@ -2068,7 +2081,9 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         }
 
         // File packets share the same serialized UART writer without verbose payload logging.
-        boolean sent = transportCoordinator.runFileWrite(() -> comManager.write(packet));
+        boolean sent =
+                transportCoordinator.runFileWrite(
+                        currentFileTransfer.transportLease, () -> comManager.write(packet));
         if (!sent) {
             Log.e(TAG, "Failed to write file packet " + packetIndex + " to UART");
             BluetoothReporting.reportFileTransferFailure(
@@ -2607,7 +2622,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             publishOutboundMessage(payload, true);
             boolean sent =
                     transportCoordinator.endFileTransferWithFinalWrite(
-                            () -> sendMessageInternalLocked(payload));
+                            transfer.transportLease, () -> sendMessageInternalLocked(payload));
             Log.i(
                     TAG,
                     "📤 transfer_failed sent to phone for "
@@ -2620,8 +2635,8 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         } catch (Exception e) {
             Log.e(TAG, "Failed to notify phone about transfer failure", e);
         } finally {
-            // Covers message construction/publishing failures before the terminal-write helper.
-            transportCoordinator.endFileTransfer();
+            // Covers failures before the helper; token matching makes this a no-op after release.
+            transportCoordinator.endFileTransfer(transfer.transportLease);
         }
     }
 

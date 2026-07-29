@@ -83,6 +83,7 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
 
     private final Runnable otaAppliedCallback;
     private final BesUartTransportCoordinator transportCoordinator;
+    private BesUartTransportCoordinator.OperationLease transportLease;
     private BesOtaCommandListener mListener;
     private final K900CommandHandler k900CommandHandler;
 
@@ -291,12 +292,15 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
             return false;
         }
 
-        if (transportCoordinator == null || !transportCoordinator.beginOtaAuthorization()) {
+        BesUartTransportCoordinator.OperationLease acquiredLease =
+                transportCoordinator != null ? transportCoordinator.beginOtaAuthorization() : null;
+        if (acquiredLease == null) {
             Log.e(TAG, "BES UART is not ready for OTA authorization");
             EventBus.getDefault()
                     .post(BesOtaProgressEvent.createFailed("BES UART is busy or not ready"));
             return false;
         }
+        transportLease = acquiredLease;
 
         // The transfer needs the vendor "screen on" state, not just CPU: the display-sleep
         // hook wedges the UART transfer state machine mid-flight even with a CPU lock held
@@ -438,8 +442,9 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
         Log.i(TAG, "BES OTA wakelock released");
         isWaitingForAuthorization = false;
         if (transportCoordinator != null) {
-            transportCoordinator.endOta();
+            transportCoordinator.endOta(transportLease);
         }
+        transportLease = null;
         bInit = false;
         fileData = null;
         sentPos = 0;
@@ -458,7 +463,7 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
                 return;
             }
 
-            if (!transportCoordinator.promoteOtaAuthorizationToTransfer()) {
+            if (!transportCoordinator.promoteOtaAuthorizationToTransfer(transportLease)) {
                 Log.e(TAG, "Could not promote UART to BES OTA transfer mode");
                 EventBus.getDefault()
                         .post(BesOtaProgressEvent.createFailed("BES UART is no longer ready"));
@@ -1245,6 +1250,6 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
             Log.e(TAG, "send() failed - data is null");
             return false;
         }
-        return transportCoordinator.writeOta(data);
+        return transportCoordinator.writeOta(transportLease, data);
     }
 }

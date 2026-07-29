@@ -132,7 +132,8 @@ public class BesUartTransportCoordinatorTest {
         coordinator.onSerialReady(host.session);
         assertThat(systemVersion("17.26.7.4"))
                 .isEqualTo(BesUartTransportCoordinator.SystemVersionResult.READY);
-        assertThat(coordinator.beginFileTransfer()).isTrue();
+        BesUartTransportCoordinator.OperationLease lease = coordinator.beginFileTransfer();
+        assertThat(lease).isNotNull();
         assertThat(host.fastReceive).isTrue();
 
         assertThat(systemVersion("17.26.7.23"))
@@ -141,7 +142,7 @@ public class BesUartTransportCoordinatorTest {
                 .isEqualTo(BesUartTransportCoordinator.State.READY_RENDEZVOUS);
         assertThat(host.controlCommands).noneMatch(command -> command.contains("cs_baud"));
 
-        coordinator.endFileTransfer();
+        coordinator.endFileTransfer(lease);
 
         assertThat(coordinator.getState())
                 .isEqualTo(BesUartTransportCoordinator.State.SWITCH_REQUESTED);
@@ -155,12 +156,14 @@ public class BesUartTransportCoordinatorTest {
         coordinator.onSerialReady(host.session);
         assertThat(systemVersion("17.26.7.4"))
                 .isEqualTo(BesUartTransportCoordinator.SystemVersionResult.READY);
-        assertThat(coordinator.beginFileTransfer()).isTrue();
+        BesUartTransportCoordinator.OperationLease lease = coordinator.beginFileTransfer();
+        assertThat(lease).isNotNull();
         assertThat(systemVersion("17.26.7.23"))
                 .isEqualTo(BesUartTransportCoordinator.SystemVersionResult.READY);
 
         assertThat(
                         coordinator.endFileTransferWithFinalWrite(
+                                lease,
                                 () -> {
                                     assertThat(coordinator.getOperation())
                                             .isEqualTo(
@@ -181,10 +184,12 @@ public class BesUartTransportCoordinatorTest {
         coordinator.onSerialReady(host.session);
         assertThat(systemVersion("17.26.7.4"))
                 .isEqualTo(BesUartTransportCoordinator.SystemVersionResult.READY);
-        assertThat(coordinator.beginFileTransfer()).isTrue();
+        BesUartTransportCoordinator.OperationLease firstLease = coordinator.beginFileTransfer();
+        assertThat(firstLease).isNotNull();
 
         assertThat(
                         coordinator.endFileTransferWithFinalWrite(
+                                firstLease,
                                 () -> {
                                     throw new IllegalStateException("write failed");
                                 }))
@@ -193,10 +198,54 @@ public class BesUartTransportCoordinatorTest {
         assertThat(coordinator.getOperation())
                 .isEqualTo(BesUartTransportCoordinator.Operation.NONE);
         assertThat(host.fastReceive).isFalse();
-        assertThat(coordinator.beginFileTransfer()).isTrue();
-        assertThat(coordinator.endFileTransferWithFinalWrite(null)).isFalse();
+        BesUartTransportCoordinator.OperationLease secondLease = coordinator.beginFileTransfer();
+        assertThat(secondLease).isNotNull();
+        assertThat(coordinator.endFileTransferWithFinalWrite(secondLease, null)).isFalse();
         assertThat(coordinator.getOperation())
                 .isEqualTo(BesUartTransportCoordinator.Operation.NONE);
+    }
+
+    @Test
+    public void staleFileRelease_cannotReleaseNewLease() {
+        coordinator.onSerialReady(host.session);
+        assertThat(systemVersion("17.26.7.4"))
+                .isEqualTo(BesUartTransportCoordinator.SystemVersionResult.READY);
+        BesUartTransportCoordinator.OperationLease firstLease = coordinator.beginFileTransfer();
+        assertThat(firstLease).isNotNull();
+        assertThat(coordinator.endFileTransferWithFinalWrite(firstLease, () -> true)).isTrue();
+
+        BesUartTransportCoordinator.OperationLease secondLease = coordinator.beginFileTransfer();
+        assertThat(secondLease).isNotNull();
+        coordinator.endFileTransfer(firstLease);
+
+        assertThat(coordinator.getOperation())
+                .isEqualTo(BesUartTransportCoordinator.Operation.FILE_TRANSFER);
+        assertThat(coordinator.runFileWrite(firstLease, () -> true)).isFalse();
+        assertThat(coordinator.runFileWrite(secondLease, () -> true)).isTrue();
+        coordinator.endFileTransfer(secondLease);
+    }
+
+    @Test
+    public void staleOtaReleaseAfterSerialReset_cannotReleaseNewFileLease() {
+        coordinator.onSerialReady(host.session);
+        assertThat(systemVersion("17.26.7.4"))
+                .isEqualTo(BesUartTransportCoordinator.SystemVersionResult.READY);
+        BesUartTransportCoordinator.OperationLease otaLease = coordinator.beginOtaAuthorization();
+        assertThat(otaLease).isNotNull();
+
+        coordinator.onSerialClosed();
+        coordinator.onSerialReady(host.session);
+        assertThat(systemVersion("17.26.7.4"))
+                .isEqualTo(BesUartTransportCoordinator.SystemVersionResult.READY);
+        BesUartTransportCoordinator.OperationLease fileLease = coordinator.beginFileTransfer();
+        assertThat(fileLease).isNotNull();
+
+        coordinator.endOta(otaLease);
+
+        assertThat(coordinator.getOperation())
+                .isEqualTo(BesUartTransportCoordinator.Operation.FILE_TRANSFER);
+        assertThat(coordinator.runFileWrite(fileLease, () -> true)).isTrue();
+        coordinator.endFileTransfer(fileLease);
     }
 
     @Test
@@ -205,19 +254,20 @@ public class BesUartTransportCoordinatorTest {
         assertThat(systemVersion("17.26.7.4"))
                 .isEqualTo(BesUartTransportCoordinator.SystemVersionResult.READY);
 
-        assertThat(coordinator.beginOtaAuthorization()).isTrue();
-        assertThat(coordinator.beginFileTransfer()).isFalse();
-        assertThat(coordinator.promoteOtaAuthorizationToTransfer()).isTrue();
+        BesUartTransportCoordinator.OperationLease otaLease = coordinator.beginOtaAuthorization();
+        assertThat(otaLease).isNotNull();
+        assertThat(coordinator.beginFileTransfer()).isNull();
+        assertThat(coordinator.promoteOtaAuthorizationToTransfer(otaLease)).isTrue();
         assertThat(coordinator.inboundRoute(host.session))
                 .isEqualTo(BesUartTransportCoordinator.InboundRoute.OTA);
         assertThat(host.fastReceive).isTrue();
         assertThat(coordinator.runNormalWrite(() -> true)).isFalse();
 
         byte[] packet = {1, 2, 3};
-        assertThat(coordinator.writeOta(packet)).isTrue();
+        assertThat(coordinator.writeOta(otaLease, packet)).isTrue();
         assertThat(host.rawWrites).containsExactly(packet);
 
-        coordinator.endOta();
+        coordinator.endOta(otaLease);
         assertThat(coordinator.inboundRoute(host.session))
                 .isEqualTo(BesUartTransportCoordinator.InboundRoute.NORMAL);
         assertThat(host.fastReceive).isFalse();
@@ -232,13 +282,14 @@ public class BesUartTransportCoordinatorTest {
         assertThat(systemVersion("17.26.7.23"))
                 .isEqualTo(BesUartTransportCoordinator.SystemVersionResult.READY);
         SerialSession retiredSession = coordinator.getSerialSession();
-        assertThat(coordinator.beginFileTransfer()).isTrue();
+        BesUartTransportCoordinator.OperationLease lease = coordinator.beginFileTransfer();
+        assertThat(lease).isNotNull();
 
         coordinator.onDiscardedBytes(
                 AsgConstants.UART_RUNTIME_RECOVERY_DISCARDED_BYTES, coordinator.getSerialSession());
         assertThat(coordinator.getState()).isEqualTo(BesUartTransportCoordinator.State.READY_FAST);
 
-        coordinator.endFileTransfer();
+        coordinator.endFileTransfer(lease);
         coordinator.onDiscardedBytes(
                 AsgConstants.UART_RUNTIME_RECOVERY_DISCARDED_BYTES, coordinator.getSerialSession());
         assertThat(coordinator.getState()).isEqualTo(BesUartTransportCoordinator.State.RECOVERING);
@@ -374,13 +425,14 @@ public class BesUartTransportCoordinatorTest {
     public void versionProbes_pauseForFileTransferAndResumeAfterLease() throws Exception {
         coordinator.onSerialReady(host.session);
         coordinator.onValidFrame(coordinator.getSerialSession());
-        assertThat(coordinator.beginFileTransfer()).isTrue();
+        BesUartTransportCoordinator.OperationLease lease = coordinator.beginFileTransfer();
+        assertThat(lease).isNotNull();
         host.controlCommands.clear();
 
         Thread.sleep(1_000);
 
         assertThat(countControlCommands("cs_syvr")).isZero();
-        coordinator.endFileTransfer();
+        coordinator.endFileTransfer(lease);
         awaitControlCommandCount("cs_syvr", 1);
     }
 
@@ -389,12 +441,13 @@ public class BesUartTransportCoordinatorTest {
         coordinator.onSerialReady(host.session);
         assertThat(systemVersion("17.26.7.4"))
                 .isEqualTo(BesUartTransportCoordinator.SystemVersionResult.READY);
-        assertThat(coordinator.beginFileTransfer()).isTrue();
+        BesUartTransportCoordinator.OperationLease lease = coordinator.beginFileTransfer();
+        assertThat(lease).isNotNull();
         assertThat(systemVersion("17.26.7.23"))
                 .isEqualTo(BesUartTransportCoordinator.SystemVersionResult.READY);
 
         coordinator.onSerialClosed();
-        coordinator.endFileTransfer();
+        coordinator.endFileTransfer(lease);
 
         assertThat(coordinator.getState()).isEqualTo(BesUartTransportCoordinator.State.CLOSED);
         assertThat(coordinator.getOperation())

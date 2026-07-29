@@ -45,6 +45,22 @@ public final class BesUartTransportCoordinator {
         OTA_TRANSFER
     }
 
+    /** Opaque ownership token for one exclusive operation lifetime. */
+    public static final class OperationLease {
+        private final long id;
+        private final Operation acquiredAs;
+
+        private OperationLease(long id, Operation acquiredAs) {
+            this.id = id;
+            this.acquiredAs = acquiredAs;
+        }
+
+        @Override
+        public String toString() {
+            return acquiredAs + "#" + id;
+        }
+    }
+
     /** Outcome of consuming a session-matched BES system-version reply. */
     public enum SystemVersionResult {
         IGNORED,
@@ -113,6 +129,8 @@ public final class BesUartTransportCoordinator {
 
     private State state = State.CLOSED;
     private Operation operation = Operation.NONE;
+    private OperationLease operationLease;
+    private long nextOperationLeaseId = 1;
     private SerialSession serialSession;
     private long phaseGeneration = 0;
     private SerialSession versionSession;
@@ -194,6 +212,7 @@ public final class BesUartTransportCoordinator {
             }
             cancelAllTimersLocked();
             operation = Operation.NONE;
+            operationLease = null;
             host.setFastReceive(false);
             state = State.DISCOVERING;
             versionSession = null;
@@ -230,6 +249,7 @@ public final class BesUartTransportCoordinator {
             versionProbeDeferred = false;
             state = State.CLOSED;
             operation = Operation.NONE;
+            operationLease = null;
             host.setFastReceive(false);
             Log.i(TAG, "Serial closed");
         }
@@ -392,10 +412,12 @@ public final class BesUartTransportCoordinator {
         return awaitBoolean(write, "raw control write");
     }
 
-    public boolean runFileWrite(WriteAction action) {
+    public boolean runFileWrite(OperationLease lease, WriteAction action) {
         Future<Boolean> write;
         synchronized (monitor) {
-            if (!isReadyLocked() || operation != Operation.FILE_TRANSFER || action == null) {
+            if (!isReadyLocked()
+                    || !ownsLeaseLocked(lease, Operation.FILE_TRANSFER)
+                    || action == null) {
                 Log.w(TAG, "Rejecting file write state=" + state + " operation=" + operation);
                 return false;
             }
@@ -404,10 +426,12 @@ public final class BesUartTransportCoordinator {
         return awaitBoolean(write, "file write");
     }
 
-    public boolean writeOta(byte[] data) {
+    public boolean writeOta(OperationLease lease, byte[] data) {
         Future<Boolean> write;
         synchronized (monitor) {
-            if (!isReadyLocked() || operation != Operation.OTA_TRANSFER || data == null) {
+            if (!isReadyLocked()
+                    || !ownsLeaseLocked(lease, Operation.OTA_TRANSFER)
+                    || data == null) {
                 Log.w(TAG, "Rejecting OTA write state=" + state + " operation=" + operation);
                 return false;
             }
@@ -416,23 +440,23 @@ public final class BesUartTransportCoordinator {
         return awaitBoolean(write, "OTA write");
     }
 
-    public boolean beginFileTransfer() {
+    public OperationLease beginFileTransfer() {
         return beginOperation(Operation.FILE_TRANSFER, true);
     }
 
-    public void endFileTransfer() {
-        endOperation(Operation.FILE_TRANSFER);
+    public void endFileTransfer(OperationLease lease) {
+        endOperation(lease, Operation.FILE_TRANSFER);
     }
 
     /**
      * Write one terminal status while retaining exclusive file ownership, then release the lease.
      * This keeps a deferred baud transition behind the status write.
      */
-    public boolean endFileTransferWithFinalWrite(WriteAction finalWrite) {
+    public boolean endFileTransferWithFinalWrite(OperationLease lease, WriteAction finalWrite) {
         try {
             Future<Boolean> write;
             synchronized (monitor) {
-                if (operation != Operation.FILE_TRANSFER) {
+                if (!ownsLeaseLocked(lease, Operation.FILE_TRANSFER)) {
                     return false;
                 }
                 if (!isReadyLocked() || finalWrite == null) {
@@ -443,26 +467,22 @@ public final class BesUartTransportCoordinator {
             return awaitBoolean(write, "file terminal write");
         } finally {
             synchronized (monitor) {
-                if (operation == Operation.FILE_TRANSFER) {
-                    operation = Operation.NONE;
-                    host.setFastReceive(false);
-                    resumeAfterOperationLocked();
-                }
+                releaseOperationLocked(lease, Operation.FILE_TRANSFER);
             }
         }
     }
 
-    public boolean beginOtaAuthorization() {
-        boolean acquired = beginOperation(Operation.OTA_AUTHORIZATION, false);
-        if (acquired) {
+    public OperationLease beginOtaAuthorization() {
+        OperationLease lease = beginOperation(Operation.OTA_AUTHORIZATION, false);
+        if (lease != null) {
             Log.i(TAG, "BES OTA authorization owns stable UART");
         }
-        return acquired;
+        return lease;
     }
 
-    public boolean promoteOtaAuthorizationToTransfer() {
+    public boolean promoteOtaAuthorizationToTransfer(OperationLease lease) {
         synchronized (monitor) {
-            if (!isReadyLocked() || operation != Operation.OTA_AUTHORIZATION) {
+            if (!isReadyLocked() || !ownsLeaseLocked(lease, Operation.OTA_AUTHORIZATION)) {
                 return false;
             }
             operation = Operation.OTA_TRANSFER;
@@ -472,13 +492,16 @@ public final class BesUartTransportCoordinator {
         }
     }
 
-    public void endOta() {
+    public void endOta(OperationLease lease) {
         synchronized (monitor) {
-            if (operation != Operation.OTA_AUTHORIZATION && operation != Operation.OTA_TRANSFER) {
+            if (operationLease != lease
+                    || (operation != Operation.OTA_AUTHORIZATION
+                            && operation != Operation.OTA_TRANSFER)) {
                 return;
             }
             host.setFastReceive(false);
             operation = Operation.NONE;
+            operationLease = null;
             resumeAfterOperationLocked();
         }
     }
@@ -491,6 +514,7 @@ public final class BesUartTransportCoordinator {
             cancelAllTimersLocked();
             host.setFastReceive(false);
             operation = Operation.NONE;
+            operationLease = null;
             versionSession = null;
             fastSwitchAttemptSession = null;
             firmwareVersion = "";
@@ -551,6 +575,7 @@ public final class BesUartTransportCoordinator {
             cancelAllTimersLocked();
             state = State.CLOSED;
             operation = Operation.NONE;
+            operationLease = null;
             phaseGeneration++;
             serialSession = null;
             host.setFastReceive(false);
@@ -559,45 +584,54 @@ public final class BesUartTransportCoordinator {
         executor.shutdownNow();
     }
 
-    private boolean beginOperation(Operation requested, boolean fastReceive) {
+    private OperationLease beginOperation(Operation requested, boolean fastReceive) {
         Future<?> barrier;
+        OperationLease lease;
         synchronized (monitor) {
             if (!isReadyLocked() || operation != Operation.NONE) {
-                return false;
+                return null;
             }
             operation = requested;
+            lease = new OperationLease(nextOperationLeaseId++, requested);
+            operationLease = lease;
             cancelHealthTimeoutLocked();
             barrier = ioLane.submit(() -> {});
         }
 
         if (!awaitBarrier(barrier, requested + " barrier")) {
             synchronized (monitor) {
-                if (operation == requested) {
-                    operation = Operation.NONE;
-                    resumeAfterOperationLocked();
-                }
+                releaseOperationLocked(lease, requested);
             }
-            return false;
+            return null;
         }
 
         synchronized (monitor) {
-            if (operation != requested || !isReadyLocked()) {
-                return false;
+            if (!ownsLeaseLocked(lease, requested) || !isReadyLocked()) {
+                return null;
             }
             host.setFastReceive(fastReceive);
-            return true;
+            return lease;
         }
     }
 
-    private void endOperation(Operation expected) {
+    private void endOperation(OperationLease lease, Operation expected) {
         synchronized (monitor) {
-            if (operation != expected) {
-                return;
-            }
-            operation = Operation.NONE;
-            host.setFastReceive(false);
-            resumeAfterOperationLocked();
+            releaseOperationLocked(lease, expected);
         }
+    }
+
+    private boolean ownsLeaseLocked(OperationLease lease, Operation expected) {
+        return lease != null && operationLease == lease && operation == expected;
+    }
+
+    private void releaseOperationLocked(OperationLease lease, Operation expected) {
+        if (!ownsLeaseLocked(lease, expected)) {
+            return;
+        }
+        operationLease = null;
+        operation = Operation.NONE;
+        host.setFastReceive(false);
+        resumeAfterOperationLocked();
     }
 
     private void resumeAfterOperationLocked() {
