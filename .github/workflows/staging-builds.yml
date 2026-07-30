@@ -158,12 +158,6 @@ jobs:
         working-directory: ./mobile
         run: bun install
 
-      # Supplies the runtime Sentry DSN to the step below. Doppler is the source
-      # of truth for mobile secrets, matching how cloud-v2/mentraos-cloud already
-      # store SENTRY_DSN (OS-1827).
-      - name: Install Doppler CLI
-        uses: dopplerhq/cli-action@v3
-
       - name: Setup environment
         working-directory: ./mobile
         # Copy the dummy .env, then overwrite the Mapbox runtime token line with
@@ -188,7 +182,17 @@ jobs:
           # fail — a missing DSN should not block a release — but never be silent
           # about it again.
           if [ -n "$DOPPLER_TOKEN" ]; then
-            SENTRY_DSN_VALUE="$(doppler secrets get EXPO_PUBLIC_SENTRY_DSN --plain)"
+            # curl, not the Doppler CLI action: that action verifies its own
+            # download with gpg and hard-fails where gpg is absent, which is the
+            # case on our self-hosted macOS runners. curl needs nothing that is
+            # not already on every runner. The single-secret endpoint keeps the
+            # rest of the config (MAPBOX_DOWNLOADS_TOKEN) out of the shell; a
+            # service token implies its own project and config.
+            SENTRY_DSN_RESPONSE="$(curl -sS --fail-with-body --retry 3 --retry-connrefused \
+              -u "$DOPPLER_TOKEN:" \
+              "https://api.doppler.com/v3/configs/config/secret?name=EXPO_PUBLIC_SENTRY_DSN" || true)"
+            # A DSN contains no double quote, so this extraction is exact.
+            SENTRY_DSN_VALUE="$(printf '%s' "$SENTRY_DSN_RESPONSE" | sed -n 's/.*"computed":"\([^"]*\)".*/\1/p')"
             echo "::add-mask::$SENTRY_DSN_VALUE"
             if [ -n "$SENTRY_DSN_VALUE" ]; then
               sed "s|^EXPO_PUBLIC_SENTRY_DSN=.*|EXPO_PUBLIC_SENTRY_DSN=$SENTRY_DSN_VALUE|" .env > .env.tmp && mv .env.tmp .env
@@ -424,12 +428,6 @@ jobs:
           rm -rf node_modules
           bun install --no-frozen-lockfile
 
-      # Supplies the runtime Sentry DSN to the step below. Doppler is the source
-      # of truth for mobile secrets, matching how cloud-v2/mentraos-cloud already
-      # store SENTRY_DSN (OS-1827).
-      - name: Install Doppler CLI
-        uses: dopplerhq/cli-action@v3
-
       - name: Setup environment
         working-directory: ./mobile
         # Copy the dummy .env, then overwrite the Mapbox runtime token line with
@@ -448,7 +446,17 @@ jobs:
           fi
           # See the Android job: an empty DSN disables Sentry silently (OS-1827).
           if [ -n "$DOPPLER_TOKEN" ]; then
-            SENTRY_DSN_VALUE="$(doppler secrets get EXPO_PUBLIC_SENTRY_DSN --plain)"
+            # curl, not the Doppler CLI action: that action verifies its own
+            # download with gpg and hard-fails where gpg is absent, which is the
+            # case on our self-hosted macOS runners. curl needs nothing that is
+            # not already on every runner. The single-secret endpoint keeps the
+            # rest of the config (MAPBOX_DOWNLOADS_TOKEN) out of the shell; a
+            # service token implies its own project and config.
+            SENTRY_DSN_RESPONSE="$(curl -sS --fail-with-body --retry 3 --retry-connrefused \
+              -u "$DOPPLER_TOKEN:" \
+              "https://api.doppler.com/v3/configs/config/secret?name=EXPO_PUBLIC_SENTRY_DSN" || true)"
+            # A DSN contains no double quote, so this extraction is exact.
+            SENTRY_DSN_VALUE="$(printf '%s' "$SENTRY_DSN_RESPONSE" | sed -n 's/.*"computed":"\([^"]*\)".*/\1/p')"
             echo "::add-mask::$SENTRY_DSN_VALUE"
             if [ -n "$SENTRY_DSN_VALUE" ]; then
               sed "s|^EXPO_PUBLIC_SENTRY_DSN=.*|EXPO_PUBLIC_SENTRY_DSN=$SENTRY_DSN_VALUE|" .env > .env.tmp && mv .env.tmp .env
