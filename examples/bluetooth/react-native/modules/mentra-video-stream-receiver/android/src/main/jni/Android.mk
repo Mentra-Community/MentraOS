@@ -42,4 +42,8 @@ GSTREAMER_PLUGINS := \
 	rswebrtc
 GSTREAMER_EXTRA_DEPS := gstreamer-app-1.0 gstreamer-video-1.0
 
+# GStreamer's custom link rule does not consume LOCAL_LDFLAGS from ndk-build.
+# Feed the 16 KB maximum page size through the target flags it does consume.
+TARGET_LDFLAGS += -Wl,-z,max-page-size=16384
+
 include $(GSTREAMER_NDK_BUILD_PATH)/gstreamer-1.0.mk
