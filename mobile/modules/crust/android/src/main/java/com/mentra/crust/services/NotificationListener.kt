@@ -179,7 +179,12 @@ class NotificationListener private constructor(private val context: Context) {
   }
 
   /** Called internally by the service when a notification is posted. */
-  internal fun onNotificationPosted(sbn: StatusBarNotification) {
+  /**
+   * @param importance NotificationManager.IMPORTANCE_* from the ranking, or null
+   *   when unavailable. Preferred over the deprecated Notification.priority,
+   *   which reads 0 for channel-based notifications.
+   */
+  internal fun onNotificationPosted(sbn: StatusBarNotification, importance: Int? = null) {
     if (!listenerEnabled || !notificationsEnabled) {
       Log.d(TAG, "Notification listener disabled")
       return
@@ -241,6 +246,10 @@ class NotificationListener private constructor(private val context: Context) {
               title = title,
               text = text,
               timestamp = sbn.postTime,
+              // Map channel importance onto the priority scale consumers
+              // already understand (LOW/MIN are negative). Fall back to the
+              // deprecated field only when no ranking was available.
+              priority = importance?.let { it - 3 } ?: notification.priority,
             )
 
             val notificationData =
@@ -355,7 +364,22 @@ class NotificationListener private constructor(private val context: Context) {
 class NotificationListenerServiceImpl : NotificationListenerService() {
   override fun onNotificationPosted(sbn: StatusBarNotification) {
     super.onNotificationPosted(sbn)
-    NotificationListener.getInstance(applicationContext).onNotificationPosted(sbn)
+    // Channel importance, not Notification.priority: the latter was deprecated
+    // at API 26 and reads 0 for apps that express intent through a channel
+    // instead, which would make every consumer treat them as ordinary. Only the
+    // service can see the ranking, so it is resolved here and passed down.
+    NotificationListener.getInstance(applicationContext).onNotificationPosted(sbn, importanceOf(sbn))
+  }
+
+  /** IMPORTANCE_* for this notification, or null when the ranking is unavailable. */
+  private fun importanceOf(sbn: StatusBarNotification): Int? {
+    return try {
+      val ranking = NotificationListenerService.Ranking()
+      if (currentRanking?.getRanking(sbn.key, ranking) == true) ranking.importance else null
+    } catch (e: Exception) {
+      Log.w("CrustNotificationListener", "could not read ranking importance", e)
+      null
+    }
   }
 
   override fun onNotificationRemoved(sbn: StatusBarNotification) {

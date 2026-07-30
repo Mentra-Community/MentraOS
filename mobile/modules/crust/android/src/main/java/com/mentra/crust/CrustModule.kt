@@ -25,6 +25,7 @@ class CrustModule : Module() {
             title: String,
             text: String,
             timestamp: Long,
+            priority: Int,
     ) {
       val data =
               mapOf(
@@ -32,7 +33,13 @@ class CrustModule : Module() {
                       "app" to appName,
                       "title" to title.ifEmpty { appName },
                       "content" to text,
-                      "priority" to "normal",
+                      // The real Notification.priority, not a placeholder. This
+                      // was hardcoded to "normal", which made every consumer's
+                      // priority handling dead code — notably the spoken-
+                      // notification path, which is supposed to stay quiet for
+                      // PRIORITY_LOW/MIN because those are exactly the ones an
+                      // app asked not to interrupt with (OS-1821).
+                      "priority" to priority,
                       "timestamp" to timestamp,
                       "packageName" to packageName,
               )
