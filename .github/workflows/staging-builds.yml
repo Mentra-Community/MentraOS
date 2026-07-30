@@ -201,20 +201,19 @@ jobs:
       - name: Wait for paired ASG pin manifest
         # No app upload without a live pin: the publish-asg-pin job must have
         # succeeded (including its GitHub asset uploads) before this binary is
-        # allowed near TestFlight / Play / the release. A missing pin here
-        # means the ASG build or the asset upload failed -- fail loudly rather
-        # than ship an app whose baked manifest URL 404s.
+        # allowed near TestFlight / Play / the release. The manifest and its
+        # referenced APK must both be valid and downloadable.
         run: |
           echo "Waiting for $ASG_PINNED_OTA_MANIFEST_URL"
           for attempt in {1..80}; do
             if curl --fail --silent --location "$ASG_PINNED_OTA_MANIFEST_URL" -o /tmp/asg_pin.json 2>/dev/null \
-              && jq -e '.apps["com.mentra.asg_client"].versionCode > 0' /tmp/asg_pin.json >/dev/null 2>&1; then
-              echo "Pin manifest is live."
+              && .github/scripts/validate-asg-ota-manifest.sh /tmp/asg_pin.json --check-apk; then
+              echo "Pin manifest and referenced APK are live."
               exit 0
             fi
             sleep 15
           done
-          echo "::error::Paired ASG pin manifest never became available -- refusing to upload an app with a dead pin (did the ASG build or its asset upload fail?)"
+          echo "::error::Paired ASG pin manifest or its referenced APK never became valid and downloadable -- refusing to upload an app with a dead pin"
           exit 1
 
       - name: Run release-android (signed APK + Beta_N upload + Play internal)
@@ -527,20 +526,19 @@ jobs:
       - name: Wait for paired ASG pin manifest
         # No app upload without a live pin: the publish-asg-pin job must have
         # succeeded (including its GitHub asset uploads) before this binary is
-        # allowed near TestFlight / Play / the release. A missing pin here
-        # means the ASG build or the asset upload failed -- fail loudly rather
-        # than ship an app whose baked manifest URL 404s.
+        # allowed near TestFlight / Play / the release. The manifest and its
+        # referenced APK must both be valid and downloadable.
         run: |
           echo "Waiting for $ASG_PINNED_OTA_MANIFEST_URL"
           for attempt in {1..80}; do
             if curl --fail --silent --location "$ASG_PINNED_OTA_MANIFEST_URL" -o /tmp/asg_pin.json 2>/dev/null \
-              && jq -e '.apps["com.mentra.asg_client"].versionCode > 0' /tmp/asg_pin.json >/dev/null 2>&1; then
-              echo "Pin manifest is live."
+              && .github/scripts/validate-asg-ota-manifest.sh /tmp/asg_pin.json --check-apk; then
+              echo "Pin manifest and referenced APK are live."
               exit 0
             fi
             sleep 15
           done
-          echo "::error::Paired ASG pin manifest never became available -- refusing to upload an app with a dead pin (did the ASG build or its asset upload fail?)"
+          echo "::error::Paired ASG pin manifest or its referenced APK never became valid and downloadable -- refusing to upload an app with a dead pin"
           exit 1
 
       - name: Run release-ios (signed IPA + Beta_N upload + TestFlight)
@@ -621,12 +619,11 @@ jobs:
     runs-on: blacksmith-4vcpu-ubuntu-2404
 
     outputs:
-      version_code: ${{ steps.asg-reuse.outputs.reuse == 'true' && steps.asg-reuse.outputs.version_code || steps.asg-build-info.outputs.version_code }}
-      version_name: ${{ steps.asg-reuse.outputs.reuse == 'true' && steps.asg-reuse.outputs.version_name || steps.asg-build-info.outputs.version_name }}
-      apk_sha256: ${{ steps.asg-reuse.outputs.reuse == 'true' && steps.asg-reuse.outputs.apk_sha256 || steps.asg-apk-info.outputs.sha256 }}
-      apk_size: ${{ steps.asg-reuse.outputs.reuse == 'true' && steps.asg-reuse.outputs.apk_size || steps.asg-apk-info.outputs.size }}
+      version_code: ${{ steps.asg-build-info.outputs.version_code }}
+      version_name: ${{ steps.asg-build-info.outputs.version_name }}
+      apk_sha256: ${{ steps.asg-apk-info.outputs.sha256 }}
+      apk_size: ${{ steps.asg-apk-info.outputs.size }}
       reuse: ${{ steps.asg-reuse.outputs.reuse }}
-      apk_url: ${{ steps.asg-reuse.outputs.apk_url }}
       tree_hash: ${{ steps.asg-reuse.outputs.tree_hash }}
 
     steps:
@@ -706,15 +703,22 @@ jobs:
             exit 0
           fi
 
+          mkdir -p asg-reuse
+          printf '%s\n' "$manifest" > asg-reuse/previous-manifest.json
+
           echo "asg_client/ unchanged; reusing published ASG ${VERSION_NAME} (${VERSION_CODE})"
-          {
-            echo "reuse=true"
-            echo "version_code=${VERSION_CODE}"
-            echo "version_name=${VERSION_NAME}"
-            echo "apk_sha256=${APK_SHA256}"
-            echo "apk_size=${APK_SIZE}"
-            echo "apk_url=${APK_URL}"
-          } >> "$GITHUB_OUTPUT"
+          echo "reuse=true" >> "$GITHUB_OUTPUT"
+
+      - name: Upload ASG reuse metadata
+        # Keep the public APK URL in a file. GitHub drops job outputs that contain
+        # any configured secret value; the signing alias is short enough to match
+        # the historical ASG asset names.
+        if: steps.asg-reuse.outputs.reuse == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: asg-reuse-metadata
+          path: asg-reuse/previous-manifest.json
+          retention-days: 1
 
       - name: Free up disk space
         if: steps.asg-reuse.outputs.reuse != 'true'
@@ -873,6 +877,13 @@ jobs:
           name: asg-staging
           path: ./asg-apk
 
+      - name: Download ASG reuse metadata
+        if: needs.build-asg.outputs.reuse == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: asg-reuse-metadata
+          path: ./asg-reuse
+
       - name: Generate ASG staging OTA manifest
         if: needs.build-asg.result == 'success'
         env:
@@ -883,14 +894,18 @@ jobs:
           APK_SHA256: ${{ needs.build-asg.outputs.apk_sha256 }}
           APK_SIZE: ${{ needs.build-asg.outputs.apk_size }}
           ASG_REUSE: ${{ needs.build-asg.outputs.reuse }}
-          REUSED_APK_URL: ${{ needs.build-asg.outputs.apk_url }}
           ASG_TREE_HASH: ${{ needs.build-asg.outputs.tree_hash }}
         run: |
           mkdir -p asg-manifest
           if [ "$ASG_REUSE" = "true" ]; then
             # asg_client/ unchanged: the manifest re-pins the previously published
             # artifact so app-only releases never move the glasses pin (OS-1689).
-            APK_URL="$REUSED_APK_URL"
+            REUSE_MANIFEST="asg-reuse/previous-manifest.json"
+            VERSION_CODE=$(jq -er '.apps["com.mentra.asg_client"].versionCode' "$REUSE_MANIFEST")
+            VERSION_NAME=$(jq -er '.apps["com.mentra.asg_client"].versionName' "$REUSE_MANIFEST")
+            APK_SHA256=$(jq -er '.apps["com.mentra.asg_client"].sha256' "$REUSE_MANIFEST")
+            APK_SIZE=$(jq -er '.apps["com.mentra.asg_client"].apkSize' "$REUSE_MANIFEST")
+            APK_URL=$(jq -er '.apps["com.mentra.asg_client"].apkUrl' "$REUSE_MANIFEST")
           else
             APK_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/staging-builds/asg-staging-${BUILD_DATE}-${BUILD_SHORT_SHA}.apk"
           fi
@@ -923,6 +938,8 @@ jobs:
               bes_firmware: .bes_firmware
             }
             + (if .remediation then {remediation: .remediation} else {} end)' "$FIRMWARE_MANIFEST" > asg-manifest/staging_live_version.json
+
+          .github/scripts/validate-asg-ota-manifest.sh asg-manifest/staging_live_version.json
 
       - name: Publish pin, APK and rolling manifest to staging-builds release
         uses: actions/github-script@v7
