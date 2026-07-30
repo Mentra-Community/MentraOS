@@ -320,9 +320,6 @@ function otaStatusLine(sdk: BluetoothSdkExampleModel) {
   if (sdk.otaPendingAction === 'verify') {
     return 'checking for remaining updates';
   }
-  if (sdk.otaPendingAction === 'continue') {
-    return 'continuing update';
-  }
   if (sdk.otaPendingAction === 'start') {
     return 'starting update';
   }
@@ -341,9 +338,6 @@ function otaStatusLine(sdk: BluetoothSdkExampleModel) {
 function otaCardTitle(sdk: BluetoothSdkExampleModel) {
   if (sdk.otaPendingAction === 'verify') {
     return 'Checking for updates';
-  }
-  if (sdk.otaPendingAction === 'continue') {
-    return 'Continuing update';
   }
   if (sdk.otaPendingAction === 'start') {
     return 'Starting update';
@@ -369,9 +363,6 @@ function otaCardTitle(sdk: BluetoothSdkExampleModel) {
 function otaCardDetail(sdk: BluetoothSdkExampleModel) {
   if (sdk.otaPendingAction === 'verify') {
     return 'Checking whether any firmware components still need to be updated.';
-  }
-  if (sdk.otaPendingAction === 'continue') {
-    return 'Starting the next required firmware update pass.';
   }
   if (sdk.otaPendingAction === 'start') {
     return 'Sending the OTA start request to the glasses.';
