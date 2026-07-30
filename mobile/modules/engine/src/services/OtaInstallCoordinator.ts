@@ -48,7 +48,6 @@ import {
   MTK_INSTALL_TIMEOUT_MS,
   OtaProgressMessages,
   PING_INTERVAL_MS,
-  POST_APK_OTA_START_DELAY_MS,
   PROGRESS_TIMEOUT_MS,
   QUERY_REPLY_TIMEOUT_MS,
   RETRY_INTERVAL_MS,
@@ -193,7 +192,6 @@ class OtaInstallCoordinator {
   private retryTimeout: ReturnType<typeof setTimeout> | null = null
   private stuckTimeout: ReturnType<typeof setTimeout> | null = null
   private progressTimeout: ReturnType<typeof setTimeout> | null = null
-  private postApkDelay: ReturnType<typeof setTimeout> | null = null
   private pingInterval: ReturnType<typeof setInterval> | null = null
   private queryReplyTimeout: ReturnType<typeof setTimeout> | null = null
   private continueLockoutTimer: ReturnType<typeof setTimeout> | null = null
@@ -750,7 +748,7 @@ class OtaInstallCoordinator {
 
     /**
      * Connect-edge — the only place that decides to send ota_start /
-     * ota_query_status, handles POST_APK delay, and flips sawReconnectEdge
+     * ota_query_status and flips sawReconnectEdge
      * on the false -> true transition that signals the BES reboot completed.
      */
     if (connectedChanged) {
@@ -878,7 +876,6 @@ class OtaInstallCoordinator {
     // these timers; a session-change edge never disconnects, so a fallback armed by an
     // earlier mount/query could otherwise fire alongside the arbitration below and send
     // a duplicate ota_start. Clearing here is a no-op on the physical path.
-    this.clearPostApkDelay()
     this.clearQueryReplyTimeout()
     this.setSawReconnectEdge(true)
 
@@ -887,26 +884,6 @@ class OtaInstallCoordinator {
     // query/fallback; the settle timer (or the build-number increase) completes.
     if (this.legacyApkSettleHold) {
       console.log(`[OTA_PROGRESS] ${label}: reconnect during legacy apk settle hold — no query`)
-      return true
-    }
-
-    const storeState = useGlassesStore.getState()
-    const s = storeState.otaStatus
-    const postApkAwaiting =
-      s?.stepType === "apk" && (s?.totalSteps ?? 0) > 1 && (s.status === "step_complete" || s.status === "complete")
-
-    if (postApkAwaiting) {
-      console.log(`[OTA_PROGRESS] ${label}: post-APK reboot detected, arming POST_APK delay for sendOtaStart`)
-      this.clearPostApkDelay()
-      this.postApkDelay = setTimeout(() => {
-        this.postApkDelay = null
-        this.retryCount = 0
-        this.hasFirstActivity = false
-        this.hasFirstNonZeroProgress = false
-        this.hasReceivedAck = false
-        console.log("[OTA_PROGRESS] POST_APK delay fired, sending ota_start")
-        void this.sendOtaStartWithWatchdogs()
-      }, POST_APK_OTA_START_DELAY_MS)
       return true
     }
 
@@ -922,7 +899,6 @@ class OtaInstallCoordinator {
 
     if (!connected) {
       console.log("[OTA_PROGRESS] connect-edge: disconnected")
-      this.clearPostApkDelay()
       // Also drop a pending query-reply fallback: firing ota_start into a dead
       // link can only produce a false "failed" state, and the reconnect edge
       // re-queries and re-arms this fallback anyway.
@@ -1361,13 +1337,6 @@ class OtaInstallCoordinator {
     this.globalTimeoutStarted = false
   }
 
-  private clearPostApkDelay(): void {
-    if (this.postApkDelay) {
-      clearTimeout(this.postApkDelay)
-      this.postApkDelay = null
-    }
-  }
-
   private clearPingInterval(): void {
     if (this.pingInterval) {
       clearInterval(this.pingInterval)
@@ -1418,7 +1387,6 @@ class OtaInstallCoordinator {
     this.clearRetryTimeout()
     this.clearStuckTimeout()
     this.clearProgressTimeout()
-    this.clearPostApkDelay()
     this.clearQueryReplyTimeout()
   }
 
