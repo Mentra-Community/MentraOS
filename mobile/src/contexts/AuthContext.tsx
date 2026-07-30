@@ -71,10 +71,18 @@ export const AuthProvider: FC<{children: React.ReactNode}> = ({children}) => {
       })
       console.log("AuthContext: setupAuthListener()", res)
       if (res.is_ok()) {
-        let changeData = res.value
-        if (changeData.data?.subscription) {
-          subscription = changeData.data.subscription
+        // The provider returns {unsubscribe}. This used to look for
+        // {data:{subscription}} — a Supabase shape that no provider has emitted
+        // since the Cloud V2 cutover — so `subscription` stayed undefined and
+        // the cleanup below was a silent no-op, leaking a listener on every
+        // remount. Accept the current shape, keeping the old one for safety.
+        const changeData = res.value as {
+          unsubscribe?: () => void
+          data?: {subscription?: {unsubscribe: () => void}}
         }
+        subscription =
+          changeData.data?.subscription ??
+          (typeof changeData.unsubscribe === "function" ? {unsubscribe: changeData.unsubscribe} : undefined)
       }
     }
 
