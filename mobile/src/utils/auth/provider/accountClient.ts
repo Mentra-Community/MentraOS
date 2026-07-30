@@ -68,7 +68,42 @@ async function throwApiError(res: Response): Promise<never> {
   throw new Error(body?.error_description || body?.error || `HTTP ${res.status}`)
 }
 
-let stateCb: ((event: string, session: MentraAuthSession) => void) | null = null
+type AuthStateListener = (event: string, session: MentraAuthSession) => void
+
+/**
+ * Every consumer of auth-state events, not just the most recent one.
+ *
+ * This was a single callback slot that each onAuthStateChange() overwrote. Two
+ * consumers subscribe in practice — AuthContext, which drives navigation off the
+ * login screen, and the engine's cloud client via MantleManager — so whichever
+ * registered last silently stole the events from the other, and either one's
+ * unsubscribe() nulled the slot for both.
+ *
+ * The engine registers second (index.tsx awaits mantle.init() after AuthContext
+ * has already mounted), so the UI stopped hearing SIGNED_IN: a Google SSO
+ * handoff saved its tokens and then left the user sitting on the login screen
+ * until they force-quit the app, because a cold start reads the persisted
+ * session directly rather than waiting for an event. That is the "SSO bounces
+ * me back to login, but it works after I reopen the app" report.
+ *
+ * The v1 authing provider used an EventEmitter and never had this problem; the
+ * single slot arrived with the Cloud V2 cutover.
+ */
+const stateListeners = new Set<AuthStateListener>()
+
+function emitAuthState(event: string, session: MentraAuthSession): void {
+  // Snapshot first: a listener is allowed to unsubscribe (or subscribe) from
+  // inside its own callback, which would otherwise mutate the set mid-iteration.
+  for (const listener of [...stateListeners]) {
+    try {
+      listener(event, session)
+    } catch (error) {
+      // One consumer throwing must not stop the rest from learning about the
+      // sign-in — that is the failure this whole structure exists to prevent.
+      console.warn("AccountAuthProvider: auth state listener threw", error)
+    }
+  }
+}
 
 export class AccountAuthProvider extends AuthClient {
   private static instance: AccountAuthProvider
@@ -80,13 +115,15 @@ export class AccountAuthProvider extends AuthClient {
 
   private notify(event: string): void {
     void this.getSession().then((r) => {
-      if (r.is_ok()) stateCb?.(event, r.value)
+      if (r.is_ok()) emitAuthState(event, r.value)
     })
   }
 
-  public onAuthStateChange(callback: (event: string, session: MentraAuthSession) => void): Result<any, Error> {
-    stateCb = callback
-    return Res.ok({unsubscribe: () => (stateCb = null)})
+  public onAuthStateChange(callback: AuthStateListener): Result<any, Error> {
+    stateListeners.add(callback)
+    // Remove only this listener. The previous implementation cleared the shared
+    // slot, so one consumer unsubscribing silenced every other consumer too.
+    return Res.ok({unsubscribe: () => stateListeners.delete(callback)})
   }
 
   /** Core rotates refresh tokens on every use and enforces single-use: a
@@ -273,7 +310,7 @@ export class AccountAuthProvider extends AuthClient {
       // notify()'s extra async /me round-trip) so AuthContext.user is populated
       // before this call resolves and the login screen navigates to "/". Otherwise
       // the home-boot auth check races the async listener and bounces to /auth/start.
-      stateCb?.("SIGNED_IN", value)
+      emitAuthState("SIGNED_IN", value)
       return {session: value, user: value.user ?? null}
     })
   }
@@ -395,7 +432,7 @@ export class AccountAuthProvider extends AuthClient {
       if (!res.ok) await throwApiError(res)
       // The account is gone; the server revoked every session already.
       clearTokens()
-      stateCb?.("SIGNED_OUT", {token: undefined})
+      emitAuthState("SIGNED_OUT", {token: undefined})
     })
   }
 
@@ -450,7 +487,7 @@ export class AccountAuthProvider extends AuthClient {
       if (!body?.access_token || !body?.refresh_token) throw new Error("oauth completion returned no session")
       saveTokens({access: body.access_token, refresh: body.refresh_token})
       const session = await this.getSession()
-      stateCb?.("SIGNED_IN", session.is_ok() ? session.value : {token: body.access_token})
+      emitAuthState("SIGNED_IN", session.is_ok() ? session.value : {token: body.access_token})
     })
   }
 
