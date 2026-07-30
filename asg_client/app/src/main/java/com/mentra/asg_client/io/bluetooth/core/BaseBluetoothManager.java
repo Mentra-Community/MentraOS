@@ -19,9 +19,9 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.RejectedExecutionException;
-import java.util.concurrent.TimeoutException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -306,8 +306,21 @@ public abstract class BaseBluetoothManager implements ICompanionTransport {
         }
     }
 
-    private static void notifySendMessageCallback(
-            SendMessageCallback callback, boolean success) {
+    /** Queue a transport-owned action behind every previously accepted outbound message. */
+    protected final boolean queueOutboundAction(Runnable action) {
+        if (action == null) {
+            return false;
+        }
+        try {
+            outboundBleExecutor.execute(() -> runOnOutboundBleWorker(action));
+            return true;
+        } catch (RejectedExecutionException e) {
+            Log.e(TAG, "Rejected transport-owned outbound action", e);
+            return false;
+        }
+    }
+
+    private static void notifySendMessageCallback(SendMessageCallback callback, boolean success) {
         if (callback == null) {
             return;
         }
@@ -323,6 +336,14 @@ public abstract class BaseBluetoothManager implements ICompanionTransport {
      * the subclass-specific send implementation.
      */
     private boolean sendMessageNow(byte[] data, boolean broadcastJsonResponses) {
+        publishOutboundMessage(data, broadcastJsonResponses);
+        return sendMessageInternal(data);
+    }
+
+    /**
+     * Record and locally publish a message that a subclass will send on its owned transport lane.
+     */
+    protected final void publishOutboundMessage(byte[] data, boolean broadcastJsonResponses) {
         BleTraceLogger.logBytes("glasses_to_phone", "asg_ble_output", data);
 
         // Try to broadcast JSON responses to intent listeners
@@ -337,8 +358,6 @@ public abstract class BaseBluetoothManager implements ICompanionTransport {
                 // Not valid JSON; skip broadcast, still send over BLE.
             }
         }
-
-        return sendMessageInternal(data);
     }
 
     private void logOutboundQueueEvent(
@@ -561,8 +580,8 @@ public abstract class BaseBluetoothManager implements ICompanionTransport {
 
     /**
      * Send an in-memory payload using the file-transfer protocol without requiring it to exist on
-     * disk. Same outbound-worker serialization and start-timeout semantics as the path-based
-     * {@link #sendFile(String)}.
+     * disk. Same outbound-worker serialization and start-timeout semantics as the path-based {@link
+     * #sendFile(String)}.
      */
     @Override
     public final boolean sendFile(byte[] data, String fileName) {
@@ -570,6 +589,19 @@ public abstract class BaseBluetoothManager implements ICompanionTransport {
             return false;
         }
         return startFileTransfer(() -> sendFileInternal(data, fileName));
+    }
+
+    @Override
+    public final boolean sendFile(byte[] data, String fileName, byte[] prelude) {
+        if (data == null
+                || data.length == 0
+                || fileName == null
+                || fileName.isEmpty()
+                || prelude == null
+                || prelude.length == 0) {
+            return false;
+        }
+        return startFileTransfer(() -> sendFileInternal(data, fileName, prelude));
     }
 
     private boolean startFileTransfer(Callable<Boolean> startAction) {
@@ -643,6 +675,11 @@ public abstract class BaseBluetoothManager implements ICompanionTransport {
 
     protected boolean sendFileInternal(byte[] data, String fileName) {
         Log.w(TAG, "sendFile(byte[]) not implemented in " + getClass().getSimpleName());
+        return false;
+    }
+
+    protected boolean sendFileInternal(byte[] data, String fileName, byte[] prelude) {
+        Log.w(TAG, "sendFile(byte[], prelude) not implemented in " + getClass().getSimpleName());
         return false;
     }
 }

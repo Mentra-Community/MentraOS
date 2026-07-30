@@ -1,0 +1,69 @@
+###############################################
+# Local RTMP / SRT / WHIP ingest for Mentra Live testing
+#
+# Primary:   RTMP publish on :1935  →  rtmp://<LAN_IP>:1935/live/stream
+#            (StreamPack requires /app/streamKey; MediaMTX path = live/stream)
+# Also:      SRT publish on :8890   →  srt://<LAN_IP>:8890?streamid=publish:live/stream
+# Fallback:  WHIP/WHEP on :8889     →  http://<LAN_IP>:8889/live/whip
+#
+# For WHIP only: webrtcAdditionalHosts is NOT hardcoded here. The start
+# script exports MTX_WEBRTCADDITIONALHOSTS=<LAN_IP> and MediaMTX picks it
+# up as an override (env wins over this file). That keeps ICE DHCP-safe.
+# RTMP/SRT do not need that env.
+###############################################
+
+logLevel: info
+logDestinations: [stdout]
+
+api: yes
+apiAddress: :9997
+
+# Local-dev auth: allow anonymous publish/read + API from any IP (Docker Desktop
+# NAT makes host→container API calls look non-localhost).
+authInternalUsers:
+  - user: any
+    pass:
+    ips: []
+    permissions:
+      - action: publish
+        path:
+      - action: read
+        path:
+      - action: playback
+        path:
+      - action: api
+      - action: metrics
+      - action: pprof
+
+# Primary publish path — plain TCP, no ICE/NAT headaches.
+rtmp: yes
+rtmpAddress: :1935
+
+# SRT publish/read (UDP). MediaMTX streamid syntax: publish:<path> / read:<path>
+srt: yes
+srtAddress: :8890
+
+# HLS viewer (recommended watch URL for RTMP/SRT publishers).
+hls: yes
+hlsAddress: :8888
+
+# WHIP / WHEP fallback (WebRTC). Needs TCP 8889 + UDP 8189 through the firewall.
+webrtc: yes
+webrtcAddress: :8889
+webrtcLocalUDPAddress: :8189
+
+paths:
+  # Glasses publish RTMP to rtmp://<LAN_IP>:1935/live/stream
+  #             or SRT to  srt://<LAN_IP>:8890?streamid=publish:live/stream
+  # Watch HLS at           http://<LAN_IP>:8888/live/stream
+  # WHIP fallback publish: http://<LAN_IP>:8889/live/whip
+  live:
+    source: publisher
+
+  # Preferred RTMP/SRT publish path for StreamPack (/app/streamKey).
+  live/stream:
+    source: publisher
+
+  # Catch-all so other stream keys still work.
+  all_others:
+    source: publisher

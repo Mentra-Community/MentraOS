@@ -79,6 +79,8 @@ export interface StartStreamOptions {
    *     HLS/DASH and no recording.
    */
   ingest?: "srt" | "whip"
+  /** Optional Bearer token for direct WHIP Authorization (custom authenticated endpoints). */
+  authToken?: string
 }
 
 export interface StreamResult {
@@ -141,6 +143,7 @@ export class StreamModule {
         video: options.video,
         audio: options.audio,
         sound: options.sound ?? true,
+        ...(options.authToken ? {authToken: options.authToken} : {}),
       })
     }
     return this.session.sendRequest<StreamResult>({

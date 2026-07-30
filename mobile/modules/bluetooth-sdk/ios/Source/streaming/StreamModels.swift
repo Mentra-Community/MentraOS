@@ -274,19 +274,22 @@ public struct StreamRequest {
     public let sound: Bool
     public let video: StreamVideoConfig?
     public let audio: StreamAudioConfig?
+    public let authToken: String?
 
     public init(
         streamUrl: String,
         streamId: String = "",
         sound: Bool = true,
         video: StreamVideoConfig? = nil,
-        audio: StreamAudioConfig? = nil
+        audio: StreamAudioConfig? = nil,
+        authToken: String? = nil
     ) {
         self.streamUrl = streamUrl
         self.streamId = streamId
         self.sound = sound
         self.video = video
         self.audio = audio
+        self.authToken = authToken
     }
 
     init(values: [String: Any]) {
@@ -299,7 +302,8 @@ public struct StreamRequest {
             streamId: values["streamId"] as? String ?? "",
             sound: values["sound"] as? Bool ?? true,
             video: StreamVideoConfig(values: values["video"] as? [String: Any]),
-            audio: StreamAudioConfig(values: values["audio"] as? [String: Any])
+            audio: StreamAudioConfig(values: values["audio"] as? [String: Any]),
+            authToken: values["authToken"] as? String ?? values["auth_token"] as? String
         )
     }
 
@@ -314,6 +318,9 @@ public struct StreamRequest {
         }
         if let audioValues = audio?.dictionary, !audioValues.isEmpty {
             values["audio"] = audioValues
+        }
+        if let authToken, !authToken.isEmpty {
+            values["authToken"] = authToken
         }
         return values
     }
