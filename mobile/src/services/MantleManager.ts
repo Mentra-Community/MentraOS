@@ -10,6 +10,7 @@ import builtInMiniappCatalog from "@/services/miniapps/BuiltInMiniappCatalog"
 import {BUNDLED_MINIAPPS} from "@/generated/bundledMiniapps"
 import {CHINA_HIDDEN_APPS, isChinaBuild, notifyPackageName} from "@/constants/miniapps"
 import {migrate} from "@/services/Migrations"
+import {buildSpokenNotification} from "@/services/notifications/spokenNotification"
 import {cloudConfigValues} from "@/services/cloudClient"
 import {engine, BgTimer, SETTINGS} from "@mentra/engine"
 import {
@@ -76,6 +77,17 @@ function parseBundledMiniappName(name: string): {packageName: string; version: s
  */
 const SPOKEN_NOTIFICATION_MAX_MS = 30_000
 
+/**
+ * Quiet window after an announcement before the next one may be read.
+ *
+ * Notifications do not arrive politely spaced: apps re-post to update a running
+ * download or a music player, and granting notification access replays whatever
+ * is already in the shade. Reading each one turns the glasses into a monologue
+ * the wearer cannot skip. Anything landing inside this window is counted, not
+ * spoken, and summarised once at the end.
+ */
+const SPOKEN_NOTIFICATION_GAP_MS = 10_000
+
 class MantleManager {
   private static instance: MantleManager | null = null
   private calendarSyncTimer: ReturnType<typeof BgTimer.setInterval> | null = null
@@ -86,8 +98,13 @@ class MantleManager {
   private subs: Array<any> = []
   private initialized: boolean = false
   private activePhoneNotificationId: string | null = null
-  /** A notification is being read aloud. Later ones are dropped, not queued. */
+  /** A notification is being read aloud right now. */
   private speakingNotification: boolean = false
+  /** When the last announcement finished, for the quiet window. */
+  private lastSpokenAt: number = 0
+  /** Notifications that arrived during the quiet window, summarised afterwards. */
+  private suppressedNotifications: number = 0
+  private suppressedSummaryTimer: ReturnType<typeof BgTimer.setTimeout> | null = null
 
   public static getInstance(): MantleManager {
     if (!MantleManager.instance) {
@@ -104,35 +121,67 @@ class MantleManager {
    * Mentra Live has a speaker but no display, so the reference card the display
    * path requests is invisible there and the wearer learns nothing (OS-1821).
    *
-   * Best effort by design:
+   * Deliberately conservative, because a notification written to be *seen* is
+   * hostile when read verbatim:
    *  - Silent on glasses that DO have a display; the card is better than speech.
-   *  - Needs an on-device TTS voice. Without one we log and stay quiet rather
-   *    than reaching for the network on every incoming notification.
-   *  - A burst must not become a monologue, so speech already in flight wins and
-   *    later notifications are dropped instead of queued behind it.
+   *  - Needs an on-device TTS voice; no network reach on every notification.
+   *  - buildSpokenNotification() strips URLs and emoji, cuts on a word boundary,
+   *    and drops low-priority and summary rows entirely.
+   *  - A burst is summarised rather than recited (see the quiet window).
    */
-  private async speakPhoneNotification(title: string, content: string): Promise<void> {
-    let audio: {audioUrl: string; cleanup: () => Promise<void>} | undefined
+  private async speakPhoneNotification(app: string, title: string, content: string, priority?: number): Promise<void> {
     try {
       const capabilities = engine.glasses.capabilities()
       if (!capabilities || capabilities.hasDisplay || !capabilities.hasSpeaker) return
-      if (this.speakingNotification) return
 
-      // Long bodies get truncated: past a sentence or two this stops being a
-      // notification and starts being a reading, with no way to skip it.
-      const spoken = [title, content]
-        .map((part) => part.trim())
-        .filter(Boolean)
-        .join(". ")
-        .slice(0, 300)
+      const spoken = buildSpokenNotification({app, title, content, priority})
+      // Nothing worth hearing: a link-only message, a "3 new messages" summary,
+      // or something the app itself marked as do-not-interrupt.
       if (!spoken) return
 
+      // Inside the quiet window (or mid-announcement): count it and let the
+      // trailing summary mention it, rather than talking over the wearer.
+      if (this.speakingNotification || Date.now() - this.lastSpokenAt < SPOKEN_NOTIFICATION_GAP_MS) {
+        this.suppressedNotifications += 1
+        this.scheduleSuppressedSummary()
+        return
+      }
+
+      await this.speakAloud(spoken)
+    } catch (error) {
+      // Never let a failed announcement break notification capture/storage.
+      this.speakingNotification = false
+      console.warn("MantleManager: failed to speak phone notification", error)
+    }
+  }
+
+  /**
+   * After the quiet window, say how many arrived during it — once, as a count.
+   * "Four more notifications" is useful; four notifications read in full is not.
+   */
+  private scheduleSuppressedSummary(): void {
+    if (this.suppressedSummaryTimer !== null) return
+    this.suppressedSummaryTimer = BgTimer.setTimeout(() => {
+      this.suppressedSummaryTimer = null
+      const count = this.suppressedNotifications
+      this.suppressedNotifications = 0
+      if (count <= 0) return
+      if (this.speakingNotification) return
+      void this.speakAloud(`${count} more notification${count === 1 ? "" : "s"}.`)
+    }, SPOKEN_NOTIFICATION_GAP_MS)
+  }
+
+  /** Synthesize and play one line. Assumes the caller checked the quiet window. */
+  private async speakAloud(text: string): Promise<void> {
+    let audio: {audioUrl: string; cleanup: () => Promise<void>} | undefined
+    try {
       if (!(await ttsModelManager.isModelAvailable())) {
         console.warn("MantleManager: no on-device TTS voice available, notification not spoken")
         return
       }
 
       this.speakingNotification = true
+      this.lastSpokenAt = Date.now()
       // Safety valve: if the completion callback never arrives, the flag would
       // latch and silence every later notification for the rest of the session.
       // Losing one announcement beats going permanently quiet.
@@ -140,7 +189,7 @@ class MantleManager {
         this.speakingNotification = false
       }, SPOKEN_NOTIFICATION_MAX_MS)
 
-      audio = await ttsModelManager.synthesizeToFile(spoken)
+      audio = await ttsModelManager.synthesizeToFile(text)
       await audioPlaybackService.play(
         {
           requestId: `phone_notification_${Date.now()}`,
@@ -150,14 +199,16 @@ class MantleManager {
         () => {
           BgTimer.clearTimeout(stuckGuard)
           this.speakingNotification = false
+          // Start the quiet window when speech ENDS, not when it started, so a
+          // long announcement isn't immediately followed by another.
+          this.lastSpokenAt = Date.now()
           void audio?.cleanup?.()
         },
       )
     } catch (error) {
-      // Never let a failed announcement break notification capture/storage.
       this.speakingNotification = false
       void audio?.cleanup?.()
-      console.warn("MantleManager: failed to speak phone notification", error)
+      console.warn("MantleManager: failed to speak notification audio", error)
     }
   }
 
@@ -642,7 +693,16 @@ class MantleManager {
           // Glasses with no screen (Mentra Live) would otherwise get nothing at
           // all from the card above — the notification arrives and is stored,
           // but the wearer never learns about it. Read it out instead (OS-1821).
-          void this.speakPhoneNotification(displayTitle, content)
+          // Pass the raw app/title rather than displayTitle: the speech path
+          // builds its own phrasing, and priority lets it skip the notifications
+          // an app explicitly marked as non-interrupting.
+          const priorityValue = Number(event.priority)
+          void this.speakPhoneNotification(
+            app,
+            title,
+            content,
+            Number.isFinite(priorityValue) ? priorityValue : undefined,
+          )
         }
       }
 
