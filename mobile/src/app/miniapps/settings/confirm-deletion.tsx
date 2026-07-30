@@ -4,6 +4,7 @@ import {View, TextInput, ActivityIndicator, ScrollView, ViewStyle, TextStyle} fr
 import {Button, Header, Screen, Text} from "@/components/ignite"
 import {Spacer} from "@/components/ui/Spacer"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useCapsuleStore} from "@/stores/capsule"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import {ThemedStyle, spacing} from "@/theme"
@@ -11,6 +12,7 @@ import showAlert from "@/utils/AlertUtils"
 import mentraAuth from "@/utils/auth/authClient"
 import {mapAuthError} from "@/utils/auth/authErrors"
 import {LogoutUtils} from "@/utils/LogoutUtils"
+import {settleFrame} from "@/utils/settleFrame"
 
 /**
  * Final step of account deletion (issue 019): the backend emailed a one-time
@@ -34,6 +36,21 @@ export default function ConfirmDeletionScreen() {
       setIsLoading(false)
       return
     }
+    // Leave the miniapp surface before the teardown destroys it, exactly as the
+    // sign-out path does (OS-1834). This screen renders inside the Settings
+    // miniapp and performCompleteLogout() calls localMiniappRuntime.cleanup(),
+    // so tearing down first leaves this component mounted in a container that no
+    // longer exists — Fabric fails to reparent a view that still has a parent
+    // and React Native destroys the ReactHost, leaving a white screen that only
+    // a force-quit clears.
+    //
+    // The window here was worse than on the sign-out path: navigation used to
+    // happen only when the user tapped OK on the success alert, so the screen
+    // could sit in a destroyed runtime indefinitely.
+    await useCapsuleStore.getState().active?.handleRightPress(true)
+    replaceAll("/auth/start")
+    await settleFrame()
+
     // Account is gone server-side; clear everything device-side too.
     try {
       await LogoutUtils.performCompleteLogout()
@@ -41,10 +58,11 @@ export default function ConfirmDeletionScreen() {
       console.error("ConfirmDeletion: logout cleanup failed:", error)
     }
     setIsLoading(false)
+    // Already on the login screen, so OK just dismisses.
     showAlert(
       translate("profileSettings:deleteAccountSuccessTitle"),
       translate("profileSettings:deleteAccountSuccessMessage"),
-      [{text: translate("common:ok"), onPress: () => replaceAll("/auth/start")}],
+      [{text: translate("common:ok")}],
       {cancelable: false},
     )
   }

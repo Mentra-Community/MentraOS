@@ -41,7 +41,7 @@ export default function ProfileSettingsPage() {
   const [loading, setLoading] = useState<boolean>(true)
   const [isSigningOut, setIsSigningOut] = useState(false)
 
-  const {goBack, push, replace, replaceAll} = useNavigationStore.getState()
+  const {goBack, push, replaceAll} = useNavigationStore.getState()
   const {logout} = useAuth()
 
   useEffect(() => {
@@ -217,11 +217,16 @@ export default function ProfileSettingsPage() {
       console.error("Profile: Error during sign-out:", err)
       setIsSigningOut(false)
 
-      // Show user-friendly error but still navigate to login to prevent stuck state
+      // Still get the user to the login screen rather than leaving them stuck,
+      // but to /auth/start like the success path — not "/". A logout that threw
+      // may have torn down some of the runtime already, and "/" remounts
+      // index.tsx, which boots against exactly that half-destroyed session.
+      // That is the flow the happy path deliberately avoids, so the error path
+      // must not walk back into it.
       showAlert(translate("common:error"), translate("settings:signOutError"), [
         {
           text: translate("common:ok"),
-          onPress: () => replace("/"),
+          onPress: () => replaceAll("/auth/start"),
         },
       ])
     }
