@@ -9,6 +9,7 @@ interface SettingsProps {
   displayPreview: DisplayPreview | null
   accentColor?: string
   accentForeground?: string
+  onUpdateUseOfflineStt: (enabled: boolean) => Promise<boolean>
   onUpdateDisplayLines: (lines: number) => Promise<boolean>
   onUpdateDisplayWidth: (width: number) => Promise<boolean>
   onUpdateWordBreaking: (enabled: boolean) => Promise<boolean>
@@ -20,11 +21,13 @@ export function Settings({
   displayPreview,
   accentColor = "#6DAEA6",
   accentForeground = "#FFFFFF",
+  onUpdateUseOfflineStt,
   onUpdateDisplayLines,
   onUpdateDisplayWidth,
   onUpdateWordBreaking,
   onUpdateCaptionTimeoutSeconds,
 }: SettingsProps) {
+  const [useOfflineStt, setUseOfflineStt] = useState(settings?.useOfflineStt ?? false)
   const [displayLines, setDisplayLines] = useState(settings?.displayLines || 3)
   const [displayWidth, setDisplayWidth] = useState(settings?.displayWidth || 1)
   const [wordBreaking, setWordBreaking] = useState(settings?.wordBreaking ?? false)
@@ -35,12 +38,21 @@ export function Settings({
   // Sync local state with props when settings change (e.g., from SSE update or initial load)
   useEffect(() => {
     if (settings) {
+      setUseOfflineStt(settings.useOfflineStt)
       setDisplayLines(settings.displayLines)
       setDisplayWidth(settings.displayWidth)
       setWordBreaking(settings.wordBreaking)
       setCaptionTimeoutSeconds(settings.captionTimeoutSeconds)
     }
   }, [settings])
+
+  const handleUseOfflineSttChange = async (enabled: boolean) => {
+    setUseOfflineStt(enabled)
+    const success = await onUpdateUseOfflineStt(enabled)
+    if (!success) {
+      setUseOfflineStt(settings?.useOfflineStt ?? false)
+    }
+  }
 
   const handleDisplayLinesChange = async (lines: number) => {
     setDisplayLines(lines) // Optimistic update
@@ -108,6 +120,41 @@ export function Settings({
               Captions will appear here
             </p>
           )}
+        </div>
+      </div>
+
+      {/* Speech-to-Text Settings */}
+      <div className="space-y-4">
+        <h2 className="text-base font-semibold text-gray-900 dark:text-zinc-50 font-['Red_Hat_Display']">
+          Speech to Text
+        </h2>
+
+        <div className="bg-white dark:bg-zinc-900 rounded-2xl p-4 shadow-sm border border-gray-100 dark:border-zinc-800">
+          <div className="flex items-center justify-between gap-4">
+            <div className="min-w-0">
+              <p className="text-base font-medium text-gray-900 dark:text-zinc-50 font-['Red_Hat_Display']">
+                Use Offline Speech to Text Models
+              </p>
+              <p className="mt-1 text-sm text-gray-500 dark:text-zinc-400 font-['Red_Hat_Display']">
+                Uses the downloaded on-device model instead of cloud transcription.
+              </p>
+            </div>
+            <button
+              onClick={() => handleUseOfflineSttChange(!useOfflineStt)}
+              className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition-colors ${
+                useOfflineStt ? "" : "bg-gray-300 dark:bg-zinc-600"
+              }`}
+              style={useOfflineStt ? {backgroundColor: accentColor} : {}}
+              role="switch"
+              aria-label="Use Offline Speech to Text Models"
+              aria-checked={useOfflineStt}>
+              <span
+                className={`inline-block h-5 w-5 transform rounded-full bg-white shadow-sm transition-transform ${
+                  useOfflineStt ? "translate-x-6" : "translate-x-1"
+                }`}
+              />
+            </button>
+          </div>
         </div>
       </div>
 
