@@ -11,6 +11,12 @@ import CoreBluetooth
 import Foundation
 import UIKit
 
+/// Keep a low-rate, non-audio EvenHub sensor stream active so iOS continues receiving BLE
+/// notifications while the Mentra App is backgrounded. The samples stay internal unless IMU was
+/// explicitly enabled through Mentra's developer-facing setting.
+private let g2ImuKeepaliveEnabled = true
+private let g2ImuKeepaliveReportPace: Int32 = 1000
+
 // MARK: - Data Little-Endian Helpers (for BMP construction)
 
 extension Data {
@@ -2959,11 +2965,12 @@ class G2: NSObject, SGCManager {
         }
         signalDisplayDirty()
 
-        try? await Task.sleep(nanoseconds: 300_000_000)  // 300ms to settle
+        try? await Task.sleep(nanoseconds: 300_000_000) // 300ms to settle
+        syncImuReportingWithIntent()
         restartMicIfAlreadyEnabled()
     }
 
-    /// Single coalesced recovery: rebuild the page + re-arm the mic from intent, but never
+    /// Single coalesced recovery: rebuild the page + re-arm sensor streams from intent, but never
     /// stack rebuilds. The firmware spams systemExit/dashboard-close ~1×/sec; without this
     /// guard each one triggered a rebuild that was torn down again → rebuild→exit→rebuild
     /// storm. At most one rebuild in flight, and at most one per RECOVERY_DEBOUNCE_MS.
@@ -3492,6 +3499,32 @@ class G2: NSObject, SGCManager {
         }
     }
 
+    /// Keep the firmware IMU stream alive at its slowest supported pace even when no miniapp
+    /// requested motion data. Incoming keepalive samples are discarded in `handleTouchEvent`.
+    private func syncImuReportingWithIntent(
+        _ intentEnabled: Bool? = nil,
+        requestedReportPace: Int32 = EvenHubProto.imuPaceP100
+    ) {
+        guard pageCreated else { return }
+
+        let shouldForwardSamples =
+            intentEnabled
+                ?? (DeviceStore.shared.get("bluetooth", "imu_enabled") as? Bool ?? false)
+        let shouldStream = shouldForwardSamples || g2ImuKeepaliveEnabled
+        let reportPace =
+            shouldForwardSamples ? requestedReportPace : g2ImuKeepaliveReportPace
+
+        Bridge.log(
+            "G2: syncing IMU stream — hardware=\(shouldStream), forward=\(shouldForwardSamples), pace=\(reportPace)"
+        )
+        let msg = EvenHubProto.imuControlMessage(
+            enable: shouldStream,
+            reportFrq: reportPace,
+            magicRandom: sendManager.nextMagicRandom()
+        )
+        sendEvenHubCommand(msg)
+    }
+
     func restartMic() {
         // Intent is "mic on". The mic only exists inside a live EvenHub page, so we
         // toggle it off then back on (the firmware needs the off→on edge to re-arm).
@@ -3829,21 +3862,7 @@ class G2: NSObject, SGCManager {
             await rebuildState()
         }
 
-        let send = { [weak self] in
-            guard let self = self else { return }
-            let msg = EvenHubProto.imuControlMessage(
-                enable: enabled, reportFrq: reportFrq,
-                magicRandom: self.sendManager.nextMagicRandom()
-            )
-            self.sendEvenHubCommand(msg)
-        }
-
-        // If we just asked for a page, give it a moment to be created first.
-        if enabled, !pageCreated {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: send)
-        } else {
-            send()
-        }
+        syncImuReportingWithIntent(enabled, requestedReportPace: reportFrq)
     }
 
     // MARK: - SGCManager: Device Control
@@ -4541,12 +4560,16 @@ class G2: NSObject, SGCManager {
             // IMU data report: eventType == IMU_DATA_REPORT (8), imuData in field 3
             // (IMU_Report_Data { x, y, z } as 32-bit floats). Handle and return before
             // the gesture-mapping path.
-            if (sysFields[1] as? Int32) == OsEventType.imuDataReport.rawValue,
-                let imuData = sysFields[3] as? Data,
-                let imu = parseImuReportData(imuData)
-            {
-                Bridge.log("G2: IMU data report: \(imu.x), \(imu.y), \(imu.z)")
-                Bridge.sendAccelEvent(x: imu.x, y: imu.y, z: imu.z, timestamp: timestamp)
+            if (sysFields[1] as? Int32) == OsEventType.imuDataReport.rawValue {
+                let shouldForwardSamples =
+                    DeviceStore.shared.get("bluetooth", "imu_enabled") as? Bool ?? false
+                if shouldForwardSamples,
+                   let imuData = sysFields[3] as? Data,
+                   let imu = parseImuReportData(imuData)
+                {
+                    Bridge.log("G2: IMU data report: \(imu.x), \(imu.y), \(imu.z)")
+                    Bridge.sendAccelEvent(x: imu.x, y: imu.y, z: imu.z, timestamp: timestamp)
+                }
                 return
             }
 
