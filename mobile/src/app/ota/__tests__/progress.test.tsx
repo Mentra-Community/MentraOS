@@ -394,7 +394,7 @@ describe("progress.tsx watchdog timers", () => {
     expect(getByText(OtaProgressMessages.stalledOrStuck)).toBeDefined()
   })
 
-  it("delays startOtaUpdate after reconnect when multi-step APK completed", async () => {
+  it("queries the resumed session without starting a second OTA after a multi-step APK reconnect", async () => {
     useGlassesStore.getState().setGlassesInfo(connectedGlassesInfo({buildNumber: sb(MINIMUM_OTA_STATUS_BUILD + 3)}))
     render(<OtaProgressScreen />)
     BluetoothSdk.startOtaUpdate.mockClear()
@@ -411,6 +411,8 @@ describe("progress.tsx watchdog timers", () => {
         status: "step_complete",
       })
     })
+    BluetoothSdk.sendOtaQueryStatus.mockClear()
+    BluetoothSdk.startOtaUpdate.mockClear()
 
     act(() => {
       setGlassesDisconnected()
@@ -419,13 +421,14 @@ describe("progress.tsx watchdog timers", () => {
       setGlassesConnected()
     })
 
+    expect(BluetoothSdk.sendOtaQueryStatus).toHaveBeenCalledTimes(1)
     expect(BluetoothSdk.startOtaUpdate).not.toHaveBeenCalled()
 
     await act(async () => {
       await jest.advanceTimersByTimeAsync(6000)
     })
 
-    expect(BluetoothSdk.startOtaUpdate).toHaveBeenCalled()
+    expect(BluetoothSdk.startOtaUpdate).not.toHaveBeenCalled()
   })
 
   it("pings periodically while updating", async () => {
