@@ -12,6 +12,7 @@ import {AsyncResult, result as Res, Result} from "typesafe-ts"
 
 import {AuthClient} from "@/utils/auth/authClient"
 import {MentraAuthSession, MentraAuthUser, MentraSigninResponse} from "@/utils/auth/authProvider.types"
+import {AuthStateListener, createAuthStateFanout} from "@/utils/auth/provider/authStateFanout"
 import {randomUrlSafe, s256Challenge} from "@/utils/auth/pkce"
 import {resolvedEndpoints} from "@/services/cloudClient"
 import {storage} from "@/utils/storage"
@@ -68,7 +69,7 @@ async function throwApiError(res: Response): Promise<never> {
   throw new Error(body?.error_description || body?.error || `HTTP ${res.status}`)
 }
 
-let stateCb: ((event: string, session: MentraAuthSession) => void) | null = null
+const authState = createAuthStateFanout()
 
 export class AccountAuthProvider extends AuthClient {
   private static instance: AccountAuthProvider
@@ -80,13 +81,15 @@ export class AccountAuthProvider extends AuthClient {
 
   private notify(event: string): void {
     void this.getSession().then((r) => {
-      if (r.is_ok()) stateCb?.(event, r.value)
+      if (r.is_ok()) authState.emit(event, r.value)
     })
   }
 
-  public onAuthStateChange(callback: (event: string, session: MentraAuthSession) => void): Result<any, Error> {
-    stateCb = callback
-    return Res.ok({unsubscribe: () => (stateCb = null)})
+  public onAuthStateChange(callback: AuthStateListener): Result<any, Error> {
+    const sub = authState.subscribe(callback)
+    // Remove only this listener. The previous implementation cleared the shared
+    // slot, so one consumer unsubscribing silenced every other consumer too.
+    return Res.ok(sub)
   }
 
   /** Core rotates refresh tokens on every use and enforces single-use: a
@@ -273,7 +276,7 @@ export class AccountAuthProvider extends AuthClient {
       // notify()'s extra async /me round-trip) so AuthContext.user is populated
       // before this call resolves and the login screen navigates to "/". Otherwise
       // the home-boot auth check races the async listener and bounces to /auth/start.
-      stateCb?.("SIGNED_IN", value)
+      authState.emit("SIGNED_IN", value)
       return {session: value, user: value.user ?? null}
     })
   }
@@ -395,7 +398,7 @@ export class AccountAuthProvider extends AuthClient {
       if (!res.ok) await throwApiError(res)
       // The account is gone; the server revoked every session already.
       clearTokens()
-      stateCb?.("SIGNED_OUT", {token: undefined})
+      authState.emit("SIGNED_OUT", {token: undefined})
     })
   }
 
@@ -450,7 +453,7 @@ export class AccountAuthProvider extends AuthClient {
       if (!body?.access_token || !body?.refresh_token) throw new Error("oauth completion returned no session")
       saveTokens({access: body.access_token, refresh: body.refresh_token})
       const session = await this.getSession()
-      stateCb?.("SIGNED_IN", session.is_ok() ? session.value : {token: body.access_token})
+      authState.emit("SIGNED_IN", session.is_ok() ? session.value : {token: body.access_token})
     })
   }
 

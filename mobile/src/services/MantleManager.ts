@@ -144,7 +144,44 @@ class MantleManager {
           }
           return {token: res.value.token, type: res.value.type}
         },
-        onStateChange: (callback) => mentraAuth.onAuthStateChange((event, session) => callback(event, session)),
+        // Hand back a synchronous handle with a real unsubscribe.
+        //
+        // mentraAuth is a lazy Proxy whose every method returns a Promise, so
+        // this call resolves to the Result rather than being one. The engine
+        // (CloudClientService.ensureAuthWatch) inspects the return value
+        // synchronously, finds no `unsubscribe` on a Promise, and keeps its
+        // no-op placeholder — so stopAuthWatch() never removed the listener.
+        //
+        // That used to be invisible: the provider held one callback slot, so
+        // the orphan was overwritten by whoever registered next. Now that every
+        // listener is retained, each engine.start() would stack another one, and
+        // a later SIGNED_IN would have several callbacks calling reconnect() on
+        // the same client. Resolve the real unsubscribe out of the promise, and
+        // honour an unsubscribe that arrives before it settles.
+        onStateChange: (callback) => {
+          const pending = Promise.resolve(
+            mentraAuth.onAuthStateChange((event: string, session: any) => callback(event, session)),
+          )
+          let resolved: (() => void) | null = null
+          let cancelled = false
+
+          void pending
+            .then((res: any) => {
+              const handle = res?.value ?? res
+              resolved = typeof handle?.unsubscribe === "function" ? handle.unsubscribe : null
+              if (cancelled) resolved?.()
+            })
+            .catch(() => {
+              resolved = null
+            })
+
+          return {
+            unsubscribe: () => {
+              cancelled = true
+              resolved?.()
+            },
+          }
+        },
       },
       // Resolved cloud endpoints + LC3 frame size. island builds its cloud
       // client from these; the host keeps the dev/settings URL resolution.
