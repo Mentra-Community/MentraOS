@@ -662,6 +662,12 @@ class MantleManager {
         const title = String(event.title ?? "").trim()
         const content = String(event.content ?? "").trim()
 
+        // Worth logging: priority was hardcoded to "normal" for every
+        // notification, which made every consumer's priority handling dead code
+        // and gave no way to tell from the outside. Log the value, never the
+        // notification text.
+        console.log(`MANTLE: phone_notification from ${app}, priority=${event.priority}`)
+
         // Direct forward to local miniapps subscribed to phone_notification.
         // Gated by READ_NOTIFICATIONS in miniapp.json at subscribe time.
         localMiniappRuntime.forwardEvent("phone_notification", {
