@@ -24,13 +24,31 @@ on:
 
 jobs:
   verify:
-    # Both families, because the injection has to survive both: the Android build
-    # runs on Ubuntu (GNU sed) while staging/iOS are macOS-pinned (BSD sed). The
-    # `sed -i ''` form used elsewhere is BSD-only and exits 2 on GNU.
+    # Two things have to hold, and they are separate risks.
+    #
+    # 1. OS portability. The Android build runs on Linux (GNU sed) while
+    #    staging/iOS are macOS (BSD sed), and the `sed -i ''` form used elsewhere
+    #    in these workflows is BSD-only and exits 2 on GNU.
+    #
+    # 2. Network reachability from the machines that actually build. Doppler is
+    #    a public SaaS API and the CLI dials out to api.doppler.com over HTTPS.
+    #    GitHub-hosted runners obviously reach it; our SELF-HOSTED macOS runners
+    #    sit on our own network, and nothing proves they can until it is tried
+    #    there. Since the real workflows warn-and-continue on a missing DSN, a
+    #    blocked egress would not fail a build — it would quietly ship another
+    #    Sentry-less app, which is the exact failure OS-1827 is about.
+    #
+    # So the matrix covers the runners the real workflows name, not stand-ins.
     strategy:
       fail-fast: false
       matrix:
-        runner: [ubuntu-latest, macos-latest]
+        include:
+          # Named by mentra-app-android-build.yml.
+          - label: blacksmith-ubuntu (android build)
+            runner: blacksmith-4vcpu-ubuntu-2404
+          # Named by staging-builds.yml and mentra-app-ios-build.yml. Ours.
+          - label: self-hosted macOS ARM64 (staging + ios)
+            runner: [self-hosted, macOS, ARM64]
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
@@ -41,12 +59,15 @@ jobs:
       - name: Inject Sentry DSN from Doppler
         working-directory: ./mobile
         env:
-          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN_MOBILE_STG }}
+          # PRD, because that is the token the real workflows reference. Service
+          # tokens are scoped to a single Doppler config, so proving STG works
+          # says nothing about whether PRD was created correctly.
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN_MOBILE_PRD }}
         run: |
           set -euo pipefail
 
           if [ -z "${DOPPLER_TOKEN:-}" ]; then
-            echo "::error::DOPPLER_TOKEN_MOBILE_STG is not set — cannot fetch the DSN."
+            echo "::error::DOPPLER_TOKEN_MOBILE_PRD is not set — cannot fetch the DSN."
             exit 1
           fi
 
@@ -91,7 +112,7 @@ jobs:
             *) echo "::error::Value does not look like a Sentry DSN (masked)."; exit 1 ;;
           esac
 
-          echo "OK on ${{ matrix.runner }}: DSN injected, length ${#VALUE}, shape valid."
+          echo "OK on ${{ matrix.label }}: DSN injected, length ${#VALUE}, shape valid."
 
           # Guard the regression this whole exercise is about: the committed
           # example file must stay empty so no real DSN is ever committed.
