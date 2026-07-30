@@ -70,7 +70,10 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     private final ChunkReassembler inboundBinaryReassembler = new ChunkReassembler();
     private final ChunkedMessageProtocolStrategy inboundBinaryStrategy =
             new ChunkedMessageProtocolStrategy(inboundBinaryReassembler);
+    private final Object phoneWireProtocolLock = new Object();
     private boolean wireV2HandshakeSent = false;
+    private boolean wireV2HandshakePending = false;
+    private long phoneWireProtocolGeneration = 0;
     // Message ids whose FLAG_WAKE fragment arrived and are still reassembling; on THAT
     // message's completion the wake window is granted again so follow-up work gets the
     // full window (see handleInboundBinaryFrame). Keyed by msgId because the reassembler
@@ -443,12 +446,16 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
     /** Reset phone-facing wire protocol state on a new phone connection. */
     public void resetPhoneWireProtocolState() {
-        BesWireFormat.resetBinaryProtocol();
+        synchronized (phoneWireProtocolLock) {
+            phoneWireProtocolGeneration++;
+            wireV2HandshakeSent = false;
+            wireV2HandshakePending = false;
+            BesWireFormat.resetBinaryProtocol();
+        }
         inboundBinaryReassembler.clear();
         // Pending wake grants die with the reassemblies they belong to: a new session
         // reusing an old msgId must not inherit a stale completion-time wake grant.
         pendingBinaryWakeMsgIds.clear();
-        wireV2HandshakeSent = false;
     }
 
     /**
@@ -461,7 +468,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         uartToBesEndian = K900LengthCodec.Endian.BE;
     }
 
-    /** Send BLE Wire v2 handshake frame (payload "v2"). */
+    /** Queue a BLE Wire v2 handshake frame (payload "v2") on the outbound worker. */
     public boolean sendWireV2Handshake() {
         if (!linkState.isSerialOpen()) {
             return false;
@@ -471,21 +478,61 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             return false;
         }
         byte[] frame = BesWireFormat.packV2HandshakeFrame();
-        boolean sent = transportCoordinator.runNormalWrite(() -> comManager.write(frame));
-        if (sent) {
+        long generation;
+        synchronized (phoneWireProtocolLock) {
+            if (wireV2HandshakeSent || wireV2HandshakePending) {
+                return true;
+            }
+            wireV2HandshakePending = true;
+            generation = phoneWireProtocolGeneration;
+        }
+
+        boolean queued =
+                queueOutboundAction(() -> sendWireV2HandshakeOnOutboundWorker(frame, generation));
+        if (!queued) {
+            synchronized (phoneWireProtocolLock) {
+                if (generation == phoneWireProtocolGeneration) {
+                    wireV2HandshakePending = false;
+                }
+            }
+        }
+        return queued;
+    }
+
+    private void sendWireV2HandshakeOnOutboundWorker(byte[] frame, long generation) {
+        boolean sent =
+                transportCoordinator.runNormalWrite(
+                        () -> {
+                            synchronized (phoneWireProtocolLock) {
+                                // This action may have waited behind an exclusive UART lease.
+                                if (generation != phoneWireProtocolGeneration
+                                        || !wireV2HandshakePending) {
+                                    return false;
+                                }
+                                return comManager.write(frame);
+                            }
+                        });
+
+        synchronized (phoneWireProtocolLock) {
+            if (generation != phoneWireProtocolGeneration) {
+                return;
+            }
+            wireV2HandshakePending = false;
+            if (!sent) {
+                return;
+            }
             wireV2HandshakeSent = true;
             BesWireFormat.setBinaryProtocolActive(true);
-            BleTraceLogger.logWireMetrics(
-                    "glasses_to_phone",
-                    "sdk_ble_handshake",
-                    "wire_v2",
-                    BesWireFormat.HANDSHAKE_PAYLOAD_V2.length(),
-                    frame.length,
-                    1,
-                    0,
-                    BesWireFormat.PROTOCOL_VERSION_V2);
         }
-        return sent;
+        BleTraceLogger.logWireMetrics(
+                "glasses_to_phone",
+                "sdk_ble_handshake",
+                "wire_v2",
+                BesWireFormat.HANDSHAKE_PAYLOAD_V2.length(),
+                frame.length,
+                1,
+                0,
+                BesWireFormat.PROTOCOL_VERSION_V2);
     }
 
     private boolean sendBinaryFragmentedJson(String originalJson) {
@@ -586,9 +633,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                         1,
                         0,
                         BesWireFormat.PROTOCOL_VERSION_V2);
-                if (!wireV2HandshakeSent) {
-                    sendWireV2Handshake();
-                }
+                sendWireV2Handshake();
             }
             return true;
         }
