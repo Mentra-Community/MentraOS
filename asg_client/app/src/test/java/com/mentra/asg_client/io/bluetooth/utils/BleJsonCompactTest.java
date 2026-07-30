@@ -37,9 +37,11 @@ public class BleJsonCompactTest {
         assertThat(compact.getString("r")).isEqualTo("p1");
         assertThat(compact.getInt("s")).isEqualTo(3);
         assertThat(compact.getLong("ts")).isEqualTo(100L);
-        assertThat(compact.has("rc")).isFalse();
+        assertThat(compact.has("rc")).isTrue();
+        assertThat(compact.getBoolean("rc")).isFalse();
         assertThat(compact.getJSONObject("cm").getInt("aes")).isEqualTo(0);
-        assertThat(compact.getJSONObject("cm").has("m")).isFalse();
+        assertThat(compact.getJSONObject("cm").has("m")).isTrue();
+        assertThat(compact.getJSONObject("cm").getBoolean("m")).isFalse();
     }
 
     @Test
@@ -124,6 +126,59 @@ public class BleJsonCompactTest {
 
         assertThat(BleJsonCompact.encode(photoStatus).getString("t")).isEqualTo("photo_status");
         assertThat(BleJsonCompact.encode(streamStatus).getString("t")).isEqualTo("stream_status");
+    }
+
+    @Test
+    public void jsonValuesRoundTripAtEveryDepth() throws Exception {
+        JSONObject status =
+                new JSONObject(
+                        "{\"type\":\"stream_status\",\"status\":\"stopped\","
+                                + "\"streaming\":false,\"reconnecting\":false,"
+                                + "\"resolvedConfig\":{\"audio\":{\"echoCancellation\":false,"
+                                + "\"noiseSuppression\":false}},"
+                                + "\"nullValue\":null,\"emptyObject\":{},\"emptyArray\":[]}");
+
+        JSONObject wire = BleJsonCompact.encode(status);
+
+        assertThat(wire.has("streaming")).isTrue();
+        assertThat(wire.getBoolean("streaming")).isFalse();
+        assertThat(wire.has("rc")).isTrue();
+        assertThat(wire.getBoolean("rc")).isFalse();
+        JSONObject wireAudio = wire.getJSONObject("resolvedConfig").getJSONObject("audio");
+        assertThat(wireAudio.has("echoCancellation")).isTrue();
+        assertThat(wireAudio.getBoolean("echoCancellation")).isFalse();
+        assertThat(wireAudio.has("noiseSuppression")).isTrue();
+        assertThat(wireAudio.getBoolean("noiseSuppression")).isFalse();
+        assertThat(wire.has("nullValue")).isTrue();
+        assertThat(wire.isNull("nullValue")).isTrue();
+        assertThat(wire.getJSONObject("emptyObject").length()).isZero();
+        assertThat(wire.getJSONArray("emptyArray").length()).isZero();
+
+        JSONObject restored = BleJsonCompact.decode(wire);
+        assertThat(restored.getBoolean("streaming")).isFalse();
+        assertThat(restored.getBoolean("reconnecting")).isFalse();
+        JSONObject restoredAudio =
+                restored.getJSONObject("resolvedConfig").getJSONObject("audio");
+        assertThat(restoredAudio.getBoolean("echoCancellation")).isFalse();
+        assertThat(restoredAudio.getBoolean("noiseSuppression")).isFalse();
+        assertThat(restored.has("nullValue")).isTrue();
+        assertThat(restored.isNull("nullValue")).isTrue();
+        assertThat(restored.getJSONObject("emptyObject").length()).isZero();
+        assertThat(restored.getJSONArray("emptyArray").length()).isZero();
+    }
+
+    @Test
+    public void wifiScanPreservesIncompleteMarker() throws Exception {
+        JSONObject result =
+                new JSONObject(
+                        "{\"type\":\"wifi_scan_result\",\"networks\":[\"one\"],"
+                                + "\"scan_complete\":false}");
+
+        JSONObject wire = BleJsonCompact.encode(result);
+
+        assertThat(wire.has("scan_complete")).isTrue();
+        assertThat(wire.getBoolean("scan_complete")).isFalse();
+        assertThat(BleJsonCompact.decode(wire).getBoolean("scan_complete")).isFalse();
     }
 
     @Test

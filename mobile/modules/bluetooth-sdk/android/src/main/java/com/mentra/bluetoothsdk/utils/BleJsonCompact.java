@@ -14,7 +14,7 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
-/** BLE Wire Protocol v2 JSON compaction: short keys, enum ints, omitted defaults, config diff. */
+/** BLE Wire Protocol v2 JSON compaction: short keys, enum ints, and config diff. */
 public final class BleJsonCompact {
 
     private static final Map<String, String> LONG_TO_SHORT = new HashMap<>();
@@ -228,7 +228,9 @@ public final class BleJsonCompact {
         String messageType = input.optString("type", input.optString("t", ""));
         boolean skipResolvedConfig = false;
 
-        if (topLevel && shouldDiffResolvedConfig(messageType) && input.has("resolvedConfig")) {
+        if (topLevel
+                && shouldDiffResolvedConfig(messageType)
+                && input.opt("resolvedConfig") instanceof JSONObject) {
             JSONObject resolvedConfig = input.getJSONObject("resolvedConfig");
             String hash = hashConfig(resolvedConfig);
             resolvedConfigByHash.put(hash, cloneObject(resolvedConfig));
@@ -250,9 +252,6 @@ public final class BleJsonCompact {
             Object value = input.get(key);
             String shortKey = LONG_TO_SHORT.getOrDefault(key, key);
             Object compacted = compactValue(key, value, messageType);
-            if (shouldOmit(key, compacted, messageType)) {
-                continue;
-            }
             output.put(shortKey, compacted);
         }
 
@@ -269,7 +268,7 @@ public final class BleJsonCompact {
     private static Object compactValue(String longKey, Object value, String messageType)
             throws JSONException {
         if (value == JSONObject.NULL || value == null) {
-            return null;
+            return JSONObject.NULL;
         }
         if (value instanceof JSONObject) {
             return compactObject((JSONObject) value, false);
@@ -321,30 +320,16 @@ public final class BleJsonCompact {
         return out;
     }
 
-    private static boolean shouldOmit(String longKey, Object value, String messageType) {
-        if (value == null || value == JSONObject.NULL) {
-            return true;
-        }
-        if (value instanceof Boolean && !((Boolean) value)) {
-            // start_stream.sound defaults to true on the glasses, so false is an
-            // override rather than an omittable default.
-            return !("start_stream".equals(messageType) && "sound".equals(longKey));
-        }
-        if (value instanceof JSONObject && ((JSONObject) value).length() == 0) {
-            return true;
-        }
-        if (value instanceof JSONArray && ((JSONArray) value).length() == 0) {
-            return true;
-        }
-        return false;
-    }
-
     private static void compactTimestamp(JSONObject output) throws JSONException {
         String tsKey = output.has("timestamp") ? "timestamp" : (output.has("ts") ? "ts" : null);
         if (tsKey == null) {
             return;
         }
-        long absolute = output.optLong(tsKey);
+        Object timestamp = output.opt(tsKey);
+        if (!(timestamp instanceof Number)) {
+            return;
+        }
+        long absolute = ((Number) timestamp).longValue();
         if (absolute <= 0) {
             return;
         }
@@ -371,9 +356,6 @@ public final class BleJsonCompact {
             }
             String longKey = SHORT_TO_LONG.getOrDefault(key, key);
             Object expanded = expandValue(longKey, value, messageType);
-            if (expanded == null || expanded == JSONObject.NULL) {
-                continue;
-            }
             output.put(longKey, expanded);
         }
 
@@ -386,7 +368,7 @@ public final class BleJsonCompact {
     }
 
     private static void cacheResolvedConfigIfPresent(JSONObject output) throws JSONException {
-        if (!output.has("resolvedConfig")) {
+        if (!(output.opt("resolvedConfig") instanceof JSONObject)) {
             return;
         }
         JSONObject resolvedConfig = output.getJSONObject("resolvedConfig");
@@ -411,7 +393,7 @@ public final class BleJsonCompact {
     private static Object expandValue(String longKey, Object value, String messageType)
             throws JSONException {
         if (value == JSONObject.NULL || value == null) {
-            return null;
+            return JSONObject.NULL;
         }
         if (value instanceof JSONObject) {
             return expandObject((JSONObject) value, false);
@@ -450,7 +432,13 @@ public final class BleJsonCompact {
 
     private static void expandTimestamp(JSONObject output) throws JSONException {
         if (!output.has("timestamp") && output.has("ts")) {
-            long delta = output.optLong("ts");
+            Object timestamp = output.opt("ts");
+            if (!(timestamp instanceof Number)) {
+                output.put("timestamp", timestamp);
+                output.remove("ts");
+                return;
+            }
+            long delta = ((Number) timestamp).longValue();
             long absolute = sessionConnectEpochMs > 0 ? sessionConnectEpochMs + delta : delta;
             output.put("timestamp", absolute);
             output.remove("ts");

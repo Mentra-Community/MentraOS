@@ -44,7 +44,8 @@ public class BleJsonCompactTest {
         assertEquals("p1", compact.getString("r"));
         assertEquals(3, compact.getInt("s"));
         assertEquals(100L, compact.getLong("ts"));
-        assertFalse(compact.has("rc"));
+        assertTrue(compact.has("rc"));
+        assertFalse(compact.getBoolean("rc"));
         assertEquals(1, compact.getJSONObject("cm").getInt("aes"));
         assertEquals(1, compact.getJSONObject("cm").getInt("src"));
     }
@@ -148,6 +149,45 @@ public class BleJsonCompactTest {
         assertTrue(wire.has("sound"));
         assertFalse(wire.getBoolean("sound"));
         assertFalse(BleJsonCompact.decode(wire).getBoolean("sound"));
+    }
+
+    @Test
+    public void jsonValuesRoundTripAtEveryDepth() throws Exception {
+        JSONObject status =
+                new JSONObject(
+                        "{\"type\":\"stream_status\",\"status\":\"stopped\","
+                                + "\"streaming\":false,\"reconnecting\":false,"
+                                + "\"resolvedConfig\":{\"audio\":{\"echoCancellation\":false,"
+                                + "\"noiseSuppression\":false}},"
+                                + "\"nullValue\":null,\"emptyObject\":{},\"emptyArray\":[]}");
+
+        JSONObject wire = BleJsonCompact.encode(status);
+
+        assertTrue(wire.has("streaming"));
+        assertFalse(wire.getBoolean("streaming"));
+        assertTrue(wire.has("rc"));
+        assertFalse(wire.getBoolean("rc"));
+        JSONObject wireAudio = wire.getJSONObject("resolvedConfig").getJSONObject("audio");
+        assertTrue(wireAudio.has("echoCancellation"));
+        assertFalse(wireAudio.getBoolean("echoCancellation"));
+        assertTrue(wireAudio.has("noiseSuppression"));
+        assertFalse(wireAudio.getBoolean("noiseSuppression"));
+        assertTrue(wire.has("nullValue"));
+        assertTrue(wire.isNull("nullValue"));
+        assertEquals(0, wire.getJSONObject("emptyObject").length());
+        assertEquals(0, wire.getJSONArray("emptyArray").length());
+
+        JSONObject restored = BleJsonCompact.decode(wire);
+        assertFalse(restored.getBoolean("streaming"));
+        assertFalse(restored.getBoolean("reconnecting"));
+        JSONObject restoredAudio =
+                restored.getJSONObject("resolvedConfig").getJSONObject("audio");
+        assertFalse(restoredAudio.getBoolean("echoCancellation"));
+        assertFalse(restoredAudio.getBoolean("noiseSuppression"));
+        assertTrue(restored.has("nullValue"));
+        assertTrue(restored.isNull("nullValue"));
+        assertEquals(0, restored.getJSONObject("emptyObject").length());
+        assertEquals(0, restored.getJSONArray("emptyArray").length());
     }
 
     @Test

@@ -1,6 +1,6 @@
 import Foundation
 
-/// BLE Wire Protocol v2 JSON compaction: short keys, enum ints, omitted defaults, config diff.
+/// BLE Wire Protocol v2 JSON compaction: short keys, enum ints, and config diff.
 enum BleJsonCompact {
     static let keyResolvedConfigHash = "rch"
 
@@ -191,13 +191,9 @@ enum BleJsonCompact {
 
         for (key, value) in input {
             if skipResolvedConfig, key == "resolvedConfig" { continue }
-            let shortKey = longToShort[key] ?? key
-            guard let compacted = compactValue(longKey: key, value: value, messageType: messageType),
-                  !shouldOmit(longKey: key, value: compacted, messageType: messageType)
-            else {
-                continue
+            if let compacted = compactValue(longKey: key, value: value, messageType: messageType) {
+                output[longToShort[key] ?? key] = compacted
             }
-            output[shortKey] = compacted
         }
 
         if topLevel {
@@ -211,7 +207,7 @@ enum BleJsonCompact {
     }
 
     private static func compactValue(longKey: String, value: Any, messageType: String) -> Any? {
-        if value is NSNull { return nil }
+        if value is NSNull { return NSNull() }
         if let nested = value as? [String: Any] {
             return compactObject(nested, topLevel: false)
         }
@@ -239,18 +235,6 @@ enum BleJsonCompact {
         return value
     }
 
-    private static func shouldOmit(longKey: String, value: Any, messageType: String) -> Bool {
-        if value is NSNull { return true }
-        if let boolValue = value as? Bool, !boolValue {
-            // start_stream.sound defaults to true on the glasses, so false is an
-            // override rather than an omittable default.
-            return !(messageType == "start_stream" && longKey == "sound")
-        }
-        if let dict = value as? [String: Any], dict.isEmpty { return true }
-        if let array = value as? [Any], array.isEmpty { return true }
-        return false
-    }
-
     private static func compactTimestamp(_ output: inout [String: Any]) {
         let tsKey: String?
         if output["timestamp"] != nil {
@@ -261,7 +245,7 @@ enum BleJsonCompact {
             tsKey = nil
         }
         guard let key = tsKey else { return }
-        let absolute = int64Value(output[key]) ?? 0
+        guard let absolute = int64Value(output[key]) else { return }
         guard absolute > 0 else { return }
         if sessionConnectEpochMs <= 0 {
             sessionConnectEpochMs = absolute
@@ -282,10 +266,9 @@ enum BleJsonCompact {
                 continue
             }
             let longKey = shortToLong[key] ?? key
-            guard let expanded = expandValue(longKey: longKey, value: value, messageType: messageType) else {
-                continue
+            if let expanded = expandValue(longKey: longKey, value: value, messageType: messageType) {
+                output[longKey] = expanded
             }
-            output[longKey] = expanded
         }
 
         if topLevel {
@@ -316,7 +299,7 @@ enum BleJsonCompact {
     }
 
     private static func expandValue(longKey: String, value: Any, messageType: String) -> Any? {
-        if value is NSNull { return nil }
+        if value is NSNull { return NSNull() }
         if let nested = value as? [String: Any] {
             return expandObject(nested, topLevel: false)
         }
@@ -344,7 +327,12 @@ enum BleJsonCompact {
     }
 
     private static func expandTimestamp(_ output: inout [String: Any]) {
-        guard output["timestamp"] == nil, let delta = int64Value(output["ts"]) else { return }
+        guard output["timestamp"] == nil, let timestamp = output["ts"] else { return }
+        guard let delta = int64Value(timestamp) else {
+            output["timestamp"] = timestamp
+            output.removeValue(forKey: "ts")
+            return
+        }
         let absolute = sessionConnectEpochMs > 0 ? sessionConnectEpochMs + delta : delta
         output["timestamp"] = absolute
         output.removeValue(forKey: "ts")
