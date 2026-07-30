@@ -15,6 +15,8 @@ import org.robolectric.annotation.Config;
 
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Queue;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -192,6 +194,53 @@ public class BesUartTransportCoordinatorTest {
             assertThat(host.controlCommands.indexOf("terminal_status"))
                     .isLessThan(host.controlCommands.indexOf("normal_response"));
             assertThat(host.controlCommands.indexOf("normal_response"))
+                    .isLessThan(indexOfControlCommand("cs_baud"));
+        } finally {
+            coordinator.endFileTransfer(lease);
+            caller.shutdownNow();
+        }
+    }
+
+    @Test
+    public void leaseRelease_drainsSiblingOutboundWritesBeforeFastSwitch() throws Exception {
+        coordinator.onSerialReady(host.session);
+        assertThat(systemVersion("17.26.7.4"))
+                .isEqualTo(BesUartTransportCoordinator.SystemVersionResult.READY);
+        BesUartTransportCoordinator.OperationLease lease = coordinator.beginFileTransfer();
+        assertThat(lease).isNotNull();
+        assertThat(systemVersion("17.26.7.23"))
+                .isEqualTo(BesUartTransportCoordinator.SystemVersionResult.READY);
+        host.deferOutboundDrains = true;
+
+        ExecutorService caller = Executors.newSingleThreadExecutor();
+        Future<Boolean> firstWrite =
+                caller.submit(
+                        () ->
+                                coordinator.runNormalWrite(
+                                        () -> {
+                                            host.controlCommands.add("first_response");
+                                            return true;
+                                        }));
+
+        try {
+            awaitDeferredNormalWriteCount(1);
+            coordinator.endFileTransfer(lease);
+            assertThat(firstWrite.get(1, TimeUnit.SECONDS)).isTrue();
+
+            assertThat(
+                            coordinator.runNormalWrite(
+                                    () -> {
+                                        host.controlCommands.add("sibling_response");
+                                        return true;
+                                    }))
+                    .isTrue();
+            assertThat(host.controlCommands).noneMatch(command -> command.contains("cs_baud"));
+
+            host.runNextOutboundDrain();
+            awaitControlCommandCount("cs_baud", 1);
+            assertThat(host.controlCommands.indexOf("first_response"))
+                    .isLessThan(host.controlCommands.indexOf("sibling_response"));
+            assertThat(host.controlCommands.indexOf("sibling_response"))
                     .isLessThan(indexOfControlCommand("cs_baud"));
         } finally {
             coordinator.endFileTransfer(lease);
@@ -688,11 +737,13 @@ public class BesUartTransportCoordinatorTest {
         volatile boolean failBaudWrites;
         volatile int openFailuresRemaining;
         volatile int invalidations;
+        volatile boolean deferOutboundDrains;
         volatile long nextSessionId = 1;
         volatile SerialSession session = new SerialSession(1, "/dev/ttyS1", baud);
         final List<String> controlCommands = new CopyOnWriteArrayList<>();
         final List<Integer> openAttempts = new CopyOnWriteArrayList<>();
         final List<byte[]> rawWrites = new CopyOnWriteArrayList<>();
+        final Queue<Runnable> outboundDrains = new ConcurrentLinkedQueue<>();
 
         @Override
         public int currentBaud() {
@@ -760,6 +811,20 @@ public class BesUartTransportCoordinatorTest {
         @Override
         public boolean supportsFastBaud(String firmwareVersion) {
             return !"17.26.7.4".equals(firmwareVersion);
+        }
+
+        @Override
+        public boolean queueAfterOutboundWrites(Runnable action) {
+            if (deferOutboundDrains) {
+                outboundDrains.add(action);
+            } else {
+                action.run();
+            }
+            return true;
+        }
+
+        void runNextOutboundDrain() {
+            outboundDrains.remove().run();
         }
     }
 }

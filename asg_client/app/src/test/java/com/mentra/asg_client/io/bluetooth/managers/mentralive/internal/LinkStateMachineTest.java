@@ -255,6 +255,31 @@ public class LinkStateMachineTest {
         assertThat(listener.states).containsExactly(LinkState.SERIAL_CLOSED);
     }
 
+    @Test
+    public void serialUnavailable_preservesStickySessionFactsDuringRecovery() {
+        machine.serialReady();
+        machine.srSyvrParsed(FULL_CAPS);
+        machine.phonePresenceReported(true);
+        BesCaps sessionCaps = machine.getNegotiatedCaps();
+
+        machine.serialUnavailable();
+
+        assertThat(machine.getState()).isEqualTo(LinkState.SERIAL_CLOSED);
+        assertThat(machine.isSerialOpen()).isFalse();
+        assertThat(machine.getProvenCaps()).isNull();
+        assertThat(machine.getNegotiatedCaps()).isEqualTo(sessionCaps);
+        assertThat(machine.getPhonePresence()).isEqualTo(PhonePresence.PRESENT);
+
+        machine.serialReady();
+        machine.srSyvrParsed(null);
+        assertThat(machine.getProvenCaps()).isEqualTo(sessionCaps);
+
+        machine.serialUnavailable();
+        machine.serialClosed();
+        assertThat(machine.getNegotiatedCaps()).isEqualTo(BesCaps.NONE);
+        assertThat(machine.getPhonePresence()).isEqualTo(PhonePresence.UNKNOWN);
+    }
+
     // ---- caps accrual rules ----
 
     @Test

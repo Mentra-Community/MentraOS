@@ -28,6 +28,11 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * stream, so the link is no longer proven at the current baud) drops back to {@code SERIAL_OPEN},
  * and {@link #serialClosed()} resets everything.
  *
+ * <p>A failed coordinator-owned reopen uses {@link #serialUnavailable()}: the physical state is
+ * {@code SERIAL_CLOSED}, but negotiated caps and phone presence survive because recovery still
+ * belongs to the same BES and phone sessions. A terminal {@link #serialClosed()} remains the only
+ * full reset.
+ *
  * <p>Orthogonal to the ladder, {@link PhonePresence} tracks whether the BES currently holds a phone
  * BLE connection (see the enum Javadoc for the firmware contract and the tri-state degradation rule
  * for old firmware).
@@ -360,6 +365,21 @@ public final class LinkStateMachine {
             if (changed) {
                 notifyListenersLocked();
             }
+        }
+    }
+
+    /**
+     * An internally managed reopen currently has no physical descriptor. Unlike terminal serial
+     * close, recovery still belongs to the same BES and phone sessions, so sticky capabilities and
+     * phone presence remain valid while the physical-open state drops to closed.
+     */
+    public void serialUnavailable() {
+        synchronized (this) {
+            if (state == LinkState.SERIAL_CLOSED) {
+                return;
+            }
+            state = LinkState.SERIAL_CLOSED;
+            notifyListenersLocked();
         }
     }
 

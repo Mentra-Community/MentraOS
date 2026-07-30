@@ -118,6 +118,9 @@ public final class BesUartTransportCoordinator {
 
         /** Whether this firmware version implements the negotiated fast-baud contract. */
         boolean supportsFastBaud(String firmwareVersion);
+
+        /** Queue a barrier behind every outbound message accepted before this call. */
+        boolean queueAfterOutboundWrites(Runnable action);
     }
 
     private static final int[] RECOVERY_BAUDS = {
@@ -145,6 +148,8 @@ public final class BesUartTransportCoordinator {
     private long discardedBytes = 0;
     private int discardEvents = 0;
     private boolean versionProbeDeferred = false;
+    private boolean outboundDrainPending = false;
+    private long outboundDrainGeneration = 0;
 
     private ScheduledFuture<?> phaseTimeout;
     private ScheduledFuture<?> healthTimeout;
@@ -233,6 +238,7 @@ public final class BesUartTransportCoordinator {
             discardedBytes = 0;
             discardEvents = 0;
             versionProbeDeferred = false;
+            cancelOutboundDrainLocked();
             serialSession = session;
             long phase = ++phaseGeneration;
             Log.i(TAG, "Serial ready; discovering BES at rendezvous baud");
@@ -260,6 +266,7 @@ public final class BesUartTransportCoordinator {
             fastSwitchAttemptSession = null;
             firmwareVersion = "";
             versionProbeDeferred = false;
+            cancelOutboundDrainLocked();
             state = State.CLOSED;
             operation = Operation.NONE;
             operationLease = null;
@@ -563,7 +570,7 @@ public final class BesUartTransportCoordinator {
             operation = Operation.NONE;
             operationLease = null;
             flushDeferredNormalWritesLocked();
-            resumeAfterOperationLocked();
+            resumeAfterOutboundDrainLocked();
         }
     }
 
@@ -582,6 +589,7 @@ public final class BesUartTransportCoordinator {
             fastSwitchAttemptSession = null;
             firmwareVersion = "";
             versionProbeDeferred = false;
+            cancelOutboundDrainLocked();
             host.invalidateLinkProof();
             serialSession = null;
             state = State.DISCOVERING;
@@ -641,6 +649,7 @@ public final class BesUartTransportCoordinator {
             operation = Operation.NONE;
             operationLease = null;
             otaRawRouting = false;
+            cancelOutboundDrainLocked();
             phaseGeneration++;
             serialSession = null;
             host.setFastReceive(false);
@@ -698,7 +707,7 @@ public final class BesUartTransportCoordinator {
         otaRawRouting = false;
         host.setFastReceive(false);
         flushDeferredNormalWritesLocked();
-        resumeAfterOperationLocked();
+        resumeAfterOutboundDrainLocked();
     }
 
     private void flushDeferredNormalWritesLocked() {
@@ -719,6 +728,35 @@ public final class BesUartTransportCoordinator {
         if (count > 0) {
             Log.w(TAG, "Cancelled " + count + " deferred normal write(s): " + reason);
         }
+    }
+
+    private void resumeAfterOutboundDrainLocked() {
+        if (outboundDrainPending) {
+            return;
+        }
+        outboundDrainPending = true;
+        long generation = ++outboundDrainGeneration;
+        if (!host.queueAfterOutboundWrites(() -> onOutboundDrained(generation))) {
+            outboundDrainPending = false;
+            resumeAfterOperationLocked();
+        }
+    }
+
+    private void onOutboundDrained(long generation) {
+        synchronized (monitor) {
+            if (!outboundDrainPending
+                    || generation != outboundDrainGeneration
+                    || state == State.CLOSED) {
+                return;
+            }
+            outboundDrainPending = false;
+            resumeAfterOperationLocked();
+        }
+    }
+
+    private void cancelOutboundDrainLocked() {
+        outboundDrainPending = false;
+        outboundDrainGeneration++;
     }
 
     private void resumeAfterOperationLocked() {
@@ -762,6 +800,7 @@ public final class BesUartTransportCoordinator {
     private void advanceLocked() {
         if (state != State.READY_RENDEZVOUS
                 || operation != Operation.NONE
+                || outboundDrainPending
                 || versionSession != serialSession
                 || fastSwitchAttemptSession == serialSession
                 || firmwareVersion.isEmpty()

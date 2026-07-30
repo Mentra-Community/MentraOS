@@ -273,7 +273,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             boolean wasOpen = comManager.isOpen();
             SerialSession session = comManager.openAtBaud(baud);
             if (session == null) {
-                linkState.serialClosed();
+                linkState.serialUnavailable();
                 return null;
             } else if (!wasOpen) {
                 linkState.serialReady();
@@ -291,7 +291,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             boolean closingCurrent = session != null && session == comManager.getCurrentSession();
             comManager.closeSession(session);
             if (closingCurrent) {
-                linkState.serialClosed();
+                linkState.serialUnavailable();
             }
         }
 
@@ -329,6 +329,11 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             return compareDottedVersions(
                             firmwareVersion, AsgConstants.UART_FAST_BAUD_MIN_BES_VERSION)
                     >= 0;
+        }
+
+        @Override
+        public boolean queueAfterOutboundWrites(Runnable action) {
+            return queueOutboundAction(action);
         }
     }
 
