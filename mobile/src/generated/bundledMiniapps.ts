@@ -7,7 +7,7 @@
 
 export const BUNDLED_MINIAPPS: number[] = [
   require("@assets/miniapps/com.mentra.ai-1.4.16.zip"),
-  require("@assets/miniapps/com.mentra.captions-1.0.14.zip"),
+  require("@assets/miniapps/com.mentra.captions-1.0.15.zip"),
   require("@assets/miniapps/com.mentra.livestreamer-1.0.15.zip"),
   require("@assets/miniapps/com.mentra.merge-0.1.29.zip"),
   require("@assets/miniapps/com.mentra.navigation-1.1.25.zip"),
