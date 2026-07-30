@@ -8,12 +8,14 @@ import {RouteButton} from "@/components/ui/RouteButton"
 import {Spacer} from "@/components/ui/Spacer"
 import {useAuth} from "@/contexts/AuthContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useCapsuleStore} from "@/stores/capsule"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import {ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
 import mentraAuth from "@/utils/auth/authClient"
 import {mapAuthError} from "@/utils/auth/authErrors"
+import {settleFrame} from "@/utils/settleFrame"
 
 // Default user icon component for profile pictures
 const DefaultUserIcon = ({size = 100, color = "#999"}: {size?: number; color?: string}) => {
@@ -39,7 +41,7 @@ export default function ProfileSettingsPage() {
   const [loading, setLoading] = useState<boolean>(true)
   const [isSigningOut, setIsSigningOut] = useState(false)
 
-  const {goBack, push, replace} = useNavigationStore.getState()
+  const {goBack, push, replace, replaceAll} = useNavigationStore.getState()
   const {logout} = useAuth()
 
   useEffect(() => {
@@ -169,16 +171,43 @@ export default function ProfileSettingsPage() {
       console.log("Profile: Starting sign-out process")
       setIsSigningOut(true)
 
+      // Leave the miniapp surface BEFORE logging out, not after.
+      //
+      // This screen renders inside the Settings miniapp, and logout destroys
+      // that runtime (LogoutUtils → mantle.cleanup() → localMiniappRuntime
+      // .cleanup()). Navigating afterwards meant this component was still
+      // mounted in a container that no longer existed, so Fabric tried to
+      // reparent a view that still had a parent:
+      //
+      //   addViewAt: failed to insert view [N] into parent [M] at index 0
+      //
+      // React Native escalates that to a host exception and destroys the
+      // ReactHost. The app is then a white screen that navigation cannot fix
+      // and only a force-quit clears — which is what users described as
+      // "SSO sends me back to login until I close and reopen the app"
+      // (OS-1834). Navigating first means this screen is already gone by the
+      // time its runtime is torn down.
+      //
+      // Close this miniapp the way its own X button does. Router navigation is
+      // not enough on its own: the miniapp is an overlay above the router, so
+      // moving the root stack underneath it leaves this screen sitting on top,
+      // still showing the account we just signed out of.
+      useCapsuleStore.getState().active?.handleRightPress(true)
+      await settleFrame()
+
+      // Straight to the login route, not to "/": going home remounts index.tsx,
+      // which starts its whole boot sequence against the session we are about
+      // to destroy and then fires clearHistoryAndGoHome() from inside that
+      // flow — landing back on a signed-out home shell no matter where we
+      // navigate afterwards. /auth/start has no session check, so it is stable
+      // to sit on while the teardown runs, and it is where we want to end up.
+      replaceAll("/auth/start")
+      await settleFrame()
+
       await logout()
 
-      console.log("Profile: Logout completed, navigating to login")
-
-      // Reset the loading state before navigation
+      console.log("Profile: Logout completed")
       setIsSigningOut(false)
-
-      // Navigate to Login screen directly instead of SplashScreen
-      // This ensures we skip the SplashScreen logic that might detect stale user data
-      replace("/")
     } catch (err) {
       console.error("Profile: Error during sign-out:", err)
       setIsSigningOut(false)

@@ -51,10 +51,13 @@ export const AuthProvider: FC<{children: React.ReactNode}> = ({children}) => {
 
     // 2. Setup auth state change listener
     const setupAuthListener = async () => {
-      const res = await mentraAuth.onAuthStateChange((_event, session: any) => {
-        // console.log("AuthContext: Auth state changed:", event)
-        // console.log("AuthContext: Session:", session)
-        // console.log("AuthContext: User:", session?.user)
+      const res = await mentraAuth.onAuthStateChange((event, session: any) => {
+        // Whether the UI's listener actually receives auth events is the whole
+        // of OS-1828: the provider kept a single callback slot, the engine
+        // registered second and silently replaced this one, and sign-in went
+        // nowhere. There was no log either way, so the failure looked like
+        // "SSO is flaky". Never log the session itself — tokens live on it.
+        console.log(`AuthContext: auth state ${event}, session ${session ? "present" : "absent"}`)
         setSession(session)
         setUser(session?.user ?? null)
         setLoading(false)
