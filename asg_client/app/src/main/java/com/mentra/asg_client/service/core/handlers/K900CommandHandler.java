@@ -2,7 +2,7 @@ package com.mentra.asg_client.service.core.handlers;
 
 import android.content.Context;
 import android.util.Log;
-import com.mentra.asg_client.io.ota.interfaces.IBesOtaController;
+
 import com.mentra.asg_client.io.bes.log.BesLogManager;
 import com.mentra.asg_client.io.peripheral.IPeripheralBus;
 import com.mentra.asg_client.io.peripheral.McuEventParser;
@@ -12,16 +12,17 @@ import com.mentra.asg_client.service.communication.interfaces.ICommunicationMana
 import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
 import com.mentra.asg_client.service.system.interfaces.IConfigurationManager;
 import com.mentra.asg_client.service.system.interfaces.IStateManager;
+
 import org.json.JSONException;
 import org.json.JSONObject;
 
 /**
  * Handles K900 protocol commands received from the BES/MCU chip over UART. Acts as a thin
- * dispatcher: inbound commands are parsed into typed {@link McuEvent}s by {@link McuEventParser} and
- * published on the {@link IPeripheralBus} for focused subscribers to react to.
+ * dispatcher: inbound commands are parsed into typed {@link McuEvent}s by {@link McuEventParser}
+ * and published on the {@link IPeripheralBus} for focused subscribers to react to.
  *
- * <p>This class still owns the BES log session and the outgoing (MTK -> BES) command builders, which
- * are request/response flows rather than inbound events.
+ * <p>This class still owns the BES log session and the outgoing (MTK -> BES) command builders,
+ * which are request/response flows rather than inbound events.
  */
 public class K900CommandHandler {
     private static final String TAG = "K900CommandHandler";
@@ -363,76 +364,6 @@ public class K900CommandHandler {
             }
         } catch (JSONException e) {
             Log.e(TAG, "💥 Error creating BT MAC address request", e);
-        }
-    }
-
-    /**
-     * Send BES OTA authorization request to BES chip Must be called before starting BES firmware
-     * update
-     */
-    public void sendBesOtaAuthorizationRequest() {
-        Log.i(TAG, "🔧 Sending BES OTA authorization request");
-
-        try {
-            // Build full K900 format: C, V, B (all three required to avoid double-wrapping!)
-            JSONObject k900Command = new JSONObject();
-            k900Command.put("C", "mh_ota");
-            k900Command.put("V", 1); // Version field - REQUIRED to prevent double-wrapping
-            k900Command.put("B", "{}"); // Empty body for authorization request
-
-            String commandStr = k900Command.toString();
-            Log.i(TAG, "🔧 Sending BES OTA authorization command: " + commandStr);
-
-            if (serviceManager == null || serviceManager.getBluetoothManager() == null) {
-                Log.e(TAG, "❌ ServiceManager or Bluetooth manager unavailable");
-                // Notify BesOtaManager of failure
-                IBesOtaController manager = serviceManager.getBesOtaManager();
-                if (manager != null) {
-                    manager.onAuthorizationDenied();
-                }
-                return;
-            }
-
-            if (!serviceManager.getBluetoothManager().isConnected()) {
-                Log.e(TAG, "❌ Bluetooth not connected; cannot send BES OTA authorization request");
-                // Notify BesOtaManager of failure
-                IBesOtaController manager = serviceManager.getBesOtaManager();
-                if (manager != null) {
-                    manager.onAuthorizationDenied();
-                }
-                return;
-            }
-
-            boolean sent =
-                    serviceManager
-                            .getBluetoothManager()
-                            .sendMessage(
-                                    commandStr.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-
-            if (sent) {
-                Log.i(TAG, "✅ BES OTA authorization request sent - waiting for response");
-            } else {
-                Log.e(TAG, "❌ Failed to send BES OTA authorization request");
-                // Notify BesOtaManager of failure
-                IBesOtaController manager = serviceManager.getBesOtaManager();
-                if (manager != null) {
-                    manager.onAuthorizationDenied();
-                }
-            }
-        } catch (JSONException e) {
-            Log.e(TAG, "💥 Error creating BES OTA authorization request", e);
-            // Notify BesOtaManager of failure
-            IBesOtaController manager = serviceManager.getBesOtaManager();
-            if (manager != null) {
-                manager.onAuthorizationDenied();
-            }
-        } catch (Exception e) {
-            Log.e(TAG, "💥 Error sending BES OTA authorization request", e);
-            // Notify BesOtaManager of failure
-            IBesOtaController manager = serviceManager.getBesOtaManager();
-            if (manager != null) {
-                manager.onAuthorizationDenied();
-            }
         }
     }
 }

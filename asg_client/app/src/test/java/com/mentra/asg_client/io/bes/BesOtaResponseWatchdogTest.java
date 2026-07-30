@@ -5,11 +5,11 @@ import static org.robolectric.Shadows.shadowOf;
 
 import android.app.Application;
 import android.os.Looper;
+
 import androidx.test.core.app.ApplicationProvider;
+
 import com.mentra.asg_client.io.bes.events.BesOtaProgressEvent;
-import java.time.Duration;
-import java.util.ArrayList;
-import java.util.List;
+
 import org.greenrobot.eventbus.EventBus;
 import org.greenrobot.eventbus.Subscribe;
 import org.junit.After;
@@ -20,16 +20,19 @@ import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
 import org.robolectric.shadows.ShadowSystemClock;
 
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
+
 /**
  * Deterministic interleaving tests for the BES OTA dead-man response watchdog.
  *
- * <p>The race under test: the watchdog callback is dispatched on the main looper with an
- * expired deadline while a response arrives on the UART receive thread. The transfer gate
- * makes the outcome depend only on ORDER, never on torn state: whichever side wins the
- * monitor either aborts (and the late response sees the transfer inactive and stops) or
- * re-arms (and the late callback re-checks the deadline and stands down). These tests pin
- * that decision table by controlling exactly when the dispatched callback runs relative
- * to a re-arm.
+ * <p>The race under test: the watchdog callback is dispatched on the main looper with an expired
+ * deadline while a response arrives on the UART receive thread. The transfer gate makes the outcome
+ * depend only on ORDER, never on torn state: whichever side wins the monitor either aborts (and the
+ * late response sees the transfer inactive and stops) or re-arms (and the late callback re-checks
+ * the deadline and stands down). These tests pin that decision table by controlling exactly when
+ * the dispatched callback runs relative to a re-arm.
  */
 @RunWith(RobolectricTestRunner.class)
 @Config(application = Application.class, sdk = 33)
@@ -46,7 +49,7 @@ public class BesOtaResponseWatchdogTest {
 
     @Before
     public void setUp() {
-        manager = new BesOtaManager(null, ApplicationProvider.getApplicationContext(), null);
+        manager = new BesOtaManager(null, null, ApplicationProvider.getApplicationContext());
         BesOtaManager.isBesOtaInProgress = false;
         events.clear();
         EventBus.getDefault().register(this);

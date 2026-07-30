@@ -5,17 +5,19 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.LinkStateMachine.BesCaps;
 import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.LinkStateMachine.LinkState;
 import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.LinkStateMachine.PhonePresence;
+
+import org.junit.Before;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.robolectric.RobolectricTestRunner;
+import org.robolectric.annotation.Config;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
-import org.junit.Before;
-import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.robolectric.RobolectricTestRunner;
-import org.robolectric.annotation.Config;
 
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 33)
@@ -88,8 +90,7 @@ public class LinkStateMachineTest {
         machine.addListener(listener);
         machine.serialReady();
 
-        assertThat(listener.states)
-                .containsExactly(LinkState.SERIAL_CLOSED, LinkState.SERIAL_OPEN);
+        assertThat(listener.states).containsExactly(LinkState.SERIAL_CLOSED, LinkState.SERIAL_OPEN);
     }
 
     @Test
@@ -138,6 +139,16 @@ public class LinkStateMachineTest {
 
         assertThat(machine.getState()).isEqualTo(LinkState.LINK_PROVEN);
         assertThat(machine.getProvenCaps()).isEqualTo(FULL_CAPS);
+        assertThat(machine.getNegotiatedCaps()).isEqualTo(FULL_CAPS);
+    }
+
+    @Test
+    public void capsAdvertised_recordsCapabilitiesWithoutProvingTransitionalLink() {
+        machine.serialReady();
+
+        machine.capsAdvertised(FULL_CAPS);
+
+        assertThat(machine.getState()).isEqualTo(LinkState.SERIAL_OPEN);
         assertThat(machine.getNegotiatedCaps()).isEqualTo(FULL_CAPS);
     }
 
@@ -244,6 +255,31 @@ public class LinkStateMachineTest {
         assertThat(listener.states).containsExactly(LinkState.SERIAL_CLOSED);
     }
 
+    @Test
+    public void serialUnavailable_preservesStickySessionFactsDuringRecovery() {
+        machine.serialReady();
+        machine.srSyvrParsed(FULL_CAPS);
+        machine.phonePresenceReported(true);
+        BesCaps sessionCaps = machine.getNegotiatedCaps();
+
+        machine.serialUnavailable();
+
+        assertThat(machine.getState()).isEqualTo(LinkState.SERIAL_CLOSED);
+        assertThat(machine.isSerialOpen()).isFalse();
+        assertThat(machine.getProvenCaps()).isNull();
+        assertThat(machine.getNegotiatedCaps()).isEqualTo(sessionCaps);
+        assertThat(machine.getPhonePresence()).isEqualTo(PhonePresence.PRESENT);
+
+        machine.serialReady();
+        machine.srSyvrParsed(null);
+        assertThat(machine.getProvenCaps()).isEqualTo(sessionCaps);
+
+        machine.serialUnavailable();
+        machine.serialClosed();
+        assertThat(machine.getNegotiatedCaps()).isEqualTo(BesCaps.NONE);
+        assertThat(machine.getPhonePresence()).isEqualTo(PhonePresence.UNKNOWN);
+    }
+
     // ---- caps accrual rules ----
 
     @Test
@@ -264,15 +300,13 @@ public class LinkStateMachineTest {
     public void srSyvrParsed_withoutBinaryFlag_doesNotTouchProto() {
         machine.serialReady();
         machine.binaryRelayObserved();
-        assertThat(machine.getNegotiatedCaps().proto)
-                .isEqualTo(BesWireFormat.PROTOCOL_VERSION_V2);
+        assertThat(machine.getNegotiatedCaps().proto).isEqualTo(BesWireFormat.PROTOCOL_VERSION_V2);
 
         // An advertisement without the binary flag says nothing about the protocol version.
         machine.srSyvrParsed(
                 new BesCaps(true, false, false, false, BesWireFormat.PROTOCOL_VERSION_V1, 0));
 
-        assertThat(machine.getNegotiatedCaps().proto)
-                .isEqualTo(BesWireFormat.PROTOCOL_VERSION_V2);
+        assertThat(machine.getNegotiatedCaps().proto).isEqualTo(BesWireFormat.PROTOCOL_VERSION_V2);
         assertThat(machine.getNegotiatedCaps().binary).isTrue();
     }
 
@@ -286,8 +320,7 @@ public class LinkStateMachineTest {
 
         assertThat(machine.getState()).isEqualTo(LinkState.SERIAL_OPEN);
         assertThat(machine.getNegotiatedCaps().binary).isTrue();
-        assertThat(machine.getNegotiatedCaps().proto)
-                .isEqualTo(BesWireFormat.PROTOCOL_VERSION_V2);
+        assertThat(machine.getNegotiatedCaps().proto).isEqualTo(BesWireFormat.PROTOCOL_VERSION_V2);
         // Not proven, so the observable (state, provenCaps) pair did not change.
         assertThat(listener.states).containsExactly(LinkState.SERIAL_OPEN);
     }
@@ -301,8 +334,7 @@ public class LinkStateMachineTest {
 
         machine.binaryRelayObserved();
 
-        assertThat(listener.states)
-                .containsExactly(LinkState.LINK_PROVEN, LinkState.LINK_PROVEN);
+        assertThat(listener.states).containsExactly(LinkState.LINK_PROVEN, LinkState.LINK_PROVEN);
         assertThat(listener.lastCaps().binary).isTrue();
 
         // A repeated observation changes nothing and must not re-notify.

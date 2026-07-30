@@ -26,10 +26,13 @@ public interface ServiceCallbackInterface {
      * @return true if file transfer started successfully, false otherwise
      */
     boolean sendFileViaBluetooth(byte[] data, String fileName);
+
+    /** Send an in-memory payload after an owner-ordered control message. */
+    boolean sendFileViaBluetooth(byte[] data, String fileName, byte[] prelude);
     
     /**
      * Check if a BLE file transfer is currently in progress
      * @return true if a transfer is active, false otherwise
      */
     boolean isBleTransferInProgress();
-} 
+}
