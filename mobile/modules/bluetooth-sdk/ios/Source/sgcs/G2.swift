@@ -4386,16 +4386,9 @@ class G2: NSObject, SGCManager {
             return
         }
 
-
         if cmdValue == EvenHubResponseCmd.osNotifyEventToApp.rawValue {
-            // Touch/gesture event from glasses
+            // Device event from glasses (touch/gesture or sensor data)
             guard let devEventData = fields[13] as? Data else { return }
-            let timestamp = Int64(Date().timeIntervalSince1970 * 1000)
-            if lastClickTimestamp != nil && timestamp - lastClickTimestamp! < 100 {
-                // Bridge.log("G2: Double click ignored (too soon)")
-                return
-            }
-            lastClickTimestamp = timestamp
             handleTouchEvent(devEventData)
         } else if cmdValue == 17 {
             // Miniapp selection from glasses dashboard menu (cmdId=17)
@@ -4545,21 +4538,13 @@ class G2: NSObject, SGCManager {
 
         let timestamp = Int64(Date().timeIntervalSince1970 * 1000)
 
-        // if we are receiving touch events we are fully booted:
-        setFullyConnected()
-
-        // Bridge.log("G2: handleTouchEvent: \(fields)")
-        // Bridge.log(
-        //     "G2: handleTouchEvent: \(devEventData.map { String(format: "%02X", $0) }.joined())")
-
-        // SysEvent (field 3) - system-level gestures
+        // Classify IMU reports before applying the click debounce. Keepalive samples arrive
+        // continuously and must not update `lastClickTimestamp`, or a real gesture delivered
+        // within 100 ms of a sample can be dropped.
+        var parsedSysFields: [Int: Any]?
         if let sysData = fields[3] as? Data {
             var sysReader = ProtobufReader(sysData)
             let sysFields = sysReader.parseFields()
-
-            // IMU data report: eventType == IMU_DATA_REPORT (8), imuData in field 3
-            // (IMU_Report_Data { x, y, z } as 32-bit floats). Handle and return before
-            // the gesture-mapping path.
             if (sysFields[1] as? Int32) == OsEventType.imuDataReport.rawValue {
                 let shouldForwardSamples =
                     DeviceStore.shared.get("bluetooth", "imu_enabled") as? Bool ?? false
@@ -4572,7 +4557,24 @@ class G2: NSObject, SGCManager {
                 }
                 return
             }
+            parsedSysFields = sysFields
+        }
 
+        if lastClickTimestamp != nil && timestamp - lastClickTimestamp! < 100 {
+            // Bridge.log("G2: Double click ignored (too soon)")
+            return
+        }
+        lastClickTimestamp = timestamp
+
+        // if we are receiving touch events we are fully booted:
+        setFullyConnected()
+
+        // Bridge.log("G2: handleTouchEvent: \(fields)")
+        // Bridge.log(
+        //     "G2: handleTouchEvent: \(devEventData.map { String(format: "%02X", $0) }.joined())")
+
+        // SysEvent (field 3) - system-level gestures
+        if let sysFields = parsedSysFields {
             var eventType: OsEventType? = nil
             var eventSource: Int32? = nil
             if let normalType = sysFields[1] as? Int32 {
