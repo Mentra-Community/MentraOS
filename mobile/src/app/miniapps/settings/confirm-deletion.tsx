@@ -47,7 +47,18 @@ export default function ConfirmDeletionScreen() {
     // The window here was worse than on the sign-out path: navigation used to
     // happen only when the user tapped OK on the success alert, so the screen
     // could sit in a destroyed runtime indefinitely.
+    //
+    // Unlike sign-out, we cannot leave *before* the auth event: the confirm call
+    // above needs a live session and emits SIGNED_OUT itself on success, so by
+    // the time we get here AuthContext has already been handed that event and
+    // has a state update in flight while this screen is still mounted. Let that
+    // commit first, then move surfaces — otherwise the teardown below races a
+    // re-render that is already under way.
+    await settleFrame()
+
     await useCapsuleStore.getState().active?.handleRightPress(true)
+    await settleFrame()
+
     replaceAll("/auth/start")
     await settleFrame()
 
