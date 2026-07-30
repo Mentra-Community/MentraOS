@@ -19,8 +19,6 @@ export const DOWNLOAD_STUCK_TIMEOUT_MS = 70_000
 export const MTK_INSTALL_TIMEOUT_MS = 300_000
 /** Whole multi-step session cap */
 export const GLOBAL_OTA_TIMEOUT_MS = 20 * 60 * 1000
-/** After APK reboot, ASG OTA service needs time before next ota_start */
-export const POST_APK_OTA_START_DELAY_MS = 6000
 /** BLE keepalive during OTA */
 export const PING_INTERVAL_MS = 10_000
 /**
