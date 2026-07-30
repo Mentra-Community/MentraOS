@@ -881,6 +881,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       otaStatusRef.current = null;
       otaStartingAppIdentityRef.current = null;
       setOtaStartInFlight(false);
+      setOtaPendingActionValue(null);
       setOtaStatus(null);
       clearOtaDisplayProgress();
       hideOtaNoUpdateCard();
@@ -1361,7 +1362,11 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   function setOtaStartInFlight(inFlight: boolean, action: Exclude<OtaPendingAction, null> = 'start') {
     otaStartInFlightRef.current = inFlight;
     setOtaStartPending(inFlight);
-    setOtaPendingActionValue(inFlight ? action : null);
+    if (inFlight) {
+      setOtaPendingActionValue(action);
+    } else if (otaPendingActionRef.current === 'start') {
+      setOtaPendingActionValue(null);
+    }
   }
 
   function updateOtaDisplayPercent(payload: OtaStatusEvent) {
