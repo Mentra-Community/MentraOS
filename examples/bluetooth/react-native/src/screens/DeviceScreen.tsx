@@ -99,7 +99,7 @@ export function DeviceScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
             <StatCard label="WI-FI" value={wifiLabel(sdk.glasses)} sub={wifiSubLabel(sdk.glasses)} subColor={colors.muted} bold />
             <StatCard label="RSSI" value={rssiLabel(sdk.glasses)} sub={rssiUpdatedLabel(sdk.glasses)} subColor={colors.greenAccent} bold />
           </View>
-          {(sdk.otaStatus || sdk.otaUpdateAvailable || sdk.otaNoUpdateVisible) ? <OtaCard sdk={sdk} /> : null}
+          {(sdk.otaStatus || sdk.otaUpdateAvailable || sdk.otaNoUpdateVisible || sdk.otaPendingAction) ? <OtaCard sdk={sdk} /> : null}
           {otaWifiRequired ? (
             <OfflineNotice message="Connect the glasses to Wi-Fi from the System tab before checking or starting OTA updates. OTA downloads run over the glasses network connection." />
           ) : null}
@@ -313,11 +313,17 @@ function canStartOta(sdk: BluetoothSdkExampleModel) {
 }
 
 function isOtaInProgress(sdk: BluetoothSdkExampleModel) {
-  return sdk.otaStartPending || sdk.otaStatus?.status === 'in_progress' || sdk.otaStatus?.status === 'step_complete';
+  return sdk.otaPendingAction !== null || sdk.otaStatus?.status === 'in_progress' || sdk.otaStatus?.status === 'step_complete';
 }
 
 function otaStatusLine(sdk: BluetoothSdkExampleModel) {
-  if (sdk.otaStartPending) {
+  if (sdk.otaPendingAction === 'verify') {
+    return 'checking for remaining updates';
+  }
+  if (sdk.otaPendingAction === 'continue') {
+    return 'continuing update';
+  }
+  if (sdk.otaPendingAction === 'start') {
     return 'starting update';
   }
   if (sdk.otaStatus) {
@@ -333,7 +339,13 @@ function otaStatusLine(sdk: BluetoothSdkExampleModel) {
 }
 
 function otaCardTitle(sdk: BluetoothSdkExampleModel) {
-  if (sdk.otaStartPending) {
+  if (sdk.otaPendingAction === 'verify') {
+    return 'Checking for updates';
+  }
+  if (sdk.otaPendingAction === 'continue') {
+    return 'Continuing update';
+  }
+  if (sdk.otaPendingAction === 'start') {
     return 'Starting update';
   }
   if (sdk.otaStatus?.status === 'failed') {
@@ -355,7 +367,13 @@ function otaCardTitle(sdk: BluetoothSdkExampleModel) {
 }
 
 function otaCardDetail(sdk: BluetoothSdkExampleModel) {
-  if (sdk.otaStartPending) {
+  if (sdk.otaPendingAction === 'verify') {
+    return 'Checking whether any firmware components still need to be updated.';
+  }
+  if (sdk.otaPendingAction === 'continue') {
+    return 'Starting the next required firmware update pass.';
+  }
+  if (sdk.otaPendingAction === 'start') {
     return 'Sending the OTA start request to the glasses.';
   }
   if (sdk.otaStatus?.error_message) {
@@ -391,7 +409,7 @@ function isOtaInstalling(sdk: BluetoothSdkExampleModel) {
 }
 
 function OtaCard({ sdk }: { sdk: BluetoothSdkExampleModel }) {
-  if (!sdk.otaStatus && !sdk.otaUpdateAvailable && !sdk.otaNoUpdateVisible) {
+  if (!sdk.otaStatus && !sdk.otaUpdateAvailable && !sdk.otaNoUpdateVisible && sdk.otaPendingAction === null) {
     return null;
   }
   const percent = otaDisplayPercent(sdk);
@@ -417,13 +435,13 @@ function OtaCard({ sdk }: { sdk: BluetoothSdkExampleModel }) {
             <Text style={[styles.otaTitle, updateRequired && styles.otaTitleRequired]}>{otaCardTitle(sdk)}</Text>
           </View>
         </View>
-        {sdk.otaStartPending || installing ? (
+        {sdk.otaPendingAction !== null || installing ? (
           <ActivityIndicator color={colors.greenPrimary} size="small" />
         ) : sdk.otaStatus ? (
           <Text style={styles.otaPercent}>{percent}%</Text>
         ) : null}
       </View>
-      {sdk.otaStatus && !installing ? (
+      {sdk.otaStatus && !installing && sdk.otaPendingAction === null ? (
         <View style={styles.otaTrack}>
           <View style={[styles.otaFill, { width: `${Math.max(0, Math.min(percent, 100))}%` }]} />
         </View>
