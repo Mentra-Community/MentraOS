@@ -105,6 +105,8 @@ class MantleManager {
   /** Notifications that arrived during the quiet window, summarised afterwards. */
   private suppressedNotifications: number = 0
   private suppressedSummaryTimer: ReturnType<typeof BgTimer.setTimeout> | null = null
+  /** Bumped by cleanup() so in-flight speech work can detect it is stale. */
+  private speechGeneration: number = 0
 
   public static getInstance(): MantleManager {
     if (!MantleManager.instance) {
@@ -210,6 +212,17 @@ class MantleManager {
       this.speakingNotification = false
     }
 
+    // Restored if nothing is actually announced. The stamp below marks "speech
+    // starting" so the stuck guard has a sane window, but on a failure path it
+    // would otherwise persist and suppress the next SPOKEN_NOTIFICATION_GAP_MS
+    // of notifications into a summary for speech that never happened.
+    const previousSpokenAt = this.lastSpokenAt
+
+    // Generation token: cleanup() bumps this, so work that is already in flight
+    // (a synthesis started before logout) can tell it is stale and stop rather
+    // than playing into the next session.
+    const generation = this.speechGeneration
+
     let audio: {audioUrl: string; cleanup: () => Promise<void>} | undefined
     try {
       if (!(await ttsModelManager.isModelAvailable())) {
@@ -220,6 +233,13 @@ class MantleManager {
 
       this.lastSpokenAt = Date.now()
       audio = await ttsModelManager.synthesizeToFile(text)
+
+      if (generation !== this.speechGeneration) {
+        this.lastSpokenAt = previousSpokenAt
+        release()
+        void audio?.cleanup?.()
+        return
+      }
       await audioPlaybackService.play(
         {
           requestId: `phone_notification_${Date.now()}`,
@@ -229,12 +249,17 @@ class MantleManager {
         () => {
           release()
           // Start the quiet window when speech ENDS, not when it started, so a
-          // long announcement isn't immediately followed by another.
-          this.lastSpokenAt = Date.now()
+          // long announcement isn't immediately followed by another. Skipped for
+          // a stale generation: cleanup() interrupts playback, which fires this
+          // callback, and stamping here would undo the reset it just performed.
+          if (generation === this.speechGeneration) this.lastSpokenAt = Date.now()
           void audio?.cleanup?.()
         },
       )
     } catch (error) {
+      // Nothing was announced, so roll the stamp back rather than opening a
+      // quiet window on a failure.
+      this.lastSpokenAt = previousSpokenAt
       release()
       void audio?.cleanup?.()
       console.warn("MantleManager: failed to speak notification audio", error)
@@ -437,6 +462,18 @@ class MantleManager {
     // after the subscriptions that produced it are gone, or carry its count and
     // speaking flag into the next login in the same process. engine.stop() does
     // not stop playback, so the notify-owned audio has to be stopped explicitly.
+    // Bump first so anything already in flight — a synthesis started before
+    // logout — sees a stale generation and drops out instead of playing into
+    // the next session.
+    this.speechGeneration += 1
+
+    // Stop playback BEFORE resetting the timestamps. stopForApp() interrupts the
+    // current clip and, by design, notifies its completion callback; that
+    // callback stamps lastSpokenAt, so resetting first left the quiet window
+    // armed across a logout→login in the same process and the first
+    // notifications of the new session were summarised instead of read.
+    await audioPlaybackService.stopForApp(notifyPackageName)
+
     if (this.suppressedSummaryTimer !== null) {
       BgTimer.clearTimeout(this.suppressedSummaryTimer)
       this.suppressedSummaryTimer = null
@@ -444,7 +481,6 @@ class MantleManager {
     this.suppressedNotifications = 0
     this.speakingNotification = false
     this.lastSpokenAt = 0
-    void audioPlaybackService.stopForApp(notifyPackageName)
 
     localMiniappRuntime.cleanup()
     micStateCoordinator.cleanup()
