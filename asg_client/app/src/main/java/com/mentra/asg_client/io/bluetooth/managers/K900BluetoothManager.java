@@ -1203,7 +1203,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             }
 
             cacheBesBaudSwitchVersion(bData);
-            cacheBesVersionFromSyvrBField(bData);
+            cacheBesMetadataFromSyvrBField(bData);
 
             if (result == BesUartTransportCoordinator.SystemVersionResult.READY) {
                 linkState.srSyvrParsed(null);
@@ -1403,14 +1403,16 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         }
     }
 
-    /**
-     * Picks the display BES string from sr_syvr B payload: same semantics as {@code hs_syvr} when
-     * possible.
-     */
-    private void cacheBesVersionFromSyvrBField(JSONObject bData) {
+    /** Cache the firmware version and manufacturing serial from the current sr_syvr response. */
+    private void cacheBesMetadataFromSyvrBField(JSONObject bData) {
         if (bData == null) {
             return;
         }
+        String manufacturingSerial = bData.optString("serial_number", "");
+        AsgSettings settings = new AsgSettings(context);
+        settings.setBesManufacturingSerial(manufacturingSerial);
+        Log.i(TAG, "Manufacturing serial available: " + !settings.getBesManufacturingSerial().isEmpty());
+
         String v = bData.optString("version", "");
         if (v.isEmpty()) {
             v = bData.optString("dpj", "");
