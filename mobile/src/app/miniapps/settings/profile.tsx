@@ -192,7 +192,12 @@ export default function ProfileSettingsPage() {
       // not enough on its own: the miniapp is an overlay above the router, so
       // moving the root stack underneath it leaves this screen sitting on top,
       // still showing the account we just signed out of.
-      useCapsuleStore.getState().active?.handleRightPress(true)
+      // Awaited, not fire-and-forget. The only implementation today is
+      // synchronous, but the contract is `Promise<void> | void` and it is
+      // documented as capturing a screenshot first. If an async one lands, an
+      // unawaited close would still be running while the teardown below starts
+      // — putting us right back in the race this exists to prevent.
+      await useCapsuleStore.getState().active?.handleRightPress(true)
       await settleFrame()
 
       // Straight to the login route, not to "/": going home remounts index.tsx,
