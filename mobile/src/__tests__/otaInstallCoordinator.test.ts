@@ -24,7 +24,6 @@ import {
   MTK_INSTALL_TIMEOUT_MS,
   OtaProgressMessages,
   PING_INTERVAL_MS,
-  POST_APK_OTA_START_DELAY_MS,
   PROGRESS_TIMEOUT_MS,
   QUERY_REPLY_TIMEOUT_MS,
   RETRY_INTERVAL_MS,
@@ -528,10 +527,10 @@ describe("OtaInstallCoordinator legacy ota_progress normalization (WP 8C-a)", ()
     expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalled()
   })
 
-  it("glasses_session_changed cancels a stale query-reply fallback (no duplicate ota_start)", async () => {
-    // Attach with an existing session: initial mount queries and arms the reply
-    // fallback. The session change then arms the post-APK delay; the stale fallback
-    // must not fire a second ota_start alongside it.
+  it("glasses_session_changed after APK completion queries the ASG-owned session without sending ota_start", async () => {
+    // The ASG persists and auto-resumes a unified multi-step session after its APK
+    // process restart. The phone observes that session; it must not start a second
+    // version-check pipeline in parallel.
     setGlassesConnected()
     useGlassesStore
       .getState()
@@ -543,16 +542,18 @@ describe("OtaInstallCoordinator legacy ota_progress normalization (WP 8C-a)", ()
     bluetoothSdkMock.startOtaUpdate.mockClear()
 
     GlobalEventEmitter.emit("glasses_session_changed", {previousSid: "old0", sid: "new1"})
-    await jest.advanceTimersByTimeAsync(Math.max(QUERY_REPLY_TIMEOUT_MS, POST_APK_OTA_START_DELAY_MS) + 1000)
-    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
+    expect(bluetoothSdkMock.sendOtaQueryStatus).toHaveBeenCalledTimes(2)
+    await jest.advanceTimersByTimeAsync(QUERY_REPLY_TIMEOUT_MS + 1000)
+    expect(bluetoothSdkMock.startOtaUpdate).not.toHaveBeenCalled()
   })
 
-  it("glasses_session_changed mid multi-step session arms the post-APK ota_start delay", async () => {
+  it("glasses_session_changed after APK completion restarts only when the ASG reports that its session was lost", async () => {
     setGlassesConnected()
     otaInstallCoordinator.attach()
     GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
-    // APK step finished as part of a 2-step session: the restart is the expected
-    // post-APK reboot, so the session-change edge must arm the POST_APK delay.
+    // APK step finished as part of a 2-step session, but the restarted ASG replies
+    // idle because its persisted session was lost. The normal query fallback may
+    // then restart OTA from the manifest.
     useGlassesStore
       .getState()
       .setOtaStatus(
@@ -561,8 +562,10 @@ describe("OtaInstallCoordinator legacy ota_progress normalization (WP 8C-a)", ()
     bluetoothSdkMock.startOtaUpdate.mockClear()
 
     GlobalEventEmitter.emit("glasses_session_changed", {previousSid: "old0", sid: "new1"})
+    expect(bluetoothSdkMock.sendOtaQueryStatus).toHaveBeenCalledTimes(1)
     expect(bluetoothSdkMock.startOtaUpdate).not.toHaveBeenCalled()
-    await jest.advanceTimersByTimeAsync(POST_APK_OTA_START_DELAY_MS)
+    useGlassesStore.getState().setOtaStatus(idleStatus())
+    await jest.advanceTimersByTimeAsync(QUERY_REPLY_TIMEOUT_MS)
     expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
   })
 
