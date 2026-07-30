@@ -29,6 +29,13 @@ export const AuthProvider: FC<{children: React.ReactNode}> = ({children}) => {
 
   useEffect(() => {
     let subscription: {unsubscribe: () => void} | undefined
+    // onAuthStateChange() is async, so this effect can be cleaned up while the
+    // subscribe call is still in flight. The subscription would then be created
+    // *after* cleanup ran and never torn down. That used to be self-correcting,
+    // because the provider held one slot and the next subscriber overwrote the
+    // orphan; now that every listener is retained, the orphan would survive and
+    // another would accumulate on each remount, updating an unmounted provider.
+    let cancelled = false
 
     // 1. Check for an active session on mount
     const getInitialSession = async () => {
@@ -83,9 +90,14 @@ export const AuthProvider: FC<{children: React.ReactNode}> = ({children}) => {
           unsubscribe?: () => void
           data?: {subscription?: {unsubscribe: () => void}}
         }
-        subscription =
+        const resolved =
           changeData.data?.subscription ??
           (typeof changeData.unsubscribe === "function" ? {unsubscribe: changeData.unsubscribe} : undefined)
+
+        // Cleanup already ran while we were awaiting, so nothing will unsubscribe
+        // this later. Drop it here instead of leaving it registered forever.
+        if (cancelled) resolved?.unsubscribe()
+        else subscription = resolved
       }
     }
 
@@ -94,6 +106,7 @@ export const AuthProvider: FC<{children: React.ReactNode}> = ({children}) => {
 
     // Cleanup the listener
     return () => {
+      cancelled = true
       subscription?.unsubscribe()
     }
   }, [])

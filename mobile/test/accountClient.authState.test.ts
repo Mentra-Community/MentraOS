@@ -14,34 +14,10 @@
  * These tests pin the two properties that failure violated: every listener is
  * notified, and unsubscribing one leaves the others alone.
  */
-type Listener = (event: string, session: {token?: string}) => void
+import {createAuthStateFanout} from "@/utils/auth/provider/authStateFanout"
 
-/**
- * The fanout under test, mirroring accountClient's module-level listener set.
- * Kept standalone so the test does not have to boot the provider's storage,
- * fetch and endpoint-resolution dependencies to assert dispatch behavior.
- */
-function createAuthStateFanout() {
-  const listeners = new Set<Listener>()
-  return {
-    subscribe(callback: Listener) {
-      listeners.add(callback)
-      return {unsubscribe: () => listeners.delete(callback)}
-    },
-    emit(event: string, session: {token?: string}) {
-      for (const listener of [...listeners]) {
-        try {
-          listener(event, session)
-        } catch {
-          // A throwing consumer must not stop the others.
-        }
-      }
-    },
-    get size() {
-      return listeners.size
-    },
-  }
-}
+// Sessions here only need a token field; the fanout never inspects them.
+const session = {token: "t"}
 
 describe("auth state fanout", () => {
   test("notifies every subscriber, not just the most recent", () => {
@@ -54,7 +30,7 @@ describe("auth state fanout", () => {
     fanout.subscribe(ui)
     fanout.subscribe(engine)
 
-    fanout.emit("SIGNED_IN", {token: "t"})
+    fanout.emit("SIGNED_IN", session)
 
     expect(ui).toHaveBeenCalledTimes(1)
     expect(engine).toHaveBeenCalledTimes(1)
@@ -69,7 +45,7 @@ describe("auth state fanout", () => {
     fanout.subscribe(engine)
     uiSub.unsubscribe()
 
-    fanout.emit("SIGNED_IN", {token: "t"})
+    fanout.emit("SIGNED_IN", session)
 
     expect(ui).not.toHaveBeenCalled()
     expect(engine).toHaveBeenCalledTimes(1)
@@ -86,7 +62,7 @@ describe("auth state fanout", () => {
     fanout.subscribe(boom)
     fanout.subscribe(engine)
 
-    fanout.emit("SIGNED_IN", {token: "t"})
+    fanout.emit("SIGNED_IN", session)
 
     expect(boom).toHaveBeenCalledTimes(1)
     expect(engine).toHaveBeenCalledTimes(1)
@@ -97,11 +73,11 @@ describe("auth state fanout", () => {
     const engine = jest.fn()
     // Snapshotting before iterating is what makes this safe; without it the set
     // is mutated mid-iteration and a later listener can be skipped.
-    const selfRemoving: Listener = () => sub.unsubscribe()
+    const selfRemoving = () => sub.unsubscribe()
     const sub = fanout.subscribe(selfRemoving)
     fanout.subscribe(engine)
 
-    expect(() => fanout.emit("SIGNED_IN", {token: "t"})).not.toThrow()
+    expect(() => fanout.emit("SIGNED_IN", session)).not.toThrow()
     expect(engine).toHaveBeenCalledTimes(1)
     expect(fanout.size).toBe(1)
   })
