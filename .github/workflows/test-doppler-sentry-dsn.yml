@@ -53,9 +53,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Doppler CLI
-        uses: dopplerhq/cli-action@v3
-
       - name: Inject Sentry DSN from Doppler
         working-directory: ./mobile
         env:
@@ -73,9 +70,23 @@ jobs:
 
           cp .env.example .env
 
-          # --plain keeps the value off stdout formatting; mask it before it can
-          # reach a log line by way of any later command echoing the file.
-          DSN="$(doppler secrets get EXPO_PUBLIC_SENTRY_DSN --plain)"
+          # Plain curl rather than dopplerhq/cli-action. That action's installer
+          # verifies its download with gpg and hard-fails when gpg is absent,
+          # which is the case on our self-hosted macOS runners — so the CLI
+          # route cannot build iOS or staging without someone first installing
+          # gnupg on those machines. curl needs nothing that is not already
+          # there, on any runner.
+          #
+          # Single-secret endpoint, not secrets/download: this config also holds
+          # MAPBOX_DOWNLOADS_TOKEN, and there is no reason to pull it into a
+          # shell variable to read one unrelated value. A service token implies
+          # its own project and config, so neither is passed.
+          RESPONSE="$(curl -sS --fail-with-body --retry 3 --retry-connrefused \
+            -u "$DOPPLER_TOKEN:" \
+            "https://api.doppler.com/v3/configs/config/secret?name=EXPO_PUBLIC_SENTRY_DSN")"
+
+          # A DSN contains no double quote, so this extraction is exact.
+          DSN="$(printf '%s' "$RESPONSE" | sed -n 's/.*"computed":"\([^"]*\)".*/\1/p')"
           echo "::add-mask::$DSN"
 
           if [ -z "$DSN" ] || [ "$DSN" = "secret" ]; then
