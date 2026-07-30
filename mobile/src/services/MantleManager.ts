@@ -163,32 +163,62 @@ class MantleManager {
     if (this.suppressedSummaryTimer !== null) return
     this.suppressedSummaryTimer = BgTimer.setTimeout(() => {
       this.suppressedSummaryTimer = null
+      if (this.suppressedNotifications <= 0) return
+
+      // Still talking, or still inside the quiet window — which only starts when
+      // speech ENDS, so this timer (anchored to the first suppressed arrival)
+      // routinely fires early. Reschedule and keep the count.
+      //
+      // This used to zero the count and then return, so a burst landing
+      // mid-announcement — the exact case the summary exists for — produced no
+      // summary at all.
+      if (this.speakingNotification || Date.now() - this.lastSpokenAt < SPOKEN_NOTIFICATION_GAP_MS) {
+        this.scheduleSuppressedSummary()
+        return
+      }
+
       const count = this.suppressedNotifications
       this.suppressedNotifications = 0
-      if (count <= 0) return
-      if (this.speakingNotification) return
       void this.speakAloud(`${count} more notification${count === 1 ? "" : "s"}.`)
     }, SPOKEN_NOTIFICATION_GAP_MS)
   }
 
   /** Synthesize and play one line. Assumes the caller checked the quiet window. */
   private async speakAloud(text: string): Promise<void> {
+    // Claim the slot synchronously, before anything awaits.
+    //
+    // The caller's quiet-window check reads this flag. Setting it only after
+    // `await isModelAvailable()` meant a burst of notifications all passed that
+    // check together, synthesized concurrently, and interrupted one another's
+    // playback — and the first completion callback then cleared the flag while
+    // a later clip was still playing. A check-and-set with no await between the
+    // two is atomic here, so this is the whole fix.
+    if (this.speakingNotification) return
+    this.speakingNotification = true
+
+    // Safety valve: if the completion callback never arrives, the flag would
+    // latch and silence every later notification for the rest of the session.
+    // Losing one announcement beats going permanently quiet. Armed before the
+    // first await so no failure path can leave the flag set without a timer,
+    // and cleared on every exit — a guard left running after a synthesis
+    // failure fires later and clears the flag for a clip still playing.
+    const stuckGuard = BgTimer.setTimeout(() => {
+      this.speakingNotification = false
+    }, SPOKEN_NOTIFICATION_MAX_MS)
+    const release = () => {
+      BgTimer.clearTimeout(stuckGuard)
+      this.speakingNotification = false
+    }
+
     let audio: {audioUrl: string; cleanup: () => Promise<void>} | undefined
     try {
       if (!(await ttsModelManager.isModelAvailable())) {
         console.warn("MantleManager: no on-device TTS voice available, notification not spoken")
+        release()
         return
       }
 
-      this.speakingNotification = true
       this.lastSpokenAt = Date.now()
-      // Safety valve: if the completion callback never arrives, the flag would
-      // latch and silence every later notification for the rest of the session.
-      // Losing one announcement beats going permanently quiet.
-      const stuckGuard = BgTimer.setTimeout(() => {
-        this.speakingNotification = false
-      }, SPOKEN_NOTIFICATION_MAX_MS)
-
       audio = await ttsModelManager.synthesizeToFile(text)
       await audioPlaybackService.play(
         {
@@ -197,8 +227,7 @@ class MantleManager {
           appId: notifyPackageName,
         },
         () => {
-          BgTimer.clearTimeout(stuckGuard)
-          this.speakingNotification = false
+          release()
           // Start the quiet window when speech ENDS, not when it started, so a
           // long announcement isn't immediately followed by another.
           this.lastSpokenAt = Date.now()
@@ -206,7 +235,7 @@ class MantleManager {
         },
       )
     } catch (error) {
-      this.speakingNotification = false
+      release()
       void audio?.cleanup?.()
       console.warn("MantleManager: failed to speak notification audio", error)
     }
@@ -403,6 +432,19 @@ class MantleManager {
     this.activePhoneNotificationId = null
 
     phoneLocationService.stopPhoneLocation()
+
+    // Spoken notifications: a queued summary would otherwise synthesize and play
+    // after the subscriptions that produced it are gone, or carry its count and
+    // speaking flag into the next login in the same process. engine.stop() does
+    // not stop playback, so the notify-owned audio has to be stopped explicitly.
+    if (this.suppressedSummaryTimer !== null) {
+      BgTimer.clearTimeout(this.suppressedSummaryTimer)
+      this.suppressedSummaryTimer = null
+    }
+    this.suppressedNotifications = 0
+    this.speakingNotification = false
+    this.lastSpokenAt = 0
+    void audioPlaybackService.stopForApp(notifyPackageName)
 
     localMiniappRuntime.cleanup()
     micStateCoordinator.cleanup()
