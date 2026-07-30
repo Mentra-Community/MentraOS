@@ -16,6 +16,8 @@ import UIKit
 /// explicitly enabled through Mentra's developer-facing setting.
 private let g2ImuKeepaliveEnabled = true
 private let g2ImuKeepaliveReportPace: Int32 = 1000
+private let g2ImuConfirmationDelay: TimeInterval = 2
+private let g2ImuMaxControlAttempts = 3
 
 // MARK: - Data Little-Endian Helpers (for BMP construction)
 
@@ -1530,6 +1532,8 @@ class G2: NSObject, SGCManager {
     private var foregroundObserver: NSObjectProtocol?
     private var startupPageCreated: Bool = false  // createStartUpPageContainer can only be called once
     private var pageCreated: Bool = false
+    private var pageGeneration: UInt64 = 0
+    private var lastImuReportTimestamp: Int64?
     // Live hardware truth: is the firmware mic actually streaming. DISTINCT from the
     // glasses/micEnabled DeviceStore flag, which is *intent* (does the user want the mic on).
     // Cleared on every page teardown (the firmware kills the mic with the page) WITHOUT touching
@@ -2967,6 +2971,11 @@ class G2: NSObject, SGCManager {
 
         try? await Task.sleep(nanoseconds: 300_000_000) // 300ms to settle
         syncImuReportingWithIntent()
+        confirmImuReporting(
+            forPageGeneration: pageGeneration,
+            commandSentAt: Int64(Date().timeIntervalSince1970 * 1000),
+            attemptsRemaining: g2ImuMaxControlAttempts - 1
+        )
         restartMicIfAlreadyEnabled()
     }
 
@@ -3488,6 +3497,8 @@ class G2: NSObject, SGCManager {
                 appId: activeMenuAppId
             )
         }
+        pageGeneration &+= 1
+        lastImuReportTimestamp = nil
         sendEvenHubCommand(msg)
         pageCreated = true
     }
@@ -3523,6 +3534,36 @@ class G2: NSObject, SGCManager {
             magicRandom: sendManager.nextMagicRandom()
         )
         sendEvenHubCommand(msg)
+    }
+
+    /// EvenHub does not ACK IMU control commands, so use the data stream itself as confirmation.
+    /// A page-generation guard prevents a delayed retry from targeting a replacement page.
+    private func confirmImuReporting(
+        forPageGeneration generation: UInt64,
+        commandSentAt: Int64,
+        attemptsRemaining: Int
+    ) {
+        guard attemptsRemaining > 0 else { return }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + g2ImuConfirmationDelay) { [weak self] in
+            guard let self,
+                  self.pageCreated,
+                  self.pageGeneration == generation,
+                  g2ImuKeepaliveEnabled
+                  || (DeviceStore.shared.get("bluetooth", "imu_enabled") as? Bool ?? false),
+                  !(self.lastImuReportTimestamp.map { $0 >= commandSentAt } ?? false)
+            else { return }
+
+            Bridge.log(
+                "G2: no IMU report received for page generation \(generation); retrying control (\(attemptsRemaining) remaining)"
+            )
+            self.syncImuReportingWithIntent()
+            self.confirmImuReporting(
+                forPageGeneration: generation,
+                commandSentAt: Int64(Date().timeIntervalSince1970 * 1000),
+                attemptsRemaining: attemptsRemaining - 1
+            )
+        }
     }
 
     func restartMic() {
@@ -4546,6 +4587,7 @@ class G2: NSObject, SGCManager {
             var sysReader = ProtobufReader(sysData)
             let sysFields = sysReader.parseFields()
             if (sysFields[1] as? Int32) == OsEventType.imuDataReport.rawValue {
+                lastImuReportTimestamp = timestamp
                 let shouldForwardSamples =
                     DeviceStore.shared.get("bluetooth", "imu_enabled") as? Bool ?? false
                 if shouldForwardSamples,
