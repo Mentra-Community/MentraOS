@@ -26,7 +26,6 @@ import com.mentra.asg_client.service.core.processors.ChunkedMessageProtocolStrat
 import com.mentra.asg_client.settings.AsgSettings;
 import com.mentra.asg_client.utils.WakeLockManager;
 
-import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.File;
@@ -2282,28 +2281,6 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     @Override
     public void onFileTransferConfirmation(String fileName, boolean success) {
         handlePhoneConfirmation(fileName, success);
-    }
-
-    @Override
-    public boolean sendFileTransferConfirmationAck(long messageId) {
-        FileTransferSession transfer = currentFileTransfer;
-        if (messageId == -1 || transfer == null || !transfer.isActive) {
-            return false;
-        }
-
-        try {
-            JSONObject ack = new JSONObject();
-            ack.put("type", "msg_ack");
-            ack.put("mId", messageId);
-            ack.put("timestamp", System.currentTimeMillis());
-            byte[] payload = ack.toString().getBytes(StandardCharsets.UTF_8);
-            publishOutboundMessage(payload, true);
-            return transportCoordinator.runFileWrite(
-                    transfer.transportLease, () -> sendMessageInternalLocked(payload));
-        } catch (JSONException e) {
-            Log.e(TAG, "Failed to build transfer_complete acknowledgment", e);
-            return false;
-        }
     }
 
     @Override

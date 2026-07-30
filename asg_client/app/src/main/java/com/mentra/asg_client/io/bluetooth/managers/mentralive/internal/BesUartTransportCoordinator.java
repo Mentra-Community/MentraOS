@@ -7,10 +7,12 @@ import com.mentra.asg_client.AsgConstants;
 import org.json.JSONObject;
 
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayDeque;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.FutureTask;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
@@ -126,6 +128,7 @@ public final class BesUartTransportCoordinator {
     private final Host host;
     private final BesUartIoLane ioLane = new BesUartIoLane();
     private final ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor();
+    private final ArrayDeque<FutureTask<Boolean>> deferredNormalWrites = new ArrayDeque<>();
 
     private State state = State.CLOSED;
     private Operation operation = Operation.NONE;
@@ -162,6 +165,12 @@ public final class BesUartTransportCoordinator {
     public Operation getOperation() {
         synchronized (monitor) {
             return operation;
+        }
+    }
+
+    int getDeferredNormalWriteCount() {
+        synchronized (monitor) {
+            return deferredNormalWrites.size();
         }
     }
 
@@ -212,6 +221,7 @@ public final class BesUartTransportCoordinator {
                 throw new IllegalArgumentException("session is required");
             }
             cancelAllTimersLocked();
+            cancelDeferredNormalWritesLocked("serial session replaced");
             operation = Operation.NONE;
             operationLease = null;
             otaRawRouting = false;
@@ -243,6 +253,7 @@ public final class BesUartTransportCoordinator {
     public void onSerialClosed() {
         synchronized (monitor) {
             cancelAllTimersLocked();
+            cancelDeferredNormalWritesLocked("serial session closed");
             phaseGeneration++;
             serialSession = null;
             versionSession = null;
@@ -389,11 +400,23 @@ public final class BesUartTransportCoordinator {
     public boolean runNormalWrite(WriteAction action) {
         Future<Boolean> write;
         synchronized (monitor) {
-            if (!isReadyLocked() || operation != Operation.NONE || action == null) {
+            if (!isReadyLocked() || action == null) {
                 Log.w(TAG, "Rejecting normal write state=" + state + " operation=" + operation);
                 return false;
             }
-            write = ioLane.submit(action::write);
+            if (operation == Operation.NONE) {
+                write = ioLane.submit(action::write);
+            } else {
+                FutureTask<Boolean> deferred = new FutureTask<>(action::write);
+                deferredNormalWrites.addLast(deferred);
+                write = deferred;
+                Log.i(
+                        TAG,
+                        "Deferring normal write behind "
+                                + operation
+                                + " pending="
+                                + deferredNormalWrites.size());
+            }
         }
         return awaitBoolean(write, "normal write");
     }
@@ -539,6 +562,7 @@ public final class BesUartTransportCoordinator {
             host.setFastReceive(false);
             operation = Operation.NONE;
             operationLease = null;
+            flushDeferredNormalWritesLocked();
             resumeAfterOperationLocked();
         }
     }
@@ -549,6 +573,7 @@ public final class BesUartTransportCoordinator {
     public void onBesOtaApplied() {
         synchronized (monitor) {
             cancelAllTimersLocked();
+            cancelDeferredNormalWritesLocked("BES OTA reset the serial session");
             otaRawRouting = false;
             host.setFastReceive(false);
             operation = Operation.NONE;
@@ -611,6 +636,7 @@ public final class BesUartTransportCoordinator {
     public void shutdown() {
         synchronized (monitor) {
             cancelAllTimersLocked();
+            cancelDeferredNormalWritesLocked("transport shutdown");
             state = State.CLOSED;
             operation = Operation.NONE;
             operationLease = null;
@@ -671,7 +697,28 @@ public final class BesUartTransportCoordinator {
         operation = Operation.NONE;
         otaRawRouting = false;
         host.setFastReceive(false);
+        flushDeferredNormalWritesLocked();
         resumeAfterOperationLocked();
+    }
+
+    private void flushDeferredNormalWritesLocked() {
+        int count = deferredNormalWrites.size();
+        while (!deferredNormalWrites.isEmpty()) {
+            ioLane.execute(deferredNormalWrites.removeFirst());
+        }
+        if (count > 0) {
+            Log.i(TAG, "Released " + count + " deferred normal write(s) to the UART lane");
+        }
+    }
+
+    private void cancelDeferredNormalWritesLocked(String reason) {
+        int count = deferredNormalWrites.size();
+        while (!deferredNormalWrites.isEmpty()) {
+            deferredNormalWrites.removeFirst().cancel(false);
+        }
+        if (count > 0) {
+            Log.w(TAG, "Cancelled " + count + " deferred normal write(s): " + reason);
+        }
     }
 
     private void resumeAfterOperationLocked() {

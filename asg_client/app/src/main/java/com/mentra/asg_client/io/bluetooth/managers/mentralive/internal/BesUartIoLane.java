@@ -5,6 +5,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.FutureTask;
 import java.util.concurrent.RejectedExecutionException;
 
 /** Single FIFO owner for physical BES UART writes and descriptor transitions. */
@@ -34,6 +35,14 @@ final class BesUartIoLane {
             CompletableFuture<Void> rejected = new CompletableFuture<>();
             rejected.completeExceptionally(e);
             return rejected;
+        }
+    }
+
+    void execute(FutureTask<?> task) {
+        try {
+            executor.execute(task);
+        } catch (RejectedExecutionException e) {
+            task.cancel(false);
         }
     }
 

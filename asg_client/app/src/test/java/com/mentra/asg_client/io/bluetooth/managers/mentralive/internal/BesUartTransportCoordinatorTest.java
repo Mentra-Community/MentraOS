@@ -84,7 +84,7 @@ public class BesUartTransportCoordinatorTest {
                 .isTrue();
         assertThat(coordinator.isReady()).isFalse();
         awaitState(BesUartTransportCoordinator.State.VERIFYING_FAST);
-        assertThat(host.baud).isEqualTo(AsgConstants.UART_FAST_BAUD);
+        awaitSerialSessionAtBaud(AsgConstants.UART_FAST_BAUD);
 
         assertThat(systemVersion("17.26.7.23"))
                 .isEqualTo(BesUartTransportCoordinator.SystemVersionResult.READY);
@@ -152,7 +152,7 @@ public class BesUartTransportCoordinatorTest {
     }
 
     @Test
-    public void fileTerminalWrite_precedesDeferredFastSwitch() throws Exception {
+    public void fileTerminalWrite_flushesDeferredNormalBeforeFastSwitch() throws Exception {
         coordinator.onSerialReady(host.session);
         assertThat(systemVersion("17.26.7.4"))
                 .isEqualTo(BesUartTransportCoordinator.SystemVersionResult.READY);
@@ -161,22 +161,71 @@ public class BesUartTransportCoordinatorTest {
         assertThat(systemVersion("17.26.7.23"))
                 .isEqualTo(BesUartTransportCoordinator.SystemVersionResult.READY);
 
-        assertThat(
-                        coordinator.endFileTransferWithFinalWrite(
-                                lease,
-                                () -> {
-                                    assertThat(coordinator.getOperation())
-                                            .isEqualTo(
-                                                    BesUartTransportCoordinator.Operation
-                                                            .FILE_TRANSFER);
-                                    host.controlCommands.add("terminal_status");
-                                    return true;
-                                }))
-                .isTrue();
+        ExecutorService caller = Executors.newSingleThreadExecutor();
+        Future<Boolean> normalWrite =
+                caller.submit(
+                        () ->
+                                coordinator.runNormalWrite(
+                                        () -> {
+                                            host.controlCommands.add("normal_response");
+                                            return true;
+                                        }));
 
-        awaitControlCommandCount("cs_baud", 1);
-        assertThat(host.controlCommands.indexOf("terminal_status"))
-                .isLessThan(indexOfControlCommand("cs_baud"));
+        try {
+            awaitDeferredNormalWriteCount(1);
+            assertThat(normalWrite.isDone()).isFalse();
+            assertThat(
+                            coordinator.endFileTransferWithFinalWrite(
+                                    lease,
+                                    () -> {
+                                        assertThat(coordinator.getOperation())
+                                                .isEqualTo(
+                                                        BesUartTransportCoordinator.Operation
+                                                                .FILE_TRANSFER);
+                                        host.controlCommands.add("terminal_status");
+                                        return true;
+                                    }))
+                    .isTrue();
+            assertThat(normalWrite.get(1, TimeUnit.SECONDS)).isTrue();
+
+            awaitControlCommandCount("cs_baud", 1);
+            assertThat(host.controlCommands.indexOf("terminal_status"))
+                    .isLessThan(host.controlCommands.indexOf("normal_response"));
+            assertThat(host.controlCommands.indexOf("normal_response"))
+                    .isLessThan(indexOfControlCommand("cs_baud"));
+        } finally {
+            coordinator.endFileTransfer(lease);
+            caller.shutdownNow();
+        }
+    }
+
+    @Test
+    public void serialClose_cancelsDeferredNormalWriteWithoutRunningIt() throws Exception {
+        coordinator.onSerialReady(host.session);
+        assertThat(systemVersion("17.26.7.4"))
+                .isEqualTo(BesUartTransportCoordinator.SystemVersionResult.READY);
+        BesUartTransportCoordinator.OperationLease lease = coordinator.beginFileTransfer();
+        assertThat(lease).isNotNull();
+
+        ExecutorService caller = Executors.newSingleThreadExecutor();
+        Future<Boolean> normalWrite =
+                caller.submit(
+                        () ->
+                                coordinator.runNormalWrite(
+                                        () -> {
+                                            host.controlCommands.add("stale_normal_response");
+                                            return true;
+                                        }));
+
+        try {
+            awaitDeferredNormalWriteCount(1);
+            coordinator.onSerialClosed();
+
+            assertThat(normalWrite.get(1, TimeUnit.SECONDS)).isFalse();
+            assertThat(host.controlCommands).doesNotContain("stale_normal_response");
+        } finally {
+            caller.shutdownNow();
+        }
     }
 
     @Test
@@ -249,7 +298,7 @@ public class BesUartTransportCoordinatorTest {
     }
 
     @Test
-    public void otaAuthorization_promotesToExclusiveRawRouting() {
+    public void otaAuthorization_promotesToExclusiveRawRouting() throws Exception {
         coordinator.onSerialReady(host.session);
         assertThat(systemVersion("17.26.7.4"))
                 .isEqualTo(BesUartTransportCoordinator.SystemVersionResult.READY);
@@ -257,19 +306,28 @@ public class BesUartTransportCoordinatorTest {
         BesUartTransportCoordinator.OperationLease otaLease = coordinator.beginOtaAuthorization();
         assertThat(otaLease).isNotNull();
         assertThat(coordinator.beginFileTransfer()).isNull();
-        assertThat(coordinator.runNormalWrite(() -> true)).isFalse();
         assertThat(coordinator.runOtaAuthorizationWrite(otaLease, () -> true)).isTrue();
         assertThat(coordinator.promoteOtaAuthorizationToTransfer(otaLease)).isTrue();
         assertThat(coordinator.inboundRoute(host.session))
                 .isEqualTo(BesUartTransportCoordinator.InboundRoute.OTA);
         assertThat(host.fastReceive).isTrue();
-        assertThat(coordinator.runNormalWrite(() -> true)).isFalse();
 
-        byte[] packet = {1, 2, 3};
-        assertThat(coordinator.writeOta(otaLease, packet)).isTrue();
-        assertThat(host.rawWrites).containsExactly(packet);
+        ExecutorService caller = Executors.newSingleThreadExecutor();
+        Future<Boolean> normalWrite = caller.submit(() -> coordinator.runNormalWrite(() -> true));
+        try {
+            awaitDeferredNormalWriteCount(1);
+            assertThat(normalWrite.isDone()).isFalse();
 
-        coordinator.endOta(otaLease);
+            byte[] packet = {1, 2, 3};
+            assertThat(coordinator.writeOta(otaLease, packet)).isTrue();
+            assertThat(host.rawWrites).containsExactly(packet);
+
+            coordinator.endOta(otaLease);
+            assertThat(normalWrite.get(1, TimeUnit.SECONDS)).isTrue();
+        } finally {
+            coordinator.endOta(otaLease);
+            caller.shutdownNow();
+        }
         assertThat(coordinator.inboundRoute(host.session))
                 .isEqualTo(BesUartTransportCoordinator.InboundRoute.NORMAL);
         assertThat(host.fastReceive).isFalse();
@@ -308,7 +366,6 @@ public class BesUartTransportCoordinatorTest {
             Future<Boolean> promotion =
                     callers.submit(() -> coordinator.promoteOtaAuthorizationToTransfer(otaLease));
 
-            assertThat(coordinator.runNormalWrite(() -> true)).isFalse();
             assertThat(coordinator.inboundRoute(host.session))
                     .isEqualTo(BesUartTransportCoordinator.InboundRoute.NORMAL);
             assertThat(promotion.isDone()).isFalse();
@@ -541,6 +598,28 @@ public class BesUartTransportCoordinatorTest {
             Thread.sleep(10);
         }
         assertThat(coordinator.getState()).isEqualTo(expected);
+    }
+
+    private void awaitDeferredNormalWriteCount(int expected) throws Exception {
+        long deadline = System.currentTimeMillis() + 1_000;
+        while (System.currentTimeMillis() < deadline
+                && coordinator.getDeferredNormalWriteCount() < expected) {
+            Thread.sleep(10);
+        }
+        assertThat(coordinator.getDeferredNormalWriteCount()).isGreaterThanOrEqualTo(expected);
+    }
+
+    private void awaitSerialSessionAtBaud(int expected) throws Exception {
+        long deadline = System.currentTimeMillis() + 2_000;
+        SerialSession session = coordinator.getSerialSession();
+        while (System.currentTimeMillis() < deadline
+                && (session == null || session.getBaud() != expected || !session.isActive())) {
+            Thread.sleep(10);
+            session = coordinator.getSerialSession();
+        }
+        assertThat(session).isNotNull();
+        assertThat(session.getBaud()).isEqualTo(expected);
+        assertThat(session.isActive()).isTrue();
     }
 
     private void establishFastLink() throws Exception {
