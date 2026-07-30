@@ -77,25 +77,14 @@ type PhotoCaptureOptions = {
   scanBarcode: boolean;
   textMode: boolean;
 };
+export type OtaPendingAction = 'start' | 'verify' | null;
 
-// A single user-initiated update may need several OTA passes (e.g. legacy
-// glasses first hop to an intermediate ASG client before the firmware pass).
-// Bound the automatic continuations so a misbehaving manifest cannot loop.
-const MAX_OTA_CHAIN_PASSES = 4;
 const OTA_NO_UPDATE_CARD_DURATION_MS = 10_000;
 
 // The SDK gives up waiting for a wifi connect ack after 15s, but the glasses
 // often finish associating shortly after; keep the connecting state alive a
 // little longer before declaring failure.
 const WIFI_CONNECT_GRACE_MS = 20_000;
-
-// An armed OTA chain survives the reboots an update itself causes, but a
-// device that stays away longer than this needs a fresh user tap.
-const OTA_CHAIN_RESUME_WINDOW_MS = 5 * 60_000;
-
-// A failed chain-start dispatch does not consume a pass, but this many
-// consecutive failures end the run instead of retrying on every check.
-const MAX_OTA_CHAIN_START_FAILURES = 3;
 
 function isDisplayableOtaStatus(payload: OtaStatusEvent) {
   return payload.status !== 'idle' || Boolean(payload.error_message);
@@ -407,6 +396,7 @@ export type BluetoothSdkExampleState = {
   micRecording: boolean;
   otaDisplayPercent: number | null;
   otaNoUpdateVisible: boolean;
+  otaPendingAction: OtaPendingAction;
   otaStartPending: boolean;
   otaStatus: OtaStatusEvent | null;
   otaStatusMessage: string | null;
@@ -658,6 +648,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   const [otaStatus, setOtaStatus] = useState<OtaStatusEvent | null>(null);
   const [otaDisplayPercent, setOtaDisplayPercent] = useState<number | null>(null);
   const [otaNoUpdateVisible, setOtaNoUpdateVisible] = useState(false);
+  const [otaPendingAction, setOtaPendingAction] = useState<OtaPendingAction>(null);
   const [otaStartPending, setOtaStartPending] = useState(false);
   const [otaStatusMessage, setOtaStatusMessage] = useState<string | null>(null);
   const [otaUpdateAvailable, setOtaUpdateAvailable] = useState(false);
@@ -729,12 +720,8 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   const otaStartingAppIdentityRef = useRef<string | null>(null);
   const postOtaCheckInProgressRef = useRef(false);
   const postOtaCheckedSessionRef = useRef<string | null>(null);
-  const otaChainRemainingRef = useRef(0);
-  const otaChainDeviceKeyRef = useRef<string | null>(null);
-  const otaChainDisconnectedAtRef = useRef<number | null>(null);
-  const otaChainStartFailuresRef = useRef(0);
-  const otaChainGenerationRef = useRef(0);
   const otaStartInFlightRef = useRef(false);
+  const otaPendingActionRef = useRef<OtaPendingAction>(null);
   const otaCheckGenerationRef = useRef(0);
   const otaNoUpdateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const connectedDeviceKeyRef = useRef<string | null>(null);
@@ -894,21 +881,13 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       otaStatusRef.current = null;
       otaStartingAppIdentityRef.current = null;
       setOtaStartInFlight(false);
-      if (otaChainRemainingRef.current > 0 && otaChainDisconnectedAtRef.current === null) {
-        otaChainDisconnectedAtRef.current = Date.now();
-      }
+      setOtaPendingActionValue(null);
       setOtaStatus(null);
       clearOtaDisplayProgress();
       hideOtaNoUpdateCard();
       setOtaStatusMessage(null);
       setOtaUpdateAvailable(false);
       return;
-    }
-    if (otaChainDisconnectedAtRef.current !== null) {
-      if (Date.now() - otaChainDisconnectedAtRef.current > OTA_CHAIN_RESUME_WINDOW_MS) {
-        cancelOtaChain();
-      }
-      otaChainDisconnectedAtRef.current = null;
     }
     if (
       !autoOtaCheckKey ||
@@ -1339,10 +1318,9 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       setOtaStatusMessage(null);
       setOtaUpdateAvailable(true);
       addEvent('LIVE', 'OTA update available');
-      maybeContinueOtaChain();
       return true;
     }
-    cancelOtaChain();
+    setOtaPendingActionValue(null);
     otaStatusRef.current = null;
     setOtaStatus(null);
     setOtaStatusMessage('Glasses firmware is up to date');
@@ -1371,73 +1349,24 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     setOtaNoUpdateVisible(false);
   }
 
-  // Cancel the armed run; bumping the generation invalidates any pending
-  // continuation dispatch so its failure handling cannot re-arm the chain.
-  function cancelOtaChain() {
-    otaChainGenerationRef.current += 1;
-    otaChainRemainingRef.current = 0;
-  }
-
-  // One user-initiated update run may span several OTA passes: legacy
-  // glasses can finish a pass on an intermediate ASG client (or reboot
-  // after a BES flash) while still being behind the manifest. Whenever a
-  // post-pass or reconnect check reports another update during an armed
-  // run, start the next pass without requiring another tap.
-  function maybeContinueOtaChain() {
-    if (otaChainRemainingRef.current <= 0) {
-      return;
-    }
-    if (otaChainDeviceKeyRef.current && otaChainDeviceKeyRef.current !== connectedDeviceKeyRef.current) {
-      // The armed run belongs to another device/connection; require a fresh tap.
-      cancelOtaChain();
-      return;
-    }
-    if (!glassesConnectedRef.current || !glassesWifiConnectedRef.current) {
-      return;
-    }
-    if (otaStartInFlightRef.current || isOtaEventInProgress(otaStatusRef.current)) {
-      return;
-    }
-    const generation = otaChainGenerationRef.current;
-    otaChainRemainingRef.current -= 1;
-    setOtaStartInFlight(true);
-    void runAction('Continue OTA', async () => {
-      try {
-        postOtaCheckedSessionRef.current = null;
-        otaStartingAppIdentityRef.current = otaAppIdentityRef.current;
-        clearOtaDisplayProgress();
-        await BluetoothSdk.startOtaUpdate();
-        if (otaChainGenerationRef.current === generation) {
-          otaChainStartFailuresRef.current = 0;
-        }
-        addEvent('LIVE', 'OTA continuing with next update pass');
-      } catch (error) {
-        setOtaStartInFlight(false);
-        // Nothing started, so the failed dispatch should not consume a
-        // pass — but stop the run after repeated failures rather than
-        // retrying on every subsequent check. If the run was cancelled or
-        // re-armed while the dispatch was pending, leave it alone.
-        if (otaChainGenerationRef.current === generation) {
-          otaChainStartFailuresRef.current += 1;
-          if (otaChainStartFailuresRef.current >= MAX_OTA_CHAIN_START_FAILURES) {
-            cancelOtaChain();
-          } else {
-            otaChainRemainingRef.current += 1;
-          }
-        }
-        throw error;
-      }
-    });
-  }
-
   function clearOtaDisplayProgress() {
     otaDisplayProgressRef.current = null;
     setOtaDisplayPercent(null);
   }
 
-  function setOtaStartInFlight(inFlight: boolean) {
+  function setOtaPendingActionValue(action: OtaPendingAction) {
+    otaPendingActionRef.current = action;
+    setOtaPendingAction(action);
+  }
+
+  function setOtaStartInFlight(inFlight: boolean, action: Exclude<OtaPendingAction, null> = 'start') {
     otaStartInFlightRef.current = inFlight;
     setOtaStartPending(inFlight);
+    if (inFlight) {
+      setOtaPendingActionValue(action);
+    } else if (otaPendingActionRef.current === 'start') {
+      setOtaPendingActionValue(null);
+    }
   }
 
   function updateOtaDisplayPercent(payload: OtaStatusEvent) {
@@ -1469,6 +1398,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
 
     postOtaCheckInProgressRef.current = true;
     autoOtaCheckInProgressRef.current = true;
+    setOtaPendingActionValue('verify');
     void runAction('Verify OTA', async () => {
       let checkSucceeded = false;
       try {
@@ -1480,6 +1410,9 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       } finally {
         postOtaCheckInProgressRef.current = false;
         autoOtaCheckInProgressRef.current = false;
+        if (otaPendingActionRef.current === 'verify') {
+          setOtaPendingActionValue(null);
+        }
         if (checkSucceeded) {
           postOtaCheckedSessionRef.current = sessionId;
           if (latestAutoOtaCheckKeyRef.current) {
@@ -1495,7 +1428,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       addEvent('TX', 'OTA start skipped; a start is already in flight');
       return;
     }
-    setOtaStartInFlight(true);
+    setOtaStartInFlight(true, 'start');
     await runAction('Start OTA', async () => {
       try {
         if (!glassesConnected) {
@@ -1510,18 +1443,12 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
         setOtaStartInFlight(false);
         throw error;
       }
-      // Arm the auto-chain only once the start is acknowledged.
-      otaChainGenerationRef.current += 1;
-      otaChainRemainingRef.current = MAX_OTA_CHAIN_PASSES;
-      otaChainDeviceKeyRef.current = connectedDeviceKeyRef.current;
-      otaChainStartFailuresRef.current = 0;
       addEvent('LIVE', 'OTA start acknowledged');
     });
   }
 
   async function disconnect() {
     await runAction('Disconnect', async () => {
-      cancelOtaChain();
       stopDirectStreamFrameWatchdog();
       await bluetooth.disconnect();
       applyDisconnectedState('Disconnected');
@@ -3958,9 +3885,6 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       otaStartingAppIdentityRef.current = null;
       setOtaUpdateAvailable(false);
     }
-    if (payload.status === 'failed') {
-      cancelOtaChain();
-    }
     addEvent('LIVE', `OTA ${payload.status} ${payload.overall_percent ?? 0}%`);
     schedulePostOtaCheck(payload);
   }
@@ -4067,6 +3991,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     otaStatus,
     otaDisplayPercent,
     otaNoUpdateVisible,
+    otaPendingAction,
     otaStartPending,
     otaStatusMessage,
     otaUpdateAvailable,
