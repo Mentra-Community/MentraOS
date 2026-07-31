@@ -28,17 +28,28 @@ function shellQuote(value) {
   return `'${String(value).replaceAll("'", `'"'"'`)}'`
 }
 
-export function xcodeEnvironmentExports(env, nodeBinary) {
+function xcodeEnvironmentEntries(env, nodeBinary) {
   const entries = Object.entries(env)
     .filter(([key, value]) => key.startsWith("EXPO_PUBLIC_") && value != null && String(value) !== "")
+    .map(([key, value]) => [key, String(value)])
     .sort(([left], [right]) => left.localeCompare(right))
 
   if (env.MENTRAOS_PINNED_BUILD_NUMBER) {
-    entries.push(["MENTRAOS_PINNED_BUILD_NUMBER", env.MENTRAOS_PINNED_BUILD_NUMBER])
+    entries.push(["MENTRAOS_PINNED_BUILD_NUMBER", String(env.MENTRAOS_PINNED_BUILD_NUMBER)])
   }
   entries.push(["NODE_BINARY", nodeBinary])
 
+  return entries
+}
+
+export function xcodeEnvironmentExports(env, nodeBinary) {
+  const entries = xcodeEnvironmentEntries(env, nodeBinary)
+
   return entries.map(([key, value]) => `export ${key}=${shellQuote(value)}`)
+}
+
+export function xcodeBuildSettings(env, nodeBinary) {
+  return xcodeEnvironmentEntries(env, nodeBinary).map(([key, value]) => `${key}=${value}`)
 }
 
 export async function appendXcodeEnvironment(filePath, env, nodeBinary) {
