@@ -78,6 +78,7 @@ interface TranscriptEntry {
 const DEFAULT_SETTINGS: CaptionSettings = {
   language: "auto",
   languageHints: [],
+  useOfflineStt: false,
   displayLines: 3,
   displayWidth: 1, // 0=Narrow, 1=Medium, 2=Wide
   wordBreaking: false,
@@ -87,6 +88,7 @@ const DEFAULT_SETTINGS: CaptionSettings = {
 const STORAGE_KEYS = {
   language: "language",
   languageHints: "languageHints",
+  useOfflineStt: "useOfflineStt",
   displayLines: "displayLines",
   displayWidth: "displayWidth",
   wordBreaking: "wordBreaking",
@@ -253,6 +255,11 @@ export class CaptionsController {
       }),
     )
     this.unsubs.push(
+      this.ui.on("captions:set-use-offline-stt", ({enabled}) => {
+        void this.setUseOfflineStt(enabled)
+      }),
+    )
+    this.unsubs.push(
       this.ui.on("captions:set-display-lines", ({lines}) => {
         void this.setDisplayLines(lines)
       }),
@@ -295,9 +302,10 @@ export class CaptionsController {
 
   private async loadSettings(): Promise<void> {
     try {
-      const [language, hintsRaw, linesRaw, widthRaw, wbRaw, timeoutRaw] = await Promise.all([
+      const [language, hintsRaw, useOfflineSttRaw, linesRaw, widthRaw, wbRaw, timeoutRaw] = await Promise.all([
         this.session.storage.get(STORAGE_KEYS.language),
         this.session.storage.get(STORAGE_KEYS.languageHints),
+        this.session.storage.get(STORAGE_KEYS.useOfflineStt),
         this.session.storage.get(STORAGE_KEYS.displayLines),
         this.session.storage.get(STORAGE_KEYS.displayWidth),
         this.session.storage.get(STORAGE_KEYS.wordBreaking),
@@ -315,6 +323,9 @@ export class CaptionsController {
           return []
         }
       })()
+
+      this.settings.useOfflineStt =
+        useOfflineSttRaw == null ? DEFAULT_SETTINGS.useOfflineStt : useOfflineSttRaw === "true"
 
       this.settings.displayLines = (() => {
         if (!linesRaw) return 3
@@ -353,6 +364,13 @@ export class CaptionsController {
   private async setLanguageHints(hints: string[]): Promise<void> {
     this.settings.languageHints = hints
     await this.persist(STORAGE_KEYS.languageHints, JSON.stringify(hints))
+    this.subscribeTranscription()
+    this.broadcastSettings()
+  }
+
+  private async setUseOfflineStt(enabled: boolean): Promise<void> {
+    this.settings.useOfflineStt = enabled
+    await this.persist(STORAGE_KEYS.useOfflineStt, enabled.toString())
     this.subscribeTranscription()
     this.broadcastSettings()
   }
@@ -419,6 +437,7 @@ export class CaptionsController {
 
     const language = this.settings.language
     const hints = this.settings.languageHints
+    const options = this.settings.useOfflineStt ? {forceLocal: true} : {}
 
     try {
       if (hints.length > 0) {
@@ -436,14 +455,18 @@ export class CaptionsController {
 
       if (language === "auto") {
         // Auto-detect: subscribe to all languages.
-        this.transcriptionCleanup = this.session.transcription.on(handler)
+        this.transcriptionCleanup = this.session.transcription.on(handler, options)
       } else {
         // The SDK owns language validation now: bare registry codes from the
         // UI ("fr") canonicalize to their BCP-47 tag ("fr-FR"); invalid values
         // throw MiniappValidationError (caught below). The old local
         // name->locale mapping table is gone — its silent en-US default is
         // exactly what broke language selection (OS-1746).
-        this.transcriptionCleanup = this.session.transcription.forLanguage(language as TranscriptionLanguage, handler)
+        this.transcriptionCleanup = this.session.transcription.forLanguage(
+          language as TranscriptionLanguage,
+          handler,
+          options,
+        )
       }
     } catch (err) {
       // Fall back to AUTO, not en-US: auto still captions whatever is spoken,
@@ -451,7 +474,7 @@ export class CaptionsController {
       console.error("LocalCaptions: transcription subscribe failed, falling back to auto", err)
       this.transcriptionCleanup = this.session.transcription.on((data) => {
         void this.handleTranscription(data)
-      })
+      }, options)
     }
   }
 

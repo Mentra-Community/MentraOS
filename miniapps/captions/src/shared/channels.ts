@@ -41,6 +41,7 @@ export interface Channels {
 
   "captions:set-language": {language: string}
   "captions:set-language-hints": {hints: string[]}
+  "captions:set-use-offline-stt": {enabled: boolean}
   "captions:set-display-lines": {lines: number}
   "captions:set-display-width": {width: number}
   "captions:set-word-breaking": {enabled: boolean}

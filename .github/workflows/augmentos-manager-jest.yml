@@ -55,6 +55,10 @@ jobs:
         working-directory: ./mobile
         run: bun run compile
 
+      - name: Run release tooling tests
+        working-directory: ./mobile
+        run: node --test scripts/*.test.mjs
+
       - name: Run Jest tests
         working-directory: ./mobile
         run: bun run test
