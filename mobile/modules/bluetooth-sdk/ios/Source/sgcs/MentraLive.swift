@@ -2760,10 +2760,10 @@ class MentraLive: NSObject, SGCManager {
                 if let systemTimeMs = fields["system_time_ms"] as? NSNumber {
                     DeviceStore.shared.apply("glasses", "systemTimeMs", systemTimeMs.int64Value)
                 }
-                if let bluetoothMacAddress = fields["bt_mac_address"] as? String {
+                if let bluetoothMacAddress = nonEmptyStringValue(fields, "bt_mac_address") {
                     DeviceStore.shared.apply("glasses", "bluetoothMacAddress", bluetoothMacAddress)
                 }
-                if let serialNumber = fields["serial_number"] as? String, !serialNumber.isEmpty {
+                if let serialNumber = nonEmptyStringValue(fields, "serial_number") {
                     DeviceStore.shared.apply("glasses", "serialNumber", serialNumber)
                 }
                 if let systemTimeMs = fields["system_time_ms"] as? NSNumber {
@@ -3441,15 +3441,17 @@ class MentraLive: NSObject, SGCManager {
         let androidVersion = json["android_version"] as? String ?? ""
         let otaVersionUrl = json["ota_version_url"] as? String ?? ""
         let firmwareVersion = json["firmware_version"] as? String ?? ""
-        let bluetoothMacAddress = json["bt_mac_address"] as? String ?? ""
-        let serialNumber = json["serial_number"] as? String ?? ""
+        let bluetoothMacAddress = nonEmptyStringValue(json, "bt_mac_address")
+        let serialNumber = nonEmptyStringValue(json, "serial_number")
 
         DeviceStore.shared.apply("glasses", "appVersion", appVersion)
         DeviceStore.shared.apply("glasses", "buildNumber", buildNumber)
         DeviceStore.shared.apply("glasses", "otaVersionUrl", otaVersionUrl)
         DeviceStore.shared.apply("glasses", "firmwareVersion", firmwareVersion)
-        DeviceStore.shared.apply("glasses", "bluetoothMacAddress", bluetoothMacAddress)
-        if !serialNumber.isEmpty {
+        if let bluetoothMacAddress {
+            DeviceStore.shared.apply("glasses", "bluetoothMacAddress", bluetoothMacAddress)
+        }
+        if let serialNumber {
             DeviceStore.shared.apply("glasses", "serialNumber", serialNumber)
         }
         isNewVersion = (Int(buildNumber) ?? 0) >= 5
@@ -3462,14 +3464,14 @@ class MentraLive: NSObject, SGCManager {
         // hasMic = supportsLC3Audio
 
         Bridge.log(
-            "Glasses Version - App: \(appVersion), Build: \(buildNumber), Device: \(deviceModel), Android: \(androidVersion), Firmware: \(firmwareVersion), BT MAC: \(bluetoothMacAddress), OTA URL: \(otaVersionUrl)"
+            "Glasses Version - App: \(appVersion), Build: \(buildNumber), Device: \(deviceModel), Android: \(androidVersion), Firmware: \(firmwareVersion), BT MAC available: \(bluetoothMacAddress != nil), OTA URL: \(otaVersionUrl)"
         )
         Bridge.log("LIVE: LC3 Audio Support: \(supportsLC3Audio), Has Mic: \(hasMic)")
         emitVersionInfo(
             appVersion: appVersion, buildNumber: buildNumber, deviceModel: deviceModel,
             androidVersion: androidVersion, otaVersionUrl: otaVersionUrl,
             firmwareVersion: firmwareVersion,
-            bluetoothMacAddress: bluetoothMacAddress
+            bluetoothMacAddress: bluetoothMacAddress ?? ""
         )
     }
 

@@ -3729,9 +3729,11 @@ class MentraLive : SGCManager() {
                         if (otaVersionUrlLegacy != null) otaVersionUrlLegacy else ""
                 )
                 DeviceStore.apply("glasses", "firmwareVersion", firmwareVersionLegacy)
-                DeviceStore.apply("glasses", "bluetoothMacAddress", btMacAddressLegacy)
-                if (serialNumberLegacy.isNotBlank()) {
-                    DeviceStore.apply("glasses", "serialNumber", serialNumberLegacy)
+                btMacAddressLegacy.trim().takeIf { it.isNotEmpty() }?.let {
+                    DeviceStore.apply("glasses", "bluetoothMacAddress", it)
+                }
+                serialNumberLegacy.trim().takeIf { it.isNotEmpty() }?.let {
+                    DeviceStore.apply("glasses", "serialNumber", it)
                 }
 
                 val versionInfoLegacy = HashMap<String, Any>()
@@ -3994,16 +3996,11 @@ class MentraLive : SGCManager() {
                                 fields["mtk_fw_version"] as String
                         )
                     }
-                    if (fields.containsKey("bt_mac_address")) {
-                        DeviceStore.apply(
-                                "glasses",
-                                "bluetoothMacAddress",
-                                fields["bt_mac_address"] as String
-                        )
+                    (fields["bt_mac_address"] as? String)?.trim()?.takeIf { it.isNotEmpty() }?.let {
+                        DeviceStore.apply("glasses", "bluetoothMacAddress", it)
                     }
-                    val serialNumber = fields["serial_number"] as? String
-                    if (!serialNumber.isNullOrBlank()) {
-                        DeviceStore.apply("glasses", "serialNumber", serialNumber)
+                    (fields["serial_number"] as? String)?.trim()?.takeIf { it.isNotEmpty() }?.let {
+                        DeviceStore.apply("glasses", "serialNumber", it)
                     }
                     if (fields.containsKey("system_time_ms")) {
                         val v = fields["system_time_ms"]
