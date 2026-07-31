@@ -3,6 +3,7 @@ import {router} from "expo-router"
 
 import mantle from "@/services/MantleManager"
 import {
+  audioPlaybackService,
   localDisplayManager,
   localMiniappRuntime,
   useAppStatusStore,
@@ -10,6 +11,9 @@ import {
   useDisplayStore,
   useSettingsStore,
 } from "@mentra/engine/internal"
+// This test resets the concrete glasses store; the package-level Jest mock does
+// not expose it through @mentra/engine.
+// eslint-disable-next-line no-restricted-imports
 import {isGlassesConnected, useGlassesStore} from "../../modules/engine/src/stores/glasses"
 import {engine, SETTINGS} from "@mentra/engine"
 import {crustModuleMock, emitCrustEvent, resetCrustModuleMock} from "@/test-utils/mockCrustModule"
@@ -100,6 +104,7 @@ function resetMantleTestState() {
 let requestWifiSetup: (reason?: string, packageName?: string) => Promise<void>
 let routerPushSpy: jest.SpiedFunction<typeof router.push>
 let syncCoreDisplayOwner: () => void
+let syncGlassesPresentationState: (status: {state: string}) => void
 
 describe("MantleManager", () => {
   beforeAll(async () => {
@@ -116,6 +121,7 @@ describe("MantleManager", () => {
     await mantle.init()
     requestWifiSetup = (engine.configure as jest.Mock).mock.calls[0][0].ui.requestWifiSetup
     syncCoreDisplayOwner = (useAppStatusStore.subscribe as jest.Mock).mock.calls.at(-1)![0]
+    syncGlassesPresentationState = (engine.glasses.onStatus as jest.Mock).mock.calls.at(-1)![0]
   })
 
   afterEach(() => {
@@ -149,11 +155,6 @@ describe("MantleManager", () => {
         core_token: "",
       }),
     )
-    expect(bluetoothSdkMock.updateBluetoothSettings).not.toHaveBeenCalledWith(
-      expect.objectContaining({
-        notifications_enabled: expect.anything(),
-      }),
-    )
     for (const nonSdkKey of ["always_on_status_bar"]) {
       expect(bluetoothSdkMock.updateBluetoothSettings).not.toHaveBeenCalledWith(
         expect.objectContaining({
@@ -167,7 +168,7 @@ describe("MantleManager", () => {
         twelve_hour_time: true,
       }),
     )
-    expect(crustModuleMock.setNotificationConfig).toHaveBeenCalledWith(false, true, [])
+    expect(crustModuleMock.setNotificationConfig).toHaveBeenCalledWith(true, [])
     expect(getBluetoothSdkListenerCount("local_transcription")).toBe(1)
 
     emitBluetoothSdkEvent("bluetooth_status", {searching: true, otherBtConnected: true})
@@ -213,21 +214,15 @@ describe("MantleManager", () => {
     )
   })
 
-  it("syncs notification enablement and blocklist settings to Crust only", async () => {
+  it("syncs the notification blocklist to Crust without an extra listener gate", async () => {
     ;(bluetoothSdkMock.updateBluetoothSettings as jest.Mock).mockClear()
     ;(crustModuleMock.setNotificationConfig as jest.Mock).mockClear()
 
-    await useSettingsStore.getState().setSetting(SETTINGS.notifications_enabled.key, false, false)
     await useSettingsStore.getState().setSetting(SETTINGS.notifications_blocklist.key, ["com.blocked"], false)
 
     await waitFor(() => {
-      expect(crustModuleMock.setNotificationConfig).toHaveBeenLastCalledWith(false, false, ["com.blocked"])
+      expect(crustModuleMock.setNotificationConfig).toHaveBeenLastCalledWith(true, ["com.blocked"])
     })
-    expect(bluetoothSdkMock.updateBluetoothSettings).not.toHaveBeenCalledWith(
-      expect.objectContaining({
-        notifications_enabled: expect.anything(),
-      }),
-    )
     expect(bluetoothSdkMock.updateBluetoothSettings).not.toHaveBeenCalledWith(
       expect.objectContaining({
         notifications_blocklist: expect.anything(),
@@ -312,6 +307,9 @@ describe("MantleManager", () => {
   it("routes notification events without the retired V1 upload", async () => {
     // The Cloud V1 REST upload is gone; the events still flow through the
     // local-miniapp forward path without a server roundtrip.
+    useAppStatusStore.setState({
+      apps: [{packageName: "cloud.augmentos.notify", type: "background", running: true}] as any,
+    })
     const forwardEvent = jest.spyOn(localMiniappRuntime, "forwardEvent")
     emitCrustEvent("phone_notification", {
       notificationId: "n-1",
@@ -376,6 +374,96 @@ describe("MantleManager", () => {
     })
     expect(localDisplayManager.dismiss).toHaveBeenCalledTimes(2)
     expect(localDisplayManager.dismiss).toHaveBeenLastCalledWith("cloud.augmentos.notify")
+    await Promise.resolve()
+  })
+
+  it("forwards notifications without presenting them when Notify is not running", () => {
+    const forwardEvent = jest.spyOn(localMiniappRuntime, "forwardEvent")
+
+    emitCrustEvent("phone_notification", {
+      notificationId: "n-hidden",
+      app: "Calendar",
+      title: "Standup",
+      content: "Daily sync",
+      priority: 0,
+      timestamp: "12345",
+      packageName: "com.calendar",
+    })
+
+    expect(forwardEvent).toHaveBeenCalledWith("phone_notification", {
+      notificationId: "n-hidden",
+      app: "Calendar",
+      title: "Standup",
+      content: "Daily sync",
+      priority: "0",
+      timestamp: 12345,
+      packageName: "com.calendar",
+    })
+    expect(localDisplayManager.request).not.toHaveBeenCalled()
+  })
+
+  it("does not speak notifications through the phone after glasses disconnect", () => {
+    useAppStatusStore.setState({
+      apps: [{packageName: "cloud.augmentos.notify", type: "background", running: true}] as any,
+    })
+    ;(engine.glasses.status as jest.Mock).mockReturnValue({state: "disconnected"})
+    ;(engine.glasses.capabilities as jest.Mock).mockReturnValue({
+      hasDisplay: false,
+      hasSpeaker: true,
+    })
+
+    emitCrustEvent("phone_notification", {
+      notificationId: "n-disconnected",
+      app: "Messages",
+      title: "Private",
+      content: "Do not read on phone",
+      priority: 0,
+      timestamp: "12345",
+      packageName: "com.messages",
+    })
+
+    expect(audioPlaybackService.play).not.toHaveBeenCalled()
+  })
+
+  it("cancels queued and active notification speech when glasses disconnect", () => {
+    const manager = mantle as any
+    manager.suppressedNotifications = 2
+    manager.scheduleSuppressedSummary()
+    const generation = manager.speechGeneration
+
+    syncGlassesPresentationState({state: "connected"})
+    syncGlassesPresentationState({state: "disconnected"})
+
+    expect(audioPlaybackService.stopForApp).toHaveBeenCalledWith("cloud.augmentos.notify")
+    expect(manager.suppressedSummaryTimer).toBeNull()
+    expect(manager.suppressedNotifications).toBe(0)
+    expect(manager.speechGeneration).toBe(generation + 1)
+  })
+
+  it("dismisses presentation and stops queued speech when Notify stops", async () => {
+    useAppStatusStore.setState({
+      apps: [{packageName: "cloud.augmentos.notify", type: "background", running: true}] as any,
+    })
+    syncCoreDisplayOwner()
+    emitCrustEvent("phone_notification", {
+      notificationId: "n-active",
+      app: "Calendar",
+      title: "Standup",
+      content: "Daily sync",
+      priority: 0,
+      timestamp: "12345",
+      packageName: "com.calendar",
+    })
+    ;(localDisplayManager.dismiss as jest.Mock).mockClear()
+    ;(audioPlaybackService.stopForApp as jest.Mock).mockClear()
+
+    useAppStatusStore.setState({
+      apps: [{packageName: "cloud.augmentos.notify", type: "background", running: false}] as any,
+    })
+    syncCoreDisplayOwner()
+
+    expect(localDisplayManager.dismiss).toHaveBeenCalledWith("cloud.augmentos.notify")
+    expect(audioPlaybackService.stopForApp).toHaveBeenCalledWith("cloud.augmentos.notify")
     await Promise.resolve()
   })
 
