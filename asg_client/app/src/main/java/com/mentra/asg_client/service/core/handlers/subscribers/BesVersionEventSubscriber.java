@@ -45,7 +45,6 @@ public final class BesVersionEventSubscriber implements IPeripheralBus.McuEventL
         String btName = versionEvent.getBtName();
         String btAddr = versionEvent.getBtAddress();
         String bleAddr = versionEvent.getBleAddress();
-        String manufacturingSerial = versionEvent.getManufacturingSerial();
 
         Log.i(TAG, "📋 System Version Report - Firmware: " + version);
         Log.i(TAG, "📋 BLE Name: " + bleName + ", BT Name: " + btName);
@@ -62,8 +61,9 @@ public final class BesVersionEventSubscriber implements IPeripheralBus.McuEventL
             metadataUpdated = true;
         }
 
-        if (serviceManager != null && serviceManager.getAsgSettings() != null) {
-            serviceManager.getAsgSettings().setBesManufacturingSerial(manufacturingSerial);
+        Context context = serviceManager != null ? serviceManager.getContext() : null;
+        if (context != null && !SysProp.normalizeBesBtMac(btAddr).isEmpty()) {
+            SysProp.setBesBtMac(context, btAddr);
             metadataUpdated = true;
         }
 
@@ -77,7 +77,6 @@ public final class BesVersionEventSubscriber implements IPeripheralBus.McuEventL
 
         // Request BT MAC address from BES chip (if not already saved)
         // This is a good time to request since we know UART is working
-        Context context = serviceManager != null ? serviceManager.getContext() : null;
         if (context != null) {
             String existingMac = SysProp.getBesBtMac(context);
             if (existingMac == null || existingMac.isEmpty()) {

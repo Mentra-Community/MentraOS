@@ -561,23 +561,6 @@ public class AsgSettings {
         setMcuFirmwareVersion(version);
     }
 
-    /** Return the manufacturing serial last reported by the BES. */
-    public String getBesManufacturingSerial() {
-        return prefs.getString(AsgConstants.KEY_BES_MANUFACTURING_SERIAL, "");
-    }
-
-    /** Persist the manufacturing serial reported by the BES, or clear an unprovisioned value. */
-    public void setBesManufacturingSerial(String serialNumber) {
-        String normalized = serialNumber == null ? "" : serialNumber.trim();
-        if (normalized.isEmpty() || normalized.matches("0+")) {
-            prefs.edit().remove(AsgConstants.KEY_BES_MANUFACTURING_SERIAL).commit();
-            return;
-        }
-        prefs.edit()
-                .putString(AsgConstants.KEY_BES_MANUFACTURING_SERIAL, normalized)
-                .commit();
-    }
-
     /** Return the exact BES version field last used to evaluate fast-UART capability. */
     public String getBesBaudSwitchVersion() {
         return prefs.getString(KEY_BES_BAUD_SWITCH_VERSION, "");

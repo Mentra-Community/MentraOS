@@ -22,9 +22,6 @@ public class AsgConstants {
     /** Current Mentra Live Android hotspot gateway when interface discovery is unavailable. */
     public static final String DEFAULT_HOTSPOT_GATEWAY_IP = "192.168.43.1";
 
-    /** SharedPreferences key for the manufacturing serial reported by the BES. */
-    public static final String KEY_BES_MANUFACTURING_SERIAL = "bes_manufacturing_serial";
-
     /** Canonical camera crop defaults shared with the phone and Bluetooth SDK. */
     public static final int CAMERA_FOV_DEFAULT = 118;
 

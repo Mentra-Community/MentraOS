@@ -1138,15 +1138,7 @@ public class AsgClientService extends Service implements NetworkStateListener, T
 
             // Include BES BT MAC address as unique device identifier (stored in system properties)
             String besBtMac = SysProp.getBesBtMac(this);
-            String manufacturingSerial = "";
-            if (serviceInitializer.getServiceManager() != null
-                    && serviceInitializer.getServiceManager().getAsgSettings() != null) {
-                manufacturingSerial =
-                        serviceInitializer
-                                .getServiceManager()
-                                .getAsgSettings()
-                                .getBesManufacturingSerial();
-            }
+            String deviceSerial = SysProp.getDeviceSerial(this);
 
             Log.d(
                     TAG,
@@ -1160,8 +1152,8 @@ public class AsgClientService extends Service implements NetworkStateListener, T
                             + mtkFirmwareVersion
                             + ", BT MAC: "
                             + besBtMac
-                            + ", Manufacturing serial available: "
-                            + !manufacturingSerial.isEmpty());
+                            + ", Android device serial available: "
+                            + !deviceSerial.isEmpty());
 
             if (serviceInitializer.getServiceManager().getBluetoothManager() != null
                     && serviceInitializer.getServiceManager().getBluetoothManager().isConnected()) {
@@ -1197,8 +1189,8 @@ public class AsgClientService extends Service implements NetworkStateListener, T
                 chunk3.put("bes_fw_version", besFirmwareVersion);
                 chunk3.put("mtk_fw_version", mtkFirmwareVersion);
                 chunk3.put("bt_mac_address", besBtMac);
-                if (!manufacturingSerial.isEmpty()) {
-                    chunk3.put("serial_number", manufacturingSerial);
+                if (!deviceSerial.isEmpty()) {
+                    chunk3.put("serial_number", deviceSerial);
                 }
                 addPhoneWireCapsIfSupported(chunk3);
 

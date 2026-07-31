@@ -2,7 +2,11 @@
 
 import { setBuildEnv } from './set-build-env.mjs';
 import { withRetry, isSPMOrSentryTransientError, writeSummary } from './release-utils.mjs';
-import { appendXcodeEnvironment, validateReleaseArchive } from './release-bundle-config.mjs';
+import {
+  appendXcodeEnvironment,
+  validateReleaseArchive,
+  xcodeBuildSettings,
+} from './release-bundle-config.mjs';
 import { getBuildNumber } from './build-number.mjs';
 import { existsSync } from 'fs';
 import path from 'path';
@@ -95,8 +99,10 @@ const exportedXcodeVariables = await appendXcodeEnvironment(
   process.env,
   process.execPath,
 );
+const archiveBuildSettings = xcodeBuildSettings(process.env, process.execPath);
 console.log(`Pinned NODE_BINARY=${process.execPath} (node ${process.version}) for Xcode build phases`);
 console.log(`Exported ${exportedXcodeVariables - 1} build variables for Xcode child processes`);
+console.log(`Passing ${archiveBuildSettings.length - 1} build variables as Xcode archive settings`);
 
 // In CI, switch the Mentra app target's Release config to MANUAL signing
 // with the fastlane match-installed AppStore profile. Without this,
@@ -203,10 +209,16 @@ const archivePath = path.resolve('build/Mentra.xcarchive');
 // against the match profile, so xcodebuild just uses that. On a laptop
 // the project is left in Automatic mode and -allowProvisioningUpdates
 // lets Xcode fetch a profile on-demand.
+//
+// Pass the public runtime environment as command-line build settings as well as
+// writing .xcode.env.local above. Xcode exports command-line settings before it
+// starts every build phase. This is necessary because Sentry's wrapper around
+// "Bundle React Native code and images" does not reliably preserve variables
+// sourced from .xcode.env.local before it launches Expo/Metro.
 await withRetry(
   'xcodebuild archive',
   () => {
-    const p = $`xcodebuild archive -workspace ios/Mentra.xcworkspace -scheme Mentra -configuration Release -destination generic/platform=iOS -archivePath ${archivePath} -derivedDataPath ${derivedDataPath} -allowProvisioningUpdates DEVELOPMENT_TEAM=${teamId} SWIFT_STRICT_CONCURRENCY=minimal`;
+    const p = $`xcodebuild archive -workspace ios/Mentra.xcworkspace -scheme Mentra -configuration Release -destination generic/platform=iOS -archivePath ${archivePath} -derivedDataPath ${derivedDataPath} -allowProvisioningUpdates DEVELOPMENT_TEAM=${teamId} SWIFT_STRICT_CONCURRENCY=minimal ${archiveBuildSettings}`;
     p.stdout.pipe(process.stdout);
     p.stderr.pipe(process.stderr);
     return p;
