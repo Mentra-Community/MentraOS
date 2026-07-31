@@ -171,6 +171,52 @@ class NotificationListener private constructor(private val context: Context) {
         hasNotificationListenerPermission(context)
     }
 
+    /**
+     * Read installed-app metadata without constructing the service singleton.
+     *
+     * These APIs run in the React Native process. The notification singleton
+     * belongs exclusively to :notif; constructing it here would create an
+     * orphaned HandlerThread that no service lifecycle ever destroys.
+     */
+    fun getInstalledApps(context: Context): List<Map<String, Any?>> {
+      val applicationContext = context.applicationContext
+      val packageManager = applicationContext.packageManager
+      val packages = packageManager.getInstalledApplications(PackageManager.GET_META_DATA)
+      val blocklist =
+        applicationContext
+          .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+          .getStringSet(PREF_NOTIFICATIONS_BLOCKLIST, emptySet())
+          ?.toSet() ?: emptySet()
+
+      return packages
+        .filter { it.flags and ApplicationInfo.FLAG_SYSTEM == 0 }
+        .map { appInfo ->
+          val icon =
+            try {
+              val drawable = packageManager.getApplicationIcon(appInfo.packageName)
+              val bitmap = (drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap
+              if (bitmap != null) {
+                val outputStream = java.io.ByteArrayOutputStream()
+                bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, outputStream)
+                val byteArray = outputStream.toByteArray()
+                "data:image/png;base64," + Base64.encodeToString(byteArray, Base64.NO_WRAP)
+              } else {
+                null
+              }
+            } catch (_: Exception) {
+              null
+            }
+
+          mapOf(
+            "packageName" to appInfo.packageName,
+            "appName" to packageManager.getApplicationLabel(appInfo).toString(),
+            "isBlocked" to blocklist.contains(appInfo.packageName),
+            "icon" to icon,
+          )
+        }
+        .sortedBy { it["appName"] as String }
+    }
+
     /** Dispose the process singleton so a service rebind gets a live HandlerThread. */
     fun destroyInstance() {
       synchronized(this) {
@@ -385,41 +431,6 @@ class NotificationListener private constructor(private val context: Context) {
     val id: Int,
     val tag: String?,
   )
-
-  /** Get all installed apps with details. */
-  fun getInstalledApps(): List<Map<String, Any?>> {
-    val packageManager = context.packageManager
-    val packages = packageManager.getInstalledApplications(PackageManager.GET_META_DATA)
-    val blocklist = notificationsBlocklist
-
-    return packages
-      .filter { it.flags and ApplicationInfo.FLAG_SYSTEM == 0 }
-      .map { appInfo ->
-        val icon =
-          try {
-            val drawable = packageManager.getApplicationIcon(appInfo.packageName)
-            val bitmap = (drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap
-            if (bitmap != null) {
-              val outputStream = java.io.ByteArrayOutputStream()
-              bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, outputStream)
-              val byteArray = outputStream.toByteArray()
-              "data:image/png;base64," + Base64.encodeToString(byteArray, Base64.NO_WRAP)
-            } else {
-              null
-            }
-          } catch (_: Exception) {
-            null
-          }
-
-        mapOf(
-          "packageName" to appInfo.packageName,
-          "appName" to packageManager.getApplicationLabel(appInfo).toString(),
-          "isBlocked" to blocklist.contains(appInfo.packageName),
-          "icon" to icon,
-        )
-      }
-      .sortedBy { it["appName"] as String }
-  }
 
   /** Clean up resources when the service is destroyed. */
   fun cleanup() {
