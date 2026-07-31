@@ -84,9 +84,10 @@ Mentra Live supports photo capture and video recording from the glasses camera.
 - **Long camera-button press**: starts video recording unless video is already recording, in which case it stops.
 - Photo/video resolution, FPS, max recording duration, and privacy LED behavior are configurable by commands from the phone app.
 - Captured media is stored locally in package-namespaced storage and exposed to the phone through the camera web server for gallery sync.
-- **Warm photo capture** (camera already running): plays the camera snap immediately because exposure is near-instant.
-- **Cold photo capture** (camera startup required): starts a five-second hold-still riser at request time, then plays a snap when that specific photo is captured. A failed capture stops its riser only while that riser still owns primary audio.
-- Every accepted cold capture keeps its completion snap. If a newer photo cue or an unrelated prompt has taken primary-audio ownership, the snap overlays that audio instead of cutting it short.
+- **Warm photo capture** (camera already running): waits for Camera2's sensor-exposure-start callback, then times the snap near the end of exposure.
+- **Cold photo capture** (camera startup required): plays a short hold-still prep click immediately and every 900ms during camera/ISP startup, then stops the clicks when sensor exposure starts.
+- Single-frame captures use Camera2 `onCaptureStarted` as the hardware anchor. The snap targets 100ms before estimated exposure end (manual duration when fixed; latest preview-metered duration for auto exposure), which keeps it immediate in bright scenes and avoids an early cue during longer low-light exposures. If the completed JPEG reaches `ImageReader` first—as can happen when a HAL delivers `onCaptureStarted` late—the frame callback plays the snap immediately, before extraction or persistence. HDR bursts use the final bracket's exposure/frame callbacks so the user remains still for the whole burst. The final captured callback remains an idempotent last-resort fallback.
+- Prep clicks and snaps use isolated audio overlays so camera feedback does not cut off unrelated device prompts. A failed capture cancels only its own pending click.
 
 ### Gallery-mode behavior
 

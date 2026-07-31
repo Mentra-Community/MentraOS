@@ -2,6 +2,7 @@ package com.mentra.asg_client.io.hardware.managers;
 
 import android.content.Context;
 import android.util.Log;
+
 import com.mentra.asg_client.audio.I2SAudioController;
 import com.mentra.asg_client.hardware.K900LedController;
 import com.mentra.asg_client.hardware.K900RgbLedController;
@@ -9,13 +10,15 @@ import com.mentra.asg_client.io.bluetooth.interfaces.ICompanionTransport;
 import com.mentra.asg_client.io.bluetooth.managers.K900BluetoothManager;
 import com.mentra.asg_client.io.hardware.core.BaseHardwareManager;
 import com.mentra.asg_client.io.hardware.interfaces.Capability;
+
+import org.json.JSONException;
+import org.json.JSONObject;
+
 import java.nio.charset.StandardCharsets;
 import java.util.EnumSet;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
-import org.json.JSONException;
-import org.json.JSONObject;
 
 /**
  * Implementation of IHardwareManager for K900 devices. Uses K900-specific hardware APIs including
@@ -215,6 +218,20 @@ public class K900HardwareManager extends BaseHardwareManager {
     }
 
     @Override
+    public long playAudioAssetOverlayTracked(String assetName) {
+        if (audioController != null) {
+            return audioController.playOverlayAssetTracked(assetName);
+        }
+        Log.w(TAG, "Audio controller not available");
+        return 0L;
+    }
+
+    @Override
+    public boolean stopAudioOverlayPlayback(long playbackToken) {
+        return audioController != null && audioController.stopOverlayPlayback(playbackToken);
+    }
+
+    @Override
     public void stopAudioPlayback() {
         if (audioController != null) {
             audioController.stopPlayback();
@@ -223,8 +240,7 @@ public class K900HardwareManager extends BaseHardwareManager {
 
     @Override
     public boolean stopAudioPlaybackIfCurrent(long playbackToken) {
-        return audioController != null
-                && audioController.stopPlaybackIfCurrent(playbackToken);
+        return audioController != null && audioController.stopPlaybackIfCurrent(playbackToken);
     }
 
     @Override
@@ -324,7 +340,8 @@ public class K900HardwareManager extends BaseHardwareManager {
             Log.d(
                     TAG,
                     String.format(
-                            "🚨 RGB LED ON - Index: %d, OnTime: %dms, OffTime: %dms, Count: %d, Brightness: %d",
+                            "🚨 RGB LED ON - Index: %d, OnTime: %dms, OffTime: %dms, Count: %d,"
+                                    + " Brightness: %d",
                             ledIndex, ontime, offtime, count, brightness));
         } else {
             Log.w(TAG, "RGB LED controller not available - call setBluetoothManager() first");

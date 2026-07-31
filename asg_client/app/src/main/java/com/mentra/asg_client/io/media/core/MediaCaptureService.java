@@ -598,14 +598,19 @@ public class MediaCaptureService {
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final Object mPhotoFeedbackLock = new Object();
     private long mPhotoFeedbackGeneration;
+    @Nullable private PhotoFeedbackToken mCurrentPrepFeedback;
 
-    private static final class PhotoRiserToken {
+    private static final class PhotoFeedbackToken {
         private final long mGeneration;
-        private final long mPlaybackToken;
+        private boolean mPrepClicksActive;
+        private boolean mExposureStarted;
+        private boolean mTerminal;
+        private long mPrepClickPlaybackToken;
+        @Nullable private Runnable mPrepClickRunnable;
+        @Nullable private Runnable mSnapRunnable;
 
-        private PhotoRiserToken(long generation, long playbackToken) {
+        private PhotoFeedbackToken(long generation) {
             mGeneration = generation;
-            mPlaybackToken = playbackToken;
         }
     }
 
@@ -640,6 +645,7 @@ public class MediaCaptureService {
                         t.setPriority(Thread.NORM_PRIORITY - 1);
                         return t;
                     });
+
     // Safety timeout covers the full job (capture + upload/BLE-handoff). Sized to outlast a
     // slow webhook upload on flaky WiFi so we don't prematurely free the flag while the upload
     // is still grinding. Force-resets isPhotoJobInFlight if no terminal callback fires.
@@ -650,6 +656,7 @@ public class MediaCaptureService {
 
     // Per-request timing instrumentation (gated by AsgConstants.ENABLE_PHOTO_TIMING_LOGS)
     private final Map<String, Map<String, Long>> photoTimings = new ConcurrentHashMap<>();
+
     /** Optional per-step detail strings shown in PHASE BREAKDOWN (exposure/ISO/size/etc.). */
     private final Map<String, Map<String, String>> photoTimingDetails = new ConcurrentHashMap<>();
 
@@ -801,32 +808,9 @@ public class MediaCaptureService {
         return CameraRestartCooldown.isActive();
     }
 
-    /**
-     * Plays photo-capture feedback, choosing by whether the upcoming capture will reuse the
-     * already-running camera:
-     *
-     * <ul>
-     *   <li><b>Warm</b> — capture is near-instant; the snap plays immediately.
-     *   <li><b>Cold</b> — the capture pays the 1–2s camera/ISP startup; the riser plays now and
-     *       the caller owes a snap via {@link #playCaptureCompleteSnap(PhotoRiserToken)} when the
-     *       photo actually lands (or {@link #stopRiserForFailedCapture(PhotoRiserToken)} on error).
-     *       {@code I2SAudioController} stops the owned riser when the snap starts, or overlays the
-     *       snap when another cue has taken ownership.
-     * </ul>
-     *
-     * The decision is made synchronously here, at request time and before the request is
-     * enqueued, so it predicts whether THIS capture is fast or slow. The upcoming-capture
-     * parameters must match those passed to {@code enqueuePhotoRequest} so the warmth prediction
-     * lines up with the path the request actually takes.
-     *
-     * @param size requested photo size for the upcoming capture (nullable)
-     * @param isFromSdk whether the upcoming capture is an SDK request (vs. a button photo)
-     * @param exposureTimeNs requested manual exposure for the upcoming capture, or null for auto
-     * @param captureSettings per-request tuning (including resolved {@code zsl}/{@code mfnr}) for warmth
-     * @return a riser token when a completion snap is owed, or {@code null} otherwise
-     */
+    /** Starts request-time prep feedback and returns the token owed an exposure-time snap. */
     @Nullable
-    private PhotoRiserToken playShutterSound(
+    private PhotoFeedbackToken startPhotoFeedback(
             String size,
             boolean isFromSdk,
             Long exposureTimeNs,
@@ -844,64 +828,155 @@ public class MediaCaptureService {
         boolean cameraWarm =
                 CameraNeoService.isCameraWarm(size, isFromSdk, exposureTimeNs, captureSettings);
         synchronized (mPhotoFeedbackLock) {
-            long feedbackGeneration = ++mPhotoFeedbackGeneration;
+            PhotoFeedbackToken feedbackToken = new PhotoFeedbackToken(++mPhotoFeedbackGeneration);
             if (cameraWarm) {
-                Log.d(TAG, "📸 Warm capture — playing snap immediately");
-                hardwareManager.playAudioAssetTracked(AudioAssets.TAKE_PHOTO_HOT);
-                return null;
+                Log.d(TAG, "📸 Warm capture — snap is waiting for sensor exposure start");
+                return feedbackToken;
             }
-            Log.d(TAG, "📸 Cold capture — playing riser; snap plays when the photo lands");
-            long playbackToken =
-                    hardwareManager.playAudioAssetTracked(AudioAssets.CAMERA_RISER);
-            return new PhotoRiserToken(feedbackGeneration, playbackToken);
+            Log.d(
+                    TAG,
+                    "📸 Cold capture — playing prep click every "
+                            + AsgConstants.CAMERA_PREP_CLICK_INTERVAL_MS
+                            + "ms until sensor exposure starts");
+            feedbackToken.mPrepClicksActive = true;
+            mCurrentPrepFeedback = feedbackToken;
+            playPrepClickLocked(feedbackToken);
+            return feedbackToken;
+        }
+    }
+
+    private void playPrepClickLocked(PhotoFeedbackToken feedbackToken) {
+        if (!feedbackToken.mPrepClicksActive
+                || feedbackToken.mTerminal
+                || mCurrentPrepFeedback != feedbackToken
+                || hardwareManager == null
+                || !hardwareManager.supportsAudioPlayback()) {
+            return;
+        }
+
+        if (feedbackToken.mPrepClickPlaybackToken > 0L) {
+            hardwareManager.stopAudioOverlayPlayback(feedbackToken.mPrepClickPlaybackToken);
+        }
+        feedbackToken.mPrepClickPlaybackToken =
+                hardwareManager.playAudioAssetOverlayTracked(AudioAssets.CAMERA_PREP_CLICK);
+
+        if (feedbackToken.mPrepClickRunnable == null) {
+            feedbackToken.mPrepClickRunnable =
+                    new Runnable() {
+                        @Override
+                        public void run() {
+                            synchronized (mPhotoFeedbackLock) {
+                                if (!feedbackToken.mPrepClicksActive
+                                        || feedbackToken.mTerminal
+                                        || mCurrentPrepFeedback != feedbackToken) {
+                                    return;
+                                }
+                                playPrepClickLocked(feedbackToken);
+                            }
+                        }
+                    };
+        }
+        mainHandler.postDelayed(
+                feedbackToken.mPrepClickRunnable, AsgConstants.CAMERA_PREP_CLICK_INTERVAL_MS);
+    }
+
+    private void stopPrepClicksLocked(PhotoFeedbackToken feedbackToken) {
+        feedbackToken.mPrepClicksActive = false;
+        if (feedbackToken.mPrepClickRunnable != null) {
+            mainHandler.removeCallbacks(feedbackToken.mPrepClickRunnable);
+        }
+        if (feedbackToken.mPrepClickPlaybackToken > 0L && hardwareManager != null) {
+            hardwareManager.stopAudioOverlayPlayback(feedbackToken.mPrepClickPlaybackToken);
+            feedbackToken.mPrepClickPlaybackToken = 0L;
+        }
+        if (mCurrentPrepFeedback == feedbackToken) {
+            mCurrentPrepFeedback = null;
         }
     }
 
     /**
-     * Plays the completion snap owed after a cold-capture riser.
-     *
-     * <p>The snap replaces its own riser. If newer or unrelated primary audio took ownership, the
-     * snap plays as an overlay so every accepted cold capture keeps capture-time feedback without
-     * cutting another cue short.
+     * Anchors the snap to Camera2 exposure start, then offsets it toward exposure end. Manual
+     * captures use the exact requested duration; auto captures use the latest preview-metered
+     * duration. Starting playback 100ms before the estimate absorbs the I2S/MediaPlayer startup
+     * latency while staying within the requested 250ms pre-capture window.
      */
-    private void playCaptureCompleteSnap(@Nullable PhotoRiserToken riserToken) {
-        if (riserToken == null) {
+    private void onPhotoExposureStarted(
+            @Nullable PhotoFeedbackToken feedbackToken, long estimatedExposureDurationNs) {
+        if (feedbackToken == null) {
             return;
         }
         synchronized (mPhotoFeedbackLock) {
-            if (hardwareManager == null || !hardwareManager.supportsAudioPlayback()) {
+            if (feedbackToken.mTerminal || feedbackToken.mExposureStarted) {
                 return;
             }
-            if (hardwareManager.replaceAudioAssetIfCurrent(
-                    riserToken.mPlaybackToken, AudioAssets.TAKE_PHOTO_HOT)) {
-                if (mPhotoFeedbackGeneration == riserToken.mGeneration) {
-                    ++mPhotoFeedbackGeneration;
-                }
+            feedbackToken.mExposureStarted = true;
+            stopPrepClicksLocked(feedbackToken);
+
+            long estimatedExposureMs =
+                    Math.max(0L, (estimatedExposureDurationNs + 999_999L) / 1_000_000L);
+            long snapDelayMs =
+                    Math.max(0L, estimatedExposureMs - AsgConstants.CAMERA_SNAP_TARGET_LEAD_MS);
+            String timingSource =
+                    "sensor exposure (estimated="
+                            + estimatedExposureMs
+                            + "ms, delay="
+                            + snapDelayMs
+                            + "ms)";
+            if (snapDelayMs == 0L) {
+                playPhotoSnap(feedbackToken, timingSource);
                 return;
             }
-            Log.d(TAG, "📸 Playing completion snap over newer or unrelated audio");
-            hardwareManager.playAudioAssetOverlay(AudioAssets.TAKE_PHOTO_HOT);
+
+            feedbackToken.mSnapRunnable = () -> playPhotoSnap(feedbackToken, timingSource);
+            mainHandler.postDelayed(feedbackToken.mSnapRunnable, snapDelayMs);
         }
     }
 
-    /** Silences a failed capture's riser only if no newer photo cue has replaced it. */
-    private void stopRiserForFailedCapture(@Nullable PhotoRiserToken riserToken) {
-        if (riserToken == null) {
+    /** Plays the snap once from the earliest reliable exposure estimate or JPEG-frame boundary. */
+    private void playPhotoSnap(@Nullable PhotoFeedbackToken feedbackToken, String timingSource) {
+        if (feedbackToken == null) {
             return;
         }
         synchronized (mPhotoFeedbackLock) {
-            if (mPhotoFeedbackGeneration != riserToken.mGeneration) {
-                Log.d(TAG, "📸 Leaving newer photo feedback playing after stale capture failure");
+            if (feedbackToken.mTerminal) {
                 return;
             }
-            if (hardwareManager != null
-                    && hardwareManager.supportsAudioPlayback()
-                    && hardwareManager.stopAudioPlaybackIfCurrent(
-                            riserToken.mPlaybackToken)) {
-                ++mPhotoFeedbackGeneration;
-            } else {
-                Log.d(TAG, "📸 Riser no longer owns primary audio; nothing to stop");
+            feedbackToken.mTerminal = true;
+            if (feedbackToken.mSnapRunnable != null) {
+                mainHandler.removeCallbacks(feedbackToken.mSnapRunnable);
+                feedbackToken.mSnapRunnable = null;
             }
+            stopPrepClicksLocked(feedbackToken);
+            if (hardwareManager == null || !hardwareManager.supportsAudioPlayback()) {
+                return;
+            }
+            Log.d(
+                    TAG,
+                    "📸 Playing camera snap from "
+                            + timingSource
+                            + " (feedback gen="
+                            + feedbackToken.mGeneration
+                            + ")");
+            hardwareManager.playAudioAssetOverlay(AudioAssets.CAMERA_SNAP);
+        }
+    }
+
+    /** Cancels one failed request's pending prep clicks without stopping unrelated audio. */
+    private void stopPhotoFeedbackForFailure(@Nullable PhotoFeedbackToken feedbackToken) {
+        if (feedbackToken == null) {
+            return;
+        }
+        synchronized (mPhotoFeedbackLock) {
+            if (feedbackToken.mTerminal) {
+                return;
+            }
+            feedbackToken.mTerminal = true;
+            if (feedbackToken.mSnapRunnable != null) {
+                mainHandler.removeCallbacks(feedbackToken.mSnapRunnable);
+                feedbackToken.mSnapRunnable = null;
+            }
+            stopPrepClicksLocked(feedbackToken);
+            Log.d(TAG, "📸 Stopped failed photo feedback (gen=" + feedbackToken.mGeneration + ")");
         }
     }
 
@@ -2071,24 +2146,24 @@ public class MediaCaptureService {
         PhotoCaptureTestHooks.addFakeDelay("CAMERA_INIT");
 
         // Skip sound and flash during camera HAL restart cooldown (e.g. after FOV change)
-        PhotoRiserToken riserToken = null;
+        PhotoFeedbackToken feedbackToken = null;
         if (!shouldSuppressPhotoFeedback()) {
             // RGB LED always flashes for photos (user visibility indicator)
             triggerPhotoFlashLed();
             if (effectiveSound) {
                 // Button photo: isFromSdk=false, auto exposure (null) — matches the
                 // enqueuePhotoRequest call below so the warm/cold prediction lines up.
-                riserToken = playShutterSound(size, false, null, captureSettings);
+                feedbackToken = startPhotoFeedback(size, false, null, captureSettings);
             }
             if (enableFlash) {
                 flashPrivacyLedForPhoto(); // Flash privacy LED
             }
         }
-        final PhotoRiserToken captureRiserToken = riserToken;
+        final PhotoFeedbackToken captureFeedbackToken = feedbackToken;
 
         // TESTING: Check for fake camera capture failure
         if (PhotoCaptureTestHooks.shouldFail("CAMERA_CAPTURE")) {
-            stopRiserForFailedCapture(captureRiserToken);
+            stopPhotoFeedbackForFailure(captureFeedbackToken);
             Log.e(TAG, "TESTING: Simulating camera capture failure");
             sendPhotoErrorResponse(
                     requestId,
@@ -2138,13 +2213,25 @@ public class MediaCaptureService {
                     }
 
                     @Override
+                    public void onPhotoExposureStarted(
+                            long sensorTimestampNs, long estimatedExposureDurationNs) {
+                        MediaCaptureService.this.onPhotoExposureStarted(
+                                captureFeedbackToken, estimatedExposureDurationNs);
+                    }
+
+                    @Override
+                    public void onPhotoFrameAvailable(long sensorTimestampNs) {
+                        playPhotoSnap(captureFeedbackToken, "JPEG frame available");
+                    }
+
+                    @Override
                     public void onPhotoCaptured(String filePath) {
                         onPhotoCaptured(filePath, null);
                     }
 
                     @Override
                     public void onPhotoCaptured(String filePath, JSONObject captureMetadata) {
-                        playCaptureCompleteSnap(captureRiserToken);
+                        playPhotoSnap(captureFeedbackToken, "photo completion fallback");
 
                         // Calculate end-to-end timing from request to capture
                         long totalElapsedMs = System.currentTimeMillis() - requestStartTimeMs;
@@ -2185,7 +2272,7 @@ public class MediaCaptureService {
 
                     @Override
                     public void onPhotoError(CameraOperationError error) {
-                        stopRiserForFailedCapture(captureRiserToken);
+                        stopPhotoFeedbackForFailure(captureFeedbackToken);
                         Log.e(TAG, "Failed to capture offline photo: " + error.message());
                         sendPhotoStatus(requestId, "failed", null, error.code(), error.message());
 
@@ -2254,8 +2341,7 @@ public class MediaCaptureService {
 
         if (textModeRequested && !acquirePhotoJob(requestId)) {
             Log.w(TAG, "Text-mode local-save job already in flight: " + requestId);
-            sendPhotoErrorResponse(
-                    requestId, "CAMERA_BUSY", "Another photo job is in progress");
+            sendPhotoErrorResponse(requestId, "CAMERA_BUSY", "Another photo job is in progress");
             return false;
         }
         if (textModeRequested) {
@@ -2281,19 +2367,19 @@ public class MediaCaptureService {
         File captureDirFile = new File(photoFilePath).getParentFile();
         final String captureId = captureDirFile != null ? captureDirFile.getName() : "";
 
-        PhotoRiserToken riserToken = null;
+        PhotoFeedbackToken feedbackToken = null;
         if (!shouldSuppressPhotoFeedback()) {
             triggerPhotoFlashLed();
             if (enableSound) {
                 // Local-save SDK photo: isFromSdk=true, matching the enqueue below.
-                riserToken =
-                        playShutterSound(captureSize, true, exposureTimeNs, captureSettings);
+                feedbackToken =
+                        startPhotoFeedback(captureSize, true, exposureTimeNs, captureSettings);
             }
             if (enableFlash) {
                 flashPrivacyLedForPhoto();
             }
         }
-        final PhotoRiserToken captureRiserToken = riserToken;
+        final PhotoFeedbackToken captureFeedbackToken = feedbackToken;
 
         try {
             CameraNeoService.enqueuePhotoRequest(
@@ -2333,6 +2419,18 @@ public class MediaCaptureService {
                         }
 
                         @Override
+                        public void onPhotoExposureStarted(
+                                long sensorTimestampNs, long estimatedExposureDurationNs) {
+                            MediaCaptureService.this.onPhotoExposureStarted(
+                                    captureFeedbackToken, estimatedExposureDurationNs);
+                        }
+
+                        @Override
+                        public void onPhotoFrameAvailable(long sensorTimestampNs) {
+                            playPhotoSnap(captureFeedbackToken, "JPEG frame available");
+                        }
+
+                        @Override
                         public void onPhotoCaptured(String filePath) {
                             onPhotoCaptured(filePath, null);
                         }
@@ -2347,7 +2445,7 @@ public class MediaCaptureService {
                                 String filePath,
                                 JSONObject captureMetadata,
                                 CapturedPhoto capturedPhoto) {
-                            playCaptureCompleteSnap(captureRiserToken);
+                            playPhotoSnap(captureFeedbackToken, "photo completion fallback");
                             if (textModeRequested) {
                                 if (capturedPhoto == null) {
                                     try {
@@ -2391,13 +2489,14 @@ public class MediaCaptureService {
                                                     Log.e(
                                                             TAG,
                                                             "Local text-mode processing failed for "
-                                                            + requestId,
+                                                                    + requestId,
                                                             processingError);
                                                     clearPhotoTracking(requestId);
                                                     sendPhotoErrorResponse(
                                                             requestId,
                                                             "PHOTO_SAVE_FAILED",
-                                                            "Could not save final text-mode output");
+                                                            "Could not save final text-mode"
+                                                                    + " output");
                                                 } finally {
                                                     releasePhotoJob(requestId);
                                                 }
@@ -2416,8 +2515,7 @@ public class MediaCaptureService {
                                 }
                                 return;
                             }
-                            finishLocalSavePhoto(
-                                    requestId, captureId, filePath, captureMetadata);
+                            finishLocalSavePhoto(requestId, captureId, filePath, captureMetadata);
                         }
 
                         @Override
@@ -2427,7 +2525,7 @@ public class MediaCaptureService {
 
                         @Override
                         public void onPhotoError(CameraOperationError error) {
-                            stopRiserForFailedCapture(captureRiserToken);
+                            stopPhotoFeedbackForFailure(captureFeedbackToken);
                             try {
                                 Log.e(
                                         TAG,
@@ -2450,7 +2548,7 @@ public class MediaCaptureService {
                     });
             return true;
         } catch (Exception e) {
-            stopRiserForFailedCapture(captureRiserToken);
+            stopPhotoFeedbackForFailure(captureFeedbackToken);
             try {
                 Log.e(TAG, "Error taking local-save photo", e);
                 sendPhotoErrorResponse(
@@ -2471,15 +2569,7 @@ public class MediaCaptureService {
             String requestId, String captureId, String filePath, JSONObject captureMetadata) {
         try {
             Log.d(TAG, "Local-save photo captured: " + filePath);
-            sendPhotoStatus(
-                    requestId,
-                    "captured",
-                    null,
-                    null,
-                    null,
-                    null,
-                    null,
-                    captureMetadata);
+            sendPhotoStatus(requestId, "captured", null, null, null, null, null, captureMetadata);
 
             if (mMediaCaptureListener != null) {
                 mMediaCaptureListener.onPhotoCaptured(requestId, filePath);
@@ -2666,7 +2756,7 @@ public class MediaCaptureService {
         // TESTING: Add fake delay for camera capture
         PhotoCaptureTestHooks.addFakeDelay("CAMERA_CAPTURE");
 
-        PhotoRiserToken riserToken = null;
+        PhotoFeedbackToken feedbackToken = null;
         try {
             // Skip sound and flash during camera HAL restart cooldown (e.g. after FOV change)
             if (!shouldSuppressPhotoFeedback()) {
@@ -2674,14 +2764,14 @@ public class MediaCaptureService {
                 if (enableSound) {
                     // SDK photo: isFromSdk=true; size and exposure match the enqueuePhotoRequest
                     // call below so the warm/cold prediction lines up.
-                    riserToken =
-                            playShutterSound(captureSize, true, exposureTimeNs, captureSettings);
+                    feedbackToken =
+                            startPhotoFeedback(captureSize, true, exposureTimeNs, captureSettings);
                 }
                 if (enableFlash) {
                     flashPrivacyLedForPhoto();
                 }
             }
-            final PhotoRiserToken captureRiserToken = riserToken;
+            final PhotoFeedbackToken captureFeedbackToken = feedbackToken;
 
             // Use the new enqueuePhotoRequest for thread-safe rapid capture
             // isFromSdk=true because this is an SDK-requested photo (take_photo command)
@@ -2713,8 +2803,7 @@ public class MediaCaptureService {
                             logBlePhotoStep(
                                     requestId,
                                     "capture_configured",
-                                    summarizeCaptureTimingDetail(
-                                            "resolved", resolvedConfig, null));
+                                    summarizeCaptureTimingDetail("resolved", resolvedConfig, null));
                             sendPhotoStatus(
                                     requestId,
                                     "configuring",
@@ -2736,9 +2825,7 @@ public class MediaCaptureService {
                                     requestId,
                                     "capture_started",
                                     summarizeCaptureTimingDetail(
-                                            "requested",
-                                            requestedCaptureConfig,
-                                            meteredPreview));
+                                            "requested", requestedCaptureConfig, meteredPreview));
                             sendPhotoStatus(
                                     requestId,
                                     "capturing",
@@ -2748,6 +2835,18 @@ public class MediaCaptureService {
                                     requestedCaptureConfig,
                                     meteredPreview,
                                     null);
+                        }
+
+                        @Override
+                        public void onPhotoExposureStarted(
+                                long sensorTimestampNs, long estimatedExposureDurationNs) {
+                            MediaCaptureService.this.onPhotoExposureStarted(
+                                    captureFeedbackToken, estimatedExposureDurationNs);
+                        }
+
+                        @Override
+                        public void onPhotoFrameAvailable(long sensorTimestampNs) {
+                            playPhotoSnap(captureFeedbackToken, "JPEG frame available");
                         }
 
                         @Override
@@ -2816,7 +2915,7 @@ public class MediaCaptureService {
                                 String filePath,
                                 JSONObject captureMetadata,
                                 CapturedPhoto capturedPhoto) {
-                            playCaptureCompleteSnap(captureRiserToken);
+                            playPhotoSnap(captureFeedbackToken, "photo completion fallback");
                             if (!textModeRequested) {
                                 onPhotoCaptured(filePath, captureMetadata);
                                 return;
@@ -2900,7 +2999,7 @@ public class MediaCaptureService {
 
                         @Override
                         public void onPhotoError(CameraOperationError error) {
-                            stopRiserForFailedCapture(captureRiserToken);
+                            stopPhotoFeedbackForFailure(captureFeedbackToken);
                             cleanupPhotoArtifacts(requestId, photoFilePath, false);
                             clearPhotoTracking(requestId);
                             releasePhotoJob(requestId);
@@ -2923,7 +3022,7 @@ public class MediaCaptureService {
                     });
             return true;
         } catch (Exception e) {
-            stopRiserForFailedCapture(riserToken);
+            stopPhotoFeedbackForFailure(feedbackToken);
             cleanupPhotoArtifacts(requestId, photoFilePath, false);
             clearPhotoTracking(requestId);
             releasePhotoJob(requestId);
@@ -3064,8 +3163,7 @@ public class MediaCaptureService {
         long encodeTotalMs = bleEncodeTotalMs.getOrDefault(requestId, 0L);
         long originalBytes = bleOriginalBytes.getOrDefault(requestId, 0L);
         long compressedBytes = bleCompressedBytes.getOrDefault(requestId, 0L);
-        BlePhotoTimingLog.PayloadReductionStats reduction =
-                blePayloadReductionStats.get(requestId);
+        BlePhotoTimingLog.PayloadReductionStats reduction = blePayloadReductionStats.get(requestId);
         BlePhotoTimingLog.CaptureSessionStats captureSession =
                 bleCaptureSessionStats.get(requestId);
         BlePhotoTimingLog.UartTransferStats uart = BlePhotoTimingLog.takeUartTransfer(bleImgId);
@@ -3122,9 +3220,7 @@ public class MediaCaptureService {
      * exposure, ISO, ZSL, metered preview).
      */
     private static String summarizeCaptureTimingDetail(
-            String kind,
-            @Nullable JSONObject captureConfig,
-            @Nullable JSONObject meteredPreview) {
+            String kind, @Nullable JSONObject captureConfig, @Nullable JSONObject meteredPreview) {
         StringBuilder sb = new StringBuilder(kind);
         if (captureConfig != null) {
             int width = captureConfig.optInt("width", -1);
@@ -3173,8 +3269,7 @@ public class MediaCaptureService {
         logBlePhotoStepAt(requestId, step, detail, System.currentTimeMillis());
     }
 
-    private void logBlePhotoStepAt(
-            String requestId, String step, String detail, long wallTimeMs) {
+    private void logBlePhotoStepAt(String requestId, String step, String detail, long wallTimeMs) {
         if (!AsgConstants.ENABLE_PHOTO_TIMING_LOGS || requestId == null || requestId.isEmpty()) {
             return;
         }
@@ -3326,8 +3421,8 @@ public class MediaCaptureService {
      * Debug-only ground truth for the crop tradeoff report: re-runs the exact no-crop BLE pipeline
      * (subsampled decode → aspect-fit resize → sharpen → JPEG encode at the same quality) on the
      * full captured frame and records the measured payload size and processing time on {@code
-     * stats}. Runs on a background thread while the (smaller) cropped payload is already in
-     * flight, so it never delays the real transfer.
+     * stats}. Runs on a background thread while the (smaller) cropped payload is already in flight,
+     * so it never delays the real transfer.
      */
     private void measureNoCropBleBaseline(
             @Nullable byte[] jpegBytes,
@@ -5035,20 +5130,20 @@ public class MediaCaptureService {
         PhotoCaptureTestHooks.addFakeDelay("CAMERA_CAPTURE");
 
         // Skip sound and flash during camera HAL restart cooldown (e.g. after FOV change)
-        PhotoRiserToken riserToken = null;
+        PhotoFeedbackToken feedbackToken = null;
         if (!shouldSuppressPhotoFeedback()) {
             triggerPhotoFlashLed();
             if (enableSound) {
                 // BLE-transfer SDK photo: isFromSdk=true; size and exposure match the
                 // enqueuePhotoRequest call below so the warm/cold prediction lines up.
-                riserToken =
-                        playShutterSound(captureSize, true, exposureTimeNs, captureSettings);
+                feedbackToken =
+                        startPhotoFeedback(captureSize, true, exposureTimeNs, captureSettings);
             }
             if (enableFlash) {
                 flashPrivacyLedForPhoto();
             }
         }
-        final PhotoRiserToken captureRiserToken = riserToken;
+        final PhotoFeedbackToken captureFeedbackToken = feedbackToken;
 
         try {
             // Use CameraNeoService for photo capture
@@ -5067,8 +5162,7 @@ public class MediaCaptureService {
                         }
 
                         @Override
-                        public void onCaptureSession(
-                                BlePhotoTimingLog.CaptureSessionStats stats) {
+                        public void onCaptureSession(BlePhotoTimingLog.CaptureSessionStats stats) {
                             bleCaptureSessionStats.put(requestId, stats);
                         }
                     };
@@ -5093,8 +5187,7 @@ public class MediaCaptureService {
                             logBlePhotoStep(
                                     requestId,
                                     "capture_configured",
-                                    summarizeCaptureTimingDetail(
-                                            "resolved", resolvedConfig, null));
+                                    summarizeCaptureTimingDetail("resolved", resolvedConfig, null));
                             sendPhotoStatus(
                                     requestId,
                                     "configuring",
@@ -5110,9 +5203,7 @@ public class MediaCaptureService {
                                     requestId,
                                     "capture_started",
                                     summarizeCaptureTimingDetail(
-                                            "requested",
-                                            requestedCaptureConfig,
-                                            meteredPreview));
+                                            "requested", requestedCaptureConfig, meteredPreview));
                             sendPhotoStatus(
                                     requestId,
                                     "capturing",
@@ -5122,6 +5213,18 @@ public class MediaCaptureService {
                                     requestedCaptureConfig,
                                     meteredPreview,
                                     null);
+                        }
+
+                        @Override
+                        public void onPhotoExposureStarted(
+                                long sensorTimestampNs, long estimatedExposureDurationNs) {
+                            MediaCaptureService.this.onPhotoExposureStarted(
+                                    captureFeedbackToken, estimatedExposureDurationNs);
+                        }
+
+                        @Override
+                        public void onPhotoFrameAvailable(long sensorTimestampNs) {
+                            playPhotoSnap(captureFeedbackToken, "JPEG frame available");
                         }
 
                         @Override
@@ -5139,7 +5242,7 @@ public class MediaCaptureService {
                                 String filePath,
                                 JSONObject captureMetadata,
                                 CapturedPhoto capturedPhoto) {
-                            playCaptureCompleteSnap(captureRiserToken);
+                            playPhotoSnap(captureFeedbackToken, "photo completion fallback");
                             // NOTE: do NOT clear isPhotoJobInFlight here — the job continues
                             // through BLE compression + handoff. Flag is cleared in
                             // compressAndSendViaBle's finally block.
@@ -5200,7 +5303,7 @@ public class MediaCaptureService {
 
                         @Override
                         public void onPhotoError(CameraOperationError error) {
-                            stopRiserForFailedCapture(captureRiserToken);
+                            stopPhotoFeedbackForFailure(captureFeedbackToken);
                             BlePhotoTimingLog.unbindPhaseSink(capturePhaseSink);
                             cleanupPhotoArtifacts(requestId, photoFilePath, false);
                             clearPhotoTracking(requestId);
@@ -5224,7 +5327,7 @@ public class MediaCaptureService {
                     });
             return true;
         } catch (Exception e) {
-            stopRiserForFailedCapture(captureRiserToken);
+            stopPhotoFeedbackForFailure(captureFeedbackToken);
             BlePhotoTimingLog.unbindPhaseSink(null);
             cleanupPhotoArtifacts(requestId, photoFilePath, false);
             clearPhotoTracking(requestId);
@@ -5409,8 +5512,7 @@ public class MediaCaptureService {
                                 android.graphics.Rect roi = null;
                                 long cropPhaseStartMs = 0L;
                                 long cropPhaseEndMs = 0L;
-                                boolean cropAttempted =
-                                        shouldCrop && !textSelectionAlreadyPrepared;
+                                boolean cropAttempted = shouldCrop && !textSelectionAlreadyPrepared;
                                 if (cropAttempted) {
                                     stage.start("text-region detection");
                                     cropPhaseStartMs = System.currentTimeMillis();
@@ -5590,9 +5692,13 @@ public class MediaCaptureService {
                                     // before any COMPRESS steps (resize/sharpen/encode).
                                     stage.start("input decode");
                                     String decodeStepStart =
-                                            cropAttempted ? "crop_decode_start" : "input_decode_start";
+                                            cropAttempted
+                                                    ? "crop_decode_start"
+                                                    : "input_decode_start";
                                     String decodeStepDone =
-                                            cropAttempted ? "crop_decode_done" : "input_decode_done";
+                                            cropAttempted
+                                                    ? "crop_decode_done"
+                                                    : "input_decode_done";
                                     logBlePhotoStep(
                                             requestId,
                                             decodeStepStart,
@@ -5975,9 +6081,7 @@ public class MediaCaptureService {
                                     // while the BLE transfer runs, so the crop tradeoff report
                                     // compares against real bytes instead of an area estimate.
                                     final byte[] baselineJpeg =
-                                            capturedPhoto != null
-                                                    ? capturedPhoto.jpegBytes
-                                                    : null;
+                                            capturedPhoto != null ? capturedPhoto.jpegBytes : null;
                                     final String baselinePath = originalPath;
                                     final int baselineTargetW = bleParams.targetWidth;
                                     final int baselineTargetH = bleParams.targetHeight;
@@ -6000,9 +6104,7 @@ public class MediaCaptureService {
                                         BlePhotoTimingLog.estimateFullFrameBlePayloadBytes(
                                                 compressedData.length, reductionStats);
                                 long cropSavedVsFullBleBytes =
-                                        Math.max(
-                                                0L,
-                                                estFullFrameBleBytes - compressedData.length);
+                                        Math.max(0L, estFullFrameBleBytes - compressedData.length);
                                 long sensorToPayloadSavedBytes =
                                         Math.max(0L, originalSizeBytes - compressedData.length);
                                 logBlePhotoStep(
@@ -6094,7 +6196,8 @@ public class MediaCaptureService {
 
                                 // 5. A requested gallery save is part of this operation's success
                                 // contract. Resolve it before notifying the phone that BLE transfer
-                                // has started, so one request can never report both transfer success
+                                // has started, so one request can never report both transfer
+                                // success
                                 // and a later save failure.
                                 boolean savePhotoRequested =
                                         Boolean.TRUE.equals(photoSaveFlags.get(requestId));
@@ -6502,8 +6605,7 @@ public class MediaCaptureService {
 
                     @Override
                     public long getDurationMs() {
-                        return Math.min(
-                                durationMs, AsgConstants.CAMERA_WARM_UP_MAX_DURATION_MS);
+                        return Math.min(durationMs, AsgConstants.CAMERA_WARM_UP_MAX_DURATION_MS);
                     }
                 });
         warmUpDispatching.set(false);
@@ -6882,6 +6984,13 @@ public class MediaCaptureService {
         isCleaningUp.set(true);
 
         try {
+            synchronized (mPhotoFeedbackLock) {
+                if (mCurrentPrepFeedback != null) {
+                    mCurrentPrepFeedback.mTerminal = true;
+                    stopPrepClicksLocked(mCurrentPrepFeedback);
+                }
+            }
+
             // Stop battery monitoring
             stopBatteryMonitoring();
 

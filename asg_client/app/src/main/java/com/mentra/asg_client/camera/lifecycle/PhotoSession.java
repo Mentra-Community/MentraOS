@@ -114,8 +114,10 @@ public final class PhotoSession {
     private volatile Integer mLastMeteredIso;
     private volatile Long mLastMeteredExposureNs;
     private volatile Long mLastStillSensorTimestampNs;
+
     /** Wall-clock of last still {@code onCaptureCompleted}; used for ImageReader delivery lag. */
     private volatile long mLastStillCaptureCompletedWallMs;
+
     private volatile long mStillShutterSubmittedWallMs;
     private volatile long mStillShutterSubmittedElapsedNs;
     private volatile long mStillRequestedExposureNs;
@@ -126,13 +128,16 @@ public final class PhotoSession {
     @Nullable private volatile Boolean mStillControlEnableZsl;
     private volatile boolean mStillHalStartedLogged;
     private volatile long mStillHalStartedWallMs;
+
     /**
      * ImageReader already wrote estimated shutter→JPEG phases; ignore late HAL phase rows so they
      * don't land after storage steps.
      */
     private volatile boolean mStillTimingFinalizedByImageReader;
+
     /** Dedicated looper so HAL CaptureCallbacks are not queued behind ImageReader JPEG work. */
     @Nullable private HandlerThread stillCaptureCallbackThread;
+
     @Nullable private Handler stillCaptureCallbackHandler;
 
     private final HdrBurstCapture hdrBurstCapture = new HdrBurstCapture();
@@ -363,8 +368,7 @@ public final class PhotoSession {
         if (settings != null && settings.zsl != null) {
             return settings.zslEnabled();
         }
-        return hooks.cameraSettings() != null
-                && hooks.cameraSettings().mAsgSettings.isZslEnabled();
+        return hooks.cameraSettings() != null && hooks.cameraSettings().mAsgSettings.isZslEnabled();
     }
 
     /**
@@ -448,8 +452,7 @@ public final class PhotoSession {
         if (settings != null && settings.zsl != null) {
             return settings.zslEnabled();
         }
-        return hooks.cameraSettings() != null
-                && hooks.cameraSettings().mAsgSettings.isZslEnabled();
+        return hooks.cameraSettings() != null && hooks.cameraSettings().mAsgSettings.isZslEnabled();
     }
 
     /**
@@ -512,8 +515,8 @@ public final class PhotoSession {
     /**
      * Compares {@code request} to the active session camera config (size, SDK flag, exposure,
      * preview-ZSL buffering need). Uses {@link #configuredCameraConfig} when {@link #activeCapture}
-     * was cleared after a shot. Must be called before {@link #activateQueuedRequest(QueuedPhotoRequest)}
-     * mutates current state.
+     * was cleared after a shot. Must be called before {@link
+     * #activateQueuedRequest(QueuedPhotoRequest)} mutates current state.
      *
      * <p>Still ZSL/MFNR flags are applied per capture on the still builder; only the preview
      * circular buffer ({@code zsl || mfnr}) requires a session reopen when the request needs it and
@@ -533,11 +536,7 @@ public final class PhotoSession {
         boolean reqZsl = resolveZslForRequest(request.captureSettings);
         boolean reqMfnr = resolveMfnrForRequest(request.captureSettings);
         return baseline.differsFrom(
-                request.size,
-                request.isFromSdk,
-                request.exposureTimeNs,
-                reqZsl,
-                reqMfnr);
+                request.size, request.isFromSdk, request.exposureTimeNs, reqZsl, reqMfnr);
     }
 
     /**
@@ -545,11 +544,11 @@ public final class PhotoSession {
      * session (a "warm" capture) instead of triggering a close + reopen reconfiguration.
      *
      * <p>The camera is reconfigured (and therefore effectively cold) when the requested size, SDK
-     * flag, or manual exposure differs, or when the request needs preview-ZSL buffering
-     * ({@code zsl || mfnr}) that the open session does not have — see
-     * {@link #needsReconfigurationForQueued}. Per-shot ZSL/MFNR toggles that keep the same preview
-     * buffering do <em>not</em> force a reopen. When there is no configured baseline (camera never
-     * opened or already torn down) this returns {@code false}: a fresh open is a cold start.
+     * flag, or manual exposure differs, or when the request needs preview-ZSL buffering ({@code zsl
+     * || mfnr}) that the open session does not have — see {@link #needsReconfigurationForQueued}.
+     * Per-shot ZSL/MFNR toggles that keep the same preview buffering do <em>not</em> force a
+     * reopen. When there is no configured baseline (camera never opened or already torn down) this
+     * returns {@code false}: a fresh open is a cold start.
      *
      * <p>When {@code captureSettings} is omitted, {@code zsl}/{@code mfnr} are resolved from the
      * global defaults (same as {@link PhotoCaptureSettings#EMPTY}).
@@ -679,9 +678,7 @@ public final class PhotoSession {
                 mCaptureDispatchedAsWarmReuse = false;
                 Log.d(TAG, "Camera config changed (reconfiguration required), reopening camera");
                 recordCaptureSessionForTiming(
-                        false,
-                        request.size,
-                        warmSessionReasonMismatch(priorConfig, request));
+                        false, request.size, warmSessionReasonMismatch(priorConfig, request));
                 Log.d(
                         TAG,
                         "warm/capture config mismatch (reopen): "
@@ -857,10 +854,10 @@ public final class PhotoSession {
     }
 
     /**
-     * Dispatched once the AE-convergence wait ends (converged/stable, locked, or the
-     * {@link AeStateMachine#AE_WAIT_MAX_NS} worst-case timeout) for whichever request is active —
-     * a real photo, or a {@code camera_warm_up} lease. Warm-up finishes here instead of capturing,
-     * so its {@code onReady} callback only fires once AE has actually settled.
+     * Dispatched once the AE-convergence wait ends (converged/stable, locked, or the {@link
+     * AeStateMachine#AE_WAIT_MAX_NS} worst-case timeout) for whichever request is active — a real
+     * photo, or a {@code camera_warm_up} lease. Warm-up finishes here instead of capturing, so its
+     * {@code onReady} callback only fires once AE has actually settled.
      */
     private void onAeReadyForActiveRequest() {
         synchronized (hooks.serviceLock()) {
@@ -882,9 +879,9 @@ public final class PhotoSession {
     }
 
     /**
-     * Called once AE convergence finishes for an active {@code camera_warm_up} lease (see
-     * {@link #onAeReadyForActiveRequest()}). Parks the session at IDLE under the warm keep-alive
-     * timer and reports {@code ready}; no capture is started.
+     * Called once AE convergence finishes for an active {@code camera_warm_up} lease (see {@link
+     * #onAeReadyForActiveRequest()}). Parks the session at IDLE under the warm keep-alive timer and
+     * reports {@code ready}; no capture is started.
      */
     private void finishWarmUpReady() {
         WarmUpRequest req = warmUpRequest;
@@ -988,6 +985,14 @@ public final class PhotoSession {
                 return;
             }
 
+            boolean finalHdrFrame =
+                    hdrBurstCapture.isActive()
+                            && hdrBurstCapture.framesReceived()
+                                    == HdrBurstBuilder.HDR_BURST_COUNT - 1;
+            if (!hdrBurstCapture.isActive() || finalHdrFrame) {
+                notifyPhotoFrameAvailable(imgTs);
+            }
+
             ByteBuffer buffer = image.getPlanes()[0].getBuffer();
             int remaining = buffer.remaining();
             byte[] bytes = new byte[remaining];
@@ -1074,8 +1079,8 @@ public final class PhotoSession {
 
     /**
      * Splits shutter→ImageReader into queue / exposure / ISP+JPEG. Uses HAL callback marks when
-     * they already arrived on the dedicated callback thread; otherwise estimates from
-     * {@link Image#getTimestamp()} vs {@link SystemClock#elapsedRealtimeNanos()}.
+     * they already arrived on the dedicated callback thread; otherwise estimates from {@link
+     * Image#getTimestamp()} vs {@link SystemClock#elapsedRealtimeNanos()}.
      */
     private String logStillShutterToImageBreakdown(
             long imageAvailableWallMs,
@@ -1103,11 +1108,9 @@ public final class PhotoSession {
         if (halStarted) {
             queueMs = Math.max(0L, mStillHalStartedWallMs - submitWallMs);
             if (halCompleted && mLastStillCaptureCompletedWallMs >= mStillHalStartedWallMs) {
-                long startToComplete =
-                        mLastStillCaptureCompletedWallMs - mStillHalStartedWallMs;
+                long startToComplete = mLastStillCaptureCompletedWallMs - mStillHalStartedWallMs;
                 long ispAfterExposure = Math.max(0L, startToComplete - exposureBudgetMs);
-                long completeToImage =
-                        halCompleteToImageMs >= 0 ? halCompleteToImageMs : 0L;
+                long completeToImage = halCompleteToImageMs >= 0 ? halCompleteToImageMs : 0L;
                 ispJpegMs = ispAfterExposure + completeToImage;
                 sinceSensorStartMs = startToComplete + completeToImage;
                 note = "HAL callbacks arrived before ImageReader";
@@ -1167,7 +1170,8 @@ public final class PhotoSession {
                     "still_sensor_exposure_end",
                     String.format(
                             java.util.Locale.US,
-                            "ESTIMATED shutter closed; exposure_budget=%dms; zsl_req=%s mfnr_req=%s nr=%d",
+                            "ESTIMATED shutter closed; exposure_budget=%dms; zsl_req=%s mfnr_req=%s"
+                                    + " nr=%d",
                             exposureBudgetMs,
                             mStillZslRequested,
                             mStillMfnrRequested,
@@ -1219,8 +1223,8 @@ public final class PhotoSession {
         return String.format(
                 java.util.Locale.US,
                 "%ssubmit→ImageReader=%dms = queue=%dms + exposure=%dms + ISP/MFNR/JPEG=%dms"
-                        + " (sensor→app=%dms); hal_complete→image=%s; zsl_req=%s mfnr_req=%s nr=%d; %s;"
-                        + " starting buffer extraction",
+                    + " (sensor→app=%dms); hal_complete→image=%s; zsl_req=%s mfnr_req=%s nr=%d; %s;"
+                    + " starting buffer extraction",
                 sizePrefix,
                 shutterToImageMs,
                 queueMs,
@@ -1500,9 +1504,7 @@ public final class PhotoSession {
     }
 
     private void notifyPhotoCaptured(
-            String filePath,
-            @Nullable CapturedPhoto capturedPhoto,
-            boolean waitForStillMetadata) {
+            String filePath, @Nullable CapturedPhoto capturedPhoto, boolean waitForStillMetadata) {
         long startMs = currentStartTimeMs();
         CameraNeoService.PhotoCaptureCallback callback =
                 activeCapture != null ? activeCapture.callback : null;
@@ -1733,6 +1735,25 @@ public final class PhotoSession {
         }
     }
 
+    /** Deliver the shutter boundary inline so feedback is not delayed behind callback work. */
+    private void notifyPhotoExposureStarted(
+            long sensorTimestampNs, long estimatedExposureDurationNs) {
+        CameraNeoService.PhotoCaptureCallback callback =
+                activeCapture != null ? activeCapture.callback : null;
+        if (callback != null) {
+            callback.onPhotoExposureStarted(sensorTimestampNs, estimatedExposureDurationNs);
+        }
+    }
+
+    /** Deliver ImageReader arrival inline, before buffer extraction or persistence. */
+    private void notifyPhotoFrameAvailable(long sensorTimestampNs) {
+        CameraNeoService.PhotoCaptureCallback callback =
+                activeCapture != null ? activeCapture.callback : null;
+        if (callback != null) {
+            callback.onPhotoFrameAvailable(sensorTimestampNs);
+        }
+    }
+
     private void notifyCurrentPhotoConfigured() {
         Size size = jpegSize();
         if (size != null) {
@@ -1819,7 +1840,9 @@ public final class PhotoSession {
             // take_photo sent right after would still pay the full convergence wait. Capped at the
             // same AeStateMachine#AE_WAIT_MAX_NS worst case as a real capture.
             if (warmUpRequest != null) {
-                Log.d(TAG, "camera_warm_up: preview running, waiting for AE to settle before ready");
+                Log.d(
+                        TAG,
+                        "camera_warm_up: preview running, waiting for AE to settle before ready");
             }
 
             startPrecaptureSequence();
@@ -2215,12 +2238,8 @@ public final class PhotoSession {
                     captureSettings,
                     useManual,
                     mLastMeteredExposureNs,
-                    useManual
-                            ? Long.valueOf(manualClampedNs)
-                            : currentExposureTimeNs(),
-                    useManual
-                            ? manualIso
-                            : captureRequest.get(CaptureRequest.SENSOR_SENSITIVITY),
+                    useManual ? Long.valueOf(manualClampedNs) : currentExposureTimeNs(),
+                    useManual ? manualIso : captureRequest.get(CaptureRequest.SENSOR_SENSITIVITY),
                     globalZsl,
                     globalMfnr);
 
@@ -2305,14 +2324,10 @@ public final class PhotoSession {
             mStillControlEnableZsl = reqZsl;
             int jpegQ = getJpegQualityForSize();
             String sizeLabel =
-                    jpegSize != null
-                            ? jpegSize.getWidth() + "x" + jpegSize.getHeight()
-                            : "unknown";
+                    jpegSize != null ? jpegSize.getWidth() + "x" + jpegSize.getHeight() : "unknown";
             String expLabel =
                     String.format(
-                            java.util.Locale.US,
-                            "%.2fms",
-                            mStillRequestedExposureNs / 1_000_000.0);
+                            java.util.Locale.US, "%.2fms", mStillRequestedExposureNs / 1_000_000.0);
             if (reqExpNs == null) {
                 expLabel += "(metered)";
             }
@@ -2320,7 +2335,8 @@ public final class PhotoSession {
                     "still_shutter_submitted",
                     String.format(
                             java.util.Locale.US,
-                            "%s jpegQ=%d mode=%s req_exp=%s req_iso=%s zsl=%s nr=%s mfnr=%s — waiting for HAL onCaptureStarted",
+                            "%s jpegQ=%d mode=%s req_exp=%s req_iso=%s zsl=%s nr=%s mfnr=%s —"
+                                    + " waiting for HAL onCaptureStarted",
                             sizeLabel,
                             jpegQ,
                             useManual ? "MANUAL" : "AUTO",
@@ -2347,6 +2363,13 @@ public final class PhotoSession {
                                 }
 
                                 @Override
+                                public void notifyPhotoExposureStarted(
+                                        long sensorTimestampNs, long estimatedExposureDurationNs) {
+                                    PhotoSession.this.notifyPhotoExposureStarted(
+                                            sensorTimestampNs, estimatedExposureDurationNs);
+                                }
+
+                                @Override
                                 public boolean stillHalStartedAlreadyLogged() {
                                     return mStillHalStartedLogged;
                                 }
@@ -2357,7 +2380,8 @@ public final class PhotoSession {
                                 }
 
                                 @Override
-                                public void recordStillCaptureCompletedWallMs(long completedWallMs) {
+                                public void recordStillCaptureCompletedWallMs(
+                                        long completedWallMs) {
                                     mLastStillCaptureCompletedWallMs = completedWallMs;
                                 }
 
@@ -2408,7 +2432,8 @@ public final class PhotoSession {
                                 public void stopSelf() {
                                     hooks.stopService();
                                 }
-                            }),
+                            },
+                            mStillRequestedExposureNs),
                     // Dedicated thread: ImageReader JPEG work must not delay HAL timing callbacks.
                     stillCaptureCallbackHandler());
 
@@ -2478,6 +2503,11 @@ public final class PhotoSession {
                         @Override
                         public void onAllCaptureRequestsCompleted(CameraCaptureSession session) {
                             restoreAePreview(session);
+                        }
+
+                        @Override
+                        public void onFinalCaptureStarted(long sensorTimestampNs) {
+                            notifyPhotoExposureStarted(sensorTimestampNs, 0L);
                         }
                     });
 
@@ -2574,8 +2604,7 @@ public final class PhotoSession {
             return BlePhotoTimingLog.WarmSessionReason.NO_WARMUP;
         }
         if (!Objects.equals(baseline.size, request.size)) {
-            return BlePhotoTimingLog.WarmSessionReason.mismatchSize(
-                    baseline.size, request.size);
+            return BlePhotoTimingLog.WarmSessionReason.mismatchSize(baseline.size, request.size);
         }
         if (baseline.isFromSdk != request.isFromSdk) {
             return BlePhotoTimingLog.WarmSessionReason.MISMATCH_SDK;
@@ -2614,8 +2643,10 @@ public final class PhotoSession {
         @Nullable final String size;
         final boolean isFromSdk;
         @Nullable final Long exposureTimeNs;
+
         /** Resolved ZSL applied to the open preview/still path. */
         final boolean zsl;
+
         /** Resolved MFNR applied to the open still path. */
         final boolean mfnr;
 

@@ -1,6 +1,7 @@
 package com.mentra.asg_client.io.hardware.interfaces;
 
 import com.mentra.asg_client.io.bluetooth.interfaces.ICompanionTransport;
+
 import java.util.Set;
 
 /**
@@ -123,6 +124,21 @@ public interface IHardwareManager {
      */
     default void playAudioAssetOverlay(String assetName) {
         playAudioAsset(assetName);
+    }
+
+    /**
+     * Play an independently stoppable overlay without replacing primary audio.
+     *
+     * @return a positive overlay token, or {@code 0} when tracking is unavailable
+     */
+    default long playAudioAssetOverlayTracked(String assetName) {
+        playAudioAssetOverlay(assetName);
+        return 0L;
+    }
+
+    /** Stop only the overlay identified by {@code playbackToken}. */
+    default boolean stopAudioOverlayPlayback(long playbackToken) {
+        return false;
     }
 
     /** Stop any active MCU-managed audio playback. */

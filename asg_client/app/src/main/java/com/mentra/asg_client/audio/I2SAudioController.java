@@ -11,12 +11,12 @@ import android.util.Log;
 import com.mentra.asg_client.service.core.AsgClientService;
 
 import java.io.IOException;
-import java.util.HashSet;
-import java.util.Set;
+import java.util.HashMap;
+import java.util.Map;
 
 /**
- * Handles I2S audio playback for devices that route speaker output through the MCU.
- * This controller opens the I2S path via the MCU, plays an asset, and then closes the path.
+ * Handles I2S audio playback for devices that route speaker output through the MCU. This controller
+ * opens the I2S path via the MCU, plays an asset, and then closes the path.
  */
 public class I2SAudioController {
 
@@ -25,8 +25,9 @@ public class I2SAudioController {
     private final Context context;
 
     private MediaPlayer mediaPlayer;
-    private final Set<MediaPlayer> overlayPlayers = new HashSet<>();
+    private final Map<Long, MediaPlayer> overlayPlayers = new HashMap<>();
     private long playbackGeneration;
+    private long overlayPlaybackGeneration;
 
     // Track if WE are actively controlling I2S (to prevent receiver feedback loop)
     private static volatile boolean isControllingI2S = false;
@@ -48,9 +49,7 @@ public class I2SAudioController {
 
     /** Replace the primary asset only if the supplied token still owns it. */
     public synchronized boolean replaceAssetIfCurrent(long playbackToken, String assetName) {
-        if (playbackToken <= 0L
-                || playbackToken != playbackGeneration
-                || mediaPlayer == null) {
+        if (playbackToken <= 0L || playbackToken != playbackGeneration || mediaPlayer == null) {
             return false;
         }
         playAssetTracked(assetName);
@@ -59,26 +58,32 @@ public class I2SAudioController {
 
     /** Play a short overlay without interrupting the current primary asset. */
     public synchronized void playOverlayAsset(String assetName) {
+        playOverlayAssetTracked(assetName);
+    }
+
+    /** Play an independently stoppable overlay without interrupting primary audio. */
+    public synchronized long playOverlayAssetTracked(String assetName) {
         Log.i(TAG, "Playing I2S overlay asset: " + assetName);
         isControllingI2S = true;
 
         if (!notifyI2SState(true)) {
             Log.w(TAG, "Failed to start I2S path; skipping overlay playback");
             refreshControlFlag();
-            return;
+            return 0L;
         }
 
         MediaPlayer overlayPlayer = null;
+        long overlayToken = ++overlayPlaybackGeneration;
         try (AssetFileDescriptor afd = context.getAssets().openFd(assetName)) {
             overlayPlayer = new MediaPlayer();
             configurePlayer(overlayPlayer, afd);
 
             final MediaPlayer trackedPlayer = overlayPlayer;
-            overlayPlayers.add(trackedPlayer);
+            overlayPlayers.put(overlayToken, trackedPlayer);
             trackedPlayer.setOnCompletionListener(
                     mp -> {
                         synchronized (I2SAudioController.this) {
-                            if (!overlayPlayers.remove(mp)) {
+                            if (!overlayPlayers.remove(overlayToken, mp)) {
                                 return;
                             }
                             Log.d(TAG, "I2S overlay playback completed");
@@ -90,7 +95,7 @@ public class I2SAudioController {
             trackedPlayer.setOnErrorListener(
                     (mp, what, extra) -> {
                         synchronized (I2SAudioController.this) {
-                            if (!overlayPlayers.remove(mp)) {
+                            if (!overlayPlayers.remove(overlayToken, mp)) {
                                 return true;
                             }
                             Log.e(
@@ -109,15 +114,30 @@ public class I2SAudioController {
             trackedPlayer.prepare();
             trackedPlayer.start();
             Log.d(TAG, "I2S overlay playback started");
+            return overlayToken;
         } catch (Exception e) {
             Log.e(TAG, "Unable to play overlay asset " + assetName, e);
             if (overlayPlayer != null) {
-                overlayPlayers.remove(overlayPlayer);
+                overlayPlayers.remove(overlayToken, overlayPlayer);
                 overlayPlayer.release();
             }
             closeI2SIfIdle();
             refreshControlFlag();
+            return 0L;
         }
+    }
+
+    /** Stop one overlay only when its token still identifies an active player. */
+    public synchronized boolean stopOverlayPlayback(long overlayToken) {
+        MediaPlayer overlayPlayer = overlayPlayers.remove(overlayToken);
+        if (overlayPlayer == null) {
+            return false;
+        }
+        isControllingI2S = true;
+        stopAndRelease(overlayPlayer);
+        closeI2SIfIdle();
+        refreshControlFlag();
+        return true;
     }
 
     private void playPrimaryAsset(String assetName) {
@@ -160,9 +180,7 @@ public class I2SAudioController {
                             if (mediaPlayer != mp) {
                                 return true;
                             }
-                            Log.e(
-                                    TAG,
-                                    "MediaPlayer error - what=" + what + ", extra=" + extra);
+                            Log.e(TAG, "MediaPlayer error - what=" + what + ", extra=" + extra);
                             mediaPlayer = null;
                             mp.release();
                             closeI2SIfIdle();
@@ -198,9 +216,7 @@ public class I2SAudioController {
 
     /** Stop the primary asset only if the supplied token still owns it. */
     public synchronized boolean stopPlaybackIfCurrent(long playbackToken) {
-        if (playbackToken <= 0L
-                || playbackToken != playbackGeneration
-                || mediaPlayer == null) {
+        if (playbackToken <= 0L || playbackToken != playbackGeneration || mediaPlayer == null) {
             return false;
         }
         ++playbackGeneration;
@@ -211,8 +227,8 @@ public class I2SAudioController {
     }
 
     /**
-     * Check if this controller is actively managing I2S state.
-     * Used by I2SAudioBroadcastReceiver to avoid reacting to our own playback.
+     * Check if this controller is actively managing I2S state. Used by I2SAudioBroadcastReceiver to
+     * avoid reacting to our own playback.
      */
     public static boolean isControllingI2S() {
         return isControllingI2S;
@@ -235,17 +251,21 @@ public class I2SAudioController {
     }
 
     private void stopOverlayPlayers() {
-        for (MediaPlayer overlayPlayer : new HashSet<>(overlayPlayers)) {
-            overlayPlayers.remove(overlayPlayer);
-            try {
-                if (overlayPlayer.isPlaying()) {
-                    overlayPlayer.stop();
-                }
-            } catch (IllegalStateException ignore) {
-                // best-effort
-            }
-            overlayPlayer.release();
+        for (MediaPlayer overlayPlayer : overlayPlayers.values()) {
+            stopAndRelease(overlayPlayer);
         }
+        overlayPlayers.clear();
+    }
+
+    private void stopAndRelease(MediaPlayer player) {
+        try {
+            if (player.isPlaying()) {
+                player.stop();
+            }
+        } catch (IllegalStateException ignore) {
+            // best-effort
+        }
+        player.release();
     }
 
     private void configurePlayer(MediaPlayer player, AssetFileDescriptor afd) throws IOException {
