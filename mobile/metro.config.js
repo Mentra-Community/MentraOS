@@ -1,6 +1,7 @@
 const {getSentryExpoConfig} = require("@sentry/react-native/metro")
 const {withUniwindConfig} = require("uniwind/metro")
 const path = require("path")
+const {withExpoPublicEnvCacheVersion} = require("./scripts/metro-cache-version.cjs")
 
 /** @type {import('expo/metro-config').MetroConfig} */
 var config = getSentryExpoConfig(__dirname)
@@ -147,5 +148,10 @@ config = withUniwindConfig(config, {
   // defaults to project's root
   dtsFile: "./src/uniwind-types.d.ts",
 })
+
+// Babel inlines EXPO_PUBLIC_* values, but Metro's default transform cache key
+// does not include them. Expo also keeps that cache when CI=true, so concurrent
+// builds on our shared runners could reuse transforms from a different release.
+config.cacheVersion = withExpoPublicEnvCacheVersion(config.cacheVersion)
 
 module.exports = config
