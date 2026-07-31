@@ -12,6 +12,11 @@ import { existsSync } from 'fs';
 import path from 'path';
 import os from 'os';
 
+// Expo's export:embed command sets production mode after the CLI starts, which
+// is too late for its Babel transform to inline inherited EXPO_PUBLIC_* values.
+// Start every release subprocess in production mode instead.
+process.env.NODE_ENV = 'production';
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function parseVersion(version) {

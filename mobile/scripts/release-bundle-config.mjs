@@ -37,6 +37,9 @@ function xcodeEnvironmentEntries(env, nodeBinary) {
   if (env.MENTRAOS_PINNED_BUILD_NUMBER) {
     entries.push(["MENTRAOS_PINNED_BUILD_NUMBER", String(env.MENTRAOS_PINNED_BUILD_NUMBER)])
   }
+  if (env.NODE_ENV) {
+    entries.push(["NODE_ENV", String(env.NODE_ENV)])
+  }
   entries.push(["NODE_BINARY", nodeBinary])
 
   return entries

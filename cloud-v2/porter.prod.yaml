@@ -2,7 +2,12 @@ version: v2
 name: cloud-prod
 
 envGroups:
-  - cloud-v2-prod-doppler
+  # Doppler-synced group. The old `cloud-v2-prod-doppler` was, despite the name,
+  # a plain Porter-stored group with no sync behind it, so a stale hand-entered
+  # SUPABASE_URL kept prod pointed at the dead auth.augmentos.org host and Google
+  # SSO returned a Cloudflare 1014 for every user (OS-1869). Doppler had the
+  # correct value the whole time; nothing was reading it.
+  - cloud-v2-prod-doppler-sync
 
 build:
   method: docker
