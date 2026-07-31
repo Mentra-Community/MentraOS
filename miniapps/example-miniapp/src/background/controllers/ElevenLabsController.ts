@@ -6,11 +6,15 @@
  *   signed URL → WebSocket → session.mic.onAudioChunk as { user_audio_chunk }
  *   agent audio_event (PCM base64) → session.speaker.createStream
  *
+ * Mic capture (same feed as the Recorder miniapp): session.mic.onAudioChunk
+ * delivers post-LC3-decode PCM16; we stream that into a fixed phone blob WAV
+ * for playback after Stop.
+ *
  * Do not run the session.mic tester and this conversation at the same time.
  */
 
 import {base64ToBytes} from "@mentra/miniapp/background"
-import type {MiniappSession, UnsubscribeFn} from "@mentra/miniapp/background"
+import type {BlobWriter, MiniappSession, UnsubscribeFn} from "@mentra/miniapp/background"
 
 import type {Channels} from "../../shared/channels"
 import {getElevenLabsConfig} from "../../shared/elevenlabsConfig"
@@ -19,14 +23,19 @@ import type {
   ElevenLabsConversationState,
   ElevenLabsDiagnostics,
   ElevenLabsLogEntry,
+  ElevenLabsRecording,
   ElevenLabsSnapshot,
   ElevenLabsStreamStats,
 } from "../../shared/types"
 import {
   appendQueryParam,
   approxBase64ByteLength,
+  buildWavHeader,
+  ELEVENLABS_RECORDING_BLOB_KEY,
   parsePcmSampleRate,
+  pcmDurationMs,
   resamplePcm16Le,
+  WAV_HEADER_BYTES,
 } from "../elevenLabsHelpers"
 
 type Send = <C extends keyof Channels & string>(channel: C, payload: Channels[C]) => void
@@ -75,6 +84,25 @@ const emptyDiagnostics = (): ElevenLabsDiagnostics => ({
   websocketTarget: "Unknown",
 })
 
+const emptyRecording = (): ElevenLabsRecording => ({
+  status: "none",
+  blobKey: ELEVENLABS_RECORDING_BLOB_KEY,
+  uri: null,
+  bytes: 0,
+  durationMs: 0,
+  sampleRate: null,
+  error: null,
+  isPlaying: false,
+})
+
+/** Flush capture PCM to the blob once ~1.5s of 16kHz mono has buffered. */
+const CAPTURE_FLUSH_BYTES = 48 * 1024
+/**
+ * Keep accepting mic PCM briefly after Stop (same idea as Recorder). Glasses
+ * audio can still be in flight across BLE/bridges when the UI stop lands.
+ */
+const STOP_TAIL_DRAIN_MS = 1500
+
 export class ElevenLabsController {
   private started = false
   private readonly unsubs: Array<() => void> = []
@@ -115,6 +143,17 @@ export class ElevenLabsController {
   /** Bumped on close/interrupt so in-flight createStream cannot leak a writer. */
   private speakerEpoch = 0
 
+  /** Mic PCM (post-LC3) — streamed into a fixed phone blob as WAV. */
+  private recording = emptyRecording()
+  private captureWriter: BlobWriter | null = null
+  private captureChunks: Uint8Array[] = []
+  private captureBufBytes = 0
+  private capturePcmBytes = 0
+  private captureSampleRate = 16000
+  private captureDrainChain: Promise<void> = Promise.resolve()
+  private captureWriteErrored = false
+  private playSeq = 0
+
   constructor(private readonly session: MiniappSession) {}
 
   start(): void {
@@ -134,7 +173,7 @@ export class ElevenLabsController {
 
     this.unsubs.push(
       ui.onOpen(() => {
-        this.pushSnapshot()
+        void this.refreshRecordingMeta().finally(() => this.pushSnapshot())
       }),
     )
 
@@ -154,6 +193,22 @@ export class ElevenLabsController {
         return {ok: true as const}
       }),
     )
+
+    this.unsubs.push(
+      ui.handle("elevenlabs:play-recording", async () => {
+        await this.playRecording()
+        return {ok: true as const}
+      }),
+    )
+
+    this.unsubs.push(
+      ui.handle("elevenlabs:stop-playback", async () => {
+        this.stopPlayback()
+        return {ok: true as const}
+      }),
+    )
+
+    void this.refreshRecordingMeta()
   }
 
   private snapshot(): ElevenLabsSnapshot {
@@ -169,6 +224,7 @@ export class ElevenLabsController {
       stats: {...this.stats},
       diagnostics: {...this.diagnostics},
       logs: this.logs.slice(),
+      recording: {...this.recording},
     }
   }
 
@@ -221,7 +277,10 @@ export class ElevenLabsController {
     this.agentSampleRate = 16000
     this.speakerSampleRate = 16000
     this.agentAudioChunksPlayed = 0
+    this.stopPlayback()
     await this.closeSpeaker()
+    // Drop the previous conversation recording so we always reuse one phone path.
+    await this.resetCaptureForNewConversation()
     this.clearFirstPcmTimeout()
     this.diagnostics = {
       ...emptyDiagnostics(),
@@ -324,10 +383,15 @@ export class ElevenLabsController {
           websocketState: "Closed",
         })
         this.websocket = null
-        this.stopGlassesPcm()
-        void this.closeSpeaker()
-        this.conversationState = "Idle"
-        this.pushSnapshot()
+        void (async () => {
+          // Keep mic briefly so in-flight post-LC3 PCM lands in the recording.
+          await delay(STOP_TAIL_DRAIN_MS)
+          this.stopGlassesPcm()
+          await this.closeSpeaker()
+          await this.finalizeCapture()
+          this.conversationState = "Idle"
+          this.pushSnapshot()
+        })()
       }
     } catch (error) {
       if (generation !== this.startGeneration) {
@@ -356,10 +420,14 @@ export class ElevenLabsController {
     this.closeSource = reason
     this.clearFirstPcmTimeout()
     this.updateDiagnostics({micStage: "Stopping"})
-    this.stopGlassesPcm()
-    await this.closeSpeaker()
     this.websocket?.close()
     this.websocket = null
+    // Same as Recorder: keep the mic subscription alive briefly so in-flight
+    // post-LC3 frames still land in the WAV before we finalize.
+    await delay(STOP_TAIL_DRAIN_MS)
+    this.stopGlassesPcm()
+    await this.closeSpeaker()
+    await this.finalizeCapture()
     this.conversationState = "Idle"
     this.pushSnapshot()
   }
@@ -370,11 +438,15 @@ export class ElevenLabsController {
     this.updateDiagnostics({micStage: "Enabling mic stream"})
     const micRequestedAtMs = Date.now()
     this.updateDiagnostics({micRequestedAtMs, micStage: "Mic requested; waiting for PCM"})
-    this.micUnsub = this.session.mic.onAudioChunk((chunk) => {
-      this.handlePcmFrame(chunk.data, chunk.sampleRate, chunk.format)
+    // Open the capture blob before subscribing so the first PCM frames aren't dropped.
+    void this.ensureCapture().then(() => {
+      if (this.conversationState !== "Streaming") return
+      this.micUnsub = this.session.mic.onAudioChunk((chunk) => {
+        this.handlePcmFrame(chunk.data, chunk.sampleRate, chunk.format)
+      })
+      this.startFirstPcmWatchdog()
+      this.pushSnapshot()
     })
-    this.startFirstPcmWatchdog()
-    this.pushSnapshot()
   }
 
   private stopGlassesPcm(): void {
@@ -434,6 +506,16 @@ export class ElevenLabsController {
       const rate = sampleRate ?? 16000
       const fmt = format ?? "pcm16"
       this.metadata = `${rate} Hz, ${fmt}`
+    }
+
+    // Record what the mic delivers after LC3 decode — same session.mic.onAudioChunk
+    // feed the Recorder miniapp uses.
+    if (sampleRate && sampleRate > 0) {
+      this.captureSampleRate = sampleRate
+    }
+    const pcm = base64ToBytes(base64Pcm)
+    if (pcm.byteLength >= 2) {
+      this.appendCapturePcm(pcm)
     }
 
     if (nextBase.frames === 1 || nextBase.frames % 10 === 0) {
@@ -729,6 +811,276 @@ export class ElevenLabsController {
       }
     }
   }
+
+  // ── Agent-audio capture (fixed phone blob path) ──────────────────────────
+
+  private async refreshRecordingMeta(): Promise<void> {
+    if (this.captureWriter || this.recording.status === "capturing") return
+    try {
+      const meta = await this.session.blob.get(ELEVENLABS_RECORDING_BLOB_KEY)
+      if (!meta) {
+        this.recording = emptyRecording()
+        return
+      }
+      const sampleRate =
+        typeof meta.meta?.sampleRate === "number" ? meta.meta.sampleRate : this.recording.sampleRate
+      const durationMs =
+        typeof meta.meta?.durationMs === "number"
+          ? meta.meta.durationMs
+          : pcmDurationMs(Math.max(0, meta.bytes - WAV_HEADER_BYTES), sampleRate || 16000)
+      this.recording = {
+        status: "ready",
+        blobKey: ELEVENLABS_RECORDING_BLOB_KEY,
+        uri: meta.uri,
+        bytes: meta.bytes,
+        durationMs,
+        sampleRate: sampleRate || null,
+        error: null,
+        isPlaying: this.recording.isPlaying,
+      }
+    } catch (error) {
+      this.recording = {
+        ...emptyRecording(),
+        status: "error",
+        error: getErrorMessage(error),
+        isPlaying: this.recording.isPlaying,
+      }
+    }
+  }
+
+  /** Clear prior recording and prepare to overwrite the same blob key. */
+  private async resetCaptureForNewConversation(): Promise<void> {
+    await this.abortCapture()
+    try {
+      await this.session.blob.delete(ELEVENLABS_RECORDING_BLOB_KEY)
+    } catch {
+      /* ignore missing */
+    }
+    this.recording = emptyRecording()
+    this.appendLog(`recording reset → ${ELEVENLABS_RECORDING_BLOB_KEY}`)
+  }
+
+  private async ensureCapture(): Promise<void> {
+    if (this.captureWriter || this.captureWriteErrored) return
+    try {
+      const writer = await this.session.blob.createWriteStream(ELEVENLABS_RECORDING_BLOB_KEY, {
+        mimeType: "audio/wav",
+        name: "elevenlabs-conversation.wav",
+        meta: {title: "ElevenLabs mic"},
+      })
+      // Placeholder header — patched with real sizes on finalize.
+      await writer.write(new Uint8Array(WAV_HEADER_BYTES))
+      this.captureWriter = writer
+      this.captureChunks = []
+      this.captureBufBytes = 0
+      this.capturePcmBytes = 0
+      this.captureSampleRate = 16000
+      this.captureDrainChain = Promise.resolve()
+      this.captureWriteErrored = false
+      this.recording = {
+        status: "capturing",
+        blobKey: ELEVENLABS_RECORDING_BLOB_KEY,
+        uri: null,
+        bytes: WAV_HEADER_BYTES,
+        durationMs: 0,
+        sampleRate: this.captureSampleRate,
+        error: null,
+        isPlaying: false,
+      }
+      this.appendLog(`capturing mic PCM → ${ELEVENLABS_RECORDING_BLOB_KEY}`)
+      this.pushSnapshot()
+    } catch (error) {
+      this.captureWriteErrored = true
+      this.recording = {
+        ...emptyRecording(),
+        status: "error",
+        error: getErrorMessage(error),
+      }
+      this.appendLog(`capture open failed: ${getErrorMessage(error)}`)
+      this.pushSnapshot()
+    }
+  }
+
+  private appendCapturePcm(pcm: Uint8Array): void {
+    if (!this.captureWriter || this.captureWriteErrored || pcm.byteLength < 2) return
+    this.captureChunks.push(pcm)
+    this.captureBufBytes += pcm.byteLength
+    this.recording = {
+      ...this.recording,
+      status: "capturing",
+      bytes: WAV_HEADER_BYTES + this.capturePcmBytes + this.captureBufBytes,
+      durationMs: pcmDurationMs(this.capturePcmBytes + this.captureBufBytes, this.captureSampleRate),
+      sampleRate: this.captureSampleRate,
+    }
+    if (this.captureBufBytes >= CAPTURE_FLUSH_BYTES) {
+      this.scheduleCaptureDrain()
+    }
+  }
+
+  private scheduleCaptureDrain(): void {
+    this.captureDrainChain = this.captureDrainChain.then(() => this.drainCaptureOnce()).catch(() => {})
+  }
+
+  private async drainCaptureOnce(): Promise<void> {
+    if (!this.captureWriter || this.captureWriteErrored) return
+    while (this.captureChunks.length > 0) {
+      const buf = this.takeCaptureBuffer()
+      try {
+        await this.captureWriter.write(buf)
+        this.capturePcmBytes += buf.length
+      } catch (error) {
+        this.captureWriteErrored = true
+        this.recording = {
+          ...this.recording,
+          status: "error",
+          error: getErrorMessage(error),
+        }
+        this.appendLog(`capture write failed: ${getErrorMessage(error)}`)
+        this.pushSnapshot()
+        break
+      }
+    }
+  }
+
+  private takeCaptureBuffer(): Uint8Array {
+    if (this.captureChunks.length === 1) {
+      const only = this.captureChunks[0]!
+      this.captureChunks = []
+      this.captureBufBytes = 0
+      return only
+    }
+    const out = new Uint8Array(this.captureBufBytes)
+    let at = 0
+    for (const c of this.captureChunks) {
+      out.set(c, at)
+      at += c.length
+    }
+    this.captureChunks = []
+    this.captureBufBytes = 0
+    return out
+  }
+
+  private async finalizeCapture(): Promise<void> {
+    const writer = this.captureWriter
+    if (!writer) {
+      if (this.recording.status === "capturing") {
+        this.recording = emptyRecording()
+      }
+      return
+    }
+    this.captureWriter = null
+    try {
+      await this.captureDrainChain
+      await this.drainCaptureOnce()
+      if (this.capturePcmBytes < 2 || this.captureWriteErrored) {
+        await writer.abort().catch(() => {})
+        this.recording = this.captureWriteErrored
+          ? {...emptyRecording(), status: "error", error: this.recording.error ?? "capture write failed"}
+          : emptyRecording()
+        this.appendLog("capture aborted (no mic audio)")
+        return
+      }
+      await writer.writeAt(0, buildWavHeader(this.captureSampleRate, this.capturePcmBytes))
+      const meta = await writer.close({
+        durationMs: pcmDurationMs(this.capturePcmBytes, this.captureSampleRate),
+        sampleRate: this.captureSampleRate,
+        channels: 1,
+        bitsPerSample: 16,
+        title: "ElevenLabs mic",
+      })
+      this.recording = {
+        status: "ready",
+        blobKey: ELEVENLABS_RECORDING_BLOB_KEY,
+        uri: meta.uri,
+        bytes: meta.bytes,
+        durationMs: pcmDurationMs(this.capturePcmBytes, this.captureSampleRate),
+        sampleRate: this.captureSampleRate,
+        error: null,
+        isPlaying: false,
+      }
+      this.appendLog(
+        `recording saved ${meta.uri} (${this.recording.durationMs}ms, ${meta.bytes} bytes)`,
+      )
+    } catch (error) {
+      try {
+        await writer.abort()
+      } catch {
+        /* ignore */
+      }
+      this.recording = {
+        ...emptyRecording(),
+        status: "error",
+        error: getErrorMessage(error),
+      }
+      this.appendLog(`capture finalize failed: ${getErrorMessage(error)}`)
+    } finally {
+      this.captureChunks = []
+      this.captureBufBytes = 0
+      this.capturePcmBytes = 0
+      this.captureWriteErrored = false
+      this.captureDrainChain = Promise.resolve()
+    }
+  }
+
+  private async abortCapture(): Promise<void> {
+    const writer = this.captureWriter
+    this.captureWriter = null
+    this.captureChunks = []
+    this.captureBufBytes = 0
+    this.capturePcmBytes = 0
+    this.captureWriteErrored = false
+    this.captureDrainChain = Promise.resolve()
+    if (!writer) return
+    try {
+      await writer.abort()
+    } catch {
+      /* ignore */
+    }
+  }
+
+  private async playRecording(): Promise<void> {
+    if (this.conversationState !== "Idle") {
+      throw new Error("Stop the conversation before playing the recording")
+    }
+    await this.refreshRecordingMeta()
+    const uri = this.recording.uri
+    if (!uri || this.recording.status !== "ready") {
+      throw new Error("No conversation recording saved yet")
+    }
+    const seq = ++this.playSeq
+    this.recording = {...this.recording, isPlaying: true}
+    this.pushSnapshot()
+    this.appendLog(`playing recording ${uri}`)
+    // Detach so the RPC returns immediately and the UI can Stop mid-play.
+    void this.session.speaker
+      .play({audioUrl: uri, stopOtherAudio: true})
+      .catch((error) => {
+        this.appendLog(`playback failed: ${getErrorMessage(error)}`)
+        this.recording = {
+          ...this.recording,
+          error: getErrorMessage(error),
+        }
+      })
+      .finally(() => {
+        if (this.playSeq === seq) {
+          this.recording = {...this.recording, isPlaying: false}
+          this.pushSnapshot()
+        }
+      })
+  }
+
+  private stopPlayback(): void {
+    this.playSeq += 1
+    try {
+      this.session.speaker.stop()
+    } catch {
+      /* ignore */
+    }
+    if (this.recording.isPlaying) {
+      this.recording = {...this.recording, isPlaying: false}
+      this.pushSnapshot()
+    }
+  }
 }
 
 async function fetchSignedUrlFromLocalServer(endpoint: string, agentId: string): Promise<string> {
@@ -793,4 +1145,8 @@ function mapSpeakerSampleRate(rate: number): SpeakerSampleRate {
   if (rate <= 16000) return 16000
   if (rate <= 24000) return 24000
   return 48000
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }

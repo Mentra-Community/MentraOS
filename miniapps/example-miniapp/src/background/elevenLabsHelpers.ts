@@ -1,5 +1,10 @@
 /** Pure helpers for ElevenLabs ConvAI PCM / URL plumbing (unit-tested). */
 
+/** Fixed blob key — one conversation recording, overwritten on each Start. */
+export const ELEVENLABS_RECORDING_BLOB_KEY = "elevenlabs-conversation.wav"
+
+export const WAV_HEADER_BYTES = 44
+
 /** Append ?key= / &key= without relying on the URL constructor. */
 export function appendQueryParam(endpoint: string, key: string, value: string): string {
   const encoded = `${encodeURIComponent(key)}=${encodeURIComponent(value)}`
@@ -43,4 +48,52 @@ export function resamplePcm16Le(input: Uint8Array, fromRate: number, toRate: num
     outView.setInt16(i * 2, Math.round(s0 + (s1 - s0) * frac), true)
   }
   return out
+}
+
+function u32le(n: number): Uint8Array {
+  const b = new Uint8Array(4)
+  b[0] = n & 0xff
+  b[1] = (n >>> 8) & 0xff
+  b[2] = (n >>> 16) & 0xff
+  b[3] = (n >>> 24) & 0xff
+  return b
+}
+
+function u16le(n: number): Uint8Array {
+  const b = new Uint8Array(2)
+  b[0] = n & 0xff
+  b[1] = (n >>> 8) & 0xff
+  return b
+}
+
+/** Build a 44-byte PCM WAV header (mono 16-bit). */
+export function buildWavHeader(sampleRate: number, dataBytes: number): Uint8Array {
+  const channels = 1
+  const bitsPerSample = 16
+  const blockAlign = (channels * bitsPerSample) / 8
+  const byteRate = sampleRate * blockAlign
+  const h = new Uint8Array(WAV_HEADER_BYTES)
+  const ascii = (s: string, at: number) => {
+    for (let i = 0; i < s.length; i++) h[at + i] = s.charCodeAt(i)
+  }
+  ascii("RIFF", 0)
+  h.set(u32le(36 + dataBytes), 4)
+  ascii("WAVE", 8)
+  ascii("fmt ", 12)
+  h.set(u32le(16), 16)
+  h.set(u16le(1), 20)
+  h.set(u16le(channels), 22)
+  h.set(u32le(sampleRate), 24)
+  h.set(u32le(byteRate), 28)
+  h.set(u16le(blockAlign), 32)
+  h.set(u16le(bitsPerSample), 34)
+  ascii("data", 36)
+  h.set(u32le(dataBytes), 40)
+  return h
+}
+
+/** ms of 16-bit mono PCM for `pcmBytes` at `sampleRate`. */
+export function pcmDurationMs(pcmBytes: number, sampleRate: number): number {
+  if (sampleRate <= 0) return 0
+  return Math.floor((pcmBytes / (sampleRate * 2)) * 1000)
 }
