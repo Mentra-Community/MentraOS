@@ -104,6 +104,7 @@ function resetMantleTestState() {
 let requestWifiSetup: (reason?: string, packageName?: string) => Promise<void>
 let routerPushSpy: jest.SpiedFunction<typeof router.push>
 let syncCoreDisplayOwner: () => void
+let syncGlassesPresentationState: (status: {state: string}) => void
 
 describe("MantleManager", () => {
   beforeAll(async () => {
@@ -120,6 +121,7 @@ describe("MantleManager", () => {
     await mantle.init()
     requestWifiSetup = (engine.configure as jest.Mock).mock.calls[0][0].ui.requestWifiSetup
     syncCoreDisplayOwner = (useAppStatusStore.subscribe as jest.Mock).mock.calls.at(-1)![0]
+    syncGlassesPresentationState = (engine.glasses.onStatus as jest.Mock).mock.calls.at(-1)![0]
   })
 
   afterEach(() => {
@@ -421,6 +423,21 @@ describe("MantleManager", () => {
     })
 
     expect(audioPlaybackService.play).not.toHaveBeenCalled()
+  })
+
+  it("cancels queued and active notification speech when glasses disconnect", () => {
+    const manager = mantle as any
+    manager.suppressedNotifications = 2
+    manager.scheduleSuppressedSummary()
+    const generation = manager.speechGeneration
+
+    syncGlassesPresentationState({state: "connected"})
+    syncGlassesPresentationState({state: "disconnected"})
+
+    expect(audioPlaybackService.stopForApp).toHaveBeenCalledWith("cloud.augmentos.notify")
+    expect(manager.suppressedSummaryTimer).toBeNull()
+    expect(manager.suppressedNotifications).toBe(0)
+    expect(manager.speechGeneration).toBe(generation + 1)
   })
 
   it("dismisses presentation and stops queued speech when Notify stops", async () => {

@@ -696,6 +696,20 @@ class MantleManager {
     const unsubscribeAppPresentationState = useAppStatusStore.subscribe(syncAppPresentationState)
     this.subs.push({remove: unsubscribeAppPresentationState})
 
+    // A remembered speaker-capable model survives disconnects, but its audio
+    // route does not. Tear down queued and active Notify speech on the
+    // connected -> disconnected transition so it cannot continue on the phone
+    // speaker. The generation bump also invalidates synthesis already in flight.
+    let glassesWereConnected = engine.glasses.status().state === "connected"
+    const unsubscribeGlassesPresentationState = engine.glasses.onStatus((status) => {
+      const glassesAreConnected = status.state === "connected"
+      if (glassesWereConnected && !glassesAreConnected) {
+        this.stopPhoneNotificationPresentation()
+      }
+      glassesWereConnected = glassesAreConnected
+    })
+    this.subs.push({remove: unsubscribeGlassesPresentationState})
+
     // (The device-status projection — onBluetoothStatus -> core store and
     // onGlassesStatus -> glasses store — moved into island's GlassesStatusProjection,
     // started by engine.start(), so the device->store feed reaches ANY host. Removed
