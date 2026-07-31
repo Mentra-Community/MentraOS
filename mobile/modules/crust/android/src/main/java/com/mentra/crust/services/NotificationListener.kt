@@ -14,13 +14,13 @@ import android.text.TextUtils
 import android.util.Base64
 import android.util.Log
 import com.mentra.crust.CrustModule
+import java.util.concurrent.ConcurrentHashMap
 
 class NotificationListener private constructor(private val context: Context) {
   companion object {
     private const val TAG = "CrustNotificationListener"
     private const val PREFS_NAME = "mentra_crust_notification_prefs"
     private const val PREF_LISTENER_ENABLED = "notification_listener_enabled"
-    private const val PREF_NOTIFICATIONS_ENABLED = "notifications_enabled"
     private const val PREF_NOTIFICATIONS_BLOCKLIST = "notifications_blocklist"
 
     @Volatile private var instance: NotificationListener? = null
@@ -36,14 +36,13 @@ class NotificationListener private constructor(private val context: Context) {
     }
 
     /**
-     * Persist the developer gate without constructing the listener singleton.
-     * When the gate is off (the default), app startup must not create the
-     * notification HandlerThread merely to disable it.
+     * Persist desired notification state without constructing the listener.
+     * The component stays enabled so Android can show it in notification-access
+     * Settings, but its service process only starts after access is granted.
      */
     fun setNotificationConfig(
       context: Context,
       listenerEnabled: Boolean,
-      notificationsEnabled: Boolean,
       blocklist: List<String>,
     ) {
       val applicationContext = context.applicationContext
@@ -52,38 +51,119 @@ class NotificationListener private constructor(private val context: Context) {
         .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         .edit()
         .putBoolean(PREF_LISTENER_ENABLED, listenerEnabled)
-        .putBoolean(PREF_NOTIFICATIONS_ENABLED, notificationsEnabled)
         .putStringSet(PREF_NOTIFICATIONS_BLOCKLIST, blocklistSet)
-        .apply()
+        .commit()
 
-      synchronized(this) {
-        instance?.applyConfig(listenerEnabled, notificationsEnabled, blocklistSet)
+      applyConfigToExisting(listenerEnabled, blocklistSet)
+
+      val permissionGranted = hasNotificationListenerPermission(applicationContext)
+      val shouldRun = listenerEnabled && permissionGranted
+      updateComponentState(
+        applicationContext,
+        enabled = listenerEnabled,
+        requestRebind = shouldRun,
+      )
+
+      if (!shouldRun) {
+        Log.d(TAG, "Notification listener prerequisites not met; service will not start")
+        return
       }
 
-      val component = ComponentName(applicationContext, NotificationListenerServiceImpl::class.java)
+      // SharedPreferences instances are cached per process, so also deliver the
+      // new values explicitly to an already-running isolated listener process.
+      NotificationProcessBridge.sendConfig(
+        applicationContext,
+        listenerEnabled,
+        blocklistSet,
+      )
+    }
+
+    /**
+     * Reconcile the component after an OS notification-access check.
+     *
+     * The permission flow calls this when the app returns from Settings, so a
+     * newly granted listener starts immediately. Without permission the service
+     * is not rebound and the isolated process is never started.
+     */
+    fun refreshComponentForPermission(context: Context): Boolean {
+      val applicationContext = context.applicationContext
+      val permissionGranted = hasNotificationListenerPermission(applicationContext)
+      val preferences = applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+      val listenerEnabled = preferences.getBoolean(PREF_LISTENER_ENABLED, false)
+      val blocklist =
+        preferences.getStringSet(PREF_NOTIFICATIONS_BLOCKLIST, emptySet())?.toSet() ?: emptySet()
+
+      val shouldRun = listenerEnabled && permissionGranted
+      updateComponentState(
+        applicationContext,
+        enabled = listenerEnabled,
+        requestRebind = shouldRun,
+      )
+      if (shouldRun) {
+        NotificationProcessBridge.sendConfig(
+          applicationContext,
+          listenerEnabled,
+          blocklist,
+        )
+      }
+      return permissionGranted
+    }
+
+    fun openNotificationListenerSettings(context: Context) {
+      val intent = Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
+      intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+      context.applicationContext.startActivity(intent)
+    }
+
+    private fun hasNotificationListenerPermission(context: Context): Boolean {
+      val packageName = context.packageName
+      val flat = Settings.Secure.getString(context.contentResolver, "enabled_notification_listeners")
+      if (TextUtils.isEmpty(flat)) return false
+
+      return flat.split(":").any { name ->
+        ComponentName.unflattenFromString(name)?.packageName == packageName
+      }
+    }
+
+    private fun updateComponentState(
+      context: Context,
+      enabled: Boolean,
+      requestRebind: Boolean,
+    ) {
+      val component = ComponentName(context, NotificationListenerServiceImpl::class.java)
       val newState =
-        if (listenerEnabled) {
+        if (enabled) {
           PackageManager.COMPONENT_ENABLED_STATE_ENABLED
         } else {
           PackageManager.COMPONENT_ENABLED_STATE_DISABLED
         }
-      val packageManager = applicationContext.packageManager
+      val packageManager = context.packageManager
       if (packageManager.getComponentEnabledSetting(component) != newState) {
         packageManager.setComponentEnabledSetting(
           component,
           newState,
           PackageManager.DONT_KILL_APP,
         )
-        if (listenerEnabled) {
-          NotificationListenerService.requestRebind(component)
-        }
+      }
+      if (enabled && requestRebind) {
+        runCatching { NotificationListenerService.requestRebind(component) }
+          .onFailure { Log.w(TAG, "Could not request notification-listener rebind", it) }
+      }
+    }
+
+    internal fun applyConfigToExisting(
+      listenerEnabled: Boolean,
+      blocklist: Set<String>,
+    ) {
+      synchronized(this) {
+        instance?.applyConfig(listenerEnabled, blocklist)
       }
     }
 
     fun isListenerEnabled(context: Context): Boolean {
-      return context
-        .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        .getBoolean(PREF_LISTENER_ENABLED, false)
+      val preferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+      return preferences.getBoolean(PREF_LISTENER_ENABLED, false) &&
+        hasNotificationListenerPermission(context)
     }
 
     /** Dispose the process singleton so a service rebind gets a live HandlerThread. */
@@ -96,6 +176,7 @@ class NotificationListener private constructor(private val context: Context) {
   }
 
   private val listeners = mutableListOf<OnNotificationReceivedListener>()
+  private val appNameCache = ConcurrentHashMap<String, String>()
 
   // Deduplication tracking with dedicated background thread. Using HandlerThread
   // keeps the service independent from the app lifecycle on newer Android versions.
@@ -107,43 +188,16 @@ class NotificationListener private constructor(private val context: Context) {
   private val preferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
   @Volatile private var listenerEnabled = preferences.getBoolean(PREF_LISTENER_ENABLED, false)
-  @Volatile private var notificationsEnabled = preferences.getBoolean(PREF_NOTIFICATIONS_ENABLED, false)
   @Volatile
   private var notificationsBlocklist =
     preferences.getStringSet(PREF_NOTIFICATIONS_BLOCKLIST, emptySet())?.toSet() ?: emptySet()
 
   private fun applyConfig(
     listenerEnabled: Boolean,
-    notificationsEnabled: Boolean,
     blocklist: Set<String>,
   ) {
     this.listenerEnabled = listenerEnabled
-    this.notificationsEnabled = notificationsEnabled
     notificationsBlocklist = blocklist
-  }
-
-  /** Check if notification listener permission is granted. */
-  fun hasNotificationListenerPermission(): Boolean {
-    val packageName = context.packageName
-    val flat = Settings.Secure.getString(context.contentResolver, "enabled_notification_listeners")
-
-    if (!TextUtils.isEmpty(flat)) {
-      val names = flat.split(":")
-      for (name in names) {
-        val componentName = ComponentName.unflattenFromString(name)
-        if (componentName != null && TextUtils.equals(packageName, componentName.packageName)) {
-          return true
-        }
-      }
-    }
-    return false
-  }
-
-  /** Open notification listener settings. */
-  fun openNotificationListenerSettings() {
-    val intent = Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
-    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-    context.startActivity(intent)
   }
 
   /** Add a listener for notifications. */
@@ -185,7 +239,7 @@ class NotificationListener private constructor(private val context: Context) {
    *   which reads 0 for channel-based notifications.
    */
   internal fun onNotificationPosted(sbn: StatusBarNotification, importance: Int? = null) {
-    if (!listenerEnabled || !notificationsEnabled) {
+    if (!listenerEnabled) {
       Log.d(TAG, "Notification listener disabled")
       return
     }
@@ -218,15 +272,6 @@ class NotificationListener private constructor(private val context: Context) {
       return
     }
 
-    val packageManager = context.packageManager
-    val appName =
-      try {
-        val appInfo = packageManager.getApplicationInfo(packageName, 0)
-        packageManager.getApplicationLabel(appInfo).toString()
-      } catch (_: Exception) {
-        packageName
-      }
-
     val notificationKey = "$packageName|$title|$text"
 
     synchronized(notificationBuffer) {
@@ -238,8 +283,22 @@ class NotificationListener private constructor(private val context: Context) {
       val task =
         Runnable {
           try {
+            // PackageManager label resolution can take tens of milliseconds on
+            // low-end devices. It belongs on this handler thread, not the
+            // NotificationListenerService main callback, and only once per app.
+            val appName =
+              appNameCache.getOrPut(packageName) {
+                try {
+                  val packageManager = context.packageManager
+                  val appInfo = packageManager.getApplicationInfo(packageName, 0)
+                  packageManager.getApplicationLabel(appInfo).toString()
+                } catch (_: Exception) {
+                  packageName
+                }
+              }
             Log.d(TAG, "Processing buffered notification from $appName")
             CrustModule.emitPhoneNotification(
+              context = context,
               notificationKey = sbn.key,
               packageName = packageName,
               appName = appName,
@@ -281,7 +340,7 @@ class NotificationListener private constructor(private val context: Context) {
 
   /** Called internally by the service when a notification is removed. */
   internal fun onNotificationRemoved(sbn: StatusBarNotification) {
-    if (!listenerEnabled || !notificationsEnabled) {
+    if (!listenerEnabled) {
       return
     }
 
@@ -291,6 +350,7 @@ class NotificationListener private constructor(private val context: Context) {
     Log.d(TAG, "Notification removed - package: $packageName, key: $notificationKey")
 
     CrustModule.emitPhoneNotificationDismissed(
+      context = context,
       notificationKey = notificationKey,
       packageName = packageName,
     )
@@ -396,7 +456,11 @@ class NotificationListenerServiceImpl : NotificationListenerService() {
     super.onListenerDisconnected()
     Log.d("CrustNotificationListener", "NotificationListenerService disconnected")
     if (NotificationListener.isListenerEnabled(applicationContext)) {
-      requestRebind(ComponentName(this, NotificationListenerServiceImpl::class.java))
+      runCatching {
+        requestRebind(ComponentName(this, NotificationListenerServiceImpl::class.java))
+      }.onFailure {
+        Log.w("CrustNotificationListener", "Could not request notification-listener rebind", it)
+      }
     }
   }
 

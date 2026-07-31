@@ -4,8 +4,8 @@ Reproduced 2026-07-29 on a moto g play 2024 (Android 14, API 34), Mentra 2.12.0.
 This is the crash behind the "emergency kill switch" in PR #3562, which disabled
 the Android notification listener by default and has blocked OS-1821 since.
 
-Native `.kt` changes are out of scope for me, so this is a spec rather than a
-patch.
+This document records both the reproduced root cause and the native isolation
+implemented to remove it.
 
 ## The ANR
 
@@ -49,12 +49,12 @@ The device is RAM-starved and swapping.
 
 ## What is actually happening
 
-A notification arrives while the Mentra App is **not running**. Android starts
-the process specifically to deliver it, and because
-`NotificationListenerServiceImpl` lives in the main process, `Application.onCreate`
-runs first — which boots the entire React Native runtime, including SoLoader
-opening the APK and parsing its zip central directory to build a native-library
-dependency cache.
+Before the fix, a notification arriving while the Mentra App was **not running**
+made Android start the process specifically to deliver it. Because
+`NotificationListenerServiceImpl` lived in the main process,
+`Application.onCreate` ran first — booting the entire React Native runtime,
+including SoLoader opening the APK and parsing its zip central directory to
+build a native-library dependency cache.
 
 All of that has to finish inside the service-start ANR window. On a fast phone it
 does. On a budget device under memory pressure it does not, and the system kills
@@ -66,17 +66,17 @@ shares a process with the app.
 
 ## Why this explains the original report
 
-| Observation | Explanation |
-| --- | --- |
-| "Crashes when he gets a lot of notifications" | Each notification arriving at a dead process is another cold start, and another chance to exceed the window. Volume raises the odds; it is not the cause. |
-| Logs ended before the failure | Background ANR: silent kill, no stack trace in app logs. |
-| The kill switch worked | A disabled component is never bound, so notifications never wake the process, so there is no cold start to time out. |
-| Pixel 8 and Z Fold 6 never reproduced | Both are fast flagships on API 36. 250-notification bursts on each survived with no ANR. This is a low-RAM device problem, not an Android-version problem. |
-| Only some users | Depends on device class and on whether the app happens to be dead when notifications land. |
+| Observation                                   | Explanation                                                                                                                                                |
+| --------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| "Crashes when he gets a lot of notifications" | Each notification arriving at a dead process is another cold start, and another chance to exceed the window. Volume raises the odds; it is not the cause.  |
+| Logs ended before the failure                 | Background ANR: silent kill, no stack trace in app logs.                                                                                                   |
+| The kill switch worked                        | A disabled component is never bound, so notifications never wake the process, so there is no cold start to time out.                                       |
+| Pixel 8 and Z Fold 6 never reproduced         | Both are fast flagships on API 36. 250-notification bursts on each survived with no ANR. This is a low-RAM device problem, not an Android-version problem. |
+| Only some users                               | Depends on device class and on whether the app happens to be dead when notifications land.                                                                 |
 
-## Fix
+## Fix implemented
 
-**Preferred — give the listener its own process.**
+The listener now runs in its own process:
 
 ```xml
 <service
@@ -85,40 +85,47 @@ shares a process with the app.
   ... />
 ```
 
-A separate process gets its own `Application.onCreate`, so the listener starts
-without booting React Native at all. Cold start becomes cheap and the ANR window
-stops being a problem.
+Android still creates the configured `Application` in every process, so the
+process declaration is not sufficient on its own. The Crust config plugin also
+injects a `MainApplication.onCreate` guard that returns immediately in `:notif`,
+before `loadReactNative()`. `NotificationProcess` deliberately has no Expo or
+React dependencies, keeping that path cheap.
 
-The catch: `NotificationListener` currently calls `CrustModule.emitPhoneNotification(...)`
-straight into JS, which no longer works across a process boundary. That handoff
-needs a real IPC hop — bind back to the main process, or persist and let the main
-process drain on next start. Notifications arriving while the app is dead should
-probably be queued rather than dropped, which is a product decision worth making
-explicitly.
+`NotificationListener` hands events to the live app process through a
+signature-protected package broadcast. Its receiving side is registered
+dynamically by `CrustModule`; therefore a notification can reach JS while the app
+runtime is alive, but cannot cold-start the main process while it is dead. There
+are no running miniapps to receive an event in a dead app process, so events are
+not queued for a later session.
 
-**Smaller alternative — skip RN init when the process was started for the listener.**
+Notification configuration uses a second explicit broadcast into `:notif`.
+That is necessary because Android caches `SharedPreferences` per process. The
+committed preferences initialize a new listener process, while the broadcast
+updates a listener that is already alive.
 
-In `MainApplication.onCreate`, detect that the process was created for the
-notification listener and return before `loadReactNative()`. Less invasive, but it
-leaves the two coupled and every future `Application.onCreate` addition can
-reintroduce the problem.
+With this isolation in place, listening is desired by default again. Native code
+keeps the component enabled so it remains discoverable in Android's
+notification-access Settings, but does not rebind the service or start `:notif`
+until access is granted. Opening Notify (or another miniapp that requires
+`READ_NOTIFICATIONS`) runs the permission flow, and the successful post-Settings
+permission check rebinds the listener immediately.
+`android_notification_listener_enabled` remains available in Debug Settings as
+an emergency kill switch.
 
 ## Secondary hardening (independent of the above)
 
-Found while investigating; worth doing regardless, none of them is the cause.
+The same change also:
 
-1. **Two unguarded `requestRebind()` calls** in `NotificationListener.kt`
-   (~line 78 and ~line 375). `requestRebind` can throw when the component lacks
-   notification access, and the `onListenerDisconnected` one fires exactly when
-   access is revoked. Neither is wrapped.
-2. **`getApplicationInfo` + `getApplicationLabel` run on the main thread per
-   notification**, before the handler thread hop, with no cache. Measured ~16ms
-   per notification on a Pixel 8. Cache `packageName -> label` and hop threads
-   first.
-3. **`android:exported="false"`** on the service is non-standard for a
-   `NotificationListenerService`; Google's documented sample uses `exported="true"`
-   and relies on `BIND_NOTIFICATION_LISTENER_SERVICE` to restrict binding. It
-   demonstrably works on API 36, so this is tidiness, not a known break.
+1. Guards both `requestRebind()` calls, including the one that can race
+   notification-access revocation.
+2. Moves `getApplicationInfo` + `getApplicationLabel` off the service callback
+   thread and caches labels by package. This measured ~16ms per notification on
+   a Pixel 8 before the fix.
+
+One non-blocking discrepancy remains: **`android:exported="false"`** on the service is non-standard for a
+`NotificationListenerService`; Google's documented sample uses `exported="true"`
+and relies on `BIND_NOTIFICATION_LISTENER_SERVICE` to restrict binding. It
+demonstrably works on API 36, so this is tidiness, not a known break.
 
 ## Verifying a fix
 

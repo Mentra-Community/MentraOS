@@ -149,11 +149,6 @@ describe("MantleManager", () => {
         core_token: "",
       }),
     )
-    expect(bluetoothSdkMock.updateBluetoothSettings).not.toHaveBeenCalledWith(
-      expect.objectContaining({
-        notifications_enabled: expect.anything(),
-      }),
-    )
     for (const nonSdkKey of ["always_on_status_bar"]) {
       expect(bluetoothSdkMock.updateBluetoothSettings).not.toHaveBeenCalledWith(
         expect.objectContaining({
@@ -167,7 +162,7 @@ describe("MantleManager", () => {
         twelve_hour_time: true,
       }),
     )
-    expect(crustModuleMock.setNotificationConfig).toHaveBeenCalledWith(false, true, [])
+    expect(crustModuleMock.setNotificationConfig).toHaveBeenCalledWith(true, [])
     expect(getBluetoothSdkListenerCount("local_transcription")).toBe(1)
 
     emitBluetoothSdkEvent("bluetooth_status", {searching: true, otherBtConnected: true})
@@ -213,21 +208,15 @@ describe("MantleManager", () => {
     )
   })
 
-  it("syncs notification enablement and blocklist settings to Crust only", async () => {
+  it("syncs the notification blocklist to Crust without an extra listener gate", async () => {
     ;(bluetoothSdkMock.updateBluetoothSettings as jest.Mock).mockClear()
     ;(crustModuleMock.setNotificationConfig as jest.Mock).mockClear()
 
-    await useSettingsStore.getState().setSetting(SETTINGS.notifications_enabled.key, false, false)
     await useSettingsStore.getState().setSetting(SETTINGS.notifications_blocklist.key, ["com.blocked"], false)
 
     await waitFor(() => {
-      expect(crustModuleMock.setNotificationConfig).toHaveBeenLastCalledWith(false, false, ["com.blocked"])
+      expect(crustModuleMock.setNotificationConfig).toHaveBeenLastCalledWith(true, ["com.blocked"])
     })
-    expect(bluetoothSdkMock.updateBluetoothSettings).not.toHaveBeenCalledWith(
-      expect.objectContaining({
-        notifications_enabled: expect.anything(),
-      }),
-    )
     expect(bluetoothSdkMock.updateBluetoothSettings).not.toHaveBeenCalledWith(
       expect.objectContaining({
         notifications_blocklist: expect.anything(),
@@ -312,6 +301,9 @@ describe("MantleManager", () => {
   it("routes notification events without the retired V1 upload", async () => {
     // The Cloud V1 REST upload is gone; the events still flow through the
     // local-miniapp forward path without a server roundtrip.
+    useAppStatusStore.setState({
+      apps: [{packageName: "cloud.augmentos.notify", type: "background", running: true}] as any,
+    })
     const forwardEvent = jest.spyOn(localMiniappRuntime, "forwardEvent")
     emitCrustEvent("phone_notification", {
       notificationId: "n-1",
@@ -377,6 +369,31 @@ describe("MantleManager", () => {
     expect(localDisplayManager.dismiss).toHaveBeenCalledTimes(2)
     expect(localDisplayManager.dismiss).toHaveBeenLastCalledWith("cloud.augmentos.notify")
     await Promise.resolve()
+  })
+
+  it("forwards notifications without presenting them when Notify is not running", () => {
+    const forwardEvent = jest.spyOn(localMiniappRuntime, "forwardEvent")
+
+    emitCrustEvent("phone_notification", {
+      notificationId: "n-hidden",
+      app: "Calendar",
+      title: "Standup",
+      content: "Daily sync",
+      priority: 0,
+      timestamp: "12345",
+      packageName: "com.calendar",
+    })
+
+    expect(forwardEvent).toHaveBeenCalledWith("phone_notification", {
+      notificationId: "n-hidden",
+      app: "Calendar",
+      title: "Standup",
+      content: "Daily sync",
+      priority: "0",
+      timestamp: 12345,
+      packageName: "com.calendar",
+    })
+    expect(localDisplayManager.request).not.toHaveBeenCalled()
   })
 
   it("tracks OTA status without allowing backward progress or stale terminal update hints", async () => {

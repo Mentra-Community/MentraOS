@@ -26,7 +26,7 @@ declare class CrustModule extends NativeModule<CrustModuleEvents> {
   setDeferredSystemGestures(edges: Array<"top" | "bottom" | "left" | "right" | "all">): Promise<void>
 
   // MentraOS Notification Commands
-  setNotificationConfig(listenerEnabled: boolean, notificationsEnabled: boolean, blocklist: string[]): Promise<void>
+  setNotificationConfig(listenerEnabled: boolean, blocklist: string[]): Promise<void>
   getInstalledApps(): Promise<InstalledApp[]>
   getInstalledAppsForNotifications(): Promise<InstalledApp[]>
   hasNotificationListenerPermission(): Promise<boolean>
