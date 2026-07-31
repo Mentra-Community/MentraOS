@@ -34,6 +34,9 @@ export async function checkAndRequestNotificationAccessSpecialPermission(): Prom
           () => CrustModule.hasNotificationListenerPermission(),
           (listener) => AppState.addEventListener("change", listener),
         )
+        if (granted) {
+          await CrustModule.refreshNotificationListener()
+        }
         finish(granted ? "granted" : "denied")
       } catch (error) {
         console.error("Error completing notification settings request:", error)

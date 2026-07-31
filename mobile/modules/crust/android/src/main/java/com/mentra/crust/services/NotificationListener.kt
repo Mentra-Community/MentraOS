@@ -47,35 +47,23 @@ class NotificationListener private constructor(private val context: Context) {
     ) {
       val applicationContext = context.applicationContext
       val blocklistSet = blocklist.toSet()
-      applicationContext
-        .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        .edit()
-        .putBoolean(PREF_LISTENER_ENABLED, listenerEnabled)
-        .putStringSet(PREF_NOTIFICATIONS_BLOCKLIST, blocklistSet)
-        .commit()
-
-      applyConfigToExisting(listenerEnabled, blocklistSet)
+      persistConfig(applicationContext, listenerEnabled, blocklistSet)
 
       val permissionGranted = hasNotificationListenerPermission(applicationContext)
       val shouldRun = listenerEnabled && permissionGranted
+      val componentChanged = updateComponentState(applicationContext, enabled = listenerEnabled)
 
-      // Deliver the kill switch before disabling the component so an already
-      // bound isolated listener stops immediately instead of waiting for the OS
-      // to tear it down. Do not send without access: an explicit broadcast to
-      // the :notif receiver would otherwise start that process unnecessarily.
+      // Keep the isolated process's own SharedPreferences cache and live
+      // singleton in sync. A rebind is only needed when enabling the component;
+      // ordinary blocklist updates must not restart a healthy listener.
       if (permissionGranted) {
         NotificationProcessBridge.sendConfig(
           applicationContext,
           listenerEnabled,
           blocklistSet,
+          requestRebind = shouldRun && componentChanged,
         )
       }
-
-      updateComponentState(
-        applicationContext,
-        enabled = listenerEnabled,
-        requestRebind = shouldRun,
-      )
 
       if (!shouldRun) {
         Log.d(TAG, "Notification listener prerequisites not met; service will not start")
@@ -99,18 +87,17 @@ class NotificationListener private constructor(private val context: Context) {
         preferences.getStringSet(PREF_NOTIFICATIONS_BLOCKLIST, emptySet())?.toSet() ?: emptySet()
 
       val shouldRun = listenerEnabled && permissionGranted
+      updateComponentState(applicationContext, enabled = listenerEnabled)
       if (permissionGranted) {
         NotificationProcessBridge.sendConfig(
           applicationContext,
           listenerEnabled,
           blocklist,
+          // This method is reserved for the confirmed permission-grant path.
+          // The :notif receiver persists the config before requesting rebind.
+          requestRebind = shouldRun,
         )
       }
-      updateComponentState(
-        applicationContext,
-        enabled = listenerEnabled,
-        requestRebind = shouldRun,
-      )
       return permissionGranted
     }
 
@@ -120,7 +107,7 @@ class NotificationListener private constructor(private val context: Context) {
       context.applicationContext.startActivity(intent)
     }
 
-    private fun hasNotificationListenerPermission(context: Context): Boolean {
+    fun hasNotificationListenerPermission(context: Context): Boolean {
       val packageName = context.packageName
       val flat = Settings.Secure.getString(context.contentResolver, "enabled_notification_listeners")
       if (TextUtils.isEmpty(flat)) return false
@@ -133,8 +120,7 @@ class NotificationListener private constructor(private val context: Context) {
     private fun updateComponentState(
       context: Context,
       enabled: Boolean,
-      requestRebind: Boolean,
-    ) {
+    ): Boolean {
       val component = ComponentName(context, NotificationListenerServiceImpl::class.java)
       val newState =
         if (enabled) {
@@ -149,11 +135,32 @@ class NotificationListener private constructor(private val context: Context) {
           newState,
           PackageManager.DONT_KILL_APP,
         )
+        return true
       }
-      if (enabled && requestRebind) {
-        runCatching { NotificationListenerService.requestRebind(component) }
-          .onFailure { Log.w(TAG, "Could not request notification-listener rebind", it) }
+      return false
+    }
+
+    internal fun persistConfig(
+      context: Context,
+      listenerEnabled: Boolean,
+      blocklist: Set<String>,
+    ) {
+      val committed =
+        context
+          .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+          .edit()
+          .putBoolean(PREF_LISTENER_ENABLED, listenerEnabled)
+          .putStringSet(PREF_NOTIFICATIONS_BLOCKLIST, blocklist)
+          .commit()
+      if (!committed) {
+        Log.w(TAG, "Could not persist notification-listener config")
       }
+    }
+
+    internal fun requestListenerRebind(context: Context) {
+      val component = ComponentName(context, NotificationListenerServiceImpl::class.java)
+      runCatching { NotificationListenerService.requestRebind(component) }
+        .onFailure { Log.w(TAG, "Could not request notification-listener rebind", it) }
     }
 
     internal fun applyConfigToExisting(

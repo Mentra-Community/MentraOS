@@ -31,6 +31,9 @@ class CrustModule extends NativeModule<CrustModuleEvents> {
   async hasNotificationListenerPermission() {
     return false
   }
+  async refreshNotificationListener() {
+    return false
+  }
   async openNotificationListenerSettings() {
     return false
   }

@@ -100,15 +100,18 @@ not queued for a later session.
 
 Notification configuration uses a second explicit broadcast into `:notif`.
 That is necessary because Android caches `SharedPreferences` per process. The
-committed preferences initialize a new listener process, while the broadcast
-updates a listener that is already alive.
+receiver commits the payload inside `:notif` before updating the live listener,
+so a later service recreation reads the same process-local config. Ordinary
+blocklist changes update the listener without rebinding it; the confirmed
+permission-grant path requests its rebind only after that local commit.
 
 With this isolation in place, listening is desired by default again. Native code
 keeps the component enabled so it remains discoverable in Android's
 notification-access Settings, but does not rebind the service or start `:notif`
 until access is granted. Opening Notify (or another miniapp that requires
 `READ_NOTIFICATIONS`) runs the permission flow, and the successful post-Settings
-permission check rebinds the listener immediately.
+grant explicitly rebinds the listener immediately. Routine permission checks are
+read-only and never restart the service.
 `android_notification_listener_enabled` remains available in Debug Settings as
 an emergency kill switch.
 
