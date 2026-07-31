@@ -3,6 +3,7 @@ import {router} from "expo-router"
 
 import mantle from "@/services/MantleManager"
 import {
+  audioPlaybackService,
   localDisplayManager,
   localMiniappRuntime,
   useAppStatusStore,
@@ -10,6 +11,9 @@ import {
   useDisplayStore,
   useSettingsStore,
 } from "@mentra/engine/internal"
+// This test resets the concrete glasses store; the package-level Jest mock does
+// not expose it through @mentra/engine.
+// eslint-disable-next-line no-restricted-imports
 import {isGlassesConnected, useGlassesStore} from "../../modules/engine/src/stores/glasses"
 import {engine, SETTINGS} from "@mentra/engine"
 import {crustModuleMock, emitCrustEvent, resetCrustModuleMock} from "@/test-utils/mockCrustModule"
@@ -394,6 +398,33 @@ describe("MantleManager", () => {
       packageName: "com.calendar",
     })
     expect(localDisplayManager.request).not.toHaveBeenCalled()
+  })
+
+  it("dismisses presentation and stops queued speech when Notify stops", async () => {
+    useAppStatusStore.setState({
+      apps: [{packageName: "cloud.augmentos.notify", type: "background", running: true}] as any,
+    })
+    syncCoreDisplayOwner()
+    emitCrustEvent("phone_notification", {
+      notificationId: "n-active",
+      app: "Calendar",
+      title: "Standup",
+      content: "Daily sync",
+      priority: 0,
+      timestamp: "12345",
+      packageName: "com.calendar",
+    })
+    ;(localDisplayManager.dismiss as jest.Mock).mockClear()
+    ;(audioPlaybackService.stopForApp as jest.Mock).mockClear()
+
+    useAppStatusStore.setState({
+      apps: [{packageName: "cloud.augmentos.notify", type: "background", running: false}] as any,
+    })
+    syncCoreDisplayOwner()
+
+    expect(localDisplayManager.dismiss).toHaveBeenCalledWith("cloud.augmentos.notify")
+    expect(audioPlaybackService.stopForApp).toHaveBeenCalledWith("cloud.augmentos.notify")
+    await Promise.resolve()
   })
 
   it("tracks OTA status without allowing backward progress or stale terminal update hints", async () => {
