@@ -23,6 +23,7 @@ import com.mentra.asg_client.reporting.domains.BluetoothReporting;
 import com.mentra.asg_client.service.core.AsgClientService;
 import com.mentra.asg_client.service.core.processors.ChunkReassembler;
 import com.mentra.asg_client.service.core.processors.ChunkedMessageProtocolStrategy;
+import com.mentra.asg_client.service.utils.SysProp;
 import com.mentra.asg_client.settings.AsgSettings;
 import com.mentra.asg_client.utils.WakeLockManager;
 
@@ -1207,12 +1208,42 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
             if (result == BesUartTransportCoordinator.SystemVersionResult.READY) {
                 linkState.srSyvrParsed(null);
+                requestBtMacAddressIfMissing();
             }
 
             return true; // Handled
         } catch (Exception e) {
             Log.e(TAG, "💥 Error parsing sr_syvr response", e);
             return false; // Let it fall through to normal processing
+        }
+    }
+
+    /**
+     * Request the BES Bluetooth address only after {@code sr_syvr} has proven the UART link.
+     *
+     * <p>The service's startup request can run while the transport is still discovering its baud,
+     * in which case normal writes are intentionally rejected. Retrying on the ready edge ensures
+     * the BES-sourced identity reaches {@code sr_btaddr} and can be reported to the phone.
+     */
+    private void requestBtMacAddressIfMissing() {
+        if (!SysProp.getBesBtMac(context).isEmpty()) {
+            return;
+        }
+
+        try {
+            JSONObject command = new JSONObject();
+            command.put("C", "cs_btaddr");
+            command.put("V", 1);
+            command.put("B", "");
+
+            boolean sent = sendMessage(command.toString().getBytes(StandardCharsets.UTF_8));
+            if (sent) {
+                Log.i(TAG, "Requested BES Bluetooth address after UART link became ready");
+            } else {
+                Log.w(TAG, "Could not request BES Bluetooth address after UART link became ready");
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to request BES Bluetooth address after UART link became ready", e);
         }
     }
 
