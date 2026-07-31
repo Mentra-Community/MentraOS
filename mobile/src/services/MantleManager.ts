@@ -20,7 +20,6 @@ import {
   gallerySyncService,
   localDisplayManager,
   localMiniappRuntime,
-  localSttFallbackCoordinator,
   micStateCoordinator,
   miniappLauncher,
   offlineSpeechModelService,
@@ -116,6 +115,37 @@ class MantleManager {
   }
 
   private constructor() {}
+
+  private isNotifyRunning(): boolean {
+    return useAppStatusStore
+      .getState()
+      .apps.some((miniapp) => miniapp.packageName === notifyPackageName && miniapp.running)
+  }
+
+  /**
+   * Stop every wearer-facing notification artifact as soon as Notify stops.
+   * Event forwarding remains independent and continues for subscribed miniapps.
+   */
+  private stopPhoneNotificationPresentation(): void {
+    this.activePhoneNotificationId = null
+    localDisplayManager.dismiss(notifyPackageName)
+
+    // Invalidate synthesis already in flight before stopping active playback.
+    // Its completion callback sees the stale generation and cannot reopen the
+    // quiet window after this reset.
+    this.speechGeneration += 1
+    void Promise.resolve(audioPlaybackService.stopForApp(notifyPackageName)).catch((error) =>
+      console.warn("MantleManager: failed to stop notification audio", error),
+    )
+
+    if (this.suppressedSummaryTimer !== null) {
+      BgTimer.clearTimeout(this.suppressedSummaryTimer)
+      this.suppressedSummaryTimer = null
+    }
+    this.suppressedNotifications = 0
+    this.speakingNotification = false
+    this.lastSpokenAt = 0
+  }
 
   /**
    * Read a phone notification aloud, for glasses that have no screen.
@@ -645,15 +675,21 @@ class MantleManager {
     // temporary background frames (notably phone notifications). Keep its
     // core owner projected from the app store so a notification can briefly
     // replace Captions and then restore the latest caption frame.
-    const syncCoreDisplayOwner = () => {
-      const coreApp = useAppStatusStore
-        .getState()
-        .apps.find((app) => app.running && (app.type === "standard" || !app.type))
+    let notifyWasRunning = this.isNotifyRunning()
+    const syncAppPresentationState = () => {
+      const apps = useAppStatusStore.getState().apps
+      const coreApp = apps.find((app) => app.running && (app.type === "standard" || !app.type))
       localDisplayManager.onCoreAppChange(coreApp?.packageName ?? null)
+
+      const notifyIsRunning = apps.some((app) => app.packageName === notifyPackageName && app.running)
+      if (notifyWasRunning && !notifyIsRunning) {
+        this.stopPhoneNotificationPresentation()
+      }
+      notifyWasRunning = notifyIsRunning
     }
-    syncCoreDisplayOwner()
-    const unsubscribeCoreDisplayOwner = useAppStatusStore.subscribe(syncCoreDisplayOwner)
-    this.subs.push({remove: unsubscribeCoreDisplayOwner})
+    syncAppPresentationState()
+    const unsubscribeAppPresentationState = useAppStatusStore.subscribe(syncAppPresentationState)
+    this.subs.push({remove: unsubscribeAppPresentationState})
 
     // (The device-status projection — onBluetoothStatus -> core store and
     // onGlassesStatus -> glasses store — moved into island's GlassesStatusProjection,
@@ -763,10 +799,7 @@ class MantleManager {
         // and no speech may interrupt the wearer. This also keeps presentation
         // intentionally unavailable on iOS while Notify is omitted from the
         // built-in catalog there.
-        const notifyIsRunning = useAppStatusStore
-          .getState()
-          .apps.some((miniapp) => miniapp.packageName === notifyPackageName && miniapp.running)
-        if (!notifyIsRunning) return
+        if (!this.isNotifyRunning()) return
 
         // Cloud V1 used to relay this event to the Notify miniapp, which then
         // painted the glasses. Notify is now an offline built-in, so render the
@@ -877,7 +910,7 @@ class MantleManager {
       // app end-of-life.
 
       this.subs.push(
-        BluetoothSdk.addListener("mic_lc3", (event) => {
+        BluetoothSdk.addListener("mic_lc3", (_event) => {
           this.noteMicDataReceived()
 
           // console.log("MANTLE: Received mic_lc3 event from Bluetooth SDK", event.lc3.length)

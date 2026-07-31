@@ -77,14 +77,20 @@ class CrustModule : Module() {
   // display, send, etc.) would be silently dropped on Android.
   @Volatile private var runtimeInstalled: Boolean = false
   private var notificationEventReceiver: BroadcastReceiver? = null
+  private var notificationBridgeContext: android.content.Context? = null
 
   private fun registerNotificationBridgeIfPossible(): Boolean {
     if (notificationEventReceiver != null) return true
     val context = appContext.reactContext ?: appContext.currentActivity ?: return false
+    val applicationContext = context.applicationContext
     notificationEventReceiver =
-      NotificationProcessBridge.register(context) { eventName, data ->
+      NotificationProcessBridge.register(applicationContext) { eventName, data ->
         emitEvent(eventName, data)
       }
+    // Keep the exact long-lived context used to register the receiver. Expo may
+    // clear reactContext/currentActivity before OnDestroy, but Android still
+    // requires this receiver to be unregistered when the module is recreated.
+    notificationBridgeContext = applicationContext
     return true
   }
 
@@ -135,12 +141,13 @@ class CrustModule : Module() {
     }
 
     OnDestroy {
-      val context = appContext.reactContext ?: appContext.currentActivity
+      val context = notificationBridgeContext
       val receiver = notificationEventReceiver
       if (context != null && receiver != null) {
         NotificationProcessBridge.unregister(context, receiver)
       }
       notificationEventReceiver = null
+      notificationBridgeContext = null
       eventEmitter = null
     }
 
