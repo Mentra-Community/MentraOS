@@ -3,8 +3,12 @@ import {describe, expect, test} from "bun:test"
 import {
   appendQueryParam,
   approxBase64ByteLength,
+  buildWavHeader,
+  ELEVENLABS_RECORDING_BLOB_KEY,
   parsePcmSampleRate,
+  pcmDurationMs,
   resamplePcm16Le,
+  WAV_HEADER_BYTES,
 } from "./elevenLabsHelpers"
 
 describe("elevenLabsHelpers", () => {
@@ -41,5 +45,22 @@ describe("elevenLabsHelpers", () => {
     const out = resamplePcm16Le(input, 16000, 32000)
     expect(out.byteLength).toBe(8)
     expect(resamplePcm16Le(input, 16000, 16000)).toBe(input)
+  })
+
+  test("buildWavHeader writes RIFF sizes for PCM data", () => {
+    const dataBytes = 32000
+    const h = buildWavHeader(16000, dataBytes)
+    expect(h.byteLength).toBe(WAV_HEADER_BYTES)
+    expect(String.fromCharCode(...h.slice(0, 4))).toBe("RIFF")
+    expect(String.fromCharCode(...h.slice(8, 12))).toBe("WAVE")
+    const view = new DataView(h.buffer)
+    expect(view.getUint32(4, true)).toBe(36 + dataBytes)
+    expect(view.getUint32(24, true)).toBe(16000)
+    expect(view.getUint32(40, true)).toBe(dataBytes)
+  })
+
+  test("pcmDurationMs and fixed blob key", () => {
+    expect(pcmDurationMs(32000, 16000)).toBe(1000)
+    expect(ELEVENLABS_RECORDING_BLOB_KEY).toBe("elevenlabs-conversation.wav")
   })
 })

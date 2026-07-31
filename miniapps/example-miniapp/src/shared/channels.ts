@@ -93,6 +93,12 @@ export interface Channels {
 
   /** Stop ElevenLabs ConvAI session and release mic. */
   "elevenlabs:stop": Rpc<Record<string, never>, {ok: true}>
+
+  /** Play the last saved mic recording from phone storage. */
+  "elevenlabs:play-recording": Rpc<Record<string, never>, {ok: true}>
+
+  /** Stop playback of the saved mic recording. */
+  "elevenlabs:stop-playback": Rpc<Record<string, never>, {ok: true}>
 }
 
 declare global {

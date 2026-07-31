@@ -17,6 +17,8 @@ import {withCrustAndroidBuildContract} from "./withAndroid"
  *   both fails the release build with duplicate classes)
  * - core-library desugaring (crust's AAR metadata requires it of embedding
  *   apps — the Nav SDK uses newer core libs)
+ * - a generated MainApplication process guard so the notification-listener
+ *   process never initializes React Native
  */
 const withCrust: ConfigPlugin = (config) => {
   return withCrustAndroidBuildContract(config)

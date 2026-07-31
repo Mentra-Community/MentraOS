@@ -37,7 +37,9 @@ export const SETTINGS: Record<string, Setting> = {
   debug_mode: {key: "debug_mode", defaultValue: () => __DEV__, writable: true, saveOnServer: true, persist: true},
   android_notification_listener_enabled: {
     key: "android_notification_listener_enabled",
-    defaultValue: () => false,
+    // Operational kill switch. The listener now runs in a guarded lightweight
+    // process, so normal installs can safely capture notifications by default.
+    defaultValue: () => true,
     writable: true,
     saveOnServer: true,
     persist: true,
@@ -647,13 +649,6 @@ export const SETTINGS: Record<string, Setting> = {
     persist: true,
   },
   // notifications
-  notifications_enabled: {
-    key: "notifications_enabled",
-    defaultValue: () => true,
-    writable: true,
-    saveOnServer: true,
-    persist: true,
-  },
   notifications_blocklist: {
     key: "notifications_blocklist",
     defaultValue: () => [],
@@ -957,6 +952,22 @@ export const useSettingsStore = create<SettingsState>()(
           settings: {...state.settings, ...loadedSettings},
         }))
 
+        // This hidden debug switch originally shipped default-off while the
+        // notification-listener cold-start ANR was being investigated. Now
+        // that the listener runs in its own guarded process, migrate existing
+        // installs to the new default once; later explicit debug changes still
+        // persist normally.
+        const NOTIFICATION_LISTENER_MIGRATION_KEY = "migration:android_notification_listener_default_on_v1"
+        const notificationListenerMigrationDone = storage.load<boolean>(NOTIFICATION_LISTENER_MIGRATION_KEY)
+        if (notificationListenerMigrationDone.is_error() || !notificationListenerMigrationDone.value) {
+          const result = await get().setSetting(SETTINGS.android_notification_listener_enabled.key, true, false)
+          if (result.is_error()) {
+            console.log("SETTINGS: notification listener migration failed:", result.error)
+          } else {
+            storage.save(NOTIFICATION_LISTENER_MIGRATION_KEY, true)
+          }
+        }
+
         // One-time migration: force android_blur=false for existing users.
         // The setting's default is already false; this migration covers users
         // who explicitly opted into Android blur effects before we discovered
@@ -1050,7 +1061,6 @@ export const useSetting = <T = any>(key: string): [T, (value: T) => AsyncResult<
   const setSetting = useSettingsStore((state) => state.setSetting)
   return [value, (newValue: T) => setSetting(key, newValue)]
 }
-
 
 
 
