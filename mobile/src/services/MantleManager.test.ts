@@ -400,6 +400,29 @@ describe("MantleManager", () => {
     expect(localDisplayManager.request).not.toHaveBeenCalled()
   })
 
+  it("does not speak notifications through the phone after glasses disconnect", () => {
+    useAppStatusStore.setState({
+      apps: [{packageName: "cloud.augmentos.notify", type: "background", running: true}] as any,
+    })
+    ;(engine.glasses.status as jest.Mock).mockReturnValue({state: "disconnected"})
+    ;(engine.glasses.capabilities as jest.Mock).mockReturnValue({
+      hasDisplay: false,
+      hasSpeaker: true,
+    })
+
+    emitCrustEvent("phone_notification", {
+      notificationId: "n-disconnected",
+      app: "Messages",
+      title: "Private",
+      content: "Do not read on phone",
+      priority: 0,
+      timestamp: "12345",
+      packageName: "com.messages",
+    })
+
+    expect(audioPlaybackService.play).not.toHaveBeenCalled()
+  })
+
   it("dismisses presentation and stops queued speech when Notify stops", async () => {
     useAppStatusStore.setState({
       apps: [{packageName: "cloud.augmentos.notify", type: "background", running: true}] as any,

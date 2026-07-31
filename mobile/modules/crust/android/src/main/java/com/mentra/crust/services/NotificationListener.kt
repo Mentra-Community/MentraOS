@@ -58,6 +58,19 @@ class NotificationListener private constructor(private val context: Context) {
 
       val permissionGranted = hasNotificationListenerPermission(applicationContext)
       val shouldRun = listenerEnabled && permissionGranted
+
+      // Deliver the kill switch before disabling the component so an already
+      // bound isolated listener stops immediately instead of waiting for the OS
+      // to tear it down. Do not send without access: an explicit broadcast to
+      // the :notif receiver would otherwise start that process unnecessarily.
+      if (permissionGranted) {
+        NotificationProcessBridge.sendConfig(
+          applicationContext,
+          listenerEnabled,
+          blocklistSet,
+        )
+      }
+
       updateComponentState(
         applicationContext,
         enabled = listenerEnabled,
@@ -68,14 +81,6 @@ class NotificationListener private constructor(private val context: Context) {
         Log.d(TAG, "Notification listener prerequisites not met; service will not start")
         return
       }
-
-      // SharedPreferences instances are cached per process, so also deliver the
-      // new values explicitly to an already-running isolated listener process.
-      NotificationProcessBridge.sendConfig(
-        applicationContext,
-        listenerEnabled,
-        blocklistSet,
-      )
     }
 
     /**
@@ -94,18 +99,18 @@ class NotificationListener private constructor(private val context: Context) {
         preferences.getStringSet(PREF_NOTIFICATIONS_BLOCKLIST, emptySet())?.toSet() ?: emptySet()
 
       val shouldRun = listenerEnabled && permissionGranted
-      updateComponentState(
-        applicationContext,
-        enabled = listenerEnabled,
-        requestRebind = shouldRun,
-      )
-      if (shouldRun) {
+      if (permissionGranted) {
         NotificationProcessBridge.sendConfig(
           applicationContext,
           listenerEnabled,
           blocklist,
         )
       }
+      updateComponentState(
+        applicationContext,
+        enabled = listenerEnabled,
+        requestRebind = shouldRun,
+      )
       return permissionGranted
     }
 
@@ -283,6 +288,13 @@ class NotificationListener private constructor(private val context: Context) {
       val task =
         Runnable {
           try {
+            // Config can change during the debounce window. Recheck here so a
+            // kill-switch or blocklist update cannot leak an already-buffered
+            // notification after it takes effect.
+            if (!listenerEnabled || notificationsBlocklist.contains(packageName)) {
+              return@Runnable
+            }
+
             // PackageManager label resolution can take tens of milliseconds on
             // low-end devices. It belongs on this handler thread, not the
             // NotificationListenerService main callback, and only once per app.
