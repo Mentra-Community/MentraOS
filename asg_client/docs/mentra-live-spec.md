@@ -150,7 +150,8 @@ The MTK↔BES UART always starts at 460800 baud. Firmware that supports the nego
 Mentra Live's canonical product serial is provisioned by the Android firmware in
 `ro.serialno`. `asg_client` reads that property directly and forwards a valid
 value to the phone as `serial_number` in `version_info_3`. It must not substitute
-the generic `ro.boot.serialno` value or a BES system-version field. The Bluetooth
+the generic `0123456789ABCDEF` Android/ADB placeholder—regardless of which
+property exposes it—or a BES system-version field. The Bluetooth
 MAC is sourced from BES (`hs_syvr`/`sr_btaddr`), persisted in
 `persist.mentra.live.mac`, and republished to the phone as soon as it is learned.
 

@@ -18,6 +18,7 @@ public class SysProp {
     // System property key for BES BT MAC address
     public static final String KEY_BES_BT_MAC = "persist.mentra.live.mac";
     public static final String KEY_DEVICE_SERIAL = "ro.serialno";
+    private static final String GENERIC_ANDROID_SERIAL = "0123456789ABCDEF";
 
     private static volatile String cachedBesBtMac = "";
 
@@ -160,6 +161,7 @@ public class SysProp {
         String normalized = serial.trim();
         if (normalized.isEmpty()
                 || normalized.matches("0+")
+                || normalized.equalsIgnoreCase(GENERIC_ANDROID_SERIAL)
                 || normalized.equalsIgnoreCase("unknown")
                 || normalized.equalsIgnoreCase("null")
                 || normalized.equalsIgnoreCase("n/a")) {

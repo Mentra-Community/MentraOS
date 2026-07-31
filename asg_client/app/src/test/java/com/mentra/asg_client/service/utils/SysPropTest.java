@@ -16,6 +16,8 @@ public class SysPropTest {
         assertThat(SysProp.normalizeDeviceSerial(null)).isEmpty();
         assertThat(SysProp.normalizeDeviceSerial(" unknown ")).isEmpty();
         assertThat(SysProp.normalizeDeviceSerial("0000000000")).isEmpty();
+        assertThat(SysProp.normalizeDeviceSerial("0123456789ABCDEF")).isEmpty();
+        assertThat(SysProp.normalizeDeviceSerial(" 0123456789abcdef ")).isEmpty();
     }
 
     @Test
