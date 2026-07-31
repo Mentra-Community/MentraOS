@@ -21,11 +21,7 @@ class CrustModule extends NativeModule<CrustModuleEvents> {
   }
   showAVRoutePicker(_tintColor?: string | null) {}
   async setDeferredSystemGestures(_edges: string[]): Promise<void> {}
-  async setNotificationConfig(
-    _listenerEnabled: boolean,
-    _notificationsEnabled: boolean,
-    _blocklist: string[],
-  ): Promise<void> {}
+  async setNotificationConfig(_listenerEnabled: boolean, _blocklist: string[]): Promise<void> {}
   async getInstalledApps() {
     return []
   }
@@ -33,6 +29,9 @@ class CrustModule extends NativeModule<CrustModuleEvents> {
     return []
   }
   async hasNotificationListenerPermission() {
+    return false
+  }
+  async refreshNotificationListener() {
     return false
   }
   async openNotificationListenerSettings() {

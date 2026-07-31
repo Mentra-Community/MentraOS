@@ -243,7 +243,7 @@ public class CrustModule: Module {
 
         // MARK: - MentraOS Notification Commands
 
-        AsyncFunction("setNotificationConfig") { (_: Bool, _: Bool, _: [String]) in
+        AsyncFunction("setNotificationConfig") { (_: Bool, _: [String]) in
             // No-op on iOS
         }
 
@@ -256,6 +256,10 @@ public class CrustModule: Module {
         }
 
         AsyncFunction("hasNotificationListenerPermission") { () -> Bool in
+            return false
+        }
+
+        AsyncFunction("refreshNotificationListener") { () -> Bool in
             return false
         }
 

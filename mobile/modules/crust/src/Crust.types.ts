@@ -128,7 +128,12 @@ export type PhoneNotificationEvent = {
   app: string
   title: string
   content: string
-  priority: string
+  /**
+   * Android notification priority: PRIORITY_MIN (-2) through PRIORITY_MAX (2).
+   * Derived from the channel importance when the ranking is available, since
+   * Notification.priority reads 0 for channel-based notifications.
+   */
+  priority: number
   timestamp: number
   packageName: string
 }

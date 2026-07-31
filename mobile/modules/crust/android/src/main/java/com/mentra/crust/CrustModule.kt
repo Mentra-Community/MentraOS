@@ -1,7 +1,9 @@
 package com.mentra.crust
 
+import android.content.BroadcastReceiver
 import android.util.Log
 import com.mentra.crust.services.NotificationListener
+import com.mentra.crust.services.NotificationProcessBridge
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import java.net.URL
@@ -19,34 +21,33 @@ class CrustModule : Module() {
     @Volatile private var eventEmitter: ((String, Map<String, Any>) -> Unit)? = null
 
     fun emitPhoneNotification(
+            context: android.content.Context,
             notificationKey: String,
             packageName: String,
             appName: String,
             title: String,
             text: String,
             timestamp: Long,
+            priority: Int,
     ) {
-      val data =
-              mapOf(
-                      "notificationId" to "$packageName-$notificationKey",
-                      "app" to appName,
-                      "title" to title.ifEmpty { appName },
-                      "content" to text,
-                      "priority" to "normal",
-                      "timestamp" to timestamp,
-                      "packageName" to packageName,
-              )
-      emitEvent("phone_notification", data)
+      NotificationProcessBridge.emitPosted(
+        context,
+        notificationKey,
+        packageName,
+        appName,
+        title,
+        text,
+        timestamp,
+        priority,
+      )
     }
 
-    fun emitPhoneNotificationDismissed(notificationKey: String, packageName: String) {
-      val data =
-              mapOf(
-                      "notificationId" to "$packageName-$notificationKey",
-                      "notificationKey" to notificationKey,
-                      "packageName" to packageName,
-              )
-      emitEvent("phone_notification_dismissed", data)
+    fun emitPhoneNotificationDismissed(
+      context: android.content.Context,
+      notificationKey: String,
+      packageName: String,
+    ) {
+      NotificationProcessBridge.emitDismissed(context, notificationKey, packageName)
     }
 
     fun emitCaptionsTesterIncident(data: Map<String, Any>) {
@@ -75,6 +76,23 @@ class CrustModule : Module() {
   // __dispatch from a per-miniapp QuickJS context (SUBSCRIBE, mic, location,
   // display, send, etc.) would be silently dropped on Android.
   @Volatile private var runtimeInstalled: Boolean = false
+  private var notificationEventReceiver: BroadcastReceiver? = null
+  private var notificationBridgeContext: android.content.Context? = null
+
+  private fun registerNotificationBridgeIfPossible(): Boolean {
+    if (notificationEventReceiver != null) return true
+    val context = appContext.reactContext ?: appContext.currentActivity ?: return false
+    val applicationContext = context.applicationContext
+    notificationEventReceiver =
+      NotificationProcessBridge.register(applicationContext) { eventName, data ->
+        emitEvent(eventName, data)
+      }
+    // Keep the exact long-lived context used to register the receiver. Expo may
+    // clear reactContext/currentActivity before OnDestroy, but Android still
+    // requires this receiver to be unregistered when the module is recreated.
+    notificationBridgeContext = applicationContext
+    return true
+  }
 
   private fun installRuntimeIfPossible(reason: String): Boolean {
     if (runtimeInstalled) return true
@@ -118,7 +136,19 @@ class CrustModule : Module() {
 
     OnCreate {
       eventEmitter = { eventName, data -> sendEvent(eventName, data) }
+      registerNotificationBridgeIfPossible()
       installRuntimeIfPossible("OnCreate")
+    }
+
+    OnDestroy {
+      val context = notificationBridgeContext
+      val receiver = notificationEventReceiver
+      if (context != null && receiver != null) {
+        NotificationProcessBridge.unregister(context, receiver)
+      }
+      notificationEventReceiver = null
+      notificationBridgeContext = null
+      eventEmitter = null
     }
 
     Function("hello") {
@@ -153,7 +183,8 @@ class CrustModule : Module() {
     // MARK: - MentraOS Notification Commands
 
     AsyncFunction("setNotificationConfig") {
-      listenerEnabled: Boolean, notificationsEnabled: Boolean, blocklist: List<String> ->
+      listenerEnabled: Boolean, blocklist: List<String> ->
+      registerNotificationBridgeIfPossible()
       val context =
               appContext.reactContext
                       ?: appContext.currentActivity
@@ -161,7 +192,6 @@ class CrustModule : Module() {
       NotificationListener.setNotificationConfig(
         context,
         listenerEnabled,
-        notificationsEnabled,
         blocklist,
       )
     }
@@ -171,7 +201,7 @@ class CrustModule : Module() {
               appContext.reactContext
                       ?: appContext.currentActivity
                               ?: throw IllegalStateException("No context available")
-      NotificationListener.getInstance(context).getInstalledApps()
+      NotificationListener.getInstalledApps(context)
     }
 
     AsyncFunction("getInstalledAppsForNotifications") {
@@ -179,7 +209,7 @@ class CrustModule : Module() {
               appContext.reactContext
                       ?: appContext.currentActivity
                               ?: throw IllegalStateException("No context available")
-      NotificationListener.getInstance(context).getInstalledApps()
+      NotificationListener.getInstalledApps(context)
     }
 
     AsyncFunction("hasNotificationListenerPermission") {
@@ -187,7 +217,15 @@ class CrustModule : Module() {
               appContext.reactContext
                       ?: appContext.currentActivity
                               ?: throw IllegalStateException("No context available")
-      NotificationListener.getInstance(context).hasNotificationListenerPermission()
+      NotificationListener.hasNotificationListenerPermission(context)
+    }
+
+    AsyncFunction("refreshNotificationListener") {
+      val context =
+              appContext.reactContext
+                      ?: appContext.currentActivity
+                              ?: throw IllegalStateException("No context available")
+      NotificationListener.refreshComponentForPermission(context)
     }
 
     AsyncFunction("openNotificationListenerSettings") {
@@ -195,7 +233,7 @@ class CrustModule : Module() {
               appContext.reactContext
                       ?: appContext.currentActivity
                               ?: throw IllegalStateException("No context available")
-      NotificationListener.getInstance(context).openNotificationListenerSettings()
+      NotificationListener.openNotificationListenerSettings(context)
       true
     }
 
