@@ -2,6 +2,7 @@
 
 import { setBuildEnv } from './set-build-env.mjs';
 import { withRetry, isSentryTransientError, writeSummary } from './release-utils.mjs';
+import { validateReleaseArchive } from './release-bundle-config.mjs';
 import { getBuildNumber } from './build-number.mjs';
 import { cp, mkdir } from 'fs/promises';
 import { existsSync } from 'fs';
@@ -101,6 +102,12 @@ if (!existsSync(apkPath)) {
   process.exit(1);
 }
 console.log('APK built successfully');
+
+// Keep the same artifact-level contract as iOS. Android currently exports with
+// a clean Metro cache, but this prevents a future release-script regression
+// from publishing an APK with missing runtime configuration.
+validateReleaseArchive(apkPath, 'Android');
+console.log('Verified Android release JS bundle configuration');
 
 // ── Step 6: Determine beta number & rename APK ───────────────────────────────
 
