@@ -163,6 +163,11 @@ class MantleManager {
    */
   private async speakPhoneNotification(app: string, title: string, content: string, priority?: number): Promise<void> {
     try {
+      // The remembered model survives disconnects. Without a live connection,
+      // playing Notify-owned audio can fall back to the phone speaker and expose
+      // private notification content when the glasses are not being worn.
+      if (engine.glasses.status().state !== "connected") return
+
       const capabilities = engine.glasses.capabilities()
       if (!capabilities || capabilities.hasDisplay || !capabilities.hasSpeaker) return
 
