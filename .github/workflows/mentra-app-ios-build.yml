@@ -139,6 +139,29 @@ jobs:
           # returns early on an empty DSN *without logging*, so every CI build has
           # shipped with crash reporting silently off (OS-1827). Warn rather than
           # fail, but never be silent about it again.
+          # A release-producing lane must never ship a green build with crash
+          # reporting silently off -- that is the exact failure OS-1827 exists to
+          # remove. pull_request runs legitimately have no secrets (forks, and
+          # secrets are not exposed to PRs from outside collaborators), so those
+          # still warn and continue. Everything else -- push to a release branch,
+          # workflow_dispatch, staging -- is fatal.
+          #
+          # Note the curl below keeps `|| true` on purpose: a network failure or a
+          # changed response shape lands here as an empty DSN and is reported with
+          # an actionable message, rather than killing the step with a bare
+          # non-zero exit that says nothing about crash reporting.
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            SENTRY_DSN_REQUIRED=false
+          else
+            SENTRY_DSN_REQUIRED=true
+          fi
+          sentry_dsn_unavailable() {
+            if [ "$SENTRY_DSN_REQUIRED" = "true" ]; then
+              echo "::error::$1 A release build must have crash reporting (OS-1827)."
+              exit 1
+            fi
+            echo "::warning::$1 This PR build will have no crash reporting (OS-1827)."
+          }
           if [ -n "$DOPPLER_TOKEN" ]; then
             # curl, not the Doppler CLI action: that action verifies its own
             # download with gpg and hard-fails where gpg is absent, which is the
@@ -155,10 +178,10 @@ jobs:
             if [ -n "$SENTRY_DSN_VALUE" ]; then
               sed "s|^EXPO_PUBLIC_SENTRY_DSN=.*|EXPO_PUBLIC_SENTRY_DSN=$SENTRY_DSN_VALUE|" .env > .env.tmp && mv .env.tmp .env
             else
-              echo "::warning::Doppler returned an empty EXPO_PUBLIC_SENTRY_DSN — this build will have no crash reporting."
+              sentry_dsn_unavailable "Doppler returned an empty EXPO_PUBLIC_SENTRY_DSN."
             fi
           else
-            echo "::warning::DOPPLER_TOKEN_MOBILE_PRD secret not set — this build will have no crash reporting (OS-1827)."
+            sentry_dsn_unavailable "DOPPLER_TOKEN_MOBILE_PRD secret not set."
           fi
 
       - name: Configure Mapbox SPM credentials (~/.netrc)
