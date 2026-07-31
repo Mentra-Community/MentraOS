@@ -34,9 +34,9 @@ audit_dir=$(mktemp -d "${TMPDIR:-/tmp}/android-16kb.XXXXXX")
 unzip -q "$apk" 'lib/*/*.so' -d "$audit_dir"
 
 libraries=()
-while IFS= read -r -d '' library; do
+while IFS= read -r library; do
   libraries+=("$library")
-done < <(find "$audit_dir/lib" -type f -name '*.so' -print0 | sort -z)
+done < <(find "$audit_dir/lib" -type f -name '*.so' -print | sort)
 if [[ ${#libraries[@]} -eq 0 ]]; then
   echo "No packaged native libraries found in $apk" >&2
   exit 1
@@ -45,12 +45,28 @@ fi
 failures=0
 for library in "${libraries[@]}"; do
   relative=${library#"$audit_dir/"}
-  bad_alignments=()
+  if ! program_headers=$("$readelf" -lW "$library"); then
+    printf 'FAIL %s (llvm-readelf could not inspect the library)\n' "$relative" >&2
+    failures=$((failures + 1))
+    continue
+  fi
+
+  alignments=()
   while IFS= read -r alignment; do
+    alignments+=("$alignment")
+  done < <(printf '%s\n' "$program_headers" | awk '$1 == "LOAD" { print $NF }')
+  if [[ ${#alignments[@]} -eq 0 ]]; then
+    printf 'FAIL %s (no ELF LOAD segments found)\n' "$relative" >&2
+    failures=$((failures + 1))
+    continue
+  fi
+
+  bad_alignments=()
+  for alignment in "${alignments[@]}"; do
     if (( alignment < 0x4000 )); then
       bad_alignments+=("$alignment")
     fi
-  done < <("$readelf" -lW "$library" | awk '$1 == "LOAD" { print $NF }')
+  done
 
   if [[ ${#bad_alignments[@]} -gt 0 ]]; then
     printf 'FAIL %s (LOAD alignment: %s)\n' "$relative" "${bad_alignments[*]}" >&2
