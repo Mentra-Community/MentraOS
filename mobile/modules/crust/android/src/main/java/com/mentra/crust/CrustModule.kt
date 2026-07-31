@@ -217,6 +217,14 @@ class CrustModule : Module() {
               appContext.reactContext
                       ?: appContext.currentActivity
                               ?: throw IllegalStateException("No context available")
+      NotificationListener.hasNotificationListenerPermission(context)
+    }
+
+    AsyncFunction("refreshNotificationListener") {
+      val context =
+              appContext.reactContext
+                      ?: appContext.currentActivity
+                              ?: throw IllegalStateException("No context available")
       NotificationListener.refreshComponentForPermission(context)
     }
 

@@ -65,6 +65,7 @@ object NotificationProcessBridge {
   private const val EXTRA_TIMESTAMP = "timestamp"
   private const val EXTRA_LISTENER_ENABLED = "listenerEnabled"
   private const val EXTRA_BLOCKLIST = "blocklist"
+  private const val EXTRA_REQUEST_REBIND = "requestRebind"
 
   fun register(
     context: Context,
@@ -166,19 +167,22 @@ object NotificationProcessBridge {
     context: Context,
     listenerEnabled: Boolean,
     blocklist: Set<String>,
+    requestRebind: Boolean,
   ) {
     val intent =
       Intent(configAction(context))
         .setComponent(ComponentName(context, NotificationConfigReceiver::class.java))
         .putExtra(EXTRA_LISTENER_ENABLED, listenerEnabled)
         .putStringArrayListExtra(EXTRA_BLOCKLIST, ArrayList(blocklist))
+        .putExtra(EXTRA_REQUEST_REBIND, requestRebind)
     context.sendBroadcast(intent, bridgePermission(context))
   }
 
-  internal fun readConfig(intent: Intent): Pair<Boolean, Set<String>> {
-    return Pair(
-      intent.getBooleanExtra(EXTRA_LISTENER_ENABLED, false),
-      intent.getStringArrayListExtra(EXTRA_BLOCKLIST)?.toSet() ?: emptySet(),
+  internal fun readConfig(intent: Intent): NotificationConfigUpdate {
+    return NotificationConfigUpdate(
+      listenerEnabled = intent.getBooleanExtra(EXTRA_LISTENER_ENABLED, false),
+      blocklist = intent.getStringArrayListExtra(EXTRA_BLOCKLIST)?.toSet() ?: emptySet(),
+      requestRebind = intent.getBooleanExtra(EXTRA_REQUEST_REBIND, false),
     )
   }
 
@@ -193,11 +197,26 @@ object NotificationProcessBridge {
   private fun bridgePermission(context: Context) = context.packageName + PERMISSION_SUFFIX
 }
 
-/** Applies live config updates inside the isolated notification process. */
+internal data class NotificationConfigUpdate(
+  val listenerEnabled: Boolean,
+  val blocklist: Set<String>,
+  val requestRebind: Boolean,
+)
+
+/** Persists and applies config inside the isolated notification process. */
 class NotificationConfigReceiver : BroadcastReceiver() {
   override fun onReceive(context: Context, intent: Intent) {
     if (!NotificationProcessBridge.isConfigAction(context, intent)) return
-    val (listenerEnabled, blocklist) = NotificationProcessBridge.readConfig(intent)
-    NotificationListener.applyConfigToExisting(listenerEnabled, blocklist)
+    val config = NotificationProcessBridge.readConfig(intent)
+
+    // SharedPreferences caches are per-process. Persist the payload here before
+    // touching the live instance so a listener recreated by requestRebind reads
+    // the same config rather than this process's stale cache.
+    NotificationListener.persistConfig(context, config.listenerEnabled, config.blocklist)
+    NotificationListener.applyConfigToExisting(config.listenerEnabled, config.blocklist)
+
+    if (config.listenerEnabled && config.requestRebind) {
+      NotificationListener.requestListenerRebind(context)
+    }
   }
 }

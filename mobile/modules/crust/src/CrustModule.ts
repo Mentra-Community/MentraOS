@@ -30,6 +30,7 @@ declare class CrustModule extends NativeModule<CrustModuleEvents> {
   getInstalledApps(): Promise<InstalledApp[]>
   getInstalledAppsForNotifications(): Promise<InstalledApp[]>
   hasNotificationListenerPermission(): Promise<boolean>
+  refreshNotificationListener(): Promise<boolean>
   openNotificationListenerSettings(): Promise<boolean>
   isBetaBuild(): Promise<boolean>
   // location services commands

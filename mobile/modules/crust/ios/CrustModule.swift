@@ -259,6 +259,10 @@ public class CrustModule: Module {
             return false
         }
 
+        AsyncFunction("refreshNotificationListener") { () -> Bool in
+            return false
+        }
+
         AsyncFunction("openNotificationListenerSettings") { () -> Bool in
             return false
         }
