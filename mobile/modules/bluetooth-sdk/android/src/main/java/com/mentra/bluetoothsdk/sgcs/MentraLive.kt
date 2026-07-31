@@ -817,12 +817,13 @@ class MentraLive : SGCManager() {
         }
 
         if (state == ConnTypes.DISCONNECTED) {
-            // A manufacturing serial is session-bound. Clear it on disconnect so a previous
-            // pair's serial can never be associated with the next connection. Connect must NOT
-            // clear it: DeviceManager.disconnect already wipes it before any new connection, and
-            // clearing on CONNECTED would wipe a still-valid serial mid-session when a same-link
-            // glasses_ready (e.g. ASG restart) re-publishes CONNECTED.
+            // Device identity is session-bound. Clear it on disconnect so a previous pair's
+            // identifiers can never be associated with the next connection. Connect must NOT
+            // clear them: DeviceManager.disconnect already wipes them before any new connection,
+            // and clearing on CONNECTED would wipe still-valid identity mid-session when a
+            // same-link glasses_ready (e.g. ASG restart) re-publishes CONNECTED.
             DeviceStore.apply("glasses", "serialNumber", "")
+            DeviceStore.apply("glasses", "bluetoothMacAddress", "")
         }
 
         // Actually update the connection state!

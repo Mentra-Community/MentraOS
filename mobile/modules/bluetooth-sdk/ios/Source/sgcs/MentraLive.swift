@@ -1282,13 +1282,14 @@ class MentraLive: NSObject, SGCManager {
     /// Mirrors Android `updateConnectionState` — RN home reads `glasses.connectionState` for reconnecting UI.
     private func updateConnectionState(_ state: String) {
         if state == ConnTypes.DISCONNECTED {
-            // A manufacturing serial is session-bound. Clear it on disconnect so a previous
-            // pair's serial cannot be associated with the next connection. Connect must NOT
-            // clear it: DeviceManager.disconnect already wipes it before any new connection, and
-            // clearing on CONNECTED would wipe a still-valid serial mid-session when a same-link
-            // glasses_ready (e.g. ASG restart) re-publishes CONNECTED (iOS has no equal-state
-            // early return, unlike Android).
+            // Device identity is session-bound. Clear it on disconnect so a previous pair's
+            // identifiers cannot be associated with the next connection. Connect must NOT clear
+            // them: DeviceManager.disconnect already wipes them before any new connection, and
+            // clearing on CONNECTED would wipe still-valid identity mid-session when a same-link
+            // glasses_ready (e.g. ASG restart) re-publishes CONNECTED (iOS has no equal-state early
+            // return, unlike Android).
             DeviceStore.shared.apply("glasses", "serialNumber", "")
+            DeviceStore.shared.apply("glasses", "bluetoothMacAddress", "")
         }
         connectionState = state
         DeviceStore.shared.apply("glasses", "connectionState", state)

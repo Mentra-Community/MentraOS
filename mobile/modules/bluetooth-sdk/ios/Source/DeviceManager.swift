@@ -1712,11 +1712,13 @@ struct ViewState {
         shouldSendBootingMessage = true // Reset for next first connect
         // clear glasses properties:
         DeviceStore.shared.apply("glasses", "deviceModel", "")
-        // A manufacturing serial is session-bound. Clear it on every disconnect so a
-        // previously connected pair's serial can never be reported for the next
-        // connection (e.g. switching from G1/Ar99, which populate it from the
-        // advertisement, to a model that never writes it, like G2).
+        // Device identifiers are session-bound. Clear them on every disconnect so a
+        // previously connected pair can never be reported for the next connection.
         DeviceStore.shared.apply("glasses", "serialNumber", "")
+        DeviceStore.shared.apply("glasses", "bluetoothMacAddress", "")
+        DeviceStore.shared.apply("glasses", "leftMacAddress", "")
+        DeviceStore.shared.apply("glasses", "rightMacAddress", "")
+        DeviceStore.shared.apply("glasses", "macAddress", "")
         DeviceStore.shared.apply("glasses", "fullyBooted", false)
         DeviceStore.shared.apply("glasses", "connected", false)
         DeviceStore.shared.apply("glasses", "connectionState", ConnTypes.DISCONNECTED)
@@ -1807,4 +1809,3 @@ struct ViewState {
         cancellables.removeAll()
     }
 }
-
