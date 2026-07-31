@@ -141,7 +141,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.bun/install/cache
-          key: bun-${{ runner.environment }}-${{ runner.os }}-${{ hashFiles('mobile/bun.lockb') }}
+          key: bun-${{ runner.environment }}-${{ runner.os }}-${{ hashFiles('mobile/bun.lock') }}
           restore-keys: |
             bun-${{ runner.environment }}-${{ runner.os }}-
 
