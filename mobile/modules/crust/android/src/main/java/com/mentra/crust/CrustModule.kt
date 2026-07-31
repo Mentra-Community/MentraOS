@@ -201,7 +201,7 @@ class CrustModule : Module() {
               appContext.reactContext
                       ?: appContext.currentActivity
                               ?: throw IllegalStateException("No context available")
-      NotificationListener.getInstance(context).getInstalledApps()
+      NotificationListener.getInstalledApps(context)
     }
 
     AsyncFunction("getInstalledAppsForNotifications") {
@@ -209,7 +209,7 @@ class CrustModule : Module() {
               appContext.reactContext
                       ?: appContext.currentActivity
                               ?: throw IllegalStateException("No context available")
-      NotificationListener.getInstance(context).getInstalledApps()
+      NotificationListener.getInstalledApps(context)
     }
 
     AsyncFunction("hasNotificationListenerPermission") {
