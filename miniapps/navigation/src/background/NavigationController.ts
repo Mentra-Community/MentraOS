@@ -2082,7 +2082,11 @@ export class NavigationController {
     // band until either Mapbox reroutes (status → "rerouting", which takes over
     // the HUD) or the user returns to within ADVISORY_M (back to the original
     // instruction). TRIGGER_M is kept only for the diagnostic log threshold.
-    const bucket = dist >= OFF_ROUTE_ADVISORY_M ? 1 : 0
+    // Use separate enter/exit thresholds so ordinary GPS jitter near 20m
+    // cannot flip the HUD between its message and turn-by-turn topologies on
+    // every fix. Each topology change is structural on G2 and requires a page
+    // rebuild, so threshold chatter presents as a whole-display refresh.
+    const bucket = classifyOffRouteAdvisory(dist, this.offRouteAdvisory) ? 1 : 0
     // Keep the advisory distance live so the glasses "Go back in X m" line
     // tracks the user every fix — growing as they move away, shrinking as they
     // return. Null when on route.
@@ -2457,15 +2461,19 @@ function withPivotDefaults<T extends {pivots?: {radiusMeters?: number; approachT
   }
 }
 
-// Off-route advisory threshold (meters): how far off the route polyline the
-// user must be before the glasses show "Go back in X m". Set to 20m so
+// Off-route advisory thresholds (meters): how far off the route polyline the
+// user must be before the glasses show "Go back in X m". Enter at 20m so
 // opposite-sidewalk crossings at typical urban 4-way intersections don't read
 // as deviations — walking the far curb across a 4-lane road (~15m wide incl.
-// parking) lands ~12-18m from the route polyline, just under this band. Above
-// 20m the advisory shows and its distance GROWS until Mapbox reroutes or the
-// user returns. (The old separate TRIGGER_M rebuild threshold was removed when
-// reroute became native-owned — there's only on/off now.)
+// parking) lands ~12-18m from the route polyline, just under this band. Once
+// active, require a fix below 15m before clearing it. This hysteresis prevents
+// GPS noise around 20m from repeatedly changing the G2 page structure.
 const OFF_ROUTE_ADVISORY_M = 20
+const OFF_ROUTE_RECOVERY_M = 15
+
+export function classifyOffRouteAdvisory(distanceMeters: number, advisoryActive: boolean): boolean {
+  return advisoryActive ? distanceMeters >= OFF_ROUTE_RECOVERY_M : distanceMeters >= OFF_ROUTE_ADVISORY_M
+}
 
 // How long the HUD may sit on "Starting…" (running, no maneuver event yet)
 // before the watchdog derives the first instruction from the route's steps.
