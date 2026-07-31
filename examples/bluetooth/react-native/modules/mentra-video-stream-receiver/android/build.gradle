@@ -48,6 +48,7 @@ android {
           "GSTREAMER_ASSETS_DIR=src/main/assets",
           "GSTREAMER_INCLUDE_FONTS=no",
           "GSTREAMER_INCLUDE_CA_CERTIFICATES=no",
+          "APP_SUPPORT_FLEXIBLE_PAGE_SIZES=true",
         )
         abiFilters "arm64-v8a"
         targets "mentra_android_webrtc_receiver"

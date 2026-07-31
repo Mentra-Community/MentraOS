@@ -42,6 +42,7 @@
       ]
     },
     "plugins": [
+      "./plugins/withAndroid16KbPageSize",
       [
         "@mentra/bluetooth-sdk",
         {
@@ -55,6 +56,9 @@
             "minSdkVersion": 28,
             "usesCleartextTraffic": true,
             "packagingOptions": {
+              "exclude": [
+                "**/libcoder.so"
+              ],
               "pickFirst": [
                 "**/libc++_shared.so",
                 "**/libonnxruntime.so",

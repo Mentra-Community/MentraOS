@@ -272,6 +272,9 @@ jobs:
         run: |
           ./gradlew :app:assembleRelease --no-daemon
 
+      - name: Verify Android 16 KB page-size support
+        run: examples/react-native/scripts/check-android-16kb.sh examples/react-native/android/app/build/outputs/apk/release/app-release.apk
+
       - name: Collect APK
         run: cp examples/react-native/android/app/build/outputs/apk/release/app-release.apk mentra-example-react-native.apk
 
