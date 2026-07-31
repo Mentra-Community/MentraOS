@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import {execFileSync} from "node:child_process"
 import test from "node:test"
 
-import {assertBundleEnvironment, xcodeEnvironmentExports} from "./release-bundle-config.mjs"
+import {assertBundleEnvironment, xcodeBuildSettings, xcodeEnvironmentExports} from "./release-bundle-config.mjs"
 
 test("xcodeEnvironmentExports exports public and pinned build values safely", () => {
   const lines = xcodeEnvironmentExports(
@@ -29,6 +29,24 @@ test("xcodeEnvironmentExports exports public and pinned build values safely", ()
     },
   )
   assert.equal(output.trim(), "https://example.test/it's-pinned.json")
+})
+
+test("xcodeBuildSettings exposes the same public values to every build phase", () => {
+  const settings = xcodeBuildSettings(
+    {
+      EXPO_PUBLIC_ASG_OTA_VERSION_URL: "https://example.test/pin.json?channel=staging build",
+      EXPO_PUBLIC_EMPTY: "",
+      MENTRAOS_PINNED_BUILD_NUMBER: 123,
+      PRIVATE_SECRET: "do-not-export",
+    },
+    "/opt/node with spaces/bin/node",
+  )
+
+  assert.deepEqual(settings, [
+    "EXPO_PUBLIC_ASG_OTA_VERSION_URL=https://example.test/pin.json?channel=staging build",
+    "MENTRAOS_PINNED_BUILD_NUMBER=123",
+    "NODE_BINARY=/opt/node with spaces/bin/node",
+  ])
 })
 
 test("assertBundleEnvironment accepts expected nonempty runtime values", () => {
