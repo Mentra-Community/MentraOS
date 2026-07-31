@@ -957,6 +957,44 @@ export const useSettingsStore = create<SettingsState>()(
         // that the listener runs in its own guarded process, migrate existing
         // installs to the new default once; later explicit debug changes still
         // persist normally.
+        // Reset the cloud backend override when the build's environment changes.
+        //
+        // cloud_core_url / cloud_runtime_url are persist:true and outrank both
+        // the build's env and the compiled default (see resolveUrl in
+        // cloudClient.ts). That is what we want inside one environment: a
+        // developer's METRO_AUTO pin should survive a rebuild. It is wrong
+        // across environments.
+        //
+        // The concrete case: TestFlight and the App Store receive the SAME
+        // binary -- the tested build is promoted untouched, so its baked URLs
+        // must already be production. A tester who pinned staging cloud while
+        // it was a beta would otherwise keep talking to staging forever after
+        // that build is promoted, with nothing surfacing it. Same shape on
+        // Android internal-track to production, where the install source cannot
+        // even be distinguished at runtime.
+        //
+        // Comparing the baked EXPO_PUBLIC_BUILD_ENV against the last one seen
+        // on this device covers promotion, environment switches and fresh
+        // installs, without touching the setting write path.
+        const BUILD_ENV_KEY = "cloud.lastBuildEnv"
+        const buildEnv = (process.env.EXPO_PUBLIC_BUILD_ENV ?? "dev").trim() || "dev"
+        const lastBuildEnv = storage.load<string>(BUILD_ENV_KEY)
+        const previousBuildEnv = lastBuildEnv.is_error() ? undefined : lastBuildEnv.value
+        if (previousBuildEnv !== buildEnv) {
+          if (previousBuildEnv !== undefined) {
+            // Only clear on an actual change. A fresh install has nothing to
+            // clear and must not log as if it did.
+            console.log(`SETTINGS: build env ${previousBuildEnv} -> ${buildEnv}, clearing cloud URL overrides`)
+            for (const key of [SETTINGS.cloud_core_url.key, SETTINGS.cloud_runtime_url.key]) {
+              const cleared = await get().setSetting(key, "", false)
+              if (cleared.is_error()) {
+                console.log(`SETTINGS: could not clear ${key}:`, cleared.error)
+              }
+            }
+          }
+          storage.save(BUILD_ENV_KEY, buildEnv)
+        }
+
         const NOTIFICATION_LISTENER_MIGRATION_KEY = "migration:android_notification_listener_default_on_v1"
         const notificationListenerMigrationDone = storage.load<boolean>(NOTIFICATION_LISTENER_MIGRATION_KEY)
         if (notificationListenerMigrationDone.is_error() || !notificationListenerMigrationDone.value) {
