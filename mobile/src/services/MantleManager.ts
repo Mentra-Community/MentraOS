@@ -758,6 +758,16 @@ class MantleManager {
           packageName: event.packageName,
         })
 
+        // Capture/forwarding is independent from presentation. Notify is the
+        // user-controlled presentation surface: if it is not running, no card
+        // and no speech may interrupt the wearer. This also keeps presentation
+        // intentionally unavailable on iOS while Notify is omitted from the
+        // built-in catalog there.
+        const notifyIsRunning = useAppStatusStore
+          .getState()
+          .apps.some((miniapp) => miniapp.packageName === notifyPackageName && miniapp.running)
+        if (!notifyIsRunning) return
+
         // Cloud V1 used to relay this event to the Notify miniapp, which then
         // painted the glasses. Notify is now an offline built-in, so render the
         // temporary card locally through the same display arbiter as miniapps.

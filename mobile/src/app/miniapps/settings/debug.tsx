@@ -81,7 +81,7 @@ export default function DebugSettingsScreen() {
             {Platform.OS === "android" && (
               <ToggleSetting
                 label="Android Notification Listener"
-                subtitle="Allow Android notifications to be read and forwarded (experimental)"
+                subtitle="Emergency kill switch for Android notification capture"
                 value={androidNotificationListenerEnabled}
                 onValueChange={(value) => setAndroidNotificationListenerEnabled(value)}
               />

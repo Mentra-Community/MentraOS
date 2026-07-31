@@ -1,13 +1,15 @@
 /**
  * Phone-notifications sync — engine-owned. Pushes the notification-forwarding
- * developer gate + config (`android_notification_listener_enabled`,
- * `notifications_enabled`, and `notifications_blocklist`) to the native
+ * operational kill switch + config (`android_notification_listener_enabled`
+ * and `notifications_blocklist`) to the native
  * NotificationListener via `CrustModule.setNotificationConfig`, so
- * `engine.phoneNotifications.setEnabled()/setBlocklist()` actually reach the
- * listener for ANY host — not just the Mentra app, where this used to live in
- * MantleManager. The Android service component is disabled unless the developer
- * gate is explicitly enabled. Android-only; a no-op elsewhere. Started by
- * `engine.start()`.
+ * the blocklist reaches the listener for ANY host — not just the Mentra App,
+ * where this used to live in MantleManager. The Android service is desired by
+ * default now that its cold start is isolated from React Native. Native code
+ * keeps the component discoverable in Android's notification-access Settings,
+ * but only binds the service after access is granted. The debug setting remains
+ * a hidden emergency kill switch; Notify's running state gates presentation,
+ * not capture. Android-only; a no-op elsewhere. Started by `engine.start()`.
  */
 import {shallow} from "zustand/shallow"
 import CrustModule from "@mentra/crust"
@@ -19,13 +21,8 @@ let unsubscribe: (() => void) | null = null
 function pushConfig(): void {
   const s = useSettingsStore.getState()
   const listenerEnabled = Boolean(s.getSetting(SETTINGS.android_notification_listener_enabled.key))
-  const notificationsEnabled = Boolean(s.getSetting(SETTINGS.notifications_enabled.key))
   const blocklist = s.getSetting(SETTINGS.notifications_blocklist.key)
-  CrustModule.setNotificationConfig(
-    listenerEnabled,
-    notificationsEnabled,
-    Array.isArray(blocklist) ? blocklist : [],
-  ).catch((err: unknown) =>
+  CrustModule.setNotificationConfig(listenerEnabled, Array.isArray(blocklist) ? blocklist : []).catch((err: unknown) =>
     console.warn(`PhoneNotificationsSync: setNotificationConfig failed: ${(err as Error)?.message ?? err}`),
   )
 }
@@ -36,7 +33,6 @@ export function startPhoneNotificationsSync(): void {
   unsubscribe = useSettingsStore.subscribe(
     (state) => ({
       listenerEnabled: state.getSetting(SETTINGS.android_notification_listener_enabled.key),
-      enabled: state.getSetting(SETTINGS.notifications_enabled.key),
       blocklist: state.getSetting(SETTINGS.notifications_blocklist.key),
     }),
     () => pushConfig(),

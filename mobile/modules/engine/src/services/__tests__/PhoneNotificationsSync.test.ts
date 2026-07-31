@@ -17,7 +17,6 @@ const mockUnsubscribe = mock(() => {})
 mock.module("../../stores/settings", () => ({
   SETTINGS: {
     android_notification_listener_enabled: {key: "android_notification_listener_enabled"},
-    notifications_enabled: {key: "notifications_enabled"},
     notifications_blocklist: {key: "notifications_blocklist"},
   },
   useSettingsStore: {
@@ -40,35 +39,33 @@ describe("PhoneNotificationsSync", () => {
     mockUnsubscribe.mockClear()
     onSettingsChanged = null
     Object.assign(values, {
-      android_notification_listener_enabled: false,
-      notifications_enabled: true,
+      android_notification_listener_enabled: true,
       notifications_blocklist: [],
     })
   })
 
-  test("keeps the Android listener disabled by default", () => {
+  test("requests Android listening by default", () => {
     startPhoneNotificationsSync()
 
-    expect(mockSetNotificationConfig).toHaveBeenCalledWith(false, true, [])
+    expect(mockSetNotificationConfig).toHaveBeenCalledWith(true, [])
   })
 
-  test("enables the listener only through the developer flag", () => {
+  test("keeps the debug setting as an emergency kill switch", () => {
     startPhoneNotificationsSync()
-    values.android_notification_listener_enabled = true
+    values.android_notification_listener_enabled = false
     onSettingsChanged?.()
 
-    expect(mockSetNotificationConfig).toHaveBeenLastCalledWith(true, true, [])
+    expect(mockSetNotificationConfig).toHaveBeenLastCalledWith(false, [])
   })
 
-  test("keeps the user notification toggle subordinate to the developer flag", () => {
+  test("syncs the per-app blocklist without adding another listener gate", () => {
     Object.assign(values, {
       android_notification_listener_enabled: true,
-      notifications_enabled: false,
       notifications_blocklist: ["com.example.noisy"],
     })
 
     startPhoneNotificationsSync()
 
-    expect(mockSetNotificationConfig).toHaveBeenCalledWith(true, false, ["com.example.noisy"])
+    expect(mockSetNotificationConfig).toHaveBeenCalledWith(true, ["com.example.noisy"])
   })
 })

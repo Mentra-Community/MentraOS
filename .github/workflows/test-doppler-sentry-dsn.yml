@@ -19,7 +19,7 @@ on:
   # workflow_dispatch is only dispatchable once a workflow is on the default
   # branch, and the whole point is to verify before touching anything shared.
   push:
-    branches: [isaiah/test-doppler-sentry-dsn]
+    branches: [aisraelov/investigate-slack-event]
   workflow_dispatch:
 
 jobs:
