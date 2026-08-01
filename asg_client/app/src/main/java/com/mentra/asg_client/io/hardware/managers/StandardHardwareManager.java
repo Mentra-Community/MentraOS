@@ -216,6 +216,17 @@ public class StandardHardwareManager extends BaseHardwareManager {
         player.release();
     }
 
+    private void stopAllAudioOverlayPlayback() {
+        MediaPlayer[] players;
+        synchronized (overlayPlayers) {
+            players = overlayPlayers.values().toArray(new MediaPlayer[0]);
+            overlayPlayers.clear();
+        }
+        for (MediaPlayer player : players) {
+            stopAndRelease(player);
+        }
+    }
+
     @Override
     public void stopAudioPlayback() {
         if (mediaPlayer != null) {
@@ -346,6 +357,7 @@ public class StandardHardwareManager extends BaseHardwareManager {
     public void shutdown() {
         stopTorch();
         stopAudioPlayback();
+        stopAllAudioOverlayPlayback();
         super.shutdown();
     }
 

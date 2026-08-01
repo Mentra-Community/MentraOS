@@ -24,6 +24,7 @@ import com.mentra.asg_client.camera.model.PhotoCaptureSettings;
 import com.mentra.asg_client.camera.model.QueuedPhotoRequest;
 import com.mentra.asg_client.camera.model.QueuedPhotoRequestQueue;
 import com.mentra.asg_client.camera.policy.AeStateMachine;
+import com.mentra.asg_client.camera.request.HdrBurstBuilder;
 import com.mentra.asg_client.camera.request.StillCaptureBuilder;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
@@ -807,7 +808,7 @@ public class PhotoSessionTest {
         setBooleanField(session, "mCurrentShotUsesHdrBurst", true);
         HdrBurstCapture hdrCapture = getField(session, "hdrBurstCapture", HdrBurstCapture.class);
         setBooleanField(hdrCapture, "active", true);
-        setIntField(hdrCapture, "framesReceived", 2);
+        setIntField(hdrCapture, "framesReceived", HdrBurstBuilder.HDR_BURST_COUNT - 1);
 
         assertThat(session.shouldNotifyPhotoFrameAvailable()).isTrue();
     }

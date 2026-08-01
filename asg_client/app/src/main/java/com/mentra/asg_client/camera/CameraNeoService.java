@@ -812,7 +812,12 @@ public class CameraNeoService extends LifecycleService {
                 Intent intent = new Intent(context, CameraNeoService.class);
                 intent.setAction(ACTION_TAKE_PHOTO);
                 intent.putExtra("USE_GLOBAL_QUEUE", true);
-                context.startForegroundService(intent);
+                try {
+                    context.startForegroundService(intent);
+                } catch (RuntimeException e) {
+                    QueuedPhotoRequestQueue.getInstance().remove(request);
+                    throw e;
+                }
             }
         }
     }

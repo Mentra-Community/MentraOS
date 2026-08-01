@@ -5,6 +5,7 @@ import android.net.ConnectivityManager;
 import android.net.NetworkCapabilities;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.util.Log;
 
 import androidx.annotation.NonNull;
@@ -599,6 +600,7 @@ public class MediaCaptureService {
     private final Object mPhotoFeedbackLock = new Object();
     private static final long CAMERA_SNAP_PREP_RESUME_DELAY_MS = 550L;
     private long mPhotoFeedbackGeneration;
+    private long mPhotoPrepSuppressedUntilUptimeMs;
     @Nullable private PhotoFeedbackToken mCurrentPrepFeedback;
     private final Set<PhotoFeedbackToken> mActivePhotoFeedback = new HashSet<>();
     private final Map<String, PhotoFeedbackToken> mPhotoFeedbackByRequestId = new HashMap<>();
@@ -614,6 +616,7 @@ public class MediaCaptureService {
         @Nullable private Runnable mPrepClickRunnable;
         @Nullable private Runnable mPrepResumeRunnable;
         @Nullable private Runnable mSnapRunnable;
+        @Nullable private Runnable mSafetyTimeoutRunnable;
 
         private PhotoFeedbackToken(String requestId, long generation) {
             mRequestId = requestId;
@@ -840,6 +843,10 @@ public class MediaCaptureService {
                     new PhotoFeedbackToken(requestId, ++mPhotoFeedbackGeneration);
             mActivePhotoFeedback.add(feedbackToken);
             mPhotoFeedbackByRequestId.put(requestId, feedbackToken);
+            feedbackToken.mSafetyTimeoutRunnable =
+                    () -> stopPhotoFeedbackForTimeout(feedbackToken);
+            mainHandler.postDelayed(
+                    feedbackToken.mSafetyTimeoutRunnable, CAPTURE_SAFETY_TIMEOUT_MS);
             if (cameraWarm) {
                 Log.d(TAG, "📸 Warm capture — snap is waiting for sensor exposure start");
                 return feedbackToken;
@@ -856,9 +863,33 @@ public class MediaCaptureService {
                             + "ms until sensor exposure starts");
             feedbackToken.mPrepClicksActive = true;
             mCurrentPrepFeedback = feedbackToken;
+            if (isPhotoPrepSuppressedLocked()) {
+                feedbackToken.mPrepClicksPaused = true;
+                Log.d(TAG, "📸 Prep click waiting for the active exposure/snap to finish");
+                long suppressionDelayMs = photoPrepSuppressionDelayLocked();
+                if (suppressionDelayMs >= 0L) {
+                    schedulePrepResumeLocked(feedbackToken, suppressionDelayMs);
+                }
+                return feedbackToken;
+            }
             playPrepClickLocked(feedbackToken);
             return feedbackToken;
         }
+    }
+
+    /** True during a sensor exposure or while a snap overlay is still playing. */
+    private boolean isPhotoPrepSuppressedLocked() {
+        return photoPrepSuppressionDelayLocked() != 0L;
+    }
+
+    /** Returns -1 for an active exposure, otherwise the remaining snap-audio suppression time. */
+    private long photoPrepSuppressionDelayLocked() {
+        for (PhotoFeedbackToken activeFeedback : mActivePhotoFeedback) {
+            if (activeFeedback.mExposureStarted && !activeFeedback.mTerminal) {
+                return -1L;
+            }
+        }
+        return Math.max(0L, mPhotoPrepSuppressedUntilUptimeMs - SystemClock.uptimeMillis());
     }
 
     private void playPrepClickLocked(PhotoFeedbackToken feedbackToken) {
@@ -957,6 +988,14 @@ public class MediaCaptureService {
                                 || mCurrentPrepFeedback != feedbackToken) {
                             return;
                         }
+                        long suppressionDelayMs = photoPrepSuppressionDelayLocked();
+                        if (suppressionDelayMs < 0L) {
+                            return;
+                        }
+                        if (suppressionDelayMs > 0L) {
+                            schedulePrepResumeLocked(feedbackToken, suppressionDelayMs);
+                            return;
+                        }
                         feedbackToken.mPrepClicksPaused = false;
                         playPrepClickLocked(feedbackToken);
                     }
@@ -970,6 +1009,10 @@ public class MediaCaptureService {
         if (feedbackToken.mSnapRunnable != null) {
             mainHandler.removeCallbacks(feedbackToken.mSnapRunnable);
             feedbackToken.mSnapRunnable = null;
+        }
+        if (feedbackToken.mSafetyTimeoutRunnable != null) {
+            mainHandler.removeCallbacks(feedbackToken.mSafetyTimeoutRunnable);
+            feedbackToken.mSafetyTimeoutRunnable = null;
         }
         stopPrepClicksLocked(feedbackToken);
         mActivePhotoFeedback.remove(feedbackToken);
@@ -1048,6 +1091,10 @@ public class MediaCaptureService {
                             + " (feedback gen="
                             + feedbackToken.mGeneration
                             + ")");
+            mPhotoPrepSuppressedUntilUptimeMs =
+                    Math.max(
+                            mPhotoPrepSuppressedUntilUptimeMs,
+                            SystemClock.uptimeMillis() + CAMERA_SNAP_PREP_RESUME_DELAY_MS);
             hardwareManager.playAudioAssetOverlay(AudioAssets.CAMERA_SNAP);
             schedulePrepResumeLocked(
                     queuedPrepFeedback, CAMERA_SNAP_PREP_RESUME_DELAY_MS);
@@ -1071,25 +1118,39 @@ public class MediaCaptureService {
         }
     }
 
-    /** Cancels the feedback owned by a timed-out request and resumes any newer queued prep. */
+    /** Cancels one timed-out token and resumes any newer queued prep. */
+    private void stopPhotoFeedbackForTimeout(@Nullable PhotoFeedbackToken feedbackToken) {
+        if (feedbackToken == null) {
+            return;
+        }
+        synchronized (mPhotoFeedbackLock) {
+            stopPhotoFeedbackForTimeoutLocked(feedbackToken);
+        }
+    }
+
+    /** Looks up feedback for the single-flight photo-job timeout. */
     private void stopPhotoFeedbackForTimeout(String requestId) {
         synchronized (mPhotoFeedbackLock) {
-            PhotoFeedbackToken feedbackToken = mPhotoFeedbackByRequestId.get(requestId);
-            if (feedbackToken == null || feedbackToken.mTerminal) {
-                return;
-            }
-            PhotoFeedbackToken queuedPrepFeedback =
-                    mCurrentPrepFeedback != feedbackToken ? mCurrentPrepFeedback : null;
-            finishPhotoFeedbackLocked(feedbackToken);
-            schedulePrepResumeLocked(queuedPrepFeedback, 0L);
-            Log.d(
-                    TAG,
-                    "📸 Stopped timed-out photo feedback (requestId="
-                            + requestId
-                            + ", gen="
-                            + feedbackToken.mGeneration
-                            + ")");
+            stopPhotoFeedbackForTimeoutLocked(mPhotoFeedbackByRequestId.get(requestId));
         }
+    }
+
+    private void stopPhotoFeedbackForTimeoutLocked(
+            @Nullable PhotoFeedbackToken feedbackToken) {
+        if (feedbackToken == null || feedbackToken.mTerminal) {
+            return;
+        }
+        PhotoFeedbackToken queuedPrepFeedback =
+                mCurrentPrepFeedback != feedbackToken ? mCurrentPrepFeedback : null;
+        finishPhotoFeedbackLocked(feedbackToken);
+        schedulePrepResumeLocked(queuedPrepFeedback, 0L);
+        Log.d(
+                TAG,
+                "📸 Stopped timed-out photo feedback (requestId="
+                        + feedbackToken.mRequestId
+                        + ", gen="
+                        + feedbackToken.mGeneration
+                        + ")");
     }
 
     /** Flash privacy LED synchronized with shutter sound for photo capture */
