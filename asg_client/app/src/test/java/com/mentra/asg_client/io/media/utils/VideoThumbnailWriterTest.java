@@ -71,6 +71,23 @@ public class VideoThumbnailWriterTest {
     }
 
     @Test
+    public void scaledTargetSize_largeFrameBoundsLongestEdgeAndPreservesAspectRatio() {
+        assertThat(VideoThumbnailWriter.scaledTargetSize(3840, 2160))
+                .containsExactly(AsgConstants.VIDEO_THUMBNAIL_MAX_DIMENSION, 270);
+    }
+
+    @Test
+    public void scaledTargetSize_smallFrameKeepsOriginalDimensions() {
+        assertThat(VideoThumbnailWriter.scaledTargetSize(320, 240)).containsExactly(320, 240);
+    }
+
+    @Test
+    public void scaledTargetSize_invalidDimensionsReturnsNull() {
+        assertThat(VideoThumbnailWriter.scaledTargetSize(0, 240)).isNull();
+        assertThat(VideoThumbnailWriter.scaledTargetSize(320, -1)).isNull();
+    }
+
+    @Test
     public void writeSidecar_validFrame_scalesCompressesAndCommitsAtomically() throws IOException {
         File captureDir = temporaryFolder.newFolder("VID_success");
         File video = write(new File(captureDir, "base.mp4"));

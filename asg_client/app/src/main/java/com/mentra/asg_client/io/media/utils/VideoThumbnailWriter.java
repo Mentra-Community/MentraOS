@@ -1,6 +1,8 @@
 package com.mentra.asg_client.io.media.utils;
 
 import android.graphics.Bitmap;
+import android.media.MediaExtractor;
+import android.media.MediaFormat;
 import android.media.MediaMetadataRetriever;
 import android.util.Log;
 import com.mentra.asg_client.AsgConstants;
@@ -196,6 +198,7 @@ public final class VideoThumbnailWriter {
             future.cancel(true);
             extractor.cancel();
             recycleUnclaimed(unclaimedResult);
+            retireFrameExtractionExecutor(submission.executor);
             Thread.currentThread().interrupt();
             return null;
         } catch (ExecutionException e) {
@@ -214,7 +217,7 @@ public final class VideoThumbnailWriter {
             activeRetriever.set(retriever);
             try {
                 retriever.setDataSource(videoFile.getAbsolutePath());
-                int[] targetSize = scaledTargetSize(retriever);
+                int[] targetSize = scaledTargetSize(retriever, videoFile);
                 Bitmap frame =
                         frameAt(retriever, AsgConstants.VIDEO_THUMBNAIL_FRAME_TIME_US, targetSize);
                 if (frame == null) {
@@ -255,13 +258,24 @@ public final class VideoThumbnailWriter {
 
     private static Bitmap frameAt(MediaMetadataRetriever retriever, long timeUs, int[] targetSize) {
         if (targetSize == null) {
-            return retriever.getFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC);
+            return null;
         }
         return retriever.getScaledFrameAtTime(
                 timeUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, targetSize[0], targetSize[1]);
     }
 
-    private static int[] scaledTargetSize(MediaMetadataRetriever retriever) {
+    private static int[] scaledTargetSize(MediaMetadataRetriever retriever, File videoFile) {
+        int[] dimensions = retrieverDimensions(retriever);
+        if (dimensions == null) {
+            dimensions = mediaTrackDimensions(videoFile);
+        }
+        if (dimensions == null) {
+            return null;
+        }
+        return scaledTargetSize(dimensions[0], dimensions[1]);
+    }
+
+    private static int[] retrieverDimensions(MediaMetadataRetriever retriever) {
         try {
             int width =
                     Integer.parseInt(
@@ -271,18 +285,46 @@ public final class VideoThumbnailWriter {
                     Integer.parseInt(
                             retriever.extractMetadata(
                                     MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT));
-            int longestEdge = Math.max(width, height);
-            if (width <= 0 || height <= 0) {
-                return null;
-            }
-            float scale =
-                    Math.min(1f, (float) AsgConstants.VIDEO_THUMBNAIL_MAX_DIMENSION / longestEdge);
-            return new int[] {
-                Math.max(1, Math.round(width * scale)), Math.max(1, Math.round(height * scale))
-            };
+            return width > 0 && height > 0 ? new int[] {width, height} : null;
         } catch (Exception ignored) {
             return null;
         }
+    }
+
+    private static int[] mediaTrackDimensions(File videoFile) {
+        MediaExtractor extractor = new MediaExtractor();
+        try {
+            extractor.setDataSource(videoFile.getAbsolutePath());
+            for (int index = 0; index < extractor.getTrackCount(); index++) {
+                MediaFormat format = extractor.getTrackFormat(index);
+                String mime = format.getString(MediaFormat.KEY_MIME);
+                if (mime != null
+                        && mime.startsWith("video/")
+                        && format.containsKey(MediaFormat.KEY_WIDTH)
+                        && format.containsKey(MediaFormat.KEY_HEIGHT)) {
+                    int width = format.getInteger(MediaFormat.KEY_WIDTH);
+                    int height = format.getInteger(MediaFormat.KEY_HEIGHT);
+                    return width > 0 && height > 0 ? new int[] {width, height} : null;
+                }
+            }
+            return null;
+        } catch (Exception ignored) {
+            return null;
+        } finally {
+            extractor.release();
+        }
+    }
+
+    static int[] scaledTargetSize(int width, int height) {
+        if (width <= 0 || height <= 0) {
+            return null;
+        }
+        int longestEdge = Math.max(width, height);
+        float scale =
+                Math.min(1f, (float) AsgConstants.VIDEO_THUMBNAIL_MAX_DIMENSION / longestEdge);
+        return new int[] {
+            Math.max(1, Math.round(width * scale)), Math.max(1, Math.round(height * scale))
+        };
     }
 
     private static void recycleUnclaimed(AtomicReference<Bitmap> unclaimedResult) {

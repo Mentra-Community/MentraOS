@@ -389,7 +389,7 @@ public class AsgConstants {
     public static final long VIDEO_THUMBNAIL_SHUTDOWN_TIMEOUT_MS = 1_000L;
 
     /** Maximum abandoned native decoder workers retained after timeout. */
-    public static final int VIDEO_THUMBNAIL_MAX_RETIRED_DECODERS = 1;
+    public static final int VIDEO_THUMBNAIL_MAX_RETIRED_DECODERS = 2;
 
     /**
      * Max wait for the deferred background photo write ({@code CapturedPhoto.persistence}) when a
