@@ -105,7 +105,6 @@ public class FileManagerCleanupTest {
             File capture =
                     new File(orphanBase, "com.mentra.asg_client.camera/VID_orphaned_thumbnail");
             assertTrue(capture.mkdirs());
-            write(new File(capture, "base.mp4"));
             write(new File(capture, AsgConstants.VIDEO_THUMBNAIL_SIDECAR_NAME));
 
             new FileManagerImpl(orphanBase, mock(Logger.class));
