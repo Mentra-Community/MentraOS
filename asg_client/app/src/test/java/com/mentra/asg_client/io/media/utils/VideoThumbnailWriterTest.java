@@ -3,11 +3,15 @@ package com.mentra.asg_client.io.media.utils;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.graphics.Color;
 import com.mentra.asg_client.AsgConstants;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -62,6 +66,80 @@ public class VideoThumbnailWriterTest {
     @Test
     public void writeSidecar_nullVideo_returnsNull() {
         assertThat(VideoThumbnailWriter.writeSidecar(null)).isNull();
+    }
+
+    @Test
+    public void writeSidecar_validFrame_scalesCompressesAndCommitsAtomically() throws IOException {
+        File captureDir = temporaryFolder.newFolder("VID_success");
+        File video = write(new File(captureDir, "base.mp4"));
+        Bitmap source = Bitmap.createBitmap(960, 480, Bitmap.Config.ARGB_8888);
+        source.eraseColor(Color.BLUE);
+        AtomicReference<Bitmap.CompressFormat> format = new AtomicReference<>();
+        AtomicInteger quality = new AtomicInteger();
+
+        File result =
+                VideoThumbnailWriter.writeSidecar(
+                        video,
+                        ignored -> source,
+                        File::renameTo,
+                        (bitmap, requestedFormat, requestedQuality, output) -> {
+                            format.set(requestedFormat);
+                            quality.set(requestedQuality);
+                            return bitmap.compress(requestedFormat, requestedQuality, output);
+                        });
+
+        assertThat(result).isEqualTo(VideoThumbnailWriter.sidecarFor(video)).exists();
+        assertThat(new File(captureDir, AsgConstants.VIDEO_THUMBNAIL_PARTIAL_NAME)).doesNotExist();
+        assertThat(format.get()).isEqualTo(Bitmap.CompressFormat.JPEG);
+        assertThat(quality.get()).isEqualTo(AsgConstants.VIDEO_THUMBNAIL_JPEG_QUALITY);
+        Bitmap decoded = BitmapFactory.decodeFile(result.getAbsolutePath());
+        assertThat(decoded.getWidth()).isEqualTo(AsgConstants.VIDEO_THUMBNAIL_MAX_DIMENSION);
+        assertThat(decoded.getHeight()).isEqualTo(240);
+        decoded.recycle();
+        assertThat(source.isRecycled()).isTrue();
+    }
+
+    @Test
+    public void writeSidecar_compressionFailure_removesPartialAndDoesNotCommit()
+            throws IOException {
+        File captureDir = temporaryFolder.newFolder("VID_compress_failure");
+        File video = write(new File(captureDir, "base.mp4"));
+        Bitmap source = Bitmap.createBitmap(100, 50, Bitmap.Config.ARGB_8888);
+        AtomicBoolean commitCalled = new AtomicBoolean(false);
+
+        File result =
+                VideoThumbnailWriter.writeSidecar(
+                        video,
+                        ignored -> source,
+                        (partial, sidecar) -> {
+                            commitCalled.set(true);
+                            return partial.renameTo(sidecar);
+                        },
+                        (bitmap, format, quality, output) -> false);
+
+        assertThat(result).isNull();
+        assertThat(commitCalled).isFalse();
+        assertThat(captureDir.listFiles()).containsExactly(video);
+        assertThat(source.isRecycled()).isTrue();
+    }
+
+    @Test
+    public void writeSidecar_commitFailure_removesPartialAndReturnsNull() throws IOException {
+        File captureDir = temporaryFolder.newFolder("VID_commit_failure");
+        File video = write(new File(captureDir, "base.mp4"));
+        Bitmap source = Bitmap.createBitmap(100, 50, Bitmap.Config.ARGB_8888);
+
+        File result =
+                VideoThumbnailWriter.writeSidecar(
+                        video,
+                        ignored -> source,
+                        (partial, sidecar) -> false,
+                        (bitmap, format, quality, output) ->
+                                bitmap.compress(format, quality, output));
+
+        assertThat(result).isNull();
+        assertThat(captureDir.listFiles()).containsExactly(video);
+        assertThat(source.isRecycled()).isTrue();
     }
 
     @Test

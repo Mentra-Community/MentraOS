@@ -64,14 +64,11 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
-import java.util.concurrent.FutureTask;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -150,6 +147,54 @@ public class MediaCaptureService {
         UploadTarget(String webhookUrl, String authToken) {
             this.webhookUrl = webhookUrl;
             this.authToken = authToken;
+        }
+    }
+
+    private final class VideoThumbnailTask
+            implements Runnable, VideoThumbnailWriter.SidecarCommitter {
+        private final File videoFile;
+        private final Object commitLock = new Object();
+        private volatile Future<?> execution;
+        private boolean discarded;
+
+        VideoThumbnailTask(String filePath) {
+            videoFile = new File(filePath);
+        }
+
+        void setExecution(Future<?> execution) {
+            this.execution = execution;
+        }
+
+        @Override
+        public void run() {
+            try {
+                VideoThumbnailWriter.writeSidecar(videoFile, this);
+            } finally {
+                videoThumbnailTasks.remove(videoFile.getAbsolutePath(), this);
+            }
+        }
+
+        @Override
+        public boolean commit(File partial, File sidecar) {
+            synchronized (commitLock) {
+                return !discarded && videoFile.isFile() && partial.renameTo(sidecar);
+            }
+        }
+
+        boolean discardAndDeleteVideo() {
+            synchronized (commitLock) {
+                boolean deleted = !videoFile.exists() || videoFile.delete();
+                if (!deleted) {
+                    return false;
+                }
+                discarded = true;
+                Future<?> currentExecution = execution;
+                if (currentExecution != null) {
+                    currentExecution.cancel(true);
+                }
+                VideoThumbnailWriter.deleteSidecar(videoFile);
+                return true;
+            }
         }
     }
 
@@ -629,7 +674,7 @@ public class MediaCaptureService {
                         t.setPriority(Thread.NORM_PRIORITY - 1);
                         return t;
                     });
-    private final ConcurrentHashMap<String, Future<?>> videoThumbnailTasks =
+    private final ConcurrentHashMap<String, VideoThumbnailTask> videoThumbnailTasks =
             new ConcurrentHashMap<>();
 
     /**
@@ -4385,9 +4430,7 @@ public class MediaCaptureService {
 
                                     if (!save) {
                                         try {
-                                            awaitVideoThumbnail(videoFilePath);
-                                            VideoThumbnailWriter.deleteSidecar(videoFile);
-                                            if (videoFile.delete()) {
+                                            if (discardThumbnailAndDeleteVideo(videoFile)) {
                                                 Log.d(
                                                         TAG,
                                                         "🗑️ Deleted video file after successful"
@@ -6793,47 +6836,31 @@ public class MediaCaptureService {
     }
 
     private void scheduleVideoThumbnail(String filePath) {
-        FutureTask<Void> task =
-                new FutureTask<Void>(
-                        () -> {
-                            VideoThumbnailWriter.writeSidecar(new File(filePath));
-                            return null;
-                        }) {
-                    @Override
-                    protected void done() {
-                        videoThumbnailTasks.remove(filePath, this);
-                    }
-                };
-        if (videoThumbnailTasks.putIfAbsent(filePath, task) != null) {
+        String taskKey = new File(filePath).getAbsolutePath();
+        VideoThumbnailTask task = new VideoThumbnailTask(taskKey);
+        if (videoThumbnailTasks.putIfAbsent(taskKey, task) != null) {
             return;
         }
         try {
-            videoThumbnailExecutor.execute(task);
+            task.setExecution(videoThumbnailExecutor.submit(task));
         } catch (RejectedExecutionException e) {
-            videoThumbnailTasks.remove(filePath, task);
-            task.cancel(false);
+            videoThumbnailTasks.remove(taskKey, task);
             Log.d(TAG, "Skipping video thumbnail during cleanup");
         }
     }
 
-    private void awaitVideoThumbnail(String filePath) {
-        Future<?> task = videoThumbnailTasks.get(filePath);
-        if (task == null) {
-            return;
+    private boolean discardThumbnailAndDeleteVideo(File videoFile) {
+        VideoThumbnailTask task = videoThumbnailTasks.get(videoFile.getAbsolutePath());
+        if (task != null) {
+            boolean deleted = task.discardAndDeleteVideo();
+            videoThumbnailTasks.remove(videoFile.getAbsolutePath(), task);
+            return deleted;
         }
-        try {
-            task.get(AsgConstants.VIDEO_THUMBNAIL_TASK_TIMEOUT_MS, TimeUnit.MILLISECONDS);
-        } catch (TimeoutException e) {
-            task.cancel(true);
-            Log.w(TAG, "Timed out waiting for video thumbnail before deleting " + filePath);
-        } catch (InterruptedException e) {
-            task.cancel(true);
-            Thread.currentThread().interrupt();
-        } catch (ExecutionException e) {
-            Log.w(TAG, "Video thumbnail task failed for " + filePath, e.getCause());
-        } finally {
-            videoThumbnailTasks.remove(filePath, task);
+        boolean deleted = !videoFile.exists() || videoFile.delete();
+        if (deleted) {
+            VideoThumbnailWriter.deleteSidecar(videoFile);
         }
+        return deleted;
     }
 
     /**
@@ -6871,6 +6898,20 @@ public class MediaCaptureService {
                 Thread.currentThread().interrupt();
             }
             videoThumbnailExecutor.shutdown();
+            try {
+                if (!videoThumbnailExecutor.awaitTermination(
+                        AsgConstants.VIDEO_THUMBNAIL_SHUTDOWN_TIMEOUT_MS,
+                        TimeUnit.MILLISECONDS)) {
+                    videoThumbnailExecutor.shutdownNow();
+                    if (!videoThumbnailExecutor.awaitTermination(1, TimeUnit.SECONDS)) {
+                        Log.w(TAG, "Video thumbnail executor did not terminate during cleanup");
+                    }
+                }
+            } catch (InterruptedException e) {
+                videoThumbnailExecutor.shutdownNow();
+                Thread.currentThread().interrupt();
+            }
+            videoThumbnailTasks.clear();
             textModeProcessingExecutor.shutdown();
             try {
                 if (!textModeProcessingExecutor.awaitTermination(3, TimeUnit.SECONDS)) {

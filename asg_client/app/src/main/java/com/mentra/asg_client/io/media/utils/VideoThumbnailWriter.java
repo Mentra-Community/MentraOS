@@ -30,6 +30,8 @@ import java.util.concurrent.atomic.AtomicReference;
  */
 public final class VideoThumbnailWriter {
     private static final String TAG = "VideoThumbnailWriter";
+    private static final BitmapEncoder JPEG_ENCODER =
+            (bitmap, format, quality, output) -> bitmap.compress(format, quality, output);
     private static final ExecutorService FRAME_EXTRACTION_EXECUTOR =
             Executors.newSingleThreadExecutor(
                     runnable -> {
@@ -69,6 +71,23 @@ public final class VideoThumbnailWriter {
      * @return the sidecar file on success, or null if extraction or writing failed
      */
     public static File writeSidecar(File videoFile) {
+        return writeSidecar(videoFile, File::renameTo);
+    }
+
+    /** Write a sidecar whose final rename is coordinated by {@code committer}. */
+    public static File writeSidecar(File videoFile, SidecarCommitter committer) {
+        return writeSidecar(videoFile, new MediaMetadataFrameExtractor(), committer);
+    }
+
+    static File writeSidecar(File videoFile, FrameExtractor extractor, SidecarCommitter committer) {
+        return writeSidecar(videoFile, extractor, committer, JPEG_ENCODER);
+    }
+
+    static File writeSidecar(
+            File videoFile,
+            FrameExtractor extractor,
+            SidecarCommitter committer,
+            BitmapEncoder encoder) {
         if (videoFile == null) {
             return null;
         }
@@ -82,7 +101,11 @@ public final class VideoThumbnailWriter {
             }
             sidecar = sidecarFor(videoFile);
             partial = partialFor(videoFile);
-            frame = extractFrame(videoFile);
+            frame =
+                    extractFrameWithTimeout(
+                            videoFile,
+                            extractor,
+                            AsgConstants.VIDEO_THUMBNAIL_EXTRACTION_TIMEOUT_MS);
             if (frame == null) {
                 Log.w(TAG, "No frame extracted for thumbnail: " + videoFile.getAbsolutePath());
                 return null;
@@ -101,14 +124,15 @@ public final class VideoThumbnailWriter {
                                     true)
                             : frame;
             try (FileOutputStream fos = new FileOutputStream(partial)) {
-                if (!scaled.compress(
+                if (!encoder.compress(
+                        scaled,
                         Bitmap.CompressFormat.JPEG,
                         AsgConstants.VIDEO_THUMBNAIL_JPEG_QUALITY,
                         fos)) {
                     return null;
                 }
             }
-            if (!partial.renameTo(sidecar)) {
+            if (!committer.commit(partial, sidecar)) {
                 Log.w(TAG, "Could not move thumbnail into place: " + sidecar.getAbsolutePath());
                 return null;
             }
@@ -127,13 +151,6 @@ public final class VideoThumbnailWriter {
                 Log.w(TAG, "Could not delete partial thumbnail: " + partial.getAbsolutePath());
             }
         }
-    }
-
-    private static Bitmap extractFrame(File videoFile) {
-        return extractFrameWithTimeout(
-                videoFile,
-                new MediaMetadataFrameExtractor(),
-                AsgConstants.VIDEO_THUMBNAIL_EXTRACTION_TIMEOUT_MS);
     }
 
     static Bitmap extractFrameWithTimeout(
@@ -231,7 +248,7 @@ public final class VideoThumbnailWriter {
 
     private static Bitmap frameAt(MediaMetadataRetriever retriever, long timeUs, int[] targetSize) {
         if (targetSize == null) {
-            return null;
+            return retriever.getFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC);
         }
         return retriever.getScaledFrameAtTime(
                 timeUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, targetSize[0], targetSize[1]);
@@ -283,5 +300,17 @@ public final class VideoThumbnailWriter {
         Bitmap extract(File videoFile);
 
         default void cancel() {}
+    }
+
+    @FunctionalInterface
+    interface BitmapEncoder {
+        boolean compress(
+                Bitmap bitmap, Bitmap.CompressFormat format, int quality, FileOutputStream output);
+    }
+
+    /** Coordinates the atomic partial-to-final sidecar commit with capture lifecycle changes. */
+    @FunctionalInterface
+    public interface SidecarCommitter {
+        boolean commit(File partial, File sidecar);
     }
 }
