@@ -234,12 +234,7 @@ public final class VideoThumbnailWriter {
                 if (cancelled.get()) {
                     return null;
                 }
-                Bitmap frame =
-                        frameAt(retriever, AsgConstants.VIDEO_THUMBNAIL_FRAME_TIME_US, targetSize);
-                if (frame == null) {
-                    frame = frameAt(retriever, 0L, targetSize);
-                }
-                return frame;
+                return frameWithFallback(timeUs -> frameAt(retriever, timeUs, targetSize));
             } catch (Exception e) {
                 Log.w(TAG, "Frame extraction failed for " + videoFile.getAbsolutePath(), e);
                 return null;
@@ -269,6 +264,18 @@ public final class VideoThumbnailWriter {
         }
         return retriever.getScaledFrameAtTime(
                 timeUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, targetSize[0], targetSize[1]);
+    }
+
+    static Bitmap frameWithFallback(FrameAtTime extractor) {
+        try {
+            Bitmap frame = extractor.extract(AsgConstants.VIDEO_THUMBNAIL_FRAME_TIME_US);
+            if (frame != null) {
+                return frame;
+            }
+        } catch (RuntimeException e) {
+            Log.w(TAG, "Could not extract preferred thumbnail frame; trying first frame", e);
+        }
+        return extractor.extract(0L);
     }
 
     private static int[] scaledTargetSize(MediaMetadataRetriever retriever, File videoFile) {
@@ -439,6 +446,11 @@ public final class VideoThumbnailWriter {
     interface BitmapEncoder {
         boolean compress(
                 Bitmap bitmap, Bitmap.CompressFormat format, int quality, FileOutputStream output);
+    }
+
+    @FunctionalInterface
+    interface FrameAtTime {
+        Bitmap extract(long timeUs);
     }
 
     private static final class ExtractionSubmission {

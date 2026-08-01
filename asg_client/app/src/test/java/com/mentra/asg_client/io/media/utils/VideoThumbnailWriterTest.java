@@ -118,6 +118,27 @@ public class VideoThumbnailWriterTest {
     }
 
     @Test
+    public void frameWithFallback_preferredSeekThrows_triesFirstFrame() {
+        AtomicInteger calls = new AtomicInteger();
+        Bitmap firstFrame = Bitmap.createBitmap(8, 8, Bitmap.Config.ARGB_8888);
+
+        Bitmap extracted =
+                VideoThumbnailWriter.frameWithFallback(
+                        timeUs -> {
+                            calls.incrementAndGet();
+                            if (timeUs == AsgConstants.VIDEO_THUMBNAIL_FRAME_TIME_US) {
+                                throw new IllegalArgumentException("preferred seek unavailable");
+                            }
+                            assertThat(timeUs).isZero();
+                            return firstFrame;
+                        });
+
+        assertThat(extracted).isSameAs(firstFrame);
+        assertThat(calls).hasValue(2);
+        extracted.recycle();
+    }
+
+    @Test
     public void writeSidecar_validFrame_scalesCompressesAndCommitsAtomically() throws IOException {
         File captureDir = temporaryFolder.newFolder("VID_success");
         File video = write(new File(captureDir, "base.mp4"));
