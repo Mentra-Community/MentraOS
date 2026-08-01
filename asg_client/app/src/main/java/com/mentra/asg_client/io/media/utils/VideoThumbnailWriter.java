@@ -12,6 +12,8 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Writes a {@code thumb.jpg} sidecar next to a finished video capture (e.g. {@code
@@ -28,6 +30,14 @@ import java.util.concurrent.TimeoutException;
  */
 public final class VideoThumbnailWriter {
     private static final String TAG = "VideoThumbnailWriter";
+    private static final ExecutorService FRAME_EXTRACTION_EXECUTOR =
+            Executors.newSingleThreadExecutor(
+                    runnable -> {
+                        Thread thread = new Thread(runnable, "VideoThumbnailDecode");
+                        thread.setPriority(Thread.NORM_PRIORITY - 1);
+                        thread.setDaemon(true);
+                        return thread;
+                    });
 
     private VideoThumbnailWriter() {}
 
@@ -122,24 +132,34 @@ public final class VideoThumbnailWriter {
     private static Bitmap extractFrame(File videoFile) {
         return extractFrameWithTimeout(
                 videoFile,
-                VideoThumbnailWriter::extractFrameDirect,
+                new MediaMetadataFrameExtractor(),
                 AsgConstants.VIDEO_THUMBNAIL_EXTRACTION_TIMEOUT_MS);
     }
 
     static Bitmap extractFrameWithTimeout(
             File videoFile, FrameExtractor extractor, long timeoutMs) {
-        ExecutorService executor =
-                Executors.newSingleThreadExecutor(
-                        runnable -> {
-                            Thread thread = new Thread(runnable, "VideoThumbnailDecode");
-                            thread.setPriority(Thread.NORM_PRIORITY - 1);
-                            return thread;
+        AtomicBoolean acceptResult = new AtomicBoolean(true);
+        AtomicReference<Bitmap> unclaimedResult = new AtomicReference<>();
+        Future<Bitmap> future =
+                FRAME_EXTRACTION_EXECUTOR.submit(
+                        () -> {
+                            Bitmap frame = extractor.extract(videoFile);
+                            unclaimedResult.set(frame);
+                            if (!acceptResult.get()) {
+                                recycleUnclaimed(unclaimedResult);
+                                return null;
+                            }
+                            return frame;
                         });
-        Future<Bitmap> future = executor.submit(() -> extractor.extract(videoFile));
         try {
-            return future.get(timeoutMs, TimeUnit.MILLISECONDS);
+            Bitmap frame = future.get(timeoutMs, TimeUnit.MILLISECONDS);
+            unclaimedResult.compareAndSet(frame, null);
+            return frame;
         } catch (TimeoutException e) {
+            acceptResult.set(false);
             future.cancel(true);
+            extractor.cancel();
+            recycleUnclaimed(unclaimedResult);
             Log.w(
                     TAG,
                     "Frame extraction timed out after "
@@ -148,35 +168,103 @@ public final class VideoThumbnailWriter {
                             + videoFile.getAbsolutePath());
             return null;
         } catch (InterruptedException e) {
+            acceptResult.set(false);
             future.cancel(true);
+            extractor.cancel();
+            recycleUnclaimed(unclaimedResult);
             Thread.currentThread().interrupt();
             return null;
         } catch (ExecutionException e) {
             Log.w(TAG, "Frame extraction failed for " + videoFile.getAbsolutePath(), e.getCause());
             return null;
-        } finally {
-            executor.shutdownNow();
         }
     }
 
-    private static Bitmap extractFrameDirect(File videoFile) {
-        MediaMetadataRetriever retriever = new MediaMetadataRetriever();
-        try {
-            retriever.setDataSource(videoFile.getAbsolutePath());
-            Bitmap frame = retriever.getFrameAtTime(AsgConstants.VIDEO_THUMBNAIL_FRAME_TIME_US);
-            if (frame == null) {
-                frame = retriever.getFrameAtTime();
+    private static final class MediaMetadataFrameExtractor implements FrameExtractor {
+        private final AtomicReference<MediaMetadataRetriever> activeRetriever =
+                new AtomicReference<>();
+
+        @Override
+        public Bitmap extract(File videoFile) {
+            MediaMetadataRetriever retriever = new MediaMetadataRetriever();
+            activeRetriever.set(retriever);
+            try {
+                retriever.setDataSource(videoFile.getAbsolutePath());
+                int[] targetSize = scaledTargetSize(retriever);
+                Bitmap frame =
+                        frameAt(retriever, AsgConstants.VIDEO_THUMBNAIL_FRAME_TIME_US, targetSize);
+                if (frame == null) {
+                    frame = frameAt(retriever, -1L, targetSize);
+                }
+                return frame;
+            } catch (Exception e) {
+                Log.w(TAG, "Frame extraction failed for " + videoFile.getAbsolutePath(), e);
+                return null;
+            } finally {
+                release(retriever);
             }
-            return frame;
-        } catch (Exception e) {
-            Log.w(TAG, "Frame extraction failed for " + videoFile.getAbsolutePath(), e);
-            return null;
-        } finally {
+        }
+
+        @Override
+        public void cancel() {
+            MediaMetadataRetriever retriever = activeRetriever.getAndSet(null);
+            releaseDirect(retriever);
+        }
+
+        private void release(MediaMetadataRetriever retriever) {
+            if (activeRetriever.compareAndSet(retriever, null)) {
+                releaseDirect(retriever);
+            }
+        }
+
+        private static void releaseDirect(MediaMetadataRetriever retriever) {
+            if (retriever == null) {
+                return;
+            }
             try {
                 retriever.release();
             } catch (Exception ignored) {
                 // best effort
             }
+        }
+    }
+
+    private static Bitmap frameAt(MediaMetadataRetriever retriever, long timeUs, int[] targetSize) {
+        if (targetSize == null) {
+            return null;
+        }
+        return retriever.getScaledFrameAtTime(
+                timeUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, targetSize[0], targetSize[1]);
+    }
+
+    private static int[] scaledTargetSize(MediaMetadataRetriever retriever) {
+        try {
+            int width =
+                    Integer.parseInt(
+                            retriever.extractMetadata(
+                                    MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH));
+            int height =
+                    Integer.parseInt(
+                            retriever.extractMetadata(
+                                    MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT));
+            int longestEdge = Math.max(width, height);
+            if (width <= 0 || height <= 0) {
+                return null;
+            }
+            float scale =
+                    Math.min(1f, (float) AsgConstants.VIDEO_THUMBNAIL_MAX_DIMENSION / longestEdge);
+            return new int[] {
+                Math.max(1, Math.round(width * scale)), Math.max(1, Math.round(height * scale))
+            };
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private static void recycleUnclaimed(AtomicReference<Bitmap> unclaimedResult) {
+        Bitmap frame = unclaimedResult.getAndSet(null);
+        if (frame != null) {
+            frame.recycle();
         }
     }
 
@@ -193,5 +281,7 @@ public final class VideoThumbnailWriter {
     @FunctionalInterface
     interface FrameExtractor {
         Bitmap extract(File videoFile);
+
+        default void cancel() {}
     }
 }

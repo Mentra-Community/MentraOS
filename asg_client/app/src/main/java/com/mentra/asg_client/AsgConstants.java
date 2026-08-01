@@ -385,6 +385,9 @@ public class AsgConstants {
     /** Maximum time allowed for platform video-frame extraction. */
     public static final long VIDEO_THUMBNAIL_EXTRACTION_TIMEOUT_MS = 10_000L;
 
+    /** Maximum wait before deleting a video whose thumbnail task is still finishing. */
+    public static final long VIDEO_THUMBNAIL_TASK_TIMEOUT_MS = 12_000L;
+
     /**
      * Max wait for the deferred background photo write ({@code CapturedPhoto.persistence}) when a
      * BLE photo consumer needs the file on disk (gallery save, text-mode canonical crop, cleanup).

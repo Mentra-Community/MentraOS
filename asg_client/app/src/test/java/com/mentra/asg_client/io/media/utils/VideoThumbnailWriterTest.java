@@ -2,10 +2,12 @@ package com.mentra.asg_client.io.media.utils;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import android.graphics.Bitmap;
 import com.mentra.asg_client.AsgConstants;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -79,24 +81,34 @@ public class VideoThumbnailWriterTest {
     @Test
     public void extractFrameWithTimeout_stalledDecoderReturnsPromptly() throws IOException {
         File video = new File(temporaryFolder.newFolder("VID_timeout"), "base.mp4");
+        AtomicBoolean cancelCalled = new AtomicBoolean(false);
         long startedAt = System.nanoTime();
 
         assertThat(
                         VideoThumbnailWriter.extractFrameWithTimeout(
                                 video,
-                                ignored -> {
-                                    try {
-                                        Thread.sleep(5_000);
-                                    } catch (InterruptedException e) {
-                                        Thread.currentThread().interrupt();
+                                new VideoThumbnailWriter.FrameExtractor() {
+                                    @Override
+                                    public Bitmap extract(File ignored) {
+                                        try {
+                                            Thread.sleep(5_000);
+                                        } catch (InterruptedException e) {
+                                            Thread.currentThread().interrupt();
+                                        }
+                                        return null;
                                     }
-                                    return null;
+
+                                    @Override
+                                    public void cancel() {
+                                        cancelCalled.set(true);
+                                    }
                                 },
                                 10))
                 .isNull();
 
         long elapsedMs = (System.nanoTime() - startedAt) / 1_000_000L;
         assertThat(elapsedMs).isLessThan(1_000L);
+        assertThat(cancelCalled).isTrue();
     }
 
     private static File write(File file) throws IOException {
