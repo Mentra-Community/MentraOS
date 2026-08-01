@@ -149,6 +149,13 @@ public class MediaCaptureService {
         }
     }
 
+    private static boolean shouldWriteVideoThumbnail(UploadTarget uploadTarget, boolean save) {
+        return save
+                || uploadTarget == null
+                || uploadTarget.webhookUrl == null
+                || uploadTarget.webhookUrl.trim().isEmpty();
+    }
+
     // Guards the stop prologue (mCurrentStopReason + pending-upload target) so the
     // check-and-set is atomic across threads. The user stop arrives on the BLE worker
     // thread while auto-stops (max-duration/battery/error) fire on the main looper; without
@@ -613,6 +620,15 @@ public class MediaCaptureService {
             Executors.newSingleThreadExecutor(
                     r -> {
                         Thread t = new Thread(r, "RecordedVideoIntegrity");
+                        t.setPriority(Thread.NORM_PRIORITY - 1);
+                        return t;
+                    });
+
+    /** Keeps best-effort thumbnail decoding from delaying integrity callbacks or uploads. */
+    private final ExecutorService videoThumbnailExecutor =
+            Executors.newSingleThreadExecutor(
+                    r -> {
+                        Thread t = new Thread(r, "VideoThumbnailWriter");
                         t.setPriority(Thread.NORM_PRIORITY - 1);
                         return t;
                     });
@@ -1407,13 +1423,6 @@ public class MediaCaptureService {
                                                 final boolean ok =
                                                         RecordedVideoIntegrityChecker.verify(
                                                                 filePath);
-                                                if (ok) {
-                                                    // Still on the background thread: write the
-                                                    // thumb.jpg sidecar for the verified video so
-                                                    // USB/desktop consumers get a preview.
-                                                    VideoThumbnailWriter.writeSidecar(
-                                                            new File(filePath));
-                                                }
                                                 mainHandler.post(
                                                         () -> {
                                                             videoCaptureIdsPendingIntegrityCheck
@@ -1494,6 +1503,24 @@ public class MediaCaptureService {
                                                                 sendGalleryStatusUpdate();
                                                             }
                                                         });
+                                                if (ok
+                                                        && shouldWriteVideoThumbnail(
+                                                                uploadTarget, save)
+                                                        && !isCleaningUp.get()) {
+                                                    try {
+                                                        videoThumbnailExecutor.execute(
+                                                                () ->
+                                                                        VideoThumbnailWriter
+                                                                                .writeSidecar(
+                                                                                        new File(
+                                                                                                filePath)));
+                                                    } catch (RejectedExecutionException e) {
+                                                        Log.d(
+                                                                TAG,
+                                                                "Skipping video thumbnail during"
+                                                                        + " cleanup");
+                                                    }
+                                                }
                                             } catch (Throwable t) {
                                                 Log.e(
                                                         TAG,
@@ -4374,6 +4401,7 @@ public class MediaCaptureService {
 
                                     if (!save) {
                                         try {
+                                            VideoThumbnailWriter.deleteSidecar(videoFile);
                                             if (videoFile.delete()) {
                                                 Log.d(
                                                         TAG,
@@ -6813,6 +6841,7 @@ public class MediaCaptureService {
                 videoIntegrityExecutor.shutdownNow();
                 Thread.currentThread().interrupt();
             }
+            videoThumbnailExecutor.shutdownNow();
             textModeProcessingExecutor.shutdown();
             try {
                 if (!textModeProcessingExecutor.awaitTermination(3, TimeUnit.SECONDS)) {

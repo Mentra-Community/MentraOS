@@ -1,5 +1,6 @@
 package com.mentra.asg_client.io.file.core;
 
+import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.logging.Logger;
 import com.mentra.asg_client.io.file.managers.FileOperationsManager;
 import com.mentra.asg_client.io.file.managers.FileSecurityManager;
@@ -8,7 +9,6 @@ import com.mentra.asg_client.io.file.managers.DirectoryManager;
 import com.mentra.asg_client.io.file.managers.ThumbnailManager;
 import com.mentra.asg_client.io.file.utils.FileOperationLogger;
 import com.mentra.asg_client.io.file.utils.MimeTypeRegistry;
-import com.mentra.asg_client.io.media.utils.VideoThumbnailWriter;
 import java.io.File;
 import java.io.InputStream;
 import java.util.ArrayList;
@@ -328,7 +328,10 @@ public class FileManagerImpl implements FileManager {
                     // Skip thumb.jpg capture sidecars (written at video finalize for USB/desktop
                     // consumers). The Wi-Fi gallery has its own thumbnail cache; listing these
                     // would advertise them to phone sync as primary capture files.
-                    if (item.getName().equals(VideoThumbnailWriter.SIDECAR_NAME)) {
+                    if (getDefaultPackageName().equals(packageName)
+                            && directory.getName().startsWith("VID_")
+                            && item.getName()
+                                    .equals(AsgConstants.VIDEO_THUMBNAIL_SIDECAR_NAME)) {
                         continue;
                     }
                     // Add file to metadata list
@@ -801,8 +804,10 @@ public class FileManagerImpl implements FileManager {
                         lower.endsWith(".mp4") || lower.endsWith(".mov") || lower.endsWith(".avi");
                     // Exclude HDR brackets — they're not standalone media
                     boolean isBracket = lower.matches("ev-?\\d+\\.jpe?g");
+                    boolean isVideoThumbnail =
+                            lower.equals(AsgConstants.VIDEO_THUMBNAIL_SIDECAR_NAME);
 
-                    if (isMediaExtension && !isBracket) {
+                    if (isMediaExtension && !isBracket && !isVideoThumbnail) {
                         boolean isVideo = lower.endsWith(".mp4") || lower.endsWith(".mov") || lower.endsWith(".avi");
                         if (isVideo) {
                             // Videos need moov atom validation — a killed process leaves

@@ -3,9 +3,15 @@ package com.mentra.asg_client.io.media.utils;
 import android.graphics.Bitmap;
 import android.media.MediaMetadataRetriever;
 import android.util.Log;
-
+import com.mentra.asg_client.AsgConstants;
 import java.io.File;
 import java.io.FileOutputStream;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /**
  * Writes a {@code thumb.jpg} sidecar next to a finished video capture (e.g. {@code
@@ -23,22 +29,26 @@ import java.io.FileOutputStream;
 public final class VideoThumbnailWriter {
     private static final String TAG = "VideoThumbnailWriter";
 
-    /** Sidecar filename inside a capture folder. */
-    public static final String SIDECAR_NAME = "thumb.jpg";
-
-    /** Longest edge of the generated thumbnail, in pixels. Aspect ratio is preserved. */
-    static final int MAX_DIMENSION = 480;
-
-    static final int JPEG_QUALITY = 80;
-
-    /** Frame to sample, in microseconds (1 second in, falling back to the first frame). */
-    private static final long FRAME_TIME_US = 1_000_000L;
-
     private VideoThumbnailWriter() {}
 
     /** The sidecar file a given video would get, whether or not it exists yet. */
     public static File sidecarFor(File videoFile) {
-        return new File(videoFile.getParentFile(), SIDECAR_NAME);
+        return new File(videoFile.getParentFile(), AsgConstants.VIDEO_THUMBNAIL_SIDECAR_NAME);
+    }
+
+    private static File partialFor(File videoFile) {
+        return new File(videoFile.getParentFile(), AsgConstants.VIDEO_THUMBNAIL_PARTIAL_NAME);
+    }
+
+    /**
+     * Remove thumbnail artifacts when the owning video is intentionally discarded. Never throws.
+     */
+    public static void deleteSidecar(File videoFile) {
+        if (videoFile == null) {
+            return;
+        }
+        deleteBestEffort(sidecarFor(videoFile));
+        deleteBestEffort(partialFor(videoFile));
     }
 
     /**
@@ -49,14 +59,19 @@ public final class VideoThumbnailWriter {
      * @return the sidecar file on success, or null if extraction or writing failed
      */
     public static File writeSidecar(File videoFile) {
-        if (videoFile == null || !videoFile.isFile()) {
+        if (videoFile == null) {
             return null;
         }
-        File sidecar = sidecarFor(videoFile);
-        File tmp = new File(sidecar.getParentFile(), SIDECAR_NAME + ".tmp");
+        File sidecar = null;
+        File partial = null;
         Bitmap frame = null;
         Bitmap scaled = null;
         try {
+            if (!videoFile.isFile()) {
+                return null;
+            }
+            sidecar = sidecarFor(videoFile);
+            partial = partialFor(videoFile);
             frame = extractFrame(videoFile);
             if (frame == null) {
                 Log.w(TAG, "No frame extracted for thumbnail: " + videoFile.getAbsolutePath());
@@ -65,7 +80,8 @@ public final class VideoThumbnailWriter {
             float scale =
                     Math.min(
                             1f,
-                            (float) MAX_DIMENSION / Math.max(frame.getWidth(), frame.getHeight()));
+                            (float) AsgConstants.VIDEO_THUMBNAIL_MAX_DIMENSION
+                                    / Math.max(frame.getWidth(), frame.getHeight()));
             scaled =
                     scale < 1f
                             ? Bitmap.createScaledBitmap(
@@ -74,12 +90,15 @@ public final class VideoThumbnailWriter {
                                     Math.round(frame.getHeight() * scale),
                                     true)
                             : frame;
-            try (FileOutputStream fos = new FileOutputStream(tmp)) {
-                if (!scaled.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, fos)) {
+            try (FileOutputStream fos = new FileOutputStream(partial)) {
+                if (!scaled.compress(
+                        Bitmap.CompressFormat.JPEG,
+                        AsgConstants.VIDEO_THUMBNAIL_JPEG_QUALITY,
+                        fos)) {
                     return null;
                 }
             }
-            if (!tmp.renameTo(sidecar)) {
+            if (!partial.renameTo(sidecar)) {
                 Log.w(TAG, "Could not move thumbnail into place: " + sidecar.getAbsolutePath());
                 return null;
             }
@@ -94,17 +113,57 @@ public final class VideoThumbnailWriter {
             if (frame != null) {
                 frame.recycle();
             }
-            if (tmp.exists() && !tmp.delete()) {
-                Log.w(TAG, "Could not delete temp thumbnail: " + tmp.getAbsolutePath());
+            if (partial != null && partial.exists() && !partial.delete()) {
+                Log.w(TAG, "Could not delete partial thumbnail: " + partial.getAbsolutePath());
             }
         }
     }
 
     private static Bitmap extractFrame(File videoFile) {
+        return extractFrameWithTimeout(
+                videoFile,
+                VideoThumbnailWriter::extractFrameDirect,
+                AsgConstants.VIDEO_THUMBNAIL_EXTRACTION_TIMEOUT_MS);
+    }
+
+    static Bitmap extractFrameWithTimeout(
+            File videoFile, FrameExtractor extractor, long timeoutMs) {
+        ExecutorService executor =
+                Executors.newSingleThreadExecutor(
+                        runnable -> {
+                            Thread thread = new Thread(runnable, "VideoThumbnailDecode");
+                            thread.setPriority(Thread.NORM_PRIORITY - 1);
+                            return thread;
+                        });
+        Future<Bitmap> future = executor.submit(() -> extractor.extract(videoFile));
+        try {
+            return future.get(timeoutMs, TimeUnit.MILLISECONDS);
+        } catch (TimeoutException e) {
+            future.cancel(true);
+            Log.w(
+                    TAG,
+                    "Frame extraction timed out after "
+                            + timeoutMs
+                            + "ms for "
+                            + videoFile.getAbsolutePath());
+            return null;
+        } catch (InterruptedException e) {
+            future.cancel(true);
+            Thread.currentThread().interrupt();
+            return null;
+        } catch (ExecutionException e) {
+            Log.w(TAG, "Frame extraction failed for " + videoFile.getAbsolutePath(), e.getCause());
+            return null;
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    private static Bitmap extractFrameDirect(File videoFile) {
         MediaMetadataRetriever retriever = new MediaMetadataRetriever();
         try {
             retriever.setDataSource(videoFile.getAbsolutePath());
-            Bitmap frame = retriever.getFrameAtTime(FRAME_TIME_US);
+            Bitmap frame = retriever.getFrameAtTime(AsgConstants.VIDEO_THUMBNAIL_FRAME_TIME_US);
             if (frame == null) {
                 frame = retriever.getFrameAtTime();
             }
@@ -119,5 +178,20 @@ public final class VideoThumbnailWriter {
                 // best effort
             }
         }
+    }
+
+    private static void deleteBestEffort(File file) {
+        try {
+            if (file.exists() && !file.delete()) {
+                Log.w(TAG, "Could not delete thumbnail artifact: " + file.getAbsolutePath());
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "Could not delete thumbnail artifact: " + file.getAbsolutePath(), e);
+        }
+    }
+
+    @FunctionalInterface
+    interface FrameExtractor {
+        Bitmap extract(File videoFile);
     }
 }

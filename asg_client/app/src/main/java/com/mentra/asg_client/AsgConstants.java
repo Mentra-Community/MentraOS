@@ -364,6 +364,27 @@ public class AsgConstants {
      */
     public static final int FILE_TRANSFER_PROGRESS_LOG_INTERVAL = 10;
 
+    // Video capture thumbnails
+    // -------------------------------------------------------------------------
+
+    /** JPEG sidecar written next to a finalized video for direct-filesystem consumers. */
+    public static final String VIDEO_THUMBNAIL_SIDECAR_NAME = "thumb.jpg";
+
+    /** Transient thumbnail filename; the .partial suffix keeps it out of gallery listings. */
+    public static final String VIDEO_THUMBNAIL_PARTIAL_NAME = "thumb.jpg.partial";
+
+    /** Longest edge of generated video thumbnails, in pixels. */
+    public static final int VIDEO_THUMBNAIL_MAX_DIMENSION = 480;
+
+    /** JPEG compression quality for video thumbnail sidecars. */
+    public static final int VIDEO_THUMBNAIL_JPEG_QUALITY = 80;
+
+    /** Frame position sampled for video thumbnails, in microseconds. */
+    public static final long VIDEO_THUMBNAIL_FRAME_TIME_US = 1_000_000L;
+
+    /** Maximum time allowed for platform video-frame extraction. */
+    public static final long VIDEO_THUMBNAIL_EXTRACTION_TIMEOUT_MS = 10_000L;
+
     /**
      * Max wait for the deferred background photo write ({@code CapturedPhoto.persistence}) when a
      * BLE photo consumer needs the file on disk (gallery save, text-mode canonical crop, cleanup).
