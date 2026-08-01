@@ -188,12 +188,12 @@ public class MediaCaptureService {
                 if (currentExecution != null) {
                     currentExecution.cancel(true);
                 }
-                try {
-                    return !videoFile.exists() || videoFile.delete();
-                } finally {
-                    // A failed video deletion must not let this task commit a late sidecar.
+                boolean deleted = !videoFile.exists() || videoFile.delete();
+                if (deleted) {
                     VideoThumbnailWriter.deleteSidecar(videoFile);
                 }
+                // Even if deletion fails, discarded prevents this task from committing late.
+                return deleted;
             }
         }
 
