@@ -980,17 +980,31 @@ export const useSettingsStore = create<SettingsState>()(
         // developer's METRO_AUTO pin should survive a rebuild. It is wrong
         // across environments.
         //
-        // The concrete case: TestFlight and the App Store receive the SAME
-        // binary -- the tested build is promoted untouched, so its baked URLs
-        // must already be production. A tester who pinned staging cloud while
-        // it was a beta would otherwise keep talking to staging forever after
-        // that build is promoted, with nothing surfacing it. Same shape on
-        // Android internal-track to production, where the install source cannot
-        // even be distinguished at runtime.
+        // The concrete case is an install that moves BETWEEN environments: an
+        // internal tester running a dev build with a pinned override who then
+        // installs the store build. The override outranks that build's prod
+        // URLs, so without this they keep talking to dev with nothing
+        // surfacing it.
+        //
+        // Note what this deliberately does NOT do, because the distinction is
+        // easy to get backwards. TestFlight and the App Store receive the SAME
+        // binary, so promotion does not change EXPO_PUBLIC_BUILD_ENV and this
+        // reset never fires on it. Promotion is safe for a different reason:
+        // the publishing lane bakes prod URLs (staging-builds.yml defaults
+        // cloud_env to prod), so a promoted build was pointed at production the
+        // whole time. The same holds for Android internal-track to production.
+        //
+        // The residual gap is therefore an override pinned while already on a
+        // prod-labelled build, which no label comparison can see. That is a
+        // deliberate limit: reaching it means typing a URL into a dev-only
+        // screen, VersionInfo renders the current value, and the same screen
+        // clears it.
         //
         // Comparing the baked EXPO_PUBLIC_BUILD_ENV against the last one seen
-        // on this device covers promotion, environment switches and fresh
-        // installs, without touching the setting write path.
+        // on this device covers those environment switches and fresh installs
+        // without touching the setting write path. A reinstall needs no
+        // handling: it drops the marker and the override together
+        // (android:allowBackup="false", and iOS deletes the container).
         const BUILD_ENV_KEY = "settings.lastBuildEnv"
         const buildEnv = (process.env.EXPO_PUBLIC_BUILD_ENV ?? "dev").trim() || "dev"
         const lastBuildEnv = storage.load<string>(BUILD_ENV_KEY)
