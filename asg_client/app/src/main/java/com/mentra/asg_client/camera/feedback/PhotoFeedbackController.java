@@ -40,9 +40,11 @@ public final class PhotoFeedbackController {
         private boolean mExposureStarted;
         private boolean mTerminal;
         private long mPrepClickPlaybackToken;
+        private long mSnapPlaybackToken;
         @Nullable private Runnable mPrepClickRunnable;
         @Nullable private Runnable mPrepResumeRunnable;
         @Nullable private Runnable mSnapRunnable;
+        @Nullable private Runnable mSnapTrackingRunnable;
         @Nullable private Runnable mSafetyTimeoutRunnable;
 
         private Token(String requestId, long generation) {
@@ -56,10 +58,10 @@ public final class PhotoFeedbackController {
     private final Handler mHandler;
     private final Clock mClock;
     private final Set<Token> mActiveFeedback = new HashSet<>();
+    private final Set<Token> mPlayingSnapFeedback = new HashSet<>();
     private final Map<String, Token> mFeedbackByRequestId = new HashMap<>();
     private long mGeneration;
     private long mPrepSuppressedUntilUptimeMs;
-    private long mSnapPlaybackToken;
     @Nullable private Token mCurrentPrepFeedback;
 
     public PhotoFeedbackController(
@@ -194,11 +196,15 @@ public final class PhotoFeedbackController {
                     Math.max(
                             mPrepSuppressedUntilUptimeMs,
                             mClock.uptimeMillis() + SNAP_PREP_RESUME_DELAY_MS);
-            if (mSnapPlaybackToken > 0L) {
-                mHardwareManager.stopAudioOverlayPlayback(mSnapPlaybackToken);
-            }
-            mSnapPlaybackToken =
+            feedbackToken.mSnapPlaybackToken =
                     mHardwareManager.playAudioAssetOverlayTracked(AudioAssets.CAMERA_SNAP);
+            if (feedbackToken.mSnapPlaybackToken > 0L) {
+                mPlayingSnapFeedback.add(feedbackToken);
+                feedbackToken.mSnapTrackingRunnable =
+                        () -> forgetCompletedSnap(feedbackToken);
+                mHandler.postDelayed(
+                        feedbackToken.mSnapTrackingRunnable, SNAP_PREP_RESUME_DELAY_MS);
+            }
             schedulePrepResumeLocked(queuedPrepFeedback, SNAP_PREP_RESUME_DELAY_MS);
         }
     }
@@ -210,6 +216,7 @@ public final class PhotoFeedbackController {
         }
         synchronized (mLock) {
             if (feedbackToken.mTerminal) {
+                stopSnapLocked(feedbackToken);
                 return;
             }
             finishLocked(feedbackToken);
@@ -232,9 +239,8 @@ public final class PhotoFeedbackController {
             for (Token feedbackToken : new HashSet<>(mActiveFeedback)) {
                 finishLocked(feedbackToken);
             }
-            if (mSnapPlaybackToken > 0L && mHardwareManager != null) {
-                mHardwareManager.stopAudioOverlayPlayback(mSnapPlaybackToken);
-                mSnapPlaybackToken = 0L;
+            for (Token feedbackToken : new HashSet<>(mPlayingSnapFeedback)) {
+                stopSnapLocked(feedbackToken);
             }
         }
     }
@@ -391,6 +397,26 @@ public final class PhotoFeedbackController {
                 && feedbackToken.mPrepClicksActive
                 && !feedbackToken.mExposureStarted
                 && !feedbackToken.mTerminal;
+    }
+
+    private void forgetCompletedSnap(Token feedbackToken) {
+        synchronized (mLock) {
+            feedbackToken.mSnapTrackingRunnable = null;
+            feedbackToken.mSnapPlaybackToken = 0L;
+            mPlayingSnapFeedback.remove(feedbackToken);
+        }
+    }
+
+    private void stopSnapLocked(Token feedbackToken) {
+        if (feedbackToken.mSnapTrackingRunnable != null) {
+            mHandler.removeCallbacks(feedbackToken.mSnapTrackingRunnable);
+            feedbackToken.mSnapTrackingRunnable = null;
+        }
+        if (feedbackToken.mSnapPlaybackToken > 0L && mHardwareManager != null) {
+            mHardwareManager.stopAudioOverlayPlayback(feedbackToken.mSnapPlaybackToken);
+            feedbackToken.mSnapPlaybackToken = 0L;
+        }
+        mPlayingSnapFeedback.remove(feedbackToken);
     }
 
     private void finishLocked(Token feedbackToken) {

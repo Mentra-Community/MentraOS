@@ -178,6 +178,32 @@ public class PhotoFeedbackControllerTest {
     }
 
     @Test
+    public void failureAfterSnap_stopsOnlyOwnedSnap() {
+        PhotoFeedbackController.Token token = controller.start("snap", true);
+        controller.playSnap(token, "test");
+        clearInvocations(hardwareManager);
+
+        controller.stopForFailure(token);
+
+        verify(hardwareManager).stopAudioOverlayPlayback(42L);
+    }
+
+    @Test
+    public void laterSnap_doesNotTruncateEarlierSnap() {
+        when(hardwareManager.playAudioAssetOverlayTracked(AudioAssets.CAMERA_SNAP))
+                .thenReturn(42L, 43L);
+        PhotoFeedbackController.Token first = controller.start("first", true);
+        controller.playSnap(first, "first");
+        clearInvocations(hardwareManager);
+        PhotoFeedbackController.Token second = controller.start("second", true);
+
+        controller.playSnap(second, "second");
+
+        verify(hardwareManager, never()).stopAudioOverlayPlayback(42L);
+        verify(hardwareManager).playAudioAssetOverlayTracked(AudioAssets.CAMERA_SNAP);
+    }
+
+    @Test
     public void cleanup_stopsPrepAndMakesCadenceCallbackInert() {
         ArgumentCaptor<Runnable> cadence = ArgumentCaptor.forClass(Runnable.class);
         controller.start("cleanup", false);
