@@ -6851,7 +6851,9 @@ public class MediaCaptureService {
         String taskKey = new File(filePath).getAbsolutePath();
         VideoThumbnailTask task = new VideoThumbnailTask(taskKey);
         synchronized (videoThumbnailLifecycleLock) {
-            if (isCleaningUp.get() || videoThumbnailExecutor.isShutdown()) {
+            // Cleanup blocks new integrity checks first, then lets checks already in flight enqueue
+            // their sidecars before closing this executor.
+            if (videoThumbnailExecutor.isShutdown()) {
                 return;
             }
             if (videoThumbnailTasks.putIfAbsent(taskKey, task) != null) {
@@ -6905,12 +6907,9 @@ public class MediaCaptureService {
                 mBatteryMonitorHandler = null;
             }
 
-            // Close submission before waiting for integrity work. Existing thumbnail tasks drain
-            // in parallel with the integrity wait, keeping the final main-thread wait short.
-            synchronized (videoThumbnailLifecycleLock) {
-                videoThumbnailExecutor.shutdown();
-            }
-
+            // isCleaningUp prevents new integrity submissions. Let checks already in flight enqueue
+            // their thumbnails before closing thumbnail submission; existing thumbnail work still
+            // drains in parallel with this wait.
             videoIntegrityExecutor.shutdown();
             try {
                 if (!videoIntegrityExecutor.awaitTermination(3, TimeUnit.SECONDS)) {
@@ -6919,6 +6918,9 @@ public class MediaCaptureService {
             } catch (InterruptedException e) {
                 videoIntegrityExecutor.shutdownNow();
                 Thread.currentThread().interrupt();
+            }
+            synchronized (videoThumbnailLifecycleLock) {
+                videoThumbnailExecutor.shutdown();
             }
             try {
                 if (!videoThumbnailExecutor.awaitTermination(
