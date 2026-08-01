@@ -2044,7 +2044,9 @@ public class MediaCaptureService {
                     public void onPhotoExposureStarted(
                             long sensorTimestampNs, long estimatedExposureDurationNs) {
                         photoFeedbackController.onExposureStarted(
-                                captureFeedbackToken, estimatedExposureDurationNs);
+                                captureFeedbackToken,
+                                sensorTimestampNs,
+                                estimatedExposureDurationNs);
                     }
 
                     @Override
@@ -2278,7 +2280,9 @@ public class MediaCaptureService {
                         public void onPhotoExposureStarted(
                                 long sensorTimestampNs, long estimatedExposureDurationNs) {
                             photoFeedbackController.onExposureStarted(
-                                    captureFeedbackToken, estimatedExposureDurationNs);
+                                    captureFeedbackToken,
+                                    sensorTimestampNs,
+                                    estimatedExposureDurationNs);
                         }
 
                         @Override
@@ -2709,7 +2713,9 @@ public class MediaCaptureService {
                         public void onPhotoExposureStarted(
                                 long sensorTimestampNs, long estimatedExposureDurationNs) {
                             photoFeedbackController.onExposureStarted(
-                                    captureFeedbackToken, estimatedExposureDurationNs);
+                                    captureFeedbackToken,
+                                    sensorTimestampNs,
+                                    estimatedExposureDurationNs);
                         }
 
                         @Override
@@ -5100,7 +5106,9 @@ public class MediaCaptureService {
                         public void onPhotoExposureStarted(
                                 long sensorTimestampNs, long estimatedExposureDurationNs) {
                             photoFeedbackController.onExposureStarted(
-                                    captureFeedbackToken, estimatedExposureDurationNs);
+                                    captureFeedbackToken,
+                                    sensorTimestampNs,
+                                    estimatedExposureDurationNs);
                         }
 
                         @Override

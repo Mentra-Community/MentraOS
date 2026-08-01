@@ -29,6 +29,8 @@ public final class PhotoFeedbackController {
 
     interface Clock {
         long uptimeMillis();
+
+        long elapsedRealtimeNanos();
     }
 
     /** Opaque handle that binds camera callbacks to one request's feedback lifecycle. */
@@ -66,7 +68,20 @@ public final class PhotoFeedbackController {
 
     public PhotoFeedbackController(
             @Nullable IHardwareManager hardwareManager, Handler handler) {
-        this(hardwareManager, handler, SystemClock::uptimeMillis);
+        this(
+                hardwareManager,
+                handler,
+                new Clock() {
+                    @Override
+                    public long uptimeMillis() {
+                        return SystemClock.uptimeMillis();
+                    }
+
+                    @Override
+                    public long elapsedRealtimeNanos() {
+                        return SystemClock.elapsedRealtimeNanos();
+                    }
+                });
     }
 
     PhotoFeedbackController(
@@ -129,7 +144,9 @@ public final class PhotoFeedbackController {
 
     /** Anchors the snap to exposure start and offsets playback toward exposure end. */
     public void onExposureStarted(
-            @Nullable Token feedbackToken, long estimatedExposureDurationNs) {
+            @Nullable Token feedbackToken,
+            long sensorTimestampNs,
+            long estimatedExposureDurationNs) {
         if (feedbackToken == null) {
             return;
         }
@@ -150,11 +167,20 @@ public final class PhotoFeedbackController {
 
             long estimatedExposureMs =
                     Math.max(0L, (estimatedExposureDurationNs + 999_999L) / 1_000_000L);
-            long snapDelayMs =
-                    Math.max(0L, estimatedExposureMs - AsgConstants.CAMERA_SNAP_TARGET_LEAD_MS);
+            long callbackLatencyNs = exposureCallbackLatencyNs(sensorTimestampNs);
+            long targetAfterExposureStartNs =
+                    Math.max(
+                            0L,
+                            estimatedExposureDurationNs
+                                    - AsgConstants.CAMERA_SNAP_TARGET_LEAD_MS * 1_000_000L);
+            long remainingToTargetNs =
+                    Math.max(0L, targetAfterExposureStartNs - callbackLatencyNs);
+            long snapDelayMs = (remainingToTargetNs + 999_999L) / 1_000_000L;
             String timingSource =
                     "sensor exposure (estimated="
                             + estimatedExposureMs
+                            + "ms, callbackLatency="
+                            + callbackLatencyNs / 1_000_000.0
                             + "ms, delay="
                             + snapDelayMs
                             + "ms)";
@@ -247,6 +273,17 @@ public final class PhotoFeedbackController {
 
     private boolean isPrepSuppressedLocked() {
         return prepSuppressionDelayLocked() != 0L;
+    }
+
+    private long exposureCallbackLatencyNs(long sensorTimestampNs) {
+        if (sensorTimestampNs <= 0L) {
+            return 0L;
+        }
+        long latencyNs = mClock.elapsedRealtimeNanos() - sensorTimestampNs;
+        // Some camera devices expose a sensor timestamp in an unspecified timebase. Ignore an
+        // implausible delta instead of letting it force every snap to play immediately.
+        long maxPlausibleLatencyNs = FEEDBACK_SAFETY_TIMEOUT_MS * 1_000_000L;
+        return latencyNs >= 0L && latencyNs <= maxPlausibleLatencyNs ? latencyNs : 0L;
     }
 
     /** Returns -1 for an active exposure, otherwise the remaining snap suppression time. */
