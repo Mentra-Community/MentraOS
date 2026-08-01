@@ -197,6 +197,22 @@ jobs:
                 -e "s|^EXPO_PUBLIC_CLOUD_CORE_URL=.*|EXPO_PUBLIC_CLOUD_CORE_URL=$CLOUD_CORE|" \
                 -e "s|^EXPO_PUBLIC_CLOUD_RUNTIME_URL=.*|EXPO_PUBLIC_CLOUD_RUNTIME_URL=$CLOUD_RT|" \
                 .env > .env.tmp && mv .env.tmp .env
+            # Make the pin authoritative for every later step. release:android /
+            # release:ios call setBuildEnv(), which keeps any value already
+            # present in the environment over the .env file (standard dotenv
+            # precedence, deliberately relied on for the signing credentials).
+            # These jobs run on persistent self-hosted runners, so a stale
+            # runner-level EXPO_PUBLIC_CLOUD_* or EXPO_PUBLIC_BUILD_ENV would
+            # otherwise outrank the values written above, Expo would bundle the
+            # inherited endpoint, and validateReleaseArchive() would compare the
+            # bundle against that same inherited process env and pass. GITHUB_ENV
+            # takes precedence over the runner's inherited environment, so the
+            # three keys agree from here on.
+            {
+              echo "EXPO_PUBLIC_BUILD_ENV=$CLOUD_ENV"
+              echo "EXPO_PUBLIC_CLOUD_CORE_URL=$CLOUD_CORE"
+              echo "EXPO_PUBLIC_CLOUD_RUNTIME_URL=$CLOUD_RT"
+            } >> "$GITHUB_ENV"
             echo "Cloud backend pinned to $CLOUD_ENV ($CLOUD_CORE)"
           elif [ "${{ github.event_name }}" = "pull_request" ]; then
             echo "::warning::Unrecognised cloud env '$CLOUD_ENV'; this PR build keeps the dev backend (OS-1875)."
