@@ -8,6 +8,7 @@ import com.mentra.asg_client.io.file.managers.DirectoryManager;
 import com.mentra.asg_client.io.file.managers.ThumbnailManager;
 import com.mentra.asg_client.io.file.utils.FileOperationLogger;
 import com.mentra.asg_client.io.file.utils.MimeTypeRegistry;
+import com.mentra.asg_client.io.media.utils.VideoThumbnailWriter;
 import java.io.File;
 import java.io.InputStream;
 import java.util.ArrayList;
@@ -322,6 +323,12 @@ public class FileManagerImpl implements FileManager {
                     // for Wi-Fi sync, where unknown leaf names are treated as primary capture files.
                     if (item.getName().endsWith(".partial")) {
                         Log.d(TAG, "⏭️ Skipping .partial file from listing: " + item.getAbsolutePath());
+                        continue;
+                    }
+                    // Skip thumb.jpg capture sidecars (written at video finalize for USB/desktop
+                    // consumers). The Wi-Fi gallery has its own thumbnail cache; listing these
+                    // would advertise them to phone sync as primary capture files.
+                    if (item.getName().equals(VideoThumbnailWriter.SIDECAR_NAME)) {
                         continue;
                     }
                     // Add file to metadata list

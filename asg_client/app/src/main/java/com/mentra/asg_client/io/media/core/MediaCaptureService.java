@@ -27,6 +27,7 @@ import com.mentra.asg_client.io.media.core.textdetect.MlKitTextRoiDetector;
 import com.mentra.asg_client.io.media.interfaces.ServiceCallbackInterface;
 import com.mentra.asg_client.io.media.managers.MediaUploadQueueManager;
 import com.mentra.asg_client.io.media.upload.MediaUploadService;
+import com.mentra.asg_client.io.media.utils.VideoThumbnailWriter;
 import com.mentra.asg_client.io.storage.StorageManager;
 import com.mentra.asg_client.io.streaming.services.RtmpStreamingService;
 import com.mentra.asg_client.io.streaming.services.SrtStreamingService;
@@ -1406,6 +1407,13 @@ public class MediaCaptureService {
                                                 final boolean ok =
                                                         RecordedVideoIntegrityChecker.verify(
                                                                 filePath);
+                                                if (ok) {
+                                                    // Still on the background thread: write the
+                                                    // thumb.jpg sidecar for the verified video so
+                                                    // USB/desktop consumers get a preview.
+                                                    VideoThumbnailWriter.writeSidecar(
+                                                            new File(filePath));
+                                                }
                                                 mainHandler.post(
                                                         () -> {
                                                             videoCaptureIdsPendingIntegrityCheck
