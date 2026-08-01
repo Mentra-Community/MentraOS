@@ -996,24 +996,38 @@ export const useSettingsStore = create<SettingsState>()(
         const lastBuildEnv = storage.load<string>(BUILD_ENV_KEY)
         const previousBuildEnv = lastBuildEnv.is_error() ? undefined : lastBuildEnv.value
         if (previousBuildEnv !== buildEnv) {
-          // Only clear on an actual change. A fresh install has nothing to
-          // clear and must not log as though it did.
-          if (previousBuildEnv !== undefined) {
-            // Driven by the descriptors rather than a hardcoded key list, so a
-            // setting that needs this behaviour declares it in one place and
-            // cannot be missed here.
-            const scoped = Object.values(SETTINGS).filter((setting) => setting.resetOnBuildEnvChange)
-            console.log(
-              `SETTINGS: build env ${previousBuildEnv} -> ${buildEnv}, clearing ${scoped.length} build-scoped setting(s)`,
-            )
-            for (const setting of scoped) {
-              const cleared = await get().setSetting(setting.key, setting.defaultValue(), false)
-              if (cleared.is_error()) {
-                console.log(`SETTINGS: could not clear ${setting.key}:`, cleared.error)
-              }
+          // Clear when there is no marker yet, not just on a recorded change.
+          // The first build carrying this code meets every existing install
+          // with previousBuildEnv === undefined, and those are exactly the
+          // installs that may hold an override set before the pin existed --
+          // the population this is here to repair. Treating "no marker" as a
+          // fresh install would record the marker and never look again. A
+          // genuinely fresh install has nothing persisted, so the clear below
+          // writes each default over itself and costs nothing.
+          //
+          // Driven by the descriptors rather than a hardcoded key list, so a
+          // setting that needs this behaviour declares it in one place and
+          // cannot be missed here.
+          const scoped = Object.values(SETTINGS).filter((setting) => setting.resetOnBuildEnvChange)
+          console.log(
+            `SETTINGS: build env ${previousBuildEnv ?? "(none recorded)"} -> ${buildEnv}, ` +
+              `clearing ${scoped.length} build-scoped setting(s)`,
+          )
+          let allCleared = true
+          for (const setting of scoped) {
+            const cleared = await get().setSetting(setting.key, setting.defaultValue(), false)
+            if (cleared.is_error()) {
+              allCleared = false
+              console.log(`SETTINGS: could not clear ${setting.key}:`, cleared.error)
             }
           }
-          storage.save(BUILD_ENV_KEY, buildEnv)
+          // Advance the marker only once the reset actually landed. Recording
+          // it after a failed write would retire the retry and leave the stale
+          // override for the life of the install; leaving it unset costs one
+          // repeated attempt per launch until a write succeeds.
+          if (allCleared) {
+            storage.save(BUILD_ENV_KEY, buildEnv)
+          }
         }
 
         const NOTIFICATION_LISTENER_MIGRATION_KEY = "migration:android_notification_listener_default_on_v1"
