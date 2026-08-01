@@ -597,6 +597,7 @@ public class MediaCaptureService {
     private final AtomicBoolean isCleaningUp = new AtomicBoolean(false);
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final Object mPhotoFeedbackLock = new Object();
+    private static final long CAMERA_SNAP_PREP_RESUME_DELAY_MS = 550L;
     private long mPhotoFeedbackGeneration;
     @Nullable private PhotoFeedbackToken mCurrentPrepFeedback;
     private final Set<PhotoFeedbackToken> mActivePhotoFeedback = new HashSet<>();
@@ -604,10 +605,12 @@ public class MediaCaptureService {
     private static final class PhotoFeedbackToken {
         private final long mGeneration;
         private boolean mPrepClicksActive;
+        private boolean mPrepClicksPaused;
         private boolean mExposureStarted;
         private boolean mTerminal;
         private long mPrepClickPlaybackToken;
         @Nullable private Runnable mPrepClickRunnable;
+        @Nullable private Runnable mPrepResumeRunnable;
         @Nullable private Runnable mSnapRunnable;
 
         private PhotoFeedbackToken(long generation) {
@@ -854,6 +857,7 @@ public class MediaCaptureService {
 
     private void playPrepClickLocked(PhotoFeedbackToken feedbackToken) {
         if (!feedbackToken.mPrepClicksActive
+                || feedbackToken.mPrepClicksPaused
                 || feedbackToken.mTerminal
                 || mCurrentPrepFeedback != feedbackToken
                 || hardwareManager == null
@@ -874,6 +878,7 @@ public class MediaCaptureService {
                         public void run() {
                             synchronized (mPhotoFeedbackLock) {
                                 if (!feedbackToken.mPrepClicksActive
+                                        || feedbackToken.mPrepClicksPaused
                                         || feedbackToken.mTerminal
                                         || mCurrentPrepFeedback != feedbackToken) {
                                     return;
@@ -889,8 +894,13 @@ public class MediaCaptureService {
 
     private void stopPrepClicksLocked(PhotoFeedbackToken feedbackToken) {
         feedbackToken.mPrepClicksActive = false;
+        feedbackToken.mPrepClicksPaused = false;
         if (feedbackToken.mPrepClickRunnable != null) {
             mainHandler.removeCallbacks(feedbackToken.mPrepClickRunnable);
+        }
+        if (feedbackToken.mPrepResumeRunnable != null) {
+            mainHandler.removeCallbacks(feedbackToken.mPrepResumeRunnable);
+            feedbackToken.mPrepResumeRunnable = null;
         }
         if (feedbackToken.mPrepClickPlaybackToken > 0L && hardwareManager != null) {
             hardwareManager.stopAudioOverlayPlayback(feedbackToken.mPrepClickPlaybackToken);
@@ -899,6 +909,53 @@ public class MediaCaptureService {
         if (mCurrentPrepFeedback == feedbackToken) {
             mCurrentPrepFeedback = null;
         }
+    }
+
+    /** Temporarily silence queued prep while another request is exposing or playing its snap. */
+    private void pausePrepClicksLocked(@Nullable PhotoFeedbackToken feedbackToken) {
+        if (feedbackToken == null
+                || !feedbackToken.mPrepClicksActive
+                || feedbackToken.mTerminal) {
+            return;
+        }
+        feedbackToken.mPrepClicksPaused = true;
+        if (feedbackToken.mPrepClickRunnable != null) {
+            mainHandler.removeCallbacks(feedbackToken.mPrepClickRunnable);
+        }
+        if (feedbackToken.mPrepClickPlaybackToken > 0L && hardwareManager != null) {
+            hardwareManager.stopAudioOverlayPlayback(feedbackToken.mPrepClickPlaybackToken);
+            feedbackToken.mPrepClickPlaybackToken = 0L;
+        }
+    }
+
+    private void schedulePrepResumeLocked(
+            @Nullable PhotoFeedbackToken feedbackToken, long delayMs) {
+        if (feedbackToken == null
+                || !feedbackToken.mPrepClicksActive
+                || !feedbackToken.mPrepClicksPaused
+                || feedbackToken.mExposureStarted
+                || feedbackToken.mTerminal
+                || mCurrentPrepFeedback != feedbackToken) {
+            return;
+        }
+        if (feedbackToken.mPrepResumeRunnable != null) {
+            mainHandler.removeCallbacks(feedbackToken.mPrepResumeRunnable);
+        }
+        feedbackToken.mPrepResumeRunnable =
+                () -> {
+                    synchronized (mPhotoFeedbackLock) {
+                        feedbackToken.mPrepResumeRunnable = null;
+                        if (!feedbackToken.mPrepClicksActive
+                                || feedbackToken.mExposureStarted
+                                || feedbackToken.mTerminal
+                                || mCurrentPrepFeedback != feedbackToken) {
+                            return;
+                        }
+                        feedbackToken.mPrepClicksPaused = false;
+                        playPrepClickLocked(feedbackToken);
+                    }
+                };
+        mainHandler.postDelayed(feedbackToken.mPrepResumeRunnable, Math.max(0L, delayMs));
     }
 
     /** Terminalizes one feedback token and cancels every callback owned by that request. */
@@ -929,9 +986,9 @@ public class MediaCaptureService {
             }
             feedbackToken.mExposureStarted = true;
             // A newer queued request may currently own prep feedback. No prep cue should overlap
-            // the shot that is exposing now, even if the newer request has not dispatched yet.
+            // the shot that is exposing now; it resumes after this request's snap.
             if (mCurrentPrepFeedback != null && mCurrentPrepFeedback != feedbackToken) {
-                stopPrepClicksLocked(mCurrentPrepFeedback);
+                pausePrepClicksLocked(mCurrentPrepFeedback);
             }
             stopPrepClicksLocked(feedbackToken);
 
@@ -969,8 +1026,12 @@ public class MediaCaptureService {
             if (feedbackToken.mTerminal) {
                 return;
             }
+            PhotoFeedbackToken queuedPrepFeedback =
+                    mCurrentPrepFeedback != feedbackToken ? mCurrentPrepFeedback : null;
+            pausePrepClicksLocked(queuedPrepFeedback);
             finishPhotoFeedbackLocked(feedbackToken);
             if (hardwareManager == null || !hardwareManager.supportsAudioPlayback()) {
+                schedulePrepResumeLocked(queuedPrepFeedback, 0L);
                 return;
             }
             Log.d(
@@ -981,6 +1042,8 @@ public class MediaCaptureService {
                             + feedbackToken.mGeneration
                             + ")");
             hardwareManager.playAudioAssetOverlay(AudioAssets.CAMERA_SNAP);
+            schedulePrepResumeLocked(
+                    queuedPrepFeedback, CAMERA_SNAP_PREP_RESUME_DELAY_MS);
         }
     }
 
@@ -993,7 +1056,10 @@ public class MediaCaptureService {
             if (feedbackToken.mTerminal) {
                 return;
             }
+            PhotoFeedbackToken queuedPrepFeedback =
+                    mCurrentPrepFeedback != feedbackToken ? mCurrentPrepFeedback : null;
             finishPhotoFeedbackLocked(feedbackToken);
+            schedulePrepResumeLocked(queuedPrepFeedback, 0L);
             Log.d(TAG, "📸 Stopped failed photo feedback (gen=" + feedbackToken.mGeneration + ")");
         }
     }
