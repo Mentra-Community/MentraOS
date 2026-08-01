@@ -292,7 +292,11 @@ public final class VideoThumbnailWriter {
                     Integer.parseInt(
                             retriever.extractMetadata(
                                     MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT));
-            return width > 0 && height > 0 ? new int[] {width, height} : null;
+            int rotation =
+                    parseRotation(
+                            retriever.extractMetadata(
+                                    MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION));
+            return orientedDimensions(width, height, rotation);
         } catch (Exception ignored) {
             return null;
         }
@@ -311,7 +315,11 @@ public final class VideoThumbnailWriter {
                         && format.containsKey(MediaFormat.KEY_HEIGHT)) {
                     int width = format.getInteger(MediaFormat.KEY_WIDTH);
                     int height = format.getInteger(MediaFormat.KEY_HEIGHT);
-                    return width > 0 && height > 0 ? new int[] {width, height} : null;
+                    int rotation =
+                            format.containsKey(MediaFormat.KEY_ROTATION)
+                                    ? format.getInteger(MediaFormat.KEY_ROTATION)
+                                    : 0;
+                    return orientedDimensions(width, height, rotation);
                 }
             }
             return null;
@@ -320,6 +328,24 @@ public final class VideoThumbnailWriter {
         } finally {
             extractor.release();
         }
+    }
+
+    private static int parseRotation(String value) {
+        try {
+            return value == null ? 0 : Integer.parseInt(value);
+        } catch (NumberFormatException ignored) {
+            return 0;
+        }
+    }
+
+    static int[] orientedDimensions(int width, int height, int rotation) {
+        if (width <= 0 || height <= 0) {
+            return null;
+        }
+        int normalizedRotation = ((rotation % 360) + 360) % 360;
+        return normalizedRotation == 90 || normalizedRotation == 270
+                ? new int[] {height, width}
+                : new int[] {width, height};
     }
 
     static int[] scaledTargetSize(int width, int height) {

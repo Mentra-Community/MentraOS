@@ -100,6 +100,24 @@ public class VideoThumbnailWriterTest {
     }
 
     @Test
+    public void orientedDimensions_quarterTurnsSwapCodedDimensions() {
+        assertThat(VideoThumbnailWriter.orientedDimensions(1920, 1080, 90))
+                .containsExactly(1080, 1920);
+        assertThat(VideoThumbnailWriter.orientedDimensions(1920, 1080, 270))
+                .containsExactly(1080, 1920);
+        assertThat(VideoThumbnailWriter.orientedDimensions(1920, 1080, -90))
+                .containsExactly(1080, 1920);
+    }
+
+    @Test
+    public void orientedDimensions_halfTurnsKeepCodedDimensions() {
+        assertThat(VideoThumbnailWriter.orientedDimensions(1920, 1080, 0))
+                .containsExactly(1920, 1080);
+        assertThat(VideoThumbnailWriter.orientedDimensions(1920, 1080, 180))
+                .containsExactly(1920, 1080);
+    }
+
+    @Test
     public void writeSidecar_validFrame_scalesCompressesAndCommitsAtomically() throws IOException {
         File captureDir = temporaryFolder.newFolder("VID_success");
         File video = write(new File(captureDir, "base.mp4"));
