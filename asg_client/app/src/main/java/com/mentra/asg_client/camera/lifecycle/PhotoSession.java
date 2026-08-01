@@ -1643,6 +1643,11 @@ public final class PhotoSession {
         CameraNeoService.PhotoCaptureCallback callback =
                 activeCapture != null ? activeCapture.callback : null;
         if (callback != null) {
+            try {
+                callback.onPhotoFailureDetected();
+            } catch (RuntimeException callbackError) {
+                Log.e(TAG, "Photo failure-boundary callback threw", callbackError);
+            }
             hooks.executor().execute(() -> callback.onPhotoError(error));
         }
     }

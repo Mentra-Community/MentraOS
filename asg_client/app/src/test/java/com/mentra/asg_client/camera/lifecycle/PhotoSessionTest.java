@@ -271,6 +271,30 @@ public class PhotoSessionTest {
     }
 
     @Test
+    public void notifyHostPhotoError_signalsFailureBeforeAsyncErrorDelivery() throws Exception {
+        PhotoSession.Hooks hooks = mockConfiguredCameraHooks();
+        AtomicReference<Runnable> pendingError = new AtomicReference<>();
+        when(hooks.executor()).thenReturn(pendingError::set);
+        CameraNeoService.PhotoCaptureCallback callback =
+                mock(CameraNeoService.PhotoCaptureCallback.class);
+        PhotoSession session = new PhotoSession(hooks);
+        activateQueuedRequest(
+                session,
+                new QueuedPhotoRequest(
+                        "/tmp/failed.jpg", "large", false, true, null, callback));
+        CameraOperationError error = CameraOperationError.captureFailed("capture failed");
+
+        session.notifyHostPhotoError(error);
+
+        verify(callback).onPhotoFailureDetected();
+        verify(callback, never()).onPhotoError(error);
+        assertThat(pendingError.get()).isNotNull();
+
+        pendingError.get().run();
+        verify(callback).onPhotoError(error);
+    }
+
+    @Test
     public void willReuseConfiguredCamera_matchesWarmUpZslMfnrBaseline() throws Exception {
         // Warm-up stores resolved zsl/mfnr in configuredCameraConfig; a later take_photo with the
         // same size/SDK/exposure must reuse even when still-side MFNR toggles (preview buffer stays).

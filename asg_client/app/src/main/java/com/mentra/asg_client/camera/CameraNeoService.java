@@ -187,6 +187,12 @@ public class CameraNeoService extends LifecycleService {
         /** Called as soon as the completed JPEG frame reaches Camera2's ImageReader. */
         default void onPhotoFrameAvailable(long sensorTimestampNs) {}
 
+        /**
+         * Called inline when the camera pipeline detects a terminal failure, before the detailed
+         * error is dispatched asynchronously. Keep this callback lightweight.
+         */
+        default void onPhotoFailureDetected() {}
+
         default void onPhotoCaptured(String filePath) {
             onPhotoCaptured(filePath, null);
         }

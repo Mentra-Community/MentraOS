@@ -2441,6 +2441,11 @@ public class MediaCaptureService {
                     }
 
                     @Override
+                    public void onPhotoFailureDetected() {
+                        stopPhotoFeedbackForFailure(captureFeedbackToken);
+                    }
+
+                    @Override
                     public void onPhotoError(String errorMessage) {
                         onPhotoError(CameraOperationError.captureFailed(errorMessage));
                     }
@@ -2712,6 +2717,11 @@ public class MediaCaptureService {
                                 return;
                             }
                             finishLocalSavePhoto(requestId, captureId, filePath, captureMetadata);
+                        }
+
+                        @Override
+                        public void onPhotoFailureDetected() {
+                            stopPhotoFeedbackForFailure(captureFeedbackToken);
                         }
 
                         @Override
@@ -3191,6 +3201,11 @@ public class MediaCaptureService {
                                         "PHOTO_SAVE_FAILED",
                                         "Text-mode processing stopped during service cleanup");
                             }
+                        }
+
+                        @Override
+                        public void onPhotoFailureDetected() {
+                            stopPhotoFeedbackForFailure(captureFeedbackToken);
                         }
 
                         @Override
@@ -5501,6 +5516,11 @@ public class MediaCaptureService {
                             logBlePhotoStep(requestId, "start_compress_for_ble");
                             compressAndSendViaBle(
                                     filePath, requestId, bleImgId, false, capturedPhoto);
+                        }
+
+                        @Override
+                        public void onPhotoFailureDetected() {
+                            stopPhotoFeedbackForFailure(captureFeedbackToken);
                         }
 
                         @Override
