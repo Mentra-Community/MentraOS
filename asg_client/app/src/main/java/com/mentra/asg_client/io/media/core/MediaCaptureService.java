@@ -601,8 +601,10 @@ public class MediaCaptureService {
     private long mPhotoFeedbackGeneration;
     @Nullable private PhotoFeedbackToken mCurrentPrepFeedback;
     private final Set<PhotoFeedbackToken> mActivePhotoFeedback = new HashSet<>();
+    private final Map<String, PhotoFeedbackToken> mPhotoFeedbackByRequestId = new HashMap<>();
 
     private static final class PhotoFeedbackToken {
+        private final String mRequestId;
         private final long mGeneration;
         private boolean mPrepClicksActive;
         private boolean mPrepClicksPaused;
@@ -613,7 +615,8 @@ public class MediaCaptureService {
         @Nullable private Runnable mPrepResumeRunnable;
         @Nullable private Runnable mSnapRunnable;
 
-        private PhotoFeedbackToken(long generation) {
+        private PhotoFeedbackToken(String requestId, long generation) {
+            mRequestId = requestId;
             mGeneration = generation;
         }
     }
@@ -815,6 +818,7 @@ public class MediaCaptureService {
     /** Starts request-time prep feedback and returns the token owed an exposure-time snap. */
     @Nullable
     private PhotoFeedbackToken startPhotoFeedback(
+            String requestId,
             String size,
             boolean isFromSdk,
             Long exposureTimeNs,
@@ -832,8 +836,10 @@ public class MediaCaptureService {
         boolean cameraWarm =
                 CameraNeoService.isCameraWarm(size, isFromSdk, exposureTimeNs, captureSettings);
         synchronized (mPhotoFeedbackLock) {
-            PhotoFeedbackToken feedbackToken = new PhotoFeedbackToken(++mPhotoFeedbackGeneration);
+            PhotoFeedbackToken feedbackToken =
+                    new PhotoFeedbackToken(requestId, ++mPhotoFeedbackGeneration);
             mActivePhotoFeedback.add(feedbackToken);
+            mPhotoFeedbackByRequestId.put(requestId, feedbackToken);
             if (cameraWarm) {
                 Log.d(TAG, "📸 Warm capture — snap is waiting for sensor exposure start");
                 return feedbackToken;
@@ -967,6 +973,7 @@ public class MediaCaptureService {
         }
         stopPrepClicksLocked(feedbackToken);
         mActivePhotoFeedback.remove(feedbackToken);
+        mPhotoFeedbackByRequestId.remove(feedbackToken.mRequestId, feedbackToken);
     }
 
     /**
@@ -1061,6 +1068,27 @@ public class MediaCaptureService {
             finishPhotoFeedbackLocked(feedbackToken);
             schedulePrepResumeLocked(queuedPrepFeedback, 0L);
             Log.d(TAG, "📸 Stopped failed photo feedback (gen=" + feedbackToken.mGeneration + ")");
+        }
+    }
+
+    /** Cancels the feedback owned by a timed-out request and resumes any newer queued prep. */
+    private void stopPhotoFeedbackForTimeout(String requestId) {
+        synchronized (mPhotoFeedbackLock) {
+            PhotoFeedbackToken feedbackToken = mPhotoFeedbackByRequestId.get(requestId);
+            if (feedbackToken == null || feedbackToken.mTerminal) {
+                return;
+            }
+            PhotoFeedbackToken queuedPrepFeedback =
+                    mCurrentPrepFeedback != feedbackToken ? mCurrentPrepFeedback : null;
+            finishPhotoFeedbackLocked(feedbackToken);
+            schedulePrepResumeLocked(queuedPrepFeedback, 0L);
+            Log.d(
+                    TAG,
+                    "📸 Stopped timed-out photo feedback (requestId="
+                            + requestId
+                            + ", gen="
+                            + feedbackToken.mGeneration
+                            + ")");
         }
     }
 
@@ -2237,7 +2265,8 @@ public class MediaCaptureService {
             if (effectiveSound) {
                 // Button photo: isFromSdk=false, auto exposure (null) — matches the
                 // enqueuePhotoRequest call below so the warm/cold prediction lines up.
-                feedbackToken = startPhotoFeedback(size, false, null, captureSettings);
+                feedbackToken =
+                        startPhotoFeedback(requestId, size, false, null, captureSettings);
             }
             if (enableFlash) {
                 flashPrivacyLedForPhoto(); // Flash privacy LED
@@ -2474,7 +2503,12 @@ public class MediaCaptureService {
             if (enableSound) {
                 // Local-save SDK photo: isFromSdk=true, matching the enqueue below.
                 feedbackToken =
-                        startPhotoFeedback(captureSize, true, exposureTimeNs, captureSettings);
+                        startPhotoFeedback(
+                                requestId,
+                                captureSize,
+                                true,
+                                exposureTimeNs,
+                                captureSettings);
             }
             if (enableFlash) {
                 flashPrivacyLedForPhoto();
@@ -2866,7 +2900,12 @@ public class MediaCaptureService {
                     // SDK photo: isFromSdk=true; size and exposure match the enqueuePhotoRequest
                     // call below so the warm/cold prediction lines up.
                     feedbackToken =
-                            startPhotoFeedback(captureSize, true, exposureTimeNs, captureSettings);
+                            startPhotoFeedback(
+                                    requestId,
+                                    captureSize,
+                                    true,
+                                    exposureTimeNs,
+                                    captureSettings);
                 }
                 if (enableFlash) {
                     flashPrivacyLedForPhoto();
@@ -3196,6 +3235,7 @@ public class MediaCaptureService {
                                 captureSafetyTimeoutRequestId = null;
                             }
                         }
+                        stopPhotoFeedbackForTimeout(requestId);
                         Log.e(
                                 TAG,
                                 "⚠️ SAFETY TIMEOUT: isPhotoJobInFlight force-reset after "
@@ -5238,7 +5278,12 @@ public class MediaCaptureService {
                 // BLE-transfer SDK photo: isFromSdk=true; size and exposure match the
                 // enqueuePhotoRequest call below so the warm/cold prediction lines up.
                 feedbackToken =
-                        startPhotoFeedback(captureSize, true, exposureTimeNs, captureSettings);
+                        startPhotoFeedback(
+                                requestId,
+                                captureSize,
+                                true,
+                                exposureTimeNs,
+                                captureSettings);
             }
             if (enableFlash) {
                 flashPrivacyLedForPhoto();
