@@ -183,17 +183,17 @@ public class MediaCaptureService {
 
         boolean discardAndDeleteVideo() {
             synchronized (commitLock) {
-                boolean deleted = !videoFile.exists() || videoFile.delete();
-                if (!deleted) {
-                    return false;
-                }
                 discarded = true;
                 Future<?> currentExecution = execution;
                 if (currentExecution != null) {
                     currentExecution.cancel(true);
                 }
-                VideoThumbnailWriter.deleteSidecar(videoFile);
-                return true;
+                try {
+                    return !videoFile.exists() || videoFile.delete();
+                } finally {
+                    // A failed video deletion must not let this task commit a late sidecar.
+                    VideoThumbnailWriter.deleteSidecar(videoFile);
+                }
             }
         }
 
