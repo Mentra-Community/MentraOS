@@ -14,10 +14,10 @@ import com.mentra.asg_client.camera.diagnostics.CameraDiagnosticsLog;
 import com.mentra.asg_client.camera.policy.AeStateMachine;
 import com.mentra.asg_client.io.media.core.BlePhotoTimingLog;
 
-import java.util.Locale;
-
 import org.json.JSONException;
 import org.json.JSONObject;
+
+import java.util.Locale;
 
 /** One-shot still capture callback; image bytes are handled later by the JPEG ImageReader. */
 public final class StillCaptureCallback extends CameraCaptureSession.CaptureCallback {
@@ -27,6 +27,9 @@ public final class StillCaptureCallback extends CameraCaptureSession.CaptureCall
 
         /** Wall-clock when HAL reported {@code onCaptureStarted}. */
         void recordStillHalStartedWallMs(long startedWallMs);
+
+        /** Notify the request owner at the exact sensor-exposure-start boundary. */
+        void notifyPhotoExposureStarted(long sensorTimestampNs, long estimatedExposureDurationNs);
 
         /** True when ImageReader already backfilled an estimated {@code still_hal_started}. */
         boolean stillHalStartedAlreadyLogged();
@@ -60,14 +63,21 @@ public final class StillCaptureCallback extends CameraCaptureSession.CaptureCall
 
     private final Hooks hooks;
     private final long shutterSubmittedWallMs;
+    private final long estimatedExposureDurationNs;
     private volatile long captureStartedWallMs;
 
     public StillCaptureCallback(Hooks hooks) {
-        this.hooks = hooks;
-        this.shutterSubmittedWallMs = System.currentTimeMillis();
+        this(hooks, 0L);
     }
 
-    private static void putIfNotNull(JSONObject json, String key, Object value) throws JSONException {
+    public StillCaptureCallback(Hooks hooks, long estimatedExposureDurationNs) {
+        this.hooks = hooks;
+        this.shutterSubmittedWallMs = System.currentTimeMillis();
+        this.estimatedExposureDurationNs = Math.max(0L, estimatedExposureDurationNs);
+    }
+
+    private static void putIfNotNull(JSONObject json, String key, Object value)
+            throws JSONException {
         if (value != null) {
             json.put(key, value);
         }
@@ -82,17 +92,18 @@ public final class StillCaptureCallback extends CameraCaptureSession.CaptureCall
         captureStartedWallMs = System.currentTimeMillis();
         boolean alreadyLogged = hooks.stillHalStartedAlreadyLogged();
         hooks.recordStillHalStartedWallMs(captureStartedWallMs);
+        hooks.notifyPhotoExposureStarted(timestamp, estimatedExposureDurationNs);
         long submitToStartMs = captureStartedWallMs - shutterSubmittedWallMs;
         Long reqExpNs = request.get(CaptureRequest.SENSOR_EXPOSURE_TIME);
         Integer reqIso = request.get(CaptureRequest.SENSOR_SENSITIVITY);
         Boolean reqZsl = request.get(CaptureRequest.CONTROL_ENABLE_ZSL);
         Integer reqAeMode = request.get(CaptureRequest.CONTROL_AE_MODE);
-        boolean manual =
-                reqAeMode != null && reqAeMode == CaptureRequest.CONTROL_AE_MODE_OFF;
+        boolean manual = reqAeMode != null && reqAeMode == CaptureRequest.CONTROL_AE_MODE_OFF;
         String detail =
                 String.format(
                         Locale.US,
-                        "frame=#%d; submit→HAL_start=%dms (queue/schedule); mode=%s; req_exp=%s; req_iso=%s; zsl=%s; sensor_ts_ns=%d",
+                        "frame=#%d; submit→HAL_start=%dms (queue/schedule); mode=%s; req_exp=%s;"
+                                + " req_iso=%s; zsl=%s; sensor_ts_ns=%d",
                         frameNumber,
                         submitToStartMs,
                         manual ? "MANUAL" : "AUTO",
@@ -137,9 +148,10 @@ public final class StillCaptureCallback extends CameraCaptureSession.CaptureCall
     }
 
     @Override
-    public void onCaptureCompleted(@NonNull CameraCaptureSession session,
-                                   @NonNull CaptureRequest request,
-                                   @NonNull TotalCaptureResult result) {
+    public void onCaptureCompleted(
+            @NonNull CameraCaptureSession session,
+            @NonNull CaptureRequest request,
+            @NonNull TotalCaptureResult result) {
         long completedWallMs = System.currentTimeMillis();
         hooks.recordStillCaptureCompletedWallMs(completedWallMs);
         Log.i(TAG, "Photo capture completed successfully");
@@ -156,18 +168,27 @@ public final class StillCaptureCallback extends CameraCaptureSession.CaptureCall
         Integer captureAeState = result.get(CaptureResult.CONTROL_AE_STATE);
         Integer captureEdgeMode = result.get(CaptureResult.EDGE_MODE);
         Long captureFrameDurationNs = result.get(CaptureResult.SENSOR_FRAME_DURATION);
-        double captureExposureMs = (captureExposureNs != null) ? captureExposureNs / 1_000_000.0 : -1;
+        double captureExposureMs =
+                (captureExposureNs != null) ? captureExposureNs / 1_000_000.0 : -1;
         boolean mfnrLikelyTriggered = (captureIso != null && captureIso > 800);
-        Log.i(TAG, "MFNR_DIAG: ISO=" + captureIso
-                + " exposure=" + String.format(Locale.US, "%.2f", captureExposureMs) + "ms"
-                + " NR_MODE=" + captureNrMode
-                + " MFNR_likely=" + mfnrLikelyTriggered);
+        Log.i(
+                TAG,
+                "MFNR_DIAG: ISO="
+                        + captureIso
+                        + " exposure="
+                        + String.format(Locale.US, "%.2f", captureExposureMs)
+                        + "ms"
+                        + " NR_MODE="
+                        + captureNrMode
+                        + " MFNR_likely="
+                        + mfnrLikelyTriggered);
 
         Long stillSensorTs = null;
         try {
             stillSensorTs = result.get(CaptureResult.SENSOR_TIMESTAMP);
             hooks.recordStillSensorTimestampNs(stillSensorTs);
-            CameraDiagnosticsLog.stillCaptureSensorTimestamp(stillSensorTs, captureExposureMs, captureIso);
+            CameraDiagnosticsLog.stillCaptureSensorTimestamp(
+                    stillSensorTs, captureExposureMs, captureIso);
         } catch (Throwable t) {
             // Never let logging crash capture.
         }
@@ -178,7 +199,8 @@ public final class StillCaptureCallback extends CameraCaptureSession.CaptureCall
         Integer reqNrMode2 = request.get(CaptureRequest.NOISE_REDUCTION_MODE);
         Integer reqEdgeMode2 = request.get(CaptureRequest.EDGE_MODE);
         Boolean reqZsl2 = request.get(CaptureRequest.CONTROL_ENABLE_ZSL);
-        boolean isManualAttempt = (reqAeMode2 != null && reqAeMode2 == CaptureRequest.CONTROL_AE_MODE_OFF);
+        boolean isManualAttempt =
+                (reqAeMode2 != null && reqAeMode2 == CaptureRequest.CONTROL_AE_MODE_OFF);
         double totalLightProxy = -1;
         if (captureExposureNs != null && captureIso != null) {
             totalLightProxy = (captureExposureNs / 1_000_000.0) * captureIso.doubleValue();
@@ -200,8 +222,7 @@ public final class StillCaptureCallback extends CameraCaptureSession.CaptureCall
         String bottleneckHint;
         if (startToCompleteMs < 0) {
             bottleneckHint = "no onCaptureStarted";
-        } else if (sensorExposureBudgetMs > 0
-                && startToCompleteMs > sensorExposureBudgetMs * 2) {
+        } else if (sensorExposureBudgetMs > 0 && startToCompleteMs > sensorExposureBudgetMs * 2) {
             bottleneckHint =
                     "HAL/ISP (beyond exposure) ~"
                             + ispAfterExposureMs
@@ -215,7 +236,9 @@ public final class StillCaptureCallback extends CameraCaptureSession.CaptureCall
         String completedDetail =
                 String.format(
                         Locale.US,
-                        "exp=%.2fms iso=%s nr=%s ae=%s/%s zsl=%s mfnr_likely=%s; submit→complete=%dms; HAL_start→complete=%dms; exposure_budget=%dms; isp_after_exposure≈%sms; bottleneck=%s",
+                        "exp=%.2fms iso=%s nr=%s ae=%s/%s zsl=%s mfnr_likely=%s;"
+                                + " submit→complete=%dms; HAL_start→complete=%dms;"
+                                + " exposure_budget=%dms; isp_after_exposure≈%sms; bottleneck=%s",
                         captureExposureMs,
                         captureIso != null ? captureIso.toString() : "?",
                         captureNrMode != null ? captureNrMode.toString() : "?",
@@ -233,7 +256,9 @@ public final class StillCaptureCallback extends CameraCaptureSession.CaptureCall
         if (!hooks.stillTimingFinalizedByImageReader()) {
             BlePhotoTimingLog.capturePhase("still_hal_completed", completedDetail);
         } else {
-            Log.i(TAG, "Still capture completed (HAL, phase already estimated): " + completedDetail);
+            Log.i(
+                    TAG,
+                    "Still capture completed (HAL, phase already estimated): " + completedDetail);
         }
 
         try {
@@ -241,7 +266,9 @@ public final class StillCaptureCallback extends CameraCaptureSession.CaptureCall
                     isManualAttempt,
                     reqExp2,
                     captureExposureNs,
-                    reqExp2 != null && captureExposureNs != null && reqExp2.equals(captureExposureNs),
+                    reqExp2 != null
+                            && captureExposureNs != null
+                            && reqExp2.equals(captureExposureNs),
                     reqIso2,
                     captureIso,
                     reqIso2 != null && captureIso != null && reqIso2.equals(captureIso),
@@ -295,9 +322,10 @@ public final class StillCaptureCallback extends CameraCaptureSession.CaptureCall
     }
 
     @Override
-    public void onCaptureFailed(@NonNull CameraCaptureSession session,
-                                @NonNull CaptureRequest request,
-                                @NonNull CaptureFailure failure) {
+    public void onCaptureFailed(
+            @NonNull CameraCaptureSession session,
+            @NonNull CaptureRequest request,
+            @NonNull CaptureFailure failure) {
         Log.e(TAG, "Photo capture failed: " + failure.getReason());
         hooks.notifyPhotoError("Photo capture failed: " + failure.getReason());
         hooks.cancelImuRecording();

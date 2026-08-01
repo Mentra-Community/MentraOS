@@ -26,7 +26,6 @@ import androidx.lifecycle.LifecycleService;
 
 import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.camera.lifecycle.CameraCoordinator;
-import com.mentra.asg_client.io.media.utils.MediaStorage;
 import com.mentra.asg_client.camera.lifecycle.CameraOpener;
 import com.mentra.asg_client.camera.lifecycle.CameraRecoveryHelper;
 import com.mentra.asg_client.camera.lifecycle.CameraServiceNotification;
@@ -47,6 +46,7 @@ import com.mentra.asg_client.camera.policy.PhotoMode;
 import com.mentra.asg_client.camera.request.PreviewRequestConfigurator;
 import com.mentra.asg_client.io.hardware.core.HardwareManagerFactory;
 import com.mentra.asg_client.io.hardware.interfaces.IHardwareManager;
+import com.mentra.asg_client.io.media.utils.MediaStorage;
 import com.mentra.asg_client.sensors.ImuRecorder;
 import com.mentra.asg_client.service.system.core.SystemControllerFactory;
 import com.mentra.asg_client.settings.VideoSettings;
@@ -176,6 +176,23 @@ public class CameraNeoService extends LifecycleService {
             onPhotoCapturing();
         }
 
+        /**
+         * Called when Camera2 reports that the sensor has started exposing the still frame. {@code
+         * estimatedExposureDurationNs} is exact for manual capture and uses the most recent
+         * preview-metered duration for auto exposure.
+         */
+        default void onPhotoExposureStarted(
+                long sensorTimestampNs, long estimatedExposureDurationNs) {}
+
+        /** Called as soon as the completed JPEG frame reaches Camera2's ImageReader. */
+        default void onPhotoFrameAvailable(long sensorTimestampNs) {}
+
+        /**
+         * Called inline when the camera pipeline detects a terminal failure, before the detailed
+         * error is dispatched asynchronously. Keep this callback lightweight.
+         */
+        default void onPhotoFailureDetected() {}
+
         default void onPhotoCaptured(String filePath) {
             onPhotoCaptured(filePath, null);
         }
@@ -250,6 +267,7 @@ public class CameraNeoService extends LifecycleService {
 
     /** Ready leases keyed by phone-owned request ID. Compatible leases share one camera session. */
     private final Map<String, WarmLease> warmLeases = new LinkedHashMap<>();
+
     private final Set<String> warmReadyRequestIds = new HashSet<>();
 
     /**
@@ -258,6 +276,7 @@ public class CameraNeoService extends LifecycleService {
      * time instead of the short photo keep-alive. Cleared when the camera closes.
      */
     private volatile long warmLeaseDeadlineMs = 0;
+
     private String warmLeaseMode;
     private String openingWarmMode;
 
@@ -469,8 +488,8 @@ public class CameraNeoService extends LifecycleService {
      * @param size requested photo size for the upcoming capture (nullable)
      * @param isFromSdk whether the upcoming capture is an SDK request (vs. a button photo)
      * @param exposureTimeNs requested manual exposure for the upcoming capture, or null for auto
-     * @param captureSettings per-request tuning used for resolved {@code zsl}/{@code mfnr} (nullable /
-     *     {@link PhotoCaptureSettings#EMPTY} inherits the global defaults)
+     * @param captureSettings per-request tuning used for resolved {@code zsl}/{@code mfnr}
+     *     (nullable / {@link PhotoCaptureSettings#EMPTY} inherits the global defaults)
      * @return true if the upcoming capture would reuse the open camera; false otherwise.
      */
     public static boolean isCameraWarm(
@@ -491,7 +510,9 @@ public class CameraNeoService extends LifecycleService {
         }
     }
 
-    /** @deprecated Prefer {@link #isCameraWarm(String, boolean, Long, PhotoCaptureSettings)}. */
+    /**
+     * @deprecated Prefer {@link #isCameraWarm(String, boolean, Long, PhotoCaptureSettings)}.
+     */
     @Deprecated
     public static boolean isCameraWarm(String size, boolean isFromSdk, Long exposureTimeNs) {
         return isCameraWarm(size, isFromSdk, exposureTimeNs, null);
@@ -797,7 +818,12 @@ public class CameraNeoService extends LifecycleService {
                 Intent intent = new Intent(context, CameraNeoService.class);
                 intent.setAction(ACTION_TAKE_PHOTO);
                 intent.putExtra("USE_GLOBAL_QUEUE", true);
-                context.startForegroundService(intent);
+                try {
+                    context.startForegroundService(intent);
+                } catch (RuntimeException e) {
+                    QueuedPhotoRequestQueue.getInstance().remove(request);
+                    throw e;
+                }
             }
         }
     }
@@ -995,10 +1021,7 @@ public class CameraNeoService extends LifecycleService {
     }
 
     private static long clampWarmUpDuration(long durationMs) {
-        long ttl =
-                durationMs > 0
-                        ? durationMs
-                        : AsgConstants.CAMERA_WARM_UP_DEFAULT_DURATION_MS;
+        long ttl = durationMs > 0 ? durationMs : AsgConstants.CAMERA_WARM_UP_DEFAULT_DURATION_MS;
         return Math.min(ttl, AsgConstants.CAMERA_WARM_UP_MAX_DURATION_MS);
     }
 
@@ -1974,7 +1997,8 @@ public class CameraNeoService extends LifecycleService {
         boolean close;
         synchronized (SERVICE_LOCK) {
             long now = System.currentTimeMillis();
-            warmLeases.entrySet()
+            warmLeases
+                    .entrySet()
                     .removeIf(
                             entry -> {
                                 if (entry.getValue().deadlineMs <= now) {
@@ -2044,7 +2068,8 @@ public class CameraNeoService extends LifecycleService {
     private void wakeUpScreen() {
         Log.d(TAG, "Waking up screen for camera access");
         // Use the WakeLockManager to acquire both CPU and screen wake locks
-        WakeLockManager.acquireFullWakeLockAndBringToForeground(this, WakeLockManager.WakeOwner.CAMERA, 180000, 5000);
+        WakeLockManager.acquireFullWakeLockAndBringToForeground(
+                this, WakeLockManager.WakeOwner.CAMERA, 180000, 5000);
     }
 
     /** Attempt to restart the camera service with different parameters if needed */
