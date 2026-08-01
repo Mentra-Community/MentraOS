@@ -59,6 +59,7 @@ public final class PhotoFeedbackController {
     private final Map<String, Token> mFeedbackByRequestId = new HashMap<>();
     private long mGeneration;
     private long mPrepSuppressedUntilUptimeMs;
+    private long mSnapPlaybackToken;
     @Nullable private Token mCurrentPrepFeedback;
 
     public PhotoFeedbackController(
@@ -193,7 +194,11 @@ public final class PhotoFeedbackController {
                     Math.max(
                             mPrepSuppressedUntilUptimeMs,
                             mClock.uptimeMillis() + SNAP_PREP_RESUME_DELAY_MS);
-            mHardwareManager.playAudioAssetOverlay(AudioAssets.CAMERA_SNAP);
+            if (mSnapPlaybackToken > 0L) {
+                mHardwareManager.stopAudioOverlayPlayback(mSnapPlaybackToken);
+            }
+            mSnapPlaybackToken =
+                    mHardwareManager.playAudioAssetOverlayTracked(AudioAssets.CAMERA_SNAP);
             schedulePrepResumeLocked(queuedPrepFeedback, SNAP_PREP_RESUME_DELAY_MS);
         }
     }
@@ -226,6 +231,10 @@ public final class PhotoFeedbackController {
         synchronized (mLock) {
             for (Token feedbackToken : new HashSet<>(mActiveFeedback)) {
                 finishLocked(feedbackToken);
+            }
+            if (mSnapPlaybackToken > 0L && mHardwareManager != null) {
+                mHardwareManager.stopAudioOverlayPlayback(mSnapPlaybackToken);
+                mSnapPlaybackToken = 0L;
             }
         }
     }
