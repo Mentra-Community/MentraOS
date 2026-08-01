@@ -64,6 +64,15 @@ public final class VideoThumbnailWriter {
         deleteBestEffort(partialFor(videoFile));
     }
 
+    /** Release the idle decoder worker during service teardown; later use restarts it lazily. */
+    public static void shutdownFrameExtraction() {
+        ExecutorService executor;
+        synchronized (FRAME_EXECUTOR_LOCK) {
+            executor = frameExtractionExecutor;
+        }
+        retireFrameExtractionExecutor(executor);
+    }
+
     /**
      * Extract a frame from {@code videoFile} and write it as {@code thumb.jpg} in the same folder.
      * The write is atomic (temp file + rename) so readers never observe a half-written thumbnail.

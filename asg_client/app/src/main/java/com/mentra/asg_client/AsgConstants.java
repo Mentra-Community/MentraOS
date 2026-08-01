@@ -386,7 +386,7 @@ public class AsgConstants {
     public static final long VIDEO_THUMBNAIL_EXTRACTION_TIMEOUT_MS = 10_000L;
 
     /** Final main-thread wait after thumbnail work has drained during other cleanup steps. */
-    public static final long VIDEO_THUMBNAIL_SHUTDOWN_TIMEOUT_MS = 1_000L;
+    public static final long VIDEO_THUMBNAIL_SHUTDOWN_TIMEOUT_MS = 250L;
 
     /** Maximum abandoned native decoder workers retained after timeout. */
     public static final int VIDEO_THUMBNAIL_MAX_RETIRED_DECODERS = 2;

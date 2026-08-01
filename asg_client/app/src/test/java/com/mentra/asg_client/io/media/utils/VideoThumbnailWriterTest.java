@@ -14,6 +14,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import org.junit.After;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -26,6 +27,11 @@ import org.robolectric.annotation.Config;
 public class VideoThumbnailWriterTest {
 
     @Rule public final TemporaryFolder temporaryFolder = new TemporaryFolder();
+
+    @After
+    public void releaseDecoderWorker() {
+        VideoThumbnailWriter.shutdownFrameExtraction();
+    }
 
     @Test
     public void sidecarFor_isThumbJpgInCaptureFolder() throws IOException {
@@ -254,6 +260,19 @@ public class VideoThumbnailWriterTest {
             releaseDecoder.countDown();
             timeoutCaller.join(1_000);
         }
+    }
+
+    @Test
+    public void shutdownFrameExtraction_nextUseRestartsDecoderLazily() throws IOException {
+        File video = new File(temporaryFolder.newFolder("VID_restart"), "base.mp4");
+        VideoThumbnailWriter.shutdownFrameExtraction();
+        Bitmap frame = Bitmap.createBitmap(8, 8, Bitmap.Config.ARGB_8888);
+
+        Bitmap extracted =
+                VideoThumbnailWriter.extractFrameWithTimeout(video, ignored -> frame, 1_000);
+
+        assertThat(extracted).isSameAs(frame);
+        extracted.recycle();
     }
 
     private static File write(File file) throws IOException {

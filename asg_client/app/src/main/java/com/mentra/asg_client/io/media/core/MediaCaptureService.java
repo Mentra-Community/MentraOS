@@ -6930,14 +6930,13 @@ public class MediaCaptureService {
                             .values()
                             .forEach(VideoThumbnailTask::cancelThumbnailWrite);
                     videoThumbnailExecutor.shutdownNow();
-                    if (!videoThumbnailExecutor.awaitTermination(1, TimeUnit.SECONDS)) {
-                        Log.w(TAG, "Video thumbnail executor did not terminate during cleanup");
-                    }
                 }
             } catch (InterruptedException e) {
                 videoThumbnailTasks.values().forEach(VideoThumbnailTask::cancelThumbnailWrite);
                 videoThumbnailExecutor.shutdownNow();
                 Thread.currentThread().interrupt();
+            } finally {
+                VideoThumbnailWriter.shutdownFrameExtraction();
             }
             videoThumbnailTasks.clear();
             textModeProcessingExecutor.shutdown();
