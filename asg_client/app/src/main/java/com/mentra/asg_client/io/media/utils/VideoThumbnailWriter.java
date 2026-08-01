@@ -208,16 +208,23 @@ public final class VideoThumbnailWriter {
     }
 
     private static final class MediaMetadataFrameExtractor implements FrameExtractor {
-        private final AtomicReference<MediaMetadataRetriever> activeRetriever =
-                new AtomicReference<>();
+        private final AtomicBoolean cancelled = new AtomicBoolean(false);
 
         @Override
         public Bitmap extract(File videoFile) {
+            if (cancelled.get()) {
+                return null;
+            }
             MediaMetadataRetriever retriever = new MediaMetadataRetriever();
-            activeRetriever.set(retriever);
             try {
+                if (cancelled.get()) {
+                    return null;
+                }
                 retriever.setDataSource(videoFile.getAbsolutePath());
                 int[] targetSize = scaledTargetSize(retriever, videoFile);
+                if (cancelled.get()) {
+                    return null;
+                }
                 Bitmap frame =
                         frameAt(retriever, AsgConstants.VIDEO_THUMBNAIL_FRAME_TIME_US, targetSize);
                 if (frame == null) {
@@ -234,20 +241,11 @@ public final class VideoThumbnailWriter {
 
         @Override
         public void cancel() {
-            MediaMetadataRetriever retriever = activeRetriever.getAndSet(null);
-            releaseDirect(retriever);
+            // MediaMetadataRetriever is not thread-safe; its decode thread releases it in finally.
+            cancelled.set(true);
         }
 
-        private void release(MediaMetadataRetriever retriever) {
-            if (activeRetriever.compareAndSet(retriever, null)) {
-                releaseDirect(retriever);
-            }
-        }
-
-        private static void releaseDirect(MediaMetadataRetriever retriever) {
-            if (retriever == null) {
-                return;
-            }
+        private static void release(MediaMetadataRetriever retriever) {
             try {
                 retriever.release();
             } catch (Exception ignored) {
