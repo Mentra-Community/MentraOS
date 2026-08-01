@@ -599,6 +599,7 @@ public class MediaCaptureService {
     private final Object mPhotoFeedbackLock = new Object();
     private long mPhotoFeedbackGeneration;
     @Nullable private PhotoFeedbackToken mCurrentPrepFeedback;
+    private final Set<PhotoFeedbackToken> mActivePhotoFeedback = new HashSet<>();
 
     private static final class PhotoFeedbackToken {
         private final long mGeneration;
@@ -829,6 +830,7 @@ public class MediaCaptureService {
                 CameraNeoService.isCameraWarm(size, isFromSdk, exposureTimeNs, captureSettings);
         synchronized (mPhotoFeedbackLock) {
             PhotoFeedbackToken feedbackToken = new PhotoFeedbackToken(++mPhotoFeedbackGeneration);
+            mActivePhotoFeedback.add(feedbackToken);
             if (cameraWarm) {
                 Log.d(TAG, "📸 Warm capture — snap is waiting for sensor exposure start");
                 return feedbackToken;
@@ -899,6 +901,17 @@ public class MediaCaptureService {
         }
     }
 
+    /** Terminalizes one feedback token and cancels every callback owned by that request. */
+    private void finishPhotoFeedbackLocked(PhotoFeedbackToken feedbackToken) {
+        feedbackToken.mTerminal = true;
+        if (feedbackToken.mSnapRunnable != null) {
+            mainHandler.removeCallbacks(feedbackToken.mSnapRunnable);
+            feedbackToken.mSnapRunnable = null;
+        }
+        stopPrepClicksLocked(feedbackToken);
+        mActivePhotoFeedback.remove(feedbackToken);
+    }
+
     /**
      * Anchors the snap to Camera2 exposure start, then offsets it toward exposure end. Manual
      * captures use the exact requested duration; auto captures use the latest preview-metered
@@ -946,12 +959,7 @@ public class MediaCaptureService {
             if (feedbackToken.mTerminal) {
                 return;
             }
-            feedbackToken.mTerminal = true;
-            if (feedbackToken.mSnapRunnable != null) {
-                mainHandler.removeCallbacks(feedbackToken.mSnapRunnable);
-                feedbackToken.mSnapRunnable = null;
-            }
-            stopPrepClicksLocked(feedbackToken);
+            finishPhotoFeedbackLocked(feedbackToken);
             if (hardwareManager == null || !hardwareManager.supportsAudioPlayback()) {
                 return;
             }
@@ -975,12 +983,7 @@ public class MediaCaptureService {
             if (feedbackToken.mTerminal) {
                 return;
             }
-            feedbackToken.mTerminal = true;
-            if (feedbackToken.mSnapRunnable != null) {
-                mainHandler.removeCallbacks(feedbackToken.mSnapRunnable);
-                feedbackToken.mSnapRunnable = null;
-            }
-            stopPrepClicksLocked(feedbackToken);
+            finishPhotoFeedbackLocked(feedbackToken);
             Log.d(TAG, "📸 Stopped failed photo feedback (gen=" + feedbackToken.mGeneration + ")");
         }
     }
@@ -6990,9 +6993,9 @@ public class MediaCaptureService {
 
         try {
             synchronized (mPhotoFeedbackLock) {
-                if (mCurrentPrepFeedback != null) {
-                    mCurrentPrepFeedback.mTerminal = true;
-                    stopPrepClicksLocked(mCurrentPrepFeedback);
+                for (PhotoFeedbackToken feedbackToken :
+                        new HashSet<>(mActivePhotoFeedback)) {
+                    finishPhotoFeedbackLocked(feedbackToken);
                 }
             }
 
