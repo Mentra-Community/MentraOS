@@ -759,6 +759,32 @@ public class PhotoSessionTest {
     }
 
     @Test
+    public void shouldNotifyPhotoFrameAvailable_normalStillAllowsFrame() {
+        PhotoSession session = new PhotoSession(mockConfiguredCameraHooks());
+
+        assertThat(session.shouldNotifyPhotoFrameAvailable()).isTrue();
+    }
+
+    @Test
+    public void shouldNotifyPhotoFrameAvailable_failedHdrSuppressesLateFrame() throws Exception {
+        PhotoSession session = new PhotoSession(mockConfiguredCameraHooks());
+        setBooleanField(session, "mCurrentShotUsesHdrBurst", true);
+
+        assertThat(session.shouldNotifyPhotoFrameAvailable()).isFalse();
+    }
+
+    @Test
+    public void shouldNotifyPhotoFrameAvailable_finalActiveHdrFrameAllowsFrame() throws Exception {
+        PhotoSession session = new PhotoSession(mockConfiguredCameraHooks());
+        setBooleanField(session, "mCurrentShotUsesHdrBurst", true);
+        HdrBurstCapture hdrCapture = getField(session, "hdrBurstCapture", HdrBurstCapture.class);
+        setBooleanField(hdrCapture, "active", true);
+        setIntField(hdrCapture, "framesReceived", 2);
+
+        assertThat(session.shouldNotifyPhotoFrameAvailable()).isTrue();
+    }
+
+    @Test
     public void onCameraClosed_quitsStillCaptureCallbackThread() throws Exception {
         PhotoSession session = new PhotoSession(mockConfiguredCameraHooks());
         Method handlerMethod =
@@ -782,5 +808,26 @@ public class PhotoSessionTest {
         assertThat(handlerField.get(session)).isNull();
         thread.join(2000);
         assertThat(thread.isAlive()).isFalse();
+    }
+
+    private static void setBooleanField(Object target, String name, boolean value)
+            throws ReflectiveOperationException {
+        Field field = target.getClass().getDeclaredField(name);
+        field.setAccessible(true);
+        field.setBoolean(target, value);
+    }
+
+    private static void setIntField(Object target, String name, int value)
+            throws ReflectiveOperationException {
+        Field field = target.getClass().getDeclaredField(name);
+        field.setAccessible(true);
+        field.setInt(target, value);
+    }
+
+    private static <T> T getField(Object target, String name, Class<T> type)
+            throws ReflectiveOperationException {
+        Field field = target.getClass().getDeclaredField(name);
+        field.setAccessible(true);
+        return type.cast(field.get(target));
     }
 }

@@ -142,6 +142,9 @@ public final class PhotoSession {
 
     private final HdrBurstCapture hdrBurstCapture = new HdrBurstCapture();
 
+    /** True from HDR dispatch through its terminal frame/error, including late JPEG delivery. */
+    private volatile boolean mCurrentShotUsesHdrBurst;
+
     /**
      * Background writer for deferred-persistence captures ({@link
      * ActivePhotoCapture#deferDiskWrite}). Single thread keeps writes ordered; daemon so it never
@@ -985,11 +988,7 @@ public final class PhotoSession {
                 return;
             }
 
-            boolean finalHdrFrame =
-                    hdrBurstCapture.isActive()
-                            && hdrBurstCapture.framesReceived()
-                                    == HdrBurstBuilder.HDR_BURST_COUNT - 1;
-            if (!hdrBurstCapture.isActive() || finalHdrFrame) {
+            if (shouldNotifyPhotoFrameAvailable()) {
                 notifyPhotoFrameAvailable(imgTs);
             }
 
@@ -2100,6 +2099,8 @@ public final class PhotoSession {
             return;
         }
 
+        mCurrentShotUsesHdrBurst = false;
+
         try {
             CameraDevice activeCameraDevice = hooks.coordinator().device();
             CameraCaptureSession activeSession = hooks.coordinator().session();
@@ -2451,6 +2452,7 @@ public final class PhotoSession {
     }
 
     private void captureHdrBurst() {
+        mCurrentShotUsesHdrBurst = true;
         try {
             shotState = AeStateMachine.ShotState.SHOOTING;
 
@@ -2522,6 +2524,18 @@ public final class PhotoSession {
             hooks.closeCamera();
             hooks.stopService();
         }
+    }
+
+    /**
+     * A failed/cancelled HDR burst is inactive but is not a normal still. Preserve the dispatch
+     * mode separately so a late JPEG cannot produce a success snap during the error callback race.
+     */
+    boolean shouldNotifyPhotoFrameAvailable() {
+        if (!mCurrentShotUsesHdrBurst) {
+            return true;
+        }
+        return hdrBurstCapture.isActive()
+                && hdrBurstCapture.framesReceived() == HdrBurstBuilder.HDR_BURST_COUNT - 1;
     }
 
     public boolean photoRequestFromSdk() {
