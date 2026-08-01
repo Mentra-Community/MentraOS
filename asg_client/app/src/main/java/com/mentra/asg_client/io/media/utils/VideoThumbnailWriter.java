@@ -265,7 +265,7 @@ public final class VideoThumbnailWriter {
 
     private static Bitmap frameAt(MediaMetadataRetriever retriever, long timeUs, int[] targetSize) {
         if (targetSize == null) {
-            return null;
+            targetSize = scaledTargetSize(0, 0);
         }
         return retriever.getScaledFrameAtTime(
                 timeUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, targetSize[0], targetSize[1]);
@@ -277,7 +277,7 @@ public final class VideoThumbnailWriter {
             dimensions = mediaTrackDimensions(videoFile);
         }
         if (dimensions == null) {
-            return null;
+            return scaledTargetSize(0, 0);
         }
         return scaledTargetSize(dimensions[0], dimensions[1]);
     }
@@ -324,7 +324,11 @@ public final class VideoThumbnailWriter {
 
     static int[] scaledTargetSize(int width, int height) {
         if (width <= 0 || height <= 0) {
-            return null;
+            // The platform preserves source aspect ratio while fitting inside this box.
+            return new int[] {
+                AsgConstants.VIDEO_THUMBNAIL_MAX_DIMENSION,
+                AsgConstants.VIDEO_THUMBNAIL_MAX_DIMENSION
+            };
         }
         int longestEdge = Math.max(width, height);
         float scale =

@@ -88,9 +88,15 @@ public class VideoThumbnailWriterTest {
     }
 
     @Test
-    public void scaledTargetSize_invalidDimensionsReturnsNull() {
-        assertThat(VideoThumbnailWriter.scaledTargetSize(0, 240)).isNull();
-        assertThat(VideoThumbnailWriter.scaledTargetSize(320, -1)).isNull();
+    public void scaledTargetSize_invalidDimensionsUsesBoundedFallback() {
+        assertThat(VideoThumbnailWriter.scaledTargetSize(0, 240))
+                .containsExactly(
+                        AsgConstants.VIDEO_THUMBNAIL_MAX_DIMENSION,
+                        AsgConstants.VIDEO_THUMBNAIL_MAX_DIMENSION);
+        assertThat(VideoThumbnailWriter.scaledTargetSize(320, -1))
+                .containsExactly(
+                        AsgConstants.VIDEO_THUMBNAIL_MAX_DIMENSION,
+                        AsgConstants.VIDEO_THUMBNAIL_MAX_DIMENSION);
     }
 
     @Test
