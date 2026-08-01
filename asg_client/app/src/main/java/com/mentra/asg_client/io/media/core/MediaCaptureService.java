@@ -833,6 +833,11 @@ public class MediaCaptureService {
                 Log.d(TAG, "📸 Warm capture — snap is waiting for sensor exposure start");
                 return feedbackToken;
             }
+            // Only the newest cold request owns the repeating prep cue. The displaced request
+            // keeps its non-terminal token, so its exposure callback can still play its snap.
+            if (mCurrentPrepFeedback != null) {
+                stopPrepClicksLocked(mCurrentPrepFeedback);
+            }
             Log.d(
                     TAG,
                     "📸 Cold capture — playing prep click every "
