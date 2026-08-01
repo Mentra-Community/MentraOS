@@ -385,8 +385,11 @@ public class AsgConstants {
     /** Maximum time allowed for platform video-frame extraction. */
     public static final long VIDEO_THUMBNAIL_EXTRACTION_TIMEOUT_MS = 10_000L;
 
-    /** Maximum wait for queued thumbnail work during media-service cleanup. */
-    public static final long VIDEO_THUMBNAIL_SHUTDOWN_TIMEOUT_MS = 12_000L;
+    /** Final main-thread wait after thumbnail work has drained during other cleanup steps. */
+    public static final long VIDEO_THUMBNAIL_SHUTDOWN_TIMEOUT_MS = 1_000L;
+
+    /** Maximum abandoned native decoder workers retained after timeout. */
+    public static final int VIDEO_THUMBNAIL_MAX_RETIRED_DECODERS = 1;
 
     /**
      * Max wait for the deferred background photo write ({@code CapturedPhoto.persistence}) when a

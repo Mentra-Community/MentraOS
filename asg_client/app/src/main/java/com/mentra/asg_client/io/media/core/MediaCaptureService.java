@@ -196,6 +196,16 @@ public class MediaCaptureService {
                 return true;
             }
         }
+
+        void cancelThumbnailWrite() {
+            synchronized (commitLock) {
+                discarded = true;
+                Future<?> currentExecution = execution;
+                if (currentExecution != null) {
+                    currentExecution.cancel(true);
+                }
+            }
+        }
     }
 
     // Guards the stop prologue (mCurrentStopReason + pending-upload target) so the
@@ -672,10 +682,12 @@ public class MediaCaptureService {
                     r -> {
                         Thread t = new Thread(r, "VideoThumbnailWriter");
                         t.setPriority(Thread.NORM_PRIORITY - 1);
+                        t.setDaemon(true);
                         return t;
                     });
     private final ConcurrentHashMap<String, VideoThumbnailTask> videoThumbnailTasks =
             new ConcurrentHashMap<>();
+    private final Object videoThumbnailLifecycleLock = new Object();
 
     /**
      * Keeps ML Kit and final-crop persistence off CameraNeo's shared callback executor. A single
@@ -6838,14 +6850,19 @@ public class MediaCaptureService {
     private void scheduleVideoThumbnail(String filePath) {
         String taskKey = new File(filePath).getAbsolutePath();
         VideoThumbnailTask task = new VideoThumbnailTask(taskKey);
-        if (videoThumbnailTasks.putIfAbsent(taskKey, task) != null) {
-            return;
-        }
-        try {
-            task.setExecution(videoThumbnailExecutor.submit(task));
-        } catch (RejectedExecutionException e) {
-            videoThumbnailTasks.remove(taskKey, task);
-            Log.d(TAG, "Skipping video thumbnail during cleanup");
+        synchronized (videoThumbnailLifecycleLock) {
+            if (isCleaningUp.get() || videoThumbnailExecutor.isShutdown()) {
+                return;
+            }
+            if (videoThumbnailTasks.putIfAbsent(taskKey, task) != null) {
+                return;
+            }
+            try {
+                task.setExecution(videoThumbnailExecutor.submit(task));
+            } catch (RejectedExecutionException e) {
+                videoThumbnailTasks.remove(taskKey, task);
+                Log.d(TAG, "Skipping video thumbnail during cleanup");
+            }
         }
     }
 
@@ -6888,6 +6905,12 @@ public class MediaCaptureService {
                 mBatteryMonitorHandler = null;
             }
 
+            // Close submission before waiting for integrity work. Existing thumbnail tasks drain
+            // in parallel with the integrity wait, keeping the final main-thread wait short.
+            synchronized (videoThumbnailLifecycleLock) {
+                videoThumbnailExecutor.shutdown();
+            }
+
             videoIntegrityExecutor.shutdown();
             try {
                 if (!videoIntegrityExecutor.awaitTermination(3, TimeUnit.SECONDS)) {
@@ -6897,17 +6920,20 @@ public class MediaCaptureService {
                 videoIntegrityExecutor.shutdownNow();
                 Thread.currentThread().interrupt();
             }
-            videoThumbnailExecutor.shutdown();
             try {
                 if (!videoThumbnailExecutor.awaitTermination(
                         AsgConstants.VIDEO_THUMBNAIL_SHUTDOWN_TIMEOUT_MS,
                         TimeUnit.MILLISECONDS)) {
+                    videoThumbnailTasks
+                            .values()
+                            .forEach(VideoThumbnailTask::cancelThumbnailWrite);
                     videoThumbnailExecutor.shutdownNow();
                     if (!videoThumbnailExecutor.awaitTermination(1, TimeUnit.SECONDS)) {
                         Log.w(TAG, "Video thumbnail executor did not terminate during cleanup");
                     }
                 }
             } catch (InterruptedException e) {
+                videoThumbnailTasks.values().forEach(VideoThumbnailTask::cancelThumbnailWrite);
                 videoThumbnailExecutor.shutdownNow();
                 Thread.currentThread().interrupt();
             }

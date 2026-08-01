@@ -331,7 +331,8 @@ public class FileManagerImpl implements FileManager {
                     if (getDefaultPackageName().equals(packageName)
                             && directory.getName().startsWith("VID_")
                             && item.getName()
-                                    .equals(AsgConstants.VIDEO_THUMBNAIL_SIDECAR_NAME)) {
+                                    .equalsIgnoreCase(
+                                            AsgConstants.VIDEO_THUMBNAIL_SIDECAR_NAME)) {
                         continue;
                     }
                     // Add file to metadata list

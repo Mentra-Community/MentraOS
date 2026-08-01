@@ -9,6 +9,8 @@ import com.mentra.asg_client.AsgConstants;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -187,6 +189,54 @@ public class VideoThumbnailWriterTest {
         long elapsedMs = (System.nanoTime() - startedAt) / 1_000_000L;
         assertThat(elapsedMs).isLessThan(1_000L);
         assertThat(cancelCalled).isTrue();
+    }
+
+    @Test
+    public void extractFrameWithTimeout_hungDecoderDoesNotBlockNextVideo() throws Exception {
+        File hungVideo = new File(temporaryFolder.newFolder("VID_hung"), "base.mp4");
+        File nextVideo = new File(temporaryFolder.newFolder("VID_next"), "base.mp4");
+        CountDownLatch decoderStarted = new CountDownLatch(1);
+        CountDownLatch releaseDecoder = new CountDownLatch(1);
+        AtomicReference<Bitmap> firstResult = new AtomicReference<>();
+        Thread timeoutCaller =
+                new Thread(
+                        () ->
+                                firstResult.set(
+                                        VideoThumbnailWriter.extractFrameWithTimeout(
+                                                hungVideo,
+                                                ignored -> {
+                                                    decoderStarted.countDown();
+                                                    while (releaseDecoder.getCount() > 0) {
+                                                        try {
+                                                            releaseDecoder.await();
+                                                        } catch (InterruptedException ignored2) {
+                                                            // Model a native decode that ignores
+                                                            // interruption.
+                                                        }
+                                                    }
+                                                    return null;
+                                                },
+                                                50)),
+                        "ThumbnailTimeoutTest");
+
+        try {
+            timeoutCaller.start();
+            assertThat(decoderStarted.await(1, TimeUnit.SECONDS)).isTrue();
+            timeoutCaller.join(1_000);
+            assertThat(timeoutCaller.isAlive()).isFalse();
+            assertThat(firstResult.get()).isNull();
+
+            Bitmap nextFrame = Bitmap.createBitmap(16, 16, Bitmap.Config.ARGB_8888);
+            Bitmap extracted =
+                    VideoThumbnailWriter.extractFrameWithTimeout(
+                            nextVideo, ignored -> nextFrame, 1_000);
+
+            assertThat(extracted).isSameAs(nextFrame);
+            extracted.recycle();
+        } finally {
+            releaseDecoder.countDown();
+            timeoutCaller.join(1_000);
+        }
     }
 
     private static File write(File file) throws IOException {

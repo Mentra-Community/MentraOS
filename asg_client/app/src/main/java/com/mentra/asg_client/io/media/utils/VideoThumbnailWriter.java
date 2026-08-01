@@ -6,10 +6,14 @@ import android.util.Log;
 import com.mentra.asg_client.AsgConstants;
 import java.io.File;
 import java.io.FileOutputStream;
+import java.util.HashSet;
+import java.util.Set;
+import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -32,14 +36,9 @@ public final class VideoThumbnailWriter {
     private static final String TAG = "VideoThumbnailWriter";
     private static final BitmapEncoder JPEG_ENCODER =
             (bitmap, format, quality, output) -> bitmap.compress(format, quality, output);
-    private static final ExecutorService FRAME_EXTRACTION_EXECUTOR =
-            Executors.newSingleThreadExecutor(
-                    runnable -> {
-                        Thread thread = new Thread(runnable, "VideoThumbnailDecode");
-                        thread.setPriority(Thread.NORM_PRIORITY - 1);
-                        thread.setDaemon(true);
-                        return thread;
-                    });
+    private static final Object FRAME_EXECUTOR_LOCK = new Object();
+    private static final Set<ExecutorService> RETIRED_FRAME_EXECUTORS = new HashSet<>();
+    private static ExecutorService frameExtractionExecutor = newFrameExtractionExecutor();
 
     private VideoThumbnailWriter() {}
 
@@ -157,17 +156,24 @@ public final class VideoThumbnailWriter {
             File videoFile, FrameExtractor extractor, long timeoutMs) {
         AtomicBoolean acceptResult = new AtomicBoolean(true);
         AtomicReference<Bitmap> unclaimedResult = new AtomicReference<>();
-        Future<Bitmap> future =
-                FRAME_EXTRACTION_EXECUTOR.submit(
-                        () -> {
-                            Bitmap frame = extractor.extract(videoFile);
-                            unclaimedResult.set(frame);
-                            if (!acceptResult.get()) {
-                                recycleUnclaimed(unclaimedResult);
-                                return null;
-                            }
-                            return frame;
-                        });
+        ExtractionSubmission submission;
+        try {
+            submission =
+                    submitFrameExtraction(
+                            () -> {
+                                Bitmap frame = extractor.extract(videoFile);
+                                unclaimedResult.set(frame);
+                                if (!acceptResult.get()) {
+                                    recycleUnclaimed(unclaimedResult);
+                                    return null;
+                                }
+                                return frame;
+                            });
+        } catch (RejectedExecutionException e) {
+            Log.w(TAG, "No bounded frame decoder is available for " + videoFile.getAbsolutePath());
+            return null;
+        }
+        Future<Bitmap> future = submission.future;
         try {
             Bitmap frame = future.get(timeoutMs, TimeUnit.MILLISECONDS);
             unclaimedResult.compareAndSet(frame, null);
@@ -177,6 +183,7 @@ public final class VideoThumbnailWriter {
             future.cancel(true);
             extractor.cancel();
             recycleUnclaimed(unclaimedResult);
+            retireFrameExtractionExecutor(submission.executor);
             Log.w(
                     TAG,
                     "Frame extraction timed out after "
@@ -211,7 +218,7 @@ public final class VideoThumbnailWriter {
                 Bitmap frame =
                         frameAt(retriever, AsgConstants.VIDEO_THUMBNAIL_FRAME_TIME_US, targetSize);
                 if (frame == null) {
-                    frame = frameAt(retriever, -1L, targetSize);
+                    frame = frameAt(retriever, 0L, targetSize);
                 }
                 return frame;
             } catch (Exception e) {
@@ -285,6 +292,53 @@ public final class VideoThumbnailWriter {
         }
     }
 
+    private static ExecutorService newFrameExtractionExecutor() {
+        return Executors.newSingleThreadExecutor(
+                runnable -> {
+                    Thread thread = new Thread(runnable, "VideoThumbnailDecode");
+                    thread.setPriority(Thread.NORM_PRIORITY - 1);
+                    thread.setDaemon(true);
+                    return thread;
+                });
+    }
+
+    private static ExtractionSubmission submitFrameExtraction(Callable<Bitmap> extraction) {
+        synchronized (FRAME_EXECUTOR_LOCK) {
+            RETIRED_FRAME_EXECUTORS.removeIf(ExecutorService::isTerminated);
+            if (frameExtractionExecutor.isShutdown()) {
+                if (!frameExtractionExecutor.isTerminated()) {
+                    if (RETIRED_FRAME_EXECUTORS.size()
+                            >= AsgConstants.VIDEO_THUMBNAIL_MAX_RETIRED_DECODERS) {
+                        throw new RejectedExecutionException(
+                                "Bounded video decoder workers are still hung");
+                    }
+                    RETIRED_FRAME_EXECUTORS.add(frameExtractionExecutor);
+                }
+                frameExtractionExecutor = newFrameExtractionExecutor();
+            }
+            return new ExtractionSubmission(
+                    frameExtractionExecutor, frameExtractionExecutor.submit(extraction));
+        }
+    }
+
+    private static void retireFrameExtractionExecutor(ExecutorService timedOutExecutor) {
+        synchronized (FRAME_EXECUTOR_LOCK) {
+            timedOutExecutor.shutdownNow();
+            RETIRED_FRAME_EXECUTORS.removeIf(ExecutorService::isTerminated);
+            if (timedOutExecutor != frameExtractionExecutor) {
+                return;
+            }
+            if (!timedOutExecutor.isTerminated()) {
+                if (RETIRED_FRAME_EXECUTORS.size()
+                        >= AsgConstants.VIDEO_THUMBNAIL_MAX_RETIRED_DECODERS) {
+                    return;
+                }
+                RETIRED_FRAME_EXECUTORS.add(timedOutExecutor);
+            }
+            frameExtractionExecutor = newFrameExtractionExecutor();
+        }
+    }
+
     private static void deleteBestEffort(File file) {
         try {
             if (file.exists() && !file.delete()) {
@@ -306,6 +360,16 @@ public final class VideoThumbnailWriter {
     interface BitmapEncoder {
         boolean compress(
                 Bitmap bitmap, Bitmap.CompressFormat format, int quality, FileOutputStream output);
+    }
+
+    private static final class ExtractionSubmission {
+        final ExecutorService executor;
+        final Future<Bitmap> future;
+
+        ExtractionSubmission(ExecutorService executor, Future<Bitmap> future) {
+            this.executor = executor;
+            this.future = future;
+        }
     }
 
     /** Coordinates the atomic partial-to-final sidecar commit with capture lifecycle changes. */

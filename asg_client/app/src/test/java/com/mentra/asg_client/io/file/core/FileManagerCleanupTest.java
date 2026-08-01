@@ -74,7 +74,8 @@ public class FileManagerCleanupTest {
     @Test
     public void listingHidesOnlyVideoCaptureThumbnailSidecars() throws Exception {
         File video = write("VID_video/base.mp4");
-        write("VID_video/" + AsgConstants.VIDEO_THUMBNAIL_SIDECAR_NAME);
+        File sidecar = write("VID_video/" + AsgConstants.VIDEO_THUMBNAIL_SIDECAR_NAME);
+        File mixedCaseSidecar = write("VID_video/THUMB.JPG");
         File regularThumb = write("documents/" + AsgConstants.VIDEO_THUMBNAIL_SIDECAR_NAME);
 
         List<FileMetadata> files = fileManager.listFiles(fileManager.getDefaultPackageName());
@@ -88,13 +89,13 @@ public class FileManagerCleanupTest {
                                 file -> file.getFilePath().equals(regularThumb.getAbsolutePath())));
         assertFalse(
                 files.stream()
+                        .anyMatch(file -> file.getFilePath().equals(sidecar.getAbsolutePath())));
+        assertFalse(
+                files.stream()
                         .anyMatch(
                                 file ->
-                                        file.getFileName()
-                                                .equals(
-                                                        "VID_video/"
-                                                                + AsgConstants
-                                                                        .VIDEO_THUMBNAIL_SIDECAR_NAME)));
+                                        file.getFilePath()
+                                                .equals(mixedCaseSidecar.getAbsolutePath())));
     }
 
     @Test
