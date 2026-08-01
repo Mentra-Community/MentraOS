@@ -928,7 +928,17 @@ public class MediaCaptureService {
                 return;
             }
             feedbackToken.mExposureStarted = true;
+            // A newer queued request may currently own prep feedback. No prep cue should overlap
+            // the shot that is exposing now, even if the newer request has not dispatched yet.
+            if (mCurrentPrepFeedback != null && mCurrentPrepFeedback != feedbackToken) {
+                stopPrepClicksLocked(mCurrentPrepFeedback);
+            }
             stopPrepClicksLocked(feedbackToken);
+
+            if (estimatedExposureDurationNs <= 0L) {
+                Log.d(TAG, "📸 Exposure duration unknown — waiting for JPEG frame to snap");
+                return;
+            }
 
             long estimatedExposureMs =
                     Math.max(0L, (estimatedExposureDurationNs + 999_999L) / 1_000_000L);
@@ -2185,7 +2195,8 @@ public class MediaCaptureService {
 
         // Use the new enqueuePhotoRequest for thread-safe rapid capture
         // isFromSdk=false because this is a button-triggered photo (local storage, high quality)
-        CameraNeoService.enqueuePhotoRequest(
+        try {
+            CameraNeoService.enqueuePhotoRequest(
                 mContext,
                 photoFilePath,
                 size,
@@ -2295,6 +2306,22 @@ public class MediaCaptureService {
                         }
                     }
                 });
+        } catch (Exception e) {
+            stopPhotoFeedbackForFailure(captureFeedbackToken);
+            Log.e(TAG, "Failed to enqueue button photo", e);
+            sendPhotoStatus(
+                    requestId,
+                    "failed",
+                    null,
+                    "CAMERA_ERROR",
+                    "Failed to start photo capture");
+            if (mMediaCaptureListener != null) {
+                mMediaCaptureListener.onMediaError(
+                        requestId,
+                        "Failed to start photo capture",
+                        MediaUploadQueueManager.MEDIA_TYPE_PHOTO);
+            }
+        }
     }
 
     /**

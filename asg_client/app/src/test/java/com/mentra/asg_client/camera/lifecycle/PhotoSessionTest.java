@@ -428,6 +428,34 @@ public class PhotoSessionTest {
     }
 
     @Test
+    public void notifyPhotoExposureStarted_staleGenerationDoesNotReachNextPhoto() throws Exception {
+        PhotoSession session = new PhotoSession(mockConfiguredCameraHooks());
+        CameraNeoService.PhotoCaptureCallback firstCallback =
+                mock(CameraNeoService.PhotoCaptureCallback.class);
+        activateQueuedRequest(
+                session,
+                new QueuedPhotoRequest(
+                        "/tmp/first.jpg", "large", false, true, null, firstCallback));
+        long staleGeneration = captureMetadataGeneration(session);
+
+        CameraNeoService.PhotoCaptureCallback secondCallback =
+                mock(CameraNeoService.PhotoCaptureCallback.class);
+        activateQueuedRequest(
+                session,
+                new QueuedPhotoRequest(
+                        "/tmp/second.jpg", "large", false, true, null, secondCallback));
+        session.notifyPhotoExposureStartedForCapture(
+                staleGeneration, firstCallback, 123L, 456L);
+
+        verify(firstCallback, never()).onPhotoExposureStarted(123L, 456L);
+        verify(secondCallback, never()).onPhotoExposureStarted(123L, 456L);
+
+        session.notifyPhotoExposureStartedForCapture(
+                captureMetadataGeneration(session), secondCallback, 123L, 456L);
+        verify(secondCallback).onPhotoExposureStarted(123L, 456L);
+    }
+
+    @Test
     public void notifyPhotoCaptured_ramFirstCaptureSurvivesMetadataWait() throws Exception {
         PhotoSession.Hooks hooks = mockConfiguredCameraHooks();
         CameraNeoService.PhotoCaptureCallback callback =

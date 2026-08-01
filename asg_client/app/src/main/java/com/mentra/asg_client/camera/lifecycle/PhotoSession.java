@@ -1734,11 +1734,18 @@ public final class PhotoSession {
         }
     }
 
-    /** Deliver the shutter boundary inline so feedback is not delayed behind callback work. */
-    private void notifyPhotoExposureStarted(
-            long sensorTimestampNs, long estimatedExposureDurationNs) {
-        CameraNeoService.PhotoCaptureCallback callback =
-                activeCapture != null ? activeCapture.callback : null;
+    /** Deliver a bound shutter boundary inline, dropping callbacks from an older queued shot. */
+    void notifyPhotoExposureStartedForCapture(
+            long captureGeneration,
+            @Nullable CameraNeoService.PhotoCaptureCallback callback,
+            long sensorTimestampNs,
+            long estimatedExposureDurationNs) {
+        synchronized (captureMetadataLock) {
+            if (captureGeneration != captureMetadataGeneration) {
+                Log.w(TAG, "Ignoring stale exposure-start callback from a previous shot");
+                return;
+            }
+        }
         if (callback != null) {
             callback.onPhotoExposureStarted(sensorTimestampNs, estimatedExposureDurationNs);
         }
@@ -2299,6 +2306,8 @@ public final class PhotoSession {
             synchronized (captureMetadataLock) {
                 captureGeneration = captureMetadataGeneration;
             }
+            final CameraNeoService.PhotoCaptureCallback captureCallback =
+                    activeCapture != null ? activeCapture.callback : null;
             mLastStillCaptureCompletedWallMs = 0L;
             mStillHalStartedLogged = false;
             mStillHalStartedWallMs = 0L;
@@ -2366,8 +2375,11 @@ public final class PhotoSession {
                                 @Override
                                 public void notifyPhotoExposureStarted(
                                         long sensorTimestampNs, long estimatedExposureDurationNs) {
-                                    PhotoSession.this.notifyPhotoExposureStarted(
-                                            sensorTimestampNs, estimatedExposureDurationNs);
+                                    notifyPhotoExposureStartedForCapture(
+                                            captureGeneration,
+                                            captureCallback,
+                                            sensorTimestampNs,
+                                            estimatedExposureDurationNs);
                                 }
 
                                 @Override
@@ -2453,6 +2465,12 @@ public final class PhotoSession {
 
     private void captureHdrBurst() {
         mCurrentShotUsesHdrBurst = true;
+        final long captureGeneration;
+        synchronized (captureMetadataLock) {
+            captureGeneration = captureMetadataGeneration;
+        }
+        final CameraNeoService.PhotoCaptureCallback captureCallback =
+                activeCapture != null ? activeCapture.callback : null;
         try {
             shotState = AeStateMachine.ShotState.SHOOTING;
 
@@ -2509,7 +2527,10 @@ public final class PhotoSession {
 
                         @Override
                         public void onFinalCaptureStarted(long sensorTimestampNs) {
-                            notifyPhotoExposureStarted(sensorTimestampNs, 0L);
+                            // Duration is unknown for the AE-bracketed frame. Stop prep at the
+                            // hardware boundary, then let final JPEG arrival trigger the snap.
+                            notifyPhotoExposureStartedForCapture(
+                                    captureGeneration, captureCallback, sensorTimestampNs, 0L);
                         }
                     });
 

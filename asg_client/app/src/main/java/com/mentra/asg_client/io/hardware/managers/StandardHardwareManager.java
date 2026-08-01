@@ -14,7 +14,10 @@ import com.mentra.asg_client.io.hardware.core.BaseHardwareManager;
 import com.mentra.asg_client.io.hardware.interfaces.Capability;
 import java.io.IOException;
 import java.util.EnumSet;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Hardware implementation for generic Android glasses that expose a standard torch and audio path.
@@ -28,6 +31,8 @@ public class StandardHardwareManager extends BaseHardwareManager {
     private boolean torchEnabled;
 
     private MediaPlayer mediaPlayer;
+    private final Map<Long, MediaPlayer> overlayPlayers = new HashMap<>();
+    private final AtomicLong nextOverlayToken = new AtomicLong(1L);
 
     public StandardHardwareManager(Context context) {
         super(context);
@@ -133,6 +138,82 @@ public class StandardHardwareManager extends BaseHardwareManager {
             mediaPlayer.release();
             mediaPlayer = null;
         }
+    }
+
+    @Override
+    public void playAudioAssetOverlay(String assetName) {
+        playAudioAssetOverlayTracked(assetName);
+    }
+
+    @Override
+    public long playAudioAssetOverlayTracked(String assetName) {
+        long token = nextOverlayToken.getAndIncrement();
+        MediaPlayer overlayPlayer = new MediaPlayer();
+        synchronized (overlayPlayers) {
+            overlayPlayers.put(token, overlayPlayer);
+        }
+        try {
+            var afd = context.getAssets().openFd(assetName);
+            overlayPlayer.setDataSource(
+                    afd.getFileDescriptor(), afd.getStartOffset(), afd.getLength());
+            afd.close();
+            overlayPlayer.setOnCompletionListener(mp -> releaseOverlayPlayer(token, mp));
+            overlayPlayer.setOnErrorListener(
+                    (mp, what, extra) -> {
+                        Log.e(
+                                TAG,
+                                "Error playing overlay asset "
+                                        + assetName
+                                        + " ("
+                                        + what
+                                        + "/"
+                                        + extra
+                                        + ")");
+                        releaseOverlayPlayer(token, mp);
+                        return true;
+                    });
+            overlayPlayer.prepare();
+            overlayPlayer.start();
+            return token;
+        } catch (IOException | IllegalStateException e) {
+            Log.e(TAG, "Unable to play overlay asset " + assetName, e);
+            releaseOverlayPlayer(token, overlayPlayer);
+            return 0L;
+        }
+    }
+
+    @Override
+    public boolean stopAudioOverlayPlayback(long playbackToken) {
+        MediaPlayer overlayPlayer;
+        synchronized (overlayPlayers) {
+            overlayPlayer = overlayPlayers.remove(playbackToken);
+        }
+        if (overlayPlayer == null) {
+            return false;
+        }
+        stopAndRelease(overlayPlayer);
+        return true;
+    }
+
+    private void releaseOverlayPlayer(long token, MediaPlayer overlayPlayer) {
+        synchronized (overlayPlayers) {
+            if (overlayPlayers.get(token) != overlayPlayer) {
+                return;
+            }
+            overlayPlayers.remove(token);
+        }
+        overlayPlayer.release();
+    }
+
+    private static void stopAndRelease(MediaPlayer player) {
+        try {
+            if (player.isPlaying()) {
+                player.stop();
+            }
+        } catch (IllegalStateException ignored) {
+            // Player was already terminal.
+        }
+        player.release();
     }
 
     @Override
