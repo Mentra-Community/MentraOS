@@ -27,6 +27,7 @@ import com.mentra.asg_client.io.media.core.textdetect.MlKitTextRoiDetector;
 import com.mentra.asg_client.io.media.interfaces.ServiceCallbackInterface;
 import com.mentra.asg_client.io.media.managers.MediaUploadQueueManager;
 import com.mentra.asg_client.io.media.upload.MediaUploadService;
+import com.mentra.asg_client.io.media.utils.VideoThumbnailWriter;
 import com.mentra.asg_client.io.storage.StorageManager;
 import com.mentra.asg_client.io.streaming.services.RtmpStreamingService;
 import com.mentra.asg_client.io.streaming.services.SrtStreamingService;
@@ -65,6 +66,7 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -145,6 +147,64 @@ public class MediaCaptureService {
         UploadTarget(String webhookUrl, String authToken) {
             this.webhookUrl = webhookUrl;
             this.authToken = authToken;
+        }
+    }
+
+    private final class VideoThumbnailTask
+            implements Runnable, VideoThumbnailWriter.SidecarCommitter {
+        private final File videoFile;
+        private final Object commitLock = new Object();
+        private volatile Future<?> execution;
+        private boolean discarded;
+
+        VideoThumbnailTask(String filePath) {
+            videoFile = new File(filePath);
+        }
+
+        void setExecution(Future<?> execution) {
+            this.execution = execution;
+        }
+
+        @Override
+        public void run() {
+            try {
+                VideoThumbnailWriter.writeSidecar(videoFile, this);
+            } finally {
+                videoThumbnailTasks.remove(videoFile.getAbsolutePath(), this);
+            }
+        }
+
+        @Override
+        public boolean commit(File partial, File sidecar) {
+            synchronized (commitLock) {
+                return !discarded && videoFile.isFile() && partial.renameTo(sidecar);
+            }
+        }
+
+        boolean discardAndDeleteVideo() {
+            synchronized (commitLock) {
+                discarded = true;
+                Future<?> currentExecution = execution;
+                if (currentExecution != null) {
+                    currentExecution.cancel(true);
+                }
+                boolean deleted = !videoFile.exists() || videoFile.delete();
+                if (deleted) {
+                    VideoThumbnailWriter.deleteSidecar(videoFile);
+                }
+                // Even if deletion fails, discarded prevents this task from committing late.
+                return deleted;
+            }
+        }
+
+        void cancelThumbnailWrite() {
+            synchronized (commitLock) {
+                discarded = true;
+                Future<?> currentExecution = execution;
+                if (currentExecution != null) {
+                    currentExecution.cancel(true);
+                }
+            }
         }
     }
 
@@ -615,6 +675,19 @@ public class MediaCaptureService {
                         t.setPriority(Thread.NORM_PRIORITY - 1);
                         return t;
                     });
+
+    /** Keeps best-effort thumbnail decoding from delaying integrity callbacks or uploads. */
+    private final ExecutorService videoThumbnailExecutor =
+            Executors.newSingleThreadExecutor(
+                    r -> {
+                        Thread t = new Thread(r, "VideoThumbnailWriter");
+                        t.setPriority(Thread.NORM_PRIORITY - 1);
+                        t.setDaemon(true);
+                        return t;
+                    });
+    private final ConcurrentHashMap<String, VideoThumbnailTask> videoThumbnailTasks =
+            new ConcurrentHashMap<>();
+    private final Object videoThumbnailLifecycleLock = new Object();
 
     /**
      * Keeps ML Kit and final-crop persistence off CameraNeo's shared callback executor. A single
@@ -1406,6 +1479,9 @@ public class MediaCaptureService {
                                                 final boolean ok =
                                                         RecordedVideoIntegrityChecker.verify(
                                                                 filePath);
+                                                if (ok) {
+                                                    scheduleVideoThumbnail(filePath);
+                                                }
                                                 mainHandler.post(
                                                         () -> {
                                                             videoCaptureIdsPendingIntegrityCheck
@@ -4366,7 +4442,7 @@ public class MediaCaptureService {
 
                                     if (!save) {
                                         try {
-                                            if (videoFile.delete()) {
+                                            if (discardThumbnailAndDeleteVideo(videoFile)) {
                                                 Log.d(
                                                         TAG,
                                                         "🗑️ Deleted video file after successful"
@@ -6771,6 +6847,41 @@ public class MediaCaptureService {
         }
     }
 
+    private void scheduleVideoThumbnail(String filePath) {
+        String taskKey = new File(filePath).getAbsolutePath();
+        VideoThumbnailTask task = new VideoThumbnailTask(taskKey);
+        synchronized (videoThumbnailLifecycleLock) {
+            // Cleanup blocks new integrity checks first, then lets checks already in flight enqueue
+            // their sidecars before closing this executor.
+            if (videoThumbnailExecutor.isShutdown()) {
+                return;
+            }
+            if (videoThumbnailTasks.putIfAbsent(taskKey, task) != null) {
+                return;
+            }
+            try {
+                task.setExecution(videoThumbnailExecutor.submit(task));
+            } catch (RejectedExecutionException e) {
+                videoThumbnailTasks.remove(taskKey, task);
+                Log.d(TAG, "Skipping video thumbnail during cleanup");
+            }
+        }
+    }
+
+    private boolean discardThumbnailAndDeleteVideo(File videoFile) {
+        VideoThumbnailTask task = videoThumbnailTasks.get(videoFile.getAbsolutePath());
+        if (task != null) {
+            boolean deleted = task.discardAndDeleteVideo();
+            videoThumbnailTasks.remove(videoFile.getAbsolutePath(), task);
+            return deleted;
+        }
+        boolean deleted = !videoFile.exists() || videoFile.delete();
+        if (deleted) {
+            VideoThumbnailWriter.deleteSidecar(videoFile);
+        }
+        return deleted;
+    }
+
     /**
      * Cleanup resources and stop all monitoring. MUST be called before service is destroyed to
      * prevent leaks.
@@ -6796,6 +6907,9 @@ public class MediaCaptureService {
                 mBatteryMonitorHandler = null;
             }
 
+            // isCleaningUp prevents new integrity submissions. Let checks already in flight enqueue
+            // their thumbnails before closing thumbnail submission; existing thumbnail work still
+            // drains in parallel with this wait.
             videoIntegrityExecutor.shutdown();
             try {
                 if (!videoIntegrityExecutor.awaitTermination(3, TimeUnit.SECONDS)) {
@@ -6805,6 +6919,26 @@ public class MediaCaptureService {
                 videoIntegrityExecutor.shutdownNow();
                 Thread.currentThread().interrupt();
             }
+            synchronized (videoThumbnailLifecycleLock) {
+                videoThumbnailExecutor.shutdown();
+            }
+            try {
+                if (!videoThumbnailExecutor.awaitTermination(
+                        AsgConstants.VIDEO_THUMBNAIL_SHUTDOWN_TIMEOUT_MS,
+                        TimeUnit.MILLISECONDS)) {
+                    videoThumbnailTasks
+                            .values()
+                            .forEach(VideoThumbnailTask::cancelThumbnailWrite);
+                    videoThumbnailExecutor.shutdownNow();
+                }
+            } catch (InterruptedException e) {
+                videoThumbnailTasks.values().forEach(VideoThumbnailTask::cancelThumbnailWrite);
+                videoThumbnailExecutor.shutdownNow();
+                Thread.currentThread().interrupt();
+            } finally {
+                VideoThumbnailWriter.shutdownFrameExtraction();
+            }
+            videoThumbnailTasks.clear();
             textModeProcessingExecutor.shutdown();
             try {
                 if (!textModeProcessingExecutor.awaitTermination(3, TimeUnit.SECONDS)) {
