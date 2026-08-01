@@ -105,6 +105,21 @@ public class PhotoFeedbackControllerTest {
     }
 
     @Test
+    public void displacedColdCapture_resumesWhenNewerRequestFails() {
+        controller.start("first", false);
+        PhotoFeedbackController.Token newer = controller.start("newer", false);
+        clearInvocations(handler, hardwareManager);
+        ArgumentCaptor<Runnable> resumeRunnable = ArgumentCaptor.forClass(Runnable.class);
+
+        controller.stopForFailure(newer);
+
+        verify(handler).postDelayed(resumeRunnable.capture(), eq(0L));
+        resumeRunnable.getValue().run();
+        verify(hardwareManager)
+                .playAudioAssetOverlayTracked(AudioAssets.CAMERA_PREP_CLICK);
+    }
+
+    @Test
     public void timeoutByRequestId_terminalizesMatchingFeedback() {
         PhotoFeedbackController.Token token = controller.start("timed-out", true);
         clearInvocations(hardwareManager);

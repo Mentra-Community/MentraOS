@@ -98,10 +98,10 @@ public final class PhotoFeedbackController {
                 return feedbackToken;
             }
 
-            // Only the newest cold request owns repeating prep. A displaced request retains its
-            // token so its later exposure callback can still play its snap.
+            // Only the newest cold request owns repeating prep. Keep a displaced request paused
+            // so it can resume if the newer request fails before reaching exposure.
             if (mCurrentPrepFeedback != null) {
-                stopPrepClicksLocked(mCurrentPrepFeedback);
+                pausePrepClicksLocked(mCurrentPrepFeedback);
             }
             Log.d(
                     TAG,
@@ -174,10 +174,10 @@ public final class PhotoFeedbackController {
             if (feedbackToken.mTerminal) {
                 return;
             }
-            Token queuedPrepFeedback =
-                    mCurrentPrepFeedback != feedbackToken ? mCurrentPrepFeedback : null;
-            pausePrepClicksLocked(queuedPrepFeedback);
+            pausePrepClicksLocked(
+                    mCurrentPrepFeedback != feedbackToken ? mCurrentPrepFeedback : null);
             finishLocked(feedbackToken);
+            Token queuedPrepFeedback = selectPrepFeedbackLocked();
             if (mHardwareManager == null || !mHardwareManager.supportsAudioPlayback()) {
                 schedulePrepResumeLocked(queuedPrepFeedback, 0L);
                 return;
@@ -207,9 +207,8 @@ public final class PhotoFeedbackController {
             if (feedbackToken.mTerminal) {
                 return;
             }
-            Token queuedPrepFeedback =
-                    mCurrentPrepFeedback != feedbackToken ? mCurrentPrepFeedback : null;
             finishLocked(feedbackToken);
+            Token queuedPrepFeedback = selectPrepFeedbackLocked();
             schedulePrepResumeLocked(queuedPrepFeedback, 0L);
             Log.d(TAG, "Stopped failed photo feedback (gen=" + feedbackToken.mGeneration + ")");
         }
@@ -358,6 +357,33 @@ public final class PhotoFeedbackController {
         mHandler.postDelayed(feedbackToken.mPrepResumeRunnable, Math.max(0L, delayMs));
     }
 
+    @Nullable
+    private Token selectPrepFeedbackLocked() {
+        if (canOwnPrepLocked(mCurrentPrepFeedback)) {
+            return mCurrentPrepFeedback;
+        }
+
+        Token newestPausedFeedback = null;
+        for (Token activeFeedback : mActiveFeedback) {
+            if (!canOwnPrepLocked(activeFeedback)) {
+                continue;
+            }
+            if (newestPausedFeedback == null
+                    || activeFeedback.mGeneration > newestPausedFeedback.mGeneration) {
+                newestPausedFeedback = activeFeedback;
+            }
+        }
+        mCurrentPrepFeedback = newestPausedFeedback;
+        return newestPausedFeedback;
+    }
+
+    private boolean canOwnPrepLocked(@Nullable Token feedbackToken) {
+        return feedbackToken != null
+                && feedbackToken.mPrepClicksActive
+                && !feedbackToken.mExposureStarted
+                && !feedbackToken.mTerminal;
+    }
+
     private void finishLocked(Token feedbackToken) {
         feedbackToken.mTerminal = true;
         if (feedbackToken.mSnapRunnable != null) {
@@ -386,9 +412,8 @@ public final class PhotoFeedbackController {
         if (feedbackToken == null || feedbackToken.mTerminal) {
             return;
         }
-        Token queuedPrepFeedback =
-                mCurrentPrepFeedback != feedbackToken ? mCurrentPrepFeedback : null;
         finishLocked(feedbackToken);
+        Token queuedPrepFeedback = selectPrepFeedbackLocked();
         schedulePrepResumeLocked(queuedPrepFeedback, 0L);
         Log.d(
                 TAG,
