@@ -52,6 +52,12 @@ public class AsgConstants {
 
     public static final long CAMERA_WARM_UP_MAX_DURATION_MS = 60_000L;
 
+    /** Cadence for the short hold-still click while a cold photo spins up the camera. */
+    public static final long CAMERA_PREP_CLICK_INTERVAL_MS = 900L;
+
+    /** Target lead before the estimated end of sensor exposure for starting the camera snap. */
+    public static final long CAMERA_SNAP_TARGET_LEAD_MS = 100L;
+
     /** Safety lease for a miniapp-owned transient FOV override. */
     public static final long CAMERA_FOV_OVERRIDE_DEFAULT_TTL_MS = 300_000L;
 
