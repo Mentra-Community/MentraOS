@@ -34,10 +34,14 @@ export interface Setting {
    *
    * A persisted override normally outranks both the build's env and the
    * compiled default, which is right within one environment: a developer's
-   * METRO_AUTO pin should survive a rebuild. It is wrong across environments.
-   * TestFlight and the App Store receive the SAME binary, so a tester who
-   * pinned staging cloud during a beta would keep talking to staging after
-   * that build was promoted, with nothing surfacing it.
+   * METRO_AUTO pin should survive a rebuild. It is wrong across environments,
+   * where an override pinned under a dev build would silently follow the
+   * install onto a store build pointed at production.
+   *
+   * Note this keys off the build's environment label, so it does NOT fire on a
+   * TestFlight to App Store promotion: that ships the same binary with the same
+   * label. Promotion is safe because the publishing lane bakes prod URLs, not
+   * because this reset runs. See the resolution block in loadSettings.
    *
    * Absent means the value is never invalidated automatically.
    */
