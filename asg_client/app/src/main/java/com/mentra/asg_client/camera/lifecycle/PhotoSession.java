@@ -948,7 +948,10 @@ public final class PhotoSession {
                         ? imageAvailableStartMs - mLastStillCaptureCompletedWallMs
                         : -1L;
         Log.d(TAG, "Processing photo capture...");
-        try (Image image = reader.acquireLatestImage()) {
+        // HDR needs every bracket in capture order. acquireLatestImage() may discard an earlier
+        // bracket when more than one JPEG is queued, leaving the three-frame burst permanently
+        // incomplete and preventing its final-frame feedback callback.
+        try (Image image = acquireStillImage(reader)) {
             int width = -1;
             int height = -1;
             long imgTs = -1L;
@@ -1074,6 +1077,13 @@ public final class PhotoSession {
                 hooks.stopService();
             }
         }
+    }
+
+    @Nullable
+    Image acquireStillImage(ImageReader reader) {
+        return hdrBurstCapture.isActive()
+                ? reader.acquireNextImage()
+                : reader.acquireLatestImage();
     }
 
     /**

@@ -15,6 +15,7 @@ import static org.mockito.Mockito.when;
 import android.hardware.camera2.CameraCaptureSession;
 import android.hardware.camera2.CameraDevice;
 import android.hardware.camera2.CaptureRequest;
+import android.media.ImageReader;
 import android.os.Handler;
 import com.mentra.asg_client.camera.CameraNeoService;
 import com.mentra.asg_client.camera.CameraSettings;
@@ -835,6 +836,30 @@ public class PhotoSessionTest {
         setIntField(hdrCapture, "framesReceived", HdrBurstBuilder.HDR_BURST_COUNT - 1);
 
         assertThat(session.shouldNotifyPhotoFrameAvailable()).isTrue();
+    }
+
+    @Test
+    public void acquireStillImage_activeHdrPreservesNextBracket() throws Exception {
+        PhotoSession session = new PhotoSession(mockConfiguredCameraHooks());
+        HdrBurstCapture hdrCapture = getField(session, "hdrBurstCapture", HdrBurstCapture.class);
+        setBooleanField(hdrCapture, "active", true);
+        ImageReader reader = mock(ImageReader.class);
+
+        session.acquireStillImage(reader);
+
+        verify(reader).acquireNextImage();
+        verify(reader, never()).acquireLatestImage();
+    }
+
+    @Test
+    public void acquireStillImage_normalStillDropsStaleFrames() {
+        PhotoSession session = new PhotoSession(mockConfiguredCameraHooks());
+        ImageReader reader = mock(ImageReader.class);
+
+        session.acquireStillImage(reader);
+
+        verify(reader).acquireLatestImage();
+        verify(reader, never()).acquireNextImage();
     }
 
     @Test
