@@ -1,5 +1,6 @@
 package com.mentra.asg_client.io.file.core;
 
+import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.logging.Logger;
 import com.mentra.asg_client.io.file.managers.FileOperationsManager;
 import com.mentra.asg_client.io.file.managers.FileSecurityManager;
@@ -322,6 +323,16 @@ public class FileManagerImpl implements FileManager {
                     // for Wi-Fi sync, where unknown leaf names are treated as primary capture files.
                     if (item.getName().endsWith(".partial")) {
                         Log.d(TAG, "⏭️ Skipping .partial file from listing: " + item.getAbsolutePath());
+                        continue;
+                    }
+                    // Skip thumb.jpg capture sidecars (written at video finalize for USB/desktop
+                    // consumers). The Wi-Fi gallery has its own thumbnail cache; listing these
+                    // would advertise them to phone sync as primary capture files.
+                    if (getDefaultPackageName().equals(packageName)
+                            && directory.getName().startsWith("VID_")
+                            && item.getName()
+                                    .equalsIgnoreCase(
+                                            AsgConstants.VIDEO_THUMBNAIL_SIDECAR_NAME)) {
                         continue;
                     }
                     // Add file to metadata list
@@ -794,8 +805,10 @@ public class FileManagerImpl implements FileManager {
                         lower.endsWith(".mp4") || lower.endsWith(".mov") || lower.endsWith(".avi");
                     // Exclude HDR brackets — they're not standalone media
                     boolean isBracket = lower.matches("ev-?\\d+\\.jpe?g");
+                    boolean isVideoThumbnail =
+                            lower.equals(AsgConstants.VIDEO_THUMBNAIL_SIDECAR_NAME);
 
-                    if (isMediaExtension && !isBracket) {
+                    if (isMediaExtension && !isBracket && !isVideoThumbnail) {
                         boolean isVideo = lower.endsWith(".mp4") || lower.endsWith(".mov") || lower.endsWith(".avi");
                         if (isVideo) {
                             // Videos need moov atom validation — a killed process leaves
