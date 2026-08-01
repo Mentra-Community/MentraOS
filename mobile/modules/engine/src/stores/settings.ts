@@ -29,6 +29,19 @@ export interface Setting {
   // overwrite a just-promoted identity. PAIRING_IDENTITY_KEYS is derived from
   // this flag so the sync exclusions can't drift from the descriptors.
   nativeAuthoritative?: true
+  /**
+   * Clear this setting when the build's environment changes.
+   *
+   * A persisted override normally outranks both the build's env and the
+   * compiled default, which is right within one environment: a developer's
+   * METRO_AUTO pin should survive a rebuild. It is wrong across environments.
+   * TestFlight and the App Store receive the SAME binary, so a tester who
+   * pinned staging cloud during a beta would keep talking to staging after
+   * that build was promoted, with nothing surfacing it.
+   *
+   * Absent means the value is never invalidated automatically.
+   */
+  resetOnBuildEnvChange?: true
 }
 
 export const SETTINGS: Record<string, Setting> = {
@@ -168,6 +181,7 @@ export const SETTINGS: Record<string, Setting> = {
     writable: true,
     saveOnServer: false,
     persist: true,
+    resetOnBuildEnvChange: true,
   },
   cloud_runtime_url: {
     key: "cloud_runtime_url",
@@ -175,6 +189,7 @@ export const SETTINGS: Record<string, Setting> = {
     writable: true,
     saveOnServer: false,
     persist: true,
+    resetOnBuildEnvChange: true,
   },
   // Bookmarked Cloud V2 endpoint pairs. Each entry is {label, coreUrl,
   // runtimeUrl} — core + runtime are saved together because they are always
@@ -976,19 +991,25 @@ export const useSettingsStore = create<SettingsState>()(
         // Comparing the baked EXPO_PUBLIC_BUILD_ENV against the last one seen
         // on this device covers promotion, environment switches and fresh
         // installs, without touching the setting write path.
-        const BUILD_ENV_KEY = "cloud.lastBuildEnv"
+        const BUILD_ENV_KEY = "settings.lastBuildEnv"
         const buildEnv = (process.env.EXPO_PUBLIC_BUILD_ENV ?? "dev").trim() || "dev"
         const lastBuildEnv = storage.load<string>(BUILD_ENV_KEY)
         const previousBuildEnv = lastBuildEnv.is_error() ? undefined : lastBuildEnv.value
         if (previousBuildEnv !== buildEnv) {
+          // Only clear on an actual change. A fresh install has nothing to
+          // clear and must not log as though it did.
           if (previousBuildEnv !== undefined) {
-            // Only clear on an actual change. A fresh install has nothing to
-            // clear and must not log as if it did.
-            console.log(`SETTINGS: build env ${previousBuildEnv} -> ${buildEnv}, clearing cloud URL overrides`)
-            for (const key of [SETTINGS.cloud_core_url.key, SETTINGS.cloud_runtime_url.key]) {
-              const cleared = await get().setSetting(key, "", false)
+            // Driven by the descriptors rather than a hardcoded key list, so a
+            // setting that needs this behaviour declares it in one place and
+            // cannot be missed here.
+            const scoped = Object.values(SETTINGS).filter((setting) => setting.resetOnBuildEnvChange)
+            console.log(
+              `SETTINGS: build env ${previousBuildEnv} -> ${buildEnv}, clearing ${scoped.length} build-scoped setting(s)`,
+            )
+            for (const setting of scoped) {
+              const cleared = await get().setSetting(setting.key, setting.defaultValue(), false)
               if (cleared.is_error()) {
-                console.log(`SETTINGS: could not clear ${key}:`, cleared.error)
+                console.log(`SETTINGS: could not clear ${setting.key}:`, cleared.error)
               }
             }
           }
