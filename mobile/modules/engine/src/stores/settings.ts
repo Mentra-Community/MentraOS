@@ -788,7 +788,12 @@ const getDefaultSettings = () =>
 let loadAllSettingsInFlight: AsyncResult<void, Error> | null = null
 
 function printableSettingValue(key: string, value: unknown): string {
-  return key.includes("token") || key.includes("email") ? "<redacted>" : JSON.stringify(value)
+  if (key.includes("token") || key.includes("email")) return "<redacted>"
+  // Calendar events carry event titles and locations. log the shape, not the contents
+  if (key === SETTINGS.calendar_events.key) {
+    return Array.isArray(value) ? `<${value.length} event(s)>` : "<redacted>"
+  }
+  return JSON.stringify(value)
 }
 
 export const useSettingsStore = create<SettingsState>()(

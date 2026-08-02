@@ -1,4 +1,4 @@
-import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
+import BluetoothSdk, {type CalendarEvent} from "@mentra/bluetooth-sdk-internal"
 import CrustModule from "@mentra/crust"
 import {Asset} from "expo-asset"
 import * as Calendar from "expo-calendar"
@@ -1025,10 +1025,15 @@ class MantleManager {
           endDate: Math.floor(end.getTime() / 1000),
         }
       })
-      try {
-        await BluetoothSdk.setCalendarEvents(shapedEvents)
-      } catch (error) {
-        console.warn("MANTLE: Failed to sync calendar events to glasses", error)
+      console.log(`MANTLE: calendar sync: calendars=${calendars.length} pushing=${shapedEvents.length} event(s)`)
+      // Write through the settings store, not BluetoothSdk.setCalendarEvents().
+      // `calendar_events` is a BLUETOOTH_SETTING_KEY, so every full push
+      // (pushAllBluetoothSettings before connect, pushDeviceSettingsOnConnect on
+      // the connected transition) overwrites the native DeviceStore copy with
+      // whatever the store holds.
+      const res = await engine.settings.set<CalendarEvent[]>(SETTINGS.calendar_events.key, shapedEvents)
+      if (res.is_error()) {
+        console.warn("MANTLE: Failed to sync calendar events to glasses", res.error)
       }
     } catch (error) {
       // it's fine if this fails

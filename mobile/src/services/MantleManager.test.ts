@@ -1,4 +1,5 @@
 import {waitFor} from "@testing-library/react-native"
+import * as Calendar from "expo-calendar"
 import {router} from "expo-router"
 
 import mantle from "@/services/MantleManager"
@@ -67,6 +68,9 @@ jest.mock("@/utils/e2eMetrics", () => ({
 }))
 
 jest.mock("expo-calendar", () => ({
+  // Denied by default: the boot-time sync then skips quietly, and only the
+  // calendar test below opts into the granted path.
+  getCalendarPermissionsAsync: jest.fn(() => Promise.resolve({status: "denied"})),
   getCalendarsAsync: jest.fn(() => Promise.resolve([])),
   getEventsAsync: jest.fn(() => Promise.resolve([])),
   EntityTypes: {EVENT: "event"},
@@ -285,6 +289,52 @@ describe("MantleManager", () => {
         sensing_enabled: true,
       }),
     )
+  })
+
+  it("writes calendar events through the settings store so full pushes carry them", async () => {
+    useGlassesStore.getState().setGlassesInfo({deviceModel: "Even Realities G1"})
+    ;(Calendar.getCalendarPermissionsAsync as jest.Mock).mockResolvedValueOnce({status: "granted"})
+    ;(Calendar.getCalendarsAsync as jest.Mock).mockResolvedValueOnce([{id: "cal-1"}])
+    ;(Calendar.getEventsAsync as jest.Mock).mockResolvedValueOnce([
+      {title: "Design review", startDate: "2026-08-03T12:00:00.000Z", endDate: "2026-08-03T13:00:00.000Z"},
+      {
+        title: "Standup",
+        location: "Room 4",
+        startDate: "2026-08-02T15:00:00.000Z",
+        endDate: "2026-08-02T16:00:00.000Z",
+      },
+      {title: "Retro", startDate: "2026-08-04T12:00:00.000Z", endDate: "2026-08-04T12:30:00.000Z"},
+      {title: "Breakfast", startDate: "2026-08-02T09:00:00.000Z", endDate: "2026-08-02T09:30:00.000Z"},
+    ])
+    ;(bluetoothSdkMock.updateBluetoothSettings as jest.Mock).mockClear()
+
+    await (mantle as unknown as {sendCalendarEvents: () => Promise<void>}).sendCalendarEvents()
+
+    const expected = [
+      {title: "Breakfast", time: expect.any(String), endDate: Date.parse("2026-08-02T09:30:00.000Z") / 1000},
+      {
+        title: "Standup",
+        location: "Room 4",
+        time: expect.any(String),
+        endDate: Date.parse("2026-08-02T16:00:00.000Z") / 1000,
+      },
+      {title: "Design review", time: expect.any(String), endDate: Date.parse("2026-08-03T13:00:00.000Z") / 1000},
+    ]
+    expect(useSettingsStore.getState().getSetting(SETTINGS.calendar_events.key)).toEqual(expected)
+    expect(useSettingsStore.getState().getBluetoothSettings().calendar_events).toEqual(expected)
+    expect(bluetoothSdkMock.setCalendarEvents).not.toHaveBeenCalled()
+
+    jest.runOnlyPendingTimers()
+    expect(bluetoothSdkMock.updateBluetoothSettings).toHaveBeenCalledWith(
+      expect.objectContaining({calendar_events: expected}),
+    )
+    ;(bluetoothSdkMock.updateBluetoothSettings as jest.Mock).mockClear()
+    emitBluetoothSdkEvent("glasses_status", {connection: {state: "connected", fullyBooted: true}})
+    await waitFor(() => {
+      expect(bluetoothSdkMock.updateBluetoothSettings).toHaveBeenCalledWith(
+        expect.objectContaining({calendar_events: expected}),
+      )
+    })
   })
 
   it("syncs standalone WiFi status events into the glasses store", () => {
