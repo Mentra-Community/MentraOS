@@ -5,11 +5,12 @@ import static org.robolectric.Shadows.shadowOf;
 
 import android.app.Application;
 import android.os.Looper;
-
 import androidx.test.core.app.ApplicationProvider;
-
 import com.mentra.asg_client.io.bes.events.BesOtaProgressEvent;
-
+import java.lang.reflect.Field;
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
 import org.greenrobot.eventbus.EventBus;
 import org.greenrobot.eventbus.Subscribe;
 import org.junit.After;
@@ -19,10 +20,6 @@ import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
 import org.robolectric.shadows.ShadowSystemClock;
-
-import java.time.Duration;
-import java.util.ArrayList;
-import java.util.List;
 
 /**
  * Deterministic interleaving tests for the BES OTA dead-man response watchdog.
@@ -101,5 +98,39 @@ public class BesOtaResponseWatchdogTest {
         shadowOf(Looper.getMainLooper()).idle();
 
         assertThat(events).isEmpty();
+    }
+
+    @Test
+    public void ambiguousAuthorizationWriteWaitsForBesResponseBeforeFailing() throws Exception {
+        BesOtaManager.isBesOtaInProgress = true;
+        setBooleanField("isWaitingForAuthorization", true);
+
+        manager.onAuthorizationWriteComplete(true, false);
+
+        assertThat(BesOtaManager.isBesOtaInProgress).isTrue();
+        assertThat(events).isEmpty();
+
+        ShadowSystemClock.advanceBy(Duration.ofSeconds(31));
+        shadowOf(Looper.getMainLooper()).idle();
+
+        assertThat(BesOtaManager.isBesOtaInProgress).isFalse();
+        assertThat(events).hasSize(1);
+    }
+
+    @Test
+    public void authorizationNotAttemptedFailsImmediately() throws Exception {
+        BesOtaManager.isBesOtaInProgress = true;
+        setBooleanField("isWaitingForAuthorization", true);
+
+        manager.onAuthorizationWriteComplete(false, false);
+
+        assertThat(BesOtaManager.isBesOtaInProgress).isFalse();
+        assertThat(events).hasSize(1);
+    }
+
+    private void setBooleanField(String name, boolean value) throws Exception {
+        Field field = BesOtaManager.class.getDeclaredField(name);
+        field.setAccessible(true);
+        field.setBoolean(manager, value);
     }
 }

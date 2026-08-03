@@ -44,6 +44,7 @@ import java.util.stream.Collectors;
 import java.util.concurrent.locks.ReentrantLock;
 
 import com.mentra.asg_client.io.ota.session.OtaSessionManager;
+import com.mentra.asg_client.io.ota.utils.BesFirmwareArtifactValidator;
 import com.mentra.asg_client.io.ota.utils.DowngradeGate;
 import com.mentra.asg_client.io.ota.utils.FirmwareDownloadException;
 import com.mentra.asg_client.io.ota.utils.OtaConstants;
@@ -2251,13 +2252,26 @@ public class OtaHelper {
         boolean verified = verifyFirmwareFile(firmwareFile.getAbsolutePath(), firmwareInfo);
         if (verified) {
             Log.i(TAG, "Firmware file verified successfully");
-            return true;
         } else {
             firmwareFile.delete();
             throw new FirmwareDownloadException(
                 FirmwareDownloadException.CODE_VERIFY_FAILED,
                 "BES firmware sha256 verification failed"
             );
+        }
+
+        try {
+            BesFirmwareArtifactValidator.validate(firmwareFile, firmwareInfo);
+            Log.i(TAG, "BES release artifact passed compressed and decompressed safety gates");
+            return true;
+        } catch (BesFirmwareArtifactValidator.ValidationException e) {
+            Log.e(TAG, "BES release artifact rejected before authorization: " + e.getMessage(), e);
+            if (!firmwareFile.delete()) {
+                Log.w(TAG, "Failed deleting rejected BES firmware artifact");
+            }
+            throw new FirmwareDownloadException(
+                    FirmwareDownloadException.CODE_VERIFY_FAILED,
+                    "BES release artifact validation failed: " + e.getMessage());
         }
     }
 

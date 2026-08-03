@@ -2,7 +2,6 @@ package com.mentra.asg_client.io.bluetooth.managers;
 
 import android.content.Context;
 import android.util.Log;
-
 import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.io.bes.BesOtaUartListener;
 import com.mentra.asg_client.io.bluetooth.core.BaseBluetoothManager;
@@ -26,9 +25,6 @@ import com.mentra.asg_client.service.core.processors.ChunkedMessageProtocolStrat
 import com.mentra.asg_client.service.utils.SysProp;
 import com.mentra.asg_client.settings.AsgSettings;
 import com.mentra.asg_client.utils.WakeLockManager;
-
-import org.json.JSONObject;
-
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
@@ -41,6 +37,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+import org.json.JSONObject;
 
 /**
  * Implementation of IBluetoothManager for K900 devices. Uses the K900's serial port to communicate
@@ -57,8 +54,10 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         /** Called on the outbound worker before the authorization request is written. */
         boolean onLeaseAcquired(BesUartTransportCoordinator.OperationLease lease);
 
-        /** Called after the authorization request write attempt finishes. */
-        void onWriteComplete(boolean success);
+        /**
+         * Called after queue processing, distinguishing no attempt from an ambiguous failed write.
+         */
+        void onWriteComplete(boolean attempted, boolean success);
     }
 
     // Single owner of the transport-side link facts (serial open, link proven at current baud,
@@ -1138,12 +1137,12 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                     BesUartTransportCoordinator.OperationLease lease =
                             transportCoordinator.beginOtaAuthorization();
                     if (lease == null) {
-                        callback.onWriteComplete(false);
+                        callback.onWriteComplete(false, false);
                         return;
                     }
                     if (!callback.onLeaseAcquired(lease)) {
                         transportCoordinator.endOta(lease);
-                        callback.onWriteComplete(false);
+                        callback.onWriteComplete(false, false);
                         return;
                     }
 
@@ -1151,10 +1150,9 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                     boolean sent =
                             transportCoordinator.runOtaAuthorizationWrite(
                                     lease, () -> sendMessageInternalLocked(payload));
-                    if (!sent) {
-                        transportCoordinator.endOta(lease);
-                    }
-                    callback.onWriteComplete(sent);
+                    // A false return does not prove BES received no bytes. The callback owner keeps
+                    // the authorization lease until hm_ota or timeout and must not resend mh_ota.
+                    callback.onWriteComplete(true, sent);
                 });
     }
 

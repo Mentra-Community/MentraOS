@@ -139,42 +139,35 @@ public class AsgConstants {
     public static final int OTA_COMPLETION_RESEND_ATTEMPTS = 15;
 
     /**
-     * FALLBACK maximum packed frame size for a v1 K900 STRING ck chunk, used until the BES
-     * advertises its true notification cap. The BES relays v1 string frames to the phone in a
-     * single unfragmented BLE notification, and the worst-case ATT payload on that link is 253
-     * bytes (ATT MTU 256) regardless of the MTU the phone requested — a packed chunk over that cap
-     * is silently truncated on the wire and the phone drops it as unparseable (incident
-     * rep_01KY6BJ0B7A4RBMQ7VN39KAE5E: OTA completion ck chunks packed to 256-263 bytes and none
-     * survived). 240 = 253 - {@link #K900_STRING_CHUNK_BUDGET_MARGIN_BYTES}. BES firmware >=
-     * 17.26.7.23 advertises {@code wire_caps.notify_cap} (the measured single-notification payload
-     * cap) and the budget becomes notify_cap minus the same margin — see
-     * MessageChunker.setStringChunkBudgetFromNotifyCap.
+     * Maximum packed frame size for every legacy v1 K900 STRING ck chunk. The BES relays v1 string
+     * frames to the phone in a single unfragmented BLE notification, and the worst-case ATT payload
+     * on that link is 253 bytes (ATT MTU 256) regardless of the MTU the phone requested — a packed
+     * chunk over that cap is silently truncated on the wire and the phone drops it as unparseable
+     * (incident rep_01KY6BJ0B7A4RBMQ7VN39KAE5E: OTA completion ck chunks packed to 256-263 bytes
+     * and none survived). Release A deliberately keeps this at the hardware-validated 240-byte
+     * ceiling even when BES advertises a larger {@code wire_caps.notify_cap}: that value describes
+     * one bearer, not a guaranteed capacity across every EATT bearer the stack may select.
      */
     public static final int K900_STRING_CHUNK_MAX_FRAME_BYTES = 240;
 
-    /**
-     * Safety margin subtracted from the BLE notification payload cap when sizing packed v1 STRING
-     * ck chunks, absorbing BES re-framing variance between the UART frame we send and the
-     * notification the BES actually emits (240 = 253 - 13 was the hardware-validated budget for the
-     * worst-case 253-byte cap).
-     */
-    public static final int K900_STRING_CHUNK_BUDGET_MARGIN_BYTES = 13;
+    /** Exact BES release artifact container accepted by the rescue ASG. */
+    public static final String BES_OTA_ARTIFACT_FORMAT = "bes-lzma-chunks-v1";
+
+    /** Mentra Live BES build target required in release metadata and the decompressed image. */
+    public static final String BES_OTA_PRODUCT = "best1502x_ibrt_bpone";
 
     /**
-     * Contract floor of {@code wire_caps.notify_cap} (BES firmware >= 17.26.7.23 computes max(253,
-     * min(ATT MTU - 3, 509))). An advertised value below this is malformed and is ignored in favor
-     * of the fallback budget.
+     * Exclusive decompressed destination limit in the deployed ota_copy bootloader:
+     * NEW_IMAGE_FLASH_OFFSET (0x200000) - OTA_CODE_OFFSET (0x20000). Images at or above this size
+     * overwrite the adjacent staging region and can brick BES.
      */
-    public static final int K900_BLE_NOTIFY_CAP_FLOOR_BYTES = 253;
+    public static final int BES_OTA_MAX_DECOMPRESSED_IMAGE_BYTES = 0x1E0000;
 
-    /**
-     * Contract ceiling of {@code wire_caps.notify_cap} (see {@link
-     * #K900_BLE_NOTIFY_CAP_FLOOR_BYTES}: the BES computes max(253, min(ATT MTU - 3, 509))). An
-     * advertised value above this is malformed; it is clamped down so a buggy advertisement can
-     * never size chunks beyond what the transport carries — the exact silent truncation class the
-     * notification budget exists to prevent.
-     */
-    public static final int K900_BLE_NOTIFY_CAP_CEILING_BYTES = 509;
+    /** SharedPreferences file holding the same-Android-boot BES authorization interlock. */
+    public static final String BES_OTA_AUTH_GATE_PREFS = "bes_ota_auth_gate";
+
+    /** Android boot id in which {@code mh_ota} was last attempted. */
+    public static final String BES_OTA_AUTH_GATE_BOOT_ID_KEY = "attempted_boot_id";
 
     /** Rendezvous baud shared by every ASG and BES firmware generation. */
     public static final int UART_RENDEZVOUS_BAUD = 460800;

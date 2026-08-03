@@ -3,16 +3,7 @@ package com.mentra.asg_client.io.bluetooth.managers.mentralive.internal;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import android.app.Application;
-
 import com.mentra.asg_client.AsgConstants;
-
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.robolectric.RobolectricTestRunner;
-import org.robolectric.annotation.Config;
-
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Queue;
@@ -23,6 +14,12 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import org.junit.After;
+import org.junit.Before;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.robolectric.RobolectricTestRunner;
+import org.robolectric.annotation.Config;
 
 @RunWith(RobolectricTestRunner.class)
 @Config(application = Application.class, sdk = 33)
@@ -382,6 +379,22 @@ public class BesUartTransportCoordinatorTest {
         assertThat(host.fastReceive).isFalse();
         assertThat(coordinator.getOperation())
                 .isEqualTo(BesUartTransportCoordinator.Operation.NONE);
+    }
+
+    @Test
+    public void failedAuthorizationWriteDoesNotImplicitlyReleaseTheOtaLease() {
+        coordinator.onSerialReady(host.session);
+        assertThat(systemVersion("17.26.7.4"))
+                .isEqualTo(BesUartTransportCoordinator.SystemVersionResult.READY);
+        BesUartTransportCoordinator.OperationLease otaLease = coordinator.beginOtaAuthorization();
+        assertThat(otaLease).isNotNull();
+
+        assertThat(coordinator.runOtaAuthorizationWrite(otaLease, () -> false)).isFalse();
+
+        assertThat(coordinator.getOperation())
+                .isEqualTo(BesUartTransportCoordinator.Operation.OTA_AUTHORIZATION);
+        assertThat(coordinator.beginFileTransfer()).isNull();
+        coordinator.endOta(otaLease);
     }
 
     @Test

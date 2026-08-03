@@ -2,7 +2,6 @@ package com.mentra.asg_client.io.bes;
 
 import android.content.Context;
 import android.util.Log;
-
 import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.io.bes.events.BesOtaProgressEvent;
 import com.mentra.asg_client.io.bes.protocol.*;
@@ -13,14 +12,12 @@ import com.mentra.asg_client.io.bluetooth.utils.ByteUtil;
 import com.mentra.asg_client.io.ota.interfaces.IBesOtaController;
 import com.mentra.asg_client.logging.BleTraceLogger;
 import com.mentra.asg_client.utils.WakeLockManager;
-
-import org.greenrobot.eventbus.EventBus;
-import org.json.JSONObject;
-
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
+import org.greenrobot.eventbus.EventBus;
+import org.json.JSONObject;
 
 /**
  * Manages BES2700 firmware OTA updates Handles file loading, packet transmission, state tracking,
@@ -80,8 +77,10 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
     private int confirmSentPos = 0;
     private boolean bWait4Confirm = false;
     private volatile boolean isWaitingForAuthorization = false;
+    private boolean authorizationAttempted = false;
 
     private final Runnable otaAppliedCallback;
+    private final BesOtaAuthorizationGate authorizationGate;
     private final BesUartTransportCoordinator transportCoordinator;
     private BesUartTransportCoordinator.OperationLease transportLease;
     private BesOtaCommandListener mListener;
@@ -103,6 +102,7 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
                         ? k900BluetoothManager.getTransportCoordinator()
                         : null;
         this.mContext = context.getApplicationContext();
+        this.authorizationGate = new BesOtaAuthorizationGate(this.mContext);
     }
 
     /**
@@ -288,6 +288,15 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
     public boolean startFirmwareUpdate(String filePath) {
         Log.i(TAG, "startFirmwareUpdate: " + filePath);
 
+        if (authorizationGate.isRetryBlockedThisBoot()) {
+            Log.e(TAG, "BES OTA retry blocked until the glasses reboot and UART is proven again");
+            EventBus.getDefault()
+                    .post(
+                            BesOtaProgressEvent.createFailed(
+                                    "Restart glasses before retrying BES update"));
+            return false;
+        }
+
         if (!init(filePath)) {
             Log.e(TAG, "Failed to initialize firmware update");
             return false;
@@ -336,13 +345,16 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
                                                     return false;
                                                 }
                                                 transportLease = lease;
-                                                return true;
+                                                authorizationAttempted =
+                                                        authorizationGate.markAttemptedThisBoot();
+                                                return authorizationAttempted;
                                             }
                                         }
 
                                         @Override
-                                        public void onWriteComplete(boolean success) {
-                                            onAuthorizationWriteComplete(success);
+                                        public void onWriteComplete(
+                                                boolean attempted, boolean success) {
+                                            onAuthorizationWriteComplete(attempted, success);
                                         }
                                     });
             if (queued) {
@@ -377,18 +389,25 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
         }
     }
 
-    private void onAuthorizationWriteComplete(boolean success) {
+    void onAuthorizationWriteComplete(boolean attempted, boolean success) {
         synchronized (mTransferGate) {
             if (!isWaitingForAuthorization) {
                 return;
             }
-            if (!success) {
+            if (!attempted) {
                 EventBus.getDefault()
                         .post(
                                 BesOtaProgressEvent.createFailed(
-                                        "Failed to write BES OTA authorization request"));
+                                        "BES UART was not ready for authorization"));
                 cleanupLocked();
                 return;
+            }
+
+            if (!success) {
+                Log.w(
+                        TAG,
+                        "BES OTA authorization write reported failure; outcome is ambiguous, "
+                                + "retaining the UART lease and waiting for hm_ota");
             }
 
             authTimeoutHandler = new android.os.Handler(android.os.Looper.getMainLooper());
@@ -466,9 +485,18 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
         Log.i(TAG, "BES OTA wakelock released");
         isWaitingForAuthorization = false;
         if (transportCoordinator != null) {
-            transportCoordinator.endOta(transportLease);
+            if (authorizationAttempted) {
+                // Legacy BES may still be consuming raw OTA bytes. Keep the operation lease so no
+                // deferred JSON is flushed into that parser. A glasses reboot destroys this
+                // coordinator; the persisted boot gate prevents a same-boot retry after an app
+                // restart.
+                Log.w(TAG, "Quarantining BES UART until glasses reboot after OTA failure");
+            } else {
+                transportCoordinator.endOta(transportLease);
+            }
         }
         transportLease = null;
+        authorizationAttempted = false;
         bInit = false;
         fileData = null;
         sentPos = 0;
@@ -536,6 +564,8 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
             }
             EventBus.getDefault()
                     .post(BesOtaProgressEvent.createFailed("BES chip denied OTA authorization"));
+            authorizationGate.clear();
+            authorizationAttempted = false;
             cleanupLocked();
         }
     }
@@ -1223,6 +1253,8 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
         } else if (msg.cmd == BesProtocolConstants.RCMD_APPLY) {
             if (msg.len == 1 && msg.body != null && msg.body[0] == 1) {
                 Log.i(TAG, "BES firmware update SUCCESS! BES will reboot.");
+                authorizationGate.clear();
+                authorizationAttempted = false;
                 EventBus.getDefault().post(BesOtaProgressEvent.createFinished());
                 if (otaAppliedCallback != null) {
                     otaAppliedCallback.run();

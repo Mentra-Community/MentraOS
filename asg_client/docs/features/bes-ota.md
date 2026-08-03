@@ -9,14 +9,15 @@ For Android-side APK update and crash recovery, see `io/ota/helpers/OtaHelper` a
 ## Architecture
 
 ```
-Server (version.json) → OtaHelper (download + sha256) → BesOtaManager → ComManager (UART) → BES2700
+Server (version.json) → OtaHelper (artifact admission) → BesOtaManager → ComManager (UART) → BES2700
                                                               ↑
                                                   BesOtaUartListener (parses BES responses)
 ```
 
 Key files:
 
-- `io/ota/helpers/OtaHelper.java` — version-check, download, sha256 verification
+- `io/ota/helpers/OtaHelper.java` — version-check, download, and release artifact admission
+- `io/ota/utils/BesFirmwareArtifactValidator.java` — compressed/decompressed identity and safety checks
 - `io/bes/BesOtaManager.java` — protocol state machine
 - `io/bes/util/BesOtaUtil.java` — constants (`MAX_FILE_SIZE = 2048 KB`, `MAGIC_CODE = "009K"`)
 - `io/bes/BesOtaUartListener.java` — reads UART responses and routes them back to the manager
@@ -34,8 +35,9 @@ UART transport is owned by `ComManager` (the K900 UART driver). When BES OTA is 
 
 1. **Version check.** `OtaHelper` polls the server's `version.json`.
 2. **Download.** New `.bin` lands at `/storage/emulated/0/asg/bes_firmware.bin`.
-3. **Verify.** SHA-256 of the downloaded file is checked against `version.json` metadata. Mismatch → file is deleted and update aborts.
-4. **Protocol handshake** — 11-step BES OTA exchange:
+3. **Admit artifact.** Before authorization, ASG requires immutable release metadata and verifies the compressed bytes, complete LZMA-chunk container, embedded CRC32, decompressed bytes, hard flash-size limit, product marker, and embedded target version. Any mismatch deletes the file and aborts without sending `mh_ota`.
+4. **Authorize once per boot.** ASG first proves a stable UART session, freezes baud reconfiguration, persists the glasses boot identity, and sends `mh_ota`. It never sends that authorization twice in one glasses boot. A reported write failure is treated as ambiguous: ASG keeps exclusive ownership and waits for `hm_ota` rather than releasing normal JSON into a BES that may already be in raw OTA mode.
+5. **Protocol handshake** — 11-step BES OTA exchange after `hm_ota` grants authorization:
 
    | Step                         | Outbound (cmd) | Inbound |
    | ---------------------------- | -------------- | ------- |
@@ -51,7 +53,7 @@ UART transport is owned by `ComManager` (the K900 UART driver). When BES OTA is 
    | Send finish                  | `0x88`         | `0x84`  |
    | Apply (BES reboots)          | `0x92`         | `0x93`  |
 
-5. **Progress events.** `BesOtaProgressEvent`s fire on EventBus throughout (`STARTED`, `PROGRESS`, `FINISHED`, `FAILED`).
+6. **Progress events.** `BesOtaProgressEvent`s fire on EventBus throughout (`STARTED`, `PROGRESS`, `FINISHED`, `FAILED`).
 
 ## Wire-format constants
 
@@ -66,7 +68,7 @@ UART transport is owned by `ComManager` (the K900 UART driver). When BES OTA is 
 
 ## Server-side `version.json`
 
-Add a `bes_firmware` block alongside the existing `apps` block:
+Release A deliberately rejects the legacy three-field BES manifest before authorization. A later BES-bearing release must add the full admission metadata below and must reference the release-packaged `update_ota.bin`, never a raw build output:
 
 ```json
 {
@@ -80,24 +82,21 @@ Add a `bes_firmware` block alongside the existing `apps` block:
     }
   },
   "bes_firmware": {
-    "versionCode": 10203,
-    "versionName": "1.2.3",
-    "firmwareUrl": "https://example.com/bes_firmware_v1.2.3.bin",
-    "sha256": "abc123def456...",
-    "fileSize": 1048576,
-    "releaseNotes": "BES firmware bug fixes and improvements"
+    "version": "17.26.7.25",
+    "format": "bes-lzma-chunks-v1",
+    "product": "best1502x_ibrt_bpone",
+    "artifact_id": "bes-17.26.7.25-update_ota.bin",
+    "url": "https://example.com/releases/bes-17.26.7.25-update_ota.bin",
+    "compressed_size": 812345,
+    "sha256": "compressed-artifact-sha256",
+    "decompressed_size": 1900000,
+    "decompressed_sha256": "raw-image-sha256",
+    "version_offset": 1809280
   }
 }
 ```
 
-| Field          | Description                                        |
-| -------------- | -------------------------------------------------- |
-| `versionCode`  | Integer for comparison                             |
-| `versionName`  | Human-readable string                              |
-| `firmwareUrl`  | Direct `.bin` URL                                  |
-| `sha256`       | Hex SHA-256 of the `.bin`                          |
-| `fileSize`     | Bytes; must be ≤ `BesOtaUtil.MAX_FILE_SIZE` (2 MB) |
-| `releaseNotes` | Free text                                          |
+All shown `bes_firmware` fields are mandatory. The URL must be HTTPS, have no query or fragment, and end exactly in `artifact_id`. `compressed_size` and `sha256` describe `update_ota.bin`; `decompressed_size` and `decompressed_sha256` describe its raw image. `decompressed_size` must be strictly less than `0x1E0000` bytes. `version_offset` identifies the four embedded version bytes that must equal `version`.
 
 ## EventBus integration
 
@@ -139,10 +138,11 @@ Manual procedure:
 ## Troubleshooting
 
 - **Update never starts** — confirm BES OTA path is initialized (`BesOtaManager` log line at startup). Check WiFi, battery (≥ 5%), and that no APK update is currently running.
-- **Stall mid-transfer** — UART instability or BES not responding. The transfer is response-driven, so a lost response no longer stalls silently: a dead-man watchdog aborts the transfer after 30 seconds without any BES response (`AsgConstants.BES_OTA_RESPONSE_TIMEOUT_MS`), runs the normal cleanup (OTA mode exited, wake leases released), posts a failure the phone surfaces as "Update failed", and emits a `bes_ota_response_timeout` lifecycle trace with the transfer position (`sentPos`, `confirmedSegments`). The BES stays on its current firmware — the recovery is simply retrying the whole OTA from the phone. If aborts recur, look for `BesOtaUartListener` logs and check the Infinity Cable; loose connections kill UART traffic.
-- **`File too big`** — firmware exceeds 2 MB.
+- **Stall or ambiguous authorization** — after `mh_ota` may have reached BES, ASG intentionally quarantines the UART instead of assuming BES returned to JSON mode. Reboot the glasses and wait for fresh version discovery before retrying. Do not retry in the same boot.
+- **Stall mid-transfer** — a dead-man watchdog reports failure after 30 seconds without a BES response. Because BES parser state is not provable after authorization, recovery requires rebooting the glasses before retrying the whole OTA. Check `BesOtaUartListener` logs and the Infinity Cable if this repeats.
+- **`File too big`** — the compressed artifact exceeds the download cap or its declared/decompressed raw image reaches the `0x1E0000`-byte bootloader limit.
 - **`SHA-256 mismatch`** — the downloaded `.bin` doesn't match `version.json`. The file is deleted; verify your hash and re-upload.
-- **Stuck in OTA mode** — if `mbOtaUpdating` doesn't get cleared (rare), normal BLE traffic stays blocked. The response watchdog's cleanup clears it on any stalled transfer; if it somehow persists outside a transfer, restart the app.
+- **Stuck in OTA mode** — after authorization uncertainty this is a deliberate safety quarantine. Restart the glasses, not only the app; the persisted same-boot gate prevents an app restart from resending `mh_ota`.
 
 ## Logcat tags
 
