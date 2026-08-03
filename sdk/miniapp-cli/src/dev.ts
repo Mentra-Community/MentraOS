@@ -1,7 +1,7 @@
 import os from 'os';
-import { readFileSync, existsSync, statSync } from 'fs';
+import { readFileSync, existsSync, statSync, unlinkSync } from 'fs';
 import { join, resolve } from 'path';
-import { printQR } from './qr.js';
+import { printQR, writeQRPng } from './qr.js';
 import { validateManifest } from './manifest.js';
 import { startDevSidecar } from './dev-server.js';
 
@@ -15,6 +15,7 @@ export interface DevAttestationInput {
 
 export interface DevOptions {
   cwd?: string;
+  qrOutput?: string;
   signDevAttestation?: (input: DevAttestationInput) => string | Promise<string | null | undefined> | null | undefined;
 }
 
@@ -264,10 +265,19 @@ export async function dev(options: DevOptions = {}): Promise<void> {
     console.log('╚══════════════════════════════════════════════════════════════╝\n');
   };
 
+  const defaultQrPath = join(os.tmpdir(), `mentra-dev-qr-${packageName}-${port}.png`);
+  const qrOutputPath = resolve(options.qrOutput ?? defaultQrPath);
+
+  const emitQR = async (url: string): Promise<void> => {
+    await printQR(url);
+    await writeQRPng(url, qrOutputPath);
+    console.log(`\n${url}`);
+    console.log(`PNG QR: ${qrOutputPath}\n`);
+  };
+
   printBanner();
   const devUrl = await buildDevUrl(lanIp);
-  await printQR(devUrl);
-  console.log(`\n${devUrl}\n`);
+  await emitQR(devUrl);
 
   // Monitor for LAN IP changes (e.g., WiFi switch).
   const ipCheckInterval = setInterval(async () => {
@@ -277,13 +287,17 @@ export async function dev(options: DevOptions = {}): Promise<void> {
       console.log(`\nLAN IP changed to ${newIp}. New QR:`);
       printBanner();
       const newDevUrl = await buildDevUrl(newIp);
-      await printQR(newDevUrl);
-      console.log(`\n${newDevUrl}\n`);
+      await emitQR(newDevUrl);
     }
   }, 10_000);
 
   const shutdown = () => {
     clearInterval(ipCheckInterval);
+    try {
+      unlinkSync(qrOutputPath);
+    } catch {
+      // best-effort cleanup of temp PNG
+    }
     sidecar?.stop();
     userServer.stop(true);
     process.exit(0);

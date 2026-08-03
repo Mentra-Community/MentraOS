@@ -1,3 +1,4 @@
+import {writeFileSync} from 'fs';
 import QRCode from 'qrcode';
 
 /**
@@ -21,5 +22,26 @@ export async function printQR(url: string): Promise<void> {
     process.stdout.write('\n' + str);
   } catch (error) {
     console.error(`Could not render terminal QR code: ${(error as Error).message}`);
+  }
+}
+
+/**
+ * Write a PNG QR to disk with mode 0o600.
+ *
+ * Dev/release URLs can carry a signed attestation query param; writing with
+ * restrictive permissions avoids a world-readable window on multi-user machines.
+ * Failures only warn — a broken PNG write must not take down the server.
+ */
+export async function writeQRPng(url: string, outPath: string): Promise<void> {
+  try {
+    const buffer = await QRCode.toBuffer(url, {
+      type: 'png',
+      errorCorrectionLevel: 'M',
+      margin: 2,
+      scale: 8,
+    });
+    writeFileSync(outPath, buffer, {mode: 0o600});
+  } catch (error) {
+    console.warn(`Could not write QR PNG to ${outPath}: ${(error as Error).message}`);
   }
 }

@@ -22,12 +22,12 @@
  * collision and matches Android's `installRelease` mental model.
  */
 
-import {readFileSync, existsSync, statSync, readdirSync} from 'fs'
+import {readFileSync, existsSync, statSync, readdirSync, unlinkSync} from 'fs'
 import os from 'os'
 import {resolve, join} from 'path'
 import {buildProduction} from './build.js'
 import {pack} from './pack.js'
-import {printQR} from './qr.js'
+import {printQR, writeQRPng} from './qr.js'
 import {validateManifest} from './manifest.js'
 
 const DEFAULT_PORT_START = 6789
@@ -39,6 +39,7 @@ const BUNDLE_PATH = '/bundle.zip'
 
 interface ReleaseOptions {
   noCache?: boolean
+  qrOutput?: string
 }
 
 export async function release(opts: ReleaseOptions = {}): Promise<void> {
@@ -156,16 +157,26 @@ export async function release(opts: ReleaseOptions = {}): Promise<void> {
   console.log('║  Ctrl+C to stop.                                             ║')
   console.log('╚══════════════════════════════════════════════════════════════╝\n')
 
+  const defaultQrPath = join(os.tmpdir(), `mentra-release-qr-${packageName}.png`)
+  const qrOutputPath = resolve(opts.qrOutput ?? defaultQrPath)
+
   await printQR(qrUrl)
-  console.log(`\n${qrUrl}\n`)
+  await writeQRPng(qrUrl, qrOutputPath)
+  console.log(`\n${qrUrl}`)
+  console.log(`PNG QR: ${qrOutputPath}\n`)
   console.log(`Serving on ${baseUrl}`)
 
   // ---- 6. Wait for SIGINT ---------------------------------------------
-  await new Promise<void>((resolve) => {
+  await new Promise<void>((resolvePromise) => {
     process.on('SIGINT', () => {
       console.log('\nShutting down...')
+      try {
+        unlinkSync(qrOutputPath)
+      } catch {
+        // best-effort cleanup of temp PNG
+      }
       server.stop()
-      resolve()
+      resolvePromise()
     })
   })
 }
