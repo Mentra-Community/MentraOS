@@ -171,9 +171,9 @@ export async function release(opts: ReleaseOptions = {}): Promise<void> {
   }
   console.log(`Serving on ${baseUrl}`)
 
-  // ---- 6. Wait for SIGINT ---------------------------------------------
+  // ---- 6. Wait for SIGINT / SIGTERM -----------------------------------
   await new Promise<void>((resolvePromise) => {
-    process.on('SIGINT', () => {
+    const shutdown = () => {
       console.log('\nShutting down...')
       // Only remove the auto temp path — keep an explicit --qr-output artifact.
       if (cleanupQrOnExit) {
@@ -185,7 +185,9 @@ export async function release(opts: ReleaseOptions = {}): Promise<void> {
       }
       server.stop()
       resolvePromise()
-    })
+    }
+    process.on('SIGINT', shutdown)
+    process.on('SIGTERM', shutdown)
   })
 }
 
