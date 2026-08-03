@@ -28,8 +28,9 @@ resolve_media_roots
 
 mkdir -p "$OUTPUT_DIR"
 if [[ "$CLEAN" -eq 1 ]]; then
-  find "$OUTPUT_DIR" -maxdepth 1 -type f -name '*.jpg' -delete 2>/dev/null || true
-  echo "Cleaned existing JPGs in $OUTPUT_DIR"
+  # Match the same extensions/case variants the pull search can write.
+  find "$OUTPUT_DIR" -maxdepth 1 -type f \( -iname '*.jpg' -o -iname '*.jpeg' \) -delete 2>/dev/null || true
+  echo "Cleaned existing JPG/JPEG files in $OUTPUT_DIR"
 fi
 
 # Prefer earlier roots (asg_media) over later legacy roots on name collision.
@@ -41,8 +42,8 @@ copy_photo() {
     echo "Skip (already present): $(basename "$dest")"
     return 1
   fi
+  # Propagate cp status — callers use `if copy_photo`, so set -e won't abort here.
   cp "$src" "$dest"
-  return 0
 }
 
 TOTAL=0

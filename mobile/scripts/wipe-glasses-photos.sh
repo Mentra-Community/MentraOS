@@ -48,7 +48,10 @@ count_matches() {
     n=0
     if [ ! -d \"\$root\" ]; then echo 0; exit 0; fi
     # Prefer the fixed asg_media camera dir; also cover legacy \${pkg}.camera when distinct.
+    prev_cam=\"\"
     for cam_name in \"\$cam_current\" \"\${pkg}.camera\"; do
+      [ \"\$cam_name\" = \"\$prev_cam\" ] && continue
+      prev_cam=\"\$cam_name\"
       cam=\"\$root/\$cam_name\"
       [ -d \"\$cam\" ] || continue
       for d in \"\$cam\"/IMG_* \"\$cam\"/VID_* \"\$cam\"/BUFFER_*; do
