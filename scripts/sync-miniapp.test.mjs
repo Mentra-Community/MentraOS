@@ -10,7 +10,12 @@ import {
 } from "fs"
 import {tmpdir} from "os"
 import {join} from "path"
-import {syncMiniapp, bumpStrictSemver, parseStrictSemver} from "./sync-miniapp.mjs"
+import {
+  syncMiniapp,
+  bumpStrictSemver,
+  parseStrictSemver,
+  assertSafePackageName,
+} from "./sync-miniapp.mjs"
 
 const fixtureRoots = []
 
@@ -144,6 +149,17 @@ describe("parseStrictSemver / bumpStrictSemver", () => {
   test("rejects prerelease", () => {
     expect(parseStrictSemver("1.0.0-dev.1")).toBeNull()
     expect(() => bumpStrictSemver("1.0.0-dev.1", "patch")).toThrow(/strict MAJOR.MINOR.PATCH/)
+  })
+})
+
+describe("assertSafePackageName", () => {
+  test("accepts reverse-domain ids", () => {
+    expect(() => assertSafePackageName("com.mentra.livestreamer")).not.toThrow()
+  })
+
+  test("rejects path traversal", () => {
+    expect(() => assertSafePackageName("../evil")).toThrow(/safe filename/)
+    expect(() => assertSafePackageName("com/mentra")).toThrow(/safe filename/)
   })
 })
 

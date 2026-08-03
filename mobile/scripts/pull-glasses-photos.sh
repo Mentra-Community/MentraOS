@@ -12,7 +12,7 @@ for arg in "$@"; do
     --clean) CLEAN=1 ;;
     -h|--help)
       echo "Usage: $0 [--clean]"
-      echo "  ADB_SERIAL=…  device serial (default ${DEFAULT_GLASSES_SERIAL})"
+      echo "  ADB_SERIAL=…  optional; if unset, requires exactly one connected device"
       echo "  OUTPUT_DIR=… host folder (default mobile/Camera_comparison/new_focus)"
       exit 0
       ;;
@@ -35,26 +35,24 @@ fi
 TOTAL=0
 for ROOT in "${MEDIA_ROOTS[@]}"; do
   ROOT_COUNT=0
-  # Exists on device?
-  if ! adb -s "$SERIAL" shell "test -d '$ROOT'" 2>/dev/null; then
+  if ! adb -s "$SERIAL" shell "test -d '$ROOT'"; then
     echo "Skip (missing on device): $ROOT"
     continue
   fi
 
   TMP="$(mktemp -d)"
-  # Pull IMG_* dirs and flat files; tolerate empty
-  adb -s "$SERIAL" pull "$ROOT" "$TMP/root" 2>/dev/null || true
+  # Fail on transport errors; empty directories still pull successfully.
+  if ! adb -s "$SERIAL" pull "$ROOT" "$TMP/root"; then
+    rm -rf "$TMP"
+    echo "Error: adb pull failed for $ROOT" >&2
+    exit 1
+  fi
 
   # Flatten capture packages: **/IMG_*/base.jpg → {capture_id}.jpg
-  # Also pick up any other base.jpg not already under IMG_* (legacy layouts).
+  # Also pick up any other base.jpg (legacy layouts).
   while IFS= read -r -d '' base; do
     parent="$(basename "$(dirname "$base")")"
-    if [[ "$parent" == IMG_* ]]; then
-      capture_id="$parent"
-    else
-      # Non-package path: derive a stable name from the parent dir.
-      capture_id="${parent}"
-    fi
+    capture_id="$parent"
     dest="${OUTPUT_DIR}/${capture_id}.jpg"
     cp "$base" "$dest"
     ROOT_COUNT=$((ROOT_COUNT + 1))

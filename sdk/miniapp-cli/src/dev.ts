@@ -267,12 +267,17 @@ export async function dev(options: DevOptions = {}): Promise<void> {
 
   const defaultQrPath = join(os.tmpdir(), `mentra-dev-qr-${packageName}-${port}.png`);
   const qrOutputPath = resolve(options.qrOutput ?? defaultQrPath);
+  const cleanupQrOnExit = !options.qrOutput;
 
   const emitQR = async (url: string): Promise<void> => {
     await printQR(url);
-    await writeQRPng(url, qrOutputPath);
+    const wrote = await writeQRPng(url, qrOutputPath);
     console.log(`\n${url}`);
-    console.log(`PNG QR: ${qrOutputPath}\n`);
+    if (wrote) {
+      console.log(`PNG QR: ${qrOutputPath}\n`);
+    } else {
+      console.log(`PNG QR: (not written — see warning above)\n`);
+    }
   };
 
   printBanner();
@@ -293,10 +298,13 @@ export async function dev(options: DevOptions = {}): Promise<void> {
 
   const shutdown = () => {
     clearInterval(ipCheckInterval);
-    try {
-      unlinkSync(qrOutputPath);
-    } catch {
-      // best-effort cleanup of temp PNG
+    // Only remove the auto temp path — keep an explicit --qr-output artifact.
+    if (cleanupQrOnExit) {
+      try {
+        unlinkSync(qrOutputPath);
+      } catch {
+        // best-effort cleanup of temp PNG
+      }
     }
     sidecar?.stop();
     userServer.stop(true);

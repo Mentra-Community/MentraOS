@@ -86,6 +86,19 @@ export function bumpStrictSemver(version, part = "patch") {
   return `${major}.${minor}.${patch}`
 }
 
+/** Filename-safe reverse-domain package ids only (no path separators). */
+export function assertSafePackageName(packageName) {
+  if (typeof packageName !== "string" || !/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(packageName)) {
+    throw new Error(
+      `packageName "${packageName}" is not a safe filename identifier ` +
+        `(expected letters/digits/._- only, no path separators)`,
+    )
+  }
+  if (packageName.includes("..") || packageName.includes("/") || packageName.includes("\\")) {
+    throw new Error(`packageName "${packageName}" must not contain path components`)
+  }
+}
+
 export function parseArgs(argv) {
   const args = {
     name: null,
@@ -263,6 +276,10 @@ function generateBundled(mobileRoot) {
   }
 }
 
+function restoreManifestVersion(manifestPath, manifest, originalVersion) {
+  writeManifestVersion(manifestPath, {...manifest, version: originalVersion}, originalVersion)
+}
+
 /**
  * Main entry used by CLI and tests.
  * @returns {{ code: number, summary?: object, error?: string }}
@@ -321,10 +338,20 @@ Never commits or pushes. Prepares local changes only.`)
 
   const miniappDir = resolveMiniappDir(repoPath)
   const manifestPath = join(miniappDir, "miniapp.json")
-  const manifest = JSON.parse(readFileSync(manifestPath, "utf8"))
+  let manifest
+  try {
+    manifest = JSON.parse(readFileSync(manifestPath, "utf8"))
+  } catch (err) {
+    die(`could not parse ${manifestPath}: ${err.message}`)
+  }
   const packageName = manifest.packageName
   if (typeof packageName !== "string" || !packageName) {
     die("miniapp.json is missing packageName")
+  }
+  try {
+    assertSafePackageName(packageName)
+  } catch (err) {
+    die(err.message)
   }
   if (configEntry?.packageName && configEntry.packageName !== packageName) {
     die(
@@ -415,7 +442,7 @@ Never commits or pushes. Prepares local changes only.`)
   if (packResult.status !== 0) {
     // 7. Rollback version on failure
     if (newVersion !== originalVersion) {
-      writeManifestVersion(manifestPath, {...manifest, version: originalVersion}, originalVersion)
+      restoreManifestVersion(manifestPath, manifest, originalVersion)
       console.error(`Pack failed — restored miniapp.json version to ${originalVersion}`)
     } else {
       console.error("Pack failed")
@@ -429,10 +456,13 @@ Never commits or pushes. Prepares local changes only.`)
     if (existsSync(alt)) {
       producedZip = alt
     } else {
+      if (newVersion !== originalVersion) {
+        restoreManifestVersion(manifestPath, manifest, originalVersion)
+      }
       die(
         `expected zip not found at ${zipPath}. Pack exited 0 but did not produce ${zipName}. ` +
           (newVersion !== originalVersion
-            ? `miniapp.json version was left at ${newVersion} (pack reported success).`
+            ? `Restored miniapp.json version to ${originalVersion}.`
             : ""),
       )
     }
@@ -447,13 +477,18 @@ Never commits or pushes. Prepares local changes only.`)
     } catch {
       // ignore
     }
+    if (newVersion !== originalVersion) {
+      restoreManifestVersion(manifestPath, manifest, originalVersion)
+    }
     die(
-      `${err.message}. Deleted the bad zip. miniapp.json version remains at ${newVersion} ` +
-        `(pack itself succeeded; only the artifact was wrong).`,
+      `${err.message}. Deleted the bad zip` +
+        (newVersion !== originalVersion
+          ? ` and restored miniapp.json version to ${originalVersion}.`
+          : "."),
     )
   }
 
-  // 9. Atomic copy into assets
+  // 9. Atomic copy into assets (keep old zips until codegen succeeds)
   mkdirSync(ctx.assetsDir, {recursive: true})
   const tempName = `.${zipName}.tmp-${process.pid}`
   const tempPath = join(ctx.assetsDir, tempName)
@@ -466,7 +501,32 @@ Never commits or pushes. Prepares local changes only.`)
     } catch {
       // ignore
     }
-    die(`failed to install zip into assets: ${err.message}. Previous zip left intact.`)
+    if (newVersion !== originalVersion) {
+      restoreManifestVersion(manifestPath, manifest, originalVersion)
+    }
+    die(
+      `failed to install zip into assets: ${err.message}. Previous zip left intact` +
+        (newVersion !== originalVersion
+          ? `; restored miniapp.json version to ${originalVersion}.`
+          : "."),
+    )
+  }
+
+  // 10. Regenerate bundled list while old same-package zips are still present,
+  // then prune. If codegen fails, leave assets as-is (new + old zips) and
+  // restore the external version so a retry can re-bump cleanly.
+  try {
+    generateBundled(ctx.mobileRoot)
+  } catch (err) {
+    if (newVersion !== originalVersion) {
+      restoreManifestVersion(manifestPath, manifest, originalVersion)
+    }
+    die(
+      `${err.message}. New zip is at ${destZip} alongside previous versions` +
+        (newVersion !== originalVersion
+          ? `; restored miniapp.json version to ${originalVersion}. Re-run after fixing codegen.`
+          : "."),
+    )
   }
 
   const removed = pruneOtherZips(ctx.assetsDir, packageName, zipName)
@@ -474,8 +534,15 @@ Never commits or pushes. Prepares local changes only.`)
     console.log(`Pruned:      ${removed.join(", ")}`)
   }
 
-  // 10. Regenerate bundled list
-  generateBundled(ctx.mobileRoot)
+  // Regenerate again so the committed list matches the pruned directory.
+  try {
+    generateBundled(ctx.mobileRoot)
+  } catch (err) {
+    die(
+      `${err.message} after prune. Zip ${destZip} is installed; re-run ` +
+        `bun run generate-bundled-miniapps in mobile/ to refresh the list.`,
+    )
+  }
 
   console.log("\nSummary:")
   console.log(`  ${packageName} ${originalVersion} → ${newVersion}`)

@@ -1,6 +1,5 @@
 {
   "livestreamer": {
-    "repo": "../Livestreamer-Miniapp",
-    "miniappDir": "miniapp"
+    "repo": "../Livestreamer-Miniapp"
   }
 }

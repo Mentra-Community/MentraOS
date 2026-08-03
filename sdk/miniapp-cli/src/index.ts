@@ -33,7 +33,12 @@ function printUsage(): void {
 function flagValue(flag: string): string | undefined {
   const idx = process.argv.indexOf(flag);
   if (idx === -1) return undefined;
-  return process.argv[idx + 1];
+  const value = process.argv[idx + 1];
+  if (!value || value.startsWith('-')) {
+    console.error(`Error: ${flag} requires a path argument`);
+    process.exit(1);
+  }
+  return value;
 }
 
 switch (subcommand) {

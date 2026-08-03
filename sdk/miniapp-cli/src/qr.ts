@@ -31,8 +31,10 @@ export async function printQR(url: string): Promise<void> {
  * Dev/release URLs can carry a signed attestation query param; writing with
  * restrictive permissions avoids a world-readable window on multi-user machines.
  * Failures only warn — a broken PNG write must not take down the server.
+ *
+ * @returns true if the file was written successfully
  */
-export async function writeQRPng(url: string, outPath: string): Promise<void> {
+export async function writeQRPng(url: string, outPath: string): Promise<boolean> {
   try {
     const buffer = await QRCode.toBuffer(url, {
       type: 'png',
@@ -44,7 +46,9 @@ export async function writeQRPng(url: string, outPath: string): Promise<void> {
     // after write so overwrites of a looser-mode temp path stay private.
     writeFileSync(outPath, buffer, {mode: 0o600});
     chmodSync(outPath, 0o600);
+    return true;
   } catch (error) {
     console.warn(`Could not write QR PNG to ${outPath}: ${(error as Error).message}`);
+    return false;
   }
 }

@@ -63,13 +63,19 @@ describe('writeQRPng', () => {
     expect(statSync(outPath).mode & 0o777).toBe(0o600);
   });
 
-  test('does not throw when the output directory is unwritable', async () => {
+  test('returns false when the output directory is unwritable', async () => {
     const dir = makeTempDir();
     const readonlyDir = join(dir, 'readonly');
     // Create a directory entry that exists as a file, so writing qr.png under it fails.
     writeFileSync(readonlyDir, 'not-a-directory');
     const outPath = join(readonlyDir, 'qr.png');
 
-    await expect(writeQRPng('miniapp://dev?test=1', outPath)).resolves.toBeUndefined();
+    await expect(writeQRPng('miniapp://dev?test=1', outPath)).resolves.toBe(false);
+  });
+
+  test('returns true on success', async () => {
+    const dir = makeTempDir();
+    const outPath = join(dir, 'ok.png');
+    await expect(writeQRPng('miniapp://dev?test=1', outPath)).resolves.toBe(true);
   });
 });

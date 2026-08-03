@@ -159,21 +159,29 @@ export async function release(opts: ReleaseOptions = {}): Promise<void> {
 
   const defaultQrPath = join(os.tmpdir(), `mentra-release-qr-${packageName}.png`)
   const qrOutputPath = resolve(opts.qrOutput ?? defaultQrPath)
+  const cleanupQrOnExit = !opts.qrOutput
 
   await printQR(qrUrl)
-  await writeQRPng(qrUrl, qrOutputPath)
+  const wrotePng = await writeQRPng(qrUrl, qrOutputPath)
   console.log(`\n${qrUrl}`)
-  console.log(`PNG QR: ${qrOutputPath}\n`)
+  if (wrotePng) {
+    console.log(`PNG QR: ${qrOutputPath}\n`)
+  } else {
+    console.log(`PNG QR: (not written — see warning above)\n`)
+  }
   console.log(`Serving on ${baseUrl}`)
 
   // ---- 6. Wait for SIGINT ---------------------------------------------
   await new Promise<void>((resolvePromise) => {
     process.on('SIGINT', () => {
       console.log('\nShutting down...')
-      try {
-        unlinkSync(qrOutputPath)
-      } catch {
-        // best-effort cleanup of temp PNG
+      // Only remove the auto temp path — keep an explicit --qr-output artifact.
+      if (cleanupQrOnExit) {
+        try {
+          unlinkSync(qrOutputPath)
+        } catch {
+          // best-effort cleanup of temp PNG
+        }
       }
       server.stop()
       resolvePromise()

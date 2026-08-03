@@ -21,7 +21,7 @@ Commands:
   wipe-photos [flags]     proxy to mobile/scripts/wipe-glasses-photos.sh (default dry-run)
 
 Env:
-  ADB_SERIAL   device serial (default ${DEFAULT_GLASSES_SERIAL})
+  ADB_SERIAL   optional; if unset, exactly one connected device is required
 EOF
 }
 

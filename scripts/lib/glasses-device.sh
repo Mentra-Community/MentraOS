@@ -3,20 +3,46 @@
 # Source this file:  source "$(dirname "$0")/../lib/glasses-device.sh"
 # or from mobile/scripts: source "$(dirname "$0")/../../scripts/lib/glasses-device.sh"
 
-DEFAULT_GLASSES_SERIAL="0123456789ABCDEF"
 PKG_PROD="com.mentra.asg_client"
 PKG_THIRDPARTY="com.mentra.asg_client.thirdparty"
 MEDIA_ROOT_CURRENT="/storage/emulated/0/asg_media"
 
+# List serials that are in "device" state (one per line).
+list_ready_serials() {
+  adb devices -l | awk 'NR>1 && $2=="device" {print $1}'
+}
+
 resolve_serial() {
-  SERIAL="${ADB_SERIAL:-$DEFAULT_GLASSES_SERIAL}"
-  if ! adb devices -l | awk 'NR>1 && $2=="device" {print $1}' | grep -qx "$SERIAL"; then
-    echo "Error: device serial '$SERIAL' is not connected (or not in 'device' state)." >&2
-    echo "Connected devices:" >&2
-    adb devices -l >&2 || true
-    echo "Override with ADB_SERIAL=<serial> if needed." >&2
-    return 1
+  local serials
+  serials="$(list_ready_serials || true)"
+
+  if [[ -n "${ADB_SERIAL:-}" ]]; then
+    # Fixed-string match — serials can contain regex metacharacters over TCP.
+    if ! printf '%s\n' "$serials" | grep -Fqx -- "$ADB_SERIAL"; then
+      echo "Error: device serial '$ADB_SERIAL' is not connected (or not in 'device' state)." >&2
+      echo "Connected devices:" >&2
+      adb devices -l >&2 || true
+      return 1
+    fi
+    SERIAL="$ADB_SERIAL"
+  else
+    local count
+    count="$(printf '%s\n' "$serials" | sed '/^$/d' | wc -l | tr -d ' ')"
+    if [[ "$count" -eq 0 ]]; then
+      echo "Error: no adb devices in 'device' state." >&2
+      adb devices -l >&2 || true
+      echo "Connect Mentra Live (or set ADB_SERIAL=<serial>)." >&2
+      return 1
+    fi
+    if [[ "$count" -gt 1 ]]; then
+      echo "Error: multiple adb devices connected; set ADB_SERIAL to pick one:" >&2
+      printf '%s\n' "$serials" >&2
+      adb devices -l >&2 || true
+      return 1
+    fi
+    SERIAL="$(printf '%s\n' "$serials" | sed '/^$/d' | head -n 1)"
   fi
+
   export SERIAL
   echo "Using serial: $SERIAL"
 }
@@ -28,8 +54,8 @@ resolve_package() {
   local pkgs
   pkgs="$(adb -s "$SERIAL" shell pm list packages 2>/dev/null | tr -d '\r' || true)"
   local has_prod=0 has_tp=0
-  echo "$pkgs" | grep -qx "package:${PKG_PROD}" && has_prod=1
-  echo "$pkgs" | grep -qx "package:${PKG_THIRDPARTY}" && has_tp=1
+  printf '%s\n' "$pkgs" | grep -Fqx "package:${PKG_PROD}" && has_prod=1
+  printf '%s\n' "$pkgs" | grep -Fqx "package:${PKG_THIRDPARTY}" && has_tp=1
 
   if [[ "$has_prod" -eq 1 ]]; then
     PACKAGE="$PKG_PROD"

@@ -15,7 +15,7 @@ for arg in "$@"; do
     -h|--help)
       echo "Usage: $0 [--dry-run] [--yes]"
       echo "  Default mode is dry-run (list only). Pass --yes to actually delete."
-      echo "  ADB_SERIAL=…  device serial (default ${DEFAULT_GLASSES_SERIAL})"
+      echo "  ADB_SERIAL=…  optional; if unset, requires exactly one connected device"
       exit 0
       ;;
   esac

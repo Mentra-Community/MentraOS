@@ -2,9 +2,8 @@
 name: ci-triage
 description: >-
   Triage failing GitHub PR checks: list failures with gh, fetch capped Actions
-  logs, skip non-Actions checks, and summarize root cause via the
-  ci-investigator subagent. Use when the user pastes CI failures, asks why a PR
-  is red, mentions failing checks, or says /ci.
+  logs, skip non-Actions checks, and summarize root cause. Use when the user
+  pastes CI failures, asks why a PR is red, mentions failing checks, or says /ci.
 ---
 
 # CI failure triage
@@ -57,9 +56,9 @@ gh run view <runId> --log-failed | tail -c 20000
 
 Always pipe through `tail -c 20000` (~20KB). Never feed the unbounded stream into context.
 
-### 6. Root-cause via `ci-investigator` subagent
+### 6. Root-cause analysis
 
-`ci-investigator` is a **built-in Task subagent type** (not a file under `~/.cursor/agents`). Invoke:
+Prefer the built-in Task subagent when available:
 
 ```
 Task(
@@ -69,13 +68,13 @@ Task(
 )
 ```
 
-Do **not** search the filesystem for a `ci-investigator` agent definition.
+If `ci-investigator` is not available in this agent runtime, analyze the capped log excerpt yourself (or use any local agent definition under `~/.cursor/agents/` / `.cursor/agents/` if present). Do not stall the triage on a missing subagent type.
 
 ### 7. Reply format
 
 One aggregated report:
 
-1. **Actions root causes** — short summaries from ci-investigator (per run/check).
+1. **Actions root causes** — short summaries (per run/check).
 2. **Non-Actions failures** — name, state, link only (open in browser).
 3. No raw log pastes.
 
