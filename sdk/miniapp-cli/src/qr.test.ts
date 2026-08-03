@@ -52,6 +52,17 @@ describe('writeQRPng', () => {
     expect(statSync(outPath).isFile()).toBe(true);
   });
 
+  test('forces mode 0o600 even when overwriting a looser-mode file', async () => {
+    const dir = makeTempDir();
+    const outPath = join(dir, 'qr.png');
+    writeFileSync(outPath, 'placeholder', {mode: 0o644});
+    chmodSync(outPath, 0o644);
+    expect(statSync(outPath).mode & 0o777).toBe(0o644);
+
+    await writeQRPng('miniapp://dev?url=http%3A%2F%2F192.168.1.1%3A3000', outPath);
+    expect(statSync(outPath).mode & 0o777).toBe(0o600);
+  });
+
   test('does not throw when the output directory is unwritable', async () => {
     const dir = makeTempDir();
     const readonlyDir = join(dir, 'readonly');

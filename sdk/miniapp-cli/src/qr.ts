@@ -1,4 +1,4 @@
-import {writeFileSync} from 'fs';
+import {chmodSync, writeFileSync} from 'fs';
 import QRCode from 'qrcode';
 
 /**
@@ -40,7 +40,10 @@ export async function writeQRPng(url: string, outPath: string): Promise<void> {
       margin: 2,
       scale: 8,
     });
+    // mode on writeFileSync only applies to newly created files — always chmod
+    // after write so overwrites of a looser-mode temp path stay private.
     writeFileSync(outPath, buffer, {mode: 0o600});
+    chmodSync(outPath, 0o600);
   } catch (error) {
     console.warn(`Could not write QR PNG to ${outPath}: ${(error as Error).message}`);
   }

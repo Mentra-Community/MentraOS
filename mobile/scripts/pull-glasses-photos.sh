@@ -45,22 +45,21 @@ for ROOT in "${MEDIA_ROOTS[@]}"; do
   # Pull IMG_* dirs and flat files; tolerate empty
   adb -s "$SERIAL" pull "$ROOT" "$TMP/root" 2>/dev/null || true
 
-  # Flatten: any **/IMG_*/base.jpg → {capture_id}.jpg
+  # Flatten capture packages: **/IMG_*/base.jpg → {capture_id}.jpg
+  # Also pick up any other base.jpg not already under IMG_* (legacy layouts).
   while IFS= read -r -d '' base; do
-    capture_id="$(basename "$(dirname "$base")")"
+    parent="$(basename "$(dirname "$base")")"
+    if [[ "$parent" == IMG_* ]]; then
+      capture_id="$parent"
+    else
+      # Non-package path: derive a stable name from the parent dir.
+      capture_id="${parent}"
+    fi
     dest="${OUTPUT_DIR}/${capture_id}.jpg"
     cp "$base" "$dest"
     ROOT_COUNT=$((ROOT_COUNT + 1))
     TOTAL=$((TOTAL + 1))
-  done < <(find "$TMP/root" -type f -path '*/IMG_*/base.jpg' -print0 2>/dev/null || true)
-
-  # Also flatten loose base.jpg under camera package dirs without exact path
-  while IFS= read -r -d '' base; do
-    # skip if already counted under IMG_*
-    if [[ "$base" == *"/IMG_"*"/base.jpg" ]]; then
-      continue
-    fi
-  done < <(true)
+  done < <(find "$TMP/root" -type f -name 'base.jpg' -print0 2>/dev/null || true)
 
   rm -rf "$TMP"
   echo "Pulled $ROOT_COUNT photo(s) from $ROOT"

@@ -65,7 +65,10 @@ case "$cmd" in
     resolve_serial
     resolve_package
     stop_asg
-    adb -s "$SERIAL" shell am start -n "${PACKAGE}/.MainActivity"
+    # Activity class lives under the Java package (com.mentra.asg_client), not the
+    # applicationId. thirdparty builds use applicationIdSuffix ".thirdparty", so
+    # "${PACKAGE}/.MainActivity" would look for com.mentra.asg_client.thirdparty.MainActivity.
+    adb -s "$SERIAL" shell am start -n "${PACKAGE}/com.mentra.asg_client.MainActivity"
     ;;
   pull-photos)
     exec bash "${MOBILE_SCRIPTS}/pull-glasses-photos.sh" "$@"
