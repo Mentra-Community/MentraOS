@@ -153,12 +153,14 @@ const en = {
     powerOn: "Power on",
     poweredOn: "Continue",
     livePairingModeTitle: "Ready to pair",
-    livePairingModeSubtitle: "New glasses pair automatically when powered on.",
+    livePairingModeSubtitle: "Put your glasses into pairing mode before you scan.",
     livePairingModeInfo:
-      "If nothing appears in the next step, press the power button 5 times quickly. The LED will flash and the glasses will read out a code.",
+      "Press the power button 5 times quickly. The LED flashes and the glasses speak a 4-character code (0–9, A–F). Match that code on the scan list if more than one unit appears.",
     noGlassesFound: "No glasses found",
     noGlassesFoundHint: "Make sure you pressed the power button 5 times quickly, then try again.",
     tryAgain: "Try Again",
+    pairingCodeLabel: "Code {{code}}",
+    legacyFirmwareLabel: "Legacy firmware",
     wipeMediaTitle: "Delete previous owner media?",
     wipeMediaMessage:
       "To use these glasses, the previous owner's photos and videos must be deleted. Delete and continue?",

@@ -48,6 +48,9 @@ jest.mock("@/i18n", () => ({
     if (vars?.model) {
       return `${key}:${vars.model}`
     }
+    if (vars?.code) {
+      return `${key}:${vars.code}`
+    }
     return key
   }),
 }))
@@ -345,19 +348,36 @@ describe("pairing scan screen", () => {
       setPlatformOS("android")
       ;(requestFeaturePermissions as jest.Mock).mockResolvedValue(false)
       useGlassesStore.getState().setGlassesInfo({bluetoothClassicConnected: false})
+      // Eligible results present → timeout must NOT claim "no glasses found".
       useCoreStore.setState({
         searchResults: [{id: "a", model: "Mentra Live", name: "MENTRA_LIVE_BLE_001", address: "a"}],
       })
 
-      const {getByText} = render(<SelectGlassesBluetoothScreen />)
+      const {queryByText} = render(<SelectGlassesBluetoothScreen />)
 
-      // Let the denied-permission promise chain settle so connectingRef resets.
       await act(async () => {
         await Promise.resolve()
         await Promise.resolve()
       })
 
-      // The 15s scan timeout must still fire because connectingRef was reset on the early return.
+      act(() => {
+        jest.advanceTimersByTime(15_000)
+      })
+
+      expect(queryByText("pairing:noGlassesFound")).toBeNull()
+    } finally {
+      jest.useRealTimers()
+    }
+  })
+
+  it("times out only when Mentra Live scan finds zero eligible glasses", async () => {
+    jest.useFakeTimers()
+    try {
+      setPlatformOS("android")
+      useCoreStore.setState({searchResults: []})
+
+      const {getByText} = render(<SelectGlassesBluetoothScreen />)
+
       act(() => {
         jest.advanceTimersByTime(15_000)
       })
@@ -366,6 +386,61 @@ describe("pairing scan screen", () => {
     } finally {
       jest.useRealTimers()
     }
+  })
+
+  it("Try Again restarts scan in place without navigating back", async () => {
+    jest.useFakeTimers()
+    try {
+      setPlatformOS("android")
+      useCoreStore.setState({searchResults: []})
+      const {getByText} = render(<SelectGlassesBluetoothScreen />)
+
+      act(() => {
+        jest.advanceTimersByTime(15_000)
+      })
+      expect(getByText("pairing:noGlassesFound")).toBeTruthy()
+      ;(engine.pairing.scan as jest.Mock).mockClear()
+
+      fireEvent.press(getByText("pairing:tryAgain"))
+
+      await waitFor(() => {
+        expect(engine.pairing.scan).toHaveBeenCalledWith("Mentra Live")
+      })
+      expect(goBack).not.toHaveBeenCalled()
+    } finally {
+      jest.useRealTimers()
+    }
+  })
+
+  it("shows pairing codes for multi-device Mentra Live results", async () => {
+    setPlatformOS("android")
+    useCoreStore.setState({
+      searchResults: [
+        {
+          id: "a",
+          model: "Mentra Live",
+          name: "MENTRA_LIVE_BLE_001",
+          address: "a",
+          pairingCode: "A1B2",
+          securePairingCapable: true,
+        },
+        {
+          id: "b",
+          model: "Mentra Live",
+          name: "MENTRA_LIVE_BLE_002",
+          address: "b",
+          pairingCode: "C3D4",
+          securePairingCapable: false,
+        },
+      ],
+    })
+
+    const {getByText} = render(<SelectGlassesBluetoothScreen />)
+
+    await waitFor(() => {
+      expect(getByText(/pairing:pairingCodeLabel:A1B2/)).toBeTruthy()
+      expect(getByText(/pairing:pairingCodeLabel:C3D4/)).toBeTruthy()
+    })
   })
 
   it("filters AR99 scan results to the selected AR99 project", async () => {

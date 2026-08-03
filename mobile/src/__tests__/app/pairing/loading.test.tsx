@@ -29,6 +29,15 @@ jest.mock("@/stores/navigation", () => ({
   useNavigationStore: {getState: jest.fn()},
 }))
 
+jest.mock("@/utils/AlertUtils", () => ({
+  __esModule: true,
+  default: jest.fn(),
+}))
+
+jest.mock("@/i18n", () => ({
+  translate: jest.fn((key: string) => key),
+}))
+
 jest.mock("@/components/ignite", () => {
   const {Text: RNText, TouchableOpacity, View} = require("react-native")
   function MockHeader() {
@@ -98,6 +107,15 @@ describe("pairing loading screen", () => {
       params: {deviceModel: "Mentra Live", deviceName: "MENTRA_LIVE_BLE_001"},
     })
     ;(useNavigationStore.getState as jest.Mock).mockReturnValue({replace, goBack})
+    const {bluetoothSdkMock} = require("@/test-utils/mockBluetoothSdk")
+    bluetoothSdkMock.wipeMediaForPairing = jest.fn(() => Promise.resolve({success: true}))
+    bluetoothSdkMock.finalizePairingTransfer = jest.fn(() =>
+      Promise.resolve({success: true, transfer_id: "ABCDEF0123456789", operation: "finalize"}),
+    )
+    bluetoothSdkMock.abortPairingTransfer = jest.fn(() =>
+      Promise.resolve({success: true, transfer_id: "ABCDEF0123456789", operation: "abort"}),
+    )
+    ;(engine.pairing.waitForBluetoothClassic as jest.Mock)?.mockResolvedValue?.(true)
   })
 
   afterEach(() => {
@@ -195,6 +213,70 @@ describe("pairing loading screen", () => {
 
     await waitFor(() => {
       expect(replace).toHaveBeenCalledWith("/pairing/success", {deviceModel: "Mentra Live"})
+    })
+  })
+
+  it("does not use pairing_info timeout when secure firmware already reported capable", async () => {
+    render(<GlassesPairingLoadingScreen />)
+
+    act(() => {
+      emitBluetoothSdkEvent("pairing_info", {
+        had_previous_bond: false,
+        secure_pairing_capable: true,
+        transfer_id: "ABCDEF0123456789",
+      })
+    })
+    act(() => {
+      useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
+    })
+    act(() => {
+      jest.advanceTimersByTime(1_000)
+    })
+
+    await waitFor(() => {
+      expect(replace).toHaveBeenCalledWith("/pairing/success", {deviceModel: "Mentra Live"})
+    })
+  })
+
+  it("always prompts wipe when had_previous_bond is true (including empty gallery)", async () => {
+    const showAlert = require("@/utils/AlertUtils").default as jest.Mock
+    showAlert.mockImplementation((_title: string, _msg: string, buttons: Array<{text?: string; onPress?: () => void}>) => {
+      // Auto-confirm wipe
+      const confirm = buttons.find((b) => b.text === "pairing:wipeMediaConfirm" || (b as any).tx === "pairing:wipeMediaConfirm")
+      // i18n is mocked to return keys; showAlert receives translated title keys from translate()
+    })
+    // Force translate to return keys so wipe button match works via onPress index
+    showAlert.mockImplementation((_t: string, _m: string, buttons: Array<{onPress?: () => void}>) => {
+      // second button is confirm
+      buttons[1]?.onPress?.()
+    })
+
+    const {bluetoothSdkMock} = require("@/test-utils/mockBluetoothSdk")
+    bluetoothSdkMock.wipeMediaForPairing = jest.fn(() => Promise.resolve({success: true}))
+    bluetoothSdkMock.finalizePairingTransfer = jest.fn(() =>
+      Promise.resolve({success: true, transfer_id: "T1", operation: "finalize"}),
+    )
+
+    render(<GlassesPairingLoadingScreen />)
+
+    act(() => {
+      emitBluetoothSdkEvent("pairing_info", {
+        had_previous_bond: true,
+        secure_pairing_capable: true,
+        transfer_id: "ABCDEF0123456789",
+        classic_bond_ready: true,
+      })
+    })
+    act(() => {
+      useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
+    })
+
+    await waitFor(() => {
+      expect(showAlert).toHaveBeenCalled()
+      expect(bluetoothSdkMock.wipeMediaForPairing).toHaveBeenCalled()
+    })
+    await waitFor(() => {
+      expect(bluetoothSdkMock.finalizePairingTransfer).toHaveBeenCalled()
     })
   })
 })
