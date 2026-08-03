@@ -47,20 +47,38 @@ resolve_serial() {
   echo "Using serial: $SERIAL"
 }
 
+# True if package appears in `pm list packages` output (any state).
+_package_listed() {
+  local list="$1" pkg="$2"
+  printf '%s\n' "$list" | grep -Fqx "package:${pkg}"
+}
+
 resolve_package() {
   if [[ -z "${SERIAL:-}" ]]; then
     resolve_serial || return 1
   fi
-  local pkgs
-  pkgs="$(adb -s "$SERIAL" shell pm list packages 2>/dev/null | tr -d '\r' || true)"
-  local has_prod=0 has_tp=0
-  printf '%s\n' "$pkgs" | grep -Fqx "package:${PKG_PROD}" && has_prod=1
-  printf '%s\n' "$pkgs" | grep -Fqx "package:${PKG_THIRDPARTY}" && has_tp=1
 
-  if [[ "$has_prod" -eq 1 ]]; then
+  # After ./asg_client/scripts/dev-setup.sh, stock stays installed but disabled
+  # while .thirdparty is the live launcher. Prefer enabled packages so wipe /
+  # restart hit the process that actually holds media files.
+  local enabled all
+  enabled="$(adb -s "$SERIAL" shell pm list packages -e 2>/dev/null | tr -d '\r' || true)"
+  all="$(adb -s "$SERIAL" shell pm list packages 2>/dev/null | tr -d '\r' || true)"
+
+  local en_tp=0 en_prod=0 has_tp=0 has_prod=0
+  _package_listed "$enabled" "$PKG_THIRDPARTY" && en_tp=1
+  _package_listed "$enabled" "$PKG_PROD" && en_prod=1
+  _package_listed "$all" "$PKG_THIRDPARTY" && has_tp=1
+  _package_listed "$all" "$PKG_PROD" && has_prod=1
+
+  if [[ "$en_tp" -eq 1 ]]; then
+    PACKAGE="$PKG_THIRDPARTY"
+  elif [[ "$en_prod" -eq 1 ]]; then
     PACKAGE="$PKG_PROD"
   elif [[ "$has_tp" -eq 1 ]]; then
     PACKAGE="$PKG_THIRDPARTY"
+  elif [[ "$has_prod" -eq 1 ]]; then
+    PACKAGE="$PKG_PROD"
   else
     echo "Error: neither ${PKG_PROD} nor ${PKG_THIRDPARTY} is installed on $SERIAL." >&2
     return 1
