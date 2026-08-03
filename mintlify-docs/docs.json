@@ -2,6 +2,10 @@
   "$schema": "https://mintlify.com/docs.json",
   "theme": "aspen",
   "name": "MentraOS",
+  "banner": {
+    "content": "**Beta.** The Mentra Miniapp SDK and these docs are in beta and subject to change. The SDK is available under debug settings in the Mentra App. [Send feedback](https://discord.gg/5ukNvkEAqT).",
+    "dismissible": false
+  },
   "colors": {
     "primary": "#00b869",
     "light": "#00b869",
