@@ -1,0 +1,101 @@
+package com.mentra.asg_client.service.core.handlers;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+import android.content.Context;
+import com.mentra.asg_client.io.file.core.FileManager;
+import com.mentra.asg_client.io.media.core.MediaCaptureService;
+import com.mentra.asg_client.io.media.managers.MediaUploadQueueManager;
+import com.mentra.asg_client.service.communication.interfaces.ICommunicationManager;
+import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
+import java.io.File;
+import org.json.JSONObject;
+import org.junit.Before;
+import org.junit.Rule;
+import org.junit.Test;
+import org.junit.rules.TemporaryFolder;
+import org.junit.runner.RunWith;
+import org.mockito.ArgumentCaptor;
+import org.robolectric.RobolectricTestRunner;
+import org.robolectric.RuntimeEnvironment;
+import org.robolectric.annotation.Config;
+
+@RunWith(RobolectricTestRunner.class)
+@Config(sdk = 33)
+public class WipeMediaCommandHandlerTest {
+
+    @Rule public TemporaryFolder tempFolder = new TemporaryFolder();
+
+    private ICommunicationManager communicationManager;
+    private AsgClientServiceManager serviceManager;
+    private FileManager fileManager;
+    private MediaUploadQueueManager queueManager;
+    private MediaCaptureService captureService;
+    private WipeMediaCommandHandler handler;
+    private File mediaDir;
+    private Context context;
+
+    @Before
+    public void setUp() throws Exception {
+        communicationManager = mock(ICommunicationManager.class);
+        serviceManager = mock(AsgClientServiceManager.class);
+        fileManager = mock(FileManager.class);
+        queueManager = mock(MediaUploadQueueManager.class);
+        captureService = mock(MediaCaptureService.class);
+        context = RuntimeEnvironment.getApplication();
+
+        mediaDir = tempFolder.newFolder("media");
+        when(fileManager.getDefaultMediaDirectory()).thenReturn(mediaDir);
+        when(fileManager.getThumbnailManager()).thenReturn(null);
+        when(serviceManager.getMediaQueueManager()).thenReturn(queueManager);
+        when(serviceManager.getMediaCaptureService()).thenReturn(captureService);
+        when(serviceManager.getContext()).thenReturn(context);
+        when(communicationManager.sendBluetoothResponse(any(JSONObject.class))).thenReturn(true);
+        when(captureService.isRecordingVideo()).thenReturn(false);
+
+        handler = new WipeMediaCommandHandler(communicationManager, serviceManager, fileManager);
+        WipeMediaCommandHandler.clearCaptureBarrier(context);
+    }
+
+    @Test
+    public void wipeMedia_deletesGalleryAndArmsBarrier() throws Exception {
+        File photo = new File(mediaDir, "IMG_test/base.jpg");
+        assertThat(photo.getParentFile().mkdirs()).isTrue();
+        assertThat(photo.createNewFile()).isTrue();
+
+        JSONObject command = new JSONObject();
+        command.put("request_id", "req-1");
+        command.put("transfer_id", "ABCDEF0123456789");
+
+        boolean handled = handler.handleCommand("wipe_media", command);
+        assertThat(handled).isTrue();
+        assertThat(photo.exists()).isFalse();
+        assertThat(WipeMediaCommandHandler.isCaptureBarrierActive(context)).isTrue();
+
+        ArgumentCaptor<JSONObject> captor = ArgumentCaptor.forClass(JSONObject.class);
+        verify(communicationManager).sendBluetoothResponse(captor.capture());
+        JSONObject response = captor.getValue();
+        assertThat(response.getBoolean("success")).isTrue();
+        assertThat(response.getString("transfer_id")).isEqualTo("ABCDEF0123456789");
+        assertThat(response.getString("request_id")).isEqualTo("req-1");
+        verify(queueManager).clearQueue();
+    }
+
+    @Test
+    public void wipeMedia_stopsActiveRecording() throws Exception {
+        when(captureService.isRecordingVideo()).thenReturn(true);
+
+        JSONObject command = new JSONObject().put("transfer_id", "1122334455667788");
+        assertThat(handler.handleCommand("wipe_media", command)).isTrue();
+        verify(captureService).stopVideoRecording();
+    }
+
+    @Test
+    public void unsupportedCommandType_rejected() {
+        assertThat(handler.handleCommand("not_wipe", new JSONObject())).isFalse();
+    }
+}

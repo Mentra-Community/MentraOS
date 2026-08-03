@@ -1,5 +1,7 @@
 package com.mentra.asg_client.io.media.core;
 
+import com.mentra.asg_client.service.core.handlers.WipeMediaCommandHandler;
+
 import android.content.Context;
 import android.net.ConnectivityManager;
 import android.net.NetworkCapabilities;
@@ -992,6 +994,10 @@ public class MediaCaptureService {
         // command handlers
         // Thread safety is maintained through CameraNeoService's internal threading and Handler
         // usage
+        if (isPairingTransferCaptureBlocked()) {
+            Log.w(TAG, "Blocking startVideoRecording — ownership transfer capture barrier active");
+            return;
+        }
         Log.d(
                 TAG,
                 "startVideoRecording called with settings: "
@@ -1839,6 +1845,11 @@ public class MediaCaptureService {
         return isRecordingVideo;
     }
 
+    /** Ownership-transfer wipe barrier — block new captures until transfer window ends. */
+    public boolean isPairingTransferCaptureBlocked() {
+        return WipeMediaCommandHandler.isCaptureBarrierActive(mContext);
+    }
+
     /**
      * Get the capture directory name (e.g. "VID_20250322_120000_123") of the actively recording
      * video, or null if idle. Used by AsgCameraServer to exclude the entire capture group from
@@ -1912,6 +1923,10 @@ public class MediaCaptureService {
     public void takePhotoLocally(String size, boolean enableFlash, boolean enableSound) {
         // Start timing for end-to-end photo capture performance measurement
         final long requestStartTimeMs = System.currentTimeMillis();
+        if (isPairingTransferCaptureBlocked()) {
+            Log.w(TAG, "Blocking takePhotoLocally — ownership transfer capture barrier active");
+            return;
+        }
         if (AsgConstants.ENABLE_PHOTO_TIMING_LOGS) {
             Log.i(TAG, "⏱️ [TIMING] LOCAL Photo request START");
         }
