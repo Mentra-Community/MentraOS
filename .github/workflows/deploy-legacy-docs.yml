@@ -1,0 +1,83 @@
+name: Deploy Legacy Docs
+
+# Publishes the archived pre-3.0 docs to legacy-docs.mentraglass.com.
+#
+# This branch is a terminal archive taken from `frozen-docs`, which is what
+# docs.mentraglass.com serves until Mintlify is repointed at `main`. Once that
+# flip happens the old content would otherwise disappear, so it lives here.
+#
+# The workflow has to sit on this branch rather than on dev: GitHub resolves
+# `push:` workflows from the branch being pushed, so a copy on dev could never
+# fire on a legacy-docs push and would be workflow_dispatch only.
+#
+# Note the source directory is `docs/`, not `mintlify-docs/`. The folder was
+# renamed after this snapshot was taken, so deploy-dev-docs.yml cannot be
+# copied verbatim.
+
+on:
+  push:
+    branches:
+      - legacy-docs
+    paths:
+      - docs/**
+      - .github/workflows/deploy-legacy-docs.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-legacy-docs
+  cancel-in-progress: true
+
+env:
+  CLOUDFLARE_PAGES_BRANCH: legacy-docs
+
+jobs:
+  deploy:
+    name: Export and deploy MentraOS legacy docs
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Export Mintlify docs
+        working-directory: docs
+        run: bunx --bun mint export --output "$RUNNER_TEMP/mentraos-docs-legacy.zip"
+
+      - name: Prepare Cloudflare Pages artifact
+        run: |
+          EXPORT_ZIP="$RUNNER_TEMP/mentraos-docs-legacy.zip"
+          EXPORT_DIR="$RUNNER_TEMP/mentraos-docs-legacy"
+          rm -rf "$EXPORT_DIR"
+          mkdir -p "$EXPORT_DIR"
+          unzip -q "$EXPORT_ZIP" -d "$EXPORT_DIR"
+          # Archived content must not compete with the current docs in search.
+          cat > "$EXPORT_DIR/_headers" <<'HEADERS'
+          /*
+            X-Robots-Tag: noindex
+          HEADERS
+
+      - name: Deploy to Cloudflare Pages
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_PAGES_API_TOKEN }}
+        run: |
+          EXPORT_DIR="$RUNNER_TEMP/mentraos-docs-legacy"
+          npx wrangler@4.86.0 pages deploy "$EXPORT_DIR" \
+            --project-name mentraos-docs-legacy \
+            --branch "$CLOUDFLARE_PAGES_BRANCH" \
+            --commit-hash "$GITHUB_SHA" \
+            --commit-message "Deploy MentraOS legacy docs from ${GITHUB_SHA::7}" \
+            --commit-dirty=true
+
+      - name: Print docs URL
+        run: |
+          echo "MentraOS legacy docs deploy target: https://legacy-docs.mentraglass.com"

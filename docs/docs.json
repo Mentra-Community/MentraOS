@@ -2,6 +2,10 @@
   "$schema": "https://mintlify.com/docs.json",
   "theme": "aspen",
   "name": "MentraOS",
+  "banner": {
+    "content": "These are the archived docs for MentraOS 2.x. They are no longer updated. For current documentation, including the Mentra Miniapp SDK, go to [docs.mentraglass.com](https://docs.mentraglass.com).",
+    "dismissible": false
+  },
   "colors": {
     "primary": "#00b869",
     "light": "#00b869",
@@ -15,11 +19,15 @@
         "groups": [
           {
             "group": "Welcome",
-            "pages": ["index"]
+            "pages": [
+              "index"
+            ]
           },
           {
             "group": "Legal",
-            "pages": ["third-party-licenses"]
+            "pages": [
+              "third-party-licenses"
+            ]
           }
         ]
       },
@@ -56,7 +64,10 @@
               {
                 "group": "Display",
                 "icon": "display",
-                "pages": ["app-devs/core-concepts/display/layouts", "app-devs/core-concepts/display/dashboard"]
+                "pages": [
+                  "app-devs/core-concepts/display/layouts",
+                  "app-devs/core-concepts/display/dashboard"
+                ]
               },
               {
                 "group": "Microphone",
@@ -153,7 +164,11 @@
           {
             "group": "Platform Setup",
             "icon": "mobile",
-            "pages": ["mentra-live/react-native-expo", "mentra-live/android", "mentra-live/ios"]
+            "pages": [
+              "mentra-live/react-native-expo",
+              "mentra-live/android",
+              "mentra-live/ios"
+            ]
           },
           {
             "group": "Core APIs",
@@ -168,7 +183,10 @@
           {
             "group": "Release",
             "icon": "clipboard-check",
-            "pages": ["mentra-live/troubleshooting", "mentra-live/production-checklist"]
+            "pages": [
+              "mentra-live/troubleshooting",
+              "mentra-live/production-checklist"
+            ]
           }
         ]
       },
@@ -204,7 +222,9 @@
           {
             "group": "Glasses OEMs",
             "icon": "industry",
-            "pages": ["glasses-oems/overview"]
+            "pages": [
+              "glasses-oems/overview"
+            ]
           }
         ]
       },
@@ -213,7 +233,9 @@
         "groups": [
           {
             "group": "Recipes",
-            "pages": ["cookbook/dashboard-note-app"]
+            "pages": [
+              "cookbook/dashboard-note-app"
+            ]
           }
         ]
       }
@@ -254,7 +276,15 @@
     }
   },
   "contextual": {
-    "options": ["copy", "view", "chatgpt", "claude", "perplexity", "cursor", "vscode"]
+    "options": [
+      "copy",
+      "view",
+      "chatgpt",
+      "claude",
+      "perplexity",
+      "cursor",
+      "vscode"
+    ]
   },
   "footer": {
     "socials": {
