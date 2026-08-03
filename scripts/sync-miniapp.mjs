@@ -247,16 +247,28 @@ with open(out, "w", encoding="utf-8") as f:
   }
 }
 
-function pruneOtherZips(assetsDir, packageName, keepFileName) {
+/**
+ * True when `name` is exactly `${packageName}-${strictSemver}.zip`.
+ * Avoids prefix collisions like pruning `com.mentra.foo` deleting
+ * `com.mentra.foo-bar-1.0.0.zip`.
+ */
+export function isSamePackageZip(name, packageName) {
+  if (typeof name !== "string" || typeof packageName !== "string") return false
+  if (!name.toLowerCase().endsWith(".zip")) return false
+  const prefix = `${packageName}-`
+  if (!name.startsWith(prefix)) return false
+  const versionPart = name.slice(prefix.length, -".zip".length)
+  return parseStrictSemver(versionPart) !== null
+}
+
+export function pruneOtherZips(assetsDir, packageName, keepFileName) {
   if (!existsSync(assetsDir)) return []
   const removed = []
   for (const name of readdirSync(assetsDir)) {
-    if (!name.toLowerCase().endsWith(".zip")) continue
     if (name === keepFileName) continue
-    if (name.startsWith(`${packageName}-`)) {
-      unlinkSync(join(assetsDir, name))
-      removed.push(name)
-    }
+    if (!isSamePackageZip(name, packageName)) continue
+    unlinkSync(join(assetsDir, name))
+    removed.push(name)
   }
   return removed
 }

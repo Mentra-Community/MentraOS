@@ -6,6 +6,10 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=../../scripts/lib/glasses-device.sh
 source "${SCRIPT_DIR}/../../scripts/lib/glasses-device.sh"
 
+# Capture package dir on asg_media is always this name (FileManagerImpl.getDefaultPackageName),
+# even when the installed APK is the .thirdparty variant.
+CAMERA_DIR_CURRENT="com.mentra.asg_client.camera"
+
 DO_YES=0
 DO_DRY=0
 for arg in "$@"; do
@@ -40,11 +44,19 @@ count_matches() {
   adb -s "$SERIAL" shell "
     root='$root'
     pkg='$PACKAGE'
+    cam_current='$CAMERA_DIR_CURRENT'
     n=0
     if [ ! -d \"\$root\" ]; then echo 0; exit 0; fi
-    # capture folders
-    for d in \"\$root\"/\${pkg}.camera/IMG_* \"\$root\"/\${pkg}.camera/VID_* \"\$root\"/\${pkg}.camera/BUFFER_* \\
-             \"\$root\"/IMG_* \"\$root\"/VID_*; do
+    # Prefer the fixed asg_media camera dir; also cover legacy \${pkg}.camera when distinct.
+    for cam_name in \"\$cam_current\" \"\${pkg}.camera\"; do
+      cam=\"\$root/\$cam_name\"
+      [ -d \"\$cam\" ] || continue
+      for d in \"\$cam\"/IMG_* \"\$cam\"/VID_* \"\$cam\"/BUFFER_*; do
+        [ -e \"\$d\" ] || continue
+        n=\$((n+1))
+      done
+    done
+    for d in \"\$root\"/IMG_* \"\$root\"/VID_*; do
       [ -e \"\$d\" ] || continue
       n=\$((n+1))
     done
@@ -53,7 +65,9 @@ count_matches() {
         n=\$((n + \$(find \"\$root/\$d\" -type f 2>/dev/null | wc -l)))
       fi
     done
-    if [ -f \"\$root/media_queue/queue_manifest.json\" ]; then n=\$((n+1)); fi
+    if [ -d \"\$root/media_queue\" ]; then
+      n=\$((n + \$(find \"\$root/media_queue\" -type f 2>/dev/null | wc -l)))
+    fi
     echo \$n
   " 2>/dev/null | tr -d '\r' | tail -n 1
 }
@@ -64,6 +78,7 @@ wipe_root() {
   adb -s "$SERIAL" shell "
     root='$root'
     pkg='$PACKAGE'
+    cam_current='$CAMERA_DIR_CURRENT'
     dry='$dry'
     log() { echo \"\$@\"; }
     if [ ! -d \"\$root\" ]; then
@@ -80,12 +95,12 @@ wipe_root() {
         log \"deleted: \$p\"
       fi
     }
-    cam=\"\$root/\${pkg}.camera\"
-    if [ -d \"\$cam\" ]; then
+    wipe_camera_dir() {
+      cam=\"\$1\"
+      [ -d \"\$cam\" ] || return 0
       for d in \"\$cam\"/IMG_* \"\$cam\"/VID_* \"\$cam\"/BUFFER_*; do
         remove_path \"\$d\"
       done
-      # loose media in camera dir
       for f in \"\$cam\"/*; do
         [ -e \"\$f\" ] || continue
         base=\$(basename \"\$f\")
@@ -93,6 +108,10 @@ wipe_root() {
           IMG_*|VID_*|*.jpg|*.jpeg|*.mp4|*.png) remove_path \"\$f\" ;;
         esac
       done
+    }
+    wipe_camera_dir \"\$root/\$cam_current\"
+    if [ \"\${pkg}.camera\" != \"\$cam_current\" ]; then
+      wipe_camera_dir \"\$root/\${pkg}.camera\"
     fi
     for d in \"\$root\"/IMG_* \"\$root\"/VID_*; do
       remove_path \"\$d\"
@@ -100,17 +119,22 @@ wipe_root() {
     for d in photos videos audio temp thumbnails photo_queue; do
       remove_path \"\$root/\$d\"
     done
-    # Reset media_queue manifest to valid empty schema (do not leave broken JSON)
+    # Clear queued media files, then reset manifest to a valid empty schema.
     mq=\"\$root/media_queue\"
     mf=\"\$mq/queue_manifest.json\"
-    if [ \"\$dry\" = \"1\" ]; then
-      if [ -e \"\$mf\" ]; then log \"would reset: \$mf\"; fi
-    else
-      mkdir -p \"\$mq\"
-      # epoch millis
-      ts=\$(date +%s000)
-      printf '%s' \"{\\\"mediaItems\\\":[],\\\"lastUpdated\\\":\${ts}}\" > \"\$mf\"
-      log \"reset manifest: \$mf\"
+    if [ -d \"\$mq\" ]; then
+      if [ \"\$dry\" = \"1\" ]; then
+        find \"\$mq\" -type f ! -name 'queue_manifest.json' 2>/dev/null | while IFS= read -r f; do
+          log \"would delete: \$f\"
+        done
+        if [ -e \"\$mf\" ]; then log \"would reset: \$mf\"; fi
+      else
+        find \"\$mq\" -type f ! -name 'queue_manifest.json' -exec rm -f {} + 2>/dev/null || true
+        mkdir -p \"\$mq\"
+        ts=\$(date +%s000)
+        printf '%s' \"{\\\"mediaItems\\\":[],\\\"lastUpdated\\\":\${ts}}\" > \"\$mf\"
+        log \"reset manifest: \$mf\"
+      fi
     fi
   " 2>/dev/null | tr -d '\r'
 }

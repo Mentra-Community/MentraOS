@@ -15,6 +15,8 @@ import {
   bumpStrictSemver,
   parseStrictSemver,
   assertSafePackageName,
+  isSamePackageZip,
+  pruneOtherZips,
 } from "./sync-miniapp.mjs"
 
 const fixtureRoots = []
@@ -160,6 +162,28 @@ describe("assertSafePackageName", () => {
   test("rejects path traversal", () => {
     expect(() => assertSafePackageName("../evil")).toThrow(/safe filename/)
     expect(() => assertSafePackageName("com/mentra")).toThrow(/safe filename/)
+  })
+})
+
+describe("isSamePackageZip / pruneOtherZips", () => {
+  test("matches only exact packageName-version.zip", () => {
+    expect(isSamePackageZip("com.mentra.foo-1.0.0.zip", "com.mentra.foo")).toBe(true)
+    expect(isSamePackageZip("com.mentra.foo-bar-1.0.0.zip", "com.mentra.foo")).toBe(false)
+    expect(isSamePackageZip("com.mentra.foo-bar-1.0.0.zip", "com.mentra.foo-bar")).toBe(true)
+  })
+
+  test("prune does not delete hyphenated sibling packages", () => {
+    const base = makeFixtureRoot()
+    const assetsDir = join(base, "assets")
+    mkdirSync(assetsDir, {recursive: true})
+    writeFileSync(join(assetsDir, "com.mentra.foo-1.0.0.zip"), "old")
+    writeFileSync(join(assetsDir, "com.mentra.foo-bar-2.0.0.zip"), "sibling")
+    writeFileSync(join(assetsDir, "com.mentra.foo-1.0.1.zip"), "keep")
+
+    const removed = pruneOtherZips(assetsDir, "com.mentra.foo", "com.mentra.foo-1.0.1.zip")
+    expect(removed).toEqual(["com.mentra.foo-1.0.0.zip"])
+    expect(existsSync(join(assetsDir, "com.mentra.foo-bar-2.0.0.zip"))).toBe(true)
+    expect(existsSync(join(assetsDir, "com.mentra.foo-1.0.1.zip"))).toBe(true)
   })
 })
 

@@ -32,6 +32,19 @@ if [[ "$CLEAN" -eq 1 ]]; then
   echo "Cleaned existing JPGs in $OUTPUT_DIR"
 fi
 
+# Prefer earlier roots (asg_media) over later legacy roots on name collision.
+# Also avoids clobbering when two trees share the same parent basename.
+copy_photo() {
+  local src="$1"
+  local dest="$2"
+  if [[ -e "$dest" ]]; then
+    echo "Skip (already present): $(basename "$dest")"
+    return 1
+  fi
+  cp "$src" "$dest"
+  return 0
+}
+
 TOTAL=0
 for ROOT in "${MEDIA_ROOTS[@]}"; do
   ROOT_COUNT=0
@@ -51,13 +64,24 @@ for ROOT in "${MEDIA_ROOTS[@]}"; do
   # Flatten capture packages: **/IMG_*/base.jpg → {capture_id}.jpg
   # Also pick up any other base.jpg (legacy layouts).
   while IFS= read -r -d '' base; do
-    parent="$(basename "$(dirname "$base")")"
-    capture_id="$parent"
+    capture_id="$(basename "$(dirname "$base")")"
     dest="${OUTPUT_DIR}/${capture_id}.jpg"
-    cp "$base" "$dest"
-    ROOT_COUNT=$((ROOT_COUNT + 1))
-    TOTAL=$((TOTAL + 1))
+    if copy_photo "$base" "$dest"; then
+      ROOT_COUNT=$((ROOT_COUNT + 1))
+      TOTAL=$((TOTAL + 1))
+    fi
   done < <(find "$TMP/root" -type f -name 'base.jpg' -print0 2>/dev/null || true)
+
+  # Loose flat captures (IMG_*.jpg) that are not package base.jpg files.
+  while IFS= read -r -d '' jpg; do
+    dest="${OUTPUT_DIR}/$(basename "$jpg")"
+    if copy_photo "$jpg" "$dest"; then
+      ROOT_COUNT=$((ROOT_COUNT + 1))
+      TOTAL=$((TOTAL + 1))
+    fi
+  done < <(
+    find "$TMP/root" -type f \( -iname 'IMG_*.jpg' -o -iname 'IMG_*.jpeg' \) -print0 2>/dev/null || true
+  )
 
   rm -rf "$TMP"
   echo "Pulled $ROOT_COUNT photo(s) from $ROOT"
