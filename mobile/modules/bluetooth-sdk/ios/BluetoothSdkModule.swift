@@ -47,6 +47,7 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             "version_info",
             "pair_failure",
             "pairing_info",
+            "pairing_transfer_result",
             "wipe_media_result",
             "audio_pairing_needed",
             "audio_connected",
@@ -412,17 +413,37 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
         AsyncFunction("wipeMediaForPairing") {
             let sdk = await MainActor.run { self.bluetoothSdk() }
             let result = try await sdk.wipeMediaForPairing()
-            return ["success": result.success]
+            var body: [String: Any] = ["success": result.success]
+            if let requestId = result.requestId { body["request_id"] = requestId }
+            if let transferId = result.transferId { body["transfer_id"] = transferId }
+            if let error = result.error { body["error"] = error }
+            return body
         }
 
         AsyncFunction("finalizePairingTransfer") {
             let sdk = await MainActor.run { self.bluetoothSdk() }
-            sdk.finalizePairingTransfer()
+            let result = try await sdk.finalizePairingTransfer()
+            var body: [String: Any] = [
+                "transfer_id": result.transferId,
+                "operation": result.operation,
+                "success": result.success,
+            ]
+            if let state = result.state { body["state"] = state }
+            if let error = result.error { body["error"] = error }
+            return body
         }
 
         AsyncFunction("abortPairingTransfer") {
             let sdk = await MainActor.run { self.bluetoothSdk() }
-            sdk.abortPairingTransfer()
+            let result = try await sdk.abortPairingTransfer()
+            var body: [String: Any] = [
+                "transfer_id": result.transferId,
+                "operation": result.operation,
+                "success": result.success,
+            ]
+            if let state = result.state { body["state"] = state }
+            if let error = result.error { body["error"] = error }
+            return body
         }
 
         AsyncFunction("requestPhoto") { (params: [String: Any]) in

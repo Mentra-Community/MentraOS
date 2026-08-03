@@ -115,7 +115,21 @@ data class RgbLedControlResponseEvent(
 data class WipeMediaResultEvent(
     val success: Boolean,
     val values: Map<String, Any>,
-)
+) {
+    val requestId: String? get() = values["request_id"] as? String
+    val transferId: String? get() = values["transfer_id"] as? String
+    val error: String? get() = values["error"] as? String
+}
+
+data class PairingTransferResultEvent(
+    val transferId: String,
+    val operation: String,
+    val success: Boolean,
+    val values: Map<String, Any>,
+) {
+    val state: Int? get() = (values["state"] as? Number)?.toInt()
+    val error: String? get() = values["error"] as? String
+}
 
 interface MentraBluetoothSdkListener {
     fun onStateChanged(state: MentraBluetoothState) {}

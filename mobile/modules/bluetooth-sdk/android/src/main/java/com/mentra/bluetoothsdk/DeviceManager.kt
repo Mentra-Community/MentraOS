@@ -1838,16 +1838,24 @@ class DeviceManager {
         sgc?.requestVersionInfo()
     }
 
-    fun sendWipeMediaForPairing() {
-        (sgc as? MentraLive)?.sendWipeMedia()
+    fun sendWipeMediaForPairing(transferId: String? = null, requestId: String? = null) {
+        requireMentraLiveForPairing().sendWipeMedia(transferId, requestId)
     }
 
-    fun sendPairingFinalize() {
-        (sgc as? MentraLive)?.sendPairingFinalize()
+    fun requireMentraLiveForPairing(): MentraLive {
+        val live = sgc as? MentraLive
+        if (live == null) {
+            throw IllegalStateException("Pairing transfer commands require Mentra Live glasses")
+        }
+        return live
     }
 
-    fun sendPairingAbort() {
-        (sgc as? MentraLive)?.sendPairingAbort()
+    fun sendPairingFinalize(transferId: String? = null) {
+        requireMentraLiveForPairing().sendPairingFinalize(transferId)
+    }
+
+    fun sendPairingAbort(transferId: String? = null) {
+        requireMentraLiveForPairing().sendPairingAbort(transferId)
     }
 
     /** Send shutdown command to glasses. This will initiate a graceful shutdown of the device. */

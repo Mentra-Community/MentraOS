@@ -210,6 +210,8 @@ public final class MentraBluetoothSDK {
     private var pendingStreamStop: (streamId: String?, seq: Int, pending: PendingResponse<StreamStatusEvent>)?
     private var pendingGalleryStatus: PendingResponse<GalleryStatusEvent>?
     private var pendingWipeMedia: PendingResponse<WipeMediaResultEvent>?
+    private var pendingPairingTransfer: PendingResponse<PairingTransferResultEvent>?
+    private var activePairingTransferId: String?
     private var pendingOtaQuery: PendingResponse<OtaQueryResult>?
     private var pendingOtaStart: PendingResponse<OtaStartAckEvent>?
     private var pendingWifiScan: PendingWifiScan?
@@ -981,14 +983,14 @@ public final class MentraBluetoothSDK {
 
     public func wipeMediaForPairing() async throws -> WipeMediaResultEvent {
         if pendingWipeMedia != nil {
-            throw BluetoothError(
+            throw BluetoothSdkError(
                 code: "request_in_flight",
                 message: "A wipe media request is already waiting for a glasses response."
             )
         }
         let pending = PendingResponse<WipeMediaResultEvent>(operation: "wipe media for pairing")
         pendingWipeMedia = pending
-        DeviceManager.shared.sendWipeMediaForPairing()
+        DeviceManager.shared.sendWipeMediaForPairing(transferId: activePairingTransferId)
         do {
             let event = try await pending.wait()
             if pendingWipeMedia === pending {
@@ -1003,12 +1005,50 @@ public final class MentraBluetoothSDK {
         }
     }
 
-    public func finalizePairingTransfer() {
-        DeviceManager.shared.sendPairingFinalize()
+    public func finalizePairingTransfer() async throws -> PairingTransferResultEvent {
+        guard DeviceManager.shared.sgc is MentraLive else {
+            throw BluetoothSdkError(code: "unsupported_device", message: "Pairing transfer requires Mentra Live glasses")
+        }
+        if pendingPairingTransfer != nil {
+            throw BluetoothSdkError(
+                code: "request_in_flight",
+                message: "A pairing transfer command is already waiting for a glasses response."
+            )
+        }
+        let pending = PendingResponse<PairingTransferResultEvent>(operation: "finalize pairing transfer")
+        pendingPairingTransfer = pending
+        DeviceManager.shared.sendPairingFinalize(transferId: activePairingTransferId)
+        do {
+            let event = try await pending.wait()
+            if pendingPairingTransfer === pending { pendingPairingTransfer = nil }
+            return event
+        } catch {
+            if pendingPairingTransfer === pending { pendingPairingTransfer = nil }
+            throw error
+        }
     }
 
-    public func abortPairingTransfer() {
-        DeviceManager.shared.sendPairingAbort()
+    public func abortPairingTransfer() async throws -> PairingTransferResultEvent {
+        guard DeviceManager.shared.sgc is MentraLive else {
+            throw BluetoothSdkError(code: "unsupported_device", message: "Pairing transfer requires Mentra Live glasses")
+        }
+        if pendingPairingTransfer != nil {
+            throw BluetoothSdkError(
+                code: "request_in_flight",
+                message: "A pairing transfer command is already waiting for a glasses response."
+            )
+        }
+        let pending = PendingResponse<PairingTransferResultEvent>(operation: "abort pairing transfer")
+        pendingPairingTransfer = pending
+        DeviceManager.shared.sendPairingAbort(transferId: activePairingTransferId)
+        do {
+            let event = try await pending.wait()
+            if pendingPairingTransfer === pending { pendingPairingTransfer = nil }
+            return event
+        } catch {
+            if pendingPairingTransfer === pending { pendingPairingTransfer = nil }
+            throw error
+        }
     }
 
     public func startStream(_ request: StreamRequest) async throws -> StreamStatusEvent {
@@ -2139,7 +2179,12 @@ private func dispatchDiscoveredDevices(_ rawSearchResults: Any?) {
             pendingGalleryStatus?.resolve(event)
             delegate?.mentraBluetoothSDK(self, didReceive: .raw(name: "gallery_status", values: event.values))
         case "pairing_info":
+            activePairingTransferId = data["transfer_id"] as? String
             delegate?.mentraBluetoothSDK(self, didReceive: .raw(name: "pairing_info", values: data))
+        case "pairing_transfer_result":
+            let transferEvent = PairingTransferResultEvent(values: data)
+            pendingPairingTransfer?.resolve(transferEvent)
+            delegate?.mentraBluetoothSDK(self, didReceive: .raw(name: "pairing_transfer_result", values: data))
         case "wipe_media_result":
             let event = WipeMediaResultEvent(values: data)
             pendingWipeMedia?.resolve(event)

@@ -650,10 +650,28 @@ export type PairFailureEvent = {
 
 export type PairingInfoEvent = {
   had_previous_bond: boolean
+  /** 16-char uppercase hex transfer id when secure pairing is active. */
+  transfer_id?: string
+  pairing_code?: string
+  classic_bond_ready?: boolean
+  secure_pairing_capable?: boolean
+  protocol_version?: number
 }
 
 export type WipeMediaResultEvent = {
   success: boolean
+  request_id?: string
+  transfer_id?: string
+  error?: string
+}
+
+export type PairingTransferResultEvent = {
+  transfer_id: string
+  operation: "finalize" | "abort" | string
+  success: boolean
+  state?: number
+  error?: string
+  protocol_version?: number
 }
 
 export type AudioPairingNeededEvent = {
@@ -905,6 +923,7 @@ export type BluetoothSdkModuleEvents = {
   pair_failure: (event: PairFailureEvent) => void
   pairing_info: (event: PairingInfoEvent) => void
   wipe_media_result: (event: WipeMediaResultEvent) => void
+  pairing_transfer_result: (event: PairingTransferResultEvent) => void
   audio_pairing_needed: (event: AudioPairingNeededEvent) => void
   audio_connected: (event: AudioConnectedEvent) => void
   audio_disconnected: (event: AudioDisconnectedEvent) => void
@@ -1011,6 +1030,7 @@ export type BluetoothSdkEventMap = {
   pair_failure: PairFailureEvent
   pairing_info: PairingInfoEvent
   wipe_media_result: WipeMediaResultEvent
+  pairing_transfer_result: PairingTransferResultEvent
   audio_pairing_needed: AudioPairingNeededEvent
   audio_connected: AudioConnectedEvent
   audio_disconnected: AudioDisconnectedEvent
@@ -1153,8 +1173,8 @@ export interface BluetoothSdkPublicModule {
   buildAr99OtaSignature(secret: string, appName: string, currentVersion: string, serialNumber: string, nonce: string): string
 
   wipeMediaForPairing(): Promise<WipeMediaResultEvent>
-  finalizePairingTransfer(): Promise<void>
-  abortPairingTransfer(): Promise<void>
+  finalizePairingTransfer(): Promise<PairingTransferResultEvent>
+  abortPairingTransfer(): Promise<PairingTransferResultEvent>
 
   // // stt commands (MOVE TO CRUST)
   // setSttModelDetails(path: string, languageCode: string): Promise<void>
@@ -1317,6 +1337,12 @@ export interface Device {
    * appear in a later scan update when the platform reports RSSI metadata.
    */
   rssi?: number
+  /** Mentra Live: unit is currently in pairing mode (adv flag). */
+  pairingMode?: boolean
+  /** Mentra Live: four-character hex spoken pairing code when available. */
+  pairingCode?: string
+  /** Mentra Live: advertisement carries the secure-pairing capability trailer. */
+  securePairingCapable?: boolean
 }
 
 export interface ConnectOptions {

@@ -213,6 +213,13 @@ export const bluetoothSdkMock = {
   checkTtsModelAvailable: jest.fn(() => Promise.resolve(false)),
   validateTtsModel: jest.fn(() => Promise.resolve(true)),
   generateTtsAudio: jest.fn(() => Promise.resolve(true)),
+  wipeMediaForPairing: jest.fn(() => Promise.resolve({success: true})),
+  finalizePairingTransfer: jest.fn(() =>
+    Promise.resolve({success: true, transfer_id: "ABCDEF0123456789", operation: "finalize"}),
+  ),
+  abortPairingTransfer: jest.fn(() =>
+    Promise.resolve({success: true, transfer_id: "ABCDEF0123456789", operation: "abort"}),
+  ),
   onExtractionProgress: jest.fn((listener: Listener) => addListener("extraction_progress", listener).remove),
 }
 

@@ -882,7 +882,15 @@ extension MentraLive: CBCentralManagerDelegate {
             // Store the peripheral
             discoveredPeripherals[name] = peripheral
 
-            emitDiscoveredDevice(name, identifier: peripheral.identifier.uuidString, rssi: rssi?.intValue)
+            let trailer = parseSecurePairingTrailer(advertisementData)
+            emitDiscoveredDevice(
+                name,
+                identifier: peripheral.identifier.uuidString,
+                rssi: rssi?.intValue,
+                pairingMode: trailer.pairingMode || isPairingDiscoverable(advertisementData),
+                pairingCode: trailer.pairingCode,
+                securePairingCapable: trailer.secureCapable || advertisesPairingFlag(advertisementData)
+            )
 
             // Check if this is the device we want to connect to
             if let savedDeviceName = UserDefaults.standard.string(forKey: PREFS_DEVICE_NAME),
@@ -1314,6 +1322,35 @@ class MentraLive: NSObject, SGCManager {
     // returns manufacturer data prefixed with the 2-byte company id (little-endian), so verify it
     // matches before trusting the flag byte — otherwise unrelated manufacturer data would wrongly
     // hide a legacy unit.
+
+    private struct SecurePairingTrailer {
+        let pairingMode: Bool
+        let pairingCode: String?
+        let secureCapable: Bool
+    }
+
+    /// Trailer immediately after pairing flag: version | capability | code_lo | code_hi
+    private func parseSecurePairingTrailer(_ advertisementData: [String: Any]) -> SecurePairingTrailer {
+        let flagIndex = advManufCompanyIdLength + advManufPairingFlagOffset
+        guard let manufData = advertisementData[CBAdvertisementDataManufacturerDataKey] as? Data,
+              manufData.count > flagIndex
+        else {
+            return SecurePairingTrailer(pairingMode: false, pairingCode: nil, secureCapable: false)
+        }
+        let pairingMode = manufData[flagIndex] == advPairingDiscoverable
+        let trailerBase = flagIndex + 1
+        guard manufData.count >= trailerBase + 4 else {
+            return SecurePairingTrailer(pairingMode: pairingMode, pairingCode: nil, secureCapable: false)
+        }
+        let version = Int(manufData[trailerBase])
+        let capability = Int(manufData[trailerBase + 1])
+        let codeLo = Int(manufData[trailerBase + 2])
+        let codeHi = Int(manufData[trailerBase + 3])
+        let code = String(format: "%02X%02X", codeHi, codeLo)
+        let secure = version >= 1 && (capability & 0x01) != 0
+        return SecurePairingTrailer(pairingMode: pairingMode, pairingCode: code, secureCapable: secure)
+    }
+
     private func advertisesPairingFlag(_ advertisementData: [String: Any]) -> Bool {
         let flagIndex = advManufCompanyIdLength + advManufPairingFlagOffset
         guard let manufData = advertisementData[CBAdvertisementDataManufacturerDataKey] as? Data,
@@ -2654,10 +2691,31 @@ class MentraLive: NSObject, SGCManager {
             Bridge.log("LIVE: Received pong response - connection healthy")
 
         case "pairing_info":
-            Bridge.sendPairingInfo(hadPreviousBond: json["had_previous_bond"] as? Bool ?? false)
+            Bridge.sendPairingInfo(
+                hadPreviousBond: json["had_previous_bond"] as? Bool ?? false,
+                transferId: json["transfer_id"] as? String,
+                pairingCode: json["pairing_code"] as? String,
+                classicBondReady: json["classic_bond_ready"] as? Bool ?? false,
+                securePairingCapable: json["secure_pairing_capable"] as? Bool ?? true,
+                protocolVersion: json["protocol_version"] as? Int ?? 1
+            )
 
         case "wipe_media_result":
-            Bridge.sendWipeMediaResult(success: json["success"] as? Bool ?? false)
+            Bridge.sendWipeMediaResult(
+                success: json["success"] as? Bool ?? false,
+                requestId: json["request_id"] as? String,
+                transferId: json["transfer_id"] as? String,
+                error: json["error"] as? String
+            )
+
+        case "pairing_transfer_result":
+            Bridge.sendPairingTransferResult(
+                transferId: json["transfer_id"] as? String ?? "",
+                operation: json["operation"] as? String ?? "",
+                success: json["success"] as? Bool ?? false,
+                state: json["state"] as? Int,
+                error: json["error"] as? String
+            )
 
         case "imu_response", "imu_stream_response", "imu_gesture_response",
              "imu_gesture_subscribed", "imu_ack", "imu_error":
@@ -3401,16 +3459,23 @@ class MentraLive: NSObject, SGCManager {
         sendJson(json, wakeUp: true)
     }
 
-    func sendWipeMedia() {
-        sendJson(["type": "wipe_media"], wakeUp: true)
+    func sendWipeMedia(transferId: String? = nil, requestId: String? = nil) {
+        var json: [String: Any] = ["type": "wipe_media"]
+        if let transferId { json["transfer_id"] = transferId }
+        if let requestId { json["request_id"] = requestId }
+        sendJson(json, wakeUp: true)
     }
 
-    func sendPairingFinalize() {
-        sendJson(["type": "pairing_finalize"], wakeUp: true)
+    func sendPairingFinalize(transferId: String? = nil) {
+        var json: [String: Any] = ["type": "pairing_finalize"]
+        if let transferId { json["transfer_id"] = transferId }
+        sendJson(json, wakeUp: true)
     }
 
-    func sendPairingAbort() {
-        sendJson(["type": "pairing_abort"], wakeUp: true)
+    func sendPairingAbort(transferId: String? = nil) {
+        var json: [String: Any] = ["type": "pairing_abort"]
+        if let transferId { json["transfer_id"] = transferId }
+        sendJson(json, wakeUp: true)
     }
 
 
@@ -5259,8 +5324,23 @@ class MentraLive: NSObject, SGCManager {
 
     // MARK: - Event Emission
 
-    private func emitDiscoveredDevice(_ name: String, identifier: String = "", rssi: Int? = nil) {
-        Bridge.sendDiscoveredDevice("Mentra Live", name, deviceAddress: identifier, rssi: rssi)
+    private func emitDiscoveredDevice(
+        _ name: String,
+        identifier: String = "",
+        rssi: Int? = nil,
+        pairingMode: Bool? = nil,
+        pairingCode: String? = nil,
+        securePairingCapable: Bool? = nil
+    ) {
+        Bridge.sendDiscoveredDevice(
+            "Mentra Live",
+            name,
+            deviceAddress: identifier,
+            rssi: rssi,
+            pairingMode: pairingMode,
+            pairingCode: pairingCode,
+            securePairingCapable: securePairingCapable
+        )
     }
 
     private func emitStopScanEvent() {

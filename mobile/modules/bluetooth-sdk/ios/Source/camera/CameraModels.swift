@@ -866,14 +866,43 @@ public struct GalleryStatusEvent: CustomStringConvertible {
 
 public struct WipeMediaResultEvent: CustomStringConvertible {
     public let success: Bool
+    public let requestId: String?
+    public let transferId: String?
+    public let error: String?
     public let values: [String: Any]
 
     public init(values: [String: Any]) {
         self.values = values
         self.success = values["success"] as? Bool ?? false
+        self.requestId = values["request_id"] as? String
+        self.transferId = values["transfer_id"] as? String
+        self.error = values["error"] as? String
     }
 
     public var description: String {
         "WipeMediaResultEvent(success: \(success))"
     }
 }
+
+public struct PairingTransferResultEvent: CustomStringConvertible {
+    public let transferId: String
+    public let operation: String
+    public let success: Bool
+    public let state: Int?
+    public let error: String?
+    public let values: [String: Any]
+
+    public init(values: [String: Any]) {
+        self.values = values
+        self.transferId = values["transfer_id"] as? String ?? ""
+        self.operation = values["operation"] as? String ?? ""
+        self.success = values["success"] as? Bool ?? false
+        self.state = values["state"] as? Int
+        self.error = values["error"] as? String
+    }
+
+    public var description: String {
+        "PairingTransferResultEvent(op: \(operation), success: \(success))"
+    }
+}
+

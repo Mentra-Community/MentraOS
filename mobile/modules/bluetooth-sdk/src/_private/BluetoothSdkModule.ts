@@ -151,8 +151,8 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   setCameraTuningConfig(anrOn: boolean, gainOn: boolean): Promise<SettingsAckSuccessEvent>
   queryGalleryStatus(): Promise<GalleryStatusEvent>
   wipeMediaForPairing(): Promise<WipeMediaResultEvent>
-  finalizePairingTransfer(): Promise<void>
-  abortPairingTransfer(): Promise<void>
+  finalizePairingTransfer(): Promise<PairingTransferResultEvent>
+  abortPairingTransfer(): Promise<PairingTransferResultEvent>
   requestPhoto(params: PhotoRequestParams): Promise<PhotoSuccessResponseEvent>
   warmUpCamera(params: WarmUpCameraParams): Promise<CameraStatusEvent>
   stopCameraWarmUp(requestId: string): Promise<void>

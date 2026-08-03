@@ -1332,16 +1332,26 @@ struct ViewState {
         sgc?.queryGalleryStatus()
     }
 
-    func sendWipeMediaForPairing() {
-        (sgc as? MentraLive)?.sendWipeMedia()
+    func requireMentraLiveForPairing() throws -> MentraLive {
+        guard let live = sgc as? MentraLive else {
+            throw BluetoothSdkError(
+                code: "unsupported_device",
+                message: "Pairing transfer commands require Mentra Live glasses"
+            )
+        }
+        return live
     }
 
-    func sendPairingFinalize() {
-        (sgc as? MentraLive)?.sendPairingFinalize()
+    func sendWipeMediaForPairing(transferId: String? = nil, requestId: String? = nil) {
+        try? requireMentraLiveForPairing().sendWipeMedia(transferId: transferId, requestId: requestId)
     }
 
-    func sendPairingAbort() {
-        (sgc as? MentraLive)?.sendPairingAbort()
+    func sendPairingFinalize(transferId: String? = nil) {
+        try? requireMentraLiveForPairing().sendPairingFinalize(transferId: transferId)
+    }
+
+    func sendPairingAbort(transferId: String? = nil) {
+        try? requireMentraLiveForPairing().sendPairingAbort(transferId: transferId)
     }
 
     /// Send OTA start command to glasses.

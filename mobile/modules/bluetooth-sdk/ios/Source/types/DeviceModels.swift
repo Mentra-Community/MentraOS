@@ -89,6 +89,9 @@ public struct Device: Identifiable, Equatable, CustomStringConvertible {
     public let rssi: Int?
     /// Stable app-facing scan-result key. Do not parse; use typed fields instead.
     public let id: String
+    public let pairingMode: Bool?
+    public let pairingCode: String?
+    public let securePairingCapable: Bool?
 
     public init(
         model: DeviceModel,
@@ -96,7 +99,10 @@ public struct Device: Identifiable, Equatable, CustomStringConvertible {
         identifier: String? = nil,
         projectName: String? = nil,
         rssi: Int? = nil,
-        id: String? = nil
+        id: String? = nil,
+        pairingMode: Bool? = nil,
+        pairingCode: String? = nil,
+        securePairingCapable: Bool? = nil
     ) {
         self.model = model
         self.name = name
@@ -104,6 +110,9 @@ public struct Device: Identifiable, Equatable, CustomStringConvertible {
         self.projectName = projectName
         self.rssi = rssi
         self.id = id ?? identifier.flatMap { $0.isEmpty ? nil : $0 } ?? "\(model.deviceType):\(name)"
+        self.pairingMode = pairingMode
+        self.pairingCode = pairingCode
+        self.securePairingCapable = securePairingCapable
     }
 
     public var description: String {
@@ -124,6 +133,15 @@ public struct Device: Identifiable, Equatable, CustomStringConvertible {
         }
         if let rssi {
             values["rssi"] = rssi
+        }
+        if let pairingMode {
+            values["pairingMode"] = pairingMode
+        }
+        if let pairingCode, !pairingCode.isEmpty {
+            values["pairingCode"] = pairingCode
+        }
+        if let securePairingCapable {
+            values["securePairingCapable"] = securePairingCapable
         }
         return values
     }

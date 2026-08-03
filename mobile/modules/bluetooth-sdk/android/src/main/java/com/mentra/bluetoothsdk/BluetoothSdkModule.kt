@@ -356,6 +356,7 @@ class BluetoothSdkModule : Module() {
             "version_info",
             "pair_failure",
             "pairing_info",
+            "pairing_transfer_result",
             "wipe_media_result",
             "audio_pairing_needed",
             "audio_connected",
@@ -652,9 +653,27 @@ class BluetoothSdkModule : Module() {
             mapOf("success" to result.success)
         }
 
-        SdkCoroutineFunction("finalizePairingTransfer") { -> requireSdk().finalizePairingTransfer() }
+        SdkCoroutineFunction("finalizePairingTransfer") { ->
+            val result = requireSdk().finalizePairingTransfer()
+            buildMap {
+                put("transfer_id", result.transferId)
+                put("operation", result.operation)
+                put("success", result.success)
+                result.state?.let { put("state", it) }
+                result.error?.let { put("error", it) }
+            }
+        }
 
-        SdkCoroutineFunction("abortPairingTransfer") { -> requireSdk().abortPairingTransfer() }
+        SdkCoroutineFunction("abortPairingTransfer") { ->
+            val result = requireSdk().abortPairingTransfer()
+            buildMap {
+                put("transfer_id", result.transferId)
+                put("operation", result.operation)
+                put("success", result.success)
+                result.state?.let { put("state", it) }
+                result.error?.let { put("error", it) }
+            }
+        }
 
         SdkCoroutineFunction("requestPhoto") { params: Map<String, Any?> ->
             // JS may pass null for optional fields; Map<String, Any> rejects null values at the bridge.

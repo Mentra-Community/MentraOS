@@ -82,6 +82,12 @@ import org.json.JSONObject
  * Note: Mentra Live glasses have no display capabilities, only camera and microphone. All
  * display-related methods are stubbed out and will log a message but not actually display anything.
  */
+private fun jsonNullableString(json: org.json.JSONObject, key: String): String? {
+    if (!json.has(key) || json.isNull(key)) return null
+    val value = json.optString(key, "")
+    return value.takeIf { it.isNotEmpty() }
+}
+
 class MentraLive : SGCManager() {
 
     companion object {
@@ -160,6 +166,25 @@ class MentraLive : SGCManager() {
         private fun advertisesPairingFlag(result: ScanResult): Boolean {
             val manufData = result.scanRecord?.getManufacturerSpecificData(MENTRA_MANUFACTURER_ID)
             return manufData != null && manufData.size > ADV_MANUF_PAIRING_FLAG_OFFSET
+        }
+
+        /** Trailer immediately after pairing flag: version | capability | code_lo | code_hi */
+        private fun parseSecurePairingTrailer(result: ScanResult): Triple<Boolean, String?, Boolean> {
+            val manufData = result.scanRecord?.getManufacturerSpecificData(MENTRA_MANUFACTURER_ID)
+                    ?: return Triple(false, null, false)
+            val pairingMode = manufData.size > ADV_MANUF_PAIRING_FLAG_OFFSET &&
+                    manufData[ADV_MANUF_PAIRING_FLAG_OFFSET] == ADV_PAIRING_DISCOVERABLE
+            val trailerBase = ADV_MANUF_PAIRING_FLAG_OFFSET + 1
+            if (manufData.size < trailerBase + 4) {
+                return Triple(pairingMode, null, false)
+            }
+            val version = manufData[trailerBase].toInt() and 0xFF
+            val capability = manufData[trailerBase + 1].toInt() and 0xFF
+            val codeLo = manufData[trailerBase + 2].toInt() and 0xFF
+            val codeHi = manufData[trailerBase + 3].toInt() and 0xFF
+            val code = String.format("%02X%02X", codeHi, codeLo)
+            val secure = version >= 1 && (capability and 0x01) != 0
+            return Triple(pairingMode, code, secure)
         }
         private const val SHUTDOWN_RECENT_MS = 45_000L // Consider "recent shutdown" for 45s
 
@@ -1108,13 +1133,15 @@ class MentraLive : SGCManager() {
                                         " glasses device: " +
                                         deviceName
                         )
-                        // EventBus.getDefault().post(new GlassesBluetoothSearchDiscoverEvent(
-                        // smartGlassesDevice.deviceModelName, deviceName));
+                        val (pairingMode, pairingCode, secureCapable) = parseSecurePairingTrailer(result)
                         Bridge.sendDiscoveredDevice(
                                 DeviceTypes.LIVE,
                                 deviceName,
                                 deviceAddress,
-                                result.rssi
+                                result.rssi,
+                                pairingMode = pairingMode || isPairingDiscoverable(result),
+                                pairingCode = pairingCode,
+                                securePairingCapable = secureCapable || advertisesPairingFlag(result),
                         )
 
                         // If this is the specific device we want to connect to by name, connect to
@@ -3177,9 +3204,29 @@ class MentraLive : SGCManager() {
                     // Process heartbeat pong response
                     Bridge.log("LIVE: Received pong response - connection healthy")
             "pairing_info" ->
-                    Bridge.sendPairingInfo(json.optBoolean("had_previous_bond", false))
+                    Bridge.sendPairingInfo(
+                            json.optBoolean("had_previous_bond", false),
+                            jsonNullableString(json, "transfer_id"),
+                            jsonNullableString(json, "pairing_code"),
+                            json.optBoolean("classic_bond_ready", false),
+                            json.optBoolean("secure_pairing_capable", true),
+                            json.optInt("protocol_version", 1),
+                    )
             "wipe_media_result" ->
-                    Bridge.sendWipeMediaResult(json.optBoolean("success", false))
+                    Bridge.sendWipeMediaResult(
+                            json.optBoolean("success", false),
+                            jsonNullableString(json, "request_id"),
+                            jsonNullableString(json, "transfer_id"),
+                            jsonNullableString(json, "error"),
+                    )
+            "pairing_transfer_result" ->
+                    Bridge.sendPairingTransferResult(
+                            json.optString("transfer_id", ""),
+                            json.optString("operation", ""),
+                            json.optBoolean("success", false),
+                            if (json.has("state")) json.optInt("state") else null,
+                            jsonNullableString(json, "error"),
+                    )
             "imu_response",
             "imu_stream_response",
             "imu_gesture_response",
@@ -4991,30 +5038,34 @@ class MentraLive : SGCManager() {
         }
     }
 
-    fun sendWipeMedia() {
+    fun sendWipeMedia(transferId: String? = null, requestId: String? = null) {
         try {
             val json = JSONObject()
             json.put("type", "wipe_media")
+            if (transferId != null) json.put("transfer_id", transferId)
+            if (requestId != null) json.put("request_id", requestId)
             sendJson(json, true)
         } catch (e: JSONException) {
             Log.e(TAG, "Error creating wipe_media command", e)
         }
     }
 
-    fun sendPairingFinalize() {
+    fun sendPairingFinalize(transferId: String? = null) {
         try {
             val json = JSONObject()
             json.put("type", "pairing_finalize")
+            if (transferId != null) json.put("transfer_id", transferId)
             sendJson(json, true)
         } catch (e: JSONException) {
             Log.e(TAG, "Error creating pairing_finalize command", e)
         }
     }
 
-    fun sendPairingAbort() {
+    fun sendPairingAbort(transferId: String? = null) {
         try {
             val json = JSONObject()
             json.put("type", "pairing_abort")
+            if (transferId != null) json.put("transfer_id", transferId)
             sendJson(json, true)
         } catch (e: JSONException) {
             Log.e(TAG, "Error creating pairing_abort command", e)

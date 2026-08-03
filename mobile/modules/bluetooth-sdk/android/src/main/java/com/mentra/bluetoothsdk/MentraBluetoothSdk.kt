@@ -45,6 +45,8 @@ class MentraBluetoothSdk private constructor(
     private val oneShotLock = Any()
     private var pendingGalleryStatus: PendingResponse<GalleryStatusEvent>? = null
     private var pendingWipeMedia: PendingResponse<WipeMediaResultEvent>? = null
+    private var pendingPairingTransfer: PendingResponse<PairingTransferResultEvent>? = null
+    private var activePairingTransferId: String? = null
     private var pendingOtaQuery: PendingResponse<OtaQueryResult>? = null
     private var pendingOtaStart: PendingResponse<OtaStartAckEvent>? = null
     private var pendingStreamStop: PendingStreamStop? = null
@@ -947,7 +949,7 @@ class MentraBluetoothSdk private constructor(
             pendingWipeMedia = pending
         }
         try {
-            deviceManager.sendWipeMediaForPairing()
+            deviceManager.sendWipeMediaForPairing(activePairingTransferId)
             return pending.await()
         } finally {
             synchronized(oneShotLock) {
@@ -958,12 +960,52 @@ class MentraBluetoothSdk private constructor(
         }
     }
 
-    suspend fun finalizePairingTransfer() {
-        deviceManager.sendPairingFinalize()
+    suspend fun finalizePairingTransfer(): PairingTransferResultEvent {
+        val live = deviceManager.requireMentraLiveForPairing()
+        val pending = PendingResponse<PairingTransferResultEvent>("finalize pairing transfer")
+        synchronized(oneShotLock) {
+            if (pendingPairingTransfer != null) {
+                throw BluetoothSdkException(
+                    "request_in_flight",
+                    "A pairing transfer command is already waiting for a glasses response.",
+                )
+            }
+            pendingPairingTransfer = pending
+        }
+        try {
+            live.sendPairingFinalize(activePairingTransferId)
+            return pending.await()
+        } finally {
+            synchronized(oneShotLock) {
+                if (pendingPairingTransfer === pending) {
+                    pendingPairingTransfer = null
+                }
+            }
+        }
     }
 
-    suspend fun abortPairingTransfer() {
-        deviceManager.sendPairingAbort()
+    suspend fun abortPairingTransfer(): PairingTransferResultEvent {
+        val live = deviceManager.requireMentraLiveForPairing()
+        val pending = PendingResponse<PairingTransferResultEvent>("abort pairing transfer")
+        synchronized(oneShotLock) {
+            if (pendingPairingTransfer != null) {
+                throw BluetoothSdkException(
+                    "request_in_flight",
+                    "A pairing transfer command is already waiting for a glasses response.",
+                )
+            }
+            pendingPairingTransfer = pending
+        }
+        try {
+            live.sendPairingAbort(activePairingTransferId)
+            return pending.await()
+        } finally {
+            synchronized(oneShotLock) {
+                if (pendingPairingTransfer === pending) {
+                    pendingPairingTransfer = null
+                }
+            }
+        }
     }
 
     suspend fun startStream(request: StreamRequest): StreamStatusEvent =
@@ -1552,11 +1594,27 @@ class MentraBluetoothSdk private constructor(
                 }
                 dispatchToListeners { it.onGalleryStatus(event) }
             }
-            "pairing_info" -> dispatchToListeners { it.onRawEvent(eventName, data) }
+            "pairing_info" -> {
+                activePairingTransferId = data["transfer_id"] as? String
+                dispatchToListeners { it.onRawEvent(eventName, data) }
+            }
             "wipe_media_result" -> {
                 val event = WipeMediaResultEvent(data["success"] as? Boolean ?: false, data)
                 synchronized(oneShotLock) {
                     pendingWipeMedia?.resolve(event)
+                }
+                dispatchToListeners { it.onRawEvent(eventName, data) }
+            }
+            "pairing_transfer_result" -> {
+                val event =
+                        PairingTransferResultEvent(
+                                data["transfer_id"] as? String ?: "",
+                                data["operation"] as? String ?: "",
+                                data["success"] as? Boolean ?: false,
+                                data,
+                        )
+                synchronized(oneShotLock) {
+                    pendingPairingTransfer?.resolve(event)
                 }
                 dispatchToListeners { it.onRawEvent(eventName, data) }
             }
