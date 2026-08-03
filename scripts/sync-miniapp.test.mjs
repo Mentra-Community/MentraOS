@@ -162,6 +162,8 @@ describe("assertSafePackageName", () => {
   test("rejects path traversal", () => {
     expect(() => assertSafePackageName("../evil")).toThrow(/safe filename/)
     expect(() => assertSafePackageName("com/mentra")).toThrow(/safe filename/)
+    // Passes the char-class regex; must still be caught by the `..` guard.
+    expect(() => assertSafePackageName("evil..name")).toThrow(/path components/)
   })
 })
 
