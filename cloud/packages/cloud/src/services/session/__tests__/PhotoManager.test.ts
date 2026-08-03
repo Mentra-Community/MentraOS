@@ -9,7 +9,7 @@ function createMockLogger() {
   return { debug: noop, info: noop, warn: noop, error: noop, child } as any;
 }
 
-describe("PhotoManager requestPhoto exposureTimeNs", () => {
+describe("PhotoManager requestPhoto", () => {
   test("forwards exposureTimeNs to glasses when valid", async () => {
     const sent: string[] = [];
     const mockSession = {
@@ -33,6 +33,7 @@ describe("PhotoManager requestPhoto exposureTimeNs", () => {
       packageName: "com.app",
       requestId: "req-1",
       size: "medium",
+      mode: "text",
       compress: "none",
       sound: true,
       exposureTimeNs: 5_000_000,
@@ -42,6 +43,7 @@ describe("PhotoManager requestPhoto exposureTimeNs", () => {
     const body = JSON.parse(sent[0]!);
     expect(body.type).toBe(CloudToGlassesMessageType.PHOTO_REQUEST);
     expect(body.exposureTimeNs).toBe(5_000_000);
+    expect(body.mode).toBe("text");
     expect(body.flash).toBe(true);
     expect(body.sound).toBe(true);
   });
@@ -75,6 +77,35 @@ describe("PhotoManager requestPhoto exposureTimeNs", () => {
 
     const body = JSON.parse(sent[0]!);
     expect(body.type).toBe(CloudToGlassesMessageType.PHOTO_REQUEST);
+    expect(body.mode).toBe("photo");
     expect(Object.prototype.hasOwnProperty.call(body, "exposureTimeNs")).toBe(false);
+  });
+
+  test("normalizes an invalid runtime mode to photo", async () => {
+    const sent: string[] = [];
+    const mockSession = {
+      sessionId: "sess-3",
+      userId: "user-3",
+      logger: createMockLogger(),
+      websocket: {
+        readyState: WebSocketReadyState.OPEN,
+        send: (s: string) => sent.push(s),
+      },
+      deviceManager: {
+        isGlassesConnected: true,
+        getModel: () => "Simulated Glasses",
+        getDeviceState: () => ({ timestamp: new Date() }),
+      },
+      installedApps: new Map([["com.app", { publicUrl: "https://app.example" }]]),
+    };
+
+    const pm = new PhotoManager(mockSession as any);
+    await pm.requestPhoto({
+      packageName: "com.app",
+      requestId: "req-3",
+      mode: "unsupported",
+    } as any);
+
+    expect(JSON.parse(sent[0]!).mode).toBe("photo");
   });
 });

@@ -25,6 +25,7 @@ const WAVE_BARS = 56
  */
 export function useRecorder() {
   const [status, setStatus] = useState<RecorderStatus | null>(null)
+  const [stopping, setStopping] = useState(false)
   const [recordings, setRecordings] = useState<RecordingItem[]>([])
   const [usage, setUsage] = useState<Usage>(EMPTY_USAGE)
   const [playingId, setPlayingId] = useState<string | null>(null)
@@ -52,6 +53,7 @@ export function useRecorder() {
         if (!mounted.current) return
         const s = p as {
           recording: RecorderStatus | null
+          stopping?: boolean
           recordings: RecordingItem[]
           usage: Usage
           playingId: string | null
@@ -60,6 +62,7 @@ export function useRecorder() {
           transcriptLang?: string
         }
         setStatus(s.recording)
+        setStopping(s.stopping ?? false)
         setRecordings(s.recordings)
         setUsage(s.usage)
         setPlayingId(s.playingId)
@@ -81,6 +84,7 @@ export function useRecorder() {
         // A new recordingId means a fresh capture — clear carryover. Keyed off
         // the id (not ms === 0) so a same-capture status can't wipe live state.
         if (st.recordingId !== lastRecId.current) {
+          setStopping(false)
           lastRecId.current = st.recordingId
           setTranscript("")
           setTranscriptLang("")
@@ -96,8 +100,14 @@ export function useRecorder() {
       }),
     )
     offs.push(
+      on("rec:stopping", () => {
+        if (mounted.current) setStopping(true)
+      }),
+    )
+    offs.push(
       on("rec:stopped", () => {
         if (!mounted.current) return
+        setStopping(false)
         lastRecId.current = null
         setStatus(null)
         setLevels([])
@@ -164,7 +174,12 @@ export function useRecorder() {
   }, [playingId])
 
   const startRecording = useCallback(() => mentra.send("rec:start", {}), [])
-  const stopRecording = useCallback(() => mentra.send("rec:stop", {}), [])
+  const stopRecording = useCallback(() => {
+    // Give the tap immediate visual feedback; the background echoes
+    // rec:stopping for snapshots and other control surfaces.
+    setStopping(true)
+    mentra.send("rec:stop", {})
+  }, [])
   const cancelRecording = useCallback(() => mentra.send("rec:cancel", {}), [])
   const pauseRecording = useCallback(() => mentra.send("rec:pause", {}), [])
   const resumeRecording = useCallback(() => mentra.send("rec:resume", {}), [])
@@ -189,6 +204,7 @@ export function useRecorder() {
     ready,
     isRecording: status !== null,
     paused: status?.paused ?? false,
+    stopping,
     startRecording,
     stopRecording,
     cancelRecording,

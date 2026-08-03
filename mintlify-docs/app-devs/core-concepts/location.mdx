@@ -9,7 +9,7 @@ icon: "location-dot"
 
 ```typescript src/background/index.ts
 const fix = await session.location.getOnce();
-session.display.showTextWall(`${fix.lat.toFixed(4)}, ${fix.lng.toFixed(4)}`);
+session.display.render([{type: "text", id: "msg", box: {x: 0, y: 0, w: 576, h: 288}, text: `${fix.lat.toFixed(4)}, ${fix.lng.toFixed(4)}`}]);
 ```
 
 Location needs the `LOCATION` permission in your
@@ -34,7 +34,7 @@ returns an unsubscribe function.
 
 ```typescript
 const off = session.location.onUpdate((data) => {
-  session.display.showTextWall(`${data.lat}, ${data.lng}`);
+  session.display.render([{type: "text", id: "msg", box: {x: 0, y: 0, w: 576, h: 288}, text: `${data.lat}, ${data.lng}`}]);
 });
 
 off(); // stop receiving updates

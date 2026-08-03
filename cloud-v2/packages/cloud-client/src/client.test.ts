@@ -114,14 +114,13 @@ describe("CloudClient construction", () => {
     }
   });
 
-  test("falls back to subject exchange after a stored refresh token is rejected", async () => {
-    const originalFetch = globalThis.fetch;
+  test("uses the configured HTTP transport for refresh and subject exchange", async () => {
     const nowSeconds = Math.floor(Date.now() / 1000);
     const storage = memoryStorage({ "mentra.cloud-client.refreshToken": "stale-refresh" });
     const calls: string[] = [];
     let expiredCalls = 0;
 
-    globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
+    const http: NonNullable<CloudClientTransports["http"]> = async (input) => {
       const url = String(input);
       calls.push(url);
       if (url.endsWith("/api/client/auth/refresh")) {
@@ -136,51 +135,52 @@ describe("CloudClient construction", () => {
         });
       }
       throw new Error(`unexpected fetch: ${url}`);
-    }) as typeof fetch;
+    };
 
-    try {
-      const cloud = new CloudClient(
-        config({
-          endpoints: { core: "https://core.example.test", runtime: "https://runtime.example.test" },
-          auth: {
-            core: {
-              getSubjectToken: async () => ({ token: "fresh-subject", type: "supabase" }),
-            },
-            runtime: { getToken: async () => "runtime-token" },
+    const cloud = new CloudClient(
+      config({
+        endpoints: { core: "https://core.example.test", runtime: "https://runtime.example.test" },
+        auth: {
+          core: {
+            getSubjectToken: async () => ({ token: "fresh-subject", type: "supabase" }),
           },
-          storage,
-        }),
-      );
-      cloud.auth.onExpired(() => {
-        expiredCalls += 1;
-      });
+          runtime: { getToken: async () => "runtime-token" },
+        },
+        storage,
+        http,
+      }),
+    );
+    cloud.auth.onExpired(() => {
+      expiredCalls += 1;
+    });
 
-      await expect(cloud.auth.getCoreToken()).resolves.toBeDefined();
-      expect(calls).toEqual([
-        "https://core.example.test/api/client/auth/refresh",
-        "https://core.example.test/api/client/auth/exchange",
-      ]);
-      expect(expiredCalls).toBe(0);
-      expect(await storage.get("mentra.cloud-client.refreshToken")).toBe("refresh-2");
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
+    await expect(cloud.auth.getCoreToken()).resolves.toBeDefined();
+    expect(calls).toEqual([
+      "https://core.example.test/api/client/auth/refresh",
+      "https://core.example.test/api/client/auth/exchange",
+    ]);
+    expect(expiredCalls).toBe(0);
+    expect(await storage.get("mentra.cloud-client.refreshToken")).toBe("refresh-2");
   });
 });
 
 function config(
   overrides: Pick<CloudClientConfig, "endpoints" | "auth"> & {
     storage?: CloudClientTransports["storage"];
+    http?: CloudClientTransports["http"];
   },
 ): CloudClientConfig {
-  const { storage, ...clientOverrides } = overrides;
+  const { storage, http, ...clientOverrides } = overrides;
   return {
     ...clientOverrides,
-    transports: dummyTransports(storage),
+    transports: dummyTransports(storage, http),
   };
 }
 
-function dummyTransports(storage: CloudClientTransports["storage"] = memoryStorage()): CloudClientTransports {
+function dummyTransports(
+  storage: CloudClientTransports["storage"] = memoryStorage(),
+  http?: CloudClientTransports["http"],
+): CloudClientTransports {
   return {
     ws: () => dummyWs(),
     udp: () => ({
@@ -189,6 +189,7 @@ function dummyTransports(storage: CloudClientTransports["storage"] = memoryStora
       close: () => undefined,
     }),
     storage,
+    http,
   };
 }
 

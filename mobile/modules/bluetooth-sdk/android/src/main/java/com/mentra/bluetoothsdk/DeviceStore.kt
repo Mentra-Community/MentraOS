@@ -73,6 +73,10 @@ object DeviceStore {
         store.set("glasses", "caseCharging", false)
         store.set("glasses", "caseBatteryLevel", -1)
         store.set("glasses", "headUp", false)
+        store.set("glasses", "bluetoothMacAddress", "")
+        store.set("glasses", "leftMacAddress", "")
+        store.set("glasses", "rightMacAddress", "")
+        store.set("glasses", "macAddress", "")
         store.set("glasses", "serialNumber", "")
         store.set("glasses", "style", "")
         store.set("glasses", "color", "")
@@ -125,6 +129,7 @@ object DeviceStore {
         store.set("bluetooth", "contextual_dashboard", true)
         store.set("bluetooth", "gallery_mode", true)
         store.set("bluetooth", "voice_activity_detection_enabled", BluetoothSdkDefaults.VOICE_ACTIVITY_DETECTION_ENABLED)
+        store.set("bluetooth", "loudness_gate_enabled", BluetoothSdkDefaults.LOUDNESS_GATE_ENABLED)
         store.set("bluetooth", "screen_disabled", false)
         store.set("bluetooth", "button_photo_size", "max")
         store.set("bluetooth", "button_max_recording_time", 10)
@@ -268,6 +273,9 @@ object DeviceStore {
             "bluetooth" to "voice_activity_detection_enabled" -> {
                 DeviceManager.getInstance().sgc?.sendVoiceActivityDetectionSetting()
             }
+            "bluetooth" to "loudness_gate_enabled" -> {
+                DeviceManager.getInstance().sgc?.sendLoudnessGateSetting()
+            }
             "bluetooth" to "nex_lc3_audio_playback" -> {
                 (value as? Boolean)?.let { enabled ->
                     Bridge.log("DeviceStore: nex_lc3_audio_playback changed to $enabled")
@@ -292,6 +300,11 @@ object DeviceStore {
             "bluetooth" to "camera_fov" -> {
                 DeviceManager.getInstance().sgc?.sendCameraFovSetting()
             }
+            "bluetooth" to "button_video_settings" -> {
+                DeviceManager.getInstance().sgc?.sendButtonVideoRecordingSettings()
+            }
+            // Legacy scalar keys remain supported for older hosts. New code should write the
+            // canonical button_video_settings object so width/height/fps update atomically.
             "bluetooth" to "button_video_width",
             "bluetooth" to "button_video_height",
             "bluetooth" to "button_video_fps" -> {
@@ -300,12 +313,6 @@ object DeviceStore {
             "bluetooth" to "preferred_mic" -> {
                 (value as? String)?.let { mic ->
                     apply("bluetooth", "micRanking", MicMap.map[mic] ?: MicMap.map["auto"]!!)
-                    DeviceManager.getInstance().setMicState()
-                }
-            }
-            "bluetooth" to "offline_captions_running" -> {
-                (value as? Boolean)?.let { running ->
-                    Bridge.log("DeviceStore: offline_captions_running changed to $running")
                     DeviceManager.getInstance().setMicState()
                 }
             }

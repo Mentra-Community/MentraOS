@@ -13,14 +13,14 @@
  * Protocol: src/protocol/{audio,messages,envelope}.ts.
  */
 
-import { PROTOCOL_MAJOR, type Envelope } from "../../protocol/envelope";
+import { PROTOCOL_MAJOR, type Envelope } from "@mentra/cloud-protocol/envelope";
 import type {
   LanguageSource,
   TranscriptionData,
   TranscriptionSubscription,
   TranslationData,
   TranslationSubscription,
-} from "../../protocol/audio";
+} from "@mentra/cloud-protocol/audio";
 import type { TranscriptMessage } from "./workers/worker";
 
 /** The two push messages a transcript can become. */
@@ -30,13 +30,21 @@ export type StreamMessage =
 
 /** A specified language resolves to its code; an "auto" source resolves to the
  * language the provider actually detected, falling back to "auto" if it never
- * reported one. */
+ * reported one.
+ *
+ * For specific mode the subscription's code MUST win over the provider's
+ * detected language: the phone routes results to miniapp handlers by exact
+ * stream key (`transcription:<resolvedLanguage>`), and providers report bare
+ * ISO 639-1 codes ("en") while subscriptions carry BCP-47 tags ("en-US").
+ * Echoing the detected code broke every specific-language subscription —
+ * results went out keyed `transcription:en` and the `transcription:en-US`
+ * handler never fired (OS-1746). */
 function resolvedLanguage(
   source: LanguageSource,
   detected: string | undefined,
 ): { language: string; detected: boolean } {
   if (source.mode === "specific") {
-    return { language: detected ?? source.code, detected: false };
+    return { language: source.code, detected: false };
   }
   return { language: detected ?? "auto", detected: true };
 }

@@ -5,7 +5,7 @@ export type GlassesNotReadyEvent = {
 }
 
 // NOTE: unlike most events below, the native module does NOT include a `type`
-// field on the button_press payload — it sends only {buttonId, pressType,
+// field on the button_press payload 闂?it sends only {buttonId, pressType,
 // timestamp} (see BluetoothSdkModule on both iOS and Android). Consumers must
 // filter on `pressType` / the "button_press" listener name, never `event.type`.
 export type ButtonPressEvent = {
@@ -85,7 +85,7 @@ export function createDisconnectedGlassesStatus(): Partial<GlassesStatus> {
   }
 }
 
-/** K900 `sr_getvol` response (Mentra Live glasses media step volume 0–15). */
+/** K900 `sr_getvol` response (Mentra Live glasses media step volume 0闂?5). */
 export type GlassesMediaVolumeGetResult = {
   level: number
   statusCode: number
@@ -116,6 +116,16 @@ export function isConnectedWifiStatus(status: WifiStatus): status is ConnectedWi
 
 export type WifiStatusChangeEvent = WifiStatus & {
   type: "wifi_status_change"
+  /**
+   * Glasses-reported provisioning failure reason when THIS event is the verdict of a
+   * failed connect attempt; absent on routine link-state updates. An attempt property,
+   * not a link property 闂?which is why it lives on the event, not on WifiStatus:
+   * "connect_timeout" arrives on a disconnected status (never associated), while
+   * "connected_to_other_network" arrives on a *connected* status (the attempt failed
+   * and the glasses ended up on / fell back to a different SSID than requested).
+   * Requires ASG client v40+ 闂?older glasses never send it.
+   */
+  error?: string
 }
 
 export type HotspotStatus = {state: "disabled"} | {state: "enabled"; ssid: string; password: string; localIp: string}
@@ -405,6 +415,7 @@ export type SettingsAckSetting =
   | "button_video_recording"
   | "button_max_recording_time"
   | "camera_fov"
+  | "camera_fov_override"
   | "camera_tuning"
 
 export type SettingsAckEvent = {
@@ -416,6 +427,7 @@ export type SettingsAckEvent = {
   fov?: number
   roiPosition?: CameraRoiPositionValue
   hardwareApplied?: boolean
+  leaseId?: string
   active?: boolean
   size?: ButtonPhotoSize | string
   width?: number
@@ -440,12 +452,22 @@ export type SettingsAckSuccessEvent = Omit<SettingsAckEvent, "status"> & {
 export type RgbLedAction = "on" | "off"
 export type RgbLedColor = "red" | "green" | "blue" | "orange" | "white"
 export type PhotoSize = "low" | "medium" | "high" | "max"
+export type PhotoMode = "photo" | "text"
+export type PhotoTransferMethod = "auto" | "direct" | "ble"
 export type ButtonPhotoSize = "low" | "medium" | "high" | "max"
 
+/**
+ * @deprecated Sticky action-button photo presets via {@link BluetoothSdkPublicModule.setPhotoCaptureDefaults}
+ * are deprecated. Prefer per-request {@link BluetoothSdkPublicModule.requestPhoto} options
+ * (e.g. `mode: "text"` for text sensor size/crop, or explicit `aeExposureDivisor`) instead of
+ * persisting button-photo tuning on the glasses.
+ */
 export type PhotoCaptureDefaults = {
   size?: PhotoSize
-  mfnr?: boolean
+  /** ZSL preview buffering for physical camera-button photos. */
   zsl?: boolean
+  /** MFNR still capture for physical camera-button photos. */
+  mfnr?: boolean
   noiseReduction?: boolean
   edgeEnhancement?: boolean
   ispDigitalGain?: number
@@ -491,6 +513,7 @@ export const DeviceModels = {
   Z100: "Vuzix Z100",
   Frame: "Brilliant Frame",
   Nimo: "NIMO",
+  Ar99: "AR99",
   R1: "Even Realities R1",
 } as const
 
@@ -505,7 +528,7 @@ export type DashboardMenuItem = {
 
 export const CAMERA_FOV_MIN = 62
 export const CAMERA_FOV_MAX = 118
-export const CAMERA_FOV_DEFAULT = 102
+export const CAMERA_FOV_DEFAULT = CAMERA_FOV_MAX
 
 export type CameraRoiPosition = "center" | "bottom" | "top"
 export type CameraRoiPositionValue = 0 | 1 | 2
@@ -527,6 +550,13 @@ export type CameraFovResult = {
   timestamp: number
 }
 
+export type CameraFovOverrideRequest = CameraFovRequest & {
+  /** Phone-owned lease used to make delayed releases safe. */
+  leaseId: string
+  /** Safety TTL; refresh the same lease/configuration to extend without a HAL restart. */
+  ttlMs?: number
+}
+
 export type CameraFovSetting = {
   fov: number
   roiPosition: CameraRoiPositionValue
@@ -542,7 +572,11 @@ export type MicMode = "phone" | "glasses" | "bluetoothClassic" | "bluetooth"
 
 export type PhotoRequestParams = {
   requestId?: string
+  appId?: string
   size: PhotoSize
+  mode?: PhotoMode
+  /** `direct` disables BLE fallback; `ble` skips direct upload and forces phone-relayed transfer. */
+  transferMethod?: PhotoTransferMethod
   webhookUrl: string | null
   authToken: string | null
   compress: PhotoCompression
@@ -558,17 +592,26 @@ export type PhotoRequestParams = {
   /** Requested on wire; glasses may log not_implemented. */
   noiseReduction?: boolean
   edgeEnhancement?: boolean
-  mfnr?: boolean
+  /** ZSL buffering. Forced off for manual/scan stills because fixed sensor controls take priority. */
   zsl?: boolean
+  /** MFNR still capture. Forced off for manual/scan stills because fixed sensor controls take priority. */
+  mfnr?: boolean
   ispDigitalGain?: number
   ispAnalogGain?: string
 }
 
 export type WarmUpCameraParams = {
+  /** Supply this when the owner needs to call stopCameraWarmUp during teardown. */
   requestId?: string
   size: PhotoSize
+  mode?: PhotoMode
   exposureTimeNs?: number | null
+  /** Ready-state hold; defaults to 15 seconds and is capped at 60 seconds by ASG. */
   durationMs?: number
+  /** ZSL preview buffering for the warm-up session. */
+  zsl?: boolean
+  /** MFNR still capture for the warm-up session. */
+  mfnr?: boolean
 }
 
 export type StreamVideoConfig = {
@@ -697,11 +740,25 @@ export type StreamResolvedConfig = {
   }
 }
 
+/** Live encoder and device telemetry emitted periodically by supported glasses firmware. */
+export type StreamLiveStats = {
+  /** Current encoded video bitrate in bits per second. */
+  bitrate?: number
+  /** Current encode frame rate. */
+  fps?: number
+  droppedFrames?: number
+  /** Seconds since the stream started. */
+  duration?: number
+  /** Device temperature in 闂佺娅ｉ悡? if the hardware reports it. */
+  temperatureC?: number
+}
+
 type StreamStatusCommon = {
   type: "stream_status"
   streamId?: string
   timestamp?: number
   resolvedConfig?: StreamResolvedConfig
+  stats?: StreamLiveStats
 }
 
 export type StreamStatusEvent =
@@ -752,6 +809,17 @@ export type MtkUpdateCompleteEvent = {
   timestamp: number
 }
 
+/**
+ * The glasses process restarted while the BES kept the BLE link alive (its `sid`
+ * changed, or first appeared after an update from a pre-sid build). There is no
+ * physical disconnect for this — treat it as the logical reconnect edge.
+ */
+export type GlassesSessionChangedEvent = {
+  type: "glasses_session_changed"
+  previous_sid: string
+  sid: string
+}
+
 /** @deprecated Glasses no longer emit ota_progress; use {@link OtaStatusEvent} and status-store mapping. */
 export type OtaProgressEvent = {
   type: "ota_progress"
@@ -768,7 +836,6 @@ export type OtaStartAckEvent = {
   type: "ota_start_ack"
   timestamp: number
 }
-
 export type OtaStatusEvent = {
   type: "ota_status"
   session_id: string
@@ -815,6 +882,8 @@ export type BluetoothSdkModuleEvents = {
   speaking_status: (event: SpeakingStatusEvent) => void
   battery_status: (event: BatteryStatusEvent) => void
   local_transcription: (event: LocalTranscriptionEvent) => void
+  phone_notification: (event: PhoneNotificationEvent) => void
+  phone_notification_dismissed: (event: PhoneNotificationDismissedEvent) => void
   wifi_status_change: (event: WifiStatusChangeEvent) => void
   wifi_scan_result: (event: WifiScanResultEvent) => void
   hotspot_status_change: (event: HotspotStatusChangeEvent) => void
@@ -847,8 +916,10 @@ export type BluetoothSdkModuleEvents = {
   stream_status: (event: StreamStatusEvent) => void
   keep_alive_ack: (event: KeepAliveAckEvent) => void
   mtk_update_complete: (event: MtkUpdateCompleteEvent) => void
+  glasses_session_changed: (event: GlassesSessionChangedEvent) => void
   ota_start_ack: (event: OtaStartAckEvent) => void
   ota_status: (event: OtaStatusEvent) => void
+  ar99_ota_status: (event: Ar99OtaStatusEvent) => void
   version_info: (event: VersionInfoEvent) => void
   send_command_to_ble: (event: BleCommandTraceEvent) => void
   receive_command_from_ble: (event: BleCommandTraceEvent) => void
@@ -860,6 +931,33 @@ export interface ExtractionProgressEvent {
   percentage: number
   bytesRead: number
   totalBytes: number
+}
+
+export interface Ar99OtaStatusEvent {
+  type: "ar99_ota_status"
+  phase: string
+  progress: number
+  offset: number
+  total: number
+  errorMessage?: string
+  error_message?: string
+}
+
+export interface PhoneNotificationEvent {
+  notificationId: string
+  app: string
+  title: string
+  content: string
+  priority: string
+  timestamp: number
+  packageName: string
+}
+
+export interface PhoneNotificationDismissedEvent {
+  notificationId: string
+  notificationKey: string
+  packageName: string
+  timestamp: number
 }
 
 export type PublicGlassesStatus = Omit<
@@ -921,6 +1019,7 @@ export type BluetoothSdkEventMap = {
   stream_status: StreamStatusEvent
   ota_start_ack: OtaStartAckEvent
   ota_status: OtaStatusEvent
+  ar99_ota_status: Ar99OtaStatusEvent
   version_info: VersionInfoEvent
   extraction_progress: ExtractionProgressEvent
 }
@@ -972,10 +1071,20 @@ export interface BluetoothSdkPublicModule {
 
   setGalleryModeEnabled(enabled: boolean): Promise<SettingsAckSuccessEvent>
   setVoiceActivityDetectionEnabled(enabled: boolean): Promise<void>
+  setLoudnessGateEnabled(enabled: boolean): Promise<void>
+  /**
+   * @deprecated Sticky action-button photo presets are deprecated. Prefer per-request
+   * `requestPhoto(...)` options (e.g. `mode: "text"` for text sensor size/crop, or explicit per-shot
+   * fields). Still functional until removed in a future release.
+   */
   setPhotoCaptureDefaults(settings: PhotoCaptureDefaults): Promise<SettingsAckSuccessEvent>
   setVideoRecordingDefaults(settings: VideoRecordingDefaults): Promise<SettingsAckSuccessEvent>
   setMaxVideoRecordingDuration(minutes: number): Promise<SettingsAckSuccessEvent>
   setCameraFov(request: CameraFovRequest): Promise<CameraFovResult>
+  /** One-way FOV command for legacy ASG clients that do not send settings acknowledgements. */
+  setLegacyCameraFov(request: CameraFovRequest): Promise<CameraFovResult>
+  setCameraFovOverride(request: CameraFovOverrideRequest): Promise<CameraFovResult>
+  releaseCameraFovOverride(leaseId: string): Promise<SettingsAckSuccessEvent>
   /**
    * Configure camera HAL tuning (ANR / gain) on Mentra Live glasses.
    *
@@ -993,6 +1102,8 @@ export interface BluetoothSdkPublicModule {
   queryGalleryStatus(): Promise<GalleryStatusEvent>
   requestPhoto(params: PhotoRequestParams): Promise<PhotoSuccessResponseEvent>
   warmUpCamera(params: WarmUpCameraParams): Promise<CameraStatusEvent>
+  /** Release one request-owned warm-up. Opening requests reject with camera_warm_up_cancelled. */
+  stopCameraWarmUp(requestId: string): Promise<void>
   startVideoRecording(
     requestId: string,
     save: boolean,
@@ -1003,7 +1114,7 @@ export interface BluetoothSdkPublicModule {
    * Stop the active recording. When {@link webhookUrl} is provided, the glasses
    * upload the recorded video to it (multipart) using {@link authToken}. These
    * are supplied at stop time (not start) so the token is fresh when the upload
-   * runs — a recording can last arbitrarily long. An empty/omitted webhook keeps
+   * runs 闂?a recording can last arbitrarily long. An empty/omitted webhook keeps
    * the video on device (no upload).
    */
   stopVideoRecording(
@@ -1036,6 +1147,10 @@ export interface BluetoothSdkPublicModule {
   checkForOtaUpdate(): Promise<boolean>
   /** Start the OTA flow with the same configured manifest URL used by checkForOtaUpdate(). */
   startOtaUpdate(): Promise<OtaStartAckEvent>
+  startAr99OtaFromFile(path: string): Promise<boolean>
+  cancelAr99Ota(): Promise<void>
+  sendAr99FactoryReset(): Promise<void>
+  buildAr99OtaSignature(secret: string, appName: string, currentVersion: string, serialNumber: string, nonce: string): string
 
   wipeMediaForPairing(): Promise<WipeMediaResultEvent>
   finalizePairingTransfer(): Promise<void>
@@ -1101,6 +1216,9 @@ export interface OtaUpdateInfo {
   versionName: string
   updates: string[] // ["apk", "mtk", "bes"]
   totalSize: number
+  cacheReady?: boolean
+  /** True when the APK step installs an older build than the glasses currently run (exact-pin manifests only). */
+  isDowngrade?: boolean
 }
 
 export interface OtaProgress {
@@ -1185,13 +1303,15 @@ export interface Device {
   /**
    * Stable app-facing key for this scan result, within the limits of the
    * platform identifier available to the SDK. Do not parse this value; use the
-   * typed model, name, address, and rssi fields instead.
+   * typed model, name, address, projectName, and rssi fields instead.
    */
   id: string
   model: DeviceModel
   name: string
   /** Platform address/identifier when available: Android Bluetooth address, iOS CoreBluetooth identifier. */
   address?: string
+  /** Optional AR99 project discriminator. Supported value: AR99. */
+  projectName?: string
   /**
    * Optional scan signal strength. It may be undefined at first discovery and
    * appear in a later scan update when the platform reports RSSI metadata.
@@ -1222,7 +1342,7 @@ export interface WifiSearchResult {
   ssid: string
   requiresPassword: boolean
   signalStrength: number
-  /** Frequency in MHz (from glasses scan). 5 GHz band is typically 5170–5825. Omitted if unknown. */
+  /** Frequency in MHz (from glasses scan). 5 GHz band is typically 5170闂?825. Omitted if unknown. */
   frequency?: number
 }
 
@@ -1275,6 +1395,7 @@ export type BluetoothSettingsUpdate = Partial<{
   twelve_hour_time: boolean
   gallery_mode: boolean
   voice_activity_detection_enabled: boolean
+  loudness_gate_enabled: boolean
   button_photo_size: ButtonPhotoSize
   button_video_settings: {width: number; height: number; fps: number}
   button_video_width: number
@@ -1286,7 +1407,6 @@ export type BluetoothSettingsUpdate = Partial<{
   should_send_lc3: boolean
   should_send_transcript: boolean
   offline_mode: boolean
-  offline_captions_running: boolean
   local_stt_fallback_active: boolean
   pending_wearable: DeviceModel | ""
   default_wearable: DeviceModel | ""

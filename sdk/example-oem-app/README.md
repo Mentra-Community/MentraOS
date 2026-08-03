@@ -1,20 +1,22 @@
 # Example OEM App
 
-A minimal Expo app that demonstrates consuming the **`@mentra/island`** SDK —
+A minimal Expo app that demonstrates consuming the **`@mentra/engine`** SDK —
 the on-device miniapp registry and runtime — the way an OEM integrator would.
 
 The screen exposes the core miniapp controls:
 
 - **Start miniapp** — launches the first registered app (`useStart`).
 - **Stop miniapp** — stops the running miniapp (`useStop`).
-- **List running miniapps** — reads `miniappRunningRegistry` and the app registry.
+- **List running miniapps** — reads `miniappRunningRegistry` (from
+  `@mentra/engine/devtools`) and the app registry.
 
 Every button routes through an on-screen console (bottom of the screen) so you
 can see each call's result or error without a Metro terminal attached.
 
-> Island depends on `@mentra/bluetooth-sdk` (its native module + Expo config
+> Engine depends on `@mentra/bluetooth-sdk` (its native module + Expo config
 > plugin), so that package is still installed and wired into the native build —
-> but the app's own code imports only `@mentra/island`.
+> but the app's own code imports only `@mentra/engine` (plus the
+> `@mentra/engine/devtools` entry for the running-list demo).
 
 ## Layout
 
@@ -22,13 +24,13 @@ can see each call's result or error without a Metro terminal attached.
 | --- | --- |
 | `App.tsx` | Single screen: state, miniapp buttons, console |
 | `src/ui.tsx` | `Section` / `ActionButton` / `StatusRow` presentational helpers |
-| `src/useLog.ts` | Tiny in-memory console hook (`run` wraps an island call) |
+| `src/useLog.ts` | Tiny in-memory console hook (`run` wraps an engine call) |
 | `app.json` | Expo config: bluetooth-sdk plugin (native module), build properties |
 | `metro.config.js` | Watches `mobile/modules` so the SDKs resolve from the monorepo |
 
 ## Running
 
-This app pulls in native code (via island's bluetooth-sdk dependency), so
+This app pulls in native code (via engine's bluetooth-sdk dependency), so
 **Expo Go cannot load it** — you need a development build on a physical phone.
 
 ```sh
@@ -38,18 +40,18 @@ bunx expo prebuild
 bunx expo run:ios       # or: bunx expo run:android
 ```
 
-The SDK is consumed straight from the monorepo (`mobile/modules/island`). If you
-edit the island source, rebuild it first — it resolves to its `build/` output,
+The SDK is consumed straight from the monorepo (`mobile/modules/engine`). If you
+edit the engine source, rebuild it first — it resolves to its `build/` output,
 not `src/`:
 
 ```sh
-cd ../../mobile/modules/island && bun run build
+cd ../../mobile/modules/engine && bun run build
 ```
 
 ## Notes
 
 - The **Start** button launches the first registered app. In a real OEM
-  integration you configure the island host (`configureIsland`,
-  `configureRuntime`) and install miniapps; this demo simply drives whatever the
+  integration you configure the engine with `engine.configure()` and install
+  miniapps; this demo simply drives whatever the
   registry already holds, so with no host wiring the registry starts empty and
   the buttons report "no miniapps registered."

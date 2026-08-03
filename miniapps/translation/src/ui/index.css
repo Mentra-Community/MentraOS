@@ -1,6 +1,10 @@
 @import url("https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@400;500;600;700&display=swap");
 @import "tailwindcss";
 
+/* Class-based dark mode: `dark:` utilities apply when `<html class="dark">` is
+   set (synced from the host color scheme by MentraProvider). */
+@custom-variant dark (&:is(.dark *));
+
 /* CSS Variables (ported verbatim from the cloud webview) */
 :root {
   --radius: 0.625rem;
@@ -49,7 +53,7 @@
   --card-foreground: oklch(0.985 0 0);
   --popover: oklch(0.205 0 0);
   --popover-foreground: oklch(0.985 0 0);
-  --primary: #2089f3;
+  --primary: #174a73;
   --primary-foreground: #ffffff;
   --secondary: oklch(0.269 0 0);
   --secondary-foreground: oklch(0.985 0 0);
@@ -138,4 +142,9 @@ select,
   /* IE and Edge */
   scrollbar-width: none;
   /* Firefox */
+}
+
+/* Dark-mode page background (light default above stays untouched). */
+.dark body {
+  background: #0b0b0d;
 }

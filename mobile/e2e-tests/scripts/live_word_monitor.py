@@ -2051,6 +2051,32 @@ class MonitorWorker:
                                 device_id=device_id,
                             )
                         continue
+                    if payload.get("event") == "cloud_v2_transcript":
+                        now_ms = int(payload.get("ts_ms") or now_ms)
+                        event_payload = {
+                            "ts_ms": now_ms,
+                            "text": str(payload.get("text") or ""),
+                            "state": str(payload.get("state") or ""),
+                            "is_final": bool(payload.get("is_final")),
+                            "resolved_language": str(payload.get("resolved_language") or ""),
+                            "language_detected": bool(payload.get("language_detected")),
+                            "utterance_id": payload.get("utterance_id"),
+                            "speaker_id": payload.get("speaker_id"),
+                            "start_ms": payload.get("start_ms"),
+                            "end_ms": payload.get("end_ms"),
+                            "duration_ms": payload.get("duration_ms"),
+                            "provider": payload.get("provider"),
+                            "confidence": payload.get("confidence"),
+                            "timestamp_ms": payload.get("timestamp_ms"),
+                            "token_count": payload.get("token_count"),
+                            "source": "logcat_cloud_v2_transcript",
+                            "device_id": device_id,
+                        }
+                        with self.state.lock:
+                            device_state = self.state.get_device(device_id)
+                            write_ndjson(device_state.output_dir / "logcat_events.ndjson", event_payload)
+                            self.state.append_event("cloud_v2_transcript", event_payload, device_id=device_id)
+                        continue
                     if payload.get("event") != "display_store_update":
                         continue
                     if not self.should_accept_display_payload(payload):

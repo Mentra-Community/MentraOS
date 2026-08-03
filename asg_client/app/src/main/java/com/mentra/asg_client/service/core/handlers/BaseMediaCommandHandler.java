@@ -4,6 +4,7 @@ import android.content.Context;
 import android.util.Log;
 import com.mentra.asg_client.io.file.core.FileManager;
 import com.mentra.asg_client.service.legacy.interfaces.ICommandHandler;
+import com.mentra.asg_client.utils.CaptureRequestId;
 import org.json.JSONObject;
 import java.io.File;
 import java.text.SimpleDateFormat;
@@ -127,22 +128,24 @@ public abstract class BaseMediaCommandHandler implements ICommandHandler {
     
     /**
      * Generate a capture directory with base file inside it.
-     * Creates a folder like IMG_20250302_143022_456/ with base.jpg inside.
+     * Creates a folder like IMG_20250302_143022_456_photoReq123/ with base.jpg inside.
+     * The requestId is embedded in the directory name (mirroring the video convention) so
+     * gallery-synced files can be correlated with the originating SDK request without
+     * timestamp matching.
      *
      * @param packageName The package name
      * @param prefix File prefix (e.g., "IMG_", "VID_")
      * @param extension File extension (e.g., ".jpg", ".mp4")
+     * @param requestId Request ID to embed in the directory name (may be empty)
      * @return Full file path to base file inside capture directory, or null if failed
      */
-    protected String generateCaptureFilePath(String packageName, String prefix, String extension) {
-        String timeStamp = new SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(new Date());
-        int randomSuffix = (int)(Math.random() * 1000);
-        String captureDir = prefix + timeStamp + "_" + randomSuffix;
+    protected String generateCaptureFilePath(
+            String packageName, String prefix, String extension, String requestId) {
         File packageDir = getPackageDirectory(packageName);
         if (packageDir == null) {
             return null;
         }
-        File captureDirFile = new File(packageDir, captureDir);
+        File captureDirFile = new File(packageDir, generateCaptureDirName(prefix, requestId));
         captureDirFile.mkdirs();
         String filePath = new File(captureDirFile, "base" + extension).getAbsolutePath();
         Log.d(TAG, "Generated capture file path: " + filePath);
@@ -154,23 +157,37 @@ public abstract class BaseMediaCommandHandler implements ICommandHandler {
      * subdirectory. Use this for captures the caller does NOT want saved to the gallery
      * (e.g. SDK photo requests with {@code save=false}): the file is invisible to
      * {@link FileManager#listFiles(String)} so it cannot leak into the gallery count or the
-     * Wi-Fi sync server's listing while the upload is in flight, and the existing periodic
-     * {@code cleanupOldFiles} sweep still age-cleans any orphans left by a crash.
+     * Wi-Fi sync server's listing while the upload is in flight, and the periodic
+     * {@code cleanupOldSdkPendingFiles} sweep still age-cleans any orphans left by a crash.
      */
-    protected String generateTransientCaptureFilePath(String packageName, String prefix, String extension) {
-        String timeStamp = new SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(new Date());
-        int randomSuffix = (int)(Math.random() * 1000);
-        String captureDir = prefix + timeStamp + "_" + randomSuffix;
+    protected String generateTransientCaptureFilePath(
+            String packageName, String prefix, String extension, String requestId) {
         File packageDir = getPackageDirectory(packageName);
         if (packageDir == null) {
             return null;
         }
         File pendingRoot = new File(packageDir, FileManager.SDK_PENDING_DIR_NAME);
-        File captureDirFile = new File(pendingRoot, captureDir);
+        File captureDirFile = new File(pendingRoot, generateCaptureDirName(prefix, requestId));
         captureDirFile.mkdirs();
         String filePath = new File(captureDirFile, "base" + extension).getAbsolutePath();
         Log.d(TAG, "Generated transient (sync-hidden) capture file path: " + filePath);
         return filePath;
+    }
+
+    /**
+     * Build a capture directory name: {@code <prefix><timestamp>_<rand>[_<requestId>]}.
+     * The random component keeps names unique in rapid capture; the sanitized requestId
+     * suffix ties the saved capture back to the request that produced it.
+     */
+    private String generateCaptureDirName(String prefix, String requestId) {
+        String timeStamp = new SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(new Date());
+        int randomSuffix = (int)(Math.random() * 1000);
+        String captureDir = prefix + timeStamp + "_" + randomSuffix;
+        String embeddedId = CaptureRequestId.sanitizeForDirName(requestId);
+        if (!embeddedId.isEmpty()) {
+            captureDir += "_" + embeddedId;
+        }
+        return captureDir;
     }
 
     /**
@@ -187,4 +204,4 @@ public abstract class BaseMediaCommandHandler implements ICommandHandler {
             Log.e(TAG, commandType + " command failed: " + errorMessage);
         }
     }
-} 
+}

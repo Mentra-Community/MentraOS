@@ -27,6 +27,18 @@ public class BackupStore {
     return RecoveryConstants.BACKUP_APK_PATH;
   }
 
+  /** VersionCode of the archived backup APK, or {@code -1} when unreadable. */
+  public long getBackupVersionCode() {
+    try {
+      PackageInfo archiveInfo =
+          context.getPackageManager().getPackageArchiveInfo(getBackupPath(), 0);
+      return archiveInfo == null ? -1L : getLongVersionCode(archiveInfo);
+    } catch (Exception e) {
+      Log.e(RecoveryConstants.TAG, "Failed to read backup versionCode", e);
+      return -1L;
+    }
+  }
+
   public boolean isValidBackup() {
     File backup = new File(getBackupPath());
     if (!backup.exists() || !backup.canRead() || backup.length() <= 0) {

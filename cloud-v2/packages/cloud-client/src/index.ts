@@ -8,7 +8,7 @@
  *
  * Wire/protocol types (`AudioSubscription`, `TranscriptionData`, the message
  * unions) are NOT re-exported here: a host imports those from
- * `@mentra/cloud-runtime/protocol` directly, so there is one source of truth and
+ * `@mentra/cloud-protocol` directly, so there is one source of truth and
  * the client cannot drift from what the cloud accepts.
  *
  * See docs/issues/004-cloud-client/spec.md and design.md.
@@ -54,3 +54,17 @@ export type {
   RuntimeTtsSpeakOptions,
   RuntimeTtsSpeechSource,
 } from "./modules/runtime/runtime";
+
+export type {
+  AddReportArtifactsResult,
+  ReportAttachmentInput,
+  ReportContext,
+  ReportDetails,
+  ReportKind,
+  ReportLogEntry,
+  ReportStatus,
+  ReportSystemPriority,
+  ReportTrigger,
+  SubmitReportInput,
+  SubmitReportResult,
+} from "./modules/core/core";

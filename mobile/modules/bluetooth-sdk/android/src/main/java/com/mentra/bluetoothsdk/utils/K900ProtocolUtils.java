@@ -27,9 +27,12 @@ public class K900ProtocolUtils {
     public static final byte CMD_TYPE_MUSIC = 0x33; // Music file type
     public static final byte CMD_TYPE_AUDIO = 0x34; // Audio file type
     public static final byte CMD_TYPE_DATA = 0x35; // Generic data type
+    public static final byte CMD_TYPE_BINARY_MSG = BleWireProtocol.CMD_TYPE_BINARY_MSG;
 
     // File transfer constants
-    public static final int FILE_PACK_SIZE = 400; // Max data size per packet
+    // Negotiated file protocol ceiling. Legacy/GATT transfers remain smaller; 800-byte frames are
+    // accepted only after file_payload_v2 negotiation and an open CoC channel.
+    public static final int FILE_PACK_SIZE = 800;
     public static final int LENGTH_FILE_START = 2;
     public static final int LENGTH_FILE_TYPE = 1;
     public static final int LENGTH_FILE_PACKSIZE = 2;
@@ -54,6 +57,10 @@ public class K900ProtocolUtils {
      * @return Byte array with packed data according to protocol format
      */
     public static byte[] packJsonCommand(String jsonData) {
+        return packJsonCommand(jsonData, K900LengthCodec.Endian.BE);
+    }
+
+    public static byte[] packJsonCommand(String jsonData, K900LengthCodec.Endian endian) {
         if (jsonData == null) {
             return null;
         }
@@ -68,7 +75,7 @@ public class K900ProtocolUtils {
 
             // Then pack with BES2700 protocol format
             byte[] jsonBytes = wrappedJson.getBytes(StandardCharsets.UTF_8);
-            return packDataCommand(jsonBytes, CMD_TYPE_STRING);
+            return packDataCommand(jsonBytes, CMD_TYPE_STRING, endian);
 
         } catch (JSONException e) {
             android.util.Log.e("K900ProtocolUtils", "Error creating JSON wrapper", e);
@@ -85,6 +92,16 @@ public class K900ProtocolUtils {
      * @return Byte array with packed data according to protocol format
      */
     public static byte[] packDataCommand(byte[] data, byte cmdType) {
+        // Default to legacy big-endian until wire_caps negotiates little-endian.
+        return packDataCommand(data, cmdType, K900LengthCodec.Endian.BE);
+    }
+
+    /**
+     * Pack raw byte data with K900 BES2700 protocol format, writing the 2-byte length field with an
+     * explicit endianness. Use the negotiated per-link endianness so both legacy big-endian and
+     * wire-v2 little-endian peers can parse the frame.
+     */
+    public static byte[] packDataCommand(byte[] data, byte cmdType, K900LengthCodec.Endian endian) {
         if (data == null) {
             return null;
         }
@@ -101,13 +118,8 @@ public class K900ProtocolUtils {
         // Command type
         result[2] = cmdType;
 
-        // Length (2 bytes, big-endian)
-        result[3] = (byte)((dataLength >> 8) & 0xFF); // MSB first
-        result[4] = (byte)(dataLength & 0xFF);        // LSB second
-
-        // Original little-endian implementation (commented out)
-        // result[3] = (byte)(dataLength & 0xFF);        // LSB first
-        // result[4] = (byte)((dataLength >> 8) & 0xFF); // MSB second
+        // Length (2 bytes, negotiated endianness)
+        K900LengthCodec.writeLength(result, 3, dataLength, endian);
 
         // Copy the data
         System.arraycopy(data, 0, result, 5, dataLength);
@@ -129,34 +141,15 @@ public class K900ProtocolUtils {
      * @return Byte array with packed data according to protocol format
      */
     public static byte[] packDataToK900(byte[] data, byte cmdType) {
-        if (data == null) {
-            return null;
-        }
+        return packDataToK900(data, cmdType, K900LengthCodec.Endian.BE);
+    }
 
-        int dataLength = data.length;
-
-        // Command structure: ## + type + length(2 bytes) + data + $$
-        byte[] result = new byte[dataLength + 7]; // 2(start) + 1(type) + 2(length) + data + 2(end)
-
-        // Start code ##
-        result[0] = CMD_START_CODE[0]; // #
-        result[1] = CMD_START_CODE[1]; // #
-
-        // Command type
-        result[2] = cmdType;
-
-        // Length (2 bytes, little-endian for phone-to-device)
-        result[3] = (byte) (dataLength & 0xFF);        // LSB first
-        result[4] = (byte) ((dataLength >> 8) & 0xFF); // MSB second
-
-        // Copy the data
-        System.arraycopy(data, 0, result, 5, dataLength);
-
-        // End code $$
-        result[5 + dataLength] = CMD_END_CODE[0]; // $
-        result[6 + dataLength] = CMD_END_CODE[1]; // $
-
-        return result;
+    /**
+     * Pack raw byte data with K900 BES2700 protocol format for phone-to-device communication.
+     * Format: ## + command_type + length(2bytes) + data + $$
+     */
+    public static byte[] packDataToK900(byte[] data, byte cmdType, K900LengthCodec.Endian endian) {
+        return packDataCommand(data, cmdType, endian);
     }
 
     /**
@@ -168,6 +161,15 @@ public class K900ProtocolUtils {
      * @return Byte array with packed data according to protocol format
      */
     public static byte[] packJsonToK900(String jsonData, boolean wakeup) {
+        return packJsonToK900(jsonData, wakeup, K900LengthCodec.Endian.BE);
+    }
+
+    /**
+     * Pack a C-wrapped JSON string for phone-to-glasses transmission, writing the STRING frame
+     * length with the negotiated per-link endianness. Legacy big-endian glasses require BE until
+     * they advertise {@code wire_caps.k900_le}.
+     */
+    public static byte[] packJsonToK900(String jsonData, boolean wakeup, K900LengthCodec.Endian endian) {
         if (jsonData == null) {
             return null;
         }
@@ -183,9 +185,9 @@ public class K900ProtocolUtils {
             // Convert to string
             String wrappedJson = wrapper.toString();
 
-            // Then pack with BES2700 protocol format using little-endian
+            // Then pack with BES2700 protocol format using the negotiated endianness
             byte[] jsonBytes = wrappedJson.getBytes(StandardCharsets.UTF_8);
-            return packDataToK900(jsonBytes, CMD_TYPE_STRING);
+            return packDataCommand(jsonBytes, CMD_TYPE_STRING, endian);
 
         } catch (JSONException e) {
             android.util.Log.e("K900ProtocolUtils", "Error creating JSON wrapper for K900", e);
@@ -203,6 +205,14 @@ public class K900ProtocolUtils {
      * @return Formatted bytes ready for transmission
      */
     public static byte[] formatMessageForTransmission(String jsonData) {
+        return formatMessageForTransmission(jsonData, K900LengthCodec.Endian.BE);
+    }
+
+    /**
+     * Format an ASG-client JSON message for transmission, writing the STRING frame length with the
+     * negotiated per-link endianness.
+     */
+    public static byte[] formatMessageForTransmission(String jsonData, K900LengthCodec.Endian endian) {
         try {
             android.util.Log.e("K900ProtocolUtils", "🔄 Formatting message: " + jsonData);
 
@@ -218,7 +228,9 @@ public class K900ProtocolUtils {
             android.util.Log.e("K900ProtocolUtils", "🔄 After C-wrapping: " + wrappedJson);
 
             // Now format with BES2700 protocol
-            byte[] result = packDataCommand(wrappedJson.getBytes(StandardCharsets.UTF_8), CMD_TYPE_STRING);
+            byte[] result =
+                    packDataCommand(
+                            wrappedJson.getBytes(StandardCharsets.UTF_8), CMD_TYPE_STRING, endian);
 
             // Log some bytes for debugging
             StringBuilder hexDump = new StringBuilder();
@@ -233,7 +245,7 @@ public class K900ProtocolUtils {
         } catch (JSONException e) {
             android.util.Log.e("K900ProtocolUtils", "❌ Error in formatMessageForTransmission", e);
             // Fallback: if json is invalid, still try to pack it without validation
-            return packJsonCommand(jsonData);
+            return packJsonCommand(jsonData, endian);
         }
     }
 
@@ -264,9 +276,6 @@ public class K900ProtocolUtils {
             return false;
         }
 
-        Log.d("K900ProtocolUtils", "isK900ProtocolFormat: " + data[0] + " " + data[1]);
-        Log.d("K900ProtocolUtils", "CMD_START_CODE: " + CMD_START_CODE[0] + " " + CMD_START_CODE[1]);
-        
         return data[0] == CMD_START_CODE[0] && 
                data[1] == CMD_START_CODE[1];
     }
@@ -304,23 +313,45 @@ public class K900ProtocolUtils {
      * @return Raw payload data or null if format is invalid
      */
     public static byte[] extractPayload(byte[] protocolData) {
+        return extractPayload(protocolData, K900LengthCodec.Endian.BE);
+    }
+
+    /**
+     * Extract payload from a K900 STRING frame, reading the length field with an explicit
+     * endianness. Prefer {@link #extractPayloadAuto} on receive when the peer endianness is not yet
+     * negotiated.
+     */
+    public static byte[] extractPayload(byte[] protocolData, K900LengthCodec.Endian endian) {
         if (!isK900ProtocolFormat(protocolData) || protocolData.length < 7) {
             return null;
         }
 
-        // Extract length (big-endian)
-        int length = ((protocolData[3] & 0xFF) << 8) | (protocolData[4] & 0xFF);
-
-        // Original little-endian implementation (commented out)
-        // int length = (protocolData[3] & 0xFF) | ((protocolData[4] & 0xFF) << 8);
+        int length = K900LengthCodec.readLength(protocolData, 3, endian);
 
         if (length + 7 > protocolData.length) {
             return null; // Invalid length
         }
 
-        // Extract payload
         byte[] payload = new byte[length];
         System.arraycopy(protocolData, 5, payload, 0, length);
+        return payload;
+    }
+
+    /**
+     * Extract payload from a K900 STRING frame, heuristically detecting the length field's
+     * endianness. Safe RX entry point when the peer endianness is not yet negotiated (fixes the
+     * "Extracted length=9472" misframe against legacy big-endian BES firmware).
+     */
+    public static byte[] extractPayloadAuto(byte[] protocolData) {
+        if (!isK900ProtocolFormat(protocolData) || protocolData.length < 7) {
+            return null;
+        }
+        K900LengthCodec.Detected detected = K900LengthCodec.detectLength(protocolData);
+        if (detected == null) {
+            return null;
+        }
+        byte[] payload = new byte[detected.length];
+        System.arraycopy(protocolData, 5, payload, 0, detected.length);
         return payload;
     }
 
@@ -330,28 +361,9 @@ public class K900ProtocolUtils {
      * @return Raw payload data or null if format is invalid
      */
     public static byte[] extractPayloadFromK900(byte[] protocolData) {
-        if (!isK900ProtocolFormat(protocolData) || protocolData.length < 7) {
-            Log.e("K900ProtocolUtils", "extractPayloadFromK900: Not K900 format or too short. Length=" +
-                  (protocolData != null ? protocolData.length : 0));
-            return null;
-        }
-
-        // Extract length (little-endian for device-to-phone)
-        int length = (protocolData[3] & 0xFF) | ((protocolData[4] & 0xFF) << 8);
-
-        Log.d("K900ProtocolUtils", "extractPayloadFromK900: Extracted length=" + length +
-              ", message length=" + protocolData.length + ", expected total=" + (length + 7));
-
-        if (length + 7 > protocolData.length) {
-            Log.e("K900ProtocolUtils", "extractPayloadFromK900: Invalid length. Need " +
-                  (length + 7) + " bytes but have " + protocolData.length);
-            return null; // Invalid length
-        }
-
-        // Extract payload
-        byte[] payload = new byte[length];
-        System.arraycopy(protocolData, 5, payload, 0, length);
-        return payload;
+        // Retained for backward compatibility: device-to-phone frames may arrive in either
+        // endianness depending on firmware vintage, so auto-detect rather than assuming LE.
+        return extractPayloadAuto(protocolData);
     }
 
     /**
@@ -379,8 +391,13 @@ public class K900ProtocolUtils {
         // Extract the command type
         byte commandType = data[2];
 
-        // Extract the length using big-endian format (MSB first)
-        int payloadLength = ((data[3] & 0xFF) << 8) | (data[4] & 0xFF);
+        // Extract the length, auto-detecting endianness so we parse both legacy big-endian and
+        // wire-v2 little-endian frames.
+        K900LengthCodec.Detected detected = K900LengthCodec.detectLength(data);
+        int payloadLength =
+                detected != null
+                        ? detected.length
+                        : ((data[3] & 0xFF) | ((data[4] & 0xFF) << 8));
 
         android.util.Log.d("K900ProtocolUtils", "Command type: 0x" + String.format("%02X", commandType) +
                          ", Payload length: " + payloadLength);
@@ -563,6 +580,23 @@ public class K900ProtocolUtils {
         }
 
         return false;
+    }
+
+    public static boolean isBinaryFrame(byte[] data) {
+        return BleWireProtocol.isBinaryFrame(data);
+    }
+
+    public static byte[] packBinaryFragment(
+            byte flags, int msgId, int fragIdx, int fragCount, byte[] payload) {
+        return BleWireProtocol.packBinaryFragment(flags, msgId, fragIdx, fragCount, payload);
+    }
+
+    public static BleWireProtocol.BinaryFragmentInfo extractBinaryFragmentInfo(byte[] frame) {
+        return BleWireProtocol.extractBinaryFragmentInfo(frame);
+    }
+
+    public static byte[] extractBinaryPayload(byte[] frame) {
+        return BleWireProtocol.extractBinaryPayload(frame);
     }
 
     /**
@@ -757,7 +791,9 @@ public class K900ProtocolUtils {
             Log.e("K900ProtocolUtils", "File packet checksum failed. Expected: " +
                   String.format("%02X", info.verifyCode) + ", Calculated: " +
                   String.format("%02X", calculatedVerify));
-        } else {
+        } else if (info.packIndex == 0
+                || info.packIndex % 32 == 0
+                || info.packIndex == (info.fileSize + FILE_PACK_SIZE - 1) / FILE_PACK_SIZE - 1) {
             Log.d("K900ProtocolUtils", "File packet extracted successfully: index=" + info.packIndex +
                   ", size=" + info.packSize + ", fileName=" + info.fileName);
         }

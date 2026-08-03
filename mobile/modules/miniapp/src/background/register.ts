@@ -22,7 +22,11 @@
 
 import {MiniappSession, type MiniappSessionOptions} from "../session"
 
-export type MiniappInitHandler = (session: MiniappSession) => void | Promise<void>
+export type TypedMiniappSession<TChannels extends object> = MiniappSession<TChannels>
+
+export type MiniappInitHandler<TChannels extends object = Record<string, unknown>> = (
+  session: TypedMiniappSession<TChannels>,
+) => void | Promise<void>
 
 interface InitGlobals {
   __mentraInitCallback?: (sessionId: string) => void
@@ -43,17 +47,17 @@ interface InitGlobals {
  * @example
  *   registerMiniapp((session) => {
  *     session.transcription.on((tx) => {
- *       session.display.showTextWall(tx.text)
+ *       session.display.render([{type: "text", id: "tx", box, text: tx.text}])
  *     })
  *   })
  */
-export function registerMiniapp(
-  handler: MiniappInitHandler,
+export function registerMiniapp<TChannels extends object = Record<string, unknown>>(
+  handler: MiniappInitHandler<TChannels>,
   options: MiniappSessionOptions = {},
 ): void {
   const g = globalThis as unknown as InitGlobals
   g.__mentraInitCallback = (_sessionId: string) => {
-    const session = new MiniappSession(options)
+    const session = new MiniappSession<TChannels>(options)
     // Fire the user handler first so any session.* subscriptions get
     // registered before the CONNECT_ACK fan-out lands.
     try {

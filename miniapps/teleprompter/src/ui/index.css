@@ -1,12 +1,19 @@
 @import url("https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@400;500;600;700;800&display=swap");
 @import "tailwindcss";
 
+/* Class-based dark mode: `dark:` utilities apply under a `.dark` ancestor
+   (toggled on <html> from the host-reported color scheme in App.tsx). */
+@custom-variant dark (&:is(.dark *));
+
 :root {
   --radius: 0.75rem;
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
   --primary: #16a34a;
   --primary-foreground: #ffffff;
+  --primary-text: #15803d;
+  --header-from: #22c55e;
+  --header-to: #15803d;
   --border: oklch(0.922 0 0);
   --ring: oklch(0.708 0 0);
 
@@ -26,8 +33,11 @@
 .dark {
   --background: oklch(0.145 0 0);
   --foreground: oklch(0.985 0 0);
-  --primary: #22c55e;
-  --primary-foreground: #06210f;
+  --primary: #166534;
+  --primary-foreground: #ffffff;
+  --primary-text: #4ade80;
+  --header-from: #166534;
+  --header-to: #14532d;
   --border: oklch(1 0 0 / 12%);
   --ring: oklch(0.556 0 0);
 }
@@ -124,4 +134,23 @@ input[type="range"].tp-range::-moz-range-thumb {
   border: 3px solid #ffffff;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
   cursor: pointer;
+}
+
+/* ── Dark theme — additive overrides for the hardcoded light values above.
+   Light mode is untouched: these only apply under `.dark`. ─────────────── */
+
+.dark body {
+  background: #0b0b0d;
+}
+
+.dark input[type="range"].tp-range {
+  background: #3f3f46;
+}
+
+.dark input[type="range"].tp-range::-webkit-slider-thumb {
+  border-color: #18181b;
+}
+
+.dark input[type="range"].tp-range::-moz-range-thumb {
+  border-color: #18181b;
 }

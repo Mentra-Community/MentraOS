@@ -1,7 +1,7 @@
 import {AlignLeft, Gauge, Repeat, Rows3, Timer} from "lucide-react"
 
 import type {LineWidth, TeleprompterSettings} from "../../shared/types"
-import {ACCENT, ACCENT_FG} from "../lib/theme"
+import {ACCENT, ACCENT_FG, ACCENT_TEXT} from "../lib/theme"
 
 interface SettingsViewProps {
   settings: TeleprompterSettings
@@ -21,15 +21,15 @@ export function SettingsView({
   onSetShowTimecode,
 }: SettingsViewProps) {
   return (
-    <div className="h-full overflow-y-auto px-4 py-5 space-y-5 bg-zinc-100 scrollbar-hide">
+    <div className="h-full overflow-y-auto px-4 py-5 space-y-5 bg-zinc-100 dark:bg-zinc-950 scrollbar-hide">
       {/* Scrolling — AI Scroll (voice-follow) lives in the Script cockpit; this
           panel sets the timed scroll speed Play uses. */}
       <Section title="Scrolling">
         <div className="space-y-3">
           <div className="flex items-center gap-3">
-            <Gauge className="w-5 h-5 text-zinc-900" />
-            <span className="text-base font-medium text-zinc-900">Scroll speed</span>
-            <span className="ml-auto text-sm font-semibold tabular-nums" style={{color: ACCENT}}>
+            <Gauge className="w-5 h-5 text-zinc-900 dark:text-zinc-50" />
+            <span className="text-base font-medium text-zinc-900 dark:text-zinc-50">Scroll speed</span>
+            <span className="ml-auto text-sm font-semibold tabular-nums" style={{color: ACCENT_TEXT}}>
               {settings.wpm} wpm
             </span>
           </div>
@@ -43,7 +43,7 @@ export function SettingsView({
             onChange={(e) => onSetWpm(Number(e.target.value))}
             aria-label="Scroll speed in words per minute"
           />
-          <p className="text-xs text-zinc-500">
+          <p className="text-xs text-zinc-500 dark:text-zinc-400">
             {settings.voiceFollow
               ? "Used to estimate total time. Pace is set by your voice."
               : "Words per minute for timed scrolling."}
@@ -55,8 +55,8 @@ export function SettingsView({
       <Section title="Glasses display">
         <div className="space-y-3">
           <div className="flex items-center gap-3">
-            <Rows3 className="w-5 h-5 text-zinc-900" />
-            <span className="text-base font-medium text-zinc-900">Lines on screen</span>
+            <Rows3 className="w-5 h-5 text-zinc-900 dark:text-zinc-50" />
+            <span className="text-base font-medium text-zinc-900 dark:text-zinc-50">Lines on screen</span>
           </div>
           <Segmented
             options={[2, 3, 4, 5].map((n) => ({value: n, label: String(n)}))}
@@ -67,8 +67,8 @@ export function SettingsView({
         <Divider />
         <div className="space-y-3">
           <div className="flex items-center gap-3">
-            <AlignLeft className="w-5 h-5 text-zinc-900" />
-            <span className="text-base font-medium text-zinc-900">Line width</span>
+            <AlignLeft className="w-5 h-5 text-zinc-900 dark:text-zinc-50" />
+            <span className="text-base font-medium text-zinc-900 dark:text-zinc-50">Line width</span>
           </div>
           <Segmented
             options={[
@@ -109,14 +109,14 @@ export function SettingsView({
 function Section({title, children}: {title: string; children: React.ReactNode}) {
   return (
     <div className="space-y-3">
-      <h2 className="text-xs font-bold uppercase tracking-wide text-zinc-400 px-1">{title}</h2>
-      <div className="bg-white rounded-2xl p-4 shadow-sm border border-zinc-100 space-y-4">{children}</div>
+      <h2 className="text-xs font-bold uppercase tracking-wide text-zinc-400 dark:text-zinc-500 px-1">{title}</h2>
+      <div className="bg-white dark:bg-zinc-900 rounded-2xl p-4 shadow-sm border border-zinc-100 dark:border-zinc-800 space-y-4">{children}</div>
     </div>
   )
 }
 
 function Divider() {
-  return <div className="h-px bg-zinc-100 w-full" />
+  return <div className="h-px bg-zinc-100 dark:bg-zinc-800 w-full" />
 }
 
 function ToggleRow({
@@ -134,10 +134,10 @@ function ToggleRow({
 }) {
   return (
     <div className="flex items-start gap-3">
-      <span className="text-zinc-900 mt-0.5">{icon}</span>
+      <span className="text-zinc-900 dark:text-zinc-50 mt-0.5">{icon}</span>
       <div className="flex-1 min-w-0">
-        <p className="text-base font-medium text-zinc-900">{label}</p>
-        <p className="text-xs text-zinc-500 mt-0.5 leading-snug">{description}</p>
+        <p className="text-base font-medium text-zinc-900 dark:text-zinc-50">{label}</p>
+        <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 leading-snug">{description}</p>
       </div>
       <Switch checked={checked} onChange={onChange} label={label} />
     </div>
@@ -152,7 +152,7 @@ function Switch({checked, onChange, label}: {checked: boolean; onChange: (v: boo
       aria-checked={checked}
       aria-label={label}
       className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition-colors ${
-        checked ? "" : "bg-zinc-300"
+        checked ? "" : "bg-zinc-300 dark:bg-zinc-600"
       }`}
       style={checked ? {backgroundColor: ACCENT} : {}}>
       <span
@@ -182,7 +182,7 @@ function Segmented<T extends number>({
             key={opt.value}
             onClick={() => onChange(opt.value)}
             className={`py-2.5 rounded-xl text-sm font-semibold transition-colors ${
-              active ? "shadow-sm" : "bg-zinc-50 text-zinc-900 active:bg-zinc-100"
+              active ? "shadow-sm" : "bg-zinc-50 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-50 active:bg-zinc-100 dark:active:bg-zinc-700"
             }`}
             style={active ? {backgroundColor: ACCENT, color: ACCENT_FG} : {}}>
             {opt.label}

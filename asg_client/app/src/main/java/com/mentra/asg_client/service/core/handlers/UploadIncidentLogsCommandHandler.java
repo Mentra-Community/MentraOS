@@ -132,13 +132,14 @@ public class UploadIncidentLogsCommandHandler implements ICommandHandler {
                 triggerBleFallback(incidentId, "http_missing_base_url");
                 return;
             }
-            String url = baseUrl + "/api/incidents/" + incidentId + "/logs";
+            String url = buildReportArtifactsUrl(baseUrl, incidentId);
 
             JSONArray logs = GlassesLogBuffer.getRecentLogs(MAX_LOG_LINES);
 
             JSONObject body = new JSONObject();
+            body.put("type", "logs");
             body.put("source", "glasses");
-            body.put("logs", logs);
+            body.put("entries", logs);
 
             String bodyStr = body.toString();
             RequestBody requestBody = RequestBody.create(bodyStr, JSON_MEDIA_TYPE);
@@ -163,7 +164,7 @@ public class UploadIncidentLogsCommandHandler implements ICommandHandler {
                     TAG,
                     "[LOGS] Glasses logs (logcat) full request: method=POST url="
                             + url
-                            + " body.source=glasses body.logs.length="
+                            + " body.source=glasses body.entries.length="
                             + logs.length()
                             + " bodyPreview="
                             + (bodyStr.length() > bodyPreviewLen
@@ -322,9 +323,18 @@ public class UploadIncidentLogsCommandHandler implements ICommandHandler {
     private String buildGlassesLogcatJson() throws Exception {
         JSONArray logs = GlassesLogBuffer.getRecentLogs(MAX_LOG_LINES);
         JSONObject body = new JSONObject();
+        body.put("type", "logs");
         body.put("source", "glasses");
-        body.put("logs", logs);
+        body.put("entries", logs);
         return body.toString();
+    }
+
+    private static String buildReportArtifactsUrl(String baseUrl, String reportId) {
+        String trimmed = baseUrl != null ? baseUrl.trim() : "";
+        while (trimmed.endsWith("/")) {
+            trimmed = trimmed.substring(0, trimmed.length() - 1);
+        }
+        return trimmed + "/api/client/reports/" + reportId + "/artifacts";
     }
 
     private static void writeUtf8File(File file, String utf8) throws IOException {

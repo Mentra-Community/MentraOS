@@ -22,7 +22,7 @@ import org.robolectric.annotation.Config;
 public class AeCaptureCallbackTest {
 
     @Test
-    public void onCaptureCompleted_whenAeConverges_postsDelayedCapture() {
+    public void onCaptureCompleted_whenAeConvergesAndExposureStable_capturesAfterStableFrames() {
         AeStateMachine stateMachine = new AeStateMachine();
         FakeHooks hooks = new FakeHooks();
         AeCaptureCallback callback = new AeCaptureCallback(stateMachine, hooks);
@@ -32,12 +32,42 @@ public class AeCaptureCallbackTest {
         stateMachine.beginWaitingForAe();
         when(result.get(CaptureResult.CONTROL_AE_STATE))
                 .thenReturn(CaptureResult.CONTROL_AE_STATE_CONVERGED);
+        when(result.get(CaptureResult.SENSOR_SENSITIVITY)).thenReturn(400);
+        when(result.get(CaptureResult.SENSOR_EXPOSURE_TIME)).thenReturn(25_000_000L);
 
+        for (int i = 0; i < AeStateMachine.STABLE_FRAMES_REQUIRED - 1; i++) {
+            callback.onCaptureCompleted(session, request, result);
+            assertThat(hooks.captureCount).isZero();
+            assertThat(stateMachine.waitingForAeConvergence()).isTrue();
+        }
         callback.onCaptureCompleted(session, request, result);
 
         assertThat(stateMachine.waitingForAeConvergence()).isFalse();
         assertThat(hooks.captureCount).isEqualTo(1);
-        assertThat(hooks.lastDelayMs).isEqualTo(AeStateMachine.EXPOSURE_STABILIZATION_DELAY_MS);
+    }
+
+    @Test
+    public void onCaptureCompleted_whenExposureOscillates_doesNotCaptureBeforeStability() {
+        AeStateMachine stateMachine = new AeStateMachine();
+        FakeHooks hooks = new FakeHooks();
+        AeCaptureCallback callback = new AeCaptureCallback(stateMachine, hooks);
+        CameraCaptureSession session = mock(CameraCaptureSession.class);
+        CaptureRequest request = mock(CaptureRequest.class);
+        TotalCaptureResult result = mock(TotalCaptureResult.class);
+        stateMachine.beginWaitingForAe();
+        when(result.get(CaptureResult.CONTROL_AE_STATE))
+                .thenReturn(CaptureResult.CONTROL_AE_STATE_CONVERGED);
+        when(result.get(CaptureResult.SENSOR_SENSITIVITY)).thenReturn(400);
+        // Exposure swings >5% each frame — the stable streak keeps restarting.
+        when(result.get(CaptureResult.SENSOR_EXPOSURE_TIME))
+                .thenReturn(25_000_000L, 33_000_000L, 25_000_000L, 33_000_000L);
+
+        for (int i = 0; i < 4; i++) {
+            callback.onCaptureCompleted(session, request, result);
+        }
+
+        assertThat(hooks.captureCount).isZero();
+        assertThat(stateMachine.waitingForAeConvergence()).isTrue();
     }
 
     @Test

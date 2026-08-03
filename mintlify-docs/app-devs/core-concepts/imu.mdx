@@ -18,8 +18,8 @@ run it without head-position events. There is no runtime permission to request.
 
 ```typescript src/background/index.ts
 const off = session.imu.onHeadPosition(({ position }) => {
-  if (position === "up") session.display.showTextWall("Welcome back");
-  else session.display.clear();
+  if (position === "up") session.display.render([{type: "text", id: "msg", box: {x: 0, y: 0, w: 576, h: 288}, text: "Welcome back"}]);
+  else session.display.render([]);
 });
 ```
 

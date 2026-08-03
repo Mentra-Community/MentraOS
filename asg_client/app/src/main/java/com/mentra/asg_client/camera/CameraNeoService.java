@@ -19,9 +19,12 @@ import android.util.Range;
 import android.util.Rational;
 import android.util.Size;
 import android.view.Surface;
+
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.lifecycle.LifecycleService;
+
+import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.camera.lifecycle.CameraCoordinator;
 import com.mentra.asg_client.camera.lifecycle.CameraOpener;
 import com.mentra.asg_client.camera.lifecycle.CameraRecoveryHelper;
@@ -29,8 +32,9 @@ import com.mentra.asg_client.camera.lifecycle.CameraServiceNotification;
 import com.mentra.asg_client.camera.lifecycle.HandlerExecutor;
 import com.mentra.asg_client.camera.lifecycle.ImageReaderTwin;
 import com.mentra.asg_client.camera.lifecycle.PhotoSession;
-import org.json.JSONObject;
 import com.mentra.asg_client.camera.lifecycle.VideoRecordingSession;
+import com.mentra.asg_client.camera.model.CameraOperationError;
+import com.mentra.asg_client.camera.model.CapturedPhoto;
 import com.mentra.asg_client.camera.model.PhotoCaptureSettings;
 import com.mentra.asg_client.camera.model.QueuedPhotoRequest;
 import com.mentra.asg_client.camera.model.QueuedPhotoRequestQueue;
@@ -38,23 +42,33 @@ import com.mentra.asg_client.camera.policy.AeStateMachine;
 import com.mentra.asg_client.camera.policy.CameraCapabilities;
 import com.mentra.asg_client.camera.policy.FpsRangePolicy;
 import com.mentra.asg_client.camera.policy.JpegOrientationResolver;
+import com.mentra.asg_client.camera.policy.PhotoMode;
 import com.mentra.asg_client.camera.request.PreviewRequestConfigurator;
 import com.mentra.asg_client.io.hardware.core.HardwareManagerFactory;
 import com.mentra.asg_client.io.hardware.interfaces.IHardwareManager;
+import com.mentra.asg_client.io.media.utils.MediaStorage;
 import com.mentra.asg_client.sensors.ImuRecorder;
 import com.mentra.asg_client.service.system.core.SystemControllerFactory;
 import com.mentra.asg_client.settings.VideoSettings;
 import com.mentra.asg_client.utils.WakeLockManager;
+
+import org.json.JSONObject;
+
 import java.io.File;
 import java.io.IOException;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Date;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class CameraNeoService extends LifecycleService {
     private static final String TAG = "CameraNeo";
@@ -83,9 +97,6 @@ public class CameraNeoService extends LifecycleService {
     // Camera keep-alive settings
     private static final long CAMERA_KEEP_ALIVE_MS =
             3000; // Keep camera open for 3 seconds after photo
-
-    /** Default warm-up hold (ms) when {@code camera_warm_up} omits/zeros durationMs. */
-    private static final long DEFAULT_WARM_UP_MS = 15000;
 
     private IHardwareManager hardwareManager;
 
@@ -147,6 +158,9 @@ public class CameraNeoService extends LifecycleService {
             "com.augmentos.camera.EXTRA_WARM_UP_DURATION_MS";
     private static final String EXTRA_WARM_UP_EXPOSURE_NS =
             "com.augmentos.camera.EXTRA_WARM_UP_EXPOSURE_NS";
+    private static final String EXTRA_WARM_UP_MODE = "com.augmentos.camera.EXTRA_WARM_UP_MODE";
+    private static final String EXTRA_WARM_UP_ZSL = "com.augmentos.camera.EXTRA_WARM_UP_ZSL";
+    private static final String EXTRA_WARM_UP_MFNR = "com.augmentos.camera.EXTRA_WARM_UP_MFNR";
     public static final String EXTRA_VIDEO_FILE_PATH = "com.augmentos.camera.EXTRA_VIDEO_FILE_PATH";
     public static final String EXTRA_VIDEO_ID = "com.augmentos.camera.EXTRA_VIDEO_ID";
     public static final String EXTRA_VIDEO_SETTINGS = "com.augmentos.camera.EXTRA_VIDEO_SETTINGS";
@@ -162,20 +176,54 @@ public class CameraNeoService extends LifecycleService {
             onPhotoCapturing();
         }
 
+        /**
+         * Called when Camera2 reports that the sensor has started exposing the still frame. {@code
+         * estimatedExposureDurationNs} is exact for manual capture and uses the most recent
+         * preview-metered duration for auto exposure.
+         */
+        default void onPhotoExposureStarted(
+                long sensorTimestampNs, long estimatedExposureDurationNs) {}
+
+        /** Called as soon as the completed JPEG frame reaches Camera2's ImageReader. */
+        default void onPhotoFrameAvailable(long sensorTimestampNs) {}
+
+        /**
+         * Called inline when the camera pipeline detects a terminal failure, before the detailed
+         * error is dispatched asynchronously. Keep this callback lightweight.
+         */
+        default void onPhotoFailureDetected() {}
+
         default void onPhotoCaptured(String filePath) {
             onPhotoCaptured(filePath, null);
         }
 
         void onPhotoCaptured(String filePath, @Nullable JSONObject captureMetadata);
 
+        /**
+         * RAM-first result delivery. Classic file-backed callbacks keep using the two-argument
+         * overload; consumers that request deferred persistence receive the capture directly so
+         * queued callbacks cannot lose it through a process-global side channel.
+         */
+        default void onPhotoCaptured(
+                String filePath,
+                @Nullable JSONObject captureMetadata,
+                @Nullable CapturedPhoto capturedPhoto) {
+            onPhotoCaptured(filePath, captureMetadata);
+        }
+
         void onPhotoError(String errorMessage);
+
+        default void onPhotoError(CameraOperationError error) {
+            onPhotoError(error.message());
+        }
     }
 
     /** Callback for {@code camera_warm_up} lifecycle (no capture). */
     public interface CameraWarmUpCallback {
         /**
          * Warm-up accepted — the camera is spinning up. Emitted only once the request is committed
-         * (not for a busy rejection), so callers never see {@code warming} followed by {@code error}.
+         * (not for a busy rejection), so callers never see {@code warming} followed by {@code
+         * error}.
          */
         void onWarming();
 
@@ -188,6 +236,10 @@ public class CameraNeoService extends LifecycleService {
         /** Warm-up failed (open/configure failure). */
         void onCameraError(String errorMessage);
 
+        default void onCameraError(CameraOperationError error) {
+            onCameraError(error.message());
+        }
+
         /**
          * The phone-side request this warm-up belongs to, or {@code null} if none. Used to keep at
          * most one pending {@code stopped} callback per request so a re-armed warm-up doesn't send
@@ -196,6 +248,11 @@ public class CameraNeoService extends LifecycleService {
          */
         default String getRequestId() {
             return null;
+        }
+
+        /** Requested ready-state lease duration, after ASG clamping. */
+        default long getDurationMs() {
+            return AsgConstants.CAMERA_WARM_UP_DEFAULT_DURATION_MS;
         }
     }
 
@@ -208,8 +265,10 @@ public class CameraNeoService extends LifecycleService {
     /** Bound warm-up callbacks awaiting ready/error. All resolve together — one shared camera. */
     private final List<CameraWarmUpCallback> warmCallbacks = new ArrayList<>();
 
-    /** Warm-up callbacks that already received ready and should receive stopped on lease expiry. */
-    private final List<CameraWarmUpCallback> warmStoppedCallbacks = new ArrayList<>();
+    /** Ready leases keyed by phone-owned request ID. Compatible leases share one camera session. */
+    private final Map<String, WarmLease> warmLeases = new LinkedHashMap<>();
+
+    private final Set<String> warmReadyRequestIds = new HashSet<>();
 
     /**
      * Wall-clock deadline (ms) of the active {@code camera_warm_up} lease, or 0 when none. Lets a
@@ -217,6 +276,19 @@ public class CameraNeoService extends LifecycleService {
      * time instead of the short photo keep-alive. Cleared when the camera closes.
      */
     private volatile long warmLeaseDeadlineMs = 0;
+
+    private String warmLeaseMode;
+    private String openingWarmMode;
+
+    private static final class WarmLease {
+        final CameraWarmUpCallback callback;
+        final long deadlineMs;
+
+        WarmLease(CameraWarmUpCallback callback, long deadlineMs) {
+            this.callback = callback;
+            this.deadlineMs = deadlineMs;
+        }
+    }
 
     // Video recording — owned by VideoRecordingSession (Phase 2.1).
     private VideoRecordingSession videoSession;
@@ -408,16 +480,23 @@ public class CameraNeoService extends LifecycleService {
      *       enqueuePhotoRequest}) and runs without a cold ISP start, so we must NOT gate on the
      *       shot state being idle.
      *   <li>The open session won't be reconfigured for this request. A differing size, SDK flag,
-     *       or manual exposure forces a close + reopen (see {@code
+     *       manual exposure, or a request that needs preview-ZSL buffering ({@code zsl || mfnr})
+     *       the open session lacks forces a close + reopen (see {@code
      *       PhotoSession#willReuseConfiguredCamera}), which is effectively a cold start.
      * </ul>
      *
      * @param size requested photo size for the upcoming capture (nullable)
      * @param isFromSdk whether the upcoming capture is an SDK request (vs. a button photo)
      * @param exposureTimeNs requested manual exposure for the upcoming capture, or null for auto
+     * @param captureSettings per-request tuning used for resolved {@code zsl}/{@code mfnr}
+     *     (nullable / {@link PhotoCaptureSettings#EMPTY} inherits the global defaults)
      * @return true if the upcoming capture would reuse the open camera; false otherwise.
      */
-    public static boolean isCameraWarm(String size, boolean isFromSdk, Long exposureTimeNs) {
+    public static boolean isCameraWarm(
+            String size,
+            boolean isFromSdk,
+            Long exposureTimeNs,
+            @Nullable PhotoCaptureSettings captureSettings) {
         // Read the open-session state under SERVICE_LOCK — the same lock enqueuePhotoRequest()
         // holds — so this prediction is consistent with the state that request will actually see.
         // Without it, a keep-alive expiry / closeCamera() on the background thread could tear down
@@ -427,8 +506,16 @@ public class CameraNeoService extends LifecycleService {
             return sInstance != null
                     && sInstance.cameraCoordinator.hasConfiguredCamera()
                     && sInstance.photoSession.willReuseConfiguredCamera(
-                            size, isFromSdk, exposureTimeNs);
+                            size, isFromSdk, exposureTimeNs, captureSettings);
         }
+    }
+
+    /**
+     * @deprecated Prefer {@link #isCameraWarm(String, boolean, Long, PhotoCaptureSettings)}.
+     */
+    @Deprecated
+    public static boolean isCameraWarm(String size, boolean isFromSdk, Long exposureTimeNs) {
+        return isCameraWarm(size, isFromSdk, exposureTimeNs, null);
     }
 
     /**
@@ -595,6 +682,67 @@ public class CameraNeoService extends LifecycleService {
             Integer iso,
             PhotoCaptureSettings captureSettings,
             PhotoCaptureCallback callback) {
+        enqueuePhotoRequest(
+                context,
+                filePath,
+                size,
+                enableLed,
+                isFromSdk,
+                exposureTimeNs,
+                iso,
+                captureSettings,
+                false,
+                callback);
+    }
+
+    /**
+     * @param deferDiskWrite when {@code true}, {@code onPhotoCaptured} receives a {@link
+     *     CapturedPhoto} as soon as the JPEG bytes are in memory; the disk write runs in the
+     *     background. Callers that need the file MUST gate access on its persistence future. See
+     *     {@link QueuedPhotoRequest#deferDiskWrite}.
+     */
+    public static void enqueuePhotoRequest(
+            Context context,
+            String filePath,
+            String size,
+            boolean enableLed,
+            boolean isFromSdk,
+            Long exposureTimeNs,
+            Integer iso,
+            PhotoCaptureSettings captureSettings,
+            boolean deferDiskWrite,
+            PhotoCaptureCallback callback) {
+        enqueuePhotoRequest(
+                context,
+                filePath,
+                size,
+                enableLed,
+                isFromSdk,
+                exposureTimeNs,
+                iso,
+                captureSettings,
+                deferDiskWrite,
+                true,
+                callback);
+    }
+
+    /**
+     * RAM-first capture entry point.
+     *
+     * @param persistToDisk whether the in-memory JPEG should also become a durable photo artifact
+     */
+    public static void enqueuePhotoRequest(
+            Context context,
+            String filePath,
+            String size,
+            boolean enableLed,
+            boolean isFromSdk,
+            Long exposureTimeNs,
+            Integer iso,
+            PhotoCaptureSettings captureSettings,
+            boolean deferDiskWrite,
+            boolean persistToDisk,
+            PhotoCaptureCallback callback) {
         synchronized (SERVICE_LOCK) {
             // Create and queue the request immediately
             QueuedPhotoRequest request =
@@ -606,6 +754,8 @@ public class CameraNeoService extends LifecycleService {
                             exposureTimeNs,
                             iso,
                             captureSettings,
+                            deferDiskWrite,
+                            persistToDisk,
                             callback);
             QueuedPhotoRequestQueue.getInstance().offer(request);
 
@@ -617,23 +767,25 @@ public class CameraNeoService extends LifecycleService {
                             + QueuedPhotoRequestQueue.getInstance().size()
                             + " | Service active: "
                             + (sInstance != null));
-            Log.i(
-                    TAG,
-                    "SCAN_PARAMS enqueued requestId="
-                            + request.requestId
-                            + " isFromSdk="
-                            + isFromSdk
-                            + " size="
-                            + size
-                            + " exposureTimeNs="
-                            + exposureTimeNs
-                            + " iso="
-                            + iso
-                            + " captureTuning={"
-                            + (captureSettings != null
-                                    ? captureSettings.describeForLog()
-                                    : "null")
-                            + "}");
+            if (AsgConstants.ENABLE_PHOTO_TIMING_LOGS) {
+                Log.i(
+                        TAG,
+                        "SCAN_PARAMS enqueued requestId="
+                                + request.requestId
+                                + " isFromSdk="
+                                + isFromSdk
+                                + " size="
+                                + size
+                                + " exposureTimeNs="
+                                + exposureTimeNs
+                                + " iso="
+                                + iso
+                                + " captureTuning={"
+                                + (captureSettings != null
+                                        ? captureSettings.describeForLog()
+                                        : "null")
+                                + "}");
+            }
 
             // Check current service state and act accordingly
             boolean cameraReady =
@@ -666,7 +818,12 @@ public class CameraNeoService extends LifecycleService {
                 Intent intent = new Intent(context, CameraNeoService.class);
                 intent.setAction(ACTION_TAKE_PHOTO);
                 intent.putExtra("USE_GLOBAL_QUEUE", true);
-                context.startForegroundService(intent);
+                try {
+                    context.startForegroundService(intent);
+                } catch (RuntimeException e) {
+                    QueuedPhotoRequestQueue.getInstance().remove(request);
+                    throw e;
+                }
             }
         }
     }
@@ -675,14 +832,17 @@ public class CameraNeoService extends LifecycleService {
      * Warm up the camera without taking a photo: open (if needed) + configure the capture session +
      * start the preview (powering the ISP/sensor and running AE), then hold it warm for {@code
      * durationMs} under the keep-alive timer. A subsequent {@link #enqueuePhotoRequest} of the same
-     * {@code size}/{@code exposureTimeNs} reuses the configured session and captures near-instantly.
+     * {@code size}/{@code exposureTimeNs} reuses the configured session and captures
+     * near-instantly.
      *
      * <p>Re-invoking while already warm simply restarts the keep-alive (that IS "keep alive"). No
      * capture, shutter sound, or file is produced.
      *
      * @param size requested resolution tier ("low"/"medium"/"high"/"max")
      * @param exposureTimeNs optional manual shutter in nanoseconds; {@code null} = auto
-     * @param durationMs keep-alive TTL in ms; {@code <= 0} uses {@link #DEFAULT_WARM_UP_MS}
+     * @param durationMs keep-alive TTL in ms; {@code <= 0} uses the ASG default
+     * @param mode capture mode ("photo"/"text"); text mode still uses text sensor size/crop
+     *     constants on capture, but no longer injects an AE exposure divisor
      * @param callback warm-up lifecycle callback (ready / stopped / error)
      */
     public static void warmUpCamera(
@@ -690,16 +850,19 @@ public class CameraNeoService extends LifecycleService {
             String size,
             Long exposureTimeNs,
             long durationMs,
+            String mode,
+            @Nullable PhotoCaptureSettings captureSettings,
             CameraWarmUpCallback callback) {
         CameraWarmUpCallback rejectBusy = null;
+        PhotoCaptureSettings warmSettings =
+                captureSettings != null ? captureSettings : PhotoCaptureSettings.EMPTY;
         synchronized (SERVICE_LOCK) {
-            long ttl = durationMs > 0 ? durationMs : DEFAULT_WARM_UP_MS;
+            long ttl = clampWarmUpDuration(durationMs);
             boolean cameraReady =
                     sInstance != null && sInstance.cameraCoordinator.hasConfiguredCamera();
             boolean idle =
                     sInstance != null
-                            && sInstance.photoSession.shotState()
-                                    == AeStateMachine.ShotState.IDLE;
+                            && sInstance.photoSession.shotState() == AeStateMachine.ShotState.IDLE;
             boolean warmUpInFlight =
                     (sInstance != null && sInstance.photoSession.isWarmingUp())
                             || !sPendingWarmCallbacks.isEmpty();
@@ -708,25 +871,36 @@ public class CameraNeoService extends LifecycleService {
                             && idle
                             && !warmUpInFlight
                             && sInstance.photoSession.willReuseConfiguredCamera(
-                                    size, true, exposureTimeNs);
+                                    size, true, exposureTimeNs, warmSettings)
+                            && (sInstance.warmLeases.isEmpty()
+                                    || PhotoMode.normalize(mode).equals(sInstance.warmLeaseMode));
 
             if (warmReusable) {
                 // Already configured + idle for these params — just re-arm the keep-alive.
                 Log.d(TAG, "camera_warm_up: camera already warm, restarting keep-alive");
                 if (callback != null) {
-                    sInstance.addWarmStoppedCallback(callback);
+                    sInstance.addWarmLease(callback, ttl, mode);
                 }
-                sInstance.cancelKeepAliveTimer();
-                sInstance.startWarmKeepAliveTimer(ttl);
+                sInstance.armWarmLeaseTimer();
                 if (callback != null) {
                     final CameraWarmUpCallback cb = callback;
                     sInstance.executor.execute(
                             () -> {
                                 cb.onWarming();
-                                cb.onCameraReady();
+                                sInstance.deliverWarmReady(cb);
                             });
                 }
                 return;
+            }
+
+            // A different camera configuration cannot coexist with ready leases. Keep the current
+            // owners valid and let the incompatible caller retry after those leases stop.
+            if (cameraReady
+                    && idle
+                    && !warmUpInFlight
+                    && sInstance != null
+                    && !sInstance.warmLeases.isEmpty()) {
+                rejectBusy = callback;
             }
 
             // Serialize: keep a single warm-up in flight, and never start one while a capture is in
@@ -739,7 +913,7 @@ public class CameraNeoService extends LifecycleService {
                             || (sInstance != null
                                     && sInstance.photoSession.shotState()
                                             != AeStateMachine.ShotState.IDLE);
-            if (busy) {
+            if (rejectBusy != null || busy) {
                 rejectBusy = callback;
             } else {
                 sPendingWarmCallbacks.add(callback);
@@ -748,20 +922,107 @@ public class CameraNeoService extends LifecycleService {
                 intent.setAction(ACTION_WARM_UP_CAMERA);
                 intent.putExtra(EXTRA_WARM_UP_SIZE, size);
                 intent.putExtra(EXTRA_WARM_UP_DURATION_MS, ttl);
+                intent.putExtra(EXTRA_WARM_UP_MODE, mode);
                 if (exposureTimeNs != null) {
                     intent.putExtra(EXTRA_WARM_UP_EXPOSURE_NS, exposureTimeNs.longValue());
+                }
+                if (warmSettings.zsl != null) {
+                    intent.putExtra(EXTRA_WARM_UP_ZSL, warmSettings.zsl.booleanValue());
+                }
+                if (warmSettings.mfnr != null) {
+                    intent.putExtra(EXTRA_WARM_UP_MFNR, warmSettings.mfnr.booleanValue());
                 }
                 context.startForegroundService(intent);
             }
         }
         // Fire outside the lock (this sends a camera_status over BLE). Only the busy rejection is
         // settled here; an accepted warm-up emits `warming` later in performWarmUp, once
-        // PhotoSession.setupWarmUp clears its own busy check and actually starts. Emitting `warming`
+        // PhotoSession.setupWarmUp clears its own busy check and actually starts. Emitting
+        // `warming`
         // at the entry gate could race a capture that starts before setupWarmUp runs, letting the
         // phone see `warming` immediately followed by `error` (camera_busy).
         if (rejectBusy != null) {
-            rejectBusy.onCameraError("camera_busy");
+            rejectBusy.onCameraError(CameraOperationError.cameraBusy());
         }
+    }
+
+    /**
+     * Release one warm-up request. Cancelling while opening rejects the original promise with a
+     * terminal cancellation error; releasing a ready lease emits stopped and keeps compatible
+     * leases alive.
+     */
+    public static void stopCameraWarmUp(String requestId) {
+        if (requestId == null || requestId.isEmpty()) {
+            return;
+        }
+
+        CameraWarmUpCallback cancelled = null;
+        CameraWarmUpCallback stopped = null;
+        boolean cancelledOpening = false;
+        synchronized (SERVICE_LOCK) {
+            for (int i = sPendingWarmCallbacks.size() - 1; i >= 0; i--) {
+                CameraWarmUpCallback callback = sPendingWarmCallbacks.get(i);
+                if (requestId.equals(callback.getRequestId())) {
+                    cancelled = callback;
+                    cancelledOpening = true;
+                    sPendingWarmCallbacks.remove(i);
+                    break;
+                }
+            }
+
+            if (sInstance != null) {
+                if (cancelled == null) {
+                    for (int i = sInstance.warmCallbacks.size() - 1; i >= 0; i--) {
+                        CameraWarmUpCallback callback = sInstance.warmCallbacks.get(i);
+                        if (requestId.equals(callback.getRequestId())) {
+                            cancelled = callback;
+                            cancelledOpening = true;
+                            sInstance.warmCallbacks.remove(i);
+                            break;
+                        }
+                    }
+                }
+
+                WarmLease lease = sInstance.warmLeases.remove(requestId);
+                if (lease != null) {
+                    if (sInstance.warmReadyRequestIds.remove(requestId)) {
+                        stopped = lease.callback;
+                    } else {
+                        cancelled = lease.callback;
+                    }
+                    sInstance.recomputeWarmLeaseDeadline();
+                }
+
+                if (cancelledOpening && sInstance.warmCallbacks.isEmpty()) {
+                    sInstance.openingWarmMode = null;
+                    sInstance.photoSession.cancelWarmUp();
+                    sInstance.cancelKeepAliveTimer();
+                    sInstance.closeCamera();
+                    sInstance.stopSelf();
+                } else if (lease != null) {
+                    if (sInstance.warmLeases.isEmpty()) {
+                        sInstance.warmLeaseMode = null;
+                        sInstance.cancelKeepAliveTimer();
+                        sInstance.closeCamera();
+                        sInstance.stopSelf();
+                    } else {
+                        sInstance.armWarmLeaseTimer();
+                    }
+                }
+            }
+        }
+
+        if (cancelled != null) {
+            cancelled.onCameraError(CameraOperationError.warmUpCancelled());
+        }
+        if (stopped != null) {
+            stopped.onCameraStopped();
+        }
+    }
+
+    private static long clampWarmUpDuration(long durationMs) {
+        long ttl = durationMs > 0 ? durationMs : AsgConstants.CAMERA_WARM_UP_DEFAULT_DURATION_MS;
+        return Math.min(ttl, AsgConstants.CAMERA_WARM_UP_MAX_DURATION_MS);
     }
 
     /**
@@ -858,7 +1119,7 @@ public class CameraNeoService extends LifecycleService {
                                             .format(new Date());
                             String videoCaptureDir = "VID_" + timeStamp;
                             File videoCaptureDirFile =
-                                    new File(getExternalFilesDir(null), videoCaptureDir);
+                                    new File(MediaStorage.getMediaRoot(this), videoCaptureDir);
                             videoCaptureDirFile.mkdirs();
                             videoPath = new File(videoCaptureDirFile, "base.mp4").getAbsolutePath();
                         }
@@ -885,12 +1146,28 @@ public class CameraNeoService extends LifecycleService {
                     {
                         String warmSize = intent.getStringExtra(EXTRA_WARM_UP_SIZE);
                         long warmDuration =
-                                intent.getLongExtra(EXTRA_WARM_UP_DURATION_MS, DEFAULT_WARM_UP_MS);
+                                intent.getLongExtra(
+                                        EXTRA_WARM_UP_DURATION_MS,
+                                        AsgConstants.CAMERA_WARM_UP_DEFAULT_DURATION_MS);
                         Long warmExposureNs =
                                 intent.hasExtra(EXTRA_WARM_UP_EXPOSURE_NS)
                                         ? intent.getLongExtra(EXTRA_WARM_UP_EXPOSURE_NS, 0L)
                                         : null;
-                        performWarmUp(warmSize, warmExposureNs, warmDuration);
+                        String warmMode = intent.getStringExtra(EXTRA_WARM_UP_MODE);
+                        PhotoCaptureSettings.Builder warmTuning =
+                                new PhotoCaptureSettings.Builder();
+                        if (intent.hasExtra(EXTRA_WARM_UP_ZSL)) {
+                            warmTuning.zsl(intent.getBooleanExtra(EXTRA_WARM_UP_ZSL, true));
+                        }
+                        if (intent.hasExtra(EXTRA_WARM_UP_MFNR)) {
+                            warmTuning.mfnr(intent.getBooleanExtra(EXTRA_WARM_UP_MFNR, true));
+                        }
+                        performWarmUp(
+                                warmSize,
+                                warmExposureNs,
+                                warmDuration,
+                                warmMode,
+                                warmTuning.build());
                         break;
                     }
             }
@@ -908,20 +1185,39 @@ public class CameraNeoService extends LifecycleService {
      * emitted once preview is running and {@code error} on any open/configure failure. Keep-alive
      * expiry emits {@code stopped} (see {@link #startWarmKeepAliveTimer}).
      */
-    private void performWarmUp(String size, Long exposureTimeNs, long durationMs) {
-        // Bind the pending callback(s) AND drive setupWarmUp under one continuous SERVICE_LOCK hold,
+    private void performWarmUp(
+            String size,
+            Long exposureTimeNs,
+            long durationMs,
+            String mode,
+            @Nullable PhotoCaptureSettings captureSettings) {
+        // Use the request's capture settings as-is. Text mode no longer injects an AE exposure
+        // divisor; explicit aeExposureDivisor / zsl / mfnr on the request (or globals when omitted)
+        // apply the same way as take_photo.
+        PhotoCaptureSettings warmCaptureSettings =
+                captureSettings != null ? captureSettings : PhotoCaptureSettings.EMPTY;
+        // Bind the pending callback(s) AND drive setupWarmUp under one continuous SERVICE_LOCK
+        // hold,
         // so warmUpRequest is set before the lock is released. Splitting them lets a second
-        // warmUpCamera slip through the entry guard in the gap between clearing the pending list and
+        // warmUpCamera slip through the entry guard in the gap between clearing the pending list
+        // and
         // setupWarmUp setting warmUpRequest; its busy-reject (fireWarmError) would then fail the
         // first caller's callback too. setupWarmUp re-acquires SERVICE_LOCK reentrantly.
         final List<CameraWarmUpCallback> warming;
         synchronized (SERVICE_LOCK) {
             warmCallbacks.addAll(sPendingWarmCallbacks);
             sPendingWarmCallbacks.clear();
+            // The owner may have cancelled after the service intent was queued but before it was
+            // handled. Do not open an unowned camera.
+            if (warmCallbacks.isEmpty()) {
+                stopSelf();
+                return;
+            }
+            openingWarmMode = PhotoMode.normalize(mode);
             photoSession.setupWarmUp(
                     size,
                     exposureTimeNs,
-                    PhotoCaptureSettings.EMPTY,
+                    warmCaptureSettings,
                     durationMs,
                     this::fireWarmReady,
                     this::fireWarmError);
@@ -944,51 +1240,79 @@ public class CameraNeoService extends LifecycleService {
             ready = new ArrayList<>(warmCallbacks);
             warmCallbacks.clear();
             for (CameraWarmUpCallback callback : ready) {
-                addWarmStoppedCallback(callback);
+                addWarmLease(callback, callback.getDurationMs(), openingWarmMode);
             }
+            openingWarmMode = null;
+            armWarmLeaseTimer();
         }
         for (CameraWarmUpCallback callback : ready) {
-            callback.onCameraReady();
+            deliverWarmReady(callback);
         }
     }
 
     /** Fail every in-flight warm-up (open/configure failure). */
-    private void fireWarmError(String errorMessage) {
+    private void fireWarmError(CameraOperationError error) {
         final List<CameraWarmUpCallback> failed;
         synchronized (SERVICE_LOCK) {
             failed = new ArrayList<>(warmCallbacks);
             warmCallbacks.clear();
+            openingWarmMode = null;
         }
         for (CameraWarmUpCallback callback : failed) {
-            callback.onCameraError(errorMessage);
+            callback.onCameraError(error);
         }
     }
 
-    /**
-     * Register a callback to be notified when warm-up stops, keeping at most one entry per
-     * requestId. Re-arming an already-warm session (the fast path) or issuing a fresh warm-up for
-     * the same requestId would otherwise append a second callback, so notifyWarmStopped would send
-     * the phone duplicate {@code stopped} events for one request. Callbacks with no requestId can't
-     * be de-duplicated and are appended as-is. Caller must hold {@code SERVICE_LOCK}.
-     */
-    private void addWarmStoppedCallback(CameraWarmUpCallback callback) {
-        String requestId = callback.getRequestId();
-        if (requestId != null) {
-            warmStoppedCallbacks.removeIf(existing -> requestId.equals(existing.getRequestId()));
+    /** Register or refresh one ready request-owned lease. Caller holds {@code SERVICE_LOCK}. */
+    private void addWarmLease(CameraWarmUpCallback callback, long durationMs, String mode) {
+        if (warmLeases.isEmpty()) {
+            warmLeaseMode = PhotoMode.normalize(mode);
         }
-        warmStoppedCallbacks.add(callback);
+        String requestId = warmLeaseKey(callback);
+        long deadline = System.currentTimeMillis() + clampWarmUpDuration(durationMs);
+        warmReadyRequestIds.remove(requestId);
+        warmLeases.put(requestId, new WarmLease(callback, deadline));
+        recomputeWarmLeaseDeadline();
     }
 
-    /** Notify the bound warm-up callback that the camera was closed without capturing. */
-    private void notifyWarmStopped() {
-        final List<CameraWarmUpCallback> stopped;
+    /** Atomically order ready before any concurrent stop for this request. */
+    private void deliverWarmReady(CameraWarmUpCallback callback) {
         synchronized (SERVICE_LOCK) {
-            stopped = new ArrayList<>(warmStoppedCallbacks);
-            warmStoppedCallbacks.clear();
+            String requestId = warmLeaseKey(callback);
+            if (!warmLeases.containsKey(requestId)) {
+                return;
+            }
+            warmReadyRequestIds.add(requestId);
+            callback.onCameraReady();
         }
-        for (CameraWarmUpCallback callback : stopped) {
-            callback.onCameraStopped();
+    }
+
+    private static String warmLeaseKey(CameraWarmUpCallback callback) {
+        String requestId = callback.getRequestId();
+        return requestId == null || requestId.isEmpty()
+                ? "local-" + System.identityHashCode(callback)
+                : requestId;
+    }
+
+    /** Remove and return every ready lease. Caller holds {@code SERVICE_LOCK}. */
+    private List<CameraWarmUpCallback> drainWarmLeases() {
+        List<CameraWarmUpCallback> stopped = new ArrayList<>();
+        for (WarmLease lease : warmLeases.values()) {
+            stopped.add(lease.callback);
         }
+        warmLeases.clear();
+        warmReadyRequestIds.clear();
+        warmLeaseDeadlineMs = 0;
+        warmLeaseMode = null;
+        return stopped;
+    }
+
+    private void recomputeWarmLeaseDeadline() {
+        long latest = 0;
+        for (WarmLease lease : warmLeases.values()) {
+            latest = Math.max(latest, lease.deadlineMs);
+        }
+        warmLeaseDeadlineMs = latest;
     }
 
     private void setupCameraForQueuedRequest(QueuedPhotoRequest request) {
@@ -1150,10 +1474,21 @@ public class CameraNeoService extends LifecycleService {
                 // For photos, find the closest available JPEG size to our target
                 Size[] jpegSizes = CameraOpener.jpegOutputSizes(map);
                 if (jpegSizes != null) {
-                    Log.d(TAG, "AAACamera " + this.cameraId + " JPEG output sizes: " + Arrays.toString(jpegSizes));
+                    Log.d(
+                            TAG,
+                            "AAACamera "
+                                    + this.cameraId
+                                    + " JPEG output sizes: "
+                                    + Arrays.toString(jpegSizes));
                     for (Size size : jpegSizes) {
-                        Log.d(TAG, "Camera " + this.cameraId + " JPEG size: " +
-                            size.getWidth() + "x" + size.getHeight());
+                        Log.d(
+                                TAG,
+                                "Camera "
+                                        + this.cameraId
+                                        + " JPEG size: "
+                                        + size.getWidth()
+                                        + "x"
+                                        + size.getHeight());
                     }
                 }
                 if (jpegSizes == null || jpegSizes.length == 0) {
@@ -1193,8 +1528,17 @@ public class CameraNeoService extends LifecycleService {
             }
 
             Log.d(TAG, "Opening camera ID: " + this.cameraId);
-            manager.openCamera(
-                    this.cameraId, newCameraOpenStateCallback(forVideo), backgroundHandler);
+            try {
+                manager.openCamera(
+                        this.cameraId, newCameraOpenStateCallback(forVideo), backgroundHandler);
+            } catch (Exception e) {
+                // The state callback owns the permit only once the open is in flight. If
+                // openCamera throws synchronously no callback will ever fire, so release
+                // here or every later open times out and every close falls into the
+                // 5s proceed-anyway teardown.
+                cameraCoordinator.releaseOpenCloseLock();
+                throw e;
+            }
 
         } catch (CameraAccessException e) {
             // Handle camera access exceptions more specifically
@@ -1236,19 +1580,40 @@ public class CameraNeoService extends LifecycleService {
      */
     private CameraDevice.StateCallback newCameraOpenStateCallback(final boolean forVideo) {
         return new CameraDevice.StateCallback() {
+            // The in-flight open owns exactly one open/close permit, surrendered to the
+            // FIRST terminal callback. onDisconnected/onError also fire long after
+            // onOpened (HAL eviction, cable events); an unconditional release there
+            // inflated the Semaphore(1) past one permit, after which the open/close
+            // lock excluded nothing and teardown could interleave with any open — the
+            // cheap way to hit the OS-1816 crash repeatedly.
+            private final AtomicBoolean openPermitReleased = new AtomicBoolean(false);
+
+            private void releaseOpenPermitOnce() {
+                if (openPermitReleased.compareAndSet(false, true)) {
+                    cameraCoordinator.releaseOpenCloseLock();
+                }
+            }
+
             @Override
             public void onOpened(@NonNull CameraDevice camera) {
                 Log.d(TAG, "Camera device opened successfully");
-                cameraCoordinator.releaseOpenCloseLock();
                 cameraCoordinator.setDevice(camera);
 
-                createCameraSessionInternal(forVideo);
+                // Hold the open/close lock until the session surfaces have been handed to
+                // the framework: releasing it first lets closeCamera() close the
+                // ImageReaders on another thread mid-setup, abandoning the surfaces this
+                // session is about to wrap (OS-1816).
+                try {
+                    createCameraSessionInternal(forVideo);
+                } finally {
+                    releaseOpenPermitOnce();
+                }
             }
 
             @Override
             public void onDisconnected(@NonNull CameraDevice camera) {
                 Log.d(TAG, "Camera device disconnected");
-                cameraCoordinator.releaseOpenCloseLock();
+                releaseOpenPermitOnce();
                 camera.close();
                 cameraCoordinator.clearDevice();
                 if (forVideo) {
@@ -1261,15 +1626,22 @@ public class CameraNeoService extends LifecycleService {
 
             @Override
             public void onError(@NonNull CameraDevice camera, int error) {
-                Log.e(TAG, "Camera device error: " + error);
-                cameraCoordinator.releaseOpenCloseLock();
+                CameraOperationError cameraError =
+                        CameraOperationError.fromCameraDeviceError(error);
+                Log.e(
+                        TAG,
+                        "Camera open failed: "
+                                + cameraError.code()
+                                + " (Android code "
+                                + error
+                                + ")");
+                releaseOpenPermitOnce();
                 camera.close();
                 cameraCoordinator.clearDevice();
                 if (forVideo) {
-                    notifyVideoError(
-                            videoSession.currentVideoId(), "Camera device error: " + error);
+                    notifyVideoError(videoSession.currentVideoId(), cameraError.message());
                 } else {
-                    photoSession.notifyHostPhotoError("Camera device error: " + error);
+                    photoSession.notifyHostPhotoError(cameraError);
                 }
                 stopSelf();
             }
@@ -1343,7 +1715,8 @@ public class CameraNeoService extends LifecycleService {
                     sizeForMetering,
                     photoSession.previewJpegQuality(),
                     jpegOrientation,
-                    mCameraSettings);
+                    mCameraSettings,
+                    forVideo ? false : photoSession.previewZslEnabled());
 
             CameraCaptureSession.StateCallback sessionStateCallback =
                     new CameraCaptureSession.StateCallback() {
@@ -1368,11 +1741,22 @@ public class CameraNeoService extends LifecycleService {
                                 try {
                                     videoSession.startRecording(
                                             cameraCoordinator.session(), previewBuilder);
-                                } catch (CameraAccessException ce) {
+                                } catch (CameraAccessException
+                                        | IllegalArgumentException
+                                        | IllegalStateException ce) {
+                                    // IllegalArgumentException: the recorder surface was
+                                    // released by a racing teardown. IllegalStateException:
+                                    // the session was closed under us. Same crash family as
+                                    // the photo path (OS-1816). Tear down like
+                                    // onConfigureFailed does — reporting the error while
+                                    // leaving device/session/recorder alive would hold the
+                                    // camera hostage for every later open.
                                     Log.e(TAG, "Failed to start video recording", ce);
                                     notifyVideoError(
                                             videoSession.currentVideoId(),
                                             "Failed to start recording: " + ce.getMessage());
+                                    closeCamera();
+                                    conditionalStopSelf();
                                 }
                             } else {
                                 Log.d(TAG, "Camera session configured and ready");
@@ -1380,7 +1764,8 @@ public class CameraNeoService extends LifecycleService {
                                 // During a warm-up the synthetic warm request is already the active
                                 // capture; polling here would let a take_photo that raced in hijack
                                 // it and then get dropped when warm-up parks. Skip the poll while
-                                // warming — finishWarmUpReady() dispatches any queued photo after the
+                                // warming — finishWarmUpReady() dispatches any queued photo after
+                                // the
                                 // session is warm.
                                 if (!photoSession.isWarmingUp()) {
                                     photoSession.pollFirstQueuedRequestIntoCurrent();
@@ -1449,6 +1834,16 @@ public class CameraNeoService extends LifecycleService {
             if (forVideo) notifyVideoError(videoSession.currentVideoId(), "Camera illegal state");
             else photoSession.notifyHostPhotoError("Camera illegal state");
             conditionalStopSelf();
+        } catch (IllegalArgumentException e) {
+            // A teardown that raced this setup abandons the reader/recorder surfaces;
+            // OutputConfiguration and createCaptureSession then throw
+            // IllegalArgumentException ("Surface was abandoned"). Fail the request
+            // instead of crashing the process (OS-1816).
+            Log.e(TAG, "Camera surface no longer valid in createCameraSessionInternal", e);
+            if (forVideo)
+                notifyVideoError(videoSession.currentVideoId(), "Camera surface no longer valid");
+            else photoSession.notifyHostPhotoError("Camera surface no longer valid");
+            conditionalStopSelf();
         }
     }
 
@@ -1487,8 +1882,7 @@ public class CameraNeoService extends LifecycleService {
             sPendingWarmCallbacks.clear();
             warmErrors.addAll(warmCallbacks);
             warmCallbacks.clear();
-            warmStops.addAll(warmStoppedCallbacks);
-            warmStoppedCallbacks.clear();
+            warmStops.addAll(drainWarmLeases());
         }
         for (CameraWarmUpCallback callback : warmErrors) {
             callback.onCameraError("Camera service terminated unexpectedly");
@@ -1570,41 +1964,92 @@ public class CameraNeoService extends LifecycleService {
      * the camera out from under an in-flight capture.
      */
     private void startWarmKeepAliveTimer(long durationMs) {
-        long ttl = durationMs > 0 ? durationMs : DEFAULT_WARM_UP_MS;
-        warmLeaseDeadlineMs = System.currentTimeMillis() + ttl;
+        long ttl = clampWarmUpDuration(durationMs);
         cameraCoordinator.startKeepAlive(
                 ttl,
                 () -> photoSession.shotState() != AeStateMachine.ShotState.IDLE,
-                () -> {
-                    synchronized (SERVICE_LOCK) {
-                        closeCamera();
-                        notifyWarmStopped();
-                        stopSelf();
-                    }
-                });
+                this::expireWarmLeases);
+    }
+
+    /** Arm the next per-owner lease deadline while leaving later compatible leases intact. */
+    private void armWarmLeaseTimer() {
+        if (warmLeases.isEmpty()) {
+            return;
+        }
+        long now = System.currentTimeMillis();
+        long earliest = Long.MAX_VALUE;
+        for (WarmLease lease : warmLeases.values()) {
+            earliest = Math.min(earliest, lease.deadlineMs);
+        }
+        long delay = Math.max(1L, earliest - now);
+        cameraCoordinator.startKeepAlive(
+                delay,
+                () -> photoSession.shotState() != AeStateMachine.ShotState.IDLE,
+                this::expireWarmLeases);
+    }
+
+    private void expireWarmLeases() {
+        expireWarmLeases(true);
+    }
+
+    private void expireWarmLeases(boolean closeWhenEmpty) {
+        List<CameraWarmUpCallback> expired = new ArrayList<>();
+        boolean close;
+        synchronized (SERVICE_LOCK) {
+            long now = System.currentTimeMillis();
+            warmLeases
+                    .entrySet()
+                    .removeIf(
+                            entry -> {
+                                if (entry.getValue().deadlineMs <= now) {
+                                    expired.add(entry.getValue().callback);
+                                    warmReadyRequestIds.remove(entry.getKey());
+                                    return true;
+                                }
+                                return false;
+                            });
+            recomputeWarmLeaseDeadline();
+            close = warmLeases.isEmpty();
+            if (close) {
+                warmLeaseMode = null;
+                if (closeWhenEmpty) {
+                    closeCamera();
+                    stopSelf();
+                }
+            } else {
+                armWarmLeaseTimer();
+            }
+        }
+        for (CameraWarmUpCallback callback : expired) {
+            callback.onCameraStopped();
+        }
     }
 
     /**
-     * Arm the keep-alive that should run after a photo settles. If a {@code camera_warm_up} lease is
-     * still within its TTL, re-arm the warm keep-alive for the lease's remaining time (never shorter
-     * than the normal photo keep-alive) so a take_photo taken inside the warm window doesn't shorten
-     * the lease the caller reserved or swallow its {@code stopped} event. Otherwise use the normal
-     * short photo keep-alive.
+     * Arm the keep-alive that should run after a photo settles. If a {@code camera_warm_up} lease
+     * is still within its TTL, re-arm the warm keep-alive for the lease's remaining time (never
+     * shorter than the normal photo keep-alive) so a take_photo taken inside the warm window
+     * doesn't shorten the lease the caller reserved or swallow its {@code stopped} event. Otherwise
+     * use the normal short photo keep-alive.
      */
     private void startPostCaptureKeepAlive() {
         long remaining = warmLeaseDeadlineMs - System.currentTimeMillis();
         if (remaining > 0) {
-            startWarmKeepAliveTimer(Math.max(remaining, CAMERA_KEEP_ALIVE_MS));
+            // Expire any shorter owner leases that elapsed during capture, then keep the camera for
+            // the next live owner. armWarmLeaseTimer() uses the next independent deadline.
+            expireWarmLeases();
         } else {
             if (warmLeaseDeadlineMs > 0) {
                 // The warm lease expired while a capture was in flight — the warm keep-alive had
                 // been cancelled for the capture, so its expiry never fired notifyWarmStopped. Emit
-                // the lease's stopped event now so clients still see the lease end per the contract,
+                // the lease's stopped event now so clients still see the lease end per the
+                // contract,
                 // then fall back to the normal short photo keep-alive for rapid-fire grace.
-                warmLeaseDeadlineMs = 0;
-                notifyWarmStopped();
+                expireWarmLeases(false);
             }
-            startKeepAliveTimer();
+            if (warmLeases.isEmpty()) {
+                startKeepAliveTimer();
+            }
         }
     }
 
@@ -1616,14 +2061,15 @@ public class CameraNeoService extends LifecycleService {
     /** Release wake locks to avoid battery drain */
     private void releaseWakeLocks() {
         // Use the WakeLockManager to release all wake locks
-        WakeLockManager.releaseAllWakeLocks();
+        WakeLockManager.release(WakeLockManager.WakeOwner.CAMERA);
     }
 
     /** Force the screen to turn on so camera can be accessed */
     private void wakeUpScreen() {
         Log.d(TAG, "Waking up screen for camera access");
         // Use the WakeLockManager to acquire both CPU and screen wake locks
-        WakeLockManager.acquireFullWakeLockAndBringToForeground(this, 180000, 5000);
+        WakeLockManager.acquireFullWakeLockAndBringToForeground(
+                this, WakeLockManager.WakeOwner.CAMERA, 180000, 5000);
     }
 
     /** Attempt to restart the camera service with different parameters if needed */

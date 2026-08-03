@@ -5,22 +5,29 @@ import Animated, {useSharedValue, withTiming} from "react-native-reanimated"
 
 import {Icon, Text, type IconTypes} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {translate} from "@/i18n"
-import {WebSocketStatus} from "@/services/WebSocketManager"
-import {useRefresh} from "@mentra/island"
-import {useConnectionStore} from "@/stores/connection"
+import {engine, useRefresh} from "@mentra/engine"
 import {ThemedStyle} from "@/theme"
-import {BgTimer} from "@mentra/island"
+import {BgTimer} from "@mentra/engine"
+
+// Mirrors engine's CloudClientConnectionStatus (not exported from the public
+// engine surface). The banner now renders the cloud-v2 runtime connection,
+// not the retired Cloud V1 websocket.
+type CloudStatus = "connected" | "connecting" | "reconnecting" | "disconnected"
 
 export default function CloudConnection() {
-  const connectionStatus = useConnectionStore((state) => state.status)
+  const connectionStatus = useEngineSnapshot(
+    () => engine.session.status().status as CloudStatus,
+    (onChange) => engine.session.onStatus(() => onChange()),
+  )
   const {themed} = useAppTheme()
   const cloudConnectionStatusAnim = useSharedValue(1)
   const [hideCloudConnection, setHideCloudConnection] = useState(true)
   const refreshApplets = useRefresh()
 
   // Add delay logic for disconnection alerts
-  const [delayedStatus, setDelayedStatus] = useState<WebSocketStatus>(connectionStatus)
+  const [delayedStatus, setDelayedStatus] = useState<CloudStatus>(connectionStatus)
   const disconnectionTimerRef = useRef<number | null>(null)
   const firstDisconnectedTimeRef = useRef<number | null>(null)
   const DISCONNECTION_DELAY = 5000 // 5 seconds delay
@@ -28,15 +35,15 @@ export default function CloudConnection() {
   /**
    * Return gradient colors based on the cloud connection status
    */
-  const getGradientColors = (connectionStatus: WebSocketStatus): string[] => {
+  const getGradientColors = (connectionStatus: CloudStatus): string[] => {
     switch (connectionStatus) {
-      case WebSocketStatus.CONNECTED:
+      case "connected":
         return ["#4CAF50", "#81C784"] // Green gradient
-      case WebSocketStatus.CONNECTING:
+      case "connecting":
         return ["#FFA726", "#FB8C00"] // Orange gradient
-      case WebSocketStatus.ERROR:
+      case "reconnecting":
         return ["#FFC107", "#FFD54F"] // Yellow-ish gradient
-      case WebSocketStatus.DISCONNECTED:
+      case "disconnected":
       default:
         return ["#FF8A80", "#FF5252"] // Red gradient
     }
@@ -45,27 +52,27 @@ export default function CloudConnection() {
   /**
    * Return icon name and color based on connection status
    */
-  const getIcon = (connectionStatus: WebSocketStatus): {name: IconTypes; color: string; label: string} => {
+  const getIcon = (connectionStatus: CloudStatus): {name: IconTypes; color: string; label: string} => {
     switch (connectionStatus) {
-      case WebSocketStatus.CONNECTED:
+      case "connected":
         return {
           name: "check-circle",
           color: "#4CAF50",
           label: translate("connection:connected"),
         }
-      case WebSocketStatus.CONNECTING:
+      case "connecting":
         return {
           name: "spinner",
           color: "#FB8C00",
           label: translate("connection:connecting"),
         }
-      case WebSocketStatus.ERROR:
+      case "reconnecting":
         return {
           name: "refresh",
           color: "#FFD54F",
           label: translate("connection:reconnecting"),
         }
-      case WebSocketStatus.DISCONNECTED:
+      case "disconnected":
       default:
         return {
           name: "exclamation-circle",
@@ -80,7 +87,7 @@ export default function CloudConnection() {
   useEffect(() => {
     console.log("CloudConnection: Status:", connectionStatus)
 
-    if (connectionStatus === WebSocketStatus.CONNECTED) {
+    if (connectionStatus === "connected") {
       // Reset disconnection tracking
       firstDisconnectedTimeRef.current = null
 
@@ -95,7 +102,7 @@ export default function CloudConnection() {
       setHideCloudConnection(true)
       cloudConnectionStatusAnim.value = withTiming(0, {duration: 500})
     } else {
-      // Not connected (DISCONNECTED, CONNECTING, or ERROR)
+      // Not connected (disconnected, connecting, or reconnecting)
 
       // Track when we first left the connected state
       if (firstDisconnectedTimeRef.current === null) {
@@ -118,7 +125,7 @@ export default function CloudConnection() {
       }
     }
 
-    if (connectionStatus === WebSocketStatus.CONNECTED || connectionStatus === WebSocketStatus.DISCONNECTED) {
+    if (connectionStatus === "connected" || connectionStatus === "disconnected") {
       refreshApplets()
     }
 
@@ -130,10 +137,6 @@ export default function CloudConnection() {
       }
     }
   }, [connectionStatus, hideCloudConnection])
-
-  // if (connectionStatus === WebSocketStatus.CONNECTED) {
-  //   return
-  // }
 
   if (hideCloudConnection) {
     return null

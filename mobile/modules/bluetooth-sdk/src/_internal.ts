@@ -9,3 +9,6 @@
 export {default} from "./_private/BluetoothSdkModule"
 export type {BluetoothSdkInternalModule} from "./_private/BluetoothSdkModule"
 export * from "./BluetoothSdk.types"
+export {default as MentraLocalNetwork} from "./_private/MentraLocalNetworkModule"
+export * from "./_private/MentraLocalNetworkModule"
+export {BLUETOOTH_SDK_VERSION, sdkPinnedOtaManifestUrl} from "./_private/sdkOtaManifest"

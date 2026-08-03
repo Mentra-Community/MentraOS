@@ -41,7 +41,11 @@ public class RecoveryWorkerManager {
     private static final String RECOVERY_APK_ASSET_NAME = "recovery_worker.apk";
     private static final String RECOVERY_APK_FILE_PATH =
             "/storage/emulated/0/asg/recovery_worker.apk";
-    private static final int ASSETS_RECOVERY_VERSION = 6;
+    // Fallback when the bundled APK's version cannot be parsed. MUST track
+    // recovery_worker/app/build.gradle versionCode (the asset is built from that project in
+    // CI): if this lags, a device already on the previous worker skips the redeploy and every
+    // pinned downgrade is refused by the MIN_RECOVERY_VERSION_FOR_DOWNGRADE gate.
+    private static final int ASSETS_RECOVERY_VERSION = 8;
     private static final String PREFS = "RecoveryWorkerManagerPrefs";
     private static final String KEY_PURGED_LEGACY = "legacy_updater_purged";
 
@@ -172,7 +176,7 @@ public class RecoveryWorkerManager {
     private JSONObject fetchManifest() {
         HttpURLConnection conn = null;
         try {
-            conn = (HttpURLConnection) new URL(OtaConstants.VERSION_JSON_URL).openConnection();
+            conn = (HttpURLConnection) new URL(OtaConstants.RESCUE_FLEET_MANIFEST_URL).openConnection();
             conn.setConnectTimeout(OtaConstants.CONNECT_TIMEOUT_MS);
             conn.setReadTimeout(OtaConstants.READ_TIMEOUT_MS);
             conn.setRequestMethod("GET");

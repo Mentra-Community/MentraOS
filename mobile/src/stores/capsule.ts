@@ -9,7 +9,7 @@ import {focusEffectPreventBack} from "@/contexts/NavigationHistoryContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
 import {captureScreenshot} from "@/effects/CapsuleMenu"
-import { BgTimer, useAppStatusStore } from "@mentra/island"
+import {BgTimer, engine} from "@mentra/engine"
 
 export interface CapsuleRegistration {
   packageName: string
@@ -75,13 +75,13 @@ export function useRegisterCapsule({
   const handleRightPress = useCallback(
     async (shouldGoBack?: boolean) => {
       console.log(`CAPSULE MENU: handleRightPress() called ${shouldGoBack}`)
-      captureScreenshot(viewShotRef, packageName, insets.top)
+      await captureScreenshot(viewShotRef, packageName, insetsTopRef.current, {settle: true})
       if (shouldGoBack) {
         goBack()
       }
-      useAppStatusStore.getState().clearForeground()
+      engine.miniapps.clearForeground()
       // Stop the app after a short delay to ensure the screenshot is captured and navigation went smooth:
-      useAppStatusStore.getState().stop(packageName)
+      engine.miniapps.stop(packageName)
     },
     [packageName, viewShotRef, goBack],
   )
@@ -90,11 +90,11 @@ export function useRegisterCapsule({
     async (shouldGoBack?: boolean) => {
       console.log(`CAPSULE MENU: handleLeftPress() called ${shouldGoBack}`)
 
-      captureScreenshot(viewShotRef, packageName, insets.top)
+      await captureScreenshot(viewShotRef, packageName, insetsTopRef.current, {settle: true})
       if (shouldGoBack) {
         goBack()
       }
-      useAppStatusStore.getState().clearForeground()
+      engine.miniapps.clearForeground()
     },
     [packageName, viewShotRef, goBack],
   )

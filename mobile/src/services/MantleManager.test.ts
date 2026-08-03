@@ -1,13 +1,21 @@
 import {waitFor} from "@testing-library/react-native"
+import {router} from "expo-router"
 
 import mantle from "@/services/MantleManager"
-import restComms from "@/services/RestComms"
-import socketComms from "@/services/SocketComms"
-import {submitAutomaticBugIncident} from "@/services/bugReport/automaticBugReport"
-import {useCoreStore} from "@/stores/core"
-import {useDisplayStore} from "@/stores/display"
-import {isGlassesConnected, useGlassesStore} from "@/stores/glasses"
-import {SETTINGS, useSettingsStore} from "@/stores/settings"
+import {
+  audioPlaybackService,
+  localDisplayManager,
+  localMiniappRuntime,
+  useAppStatusStore,
+  useCoreStore,
+  useDisplayStore,
+  useSettingsStore,
+} from "@mentra/engine/internal"
+// This test resets the concrete glasses store; the package-level Jest mock does
+// not expose it through @mentra/engine.
+// eslint-disable-next-line no-restricted-imports
+import {isGlassesConnected, useGlassesStore} from "../../modules/engine/src/stores/glasses"
+import {engine, SETTINGS} from "@mentra/engine"
 import {crustModuleMock, emitCrustEvent, resetCrustModuleMock} from "@/test-utils/mockCrustModule"
 import {
   bluetoothSdkMock,
@@ -32,106 +40,18 @@ jest.mock("@mentra/crust", () => {
   }
 })
 
-jest.mock("@/services/RestComms", () => ({
+const mockShowAlert = jest.fn()
+jest.mock("@/utils/AlertUtils", () => ({
   __esModule: true,
-  default: {
-    loadUserSettings: jest.fn(async () => ({
-      is_ok: () => true,
-      is_error: () => false,
-      value: {
-        contextual_dashboard: true,
-        core_token: "server-token",
-        auth_email: "from-server@example.com",
-      },
-    })),
-    writeUserSettings: jest.fn(async () => ({
-      is_ok: () => true,
-      is_error: () => false,
-    })),
-    updateGlassesState: jest.fn(async () => ({
-      is_ok: () => true,
-      is_error: () => false,
-    })),
-    sendPhotoResponse: jest.fn(async () => ({
-      is_ok: () => true,
-      is_error: () => false,
-    })),
-    sendPhoneNotification: jest.fn(async () => ({
-      is_ok: () => true,
-      is_error: () => false,
-    })),
-    sendPhoneNotificationDismissed: jest.fn(async () => ({
-      is_ok: () => true,
-      is_error: () => false,
-    })),
-    sendCalendarData: jest.fn(async () => ({
-      is_ok: () => true,
-      is_error: () => false,
-    })),
-    sendLocationData: jest.fn(),
-    goodbye: jest.fn(async () => ({
-      is_ok: () => true,
-      is_error: () => false,
-    })),
-    getApplets: jest.fn(),
-    configureAudioFormat: jest.fn(async () => ({
-      is_ok: () => true,
-      is_error: () => false,
-    })),
-  },
+  default: (...args: unknown[]) => mockShowAlert(...args),
+  showAlert: (...args: unknown[]) => mockShowAlert(...args),
 }))
 
-jest.mock("@/services/SocketComms", () => ({
-  __esModule: true,
-  default: {
-    connectWebsocket: jest.fn(),
-    cleanup: jest.fn(),
-    sendTouchEvent: jest.fn(),
-    sendBatteryStatus: jest.fn(),
-    sendButtonPress: jest.fn(),
-    sendHeadPosition: jest.fn(),
-    sendLocalTranscription: jest.fn(),
-    sendVadStatus: jest.fn(),
-    sendSwipeVolumeStatus: jest.fn(),
-    sendSwitchStatus: jest.fn(),
-    sendRgbLedControlResponse: jest.fn(),
-    sendText: jest.fn(),
-    sendBinary: jest.fn(),
-    sendStreamStatus: jest.fn(),
-    sendKeepAliveAck: jest.fn(),
-    handle_display_event: jest.fn(),
-    sendLocationUpdate: jest.fn(),
-  },
-}))
-
-jest.mock("@/services/asg/gallerySyncService", () => ({
-  gallerySyncService: {
-    initialize: jest.fn(),
-  },
-}))
-
-jest.mock("@/services/UdpManager", () => ({
-  __esModule: true,
-  default: {
-    enabledAndReady: jest.fn(() => false),
-    sendAudio: jest.fn(),
-    cleanup: jest.fn(),
-  },
-}))
-
-jest.mock("@/services/Livekit", () => ({
-  __esModule: true,
-  default: {
-    disconnect: jest.fn(),
-  },
-}))
+// gallerySyncService moved into @mentra/engine; the global @mentra/engine jest mock
+// already supplies it (gallerySyncService.initialize), so no local mock is needed.
 
 jest.mock("@/services/Migrations", () => ({
   migrate: jest.fn(() => Promise.resolve()),
-}))
-
-jest.mock("@/services/bugReport/automaticBugReport", () => ({
-  submitAutomaticBugIncident: jest.fn(async () => ({status: "filed", incidentId: "incident-1"})),
 }))
 
 jest.mock("@/utils/PermissionsUtils", () => ({
@@ -174,19 +94,34 @@ jest.mock("expo-task-manager", () => ({
 }))
 
 function resetMantleTestState() {
+  useAppStatusStore.setState({apps: []})
   useCoreStore.getState().reset()
   useGlassesStore.getState().reset()
   useSettingsStore.getState().resetAllSettingsLocally()
   useDisplayStore.setState({view: "main"})
 }
 
+let requestWifiSetup: (reason?: string, packageName?: string) => Promise<void>
+let routerPushSpy: jest.SpiedFunction<typeof router.push>
+let syncCoreDisplayOwner: () => void
+let syncGlassesPresentationState: (status: {state: string}) => void
+
 describe("MantleManager", () => {
   beforeAll(async () => {
+    routerPushSpy = jest.spyOn(router, "push").mockImplementation(() => {})
     jest.useFakeTimers()
     resetBluetoothSdkMock()
     resetCrustModuleMock()
     resetMantleTestState()
+    // The V1 settings pull is retired; seed what its mock used to return so
+    // the glasses-sync assertions still exercise the propagation path.
+    useSettingsStore.setState((state) => ({
+      settings: {...state.settings, contextual_dashboard: true, auth_email: "from-server@example.com"},
+    }))
     await mantle.init()
+    requestWifiSetup = (engine.configure as jest.Mock).mock.calls[0][0].ui.requestWifiSetup
+    syncCoreDisplayOwner = (useAppStatusStore.subscribe as jest.Mock).mock.calls.at(-1)![0]
+    syncGlassesPresentationState = (engine.glasses.onStatus as jest.Mock).mock.calls.at(-1)![0]
   })
 
   afterEach(() => {
@@ -203,10 +138,13 @@ describe("MantleManager", () => {
   it("syncs native status, routes events, and forwards Bluetooth SDK setting changes", async () => {
     jest.advanceTimersByTime(1000)
 
+    // island's GlassesSettingsSync pushes the FULL device-settings set on the glasses
+    // connect transition (previously a MantleManager boot push). Simulate the connect.
+    emitBluetoothSdkEvent("glasses_status", {connection: {state: "connected", fullyBooted: true}})
+
     expect(bluetoothSdkMock.updateBluetoothSettings).toHaveBeenCalledWith(
       expect.objectContaining({
         contextual_dashboard: true,
-        core_token: "server-token",
         auth_email: "from-server@example.com",
         power_saving_mode: false,
         voice_activity_detection_enabled: true,
@@ -214,7 +152,7 @@ describe("MantleManager", () => {
     )
     expect(bluetoothSdkMock.updateBluetoothSettings).not.toHaveBeenCalledWith(
       expect.objectContaining({
-        notifications_enabled: expect.anything(),
+        core_token: "",
       }),
     )
     for (const nonSdkKey of ["always_on_status_bar"]) {
@@ -246,94 +184,45 @@ describe("MantleManager", () => {
     expect(useGlassesStore.getState().deviceModel).toBe("Mentra Live")
     expect(useGlassesStore.getState().batteryLevel).toBe(77)
 
-    emitBluetoothSdkEvent("photo_response", {
-      type: "photo_response",
-      state: "success",
-      requestId: "req-1",
-      uploadUrl: "https://example.com/photo.jpg",
-      timestamp: 123,
-    })
-    expect(restComms.sendPhotoResponse).toHaveBeenCalledWith(
-      expect.objectContaining({
-        requestId: "req-1",
-        uploadUrl: "https://example.com/photo.jpg",
-      }),
-    )
-
-    emitBluetoothSdkEvent("touch_event", {
-      type: "touch_event",
-      deviceModel: "Mentra Live",
-      gestureName: "tap",
-      timestamp: 999,
-    })
-    expect(socketComms.sendTouchEvent).toHaveBeenCalledWith({
-      type: "touch_event",
-      deviceModel: "Mentra Live",
-      gestureName: "tap",
-      timestamp: 999,
-    })
+    // photo_response / touch_event routing moved into island's DeviceEventRouter
+    // (covered by deviceEventRouter.test.ts); MantleManager no longer handles them.
 
     // Local transcripts no longer roundtrip through the cloud. With no
-    // local-miniapp subscription and the offline-captions flag off, the
-    // transcript is dropped — `sendLocalTranscription` must not fire.
-    ;(socketComms.sendLocalTranscription as jest.Mock).mockClear()
+    // local-miniapp subscription, the transcript is simply dropped.
     emitBluetoothSdkEvent("local_transcription", {
       text: "hello world",
       isFinal: true,
       transcribeLanguage: "en-US",
     })
-    await waitFor(() => {
-      expect(socketComms.sendLocalTranscription).not.toHaveBeenCalled()
-    })
-
     emitBluetoothSdkEvent("head_up", {up: true})
-    expect(socketComms.sendHeadPosition).toHaveBeenCalledWith(true)
     await waitFor(() => {
       expect(useDisplayStore.getState().view).toBe("dashboard")
     })
-
-    emitBluetoothSdkEvent("speaking_status", {type: "speaking_status", speaking: true})
-    expect(socketComms.sendVadStatus).toHaveBeenCalledWith(true)
-
-    emitBluetoothSdkEvent("battery_status", {
-      type: "battery_status",
-      level: 88,
-      charging: true,
-      timestamp: 123456,
-    })
-    expect(socketComms.sendBatteryStatus).toHaveBeenCalledWith(88, true, 123456)
+    // getBluetoothSettings is device-model-filtered now, and vad is not in the
+    // Mentra Live key set — switch to a display model for the sync asserts.
+    useGlassesStore.getState().setGlassesInfo({deviceModel: "Even Realities G1"})
     ;(bluetoothSdkMock.updateBluetoothSettings as jest.Mock).mockClear()
     await useSettingsStore.getState().setSetting(SETTINGS.core_token.key, "new-token", false)
+    await useSettingsStore.getState().setSetting(SETTINGS.voice_activity_detection_enabled.key, false, false)
+    // Setting pushes are debounced (300ms) and merged into one native write.
+    jest.runOnlyPendingTimers()
     expect(bluetoothSdkMock.updateBluetoothSettings).toHaveBeenCalledWith(
       expect.objectContaining({
         core_token: "new-token",
-      }),
-    )
-
-    ;(bluetoothSdkMock.updateBluetoothSettings as jest.Mock).mockClear()
-    await useSettingsStore.getState().setSetting(SETTINGS.voice_activity_detection_enabled.key, false, false)
-    expect(bluetoothSdkMock.updateBluetoothSettings).toHaveBeenCalledWith(
-      expect.objectContaining({
         voice_activity_detection_enabled: false,
       }),
     )
   })
 
-  it("syncs notification enablement and blocklist settings to Crust only", async () => {
+  it("syncs the notification blocklist to Crust without an extra listener gate", async () => {
     ;(bluetoothSdkMock.updateBluetoothSettings as jest.Mock).mockClear()
     ;(crustModuleMock.setNotificationConfig as jest.Mock).mockClear()
 
-    await useSettingsStore.getState().setSetting(SETTINGS.notifications_enabled.key, false, false)
     await useSettingsStore.getState().setSetting(SETTINGS.notifications_blocklist.key, ["com.blocked"], false)
 
     await waitFor(() => {
-      expect(crustModuleMock.setNotificationConfig).toHaveBeenLastCalledWith(false, ["com.blocked"])
+      expect(crustModuleMock.setNotificationConfig).toHaveBeenLastCalledWith(true, ["com.blocked"])
     })
-    expect(bluetoothSdkMock.updateBluetoothSettings).not.toHaveBeenCalledWith(
-      expect.objectContaining({
-        notifications_enabled: expect.anything(),
-      }),
-    )
     expect(bluetoothSdkMock.updateBluetoothSettings).not.toHaveBeenCalledWith(
       expect.objectContaining({
         notifications_blocklist: expect.anything(),
@@ -341,7 +230,23 @@ describe("MantleManager", () => {
     )
   })
 
+  it("keeps the running standard miniapp as display core when Notifications is background", () => {
+    useAppStatusStore.setState({
+      apps: [
+        {packageName: "com.mentra.captions", type: "standard", running: true},
+        {packageName: "cloud.augmentos.notify", type: "background", running: true},
+      ] as any,
+    })
+
+    syncCoreDisplayOwner()
+
+    expect(localDisplayManager.onCoreAppChange).toHaveBeenLastCalledWith("com.mentra.captions")
+  })
+
   it("keeps non-SDK settings out of Bluetooth SDK sync", async () => {
+    useGlassesStore.getState().setGlassesInfo({deviceModel: "Even Realities G1"})
+    jest.advanceTimersByTime(300)
+    ;(bluetoothSdkMock.updateBluetoothSettings as jest.Mock).mockClear()
     const nonSdkSettings = {
       always_on_status_bar: true,
       bypass_audio_encoding_for_debugging: true,
@@ -359,6 +264,7 @@ describe("MantleManager", () => {
       await useSettingsStore.getState().setSetting(key, value, false)
     }
 
+    jest.advanceTimersByTime(300)
     for (const key of Object.keys(nonSdkSettings)) {
       expect(useSettingsStore.getState().getBluetoothSettings()).not.toHaveProperty(key)
     }
@@ -368,10 +274,15 @@ describe("MantleManager", () => {
     expect(useSettingsStore.getState().getBluetoothSettings()).toHaveProperty("voice_activity_detection_enabled", true)
     expect(useSettingsStore.getState().getBluetoothSettings()).toHaveProperty("metric_system")
     expect(useSettingsStore.getState().getBluetoothSettings()).toHaveProperty("twelve_hour_time")
-    await useSettingsStore.getState().setSetting(SETTINGS.power_saving_mode.key, true, false)
+    ;(bluetoothSdkMock.updateBluetoothSettings as jest.Mock).mockClear()
+    await useSettingsStore.getState().setSetting(SETTINGS.sensing_enabled.key, false, false)
+    jest.runOnlyPendingTimers()
+    ;(bluetoothSdkMock.updateBluetoothSettings as jest.Mock).mockClear()
+    await useSettingsStore.getState().setSetting(SETTINGS.sensing_enabled.key, true, false)
+    jest.runOnlyPendingTimers()
     expect(bluetoothSdkMock.updateBluetoothSettings).toHaveBeenCalledWith(
       expect.objectContaining({
-        power_saving_mode: true,
+        sensing_enabled: true,
       }),
     )
   })
@@ -393,38 +304,13 @@ describe("MantleManager", () => {
     expect(useGlassesStore.getState().wifi).toEqual({state: "disconnected"})
   })
 
-  it("renders offline local transcription locally instead of forwarding it to cloud", async () => {
-    ;(socketComms.sendLocalTranscription as jest.Mock).mockClear()
-    ;(socketComms.handle_display_event as jest.Mock).mockClear()
-
-    await useSettingsStore.getState().setSetting(SETTINGS.offline_captions_running.key, true, false)
-
-    emitBluetoothSdkEvent("local_transcription", {
-      text: "offline words",
-      isFinal: true,
-      transcribeLanguage: "en-US",
+  it("routes notification events without the retired V1 upload", async () => {
+    // The Cloud V1 REST upload is gone; the events still flow through the
+    // local-miniapp forward path without a server roundtrip.
+    useAppStatusStore.setState({
+      apps: [{packageName: "cloud.augmentos.notify", type: "background", running: true}] as any,
     })
-
-    await waitFor(() => {
-      expect(socketComms.handle_display_event).toHaveBeenCalledWith(
-        expect.objectContaining({
-          view: "main",
-          layout: expect.objectContaining({
-            layoutType: "text_wall",
-            text: expect.stringContaining("offline words"),
-          }),
-        }),
-      )
-    })
-    expect(socketComms.sendLocalTranscription).not.toHaveBeenCalled()
-
-    await useSettingsStore.getState().setSetting(SETTINGS.offline_captions_running.key, false, false)
-  })
-
-  it("maps notification events to REST payloads", async () => {
-    ;(restComms.sendPhoneNotification as jest.Mock).mockClear()
-    ;(restComms.sendPhoneNotificationDismissed as jest.Mock).mockClear()
-
+    const forwardEvent = jest.spyOn(localMiniappRuntime, "forwardEvent")
     emitCrustEvent("phone_notification", {
       notificationId: "n-1",
       app: "Calendar",
@@ -439,56 +325,146 @@ describe("MantleManager", () => {
       notificationKey: "key-1",
       packageName: "com.calendar",
     })
-
-    await waitFor(() => {
-      expect(restComms.sendPhoneNotification).toHaveBeenCalledWith({
-        notificationId: "n-1",
-        app: "Calendar",
-        title: "Standup",
-        content: "Daily sync",
-        priority: "4",
-        timestamp: 12345,
-        packageName: "com.calendar",
-      })
-      expect(restComms.sendPhoneNotificationDismissed).toHaveBeenCalledWith({
-        notificationId: "n-1",
-        notificationKey: "key-1",
-        packageName: "com.calendar",
-      })
+    emitBluetoothSdkEvent("phone_notification", {
+      notificationId: "ancs-42",
+      app: "com.apple.mobilemail",
+      title: "Build complete",
+      content: "The iOS relay is working",
+      priority: "1",
+      timestamp: 12345,
+      packageName: "com.apple.mobilemail",
     })
+    emitBluetoothSdkEvent("phone_notification_dismissed", {
+      notificationId: "ancs-42",
+      notificationKey: "ancs-42",
+      packageName: "com.apple.mobilemail",
+      timestamp: 12346,
+    })
+
+    expect(forwardEvent).toHaveBeenCalledWith("phone_notification", {
+      notificationId: "ancs-42",
+      app: "com.apple.mobilemail",
+      title: "Build complete",
+      content: "The iOS relay is working",
+      priority: "1",
+      timestamp: 12345,
+      packageName: "com.apple.mobilemail",
+    })
+    expect(forwardEvent).toHaveBeenCalledWith("phone_notification_dismissed", {
+      notificationId: "ancs-42",
+      notificationKey: "ancs-42",
+      packageName: "com.apple.mobilemail",
+      timestamp: 12346,
+    })
+    expect(localDisplayManager.request).toHaveBeenNthCalledWith(1, "cloud.augmentos.notify", {
+      layout: {
+        layoutType: "reference_card",
+        title: "Calendar: Standup",
+        text: "Daily sync",
+      },
+      durationMs: 5_000,
+    })
+    expect(localDisplayManager.request).toHaveBeenNthCalledWith(2, "cloud.augmentos.notify", {
+      layout: {
+        layoutType: "reference_card",
+        title: "com.apple.mobilemail: Build complete",
+        text: "The iOS relay is working",
+      },
+      durationMs: 5_000,
+    })
+    expect(localDisplayManager.dismiss).toHaveBeenCalledTimes(2)
+    expect(localDisplayManager.dismiss).toHaveBeenLastCalledWith("cloud.augmentos.notify")
+    await Promise.resolve()
   })
 
-  it("files captions tester incidents from Crust instead of Bluetooth SDK", async () => {
-    ;(submitAutomaticBugIncident as jest.Mock).mockClear()
+  it("forwards notifications without presenting them when Notify is not running", () => {
+    const forwardEvent = jest.spyOn(localMiniappRuntime, "forwardEvent")
 
-    emitBluetoothSdkEvent("captions_tester_incident", {
-      failure_code: "stale_transcript",
-      failure_message: "Bluetooth SDK should not own this app-level flow",
-      test_run_id: "run-from-sdk",
+    emitCrustEvent("phone_notification", {
+      notificationId: "n-hidden",
+      app: "Calendar",
+      title: "Standup",
+      content: "Daily sync",
+      priority: 0,
+      timestamp: "12345",
+      packageName: "com.calendar",
     })
 
-    expect(submitAutomaticBugIncident).not.toHaveBeenCalled()
+    expect(forwardEvent).toHaveBeenCalledWith("phone_notification", {
+      notificationId: "n-hidden",
+      app: "Calendar",
+      title: "Standup",
+      content: "Daily sync",
+      priority: "0",
+      timestamp: 12345,
+      packageName: "com.calendar",
+    })
+    expect(localDisplayManager.request).not.toHaveBeenCalled()
+  })
 
-    emitCrustEvent("captions_tester_incident", {
-      failure_code: "stale_transcript",
-      failure_message: "Transcript stayed stale",
-      test_run_id: "run-1",
-      scenario_name: "live_words",
+  it("does not speak notifications through the phone after glasses disconnect", () => {
+    useAppStatusStore.setState({
+      apps: [{packageName: "cloud.augmentos.notify", type: "background", running: true}] as any,
+    })
+    ;(engine.glasses.status as jest.Mock).mockReturnValue({state: "disconnected"})
+    ;(engine.glasses.capabilities as jest.Mock).mockReturnValue({
+      hasDisplay: false,
+      hasSpeaker: true,
     })
 
-    await waitFor(() => {
-      expect(submitAutomaticBugIncident).toHaveBeenCalledWith(
-        expect.objectContaining({
-          categorization: expect.objectContaining({
-            triggerArea: "captions_tester",
-            triggerReason: "captions_incident_detected",
-          }),
-          actualBehavior: expect.stringContaining("Transcript stayed stale"),
-          dedupeKey: "captions_tester|stale_transcript|live_words|run-1",
-          logTag: "CaptionsTesterBugReport",
-        }),
-      )
+    emitCrustEvent("phone_notification", {
+      notificationId: "n-disconnected",
+      app: "Messages",
+      title: "Private",
+      content: "Do not read on phone",
+      priority: 0,
+      timestamp: "12345",
+      packageName: "com.messages",
     })
+
+    expect(audioPlaybackService.play).not.toHaveBeenCalled()
+  })
+
+  it("cancels queued and active notification speech when glasses disconnect", () => {
+    const manager = mantle as any
+    manager.suppressedNotifications = 2
+    manager.scheduleSuppressedSummary()
+    const generation = manager.speechGeneration
+
+    syncGlassesPresentationState({state: "connected"})
+    syncGlassesPresentationState({state: "disconnected"})
+
+    expect(audioPlaybackService.stopForApp).toHaveBeenCalledWith("cloud.augmentos.notify")
+    expect(manager.suppressedSummaryTimer).toBeNull()
+    expect(manager.suppressedNotifications).toBe(0)
+    expect(manager.speechGeneration).toBe(generation + 1)
+  })
+
+  it("dismisses presentation and stops queued speech when Notify stops", async () => {
+    useAppStatusStore.setState({
+      apps: [{packageName: "cloud.augmentos.notify", type: "background", running: true}] as any,
+    })
+    syncCoreDisplayOwner()
+    emitCrustEvent("phone_notification", {
+      notificationId: "n-active",
+      app: "Calendar",
+      title: "Standup",
+      content: "Daily sync",
+      priority: 0,
+      timestamp: "12345",
+      packageName: "com.calendar",
+    })
+    ;(localDisplayManager.dismiss as jest.Mock).mockClear()
+    ;(audioPlaybackService.stopForApp as jest.Mock).mockClear()
+
+    useAppStatusStore.setState({
+      apps: [{packageName: "cloud.augmentos.notify", type: "background", running: false}] as any,
+    })
+    syncCoreDisplayOwner()
+
+    expect(localDisplayManager.dismiss).toHaveBeenCalledWith("cloud.augmentos.notify")
+    expect(audioPlaybackService.stopForApp).toHaveBeenCalledWith("cloud.augmentos.notify")
+    await Promise.resolve()
   })
 
   it("tracks OTA status without allowing backward progress or stale terminal update hints", async () => {
@@ -535,5 +511,27 @@ describe("MantleManager", () => {
     })
     expect(useGlassesStore.getState().otaUpdateAvailable).toBeNull()
     expect(useGlassesStore.getState().otaInProgress).toBe(false)
+  })
+
+  it("prompts before opening Wi-Fi setup and backgrounds the requesting miniapp", async () => {
+    const cancelRequest = requestWifiSetup("Streaming needs Wi-Fi")
+    const [, message, cancelButtons] = mockShowAlert.mock.calls.at(-1)!
+
+    expect(message).toBe("Streaming needs Wi-Fi")
+    expect(engine.miniapps.clearForeground).not.toHaveBeenCalled()
+    cancelButtons[0].onPress()
+    await cancelRequest
+    expect(engine.miniapps.clearForeground).not.toHaveBeenCalled()
+
+    const confirmRequest = requestWifiSetup("Streaming needs Wi-Fi", "com.mentra.livestreamer")
+    const confirmButtons = mockShowAlert.mock.calls.at(-1)![2]
+    confirmButtons[1].onPress()
+    await confirmRequest
+
+    expect(engine.miniapps.clearForeground).toHaveBeenCalledTimes(1)
+    expect(routerPushSpy).toHaveBeenLastCalledWith({
+      pathname: "/wifi/scan",
+      params: {returnToMiniapp: "com.mentra.livestreamer"},
+    })
   })
 })

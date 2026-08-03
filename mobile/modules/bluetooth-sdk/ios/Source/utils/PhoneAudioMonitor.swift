@@ -55,6 +55,10 @@ class PhoneAudioMonitor {
         return session.isOtherAudioPlaying || ownAppAudioPlaying
     }
 
+    func isOwnAppAudioPlaying() -> Bool {
+        ownAppAudioPlaying
+    }
+
     /// Notify the monitor that our own app started/stopped playing audio
     /// Called from RN AudioPlaybackService via Bridge
     func setOwnAppAudioPlaying(_ playing: Bool) {

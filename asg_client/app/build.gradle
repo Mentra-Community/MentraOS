@@ -51,12 +51,16 @@ if (envFile.exists()) {
 def asgBuildEpochMs = 1735689600000L
 def asgBuildBaseline = 100000
 
+def pinnedAsgVersionCode = (
+        project.findProperty("ASG_VERSION_CODE")
+                ?: System.getenv("ASG_VERSION_CODE")
+                ?: System.getenv("MENTRAOS_PINNED_BUILD_NUMBER")
+)
+def isPinnedCiBuild = pinnedAsgVersionCode != null && !pinnedAsgVersionCode.toString().trim().isEmpty()
+
 def resolveAsgVersionCode = {
-    def pinned = project.findProperty("ASG_VERSION_CODE")
-            ?: System.getenv("ASG_VERSION_CODE")
-            ?: System.getenv("MENTRAOS_PINNED_BUILD_NUMBER")
-    if (pinned != null && !pinned.toString().trim().isEmpty()) {
-        def parsed = pinned.toString().trim().toInteger()
+    if (isPinnedCiBuild) {
+        def parsed = pinnedAsgVersionCode.toString().trim().toInteger()
         if (parsed <= 0) {
             throw new GradleException("ASG_VERSION_CODE must be a positive integer")
         }
@@ -67,10 +71,14 @@ def resolveAsgVersionCode = {
 }
 
 def asgVersionCodeValue = resolveAsgVersionCode()
+// Unpinned builds are development builds regardless of buildType (local installRelease is the
+// common dev workflow for performance): the "-dev" versionName suffix makes the phone skip OTA
+// for them, so a sideloaded build is never prompted to roll back to the app's pinned release.
+// CI always pins ASG_VERSION_CODE, so CI artifacts get clean version names and full OTA.
 def asgVersionNameValue = (
         project.findProperty("ASG_VERSION_NAME")
                 ?: System.getenv("ASG_VERSION_NAME")
-                ?: asgVersionCodeValue.toString()
+                ?: (asgVersionCodeValue.toString() + (isPinnedCiBuild ? "" : "-dev"))
 ).toString()
 
 /**
@@ -246,6 +254,16 @@ android {
     testOptions {
         unitTests {
             includeAndroidResources = true
+            all {
+                def textDetectInputDir = System.getProperty('textdetect.inputDir')
+                if (textDetectInputDir != null) {
+                    systemProperty 'textdetect.inputDir', textDetectInputDir
+                }
+                def textDetectOutputDir = System.getProperty('textdetect.outputDir')
+                if (textDetectOutputDir != null) {
+                    systemProperty 'textdetect.outputDir', textDetectOutputDir
+                }
+            }
         }
     }
 
@@ -355,6 +373,9 @@ dependencies {
 
     //location services
     implementation 'com.google.android.gms:play-services-location:18.0.0'
+
+    // Bundled/offline text localization for Mentra Live text-mode photos.
+    implementation 'com.google.mlkit:text-recognition:16.0.1'
 
     //websocket
     implementation 'com.squareup.okhttp3:okhttp:4.9.3'

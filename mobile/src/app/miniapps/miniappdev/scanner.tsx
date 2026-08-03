@@ -8,14 +8,8 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import showAlert from "@/utils/AlertUtils"
-import {
-  appRegistry,
-  decideDevLaunchRoute,
-  registerDevApp,
-  useAppStatusStore,
-  DEV_APP_PACKAGE_NAME,
-  type DevAppRecord,
-} from "@mentra/island"
+import {decideDevLaunchRoute, engine} from "@mentra/engine"
+import {appRegistry, registerDevApp, type DevAppRecord} from "@mentra/engine/internal"
 import {askPermissionsUI, checkPermissionsUI, PERMISSION_CONFIG} from "@/utils/PermissionsUtils"
 import {markMiniappDevMode} from "@/utils/miniappDevMode"
 import type {AppletInterface, AppletPermission} from "@/../../cloud/packages/types/src"
@@ -101,8 +95,8 @@ export default function MiniappDeveloperScannerScreen() {
       const launchResult = await decideDevLaunchRoute(packageName ?? "", devUrl)
 
       const manifest = launchResult.manifest
-      packageName = packageName || manifest?.packageName || "com.dev.unknown"
-      name = name || manifest?.name || "Dev Miniapp"
+      packageName = manifest?.packageName || packageName || "com.dev.unknown"
+      name = manifest?.name || name || "Dev Miniapp"
       const iconPath = manifest?.icon as string | undefined
       const manifestPermissions: AppletPermission[] = Array.isArray(manifest?.permissions)
         ? (manifest!.permissions as AppletPermission[])
@@ -115,15 +109,9 @@ export default function MiniappDeveloperScannerScreen() {
           : `${devUrl.replace(/\/$/, "")}/${iconPath.replace(/^\//, "")}`
       }
 
-      // Persist a home-tile record so the dev miniapp is re-launchable
-      // without re-scanning. Dev apps load over HTTP and aren't installed
-      // to disk, so the lmas/ scan can't surface them. registerDevApp owns
-      // the dev_url/dev_port keys (under DEV_APP_PACKAGE_NAME) but keeps the
-      // manifest's real name + icon on the tile (marked dev by DevMiniappBadge).
-      // Pass the manifest's REAL packageName: registerDevApp forces the tile's
-      // packageName to the single dev slot for routing, but preserves the real
-      // one as sourcePackageName — which MantleManager uses as the miniapp-token
-      // audience, so the dev backend's JWKS verify (aud === real package) passes.
+      // Persist a package-keyed home tile and routing record so this dev
+      // miniapp remains independently launchable without rescanning. Its icon
+      // is copied locally while the server is reachable.
       if (manifest) {
         // A fetched manifest means a real dev app loaded — latch the per-account
         // "this user is a developer" signal (idempotent). Gated on the manifest
@@ -132,7 +120,9 @@ export default function MiniappDeveloperScannerScreen() {
         markMiniappDevMode()
 
         const portNum = devPort ? parseInt(devPort, 10) : NaN
-        registerDevApp({
+        const existing = engine.miniapps.list().find((app) => app.packageName === packageName)
+        if (existing?.running) await engine.miniapps.stop(packageName)
+        await registerDevApp({
           packageName,
           name: name ?? packageName,
           iconUrl: iconUrl ?? `${devUrl.replace(/\/$/, "")}/icon.png`,
@@ -177,11 +167,8 @@ export default function MiniappDeveloperScannerScreen() {
       }
 
       clearHistoryAndGoHome()
-      await useAppStatusStore.getState().refresh()
-      // Foreground the single dev slot, NOT the manifest's real package name —
-      // the projected tile + JSContext are registered under DEV_APP_PACKAGE_NAME,
-      // so setForeground(realName) would no-op (the store has no such app).
-      await useAppStatusStore.getState().setForeground(DEV_APP_PACKAGE_NAME)
+      await engine.miniapps.refresh()
+      await engine.miniapps.setForeground(packageName)
     } catch (error) {
       showAlert("Error", String(error), [{text: "OK", onPress: () => setScanned(false)}])
     }

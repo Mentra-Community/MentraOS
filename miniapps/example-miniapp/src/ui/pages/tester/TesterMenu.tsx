@@ -32,18 +32,38 @@ const EXAMPLE_ROWS: Row[] = [
 // then placeholders.
 const API_ROWS: Row[] = [
   {emoji: "🖥️", title: "session.display", subtitle: "text walls, cards, bitmaps", path: "/tester/display"},
-  {emoji: "🎨", title: "session.canvas", subtitle: "show_text / show_bitmap / clear / show_page", path: "/tester/canvas"},
   {emoji: "🔊", title: "session.speaker", subtitle: "play URL, speak text", path: "/tester/speaker"},
   {emoji: "🎙️", title: "session.mic", subtitle: "audio chunks, VAD, stop()", path: "/tester/mic"},
-  {emoji: "📝", title: "session.transcription", subtitle: "on / forLanguage / configure / stop", path: "/tester/transcription"},
+  {
+    emoji: "🗣️",
+    title: "ElevenLabs",
+    subtitle: "ConvAI mic → WebSocket",
+    path: "/tester/elevenlabs",
+  },
+  {
+    emoji: "📝",
+    title: "session.transcription",
+    subtitle: "on / forLanguage / configure / stop",
+    path: "/tester/transcription",
+  },
   {emoji: "🌐", title: "session.translation", subtitle: "forLanguagePair, stop", path: "/tester/translation"},
-  {emoji: "📸", title: "session.camera", subtitle: "takePhoto + image preview", path: "/tester/camera"},
-  {emoji: "🎬", title: "session.stream", subtitle: "startStream direct + managed RTMP/WHIP + viewer", path: "/tester/stream"},
+  {
+    emoji: "📸",
+    title: "session.camera",
+    subtitle: "Cloud V2 warmUp/takePhoto — sizes, modes, matrix",
+    path: "/tester/camera",
+  },
+  {
+    emoji: "🎬",
+    title: "session.stream",
+    subtitle: "startStream direct + managed RTMP/WHIP + viewer",
+    path: "/tester/stream",
+  },
   {emoji: "👆", title: "session.input", subtitle: "buttons, touch + gesture filters", path: "/tester/input"},
   {emoji: "📍", title: "session.location", subtitle: "GPS updates", path: "/tester/location"},
   {emoji: "↕️", title: "session.imu", subtitle: "head position", path: "/tester/imu"},
   {emoji: "👓", title: "session.glasses", subtitle: "battery, connection", path: "/tester/glasses"},
-  {emoji: "📱", title: "session.phone", subtitle: "battery, notifications, calendar", path: "/tester/phone"},
+  {emoji: "📱", title: "session.phone", subtitle: "battery, notifications, calendar snapshots", path: "/tester/phone"},
   {emoji: "🔗", title: "session.system", subtitle: "share, open URL, clipboard", path: "/tester/system"},
   {
     emoji: "💡",
@@ -75,7 +95,12 @@ function Badge({badge}: {badge?: Row["badge"]}) {
   return null
 }
 
-function RowButton({row, isMentraLive, modelName, onNavigate}: {
+function RowButton({
+  row,
+  isMentraLive,
+  modelName,
+  onNavigate,
+}: {
   row: Row
   isMentraLive: boolean
   modelName: string
@@ -131,7 +156,8 @@ export default function TesterMenu() {
 
       <div className="flex-1 overflow-y-auto px-4 pb-6">
         <p className="mb-3 px-1 text-[13px] text-muted-foreground">
-          Each section exercises the @mentra/miniapp SDK. Use this to verify your glasses + phone + miniapp host are talking correctly.
+          Each section exercises the @mentra/miniapp SDK. Use this to verify your glasses + phone + miniapp host are
+          talking correctly.
         </p>
 
         <SectionHeading>Examples</SectionHeading>

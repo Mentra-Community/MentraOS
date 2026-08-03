@@ -32,6 +32,34 @@ import {
 import type {Channels} from "../../shared/channels"
 import type {TranslationEntry, TranslationSettings, TranslationsSnapshot, DisplayPreview} from "../../shared/types"
 
+/** Primary language subtag, lowercased ("fr-FR" -> "fr", "FR" -> "fr"). */
+function primarySubtag(code: string | undefined): string {
+  return (code ?? "").split("-")[0].toLowerCase()
+}
+
+/**
+ * Is this event a same-language passthrough (speech already in the target
+ * language, emitted by the cloud as a transcription) rather than a real
+ * translation?
+ *
+ * When the detected source is known, compare it to the target. But on early
+ * INTERIMS Soniox often has not identified the language yet, so the source
+ * arrives as "auto"/absent — comparing that against the target says
+ * "different language" and lets passthrough interims leak onto the glasses in
+ * "Translation only" mode. Fall back to the structural tell: a cross-language
+ * translation always carries `originalText` (source tokens stream in ahead of
+ * the lagging translation tokens), a passthrough never does.
+ */
+function isSameLanguagePassthrough(
+  sourceLanguage: string | undefined,
+  targetLanguage: string,
+  originalText: string | undefined,
+): boolean {
+  const src = primarySubtag(sourceLanguage)
+  if (src && src !== "auto") return src === primarySubtag(targetLanguage)
+  return !originalText
+}
+
 type Send = <C extends keyof Channels & string>(channel: C, payload: Channels[C]) => void
 type On = <C extends keyof Channels & string>(channel: C, cb: (payload: Channels[C]) => void) => () => void
 
@@ -109,6 +137,7 @@ export class TranslationController {
   private readonly unsubs: Array<() => void> = []
 
   private translationCleanup: UnsubscribeFn | null = null
+  private translationTarget: string | null = null
   private inactivityTimer: ReturnType<typeof setTimeout> | null = null
 
   // session.ui, retyped against this miniapp's channel registry. The SDK types
@@ -190,6 +219,7 @@ export class TranslationController {
         /* ignore */
       }
       this.translationCleanup = null
+      this.translationTarget = null
     }
     if (this.inactivityTimer) {
       clearTimeout(this.inactivityTimer)
@@ -282,9 +312,7 @@ export class TranslationController {
     }
   }
 
-  private async startTranslation(
-    params: Record<string, unknown>,
-  ): Promise<{targetLanguage: string; status: string}> {
+  private async startTranslation(params: Record<string, unknown>): Promise<{targetLanguage: string; status: string}> {
     const target =
       typeof params.targetLanguage === "string" && params.targetLanguage.trim() ? params.targetLanguage.trim() : null
 
@@ -348,8 +376,7 @@ export class TranslationController {
       })()
 
       this.settings.wordBreaking = wbRaw == null ? DEFAULT_SETTINGS.wordBreaking : wbRaw === "true"
-      this.settings.showOriginalText =
-        showOrigRaw == null ? DEFAULT_SETTINGS.showOriginalText : showOrigRaw === "true"
+      this.settings.showOriginalText = showOrigRaw == null ? DEFAULT_SETTINGS.showOriginalText : showOrigRaw === "true"
       this.settings.glassesDisplayMode =
         glassesModeRaw === "both" || glassesModeRaw === "translation"
           ? glassesModeRaw
@@ -361,6 +388,11 @@ export class TranslationController {
   }
 
   private async setTargetLanguage(targetLanguage: string): Promise<void> {
+    if (targetLanguage === this.settings.targetLanguage) {
+      this.subscribeTranslation()
+      this.broadcastSettings()
+      return
+    }
     this.settings.targetLanguage = targetLanguage
     await this.persist(STORAGE_KEYS.targetLanguage, targetLanguage)
     this.subscribeTranslation()
@@ -398,9 +430,42 @@ export class TranslationController {
 
   private async setGlassesDisplayMode(mode: TranslationSettings["glassesDisplayMode"]): Promise<void> {
     if (mode !== "translation" && mode !== "both") return
+    if (mode === this.settings.glassesDisplayMode) return
     this.settings.glassesDisplayMode = mode
     await this.persist(STORAGE_KEYS.glassesDisplayMode, mode)
+    // Re-render the currently shown line in the new mode immediately. Without
+    // this the toggle only takes effect on the NEXT spoken utterance, so
+    // flipping "Translation + transcription" looks like it does nothing (the
+    // reported no-op). The combined text is baked into the formatter history at
+    // render time, so a plain refresh cannot recombine — rebuild from the
+    // stored translations instead.
+    this.rebuildGlassesDisplay()
     this.broadcastSettings()
+  }
+
+  /**
+   * Rebuild the glasses formatter from the stored final translations,
+   * recombining each with its original transcription per the current
+   * glassesDisplayMode, then refresh. Mirrors updateDisplaySettings' rebuild
+   * but recomputes the per-line content for the new mode.
+   */
+  private rebuildGlassesDisplay(): void {
+    const both = this.settings.glassesDisplayMode === "both"
+    this.createFormatter()
+    let lastSpeaker: string | undefined
+    for (const entry of this.translations) {
+      if (!entry.isFinal) continue
+      // Same-language transcriptions (source === target) show on the glasses
+      // only in "both" mode — matches the live path in
+      // handleSameLanguageTranscription.
+      const sameLanguage = isSameLanguagePassthrough(entry.sourceLanguage, entry.targetLanguage, entry.originalText)
+      if (sameLanguage && !both) continue
+      const speakerChanged = entry.speaker !== lastSpeaker
+      lastSpeaker = entry.speaker
+      const displayText = both && entry.originalText ? `${entry.text}\n${entry.originalText}` : entry.text
+      this.formatter.processTranscription(displayText, true, entry.speaker, speakerChanged)
+    }
+    this.refreshDisplay()
   }
 
   private async persist(key: string, value: string): Promise<void> {
@@ -420,17 +485,8 @@ export class TranslationController {
   // ───────────────────────────────────────────────────────────────────────
 
   private subscribeTranslation(): void {
-    // Tear down any existing subscription before re-subscribing.
-    if (this.translationCleanup) {
-      try {
-        this.translationCleanup()
-      } catch {
-        /* ignore */
-      }
-      this.translationCleanup = null
-    }
-
     const targetLanguage = this.settings.targetLanguage
+    if (this.translationCleanup && this.translationTarget === targetLanguage) return
 
     try {
       const handler = (data: TranslationData) => {
@@ -440,7 +496,20 @@ export class TranslationController {
       // Any source language -> selected target language. Translating whatever
       // is spoken into one chosen language is the app's whole model; the source
       // is intentionally not configurable (see the file header).
-      this.translationCleanup = this.session.translation.to(targetLanguage, handler)
+      // Attach the replacement before releasing the old subscription. This
+      // keeps the microphone/cloud translation union live while settings are
+      // changed and preserves the working subscription if replacement fails.
+      const previousCleanup = this.translationCleanup
+      const nextCleanup = this.session.translation.to(targetLanguage, handler)
+      this.translationCleanup = nextCleanup
+      this.translationTarget = targetLanguage
+      if (previousCleanup) {
+        try {
+          previousCleanup()
+        } catch {
+          /* ignore */
+        }
+      }
     } catch (err) {
       console.log(`LocalTranslation: translation subscribe failed for target=${targetLanguage}`, err)
     }
@@ -495,6 +564,13 @@ export class TranslationController {
     // Glasses display: translation only, or translation + transcription
     // combined — the translation leads (it's what the wearer reads), with the
     // source-language transcription under it.
+    //
+    // Same-language passthrough events (the cloud emits speech ALREADY in the
+    // target language as a transcription; source == target) always land in the
+    // UI history above, but reach the glasses only in "Translation +
+    // transcription" mode — same-language on the display is opt-in.
+    const sameLanguage = isSameLanguagePassthrough(entry.sourceLanguage, entry.targetLanguage, rich.originalText)
+    if (sameLanguage && this.settings.glassesDisplayMode !== "both") return
     const displayText =
       this.settings.glassesDisplayMode === "both" && rich.originalText
         ? `${data.text}\n${rich.originalText}`
@@ -684,11 +760,15 @@ export class TranslationController {
   }
 
   private showTextWall(text: string): void {
-    try {
-      this.session.display.showTextWall(text, {view: "main"})
-    } catch (err) {
-      console.log("LocalTranslation: display error", err)
-    }
+    // One full-canvas text element with a stable id: successive translations
+    // update it in place on the glasses (no flicker). Box coordinates are raw
+    // device px — read from capabilities, falling back to the largest canvas
+    // (the host clamps to the real one). render() never throws; it resolves
+    // {status: "blocked"} instead.
+    const d = this.session.capabilities?.display
+    void this.session.display.render([
+      {type: "text", id: "translation", box: {x: 0, y: 0, w: d?.width ?? 576, h: d?.height ?? 288}, text},
+    ])
   }
 
   private cleanTranscriptText(text: string): string {
@@ -715,11 +795,7 @@ export class TranslationController {
     this.inactivityTimer = setTimeout(() => {
       this.formatter.clear()
       this.lastSpeakerId = undefined
-      try {
-        this.session.display.clear()
-      } catch (err) {
-        console.log("LocalTranslation: clear error", err)
-      }
+      void this.session.display.render([])
     }, 40000)
   }
 

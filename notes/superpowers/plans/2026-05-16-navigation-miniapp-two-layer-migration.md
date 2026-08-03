@@ -24,8 +24,8 @@
 | `mobile/modules/miniapp/src/ui/index.ts` | Modify | Add `request()` method to `MentraUiGlobal`; export `Rpc`, `MentraRpcError`, `MentraRpcTimeoutError`; update docstring. |
 | `mobile/modules/miniapp/src/react/useRpc.ts` | Create | React hook with auto-abort-on-unmount + `.abort()` for cancel-previous patterns. |
 | `mobile/modules/miniapp/src/react/index.ts` | Modify | Export `useRpc`. |
-| `mobile/modules/island/src/services/mentraUiShim.ts` | Modify | Add `requestId` to `msg` frames (both directions); generate `cancel` frame; pre-ready buffer for RPC. |
-| `mobile/modules/island/src/services/MentraUIRouter.ts` | Modify | Pass `requestId` through `routeFromWebView` / `routeFromBackground`; route `cancel` frame in both directions. |
+| `mobile/modules/engine/src/services/mentraUiShim.ts` | Modify | Add `requestId` to `msg` frames (both directions); generate `cancel` frame; pre-ready buffer for RPC. |
+| `mobile/modules/engine/src/services/MentraUIRouter.ts` | Modify | Pass `requestId` through `routeFromWebView` / `routeFromBackground`; route `cancel` frame in both directions. |
 
 ### Example mini app refactor (`sdk/example-miniapp/`)
 
@@ -643,7 +643,7 @@ git commit -m "Cover handle() error, cancel, and re-register semantics with test
 
 **Files:**
 - Modify: `mobile/modules/miniapp/src/ui/index.ts` — add `request` to the interface
-- Modify: `mobile/modules/island/src/services/mentraUiShim.ts` — implement `request` on the WebView global
+- Modify: `mobile/modules/engine/src/services/mentraUiShim.ts` — implement `request` on the WebView global
 
 - [ ] **Step 1: Extend the `MentraUiGlobal` interface**
 
@@ -698,7 +698,7 @@ export {MentraRpcError, MentraRpcTimeoutError} from "../modules/ui"
 
 - [ ] **Step 2: Implement `request` in the shim**
 
-In `mobile/modules/island/src/services/mentraUiShim.ts`, find the IIFE source (after `function send(...)` around line 93). Add the RPC machinery. The shim is plain ECMAScript (no TS, no imports) — write the new logic in the same style.
+In `mobile/modules/engine/src/services/mentraUiShim.ts`, find the IIFE source (after `function send(...)` around line 93). Add the RPC machinery. The shim is plain ECMAScript (no TS, no imports) — write the new logic in the same style.
 
 After the `function on(channel, cb) {...}` function (around line 109-131), add:
 
@@ -874,7 +874,7 @@ Expected: compiles. (`UIModuleImpl` already has `handle`; the interface narrowin
 - [ ] **Step 4: Run shim build**
 
 ```bash
-cd mobile/modules/island && bun x tsc --noEmit
+cd mobile/modules/engine && bun x tsc --noEmit
 ```
 
 Expected: compiles. The shim is `.ts` returning a string — the string content isn't type-checked, only the surrounding wrapper.
@@ -882,7 +882,7 @@ Expected: compiles. The shim is `.ts` returning a string — the string content 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add mobile/modules/miniapp/src/ui/index.ts mobile/modules/island/src/services/mentraUiShim.ts
+git add mobile/modules/miniapp/src/ui/index.ts mobile/modules/engine/src/services/mentraUiShim.ts
 git commit -m "Add mentra.request to WebView shim + UI global type" --no-verify
 ```
 
@@ -891,7 +891,7 @@ git commit -m "Add mentra.request to WebView shim + UI global type" --no-verify
 ## Task 6: Route `requestId` + `cancel` frames through `MentraUIRouter`
 
 **Files:**
-- Modify: `mobile/modules/island/src/services/MentraUIRouter.ts`
+- Modify: `mobile/modules/engine/src/services/MentraUIRouter.ts`
 
 - [ ] **Step 1: Pass `requestId` through both directions and route `cancel` frames**
 
@@ -968,7 +968,7 @@ In `routeFromBackground` (around lines 154-169), preserve `requestId` and add a 
   }
 ```
 
-Also: the shim's `recv` needs to handle `'cancel'` frames (background-initiated cancel — unused today, but reserved). Open `mobile/modules/island/src/services/mentraUiShim.ts` and inside the `recv` function add a branch right before the `'ack'` branch:
+Also: the shim's `recv` needs to handle `'cancel'` frames (background-initiated cancel — unused today, but reserved). Open `mobile/modules/engine/src/services/mentraUiShim.ts` and inside the `recv` function add a branch right before the `'ack'` branch:
 
 ```js
     if (type === 'cancel' && typeof envelope.requestId === 'string') {
@@ -981,7 +981,7 @@ Also: the shim's `recv` needs to handle `'cancel'` frames (background-initiated 
 - [ ] **Step 2: Typecheck the host package**
 
 ```bash
-cd mobile/modules/island && bun x tsc --noEmit
+cd mobile/modules/engine && bun x tsc --noEmit
 ```
 
 Expected: compiles.
@@ -989,7 +989,7 @@ Expected: compiles.
 - [ ] **Step 3: Commit**
 
 ```bash
-git add mobile/modules/island/src/services/MentraUIRouter.ts mobile/modules/island/src/services/mentraUiShim.ts
+git add mobile/modules/engine/src/services/MentraUIRouter.ts mobile/modules/engine/src/services/mentraUiShim.ts
 git commit -m "Pass requestId and cancel frames through the UI router" --no-verify
 ```
 

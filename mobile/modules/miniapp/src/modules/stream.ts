@@ -79,6 +79,8 @@ export interface StartStreamOptions {
    *     HLS/DASH and no recording.
    */
   ingest?: "srt" | "whip"
+  /** Optional Bearer token for direct WHIP Authorization (custom authenticated endpoints). */
+  authToken?: string
 }
 
 export interface StreamResult {
@@ -98,10 +100,26 @@ export interface StreamResult {
   webrtcUrl?: string
 }
 
+/** Live encoder and device telemetry emitted periodically by supported glasses firmware. */
+export interface StreamLiveStats {
+  /** Current encoded video bitrate in bits per second. */
+  bitrate?: number
+  /** Current encode frame rate. */
+  fps?: number
+  droppedFrames?: number
+  /** Seconds since the stream started. */
+  duration?: number
+  /** Device temperature in °C, if the hardware reports it. */
+  temperatureC?: number
+}
+
 export interface StreamStatus {
   streamId: string
   status: string
   errorDetails?: string
+  /** Negotiated encode config — forwarded once, on the first status ack. */
+  resolvedConfig?: StreamResolvedConfig
+  stats?: StreamLiveStats
 }
 
 export class StreamModule {
@@ -125,6 +143,7 @@ export class StreamModule {
         video: options.video,
         audio: options.audio,
         sound: options.sound ?? true,
+        ...(options.authToken ? {authToken: options.authToken} : {}),
       })
     }
     return this.session.sendRequest<StreamResult>({

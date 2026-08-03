@@ -48,6 +48,26 @@ public final class RecoveryConstants {
   public static final int MAX_MISSED_HEARTBEATS = 3;
   public static final long RESTART_GRACE_MS = 20000L;
   public static final long REINSTALL_GRACE_MS = 60000L;
+
+  /**
+   * How long the reinstall path keeps the install lock after dispatching the backup install,
+   * waiting for the installed versionCode to reach the backup's. The OEM install is asynchronous;
+   * releasing the lock at dispatch would let a downgrade begin while the higher backup install is
+   * still in flight.
+   */
+  public static final long REINSTALL_OBSERVE_TIMEOUT_MS = 60000L;
+
+  /**
+   * How long the downgrade worker keeps its transaction alive after first observing the target
+   * version, re-checking that the version holds. A recovery backup install that outlived the
+   * reinstall observe window could otherwise commit right after convergence, with the
+   * transaction already cleared and no WAIT_FOR_REVERT left to re-uninstall it. During the
+   * linger any higher build that (re)appears resumes the state machine instead.
+   */
+  public static final long DOWNGRADE_CONVERGENCE_LINGER_MS = 60000L;
+
+  /** Poll cadence while lingering at the converged target version. */
+  public static final long DOWNGRADE_LINGER_POLL_MS = 5000L;
   public static final long REINSTALL_LATE_PONG_GRACE_MS = 30000L;
   public static final long RECOVERY_WINDOW_MS = 30 * 60 * 1000L;
   public static final int MAX_RECOVERIES_PER_WINDOW = 3;
@@ -68,21 +88,59 @@ public final class RecoveryConstants {
   public static final String BACKUP_APK_PATH = "/storage/emulated/0/asg/asg_client_backup.apk";
   public static final String BACKUP_METADATA_PATH = "/storage/emulated/0/asg/asg_client_backup.json";
 
-  // --- Remediation (self-contained ASG force-install path) ---
 
-  /** OTA manifest fetched directly by the recovery worker (independent of ASG's OTA cache). */
-  public static final String VERSION_JSON_URL = "https://ota.mentraglass.com/prod_live_version_v2.json";
-  /** Fresh-download target; always overwritten so the ASG OTA cache is bypassed implicitly. */
-  public static final String REMEDIATION_APK_PATH =
-      "/storage/emulated/0/asg/recovery_remediation.apk";
-  public static final String REMEDIATION_PREFS = "mentra_remediation_state";
-  public static final String KEY_LAST_APPLIED_VERSION = "last_applied_version_code";
-  public static final String UNIQUE_REMEDIATION_WORK = "mentra_remediation_check";
+  // --- Pinned ASG downgrade transaction (uninstall-then-reinstall detour) ---
 
-  /** Periodic remediation check cadence. */
-  public static final long REMEDIATION_CHECK_INTERVAL_HOURS = 6L;
-  /** HTTP connect timeout for manifest fetch / APK download. */
-  public static final int REMEDIATION_CONNECT_TIMEOUT_MS = 15_000;
-  /** HTTP read timeout for manifest fetch / APK download. */
-  public static final int REMEDIATION_READ_TIMEOUT_MS = 60_000;
+  /** ASG hands off a staged, checksummed downgrade APK for recovery to install. */
+  public static final String ACTION_REQUEST_DOWNGRADE = "com.mentra.recovery.ACTION_REQUEST_DOWNGRADE";
+  public static final String EXTRA_DOWNGRADE_TARGET_VERSION = "target_version_code";
+  public static final String EXTRA_DOWNGRADE_APK_PATH = "apk_path";
+  public static final String EXTRA_DOWNGRADE_APK_SHA256 = "apk_sha256";
+
+  public static final String DOWNGRADE_PREFS = "mentra_downgrade_transaction";
+  public static final String UNIQUE_DOWNGRADE_WORK = "mentra_downgrade_transaction";
+
+  /**
+   * Oldest ASG versionCode a downgrade transaction may target. Mirrors ASG's
+   * {@code OtaConstants.DOWNGRADE_FLOOR_VERSION_CODE} as defense in depth (this package updates
+   * independently of ASG): builds below the floor predate the downgrade-safe contract (media
+   * storage layout, post-uninstall behavior). 0 leaves the floor open for RFC/bench testing only;
+   * raise both constants together before enabling downgrades in production.
+   */
+  public static final long DOWNGRADE_FLOOR_VERSION_CODE = 0L;
+
+  /** Uninstall broadcast dispatch until the factory /system revert is observed. */
+  public static final long DOWNGRADE_REVERT_TIMEOUT_MS = 90_000L;
+  /** Install broadcast dispatch until the target versionCode is observed installed. */
+  public static final long DOWNGRADE_INSTALL_TIMEOUT_MS = 120_000L;
+  /** Installed-version poll cadence while a downgrade phase is in flight. */
+  public static final long DOWNGRADE_POLL_INTERVAL_MS = 2_000L;
+  /** Install broadcast attempts before the transaction gives up. */
+  public static final int DOWNGRADE_MAX_INSTALL_ATTEMPTS = 3;
+  /**
+   * Abandon a transaction that has not converged after this long. Generous because the
+   * transaction legitimately spans the uninstall revert, an install, and process restarts.
+   */
+  public static final long DOWNGRADE_TRANSACTION_STALE_MS = 30 * 60 * 1000L;
+
+  /**
+   * Verdict broadcast sent back to ASG synchronously from the handoff decision: ASG cannot
+   * otherwise distinguish a refused handoff from an accepted-but-slow transaction (its
+   * watchdog only observes "still alive"), and that ambiguity is what made blind retry
+   * dangerous. Guarded like the heartbeat channel.
+   */
+  public static final String ACTION_DOWNGRADE_HANDOFF_RESULT =
+      "com.mentra.recovery.ACTION_DOWNGRADE_HANDOFF_RESULT";
+
+  public static final String EXTRA_HANDOFF_ACCEPTED = "accepted";
+  public static final String EXTRA_HANDOFF_TARGET_VERSION = "target_version";
+  public static final String EXTRA_HANDOFF_REASON = "reason";
+
+  /**
+   * Suffix appended when the accepted transaction claims the staged APK by rename. Renaming
+   * (atomic within the filesystem) transfers artifact ownership to the transaction, so a
+   * later ASG re-stage writes a DIFFERENT file and can never corrupt the bytes a live
+   * DowngradeWorker validates and installs.
+   */
+  public static final String DOWNGRADE_CLAIMED_APK_SUFFIX = ".txn";
 }

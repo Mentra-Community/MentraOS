@@ -14,8 +14,11 @@ import com.mentra.bluetoothsdk.controllers.ControllerManager
 import com.mentra.bluetoothsdk.controllers.R1
 import com.mentra.bluetoothsdk.services.ForegroundService
 import com.mentra.bluetoothsdk.services.PhoneMic
+import com.mentra.bluetoothsdk.sgcs.Ar99
 import com.mentra.bluetoothsdk.sgcs.G1
 import com.mentra.bluetoothsdk.sgcs.G2
+import com.mentra.bluetoothsdk.sgcs.SceneElement
+import com.mentra.bluetoothsdk.sgcs.SceneFrame
 import com.mentra.bluetoothsdk.sgcs.Mach1
 import com.mentra.bluetoothsdk.sgcs.MentraLive
 import com.mentra.bluetoothsdk.sgcs.MentraNex
@@ -26,6 +29,7 @@ import com.mentra.bluetoothsdk.utils.ControllerTypes
 import com.mentra.bluetoothsdk.utils.DeviceTypes
 import com.mentra.bluetoothsdk.utils.MicMap
 import com.mentra.bluetoothsdk.utils.MicTypes
+import com.mentra.bluetoothsdk.utils.PhoneAudioMonitor
 import com.mentra.lc3Lib.Lc3Cpp
 import com.mentra.bluetoothsdk.stt.SherpaOnnxTranscriber
 import kotlinx.coroutines.CoroutineScope
@@ -143,10 +147,6 @@ class DeviceManager {
     private var bypassVad: Boolean
         get() = DeviceStore.store.get("bluetooth", "bypass_vad") as? Boolean ?: false
         set(value) = DeviceStore.apply("bluetooth", "bypass_vad", value)
-
-    private var offlineCaptionsRunning: Boolean
-        get() = DeviceStore.store.get("bluetooth", "offline_captions_running") as? Boolean ?: false
-        set(value) = DeviceStore.apply("bluetooth", "offline_captions_running", value)
 
     private var localSttFallbackActive: Boolean
         get() = DeviceStore.store.get("bluetooth", "local_stt_fallback_active") as? Boolean ?: false
@@ -328,6 +328,16 @@ class DeviceManager {
         val glassesMicEnabled = DeviceStore.get("glasses", "micEnabled") as? Boolean ?: false
         val glassesConnected = DeviceStore.get("glasses", "connected") as? Boolean ?: false
         if (!glassesMicEnabled || !glassesConnected) {
+            return
+        }
+
+        if (sgc?.isMicSuspendedForAudio == true) {
+            Bridge.log("MAN: Glasses mic intentionally suspended for phone audio; skipping mic recovery")
+            return
+        }
+
+        if (PhoneAudioMonitor.getInstance(Bridge.getContext()).isOwnAppAudioPlaying()) {
+            Bridge.log("MAN: Mentra audio is playing; skipping glasses mic recovery")
             return
         }
 
@@ -573,6 +583,36 @@ class DeviceManager {
         }
     }
 
+    /**
+     * Re-evaluate the active foreground-service types while the host Activity is visible.
+     *
+     * Location is a while-in-use permission, so Android 14+ only allows the service to add
+     * the location type from the foreground. Sending a command to the existing service
+     * updates its type mask without tearing down the glasses connection.
+     */
+    fun refreshForegroundServiceTypes() {
+        val context = Bridge.getContext()
+
+        try {
+            Bridge.log("MAN: Refreshing foreground service types")
+            val serviceIntent =
+                Intent(context, ForegroundService::class.java).apply {
+                    action = ForegroundService.ACTION_REFRESH_TYPES
+                }
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(serviceIntent)
+            } else {
+                context.startService(serviceIntent)
+            }
+
+            serviceStarted = true
+            Bridge.log("MAN: Foreground service types refreshed")
+        } catch (e: Exception) {
+            Bridge.log("MAN: Failed to refresh foreground service types: ${e.message}")
+        }
+    }
+
     private fun restartForegroundService() {
         val context = Bridge.getContext()
 
@@ -660,6 +700,13 @@ class DeviceManager {
         var borderWidth: Int? = null,
         var borderRadius: Int? = null
     )
+
+    // Scene slots — one whole SceneFrame per view (main/dashboard), parallel to
+    // viewStates. When a slot holds a scene, viewStates carries a "scene"
+    // sentinel so sendCurrentState routes here. Holding the WHOLE frame keeps
+    // native re-dispatch coherent (dashboard exit re-applies a complete scene,
+    // not whatever element happened to arrive last).
+    private val sceneStates = arrayOfNulls<SceneFrame>(2)
     // MARK: - End Unique
 
     // MARK: - Voice Data Handling
@@ -740,7 +787,7 @@ class DeviceManager {
         // class to fire `vad_status` (a separate signal the cloud SDK
         // surfaces as `session.audio.isSpeaking`).
         handleSendingPcm(pcmData)
-        if (shouldSendTranscript || offlineCaptionsRunning || localSttFallbackActive) {
+        if (shouldSendTranscript || localSttFallbackActive) {
             if (ensureTranscriberInitialized()) {
                 transcriber?.acceptAudio(pcmData)
             }
@@ -877,16 +924,8 @@ class DeviceManager {
         }
 
         // executor.execute {
-        var currentViewState: ViewState
-        if (hUp) {
-            currentViewState = viewStates[1]
-        } else {
-            currentViewState = viewStates[0]
-        }
-
-        if (hUp && !contextualDashboard) {
-            currentViewState = viewStates[0]
-        }
+        val currentStateIndex = if (hUp && contextualDashboard) 1 else 0
+        val currentViewState: ViewState = viewStates[currentStateIndex]
 
         if (sgc?.type?.contains(DeviceTypes.SIMULATED) == true) {
             // dont send the event to glasses that aren't there:
@@ -942,6 +981,10 @@ class DeviceManager {
                     currentViewState.borderWidth ?: 0,
                     currentViewState.borderRadius ?: 0
                 )
+            }
+
+            "scene" -> {
+                sceneStates[currentStateIndex]?.let { sgc?.applySceneFrame(it) }
             }
 
             "clear_view" -> sgc?.clearDisplay()
@@ -1116,6 +1159,8 @@ class DeviceManager {
             sgc = MentraLive()
         } else if (wearable.contains(DeviceTypes.NEX)) {
             sgc = MentraNex()
+        } else if (wearable.contains(DeviceTypes.AR99)) {
+            sgc = Ar99()
         } else if (wearable.contains(DeviceTypes.MACH1)) {
             sgc = createOptionalMach1Sgc(DeviceTypes.MACH1)
         } else if (wearable.contains(DeviceTypes.Z100)) {
@@ -1193,6 +1238,10 @@ class DeviceManager {
                 }
             )
             nextTranscriber.initialize()
+            if (!nextTranscriber.isInitialized()) {
+                Bridge.log("SherpaOnnxTranscriber initialize() returned without becoming ready")
+                return false
+            }
             transcriber = nextTranscriber
             Bridge.log("SherpaOnnxTranscriber fully initialized")
             true
@@ -1279,6 +1328,10 @@ class DeviceManager {
         Bridge.saveSetting("default_wearable", defaultWearable)
         Bridge.saveSetting("device_name", deviceName)
         Bridge.saveSetting("device_address", deviceAddress)
+        if (defaultWearable.contains(DeviceTypes.AR99)) {
+            val projectName = (DeviceStore.store.get("bluetooth", "project_name") as? String)?.trim().orEmpty()
+            Bridge.saveSetting("project_name", projectName)
+        }
     }
 
     private fun syncSystemTimeOnceForConnection(connectionKey: String) {
@@ -1362,9 +1415,31 @@ class DeviceManager {
         val isDashboard = view == "dashboard"
         val stateIndex = if (isDashboard) 1 else 0
 
+        // Scene frames (display.render() pipeline) take their own path: the
+        // whole frame is the unit, not a layout, and the host's per-element
+        // annotations make redundant frames self-deduping (all-"unchanged"
+        // frames no-op in the SGC base handler).
+        @Suppress("UNCHECKED_CAST") val sceneMap = event["scene"] as? Map<String, Any>
+        if (sceneMap != null) {
+            handleSceneEvent(stateIndex, sceneMap)
+            return
+        }
+
         @Suppress("UNCHECKED_CAST") val layout = event["layout"] as? Map<String, Any> ?: return
 
         val layoutType = layout["layoutType"] as? String
+
+        // Scene→legacy handoff: a legacy layout is about to draw over a scene
+        // (e.g. a cloud app taking the view from a miniapp). Sweep the scene's
+        // elements first so they don't linger under the new content; clear_view
+        // wipes everything anyway.
+        sceneStates[stateIndex]?.let { prevFrame ->
+            sceneStates[stateIndex] = null
+            if (layoutType != "clear_view") {
+                sgc?.clearSceneElements(prevFrame.elements.map { it.id })
+            }
+        }
+
         val text = parsePlaceholders(layout.getString("text", " "))
         val topText = parsePlaceholders(layout.getString("topText", " "))
         val bottomText = parsePlaceholders(layout.getString("bottomText", " "))
@@ -1414,6 +1489,86 @@ class DeviceManager {
         }
     }
 
+    /** Parse + store a scene frame, then dispatch it if its view is visible. */
+    private fun handleSceneEvent(stateIndex: Int, sceneMap: Map<String, Any>) {
+        var frame = parseSceneFrame(sceneMap) ?: return
+        val prevFrame = sceneStates[stateIndex]
+
+        if (prevFrame == null) {
+            // Legacy→scene handoff: stale legacy content (e.g. a cloud app's
+            // text wall) must not linger under the scene's elements.
+            // clearDisplay is the per-device "wipe what's there" (blank-in-place
+            // on G2 — no page rebuild).
+            val prevLegacyType = viewStates[stateIndex].layoutType
+            if (prevLegacyType.isNotEmpty() && prevLegacyType != "clear_view" && prevLegacyType != "scene") {
+                sgc?.clearDisplay()
+            }
+        } else if (prevFrame.appId != frame.appId) {
+            // Cross-app switch: the host's diff baseline is per-app, so the new
+            // app's annotations don't know the old app's elements are on the
+            // glasses. Sweep the old app's elements (SGC registries still map
+            // them), then paint the new frame from scratch. In practice the
+            // boot message interposes between apps, so this isn't visible as a
+            // blank.
+            sgc?.clearSceneElements(prevFrame.elements.map { it.id })
+            frame = frame.copy(replay = true, elements = frame.elements.map { it.copy(change = "created") })
+        }
+
+        // Store the REDISPATCH form: any later sendCurrentState (dashboard
+        // exit, head-up return) must repaint the whole frame — the original
+        // annotations are only valid for the first dispatch right now.
+        sceneStates[stateIndex] =
+            frame.copy(replay = true, elements = frame.elements.map { it.copy(change = "created") })
+        viewStates[stateIndex] = ViewState(" ", " ", " ", "scene", " ", null, null)
+
+        val hUp = headUp && contextualDashboard
+        if ((stateIndex == 0 && !hUp) || (stateIndex == 1 && hUp)) {
+            dispatchSceneFrame(frame)
+        }
+    }
+
+    /** Guarded scene dispatch — mirrors sendCurrentState's send conditions. */
+    private fun dispatchSceneFrame(frame: SceneFrame) {
+        if (screenDisabled) return
+        if (sgc?.type?.contains(DeviceTypes.SIMULATED) == true) return
+        if (sgc?.fullyBooted != true) {
+            Bridge.log("MAN: dispatchSceneFrame(): sgc not ready")
+            return
+        }
+        sgc?.applySceneFrame(frame)
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun parseSceneFrame(sceneMap: Map<String, Any>): SceneFrame? {
+        val elementsRaw = sceneMap["elements"] as? List<Map<String, Any>> ?: return null
+        val elements =
+            elementsRaw.mapNotNull { el ->
+                val box = el["box"] as? Map<String, Any> ?: return@mapNotNull null
+                val style = el["style"] as? Map<String, Any>
+                SceneElement(
+                    id = el["id"] as? String ?: return@mapNotNull null,
+                    type = el["type"] as? String ?: return@mapNotNull null,
+                    x = (box["x"] as? Number)?.toInt() ?: 0,
+                    y = (box["y"] as? Number)?.toInt() ?: 0,
+                    w = (box["w"] as? Number)?.toInt() ?: 0,
+                    h = (box["h"] as? Number)?.toInt() ?: 0,
+                    text = (el["text"] as? String)?.let { parsePlaceholders(it) },
+                    data = el["data"] as? String,
+                    border = (style?.get("border") as? Number)?.toInt() ?: 0,
+                    radius = (style?.get("radius") as? Number)?.toInt() ?: 0,
+                    change = el["change"] as? String ?: "created",
+                    contentHash = el["contentHash"] as? String ?: ""
+                )
+            }
+        return SceneFrame(
+            appId = sceneMap["appId"] as? String ?: "",
+            epoch = (sceneMap["sceneEpoch"] as? Number)?.toInt() ?: 0,
+            replay = sceneMap["replay"] as? Boolean ?: false,
+            elements = elements,
+            removed = (sceneMap["removed"] as? List<*>)?.filterIsInstance<String>() ?: emptyList()
+        )
+    }
+
     fun showDashboard() {
         sgc?.showDashboard()
     }
@@ -1453,10 +1608,10 @@ class DeviceManager {
         sgc?.sendStreamKeepAlive(message)
     }
 
-    fun requestWifiScan() {
+    fun requestWifiScan(scanId: String? = null) {
         Bridge.log("MAN: Requesting wifi scan")
         DeviceStore.apply("bluetooth", "wifiScanResults", emptyList<Any>())
-        sgc?.requestWifiScan()
+        sgc?.requestWifiScan(scanId)
     }
 
     fun sendIncidentId(incidentId: String, apiBaseUrl: String? = null) {
@@ -1503,6 +1658,20 @@ class DeviceManager {
         (sgc as? MentraLive)?.sendOtaQueryStatus()
     }
 
+    fun startAr99OtaFromFile(path: String): Boolean {
+        val ar99 = sgc as? Ar99 ?: throw IllegalStateException("unsupported_device")
+        return ar99.startOtaFromFile(path)
+    }
+
+    fun cancelAr99Ota() {
+        (sgc as? Ar99)?.cancelAr99Ota()
+    }
+
+    fun sendAr99FactoryReset() {
+        val ar99 = sgc as? Ar99 ?: throw IllegalStateException("unsupported_device")
+        ar99.sendFactoryReset()
+    }
+
     fun sendGalleryMode(requestId: String, enabled: Boolean) {
         val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
         live.sendGalleryMode(requestId, enabled)
@@ -1546,6 +1715,38 @@ class DeviceManager {
         live.sendCameraFovSetting(requestId, fov, roiPosition)
     }
 
+    /** Sends the pre-lease FOV command used by ASG clients that do not send an acknowledgement. */
+    fun sendLegacyCameraFovSetting(fov: Int, roiPosition: Int) {
+        val glassesConnected = DeviceStore.get("glasses", "connected") as? Boolean ?: false
+        if (!glassesConnected) throw IllegalStateException("not_connected")
+        val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
+        live.sendCameraFovSetting(null, fov, roiPosition)
+    }
+
+    /** Replays the persistent base FOV without waiting for an acknowledgement. */
+    fun restoreLegacyCameraFovSetting() {
+        val glassesConnected = DeviceStore.get("glasses", "connected") as? Boolean ?: false
+        if (!glassesConnected) throw IllegalStateException("not_connected")
+        val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
+        live.sendCameraFovSetting()
+    }
+
+    fun sendCameraFovOverride(
+        requestId: String,
+        leaseId: String,
+        fov: Int,
+        roiPosition: Int,
+        ttlMs: Int,
+    ) {
+        val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
+        live.sendCameraFovOverride(requestId, leaseId, fov, roiPosition, ttlMs)
+    }
+
+    fun releaseCameraFovOverride(requestId: String, leaseId: String) {
+        val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
+        live.releaseCameraFovOverride(requestId, leaseId)
+    }
+
     fun sendCameraTuningConfig(requestId: String, anrOn: Boolean, gainOn: Boolean) {
         val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
         live.sendCameraTuningConfig(requestId, anrOn, gainOn)
@@ -1554,8 +1755,11 @@ class DeviceManager {
     fun warmUpCamera(
         requestId: String,
         size: PhotoSize,
+        mode: PhotoMode = PhotoMode.PHOTO,
         exposureTimeNs: Long?,
         durationMs: Int,
+        zsl: Boolean? = null,
+        mfnr: Boolean? = null,
     ) {
         // Fail fast like other camera commands so the SDK promise rejects immediately instead of
         // hanging until the request timeout with no camera_status.
@@ -1565,11 +1769,16 @@ class DeviceManager {
                     "unsupported_device",
                     "This command requires Mentra Live glasses.",
                 )
-        live.warmUpCamera(requestId, size, exposureTimeNs, durationMs)
+        live.warmUpCamera(requestId, size, mode, exposureTimeNs, durationMs, zsl, mfnr)
+    }
+
+    fun stopCameraWarmUp(requestId: String) {
+        val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
+        live.stopCameraWarmUp(requestId)
     }
 
     /**
-     * Read glasses media step volume (0–15) via K900 on Mentra Live only. Blocks until response,
+     * Read glasses media step volume (0—5) via K900 on Mentra Live only. Blocks until response,
      * error, or timeout (used from JS AsyncFunction on a worker thread).
      */
     fun getGlassesMediaVolumeBlocking(): Map<String, Any> {
@@ -1595,7 +1804,7 @@ class DeviceManager {
         return result ?: throw IllegalStateException("glasses_volume_empty")
     }
 
-    /** Set glasses media step volume (0–15) via K900 on Mentra Live only. */
+    /** Set glasses media step volume (0—5) via K900 on Mentra Live only. */
     fun setGlassesMediaVolumeBlocking(level: Int): Map<String, Any> {
         val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
         val latch = CountDownLatch(1)
@@ -1681,7 +1890,7 @@ class DeviceManager {
 
     fun setMicState() {
         val willSendPcm = shouldSendPcm || shouldSendLc3
-        val willSendTranscript = shouldSendTranscript || offlineCaptionsRunning || localSttFallbackActive
+        val willSendTranscript = shouldSendTranscript || localSttFallbackActive
         val nextEnabled = willSendPcm || willSendTranscript
         // Tell VAD when the mic is shutting down so it doesn't get stuck in
         // a stale "speaking" state and keep emitting vad_status=true after
@@ -1709,7 +1918,7 @@ class DeviceManager {
                 iso = manualIso,
             )
         Bridge.log(
-            "MAN: PHOTO PIPELINE [4/6] DeviceManager.requestPhoto requestId=${routed.requestId} size=${routed.size.value} compress=${routed.compress.value} save=${routed.save} sound=${routed.sound} exposureTimeNs=$exposureNs iso=${manualIso ?: "auto"} aeDivisor=${routed.aeExposureDivisor} isoCap=${routed.isoCap} sgc=${sgc?.javaClass?.simpleName ?: "null"}"
+            "MAN: PHOTO PIPELINE [4/6] DeviceManager.requestPhoto requestId=${routed.requestId} size=${routed.size.value} mode=${routed.mode.value} compress=${routed.compress.value} save=${routed.save} sound=${routed.sound} exposureTimeNs=$exposureNs iso=${manualIso ?: "auto"} aeDivisor=${routed.aeExposureDivisor} isoCap=${routed.isoCap} sgc=${sgc?.javaClass?.simpleName ?: "null"}"
         )
         val activeSgc = sgc
         if (activeSgc == null) {
@@ -1739,8 +1948,14 @@ class DeviceManager {
             Bridge.log("MAN: No default wearable, returning")
             return
         }
-        if (deviceName.isEmpty()) {
-            Bridge.log("MAN: No device name, returning")
+        val reconnectTarget =
+            if (defaultWearable.contains(DeviceTypes.AR99) && deviceAddress.isNotBlank()) {
+                deviceAddress
+            } else {
+                deviceName
+            }
+        if (reconnectTarget.isEmpty()) {
+            Bridge.log("MAN: No reconnect target, returning")
             return
         }
         if (!hasBluetoothPermissions()) {
@@ -1752,7 +1967,7 @@ class DeviceManager {
         }
         initSGC(defaultWearable)
         searching = true
-        sgc?.connectById(deviceName)
+        sgc?.connectById(reconnectTarget)
         connectDefaultController()
     }
 
@@ -1847,6 +2062,13 @@ class DeviceManager {
         shouldSendBootingMessage = true // Reset for next first connect
         // clear glasses properties:
         DeviceStore.apply("glasses", "deviceModel", "")
+        // Device identifiers are session-bound. Clear them on every disconnect so a
+        // previously connected pair can never be reported for the next connection.
+        DeviceStore.apply("glasses", "serialNumber", "")
+        DeviceStore.apply("glasses", "bluetoothMacAddress", "")
+        DeviceStore.apply("glasses", "leftMacAddress", "")
+        DeviceStore.apply("glasses", "rightMacAddress", "")
+        DeviceStore.apply("glasses", "macAddress", "")
         DeviceStore.apply("glasses", "fullyBooted", false)
         DeviceStore.apply("glasses", "connected", false)
         DeviceStore.apply(
@@ -1885,6 +2107,7 @@ class DeviceManager {
         Bridge.saveSetting("default_wearable", "")
         Bridge.saveSetting("device_name", "")
         Bridge.saveSetting("device_address", "")
+        Bridge.saveSetting("project_name", "")
     }
 
     fun forgetController() {

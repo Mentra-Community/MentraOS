@@ -43,6 +43,13 @@ const WAV_SOFTWARE = "Mentra Recorder"
 const FLUSH_BYTES = 48 * 1024
 /** Throttle UI status pushes to ~5/sec (keyed off captured audio ms, not a timer). */
 const PROGRESS_MS = 200
+/**
+ * Keep accepting PCM briefly after the user taps stop. Glasses audio crosses
+ * BLE and two JS/native bridges, so the newest frames can still be in flight
+ * when the UI command reaches this controller. Unsubscribing immediately drops
+ * that tail even though it was spoken before the tap.
+ */
+const STOP_TAIL_DRAIN_MS = 1500
 
 export class RecorderController {
   private started = false
@@ -74,8 +81,14 @@ export class RecorderController {
   private interimTranscript = ""
   /** Detected/active transcription language tag (e.g. "en-US"). */
   private lang = ""
+  /** Shared start promise so duplicate UI/action starts create one writer. */
+  private startPromise: Promise<void> | null = null
   /** True while a stop/cancel is finalizing the blob — blocks a new start from racing its state. */
   private finalizing = false
+  /** Shared stop promise so duplicate UI/action stops await one finalization. */
+  private stopPromise: Promise<void> | null = null
+  /** Capture being finalized after recordingId is cleared, for concurrent action responses. */
+  private finalizingRecordingId: string | null = null
   /** Serializes blob writes so chunks land in order, one at a time. */
   private drainChain: Promise<void> = Promise.resolve()
 
@@ -87,7 +100,10 @@ export class RecorderController {
   private recordings: RecordingItem[] = []
   private usage: Usage = EMPTY_USAGE
 
-  constructor(private readonly session: MiniappSession) {}
+  constructor(
+    private readonly session: MiniappSession,
+    private readonly stopTailDrainMs = STOP_TAIL_DRAIN_MS,
+  ) {}
 
   // ── Lifecycle ────────────────────────────────────────────────────────────
 
@@ -102,6 +118,7 @@ export class RecorderController {
     }
 
     this.registerUiHandlers()
+    this.registerActions()
 
     // Playback UI state is driven entirely by play()'s own request lifecycle
     // (see play()), NOT by speaker.onStateChange. The speaker state is global to
@@ -169,9 +186,19 @@ export class RecorderController {
     this.unsubs.push(this.ui.on("rec:clear", () => void this.clearAll()))
   }
 
+  private registerActions(): void {
+    try {
+      this.unsubs.push(this.session.actions.handle("start_recording", () => this.startRecordingAction()))
+      this.unsubs.push(this.session.actions.handle("stop_recording", () => this.stopRecordingAction()))
+    } catch (err) {
+      console.log("Recorder: failed to register actions", err)
+    }
+  }
+
   private sendSnapshot(): void {
     this.ui.send("rec:snapshot", {
       recording: this.lastStatus,
+      stopping: this.finalizing,
       recordings: this.recordings,
       usage: this.usage,
       playingId: this.playingId,
@@ -185,8 +212,60 @@ export class RecorderController {
 
   // ── Recording (capture in the miniapp) ─────────────────────────────────────
 
-  private async startRecording(): Promise<void> {
-    if (this.recordingId || this.finalizing) return
+  private async startRecordingAction(): Promise<{
+    status: "recording"
+    recordingId: string
+    startedAt: number
+    paused: boolean
+  }> {
+    if (!this.session.mic.hasPermission) {
+      throw new Error("Microphone permission is required to start a recording")
+    }
+    if (this.finalizing) {
+      throw new Error("The previous recording is still being saved")
+    }
+
+    await this.startRecording()
+    if (!this.recordingId || !this.lastStatus) {
+      throw new Error("Failed to start recording")
+    }
+    return {
+      status: "recording",
+      recordingId: this.recordingId,
+      startedAt: this.lastStatus.startedAt,
+      paused: this.lastStatus.paused === true,
+    }
+  }
+
+  private async stopRecordingAction(): Promise<{
+    status: "stopped" | "idle"
+    recording: RecordingItem | null
+  }> {
+    const recordingId = this.recordingId ?? this.finalizingRecordingId
+    if (!recordingId) return {status: "idle", recording: null}
+
+    await this.stopRecording()
+    return {
+      status: "stopped",
+      recording: this.recordings.find((recording) => recording.id === recordingId) ?? null,
+    }
+  }
+
+  private startRecording(): Promise<void> {
+    if (this.startPromise) return this.startPromise
+    if (this.recordingId || this.finalizing) return Promise.resolve()
+
+    const start = this.beginRecording()
+    this.startPromise = start.finally(() => {
+      this.startPromise = null
+    })
+    return this.startPromise
+  }
+
+  private async beginRecording(): Promise<void> {
+    // Recording and playback are mutually exclusive. Stop synchronously before
+    // opening the writer so no old clip keeps playing over the new capture.
+    this.stopPlay()
     try {
       // One timestamp drives the filename, the display title, and the WAV's
       // ICRD date tag so they all agree.
@@ -405,14 +484,33 @@ export class RecorderController {
     })
   }
 
-  private async stopRecording(): Promise<void> {
+  private stopRecording(): Promise<void> {
+    if (this.stopPromise) return this.stopPromise
+    if (!this.recordingId || !this.writer) return Promise.resolve()
+
+    this.finalizingRecordingId = this.recordingId
+    // Acknowledge the tap before the tail-drain/save work begins so the UI can
+    // stop animating immediately without sacrificing in-flight audio frames.
+    this.ui.send("rec:stopping", {})
+    const stop = this.finalizeRecording()
+    this.stopPromise = stop.finally(() => {
+      this.stopPromise = null
+      this.finalizingRecordingId = null
+    })
+    return this.stopPromise
+  }
+
+  private async finalizeRecording(): Promise<void> {
     const writer = this.writer
     if (!this.recordingId || !writer) return
     // `finalizing` blocks a new start from racing this recording's capture state
     // (pcmBytes/sampleRate/buffers) while we flush + write the header.
     this.finalizing = true
     try {
-      // Stop the feeds first so no more chunks/transcript arrive, then finalize.
+      // Audio spoken just before the tap may still be crossing BLE/native
+      // bridges. Keep the subscriptions alive for a short tail-drain window so
+      // those frames land before we freeze and finalize the WAV.
+      await delay(this.stopTailDrainMs)
       try {
         this.micUnsub?.()
       } catch {
@@ -663,16 +761,17 @@ export class RecorderController {
   // ── Glasses HUD ──────────────────────────────────────────────────────────
 
   private renderHud(): void {
-    try {
-      if (this.recordingId && this.lastStatus) {
-        const tag = this.lastStatus.paused ? "❚❚ PAUSED" : "● REC"
-        this.session.display.showTextWall(`${tag}   ${fmtClock(this.lastStatus.ms)}`, {view: "main"})
-      } else {
-        this.session.display.showTextWall("Recorder ready", {view: "main"})
-      }
-    } catch {
-      /* no display attached — fine */
-    }
+    const text =
+      this.recordingId && this.lastStatus
+        ? `${this.lastStatus.paused ? "❚❚ PAUSED" : "● REC"}   ${fmtClock(this.lastStatus.ms)}`
+        : "Recorder ready"
+    // Full-canvas text element with a stable id — the ticking clock updates in
+    // place on the glasses. render() never throws; on a displayless device it
+    // just resolves {status: "blocked"}.
+    const d = this.session.capabilities?.display
+    void this.session.display.render([
+      {type: "text", id: "hud", box: {x: 0, y: 0, w: d?.width ?? 576, h: d?.height ?? 288}, text},
+    ])
   }
 }
 
@@ -765,4 +864,8 @@ function fmtClock(ms: number): string {
   const m = Math.floor(s / 60)
   const r = s % 60
   return `${m}:${r.toString().padStart(2, "0")}`
+}
+
+function delay(ms: number): Promise<void> {
+  return ms > 0 ? new Promise((resolve) => setTimeout(resolve, ms)) : Promise.resolve()
 }

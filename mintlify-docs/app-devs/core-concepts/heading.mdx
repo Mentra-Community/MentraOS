@@ -9,7 +9,7 @@ icon: "compass"
 
 ```typescript src/background/index.ts
 const off = session.heading.onUpdate((data) => {
-  session.display.showTextWall(`${Math.round(data.degrees)}°`);
+  session.display.render([{type: "text", id: "msg", box: {x: 0, y: 0, w: 576, h: 288}, text: `${Math.round(data.degrees)}°`}]);
 });
 ```
 
@@ -24,7 +24,7 @@ unsubscribe function.
 
 ```typescript
 const off = session.heading.onUpdate((data) => {
-  session.display.showTextWall(`${Math.round(data.degrees)}°`);
+  session.display.render([{type: "text", id: "msg", box: {x: 0, y: 0, w: 576, h: 288}, text: `${Math.round(data.degrees)}°`}]);
 });
 
 off(); // stop receiving updates

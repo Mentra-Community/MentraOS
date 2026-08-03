@@ -1,6 +1,6 @@
 {
   "name": "create-mentra-miniapp",
-  "version": "0.1.0-dev.0",
+  "version": "0.1.0-dev.1",
   "description": "Scaffold a new MentraOS miniapp project",
   "type": "module",
   "publishConfig": {
@@ -11,7 +11,7 @@
     "create-mentra-miniapp": "./bin/index.ts"
   },
   "scripts": {
-    "build": "echo 'No build needed — runs via bun'"
+    "build": "echo 'No build needed \u2014 runs via bun'"
   },
   "dependencies": {
     "@clack/prompts": "^1.2.0"
@@ -19,5 +19,24 @@
   "devDependencies": {
     "typescript": "^5.0.0"
   },
-  "files": ["bin", "template"]
+  "files": [
+    "bin",
+    "template"
+  ],
+  "keywords": [
+    "mentra",
+    "mentraos",
+    "miniapp",
+    "create",
+    "scaffold"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Mentra-Community/MentraOS.git",
+    "directory": "sdk/create-mentra-miniapp"
+  },
+  "homepage": "https://github.com/Mentra-Community/MentraOS/tree/dev/sdk/create-mentra-miniapp#readme",
+  "bugs": {
+    "url": "https://github.com/Mentra-Community/MentraOS/issues"
+  }
 }

@@ -11,7 +11,7 @@ the subscription for you.
 ```typescript
 session.translation.to("es", (data) => {
   if (data.isFinal) {
-    session.display.showTextWall(data.text);
+    session.display.render([{type: "text", id: "msg", box: {x: 0, y: 0, w: 576, h: 288}, text: data.text}]);
   }
 });
 ```
@@ -79,7 +79,7 @@ session.translation.to("es", (data) => {
   if (data.originalText) {
     session.display.showDoubleTextWall(data.originalText, data.text);
   } else {
-    session.display.showTextWall(data.text);
+    session.display.render([{type: "text", id: "msg", box: {x: 0, y: 0, w: 576, h: 288}, text: data.text}]);
   }
 });
 ```

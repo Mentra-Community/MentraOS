@@ -235,11 +235,28 @@ describe('validateManifest', () => {
               },
               required: ['text'],
             },
+            outputSchema: {
+              type: 'object',
+              properties: {
+                ok: {type: 'boolean'},
+                message: {type: 'string'},
+              },
+              required: ['ok'],
+            },
           },
         ],
       });
       expect(errors).toEqual([]);
       expect(valid).toBe(true);
+    });
+
+    test('rejects a non-object output schema', () => {
+      const {valid, errors} = validateManifest({
+        ...minimalValid,
+        actions: [{id: 'go', description: 'x', outputSchema: 'not-a-schema'}],
+      });
+      expect(valid).toBe(false);
+      expect(errors.some((e) => e.includes('outputSchema'))).toBe(true);
     });
 
     test('accepts an action with no parameters', () => {

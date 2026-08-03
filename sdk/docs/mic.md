@@ -1,12 +1,13 @@
 # `session.mic`
 
 Low-level audio-input subscriptions for miniapps. Houses raw audio chunks
-and voice-activity detection (VAD). Mirrors cloud SDK v3's `MicManager`
-naming.
+and voice-activity detection (VAD), plus imperative controls for glasses-side
+microphone gates (VAD and the loudness "Barrier"). Mirrors cloud SDK v3's
+`MicManager` naming for the listen APIs.
 
 Transcription and translation are **not** on this module — they live at
 `session.transcription` and `session.translation` so authors don't have to
-mentally model "transcription is a microphone thing." Audio *output* (TTS,
+mentally model "transcription is a microphone thing." Audio _output_ (TTS,
 file playback) lives on `session.speaker`.
 
 > Before the v3-alignment round this module was called `MicrophoneModule` /
@@ -33,6 +34,10 @@ const unsubAudio = session.mic.onAudioChunk((data) => {
   decodeAndProcess(data.data, data.format, data.sampleRate)
 })
 
+// Optional: control glasses-side mic gates (Mentra Live)
+await session.mic.setVoiceActivityDetectionEnabled(true)
+await session.mic.setLoudnessGateEnabled(true)
+
 // later — either tear down individually:
 unsubVad()
 unsubAudio()
@@ -44,9 +49,9 @@ session.mic.stop()
 
 ## Manifest
 
-Mic subscriptions require `MICROPHONE` in the miniapp manifest. Without it,
-the phone runtime rejects every subscribe on this module with
-`PERMISSION_NOT_DECLARED`.
+Mic subscriptions and gate setters require `MICROPHONE` in the miniapp
+manifest. Without it, the phone runtime rejects every subscribe / set call on
+this module with `PERMISSION_NOT_DECLARED`.
 
 ```json
 {
@@ -65,7 +70,7 @@ reads the cached manifest record populated at `CONNECT_ACK`.
 
 ```ts
 if (!session.mic.hasPermission) {
-  // mic subscriptions will be rejected by the phone runtime
+  // mic subscriptions / gate setters will be rejected by the phone runtime
 }
 ```
 
@@ -111,13 +116,52 @@ tracked by the module so `stop()` can tear it down too.
 
 ---
 
+### `setVoiceActivityDetectionEnabled(enabled)` — `Promise<void>`
+
+Temporarily override glasses-side voice activity detection (GX8002) for this
+miniapp's lifetime. The Mentra App's configured value is restored when the
+miniapp disconnects.
+
+When VAD is disabled, mic gating falls back to the loudness gate only (if
+that gate is enabled). With VAD disabled and the loudness gate enabled, Mentra
+Live keeps sending audio frames but represents quiet input as silence. Mentra
+Live only today; other models no-op.
+
+**Requires:** `MICROPHONE` in the miniapp manifest.
+
+```ts
+await session.mic.setVoiceActivityDetectionEnabled(false)
+```
+
+---
+
+### `setLoudnessGateEnabled(enabled)` — `Promise<void>`
+
+Temporarily override the center-mic loudness gate ("Barrier") for this
+miniapp's lifetime. It blocks quiet / self-talk audio independent of VAD. The
+Mentra App's configured value is restored when the miniapp disconnects.
+Mentra Live only today; other models no-op.
+
+**Requires:** `MICROPHONE` in the miniapp manifest.
+
+```ts
+await session.mic.setLoudnessGateEnabled(false)
+```
+
+---
+
 ### `stop()` — `void`
 
 Tears down every subscription this module owns in one shot. Useful when a
 component is unmounting and wants to free everything without tracking
 individual unsubscribe functions.
 
+Does **not** release glasses-side VAD / loudness-gate overrides. Those
+overrides belong to the miniapp session rather than its subscriptions and are
+released when the miniapp disconnects.
+
 **Side effects:**
+
 - Invokes every tracked unsubscribe; errors from individual unsubs are
   swallowed.
 - Clears the module's internal tracking set.
@@ -129,26 +173,32 @@ becomes a no-op.
 
 ## Errors
 
-| Code | Where | Meaning |
-| --- | --- | --- |
-| `PERMISSION_NOT_DECLARED` | Phone-side rejection of the underlying `SUBSCRIBE` | `MICROPHONE` missing from miniapp manifest. |
+| Code                      | Where                                               | Meaning                                     |
+| ------------------------- | --------------------------------------------------- | ------------------------------------------- |
+| `INVALID_ARGUMENT`        | Phone-side rejection of a gate setter               | `enabled` was not a boolean.                |
+| `PERMISSION_NOT_DECLARED` | Phone-side rejection of `SUBSCRIBE` or gate setters | `MICROPHONE` missing from miniapp manifest. |
+| `INTERNAL`                | Phone-side rejection of a gate setter               | Native Bluetooth / settings apply failed.   |
 
-This module has no synchronous throws — permission gating happens at the
-phone runtime when the `SUBSCRIBE` is processed.
+Subscribe permission gating happens at the phone runtime when the `SUBSCRIBE`
+is processed. Gate setters reject with the same code when the manifest is
+missing `MICROPHONE`.
 
 ---
 
 ## Wire-level reference
 
-For host implementors — this module is stream-only.
+For host implementors — this module has stream subscriptions plus two
+imperative setters.
 
-| Subscribe | Stream type | Payload |
-| --- | --- | --- |
-| `onVoiceActivity` | `VAD` | `VadData` |
-| `onAudioChunk` | `AUDIO_CHUNK` | `AudioChunkData` |
+| Subscribe / call                   | Stream / request type                                                     | Payload              |
+| ---------------------------------- | ------------------------------------------------------------------------- | -------------------- |
+| `onVoiceActivity`                  | `VAD`                                                                     | `VadData`            |
+| `onAudioChunk`                     | `AUDIO_CHUNK`                                                             | `AudioChunkData`     |
+| `setVoiceActivityDetectionEnabled` | `MIC_SET_VAD_ENABLED` (`miniapp_mic_set_vad_enabled`)                     | `{enabled: boolean}` |
+| `setLoudnessGateEnabled`           | `MIC_SET_LOUDNESS_GATE_ENABLED` (`miniapp_mic_set_loudness_gate_enabled`) | `{enabled: boolean}` |
 
 ---
 
 ## Tests
 
-_no integration tests yet_
+See [mobile/modules/miniapp/src/modules/mic.test.ts](../../mobile/modules/miniapp/src/modules/mic.test.ts).

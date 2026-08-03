@@ -57,6 +57,12 @@ export function useSettings() {
     return true
   }
 
+  const updateUseOfflineStt = async (enabled: boolean): Promise<boolean> => {
+    setSettings((prev) => (prev ? {...prev, useOfflineStt: enabled} : prev))
+    mentra.send("captions:set-use-offline-stt", {enabled})
+    return true
+  }
+
   const updateDisplayLines = async (lines: number): Promise<boolean> => {
     setSettings((prev) => (prev ? {...prev, displayLines: lines} : prev))
     mentra.send("captions:set-display-lines", {lines})
@@ -75,14 +81,22 @@ export function useSettings() {
     return true
   }
 
+  const updateCaptionTimeoutSeconds = async (seconds: number): Promise<boolean> => {
+    setSettings((prev) => (prev ? {...prev, captionTimeoutSeconds: seconds} : prev))
+    mentra.send("captions:set-caption-timeout", {seconds})
+    return true
+  }
+
   return {
     settings,
     loading,
     error: null as string | null,
     updateLanguage,
     updateHints,
+    updateUseOfflineStt,
     updateDisplayLines,
     updateDisplayWidth,
     updateWordBreaking,
+    updateCaptionTimeoutSeconds,
   }
 }

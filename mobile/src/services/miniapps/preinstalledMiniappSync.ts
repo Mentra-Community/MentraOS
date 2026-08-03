@@ -1,5 +1,5 @@
 import type {PreinstalledMiniappRegistryEntry} from "@mentra/cloud-client/react-native"
-import {appRegistry} from "@mentra/island"
+import {appRegistry} from "@mentra/engine/internal"
 import {Directory, File, Paths} from "expo-file-system"
 import semver from "semver"
 
@@ -60,7 +60,13 @@ async function installEntry(entry: PreinstalledMiniappRegistryEntry): Promise<vo
 
   console.log(`${LOG_TAG}: installing ${entry.packageName}@${entry.version} (${entry.installPolicy})`)
   const zipPath = await downloadVerifiedBundle(entry)
-  const result = await appRegistry.installFromLocalZip(zipPath)
+  const result = await appRegistry.installFromLocalZip(zipPath, {
+    releaseIdentity: {
+      source: "preinstalled_registry",
+      bundleSha256: entry.bundleSha256.toLowerCase(),
+      channel: entry.channel,
+    },
+  })
   if (result.is_error()) {
     throw result.error
   }

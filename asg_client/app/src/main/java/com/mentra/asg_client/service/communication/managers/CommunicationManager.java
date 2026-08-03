@@ -3,6 +3,8 @@ package com.mentra.asg_client.service.communication.managers;
 import android.util.Log;
 import com.mentra.asg_client.io.bluetooth.interfaces.IBluetoothManager;
 import com.mentra.asg_client.io.bluetooth.interfaces.ICompanionTransport;
+import com.mentra.asg_client.io.bluetooth.managers.K900BluetoothManager;
+import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.LinkStateMachine;
 import com.mentra.asg_client.io.network.interfaces.INetworkManager;
 import com.mentra.asg_client.io.network.models.NetworkInfo;
 import com.mentra.asg_client.io.ota.helpers.OtaHelper;
@@ -78,10 +80,15 @@ public class CommunicationManager
 
     @Override
     public void sendWifiStatusOverBle(boolean isConnected) {
+        sendWifiStatusOverBle(isConnected, null);
+    }
+
+    @Override
+    public void sendWifiStatusOverBle(boolean isConnected, String error) {
         Log.d(TAG, "🔄 =========================================");
         Log.d(TAG, "🔄 SEND WIFI STATUS OVER BLE");
         Log.d(TAG, "🔄 =========================================");
-        Log.d(TAG, "🔄 WiFi connected: " + isConnected);
+        Log.d(TAG, "🔄 WiFi connected: " + isConnected + (error != null ? ", error: " + error : ""));
 
         if (transport != null && transport.isConnected()) {
             Log.d(TAG, "🔄 ✅ Transport available and connected");
@@ -91,6 +98,9 @@ public class CommunicationManager
                 // Use proper type for reliable sending
                 wifiStatus.put("type", "wifi_status");
                 wifiStatus.put("connected", isConnected);
+                if (error != null && !error.isEmpty()) {
+                    wifiStatus.put("error", error);
+                }
                 if (isConnected && networkManager != null) {
                     String ssid = networkManager.getCurrentWifiSsid();
                     String localIp = networkManager.getLocalIpAddress();
@@ -150,8 +160,19 @@ public class CommunicationManager
         }
     }
 
+    /** Build a wifi_scan_result envelope echoing the originating scan's correlation id. */
+    private JSONObject newWifiScanResultMessage(String scanId) throws JSONException {
+        JSONObject response = new JSONObject();
+        response.put("type", "wifi_scan_result");
+        response.put("timestamp", System.currentTimeMillis());
+        if (scanId != null && !scanId.isEmpty()) {
+            response.put("scanId", scanId);
+        }
+        return response;
+    }
+
     @Override
-    public void sendWifiScanResultsOverBle(List<String> networks) {
+    public void sendWifiScanResultsOverBle(List<String> networks, String scanId) {
         Log.d(TAG, "📡 =========================================");
         Log.d(TAG, "📡 SEND WIFI SCAN RESULTS OVER BLE");
         Log.d(TAG, "📡 =========================================");
@@ -172,9 +193,7 @@ public class CommunicationManager
                     List<String> chunk = scanNetworks.subList(i, endIdx);
                     boolean scanComplete = endIdx >= scanNetworks.size();
 
-                    JSONObject response = new JSONObject();
-                    response.put("type", "wifi_scan_result");
-                    response.put("timestamp", System.currentTimeMillis());
+                    JSONObject response = newWifiScanResultMessage(scanId);
 
                     org.json.JSONArray networksArray = new org.json.JSONArray();
                     for (String network : chunk) {
@@ -210,9 +229,7 @@ public class CommunicationManager
                     }
                 }
                 if (scanNetworks.isEmpty()) {
-                    JSONObject response = new JSONObject();
-                    response.put("type", "wifi_scan_result");
-                    response.put("timestamp", System.currentTimeMillis());
+                    JSONObject response = newWifiScanResultMessage(scanId);
                     response.put("networks", new org.json.JSONArray());
                     response.put("scan_complete", true);
 
@@ -239,7 +256,7 @@ public class CommunicationManager
 
     @Override
     public void sendWifiScanResultsOverBleEnhanced(
-            List<NetworkInfo> networks, boolean scanComplete) {
+            List<NetworkInfo> networks, boolean scanComplete, String scanId) {
         Log.d(TAG, "📡 =========================================");
         Log.d(TAG, "📡 SEND ENHANCED WIFI SCAN RESULTS OVER BLE");
         Log.d(TAG, "📡 =========================================");
@@ -254,9 +271,7 @@ public class CommunicationManager
 
                 // Send one network at a time to keep message size minimal
                 for (NetworkInfo network : scanNetworks) {
-                    JSONObject response = new JSONObject();
-                    response.put("type", "wifi_scan_result");
-                    response.put("timestamp", System.currentTimeMillis());
+                    JSONObject response = newWifiScanResultMessage(scanId);
                     response.put("scan_complete", false);
 
                     // Legacy format for backwards compatibility
@@ -304,9 +319,7 @@ public class CommunicationManager
                     }
                 }
                 if (scanComplete) {
-                    JSONObject response = new JSONObject();
-                    response.put("type", "wifi_scan_result");
-                    response.put("timestamp", System.currentTimeMillis());
+                    JSONObject response = newWifiScanResultMessage(scanId);
                     response.put("scan_complete", scanComplete);
                     response.put("networks", new org.json.JSONArray());
                     response.put("networks_neo", new org.json.JSONArray());
@@ -592,9 +605,21 @@ public class CommunicationManager
     /**
      * Check if phone is currently connected via BLE. Part of OtaHelper.PhoneConnectionProvider
      * interface.
+     *
+     * <p>When the BES has reported phone BLE presence (firmware >= 17.26.7.23: sr_phble edges,
+     * phone_ble in sr_syvr), that report is authoritative. When presence is UNKNOWN — the entire
+     * deployed fleet today — this keeps the historical transport-based answer: OTA (and the wifi
+     * scan/set flows that ride the same provider) must keep working against old BES firmware.
      */
     @Override
     public boolean isPhoneConnected() {
+        if (transport instanceof K900BluetoothManager) {
+            LinkStateMachine.PhonePresence presence =
+                    ((K900BluetoothManager) transport).getLinkStateMachine().getPhonePresence();
+            if (presence != LinkStateMachine.PhonePresence.UNKNOWN) {
+                return presence == LinkStateMachine.PhonePresence.PRESENT;
+            }
+        }
         return transport != null && transport.isConnected();
     }
 

@@ -19,7 +19,7 @@ the actions those miniapps expose.
 `session.miniapps` lists installed miniapps and starts or stops them.
 
 ```ts
-// Compatible miniapps only by default; each entry carries its declared actions.
+// Compatible miniapps only by default; each action can carry input and output schemas.
 const apps = await session.miniapps.list();
 const all = await session.miniapps.list({ includeIncompatible: true });
 
@@ -65,3 +65,5 @@ const res = await session.actions.invoke(
 | `PAYLOAD_TOO_LARGE` | Params or result exceeded 256 KB. |
 
 A thrown handler in the target surfaces its own error message to the caller.
+The action descriptor returned by `session.miniapps.list()` includes an optional
+`outputSchema`, which describes the structured result for result-aware callers.

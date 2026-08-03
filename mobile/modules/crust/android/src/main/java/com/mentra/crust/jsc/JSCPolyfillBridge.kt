@@ -45,6 +45,41 @@ object JSCPolyfillBridge {
             .build()
     }
 
+    data class HttpResult(
+        val status: Int,
+        val statusText: String,
+        val headers: Map<String, String>,
+        val body: String,
+    )
+
+    /** Shared OkHttp execution path for host cloud-client requests. */
+    fun executeHttp(method: String, url: String, headers: Map<String, String>, bodyString: String?): HttpResult {
+        val builder = Request.Builder().url(url)
+        for ((name, value) in headers) builder.header(name, value)
+        val contentType = headers.entries
+            .firstOrNull { (name, _) -> name.equals("content-type", ignoreCase = true) }
+            ?.value
+        val upperMethod = method.uppercase()
+        val requestBody = when {
+            bodyString != null -> bodyString.toRequestBody((contentType ?: "application/octet-stream").toMediaTypeOrNull())
+            upperMethod == "POST" || upperMethod == "PUT" || upperMethod == "PATCH" -> "".toRequestBody(null)
+            else -> null
+        }
+        builder.method(upperMethod, requestBody)
+        httpClient.newCall(builder.build()).execute().use { response ->
+            val responseHeaders = mutableMapOf<String, String>()
+            for (name in response.headers.names()) {
+                responseHeaders[name.lowercase()] = response.headers.values(name).joinToString(", ")
+            }
+            return HttpResult(
+                status = response.code,
+                statusText = response.message,
+                headers = responseHeaders,
+                body = response.body?.string() ?: "",
+            )
+        }
+    }
+
     /** Idempotent. Call once on host boot, after the dispatcher is created. */
     fun install(runtime: JSCRuntime) {
         installFetch(runtime)
@@ -187,8 +222,14 @@ object JSCPolyfillBridge {
 
             val builder = Request.Builder().url(url)
             for ((k, v) in headers) builder.header(k, v)
+            // HTTP header names are case-insensitive. The JS fetch caller will
+            // commonly provide `Content-Type`; a direct lowercase map lookup
+            // misses that value and causes OkHttp to emit application/octet-stream.
+            val contentType = headers.entries
+                .firstOrNull { (name, _) -> name.equals("content-type", ignoreCase = true) }
+                ?.value
             val body = if (bodyString.isNullOrEmpty()) null else bodyString.toRequestBody(
-                (headers["content-type"] ?: "application/octet-stream").toMediaTypeOrNull()
+                (contentType ?: "application/octet-stream").toMediaTypeOrNull()
             )
             builder.method(method.uppercase(), body)
 

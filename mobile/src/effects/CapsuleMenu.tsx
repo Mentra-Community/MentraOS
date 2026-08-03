@@ -2,21 +2,23 @@ import {Button, Icon, Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useCapsuleStore} from "@/stores/capsule"
 
-import {Dimensions, PixelRatio, Platform, Share, View} from "react-native"
+import {Dimensions, InteractionManager, PixelRatio, Platform, Share, View} from "react-native"
 import {Pressable} from "react-native-gesture-handler"
 import {forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState} from "react"
 import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
 import GlassView from "@/components/ui/GlassView"
 import {usePathname} from "expo-router"
-import {ClientApp, useAppStatusStore} from "@mentra/island"
+import {ClientApp, engine} from "@mentra/engine"
+import {Directory, File, Paths} from "expo-file-system"
 import * as ImageManipulator from "expo-image-manipulator"
 import {captureRef} from "react-native-view-shot"
 import {Image as RNImage} from "react-native"
 import {BottomSheetBackdrop, BottomSheetModal} from "@gorhom/bottom-sheet"
 import AppIcon from "@/components/home/AppIcon"
-import {SETTINGS, useSetting} from "@/stores/settings"
+import {SETTINGS, useSetting} from "@mentra/engine"
 import {useNavigationStore} from "@/stores/navigation"
 import {SYSTEM_APPS} from "@/constants/miniapps"
+import {enqueueScreenshotPersistence} from "@/effects/screenshotPersistenceQueue"
 
 interface CapsuleButtonProps {
   onRightPress?: () => void
@@ -164,54 +166,110 @@ export default function CapsuleMenu({forceShow}: {forceShow: boolean}) {
   )
 }
 
+/** Longest we'll delay a close waiting for the UI to go idle before capturing. */
+const CAPTURE_SETTLE_TIMEOUT_MS = 300
+let screenshotFileSequence = 0
+
+/**
+ * Resolve once the UI has settled enough to photograph, or after
+ * CAPTURE_SETTLE_TIMEOUT_MS, whichever comes first. Two nested frames after
+ * interactions finish: the first lets React commit the released pressed state,
+ * the second lets the native view tree draw it.
+ */
+function settleBeforeCapture(): Promise<void> {
+  return new Promise<void>((resolve) => {
+    let settled = false
+    const finish = () => {
+      if (settled) return
+      settled = true
+      resolve()
+    }
+    const guard = setTimeout(finish, CAPTURE_SETTLE_TIMEOUT_MS)
+    InteractionManager.runAfterInteractions(() => {
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => {
+          clearTimeout(guard)
+          finish()
+        }),
+      )
+    })
+  })
+}
+
 export async function captureScreenshot(
   viewShotRef: React.RefObject<View | null>,
   packageName: string,
   topInsetOffset: number = 0,
+  options: {settle?: boolean} = {},
 ) {
   if (!viewShotRef.current) {
     console.warn(`captureScreenshot: viewShotRef is null ${viewShotRef.current}`)
     return
   }
 
-  if (Platform.OS === "ios") {
-    captureRef(viewShotRef, {
+  try {
+    // Capsule presses can leave pressed/layout transients in the image. Gesture
+    // exits must capture immediately because their callers start teardown or a
+    // compositor transform as soon as this function returns.
+    if (options.settle) await settleBeforeCapture()
+
+    let screenshotUri = await captureRef(viewShotRef, {
       format: "jpg",
-      quality: 0.1,
+      quality: Platform.OS === "ios" ? 0.1 : 0.5,
       result: "tmpfile",
     })
-      .then(async (uri) => {
-        const {width, height} = await new Promise<{width: number; height: number}>((resolve, reject) => {
-          RNImage.getSize(uri, (w, h) => resolve({width: w, height: h}), reject)
-        })
-        let amountToChop = topInsetOffset * PixelRatio.get()
-        amountToChop = 0
-        const context = ImageManipulator.ImageManipulator.manipulate(uri)
-        context.crop({originX: 0, originY: amountToChop, width: width, height: height - amountToChop})
-        const imageRef = await context.renderAsync()
-        const cropped = await imageRef.saveAsync({
-          format: ImageManipulator.SaveFormat.JPEG,
-          compress: 0.1,
-        })
-        await useAppStatusStore.getState().saveScreenshot(packageName, cropped.uri)
+
+    if (Platform.OS === "ios") {
+      const {width, height} = await new Promise<{width: number; height: number}>((resolve, reject) => {
+        RNImage.getSize(screenshotUri, (w, h) => resolve({width: w, height: h}), reject)
       })
-      .catch((e) => {
-        console.warn("screenshot failed:", e)
+      let amountToChop = topInsetOffset * PixelRatio.get()
+      amountToChop = 0
+      const context = ImageManipulator.ImageManipulator.manipulate(screenshotUri)
+      context.crop({originX: 0, originY: amountToChop, width, height: height - amountToChop})
+      const imageRef = await context.renderAsync()
+      const cropped = await imageRef.saveAsync({
+        format: ImageManipulator.SaveFormat.JPEG,
+        compress: 0.1,
       })
-  } else {
-    captureRef(viewShotRef, {
-      format: "jpg",
-      // handleGLSurfaceViewOnAndroid: true,
-      quality: 0.5, // android needs a higher quality to avoid compression artifacts
-      result: "tmpfile",
+      screenshotUri = cropped.uri
+    }
+
+    await enqueueScreenshotPersistence(async () => {
+      const screenshotDirectory = new Directory(Paths.document, "miniapp-screenshots")
+      if (!screenshotDirectory.exists) screenshotDirectory.create()
+
+      const safePackageName = packageName.replace(/[^a-zA-Z0-9._-]/g, "_")
+      // Unique filename per capture. The app switcher renders this uri through
+      // expo-image, which caches by uri, so reusing one path meant every fresh
+      // capture landed on disk but the card kept showing the first image ever
+      // loaded (OS-1810). Changing the uri is what actually invalidates it.
+      const prefix = `${safePackageName}-`
+      const legacyName = `${safePackageName}.jpg`
+      const captureId = `${Date.now()}-${screenshotFileSequence++}`
+      const persistentFile = new File(screenshotDirectory, `${prefix}${captureId}.jpg`)
+      new File(screenshotUri).copy(persistentFile)
+
+      // Publish the new URI before removing older files. Persistence is
+      // serialized so another capture cannot publish a file this sweep deletes.
+      await engine.miniapps.saveScreenshot(packageName, persistentFile.uri)
+
+      for (const entry of screenshotDirectory.list()) {
+        if (
+          entry instanceof File &&
+          (entry.name === legacyName || entry.name.startsWith(prefix)) &&
+          entry.name !== persistentFile.name
+        ) {
+          try {
+            entry.delete()
+          } catch {
+            // A stale file we can't remove is harmless; don't fail the capture.
+          }
+        }
+      }
     })
-      .then(async (uri) => {
-        // android is weird and the crop doesn't work properly:
-        useAppStatusStore.getState().saveScreenshot(packageName, uri)
-      })
-      .catch((e) => {
-        console.warn("screenshot failed:", e)
-      })
+  } catch (error) {
+    console.warn("screenshot failed:", error)
   }
 }
 
@@ -232,7 +290,7 @@ export async function captureScreenshot(
 //     const [superMode] = useSetting(SETTINGS.super_mode.key)
 
 //     useEffect(() => {
-//       const storeApp = useAppStatusStore.getState().apps.find((a) => a.packageName === packageName)
+//       const storeApp = engine.miniapps.list().find((a) => a.packageName === packageName)
 //       if (storeApp) {
 //         setApp(storeApp)
 //       } else if (appNameOverride || iconUrlOverride) {
@@ -262,26 +320,15 @@ export async function captureScreenshot(
 //     )
 
 //     const handleAddRemoveFromHome = useCallback(() => {
-//       useAppStatusStore.getState().setHiddenStatus(packageName, !app?.hidden)
+//       engine.miniapps.setHiddenStatus(packageName, !app?.hidden)
 //       internalRef.current?.dismiss()
 //       useNavigationStore.getState().clearHistoryAndGoHome()
 //     }, [packageName, app?.hidden])
 
-//     const handleShare = useCallback(() => {
-//       const storeUrl = `https://apps.mentraglass.com/package/${packageName}`
-//       // on Android, Share.share ignores `url` and only uses `message`
-//       Share.share(
-//         Platform.OS === "android"
-//           ? {message: `${app?.name ?? packageName}\n${storeUrl}`}
-//           : {message: app?.name ?? packageName, url: storeUrl},
-//       )
-//     }, [packageName, app?.name])
-
 //     const handleFeedback = useCallback(() => {
 //       internalRef.current?.dismiss()
 //       useNavigationStore.getState().push("/miniapps/settings/feedback", {
-//         submissionMode: "USER_INITIATED",
-//         triggerArea: "applet_capsule_menu",
+//         triggerSource: "applet_capsule_menu",
 //         triggerReason: "manual_bug_report",
 //         sourceAppletPackageName: packageName,
 //         sourceAppletName: app?.name,

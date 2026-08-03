@@ -1,5 +1,5 @@
 import {useEffect, useMemo, useState, type CSSProperties, type ReactNode} from "react"
-import {useSafeArea} from "@mentra/miniapp/ui"
+import {useColorScheme, useSafeArea} from "@mentra/miniapp/ui"
 
 import MergeLogo from "./assets/merge_logo.png"
 import {useDeveloperMode, type HoldHandlers} from "./useDeveloperMode"
@@ -66,12 +66,12 @@ type ActivityFilter = "all" | "shown" | "quiet"
 
 // Per-agent presentation: the tinted icon tile + glyph that fronts each card
 // and the "standing by" chips. Unknown agents fall back to a neutral mark.
-type AgentVisual = {bg: string; fg: string; glyph: ReactNode}
+type AgentVisual = {bg: string; fg: string; glyph: ReactNode; bgDark?: string}
 const AGENT_VISUALS: Record<string, AgentVisual> = {
-  QuestionAnswerer: {bg: "#FFE7F0", fg: MERGE_COLORS.pink, glyph: <SparkGlyph />},
-  FactChecker: {bg: "#ECEAFE", fg: MERGE_COLORS.violet, glyph: <CheckGlyph />},
-  Definer: {bg: "#ECEAFE", fg: MERGE_COLORS.violet, glyph: <CheckGlyph />},
-  Initial: {bg: "#FFE7F0", fg: MERGE_COLORS.pink, glyph: <SparkGlyph />},
+  QuestionAnswerer: {bg: "#FFE7F0", bgDark: "#3F1D2E", fg: MERGE_COLORS.pink, glyph: <SparkGlyph />},
+  FactChecker: {bg: "#ECEAFE", bgDark: "#2A2350", fg: MERGE_COLORS.violet, glyph: <CheckGlyph />},
+  Definer: {bg: "#ECEAFE", bgDark: "#2A2350", fg: MERGE_COLORS.violet, glyph: <CheckGlyph />},
+  Initial: {bg: "#FFE7F0", bgDark: "#3F1D2E", fg: MERGE_COLORS.pink, glyph: <SparkGlyph />},
 }
 const STANDBY_AGENTS = ["QuestionAnswerer", "FactChecker", "Definer"]
 
@@ -81,6 +81,7 @@ function agentVisual(type?: string): AgentVisual {
 
 export function App() {
   const {insets, capsuleMenu} = useSafeArea()
+  const scheme = useColorScheme()
   const [activeTab, setActiveTab] = useState<MergeTab>("insights")
   const [showDeveloperInfo, setShowDeveloperInfo] = useState(false)
   const {developerMode, holdHandlers} = useDeveloperMode()
@@ -95,6 +96,12 @@ export function App() {
   const [backendStatus, setBackendStatus] = useState<MergeBackendStatus>("idle")
   const [processing, setProcessing] = useState(false)
   const [lastError, setLastError] = useState<string | null>(null)
+
+  // Mirror the host-reported color scheme onto <html> so `.dark` CSS and
+  // Tailwind `dark:` variants activate. Light remains the untouched default.
+  useEffect(() => {
+    document.documentElement.classList.toggle("dark", scheme === "dark")
+  }, [scheme])
 
   useEffect(() => {
     const unsubs = [
@@ -163,7 +170,7 @@ export function App() {
 
   return (
     <div
-      className="w-screen h-screen flex overflow-hidden font-sans"
+      className="merge-shell w-screen h-screen flex overflow-hidden font-sans"
       style={{
         ...MERGE_SHELL_STYLE,
         paddingTop: insets.top,
@@ -177,8 +184,8 @@ export function App() {
             <div className="flex items-center gap-3 min-w-0">
               <img src={MergeLogo} alt="" className="h-10 w-10 flex-shrink-0" />
               <div className="min-w-0">
-                <h1 className="m-0 text-xl font-bold text-[#15171c] truncate">Merge</h1>
-                <p className="m-0 mt-0.5 flex items-center gap-1.5 text-sm text-[#8a8f9c] truncate">
+                <h1 className="m-0 text-xl font-bold text-[#15171c] dark:text-zinc-50 truncate">Merge</h1>
+                <p className="m-0 mt-0.5 flex items-center gap-1.5 text-sm text-[#8a8f9c] dark:text-zinc-400 truncate">
                   <span
                     className="h-1.5 w-1.5 rounded-full flex-shrink-0"
                     style={{backgroundColor: busy ? MERGE_COLORS.peach : MERGE_COLORS.pink}}
@@ -306,6 +313,7 @@ function InsightsView({
                     insight={insight}
                     decision={decision}
                     isNewest={insight.id === newestId}
+                    developerMode={developerMode}
                     expanded={expandedInsightId === insight.id}
                     onToggle={() => setExpandedInsightId((current) => (current === insight.id ? null : insight.id))}
                   />
@@ -363,11 +371,11 @@ function ListeningEmpty() {
   return (
     <div className="h-full flex flex-col items-center justify-center text-center px-6 pb-24">
       <PulseHero />
-      <h2 className="mt-6 mb-0 text-[22px] font-bold text-[#15171c]">No insights yet</h2>
-      <p className="m-0 mt-2 max-w-[280px] text-sm leading-5 text-[#8a8f9c]">
+      <h2 className="mt-6 mb-0 text-[22px] font-bold text-[#15171c] dark:text-zinc-50">No insights yet</h2>
+      <p className="m-0 mt-2 max-w-[280px] text-sm leading-5 text-[#8a8f9c] dark:text-zinc-400">
         Merge stays quiet until it has something useful to add.
       </p>
-      <p className="m-0 mt-9 text-[11px] font-bold uppercase tracking-[0.16em] text-[#b3b7c2]">Agents standing by</p>
+      <p className="m-0 mt-9 text-[11px] font-bold uppercase tracking-[0.16em] text-[#b3b7c2] dark:text-zinc-500">Agents standing by</p>
       <div className="mt-3 flex flex-wrap items-center justify-center gap-2 max-w-[300px]">
         {STANDBY_AGENTS.map((agent) => (
           <AgentChip key={agent} type={agent} />
@@ -381,11 +389,11 @@ function ThinkingHero({quote}: {quote?: string}) {
   return (
     <div className="h-full flex flex-col items-center justify-center text-center px-6 pb-24">
       <PulseHero thinking />
-      <h2 className="mt-6 mb-0 text-[22px] font-bold text-[#15171c]">Thinking…</h2>
+      <h2 className="mt-6 mb-0 text-[22px] font-bold text-[#15171c] dark:text-zinc-50">Thinking…</h2>
       {quote ? (
-        <p className="m-0 mt-2 max-w-[290px] text-base leading-6 text-[#3a3f4c]">“{quote}”</p>
+        <p className="m-0 mt-2 max-w-[290px] text-base leading-6 text-[#3a3f4c] dark:text-zinc-200">“{quote}”</p>
       ) : (
-        <p className="m-0 mt-2 max-w-[290px] text-base leading-6 text-[#8a8f9c]">Checking what matters…</p>
+        <p className="m-0 mt-2 max-w-[290px] text-base leading-6 text-[#8a8f9c] dark:text-zinc-400">Checking what matters…</p>
       )}
     </div>
   )
@@ -394,20 +402,24 @@ function ThinkingHero({quote}: {quote?: string}) {
 function AgentChip({type}: {type: string}) {
   return (
     <div
-      className="inline-flex items-center gap-2 rounded-full bg-white py-1.5 pl-1.5 pr-3.5 border border-[#F0F0F4]"
+      className="inline-flex items-center gap-2 rounded-full bg-white dark:bg-zinc-900 py-1.5 pl-1.5 pr-3.5 border border-[#F0F0F4] dark:border-zinc-800"
       style={{boxShadow: "0 4px 14px rgba(20, 23, 28, 0.06)"}}>
       <AgentIconTile type={type} size={24} />
-      <span className="text-sm font-semibold text-[#15171c]">{type}</span>
+      <span className="text-sm font-semibold text-[#15171c] dark:text-zinc-50">{type}</span>
     </div>
   )
 }
 
 function AgentIconTile({type, size = 30}: {type?: string; size?: number}) {
   const visual = agentVisual(type)
+  // Tile background is an inline style, out of Tailwind dark:'s reach — pick
+  // the pastel or its dark twin by scheme. Saturated glyph inks stay put.
+  const isDark = useColorScheme() === "dark"
+  const bg = isDark ? (visual.bgDark ?? "#27272A") : visual.bg
   return (
     <span
       className="inline-flex items-center justify-center rounded-[9px] flex-shrink-0"
-      style={{width: size, height: size, backgroundColor: visual.bg, color: visual.fg}}>
+      style={{width: size, height: size, backgroundColor: bg, color: visual.fg}}>
       {visual.glyph}
     </span>
   )
@@ -430,20 +442,20 @@ function SettingsView({
 }) {
   return (
     <div className="h-full overflow-y-auto px-5 pt-4 pb-28">
-      <h1 className="m-0 text-[26px] font-bold text-[#15171c]">Settings</h1>
-      <p className="m-0 mt-1 text-sm text-[#8a8f9c]">Tune how Merge listens, thinks, and speaks.</p>
+      <h1 className="m-0 text-[26px] font-bold text-[#15171c] dark:text-zinc-50">Settings</h1>
+      <p className="m-0 mt-1 text-sm text-[#8a8f9c] dark:text-zinc-400">Tune how Merge listens, thinks, and speaks.</p>
 
       <SectionLabel className="mt-7">Intelligence</SectionLabel>
       <div
-        className="mt-3 rounded-2xl bg-white border border-[#ECECF1] overflow-hidden"
+        className="mt-3 rounded-2xl bg-white dark:bg-zinc-900 border border-[#ECECF1] dark:border-zinc-800 overflow-hidden"
         style={{boxShadow: CARD_SHADOW}}>
         {/* Answer language — native picker overlaid on a row that shows the value. */}
         <div className="relative flex items-center gap-3 px-4 py-3.5">
           <SettingIconTile>
             <LanguageIcon />
           </SettingIconTile>
-          <span className="flex-1 text-[15px] font-semibold text-[#15171c]">Answer language</span>
-          <span className="flex items-center gap-1 text-[15px] text-[#8a8f9c]">
+          <span className="flex-1 text-[15px] font-semibold text-[#15171c] dark:text-zinc-50">Answer language</span>
+          <span className="flex items-center gap-1 text-[15px] text-[#8a8f9c] dark:text-zinc-400">
             {settings.answerLanguage}
             <ChevronRightIcon />
           </span>
@@ -460,7 +472,7 @@ function SettingsView({
           </select>
         </div>
 
-        <div className="h-px bg-[#F1F1F4] mx-4" />
+        <div className="h-px bg-[#F1F1F4] dark:bg-zinc-800 mx-4" />
 
         {/* Insight frequency */}
         <div className="px-4 py-3.5">
@@ -468,7 +480,7 @@ function SettingsView({
             <SettingIconTile>
               <FrequencyIcon />
             </SettingIconTile>
-            <span className="flex-1 text-[15px] font-semibold text-[#15171c]">Insight frequency</span>
+            <span className="flex-1 text-[15px] font-semibold text-[#15171c] dark:text-zinc-50">Insight frequency</span>
           </div>
           <div className="mt-3 grid grid-cols-3 gap-2">
             {(["low", "medium", "high"] as const).map((frequency) => {
@@ -489,7 +501,7 @@ function SettingsView({
 
       {developerMode && (
         <button
-          className="mt-6 w-full py-3 text-xs font-semibold text-zinc-400 hover:text-zinc-600 transition-colors"
+          className="mt-6 w-full py-3 text-xs font-semibold text-zinc-400 hover:text-zinc-600 dark:text-zinc-500 dark:hover:text-zinc-300 transition-colors"
           onClick={onOpenDeveloperInfo}>
           Developer info
         </button>
@@ -500,7 +512,7 @@ function SettingsView({
 
 function SettingIconTile({children}: {children: ReactNode}) {
   return (
-    <span className="inline-flex h-9 w-9 items-center justify-center rounded-[11px] bg-[#F3F3F7] text-[#5b6070] flex-shrink-0">
+    <span className="inline-flex h-9 w-9 items-center justify-center rounded-[11px] bg-[#F3F3F7] dark:bg-zinc-800 text-[#5b6070] dark:text-zinc-300 flex-shrink-0">
       {children}
     </span>
   )
@@ -523,12 +535,12 @@ function DeveloperInfo({
   return (
     <div className="h-full flex flex-col overflow-hidden">
       <div className="px-5 py-3 flex items-center gap-3">
-        <button className="h-9 w-9 rounded-full bg-white border border-[#ECECF1] flex items-center justify-center" onClick={onBack} aria-label="Back">
+        <button className="h-9 w-9 rounded-full bg-white dark:bg-zinc-900 border border-[#ECECF1] dark:border-zinc-800 flex items-center justify-center" onClick={onBack} aria-label="Back">
           <BackIcon />
         </button>
         <div>
-          <h2 className="m-0 text-lg font-bold text-zinc-900">Developer info</h2>
-          <p className="m-0 text-xs text-zinc-500">Public build configuration</p>
+          <h2 className="m-0 text-lg font-bold text-zinc-900 dark:text-zinc-50">Developer info</h2>
+          <p className="m-0 text-xs text-zinc-500 dark:text-zinc-400">Public build configuration</p>
         </div>
       </div>
       <div className="flex-1 overflow-y-auto px-5 py-3 space-y-4">
@@ -565,7 +577,7 @@ function BottomNav({
   return (
     <div className="pointer-events-none absolute inset-x-0 bottom-3 flex justify-center">
       <div
-        className="pointer-events-auto inline-flex items-center gap-1 rounded-full bg-white/90 backdrop-blur-lg p-1.5 border border-[#ECECF1]"
+        className="pointer-events-auto inline-flex items-center gap-1 rounded-full bg-white/90 dark:bg-zinc-900/90 backdrop-blur-lg p-1.5 border border-[#ECECF1] dark:border-zinc-800"
         style={{boxShadow: "0 12px 30px rgba(20, 23, 28, 0.14)"}}>
         <DockButton active={activeTab === "insights"} label="Insights" onClick={() => onTabChange("insights")}>
           <InsightsIcon active={activeTab === "insights"} />
@@ -621,12 +633,12 @@ function ModeSwitch({
   onModeChange: (mode: InsightsMode) => void
 }) {
   return (
-    <div className="grid grid-cols-2 gap-1 rounded-full bg-zinc-100 p-1 border border-zinc-200 flex-shrink-0">
+    <div className="grid grid-cols-2 gap-1 rounded-full bg-zinc-100 dark:bg-zinc-800 p-1 border border-zinc-200 dark:border-zinc-700 flex-shrink-0">
       {(["insights", "activity"] as const).map((item) => (
         <button
           key={item}
           className={`h-7 min-w-[62px] rounded-full px-2 text-[11px] font-bold capitalize transition-colors ${
-            mode === item ? "text-white" : "text-zinc-500"
+            mode === item ? "text-white" : "text-zinc-500 dark:text-zinc-400"
           }`}
           style={mode === item ? MERGE_ACTIVE_STYLE : {backgroundColor: "transparent"}}
           onClick={() => onModeChange(item)}>
@@ -641,65 +653,75 @@ function InsightCard({
   insight,
   decision,
   isNewest,
+  developerMode,
   expanded,
   onToggle,
 }: {
   insight: MergeInsight
   decision?: MergeDecision
   isNewest: boolean
+  developerMode: boolean
   expanded: boolean
   onToggle: () => void
 }) {
   const quote = decision?.chunkText?.trim()
   const duration = insight.profiling ? formatDuration(insight.profiling.totalMs) : null
+  const sources = insight.sources ?? decision?.sources ?? []
+  const hasUserDetails = sources.length > 0
+  const canExpand = developerMode || hasUserDetails
   return (
     <article
-      className={`rounded-[20px] bg-white p-4 ${isNewest ? "border-2 border-[#F8B4CC]" : "border border-[#ECECF1]"}`}
+      className={`rounded-[20px] bg-white dark:bg-zinc-900 p-4 ${isNewest ? "border-2 border-[#F8B4CC] dark:border-pink-900" : "border border-[#ECECF1] dark:border-zinc-800"}`}
       style={{boxShadow: CARD_SHADOW}}>
-      <button className="w-full text-left" onClick={onToggle}>
+      <button className="w-full text-left" onClick={canExpand ? onToggle : undefined}>
         <div className="flex items-center gap-2.5">
           <AgentIconTile type={insight.agentType} />
-          <span className="flex-1 text-[15px] font-bold text-[#15171c] truncate">{insight.agentType || "Merge"}</span>
+          <span className="flex-1 text-[15px] font-bold text-[#15171c] dark:text-zinc-50 truncate">{insight.agentType || "Merge"}</span>
           {isNewest ? (
             <NewBadge />
           ) : (
-            <span className="text-xs text-[#9aa0ad] flex-shrink-0">{formatClockTime(insight.timestamp)}</span>
+            <span className="text-xs text-[#9aa0ad] dark:text-zinc-500 flex-shrink-0">{formatClockTime(insight.timestamp)}</span>
           )}
         </div>
 
         {quote ? (
-          <div className="mt-3 flex items-center gap-2 rounded-xl bg-[#F4F4F7] px-3 py-2">
+          <div className="mt-3 flex items-center gap-2 rounded-xl bg-[#F4F4F7] dark:bg-zinc-800 px-3 py-2">
             <WaveformIcon />
-            <span className="min-w-0 flex-1 truncate text-[13px] italic text-[#8a8f9c]">“{quote}”</span>
+            <span className="min-w-0 flex-1 truncate text-[13px] italic text-[#8a8f9c] dark:text-zinc-400">“{quote}”</span>
           </div>
         ) : null}
 
-        <p className="selectable-text m-0 mt-3 text-[15px] font-semibold leading-6 text-[#15171c] whitespace-pre-wrap break-words">
+        <p className="selectable-text m-0 mt-3 text-[15px] font-semibold leading-6 text-[#15171c] dark:text-zinc-50 whitespace-pre-wrap break-words">
           {insight.text}
         </p>
 
-        <div className="mt-3 flex items-center gap-2">
-          {insight.displayAction ? <ActionBadge action={insight.displayAction} /> : null}
-          {typeof insight.confidence === "number" ? (
-            <span className="text-xs font-semibold text-[#8a8f9c]">{Math.round(insight.confidence * 100)}%</span>
-          ) : null}
-          {duration ? (
-            <>
-              <span className="text-[#c4c8d1]">·</span>
-              <span className="text-xs text-[#8a8f9c]">{duration}</span>
-            </>
-          ) : null}
-        </div>
+        {developerMode ? (
+          <div className="mt-3 flex items-center gap-2">
+            {insight.displayAction ? <ActionBadge action={insight.displayAction} /> : null}
+            {typeof insight.confidence === "number" ? (
+              <span className="text-xs font-semibold text-[#8a8f9c] dark:text-zinc-400">{Math.round(insight.confidence * 100)}%</span>
+            ) : null}
+            {duration ? (
+              <>
+                <span className="text-[#c4c8d1] dark:text-zinc-600">·</span>
+                <span className="text-xs text-[#8a8f9c] dark:text-zinc-400">{duration}</span>
+              </>
+            ) : null}
+          </div>
+        ) : null}
       </button>
 
-      {expanded ? (
+      {expanded && canExpand ? (
         <div className="mt-3 space-y-2">
-          {decision?.chunkText ? <DetailBlock label="Conversation" text={decision.chunkText} /> : null}
-          {insight.reasoning || decision?.reasoning ? (
+          {developerMode && decision?.chunkText ? <DetailBlock label="Conversation" text={decision.chunkText} /> : null}
+          {developerMode && (insight.reasoning || decision?.reasoning) ? (
             <DetailBlock label="Reasoning" text={insight.reasoning ?? decision?.reasoning ?? ""} />
           ) : null}
-          <SourcesBlock sources={insight.sources ?? decision?.sources ?? []} searchQueries={insight.searchQueries ?? decision?.searchQueries ?? []} />
-          <ProfilingBlock profiling={insight.profiling ?? decision?.profiling} />
+          <SourcesBlock
+            sources={sources}
+            searchQueries={developerMode ? (insight.searchQueries ?? decision?.searchQueries ?? []) : []}
+          />
+          {developerMode ? <ProfilingBlock profiling={insight.profiling ?? decision?.profiling} /> : null}
         </div>
       ) : null}
     </article>
@@ -724,8 +746,8 @@ function ActivityTimeline({
     return (
       <div className="h-full flex flex-col items-center justify-center text-center pb-24">
         <img src={MergeLogo} alt="" className="h-14 w-14 opacity-80" />
-        <h2 className="mt-4 mb-1 text-base font-bold text-[#15171c]">No AI activity yet</h2>
-        <p className="m-0 max-w-[250px] text-sm leading-5 text-[#8a8f9c]">
+        <h2 className="mt-4 mb-1 text-base font-bold text-[#15171c] dark:text-zinc-50">No AI activity yet</h2>
+        <p className="m-0 max-w-[250px] text-sm leading-5 text-[#8a8f9c] dark:text-zinc-400">
           Decisions appear after Merge analyzes speech.
         </p>
       </div>
@@ -740,8 +762,8 @@ function ActivityTimeline({
         counts={{all: decisions.length, shown: shownCount, quiet: quietCount}}
       />
       {filteredDecisions.length === 0 ? (
-        <div className="rounded-lg border border-dashed border-[#dfe6e4] bg-white/70 px-4 py-6 text-center">
-          <p className="m-0 text-sm font-semibold text-[#66736f]">No {filter === "shown" ? "shown insights" : "quiet decisions"} yet</p>
+        <div className="rounded-lg border border-dashed border-[#dfe6e4] dark:border-zinc-700 bg-white/70 dark:bg-zinc-900/70 px-4 py-6 text-center">
+          <p className="m-0 text-sm font-semibold text-[#66736f] dark:text-zinc-400">No {filter === "shown" ? "shown insights" : "quiet decisions"} yet</p>
         </div>
       ) : (
         filteredDecisions
@@ -770,13 +792,13 @@ function ActivityFilterBar({
   counts: Record<ActivityFilter, number>
 }) {
   return (
-    <div className="sticky top-0 z-10 -mx-5 px-5 pb-2 bg-[#f6f6fa]/95 backdrop-blur">
-      <div className="grid grid-cols-3 gap-1 rounded-full bg-white p-1 border border-[#ECECF1] shadow-[0_1px_6px_rgba(16,24,24,0.04)]">
+    <div className="sticky top-0 z-10 -mx-5 px-5 pb-2 bg-[#f6f6fa]/95 dark:bg-zinc-950/95 backdrop-blur">
+      <div className="grid grid-cols-3 gap-1 rounded-full bg-white dark:bg-zinc-900 p-1 border border-[#ECECF1] dark:border-zinc-800 shadow-[0_1px_6px_rgba(16,24,24,0.04)]">
         {(["all", "shown", "quiet"] as const).map((item) => (
           <button
             key={item}
             className={`h-8 rounded-full px-2 text-[11px] font-bold capitalize transition-colors ${
-              filter === item ? "text-white" : "text-[#66736f]"
+              filter === item ? "text-white" : "text-[#66736f] dark:text-zinc-400"
             }`}
             style={filter === item ? MERGE_ACTIVE_STYLE : {backgroundColor: "transparent"}}
             onClick={() => onFilterChange(item)}>
@@ -798,16 +820,16 @@ function ActivityRow({
   onToggle: () => void
 }) {
   return (
-    <article className="rounded-lg border border-[#ECECF1] bg-white px-3 py-2 shadow-[0_1px_6px_rgba(16,24,24,0.04)]">
+    <article className="rounded-lg border border-[#ECECF1] dark:border-zinc-800 bg-white dark:bg-zinc-900 px-3 py-2 shadow-[0_1px_6px_rgba(16,24,24,0.04)]">
       <button className="w-full text-left" onClick={onToggle}>
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 min-w-0">
             <span className="h-2.5 w-2.5 rounded-full flex-shrink-0" style={{backgroundColor: actionColor(decision.action)}} />
-            <span className="text-sm font-bold text-[#15171c] truncate">{activityTitle(decision)}</span>
+            <span className="text-sm font-bold text-[#15171c] dark:text-zinc-50 truncate">{activityTitle(decision)}</span>
           </div>
-          <span className="text-[11px] text-[#9aa0ad] flex-shrink-0">{formatTime(decision.timestamp)}</span>
+          <span className="text-[11px] text-[#9aa0ad] dark:text-zinc-500 flex-shrink-0">{formatTime(decision.timestamp)}</span>
         </div>
-        <p className="m-0 mt-1 text-xs leading-4 text-[#66736f] line-clamp-2">
+        <p className="m-0 mt-1 text-xs leading-4 text-[#66736f] dark:text-zinc-400 line-clamp-2">
           {decision.reasoning || decision.insightText || decision.chunkText || "No reasoning recorded"}
         </p>
       </button>
@@ -819,21 +841,21 @@ function ActivityRow({
           <DetailBlock label="Reasoning" text={decision.reasoning || "No reasoning recorded"} />
           <div className="flex flex-wrap gap-1.5">
             <ActionBadge action={decision.action} />
-            <span className="rounded-full bg-zinc-100 px-2 py-1 text-[10px] font-bold uppercase text-zinc-500">
+            <span className="rounded-full bg-zinc-100 dark:bg-zinc-800 px-2 py-1 text-[10px] font-bold uppercase text-zinc-500 dark:text-zinc-400">
               {decision.trigger}
             </span>
             {decision.urgency ? (
-              <span className="rounded-full bg-zinc-100 px-2 py-1 text-[10px] font-bold uppercase text-zinc-500">
+              <span className="rounded-full bg-zinc-100 dark:bg-zinc-800 px-2 py-1 text-[10px] font-bold uppercase text-zinc-500 dark:text-zinc-400">
                 {decision.urgency}
               </span>
             ) : null}
             {typeof decision.confidence === "number" ? (
-              <span className="rounded-full bg-zinc-100 px-2 py-1 text-[10px] font-bold uppercase text-zinc-500">
+              <span className="rounded-full bg-zinc-100 dark:bg-zinc-800 px-2 py-1 text-[10px] font-bold uppercase text-zinc-500 dark:text-zinc-400">
                 {Math.round(decision.confidence * 100)}%
               </span>
             ) : null}
             {decision.profiling ? (
-              <span className="rounded-full bg-zinc-100 px-2 py-1 text-[10px] font-bold uppercase text-zinc-500">
+              <span className="rounded-full bg-zinc-100 dark:bg-zinc-800 px-2 py-1 text-[10px] font-bold uppercase text-zinc-500 dark:text-zinc-400">
                 {formatDuration(decision.profiling.totalMs)}
               </span>
             ) : null}
@@ -867,27 +889,27 @@ function LiveDebugTray({
   return (
     <footer className="px-5 pb-20 pt-2">
       <button
-        className="w-full rounded-lg bg-white border border-[#ECECF1] px-3 py-2 text-left"
+        className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-[#ECECF1] dark:border-zinc-800 px-3 py-2 text-left"
         onClick={onOpenActivity}>
         <div className="flex items-center justify-between gap-3">
-          <span className="text-[11px] font-bold uppercase text-[#7a8581]">Live</span>
+          <span className="text-[11px] font-bold uppercase text-[#7a8581] dark:text-zinc-500">Live</span>
           {latestDecision ? (
             <span className="text-[11px] font-bold uppercase" style={{color: actionColor(latestDecision.action)}}>
               {latestDecision.action} · {latestDecision.trigger}
             </span>
           ) : null}
         </div>
-        <p className="m-0 mt-1 text-sm leading-5 text-[#2f3b38] line-clamp-1">
+        <p className="m-0 mt-1 text-sm leading-5 text-[#2f3b38] dark:text-zinc-200 line-clamp-1">
           {latestTranscript?.text || "Waiting for speech"}
         </p>
         <div className="mt-1 min-h-4 flex items-center justify-between gap-3 text-[11px] leading-4">
-          <span className={`inline-flex min-w-0 items-center gap-1.5 font-semibold ${hasProblem ? "text-[#202431]" : "text-[#8a9692]"}`}>
+          <span className={`inline-flex min-w-0 items-center gap-1.5 font-semibold ${hasProblem ? "text-[#202431] dark:text-zinc-200" : "text-[#8a9692] dark:text-zinc-500"}`}>
             <span className="h-1.5 w-1.5 rounded-full flex-shrink-0" style={{backgroundColor: cloudPresentation.accentColor}} />
             <span className="truncate">{cloudPresentation.label}</span>
           </span>
           <span
             className={`min-w-0 truncate text-right font-semibold ${
-              backendPresentation.label === "AI offline" ? "text-[#b94a5a]" : "text-[#8a9692]"
+              backendPresentation.label === "AI offline" ? "text-[#b94a5a] dark:text-[#ef7688]" : "text-[#8a9692] dark:text-zinc-500"
             }`}>
             {backendText}
           </span>
@@ -899,7 +921,7 @@ function LiveDebugTray({
 
 function SectionLabel({children, className}: {children: ReactNode; className?: string}) {
   return (
-    <p className={`m-0 px-1 text-[11px] font-bold uppercase tracking-[0.12em] text-[#b3b7c2] ${className ?? ""}`}>
+    <p className={`m-0 px-1 text-[11px] font-bold uppercase tracking-[0.12em] text-[#b3b7c2] dark:text-zinc-500 ${className ?? ""}`}>
       {children}
     </p>
   )
@@ -917,9 +939,9 @@ function NewBadge() {
 
 function DetailBlock({label, text}: {label: string; text: string}) {
   return (
-    <div className="rounded-md bg-[#f8faf9] border border-[#e0e6e4] px-3 py-2">
-      <div className="text-[10px] font-bold uppercase text-[#8a9692]">{label}</div>
-      <p className="m-0 mt-1 text-xs leading-4 text-[#46524f] whitespace-pre-wrap break-words">{text}</p>
+    <div className="rounded-md bg-[#f8faf9] dark:bg-zinc-800 border border-[#e0e6e4] dark:border-zinc-700 px-3 py-2">
+      <div className="text-[10px] font-bold uppercase text-[#8a9692] dark:text-zinc-500">{label}</div>
+      <p className="m-0 mt-1 text-xs leading-4 text-[#46524f] dark:text-zinc-300 whitespace-pre-wrap break-words">{text}</p>
     </div>
   )
 }
@@ -934,8 +956,8 @@ function SourcesBlock({
   if (sources.length === 0 && searchQueries.length === 0) return null
 
   return (
-    <div className="rounded-md bg-[#f8faf9] border border-[#e0e6e4] px-3 py-2">
-      <div className="text-[10px] font-bold uppercase text-[#8a9692]">Sources</div>
+    <div className="rounded-md bg-[#f8faf9] dark:bg-zinc-800 border border-[#e0e6e4] dark:border-zinc-700 px-3 py-2">
+      <div className="text-[10px] font-bold uppercase text-[#8a9692] dark:text-zinc-500">Sources</div>
       {sources.length > 0 ? (
         <div className="mt-2 flex flex-wrap gap-1.5">
           {sources.map((source, index) => (
@@ -944,16 +966,16 @@ function SourcesBlock({
               href={source.uri}
               target="_blank"
               rel="noreferrer"
-              className="max-w-full rounded-full bg-white border border-[#e0e6e4] px-2 py-1 text-[11px] font-semibold text-[#36423f] no-underline truncate">
+              className="max-w-full rounded-full bg-white dark:bg-zinc-900 border border-[#e0e6e4] dark:border-zinc-700 px-2 py-1 text-[11px] font-semibold text-[#36423f] dark:text-zinc-300 no-underline truncate">
               {source.domain || source.title}
             </a>
           ))}
         </div>
       ) : (
-        <p className="m-0 mt-1 text-xs leading-4 text-[#66736f]">No grounded sources returned.</p>
+        <p className="m-0 mt-1 text-xs leading-4 text-[#66736f] dark:text-zinc-400">No grounded sources returned.</p>
       )}
       {searchQueries.length > 0 ? (
-        <p className="m-0 mt-2 text-[11px] leading-4 text-[#66736f]">
+        <p className="m-0 mt-2 text-[11px] leading-4 text-[#66736f] dark:text-zinc-400">
           Searched: {searchQueries.slice(0, 3).join(" · ")}
         </p>
       ) : null}
@@ -973,13 +995,13 @@ function ProfilingBlock({profiling}: {profiling?: MergeInsight["profiling"]}) {
   ] as const
 
   return (
-    <div className="rounded-md bg-[#f8faf9] border border-[#e0e6e4] px-3 py-2">
-      <div className="text-[10px] font-bold uppercase text-[#8a9692]">Profiling</div>
+    <div className="rounded-md bg-[#f8faf9] dark:bg-zinc-800 border border-[#e0e6e4] dark:border-zinc-700 px-3 py-2">
+      <div className="text-[10px] font-bold uppercase text-[#8a9692] dark:text-zinc-500">Profiling</div>
       <div className="mt-2 grid grid-cols-2 gap-1.5">
         {rows.map(([label, value]) => (
-          <div key={label} className="rounded bg-white border border-[#edf1ef] px-2 py-1">
-            <div className="text-[9px] font-bold uppercase text-[#a0aaa6]">{label}</div>
-            <div className="mt-0.5 text-[11px] font-semibold text-[#36423f] break-all">{value}</div>
+          <div key={label} className="rounded bg-white dark:bg-zinc-900 border border-[#edf1ef] dark:border-zinc-700 px-2 py-1">
+            <div className="text-[9px] font-bold uppercase text-[#a0aaa6] dark:text-zinc-500">{label}</div>
+            <div className="mt-0.5 text-[11px] font-semibold text-[#36423f] dark:text-zinc-300 break-all">{value}</div>
           </div>
         ))}
       </div>
@@ -999,10 +1021,10 @@ function ActionBadge({action}: {action: MergeDecision["action"]}) {
 
 function StatusPill({label, detail, color}: {label: string; detail: string; color: string}) {
   return (
-    <div className="flex items-center gap-1.5 rounded-full border border-[#e3e4ea] bg-white px-2 py-1 flex-shrink-0">
+    <div className="flex items-center gap-1.5 rounded-full border border-[#e3e4ea] dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2 py-1 flex-shrink-0">
       <span className="h-2 w-2 rounded-full flex-shrink-0" style={{backgroundColor: color}} />
-      <span className="text-[11px] font-bold text-[#24302d] whitespace-nowrap">{compactStatusLabel(label)}</span>
-      <span className="text-[10px] font-bold uppercase text-[#7a8581] whitespace-nowrap">
+      <span className="text-[11px] font-bold text-[#24302d] dark:text-zinc-200 whitespace-nowrap">{compactStatusLabel(label)}</span>
+      <span className="text-[10px] font-bold uppercase text-[#7a8581] dark:text-zinc-500 whitespace-nowrap">
         {compactStatusDetail(label, detail)}
       </span>
     </div>
@@ -1011,8 +1033,8 @@ function StatusPill({label, detail, color}: {label: string; detail: string; colo
 
 function InfoCard({title, children}: {title: string; children: ReactNode}) {
   return (
-    <section className="bg-white rounded-2xl p-4 border border-[#ECECF1]" style={{boxShadow: CARD_SHADOW}}>
-      <h3 className="m-0 mb-3 text-sm font-bold text-zinc-900">{title}</h3>
+    <section className="bg-white dark:bg-zinc-900 rounded-2xl p-4 border border-[#ECECF1] dark:border-zinc-800" style={{boxShadow: CARD_SHADOW}}>
+      <h3 className="m-0 mb-3 text-sm font-bold text-zinc-900 dark:text-zinc-50">{title}</h3>
       <div className="space-y-3">{children}</div>
     </section>
   )
@@ -1021,8 +1043,8 @@ function InfoCard({title, children}: {title: string; children: ReactNode}) {
 function InfoRow({label, value}: {label: string; value: string}) {
   return (
     <div>
-      <div className="text-[11px] font-bold uppercase text-zinc-400 break-all">{label}</div>
-      <div className="mt-0.5 text-sm leading-5 text-zinc-800 break-all">{value}</div>
+      <div className="text-[11px] font-bold uppercase text-zinc-400 dark:text-zinc-500 break-all">{label}</div>
+      <div className="mt-0.5 text-sm leading-5 text-zinc-800 dark:text-zinc-200 break-all">{value}</div>
     </div>
   )
 }
@@ -1236,7 +1258,7 @@ function ChevronRightIcon() {
 
 function BackIcon() {
   return (
-    <svg className="w-5 h-5 text-zinc-800" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg className="w-5 h-5 text-zinc-800 dark:text-zinc-200" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="m15 18-6-6 6-6" />
     </svg>
   )

@@ -1,5 +1,5 @@
 import {useState} from "react"
-import {AlignLeft, MessageSquare, Mic, Pause, Play, Square, Trash2, Volume2} from "lucide-react"
+import {AlignLeft, Loader2, MessageSquare, Mic, Pause, Play, Square, Trash2, Volume2} from "lucide-react"
 
 import type {RecorderStatus} from "../../shared/types"
 import {fmtDateTime, fmtTimer} from "../lib/format"
@@ -11,6 +11,7 @@ interface Props {
   transcript: string
   transcriptLang: string
   paused: boolean
+  stopping: boolean
   onPause: () => void
   onResume: () => void
   onStop: () => void
@@ -38,6 +39,7 @@ export function RecordingScreen({
   transcript,
   transcriptLang,
   paused,
+  stopping,
   onPause,
   onResume,
   onStop,
@@ -47,7 +49,7 @@ export function RecordingScreen({
   // Capture start comes from the background (stable across pause + reopen), not
   // when this screen mounted.
   const startedAt = status.startedAt
-  const speaking = !paused && status.level > 0.06
+  const speaking = !paused && !stopping && status.level > 0.06
 
   return (
     <div className="flex flex-col min-h-0 flex-1 px-4 pb-5">
@@ -60,7 +62,8 @@ export function RecordingScreen({
           type="button"
           aria-label="Discard recording"
           onClick={onCancel}
-          className="grid place-items-center rounded-full active:opacity-70"
+          disabled={stopping}
+          className="grid place-items-center rounded-full active:opacity-70 disabled:opacity-40"
           style={{width: 36, height: 36, color: "var(--text)"}}>
           <Trash2 className="w-5 h-5" />
         </button>
@@ -77,11 +80,11 @@ export function RecordingScreen({
               <span
                 className="text-[15px] font-semibold"
                 style={{color: speaking ? "var(--green)" : "var(--text-muted)"}}>
-                {paused ? "Paused" : speaking ? "Speech" : "Listening…"}
+                {stopping ? "Saving…" : paused ? "Paused" : speaking ? "Speech" : "Listening…"}
               </span>
             </div>
             <div className="min-h-0 flex-1">
-              <Waveform levels={levels} paused={paused} />
+              <Waveform levels={levels} paused={paused || stopping} />
             </div>
           </>
         ) : (
@@ -93,7 +96,10 @@ export function RecordingScreen({
                 </p>
                 {transcriptLang ? (
                   <div className="flex items-center gap-1.5 mt-3 text-[13px]" style={{color: "var(--text-muted)"}}>
-                    <span className="inline-block rounded-full" style={{width: 7, height: 7, background: "var(--green)"}} />
+                    <span
+                      className="inline-block rounded-full"
+                      style={{width: 7, height: 7, background: "var(--green)"}}
+                    />
                     {langLabel(transcriptLang)}
                   </div>
                 ) : null}
@@ -101,7 +107,7 @@ export function RecordingScreen({
             ) : (
               <div className="h-full grid place-items-center text-center px-4">
                 <p className="text-[14px]" style={{color: "var(--text-muted)"}}>
-                  {paused ? "Paused" : "Listening for speech…"}
+                  {stopping ? "Saving recording…" : paused ? "Paused" : "Listening for speech…"}
                 </p>
               </div>
             )}
@@ -111,15 +117,27 @@ export function RecordingScreen({
 
       {/* Audio / Transcript toggle */}
       <div className="flex items-center justify-center gap-6 mt-4">
-        <TogglePill active={view === "audio"} onClick={() => setView("audio")} icon={<Volume2 className="w-4 h-4" />} label="Audio" />
-        <TogglePill active={view === "transcript"} onClick={() => setView("transcript")} icon={<AlignLeft className="w-4 h-4" />} label="Transcript" />
+        <TogglePill
+          active={view === "audio"}
+          disabled={stopping}
+          onClick={() => setView("audio")}
+          icon={<Volume2 className="w-4 h-4" />}
+          label="Audio"
+        />
+        <TogglePill
+          active={view === "transcript"}
+          disabled={stopping}
+          onClick={() => setView("transcript")}
+          icon={<AlignLeft className="w-4 h-4" />}
+          label="Transcript"
+        />
       </div>
 
       {/* Timer */}
       <div className="flex items-center justify-center gap-3 mt-4">
         <span
-          className={`inline-block rounded-full ${paused ? "" : "rec-pulse"}`}
-          style={{width: 14, height: 14, background: "var(--rec)", opacity: paused ? 0.4 : 1}}
+          className={`inline-block rounded-full ${paused || stopping ? "" : "rec-pulse"}`}
+          style={{width: 14, height: 14, background: "var(--rec)", opacity: paused || stopping ? 0.4 : 1}}
         />
         <span className="text-[44px] font-light leading-none tabular-nums" style={{color: "var(--text)"}}>
           {fmtTimer(status.ms)}
@@ -131,18 +149,28 @@ export function RecordingScreen({
         <button
           type="button"
           onClick={paused ? onResume : onPause}
-          className="flex-1 h-14 flex items-center justify-center gap-2 rounded-full text-[16px] font-semibold press active:opacity-80"
+          disabled={stopping}
+          className="flex-1 h-14 flex items-center justify-center gap-2 rounded-full text-[16px] font-semibold press active:opacity-80 disabled:opacity-40"
           style={{background: "var(--surface-2)", border: "1px solid var(--border)", color: "var(--text)"}}>
-          {paused ? <Play className="w-5 h-5" fill="currentColor" strokeWidth={0} /> : <Pause className="w-5 h-5" fill="currentColor" strokeWidth={0} />}
+          {paused ? (
+            <Play className="w-5 h-5" fill="currentColor" strokeWidth={0} />
+          ) : (
+            <Pause className="w-5 h-5" fill="currentColor" strokeWidth={0} />
+          )}
           {paused ? "Resume" : "Pause"}
         </button>
         <button
           type="button"
           onClick={onStop}
-          className="flex-1 h-14 flex items-center justify-center gap-2 rounded-full text-[16px] font-semibold text-white press"
+          disabled={stopping}
+          className="flex-1 h-14 flex items-center justify-center gap-2 rounded-full text-[16px] font-semibold text-white press disabled:opacity-70"
           style={{background: "var(--rec-grad)", boxShadow: "var(--shadow-fab)"}}>
-          <Square className="w-4 h-4" fill="currentColor" strokeWidth={0} />
-          Stop
+          {stopping ? (
+            <Loader2 className="w-4 h-4 animate-spin" />
+          ) : (
+            <Square className="w-4 h-4" fill="currentColor" strokeWidth={0} />
+          )}
+          {stopping ? "Saving…" : "Stop"}
         </button>
       </div>
 
@@ -156,11 +184,13 @@ export function RecordingScreen({
 
 function TogglePill({
   active,
+  disabled,
   onClick,
   icon,
   label,
 }: {
   active: boolean
+  disabled?: boolean
   onClick: () => void
   icon: React.ReactNode
   label: string
@@ -168,8 +198,9 @@ function TogglePill({
   return (
     <button
       type="button"
+      disabled={disabled}
       onClick={onClick}
-      className="flex items-center gap-2 h-9 px-4 rounded-full text-[15px] font-semibold press active:opacity-80"
+      className="flex items-center gap-2 h-9 px-4 rounded-full text-[15px] font-semibold press active:opacity-80 disabled:opacity-40"
       style={
         active
           ? {background: "color-mix(in srgb, var(--amber) 16%, transparent)", color: "var(--amber)"}

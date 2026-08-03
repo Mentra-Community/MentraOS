@@ -20,6 +20,8 @@ export interface MiniappActionInfo {
    * to an MCP tool `inputSchema`. Undefined for actions that take no params.
    */
   parameters?: Record<string, unknown>
+  /** JSON-Schema descriptor for the structured value returned by the action. */
+  outputSchema?: Record<string, unknown>
 }
 
 /**

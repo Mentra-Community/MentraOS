@@ -10,13 +10,8 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import showAlert from "@/utils/AlertUtils"
-import {
-  decideDevLaunchRoute,
-  registerDevApp,
-  useAppStatusStore,
-  DEV_APP_PACKAGE_NAME,
-  type DevAppRecord,
-} from "@mentra/island"
+import {decideDevLaunchRoute, engine} from "@mentra/engine"
+import {registerDevApp, type DevAppRecord} from "@mentra/engine/internal"
 import {askPermissionsUI, checkPermissionsUI, PERMISSION_CONFIG} from "@/utils/PermissionsUtils"
 import {markMiniappDevMode} from "@/utils/miniappDevMode"
 import {storage} from "@/utils/storage/storage"
@@ -93,14 +88,16 @@ export default function MiniappDeveloperUrlScreen() {
     // offline check keeps a failed/unreachable launch from flipping the flag.
     markMiniappDevMode()
 
+    const packageName = launchResult.manifest.packageName || entry.packageName
+    const appName = launchResult.manifest.name || entry.name
     const manifestPermissions: AppletPermission[] = Array.isArray(launchResult.manifest.permissions)
       ? (launchResult.manifest.permissions as AppletPermission[])
       : []
 
     if (manifestPermissions.length > 0) {
       const fakeApplet = {
-        packageName: entry.packageName,
-        name: entry.name,
+        packageName,
+        name: appName,
         permissions: manifestPermissions,
       } as unknown as AppletInterface
       const permResult = await askPermissionsUI(fakeApplet, theme)
@@ -110,7 +107,7 @@ export default function MiniappDeveloperUrlScreen() {
         const friendlyNames = stillNeeded.map((p) => PERMISSION_CONFIG[p]?.name ?? p).join(", ")
         showAlert(
           "Required permissions denied",
-          `${entry.name} can't run without these permissions: ${friendlyNames}. Open Settings to enable them, then try again.`,
+          `${appName} can't run without these permissions: ${friendlyNames}. Open Settings to enable them, then try again.`,
           [
             {text: "Open Settings", onPress: () => Linking.openSettings()},
             {text: "Cancel", style: "cancel"},
@@ -120,28 +117,24 @@ export default function MiniappDeveloperUrlScreen() {
       }
     }
 
-    // Re-register the dev slot for THIS entry before foregrounding. There is a
-    // single dev slot (com.dev): without this, setForeground launches whatever
-    // app was last registered into the slot — tapping "Mentra Example" in the
-    // recent list would silently relaunch a different, previously-registered
-    // dev app under the Mentra Example name.
-    registerDevApp({
-      packageName: entry.packageName,
-      name: entry.name,
-      iconUrl: entry.iconUrl ?? `${entry.url}/icon.png`,
+    // Refresh this package's manifest metadata before foregrounding it. Other
+    // dev packages remain registered and independently launchable.
+    const existing = engine.miniapps.list().find((app) => app.packageName === packageName)
+    if (existing?.running) await engine.miniapps.stop(packageName)
+    await registerDevApp({
+      packageName,
+      name: appName,
+      iconUrl: resolveIconUrl(entry.url, launchResult.manifest.icon) ?? entry.iconUrl ?? `${entry.url}/icon.png`,
       devUrl: entry.url,
       devPort: deriveDevPort(entry.url),
       type: launchResult.manifest.type as DevAppRecord["type"],
       permissions: launchResult.manifest.permissions as DevAppRecord["permissions"],
       hardwareRequirements: launchResult.manifest.hardwareRequirements as DevAppRecord["hardwareRequirements"],
+      actions: launchResult.manifest.actions as DevAppRecord["actions"],
     })
 
-    await useAppStatusStore.getState().refresh()
-    // Compositor begins its fade-in + mounts LocalMiniappView (which runs its
-    // own install/spawn phase machine inside the overlay). Foreground the single
-    // dev slot, NOT the manifest's real package name — the projected tile +
-    // JSContext are registered under DEV_APP_PACKAGE_NAME.
-    await useAppStatusStore.getState().setForeground(DEV_APP_PACKAGE_NAME)
+    await engine.miniapps.refresh()
+    await engine.miniapps.setForeground(packageName)
   }
 
   const handleLoadUrl = async () => {
@@ -183,25 +176,6 @@ export default function MiniappDeveloperUrlScreen() {
       }
       const updated = [entry, ...recent.filter((r) => r.url !== entry.url)].slice(0, MAX_RECENT)
       saveRecent(updated)
-      // Home-tile record so the dev miniapp is re-launchable without
-      // re-entering the URL (dev apps load over HTTP, not installed to disk).
-      // registerDevApp owns the dev_url/dev_port keys (under DEV_APP_PACKAGE_NAME),
-      // so the launch chain reads them under the single package name it routes by.
-      registerDevApp({
-        packageName: entry.packageName,
-        name: entry.name,
-        iconUrl: entry.iconUrl ?? `${entry.url}/icon.png`,
-        devUrl: entry.url,
-        // Two-layer / background miniapps fetch their bundle from the CLI's
-        // sidecar, which `mentra-miniapp dev` starts on userPort + 1. The QR
-        // path carries this as `&dev=<port>`; derive the same here so manual-URL
-        // launches aren't rejected with "no dev port configured".
-        devPort: deriveDevPort(entry.url),
-        type: manifest.type as DevAppRecord["type"],
-        permissions: manifest.permissions as DevAppRecord["permissions"],
-        hardwareRequirements: manifest.hardwareRequirements as DevAppRecord["hardwareRequirements"],
-        actions: manifest.actions as DevAppRecord["actions"],
-      })
 
       // launchDevMiniapp re-runs the reachability + manifest fetch (cheap;
       // catches manifest changes between save and tap) and runs the

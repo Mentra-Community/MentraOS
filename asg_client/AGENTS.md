@@ -52,13 +52,15 @@ Camera sources live in `com.mentra.asg_client.camera` subpackages (`lifecycle/`,
 
 ### Dependencies
 
-- **StreamPackLite**: RTMP streaming library (must be cloned separately)
+- **StreamPackLite**: RTMP streaming library, vendored as a git submodule at
+  `asg_client/StreamPackLite`. A fresh clone with `--recurse-submodules` already has it;
+  otherwise initialize it once (from the repository root):
   ```bash
-  cd asg_client
-  git clone git@github.com:Mentra-Community/StreamPackLite.git
-  cd StreamPackLite
-  git checkout working
+  git submodule update --init asg_client/StreamPackLite
   ```
+  To move it to a newer StreamPackLite commit, update inside the submodule and commit the
+  new gitlink in this repo (`git -C asg_client/StreamPackLite pull origin working` then
+  `git add asg_client/StreamPackLite`).
 - **SmartGlassesManager**: Currently required to be in a sibling directory (will be merged into asg_client in the future)
 
 ## Environment Setup
@@ -131,7 +133,7 @@ asg_client/
 │   ├── di/             # Dependency injection
 │   └── receiver/       # Broadcast receivers
 ├── docs/               # ASG documentation, including feature docs and agent scratchpad
-├── StreamPackLite/     # RTMP streaming library (external)
+├── StreamPackLite/     # RTMP streaming library (git submodule)
 ├── credentials/        # Debug keystore (not committed)
 ├── AGENTS.md           # Development guide
 ├── CLAUDE.md           # AI assistant reference
@@ -145,10 +147,21 @@ asg_client/
 - **Java Version**: Java 17 required
 - **Classes**: PascalCase (e.g., `AsgClientService`)
 - **Methods**: camelCase (e.g., `connectToCloud()`)
-- **Constants**: UPPER_SNAKE_CASE (e.g., `MAX_RETRY_ATTEMPTS`)
+- **Constants**: UPPER_SNAKE_CASE (e.g., `MAX_RETRY_ATTEMPTS`). See [Constants (`AsgConstants.java`)](#constants-asgconstantsjava) below.
 - **Member Variables**: mCamelCase with 'm' prefix (e.g., `mWebSocketClient`)
 - **Indentation**: 4 spaces
 - **Braces**: Opening brace on same line
+
+### Constants (`AsgConstants.java`)
+
+**Whenever you are asked to add a constant in `asg_client`, add it to `app/src/main/java/com/mentra/asg_client/AsgConstants.java`.** Do not introduce duplicate `private static final` fields in individual classes.
+
+- Naming: `public static final`, `UPPER_SNAKE_CASE`
+- Document tunables and debug/feature flags with a short Javadoc
+- Consume as `AsgConstants.FOO` from call sites
+- Group related constants together (photo/BLE pipeline, LED, endpoints, etc.)
+
+Examples already in that file: `ENABLE_PHOTO_TIMING_LOGS`, `ENABLE_GRAYSCALE_BLE_PHOTOS`, `FORCE_BLE_TRANSFER`, BLE quality caps.
 
 ### Documentation
 
@@ -240,8 +253,7 @@ asg_client/
 
 **"StreamPackLite not found"**
 
-- Clone StreamPackLite repo in asg_client directory
-- Checkout `working` branch
+- Initialize the submodule: `git submodule update --init asg_client/StreamPackLite`
 
 **"SmartGlassesManager dependency not found"**
 

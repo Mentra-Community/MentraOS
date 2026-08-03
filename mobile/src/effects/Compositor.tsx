@@ -20,7 +20,7 @@
  */
 
 import {useCallback, useEffect, useRef, useState} from "react"
-import {Dimensions, Platform, View} from "react-native"
+import {Dimensions, Keyboard, Platform, View} from "react-native"
 import {Gesture, GestureDetector} from "react-native-gesture-handler"
 import Animated, {
   Easing,
@@ -38,14 +38,13 @@ import LocalMiniappView from "@/components/miniapp/LocalMiniappView"
 import OfflineAppHost from "@/components/miniapp/OfflineAppHost"
 import {isOfflineHosted} from "@/components/miniapp/offlineHostedPackages"
 import {captureScreenshot} from "@/effects/CapsuleMenu"
-import {useAppStatusStore, useForegroundApp} from "@mentra/island"
+import {engine, useForegroundApp, SETTINGS, useSetting} from "@mentra/engine"
 import {Screen} from "@/components/ignite/Screen"
 import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
 import {appSwitcherProgress, OPEN_SPRING, SWIPE_DISTANCE_THRESHOLD, SWIPE_PERCENT_THRESHOLD} from "@/stores/appSwitcher"
 import {useNavigationStore} from "@/stores/navigation"
 import {hapticBuzz} from "@/utils/utils"
 import CrustModule from "@mentra/crust"
-import {SETTINGS, useSetting} from "@/stores/settings"
 const EDGE_HIT_WIDTH = 24
 // Distance past which a slow drag commits the back gesture (fraction of screen
 // width). UIKit's interactive pop commits at ~50%; we sit a hair under that.
@@ -71,7 +70,7 @@ const FADE_OUT_SCALE_TO = 0.4
 // right edge (push) and slides back out to the right (pop), mimicking the
 // native stack transition rather than the old fade+zoom. The slide distance is
 // the full screen width (set per-render below).
-const SLIDE_DURATION_MS = Platform.OS === "ios" ? 450 : 400
+const SLIDE_DURATION_MS = Platform.OS === "ios" ? 300 : 260
 // iOS liquid-glass warm-up for offline-hosted apps: the overlay mounts fully
 // opaque (parked off-screen to the right) for this long so the glass views
 // configure under an opaque ancestor before the real slide-in plays.
@@ -79,6 +78,9 @@ const GLASS_WARMUP_MS = 10
 
 export default function Compositor() {
   const foregroundApp = useForegroundApp()
+  // Last foregrounded packageName (null = none) — lets the keyboard-dismiss
+  // effect below fire only on real identity changes, not reference churn.
+  const prevForegroundPackageRef = useRef<string | null>(null)
   const didSwipeToExit = useRef(false)
   const viewShotRef = useRef<View | null>(null)
   const insets = useSaferAreaInsets()
@@ -95,6 +97,20 @@ export default function Compositor() {
     SETTINGS.ios_app_switcher_bottom_swipe.key,
   )
   useEffect(() => {
+    // A TextInput focused in one miniapp/screen can otherwise keep the IME's
+    // served view across a switch to a different app (or back to none on
+    // minimize), causing the keyboard to pop back up over a screen with no
+    // visible input field. This is the single choke point both directions
+    // funnel through. Gate on the foregrounded IDENTITY, not the object:
+    // refresh() hands this effect a new foregroundApp reference on every
+    // store poll even while the same miniapp stays foregrounded, and
+    // dismissing on those would drop the keyboard mid-typing (e.g. an RN
+    // TextInput on a settings screen) with no actual app switch.
+    const currentPackage = foregroundApp?.packageName ?? null
+    if (currentPackage !== prevForegroundPackageRef.current) {
+      prevForegroundPackageRef.current = currentPackage
+      Keyboard.dismiss()
+    }
     if (foregroundApp) {
       // Only swap renderedApp when a DIFFERENT app is foregrounded. refresh()
       // hands us a new foregroundApp object reference on every poll even when
@@ -129,13 +145,20 @@ export default function Compositor() {
 
   const handleBack = useCallback(() => {
     captureScreenshot(viewShotRef as any, foregroundApp?.packageName ?? "", insets.top)
-    useAppStatusStore.getState().clearForeground()
+    engine.miniapps.clearForeground()
   }, [foregroundApp?.packageName])
 
   const handleShouldCapture = useCallback(() => {
     console.log("handleShouldCapture()")
     captureScreenshot(viewShotRef, foregroundApp?.packageName ?? "", insets.top)
   }, [foregroundApp?.packageName, insets.top])
+
+  // Exit for the swipe-commit paths: the screenshot was already captured at
+  // commit time (while the overlay was still mounted — the CLOSE effect
+  // unmounts swipe exits immediately, so capturing here would race teardown).
+  const finishSwipeExit = useCallback(() => {
+    engine.miniapps.clearForeground()
+  }, [])
 
   const swipeTranslateX = useSharedValue(0)
   const swipeTranslateY = useSharedValue(0)
@@ -148,6 +171,12 @@ export default function Compositor() {
 
   const markSwipedToExit = () => {
     didSwipeToExit.current = true
+    // Swipe exits bypass OfflineAppHost's beginExit(), so the host never gets
+    // to stand its NavInterceptor down itself. Clear it here so pushes landing
+    // during the exit spring reach the real router instead of the dying host's
+    // internal stack. (Identity-guarded cleanups make this safe: the host's
+    // unmount cleanup only clears an interceptor that is still its own.)
+    useNavigationStore.getState().setInterceptor(null)
   }
 
   const swipeGesture = Gesture.Pan()
@@ -180,11 +209,15 @@ export default function Compositor() {
         // is seamless. Clamp the seed so a violent flick doesn't overshoot.
         const velocity = Math.min(Math.max(e.velocityX, 0), MAX_COMMIT_VELOCITY)
         runOnJS(markSwipedToExit)()
+        // Capture the app-switcher card now, while the overlay is guaranteed
+        // mounted for the whole spring (the swipe exit unmounts right after
+        // clearForeground, unlike the button close's slide-out grace period).
+        runOnJS(handleShouldCapture)()
         swipeTranslateX.value = withSpring(
           screenWidth,
           {damping: 50, stiffness: 800, velocity, overshootClamping: true},
           (finished) => {
-            if (finished) runOnJS(handleBack)()
+            if (finished) runOnJS(finishSwipeExit)()
           },
         )
 
@@ -212,7 +245,7 @@ export default function Compositor() {
     if (getCurrentRoute() !== "/home") clearHistoryAndGoHome()
     // Not handleBack(): the overlay is already shrunk/faded, so capturing here
     // would overwrite the fresh screenshot taken at gesture begin.
-    useAppStatusStore.getState().clearForeground()
+    engine.miniapps.clearForeground()
   }, [])
 
   const hasBuzzed = useSharedValue(false)
@@ -337,7 +370,17 @@ export default function Compositor() {
   useEffect(() => {
     if (isForeground) return
     openedPackageRef.current = null // allow the next open to re-trigger the slide
-    if (didSwipeToExit.current) return
+    if (didSwipeToExit.current) {
+      // The swipe gesture already drove the overlay off-screen (edge swipe) or
+      // faded it out (switcher swipe-up) before clearing foreground — unmount
+      // immediately. Skipping the unmount here left renderedApp set forever:
+      // the host stayed mounted invisibly, and for offline-hosted apps its
+      // still-registered NavInterceptor silently swallowed every later push()
+      // to a route it owns (e.g. home's glasses card → /miniapps/settings/main
+      // after swiping out of Settings).
+      setRenderedApp(null)
+      return
+    }
     fadeOpacity.value = 1
     fadeScale.value = 1
     swipeTranslateX.value = withTiming(

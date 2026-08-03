@@ -1,4 +1,4 @@
-import BluetoothSdk from "@mentra/bluetooth-sdk"
+import {engine} from "@mentra/engine"
 import {useLocalSearchParams} from "expo-router"
 import {useEffect, useState, useCallback} from "react"
 import {ActivityIndicator, View} from "react-native"
@@ -63,6 +63,7 @@ export default function WifiConnectingScreen() {
   const password = (params.password as string) || ""
   const rememberPassword = (params.rememberPassword as string) === "true"
   const returnTo = params.returnTo as string | undefined
+  const returnToMiniapp = params.returnToMiniapp as string | undefined
   const _nextRoute = params.nextRoute as string | undefined
 
   const {theme} = useAppTheme()
@@ -70,7 +71,7 @@ export default function WifiConnectingScreen() {
   const [errorMessage, setErrorMessage] = useState("")
   const [errorDescription, setErrorDescription] = useState("")
 
-  const {goBack, push} = useNavigationStore.getState()
+  const {goBack, push, clearHistoryAndGoHome} = useNavigationStore.getState()
   const pushPrevious = usePushPrevious()
 
   useEffect(() => {
@@ -81,7 +82,7 @@ export default function WifiConnectingScreen() {
   const attemptConnection = async () => {
     try {
       console.log("Attempting to send wifi credentials to Core", ssid, password)
-      await BluetoothSdk.sendWifiCredentials(ssid, password)
+      await engine.glasses.wifi.connect(ssid, password)
 
       // Save credentials ONLY on successful connection if checkbox was checked.
       // This ensures we never save wrong passwords.
@@ -107,7 +108,13 @@ export default function WifiConnectingScreen() {
     attemptConnection()
   }
 
-  const handleSuccess = useCallback(() => {
+  const handleSuccess = useCallback(async () => {
+    if (returnToMiniapp) {
+      clearHistoryAndGoHome({transition: "fade"})
+      await engine.miniapps.setForeground(returnToMiniapp)
+      return
+    }
+
     const history = useNavigationStore.getState().history
     // Check if OTA check-for-updates is already in the stack (initial pairing flow)
     const otaIndex = history.indexOf("/ota/check-for-updates")
@@ -126,7 +133,7 @@ export default function WifiConnectingScreen() {
       console.log("WiFi success: OTA not in stack, pushing /ota/check-for-updates")
       push("/ota/check-for-updates")
     }
-  }, [pushPrevious, push])
+  }, [clearHistoryAndGoHome, pushPrevious, push, returnToMiniapp])
 
   const handleHeaderBack = useCallback(() => {
     goBack()

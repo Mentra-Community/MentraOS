@@ -19,6 +19,24 @@ within a second after about 10 of them were spawned. The fix:
   zero direct native access — talks to its own background layer
   through a typed message bus.
 
+## Background runtime contract
+
+The background is not a browser and not Node. Do not rely on an API just
+because TypeScript or Bun accepts it during a build. MentraOS explicitly
+provides `console`, timers (`setTimeout`, `setInterval`, and
+`queueMicrotask`), `fetch`, `WebSocket`, per-miniapp `localStorage`,
+`crypto.getRandomValues`, `crypto.randomUUID`, `TextEncoder`, `TextDecoder`,
+`atob`, `btoa`, and the SDK-supported `AbortController` subset.
+
+It does **not** provide `window`, `document`, DOM elements, `performance`,
+`XMLHttpRequest`, `crypto.subtle`, Node built-ins (`fs`, `path`, and so on),
+`process`, or a runtime module resolver. Use `Date.now()` for elapsed time.
+
+Keep `session.*` calls, hardware subscriptions, durable state, and work that
+must survive UI closure in `src/background/`. Keep rendering, browser APIs,
+and UI-only libraries in `src/ui/`. Pass serializable data between them over
+the typed message bus.
+
 ## File layout
 
 ```

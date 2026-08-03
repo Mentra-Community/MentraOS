@@ -1,4 +1,5 @@
-import { Schema, model, type InferSchemaType } from "mongoose";
+import { Schema, type InferSchemaType } from "mongoose";
+import { registerModel } from "./register-model";
 
 const TrustedIssuerSchema = new Schema(
   {
@@ -24,4 +25,4 @@ const TrustedIssuerSchema = new Schema(
 TrustedIssuerSchema.index({ enterpriseOrgId: 1, environmentName: 1 }, { unique: true });
 
 export type TrustedIssuer = InferSchemaType<typeof TrustedIssuerSchema>;
-export const TrustedIssuerModel = model("TrustedIssuer", TrustedIssuerSchema);
+export const TrustedIssuerModel = registerModel("TrustedIssuer", TrustedIssuerSchema);

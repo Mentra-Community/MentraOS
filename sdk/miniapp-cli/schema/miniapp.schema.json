@@ -64,7 +64,7 @@
         },
         "ui": {
           "type": "string",
-          "description": "Path to the UI bundle entry HTML, relative to the bundle root (e.g. ui/index.html). Optional — pure-background miniapps don't need a WebView."
+          "description": "Path to the UI bundle entry HTML, relative to the bundle root (e.g. ui/index.html). Optional  -- pure-background miniapps don't need a WebView."
         }
       }
     },
@@ -169,7 +169,7 @@
           },
           "description": {
             "type": "string",
-            "description": "AI-facing contract — say when to use the action."
+            "description": "AI-facing contract  -- say when to use the action."
           },
           "parameters": {
             "type": "object",
@@ -221,6 +221,10 @@
                 }
               }
             }
+          },
+          "outputSchema": {
+            "type": "object",
+            "description": "JSON-Schema descriptor for the structured action result (MCP outputSchema)."
           }
         }
       }

@@ -108,8 +108,15 @@ describe("checkVersionUpdateAvailable", () => {
     expect(checkVersionUpdateAvailable("100", newFormatJson)).toBe(false)
   })
 
-  it("returns false when current is newer in new format", () => {
+  it("does not flag a downgrade when the floor is disabled (production default 0)", () => {
+    // Floor 0 disables downgrades: a newer installed build than the exact pin is not offered.
     expect(checkVersionUpdateAvailable("200", newFormatJson)).toBe(false)
+  })
+
+  it("flags a downgrade when the floor is enabled at/below the pin", () => {
+    // With a positive floor at/below the pinned versionCode (100), the lower-than-installed pin
+    // is an actionable version change.
+    expect(checkVersionUpdateAvailable("200", newFormatJson, 100)).toBe(true)
   })
 
   it("detects update available in legacy format", () => {

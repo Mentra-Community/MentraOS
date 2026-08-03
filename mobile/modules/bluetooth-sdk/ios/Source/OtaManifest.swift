@@ -78,7 +78,7 @@ enum OtaManifestChecker {
         guard (200 ... 299).contains(httpResponse.statusCode) else {
             throw BluetoothSdkError(
                 code: "ota_manifest_request_failed",
-                message: "OTA manifest request failed with HTTP \(httpResponse.statusCode)."
+                message: "OTA manifest request failed with HTTP \(httpResponse.statusCode) for \(otaVersionUrl)."
             )
         }
         return try JSONDecoder().decode(OtaManifest.self, from: data)
@@ -88,9 +88,18 @@ enum OtaManifestChecker {
         currentBuildNumber: String,
         currentMtkVersion: String,
         currentBesVersion: String,
-        manifest: OtaManifest
+        manifest: OtaManifest,
+        // Downgrade floor: a non-positive value (the default) disables downgrades entirely,
+        // matching ASG's fail-closed DowngradeGate and the engine. OEM SDK consumers that do not
+        // set a floor get upgrade-only behavior and are never told a downgrade is available that
+        // the glasses would refuse.
+        downgradeFloorVersionCode: Int = 0
     ) throws -> Bool {
-        try hasApkUpdate(currentBuildNumber: currentBuildNumber, manifest: manifest) ||
+        try hasApkUpdate(
+            currentBuildNumber: currentBuildNumber,
+            manifest: manifest,
+            downgradeFloorVersionCode: downgradeFloorVersionCode
+        ) ||
             hasMtkUpdate(patches: manifest.mtkPatches, currentVersion: currentMtkVersion) ||
             hasBesUpdate(besFirmware: manifest.besFirmware, currentVersion: currentBesVersion)
     }
@@ -113,7 +122,11 @@ enum OtaManifestChecker {
         throw BluetoothSdkError(code: "invalid_ota_manifest", message: "OTA manifest is missing ASG app versionCode.")
     }
 
-    private static func hasApkUpdate(currentBuildNumber: String, manifest: OtaManifest) throws -> Bool {
+    private static func hasApkUpdate(
+        currentBuildNumber: String,
+        manifest: OtaManifest,
+        downgradeFloorVersionCode: Int
+    ) throws -> Bool {
         guard let currentVersion = Int(currentBuildNumber) else {
             throw BluetoothSdkError(
                 code: "invalid_glasses_version",
@@ -123,7 +136,37 @@ enum OtaManifestChecker {
         guard let serverVersion = try latestAppInfo(manifest).versionCode else {
             throw BluetoothSdkError(code: "invalid_ota_manifest", message: "OTA manifest is missing ASG app versionCode.")
         }
-        return serverVersion > currentVersion
+        // Only apps-shaped manifests are exact pins. A legacy top-level manifest (versionCode at
+        // the root, no apps entry) is NOT a pin and stays strictly upgrade-only, matching the
+        // engine TS checker and Kotlin.
+        let isExactPin = manifest.apps?[asgClientPackage]?.versionCode != nil
+        if !isExactPin {
+            return serverVersion > currentVersion
+        }
+        // Exact pin: any mismatch is an update in either direction (downgrades take the
+        // uninstall-then-reinstall detour on the glasses). A non-positive pin is only legitimate
+        // in the frozen legacy rescue manifests that pre-39 glasses are checked against; for
+        // modern glasses it means the manifest cannot verify anything, and that must surface as
+        // an error — never as "no update". Mirrors the Kotlin OtaManifestChecker.
+        if serverVersion <= 0 {
+            if currentVersion >= 39 {
+                throw BluetoothSdkError(
+                    code: "invalid_ota_manifest",
+                    message: "OTA manifest ASG pin is missing or zero; cannot verify update state."
+                )
+            }
+            return false
+        }
+        if serverVersion > currentVersion {
+            return true
+        }
+        // Exact match: already on the pin, no update.
+        if serverVersion == currentVersion {
+            return false
+        }
+        // Downgrade: only actionable at/above the enabled floor; a non-positive floor disables
+        // downgrades (fail closed, matching ASG and the engine).
+        return downgradeFloorVersionCode > 0 && serverVersion >= downgradeFloorVersionCode
     }
 
     private static func hasMtkUpdate(patches: [MtkPatch]?, currentVersion: String) throws -> Bool {

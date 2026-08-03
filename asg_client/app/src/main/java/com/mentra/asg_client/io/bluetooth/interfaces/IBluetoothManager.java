@@ -70,6 +70,27 @@ public interface IBluetoothManager {
     boolean sendFile(String filePath);
 
     /**
+     * Send an in-memory payload to the connected device using the file-transfer protocol, without
+     * requiring the payload to exist on disk. Default returns false for transports without
+     * file-transfer support.
+     *
+     * @param data payload bytes
+     * @param fileName wire name for the transfer (the K900 protocol caps this at 16 chars)
+     * @return true if transfer start was accepted after earlier outbound messages drained
+     */
+    default boolean sendFile(byte[] data, String fileName) {
+        return false;
+    }
+
+    /**
+     * Send an in-memory payload after an owner-ordered control message. Transports without an
+     * exclusive file lane may reject this operation.
+     */
+    default boolean sendFile(byte[] data, String fileName, byte[] prelude) {
+        return false;
+    }
+
+    /**
      * @return true if a transfer is active, false otherwise
      */
     boolean isFileTransferInProgress();

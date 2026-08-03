@@ -24,6 +24,13 @@ public class ResetController {
   }
 
   public void onAsgUnresponsive() {
+    // A downgrade transaction deliberately uninstalls and reinstalls ASG, so ASG is expected to
+    // be unresponsive throughout. Heartbeat recovery must not fire here — reinstalling the
+    // (higher-version) backup APK would fight the pinned downgrade the DowngradeWorker owns.
+    if (new com.mentra.recovery.downgrade.DowngradeTransactionStore(context).isActive()) {
+      Log.i(RecoveryConstants.TAG, "Downgrade transaction active; skipping heartbeat recovery");
+      return;
+    }
     String currentState = stateStore.getState();
     boolean staleInFlightRecovery = false;
     if (RecoveryConstants.STATE_RESTARTING.equals(currentState)

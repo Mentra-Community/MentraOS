@@ -4,7 +4,7 @@ import {Icon, Text} from "@/components/ignite"
 import GlassView from "@/components/ui/GlassView"
 import {Group} from "@/components/ui/Group"
 import {useAppTheme} from "@/contexts/ThemeContext"
-import {STTModelManager} from "@mentra/island"
+import {STTModelManager} from "@mentra/engine/internal"
 import {ThemedStyle} from "@/theme"
 
 export type LanguageRow = {
@@ -60,10 +60,7 @@ export default function LanguageSelector({
 
         return (
           <GlassView key={lang.code} className="bg-primary-foreground">
-            <Pressable
-              disabled={isDownloading}
-              style={themed($row)}
-              onPress={() => onPickLanguage(lang.code)}>
+            <Pressable disabled={isDownloading} style={themed($row)} onPress={() => onPickLanguage(lang.code)}>
               <View style={themed($rowText)}>
                 <Text text={lang.displayName} style={themed($rowTitle)} />
                 <Text text={subtitle} style={themed($rowSubtitle)} />

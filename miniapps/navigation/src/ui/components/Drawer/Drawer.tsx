@@ -214,7 +214,7 @@ function DrawerInner({
           ref={measureRef}
           className={
             className ??
-            "pointer-events-auto mx-auto max-w-md flex flex-col rounded-tl-[22px] rounded-tr-[22px] bg-[#F5F1E8] [box-shadow:#1F1F1B0F_0px_-2px_16px] antialiased"
+            "pointer-events-auto mx-auto max-w-md flex flex-col rounded-tl-[22px] rounded-tr-[22px] bg-[#F5F1E8] dark:bg-zinc-900 [box-shadow:#1F1F1B0F_0px_-2px_16px] antialiased"
           }>
           <DrawerHandleInternal onTap={onHandleTap} />
           {children}
@@ -231,7 +231,7 @@ function DrawerHandleInternal({onTap}: {onTap: () => void}) {
       onClick={onTap}
       className="w-full flex justify-center pt-4 pb-4"
       aria-label="Drawer handle">
-      <div className="w-9 h-1 rounded-full bg-[#00000033]" />
+      <div className="w-9 h-1 rounded-full bg-[#00000033] dark:bg-[#FFFFFF4D]" />
     </button>
   )
 }

@@ -21,6 +21,7 @@ import { estimateArrayBufferBytes, sumEstimatedBytes } from "../../metrics/memor
 import UserSession from "../UserSession";
 
 import { AlibabaTranscriptionProvider } from "./providers/AlibabaTranscriptionProvider";
+import { classifySonioxCredentialFailure } from "../soniox/SonioxKeyPool";
 import { SonioxTranscriptionProvider } from "./providers/SonioxTranscriptionProvider";
 import { ProviderSelector } from "./ProviderSelector";
 import {
@@ -1615,8 +1616,26 @@ export class TranscriptionManager {
       return false;
     }
 
+    if (error.message.includes("No available Soniox credentials")) {
+      this.logger.warn({ message: error.message }, "Soniox credentials cooling down - retrying");
+      return true;
+    }
+
     // Soniox-specific error handling
     if (error.message.includes("Soniox error")) {
+      const credentialFailure = classifySonioxCredentialFailure(error);
+      if (
+        credentialFailure.kind === "quota" ||
+        credentialFailure.kind === "concurrency" ||
+        credentialFailure.kind === "rate_limit"
+      ) {
+        this.logger.warn(
+          { failureKind: credentialFailure.kind, message: error.message },
+          "Soniox credential capacity error - retrying so fallback credentials can be tried",
+        );
+        return true;
+      }
+
       // Extract error code if available
       const errorCodeMatch = error.message.match(/Soniox error (\d+):/);
       if (errorCodeMatch) {

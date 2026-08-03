@@ -1,0 +1,35 @@
+# UDP Network Load Balancer for the cloud-isaiah personal env's runtime audio.
+# Cloned from audio-udp-nlb-debug.yaml (the per-env template).
+#
+# Apply with DIRECT kubectl (aws sso login + the EKS kubeconfig;
+# `porter kubectl` is read-only and cannot create Services):
+#   kubectl apply -f deploy/audio-udp-nlb-isaiah.yaml
+#
+# Then put the provisioned NLB hostname into dev_isaiah
+# (AUDIO_UDP_ADVERTISED_HOST) and redeploy cloud-isaiah, or clients keep
+# advertising a dead host and silently fall back to WS audio.
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: cloud-isaiah-audio-udp
+  namespace: default
+  labels:
+    porter.run/app-name: cloud-isaiah
+    app.kubernetes.io/managed-by: kubectl
+  annotations:
+    description: "UDP LoadBalancer for cloud-v2 isaiah runtime audio (not managed by Porter)"
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing"
+    service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+spec:
+  type: LoadBalancer
+  selector:
+    porter.run/app-name: cloud-isaiah
+    porter.run/service-name: runtime
+  ports:
+    - name: udp-audio
+      protocol: UDP
+      port: 8000
+      targetPort: 8000
+  externalTrafficPolicy: Local

@@ -1,12 +1,12 @@
 import {useState, useEffect, useRef} from "react"
-import {View, ViewStyle, TextStyle} from "react-native"
+import {Image, ImageStyle, View, ViewStyle, TextStyle} from "react-native"
 import Canvas, {Image as CanvasImage} from "react-native-canvas"
 
 import {Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
-import {useDisplayStore} from "@/stores/display"
-import {useGlassesStore} from "@/stores/glasses"
+import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {ThemedStyle} from "@/theme"
+import {engine} from "@mentra/engine"
 
 // Native glasses display resolution. Canvas (positioned_text / bitmap) layouts
 // give coordinates in this space; the mirror scales them to its rendered size.
@@ -30,8 +30,10 @@ const GlassesDisplayMirror: React.FC<GlassesDisplayMirrorProps> = ({
   const canvasRef = useRef<Canvas>(null)
   const containerRef = useRef<View | null>(null)
   const [containerWidth, setContainerWidth] = useState<number | null>(null)
-  const {currentEvent} = useDisplayStore()
-  const batteryLevel = useGlassesStore((state) => state.batteryLevel)
+  const currentEvent = useEngineSnapshot(engine.display.mirror.current, (onChange) =>
+    engine.display.mirror.onMirror(onChange),
+  )
+  const batteryLevel = useEngineSnapshot(engine.glasses.status, (onChange) => engine.glasses.onStatus(onChange)).battery
 
   // Use demo layout if in demo mode, otherwise use real layout
   const layout = demoText !== "" ? {layoutType: "text_wall", text: demoText} : currentEvent.layout
@@ -250,6 +252,66 @@ const GlassesDisplayMirror: React.FC<GlassesDisplayMirrorProps> = ({
           </View>
         )
       }
+      case "scene": {
+        const sceneWidth = Number(layout.width) || GLASSES_WIDTH
+        const scale = containerWidth ? containerWidth / sceneWidth : 1
+        const elements = Array.isArray(layout.elements) ? layout.elements : []
+
+        return (
+          <View
+            ref={containerRef}
+            style={{width: "100%", height: "100%", overflow: "hidden"}}
+            onLayout={(event) => {
+              const {width} = event.nativeEvent.layout
+              if (setContainerWidth) {
+                setContainerWidth(width)
+              }
+            }}>
+            {elements.map((element: any, index: number) => {
+              const box = element?.box ?? {}
+              const elementStyle = element?.style ?? {}
+              const frameStyle: ImageStyle = {
+                position: "absolute",
+                left: (Number(box.x) || 0) * scale,
+                top: (Number(box.y) || 0) * scale,
+                width: Math.max(0, Number(box.w) || 0) * scale,
+                height: Math.max(0, Number(box.h) || 0) * scale,
+                overflow: "hidden",
+              }
+              const border = Number(elementStyle.border) || (element?.type === "rect" ? 1 : 0)
+              if (border > 0) {
+                frameStyle.borderWidth = Math.max(1, border * scale)
+                frameStyle.borderColor = (textStyle?.color as string) ?? "#00ff88aa"
+              }
+              const radius = Number(elementStyle.radius) || 0
+              if (radius > 0) {
+                frameStyle.borderRadius = radius * scale
+              }
+
+              const key = typeof element?.id === "string" ? element.id : `scene-${index}`
+              if (element?.type === "image" && typeof element.data === "string" && element.data !== "") {
+                const uri = element.data.startsWith("data:") ? element.data : `data:image/png;base64,${element.data}`
+                return <Image key={key} source={{uri}} style={frameStyle} resizeMode="contain" />
+              }
+
+              if (element?.type === "text") {
+                const text = parseText(typeof element.text === "string" ? element.text : "")
+                return (
+                  <View key={key} style={frameStyle}>
+                    {text.split("\n").map((line: string, lineIndex: number) => (
+                      <Text key={lineIndex} style={[textStyle, styles.cardContent]}>
+                        {line || " "}
+                      </Text>
+                    ))}
+                  </View>
+                )
+              }
+
+              return <View key={key} style={frameStyle} />
+            })}
+          </View>
+        )
+      }
       case "clear_view":
         return null
       default:
@@ -284,10 +346,12 @@ const GlassesDisplayMirror: React.FC<GlassesDisplayMirrorProps> = ({
   // positioned_text places content at absolute native coords from the top-left,
   // so the screen must match the glasses aspect ratio and drop its inner padding
   // for the scaled coordinates to land where they should.
-  const isPositioned = layout.layoutType === "positioned_text"
+  const isPositioned = layout.layoutType === "positioned_text" || layout.layoutType === "scene"
+  const positionedWidth = layout.layoutType === "scene" ? Number(layout.width) || GLASSES_WIDTH : GLASSES_WIDTH
+  const positionedHeight = layout.layoutType === "scene" ? Number(layout.height) || GLASSES_HEIGHT : GLASSES_HEIGHT
   const positionedOverride: ViewStyle = isPositioned
     ? {
-        aspectRatio: GLASSES_WIDTH / GLASSES_HEIGHT,
+        aspectRatio: positionedWidth / positionedHeight,
         minHeight: undefined,
         maxHeight: undefined,
         padding: 0,

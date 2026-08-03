@@ -11,17 +11,29 @@
  */
 
 import {registerMiniapp} from "@mentra/miniapp/background"
-import "../shared/channels"
+import type {Channels} from "../shared/channels"
 
-registerMiniapp(async (session) => {
+registerMiniapp<Channels>(async (session) => {
   // Hydrate any persisted state from session.storage (string KV — JSON-encode
   // structured data yourself).
   // const stored = await session.storage.get("notes")
   // const notes: Note[] = stored ? JSON.parse(stored) : []
 
-  // Glasses button → demo display.
+  // Glasses button → demo display. display.render() replaces the whole frame:
+  // describe everything that should be on screen and the host diffs it against
+  // the previous frame (stable ids update in place; render([]) clears). Box
+  // coordinates are raw device px — read `session.capabilities.display`
+  // (populated on the "ready" event) for the real canvas size.
   session.input.onButtonPress(() => {
-    session.display.showTextWall("Hello from MentraJS")
+    const d = session.capabilities?.display
+    void session.display.render([
+      {
+        type: "text",
+        id: "hello",
+        box: {x: 0, y: 0, w: d?.width ?? 576, h: d?.height ?? 288},
+        text: "Hello from MentraJS",
+      },
+    ])
   })
 
   // UI bus: forward "ping" → "pong" with a roundtrip timestamp.

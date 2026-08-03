@@ -1,53 +1,35 @@
-import {useEffect} from "react"
+import {useEffect, useState} from "react"
 
-import {useApps} from "@mentra/island"
+import {engine, SETTINGS, useSetting} from "@mentra/engine"
 
-import {cameraPackageName} from "@/constants/miniapps"
-import {SETTINGS, useSetting} from "@/stores/settings"
+import {shouldUseMentraLiveNativeCapture} from "@/effects/buttonCapturePolicy"
 
 /**
- * Syncs gallery mode state to glasses based on app status.
+ * Syncs Mentra Live gallery mode to active hardware-button subscriptions.
  *
  * Gallery mode (capture enabled) is TRUE when:
- * - Camera app is running, OR
- * - No standard/background apps are running
+ * - No miniapp subscribes to button_press
  *
- * This allows button press to capture photos when no apps are active,
- * while preventing capture when other apps are handling button events.
+ * A miniapp being open or running is not enough to block native capture.
  */
 export function GalleryModeSync() {
-  const applets = useApps()
   const [galleryMode, setGalleryMode] = useSetting(SETTINGS.gallery_mode.key)
+  const [buttonPressSubscribers, setButtonPressSubscribers] = useState(() => engine.miniapps.buttonPressSubscribers())
 
   useEffect(() => {
-    // console.log(`📸 [GalleryModeSync] Effect triggered, ${applets.length} applets loaded`)
+    const unsubscribe = engine.miniapps.onButtonPressSubscribersChanged(setButtonPressSubscribers)
+    // Close the snapshot/subscription race by refreshing after registration.
+    setButtonPressSubscribers(engine.miniapps.buttonPressSubscribers())
+    return unsubscribe
+  }, [])
 
-    // Debug: log all running apps
-    // const runningApps = applets.filter((app) => app.running)
-    // console.log(
-    //   `[GalleryModeSync] Running apps (${runningApps.length}):`,
-    //   runningApps.map((app) => `${app.name} (${app.type}, ${app.packageName})`).join(", ") || "NONE",
-    // )
-
-    const cameraApp = applets.find((app) => app.packageName === cameraPackageName && app.running)
-    const otherButtonHandlingApp = applets.find(
-      (app) =>
-        (app.type === "standard" || app.type === "background") &&
-        app.running &&
-        app.packageName !== cameraPackageName,
-    )
-
-    const shouldEnableCapture = !!cameraApp || !otherButtonHandlingApp
-
-    // console.log(
-    //   `[GalleryModeSync] Capture: ${shouldEnableCapture ? "ENABLED" : "DISABLED"} ` +
-    //     `(setting gallery_mode to ${shouldEnableCapture})`,
-    // )
+  useEffect(() => {
+    const shouldEnableCapture = shouldUseMentraLiveNativeCapture(buttonPressSubscribers)
 
     if (galleryMode !== shouldEnableCapture) {
       setGalleryMode(shouldEnableCapture)
     }
-  }, [applets])
+  }, [buttonPressSubscribers, galleryMode, setGalleryMode])
 
   return null
 }

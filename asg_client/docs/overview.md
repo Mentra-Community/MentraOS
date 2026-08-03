@@ -10,14 +10,14 @@ Throughout the codebase you will see `K900` everywhere — class names (`K900Blu
 
 **K900 is the internal codename for Mentra Live**, used during development. There is no separate "K900" device — the codename was kept in the code to avoid a sweeping rename. When you see `K900` in code or in the rest of these docs, read it as "the Mentra Live hardware platform."
 
-The two chips on Mentra Live: **MTK** is the Mediatek SoC running Android (and ASG Client itself). **BES** is the dedicated Bluetooth/audio microcontroller it talks to over UART. You'll see both names in feature docs, especially around LED control where the two chips share a single LED ring.
+The two chips on Mentra Live: **MTK** is the Mediatek SoC running Android (and ASG Client itself). **BES** is the dedicated Bluetooth/audio microcontroller it talks to over UART. You'll see both names in feature docs, especially around control of the shared RGB status LED.
 
 ## Architecture
 
 `AsgClientService` is the main foreground Android service. It owns lifecycle and routes messages between four subsystems:
 
 1. **Bluetooth communication** — receives JSON commands from the phone over BLE, sends status updates and media back. The wire-level command surface is documented in [ASG Client Command API](ASG_CLIENT_API.md).
-2. **Hardware integration** — talks to the BES microcontroller over UART for button presses, touch/swipe events, battery voltage, BES OTA, and the LED ring. See [features/button-press-system.md](features/button-press-system.md) and [features/led-control.md](features/led-control.md).
+2. **Hardware integration** — talks to the BES microcontroller over UART for button presses, touch/swipe events, battery voltage, BES OTA, and the RGB status LED. See [features/button-press-system.md](features/button-press-system.md) and [features/led-control.md](features/led-control.md).
 3. **Media** — photo capture, video recording, RTMP/SRT/WHIP streaming, and the local HTTP server for sync. See [features/rtmp-streaming.md](features/rtmp-streaming.md) and [features/camera-web-server.md](features/camera-web-server.md).
 4. **Network** — WiFi connect/scan/forget, hotspot, and the heuristics that decide which network manager to use on a given platform.
 
@@ -51,7 +51,7 @@ Physical hardware → BES MCU (UART) → AsgClientService → BLE → Phone app 
 
 ### Hardware managers (`io/hardware/managers/`)
 
-- `K900HardwareManager` — Mentra Live (LED ring, battery, audio assets)
+- `K900HardwareManager` — Mentra Live (RGB status LED, battery, audio assets)
 - `StandardHardwareManager` — generic Android fallback
 
 Selected at runtime by `HardwareManagerFactory`.

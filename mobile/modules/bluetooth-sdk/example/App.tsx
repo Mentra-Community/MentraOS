@@ -40,8 +40,8 @@ const SCAN_MODE_PRESET = {
   ispDigitalGain: 0,
   ispAnalogGain: "low" as const,
   edgeEnhancement: false,
-  mfnr: false,
   zsl: false,
+  mfnr: false,
   compress: "none" as const,
   sound: false,
 }
@@ -58,6 +58,8 @@ export default function App() {
   const [tab, setTab] = useState<TabId>("camera")
   const [photoSize, setPhotoSize] = useState<PhotoSize>("max")
   const [scanMode, setScanMode] = useState(false)
+  const [zsl, setZsl] = useState(true)
+  const [mfnr, setMfnr] = useState(true)
   const [aeDivisor, setAeDivisor] = useState<3 | 5>(3)
   const [isoCap, setIsoCap] = useState(800)
   const [capturing, setCapturing] = useState(false)
@@ -71,14 +73,16 @@ export default function App() {
 
   const scanFields = useCallback((): Partial<PhotoRequestParams> => {
     if (!scanMode) {
-      return {size: "medium", compress: "none", sound: true}
+      return {size: "medium", compress: "none", sound: true, zsl, mfnr}
     }
     return {
       ...SCAN_MODE_PRESET,
       aeExposureDivisor: aeDivisor,
       isoCap,
+      zsl,
+      mfnr,
     }
-  }, [scanMode, aeDivisor, isoCap])
+  }, [scanMode, aeDivisor, isoCap, zsl, mfnr])
 
   useEffect(() => {
     const statusSub = BluetoothSdk.addListener("photo_status", (event: PhotoStatusEvent) => {
@@ -124,8 +128,8 @@ export default function App() {
   const pushScanButtonPreset = useCallback(async () => {
     await BluetoothSdk.setPhotoCaptureDefaults({
       size: "max",
-      mfnr: false,
       zsl: false,
+      mfnr: false,
       noiseReduction: false,
       edgeEnhancement: false,
       ispDigitalGain: 0,
@@ -140,15 +144,19 @@ export default function App() {
   const handleScanModeChange = async (enabled: boolean) => {
     setScanMode(enabled)
     if (enabled) {
+      setZsl(false)
+      setMfnr(false)
       return
     }
     try {
       await BluetoothSdk.setPhotoCaptureDefaults({
         size: photoSize,
-        mfnr: true,
         zsl: true,
+        mfnr: true,
         resetCaptureTuning: true,
       })
+      setZsl(true)
+      setMfnr(true)
     } catch (err) {
       setStatusMessage(err instanceof Error ? err.message : "failed to sync scan preset")
     }
@@ -181,6 +189,9 @@ export default function App() {
         size: fields.size ?? "medium",
         compress: fields.compress ?? "none",
         sound: fields.sound ?? true,
+        // Always send explicit booleans so the glasses never inherit an ambiguous default.
+        zsl: fields.zsl ?? zsl,
+        mfnr: fields.mfnr ?? mfnr,
       })
       setLastCapture({
         fileUri: uploadedUriRef.current ?? "",
@@ -246,9 +257,23 @@ export default function App() {
             <Group name="Scan Mode capture">
               <View style={styles.row}>
                 <View style={styles.labelBlock}>
+                  <Text style={styles.label}>ZSL</Text>
+                  <Text style={styles.hintInline}>Zero-shutter-lag preview buffering. Off for scan mode.</Text>
+                </View>
+                <Switch value={zsl} disabled={scanMode} onValueChange={setZsl} />
+              </View>
+              <View style={styles.row}>
+                <View style={styles.labelBlock}>
+                  <Text style={styles.label}>MFNR</Text>
+                  <Text style={styles.hintInline}>Multi-frame noise reduction capture. Off for scan mode.</Text>
+                </View>
+                <Switch value={mfnr} disabled={scanMode} onValueChange={setMfnr} />
+              </View>
+              <View style={styles.row}>
+                <View style={styles.labelBlock}>
                   <Text style={styles.label}>Scan Mode</Text>
                   <Text style={styles.hintInline}>
-                    Document / barcode tuning — max res, darker exposure, edge & MFNR off.
+                    Document / barcode tuning — max res, darker exposure, edge & ZSL/MFNR off.
                   </Text>
                 </View>
                 <Switch value={scanMode} onValueChange={(enabled) => void handleScanModeChange(enabled)} />
@@ -327,6 +352,7 @@ function formatMetadata(meta: PhotoCaptureMetadata): string {
   if (meta.iso != null) parts.push(`ISO ${meta.iso}`)
   if (meta.edgeMode != null) parts.push(`edge ${meta.edgeMode}`)
   if (meta.mfnrApplied != null) parts.push(`mfnr ${meta.mfnrApplied}`)
+  if (meta.zsl != null) parts.push(`zsl ${meta.zsl}`)
   if (meta.noiseReductionWarning) parts.push(`NR: ${meta.noiseReductionWarning}`)
   if (meta.ispDigitalGainWarning) parts.push(`digital gain: ${meta.ispDigitalGainWarning}`)
   if (meta.ispAnalogGainWarning) parts.push(`analog gain: ${meta.ispAnalogGainWarning}`)

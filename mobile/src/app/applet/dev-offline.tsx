@@ -5,7 +5,7 @@ import {View} from "react-native"
 
 import {Button, Screen, Text} from "@/components/ignite"
 import {useNavigationStore} from "@/stores/navigation"
-import {useApps, decideDevLaunchRoute, useAppStatusStore} from "@mentra/island"
+import {decideDevLaunchRoute, engine, useApps} from "@mentra/engine"
 import {storage} from "@/utils/storage/storage"
 import {useRegisterCapsule} from "@/stores/capsule"
 import {useRef} from "react"
@@ -61,7 +61,7 @@ export default function DevMiniappOfflineScreen() {
     // re-scan. If up, replace into /applet/local.
     const launchResult = await decideDevLaunchRoute(packageName, devUrlRes.value)
     if (launchResult.decision === "live") {
-      await useAppStatusStore.getState().setForeground(packageName)
+      await engine.miniapps.setForeground(packageName)
     }
     // else: stay put — the "Last reached" line stays accurate, user can
     // tap again or re-scan.

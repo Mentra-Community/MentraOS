@@ -2,6 +2,8 @@ package com.mentra.asg_client.service.core.processors;
 
 import android.content.Context;
 import android.util.Log;
+
+import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.io.bes.log.BesTracePoller;
 import com.mentra.asg_client.io.file.core.FileManager;
 import com.mentra.asg_client.io.peripheral.IPeripheralBus;
@@ -39,10 +41,13 @@ import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
 import com.mentra.asg_client.service.media.interfaces.IMediaManager;
 import com.mentra.asg_client.service.system.interfaces.IConfigurationManager;
 import com.mentra.asg_client.service.system.interfaces.IStateManager;
+import com.mentra.asg_client.utils.WakeLockManager;
+
+import org.json.JSONObject;
+
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
-import org.json.JSONObject;
 
 /**
  * CommandProcessor - Orchestrates command processing following SOLID principles.
@@ -180,8 +185,20 @@ public class CommandProcessor {
 
         Log.d(TAG, "📊 processJsonCommand() started" + json.toString());
         try {
+            // Wake-flagged command ("W":1): grant a fresh awake window so its follow-up work
+            // survives the 12s screen timeout — the BES power-key pulse for W=1 only fires
+            // when the SoC is already asleep, never extending a window already in progress.
+            // Extend-only: never shortens a longer-lived lock (BES/MTK OTA). Binary wire-v2
+            // frames carry the same flag in the frame header; K900BluetoothManager grants it.
+            if (json.optInt("W", 0) == 1) {
+                WakeLockManager.acquireCpu(
+                        context,
+                        WakeLockManager.WakeOwner.PHONE_COMMAND,
+                        AsgConstants.PHONE_WAKE_COMMAND_WINDOW_MS);
+            }
+
             // Check for ACK first (from phone acknowledging our sent messages)
-            String type = json.optString("type", "");
+            String type = json.optString("type", json.optString("t", ""));
             if ("msg_ack".equals(type)) {
                 long messageId = json.optLong("mId", -1);
                 if (messageId != -1) {
@@ -208,7 +225,6 @@ public class CommandProcessor {
                             + commandData.messageId()
                             + ", Data: "
                             + commandData.data());
-            serviceManager.onPhoneCommandReceived();
 
             // Check for duplicate message ID
             if (isDuplicateMessage(commandData.messageId())) {
@@ -248,7 +264,6 @@ public class CommandProcessor {
 
             if (!result.isValid()) {
                 if ("chunk_in_progress".equals(result.commandType())) {
-                    serviceManager.onPhoneCommandReceived();
                     return null;
                 }
                 Log.w(
@@ -318,9 +333,15 @@ public class CommandProcessor {
         Log.i(TAG, "🎯 Routing command type: " + type);
         BleTraceLogger.logJson("phone_to_glasses", "asg_command_router", commandData.data());
         if ("take_photo".equals(type)) {
+            String mode =
+                    commandData.data() != null && commandData.data().has("mode")
+                            ? commandData.data().optString("mode", "photo")
+                            : "photo (missing from payload)";
             Log.i(
                     TAG,
-                    "PHOTO PIPELINE [ASG 1/3] Received take_photo on glasses: "
+                    "PHOTO PIPELINE [ASG 1/3] Received take_photo on glasses mode="
+                            + mode
+                            + ": "
                             + commandData.data());
         }
 

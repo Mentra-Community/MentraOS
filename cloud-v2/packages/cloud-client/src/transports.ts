@@ -54,6 +54,13 @@ export interface KeyValueStore {
   delete(key: string): Promise<void>;
 }
 
+/** Fetch-compatible HTTP executor supplied by hosts that need networking to
+ * outlive their JavaScript UI lifecycle (for example Android foreground services). */
+export type HttpTransport = (
+  input: Parameters<typeof fetch>[0],
+  init?: Parameters<typeof fetch>[1],
+) => ReturnType<typeof fetch>;
+
 /**
  * The bundle of platform pieces handed to the root `CloudClient`.
  *
@@ -65,4 +72,6 @@ export interface CloudClientTransports {
   ws: (url: string) => WebSocketLike;
   udp: () => UdpSocketLike;
   storage: KeyValueStore;
+  /** Falls back to globalThis.fetch when omitted. */
+  http?: HttpTransport;
 }

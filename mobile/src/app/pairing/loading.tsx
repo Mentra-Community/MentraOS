@@ -1,6 +1,7 @@
 import {useRoute} from "@react-navigation/native"
-import {waitForGlassesReady, BluetoothSdk} from "@mentra/island"
-import type {PairFailureEvent, GlassesNotReadyEvent, PairingInfoEvent} from "@mentra/island"
+import BluetoothSdk, {type PairingInfoEvent} from "@mentra/bluetooth-sdk"
+import {engine} from "@mentra/engine"
+import type {PairFailureEvent} from "@mentra/engine"
 import {useCallback, useEffect, useRef, useState} from "react"
 import {View} from "react-native"
 
@@ -12,8 +13,7 @@ import GlassesPairingLoader from "@/components/glasses/GlassesPairingLoader"
 import GlassesTroubleshootingModal from "@/components/glasses/GlassesTroubleshootingModal"
 import {focusEffectPreventBack} from "@/contexts/NavigationHistoryContext"
 import {translate} from "@/i18n"
-import {submitAutomaticBugIncident} from "@/services/bugReport/automaticBugReport"
-import {selectGlassesReady, useGlassesStore} from "@/stores/glasses"
+import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {useNavigationStore} from "@/stores/navigation"
 import showAlert from "@/utils/AlertUtils"
 
@@ -25,13 +25,13 @@ const PAIRING_INFO_FALLBACK_MS = 5_000
 export default function GlassesPairingLoadingScreen() {
   const {replace, goBack} = useNavigationStore.getState()
   const route = useRoute()
-  const {deviceModel, deviceName} = route.params as {deviceModel: string; deviceName?: string}
+  const {deviceModel, deviceName, ar99ProjectName} = route.params as {deviceModel: string; deviceName?: string; ar99ProjectName?: string}
   const [showTroubleshootingModal, setShowTroubleshootingModal] = useState(false)
-  const showGlassesBootingRef = useRef(false)
-  const hasSubmittedTimeoutIncidentRef = useRef(false)
   const hasNavigatedRef = useRef(false)
   const navigationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const glassesFullyBooted = useGlassesStore(selectGlassesReady)
+  const glassesFullyBooted = useEngineSnapshot(engine.pairing.readiness, (onChange) =>
+    engine.pairing.onReadiness(onChange),
+  ).fullyBooted
   const [showGlassesBooting, setShowGlassesBooting] = useState(false)
   const pairingInfoRef = useRef<boolean | null>(null)
   const [pairingResolved, setPairingResolved] = useState(false)
@@ -42,11 +42,11 @@ export default function GlassesPairingLoadingScreen() {
   const isMentraLive = deviceModel === DeviceTypes.LIVE
 
   useEffect(() => {
-    let sub = BluetoothSdk.addListener("glasses_not_ready", (_event: GlassesNotReadyEvent) => {
+    let unsub = engine.pairing.onGlassesNotReady(() => {
       setShowGlassesBooting(true)
     })
     return () => {
-      sub.remove()
+      unsub()
     }
   }, [])
 
@@ -150,7 +150,11 @@ export default function GlassesPairingLoadingScreen() {
 
   const handlePairFailure = useCallback(
     (error: string) => {
-      BluetoothSdk.forget()
+      // Clears the failed attempt; when a real pairing predates this attempt
+      // (re-pair), it is preserved instead of forgotten.
+      void engine.pairing.abandonAttempt().catch((cleanupError) => {
+        console.warn("Pairing failure cleanup failed:", cleanupError)
+      })
       if (error === "errors:pairNeedDisconnect") {
         replace("/pairing/unpair-even", {deviceModel: deviceModel})
         return
@@ -161,56 +165,23 @@ export default function GlassesPairingLoadingScreen() {
   )
 
   useEffect(() => {
-    let sub = BluetoothSdk.addListener("pair_failure", (event: PairFailureEvent) => {
+    let unsub = engine.pairing.onPairFailure((event: PairFailureEvent) => {
       handlePairFailure(event.error)
     })
     return () => {
-      sub.remove()
+      unsub()
     }
   }, [handlePairFailure])
 
   useEffect(() => {
-    showGlassesBootingRef.current = showGlassesBooting
-  }, [showGlassesBooting])
-
-  useEffect(() => {
-    hasSubmittedTimeoutIncidentRef.current = false
     const controller = new AbortController()
 
-    void waitForGlassesReady({
-      getConnection: () => useGlassesStore.getState().connection,
-      subscribe: (listener) => useGlassesStore.subscribe((s) => s.connection, listener),
+    void engine.pairing.waitForReady({
+      deviceModel,
+      deviceName,
       timeoutMs: 35_000,
+      route: "/pairing/loading",
       signal: controller.signal,
-    }).then((ready) => {
-      if (ready || controller.signal.aborted || hasSubmittedTimeoutIncidentRef.current) {
-        return
-      }
-      hasSubmittedTimeoutIncidentRef.current = true
-      const actualBehavior = JSON.stringify(
-        {
-          deviceModel,
-          deviceName,
-          showGlassesBooting: showGlassesBootingRef.current,
-          elapsedMs: 35_000,
-          route: "/pairing/loading",
-        },
-        null,
-        2,
-      )
-
-      void submitAutomaticBugIncident({
-        categorization: {
-          submissionMode: "AUTOMATIC",
-          triggerArea: "pairing_loading",
-          triggerReason: "glasses_connect_timeout",
-        },
-        expectedBehavior: "Glasses should connect successfully within 35 seconds.",
-        actualBehavior,
-        severityRating: 4,
-        dedupeKey: `pairing_timeout|${deviceModel}|${deviceName || "unknown"}`,
-        logTag: "PairingTimeoutBugReport",
-      })
     })
 
     return () => {
@@ -266,7 +237,7 @@ export default function GlassesPairingLoadingScreen() {
 
     hasNavigatedRef.current = true
     navigationTimerRef.current = setTimeout(() => {
-      replace("/pairing/success", {deviceModel: deviceModel})
+      replace("/pairing/success", {deviceModel: deviceModel, ar99ProjectName})
     }, 1000)
   }, [
     glassesFullyBooted,
@@ -276,6 +247,7 @@ export default function GlassesPairingLoadingScreen() {
     pairingInfoReceived,
     pairingInfoTimedOut,
     pairingResolved,
+    ar99ProjectName,
   ])
 
   focusEffectPreventBack()
@@ -288,6 +260,7 @@ export default function GlassesPairingLoadingScreen() {
           <GlassesPairingLoader
             deviceModel={deviceModel}
             deviceName={deviceName}
+            ar99ProjectName={ar99ProjectName}
             isBooting={showGlassesBooting}
             onCancel={handleGoBack}
           />
@@ -307,3 +280,7 @@ export default function GlassesPairingLoadingScreen() {
     </Screen>
   )
 }
+
+
+
+

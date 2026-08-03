@@ -334,7 +334,7 @@ No transition lock needed — photos are independent, multiple concurrent in-fli
 
 Thin fetch client, parallel to `v2StreamApi.ts`. Three functions: `request()`, `pollUntilReady(requestId)`, `freePhoto(requestId)`. Reads `backendUrl` + `coreToken` from island runtime settings hook (same as v2StreamApi).
 
-### Edit: `mobile/modules/island/src/runtime/config.ts`
+### Edit: `mobile/modules/engine/src/runtime/config.ts`
 
 Replace the existing `requestMiniappSdkPhoto` adapter with a cleaner one:
 
@@ -347,7 +347,7 @@ photo?: {
 }
 ```
 
-### Edit: `mobile/modules/island/src/services/LocalMiniappRuntime.ts`
+### Edit: `mobile/modules/engine/src/services/LocalMiniappRuntime.ts`
 
 The current `handlePhoto` registers a pending cloud request and waits for `phone_photo_ready` via WS. Replace with a direct call to the new hook:
 
@@ -553,8 +553,8 @@ Glasses never see `coreToken`. They only hold the single-use opaque `uploadToken
 | EDIT | `cloud/packages/cloud/src/hono-app.ts` | drop old mount, add `/api/v2/client/photo` |
 | EDIT | `cloud/packages/cloud/src/services/session/UserSession.ts` | drop `miniappSdkPhotoManager` field + ctor call + cleanup |
 | EDIT | `cloud/.env.example` | rename `MINIAPP_SDK_PHOTO_UPLOAD_SECRET` → `MENTRA_PHOTO_UPLOAD_SECRET` |
-| EDIT | `mobile/modules/island/src/runtime/config.ts` | swap `requestMiniappSdkPhoto` → `photo` hook |
-| EDIT | `mobile/modules/island/src/services/LocalMiniappRuntime.ts` | rewrite `handlePhoto`; drop `phone_photo_ready` case from `handleCloudMessage` + its doc-comment mention |
+| EDIT | `mobile/modules/engine/src/runtime/config.ts` | swap `requestMiniappSdkPhoto` → `photo` hook |
+| EDIT | `mobile/modules/engine/src/services/LocalMiniappRuntime.ts` | rewrite `handlePhoto`; drop `phone_photo_ready` case from `handleCloudMessage` + its doc-comment mention |
 | EDIT | `mobile/src/services/SocketComms.ts` | drop `phone_photo_ready` case from `handleCloudMessage` |
 | EDIT | `mobile/src/services/MantleManager.ts` | (1) swap hook registration; (2) gate the `photo_response` BLE listener by `phonePhotoCoordinator.owns(requestId)` so local-miniapp errors short-circuit instead of going to `restComms.sendPhotoResponse` |
 | DELETE | `cloud/packages/cloud/src/api/hono/client/miniapp-sdk-photo.api.ts` | dead |

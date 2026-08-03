@@ -32,11 +32,8 @@ run_asg() {
     cat >&2 <<'MSG'
 error: asg_client/StreamPackLite is missing.
 
-Set up the ASG dependency first:
-  cd asg_client
-  git clone git@github.com:Mentra-Community/StreamPackLite.git
-  cd StreamPackLite
-  git checkout working
+StreamPackLite is a git submodule. Initialize it first (from the repository root):
+  git submodule update --init asg_client/StreamPackLite
 MSG
     return 1
   fi

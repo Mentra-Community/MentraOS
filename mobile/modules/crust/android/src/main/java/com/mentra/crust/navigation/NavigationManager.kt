@@ -436,6 +436,8 @@ object NavigationManager {
       .alternatives(false)
       .steps(true)
       .bannerInstructions(true)
+      // The onboard router rejects voice units when voice instructions are disabled.
+      .voiceUnits(null)
       .voiceInstructions(false)
       .exclude(buildExclude(options))
       .build()

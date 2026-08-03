@@ -57,7 +57,7 @@ internal object OtaManifestChecker {
         return try {
             val status = connection.responseCode
             if (status !in 200..299) {
-                throw BluetoothSdkException("ota_manifest_request_failed", "OTA manifest request failed with HTTP $status.")
+                throw BluetoothSdkException("ota_manifest_request_failed", "OTA manifest request failed with HTTP $status for $otaVersionUrl.")
             }
             JSONObject(connection.inputStream.bufferedReader().use { it.readText() })
         } finally {
@@ -70,8 +70,13 @@ internal object OtaManifestChecker {
         currentMtkVersion: String,
         currentBesVersion: String,
         manifest: JSONObject,
+        // Downgrade floor: a non-positive value (the default) disables downgrades entirely,
+        // matching ASG's fail-closed DowngradeGate and the engine. OEM SDK consumers that do
+        // not set a floor therefore get upgrade-only behavior and are never told a downgrade is
+        // available that the glasses would refuse.
+        downgradeFloorVersionCode: Long = 0L,
     ): Boolean =
-        hasApkUpdate(currentBuildNumber, manifest) ||
+        hasApkUpdate(currentBuildNumber, manifest, downgradeFloorVersionCode) ||
             hasMtkUpdate(manifest.optJSONArray("mtk_patches"), currentMtkVersion) ||
             hasBesUpdate(manifest.optJSONObject("bes_firmware"), currentBesVersion)
 
@@ -95,15 +100,50 @@ internal object OtaManifestChecker {
         throw BluetoothSdkException("invalid_ota_manifest", "OTA manifest is missing ASG app versionCode.")
     }
 
-    private fun hasApkUpdate(currentBuildNumber: String, manifest: JSONObject): Boolean {
+    private fun hasApkUpdate(
+        currentBuildNumber: String,
+        manifest: JSONObject,
+        downgradeFloorVersionCode: Long,
+    ): Boolean {
         val currentVersion =
             currentBuildNumber.toLongOrNull()
                 ?: throw BluetoothSdkException(
                     "invalid_glasses_version",
                     "Cannot check OTA update because glasses build number is invalid.",
                 )
+        // Only apps-shaped manifests are exact pins. A legacy top-level manifest (versionCode at
+        // the root, no apps entry) is NOT a pin and stays strictly upgrade-only, matching the
+        // engine TS checker — otherwise a build newer than such a manifest would report a false
+        // downgrade the JS path ignores.
+        val isExactPin = manifest.optJSONObject("apps")?.optJSONObject(ASG_CLIENT_PACKAGE)?.hasNumber("versionCode") == true
         val serverVersion = latestAppInfo(manifest).requiredLong("versionCode")
-        return serverVersion > currentVersion
+        if (!isExactPin) {
+            return serverVersion > currentVersion
+        }
+        // Exact pin: any mismatch is an update in either direction (downgrades take the
+        // uninstall-then-reinstall detour on the glasses). A non-positive pin is only legitimate
+        // in the frozen legacy rescue manifests that pre-39 glasses are checked against; for
+        // modern glasses it means the manifest cannot verify anything, and that must surface as an
+        // error — never as "no update".
+        if (serverVersion <= 0) {
+            if (currentVersion >= 39) {
+                throw BluetoothSdkException(
+                    "invalid_ota_manifest",
+                    "OTA manifest ASG pin is missing or zero; cannot verify update state.",
+                )
+            }
+            return false
+        }
+        if (serverVersion > currentVersion) {
+            return true
+        }
+        // Exact match: already on the pin, no update.
+        if (serverVersion == currentVersion) {
+            return false
+        }
+        // Downgrade: only actionable at/above the enabled floor; a non-positive floor disables
+        // downgrades (fail closed, matching ASG and the engine).
+        return downgradeFloorVersionCode > 0 && serverVersion >= downgradeFloorVersionCode
     }
 
     private fun hasMtkUpdate(patches: JSONArray?, currentVersion: String): Boolean {

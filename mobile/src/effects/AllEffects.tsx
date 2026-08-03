@@ -2,7 +2,6 @@ import {ButtonActions} from "@/effects/ButtonActions"
 import {GalleryModeSync} from "@/effects/GalleryModeSync"
 import {MemoryWarningMonitor} from "@/effects/MemoryWarningMonitor"
 import {MtkUpdateAlert} from "@/effects/MtkUpdateAlert"
-import {NetworkMonitoring} from "@/effects/NetworkMonitoring"
 import {Reconnect} from "@/effects/Reconnect"
 import {ConsoleLogger} from "@/utils/dev/console"
 import {FirebaseAnalyticsSetup} from "@/effects/FirebaseAnalyticsSetup"
@@ -28,7 +27,6 @@ export const AllEffects = () => {
       {/* <TranscriptionsListener /> */}
       <MtkUpdateAlert />
       <OtaUpdateChecker />
-      <NetworkMonitoring />
       <ButtonActions />
       <GalleryModeSync />
       <ConsoleLogger />

@@ -29,7 +29,12 @@ When the PR agent orchestrator triggers this review, end with a top-level PR com
 
 - Use `blocking` only for issues that must be fixed before merge.
 - Use `nit` for style or optional suggestions.
-- Do not re-raise issues already listed in open `<!-- pr-agent-orchestrator -->` findings unless they regressed.
+- The orchestrator's `<!-- pr-agent-orchestrator -->` state comment lists prior
+  open findings. Treat each as a hypothesis, not a fact: check the current
+  code at HEAD before repeating one. If it's already fixed, leave it out of
+  your findings — the orchestrator resolves it automatically once you stop
+  reporting it. Only repeat it if you can point to code that still exhibits it.
+- Do not re-raise issues already listed as *resolved* unless they regressed.
 
 ## Scope
 

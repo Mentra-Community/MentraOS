@@ -59,7 +59,6 @@ public class PhoneReadyCommandHandlerTest {
         assertThat(handled).isTrue();
         verify(transport).onTransportReset();
         verify(communicationManager).sendBluetoothResponse(any(JSONObject.class));
-        verify(serviceManager).onPhoneReadyHandshakeComplete();
     }
 
     @Test
@@ -70,7 +69,6 @@ public class PhoneReadyCommandHandlerTest {
 
         assertThat(handled).isTrue();
         verify(communicationManager).sendBluetoothResponse(any(JSONObject.class));
-        verify(serviceManager).onPhoneReadyHandshakeComplete();
     }
 
     @Test

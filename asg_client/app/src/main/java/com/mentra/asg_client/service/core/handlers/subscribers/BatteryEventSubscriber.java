@@ -61,7 +61,11 @@ public final class BatteryEventSubscriber implements IPeripheralBus.McuEventList
 
     /** Send battery status over BLE */
     private void sendBatteryStatusOverBle(int batteryPercentage, int batteryVoltage) {
-        // Calculate charging status based on voltage
+        // hm_batv carries no charge bit, so charging cannot be known here. The voltage
+        // heuristic (>3900mV) is wrong for most of a Li-ion cell's range — a discharging
+        // full pack reads "charging". Internal state keeps the heuristic (log-only
+        // consumers), but the BLE message omits the flag: the phone sources charging
+        // exclusively from the PMU charg bit in the sr_hrt heartbeat.
         boolean isCharging = batteryVoltage > 3900;
 
         // Always update local state, regardless of BLE connection
@@ -77,7 +81,6 @@ public final class BatteryEventSubscriber implements IPeripheralBus.McuEventList
             try {
                 JSONObject obj = new JSONObject();
                 obj.put("type", "battery_status");
-                obj.put("charging", isCharging);
                 obj.put("percent", batteryPercentage);
                 String jsonString = obj.toString();
                 Log.d(TAG, "Formatted battery status message: " + jsonString);

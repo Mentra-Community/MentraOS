@@ -125,7 +125,7 @@ public final class CameraOpener {
         if (jpegSizes == null || jpegSizes.length == 0) {
             return null;
         }
-        String requestedSizeTier = PhotoSizeTier.normalize(rawRequestedSizeTier);
+        String requestedSizeTier = PhotoSizeTier.normalizeCaptureSize(rawRequestedSizeTier);
         if (CameraConstants.SIZE_MAX.equals(requestedSizeTier)) {
             Size maxSize = CameraSizeSelector.largestSize(jpegSizes);
             if (maxSize == null) {

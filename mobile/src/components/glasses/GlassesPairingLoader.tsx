@@ -3,8 +3,8 @@ import {View, Animated, Easing, Image} from "react-native"
 
 import {Button, Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
-import {useSetting, SETTINGS} from "@/stores/settings"
-import {getGlassesImage, getEvenRealitiesG1Image} from "@/utils/getGlassesImage"
+import {useSetting, SETTINGS} from "@mentra/engine"
+import {getAr99DisplayName, getAr99ImageSource, getGlassesImage, getEvenRealitiesG1Image} from "@/utils/getGlassesImage"
 
 import {getModelSpecificTips} from "@/components/glasses/GlassesTroubleshootingModal"
 import GlassView from "@/components/ui/GlassView"
@@ -12,11 +12,12 @@ import GlassView from "@/components/ui/GlassView"
 interface GlassesPairingLoaderProps {
   deviceModel: string
   deviceName?: string
+  ar99ProjectName?: string
   onCancel?: () => void
   isBooting?: boolean
 }
 
-const GlassesPairingLoader: React.FC<GlassesPairingLoaderProps> = ({deviceModel, deviceName, onCancel, isBooting}) => {
+const GlassesPairingLoader: React.FC<GlassesPairingLoaderProps> = ({deviceModel, deviceName, ar99ProjectName, onCancel, isBooting}) => {
   const {theme} = useAppTheme()
   const [superMode] = useSetting<boolean>(SETTINGS.super_mode.key)
   const progressAnim = useRef(new Animated.Value(0)).current
@@ -24,6 +25,7 @@ const GlassesPairingLoader: React.FC<GlassesPairingLoaderProps> = ({deviceModel,
   const tipTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const tips = getModelSpecificTips(deviceModel)
+  const displayName = deviceModel === "AR99" ? getAr99DisplayName(ar99ProjectName) : deviceModel
 
   // Set up animations
   useEffect(() => {
@@ -58,7 +60,7 @@ const GlassesPairingLoader: React.FC<GlassesPairingLoaderProps> = ({deviceModel,
   })
 
   // Use dynamic image for Even Realities G1 based on style and color
-  let glassesImage = getGlassesImage(deviceModel)
+  let glassesImage = deviceModel === "AR99" ? getAr99ImageSource(ar99ProjectName) : getGlassesImage(deviceModel)
   if (
     deviceModel &&
     (deviceModel === "Even Realities G1" || deviceModel === "evenrealities_g1" || deviceModel === "g1")
@@ -74,7 +76,7 @@ const GlassesPairingLoader: React.FC<GlassesPairingLoaderProps> = ({deviceModel,
         {/* Title */}
         <Text tx="pairing:pairing" className="text-xl font-semibold text-center" />
         <Text className="text-xl text-center">
-          {deviceModel}
+          {displayName}
           {superMode && deviceName && deviceName !== "NOTREQUIREDSKIP" ? ` - ${deviceName}` : ""}
         </Text>
 
@@ -117,3 +119,7 @@ const GlassesPairingLoader: React.FC<GlassesPairingLoaderProps> = ({deviceModel,
 }
 
 export default GlassesPairingLoader
+
+
+
+

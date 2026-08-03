@@ -245,20 +245,28 @@ export async function dev(options: DevOptions = {}): Promise<void> {
 
   const printBanner = (): void => {
     console.log('\n╔══════════════════════════════════════════════════════════════╗');
-    console.log('║  To test your mini app on glasses:                           ║');
+    console.log('║  To test your miniapp on glasses:                            ║');
     console.log('║                                                              ║');
-    console.log('║    1. Open the Mentra app on your phone                      ║');
+    console.log('║    1. Open the Mentra App on your phone                      ║');
     console.log('║    2. Settings → Developer settings                          ║');
     console.log('║    3. Under "Mini App Development", tap                      ║');
     console.log('║       "Scan Mini App QR Code" and scan the QR below          ║');
     console.log('║                                                              ║');
     console.log('║  Your phone must be on the same Wi-Fi as this computer.      ║');
+    console.log('║                                                              ║');
+    console.log('║  Dev mode is live and temporary:                             ║');
+    console.log('║    • Keep this process and computer running.                 ║');
+    console.log('║    • Each package gets its own dev entry, so you can scan    ║');
+    console.log('║      and test multiple dev miniapps side by side.            ║');
+    console.log('║    • The Mentra App caches each miniapp name and icon.       ║');
+    console.log('║                                                              ║');
+    console.log('║  For a persistent install, run: bun run release              ║');
     console.log('╚══════════════════════════════════════════════════════════════╝\n');
   };
 
   printBanner();
   const devUrl = await buildDevUrl(lanIp);
-  printQR(devUrl);
+  await printQR(devUrl);
   console.log(`\n${devUrl}\n`);
 
   // Monitor for LAN IP changes (e.g., WiFi switch).
@@ -269,7 +277,7 @@ export async function dev(options: DevOptions = {}): Promise<void> {
       console.log(`\nLAN IP changed to ${newIp}. New QR:`);
       printBanner();
       const newDevUrl = await buildDevUrl(newIp);
-      printQR(newDevUrl);
+      await printQR(newDevUrl);
       console.log(`\n${newDevUrl}\n`);
     }
   }, 10_000);

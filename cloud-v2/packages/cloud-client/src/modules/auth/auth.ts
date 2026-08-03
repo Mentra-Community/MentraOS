@@ -33,6 +33,7 @@ import type {
 } from "../../config";
 import type { HttpClient } from "../../http";
 import type { Logger } from "../../logger";
+import type { HttpTransport } from "../../transports";
 import { AuthExpiredError } from "../../errors";
 import { decodeClaims } from "./jwt";
 import { TokenStore } from "./token-store";
@@ -133,12 +134,14 @@ export class Auth implements AuthModule {
    * Core base URL for the form-encoded `/exchange` and `/refresh` calls.
    *
    * These two endpoints take `application/x-www-form-urlencoded` bodies and
-   * present the subject/refresh token in the body (not as a Bearer), so they go
-   * through `fetch` directly rather than the JSON-only injected `HttpClient`. In
-   * runtime-only mode this is absent by design: Core identity, miniapp token
-   * minting, and miniapp auto-auth are Core-backed features.
+   * present the subject/refresh token in the body (not as a Bearer), so they do
+   * not use the JSON-only `HttpClient`. They still use the host's injected HTTP
+   * transport when one is available. In runtime-only mode this is absent by
+   * design: Core identity, miniapp token minting, and miniapp auto-auth are
+   * Core-backed features.
    */
   private readonly baseUrl?: string;
+  private readonly httpTransport: HttpTransport;
 
   /** Miniapp tokens cached per packageName until near expiry. */
   private readonly miniappCache = new Map<string, MiniappTokenEntry>();
@@ -160,6 +163,7 @@ export class Auth implements AuthModule {
     config: AuthConfig;
     logger: Logger;
     baseUrl?: string;
+    fetch?: HttpTransport;
   }) {
     this.http = deps.http;
     this.store = deps.store;
@@ -167,6 +171,7 @@ export class Auth implements AuthModule {
     this.runtimeConfig = deps.config.runtime;
     this.logger = deps.logger;
     this.baseUrl = deps.baseUrl;
+    this.httpTransport = deps.fetch ?? globalThis.fetch;
   }
 
   /**
@@ -481,7 +486,7 @@ export class Auth implements AuthModule {
    * POST a form-encoded body to a token endpoint and parse the RFC token
    * response.
    *
-   * Uses `fetch` directly (not the injected JSON `HttpClient`) because these
+   * Uses the injected HTTP transport (not the JSON `HttpClient`) because these
    * endpoints require `application/x-www-form-urlencoded` and present the
    * subject/refresh token in the body, not as a Bearer header. We never log the
    * body: it carries a token.
@@ -492,7 +497,7 @@ export class Auth implements AuthModule {
     label: string,
   ): Promise<TokenResponse> {
     const url = this.joinUrl(path);
-    const res = await fetch(url, {
+    const res = await this.httpTransport(url, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: body.toString(),

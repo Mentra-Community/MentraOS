@@ -1,15 +1,38 @@
 name: Release Bluetooth SDK
 
+# Channel promotion (see .github/scripts/npm-channel.mjs): git holds one
+# prerelease base version (X.Y.Z-dev.N, only edited on dev) and the branch
+# derives what publishes:
+#   dev                -> X.Y.Z-dev.N   (npm dev tag)
+#   staging            -> X.Y.Z-beta.N  (npm beta tag)
+#   main-bluetooth-sdk -> X.Y.Z         (npm latest tag)
+# Merging up the chain IS the promotion; no version edits ride the branches.
+# The SDK's prod branch is main-bluetooth-sdk, NOT main — merge staging into it
+# when the SDK should go public, independently of the monorepo's main.
+#
+# Publish mode per channel, aligned across all three stores: dev releases go
+# straight out; staging/prod releases are STAGED and a human approves each one
+# in the store's own UI —
+#   npm:     `npm stage publish --tag` -> approve in npmjs.com's staging queue
+#   maven:   Sonatype Central upload with publishing_type=user_managed ->
+#            publish at https://central.sonatype.com/publishing/deployments
+#   swiftpm: SPM resolves TAGS only, so the export+commit is invisible until
+#            the tag lands; the tag-push job sits behind the protected
+#            `bluetooth-sdk-release-approval` GitHub environment and waits for
+#            a reviewer's approval in the Actions UI.
+#
+# Detection is registry-state across all three stores (a promotion merge does
+# not change the version field, so the release fires when the derived version
+# is missing from ANY store; each job still re-checks and skips its own store).
+# No paths filter, deliberately: every push to a channel branch reconciles, and
+# the detect job no-ops in seconds when all stores are complete.
+
 on:
   push:
     branches:
       - dev
-    paths:
-      - ".github/scripts/build-bluetooth-sdk-ota-manifest.mjs"
-      - ".github/scripts/bluetooth-sdk-release-info.mjs"
-      - ".github/workflows/bluetooth-sdk-release.yml"
-      - "mobile/modules/bluetooth-sdk/**"
-      - "scripts/export-bluetooth-sdk-ios-spm.sh"
+      - staging
+      - main-bluetooth-sdk
   workflow_dispatch:
     inputs:
       dry_run:
@@ -18,7 +41,7 @@ on:
         default: true
         type: boolean
       force_release:
-        description: "Run release jobs even if the SDK package version did not change"
+        description: "Run release jobs even when every store already has the derived version (immutable stores still skip themselves)."
         required: true
         default: false
         type: boolean
@@ -43,9 +66,11 @@ jobs:
     outputs:
       package_name: ${{ steps.release-info.outputs.package_name }}
       version: ${{ steps.release-info.outputs.version }}
-      previous_version: ${{ steps.release-info.outputs.previous_version }}
-      compare_sha: ${{ steps.release-info.outputs.compare_sha }}
-      version_changed: ${{ steps.release-info.outputs.version_changed }}
+      base_version: ${{ steps.release-info.outputs.base_version }}
+      dist_tag: ${{ steps.release-info.outputs.dist_tag }}
+      npm_exists: ${{ steps.release-info.outputs.npm_exists }}
+      maven_exists: ${{ steps.release-info.outputs.maven_exists }}
+      swiftpm_exists: ${{ steps.release-info.outputs.swiftpm_exists }}
       force_release: ${{ steps.release-info.outputs.force_release }}
       run_release: ${{ steps.release-info.outputs.run_release }}
       dry_run: ${{ steps.release-info.outputs.dry_run }}
@@ -53,10 +78,10 @@ jobs:
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+        # Depth 1 is fine: the decision reads the working tree + the three
+        # stores' registry state, never git history.
 
-      - name: Detect package version change
+      - name: Decide release for this channel
         id: release-info
         run: node .github/scripts/bluetooth-sdk-release-info.mjs
         env:
@@ -101,9 +126,8 @@ jobs:
             echo "## Bluetooth SDK release decision"
             echo ""
             echo "- Package: \`${{ steps.release-info.outputs.package_name }}\`"
-            echo "- Current version: \`${{ steps.release-info.outputs.version }}\`"
-            echo "- Previous version: \`${{ steps.release-info.outputs.previous_version || 'unavailable' }}\`"
-            echo "- Version changed: \`${{ steps.release-info.outputs.version_changed }}\`"
+            echo "- Base version: \`${{ steps.release-info.outputs.base_version }}\` -> derived \`${{ steps.release-info.outputs.version }}\` (dist-tag \`${{ steps.release-info.outputs.dist_tag }}\`)"
+            echo "- Already released — npm: \`${{ steps.release-info.outputs.npm_exists }}\`, maven: \`${{ steps.release-info.outputs.maven_exists }}\`, swiftpm: \`${{ steps.release-info.outputs.swiftpm_exists }}\`"
             echo "- Dry run: \`${{ steps.release-info.outputs.dry_run }}\`"
             echo "- Run release jobs: \`${{ steps.release-info.outputs.run_release }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
@@ -120,17 +144,17 @@ jobs:
       version_code: ${{ steps.existing-sdk-ota.outputs.version_code || steps.asg-build-info.outputs.version_code }}
       version_name: ${{ steps.existing-sdk-ota.outputs.version_name || steps.asg-build-info.outputs.version_name }}
     steps:
-      - name: Refuse non-dev publish
-        if: needs.detect.outputs.dry_run != 'true' && github.ref_name != 'dev'
-        run: |
-          echo "Bluetooth SDK releases must publish from the dev branch while this workflow is being validated." >&2
-          exit 1
-
       - name: Get cache week number
         id: cache-week
         run: echo "week=$(date +%Y-%U)" >> "$GITHUB_OUTPUT"
 
       - name: Clean build artifacts (preserve caches)
+        # Includes the submodule worktree: this job runs on a persistent self-hosted
+        # runner, actions/checkout does not clean submodule worktrees, and submodule
+        # init does not remove ignored build outputs (core/build, extensions/*/build)
+        # — stale StreamPackLite products would survive across release runs. Removal
+        # is cheap: the submodule git dir lives under .git/modules, so init
+        # re-checks-out locally instead of re-cloning.
         run: |
           rm -rf asg_client/app/build asg_client/.gradle asg_client/StreamPackLite
 
@@ -155,8 +179,7 @@ jobs:
           NOW_SECONDS=$(git show -s --format=%ct HEAD)
           VERSION_CODE=$((BASELINE + NOW_SECONDS - EPOCH_OFFSET_SECONDS))
           SHORT_SHA=$(git rev-parse --short HEAD)
-          BUILD_TIMESTAMP=$(date -u -r "$NOW_SECONDS" +%Y%m%d.%H%M%S)
-          VERSION_NAME="sdk.${SDK_VERSION}.${BUILD_TIMESTAMP}.${SHORT_SHA}"
+          VERSION_NAME="${SDK_VERSION}"
 
           echo "version_code=${VERSION_CODE}" >> "$GITHUB_OUTPUT"
           echo "version_name=${VERSION_NAME}" >> "$GITHUB_OUTPUT"
@@ -238,13 +261,15 @@ jobs:
         working-directory: ./asg_client
         run: cp .env.example .env
 
-      - name: Clone StreamPackLite dependency
+      - name: Init StreamPackLite submodule
+        # After (and gated on) the existing-manifest check: a reused SDK OTA manifest
+        # needs no ASG build, so no StreamPackLite fetch and no exposure to a
+        # transient submodule fetch failure.
+        # Path-scoped on purpose: .gitmodules also carries a dangling
+        # mcu_client/peripheral_uart_next/nrf5340 entry with an unfetchable relative
+        # self-URL; a blanket recursive init would break if its gitlink ever lands.
         if: steps.existing-sdk-ota.outputs.exists != 'true'
-        working-directory: ./asg_client
-        run: |
-          git clone https://github.com/Mentra-Community/StreamPackLite.git
-          cd StreamPackLite
-          git checkout working
+        run: git submodule update --init asg_client/StreamPackLite
 
       - name: Cache Gradle dependencies
         if: steps.existing-sdk-ota.outputs.exists != 'true'
@@ -440,9 +465,9 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   npm:
-    name: Stage npm package
+    name: Publish npm package
     needs: [detect, sdk-ota]
-    if: needs.detect.outputs.run_release == 'true'
+    if: needs.detect.outputs.run_release == 'true' && (needs.detect.outputs.npm_exists != 'true' || needs.detect.outputs.dry_run == 'true' || needs.detect.outputs.force_release == 'true')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout source
@@ -452,9 +477,14 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "24"
+          registry-url: "https://registry.npmjs.org"
 
       - name: Use npm with staged publishing support
-        run: npm install -g npm@latest
+        # Pinned major: the release-critical path must not pick up whatever npm
+        # shipped this morning. `npm stage publish` needs >=11.15.0.
+        run: |
+          npm install -g npm@11
+          npm stage --help >/dev/null 2>&1 || { echo "::error::this npm ($(npm --version)) lacks 'npm stage' — staged publishing needs >=11.15.0."; exit 1; }
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -473,19 +503,36 @@ jobs:
         working-directory: mobile
         run: bun install --frozen-lockfile
 
+      # After the frozen install (which would reject a changed version field):
+      # stamp the manifest to this channel's derived version — everything
+      # downstream (build, pack, the iOS placeholder substitution) reads it.
+      # Packed checkout only, never committed.
+      - name: Stamp channel version
+        working-directory: ${{ env.SDK_PACKAGE_DIR }}
+        run: npm pkg set version="${{ needs.detect.outputs.version }}"
+
       - name: Build package
         working-directory: ${{ env.SDK_PACKAGE_DIR }}
         run: bun run build
 
       - name: Check npm registry
         id: npm-registry
+        # Belt-and-braces re-check of the detect decision (E404-only absence).
         run: |
           set -euo pipefail
-          if npm view "${{ needs.detect.outputs.package_name }}@${{ needs.detect.outputs.version }}" version --registry=https://registry.npmjs.org >/dev/null 2>&1; then
+          set +e
+          out=$(npm view "${{ needs.detect.outputs.package_name }}@${{ needs.detect.outputs.version }}" version --json --registry=https://registry.npmjs.org 2>&1)
+          code=$?
+          set -e
+          if [[ $code -eq 0 ]]; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
             echo "npm already has ${{ needs.detect.outputs.package_name }}@${{ needs.detect.outputs.version }}."
-          else
+          elif echo "$out" | grep -q '"code": *"E404"' || echo "$out" | grep -q "code E404"; then
             echo "exists=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::npm view failed with a non-404 error — refusing to guess registry state." >&2
+            echo "$out" >&2
+            exit 1
           fi
 
       - name: Dry-run npm package
@@ -527,19 +574,52 @@ jobs:
             exit 1
           fi
 
-      - name: Stage npm package
-        if: needs.detect.outputs.dry_run != 'true' && steps.npm-registry.outputs.exists != 'true'
+      # Direct publish on the dev channel (fast internal iteration, no
+      # approval). Uses NPM_TOKEN: the package's npm Trusted Publisher is
+      # configured for `npm stage publish` only.
+      - name: Publish to npm (dev channel)
+        if: needs.detect.outputs.dry_run != 'true' && steps.npm-registry.outputs.exists != 'true' && github.ref_name == 'dev'
         working-directory: ${{ env.SDK_PACKAGE_DIR }}
-        run: npm stage publish
+        run: |
+          if [[ -z "${NODE_AUTH_TOKEN:-}" ]]; then
+            echo "::error::Set the NPM_TOKEN repository secret for dev-channel direct publishes."
+            exit 1
+          fi
+          npm publish --tag "${{ needs.detect.outputs.dist_tag }}"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-      - name: Skip npm stage publish
+      - name: Stage npm package for approval (beta/latest channels)
+        if: needs.detect.outputs.dry_run != 'true' && steps.npm-registry.outputs.exists != 'true' && github.ref_name != 'dev'
+        working-directory: ${{ env.SDK_PACKAGE_DIR }}
+        # OIDC trusted publisher; the tag is immutable once staged, so it must
+        # be right here. A staged-but-unapproved version is not live (npm view
+        # won't list it), so a re-merge before approval re-attempts the stage —
+        # tolerate that one error.
+        run: |
+          set +e
+          out=$(npm stage publish --tag "${{ needs.detect.outputs.dist_tag }}" 2>&1)
+          code=$?
+          set -e
+          echo "$out"
+          if [[ $code -ne 0 ]]; then
+            if echo "$out" | grep -qi "already"; then
+              echo "::notice::${{ needs.detect.outputs.package_name }}@${{ needs.detect.outputs.version }} is already in the staging queue — approve or reject it in the npm UI."
+            else
+              exit $code
+            fi
+          else
+            echo "::notice::${{ needs.detect.outputs.package_name }}@${{ needs.detect.outputs.version }} staged for '${{ needs.detect.outputs.dist_tag }}' — a maintainer must approve it in the npm UI before it goes live."
+          fi
+
+      - name: Skip npm publish
         if: steps.npm-registry.outputs.exists == 'true'
-        run: echo "Skipping npm stage publish because this version already exists on npm."
+        run: echo "Skipping npm publish because this version already exists on npm."
 
   maven:
     name: Publish Maven Central artifacts
     needs: [detect, sdk-ota]
-    if: needs.detect.outputs.run_release == 'true'
+    if: needs.detect.outputs.run_release == 'true' && (needs.detect.outputs.maven_exists != 'true' || needs.detect.outputs.dry_run == 'true' || needs.detect.outputs.force_release == 'true')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout source
@@ -661,6 +741,10 @@ jobs:
       - name: Publish Maven Central artifacts
         if: needs.detect.outputs.dry_run != 'true' && steps.maven-central.outputs.exists != 'true'
         working-directory: mobile/android
+        # Publish mode mirrors the npm split: the dev channel auto-releases
+        # (publishing_type=automatic), beta/prod uploads stay staged in the
+        # Central Portal (user_managed) until a maintainer publishes them at
+        # https://central.sonatype.com/publishing/deployments.
         run: |
           ./gradlew \
             :lc3Lib:publishReleasePublicationToSonatypeCentralRepository \
@@ -669,22 +753,28 @@ jobs:
             -PmentraPublicSdk=true \
             --no-daemon \
             --stacktrace
+          if [[ "${SONATYPE_PUBLISHING_TYPE}" == "user_managed" ]]; then
+            echo "::notice::Maven deployment for ${{ needs.detect.outputs.version }} is staged in the Central Portal — a maintainer must publish it at https://central.sonatype.com/publishing/deployments."
+          fi
         env:
           MAVEN_CENTRAL_TOKEN_BASE64: ${{ secrets.MAVEN_CENTRAL_TOKEN_BASE64 }}
           MENTRA_MAVEN_VERSION: ${{ needs.detect.outputs.version }}
           SIGNING_KEY: ${{ secrets.MAVEN_SIGNING_KEY }}
           SIGNING_PASSWORD: ${{ secrets.MAVEN_SIGNING_PASSWORD }}
-          SONATYPE_PUBLISHING_TYPE: ${{ vars.SONATYPE_PUBLISHING_TYPE || 'user_managed' }}
+          SONATYPE_PUBLISHING_TYPE: ${{ github.ref_name == 'dev' && 'automatic' || 'user_managed' }}
 
       - name: Skip Maven publish
         if: steps.maven-central.outputs.exists == 'true'
         run: echo "Skipping Maven publish because both Android artifacts already exist."
 
   ios-swiftpm:
-    name: Release iOS SwiftPM mirror
+    name: Export iOS SwiftPM mirror
     needs: [detect, sdk-ota]
-    if: needs.detect.outputs.run_release == 'true'
+    if: needs.detect.outputs.run_release == 'true' && (needs.detect.outputs.swiftpm_exists != 'true' || needs.detect.outputs.dry_run == 'true' || needs.detect.outputs.force_release == 'true')
     runs-on: macos-15
+    outputs:
+      tag_exists: ${{ steps.swiftpm-tag.outputs.exists }}
+      mirror_sha: ${{ steps.mirror-commit.outputs.mirror_sha }}
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
@@ -722,6 +812,13 @@ jobs:
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
+      # The export script reads the SDK package.json version, so stamping the
+      # channel-derived version here flows into Package.swift, the README and
+      # the Swift source placeholder. Export checkout only — never committed.
+      - name: Stamp channel version
+        working-directory: MentraOS/mobile/modules/bluetooth-sdk
+        run: npm pkg set version="${{ needs.detect.outputs.version }}"
+
       - name: Export and verify Swift package
         if: steps.swiftpm-tag.outputs.exists != 'true'
         working-directory: MentraOS
@@ -737,7 +834,12 @@ jobs:
           git status --short
           git diff --stat
 
-      - name: Commit and tag SwiftPM mirror
+      # Commit + push the export, but NOT the tag: SPM resolves tags only, so
+      # an untagged commit is invisible to consumers. The tag push is the
+      # release act and lives in the next job, behind the approval environment
+      # on non-dev channels.
+      - name: Commit SwiftPM mirror (no tag)
+        id: mirror-commit
         if: needs.detect.outputs.dry_run != 'true' && steps.swiftpm-tag.outputs.exists != 'true'
         working-directory: mentra-bluetooth-sdk-ios
         run: |
@@ -747,15 +849,49 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add Package.swift README.md LICENSE ios .gitignore
           if git diff --cached --quiet; then
-            echo "SwiftPM export produced no file changes; tagging the current mirror HEAD."
+            echo "SwiftPM export produced no file changes; the tag job will tag the current mirror HEAD."
           else
             git commit -m "Release MentraBluetoothSDK ${{ needs.detect.outputs.version }}" \
               -m "Exported from MentraOS ${source_sha}."
             git push origin HEAD:main
           fi
-          git tag "${{ needs.detect.outputs.swiftpm_tag }}"
-          git push origin "refs/tags/${{ needs.detect.outputs.swiftpm_tag }}"
+          echo "mirror_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
-      - name: Skip SwiftPM release
+      - name: Skip SwiftPM export
         if: steps.swiftpm-tag.outputs.exists == 'true'
-        run: echo "Skipping SwiftPM release because the version tag already exists."
+        run: echo "Skipping SwiftPM export because the version tag already exists."
+
+  ios-swiftpm-tag:
+    name: Tag iOS SwiftPM release
+    needs: [detect, ios-swiftpm]
+    if: needs.detect.outputs.dry_run != 'true' && needs.ios-swiftpm.outputs.tag_exists != 'true' && needs.ios-swiftpm.outputs.mirror_sha != ''
+    runs-on: ubuntu-latest
+    # SPM resolves tags only, so pushing the tag IS the release. On dev the
+    # environment is unprotected and the tag goes straight out; on staging and
+    # main-bluetooth-sdk the approval environment holds this job until a
+    # reviewer approves it in the Actions UI — the SwiftPM equivalent of npm's
+    # staging queue and Sonatype's user_managed deployments. Configure required
+    # reviewers on `bluetooth-sdk-release-approval` (Settings -> Environments);
+    # until that is done the gate is a no-op.
+    environment: ${{ github.ref_name == 'dev' && 'bluetooth-sdk-dev-release' || 'bluetooth-sdk-release-approval' }}
+    steps:
+      - name: Checkout SwiftPM mirror
+        uses: actions/checkout@v4
+        with:
+          repository: Mentra-Community/mentra-bluetooth-sdk-ios
+          token: ${{ secrets.MENTRA_BLUETOOTH_SDK_IOS_PUSH_TOKEN }}
+          fetch-depth: 0
+
+      - name: Tag and push
+        run: |
+          set -euo pipefail
+          mirror_sha="${{ needs.ios-swiftpm.outputs.mirror_sha }}"
+          if ! git cat-file -e "${mirror_sha}^{commit}"; then
+            echo "::error::Exported mirror commit ${mirror_sha} not found — was the mirror force-pushed between export and approval?"
+            exit 1
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "${{ needs.detect.outputs.swiftpm_tag }}" "${mirror_sha}"
+          git push origin "refs/tags/${{ needs.detect.outputs.swiftpm_tag }}"
+          echo "::notice::SwiftPM release ${{ needs.detect.outputs.swiftpm_tag }} is live (tag pushed at ${mirror_sha})."

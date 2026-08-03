@@ -1,39 +1,51 @@
 {
   "mtk_patches": [
     {
-      "start_firmware": "MentraLive_20260418",
-      "end_firmware": "MentraLive_20260525",
-      "url": "https://github.com/Mentra-Community/MentraOS/releases/download/asg-client/mtk_ota_update_20260418_20260525.zip",
-      "sha256": "169e9b94ea4b8ff283dccd2b2db4102966bbb424dc16a188f9ff28dfb202b256"
-    },
-    {
-      "start_firmware": "MentraLive_20260421",
-      "end_firmware": "MentraLive_20260525",
-      "url": "https://github.com/Mentra-Community/MentraOS/releases/download/asg-client/mtk_ota_update_20260421_20260525.zip",
-      "sha256": "07bf1d53f9527a6dc1cb1165d9edd6e3ff8ecb09e9f2f49ff9abdc157774052e"
-    },
-    {
-      "start_firmware": "MentraLive_20260513",
-      "end_firmware": "MentraLive_20260525",
-      "url": "https://github.com/Mentra-Community/MentraOS/releases/download/asg-client/mtk_ota_update_20260513_20260525.zip",
-      "sha256": "f9f5b30ce7cbb335a1f51296d16a33e3f44fc51171eb921304ea90089c493619"
+      "start_firmware": "MentraLive_20260113",
+      "end_firmware": "MentraLive_20260709",
+      "url": "https://github.com/Mentra-Community/MentraOS/releases/download/asg-client/mtk_ota_update_20260113_20260709.zip",
+      "sha256": "cdfef8953f9b4cbac70a108b49e131aba2df092a6b384f0616356611fb772b47"
     },
     {
       "start_firmware": "MentraLive_20260204",
-      "end_firmware": "MentraLive_20260525",
-      "url": "https://github.com/Mentra-Community/MentraOS/releases/download/asg-client/mtk_ota_update_20260204_20260525.zip",
-      "sha256": "6078863f99b28fa7a6a7988e12e001ee6384f928861a3129f50652bec82bbd27"
+      "end_firmware": "MentraLive_20260709",
+      "url": "https://github.com/Mentra-Community/MentraOS/releases/download/asg-client/mtk_ota_update_20260204_20260709.zip",
+      "sha256": "b280ecb480c21bb8f83fbdd40b766ff1a7e234008ae639b9c6bec96bbae1fe8f"
     },
     {
-      "start_firmware": "MentraLive_20260113",
-      "end_firmware": "MentraLive_20260525",
-      "url": "https://github.com/Mentra-Community/MentraOS/releases/download/asg-client/mtk_ota_update_20260113_20260525.zip",
-      "sha256": "23b391985ee5da2ac3ec0adca2186e48bcaf5fa8ea50eb2f90a7145fe8d856a7"
+      "start_firmware": "MentraLive_20260418",
+      "end_firmware": "MentraLive_20260709",
+      "url": "https://github.com/Mentra-Community/MentraOS/releases/download/asg-client/mtk_ota_update_20260418_20260709.zip",
+      "sha256": "f82c55c53dd54ffe1b4885ea002f34bc6f7f96e1c30e8c3d717f438722d6925f"
+    },
+    {
+      "start_firmware": "MentraLive_20260421",
+      "end_firmware": "MentraLive_20260709",
+      "url": "https://github.com/Mentra-Community/MentraOS/releases/download/asg-client/mtk_ota_update_20260421_20260709.zip",
+      "sha256": "e63b01d15141565aed67fd5d4fecc26aeebfcbdcad4366d0e650e06263ba24ca"
+    },
+    {
+      "start_firmware": "MentraLive_20260513",
+      "end_firmware": "MentraLive_20260709",
+      "url": "https://github.com/Mentra-Community/MentraOS/releases/download/asg-client/mtk_ota_update_20260513_20260709.zip",
+      "sha256": "9a1c0f233731e8a6ff6a8c0d484e8ca3398ad2afcc0e658ae1721276399639b7"
+    },
+    {
+      "start_firmware": "MentraLive_20260525",
+      "end_firmware": "MentraLive_20260709",
+      "url": "https://github.com/Mentra-Community/MentraOS/releases/download/asg-client/mtk_ota_update_20260525_20260709.zip",
+      "sha256": "ca688255dd189798bb0ef23e556bb7d897241060d80f438fa1c07f12234c1cbc"
+    },
+    {
+      "start_firmware": "MentraLive_20260626",
+      "end_firmware": "MentraLive_20260709",
+      "url": "https://github.com/Mentra-Community/MentraOS/releases/download/asg-client/mtk_ota_update_20260626_20260709.zip",
+      "sha256": "be75eed47e4eb16644747e7413d132447bcc36e27ac676249d104fa7ed8eba7b"
     }
   ],
   "bes_firmware": {
-    "version": "17.26.05.22",
-    "url": "https://github.com/Mentra-Community/MentraOS/releases/download/asg-client/bes_firmware_17.26.05.22.bin",
-    "sha256": "9499b1d132b934d3564c9dadf166595b4e9729cdf865b4be4e55b1d77cc5fa3c"
+    "version": "26.7.30.4",
+    "url": "https://firmwarecdn.mentraglass.com/bes_firmware_26.7.30.4.bin",
+    "sha256": "9e8d127033d41c4bafad3d9e70a871fe24351c7b315fb341ff97f2e46c00b29c"
   }
 }

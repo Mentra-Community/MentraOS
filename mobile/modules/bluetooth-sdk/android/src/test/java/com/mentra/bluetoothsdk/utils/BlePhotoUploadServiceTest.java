@@ -58,6 +58,15 @@ public class BlePhotoUploadServiceTest {
     }
 
     @Test
+    public void convertToJpeg_passesThroughExistingJpegWithoutReencode() throws Exception {
+        File input = tempFolder.newFile("input.jpg");
+        writeMinimalJpeg(input);
+        byte[] inputBytes = java.nio.file.Files.readAllBytes(input.toPath());
+        byte[] outputBytes = BlePhotoUploadService.convertToJpegPreservingExif(inputBytes);
+        assertThat(outputBytes).isEqualTo(inputBytes);
+    }
+
+    @Test
     public void convertToJpegPreservesUserComment() throws Exception {
         File input = tempFolder.newFile("input.jpg");
         writeMinimalJpeg(input);

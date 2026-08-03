@@ -1,8 +1,4 @@
-import type {
-  ButtonPressData,
-  MiniappSession,
-  TranscriptionData,
-} from "@mentra/miniapp/background"
+import type {ButtonPressData, MiniappSession, TranscriptionData} from "@mentra/miniapp/background"
 
 import type {Channels} from "../../shared/channels"
 
@@ -56,10 +52,7 @@ export class GlassesController {
     const ui = this.session.ui as unknown as {
       send: Send
       onOpen: (cb: () => void) => () => void
-      on: <C extends keyof Channels & string>(
-        channel: C,
-        cb: (p: Channels[C]) => void,
-      ) => () => void
+      on: <C extends keyof Channels & string>(channel: C, cb: (p: Channels[C]) => void) => () => void
     }
 
     // Glasses subscriptions — always on while the session lives.
@@ -67,7 +60,14 @@ export class GlassesController {
       this.session.transcription.on((data: TranscriptionData) => {
         this.liveTranscript = data.text
         if (this.mirrorToGlasses) {
-          this.session.display.showTextWall(data.text)
+          // display.render() replaces the whole frame: one full-canvas text
+          // element whose stable id makes successive transcripts update in
+          // place. Box coordinates are raw device px from capabilities
+          // (host-clamped, so the fallback is safe before "ready").
+          const d = this.session.capabilities?.display
+          void this.session.display.render([
+            {type: "text", id: "mirror", box: {x: 0, y: 0, w: d?.width ?? 576, h: d?.height ?? 288}, text: data.text},
+          ])
         }
         if (data.isFinal && data.text.trim()) {
           this.history.push(data.text.trim())
@@ -124,7 +124,7 @@ export class GlassesController {
       ui.on("captions:clear", () => {
         this.history = []
         this.liveTranscript = ""
-        this.session.display.clear()
+        void this.session.display.render([])
         ui.send("captions:history-update", {history: []})
         ui.send("captions:live-transcript", {text: ""})
       }),

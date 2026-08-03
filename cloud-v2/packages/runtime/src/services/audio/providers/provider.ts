@@ -62,6 +62,14 @@ export interface ProviderOptions {
   scope: string;
   /** Source language (`"auto"` for detection, otherwise BCP-47 code). */
   language: string;
+  /**
+   * Optional detection hints for `language: "auto"` — bare ISO 639-1 codes
+   * ("en", "ja") that bias language identification without pinning it. Ignored
+   * for a specific `language` (the language itself is the hint there). Carries
+   * the miniapp's `transcription.configure({languageHints})` through to the
+   * provider (issue 021).
+   */
+  languageHints?: string[];
   /** Fired when the provider has a transcript event to emit. */
   onTranscript: (event: TranscriptEvent) => void;
   /** Fired on provider-side errors. Worker logs + decides whether to recreate. */

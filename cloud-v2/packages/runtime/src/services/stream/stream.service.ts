@@ -13,7 +13,7 @@
  * Spec: docs/issues/002-cloud-runtime/camera/spec.md ("Managed stream").
  */
 
-import type { ManagedStream, StreamOptions, StreamStatusResult } from "../../protocol/camera";
+import type { ManagedStream, StreamOptions, StreamStatusResult } from "@mentra/cloud-protocol/camera";
 import { createCloudflareStreamProvider } from "./providers/cloudflare-stream.provider";
 
 export interface StreamProvider {

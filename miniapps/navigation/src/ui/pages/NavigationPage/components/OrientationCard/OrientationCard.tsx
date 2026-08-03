@@ -89,7 +89,7 @@ export function OrientationCard({
 
   return (
     <div className="mx-1 mt-2">
-      <div className="[font-synthesis:none] relative flex py-4.5 px-5 gap-4  rounded-[20px] items-center bg-[#FFFFFFC7] border border-solid border-[#FFFFFF99] [backdrop-filter:blur(40px)_saturate(180%)] [box-shadow:#FFFFFF80_0px_1px_0px_inset,#00000029_0px_8px_32px] antialiased ">
+      <div className="[font-synthesis:none] relative flex py-4.5 px-5 gap-4  rounded-[20px] items-center bg-[#FFFFFFC7] dark:bg-[#161619D9] border border-solid border-[#FFFFFF99] dark:border-[#FFFFFF1A] [backdrop-filter:blur(40px)_saturate(180%)] [box-shadow:#FFFFFF80_0px_1px_0px_inset,#00000029_0px_8px_32px] antialiased ">
         <AnimatePresence mode="popLayout" initial={false}>
           <motion.div
             key={icon}
@@ -104,7 +104,7 @@ export function OrientationCard({
 
         <div className="flex flex-col items-start gap-0.5 min-w-0 flex-1">
           {nextRoad ? (
-            <div className="self-stretch text-[#6B6B6B] font-sans text-sm/4.5">{nextRoad}</div>
+            <div className="self-stretch text-[#6B6B6B] dark:text-zinc-400 font-sans text-sm/4.5">{nextRoad}</div>
           ) : null}
           {/* Animate only when the verb changes (e.g. "Turn right" → "Turn left"),
               not on every distance tick. Stripping the trailing "in 500 m" off
@@ -171,7 +171,7 @@ function AutoFitLabel({text}: {text: string}) {
     <div
       ref={ref}
       style={{fontSize: `${fontPx}px`, lineHeight: `${linePx}px`}}
-      className="tracking-[-0.02em] text-[#111111] font-sans font-semibold wrap-break-word">
+      className="tracking-[-0.02em] text-[#111111] dark:text-zinc-50 font-sans font-semibold wrap-break-word">
       {text}
     </div>
   )

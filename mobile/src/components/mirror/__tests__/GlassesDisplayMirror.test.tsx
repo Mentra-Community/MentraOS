@@ -1,7 +1,8 @@
 import {render} from "@testing-library/react-native"
 
+import {engine} from "@mentra/engine"
 import GlassesDisplayMirror from "@/components/mirror/GlassesDisplayMirror"
-import {useDisplayStore} from "@/stores/display"
+import {useDisplayStore} from "@mentra/engine/internal"
 
 jest.mock("react-native-canvas", () => {
   const {createElement, forwardRef} = require("react")
@@ -61,6 +62,12 @@ describe("GlassesDisplayMirror", () => {
       mainEvent: {},
       view: "main",
     })
+    // The mirror reads through engine.display.mirror now; delegate the mocked
+    // facade to the real display store this test seeds via setState().
+    ;(engine.display.mirror.current as jest.Mock).mockImplementation(() => useDisplayStore.getState().currentEvent)
+    ;(engine.display.mirror.onMirror as jest.Mock).mockImplementation((cb: (event: unknown) => void) =>
+      useDisplayStore.subscribe((s) => s.currentEvent, cb),
+    )
   })
 
   it("renders clear_view as an empty mirror instead of an unknown layout error", () => {
@@ -88,5 +95,41 @@ describe("GlassesDisplayMirror", () => {
     const {getByText} = render(<GlassesDisplayMirror />)
 
     expect(getByText("Hello mirror")).toBeTruthy()
+  })
+
+  it("renders positioned text from scene frames", () => {
+    useDisplayStore.setState({
+      currentEvent: {
+        view: "main",
+        layout: {
+          layoutType: "scene",
+          width: 576,
+          height: 288,
+          elements: [
+            {
+              id: "title",
+              type: "text",
+              box: {x: 12, y: 20, w: 300, h: 50},
+              text: "Scene mirror text",
+              change: "created",
+              contentHash: "hash",
+            },
+            {
+              id: "outline",
+              type: "rect",
+              box: {x: 0, y: 0, w: 576, h: 288},
+              style: {border: 2, radius: 4},
+              change: "created",
+              contentHash: "rect-hash",
+            },
+          ],
+        },
+      },
+    })
+
+    const {getByText, queryByText} = render(<GlassesDisplayMirror />)
+
+    expect(getByText("Scene mirror text")).toBeTruthy()
+    expect(queryByText(/Unknown layout type/i)).toBeNull()
   })
 })

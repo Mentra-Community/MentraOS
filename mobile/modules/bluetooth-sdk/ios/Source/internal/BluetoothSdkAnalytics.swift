@@ -39,6 +39,7 @@ final class BluetoothSdkAnalytics {
     private let configuration: BluetoothSdkAnalyticsConfiguration
     private var startedCaptured = false
     private var lastConnected = false
+    private var identifiedCapturedForConnection = false
 
     init(configuration: BluetoothSdkAnalyticsConfiguration) {
         self.configuration = configuration.resolvedForApp()
@@ -47,6 +48,12 @@ final class BluetoothSdkAnalytics {
     func initializeGlassesStatus(_ status: GlassesStatus) {
         stateQueue.sync {
             lastConnected = status.analyticsConnected
+            // Only treat identification as already captured when a valid serial is
+            // present at init. If the glasses are connected but the serial has not
+            // arrived yet (Mentra Live fills it via version_info after connect), leave
+            // this false so the identify event still fires once the serial arrives.
+            identifiedCapturedForConnection =
+                status.analyticsConnected && status.serialNumber.validManufacturingSerial != nil
         }
     }
 
@@ -72,7 +79,12 @@ final class BluetoothSdkAnalytics {
             let wasConnected = lastConnected
             lastConnected = isConnected
             guard configuration.isReady else { return }
+            guard isConnected else {
+                identifiedCapturedForConnection = false
+                return
+            }
             if isConnected, !wasConnected {
+                identifiedCapturedForConnection = false
                 var properties: [String: Any] = [
                     "event_kind": "glasses_connected",
                     "fully_booted": status.fullyBooted,
@@ -81,7 +93,25 @@ final class BluetoothSdkAnalytics {
                     properties["glasses_model"] = status.deviceModel
                 }
                 capture(event: "bluetooth_sdk_glasses_connected", properties: properties, configuration: configuration)
+                // Fall through: a serial already present at connect time (G1/Ar99
+                // report it in the advertisement) should be identified now rather than
+                // waiting for some later, unrelated glasses-store update to run.
             }
+
+            guard !identifiedCapturedForConnection,
+                  let serialNumber = status.serialNumber.validManufacturingSerial
+            else { return }
+            identifiedCapturedForConnection = true
+            var properties: [String: Any] = [
+                "event_kind": "glasses_identified",
+                "fully_booted": status.fullyBooted,
+                "glasses_device_id": serialNumber,
+                "glasses_device_id_type": "manufacturing_serial",
+            ]
+            if !status.deviceModel.isEmpty {
+                properties["glasses_model"] = status.deviceModel
+            }
+            capture(event: "bluetooth_sdk_glasses_identified", properties: properties, configuration: configuration)
         }
     }
 
@@ -116,6 +146,7 @@ final class BluetoothSdkAnalytics {
             "event_source": "mentra_bluetooth_sdk",
             "sdk_platform": "ios",
             "sdk_surface": configuration.surface,
+            "app_identifier": Bundle.main.bundleIdentifier ?? "",
             "app_bundle_identifier": Bundle.main.bundleIdentifier ?? "",
             "os_platform": "ios",
             "os_version": ProcessInfo.processInfo.operatingSystemVersionString,
@@ -145,6 +176,14 @@ final class BluetoothSdkAnalytics {
 private extension GlassesStatus {
     var analyticsConnected: Bool {
         connectionState.isConnected || connected || fullyBooted
+    }
+}
+
+private extension String {
+    var validManufacturingSerial: String? {
+        let normalized = trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty, normalized.contains(where: { $0 != "0" }) else { return nil }
+        return normalized
     }
 }
 

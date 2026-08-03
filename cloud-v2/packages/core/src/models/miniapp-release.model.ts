@@ -1,4 +1,5 @@
-import { Schema, model, type InferSchemaType } from "mongoose";
+import { Schema, type InferSchemaType } from "mongoose";
+import { registerModel } from "./register-model";
 
 export const RELEASE_STATUSES = [
   "draft",
@@ -39,4 +40,4 @@ const MiniAppReleaseSchema = new Schema(
 MiniAppReleaseSchema.index({ miniAppId: 1, version: 1 }, { unique: true });
 
 export type MiniAppRelease = InferSchemaType<typeof MiniAppReleaseSchema>;
-export const MiniAppReleaseModel = model("MiniAppRelease", MiniAppReleaseSchema);
+export const MiniAppReleaseModel = registerModel("MiniAppRelease", MiniAppReleaseSchema);

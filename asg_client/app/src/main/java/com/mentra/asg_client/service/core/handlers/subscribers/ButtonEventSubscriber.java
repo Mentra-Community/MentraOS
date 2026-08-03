@@ -4,6 +4,9 @@ import android.content.Context;
 import android.os.PowerManager;
 import android.util.Log;
 import com.mentra.asg_client.audio.AudioAssets;
+import com.mentra.asg_client.io.bluetooth.interfaces.ICompanionTransport;
+import com.mentra.asg_client.io.bluetooth.managers.K900BluetoothManager;
+import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.LinkStateMachine;
 import com.mentra.asg_client.io.hardware.interfaces.IHardwareManager;
 import com.mentra.asg_client.io.media.core.MediaCaptureService;
 import com.mentra.asg_client.io.peripheral.IPeripheralBus;
@@ -90,29 +93,33 @@ public final class ButtonEventSubscriber implements IPeripheralBus.McuEventListe
         // Check if gallery/camera app is active before capturing
         boolean isSaveInGalleryMode = serviceManager.getAsgSettings().isSaveInGalleryMode();
 
-        // Check if glasses are connected to phone
-        boolean isConnected = serviceManager.isConnected();
+        // BES-reported phone BLE presence replaces the old heartbeat-inferred "connected" flag.
+        // UNKNOWN (old BES firmware, or no signal since the link reset) is treated as no phone:
+        // local capture is the safe default — worst case a duplicate photo, never a lost one.
+        LinkStateMachine.PhonePresence presence = phonePresence();
+        boolean phonePresent = presence == LinkStateMachine.PhonePresence.PRESENT;
 
-        // LOG CONNECTION STATE FOR DEBUGGING
         Log.i(
                 TAG,
                 "📸 Photo capture decision - Gallery Mode: "
                         + (isSaveInGalleryMode ? "ACTIVE" : "INACTIVE")
-                        + ", Connection State: "
-                        + (isConnected ? "CONNECTED" : "DISCONNECTED"));
+                        + ", Phone presence: "
+                        + presence);
 
-        // Skip capture only if: camera app NOT running AND phone IS connected
-        if (!isSaveInGalleryMode && isConnected) {
+        // Skip capture only if: camera app NOT running AND the BES reports a phone present
+        if (!isSaveInGalleryMode && phonePresent) {
             Log.d(
                     TAG,
-                    "📸 Camera app not active and connected to phone - skipping local capture (button press already forwarded to apps)");
+                    "📸 Camera app not active and phone present - skipping local capture (button press already forwarded to apps)");
             return;
         }
 
-        if (!isConnected) {
+        if (!phonePresent) {
             Log.d(
                     TAG,
-                    "📸 Disconnected from phone - proceeding with local capture regardless of gallery mode");
+                    "📸 No phone present ("
+                            + presence
+                            + ") - proceeding with local capture regardless of gallery mode");
         } else {
             Log.d(TAG, "📸 Camera app active - proceeding with local capture");
         }
@@ -189,6 +196,22 @@ public final class ButtonEventSubscriber implements IPeripheralBus.McuEventListe
         }
     }
 
+    /**
+     * BES-reported phone BLE presence from the transport link state machine. {@code UNKNOWN} when
+     * the BES firmware predates sr_phble/phone_ble reporting, when no signal has arrived since
+     * the last link reset, or when the transport is not the K900 UART bridge at all.
+     */
+    private LinkStateMachine.PhonePresence phonePresence() {
+        ICompanionTransport bluetoothManager =
+                serviceManager != null ? serviceManager.getBluetoothManager() : null;
+        if (bluetoothManager instanceof K900BluetoothManager) {
+            return ((K900BluetoothManager) bluetoothManager)
+                    .getLinkStateMachine()
+                    .getPhonePresence();
+        }
+        return LinkStateMachine.PhonePresence.UNKNOWN;
+    }
+
     /** Send button press to phone via Bluetooth */
     private void sendButtonPressToPhone(boolean isLongPress) {
         if (serviceManager != null
@@ -235,8 +258,8 @@ public final class ButtonEventSubscriber implements IPeripheralBus.McuEventListe
                 Log.d(
                         TAG,
                         "🔋 Device is asleep, acquiring short wake lock for battery announcement");
-                WakeLockManager.acquireScreenWakeLock(
-                        context, 5000); // 5 seconds for query + audio
+                WakeLockManager.acquireScreen(
+                        context, WakeLockManager.WakeOwner.BATTERY_ANNOUNCE, 5000); // 5 seconds for query + audio
             }
         }
 

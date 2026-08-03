@@ -12,6 +12,7 @@
     "setup:test": "bun scripts/setup.ts --test",
     "test:down": "docker compose -f docker-compose.test.yml down",
     "dev": "bun scripts/dev.ts",
+    "dev:local": "bash scripts/dev-local.sh",
     "dev:core": "bun --watch packages/core/src/index.ts",
     "dev:runtime": "bun --watch packages/runtime/src/index.ts",
     "dev:proxy": "bun --watch packages/proxy/src/index.ts",

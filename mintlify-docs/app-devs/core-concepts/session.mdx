@@ -18,7 +18,9 @@ registerMiniapp((session) => {
   // session.capabilities – what the connected glasses can do (null until ready)
 
   session.transcription.on((data) => {
-    session.display.showTextWall(data.text);
+    session.display.render([
+      { type: "text", id: "caption", box: { x: 0, y: 0, w: 576, h: 288 }, text: data.text },
+    ]);
   });
 });
 ```
@@ -37,8 +39,7 @@ covered in its own page.
 
 | Module | What it does |
 |---|---|
-| [`session.display`](/app-devs/core-concepts/display/layouts) | Text walls, reference cards, and bitmaps on the glasses HUD. |
-| [`session.canvas`](/app-devs/core-concepts/canvas) | Lower-level positioned text and bitmap drawing. |
+| [`session.display`](/app-devs/core-concepts/display/layouts) | Scenes of positioned text, images, and shapes on the glasses HUD. |
 | [`session.speaker`](/app-devs/core-concepts/speakers/text-to-speech) | Play audio and text-to-speech. |
 | [`session.led`](/app-devs/core-concepts/led/overview) | The LED on supported glasses. |
 
@@ -131,7 +132,9 @@ never manage subscriptions by hand.
 
 ```typescript
 const stop = session.transcription.on((data) => {
-  session.display.showTextWall(data.text);
+  session.display.render([
+    { type: "text", id: "caption", box: { x: 0, y: 0, w: 576, h: 288 }, text: data.text },
+  ]);
 });
 
 stop(); // unsubscribe

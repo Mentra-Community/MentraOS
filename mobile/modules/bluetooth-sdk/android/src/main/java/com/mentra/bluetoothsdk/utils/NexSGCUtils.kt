@@ -15,6 +15,12 @@ import mentraos.ble.MentraosBle.ClearDisplay
 import mentraos.ble.MentraosBle.DisconnectRequest
 import mentraos.ble.MentraosBle.PhoneToGlasses
 import mentraos.ble.MentraosBle.DisplayImage
+import mentraos.ble.MentraosBle.CanvasCreateComponent
+import mentraos.ble.MentraosBle.CanvasUpdateImage
+import mentraos.ble.MentraosBle.CanvasUpdateText
+import mentraos.ble.MentraosBle.CanvasDeleteComponent
+import mentraos.ble.MentraosBle.CanvasClear
+import mentraos.ble.MentraosBle.CanvasComponentType
 import mentraos.ble.MentraosBle.BatteryStateRequest
 import mentraos.ble.MentraosBle.MicStateConfig
 import mentraos.ble.MentraosBle.BrightnessConfig
@@ -60,6 +66,25 @@ object NexProtobufUtils {
     private const val TAG = "NexProtobufUtils"
 
     private const val WHITELIST_CMD: Int = 0x04
+
+    // Characters the Nex font can render: letters, digits, whitespace, and a small
+    // punctuation set. Everything else (CJK, emoji, smart quotes, …) is stripped when
+    // Chinese captions are off. Compiled once — sanitizeDisplayText runs on every
+    // caption update (high frequency), so we don't rebuild it per call.
+    private val UNSUPPORTED_GLYPH_REGEX = Regex("""[^A-Za-z0-9 \r\n.,!?;:\-\[\]\(\)\{\}'"+=/]""")
+
+    /**
+     * Sanitize text bound for the glasses. When Chinese captions are disabled (the
+     * default) the Nex font can't render CJK/emoji/etc., so em-dashes are normalised
+     * to hyphens and any unsupported glyph is dropped. When enabled, text passes
+     * through untouched. Every text path that reaches the display funnels through
+     * here so the filter behaves identically for captions, text walls, and layouts.
+     */
+    private fun sanitizeDisplayText(text: String): String {
+        val chineseCaptionsEnabled = DeviceStore.get("bluetooth", "nex_chinese_captions") as? Boolean ?: false
+        if (chineseCaptionsEnabled) return text
+        return text.replace("—", "-").replace(UNSUPPORTED_GLYPH_REGEX, "")
+    }
 
     /**
      * Maps dashboard depth to the value Nex firmware expects in [DisplayDistanceConfig.distance_cm].
@@ -241,22 +266,97 @@ object NexProtobufUtils {
         return generateProtobufCommandBytes(phoneToGlasses)
     }
 
+    /**
+     * Canvas: create (or replace) a full-screen bitmap component. The firmware infers the bitmap
+     * pool from the id (10..13); we use a single fixed id for the full-screen image. Pixels follow
+     * via [generateCanvasUpdateImageCommandBytes] + the 0xB0 chunk stream.
+     */
+    fun generateCanvasCreateBitmapCommandBytes(id: Int, x: Int, y: Int, width: Int, height: Int): ByteArray {
+        // Negative geometry would serialize as a huge unsigned varint on the
+        // wire — clamp to the drawable range before it reaches the firmware.
+        val create = CanvasCreateComponent.newBuilder()
+            .setId(id)
+            .setType(CanvasComponentType.CANVAS_BITMAP)
+            .setX(x.coerceAtLeast(0))
+            .setY(y.coerceAtLeast(0))
+            .setWidth(width.coerceAtLeast(1))
+            .setHeight(height.coerceAtLeast(1))
+            .build()
+        val phoneToGlasses = PhoneToGlasses.newBuilder()
+            .setCanvasCreateComponent(create)
+            .build()
+        return generateProtobufCommandBytes(phoneToGlasses)
+    }
+
+    /** Canvas: create (or replace) a text component (TEXTBOX). Content follows via CanvasUpdateText. */
+    fun generateCanvasCreateTextboxCommandBytes(
+        id: Int, x: Int, y: Int, width: Int, height: Int, borderWidth: Int, borderRadius: Int
+    ): ByteArray {
+        val create = CanvasCreateComponent.newBuilder()
+            .setId(id)
+            .setType(CanvasComponentType.CANVAS_TEXTBOX)
+            .setX(x)
+            .setY(y)
+            .setWidth(width)
+            .setHeight(height)
+            .setBorderWidth(borderWidth)
+            .setBorderRadius(borderRadius)
+            .build()
+        val phoneToGlasses = PhoneToGlasses.newBuilder()
+            .setCanvasCreateComponent(create)
+            .build()
+        return generateProtobufCommandBytes(phoneToGlasses)
+    }
+
+    /** Canvas: set the text of a TEXTBOX / SCROLL_TEXTBOX component. */
+    fun generateCanvasUpdateTextCommandBytes(id: Int, text: String, scrollOffset: Int = 0): ByteArray {
+        val update = CanvasUpdateText.newBuilder()
+            .setId(id)
+            .setText(sanitizeDisplayText(text))
+            .setScrollOffset(scrollOffset)
+            .build()
+        val phoneToGlasses = PhoneToGlasses.newBuilder()
+            .setCanvasUpdateText(update)
+            .build()
+        return generateProtobufCommandBytes(phoneToGlasses)
+    }
+
+    /** Canvas: delete a single component by id. */
+    fun generateCanvasDeleteComponentCommandBytes(id: Int): ByteArray {
+        val del = CanvasDeleteComponent.newBuilder().setId(id).build()
+        val phoneToGlasses = PhoneToGlasses.newBuilder()
+            .setCanvasDeleteComponent(del)
+            .build()
+        return generateProtobufCommandBytes(phoneToGlasses)
+    }
+
+    /** Canvas: delete all components and exit the canvas view. */
+    fun generateCanvasClearCommandBytes(): ByteArray {
+        val phoneToGlasses = PhoneToGlasses.newBuilder()
+            .setCanvasClear(CanvasClear.newBuilder().build())
+            .build()
+        return generateProtobufCommandBytes(phoneToGlasses)
+    }
+
+    /** Canvas: begin streaming a 1-bit BMP into an existing bitmap component. */
+    fun generateCanvasUpdateImageCommandBytes(id: Int, streamId: String, totalChunks: Int): ByteArray {
+        val update = CanvasUpdateImage.newBuilder()
+            .setId(id)
+            .setStreamId(streamId)
+            .setTotalChunks(totalChunks)
+            .build()
+        val phoneToGlasses = PhoneToGlasses.newBuilder()
+            .setCanvasUpdateImage(update)
+            .build()
+        return generateProtobufCommandBytes(phoneToGlasses)
+    }
+
     fun generateDisplayTextCommandBytes(text: String): ByteArray {
         Bridge.log("Nex: === SENDING TEXT TO GLASSES ===")
         Bridge.log("Nex: Text: \"$text\"")
         Bridge.log("Nex: Text Length: ${text.length} characters")
 
-        // When Chinese captions are disabled (default), strip characters the Nex font
-        // can't render (CJK etc.): replace m-dashes, then keep only the supported ASCII set.
-        val chineseCaptionsEnabled = DeviceStore.get("bluetooth", "nex_chinese_captions") as? Boolean ?: false
-        val displayText = if (chineseCaptionsEnabled) {
-            text
-        } else {
-            text.replace("—", "-").replace(
-                Regex("""[^A-Za-z0-9 \r\n.,!?;:\-\[\]\(\)\{\}'"+=/]"""),
-                ""
-            )
-        }
+        val displayText = sanitizeDisplayText(text)
 
         val textNewBuilder = DisplayText.newBuilder()
             .setColor(10000)

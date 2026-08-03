@@ -10,10 +10,14 @@ React Native apps use the JavaScript package `@mentra/bluetooth-sdk`. The packag
 Expo Go cannot load `@mentra/bluetooth-sdk` because Expo Go does not include the SDK's native modules.
 </Warning>
 
+<Warning>
+SDK `0.1.21-beta.3` requires the matching Mentra Live `0.1.21-beta.3` glasses software. [Update Mentra Live before testing SDK features](/mentra-live/software-update).
+</Warning>
+
 ## Install
 
 ```bash
-bun add @mentra/bluetooth-sdk
+bun add @mentra/bluetooth-sdk@0.1.21-beta.3
 bunx expo install expo-build-properties
 ```
 

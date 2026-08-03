@@ -98,6 +98,8 @@ export interface PhotoRequestToGlasses extends BaseMessage {
   authToken?: string; // Auth token for webhook authentication
   /** Desired capture size to guide device resolution selection */
   size?: "low" | "medium" | "high" | "max";
+  /** Capture mode. Text mode enables on-glasses text ROI cropping. */
+  mode?: "photo" | "text";
   /** Image compression level: none, medium, or heavy */
   compress?: "none" | "medium" | "heavy";
   /** Controls front-facing privacy flash LED. Cloud-controlled based on packageName. */

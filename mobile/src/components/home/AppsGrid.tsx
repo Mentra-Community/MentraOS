@@ -1,5 +1,14 @@
 import {useCallback, useEffect, useMemo, useRef, useState} from "react"
-import {Dimensions, FlatList, LayoutChangeEvent, Platform, Pressable, StyleSheet, TouchableOpacity, View} from "react-native"
+import {
+  Dimensions,
+  FlatList,
+  LayoutChangeEvent,
+  Platform,
+  Pressable,
+  StyleSheet,
+  TouchableOpacity,
+  View,
+} from "react-native"
 import Animated, {
   cancelAnimation,
   Easing,
@@ -15,28 +24,19 @@ import {BlurView} from "expo-blur"
 import {Icon, Text} from "@/components/ignite"
 import AppIcon from "@/components/home/AppIcon"
 import {useAppTheme} from "@/contexts/ThemeContext"
-import {
-  DUMMY_APPLET,
-  getAppsOrder,
-  saveAppsOrder,
-  sortAppsByPackageNamePriority,
-  useAppStatusStore,
-  useStart,
-  useStop,
-  type ClientApp,
-  type OrderMap,
-} from "@mentra/island"
+import {DUMMY_APPLET, HardwareType, getAppsOrder, saveAppsOrder, sortAppsByPackageNamePriority, engine, type ClientApp, type OrderMap, useSetForeground, useStart, useStop} from "@mentra/engine"
 
 import {isOfflineHosted} from "@/components/miniapp/offlineHostedPackages"
 import {SYSTEM_APPS} from "@/constants/miniapps"
 import {useForegroundApps} from "@/hooks/useAppsExtras"
 import {uninstallAppUI} from "@/utils/uninstallAppUI"
 import {askPermissionsUI, checkPermissionsUI} from "@/utils/PermissionsUtils"
-import {SETTINGS, useSetting} from "@/stores/settings"
+import {SETTINGS, useSetting} from "@mentra/engine"
 import {storage} from "@/utils/storage"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import GlassView from "@/components/ui/GlassView"
+import {showAlert} from "@/contexts/ModalContext"
 import {DraggableMasonryList} from "react-native-draggable-masonry"
 
 const GRID_COLUMNS = 4
@@ -68,6 +68,35 @@ interface PopoverPosition {
   y: number
   screenX: number
   screenY: number
+}
+
+async function showCompatibilityAlert(app: ClientApp): Promise<boolean> {
+  if (app.compatibility?.isCompatible !== false) {
+    return false
+  }
+
+  const missingTypes = app.compatibility.missingRequired?.map((req) => req.type) ?? []
+  if (missingTypes.includes(HardwareType.EXIST)) {
+    await showAlert({
+      title: translate("home:glassesRequired"),
+      buttons: [{text: translate("common:ok")}],
+      message: translate("home:glassesRequiredMessage", {app: app.name}),
+    })
+    return true
+  }
+
+  const missingHardware =
+    missingTypes
+      .filter((type) => type !== HardwareType.EXIST)
+      .map((type) => type.toLowerCase())
+      .join(", ") || translate("home:requiredFeatures")
+
+  await showAlert({
+    title: translate("home:hardwareIncompatible"),
+    buttons: [{text: translate("common:ok")}],
+    message: translate("home:hardwareIncompatibleMessage", {app: app.name, missing: missingHardware}),
+  })
+  return true
 }
 
 const AppPopover: React.FC<{
@@ -258,6 +287,7 @@ export function AppsGrid({
 
   const startApplet = useStart()
   const stopApplet = useStop()
+  const setForeground = useSetForeground()
   const apps = useForegroundApps()
 
   const [orderMap, setOrderMap] = useState<OrderMap>({})
@@ -568,10 +598,30 @@ export function AppsGrid({
     [apps, selectedApp],
   )
 
+  const openApp = useCallback(
+    async (app: ClientApp) => {
+      if (await showCompatibilityAlert(app)) return
+
+      const started = app.running || (await startApplet(app, {skipNavigation: true}))
+      if (!started) return
+
+      if (isOfflineHosted(app.packageName) || app.local) {
+        await setForeground(app.packageName)
+      } else if (app.offlineRoute) {
+        push(app.offlineRoute, {transition: "fade"})
+      }
+      // (Cloud V1 apps opened /applet/webview here; removed with Cloud V1 app
+      // end-of-life. Installed apps are local/offline-hosted.)
+
+      onOpenApp?.(app)
+    },
+    [onOpenApp, push, setForeground, startApplet],
+  )
+
   const placeAppOnHome = useCallback(
     (app: ClientApp) => {
       const packageName = app.packageName
-      useAppStatusStore.getState().setHiddenStatus(packageName, false)
+      engine.miniapps.setHiddenStatus(packageName, false)
 
       const latestOrder = getAppsOrder()
       const currentOrder = latestOrder.is_ok() ? latestOrder.value : orderMap
@@ -608,10 +658,7 @@ export function AppsGrid({
           icon: "play",
           onPress: () => {
             if (liveSelectedApp) {
-              startApplet(liveSelectedApp, {skipNavigation: true})
-              if (onOpenApp) {
-                onOpenApp?.(liveSelectedApp)
-              }
+              void openApp(liveSelectedApp)
             }
           },
         },
@@ -640,8 +687,8 @@ export function AppsGrid({
           icon: "circle-minus",
           onPress: () => {
             if (liveSelectedApp) {
-              useAppStatusStore.getState().setHiddenStatus(liveSelectedApp.packageName, true)
-              // useAppStatusStore.getState().refreshApplets()
+              engine.miniapps.setHiddenStatus(liveSelectedApp.packageName, true)
+              // engine.miniapps.refresh()
             }
           },
         },
@@ -665,54 +712,31 @@ export function AppsGrid({
           },
         },
       ].filter(Boolean) as PopoverAction[],
-    [liveSelectedApp, startApplet, stopApplet, showAllApps, placeAppOnHome, push, onOpenApp],
+    [liveSelectedApp, openApp, stopApplet, showAllApps, placeAppOnHome, push],
   )
 
-  const handlePress = async (app: ClientApp) => {
-    if (app.packageName.includes("@empty")) return // ignore dummy apps
+  const handlePress = useCallback(
+    async (app: ClientApp) => {
+      if (app.packageName.includes("@empty")) return // ignore dummy apps
+      if (await showCompatibilityAlert(app)) return
 
-    // Hardware-incompatible apps must not foreground the overlay or prompt for
-    // permissions — startApplet's beforeStart gate shows the incompatible alert
-    // and rejects the launch. Foregrounding first would open the miniapp
-    // WebView underneath that alert (same predicate as the beforeStart gate).
-    if (!app.compatibility?.isCompatible) {
-      startApplet(app)
-      return
-    }
-
-    // Overlay-hosted app types (local miniapps + offline-hosted built-ins) get
-    // their splash painted by foregrounding the Compositor overlay. Other types
-    // navigate via routes inside startApplet, so we leave their flow untouched.
-    const overlayForegrounded = app.local || isOfflineHosted(app.packageName)
-
-    // Check permissions FIRST so we never show the splash (or load the miniapp)
-    // underneath a permission prompt. When nothing needs granting — the common
-    // case — this resolves fast and we foreground immediately for an instant,
-    // responsive splash. Only when a permission is actually missing do we hold
-    // off: run the prompt with NO splash behind it, and foreground only after
-    // the user grants.
-    const neededPermissions = await checkPermissionsUI(app)
-
-    if (neededPermissions.length === 0) {
-      // Paint the splash the instant we know no prompt is needed.
-      if (overlayForegrounded) {
-        useAppStatusStore.getState().setForeground(app.packageName)
+      // Overlay-hosted app types (local miniapps + offline-hosted built-ins) get
+      // their splash painted by foregrounding the Compositor overlay. Check
+      // permissions first so that splash never sits behind a permission prompt.
+      const overlayForegrounded = app.local || isOfflineHosted(app.packageName)
+      const neededPermissions = await checkPermissionsUI(app)
+      if (neededPermissions.length > 0) {
+        const result = await askPermissionsUI(app, theme)
+        if (result !== 1) return
       }
-    } else {
-      // Permissions missing — prompt FIRST, no overlay behind it.
-      const result = await askPermissionsUI(app, theme)
-      if (result !== 1) return // denied / cancelled — nothing launched, nothing to tear down
-      // Granted: now foreground (splash) and launch.
-      if (overlayForegrounded) {
-        useAppStatusStore.getState().setForeground(app.packageName)
-      }
-    }
 
-    startApplet(app)
-    if (onOpenApp) {
-      onOpenApp?.(app)
-    }
-  }
+      if (overlayForegrounded) {
+        await setForeground(app.packageName)
+      }
+      await openApp(app)
+    },
+    [openApp, setForeground, theme],
+  )
 
   const showPopover = useCallback(
     (key: string) => {
@@ -839,7 +863,7 @@ export function AppsGrid({
         </TouchableOpacity>
       )
     },
-    [themed, theme, startApplet],
+    [handlePress, showAllApps, showPopover],
   )
 
   // Non-gated path (home grid): unchanged — plain skeleton while showPlaceholders,

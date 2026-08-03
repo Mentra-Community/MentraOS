@@ -26,7 +26,7 @@
  */
 
 import { getRedis } from "../../clients/redis.client";
-import type { AudioSubscription } from "../../protocol/audio";
+import type { AudioSubscription } from "@mentra/cloud-protocol/audio";
 
 /**
  * Subscription key TTL. Refreshed by the owner while the session is live and

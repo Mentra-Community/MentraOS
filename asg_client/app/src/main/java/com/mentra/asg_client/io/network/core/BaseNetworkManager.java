@@ -12,7 +12,9 @@ import android.net.wifi.ScanResult;
 import android.net.wifi.WifiManager;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.util.Log;
+import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.NetworkUtils;
 import com.mentra.asg_client.io.network.interfaces.INetworkController;
 import com.mentra.asg_client.io.network.interfaces.IWifiScanCallback;
@@ -23,6 +25,7 @@ import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Base implementation of the INetworkManager interface. Provides common functionality for all
@@ -44,6 +47,7 @@ public abstract class BaseNetworkManager implements INetworkController {
     protected boolean isHotspotEnabled = false;
     protected String currentHotspotSsid = "";
     protected String currentHotspotPassword = "";
+    protected String currentHotspotGatewayIp = AsgConstants.DEFAULT_HOTSPOT_GATEWAY_IP;
 
     // Device-persistent hotspot credentials
     private String deviceHotspotSsid = null;
@@ -53,9 +57,7 @@ public abstract class BaseNetworkManager implements INetworkController {
     private BroadcastReceiver tetheringStateReceiver;
 
     // HTTP activity tracking for auto-disconnect
-    private long lastHttpActivityTime = 0;
-    private static final long HOTSPOT_INACTIVITY_TIMEOUT_MS =
-            120000; // 120 seconds - increased from 40s to allow time for iOS WiFi connection
+    private final AtomicLong lastHttpActivityTime = new AtomicLong(0L);
     private Handler inactivityCheckHandler;
     private Runnable inactivityCheckRunnable;
 
@@ -287,8 +289,14 @@ public abstract class BaseNetworkManager implements INetworkController {
         Log.d(TAG, "Initializing BaseNetworkManager");
         Log.d(TAG, "Device hotspot SSID: " + deviceHotspotSsid);
 
-        // Register tethering state broadcast receiver
-        registerTetheringStateReceiver();
+        if (shouldMonitorTetheringBroadcasts()) {
+            registerTetheringStateReceiver();
+        }
+    }
+
+    /** Whether this manager uses Android's tethering broadcasts for hotspot lifecycle state. */
+    protected boolean shouldMonitorTetheringBroadcasts() {
+        return true;
     }
 
     @Override
@@ -791,22 +799,51 @@ public abstract class BaseNetworkManager implements INetworkController {
      */
     @Override
     public String getHotspotGatewayIp() {
-        // Standard Android hotspot gateway IP
-        return "192.168.43.1";
+        return currentHotspotGatewayIp;
     }
 
     /** Update hotspot state - to be called by subclasses when hotspot state changes */
     protected void updateHotspotState(boolean enabled, String ssid, String password) {
+        updateHotspotState(enabled, ssid, password, AsgConstants.DEFAULT_HOTSPOT_GATEWAY_IP);
+    }
+
+    /** Update hotspot state including the gateway advertised to the paired phone. */
+    protected void updateHotspotState(
+            boolean enabled, String ssid, String password, String gatewayIp) {
         this.isHotspotEnabled = enabled;
         this.currentHotspotSsid = ssid != null ? ssid : "";
         this.currentHotspotPassword = password != null ? password : "";
+        this.currentHotspotGatewayIp =
+                gatewayIp != null && !gatewayIp.isEmpty()
+                        ? gatewayIp
+                        : AsgConstants.DEFAULT_HOTSPOT_GATEWAY_IP;
 
         Log.d(TAG, "Hotspot state updated: enabled=" + enabled + ", ssid=" + ssid);
     }
 
     /** Clear hotspot state - to be called by subclasses on shutdown or error */
     protected void clearHotspotState() {
-        updateHotspotState(false, "", "");
+        updateHotspotState(false, "", "", AsgConstants.DEFAULT_HOTSPOT_GATEWAY_IP);
+    }
+
+    /** Mark a hotspot ready and begin the shared idle policy. */
+    protected final void onHotspotStarted(String ssid, String password, String gatewayIp) {
+        boolean wasEnabled = isHotspotEnabled;
+        updateHotspotState(true, ssid, password, gatewayIp);
+        startInactivityMonitoring();
+        if (!wasEnabled) {
+            notifyHotspotStateChanged(true);
+        }
+    }
+
+    /** Mark a hotspot stopped and cancel the shared idle policy. */
+    protected final void onHotspotStopped() {
+        boolean wasEnabled = isHotspotEnabled;
+        stopInactivityMonitoring();
+        clearHotspotState();
+        if (wasEnabled) {
+            notifyHotspotStateChanged(false);
+        }
     }
 
     /** Register broadcast receiver for tethering state changes */
@@ -860,7 +897,7 @@ public abstract class BaseNetworkManager implements INetworkController {
     }
 
     /** Check if WiFi tethering is currently active */
-    private boolean isWifiTetheringActive() {
+    protected boolean isWifiTetheringActive() {
         try {
             ConnectivityManager cm =
                     (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
@@ -893,10 +930,7 @@ public abstract class BaseNetworkManager implements INetworkController {
         }
     }
 
-    /**
-     * Refresh hotspot credentials - to be overridden by subclasses K900 will read from
-     * Settings.Global, others use device credentials
-     */
+    /** Refresh tethered-hotspot credentials for managers that use the base broadcast path. */
     protected void refreshHotspotCredentials() {
         // Default implementation for non-K900 devices
         String ssid = getDeviceHotspotSsid();
@@ -907,12 +941,12 @@ public abstract class BaseNetworkManager implements INetworkController {
 
     /** Update HTTP activity timestamp */
     public void updateHttpActivity() {
-        lastHttpActivityTime = System.currentTimeMillis();
+        lastHttpActivityTime.set(SystemClock.elapsedRealtime());
         Log.d(TAG, "📡 HTTP activity detected, updating timestamp");
     }
 
     /** Start monitoring for hotspot inactivity */
-    private void startInactivityMonitoring() {
+    protected final void startInactivityMonitoring() {
         stopInactivityMonitoring(); // Clear any existing monitoring
 
         inactivityCheckRunnable =
@@ -923,11 +957,12 @@ public abstract class BaseNetworkManager implements INetworkController {
                             return; // Hotspot already disabled
                         }
 
-                        long currentTime = System.currentTimeMillis();
-                        long timeSinceLastActivity = currentTime - lastHttpActivityTime;
+                        long currentTime = SystemClock.elapsedRealtime();
+                        long lastActivity = lastHttpActivityTime.get();
+                        long timeSinceLastActivity = currentTime - lastActivity;
 
-                        if (lastHttpActivityTime > 0
-                                && timeSinceLastActivity > HOTSPOT_INACTIVITY_TIMEOUT_MS) {
+                        if (timeSinceLastActivity
+                                > AsgConstants.HOTSPOT_INACTIVITY_TIMEOUT_MS) {
                             Log.i(
                                     TAG,
                                     "🔥 Hotspot inactive for "
@@ -936,25 +971,27 @@ public abstract class BaseNetworkManager implements INetworkController {
                             stopHotspot();
                         } else {
                             // Schedule next check in 10 seconds
-                            inactivityCheckHandler.postDelayed(this, 10000);
+                            inactivityCheckHandler.postDelayed(
+                                    this, AsgConstants.HOTSPOT_INACTIVITY_CHECK_INTERVAL_MS);
                         }
                     }
                 };
 
         // Reset activity time when starting
-        lastHttpActivityTime = System.currentTimeMillis();
+        lastHttpActivityTime.set(SystemClock.elapsedRealtime());
 
         // Start checking after initial timeout period
-        inactivityCheckHandler.postDelayed(inactivityCheckRunnable, HOTSPOT_INACTIVITY_TIMEOUT_MS);
+        inactivityCheckHandler.postDelayed(
+                inactivityCheckRunnable, AsgConstants.HOTSPOT_INACTIVITY_TIMEOUT_MS);
         Log.d(TAG, "📡 Started hotspot inactivity monitoring");
     }
 
     /** Stop monitoring for hotspot inactivity */
-    private void stopInactivityMonitoring() {
+    protected final void stopInactivityMonitoring() {
         if (inactivityCheckRunnable != null) {
             inactivityCheckHandler.removeCallbacks(inactivityCheckRunnable);
             inactivityCheckRunnable = null;
-            lastHttpActivityTime = 0;
+            lastHttpActivityTime.set(0L);
             Log.d(TAG, "📡 Stopped hotspot inactivity monitoring");
         }
     }

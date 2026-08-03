@@ -1,7 +1,9 @@
 package com.mentra.crust
 
+import android.content.BroadcastReceiver
 import android.util.Log
 import com.mentra.crust.services.NotificationListener
+import com.mentra.crust.services.NotificationProcessBridge
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import java.net.URL
@@ -19,34 +21,33 @@ class CrustModule : Module() {
     @Volatile private var eventEmitter: ((String, Map<String, Any>) -> Unit)? = null
 
     fun emitPhoneNotification(
+            context: android.content.Context,
             notificationKey: String,
             packageName: String,
             appName: String,
             title: String,
             text: String,
             timestamp: Long,
+            priority: Int,
     ) {
-      val data =
-              mapOf(
-                      "notificationId" to "$packageName-$notificationKey",
-                      "app" to appName,
-                      "title" to title.ifEmpty { appName },
-                      "content" to text,
-                      "priority" to "normal",
-                      "timestamp" to timestamp,
-                      "packageName" to packageName,
-              )
-      emitEvent("phone_notification", data)
+      NotificationProcessBridge.emitPosted(
+        context,
+        notificationKey,
+        packageName,
+        appName,
+        title,
+        text,
+        timestamp,
+        priority,
+      )
     }
 
-    fun emitPhoneNotificationDismissed(notificationKey: String, packageName: String) {
-      val data =
-              mapOf(
-                      "notificationId" to "$packageName-$notificationKey",
-                      "notificationKey" to notificationKey,
-                      "packageName" to packageName,
-              )
-      emitEvent("phone_notification_dismissed", data)
+    fun emitPhoneNotificationDismissed(
+      context: android.content.Context,
+      notificationKey: String,
+      packageName: String,
+    ) {
+      NotificationProcessBridge.emitDismissed(context, notificationKey, packageName)
     }
 
     fun emitCaptionsTesterIncident(data: Map<String, Any>) {
@@ -75,6 +76,23 @@ class CrustModule : Module() {
   // __dispatch from a per-miniapp QuickJS context (SUBSCRIBE, mic, location,
   // display, send, etc.) would be silently dropped on Android.
   @Volatile private var runtimeInstalled: Boolean = false
+  private var notificationEventReceiver: BroadcastReceiver? = null
+  private var notificationBridgeContext: android.content.Context? = null
+
+  private fun registerNotificationBridgeIfPossible(): Boolean {
+    if (notificationEventReceiver != null) return true
+    val context = appContext.reactContext ?: appContext.currentActivity ?: return false
+    val applicationContext = context.applicationContext
+    notificationEventReceiver =
+      NotificationProcessBridge.register(applicationContext) { eventName, data ->
+        emitEvent(eventName, data)
+      }
+    // Keep the exact long-lived context used to register the receiver. Expo may
+    // clear reactContext/currentActivity before OnDestroy, but Android still
+    // requires this receiver to be unregistered when the module is recreated.
+    notificationBridgeContext = applicationContext
+    return true
+  }
 
   private fun installRuntimeIfPossible(reason: String): Boolean {
     if (runtimeInstalled) return true
@@ -118,7 +136,19 @@ class CrustModule : Module() {
 
     OnCreate {
       eventEmitter = { eventName, data -> sendEvent(eventName, data) }
+      registerNotificationBridgeIfPossible()
       installRuntimeIfPossible("OnCreate")
+    }
+
+    OnDestroy {
+      val context = notificationBridgeContext
+      val receiver = notificationEventReceiver
+      if (context != null && receiver != null) {
+        NotificationProcessBridge.unregister(context, receiver)
+      }
+      notificationEventReceiver = null
+      notificationBridgeContext = null
+      eventEmitter = null
     }
 
     Function("hello") {
@@ -127,6 +157,17 @@ class CrustModule : Module() {
 
     AsyncFunction("setValueAsync") { value: String ->
       sendEvent("onChange", mapOf("value" to value))
+    }
+
+    AsyncFunction("nativeHttpRequest") {
+      method: String, url: String, headers: Map<String, String>, body: String? ->
+      val result = JSCPolyfillBridge.executeHttp(method, url, headers, body)
+      mapOf(
+        "status" to result.status,
+        "statusText" to result.statusText,
+        "headers" to result.headers,
+        "body" to result.body,
+      )
     }
 
     Function("showAVRoutePicker") { _: String? ->
@@ -141,12 +182,18 @@ class CrustModule : Module() {
 
     // MARK: - MentraOS Notification Commands
 
-    AsyncFunction("setNotificationConfig") { enabled: Boolean, blocklist: List<String> ->
+    AsyncFunction("setNotificationConfig") {
+      listenerEnabled: Boolean, blocklist: List<String> ->
+      registerNotificationBridgeIfPossible()
       val context =
               appContext.reactContext
                       ?: appContext.currentActivity
                               ?: throw IllegalStateException("No context available")
-      NotificationListener.getInstance(context).setNotificationConfig(enabled, blocklist)
+      NotificationListener.setNotificationConfig(
+        context,
+        listenerEnabled,
+        blocklist,
+      )
     }
 
     AsyncFunction("getInstalledApps") {
@@ -154,7 +201,7 @@ class CrustModule : Module() {
               appContext.reactContext
                       ?: appContext.currentActivity
                               ?: throw IllegalStateException("No context available")
-      NotificationListener.getInstance(context).getInstalledApps()
+      NotificationListener.getInstalledApps(context)
     }
 
     AsyncFunction("getInstalledAppsForNotifications") {
@@ -162,7 +209,7 @@ class CrustModule : Module() {
               appContext.reactContext
                       ?: appContext.currentActivity
                               ?: throw IllegalStateException("No context available")
-      NotificationListener.getInstance(context).getInstalledApps()
+      NotificationListener.getInstalledApps(context)
     }
 
     AsyncFunction("hasNotificationListenerPermission") {
@@ -170,7 +217,15 @@ class CrustModule : Module() {
               appContext.reactContext
                       ?: appContext.currentActivity
                               ?: throw IllegalStateException("No context available")
-      NotificationListener.getInstance(context).hasNotificationListenerPermission()
+      NotificationListener.hasNotificationListenerPermission(context)
+    }
+
+    AsyncFunction("refreshNotificationListener") {
+      val context =
+              appContext.reactContext
+                      ?: appContext.currentActivity
+                              ?: throw IllegalStateException("No context available")
+      NotificationListener.refreshComponentForPermission(context)
     }
 
     AsyncFunction("openNotificationListenerSettings") {
@@ -178,7 +233,7 @@ class CrustModule : Module() {
               appContext.reactContext
                       ?: appContext.currentActivity
                               ?: throw IllegalStateException("No context available")
-      NotificationListener.getInstance(context).openNotificationListenerSettings()
+      NotificationListener.openNotificationListenerSettings(context)
       true
     }
 
@@ -575,6 +630,55 @@ class CrustModule : Module() {
                           }
                         }
 
+        val relativePath =
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                  if (isVideo) "Movies/Mentra" else "Pictures/Mentra"
+                } else {
+                  null
+                }
+        val resolver = context.contentResolver
+        val stableDisplayName =
+                mediaDisplayName.takeIf {
+                  it.startsWith("IMG_") || it.startsWith("VID_")
+                }
+        val existingUri =
+                stableDisplayName?.let {
+                  findExistingGalleryAsset(
+                          resolver,
+                          collection,
+                          listOf(it),
+                          file.length(),
+                          captureTimeMillis,
+                          relativePath,
+                          context.packageName,
+                          requireUniqueMatch = false,
+                  )
+                }
+                        ?: findExistingGalleryAsset(
+                                resolver,
+                                collection,
+                                listOfNotNull(
+                                                mediaDisplayName.takeIf { stableDisplayName == null },
+                                                file.name.takeIf {
+                                                  it.isNotBlank() && it != stableDisplayName
+                                                },
+                                        )
+                                        .distinct(),
+                                file.length(),
+                                captureTimeMillis,
+                                relativePath,
+                                context.packageName,
+                                requireUniqueMatch = true,
+                        )
+        if (existingUri != null) {
+          android.util.Log.d("CrustModule", "Reusing existing gallery asset")
+          return@AsyncFunction mapOf(
+                  "success" to true,
+                  "uri" to existingUri.toString(),
+                  "existing" to true,
+          )
+        }
+
         val values =
                 android.content.ContentValues().apply {
                   put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, mediaDisplayName)
@@ -593,19 +697,12 @@ class CrustModule : Module() {
                     )
                   }
 
-                  if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
-                    val relativePath =
-                            if (isVideo) {
-                              "Movies/Mentra"
-                            } else {
-                              "Pictures/Mentra"
-                            }
+                  if (relativePath != null) {
                     put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, relativePath)
                     put(android.provider.MediaStore.MediaColumns.IS_PENDING, 1)
                   }
                 }
 
-        val resolver = context.contentResolver
         val uri =
                 resolver.insert(collection, values)
                         ?: throw IllegalStateException("Failed to create MediaStore entry")
@@ -877,6 +974,113 @@ class CrustModule : Module() {
     AsyncFunction("stopHeading") {
       HeadingManager.stop()
       mapOf("ok" to true)
+    }
+  }
+
+  /**
+   * Find a completed export from a previous attempt. A crash can happen after MediaStore commits
+   * but before JavaScript persists the URI receipt; the stable capture display name, size, and
+   * capture time, and Mentra album path let the retry return that receipt instead of inserting a
+   * duplicate. Scoping by album is also important before deleting interrupted pending rows: a
+   * same-named asset owned by another album must never be treated as ours.
+   */
+  private fun findExistingGalleryAsset(
+          resolver: android.content.ContentResolver,
+          collection: android.net.Uri,
+          displayNames: List<String>,
+          size: Long,
+          captureTimeMillis: Long?,
+          relativePath: String?,
+          ownerPackageName: String,
+          requireUniqueMatch: Boolean,
+  ): android.net.Uri? {
+    val dateColumn = android.provider.MediaStore.Images.ImageColumns.DATE_TAKEN
+    if (displayNames.isEmpty()) return null
+    val namePlaceholders = displayNames.joinToString(",") { "?" }
+    val selectionParts =
+            mutableListOf(
+                    "${android.provider.MediaStore.MediaColumns.DISPLAY_NAME} IN ($namePlaceholders)",
+            )
+    val selectionArgs = displayNames.toMutableList()
+    if (captureTimeMillis != null) {
+      selectionParts.add("$dateColumn = ?")
+      selectionArgs.add(captureTimeMillis.toString())
+    }
+    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q &&
+                    relativePath != null
+    ) {
+      val pathWithoutTrailingSlash = relativePath.trimEnd('/')
+      selectionParts.add(
+              "(${android.provider.MediaStore.MediaColumns.RELATIVE_PATH} = ? OR " +
+                      "${android.provider.MediaStore.MediaColumns.RELATIVE_PATH} = ?)"
+      )
+      // MediaProvider normally canonicalizes RELATIVE_PATH with a trailing slash. Accept the
+      // caller's original representation too so exports created by older Android builds remain
+      // reconcilable, while still requiring an exact Mentra album match.
+      selectionArgs.add(pathWithoutTrailingSlash)
+      selectionArgs.add("$pathWithoutTrailingSlash/")
+      // Never reconcile or delete another application's pending MediaStore row.
+      selectionParts.add("${android.provider.MediaStore.MediaColumns.OWNER_PACKAGE_NAME} = ?")
+      selectionArgs.add(ownerPackageName)
+    }
+    val projection =
+            mutableListOf(
+                            android.provider.BaseColumns._ID,
+                            android.provider.MediaStore.MediaColumns.SIZE,
+                    )
+                    .apply {
+              if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                add(android.provider.MediaStore.MediaColumns.IS_PENDING)
+              }
+            }
+
+    return try {
+      resolver
+              .query(
+                      collection,
+                      projection.toTypedArray(),
+                      selectionParts.joinToString(" AND "),
+                      selectionArgs.toTypedArray(),
+                      "${android.provider.BaseColumns._ID} DESC",
+              )
+              ?.use { cursor ->
+                val candidates = mutableListOf<android.net.Uri>()
+                val idColumn = cursor.getColumnIndexOrThrow(android.provider.BaseColumns._ID)
+                val sizeColumn =
+                        cursor.getColumnIndexOrThrow(android.provider.MediaStore.MediaColumns.SIZE)
+                val pendingColumn =
+                        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                          cursor.getColumnIndex(android.provider.MediaStore.MediaColumns.IS_PENDING)
+                        } else {
+                          -1
+                        }
+                while (cursor.moveToNext()) {
+                  val uri =
+                          android.content.ContentUris.withAppendedId(
+                                  collection,
+                                  cursor.getLong(idColumn),
+                          )
+                  if (pendingColumn >= 0 && cursor.getInt(pendingColumn) != 0) {
+                    // This app owns the row and it was never published. Remove the interrupted
+                    // placeholder before retrying the copy, even if it contains only a prefix.
+                    resolver.delete(uri, null, null)
+                    continue
+                  }
+                  if (cursor.getLong(sizeColumn) == size) candidates.add(uri)
+                }
+                if (requireUniqueMatch) {
+                  // A legacy `base.jpg`/`base.mp4` match is safe only when the complete
+                  // name/date/size/path/owner fingerprint identifies exactly one asset.
+                  candidates.singleOrNull()
+                } else {
+                  // Capture-derived display names are stable. If an older retry already made
+                  // duplicates, reuse the newest completed row instead of creating another.
+                  candidates.firstOrNull()
+                }
+              }
+    } catch (error: Exception) {
+      android.util.Log.w("CrustModule", "Unable to reconcile existing gallery asset", error)
+      null
     }
   }
 }

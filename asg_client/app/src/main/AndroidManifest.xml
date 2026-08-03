@@ -123,6 +123,7 @@
             <intent-filter>
                 <action android:name="com.mentra.recovery.ACTION_PING" />
                 <action android:name="com.mentra.asg_client.ACTION_HEARTBEAT" />
+                <action android:name="com.mentra.recovery.ACTION_DOWNGRADE_HANDOFF_RESULT" />
             </intent-filter>
         </receiver>
 

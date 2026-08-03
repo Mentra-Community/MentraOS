@@ -63,7 +63,7 @@ miniapp SDK (display.*/canvas.*)
 | Partial update | ✗ | ✗ | ✓ update text/image in place | ✗ (full frame resend) | ✓ (OEM spec: retained ids + `update` + atomic `commit`) |
 | Unused headroom | — | — | firmware **ListContainer** (scrollable selectable menus + selection events) — unexposed | — | we control the spec |
 
-Sources: G2 = `mobile/modules/bluetooth-sdk/ios/Source/sgcs/G2.swift` + `local/g2_re/ae_g2_rev/proto/.../EvenHub.proto`; NIMO = `local/NIMO/Mentra接入Nimo智能眼镜-动态创建UI布局接入指导.pdf` (dynamic-UI protocol, app id 253) + `local/NIMO/current_nimo_sdk/docs/protocol/`; Nex target = `docs/glasses-oems/firmware-spec.md`.
+Sources: G2 = `mobile/modules/bluetooth-sdk/ios/Source/sgcs/G2.swift` + `local/g2_re/ae_g2_rev/proto/.../EvenHub.proto`; NIMO = `local/NIMO/Mentra接入Nimo智能眼镜-动态创建UI布局接入指导.pdf` (dynamic-UI protocol, app id 253) + `local/NIMO/current_nimo_sdk/docs/protocol/`; Nex target = `mintlify-docs/glasses-oems/firmware-spec.mdx`.
 
 ### 2.1 NIMO dynamic-UI protocol (the new PDF, summarized)
 
@@ -80,7 +80,7 @@ NIMO also has a legacy fixed-widget model (dashboard/nav/translate/teleprompter 
 
 ### 2.2 The convergence
 
-G2 (retained containers), NIMO (immediate draw list), and our own OEM Display Protocol spec (`docs/glasses-oems/firmware-spec.md` — immediate draws + optional retained ids + atomic commit) all describe the same thing: **a monochrome frame of positioned text boxes and images, plus simple shapes on 2 of 3.** G2 is the only one missing shapes, and its bordered containers cover rects. NIMO's protocol is nearly a strict subset of the OEM spec.
+G2 (retained containers), NIMO (immediate draw list), and our own OEM Display Protocol spec (`mintlify-docs/glasses-oems/firmware-spec.mdx` — immediate draws + optional retained ids + atomic commit) all describe the same thing: **a monochrome frame of positioned text boxes and images, plus simple shapes on 2 of 3.** G2 is the only one missing shapes, and its bordered containers cover rects. NIMO's protocol is nearly a strict subset of the OEM spec.
 
 Differences to bridge:
 
@@ -119,7 +119,7 @@ const result = await session.display.render([
 
 ### 3.2 Host-side IR: the OEM Display Protocol DrawOp list
 
-Make the internal contract literally the `DrawOp` frame from `docs/glasses-oems/firmware-spec.md:284-302` (draw ops + optional retained ids + atomic commit). One IR, N backends:
+Make the internal contract literally the `DrawOp` frame from `mintlify-docs/glasses-oems/firmware-spec.mdx:290-308` (draw ops + optional retained ids + atomic commit). One IR, N backends:
 
 ```
 SDK scene ──compile──▶ DrawOp frame ──┬─▶ Nex / future OEMs: passthrough (draw_* + commit; retained ids + update)
@@ -259,13 +259,13 @@ Context: few users, dwindling over time — don't over-optimize, but nothing may
 | Concern | Files |
 |---|---|
 | SDK display surface | `mobile/modules/miniapp/src/modules/display.ts`, `canvas.ts`, `dashboard.ts`, `protocol.ts` |
-| Host runtime + arbitration | `mobile/modules/island/src/services/LocalMiniappRuntime.ts`, `LocalDisplayManager.ts` |
-| Text adaptation | `mobile/modules/island/src/services/DisplayProcessor.ts`, `mobile/modules/island/src/utils/display/` (mirrors `cloud/packages/display-utils/`) |
+| Host runtime + arbitration | `mobile/modules/engine/src/services/LocalMiniappRuntime.ts`, `LocalDisplayManager.ts` |
+| Text adaptation | `mobile/modules/engine/src/services/DisplayProcessor.ts`, `mobile/modules/engine/src/utils/display/` (mirrors `cloud/packages/display-utils/`) |
 | Native dispatch | `mobile/modules/bluetooth-sdk/ios/Source/DeviceManager.swift`, `.../android/.../DeviceManager.kt` |
 | SGC verb protocol | `mobile/modules/bluetooth-sdk/ios/Source/sgcs/SGCManager.swift` (+ `.kt`) |
 | Per-device drivers | `sgcs/G1.swift`, `G2.swift`, `MentraNex.swift`, `Nimo.swift`, `Mach1.swift`, `MentraLive.swift` (+ Android `.kt` mirrors) |
 | Capabilities | `cloud/packages/types/src/hardware.ts`, `cloud/packages/types/src/capabilities/*.ts` (duplicated in `cloud/packages/cloud/src/config/capabilities/`) |
-| OEM display spec (IR source) | `docs/glasses-oems/firmware-spec.md` |
+| OEM display spec (IR source) | `mintlify-docs/glasses-oems/firmware-spec.mdx` |
 | NIMO dynamic-UI protocol | `local/NIMO/Mentra接入Nimo智能眼镜-动态创建UI布局接入指导.pdf`, `local/NIMO/current_nimo_sdk/docs/protocol/` |
 | G2 firmware ground truth | `local/g2_re/ae_g2_rev/proto/proto_out_v2.1.0_beta_v3/protos/g2/EvenHub.proto`, `local/g2_re/ae_g2_rev/aegray/demos/` |
 | G2-hack case study | `miniapps/navigation/src/background/managers/DisplayManager.ts` |

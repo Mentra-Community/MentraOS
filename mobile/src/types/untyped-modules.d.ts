@@ -7,6 +7,12 @@ declare module "bzip2" {
   export default bzip2
 }
 
+declare module "exifr/src/bundles/nano.mjs" {
+  export {parse} from "exifr"
+}
+
+declare module "exifr/src/dicts/*.mjs"
+
 declare module "tar-js" {
   export interface TarEntry {
     name: string

@@ -166,29 +166,50 @@ Automated ransomware scanners actively target exposed MongoDB instances. Use Mon
 - [GitHub Project Board - General Tasks](https://github.com/orgs/Mentra-Community/projects/2)
 - [Discord Community](https://discord.gg/5ukNvkEAqT)
 
+### Related Miniapp Repositories
+
+- [Mentra Notes Miniapp](https://github.com/Mentra-Community/Mentra-Notes-Miniapp)
+- [Livestreamer Miniapp](https://github.com/Mentra-Community/Livestreamer-Miniapp)
+- [Mentra AI Miniapp](https://github.com/Mentra-Community/Mentra-AI-Miniapp)
+- [Mentra Enterprise Miniapp](https://github.com/Mentra-Community/Mentra-Enterprise-Miniapp)
+
+If a MentraOS PR also requires changes to one of the external miniapps above, or
+you are otherwise asked to change one of those miniapps:
+
+1. Clone the external miniapp repository if needed, or pull the latest `main`
+   branch if it is already available locally.
+2. Make the changes in the external miniapp repository, bump its version, and
+   push the changes directly to that repository's `main` branch.
+3. Package the updated miniapp as a ZIP archive.
+4. Add the new ZIP archive to `mobile/assets/miniapps/` in the MentraOS
+   monorepo so the external miniapp update is included in the MentraOS mobile
+   PR.
+
 ## Bug Report Logs
 
-When working on bug reports linked to `console.mentra.glass/admin/incidents/{id}`:
+Bug reports and feedback filed from the Mentra App land in the Cloud V2 reports system. Report ids look like `rep_01...` and appear in the reports Slack notifications and in the admin console's Incident system page (admin.mentraglass.com).
 
-1. Extract the incident ID from the URL
-2. Fetch logs: `./scripts/fetch-incident-logs.sh {incidentId}` — or use the **mentra-console** MCP server (`cloud/packages/console-mcp`, tools `incident_get` / `incident_get_logs`) from Cursor
-3. Requires `MENTRA_AGENT_API_KEY` in your environment (or in MCP `env` / `~/.zshrc` when using `scripts/run-mcp.sh`)
+1. Get the report id (from Slack, the admin console, or the user)
+2. Fetch it: `./scripts/fetch-incident-logs.sh {reportId}` — downloads `report.json` plus every artifact into `./incident-logs/{reportId}/`
+3. Requires `MENTRA_ADMIN_TOKEN` in your environment: an org API key (`msk_...`) whose synthetic email is allowlisted via `CLOUD_CORE_ADMIN_EMAILS`, or a WorkOS access token of an admin user
+4. Without an environment override, the script tries prod, dev, then staging and reports which backend succeeded. Use `--env prod|dev|staging` or `MENTRA_CORE_URL` to target one backend explicitly.
 
-The logs JSON contains:
+What you get:
 
-- `phoneLogs` - Last 10 min of mobile app logs
-- `cloudLogs` - Last 10 min of cloud service logs
-- `glassesLogs` - Last 10 min of glasses logs (if available)
-- `appTelemetryLogs` - Logs from third-party apps (if telemetry enabled)
-- `phoneState` - Snapshot of app state at time of report
-- `feedback` - User's bug report description
+- `report.json` - Full report document: `kind` (bug/feedback/automatic), `trigger`, `report` (actual/expected behavior, severity, contact email), `feedback`, `context` (phone/glasses/app state snapshot), artifact metadata, and asset rows
+- `NN-logs-{source}.json` - Log bundles uploaded by the devices (e.g. phone, glasses), each `{entries: [{timestamp, level, message, source?}]}`
+- `NN-screenshot-phone-*.{png,jpg}` - Screenshots attached by the user
+
+Other modes: `--json` prints the raw report JSON to stdout (no downloads); `--list [--kind ...] [--status ...] [--limit N]` lists recent reports.
 
 Example:
 
 ```bash
-export MENTRA_AGENT_API_KEY=your-api-key
-./scripts/fetch-incident-logs.sh 550e8400-e29b-41d4-a716-446655440000
+export MENTRA_ADMIN_TOKEN=msk_your-admin-key
+./scripts/fetch-incident-logs.sh rep_01JZWY3V8N0F2E9GQ4T6KXH5RD
 ```
+
+Note: the **mentra-console** MCP server (`cloud/packages/console-mcp`, tools `incident_get` / `incident_get_logs`) still targets the legacy V1 incidents API (`/api/agent/incidents`, `X-Agent-Key`) and has not been ported to the V2 reports API yet.
 
 ## Additional Documentation
 

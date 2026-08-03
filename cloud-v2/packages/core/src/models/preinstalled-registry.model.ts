@@ -1,4 +1,5 @@
-import { Schema, model, type InferSchemaType } from "mongoose";
+import { Schema, type InferSchemaType } from "mongoose";
+import { registerModel } from "./register-model";
 
 export const PREINSTALLED_REGISTRY_ENVIRONMENTS = ["debug", "dev", "staging", "prod"] as const;
 export const PREINSTALLED_REGISTRY_STATUSES = ["draft", "active", "archived"] as const;
@@ -22,4 +23,4 @@ PreinstalledRegistrySchema.index(
 );
 
 export type PreinstalledRegistry = InferSchemaType<typeof PreinstalledRegistrySchema>;
-export const PreinstalledRegistryModel = model("PreinstalledRegistry", PreinstalledRegistrySchema);
+export const PreinstalledRegistryModel = registerModel("PreinstalledRegistry", PreinstalledRegistrySchema);

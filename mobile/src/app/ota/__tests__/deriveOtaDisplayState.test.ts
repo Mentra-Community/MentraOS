@@ -1,6 +1,4 @@
-import type {OtaProgress, OtaStatus} from "@mentra/bluetooth-sdk-internal"
-
-import {deriveDisplayState, type DisplayState} from "@/app/ota/deriveOtaDisplayState"
+import {deriveDisplayState, type DisplayState, type OtaProgress, type OtaStatus} from "@mentra/engine"
 
 type DeriveArgs = Parameters<typeof deriveDisplayState>[0]
 
@@ -108,6 +106,27 @@ const besProgressLegacy: OtaProgress = {
   currentUpdate: "bes",
 }
 
+// Legacy-shaped statuses (WP 8C): old (< 37) ASG builds send ota_progress, which the
+// SDK maps to ota_status with sessionId "" / totalSteps 1 / FINISHED→"complete" at ANY
+// phase. sessionId "" is the legacy-shape marker deriveDisplayState keys on.
+const legacyShaped = (overrides: Partial<OtaStatus>): OtaStatus => ({
+  sessionId: "",
+  totalSteps: 1,
+  currentStep: 1,
+  stepType: "apk",
+  phase: "download",
+  stepPercent: 0,
+  overallPercent: 0,
+  status: "in_progress",
+  ...overrides,
+})
+
+const legacyApkDownloadComplete = legacyShaped({stepType: "apk", phase: "download", status: "complete", stepPercent: 100, overallPercent: 100})
+const legacyBesDownloadComplete = legacyShaped({stepType: "bes", phase: "download", status: "complete", stepPercent: 100, overallPercent: 100})
+const legacyBesInstallComplete = legacyShaped({stepType: "bes", phase: "install", status: "complete", stepPercent: 100, overallPercent: 100})
+const legacyApkInstallComplete = legacyShaped({stepType: "apk", phase: "install", status: "complete", stepPercent: 100, overallPercent: 100})
+const legacyApkInstallInProgress = legacyShaped({stepType: "apk", phase: "install", status: "in_progress", stepPercent: 80, overallPercent: 80})
+
 describe("deriveDisplayState", () => {
   const cases: Array<[string, Partial<DeriveArgs>, DisplayState]> = [
     ["Rule 1: errorMsg wins over in_progress", {errorMsg: "boom", otaStatus: apkInProgress}, "failed"],
@@ -159,6 +178,92 @@ describe("deriveDisplayState", () => {
       "Edge: BES step_complete, no edge, connected -> restarting",
       {otaStatus: besStepComplete, sawReconnectEdge: false, connected: true},
       "restarting",
+    ],
+    // WP 8C legacy-shape rules (sessionId "" from the SDK's ota_progress mapping):
+    [
+      "Legacy: apk download FINISHED (mapped complete) is not terminal -> updating",
+      {otaStatus: legacyApkDownloadComplete},
+      "updating",
+    ],
+    [
+      "Legacy: bes download FINISHED (mapped complete) is not BES-terminal -> updating",
+      {otaStatus: legacyBesDownloadComplete},
+      "updating",
+    ],
+    [
+      "Legacy: bes install FINISHED is BES-terminal -> restarting",
+      {otaStatus: legacyBesInstallComplete},
+      "restarting",
+    ],
+    [
+      "Legacy: apk download complete + disconnected -> disconnected (matches legacy screen)",
+      {otaStatus: legacyApkDownloadComplete, connected: false},
+      "disconnected",
+    ],
+    [
+      "Legacy: bes download complete + disconnected -> disconnected (flash not started)",
+      {otaStatus: legacyBesDownloadComplete, connected: false},
+      "disconnected",
+    ],
+    [
+      "Legacy: apk install complete held by the settle window -> updating",
+      {otaStatus: legacyApkInstallComplete, legacyApkSettleHold: true},
+      "updating",
+    ],
+    [
+      "Legacy: apk install complete held + disconnected (restarting glasses) -> updating",
+      {otaStatus: legacyApkInstallComplete, legacyApkSettleHold: true, connected: false},
+      "updating",
+    ],
+    [
+      "Legacy: apk install complete without hold -> complete",
+      {otaStatus: legacyApkInstallComplete},
+      "complete",
+    ],
+    [
+      "Legacy: build-number completion flag -> complete despite stale in-flight status",
+      {otaStatus: legacyApkInstallInProgress, apkCompletedViaBuildIncrease: true},
+      "complete",
+    ],
+    [
+      "Legacy: build-number completion flag + disconnected -> complete",
+      {apkCompletedViaBuildIncrease: true, connected: false},
+      "complete",
+    ],
+    [
+      "Unified: complete during download phase stays complete for real (>= 37) sessions",
+      {otaStatus: {...apkComplete, phase: "download" as const}},
+      "complete",
+    ],
+    [
+      "Version-change: convergence completes despite a stale in-flight install status",
+      {otaStatus: apkInProgress, versionChangeConverged: true},
+      "complete",
+    ],
+    [
+      "Version-change: convergence completes even while disconnected",
+      {versionChangeConverged: true, connected: false},
+      "complete",
+    ],
+    [
+      "Version-change: convergence outranks a stale failed status (wipe cleared the session)",
+      {otaStatus: apkFailed, versionChangeConverged: true, errorMsg: ""},
+      "complete",
+    ],
+    [
+      "Version-change: a bare complete before convergence is NOT success (refusal/stale)",
+      {otaStatus: apkComplete, versionChangeSession: true, versionChangeConverged: false},
+      "updating",
+    ],
+    [
+      "Version-change: bare complete before convergence while disconnected -> disconnected",
+      {otaStatus: apkComplete, versionChangeSession: true, versionChangeConverged: false, connected: false},
+      "disconnected",
+    ],
+    [
+      "Non-version-change complete is unaffected by the guard",
+      {otaStatus: apkComplete},
+      "complete",
     ],
   ]
 

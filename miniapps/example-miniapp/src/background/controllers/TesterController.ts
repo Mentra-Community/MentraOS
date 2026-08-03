@@ -37,10 +37,7 @@ export class TesterController {
 
     const ui = this.session.ui as unknown as {
       send: Send
-      on: <C extends keyof Channels & string>(
-        channel: C,
-        cb: (p: Channels[C]) => void,
-      ) => () => void
+      on: <C extends keyof Channels & string>(channel: C, cb: (p: Channels[C]) => void) => () => void
       handle: <C extends keyof Channels & string>(
         channel: C,
         handler: (payload: unknown, ctx?: {signal: AbortSignal}) => Promise<unknown> | unknown,
@@ -84,6 +81,52 @@ export class TesterController {
         const fn = module[method] as ((...a: unknown[]) => unknown) | undefined
         if (typeof fn !== "function") throw new Error(`unknown method "${iface}.${method}"`)
         return await Promise.resolve(fn.apply(module, args ?? []))
+      }),
+    )
+
+    this.unsubs.push(
+      ui.handle("tester:calendar-list", async (payload) => {
+        const {startsAt, endsAt, limit} = payload as {startsAt: string; endsAt: string; limit?: number}
+        return await this.session.phone.calendar.listEvents({startsAt, endsAt, limit})
+      }),
+    )
+
+    // speaker.createStream E2E: generate a sine tone background-side and pump
+    // it through the live PCM stream. Runs here (not tester:invoke) because
+    // the SpeakerStreamWriter can't cross the bridge — only a summary returns.
+    // Writes are awaited, so the host's backpressure ceiling paces the loop.
+    this.unsubs.push(
+      ui.handle("tester:speaker-stream-tone", async (payload) => {
+        const {
+          seconds = 5,
+          freqHz = 440,
+          sampleRate = 16000,
+        } = (payload ?? {}) as {seconds?: number; freqHz?: number; sampleRate?: 16000 | 24000 | 48000}
+
+        const writer = await this.session.speaker.createStream({sampleRate})
+        try {
+          // 100ms chunks of 16-bit LE mono sine.
+          const chunkFrames = Math.floor(sampleRate / 10)
+          const totalChunks = Math.max(1, Math.round(seconds * 10))
+          let phase = 0
+          const phaseStep = (2 * Math.PI * freqHz) / sampleRate
+          let last = {bufferedMs: 0}
+          for (let i = 0; i < totalChunks; i++) {
+            const buf = new Uint8Array(chunkFrames * 2)
+            const view = new DataView(buf.buffer)
+            for (let f = 0; f < chunkFrames; f++) {
+              // 0.25 amplitude so it isn't ear-splitting through the glasses.
+              view.setInt16(f * 2, Math.round(Math.sin(phase) * 0x2000), true)
+              phase += phaseStep
+            }
+            last = await writer.write(buf)
+          }
+          const {durationMs} = await writer.close()
+          return {streamId: writer.streamId, durationMs, chunks: totalChunks, lastBufferedMs: last.bufferedMs}
+        } catch (err) {
+          await writer.abort().catch(() => {})
+          throw err
+        }
       }),
     )
   }

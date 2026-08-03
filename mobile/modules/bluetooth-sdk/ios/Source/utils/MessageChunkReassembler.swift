@@ -6,6 +6,46 @@ final class MessageChunkReassembler {
 
     private var activeSessions: [String: ChunkSession] = [:]
 
+    private var activeBinarySessions: [UInt16: BinarySession] = [:]
+
+    func addBinaryFragment(msgId: UInt16, fragIdx: Int, fragCount: Int, data: Data) -> Data? {
+        cleanupTimedOutSessions()
+
+        guard fragCount > 0, fragIdx >= 0, fragIdx < fragCount else {
+            print("MessageChunkReassembler: Dropping invalid binary fragment for msgId \(msgId)")
+            return nil
+        }
+
+        if let existing = activeBinarySessions[msgId], existing.fragCount != fragCount {
+            activeBinarySessions.removeValue(forKey: msgId)
+        }
+
+        if activeBinarySessions.count >= Self.maxConcurrentSessions,
+           activeBinarySessions[msgId] == nil
+        {
+            removeOldestBinarySession()
+        }
+
+        let isNewSession = activeBinarySessions[msgId] == nil
+        let session = activeBinarySessions[msgId] ?? BinarySession(msgId: msgId, fragCount: fragCount)
+
+        guard session.addFragment(index: fragIdx, data: data) else {
+            return nil
+        }
+        if isNewSession {
+            activeBinarySessions[msgId] = session
+        }
+
+        guard session.isComplete else {
+            return nil
+        }
+
+        let reassembled = session.reassemble()
+        activeBinarySessions.removeValue(forKey: msgId)
+        print("MessageChunkReassembler: Reassembled \(reassembled.count) bytes from \(fragCount) binary fragments")
+        return reassembled
+    }
+
     func addChunk(_ info: MessageChunker.ChunkInfo) -> String? {
         cleanupTimedOutSessions()
 
@@ -57,6 +97,7 @@ final class MessageChunkReassembler {
 
     func clear() {
         activeSessions.removeAll()
+        activeBinarySessions.removeAll()
     }
 
     private func cleanupTimedOutSessions() {
@@ -64,6 +105,16 @@ final class MessageChunkReassembler {
         activeSessions = activeSessions.filter { entry in
             now - entry.value.createdAtMs <= Self.chunkTimeoutMs
         }
+        activeBinarySessions = activeBinarySessions.filter { entry in
+            now - entry.value.createdAtMs <= Self.chunkTimeoutMs
+        }
+    }
+
+    private func removeOldestBinarySession() {
+        guard let oldest = activeBinarySessions.min(by: { $0.value.createdAtMs < $1.value.createdAtMs }) else {
+            return
+        }
+        activeBinarySessions.removeValue(forKey: oldest.key)
     }
 
     private func removeOldestSession() {
@@ -101,6 +152,37 @@ final class MessageChunkReassembler {
             var result = ""
             for index in 0 ..< totalChunks {
                 result += chunks[index] ?? ""
+            }
+            return result
+        }
+    }
+
+    private final class BinarySession {
+        let msgId: UInt16
+        let fragCount: Int
+        let createdAtMs: TimeInterval
+        private var fragments: [Int: Data] = [:]
+
+        init(msgId: UInt16, fragCount: Int) {
+            self.msgId = msgId
+            self.fragCount = fragCount
+            self.createdAtMs = Date().timeIntervalSince1970 * 1000
+        }
+
+        func addFragment(index: Int, data: Data) -> Bool {
+            guard index >= 0, index < fragCount else { return false }
+            fragments[index] = data
+            return true
+        }
+
+        var isComplete: Bool {
+            fragments.count == fragCount
+        }
+
+        func reassemble() -> Data {
+            var result = Data()
+            for index in 0 ..< fragCount {
+                result.append(fragments[index] ?? Data())
             }
             return result
         }

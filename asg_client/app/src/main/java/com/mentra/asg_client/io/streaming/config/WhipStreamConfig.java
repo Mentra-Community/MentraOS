@@ -10,10 +10,11 @@ import java.math.RoundingMode;
  */
 public class WhipStreamConfig {
 
-  public static final int DEFAULT_VIDEO_WIDTH = 854;
-  public static final int DEFAULT_VIDEO_HEIGHT = 480;
+  // Defaults used when caller omits video JSON (or a given field).
+  public static final int DEFAULT_VIDEO_WIDTH = 1280;
+  public static final int DEFAULT_VIDEO_HEIGHT = 720;
   public static final int DEFAULT_VIDEO_FPS = 15;
-  public static final int DEFAULT_VIDEO_BITRATE = 1000000; // 1 Mbps
+  public static final int DEFAULT_VIDEO_BITRATE = 2_500_000; // 2.5 Mbps
   public static final int MIN_VIDEO_FPS = 5;
   public static final int MAX_VIDEO_FPS = 30;
 
@@ -41,18 +42,24 @@ public class WhipStreamConfig {
    * Supports both full key names and compact keys for MTU-constrained messages:
    *   Full: { width, height, bitrate, frameRate } / { echoCancellation, noiseSuppression }
    *   Compact: { w, h, br, fr } / { ec, ns }
+   * FPS also accepts {@code fps} / {@code f} (miniapp SDK / BleJsonCompact).
+   * When both a full key and its compact alias are present, the full key wins.
    */
   public static WhipStreamConfig fromJson(JSONObject videoJson, JSONObject audioJson) {
     WhipStreamConfig config = new WhipStreamConfig();
 
     if (videoJson != null) {
-      config.videoWidth = clamp(optIntWithFallback(videoJson, "width", "w", DEFAULT_VIDEO_WIDTH), 320, 1920);
-      config.videoHeight = clamp(optIntWithFallback(videoJson, "height", "h", DEFAULT_VIDEO_HEIGHT), 240, 1080);
-      config.videoBitrate = clamp(optIntWithFallback(videoJson, "bitrate", "br", DEFAULT_VIDEO_BITRATE), 100000, 10000000);
-      config.videoFps = clamp(
-          optIntWithFallback(videoJson, "frameRate", "fr", DEFAULT_VIDEO_FPS),
-          MIN_VIDEO_FPS,
-          MAX_VIDEO_FPS);
+      int width = optIntWithFallback(videoJson, "width", "w", DEFAULT_VIDEO_WIDTH);
+      int height = optIntWithFallback(videoJson, "height", "h", DEFAULT_VIDEO_HEIGHT);
+      config.videoBitrate = optIntWithFallback(videoJson, "bitrate", "br", DEFAULT_VIDEO_BITRATE);
+      // Prefer frameRate (phone BLE wire), then fr / fps / f. First key present wins.
+      config.videoFps = firstPresentInt(
+          videoJson, DEFAULT_VIDEO_FPS, "frameRate", "fr", "fps", "f");
+
+      config.videoWidth = normalizeDimension(width, 320, 1920);
+      config.videoHeight = normalizeDimension(height, 240, 1080);
+      config.videoBitrate = clamp(config.videoBitrate, 100000, 10000000);
+      config.videoFps = clamp(config.videoFps, MIN_VIDEO_FPS, MAX_VIDEO_FPS);
     }
 
     if (audioJson != null) {
@@ -63,9 +70,23 @@ public class WhipStreamConfig {
     return config;
   }
 
+  /**
+   * Try full key first, then compact key, then default.
+   * When both keys are present, the full key wins.
+   */
   private static int optIntWithFallback(JSONObject json, String fullKey, String compactKey, int defaultValue) {
     if (json.has(fullKey)) return json.optInt(fullKey, defaultValue);
     return json.optInt(compactKey, defaultValue);
+  }
+
+  /** First present key wins; otherwise {@code defaultValue}. */
+  private static int firstPresentInt(JSONObject json, int defaultValue, String... keys) {
+    for (String key : keys) {
+      if (json.has(key)) {
+        return json.optInt(key, defaultValue);
+      }
+    }
+    return defaultValue;
   }
 
   private static boolean optBoolWithFallback(JSONObject json, String fullKey, String compactKey, boolean defaultValue) {
@@ -75,6 +96,12 @@ public class WhipStreamConfig {
 
   private static int clamp(int value, int min, int max) {
     return Math.max(min, Math.min(max, value));
+  }
+
+  /** Clamp then force to an even value (H.264 requires even width/height on most hardware encoders). */
+  private static int normalizeDimension(int value, int min, int max) {
+    int clamped = clamp(value, min, max);
+    return clamped - (clamped % 2); // round down to nearest even
   }
 
   private static double clamp(double value, double min, double max) {
@@ -134,12 +161,12 @@ public class WhipStreamConfig {
 
   // Setters with validation (fluent API)
   public WhipStreamConfig setVideoWidth(int width) {
-    this.videoWidth = clamp(width, 320, 1920);
+    this.videoWidth = normalizeDimension(width, 320, 1920);
     return this;
   }
 
   public WhipStreamConfig setVideoHeight(int height) {
-    this.videoHeight = clamp(height, 240, 1080);
+    this.videoHeight = normalizeDimension(height, 240, 1080);
     return this;
   }
 
@@ -153,6 +180,11 @@ public class WhipStreamConfig {
       this.statusVideoFps = clamp(fps, MIN_VIDEO_FPS, MAX_VIDEO_FPS);
     }
     return this;
+  }
+
+  /** Measured camera/output fps when known; NaN if not yet measured. */
+  public double getMeasuredCameraFps() {
+    return statusVideoFps;
   }
 
   private double getStatusVideoFps() {

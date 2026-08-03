@@ -16,7 +16,7 @@
  */
 
 export {MiniappSession, type MiniappSessionOptions} from "../session"
-export {registerMiniapp, type MiniappInitHandler} from "./register"
+export {registerMiniapp, type MiniappInitHandler, type TypedMiniappSession} from "./register"
 
 // Event / data type re-exports — these are payload shapes a miniapp's
 // background-side handlers consume from session.transcription.on, etc.
@@ -34,15 +34,22 @@ export type {
   LocationData,
   PhoneNotificationData,
   NotificationDismissedData,
-  CalendarEventData,
   HeadingData,
   TouchData,
   UnsubscribeFn,
 } from "../modules/events"
+export type {CalendarEvent, CalendarListOptions, CalendarListResult} from "../modules/phone"
 
 // Public envelope + protocol types so authors can write strongly-typed
 // glue when they need to fall back to session.sendOneShot / sendRequest.
 export {MiniappRequestType, MiniappResponseType, MiniappStreamType, MiniappErrorCode} from "../protocol"
+export {
+  MiniappValidationError,
+  SUPPORTED_LANGUAGE_HINTS,
+  SUPPORTED_TRANSCRIPTION_LANGUAGES,
+  isTranscriptionLanguage,
+} from "../modules/languages"
+export type {LanguageHint, TranscriptionLanguage} from "../modules/languages"
 
 // Action handler types — for typing `session.actions.handle(id, fn)` handlers
 // (the registering side lives in the background JSContext). `InvokeOptions` is
@@ -52,7 +59,6 @@ export type {ActionContext, ActionHandler, InvokeOptions} from "../modules/actio
 // Session module types — useful for typing controller classes or
 // utility helpers that take a session-like dependency.
 export type {DisplayManager} from "../modules/display"
-export type {CanvasManager} from "../modules/canvas"
 export type {
   CameraFovPreset,
   CameraFovRequest,
@@ -100,20 +106,18 @@ export {MentraRpcError, MentraRpcTimeoutError} from "../modules/ui"
 export type {LedColor, LedControlOptions} from "../modules/led"
 export type {
   ViewType,
-  LayoutType,
-  Layout,
-  DisplayOptions,
-  TextWall,
-  DoubleTextWall,
-  ReferenceCard,
-  DashboardCard,
-  BitmapView,
-  ClearView,
+  DisplayBreakMode,
+  RenderBox,
+  RenderElement,
+  RenderOptions,
+  RenderRectStyle,
+  RenderResult,
+  RenderTextStyle,
 } from "../modules/display"
 export type {DashboardMode} from "../modules/dashboard"
 export type {PlayAudioOptions, SpeakOptions, SpeakResult, SpeakerState, SpeakerStateEvent} from "../modules/speaker"
 export type {ShareOptions, ShareResult, DownloadOptions, DownloadResult} from "../modules/system"
-export type {TranscriptionConfig} from "../modules/transcription"
+export type {TranscriptionConfig, TranscriptionOptions} from "../modules/transcription"
 export type {PermissionErrorEvent} from "../modules/permissions"
 export type {
   AuthUpdatePayload,

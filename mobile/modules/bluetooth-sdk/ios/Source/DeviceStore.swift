@@ -35,6 +35,9 @@ class DeviceStore {
         store.set("glasses", "caseCharging", false)
         store.set("glasses", "caseBatteryLevel", -1)
         store.set("glasses", "headUp", false)
+        store.set("glasses", "bluetoothMacAddress", "")
+        store.set("glasses", "leftMacAddress", "")
+        store.set("glasses", "rightMacAddress", "")
         store.set("glasses", "serialNumber", "")
         store.set("glasses", "style", "")
         store.set("glasses", "color", "")
@@ -88,6 +91,7 @@ class DeviceStore {
         store.set("bluetooth", "contextual_dashboard", true)
         store.set("bluetooth", "gallery_mode", true)
         store.set("bluetooth", "voice_activity_detection_enabled", BluetoothSdkDefaults.voiceActivityDetectionEnabled)
+        store.set("bluetooth", "loudness_gate_enabled", BluetoothSdkDefaults.loudnessGateEnabled)
         // Mentra Nex feature flag (off by default; toggled from Nex Developer Settings):
         store.set("bluetooth", "nex_chinese_captions", false)
         store.set("bluetooth", "screen_disabled", false)
@@ -245,6 +249,9 @@ class DeviceStore {
         case ("bluetooth", "voice_activity_detection_enabled"):
             DeviceManager.shared.sgc?.sendVoiceActivityDetectionSetting()
 
+        case ("bluetooth", "loudness_gate_enabled"):
+            DeviceManager.shared.sgc?.sendLoudnessGateSetting()
+
         case ("bluetooth", "screen_disabled"):
             if let disabled = value as? Bool {
                 if disabled {
@@ -263,6 +270,11 @@ class DeviceStore {
         case ("bluetooth", "camera_fov"):
             DeviceManager.shared.sgc?.sendCameraFovSetting()
 
+        case ("bluetooth", "button_video_settings"):
+            DeviceManager.shared.sgc?.sendButtonVideoRecordingSettings()
+
+        // Legacy scalar keys remain supported for older hosts. New code should write the
+        // canonical button_video_settings object so width/height/fps update atomically.
         case ("bluetooth", "button_video_width"), ("bluetooth", "button_video_height"),
              ("bluetooth", "button_video_fps"):
             DeviceManager.shared.sgc?.sendButtonVideoRecordingSettings()
@@ -270,11 +282,6 @@ class DeviceStore {
         case ("bluetooth", "preferred_mic"):
             if let mic = value as? String {
                 apply("bluetooth", "micRanking", MicMap.map[mic] ?? MicMap.map["auto"]!)
-                DeviceManager.shared.setMicState()
-            }
-
-        case ("bluetooth", "offline_captions_running"):
-            if let running = value as? Bool {
                 DeviceManager.shared.setMicState()
             }
 

@@ -42,13 +42,16 @@ import { registerMiniapp } from "@mentra/miniapp/background";
 
 registerMiniapp((session) => {
   // Runs once the miniapp connects. `session` is your handle to the glasses.
+  // display.render() replaces the frame; a stable id updates the element in
+  // place. Boxes are raw device px — see session.capabilities.display.
+  const hud = { x: 0, y: 0, w: 576, h: 288 };
   session.input.onButtonPress(() => {
-    session.display.showTextWall("Hello from MentraOS!");
+    session.display.render([{ type: "text", id: "hud", box: hud, text: "Hello from MentraOS!" }]);
   });
 
   // React to what the user says.
   session.transcription.on((data) => {
-    session.display.showTextWall(data.text);
+    session.display.render([{ type: "text", id: "hud", box: hud, text: data.text }]);
   });
 });
 ```

@@ -2,6 +2,7 @@ package com.mentra.asg_client.io.file.platform;
 
 import android.content.Context;
 
+import com.mentra.asg_client.io.media.utils.MediaStorage;
 import com.mentra.asg_client.logging.Logger;
 import com.mentra.asg_client.logging.AndroidLogger;
 
@@ -21,7 +22,9 @@ public class AndroidPlatformStrategy implements PlatformStrategy {
 
     @Override
     public File getBaseDirectory() {
-        return context.getExternalFilesDir("");
+        // Shared media root, NOT getExternalFilesDir: the app-owned tree is deleted by the OEM
+        // uninstall used for pinned downgrades (hardware-verified 2026-07-21).
+        return MediaStorage.getMediaRoot(context);
     }
 
     @Override

@@ -64,7 +64,7 @@ export function DestinationPreviewDrawer({
       open={!!destination}
       onClose={onClose}
       dismissOnSwipeDown
-      className="[font-synthesis:none] pointer-events-auto mx-auto max-w-md flex flex-col rounded-tl-[28px] rounded-tr-[28px] pb-8 gap-4 bg-[#FFFFFFB3] border-t border-t-solid border-t-[#FFFFFF99] [backdrop-filter:blur(40px)_saturate(180%)] [box-shadow:#0000001A_0px_-8px_28px] antialiased px-5">
+      className="[font-synthesis:none] pointer-events-auto mx-auto max-w-md flex flex-col rounded-tl-[28px] rounded-tr-[28px] pb-8 gap-4 bg-[#FFFFFFB3] dark:bg-[#161619CC] border-t border-t-solid border-t-[#FFFFFF99] dark:border-t-[#FFFFFF1A] [backdrop-filter:blur(40px)_saturate(180%)] [box-shadow:#0000001A_0px_-8px_28px] antialiased px-5">
       {destination ? (
         <>
           {/* Name + address. Dropped pins start with `isGeocoding: true`
@@ -74,14 +74,14 @@ export function DestinationPreviewDrawer({
           <div className="flex flex-col pt-1 gap-1 mb-4">
             {destination.isGeocoding ? (
               <>
-                <div className="h-7 w-3/5 rounded-md bg-[#00000014] animate-pulse" />
-                <div className="h-4.5 w-2/5 rounded-md bg-[#00000014] animate-pulse mt-1.5" />
+                <div className="h-7 w-3/5 rounded-md bg-[#00000014] dark:bg-[#FFFFFF1F] animate-pulse" />
+                <div className="h-4.5 w-2/5 rounded-md bg-[#00000014] dark:bg-[#FFFFFF1F] animate-pulse mt-1.5" />
               </>
             ) : (
               <>
                 <div className="flex items-start gap-2">
                   <div className="grow min-w-0">
-                    <div className="tracking-[-0.02em] text-[#000000E6] font-sans font-semibold text-[22px]/7 truncate">
+                    <div className="tracking-[-0.02em] text-[#000000E6] dark:text-zinc-50 font-sans font-semibold text-[22px]/7 truncate">
                       {destination.name || "Unnamed place"}
                     </div>
                     {(() => {
@@ -92,7 +92,7 @@ export function DestinationPreviewDrawer({
                       // step down in size for a clear visual hierarchy.
                       const showStreet = street && street !== destination.name
                       return (
-                        <div className="text-[#00000099] font-sans mt-1">
+                        <div className="text-[#00000099] dark:text-zinc-400 font-sans mt-1">
                           {showStreet ? (
                             <div className="text-[15px]/5 truncate">{street}</div>
                           ) : null}
@@ -100,7 +100,7 @@ export function DestinationPreviewDrawer({
                             <div className="text-[13px]/4.5 truncate">
                               {locality}
                               {locality && country ? ", " : ""}
-                              {country ? <span className="text-[#0000007A]">{country}</span> : null}
+                              {country ? <span className="text-[#0000007A] dark:text-zinc-500">{country}</span> : null}
                             </div>
                           ) : null}
                         </div>
@@ -120,7 +120,7 @@ export function DestinationPreviewDrawer({
                         toast(next ? "Couldn’t save place" : "Couldn’t remove place")
                       }
                     }}
-                    className="shrink-0 flex items-center justify-center size-12 rounded-full bg-[#0000000A] active:bg-[#0000001A] mt-1">
+                    className="shrink-0 flex items-center justify-center size-12 rounded-full bg-[#0000000A] dark:bg-[#FFFFFF14] active:bg-[#0000001A] dark:active:bg-[#FFFFFF26] mt-1">
                     {saved ? (
                       <StarIcon size={22} color="#1A1A1A" />
                     ) : (
@@ -134,10 +134,10 @@ export function DestinationPreviewDrawer({
 
           {/* ETA + distance + arrival */}
           <div className="flex items-baseline gap-3 mb-4">
-            <div className="[letter-spacing:-0.025em] text-[#000000E6] font-sans font-semibold text-[32px]/9">
+            <div className="[letter-spacing:-0.025em] text-[#000000E6] dark:text-zinc-50 font-sans font-semibold text-[32px]/9">
               {etaLabel ?? "—"}
             </div>
-            <div className="text-[#00000099] font-sans text-sm/4.5">
+            <div className="text-[#00000099] dark:text-zinc-400 font-sans text-sm/4.5">
               {distanceLabel && arrivalLabel ? `${distanceLabel} · arrive ${arrivalLabel}` : "—"}
               {simulate ? ` · sim ${speedMultiplier}×` : null}
             </div>
@@ -148,16 +148,16 @@ export function DestinationPreviewDrawer({
             <button
               type="button"
               onClick={onStart}
-              className="h-13 flex items-center justify-center rounded-2xl px-4 bg-[#1A1A1A] [box-shadow:#00000033_0px_6px_18px] shrink-0">
-              <div className="text-white font-sans font-semibold text-base/5">
+              className="h-13 flex items-center justify-center rounded-2xl px-4 bg-[#1A1A1A] dark:bg-zinc-100 [box-shadow:#00000033_0px_6px_18px] shrink-0">
+              <div className="text-white dark:text-zinc-900 font-sans font-semibold text-base/5">
                 Start Navigation
               </div>
             </button>
             <button
               type="button"
               onClick={onClose}
-              className="[font-synthesis:none] h-13 flex items-center justify-center rounded-2xl shrink-0 [box-shadow:#FFFFFF99_0px_1px_0px_inset] bg-[#0000000F] border border-solid border-[#00000014] antialiased">
-              <div className="[white-space-collapse:preserve] font-sans font-semibold text-[#1A1A1C] text-base/5">
+              className="[font-synthesis:none] h-13 flex items-center justify-center rounded-2xl shrink-0 [box-shadow:#FFFFFF99_0px_1px_0px_inset] bg-[#0000000F] dark:bg-[#FFFFFF14] border border-solid border-[#00000014] dark:border-[#FFFFFF1F] antialiased">
+              <div className="[white-space-collapse:preserve] font-sans font-semibold text-[#1A1A1C] dark:text-zinc-50 text-base/5">
                 Cancel
               </div>
             </button>

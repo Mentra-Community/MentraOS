@@ -88,7 +88,12 @@ import "../shared/channels";
 
 registerMiniapp((session) => {
   session.input.onButtonPress(() => {
-    session.display.showTextWall("Hello from MentraOS");
+    // render() replaces the whole frame — a full-canvas text element here.
+    // Box coordinates are raw device px from session.capabilities.display.
+    const d = session.capabilities?.display;
+    session.display.render([
+      { type: "text", id: "hello", box: { x: 0, y: 0, w: d?.width ?? 576, h: d?.height ?? 288 }, text: "Hello from MentraOS" },
+    ]);
   });
 
   // Reply to a "ping" from the UI with a "pong".

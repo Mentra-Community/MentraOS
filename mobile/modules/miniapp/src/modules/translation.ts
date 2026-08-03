@@ -20,8 +20,16 @@
 import {MiniappStreamType} from "../protocol"
 import {MiniappSession} from "../session"
 import type {TranslationData, UnsubscribeFn} from "./events"
+import {requireTranscriptionLanguage} from "./languages"
+import type {TranscriptionLanguage} from "./languages"
 
 export type TranslationHandler = (data: TranslationData) => void
+
+/**
+ * Translation source: a registry language, or "auto" to let the cloud detect
+ * the spoken language.
+ */
+export type TranslationSource = TranscriptionLanguage | "auto"
 
 export class TranslationModule {
   private readonly unsubs = new Set<UnsubscribeFn>()
@@ -51,8 +59,10 @@ export class TranslationModule {
    * regardless of source. Useful for "I'm a Spanish speaker, translate
    * whatever I hear to Spanish."
    */
-  to(target: string | string[], handler: TranslationHandler): UnsubscribeFn {
-    const targets = Array.isArray(target) ? target : [target]
+  to(target: TranscriptionLanguage | TranscriptionLanguage[], handler: TranslationHandler): UnsubscribeFn {
+    const targets = (Array.isArray(target) ? target : [target]).map((t) =>
+      requireTranscriptionLanguage(t, "translation.to(target)"),
+    )
     if (targets.length === 0) return () => {}
     const unsubs: UnsubscribeFn[] = []
     for (const t of targets) {
@@ -81,17 +91,21 @@ export class TranslationModule {
    * from the same source.
    */
   fromTo(
-    source: string,
-    target: string | string[],
+    source: TranslationSource,
+    target: TranscriptionLanguage | TranscriptionLanguage[],
     handler: TranslationHandler,
   ): UnsubscribeFn {
-    const targets = Array.isArray(target) ? target : [target]
+    const validSource =
+      source === "auto" ? "auto" : requireTranscriptionLanguage(source, "translation.fromTo(source)")
+    const targets = (Array.isArray(target) ? target : [target]).map((t) =>
+      requireTranscriptionLanguage(t, "translation.fromTo(target)"),
+    )
     if (targets.length === 0) return () => {}
     const unsubs: UnsubscribeFn[] = []
     for (const t of targets) {
       unsubs.push(
         this.session._subscribe(
-          `${MiniappStreamType.TRANSLATION}:${source}:${t}`,
+          `${MiniappStreamType.TRANSLATION}:${validSource}:${t}`,
           handler as (data: unknown) => void,
         ),
       )
@@ -113,8 +127,8 @@ export class TranslationModule {
    * SDK v3 parity. This alias will be removed in a future release.
    */
   forLanguagePair(
-    fromLang: string,
-    toLang: string,
+    fromLang: TranslationSource,
+    toLang: TranscriptionLanguage,
     handler: TranslationHandler,
   ): UnsubscribeFn {
     return this.fromTo(fromLang, toLang, handler)

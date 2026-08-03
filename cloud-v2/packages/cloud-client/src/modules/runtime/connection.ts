@@ -47,7 +47,7 @@ import {
   type ConnectionAck,
   type ClientToCloudMessage,
   type CloudToClientMessage,
-} from "@mentra/cloud-runtime/protocol";
+} from "@mentra/cloud-protocol";
 import type { WebSocketLike } from "../../transports";
 import type { Logger } from "../../logger";
 

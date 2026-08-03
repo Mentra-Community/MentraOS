@@ -7,20 +7,14 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import {getMentraJS} from "@/services/mentraJsBootstrap"
 import {useStressTestStore} from "@/stores/stressTest"
 import MiniappSplash from "@/components/miniapp/MiniappSplash"
-import {
-  BgTimer,
-  buildMentraUiShim,
-  buildMiniappGlobalsScript,
-  DEV_APP_PACKAGE_NAME,
-  devServerBridge,
-  miniappLauncher,
-  useAppStatusStore,
-} from "@mentra/island"
+import {BgTimer, engine} from "@mentra/engine"
+import {buildMentraUiShim, buildMiniappGlobalsScript, miniappLauncher} from "@mentra/engine/internal"
+import {devServerBridge} from "@mentra/engine/devtools"
 import {useNavigationStore} from "@/stores/navigation"
 import CapsuleMenu from "@/effects/CapsuleMenu"
 import {useRegisterCapsule} from "@/stores/capsule"
 import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
-import {SETTINGS, useSetting} from "@/stores/settings"
+import {SETTINGS, useSetting} from "@mentra/engine"
 
 /**
  * LocalMiniappView — the UI half of a local (or dev) miniapp.
@@ -75,13 +69,20 @@ function LocalMiniappView({
   const onExitRef = useRef(onExit)
   onExitRef.current = onExit
 
+  // Read inside the launch effect's catch handler without adding appName/iconUrl
+  // to its dependency array — they're display-only and shouldn't re-trigger a
+  // JSContext respawn on their own (e.g. a store refresh resolving a lazy icon).
+  const appNameRef = useRef(appName)
+  appNameRef.current = appName
+  const iconUrlRef = useRef(iconUrl)
+  iconUrlRef.current = iconUrl
+
   const viewShotRef = useRef<View | null>(null)
   const webViewRef = useRef<WebView | null>(null)
   const appStateRef = useRef<AppStateStatus>(AppState.currentState)
   const [webViewCanGoBack, setWebViewCanGoBack] = useState(false)
   const [uiUri, setUiUri] = useState<string | null>(null)
   const [uiBaseDir, setUiBaseDir] = useState<string | null>(null)
-  const [loadGatePassed, setLoadGatePassed] = useState(false)
   const [devMode] = useSetting(SETTINGS.dev_mode.key)
 
   // ----- Load-state tracking -------------------------------------------------
@@ -165,14 +166,6 @@ function LocalMiniappView({
   const [label, setLabel] = useState<string | undefined>(undefined)
   const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined)
 
-  useEffect(() => {
-    // if (Platform.OS !== "android") return
-    // delay loading the webview until the animation is complete
-    BgTimer.setTimeout(() => {
-      setLoadGatePassed(true)
-    }, 1000)
-  }, [])
-
   // WebView injections can be missed while Android/iOS is resuming or when the
   // host process thaws after a sleep/network interruption. The background
   // runtime owns canonical state, so periodically re-announce the mounted UI
@@ -218,7 +211,7 @@ function LocalMiniappView({
       if (Platform.OS === "android") {
         // captureScreenshot(viewShotRef, packageName.toString(), insets.top)
         onShouldCapture()
-        useAppStatusStore.getState().clearForeground()
+        engine.miniapps.clearForeground()
       }
     }
   }, [webViewCanGoBack])
@@ -276,21 +269,42 @@ function LocalMiniappView({
       checkpoint()
 
       setLabel(undefined)
-      // Set unconditionally: when the launcher resolves no UI entry (e.g. the
-      // dev server dropped, or a re-foreground couldn't re-resolve), clearing
-      // prevents the WebView from continuing to show a stale / previous URL.
+      // Already-registered packages never throw from ensureRunning — a dropped
+      // dev server returns {uiUri: null} instead. Route those reopens to the
+      // offline recovery screen the same way as first-launch resolve failures.
+      if (devUrl && !result.uiUri) {
+        console.warn(`LocalMiniappView: ${packageName} already running but UI unresolved, routing to dev-offline`)
+        engine.miniapps.clearForeground()
+        useNavigationStore.getState().push("/applet/dev-offline", {
+          packageName,
+          name: appNameRef.current,
+          iconUrl: iconUrlRef.current,
+        })
+        return
+      }
+      // Set unconditionally: when the launcher resolves no UI entry (e.g. a
+      // re-foreground couldn't re-resolve a non-dev package), clearing prevents
+      // the WebView from continuing to show a stale / previous URL.
       setUiUri(result.uiUri)
       setUiBaseDir(result.uiBaseDir)
     }
 
     launch().catch((e: Error) => {
       if (e.name === "AbortError") return // stale run — ignore entirely
-      // if (devUrl) {
-      //   // failed to load the dev url (we probably are connected to a different wifi network)
-      //   useAppStatusStore.getState().clearForeground()
-      //   useNavigationStore.getState().push("/applet/dev-offline", {packageName, name: appName, iconUrl})
-      //   return
-      // }
+      if (devUrl) {
+        // Dev bundle couldn't be resolved (dev server unreachable, or the
+        // manifest/background bundle fetch failed) — route to the dedicated
+        // offline screen with "Try again" / "Re-scan QR" instead of leaving
+        // the user stuck on a bare error splash with no recovery action.
+        console.warn(`LocalMiniappView: ${packageName} dev bundle unresolvable, routing to dev-offline: ${e.message}`)
+        engine.miniapps.clearForeground()
+        useNavigationStore.getState().push("/applet/dev-offline", {
+          packageName,
+          name: appNameRef.current,
+          iconUrl: iconUrlRef.current,
+        })
+        return
+      }
       fail(e.message)
     })
 
@@ -439,19 +453,11 @@ function LocalMiniappView({
     return <Text text="Missing required parameters" />
   }
 
-  if (!loadGatePassed) {
-    return (
-      <View className="flex-1">
-        <MiniappSplash iconUrl={iconUrl} bgColor={theme.colors.background} isLoaded={false} name={appName} />
-      </View>
-    )
-  }
-
-  const isDevApp = packageName == DEV_APP_PACKAGE_NAME
+  const isDevApp = !!devUrl
 
   if (!uiUri) {
     return (
-      <View className="flex-1">
+      <View ref={viewShotRef} collapsable={false} className="flex-1">
         <MiniappSplash
           name={appName}
           iconUrl={iconUrl}
@@ -491,7 +497,7 @@ function LocalMiniappView({
   }
 
   return (
-    <View className="flex-1 bg-black">
+    <View ref={viewShotRef} collapsable={false} className="flex-1 bg-black">
       <WebView
         ref={handleRef}
         source={{uri: uiUri}}
@@ -501,6 +507,13 @@ function LocalMiniappView({
         allowingReadAccessToURL={uiBaseDir ?? undefined}
         javaScriptEnabled={true}
         domStorageEnabled={true}
+        // Miniapps such as Livestreamer render muted autoplay previews using
+        // either an inline WebRTC <video> or an HLS player iframe. WKWebView
+        // blocks both unless the native host explicitly permits inline,
+        // non-user-initiated media playback.
+        allowsInlineMediaPlayback={true}
+        mediaPlaybackRequiresUserAction={false}
+        allowsFullscreenVideo={true}
         injectedJavaScriptBeforeContentLoaded={injectedJS}
         onMessage={handleMessage}
         onLoadEnd={handleLoadEnd}

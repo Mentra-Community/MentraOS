@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { AppToCloudMessageType } from "../../../types";
 import { CameraManager, type CameraManagerDeps } from "../CameraManager";
 
-describe("CameraManager takePhoto exposureTimeNs", () => {
+describe("CameraManager takePhoto", () => {
   let lastOutbound: Record<string, unknown> | undefined;
   let manager: CameraManager;
 
@@ -50,6 +50,39 @@ describe("CameraManager takePhoto exposureTimeNs", () => {
     const p = manager.takePhoto({});
     expect(lastOutbound?.type).toBe(AppToCloudMessageType.PHOTO_REQUEST);
     expect(Object.prototype.hasOwnProperty.call(lastOutbound ?? {}, "exposureTimeNs")).toBe(false);
+    const rid = lastOutbound?.requestId as string;
+    manager.handlePhotoResponse({
+      requestId: rid,
+      success: true,
+      photoUrl: "https://x/u.jpg",
+      width: 1,
+      height: 1,
+      timestamp: new Date(),
+      savedToGallery: false,
+    });
+    await p;
+  });
+
+  test("forwards text mode", async () => {
+    const p = manager.takePhoto({ mode: "text" });
+    expect(lastOutbound?.type).toBe(AppToCloudMessageType.PHOTO_REQUEST);
+    expect(lastOutbound?.mode).toBe("text");
+    const rid = lastOutbound?.requestId as string;
+    manager.handlePhotoResponse({
+      requestId: rid,
+      success: true,
+      photoUrl: "https://x/u.jpg",
+      width: 1,
+      height: 1,
+      timestamp: new Date(),
+      savedToGallery: false,
+    });
+    await p;
+  });
+
+  test("defaults mode to photo", async () => {
+    const p = manager.takePhoto();
+    expect(lastOutbound?.mode).toBe("photo");
     const rid = lastOutbound?.requestId as string;
     manager.handlePhotoResponse({
       requestId: rid,

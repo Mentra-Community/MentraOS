@@ -63,12 +63,26 @@ const stripPem = (p: string) =>
 // runtime-only tokens so Runtime never issues tokens for itself.
 {
   const coreKeys = crypto.generateKeyPairSync("ed25519");
+  const miniappKeys = crypto.generateKeyPairSync("ed25519");
+  const accountKeys = crypto.generateKeyPairSync("ed25519");
   const localRuntimeKeys = crypto.generateKeyPairSync("ed25519");
   process.env.MENTRA_JWT_PRIVATE_KEY = stripPem(
     coreKeys.privateKey.export({ type: "pkcs8", format: "pem" }).toString(),
   );
   process.env.MENTRA_JWT_PUBLIC_KEY = stripPem(
     coreKeys.publicKey.export({ type: "spki", format: "pem" }).toString(),
+  );
+  process.env.MENTRA_MINIAPP_JWT_PRIVATE_KEY = stripPem(
+    miniappKeys.privateKey.export({ type: "pkcs8", format: "pem" }).toString(),
+  );
+  process.env.MENTRA_MINIAPP_JWT_PUBLIC_KEY = stripPem(
+    miniappKeys.publicKey.export({ type: "spki", format: "pem" }).toString(),
+  );
+  process.env.MENTRA_ACCOUNT_JWT_PRIVATE_KEY = stripPem(
+    accountKeys.privateKey.export({ type: "pkcs8", format: "pem" }).toString(),
+  );
+  process.env.MENTRA_ACCOUNT_JWT_PUBLIC_KEY = stripPem(
+    accountKeys.publicKey.export({ type: "spki", format: "pem" }).toString(),
   );
   process.env.LOCAL_RUNTIME_AUTH_PRIVATE_KEY = stripPem(
     localRuntimeKeys.privateKey.export({ type: "pkcs8", format: "pem" }).toString(),

@@ -6,7 +6,7 @@ import {Text} from "@/components/ignite"
 import MiniappSplash from "@/components/miniapp/MiniappSplash"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
-import {useAppStatusStore, useSetForeground} from "@mentra/island"
+import {engine, useSetForeground} from "@mentra/engine"
 
 /**
  * Transient handoff route for launching a DEV local miniapp from the scanner,
@@ -50,7 +50,7 @@ export default function LocalMiniAppPage() {
       // Land the just-registered dev app in the store before foregrounding —
       // setForeground() no-ops if the package isn't in apps yet, and the
       // refresh kicked off by registerDevApp() is fire-and-forget.
-      await useAppStatusStore.getState().refresh()
+      await engine.miniapps.refresh()
       // Compositor begins its fade-in + mounts LocalMiniappView (which runs its
       // own install/spawn phase machine inside the overlay).
       await setForeground(packageName)

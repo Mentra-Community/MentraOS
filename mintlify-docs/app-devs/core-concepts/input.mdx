@@ -13,7 +13,7 @@ import { registerMiniapp } from "@mentra/miniapp/background";
 
 registerMiniapp((session) => {
   session.input.onButtonPress((press) => {
-    session.display.showTextWall(`${press.buttonId}: ${press.pressType}`);
+    session.display.render([{type: "text", id: "msg", box: {x: 0, y: 0, w: 576, h: 288}, text: `${press.buttonId}: ${press.pressType}`}]);
   });
 });
 ```
@@ -28,7 +28,7 @@ the miniapp to those glasses.
 
 ```typescript
 session.input.onButtonPress((press) => {
-  if (press.pressType === "long") session.display.clear();
+  if (press.pressType === "long") session.display.render([]);
 });
 ```
 
@@ -48,12 +48,12 @@ several gestures.
 ```typescript
 // Every touch gesture.
 session.input.onTouch((touch) => {
-  session.display.showTextWall(touch.kind);
+  session.display.render([{type: "text", id: "msg", box: {x: 0, y: 0, w: 576, h: 288}, text: touch.kind}]);
 });
 
 // One gesture.
 session.input.onTouch("single_tap", () => {
-  session.display.showTextWall("Tap");
+  session.display.render([{type: "text", id: "msg", box: {x: 0, y: 0, w: 576, h: 288}, text: "Tap"}]);
 });
 
 // Several gestures, one subscription.

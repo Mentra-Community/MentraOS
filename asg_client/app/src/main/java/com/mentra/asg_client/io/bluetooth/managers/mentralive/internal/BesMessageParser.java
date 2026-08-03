@@ -1,8 +1,10 @@
 package com.mentra.asg_client.io.bluetooth.managers.mentralive.internal;
 
 import android.util.Log;
+
 import com.mentra.asg_client.io.bluetooth.utils.ByteUtil;
 import com.mentra.asg_client.io.bluetooth.utils.CircleBuffer;
+
 import java.util.ArrayList;
 import java.util.List;
 
@@ -24,6 +26,7 @@ public class BesMessageParser {
 
     private final CircleBuffer mCircleBuffer;
     private final byte[] mTempBuffer;
+    private long mDiscardedByteCount;
 
     /** Create a new BesMessageParser */
     public BesMessageParser() {
@@ -83,6 +86,7 @@ public class BesMessageParser {
                 // No start marker found
                 if (!foundValidMessage) {
                     // If we haven't found any valid messages, clear the whole buffer
+                    mDiscardedByteCount += fetchSize;
                     mCircleBuffer.clear();
                     return null;
                 }
@@ -91,6 +95,7 @@ public class BesMessageParser {
 
             // If we found a start marker that's not at our current position, skip to it
             if (startMarkerPos > currentPos) {
+                mDiscardedByteCount += startMarkerPos - currentPos;
                 currentPos = startMarkerPos;
             }
 
@@ -112,6 +117,7 @@ public class BesMessageParser {
                 // For now, if the buffer size exceeds a reasonable message size, clear it
                 if (fetchSize > 512) { // 512 bytes should be more than enough for any valid message
                     Log.d(TAG, "Buffer size too large without valid message - clearing");
+                    mDiscardedByteCount += fetchSize;
                     mCircleBuffer.clear();
                 }
                 return null;
@@ -120,6 +126,7 @@ public class BesMessageParser {
             // Validate the message format (check ## is followed by at least 4 bytes of command
             // header)
             if (endMarkerPos - currentPos < 6) {
+                mDiscardedByteCount += endMarkerPos + 2 - currentPos;
                 currentPos = endMarkerPos + 2;
                 continue;
             }
@@ -135,6 +142,8 @@ public class BesMessageParser {
             if (isValidK900Message(completeMessage)) {
                 completeMessages.add(completeMessage);
                 foundValidMessage = true;
+            } else {
+                mDiscardedByteCount += messageLength;
             }
 
             // Move past this message
@@ -144,14 +153,7 @@ public class BesMessageParser {
         // Remove the processed data from the circle buffer
         if (currentPos > 0) {
             mCircleBuffer.removeHead(currentPos);
-            // Keep this log as it's useful for monitoring circle buffer state
-            Log.d(
-                    TAG,
-                    "Removed "
-                            + currentPos
-                            + " bytes from buffer, "
-                            + mCircleBuffer.getDataLen()
-                            + " remaining");
+            // Hot path during BLE file transfer (cs_flts ACKs) — do not log every drain.
         }
 
         return completeMessages.isEmpty() ? null : completeMessages;
@@ -210,7 +212,15 @@ public class BesMessageParser {
     /** Clear the message buffer */
     public void clear() {
         mCircleBuffer.clear();
+        mDiscardedByteCount = 0;
         Log.d(TAG, "Message buffer cleared");
+    }
+
+    /** Return bytes discarded as unframed/corrupt since the last call, then reset the counter. */
+    public long consumeDiscardedByteCount() {
+        long count = mDiscardedByteCount;
+        mDiscardedByteCount = 0;
+        return count;
     }
 
     /**

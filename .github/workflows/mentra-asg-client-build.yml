@@ -83,6 +83,12 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Init StreamPackLite submodule
+        # Path-scoped on purpose: .gitmodules also carries a dangling
+        # mcu_client/peripheral_uart_next/nrf5340 entry with an unfetchable relative
+        # self-URL; a blanket recursive init would break if its gitlink ever lands.
+        run: git submodule update --init asg_client/StreamPackLite
+
       - name: Free up disk space
         # GitHub-hosted ubuntu ships ~14GB free; a full ASG release build (NDK +
         # Gradle + StreamPackLite) can exhaust it. Drop unused preinstalled
@@ -109,16 +115,6 @@ jobs:
         run: |
           # Create .env from example
           cp .env.example .env
-
-      - name: Clone StreamPackLite dependency
-        working-directory: ./asg_client
-        run: |
-          # Clone StreamPackLite repository
-          git clone https://github.com/Mentra-Community/StreamPackLite.git
-
-          # Checkout the working branch
-          cd StreamPackLite
-          git checkout working
 
       - name: Cache Gradle dependencies
         uses: actions/cache@v4

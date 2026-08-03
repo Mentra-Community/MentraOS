@@ -10,7 +10,7 @@ you start getting results; the SDK handles the subscription for you.
 ```typescript
 session.transcription.on((data) => {
   if (data.isFinal) {
-    session.display.showTextWall(data.text);
+    session.display.render([{type: "text", id: "msg", box: {x: 0, y: 0, w: 576, h: 288}, text: data.text}]);
   }
 });
 ```
@@ -46,6 +46,21 @@ session.transcription.forLanguage(["en-US", "es-ES"], (data) => { /* … */ });
 ```
 
 Each call is independent, and you can have several active at the same time.
+
+## Requiring on-device transcription
+
+Pass `{forceLocal: true}` as the final argument to route that subscription
+through on-device STT and suppress cloud transcript delivery:
+
+```typescript
+session.transcription.on(handler, {forceLocal: true});
+session.transcription.forLanguage("en-US", handler, {forceLocal: true});
+```
+
+This requires a downloaded local STT model. Cloud transcripts are suppressed
+for the local-only subscription, even while other miniapps continue using cloud
+transcription. Routing is per listener, so a default listener on the same stream
+can continue receiving cloud transcription.
 
 ## Configuring
 

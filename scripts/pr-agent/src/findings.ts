@@ -105,6 +105,44 @@ export function resolveOpenFindingsFromSource(
   return { open, resolved };
 }
 
+/**
+ * Per-fingerprint resolution: `source` produced a genuine review this cycle
+ * (`currentFingerprints` is its complete current blocking list). Any
+ * previously-open finding attributed to `source` that is NOT in that list is
+ * treated as fixed — the reviewer re-examined the PR and silently dropped it.
+ *
+ * This must run independently of the overall verdict. Gating resolution on a
+ * fully clean "approve" (as `resolveOpenFindingsFromSource` alone did) means a
+ * single new or repeated blocking item keeps every older, already-fixed
+ * finding from the same source open forever, since the ledger never removes
+ * a finding just because it stopped being reported.
+ */
+export function resolveStaleFindingsFromSource(
+  openFindings: Finding[],
+  resolvedFindings: Finding[],
+  source: string,
+  currentFingerprints: Set<string>,
+  cycle: number,
+): { open: Finding[]; resolved: Finding[] } {
+  const toResolve = openFindings.filter(
+    (f) =>
+      f.source === source &&
+      f.severity === 'blocking' &&
+      f.status === 'open' &&
+      !currentFingerprints.has(f.fingerprint),
+  );
+  if (toResolve.length === 0) {
+    return { open: openFindings, resolved: resolvedFindings };
+  }
+  const resolvedIds = new Set(toResolve.map((f) => f.fingerprint));
+  const open = openFindings.filter((f) => !resolvedIds.has(f.fingerprint));
+  const resolved = [
+    ...resolvedFindings,
+    ...toResolve.map((f) => ({ ...f, status: 'resolved' as const, lastSeenCycle: cycle })),
+  ];
+  return { open, resolved };
+}
+
 export function openBlocking(findings: Finding[]): Finding[] {
   return findings.filter((f) => f.severity === 'blocking' && f.status === 'open');
 }

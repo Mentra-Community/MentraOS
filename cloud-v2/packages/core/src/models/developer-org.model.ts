@@ -1,4 +1,5 @@
-import { Schema, model, type InferSchemaType } from "mongoose";
+import { Schema, type InferSchemaType } from "mongoose";
+import { registerModel } from "./register-model";
 
 export const DEVELOPER_ORG_PREFIX_STATUSES = ["unverified", "verified", "rejected"] as const;
 export type DeveloperOrgPrefixStatus = (typeof DEVELOPER_ORG_PREFIX_STATUSES)[number];
@@ -24,4 +25,4 @@ DeveloperOrgSchema.index({ ownerUserId: 1, createdAt: 1 });
 DeveloperOrgSchema.index({ workosOrgId: 1 }, { unique: true, sparse: true });
 
 export type DeveloperOrg = InferSchemaType<typeof DeveloperOrgSchema>;
-export const DeveloperOrgModel = model("DeveloperOrg", DeveloperOrgSchema);
+export const DeveloperOrgModel = registerModel("DeveloperOrg", DeveloperOrgSchema);

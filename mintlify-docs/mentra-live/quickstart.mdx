@@ -10,13 +10,17 @@ This quickstart shows the shortest path from package install to connecting to Me
 Use a physical phone for Bluetooth testing. Simulators and emulators are useful for UI and compile checks, but they do not provide the real Bluetooth path.
 </Warning>
 
+<Warning>
+This quickstart uses Bluetooth SDK `0.1.21-beta.3`. Before testing SDK features, [install the matching Mentra Live `0.1.21-beta.3` glasses software](/mentra-live/software-update). Every SDK release requires the Mentra Live software release with the same version number.
+</Warning>
+
 ## Step 1: Install The SDK
 
 <Tabs>
   <Tab title="React Native / Expo">
 
 ```bash
-bun add @mentra/bluetooth-sdk
+bun add @mentra/bluetooth-sdk@0.1.21-beta.3
 bunx expo install expo-build-properties
 ```
 
@@ -91,7 +95,7 @@ android {
 }
 
 dependencies {
-    implementation("com.mentraglass:bluetooth-sdk:0.1.18")
+    implementation("com.mentraglass:bluetooth-sdk:0.1.21-beta.3")
 }
 ```
 
@@ -108,14 +112,14 @@ In Xcode, add this package URL:
 https://github.com/Mentra-Community/mentra-bluetooth-sdk-ios.git
 ```
 
-Select version `0.1.18`, then add the `MentraBluetoothSDK` product to your app target.
+Select version `0.1.21-beta.3`, then add the `MentraBluetoothSDK` product to your app target.
 
 For `Package.swift` consumers:
 
 ```swift
 .package(
   url: "https://github.com/Mentra-Community/mentra-bluetooth-sdk-ios.git",
-  from: "0.1.18"
+  from: "0.1.21-beta.3"
 )
 ```
 
@@ -349,6 +353,9 @@ final class GlassesController: NSObject, MentraBluetoothSDKDelegate {
 ## Next Steps
 
 <CardGroup cols={2}>
+  <Card title="Update Mentra Live" icon="download" href="/mentra-live/software-update">
+    Match the glasses software release to your SDK version.
+  </Card>
   <Card title="Run Example Apps" icon="mobile" href="/mentra-live/examples">
     Start from complete Android, iOS, and React Native examples.
   </Card>

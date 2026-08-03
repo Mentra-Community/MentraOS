@@ -279,6 +279,9 @@ dependencies {
   // Local photo upload receiver
   implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1"
 
+  // AR99 GATT Opus to PCM decoder.
+  implementation 'io.github.jaredmdobson:concentus:1.0.1'
+
   // LC3 audio codec library
   implementation project(':lc3Lib')
 

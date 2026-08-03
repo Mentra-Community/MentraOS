@@ -23,25 +23,23 @@ import {
 } from "react-native"
 import * as RNFS from "@dr.pogodin/react-native-fs"
 import {createShimmerPlaceholder} from "react-native-shimmer-placeholder"
-import {useShallow} from "zustand/react/shallow"
 
-import {MediaViewer} from "@/components/glasses/Gallery/MediaViewer"
+import {createMediaViewerSnapshot, MediaViewer} from "@/components/glasses/Gallery/MediaViewer"
 import {PhotoImage} from "@/components/glasses/Gallery/PhotoImage"
 import {ProgressRing} from "@/components/glasses/Gallery/ProgressRing"
 import {Header, Icon, Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
-import {gallerySyncService} from "@/services/asg/gallerySyncService"
-import {localStorageService} from "@/services/asg/localStorageService"
-import {useGallerySyncStore} from "@/stores/gallerySync"
-import {selectGlassesConnected, useGlassesStore} from "@/stores/glasses"
-import {SETTINGS, useSetting} from "@/stores/settings"
+import {engine, MediaLibraryPermissions, SETTINGS, useSetting} from "@mentra/engine"
+import {cameraRollExportCoordinator, localStorageService} from "@mentra/engine/internal"
 import {spacing, ThemedStyle} from "@/theme"
 import {PhotoInfo} from "@/types/asg"
 import Share from "react-native-share"
-import showAlert from "@/utils/AlertUtils"
-import {MediaLibraryPermissions} from "@/utils/permissions/MediaLibraryPermissions"
+import showAlert, {showBluetoothAlert} from "@/utils/AlertUtils"
+import {canShareGallerySelection, MAX_GALLERY_SHARE_ITEMS} from "@/utils/galleryShareLimits"
+import {SettingsNavigationUtils} from "@/utils/SettingsNavigationUtils"
 import {ENABLE_TEST_GALLERY_DATA, TEST_GALLERY_ITEMS} from "@/utils/testGalleryData"
 import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
 
@@ -71,7 +69,7 @@ interface GalleryItem {
 }
 
 export function GalleryScreen() {
-  const {goBack, push} = useNavigationStore.getState()
+  const {push} = useNavigationStore.getState()
   const {theme, themed} = useAppTheme()
   const insets = useSaferAreaInsets()
 
@@ -83,26 +81,20 @@ export function GalleryScreen() {
   const itemWidth = (screenWidth - HORIZONTAL_PADDING - ITEM_SPACING * (numColumns - 1)) / numColumns
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
   const features = getModelCapabilities(defaultWearable)
-  const glassesConnected = useGlassesStore(selectGlassesConnected)
+  const glassesConnected =
+    useEngineSnapshot(engine.glasses.status, (onChange) => engine.glasses.onStatus(onChange)).state === "connected"
 
-  // Subscribe to sync store
-  const syncState = useGallerySyncStore((state) => state.syncState)
-  const currentFile = useGallerySyncStore((state) => state.currentFile)
-  const currentFileProgress = useGallerySyncStore((state) => state.currentFileProgress)
-  const completedFiles = useGallerySyncStore((state) => state.completedFiles)
-  const totalFiles = useGallerySyncStore((state) => state.totalFiles)
-  const failedFiles = useGallerySyncStore((state) => state.failedFiles)
-  const processingFiles = useGallerySyncStore((state) => state.processingFiles)
-  const processedFiles = useGallerySyncStore((state) => state.processedFiles)
-  const syncQueue = useGallerySyncStore((state) => state.queue)
-  const glassesGalleryStatus = useGallerySyncStore(
-    useShallow((state) => ({
-      photos: state.glassesPhotoCount,
-      videos: state.glassesVideoCount,
-      total: state.glassesTotalCount,
-      hasContent: state.glassesHasContent,
-    })),
-  )
+  const galleryStatus = useEngineSnapshot(engine.gallery.status, (onChange) => engine.gallery.onStatus(onChange))
+  const syncState = galleryStatus.syncState
+  const currentFile = galleryStatus.currentFile
+  const currentFileProgress = galleryStatus.currentFileProgress
+  const completedFiles = galleryStatus.completedFiles
+  const totalFiles = galleryStatus.totalFiles
+  const failedFiles = galleryStatus.failedFiles
+  const processingFiles = useMemo(() => new Set(galleryStatus.processingFiles), [galleryStatus.processingFiles])
+  const processedFiles = galleryStatus.processedFiles
+  const syncQueue = galleryStatus.queue
+  const glassesGalleryStatus = galleryStatus.glassesGallery
 
   // Permission state - no longer blocking, permission is requested lazily when saving
   const [_hasMediaLibraryPermission, setHasMediaLibraryPermission] = useState(false)
@@ -110,6 +102,9 @@ export function GalleryScreen() {
   // Data state
   const [downloadedPhotos, setDownloadedPhotos] = useState<PhotoInfo[]>([])
   const [selectedPhoto, setSelectedPhoto] = useState<PhotoInfo | null>(null)
+  const [viewerPhotos, setViewerPhotos] = useState<PhotoInfo[]>([])
+  const [viewerInitialIndex, setViewerInitialIndex] = useState(0)
+  const galleryPhotosRef = useRef<GalleryItem[]>([])
 
   // Photo sync states for UI (progress rings on thumbnails)
   const [photoSyncStates, setPhotoSyncStates] = useState<
@@ -137,6 +132,89 @@ export function GalleryScreen() {
 
   // Animation for smooth transition from placeholders to photos
   const fadeAnim = useRef(new Animated.Value(1)).current
+
+  // Render the island gallery sync's structured notices (it no longer shows its own
+  // alerts). The host owns the alert text/buttons/i18n + the OS-settings deep-links.
+  useEffect(() => {
+    return engine.gallery.onNotice((notice) => {
+      switch (notice.code) {
+        case "glasses_disconnected":
+          showAlert("Glasses Disconnected", "Please connect your glasses before syncing the gallery.", [{text: "OK"}])
+          break
+        case "insufficient_storage":
+          showAlert(
+            "Insufficient Storage",
+            `Only ${notice.data?.freeSpaceMB ?? 0} MB free. Please free up at least 500 MB before syncing.`,
+            [{text: "OK"}],
+          )
+          break
+        case "wifi_initializing":
+          showAlert("Please Wait", "WiFi is initializing. Please wait a moment before trying to sync again.", [
+            {text: "OK"},
+          ])
+          break
+        case "wifi_off":
+          showAlert(
+            "WiFi is Disabled",
+            "Please enable WiFi to sync photos from your glasses. Would you like to open WiFi settings?",
+            [
+              // Cancel arms nothing — the island only arms the retry/cooldown via ack().
+              {text: "Cancel", style: "cancel"},
+              {
+                text: "Open Settings",
+                onPress: () => {
+                  // Affirmative choice → let the island arm its WiFi auto-retry + cooldown,
+                  // then navigate to OS settings (host-owned UI).
+                  notice.ack?.()
+                  void SettingsNavigationUtils.openWifiSettings()
+                },
+              },
+            ],
+            {cancelable: false},
+          )
+          break
+        case "location_services_off":
+          showAlert(
+            "Location Services Required",
+            "Android requires Location Services to be enabled to connect to your glasses WiFi hotspot. Would you like to enable it?",
+            [
+              {text: "Cancel", style: "cancel"},
+              {text: "Enable", onPress: () => void SettingsNavigationUtils.showLocationServicesDialog()},
+            ],
+            {cancelable: false},
+          )
+          break
+        case "camera_roll_permission_required":
+          showAlert(
+            "Camera Roll Access Required",
+            "Automatic saving is enabled. Allow photo-library access, or turn automatic saving off in Gallery Settings before syncing.",
+            [
+              {text: "Cancel", style: "cancel"},
+              {text: "Open Settings", onPress: () => void SettingsNavigationUtils.openAppSettings()},
+            ],
+          )
+          break
+        case "bluetooth_off":
+          // Same copy the host's old pre-sync connectivity gate showed.
+          showBluetoothAlert(
+            translate("pairing:connectionIssueTitle"),
+            "Bluetooth is required to connect to glasses. Please enable Bluetooth and try again.",
+          )
+          break
+        case "connect_to_glasses": {
+          const ssid = (notice.data?.ssid as string) ?? ""
+          const message =
+            notice.data?.platform === "ios"
+              ? translate("glasses:wifiJoinExplanationIos", {ssid})
+              : translate("glasses:wifiJoinExplanationAndroid", {ssid})
+          showAlert(translate("glasses:connectToGlassesTitle"), message, [
+            {text: translate("common:ok"), onPress: () => notice.ack?.()},
+          ])
+          break
+        }
+      }
+    })
+  }, [])
 
   // DEBUG: Log state changes
   useEffect(() => {
@@ -243,9 +321,9 @@ export function GalleryScreen() {
         }
       }
 
-      // Clean up stale metadata entries (files that no longer exist on disk)
+      // Preserve stale metadata for path recovery/support instead of deleting the only record.
       for (const fileName of staleFileNames) {
-        await localStorageService.deleteDownloadedFile(fileName)
+        await localStorageService.quarantineDownloadedFile(fileName, "local media missing or empty during gallery load")
       }
 
       // Also unlink zero-byte files from disk so they don't accumulate.
@@ -450,15 +528,25 @@ export function GalleryScreen() {
       }
 
       // Open MediaViewer directly (no floating transition)
-      // Index will be calculated from photo name when rendering MediaViewer
-      console.log("[GalleryScreen] 🚀 Opening MediaViewer for photo:", item.photo.name)
+      // Snapshot the list so background gallery polling does not continually
+      // rebuild and re-render full-resolution viewer items.
+      const snapshot = createMediaViewerSnapshot(
+        galleryPhotosRef.current.map((galleryItem) => galleryItem.photo),
+        item.photo.name,
+      )
+      if (!snapshot) {
+        console.warn(`[GalleryScreen] Ignoring stale media selection: ${item.photo.name}`)
+        return
+      }
+      setViewerPhotos(snapshot.photos)
+      setViewerInitialIndex(snapshot.initialIndex)
       setSelectedPhoto(item.photo)
     },
     [isSelectionMode, photoSyncStates, togglePhotoSelection],
   )
 
   // Handle photo sharing — copies to cache dir for Android FileProvider compatibility
-  const handleSharePhoto = async (photo: PhotoInfo) => {
+  const handleSharePhoto = useCallback(async (photo: PhotoInfo) => {
     if (!photo) {
       console.error("No photo provided to share")
       return
@@ -514,11 +602,15 @@ export function GalleryScreen() {
       console.error("Error sharing photo:", error)
       showAlert("Error", "Failed to share. Please try again.", [{text: translate("common:ok")}])
     }
-  }
+  }, [])
 
-  // Handle sync button press - delegate to service
-  const handleSyncPress = () => {
-    if (gallerySyncService.isSyncing() || gallerySyncService.isSyncStarting()) {
+  const handleCloseMediaViewer = useCallback(() => {
+    setSelectedPhoto(null)
+  }, [])
+
+  // Handle sync button press - delegate to the island gallery service.
+  const handleSyncPress = async () => {
+    if (galleryStatus.isSyncing || galleryStatus.isStarting) {
       console.log("[GalleryScreen] Already syncing, ignoring press")
       return
     }
@@ -529,7 +621,10 @@ export function GalleryScreen() {
       return
     }
 
-    gallerySyncService.startSync()
+    // Connectivity preconditions (BT adapter, Android location) live in the island
+    // sync pre-flight now — it emits structured notices that the onNotice handler
+    // above renders as alerts.
+    void engine.gallery.sync()
   }
 
   // Handle deletion of selected photos
@@ -538,8 +633,15 @@ export function GalleryScreen() {
 
     const selectedCount = selectedPhotos.size
     const itemText = selectedCount === 1 ? "item" : "items"
+    const notExportedCount = await cameraRollExportCoordinator.countNotExported(Array.from(selectedPhotos))
+    const exportWarning =
+      notExportedCount > 0
+        ? ` ${notExportedCount} ${
+            notExportedCount === 1 ? "item has" : "items have"
+          } not been confirmed in your camera roll and may be permanently lost.`
+        : " Copies already saved to your camera roll will not be affected."
 
-    showAlert("Delete Photos", `Are you sure you want to delete ${selectedCount} ${itemText}?`, [
+    showAlert("Delete Photos", `Are you sure you want to delete ${selectedCount} ${itemText}?${exportWarning}`, [
       {text: translate("common:cancel"), style: "cancel"},
       {
         text: translate("common:delete"),
@@ -559,7 +661,7 @@ export function GalleryScreen() {
             if (localPhotos.length > 0) {
               for (const photoName of localPhotos) {
                 try {
-                  const deleted = await localStorageService.deleteDownloadedFile(photoName)
+                  const deleted = await cameraRollExportCoordinator.deleteLocalMedia(photoName)
                   if (deleted) {
                     deletedPhotoNames.push(photoName)
                   } else {
@@ -575,7 +677,7 @@ export function GalleryScreen() {
 
             if (deletedPhotoNames.length > 0) {
               setDownloadedPhotos((prev) => prev.filter((photo) => !deletedPhotoNames.includes(photo.name)))
-              useGallerySyncStore.getState().removeFilesFromQueue(deletedPhotoNames)
+              engine.gallery.removeFilesFromQueue(deletedPhotoNames)
             }
 
             // Refresh gallery
@@ -603,6 +705,14 @@ export function GalleryScreen() {
   // Handle sharing multiple selected photos/videos
   const handleShareSelectedPhotos = async () => {
     if (selectedPhotos.size === 0) return
+    if (!canShareGallerySelection(selectedPhotos.size)) {
+      showAlert(
+        "Share Limit",
+        `You can share up to ${MAX_GALLERY_SHARE_ITEMS} items at a time. You currently have ${selectedPhotos.size} selected.`,
+        [{text: translate("common:ok")}],
+      )
+      return
+    }
 
     try {
       const photosToShare = allPhotos.filter((p) => p.photo && selectedPhotos.has(p.photo.name)).map((p) => p.photo!)
@@ -727,7 +837,7 @@ export function GalleryScreen() {
     // Only query glasses if we have glasses info (meaning glasses are connected) AND glasses have gallery capability
     if (glassesConnected && features?.hasCamera) {
       console.log("[GalleryScreen] Glasses connected with gallery capability - querying gallery status")
-      gallerySyncService.queryGlassesGalleryStatus()
+      void engine.gallery.refreshStatus()
     }
 
     // Note: Sync service is initialized globally in GallerySyncEffect
@@ -737,7 +847,7 @@ export function GalleryScreen() {
   useEffect(() => {
     if (!glassesConnected) {
       console.log("[GalleryScreen] Glasses disconnected - clearing gallery state")
-      useGallerySyncStore.getState().clearGlassesGalleryStatus()
+      engine.gallery.clearGlassesGalleryStatus()
     }
   }, [glassesConnected])
 
@@ -861,6 +971,7 @@ export function GalleryScreen() {
 
     return items
   }, [syncState, syncQueue, downloadedPhotos])
+  galleryPhotosRef.current = allPhotos
 
   // Create placeholder items during initial load (only if loading is taking a while)
   const placeholderItems = useMemo(() => {
@@ -1339,35 +1450,16 @@ export function GalleryScreen() {
         {renderStatusBar()}
 
         {/* Gallery viewer - direct open (no floating transition) */}
-        {selectedPhoto &&
-          (() => {
-            // Calculate the actual index in the flattened photos array
-            // GalleryItem.index includes sync queue offsets, so we need to find the real position
-            const flatPhotos = allPhotos.map((item) => item.photo).filter((p): p is PhotoInfo => p !== undefined)
-            const actualIndex = flatPhotos.findIndex((p) => p?.name === selectedPhoto.name)
-
-            if (actualIndex === -1) {
-              console.error("[GalleryScreen] ❌ Selected photo not found in photos array:", selectedPhoto.name)
-              return null
-            }
-
-            console.log("[GalleryScreen] 🎬 Rendering MediaViewer with", flatPhotos.length, "photos")
-            console.log("[GalleryScreen] 🎬 actualIndex for", selectedPhoto.name, ":", actualIndex)
-
-            return (
-              <MediaViewer
-                visible={true}
-                photo={selectedPhoto}
-                photos={flatPhotos}
-                initialIndex={actualIndex}
-                onClose={() => {
-                  console.log("[GalleryScreen] 🎬 MediaViewer closed by user")
-                  setSelectedPhoto(null)
-                }}
-                onShare={handleSharePhoto}
-              />
-            )
-          })()}
+        {selectedPhoto && viewerPhotos.length > 0 && (
+          <MediaViewer
+            visible
+            photo={selectedPhoto}
+            photos={viewerPhotos}
+            initialIndex={viewerInitialIndex}
+            onClose={handleCloseMediaViewer}
+            onShare={handleSharePhoto}
+          />
+        )}
       </View>
     </>
   )

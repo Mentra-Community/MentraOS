@@ -34,12 +34,19 @@ name: CI Gate (dev)
 on:
   # Post an initial pending status the moment a PR opens / updates, so the
   # required check appears immediately rather than only after a builder starts.
-  pull_request:
+  #
+  # pull_request_target (not pull_request): fork PRs receive a read-only
+  # GITHUB_TOKEN on pull_request, so createCommitStatus 403s with
+  # "Resource not accessible by integration". pull_request_target runs in the
+  # base-repo context with statuses:write. Safe here because this workflow
+  # never checks out or executes PR-head code — it only reads Actions API
+  # state and posts a commit status for github.event.pull_request.head.sha.
+  pull_request_target:
     branches: [dev]
     types: [opened, reopened, synchronize]
   # Manual retrigger. Needed for PRs whose head commit predates ci-gate.yml
-  # landing on dev (no pull_request event ever fired for them) — re-run this
-  # workflow against the PR branch to evaluate and post the status.
+  # landing on dev (no pull_request_target event ever fired for them) — re-run
+  # this workflow against the PR branch to evaluate and post the status.
   workflow_dispatch:
   # Re-evaluate when a gated builder COMPLETES. This is what makes the gate
   # self-correct after a builder is RE-RUN (e.g. a flaky failure that an
@@ -55,6 +62,7 @@ on:
       - "Mobile App Android Build"
       - "MentraOS ASG Client Build"
       - "Mobile App Quality Checks"
+      - "OEM Host Boundary Gate"
       - "Bun Lockfile Checks"
       - "🧪 Test Cloud build"
       - "🧪 Test SDK build"
@@ -66,10 +74,11 @@ on:
 concurrency:
   # Key by the COMMIT (head SHA), consistently across every event type, so all
   # evaluations of the same commit land in one group and never run in parallel
-  # (which would race on createCommitStatus for that SHA). Both the pull_request
-  # head SHA and the workflow_run head SHA refer to the same commit, so unrelated
-  # fork PRs sharing a branch name do NOT collide (different commits -> different
-  # groups). github.sha is the final fallback (e.g. workflow_dispatch).
+  # (which would race on createCommitStatus for that SHA). Both the
+  # pull_request_target head SHA and the workflow_run head SHA refer to the
+  # same commit, so unrelated fork PRs sharing a branch name do NOT collide
+  # (different commits -> different groups). github.sha is the final fallback
+  # (e.g. workflow_dispatch).
   group: ci-gate-dev-${{ github.event.pull_request.head.sha || github.event.workflow_run.head_sha || github.sha }}
   # Do NOT cancel in progress: re-evaluations from builder completions should
   # queue and replace, not cancel each other. Cancelling was what littered every
@@ -108,6 +117,7 @@ jobs:
               "Mobile App Android Build",
               "MentraOS ASG Client Build",
               "Mobile App Quality Checks",
+              "OEM Host Boundary Gate",
               "Bun Lockfile Checks",
               "🧪 Test Cloud build",
               "🧪 Test SDK build",

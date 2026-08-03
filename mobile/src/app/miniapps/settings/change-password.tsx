@@ -13,9 +13,11 @@ import mentraAuth from "@/utils/auth/authClient"
 import {mapAuthError} from "@/utils/auth/authErrors"
 
 export default function ChangePasswordScreen() {
+  const [currentPassword, setCurrentPassword] = useState("")
   const [newPassword, setNewPassword] = useState("")
   const [confirmPassword, setConfirmPassword] = useState("")
   const [isLoading, setIsLoading] = useState(false)
+  const [showCurrentPassword, setShowCurrentPassword] = useState(false)
   const [showNewPassword, setShowNewPassword] = useState(false)
   const [showConfirmPassword, setShowConfirmPassword] = useState(false)
 
@@ -23,7 +25,7 @@ export default function ChangePasswordScreen() {
   const {theme, themed} = useAppTheme()
 
   const passwordsMatch = newPassword === confirmPassword && newPassword.length > 0
-  const isFormValid = passwordsMatch && newPassword.length >= 6
+  const isFormValid = passwordsMatch && newPassword.length >= 6 && currentPassword.length > 0
 
   const handleUpdatePassword = async () => {
     // Validation checks with specific error messages
@@ -39,7 +41,8 @@ export default function ChangePasswordScreen() {
 
     setIsLoading(true)
 
-    const res = await mentraAuth.updateUserPassword(newPassword)
+    // The account backend re-verifies the current password before applying.
+    const res = await mentraAuth.updateUserPassword(newPassword, currentPassword)
     if (res.is_error()) {
       console.error("Error updating password:", res.error)
       showAlert(translate("common:error"), mapAuthError(res.error), [{text: translate("common:ok")}])
@@ -60,6 +63,29 @@ export default function ChangePasswordScreen() {
           <Text tx="profileSettings:changePasswordSubtitle" style={themed($subtitle)} />
 
           <View style={themed($form)}>
+            <View style={themed($inputGroup)}>
+              <Text tx="profileSettings:currentPassword" style={themed($inputLabel)} />
+              <View style={themed($enhancedInputContainer)}>
+                <FontAwesome name="lock" size={16} color={theme.colors.text} />
+                <Spacer width={spacing.s1} />
+                <TextInput
+                  hitSlop={{top: 16, bottom: 16}}
+                  style={themed($enhancedInput)}
+                  placeholder={translate("profileSettings:enterCurrentPassword")}
+                  value={currentPassword}
+                  autoCapitalize="none"
+                  onChangeText={setCurrentPassword}
+                  secureTextEntry={!showCurrentPassword}
+                  placeholderTextColor={theme.colors.textDim}
+                />
+                <TouchableOpacity
+                  hitSlop={{top: 16, bottom: 16, left: 16, right: 16}}
+                  onPress={() => setShowCurrentPassword(!showCurrentPassword)}>
+                  <FontAwesome name={showCurrentPassword ? "eye" : "eye-slash"} size={18} color={theme.colors.text} />
+                </TouchableOpacity>
+              </View>
+            </View>
+
             <View style={themed($inputGroup)}>
               <Text tx="profileSettings:newPassword" style={themed($inputLabel)} />
               <View style={themed($enhancedInputContainer)}>

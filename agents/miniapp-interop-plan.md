@@ -61,7 +61,7 @@ interface MiniappInfo {
 }
 ```
 
-- `list()` returns **compatible apps only** by default. Each entry carries the project's existing `CompatibilityResult` (`mobile/modules/island/src/utils/hardware/hardware.ts:13`) — `{isCompatible, missingRequired: HardwareRequirement[], missingOptional, warnings}` — already computed on `ClientApp.compatibility`. So "incompatible reasons" aren't a vague string array; they're structured `missingRequired` hardware requirements (CAMERA, DISPLAY, etc.), and `HardwareCompatibility.getCompatibilityMessage(result)` / `getDetailedMessages(result)` already turn them into human strings Mentra AI can speak ("the camera app needs glasses with a camera"). `includeIncompatible: true` adds the incompatible apps to the list.
+- `list()` returns **compatible apps only** by default. Each entry carries the project's existing `CompatibilityResult` (`mobile/modules/engine/src/utils/hardware/hardware.ts:13`) — `{isCompatible, missingRequired: HardwareRequirement[], missingOptional, warnings}` — already computed on `ClientApp.compatibility`. So "incompatible reasons" aren't a vague string array; they're structured `missingRequired` hardware requirements (CAMERA, DISPLAY, etc.), and `HardwareCompatibility.getCompatibilityMessage(result)` / `getDetailedMessages(result)` already turn them into human strings Mentra AI can speak ("the camera app needs glasses with a camera"). `includeIncompatible: true` adds the incompatible apps to the list.
 - `start()` goes through the exact same path as a home-screen tap (`useAppStatusStore.start`), so hardware gates, the captions STT gate, foreground arbitration, and navigation all apply unchanged.
 - `list`/`start`/`stop` from a non-system app reject with `NOT_PERMITTED`.
 
@@ -238,7 +238,7 @@ A miniapp woken by an action **stays running** until something explicitly stops 
 
 `start()`/`stop()` already surface through existing machinery — we don't add a hint:
 
-- **On glasses:** `LocalDisplayManager.onMount` already sends a `"Starting <AppName>…"` boot message to the display when a miniapp mounts (`mobile/modules/island/src/services/LocalDisplayManager.ts:122`). Because system `start()` goes through the same `useAppStatusStore.start` → mount path as a tile tap, the AI starting an app looks identical to the user starting it.
+- **On glasses:** `LocalDisplayManager.onMount` already sends a `"Starting <AppName>…"` boot message to the display when a miniapp mounts (`mobile/modules/engine/src/services/LocalDisplayManager.ts:122`). Because system `start()` goes through the same `useAppStatusStore.start` → mount path as a tile tap, the AI starting an app looks identical to the user starting it.
 - **In the app list:** the app flips to `running` in the home UI either way.
 - **Headless action wakes intentionally show nothing** on the glasses — a background action shouldn't seize the display. The boot message is tied to *display mount*, not background spawn, so a woken app that never calls `session.display` stays invisible, which is the desired behavior.
 

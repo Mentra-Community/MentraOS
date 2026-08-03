@@ -12,13 +12,18 @@
  * can stay byte-identical.
  */
 
+export const CAPTION_TIMEOUT_OPTIONS_SECONDS = [3, 5, 10, 30, 40] as const
+export const DEFAULT_CAPTION_TIMEOUT_SECONDS = 40
+
 /** Caption settings — persisted in storage, mirrored to the UI. */
 export interface CaptionSettings {
   language: string
   languageHints: string[]
+  useOfflineStt: boolean
   displayLines: number
   displayWidth: number
   wordBreaking: boolean
+  captionTimeoutSeconds: number
 }
 
 /** A single transcript entry shown in the UI's transcript list. */

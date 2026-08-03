@@ -1,4 +1,4 @@
-// Imports the real GlassesReadiness module by path (not via "@mentra/island",
+// Imports the real GlassesReadiness module by path (not via "@mentra/engine",
 // which jest mocks) so the actual logic runs under the mobile jest CI runner.
 import {
   isGlassesConnected,
@@ -6,7 +6,7 @@ import {
   isGlassesReady,
   waitForGlassesReady,
   type GlassesConnectionStatus,
-} from "../../modules/island/src/services/GlassesReadiness"
+} from "../../modules/engine/src/services/GlassesReadiness"
 
 describe("GlassesReadiness predicates", () => {
   it("isGlassesConnected is true only when connected", () => {

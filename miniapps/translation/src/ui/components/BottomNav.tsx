@@ -1,4 +1,5 @@
 import {Languages, Settings as SettingsGlyph} from "lucide-react"
+import {useColorScheme} from "@mentra/miniapp/ui"
 
 import type {HoldHandlers} from "../hooks/useDeveloperMode"
 
@@ -18,12 +19,14 @@ export function BottomNav({
   settingsHoldHandlers,
 }: BottomNavProps) {
   const activeIconColor = readableIconColor(accentColor)
-  const inactiveIconColor = "#3F3F46"
+  // Inactive ink flips with the host color scheme (icons take a color prop,
+  // so Tailwind dark: variants can't reach them).
+  const inactiveIconColor = useColorScheme() === "dark" ? "#A1A1AA" : "#3F3F46"
 
   return (
     <div className="w-full flex flex-col">
       {/* Bottom navigation */}
-      <div className="w-full h-14 py-3 bg-white/80 rounded-tl-2xl rounded-tr-2xl backdrop-blur-lg flex flex-col justify-start items-center gap-2.5 overflow-hidden">
+      <div className="w-full h-14 py-3 bg-white/80 dark:bg-zinc-900/80 rounded-tl-2xl rounded-tr-2xl backdrop-blur-lg flex flex-col justify-start items-center gap-2.5 overflow-hidden">
         <div className="w-full flex justify-center items-end">
           {/* Translation tab */}
           <div className="flex-1 inline-flex flex-col justify-start items-center gap-1">

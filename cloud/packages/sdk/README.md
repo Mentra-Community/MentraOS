@@ -45,6 +45,10 @@ await app.start();
 
 `await session.camera.takePhoto({ exposureTimeNs: 8_333_333 })` sets sensor exposure time in **nanoseconds** for that shot only. It is **not** saved as a camera preference. Omit the field, or pass an invalid / non-positive value, for normal auto exposure. Unsupported hardware falls back to auto exposure on the glasses.
 
+### Text capture
+
+`await session.camera.takePhoto({ mode: "text" })` captures at maximum source quality and, on supported glasses, crops around readable text before delivery. Omit `mode`, or use `"photo"`, for a normal full-frame photo.
+
 ## Migrating from v2?
 
 See the [migration guide](https://docs.mentra.glass/app-devs/migration/overview). Your existing code still works — v3 includes a compatibility layer.

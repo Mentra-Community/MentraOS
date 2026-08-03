@@ -3,16 +3,14 @@ import {useState, useEffect} from "react"
 import {View, ViewStyle, TextStyle, ScrollView} from "react-native"
 
 import {Header, Screen, Text} from "@/components/ignite"
-import ToggleSetting from "@/components/settings/ToggleSetting"
+import {GalleryCameraRollSetting} from "@/components/glasses/Gallery/GalleryCameraRollSetting"
 import InfoCardSection from "@/components/ui/InfoCard"
 import {RouteButton} from "@/components/ui/RouteButton"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
-import {gallerySettingsService} from "@/services/asg/gallerySettingsService"
-import {localStorageService} from "@/services/asg/localStorageService"
-import {useGallerySyncStore} from "@/stores/gallerySync"
-import {SETTINGS, useSetting} from "@/stores/settings"
+import {engine, SETTINGS, useSetting} from "@mentra/engine"
+import {cameraRollExportCoordinator, localStorageService} from "@mentra/engine/internal"
 import {ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
 
@@ -21,7 +19,6 @@ export default function GallerySettingsScreen() {
   const {theme, themed} = useAppTheme()
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
 
-  const [autoSaveToCameraRoll, setAutoSaveToCameraRoll] = useState(true)
   const [localPhotoCount, setLocalPhotoCount] = useState(0)
   const [localVideoCount, setLocalVideoCount] = useState(0)
   const [glassesPhotoCount, setGlassesPhotoCount] = useState(0)
@@ -31,14 +28,8 @@ export default function GallerySettingsScreen() {
 
   // Load settings and stats on mount
   useEffect(() => {
-    loadSettings()
     loadStats()
   }, [])
-
-  const loadSettings = async () => {
-    const settings = await gallerySettingsService.getSettings()
-    setAutoSaveToCameraRoll(settings.autoSaveToCameraRoll)
-  }
 
   const loadStats = async () => {
     try {
@@ -77,11 +68,6 @@ export default function GallerySettingsScreen() {
     }
   }
 
-  const handleToggleAutoSave = async (value: boolean) => {
-    setAutoSaveToCameraRoll(value)
-    await gallerySettingsService.setAutoSaveToCameraRoll(value)
-  }
-
   const handleDeleteAll = async () => {
     const totalLocalMedia = localPhotoCount + localVideoCount
 
@@ -91,7 +77,16 @@ export default function GallerySettingsScreen() {
     }
 
     const itemText = totalLocalMedia === 1 ? "item" : "items"
-    const message = `This will permanently delete all ${totalLocalMedia} ${itemText} from your device. Photos saved to your camera roll will not be affected. This action cannot be undone.`
+    const notExportedCount = await cameraRollExportCoordinator.countNotExported(
+      Object.keys(await localStorageService.getDownloadedFiles()),
+    )
+    const exportWarning =
+      notExportedCount > 0
+        ? ` ${notExportedCount} ${
+            notExportedCount === 1 ? "item has" : "items have"
+          } not been confirmed in your camera roll and may be permanently lost.`
+        : " Photos and videos already saved to your camera roll will not be affected."
+    const message = `This will permanently delete all ${totalLocalMedia} ${itemText} from the Mentra App.${exportWarning} This action cannot be undone.`
 
     showAlert("Delete All Photos", message, [
       {text: translate("common:cancel"), style: "cancel"},
@@ -101,11 +96,9 @@ export default function GallerySettingsScreen() {
         onPress: async () => {
           try {
             // console.log("[GallerySettings] 🗑️ Clearing all downloaded files and sync queue")
-            await localStorageService.clearAllFiles()
+            await cameraRollExportCoordinator.clearLocalMedia()
 
-            // Clear the sync queue in Zustand store to remove zombie files
-            const gallerySyncStore = useGallerySyncStore.getState()
-            gallerySyncStore.clearQueue()
+            engine.gallery.clearQueue()
             // console.log("[GallerySettings] ✅ Cleared sync queue from store")
 
             showAlert("Success", "All photos deleted from device storage", [{text: translate("common:ok")}])
@@ -146,12 +139,7 @@ export default function GallerySettingsScreen() {
 
         <View style={themed($sectionCompact)}>
           <Text style={themed($sectionTitle)}>{translate("glasses:automaticSync")}</Text>
-          <ToggleSetting
-            label={translate("glasses:saveToCameraRoll")}
-            subtitle={translate("glasses:saveToLibraryDescription")}
-            value={autoSaveToCameraRoll}
-            onValueChange={handleToggleAutoSave}
-          />
+          <GalleryCameraRollSetting />
         </View>
 
         <Text style={themed($sectionTitle)}>{translate("glasses:storageInfo")}</Text>

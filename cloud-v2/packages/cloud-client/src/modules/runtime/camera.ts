@@ -23,7 +23,7 @@ import type {
   StreamOptions,
   ManagedStream,
   StreamStatusResult,
-} from "@mentra/cloud-runtime/protocol";
+} from "@mentra/cloud-protocol";
 
 // The camera wire types are canonical in the protocol package (the cloud server
 // uses the same ones); re-export them so a host gets them from this module.
@@ -32,7 +32,7 @@ export type {
   StreamOptions,
   ManagedStream,
   StreamStatusResult,
-} from "@mentra/cloud-runtime/protocol";
+} from "@mentra/cloud-protocol";
 
 const PHOTO_PATH = "/api/camera/photo";
 const STREAM_PATH = "/api/camera/stream";

@@ -7,7 +7,7 @@
  *   UserSession        -> start() lifecycle + transcription subscription
  *   SettingsManager    -> storage-backed settings (load on start, persist on change)
  *   TranscriptsManager -> transcript list bookkeeping + UI broadcast
- *   DisplayManager     -> CaptionsFormatter-driven glasses rendering + 40s clear
+ *   DisplayManager     -> CaptionsFormatter-driven glasses rendering + configurable inactivity clear
  *
  * Transport seam swaps vs. the cloud app:
  *   appSession.events.onTranscriptionForLanguage(locale, h, {hints})
@@ -15,7 +15,8 @@
  *           + session.transcription.configure({languageHints})
  *           + session.transcription.on(h) for "auto"
  *   appSession.layouts.showTextWall(text, {view, durationMs})
- *        -> session.display.showTextWall(text, {view: "main", durationMs})
+ *        -> session.display.render([full-canvas text element]) — the scene API;
+ *           a stable element id updates in place, render([]) clears
  *   appSession.simpleStorage.get/set
  *        -> session.storage.get/set (JSON-encode yourself)
  *   SSE broadcast(type, payload)
@@ -32,7 +33,14 @@
  * full snapshot on every session.ui.onOpen.
  */
 
-import type {CloudClientStatus, MiniappSession, TranscriptionData, UnsubscribeFn} from "@mentra/miniapp/background"
+import type {
+  CloudClientStatus,
+  LanguageHint,
+  MiniappSession,
+  TranscriptionData,
+  TranscriptionLanguage,
+  UnsubscribeFn,
+} from "@mentra/miniapp/background"
 
 import {
   CaptionsFormatter,
@@ -43,9 +51,15 @@ import {
   type TranscriptHistoryEntry,
 } from "../../core/CaptionsFormatter"
 import {convertToPinyin} from "../../core/ChineseUtils"
-import {languageToLocale} from "../../core/languageLocale"
 import type {Channels} from "../../shared/channels"
-import type {CaptionSettings, CaptionsSnapshot, DisplayPreview, Transcript} from "../../shared/types"
+import {
+  CAPTION_TIMEOUT_OPTIONS_SECONDS,
+  DEFAULT_CAPTION_TIMEOUT_SECONDS,
+  type CaptionSettings,
+  type CaptionsSnapshot,
+  type DisplayPreview,
+  type Transcript,
+} from "../../shared/types"
 
 type Send = <C extends keyof Channels & string>(channel: C, payload: Channels[C]) => void
 type On = <C extends keyof Channels & string>(channel: C, cb: (payload: Channels[C]) => void) => () => void
@@ -64,17 +78,21 @@ interface TranscriptEntry {
 const DEFAULT_SETTINGS: CaptionSettings = {
   language: "auto",
   languageHints: [],
+  useOfflineStt: false,
   displayLines: 3,
   displayWidth: 1, // 0=Narrow, 1=Medium, 2=Wide
   wordBreaking: false,
+  captionTimeoutSeconds: DEFAULT_CAPTION_TIMEOUT_SECONDS,
 }
 
 const STORAGE_KEYS = {
   language: "language",
   languageHints: "languageHints",
+  useOfflineStt: "useOfflineStt",
   displayLines: "displayLines",
   displayWidth: "displayWidth",
   wordBreaking: "wordBreaking",
+  captionTimeoutSeconds: "captionTimeoutSeconds",
 } as const
 const TRANSCRIPT_TIMING_TELEMETRY = (globalThis as {__DEV__?: boolean}).__DEV__ === true
 
@@ -237,6 +255,11 @@ export class CaptionsController {
       }),
     )
     this.unsubs.push(
+      this.ui.on("captions:set-use-offline-stt", ({enabled}) => {
+        void this.setUseOfflineStt(enabled)
+      }),
+    )
+    this.unsubs.push(
       this.ui.on("captions:set-display-lines", ({lines}) => {
         void this.setDisplayLines(lines)
       }),
@@ -249,6 +272,11 @@ export class CaptionsController {
     this.unsubs.push(
       this.ui.on("captions:set-word-breaking", ({enabled}) => {
         void this.setWordBreaking(enabled)
+      }),
+    )
+    this.unsubs.push(
+      this.ui.on("captions:set-caption-timeout", ({seconds}) => {
+        void this.setCaptionTimeoutSeconds(seconds)
       }),
     )
     this.unsubs.push(
@@ -274,12 +302,14 @@ export class CaptionsController {
 
   private async loadSettings(): Promise<void> {
     try {
-      const [language, hintsRaw, linesRaw, widthRaw, wbRaw] = await Promise.all([
+      const [language, hintsRaw, useOfflineSttRaw, linesRaw, widthRaw, wbRaw, timeoutRaw] = await Promise.all([
         this.session.storage.get(STORAGE_KEYS.language),
         this.session.storage.get(STORAGE_KEYS.languageHints),
+        this.session.storage.get(STORAGE_KEYS.useOfflineStt),
         this.session.storage.get(STORAGE_KEYS.displayLines),
         this.session.storage.get(STORAGE_KEYS.displayWidth),
         this.session.storage.get(STORAGE_KEYS.wordBreaking),
+        this.session.storage.get(STORAGE_KEYS.captionTimeoutSeconds),
       ])
 
       this.settings.language = language || "auto"
@@ -293,6 +323,9 @@ export class CaptionsController {
           return []
         }
       })()
+
+      this.settings.useOfflineStt =
+        useOfflineSttRaw == null ? DEFAULT_SETTINGS.useOfflineStt : useOfflineSttRaw === "true"
 
       this.settings.displayLines = (() => {
         if (!linesRaw) return 3
@@ -308,6 +341,12 @@ export class CaptionsController {
       })()
 
       this.settings.wordBreaking = wbRaw == null ? DEFAULT_SETTINGS.wordBreaking : wbRaw === "true"
+
+      this.settings.captionTimeoutSeconds = (() => {
+        if (!timeoutRaw) return DEFAULT_CAPTION_TIMEOUT_SECONDS
+        const parsed = parseInt(timeoutRaw, 10)
+        return isSupportedCaptionTimeoutSeconds(parsed) ? parsed : DEFAULT_CAPTION_TIMEOUT_SECONDS
+      })()
     } catch (err) {
       console.log("LocalCaptions: failed to load settings, using defaults", err)
       this.settings = {...DEFAULT_SETTINGS}
@@ -325,6 +364,13 @@ export class CaptionsController {
   private async setLanguageHints(hints: string[]): Promise<void> {
     this.settings.languageHints = hints
     await this.persist(STORAGE_KEYS.languageHints, JSON.stringify(hints))
+    this.subscribeTranscription()
+    this.broadcastSettings()
+  }
+
+  private async setUseOfflineStt(enabled: boolean): Promise<void> {
+    this.settings.useOfflineStt = enabled
+    await this.persist(STORAGE_KEYS.useOfflineStt, enabled.toString())
     this.subscribeTranscription()
     this.broadcastSettings()
   }
@@ -349,6 +395,16 @@ export class CaptionsController {
     this.settings.wordBreaking = enabled
     await this.persist(STORAGE_KEYS.wordBreaking, enabled.toString())
     this.applySettingsToDisplay()
+    this.broadcastSettings()
+  }
+
+  private async setCaptionTimeoutSeconds(seconds: number): Promise<void> {
+    if (!isSupportedCaptionTimeoutSeconds(seconds)) return
+    this.settings.captionTimeoutSeconds = seconds
+    await this.persist(STORAGE_KEYS.captionTimeoutSeconds, seconds.toString())
+    if (this.inactivityTimer !== null) {
+      this.resetInactivityTimer()
+    }
     this.broadcastSettings()
   }
 
@@ -381,10 +437,16 @@ export class CaptionsController {
 
     const language = this.settings.language
     const hints = this.settings.languageHints
+    const options = this.settings.useOfflineStt ? {forceLocal: true} : {}
 
     try {
       if (hints.length > 0) {
-        this.session.transcription.configure({languageHints: hints})
+        // configure() is a request now (issue 021): the promise rejects if the
+        // runtime can't apply the hints. Log loudly; hints failing must not
+        // take the caption stream down with them.
+        this.session.transcription
+          .configure({languageHints: hints as LanguageHint[]})
+          .catch((err) => console.error("LocalCaptions: language hints not applied", err))
       }
 
       const handler = (data: TranscriptionData) => {
@@ -393,16 +455,26 @@ export class CaptionsController {
 
       if (language === "auto") {
         // Auto-detect: subscribe to all languages.
-        this.transcriptionCleanup = this.session.transcription.on(handler)
+        this.transcriptionCleanup = this.session.transcription.on(handler, options)
       } else {
-        const locale = languageToLocale(language)
-        this.transcriptionCleanup = this.session.transcription.forLanguage(locale, handler)
+        // The SDK owns language validation now: bare registry codes from the
+        // UI ("fr") canonicalize to their BCP-47 tag ("fr-FR"); invalid values
+        // throw MiniappValidationError (caught below). The old local
+        // name->locale mapping table is gone — its silent en-US default is
+        // exactly what broke language selection (OS-1746).
+        this.transcriptionCleanup = this.session.transcription.forLanguage(
+          language as TranscriptionLanguage,
+          handler,
+          options,
+        )
       }
     } catch (err) {
-      console.log("LocalCaptions: transcription subscribe failed, falling back to en-US", err)
-      this.transcriptionCleanup = this.session.transcription.forLanguage("en-US", (data) => {
+      // Fall back to AUTO, not en-US: auto still captions whatever is spoken,
+      // while a silent en-US fallback reintroduces the wrong-language bug.
+      console.error("LocalCaptions: transcription subscribe failed, falling back to auto", err)
+      this.transcriptionCleanup = this.session.transcription.on((data) => {
         void this.handleTranscription(data)
-      })
+      }, options)
     }
   }
 
@@ -654,11 +726,15 @@ export class CaptionsController {
   }
 
   private showTextWall(text: string): void {
-    try {
-      this.session.display.showTextWall(text, {view: "main"})
-    } catch (err) {
-      console.log("LocalCaptions: display error", err)
-    }
+    // One full-canvas text element with a stable id: successive captions update
+    // it in place on the glasses (no flicker). Box coordinates are raw device
+    // px — read from capabilities, falling back to the largest canvas (the host
+    // clamps to the real one). render() never throws; it resolves {status:
+    // "blocked"} instead.
+    const d = this.session.capabilities?.display
+    void this.session.display.render([
+      {type: "text", id: "caption", box: {x: 0, y: 0, w: d?.width ?? 576, h: d?.height ?? 288}, text},
+    ])
   }
 
   private cleanTranscriptText(text: string): string {
@@ -681,16 +757,13 @@ export class CaptionsController {
     if (this.inactivityTimer) {
       clearTimeout(this.inactivityTimer)
     }
-    // Clear the formatter + glasses display after 40s of inactivity.
+    // Clear the formatter + glasses display after the configured period of inactivity.
     this.inactivityTimer = setTimeout(() => {
+      this.inactivityTimer = null
       this.formatter.clear()
       this.lastSpeakerId = undefined
-      try {
-        this.session.display.clear()
-      } catch (err) {
-        console.log("LocalCaptions: clear error", err)
-      }
-    }, 40000)
+      void this.session.display.render([])
+    }, this.settings.captionTimeoutSeconds * 1000)
   }
 
   private broadcastDisplayPreview(text: string, lines: string[], isFinal: boolean): void {
@@ -698,4 +771,8 @@ export class CaptionsController {
     this.lastDisplayPreview = preview
     this.ui.send("captions:display-preview", preview)
   }
+}
+
+export function isSupportedCaptionTimeoutSeconds(seconds: number): boolean {
+  return CAPTION_TIMEOUT_OPTIONS_SECONDS.some((option) => option === seconds)
 }

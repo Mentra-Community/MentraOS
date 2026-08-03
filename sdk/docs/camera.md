@@ -32,6 +32,7 @@ if (!session.capabilities.hasCamera) {
 
 const photo = await session.camera.takePhoto({
   size: "medium",
+  mode: "text",
   compress: "none",
   sound: true,
   saveToGallery: false,
@@ -105,7 +106,9 @@ error. Check `session.capabilities.hasCamera` before calling.
 
 ```ts
 interface TakePhotoOptions {
-  size?: "small" | "medium" | "large"
+  size?: "low" | "medium" | "high" | "max"
+  mode?: "photo" | "text"
+  transferMethod?: "auto" | "direct" | "ble"
   compress?: "none" | "low" | "medium" | "high"
   sound?: boolean
   saveToGallery?: boolean
@@ -117,9 +120,17 @@ Defaults (applied client-side before the request is sent):
 | Field | Default |
 | --- | --- |
 | `size` | `"medium"` |
+| `mode` | `"photo"` |
+| `transferMethod` | `"auto"` |
 | `compress` | `"none"` |
 | `sound` | `true` |
 | `saveToGallery` | `false` |
+
+Use `transferMethod: "ble"` when you need to skip the glasses' direct Wi-Fi
+upload attempt and always relay the image through the phone over Bluetooth.
+Use `"direct"` to attempt only the direct upload, without BLE fallback.
+`"auto"` tries direct upload first and falls back to BLE.
+Unknown runtime values are rejected instead of being treated as `"auto"`.
 
 **Returns:** `PhotoTaken`
 
@@ -213,7 +224,7 @@ For host implementors — request/response message types this module emits:
 | Method | Request type | Response |
 | --- | --- | --- |
 | `setFov` | `CAMERA_FOV` (`{horizontal, vertical}`, one-shot) | — |
-| `takePhoto` | `PHOTO` (`{size, compress, sound, saveToGallery}`) | `REQUEST_RESULT` with `data: PhotoTaken` |
+| `takePhoto` | `PHOTO` (`{size, mode, compress, sound, saveToGallery}`) | `REQUEST_RESULT` with `data: PhotoTaken` |
 | `startVideoRecording` | `VIDEO_RECORDING_START` (`{width, height, fps, sound, save}`) | `REQUEST_RESULT` with `data: VideoRecordingStarted` |
 | `stopVideoRecording` | `VIDEO_RECORDING_STOP` (`{recordingId}`) | `REQUEST_RESULT` |
 

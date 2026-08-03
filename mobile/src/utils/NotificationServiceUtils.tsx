@@ -1,32 +1,54 @@
-import {Platform} from "react-native"
+import {AppState, Platform} from "react-native"
 import CrustModule from "@mentra/crust"
 
 import showAlert from "@/utils/AlertUtils"
 
-export async function checkAndRequestNotificationAccessSpecialPermission(): Promise<boolean> {
+import {checkPermissionAfterSettingsReturn} from "./notificationPermissionFlow"
+
+export type NotificationAccessRequestResult = "granted" | "denied" | "cancelled"
+
+export async function checkAndRequestNotificationAccessSpecialPermission(): Promise<NotificationAccessRequestResult> {
   if (Platform.OS !== "android") {
-    return false
+    return "denied"
   }
 
   let hasAccess = await CrustModule.hasNotificationListenerPermission()
   if (hasAccess) {
     console.log("Notification access already granted")
-    return true
+    return "granted"
   }
 
-  return await new Promise<boolean>((resolve) => {
-    // useFocusEffect(
-    //   useCallback(() => {
-    //     // let hasAccess = await CrustModule.hasNotificationListenerPermission()
-    //     // if (hasAccess) {
-    //     //   console.log("Notification access already granted")
-    //     //   return true
-    //     // }
+  return await new Promise<NotificationAccessRequestResult>((resolve) => {
+    let settled = false
 
-    //     resolve(CrustModule.hasNotificationListenerPermission())
-    //     return async () => {}
-    //   }, []),
-    // )
+    const finish = (result: NotificationAccessRequestResult) => {
+      if (settled) return
+      settled = true
+      resolve(result)
+    }
+
+    const openSettings = async () => {
+      try {
+        const granted = await checkPermissionAfterSettingsReturn(
+          () => CrustModule.openNotificationListenerSettings(),
+          () => CrustModule.hasNotificationListenerPermission(),
+          (listener) => AppState.addEventListener("change", listener),
+        )
+        if (granted) {
+          await CrustModule.refreshNotificationListener()
+        }
+        finish(granted ? "granted" : "denied")
+      } catch (error) {
+        console.error("Error completing notification settings request:", error)
+        showAlert(
+          "Error",
+          "Could not open notification settings. Please enable notification access manually in your device settings.",
+          [{text: "OK"}],
+        )
+        finish("denied")
+      }
+    }
+
     showAlert(
       "Enable Notification Access",
       "MentraOS needs permission to read your phone notifications to display them on your smart glasses.\n\n" +
@@ -38,23 +60,11 @@ export async function checkAndRequestNotificationAccessSpecialPermission(): Prom
         {
           text: "Later",
           style: "cancel",
-          onPress: () => {
-            resolve(false)
-          },
+          onPress: () => finish("cancelled"),
         },
         {
           text: "Go to Settings",
-          onPress: async () => {
-            CrustModule.openNotificationListenerSettings().catch((err: any) => {
-              console.error("Error opening notification settings:", err)
-              showAlert(
-                "Error",
-                "Could not open notification settings. Please enable notification access manually in your device settings.",
-                [{text: "OK"}],
-              )
-            })
-            // resolve(false)
-          },
+          onPress: openSettings,
         },
       ],
       {cancelable: true},

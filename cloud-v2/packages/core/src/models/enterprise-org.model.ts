@@ -1,4 +1,5 @@
-import { Schema, model, type InferSchemaType } from "mongoose";
+import { Schema, type InferSchemaType } from "mongoose";
+import { registerModel } from "./register-model";
 
 export const ENTERPRISE_ORG_STATUSES = ["active", "disabled"] as const;
 export type EnterpriseOrgStatus = (typeof ENTERPRISE_ORG_STATUSES)[number];
@@ -26,4 +27,4 @@ EnterpriseOrgSchema.index(
 );
 
 export type EnterpriseOrg = InferSchemaType<typeof EnterpriseOrgSchema>;
-export const EnterpriseOrgModel = model("EnterpriseOrg", EnterpriseOrgSchema);
+export const EnterpriseOrgModel = registerModel("EnterpriseOrg", EnterpriseOrgSchema);

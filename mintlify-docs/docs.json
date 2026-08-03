@@ -15,20 +15,16 @@
         "groups": [
           {
             "group": "Welcome",
-            "pages": [
-              "index"
-            ]
+            "pages": ["index", "contributing"]
           },
           {
             "group": "Legal",
-            "pages": [
-              "third-party-licenses"
-            ]
+            "pages": ["third-party-licenses"]
           }
         ]
       },
       {
-        "tab": "App Devs",
+        "tab": "Miniapp Development",
         "groups": [
           {
             "group": "Getting Started",
@@ -54,19 +50,12 @@
           {
             "group": "UI Layer",
             "icon": "browser",
-            "pages": [
-              "app-devs/core-concepts/webviews/react-webviews",
-              "app-devs/core-concepts/webviews/safe-areas"
-            ]
+            "pages": ["app-devs/core-concepts/webviews/react-webviews", "app-devs/core-concepts/webviews/safe-areas"]
           },
           {
             "group": "Display",
             "icon": "display",
-            "pages": [
-              "app-devs/core-concepts/display/layouts",
-              "app-devs/core-concepts/canvas",
-              "app-devs/core-concepts/led/overview"
-            ]
+            "pages": ["app-devs/core-concepts/display/layouts", "app-devs/core-concepts/led/overview"]
           },
           {
             "group": "Audio & Speech",
@@ -121,10 +110,7 @@
           {
             "group": "Reference",
             "icon": "book",
-            "pages": [
-              "app-devs/reference/cli",
-              "app-devs/reference/system-apis"
-            ]
+            "pages": ["app-devs/reference/cli", "app-devs/reference/system-apis"]
           }
         ]
       },
@@ -136,6 +122,7 @@
             "icon": "bluetooth",
             "pages": [
               "mentra-live/overview",
+              "mentra-live/software-update",
               "mentra-live/ai-ide-integration",
               "mentra-live/quickstart",
               "mentra-live/examples"
@@ -144,11 +131,7 @@
           {
             "group": "Platform Setup",
             "icon": "mobile",
-            "pages": [
-              "mentra-live/react-native-expo",
-              "mentra-live/android",
-              "mentra-live/ios"
-            ]
+            "pages": ["mentra-live/react-native-expo", "mentra-live/android", "mentra-live/ios"]
           },
           {
             "group": "Core APIs",
@@ -163,36 +146,7 @@
           {
             "group": "Release",
             "icon": "clipboard-check",
-            "pages": [
-              "mentra-live/troubleshooting",
-              "mentra-live/production-checklist"
-            ]
-          }
-        ]
-      },
-      {
-        "tab": "OS Devs",
-        "groups": [
-          {
-            "group": "Contributing",
-            "icon": "users",
-            "pages": [
-              "os-devs/contributing/overview",
-              "os-devs/contributing/mentraos-manager-guidelines",
-              "os-devs/contributing/mentraos-asg-client-guidelines",
-              "os-devs/contributing/add-new-glasses-support",
-              {
-                "group": "Android Smart Glasses (ASG) Client",
-                "icon": "microchip",
-                "pages": [
-                  "os-devs/asg-client/README",
-                  "os-devs/asg-client/architecture",
-                  "os-devs/asg-client/mentra-live",
-                  "os-devs/asg-client/button-system",
-                  "os-devs/asg-client/streaming"
-                ]
-              }
-            ]
+            "pages": ["mentra-live/troubleshooting", "mentra-live/production-checklist"]
           }
         ]
       },
@@ -203,7 +157,9 @@
             "group": "Glasses OEMs",
             "icon": "industry",
             "pages": [
-              "glasses-oems/overview"
+              "glasses-oems/overview",
+              "glasses-oems/engine",
+              "glasses-oems/firmware-spec"
             ]
           }
         ]
@@ -245,15 +201,7 @@
     }
   },
   "contextual": {
-    "options": [
-      "copy",
-      "view",
-      "chatgpt",
-      "claude",
-      "perplexity",
-      "cursor",
-      "vscode"
-    ]
+    "options": ["copy", "view", "chatgpt", "claude", "perplexity", "cursor", "vscode"]
   },
   "footer": {
     "socials": {
@@ -263,50 +211,99 @@
     }
   },
   "redirects": [
-    { "source": "/app-devs/getting-started/deployment/overview", "destination": "/app-devs/getting-started/distribution" },
-    { "source": "/app-devs/getting-started/deployment/local-development", "destination": "/app-devs/getting-started/distribution" },
-    { "source": "/app-devs/getting-started/deployment/railway-deployment", "destination": "/app-devs/getting-started/distribution" },
-    { "source": "/app-devs/getting-started/deployment/ubuntu-deployment", "destination": "/app-devs/getting-started/distribution" },
-    { "source": "/app-devs/migration/overview", "destination": "/app-devs/getting-started/overview" },
-    { "source": "/app-devs/migration/api-map", "destination": "/app-devs/getting-started/overview" },
-    { "source": "/app-devs/core-concepts/app-server", "destination": "/app-devs/core-concepts/two-layer-architecture" },
-    { "source": "/app-devs/core-concepts/app-lifecycle-overview", "destination": "/app-devs/core-concepts/two-layer-architecture" },
-    { "source": "/app-devs/core-concepts/simple-storage", "destination": "/app-devs/core-concepts/storage" },
-    { "source": "/app-devs/core-concepts/time", "destination": "/app-devs/core-concepts/session" },
-    { "source": "/app-devs/core-concepts/ai-tool-calls", "destination": "/app-devs/core-concepts/miniapp-interop" },
-    { "source": "/app-devs/core-concepts/app-session/app-session", "destination": "/app-devs/core-concepts/session" },
-    { "source": "/app-devs/core-concepts/app-session/events-and-data", "destination": "/app-devs/core-concepts/session" },
-    { "source": "/app-devs/core-concepts/app-session/device-control", "destination": "/app-devs/core-concepts/glasses" },
-    { "source": "/app-devs/core-concepts/device/overview", "destination": "/app-devs/core-concepts/glasses" },
-    { "source": "/app-devs/core-concepts/device/hardware-capabilities", "destination": "/app-devs/core-concepts/session" },
-    { "source": "/app-devs/core-concepts/hardware-capabilities/overview", "destination": "/app-devs/core-concepts/session" },
-    { "source": "/app-devs/core-concepts/hardware-capabilities/device-capabilities", "destination": "/app-devs/core-concepts/session" },
-    { "source": "/app-devs/core-concepts/hardware-capabilities/display-glasses", "destination": "/app-devs/core-concepts/session" },
-    { "source": "/app-devs/core-concepts/hardware-capabilities/camera-glasses", "destination": "/app-devs/core-concepts/camera/photos" },
-    { "source": "/app-devs/core-concepts/webviews/bun-fullstack", "destination": "/app-devs/core-concepts/webviews/react-webviews" },
-    { "source": "/app-devs/core-concepts/webviews/webview-authentication", "destination": "/app-devs/core-concepts/auth" },
-    { "source": "/app-devs/reference/index", "destination": "/app-devs/core-concepts/session" },
-    { "source": "/app-devs/reference/app-server", "destination": "/app-devs/core-concepts/session" },
-    { "source": "/app-devs/reference/app-session", "destination": "/app-devs/core-concepts/session" },
-    { "source": "/app-devs/reference/dashboard-api", "destination": "/app-devs/core-concepts/display/layouts" },
-    { "source": "/app-devs/reference/enums", "destination": "/app-devs/core-concepts/session" },
-    { "source": "/app-devs/reference/token-utils", "destination": "/app-devs/core-concepts/auth" },
-    { "source": "/app-devs/reference/utilities", "destination": "/app-devs/core-concepts/session" },
-    { "source": "/app-devs/reference/managers/event-manager", "destination": "/app-devs/core-concepts/session" },
-    { "source": "/app-devs/reference/managers/layout-manager", "destination": "/app-devs/core-concepts/display/layouts" },
-    { "source": "/app-devs/reference/managers/settings-manager", "destination": "/app-devs/core-concepts/session" },
-    { "source": "/app-devs/reference/managers/audio-manager", "destination": "/app-devs/core-concepts/speakers/text-to-speech" },
-    { "source": "/app-devs/reference/managers/led-manager", "destination": "/app-devs/core-concepts/led/overview" },
-    { "source": "/app-devs/reference/managers/camera", "destination": "/app-devs/core-concepts/camera/photos" },
-    { "source": "/app-devs/reference/managers/location-manager", "destination": "/app-devs/core-concepts/location" },
-    { "source": "/app-devs/reference/interfaces/capabilities", "destination": "/app-devs/core-concepts/session" },
-    { "source": "/app-devs/reference/interfaces/config-types", "destination": "/app-devs/core-concepts/session" },
-    { "source": "/app-devs/reference/interfaces/event-types", "destination": "/app-devs/core-concepts/session" },
-    { "source": "/app-devs/reference/interfaces/layout-types", "destination": "/app-devs/core-concepts/display/layouts" },
-    { "source": "/app-devs/reference/interfaces/message-types", "destination": "/app-devs/core-concepts/session" },
-    { "source": "/app-devs/reference/interfaces/setting-types", "destination": "/app-devs/core-concepts/session" },
-    { "source": "/app-devs/reference/interfaces/tool-types", "destination": "/app-devs/core-concepts/miniapp-interop" },
-    { "source": "/app-devs/reference/interfaces/webhook-types", "destination": "/app-devs/core-concepts/session" },
-    { "source": "/cookbook/dashboard-note-app", "destination": "/app-devs/getting-started/overview" }
+    {
+      "source": "/app-devs/getting-started/deployment/overview",
+      "destination": "/app-devs/getting-started/distribution"
+    },
+    {
+      "source": "/app-devs/getting-started/deployment/local-development",
+      "destination": "/app-devs/getting-started/distribution"
+    },
+    {
+      "source": "/app-devs/getting-started/deployment/railway-deployment",
+      "destination": "/app-devs/getting-started/distribution"
+    },
+    {
+      "source": "/app-devs/getting-started/deployment/ubuntu-deployment",
+      "destination": "/app-devs/getting-started/distribution"
+    },
+    {"source": "/app-devs/migration/overview", "destination": "/app-devs/getting-started/overview"},
+    {"source": "/app-devs/migration/api-map", "destination": "/app-devs/getting-started/overview"},
+    {"source": "/app-devs/core-concepts/app-server", "destination": "/app-devs/core-concepts/two-layer-architecture"},
+    {"source": "/app-devs/core-concepts/canvas", "destination": "/app-devs/core-concepts/display/layouts"},
+    {
+      "source": "/app-devs/core-concepts/app-lifecycle-overview",
+      "destination": "/app-devs/core-concepts/two-layer-architecture"
+    },
+    {"source": "/app-devs/core-concepts/simple-storage", "destination": "/app-devs/core-concepts/storage"},
+    {"source": "/app-devs/core-concepts/time", "destination": "/app-devs/core-concepts/session"},
+    {"source": "/app-devs/core-concepts/ai-tool-calls", "destination": "/app-devs/core-concepts/miniapp-interop"},
+    {"source": "/app-devs/core-concepts/app-session/app-session", "destination": "/app-devs/core-concepts/session"},
+    {"source": "/app-devs/core-concepts/app-session/events-and-data", "destination": "/app-devs/core-concepts/session"},
+    {"source": "/app-devs/core-concepts/app-session/device-control", "destination": "/app-devs/core-concepts/glasses"},
+    {"source": "/app-devs/core-concepts/device/overview", "destination": "/app-devs/core-concepts/glasses"},
+    {
+      "source": "/app-devs/core-concepts/device/hardware-capabilities",
+      "destination": "/app-devs/core-concepts/session"
+    },
+    {
+      "source": "/app-devs/core-concepts/hardware-capabilities/overview",
+      "destination": "/app-devs/core-concepts/session"
+    },
+    {
+      "source": "/app-devs/core-concepts/hardware-capabilities/device-capabilities",
+      "destination": "/app-devs/core-concepts/session"
+    },
+    {
+      "source": "/app-devs/core-concepts/hardware-capabilities/display-glasses",
+      "destination": "/app-devs/core-concepts/session"
+    },
+    {
+      "source": "/app-devs/core-concepts/hardware-capabilities/camera-glasses",
+      "destination": "/app-devs/core-concepts/camera/photos"
+    },
+    {
+      "source": "/app-devs/core-concepts/webviews/bun-fullstack",
+      "destination": "/app-devs/core-concepts/webviews/react-webviews"
+    },
+    {
+      "source": "/app-devs/core-concepts/webviews/webview-authentication",
+      "destination": "/app-devs/core-concepts/auth"
+    },
+    {"source": "/app-devs/reference/index", "destination": "/app-devs/core-concepts/session"},
+    {"source": "/app-devs/reference/app-server", "destination": "/app-devs/core-concepts/session"},
+    {"source": "/app-devs/reference/app-session", "destination": "/app-devs/core-concepts/session"},
+    {"source": "/app-devs/reference/dashboard-api", "destination": "/app-devs/core-concepts/display/layouts"},
+    {"source": "/app-devs/reference/enums", "destination": "/app-devs/core-concepts/session"},
+    {"source": "/app-devs/reference/token-utils", "destination": "/app-devs/core-concepts/auth"},
+    {"source": "/app-devs/reference/utilities", "destination": "/app-devs/core-concepts/session"},
+    {"source": "/app-devs/reference/managers/event-manager", "destination": "/app-devs/core-concepts/session"},
+    {"source": "/app-devs/reference/managers/layout-manager", "destination": "/app-devs/core-concepts/display/layouts"},
+    {"source": "/app-devs/reference/managers/settings-manager", "destination": "/app-devs/core-concepts/session"},
+    {
+      "source": "/app-devs/reference/managers/audio-manager",
+      "destination": "/app-devs/core-concepts/speakers/text-to-speech"
+    },
+    {"source": "/app-devs/reference/managers/led-manager", "destination": "/app-devs/core-concepts/led/overview"},
+    {"source": "/app-devs/reference/managers/camera", "destination": "/app-devs/core-concepts/camera/photos"},
+    {"source": "/app-devs/reference/managers/location-manager", "destination": "/app-devs/core-concepts/location"},
+    {"source": "/app-devs/reference/interfaces/capabilities", "destination": "/app-devs/core-concepts/session"},
+    {"source": "/app-devs/reference/interfaces/config-types", "destination": "/app-devs/core-concepts/session"},
+    {"source": "/app-devs/reference/interfaces/event-types", "destination": "/app-devs/core-concepts/session"},
+    {"source": "/app-devs/reference/interfaces/layout-types", "destination": "/app-devs/core-concepts/display/layouts"},
+    {"source": "/app-devs/reference/interfaces/message-types", "destination": "/app-devs/core-concepts/session"},
+    {"source": "/app-devs/reference/interfaces/setting-types", "destination": "/app-devs/core-concepts/session"},
+    {"source": "/app-devs/reference/interfaces/tool-types", "destination": "/app-devs/core-concepts/miniapp-interop"},
+    {"source": "/app-devs/reference/interfaces/webhook-types", "destination": "/app-devs/core-concepts/session"},
+    {"source": "/cookbook/dashboard-note-app", "destination": "/app-devs/getting-started/overview"},
+    {"source": "/os-devs/contributing/overview", "destination": "/contributing"},
+    {"source": "/os-devs/contributing/mentraos-manager-guidelines", "destination": "/contributing"},
+    {"source": "/os-devs/contributing/mentraos-asg-client-guidelines", "destination": "/contributing"},
+    {"source": "/os-devs/contributing/add-new-glasses-support", "destination": "/contributing"},
+    {"source": "/os-devs/asg-client/README", "destination": "/contributing"},
+    {"source": "/os-devs/asg-client/architecture", "destination": "/contributing"},
+    {"source": "/os-devs/asg-client/mentra-live", "destination": "/contributing"},
+    {"source": "/os-devs/asg-client/button-system", "destination": "/contributing"},
+    {"source": "/os-devs/asg-client/streaming", "destination": "/contributing"}
   ]
 }

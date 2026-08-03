@@ -1,7 +1,7 @@
 name: Staging Builds
 
 # Builds the mobile app (Android + iOS) and ASG client from the staging branch
-# and publishes to THREE places:
+# and publishes to TWO places:
 #
 #   1. The versioned release tag (`v2.10` etc.) with `_Beta_N` numbering.
 #      This is what `bun run release:android` / `release:ios` produce.
@@ -9,15 +9,15 @@ name: Staging Builds
 #
 #   2. The rolling-latest tag (`staging-builds`) with stable filenames:
 #        - mobile-latest.apk / mobile-latest.ipa / asg-latest.apk
-#        - staging_live_version.json
-#        - Dated copies kept for 7 days.
+#        - staging_live_version.json (rolling head: last-published ASG record
+#          for the OS-1689 reuse check; not consumed by any shipped binary)
+#        - asg-staging-r<run_id>-version.json pins + ASG APKs (permanent)
+#        - Dated mobile builds kept for 7 days.
 #
-#   3. The dedicated Cloudflare Pages staging OTA site:
-#        - https://mentra-live-ota-staging.pages.dev/staging_live_version.json
-#        - https://staging.ota.mentraglass.com/staging_live_version.json
-#          once the custom domain is attached.
-#      This intentionally does not deploy to the production ota.mentraglass.com
-#      project or include prod_live_version.json.
+# There is no staging OTA "track": app binaries carry their own pinned
+# manifest, and ad-hoc development uses the super-mode custom manifest URL
+# override. (The former Cloudflare Pages staging OTA site and its
+# staging.ota.mentraglass.com domain are no longer deployed.)
 #
 # Mobile also uploads to TestFlight (iOS) and Play Store internal track
 # (Android), as the release scripts already do, IF the runner has the creds
@@ -38,23 +38,28 @@ on:
 permissions:
   contents: write
 
-# Serialize runs: two staging pushes in quick succession must not deploy OTA
-# manifests to Cloudflare Pages out of order (the older manifest could land
-# last and stay live) or race the delete/re-upload of rolling release assets.
+# Serialize runs: two staging pushes in quick succession must not publish the
+# rolling OTA manifest out of order (the older manifest could land last and
+# stay live) or race the delete/re-upload of rolling release assets.
 concurrency:
   group: staging-builds
   cancel-in-progress: false
 
-# These URLs are used to publish and verify the staging OTA manifest below.
-# Deliberately NOT baked into the mobile builds (e.g. via
-# EXPO_PUBLIC_ASG_OTA_VERSION_URL): the TestFlight / Play internal binaries
-# built here are the exact binaries later promoted to public beta and the
-# app stores, so a compiled-in staging manifest URL would ship to customers
-# and point their glasses OTA at staging builds. Staging testers opt in via
-# the developer-settings "Custom OTA Manifest URL" Staging preset instead.
+# The MUTABLE rolling manifest is deliberately not baked into the
+# mobile builds — but each build DOES bake ASG_PINNED_OTA_MANIFEST_URL, an
+# IMMUTABLE per-run manifest pinning the paired ASG built from the same
+# commit. The TestFlight / Play binaries are the exact binaries later
+# promoted to the app stores, and under the phone-owned-manifest model that
+# is the point: the promoted app carries its pin, so store rollout waves
+# stage the glasses fleet. Pinned manifests and the ASG APKs they reference
+# are permanent release assets; APK growth is bounded by the OS-1689 reuse
+# check (app-only releases re-pin the previous artifact).
 env:
-  ASG_STAGING_OTA_VERSION_URL: https://mentra-live-ota-staging.pages.dev/staging_live_version.json
-  ASG_STAGING_OTA_CUSTOM_DOMAIN_URL: https://staging.ota.mentraglass.com/staging_live_version.json
+  # Known to every job up front (run_id is run-wide), so the parallel mobile
+  # jobs can bake it without waiting for the ASG build. If the ASG build
+  # fails, the manifest is never uploaded and the baked URL 404s — a failed
+  # pairing means no OTA, never a wrong pin.
+  ASG_PINNED_OTA_MANIFEST_URL: https://github.com/${{ github.repository }}/releases/download/staging-builds/asg-staging-r${{ github.run_id }}-version.json
 
 # All jobs check out `ref: ${{ github.sha }}` so each run builds the exact
 # commit that triggered it. If we used `ref: staging` instead, concurrent
@@ -69,6 +74,9 @@ jobs:
     # (per-runner git config, Mentra credentials at ~/.mentra/credentials).
     # ASG client below stays unconstrained because it's a clean gradle build.
     runs-on: [self-hosted, macOS, ARM64]
+    env:
+      EXPO_PUBLIC_AR99_RELEASE_DEVELOPER_ID: ${{ secrets.EXPO_PUBLIC_AR99_RELEASE_DEVELOPER_ID }}
+      EXPO_PUBLIC_AR99_RELEASE_CLIENT_KEY: ${{ secrets.EXPO_PUBLIC_AR99_RELEASE_CLIENT_KEY }}
 
     # Surface release-status.json fields as job outputs so slack-notify can
     # build a per-platform status section. See mobile/scripts/release-android.mjs.
@@ -142,7 +150,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.bun/install/cache
-          key: bun-${{ runner.os }}-${{ hashFiles('mobile/bun.lockb') }}
+          key: bun-${{ runner.os }}-${{ hashFiles('mobile/bun.lock') }}
           restore-keys: |
             bun-${{ runner.os }}-
 
@@ -159,6 +167,7 @@ jobs:
         # it into the Android manifest (com.mapbox.token) for the Nav SDK.
         env:
           MAPBOX_PUBLIC_TOKEN: ${{ secrets.MAPBOX_PUBLIC_TOKEN }}
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN_MOBILE_STG }}
         run: |
           cp .env.example .env
           if [ -n "$MAPBOX_PUBLIC_TOKEN" ]; then
@@ -167,6 +176,58 @@ jobs:
           else
             echo "::warning::MAPBOX_PUBLIC_TOKEN secret not set — Android build will use the dummy token and on-device navigation will not work."
           fi
+          # .env.example ships an empty EXPO_PUBLIC_SENTRY_DSN and SentrySetup.tsx
+          # returns early on an empty DSN *without logging*, so every CI build has
+          # shipped with crash reporting silently off (OS-1827). Warn rather than
+          # fail — a missing DSN should not block a release — but never be silent
+          # about it again.
+          # A release-producing lane must never ship a green build with crash
+          # reporting silently off -- that is the exact failure OS-1827 exists to
+          # remove. pull_request runs legitimately have no secrets (forks, and
+          # secrets are not exposed to PRs from outside collaborators), so those
+          # still warn and continue. Everything else -- push to a release branch,
+          # workflow_dispatch, staging -- is fatal.
+          #
+          # Note the curl below keeps `|| true` on purpose: a network failure or a
+          # changed response shape lands here as an empty DSN and is reported with
+          # an actionable message, rather than killing the step with a bare
+          # non-zero exit that says nothing about crash reporting.
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            SENTRY_DSN_REQUIRED=false
+          else
+            SENTRY_DSN_REQUIRED=true
+          fi
+          sentry_dsn_unavailable() {
+            if [ "$SENTRY_DSN_REQUIRED" = "true" ]; then
+              echo "::error::$1 A release build must have crash reporting (OS-1827)."
+              exit 1
+            fi
+            echo "::warning::$1 This PR build will have no crash reporting (OS-1827)."
+          }
+          if [ -n "$DOPPLER_TOKEN" ]; then
+            # curl, not the Doppler CLI action: that action verifies its own
+            # download with gpg and hard-fails where gpg is absent, which is the
+            # case on our self-hosted macOS runners. curl needs nothing that is
+            # not already on every runner. The single-secret endpoint keeps the
+            # rest of the config (MAPBOX_DOWNLOADS_TOKEN) out of the shell; a
+            # service token implies its own project and config.
+            SENTRY_DSN_RESPONSE="$(curl -sS --fail-with-body --retry 3 --retry-connrefused \
+              -u "$DOPPLER_TOKEN:" \
+              "https://api.doppler.com/v3/configs/config/secret?name=EXPO_PUBLIC_SENTRY_DSN" || true)"
+            # A DSN contains no double quote, so this extraction is exact.
+            SENTRY_DSN_VALUE="$(printf '%s' "$SENTRY_DSN_RESPONSE" | sed -n 's/.*"computed":"\([^"]*\)".*/\1/p')"
+            echo "::add-mask::$SENTRY_DSN_VALUE"
+            if [ -n "$SENTRY_DSN_VALUE" ]; then
+              sed "s|^EXPO_PUBLIC_SENTRY_DSN=.*|EXPO_PUBLIC_SENTRY_DSN=$SENTRY_DSN_VALUE|" .env > .env.tmp && mv .env.tmp .env
+            else
+              sentry_dsn_unavailable "Doppler returned an empty EXPO_PUBLIC_SENTRY_DSN."
+            fi
+          else
+            sentry_dsn_unavailable "DOPPLER_TOKEN_MOBILE_STG secret not set."
+          fi
+          # Pin this app build's glasses OTA manifest to the ASG paired with it
+          # (immutable per-run asset uploaded by upload-releases).
+          echo "EXPO_PUBLIC_ASG_OTA_VERSION_URL=$ASG_PINNED_OTA_MANIFEST_URL" >> .env
 
       - name: Fix React Native symlinks
         working-directory: ./mobile
@@ -186,6 +247,24 @@ jobs:
           upload-key-password: ${{ secrets.MENTRAOS_UPLOAD_KEY_PASSWORD }}
           upload-key-alias: ${{ secrets.MENTRAOS_UPLOAD_KEY_ALIAS }}
           google-play-key-json: ${{ secrets.GOOGLE_PLAY_KEY_JSON }}
+
+      - name: Wait for paired ASG pin manifest
+        # No app upload without a live pin: the publish-asg-pin job must have
+        # succeeded (including its GitHub asset uploads) before this binary is
+        # allowed near TestFlight / Play / the release. The manifest and its
+        # referenced APK must both be valid and downloadable.
+        run: |
+          echo "Waiting for $ASG_PINNED_OTA_MANIFEST_URL"
+          for attempt in {1..80}; do
+            if curl --fail --silent --location "$ASG_PINNED_OTA_MANIFEST_URL" -o /tmp/asg_pin.json 2>/dev/null \
+              && .github/scripts/validate-asg-ota-manifest.sh /tmp/asg_pin.json --check-apk; then
+              echo "Pin manifest and referenced APK are live."
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "::error::Paired ASG pin manifest or its referenced APK never became valid and downloadable -- refusing to upload an app with a dead pin"
+          exit 1
 
       - name: Run release-android (signed APK + Beta_N upload + Play internal)
         working-directory: ./mobile
@@ -260,6 +339,9 @@ jobs:
   build-mobile-ios:
     name: Build Mobile App (iOS)
     runs-on: [self-hosted, macOS, ARM64]
+    env:
+      EXPO_PUBLIC_AR99_RELEASE_DEVELOPER_ID: ${{ secrets.EXPO_PUBLIC_AR99_RELEASE_DEVELOPER_ID }}
+      EXPO_PUBLIC_AR99_RELEASE_CLIENT_KEY: ${{ secrets.EXPO_PUBLIC_AR99_RELEASE_CLIENT_KEY }}
 
     outputs:
       ipa_name: ${{ steps.release-status.outputs.ipa_name }}
@@ -351,7 +433,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.bun/install/cache
-          key: bun-${{ runner.os }}-${{ hashFiles('mobile/bun.lockb') }}
+          key: bun-${{ runner.os }}-${{ hashFiles('mobile/bun.lock') }}
           restore-keys: |
             bun-${{ runner.os }}-
 
@@ -377,6 +459,7 @@ jobs:
         # file (not a shell env var) is the source of truth.
         env:
           MAPBOX_PUBLIC_TOKEN: ${{ secrets.MAPBOX_PUBLIC_TOKEN }}
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN_MOBILE_STG }}
         run: |
           cp .env.example .env
           if [ -n "$MAPBOX_PUBLIC_TOKEN" ]; then
@@ -384,6 +467,54 @@ jobs:
           else
             echo "::warning::MAPBOX_PUBLIC_TOKEN secret not set — iOS build will use the dummy token and on-device navigation will not work."
           fi
+          # See the Android job: an empty DSN disables Sentry silently (OS-1827).
+          # A release-producing lane must never ship a green build with crash
+          # reporting silently off -- that is the exact failure OS-1827 exists to
+          # remove. pull_request runs legitimately have no secrets (forks, and
+          # secrets are not exposed to PRs from outside collaborators), so those
+          # still warn and continue. Everything else -- push to a release branch,
+          # workflow_dispatch, staging -- is fatal.
+          #
+          # Note the curl below keeps `|| true` on purpose: a network failure or a
+          # changed response shape lands here as an empty DSN and is reported with
+          # an actionable message, rather than killing the step with a bare
+          # non-zero exit that says nothing about crash reporting.
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            SENTRY_DSN_REQUIRED=false
+          else
+            SENTRY_DSN_REQUIRED=true
+          fi
+          sentry_dsn_unavailable() {
+            if [ "$SENTRY_DSN_REQUIRED" = "true" ]; then
+              echo "::error::$1 A release build must have crash reporting (OS-1827)."
+              exit 1
+            fi
+            echo "::warning::$1 This PR build will have no crash reporting (OS-1827)."
+          }
+          if [ -n "$DOPPLER_TOKEN" ]; then
+            # curl, not the Doppler CLI action: that action verifies its own
+            # download with gpg and hard-fails where gpg is absent, which is the
+            # case on our self-hosted macOS runners. curl needs nothing that is
+            # not already on every runner. The single-secret endpoint keeps the
+            # rest of the config (MAPBOX_DOWNLOADS_TOKEN) out of the shell; a
+            # service token implies its own project and config.
+            SENTRY_DSN_RESPONSE="$(curl -sS --fail-with-body --retry 3 --retry-connrefused \
+              -u "$DOPPLER_TOKEN:" \
+              "https://api.doppler.com/v3/configs/config/secret?name=EXPO_PUBLIC_SENTRY_DSN" || true)"
+            # A DSN contains no double quote, so this extraction is exact.
+            SENTRY_DSN_VALUE="$(printf '%s' "$SENTRY_DSN_RESPONSE" | sed -n 's/.*"computed":"\([^"]*\)".*/\1/p')"
+            echo "::add-mask::$SENTRY_DSN_VALUE"
+            if [ -n "$SENTRY_DSN_VALUE" ]; then
+              sed "s|^EXPO_PUBLIC_SENTRY_DSN=.*|EXPO_PUBLIC_SENTRY_DSN=$SENTRY_DSN_VALUE|" .env > .env.tmp && mv .env.tmp .env
+            else
+              sentry_dsn_unavailable "Doppler returned an empty EXPO_PUBLIC_SENTRY_DSN."
+            fi
+          else
+            sentry_dsn_unavailable "DOPPLER_TOKEN_MOBILE_STG secret not set."
+          fi
+          # Pin this app build's glasses OTA manifest to the ASG paired with it
+          # (immutable per-run asset uploaded by upload-releases).
+          echo "EXPO_PUBLIC_ASG_OTA_VERSION_URL=$ASG_PINNED_OTA_MANIFEST_URL" >> .env
 
       - name: Configure Mapbox SPM credentials (~/.netrc)
         # The Mapbox Navigation SDK (v3) is a Swift Package fetched from
@@ -488,6 +619,24 @@ jobs:
           asc-api-key-id: ${{ secrets.ASC_API_KEY_ID }}
           asc-api-issuer-id: ${{ secrets.ASC_API_ISSUER_ID }}
 
+      - name: Wait for paired ASG pin manifest
+        # No app upload without a live pin: the publish-asg-pin job must have
+        # succeeded (including its GitHub asset uploads) before this binary is
+        # allowed near TestFlight / Play / the release. The manifest and its
+        # referenced APK must both be valid and downloadable.
+        run: |
+          echo "Waiting for $ASG_PINNED_OTA_MANIFEST_URL"
+          for attempt in {1..80}; do
+            if curl --fail --silent --location "$ASG_PINNED_OTA_MANIFEST_URL" -o /tmp/asg_pin.json 2>/dev/null \
+              && .github/scripts/validate-asg-ota-manifest.sh /tmp/asg_pin.json --check-apk; then
+              echo "Pin manifest and referenced APK are live."
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "::error::Paired ASG pin manifest or its referenced APK never became valid and downloadable -- refusing to upload an app with a dead pin"
+          exit 1
+
       - name: Run release-ios (signed IPA + Beta_N upload + TestFlight)
         working-directory: ./mobile
         env:
@@ -570,6 +719,8 @@ jobs:
       version_name: ${{ steps.asg-build-info.outputs.version_name }}
       apk_sha256: ${{ steps.asg-apk-info.outputs.sha256 }}
       apk_size: ${{ steps.asg-apk-info.outputs.size }}
+      reuse: ${{ steps.asg-reuse.outputs.reuse }}
+      tree_hash: ${{ steps.asg-reuse.outputs.tree_hash }}
 
     steps:
       - name: Get cache week number
@@ -577,6 +728,11 @@ jobs:
         run: echo "week=$(date +%Y-%U)" >> $GITHUB_OUTPUT
 
       - name: Clean build artifacts (preserve caches)
+        # The submodule worktree is cleaned here too: actions/checkout does not clean
+        # submodule worktrees and submodule init does not remove ignored build outputs,
+        # so on a persistent runner stale Gradle products would survive across runs.
+        # Removal is cheap — the submodule's git dir lives under .git/modules, so init
+        # re-checks-out locally instead of re-cloning.
         run: |
           rm -rf asg_client/app/build asg_client/.gradle asg_client/StreamPackLite
 
@@ -585,7 +741,83 @@ jobs:
         with:
           ref: ${{ github.sha }}
 
+      # OS-1689: skip the whole ASG build when asg_client/ is unchanged since the
+      # last published staging ASG. The rolling manifest records the git tree hash
+      # of asg_client/ it was built from; a match means this commit would produce
+      # a functionally identical APK, so this run's manifests reuse the previous
+      # artifact verbatim. That keeps the pin stable across app-only releases
+      # (no phantom glasses updates under exact-pin semantics) and bounds APK
+      # storage growth to actual ASG changes.
+      - name: Check ASG artifact reuse
+        id: asg-reuse
+        run: |
+          set -euo pipefail
+          # Hash only build-relevant content: docs, the OTA manifests (firmware
+          # definitions ride the generated pin, not the APK), the OTA website
+          # assets, archives, markdown, and unit/instrumentation test sources
+          # (src/test, src/androidTest — never packaged into the release APK)
+          # affect no APK byte, so they must not mint a new ASG build (a
+          # fleet-visible phantom update). git ls-tree lists every remaining file
+          # with its blob SHA in stable path order, so hashing the listing is a
+          # deterministic content hash.
+          # StreamPackLite is a submodule under asg_client/, so its pinned commit appears as a
+          # gitlink in this listing — a StreamPackLite bump changes HEAD:asg_client and forces a
+          # fresh build for free, with no out-of-tree SHA sampling to keep in sync.
+          TREE_HASH=$(git ls-tree -r "HEAD:asg_client" \
+            | grep -vE $'\t(docs/|ota_manifests/|ota_website/|archive/)' \
+            | grep -vE '/src/(test|androidTest)/' \
+            | grep -vE '\.md$' \
+            | sha256sum | awk '{print $1}')
+          echo "tree_hash=${TREE_HASH}" >> "$GITHUB_OUTPUT"
+          echo "reuse=false" >> "$GITHUB_OUTPUT"
+
+          MANIFEST_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/staging-builds/staging_live_version.json"
+          if ! manifest=$(curl --fail --silent --location "$MANIFEST_URL"); then
+            echo "No published staging manifest readable; building fresh."
+            exit 0
+          fi
+
+          PREV_HASH=$(jq -r '.sourceTreeHash // ""' <<<"$manifest")
+          if [ -z "$PREV_HASH" ] || [ "$PREV_HASH" != "$TREE_HASH" ]; then
+            echo "asg_client/ changed (prev=${PREV_HASH:-none}, now=${TREE_HASH}); building fresh."
+            exit 0
+          fi
+
+          VERSION_CODE=$(jq -r '.apps["com.mentra.asg_client"].versionCode // empty' <<<"$manifest")
+          VERSION_NAME=$(jq -r '.apps["com.mentra.asg_client"].versionName // empty' <<<"$manifest")
+          APK_SHA256=$(jq -r '.apps["com.mentra.asg_client"].sha256 // empty' <<<"$manifest")
+          APK_SIZE=$(jq -r '.apps["com.mentra.asg_client"].apkSize // empty' <<<"$manifest")
+          APK_URL=$(jq -r '.apps["com.mentra.asg_client"].apkUrl // empty' <<<"$manifest")
+          if [ -z "$VERSION_CODE" ] || [ -z "$VERSION_NAME" ] || [ -z "$APK_SHA256" ] || [ -z "$APK_SIZE" ] || [ -z "$APK_URL" ]; then
+            echo "Previous manifest entry incomplete; building fresh."
+            exit 0
+          fi
+
+          # The reused pin is only valid if the artifact is still downloadable.
+          if ! curl --fail --silent --head --location "$APK_URL" >/dev/null; then
+            echo "Previous APK asset missing (${APK_URL}); building fresh."
+            exit 0
+          fi
+
+          mkdir -p asg-reuse
+          printf '%s\n' "$manifest" > asg-reuse/previous-manifest.json
+
+          echo "asg_client/ unchanged; reusing published ASG ${VERSION_NAME} (${VERSION_CODE})"
+          echo "reuse=true" >> "$GITHUB_OUTPUT"
+
+      - name: Upload ASG reuse metadata
+        # Keep the public APK URL in a file. GitHub drops job outputs that contain
+        # any configured secret value; the signing alias is short enough to match
+        # the historical ASG asset names.
+        if: steps.asg-reuse.outputs.reuse == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: asg-reuse-metadata
+          path: asg-reuse/previous-manifest.json
+          retention-days: 1
+
       - name: Free up disk space
+        if: steps.asg-reuse.outputs.reuse != 'true'
         run: |
           echo "Before:"; df -h / | tail -1
           sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup \
@@ -596,6 +828,7 @@ jobs:
 
       - name: Compute ASG build info
         id: asg-build-info
+        if: steps.asg-reuse.outputs.reuse != 'true'
         run: |
           EPOCH_OFFSET_SECONDS=1735689600
           BASELINE=100000
@@ -608,26 +841,33 @@ jobs:
           echo "version_name=${VERSION_NAME}" >> "$GITHUB_OUTPUT"
 
       - name: Setup Java
+        if: steps.asg-reuse.outputs.reuse != 'true'
         uses: actions/setup-java@v3
         with:
           java-version: "17"
           distribution: "temurin"
 
       - name: Setup Android SDK
+        if: steps.asg-reuse.outputs.reuse != 'true'
         uses: android-actions/setup-android@v2
 
       - name: Setup environment
         working-directory: ./asg_client
+        if: steps.asg-reuse.outputs.reuse != 'true'
         run: cp .env.example .env
 
-      - name: Clone StreamPackLite dependency
-        working-directory: ./asg_client
-        run: |
-          git clone https://github.com/Mentra-Community/StreamPackLite.git
-          cd StreamPackLite
-          git checkout working
+      - name: Init StreamPackLite submodule
+        # After (and gated on) the reuse decision: reuse only needs the gitlink from
+        # HEAD:asg_client, not the worktree, so app-only releases neither fetch
+        # StreamPackLite nor can they fail on a transient submodule fetch.
+        # Path-scoped on purpose: .gitmodules also carries a dangling
+        # mcu_client/peripheral_uart_next/nrf5340 entry with an unfetchable relative
+        # self-URL; a blanket recursive init would break if its gitlink ever lands.
+        if: steps.asg-reuse.outputs.reuse != 'true'
+        run: git submodule update --init asg_client/StreamPackLite
 
       - name: Cache Gradle dependencies
+        if: steps.asg-reuse.outputs.reuse != 'true'
         uses: actions/cache@v4
         with:
           path: |
@@ -644,6 +884,7 @@ jobs:
       # so it must run after injection or it falls back to ~/.mentra (the disk
       # dependency this PR removes) and fails on a clean runner.
       - name: Inject release signing key
+        if: steps.asg-reuse.outputs.reuse != 'true'
         uses: ./.github/actions/inject-signing
         with:
           asg: "true"
@@ -653,6 +894,7 @@ jobs:
           asg-key-alias: ${{ secrets.ASG_KEY_ALIAS }}
 
       - name: Build recovery worker asset
+        if: steps.asg-reuse.outputs.reuse != 'true'
         working-directory: ./asg_client/recovery_worker
         run: |
           chmod +x ./build_and_deploy.sh
@@ -661,6 +903,7 @@ jobs:
 
       - name: Build Release APK
         id: gradle-build
+        if: steps.asg-reuse.outputs.reuse != 'true'
         working-directory: ./asg_client
         run: ./gradlew -PASG_VERSION_CODE="${{ steps.asg-build-info.outputs.version_code }}" -PASG_VERSION_NAME="${{ steps.asg-build-info.outputs.version_name }}" assembleRelease --build-cache --parallel
         continue-on-error: true
@@ -676,6 +919,7 @@ jobs:
 
       - name: Collect ASG APK info
         id: asg-apk-info
+        if: steps.asg-reuse.outputs.reuse != 'true'
         run: |
           APK="asg_client/app/build/outputs/apk/release/app-release.apk"
           if command -v shasum >/dev/null 2>&1; then
@@ -687,10 +931,186 @@ jobs:
           echo "size=$(wc -c < "$APK" | tr -d ' ')" >> "$GITHUB_OUTPUT"
 
       - name: Upload artifact
+        if: steps.asg-reuse.outputs.reuse != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: asg-staging
           path: asg_client/app/build/outputs/apk/release/app-release.apk
+
+  publish-asg-pin:
+    name: Publish paired ASG pin
+    # Publishes the ASG APK and this run's immutable pin manifest BEFORE the
+    # mobile jobs upload anything to TestFlight / Play / the GitHub release:
+    # their pre-upload gate waits for the pin URL to be live, so a refused or
+    # failed asset upload here (GitHub can reject uploads) hard-blocks app
+    # publishing instead of shipping binaries with a dead pin.
+    needs: build-asg
+    if: needs.build-asg.result == 'success'
+    runs-on: ubuntu-latest
+    outputs:
+      build_date: ${{ steps.build-info.outputs.date }}
+      short_sha: ${{ steps.build-info.outputs.sha }}
+      reuse: ${{ needs.build-asg.outputs.reuse }}
+    steps:
+      - name: Checkout for firmware manifest
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+
+      - name: Get build info
+        id: build-info
+        run: |
+          echo "date=$(date +%Y-%m-%d)" >> $GITHUB_OUTPUT
+          echo "sha=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+
+      - name: Download ASG artifact
+        # Reuse mode (OS-1689): no fresh artifact; manifests re-pin the
+        # previously published APK and asg-latest.apk stays as-is.
+        if: needs.build-asg.outputs.reuse != 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: asg-staging
+          path: ./asg-apk
+
+      - name: Download ASG reuse metadata
+        if: needs.build-asg.outputs.reuse == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: asg-reuse-metadata
+          path: ./asg-reuse
+
+      - name: Generate ASG staging OTA manifest
+        if: needs.build-asg.result == 'success'
+        env:
+          BUILD_DATE: ${{ steps.build-info.outputs.date }}
+          BUILD_SHORT_SHA: ${{ steps.build-info.outputs.sha }}
+          VERSION_CODE: ${{ needs.build-asg.outputs.version_code }}
+          VERSION_NAME: ${{ needs.build-asg.outputs.version_name }}
+          APK_SHA256: ${{ needs.build-asg.outputs.apk_sha256 }}
+          APK_SIZE: ${{ needs.build-asg.outputs.apk_size }}
+          ASG_REUSE: ${{ needs.build-asg.outputs.reuse }}
+          ASG_TREE_HASH: ${{ needs.build-asg.outputs.tree_hash }}
+        run: |
+          mkdir -p asg-manifest
+          if [ "$ASG_REUSE" = "true" ]; then
+            # asg_client/ unchanged: the manifest re-pins the previously published
+            # artifact so app-only releases never move the glasses pin (OS-1689).
+            REUSE_MANIFEST="asg-reuse/previous-manifest.json"
+            VERSION_CODE=$(jq -er '.apps["com.mentra.asg_client"].versionCode' "$REUSE_MANIFEST")
+            VERSION_NAME=$(jq -er '.apps["com.mentra.asg_client"].versionName' "$REUSE_MANIFEST")
+            APK_SHA256=$(jq -er '.apps["com.mentra.asg_client"].sha256' "$REUSE_MANIFEST")
+            APK_SIZE=$(jq -er '.apps["com.mentra.asg_client"].apkSize' "$REUSE_MANIFEST")
+            APK_URL=$(jq -er '.apps["com.mentra.asg_client"].apkUrl' "$REUSE_MANIFEST")
+          else
+            APK_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/staging-builds/asg-staging-${BUILD_DATE}-${BUILD_SHORT_SHA}.apk"
+          fi
+          FIRMWARE_MANIFEST="asg_client/ota_manifests/firmware_live.json"
+
+          jq -e '
+            (.mtk_patches | type == "array" and length > 0)
+            and (.bes_firmware | type == "object")
+          ' "$FIRMWARE_MANIFEST" >/dev/null
+
+          jq \
+            --arg apkUrl "$APK_URL" \
+            --arg versionName "$VERSION_NAME" \
+            --arg sha256 "$APK_SHA256" \
+            --arg treeHash "$ASG_TREE_HASH" \
+            --argjson versionCode "$VERSION_CODE" \
+            --argjson apkSize "$APK_SIZE" \
+            '{
+              sourceTreeHash: $treeHash,
+              apps: {
+                "com.mentra.asg_client": {
+                  versionCode: $versionCode,
+                  versionName: $versionName,
+                  apkUrl: $apkUrl,
+                  apkSize: $apkSize,
+                  sha256: $sha256
+                }
+              },
+              mtk_patches: .mtk_patches,
+              bes_firmware: .bes_firmware
+            }
+            + (if .remediation then {remediation: .remediation} else {} end)' "$FIRMWARE_MANIFEST" > asg-manifest/staging_live_version.json
+
+          .github/scripts/validate-asg-ota-manifest.sh asg-manifest/staging_live_version.json
+
+      - name: Publish pin, APK and rolling manifest to staging-builds release
+        uses: actions/github-script@v7
+        env:
+          ASG_REUSE: ${{ needs.build-asg.outputs.reuse }}
+        with:
+          script: |
+            const fs = require('fs');
+            const date = '${{ steps.build-info.outputs.date }}';
+            const sha = '${{ steps.build-info.outputs.sha }}';
+            const reuse = process.env.ASG_REUSE === 'true';
+            const onStaging = context.ref === 'refs/heads/staging';
+
+            let release;
+            try {
+              release = await github.rest.repos.getReleaseByTag({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                tag: 'staging-builds'
+              });
+            } catch (error) {
+              if (error.status === 404) {
+                release = await github.rest.repos.createRelease({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  tag_name: 'staging-builds',
+                  name: 'Staging Builds',
+                  body: 'Automated builds from the staging branch.',
+                  prerelease: true,
+                  draft: false
+                });
+              } else {
+                throw error;
+              }
+            }
+            const releaseId = release.data.id;
+
+            // Ordered uploads: APK first (fresh mode), then the pin that references
+            // it, then the rolling head. Any API failure throws and fails the job,
+            // which blocks the mobile store uploads via their pin gate.
+            const uploads = [];
+            if (!reuse) {
+              uploads.push({path: './asg-apk/app-release.apk', names: [`asg-staging-${date}-${sha}.apk`, 'asg-latest.apk']});
+            }
+            uploads.push({path: './asg-manifest/staging_live_version.json', names: ['asg-staging-r${{ github.run_id }}-version.json']});
+            if (onStaging) {
+              uploads.push({path: './asg-manifest/staging_live_version.json', names: ['staging_live_version.json']});
+            }
+
+            for (const upload of uploads) {
+              if (!fs.existsSync(upload.path)) {
+                throw new Error(`Missing artifact: ${upload.path}`);
+              }
+              const data = fs.readFileSync(upload.path);
+              for (const name of upload.names) {
+                for (const asset of release.data.assets) {
+                  if (asset.name === name) {
+                    console.log(`Deleting existing ${name}`);
+                    await github.rest.repos.deleteReleaseAsset({
+                      owner: context.repo.owner,
+                      repo: context.repo.repo,
+                      asset_id: asset.id
+                    });
+                  }
+                }
+                console.log(`Uploading ${name} (${data.length} bytes)...`);
+                await github.rest.repos.uploadReleaseAsset({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  release_id: releaseId,
+                  name,
+                  data
+                });
+              }
+            }
 
   upload-releases:
     name: Upload to staging-builds release
@@ -728,13 +1148,6 @@ jobs:
           name: mobile-staging-ios
           path: ./mobile-ipa
 
-      - name: Download ASG artifact
-        if: needs.build-asg.result == 'success'
-        uses: actions/download-artifact@v4
-        with:
-          name: asg-staging
-          path: ./asg-apk
-
       - name: Get build info
         id: build-info
         run: |
@@ -749,7 +1162,7 @@ jobs:
             const date = '${{ steps.build-info.outputs.date }}';
             const sha = '${{ steps.build-info.outputs.sha }}';
 
-            const releaseBody = `Automated builds from the \`staging\` branch.\n\n**Latest builds:** ${date} (${sha})\n\n## Download Links\n\n- [Mobile App Android (latest)](https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/staging-builds/mobile-latest.apk)\n- [Mobile App iOS (latest)](https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/staging-builds/mobile-latest.ipa)\n- [ASG Client (latest)](https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/staging-builds/asg-latest.apk)\n- [ASG OTA manifest (release asset)](https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/staging-builds/staging_live_version.json)\n- [ASG OTA manifest (Cloudflare Pages staging)](https://mentra-live-ota-staging.pages.dev/staging_live_version.json)\n\nVersioned builds with \`_Beta_N\` numbering are also published under the per-version release tag (e.g. \`v2.10\`).\n\n---\n\n*Builds older than 7 days in this rolling-latest channel are automatically cleaned up.*`;
+            const releaseBody = `Automated builds from the \`staging\` branch.\n\n**Latest builds:** ${date} (${sha})\n\n## Download Links\n\n- [Mobile App Android (latest)](https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/staging-builds/mobile-latest.apk)\n- [Mobile App iOS (latest)](https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/staging-builds/mobile-latest.ipa)\n- [ASG Client (latest)](https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/staging-builds/asg-latest.apk)\n- [ASG OTA manifest (release asset)](https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/staging-builds/staging_live_version.json)\n\nVersioned builds with \`_Beta_N\` numbering are also published under the per-version release tag (e.g. \`v2.10\`).\n\n---\n\n*Builds older than 7 days in this rolling-latest channel are automatically cleaned up.*`;
 
             let release;
             try {
@@ -778,8 +1191,7 @@ jobs:
 
             const uploads = [
               { path: './mobile-apk/app-release.apk', latestName: 'mobile-latest.apk', datedName: `mobile-staging-${date}-${sha}.apk` },
-              { path: './mobile-ipa/app-release.ipa', latestName: 'mobile-latest.ipa', datedName: `mobile-staging-${date}-${sha}.ipa` },
-              { path: './asg-apk/app-release.apk', latestName: 'asg-latest.apk', datedName: `asg-staging-${date}-${sha}.apk` }
+              { path: './mobile-ipa/app-release.ipa', latestName: 'mobile-latest.ipa', datedName: `mobile-staging-${date}-${sha}.ipa` }
             ];
 
             for (const upload of uploads) {
@@ -834,239 +1246,23 @@ jobs:
 
             console.log('Successfully uploaded build artifacts');
 
-      - name: Generate ASG staging OTA manifest
-        if: needs.build-asg.result == 'success'
-        env:
-          BUILD_DATE: ${{ steps.build-info.outputs.date }}
-          BUILD_SHORT_SHA: ${{ steps.build-info.outputs.sha }}
-          VERSION_CODE: ${{ needs.build-asg.outputs.version_code }}
-          VERSION_NAME: ${{ needs.build-asg.outputs.version_name }}
-          APK_SHA256: ${{ needs.build-asg.outputs.apk_sha256 }}
-          APK_SIZE: ${{ needs.build-asg.outputs.apk_size }}
-        run: |
-          mkdir -p asg-manifest
-          APK_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/staging-builds/asg-staging-${BUILD_DATE}-${BUILD_SHORT_SHA}.apk"
-          FIRMWARE_MANIFEST="asg_client/ota_manifests/firmware_live.json"
-
-          jq -e '
-            (.mtk_patches | type == "array" and length > 0)
-            and (.bes_firmware | type == "object")
-          ' "$FIRMWARE_MANIFEST" >/dev/null
-
-          jq \
-            --arg apkUrl "$APK_URL" \
-            --arg versionName "$VERSION_NAME" \
-            --arg sha256 "$APK_SHA256" \
-            --argjson versionCode "$VERSION_CODE" \
-            --argjson apkSize "$APK_SIZE" \
-            '{
-              apps: {
-                "com.mentra.asg_client": {
-                  versionCode: $versionCode,
-                  versionName: $versionName,
-                  apkUrl: $apkUrl,
-                  apkSize: $apkSize,
-                  sha256: $sha256
-                }
-              },
-              mtk_patches: .mtk_patches,
-              bes_firmware: .bes_firmware
-            }
-            + (if .remediation then {remediation: .remediation} else {} end)' "$FIRMWARE_MANIFEST" > asg-manifest/staging_live_version.json
-
-      - name: Build ASG OTA staging Pages site
-        if: needs.build-asg.result == 'success'
-        run: |
-          mkdir -p asg-pages-site
-          cp asg-manifest/staging_live_version.json asg-pages-site/staging_live_version.json
-
-          cat > asg-pages-site/index.html <<'HTML'
-          <!doctype html>
-          <html lang="en">
-            <head>
-              <meta charset="UTF-8" />
-              <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-              <title>MentraOS ASG Staging OTA</title>
-            </head>
-            <body>
-              <h1>MentraOS ASG Staging OTA</h1>
-              <p><a href="./staging_live_version.json">View staging OTA manifest</a></p>
-            </body>
-          </html>
-          HTML
-
-          printf '%s\n' \
-            '/*' \
-            '  Access-Control-Allow-Origin: *' \
-            '  X-Content-Type-Options: nosniff' \
-            '  X-Robots-Tag: noindex' \
-            '' \
-            '/staging_live_version.json' \
-            '  Content-Type: application/json' \
-            '  Cache-Control: public, max-age=0, must-revalidate' \
-            > asg-pages-site/_headers
-
-          if [ -e asg-pages-site/prod_live_version.json ]; then
-            echo "Staging OTA payload must not contain prod_live_version.json." >&2
-            exit 1
-          fi
-
-          jq -e '
-            (.apps["com.mentra.asg_client"].versionCode | type == "number")
-            and (.mtk_patches | type == "array" and length > 0)
-            and (.bes_firmware | type == "object")
-          ' asg-pages-site/staging_live_version.json >/dev/null
-
-      - name: Upload ASG OTA manifest to staging-builds release
-        # Same ref guard as the Pages deploy: a workflow_dispatch run from a
-        # non-staging branch must not overwrite the release-asset manifest the
-        # cleanup keep-APK logic trusts while Pages keeps serving the old one.
-        if: needs.build-asg.result == 'success' && github.ref_name == 'staging'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const fs = require('fs');
-            const date = '${{ steps.build-info.outputs.date }}';
-            const sha = '${{ steps.build-info.outputs.sha }}';
-
-            const releaseBody = `Automated builds from the \`staging\` branch.\n\n**Latest builds:** ${date} (${sha})\n\n## Download Links\n\n- [Mobile App Android (latest)](https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/staging-builds/mobile-latest.apk)\n- [Mobile App iOS (latest)](https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/staging-builds/mobile-latest.ipa)\n- [ASG Client (latest)](https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/staging-builds/asg-latest.apk)\n- [ASG OTA manifest (release asset)](https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/staging-builds/staging_live_version.json)\n- [ASG OTA manifest (Cloudflare Pages staging)](https://mentra-live-ota-staging.pages.dev/staging_live_version.json)\n\nVersioned builds with \`_Beta_N\` numbering are also published under the per-version release tag (e.g. \`v2.10\`).\n\n---\n\n*Builds older than 7 days in this rolling-latest channel are automatically cleaned up.*`;
-
-            let release;
-            try {
-              release = await github.rest.repos.getReleaseByTag({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                tag: 'staging-builds'
-              });
-            } catch (error) {
-              if (error.status === 404) {
-                release = await github.rest.repos.createRelease({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  tag_name: 'staging-builds',
-                  name: 'Staging Builds',
-                  body: releaseBody,
-                  prerelease: true,
-                  draft: false
-                });
-              } else {
-                throw error;
-              }
-            }
-
-            const releaseId = release.data.id;
-
-            const uploads = [
-              { path: './asg-manifest/staging_live_version.json', latestName: 'staging_live_version.json', datedName: `staging_live_version-${date}-${sha}.json` }
-            ];
-
-            for (const upload of uploads) {
-              if (!fs.existsSync(upload.path)) {
-                throw new Error(`Missing ASG OTA manifest: ${upload.path}`);
-              }
-              const data = fs.readFileSync(upload.path);
-
-              // Delete existing -latest asset if present.
-              for (const asset of release.data.assets) {
-                if (asset.name === upload.latestName) {
-                  console.log(`Deleting existing ${upload.latestName}`);
-                  await github.rest.repos.deleteReleaseAsset({
-                    owner: context.repo.owner,
-                    repo: context.repo.repo,
-                    asset_id: asset.id
-                  });
-                  break;
-                }
-              }
-
-              console.log(`Uploading ${upload.latestName} (${data.length} bytes)...`);
-              await github.rest.repos.uploadReleaseAsset({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                release_id: releaseId,
-                name: upload.latestName,
-                data
-              });
-
-              console.log(`Uploading ${upload.datedName} (${data.length} bytes)...`);
-              await github.rest.repos.uploadReleaseAsset({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                release_id: releaseId,
-                name: upload.datedName,
-                data
-              });
-            }
-
-            await github.rest.repos.updateRelease({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              release_id: releaseId,
-              body: releaseBody
-            });
-
-            console.log('Successfully uploaded ASG OTA manifest');
-
-      - name: Publish ASG OTA staging site to Cloudflare Pages
-        if: needs.build-asg.result == 'success' && github.ref_name == 'staging'
-        env:
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_PAGES_API_TOKEN }}
-          BUILD_SHORT_SHA: ${{ steps.build-info.outputs.sha }}
-          VERSION_CODE: ${{ needs.build-asg.outputs.version_code }}
-        run: |
-          if [ -z "$CLOUDFLARE_ACCOUNT_ID" ] || [ -z "$CLOUDFLARE_API_TOKEN" ]; then
-            echo "Cloudflare credentials are required to publish the staging OTA manifest." >&2
-            exit 1
-          fi
-
-          npx --yes wrangler@4.86.0 pages deploy asg-pages-site \
-            --project-name mentra-live-ota-staging \
-            --branch staging \
-            --commit-hash "$GITHUB_SHA" \
-            --commit-dirty=true \
-            --commit-message "Publish staging OTA manifest ${BUILD_SHORT_SHA}"
-
-          echo "Verifying $ASG_STAGING_OTA_VERSION_URL"
-          for attempt in {1..12}; do
-            if curl --fail --silent --show-error --location "$ASG_STAGING_OTA_VERSION_URL" -o /tmp/staging_live_version.json \
-              && jq -e --argjson versionCode "$VERSION_CODE" \
-                '.apps["com.mentra.asg_client"].versionCode == $versionCode' \
-                /tmp/staging_live_version.json >/dev/null; then
-              break
-            fi
-            if [ "$attempt" -eq 12 ]; then
-              echo "Staging OTA manifest was not reachable at $ASG_STAGING_OTA_VERSION_URL after deploy." >&2
-              exit 1
-            fi
-            sleep 10
-          done
-
-          echo "Checking optional custom domain $ASG_STAGING_OTA_CUSTOM_DOMAIN_URL"
-          custom_domain_ready=false
-          for attempt in {1..12}; do
-            if curl --fail --silent --show-error --location "$ASG_STAGING_OTA_CUSTOM_DOMAIN_URL" -o /tmp/staging_custom_domain_live_version.json \
-              && jq -e --argjson versionCode "$VERSION_CODE" \
-                '.apps["com.mentra.asg_client"].versionCode == $versionCode' \
-                /tmp/staging_custom_domain_live_version.json >/dev/null; then
-              custom_domain_ready=true
-              break
-            fi
-            if [ "$attempt" -eq 12 ]; then
-              break
-            fi
-            sleep 10
-          done
-          if [ "$custom_domain_ready" != "true" ]; then
-            echo "Custom staging OTA domain is not serving this manifest yet after retries; Pages.dev URL is healthy." >&2
-          fi
-
       - name: Cleanup old staging builds
         if: ${{ github.event.inputs.skip_cleanup != 'true' }}
         uses: actions/github-script@v7
         with:
           script: |
             const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+            // Pinned OTA assets are permanent: per-run pinned manifests
+            // (asg-staging-r<run_id>-version.json, a few KB each) are baked into
+            // that run's mobile app builds, which may be promoted to TestFlight /
+            // the app stores, and the ASG APKs they reference must stay
+            // downloadable for as long as any such app lives. APK growth is
+            // bounded by the OS-1689 reuse check: app-only releases re-pin the
+            // previous artifact, so new APKs only appear when asg_client/ changed.
+            const permanentAssetPatterns = [
+              /^asg-staging-r\d+-version\.json$/,
+              /^asg-staging-.*\.apk$/
+            ];
 
             try {
               const release = await github.rest.repos.getReleaseByTag({
@@ -1081,40 +1277,13 @@ jobs:
                 'staging_live_version.json'
               ]);
 
-              // Fail closed: only delete dated ASG APKs once we know which one
-              // the live manifest references. If the manifest can't be read we
-              // might otherwise delete the APK that staging glasses still
-              // download via the deployed Pages manifest.
-              let liveApkResolved = false;
-              const manifestAsset = release.data.assets.find((asset) => asset.name === 'staging_live_version.json');
-              if (manifestAsset) {
-                try {
-                  const response = await fetch(manifestAsset.browser_download_url);
-                  if (!response.ok) {
-                    throw new Error(`manifest fetch returned HTTP ${response.status}`);
-                  }
-                  const manifest = await response.json();
-                  const apkUrl = manifest.apps?.['com.mentra.asg_client']?.apkUrl;
-                  const liveApkAssetName = apkUrl ? decodeURIComponent(new URL(apkUrl).pathname.split('/').pop() || '') : '';
-                  if (liveApkAssetName) {
-                    keepAssetNames.add(liveApkAssetName);
-                    console.log(`Keeping live ASG OTA APK asset: ${liveApkAssetName}`);
-                  }
-                  liveApkResolved = true;
-                } catch (error) {
-                  console.log('Could not determine live ASG OTA APK asset:', error.message);
-                }
-              } else {
-                // No manifest published yet, so no APK can be referenced by it.
-                liveApkResolved = true;
-              }
-
               for (const asset of release.data.assets) {
                 if (keepAssetNames.has(asset.name)) continue;
-                if (!liveApkResolved && asset.name.startsWith('asg-') && asset.name.endsWith('.apk')) {
-                  console.log(`Keeping ${asset.name}: live manifest unreadable, not deleting ASG APKs`);
-                  continue;
-                }
+                // ASG APKs and per-run pinned manifests are permanent: shipped app
+                // binaries pin them, and there is no reliable way to know from here
+                // which builds were (or will be) promoted. Covers the rolling
+                // manifest's live APK too, so no manifest fetch is needed.
+                if (permanentAssetPatterns.some((pattern) => pattern.test(asset.name))) continue;
 
                 const createdAt = new Date(asset.created_at);
                 if (createdAt < sevenDaysAgo) {
@@ -1132,7 +1301,7 @@ jobs:
 
   slack-notify:
     name: Notify Slack
-    needs: [build-mobile-android, build-mobile-ios, build-asg, upload-releases]
+    needs: [build-mobile-android, build-mobile-ios, build-asg, publish-asg-pin, upload-releases]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -1174,6 +1343,9 @@ jobs:
           # upload step.
           BUILD_DATE: ${{ needs.upload-releases.outputs.build_date }}
           BUILD_SHORT_SHA: ${{ needs.upload-releases.outputs.short_sha }}
+          ASG_PIN_DATE: ${{ needs.publish-asg-pin.outputs.build_date }}
+          ASG_PIN_SHA: ${{ needs.publish-asg-pin.outputs.short_sha }}
+          ASG_PIN_REUSE: ${{ needs.publish-asg-pin.outputs.reuse }}
         # All shell here is pure ASCII. Status symbols use Slack mrkdwn
         # emoji codes (e.g. :white_check_mark:) instead of literal Unicode
         # so the shell parser never has to deal with non-ASCII bytes.
@@ -1264,8 +1436,13 @@ jobs:
           # Slack messages stop being interesting anyway). Reuse date+sha
           # from upload-releases so the link stays in sync if the run
           # crosses a UTC midnight boundary.
-          if [ -n "$BUILD_DATE" ] && [ -n "$BUILD_SHORT_SHA" ]; then
-            ASG_NAME="asg-staging-${BUILD_DATE}-${BUILD_SHORT_SHA}.apk"
+          if [ "$ASG_PIN_REUSE" = "true" ]; then
+            # Reuse mode published no new dated APK; asg-latest still points at
+            # the (unchanged) build this run re-pinned.
+            ASG_NAME="asg-latest.apk"
+            ASG_URL="https://github.com/${REPO}/releases/download/staging-builds/asg-latest.apk"
+          elif [ -n "$ASG_PIN_DATE" ] && [ -n "$ASG_PIN_SHA" ]; then
+            ASG_NAME="asg-staging-${ASG_PIN_DATE}-${ASG_PIN_SHA}.apk"
             ASG_URL="https://github.com/${REPO}/releases/download/staging-builds/${ASG_NAME}"
           else
             # Fallback: upload-releases didn't run (all builds failed), so

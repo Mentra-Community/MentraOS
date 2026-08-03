@@ -16,7 +16,8 @@ import {useNavigationStore} from "@/stores/navigation"
 import {useStressTestStore} from "@/stores/stressTest"
 import {buildDummyMiniappHtml} from "@/utils/stressTest/dummyHtml"
 import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
-import {miniappRunningRegistry} from "@mentra/island"
+import {engine} from "@mentra/engine"
+import {miniappRunningRegistry} from "@mentra/engine/devtools"
 
 const POLL_MS = 1000
 
@@ -28,7 +29,7 @@ export default function StressTest() {
     let id: ReturnType<typeof setInterval> | null = null
     const tick = () => {
       try {
-        const mb = BluetoothSdk.getMemoryMB()
+        const mb = engine.dev.getMemoryMB()
         setResidentMB(mb)
         if (active) {
           // eslint-disable-next-line no-console
@@ -161,7 +162,7 @@ export default function StressTest() {
               label="Spawn 1 JSContext"
               subtitle="Measures per-context memory cost"
               onPress={async () => {
-                const baseline = BluetoothSdk.getMemoryMB()
+                const baseline = engine.dev.getMemoryMB()
                 const result = (BluetoothSdk as any).jscSpawnAndMeasure(1, baseline)
                 console.log("STRESS: jsc-spike", JSON.stringify(result))
               }}
@@ -169,7 +170,7 @@ export default function StressTest() {
             <RouteButton
               label="Spawn 10 JSContexts"
               onPress={async () => {
-                const baseline = BluetoothSdk.getMemoryMB()
+                const baseline = engine.dev.getMemoryMB()
                 const result = (BluetoothSdk as any).jscSpawnAndMeasure(10, baseline)
                 console.log("STRESS: jsc-spike", JSON.stringify(result))
               }}
@@ -177,7 +178,7 @@ export default function StressTest() {
             <RouteButton
               label="Spawn 50 JSContexts"
               onPress={async () => {
-                const baseline = BluetoothSdk.getMemoryMB()
+                const baseline = engine.dev.getMemoryMB()
                 const result = (BluetoothSdk as any).jscSpawnAndMeasure(50, baseline)
                 console.log("STRESS: jsc-spike", JSON.stringify(result))
               }}

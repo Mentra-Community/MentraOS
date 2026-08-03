@@ -58,6 +58,12 @@ If your app also uses Firebase with static frameworks, Firebase modular header c
 - Confirm the hardware feature is available on the connected model.
 - Watch SDK log callbacks for native diagnostics.
 
+## Connected But SDK Features Fail
+
+Bluetooth connection does not confirm that the mobile SDK and glasses software versions match. Each Bluetooth SDK release requires the Mentra Live software release with the same version number.
+
+If your app uses SDK `0.1.21-beta.3`, [install the matching Mentra Live `0.1.21-beta.3` software](/mentra-live/software-update), then reconnect and check again. Do not debug individual feature failures until the OTA check succeeds with no update remaining.
+
 ## Optional Local Stream Preview Does Not Show Video
 
 - The local demo cloud is only needed when the starter app's Stream screen has **Use cloud server** enabled. If you are using that optional local stream preview, confirm the local demo cloud or MediaMTX helper is running.

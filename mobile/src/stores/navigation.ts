@@ -70,7 +70,10 @@ export const useNavigationStore = create<NavigationState>((set, get) => ({
   interceptor: null,
 
   push: (path, params) => {
-    if (get().interceptor?.push(path, params)) return
+    if (get().interceptor?.push(path, params)) {
+      console.info("NAV: push() intercepted", path)
+      return
+    }
     console.info("NAV: push()", path)
     const {history, historyParams, _resetAnimationDelayed} = get()
     if (history[history.length - 1] === path) return
@@ -87,7 +90,10 @@ export const useNavigationStore = create<NavigationState>((set, get) => ({
   },
 
   replace: (path, params) => {
-    if (get().interceptor?.replace(path, params)) return
+    if (get().interceptor?.replace(path, params)) {
+      console.info("NAV: replace() intercepted", path)
+      return
+    }
     console.info("NAV: replace()", path)
     const {history, historyParams, _resetAnimationDelayed} = get()
     set({
@@ -107,7 +113,10 @@ export const useNavigationStore = create<NavigationState>((set, get) => ({
   },
 
   goBack: () => {
-    if (get().interceptor?.goBack()) return
+    if (get().interceptor?.goBack()) {
+      console.info("NAV: goBack() intercepted")
+      return
+    }
     console.log("NAV: goBack()")
     const {history, historyParams, _resetAnimationDelayed} = get()
     const currentPath = history[history.length - 1]

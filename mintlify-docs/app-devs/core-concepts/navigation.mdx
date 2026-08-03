@@ -11,7 +11,7 @@ trip lifecycle; your miniapp starts it, listens, and stops it.
 ```typescript src/background/index.ts
 const off = session.navigation.onUpdate((update) => {
   if (update.kind === "maneuver" && update.instruction) {
-    session.display.showTextWall(update.instruction);
+    session.display.render([{type: "text", id: "msg", box: {x: 0, y: 0, w: 576, h: 288}, text: update.instruction}]);
   }
 });
 

@@ -226,7 +226,7 @@ class Simulated: SGCManager {
 
     // MARK: - Network Management
 
-    func requestWifiScan() {
+    func requestWifiScan(scanId _: String?) {
         Bridge.log("requestWifiScan")
     }
 

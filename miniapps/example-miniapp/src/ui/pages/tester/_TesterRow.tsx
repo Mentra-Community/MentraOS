@@ -7,17 +7,7 @@
  * Use for events whose payload is one short value (button press, head pos,
  * VAD boolean, etc.) where a key-value table would be overkill.
  */
-export function Row({
-  emoji,
-  label,
-  value,
-  mono,
-}: {
-  emoji: string
-  label: string
-  value: string
-  mono?: boolean
-}) {
+export function Row({emoji, label, value, mono}: {emoji: string; label: string; value: string; mono?: boolean}) {
   return (
     <div className="mb-2 rounded-xl border border-border bg-card p-3">
       <div className="mb-1 flex items-center gap-2 text-[12px] font-semibold uppercase tracking-wider text-muted-foreground">
@@ -32,7 +22,7 @@ export function Row({
 /**
  * Card with emoji + label + a key-value table of the event's payload.
  * Use for events with rich payloads (TouchData, ConnectionData,
- * PhoneNotificationData, CalendarEventData, LocationData) so the developer
+ * PhoneNotificationData or LocationData) so the developer
  * can see every field, not just whatever subset the formatter chose.
  *
  * Pass `data` as a Record<string, unknown> — controllers / page handlers
@@ -66,9 +56,7 @@ export function TableRow({
             <tbody>
               {entries.map(([key, val], i) => (
                 <tr key={key} className={i % 2 === 0 ? "bg-background" : "bg-muted/30"}>
-                  <td className="whitespace-nowrap px-3 py-1.5 font-mono text-[11px] text-muted-foreground">
-                    {key}
-                  </td>
+                  <td className="whitespace-nowrap px-3 py-1.5 font-mono text-[11px] text-muted-foreground">{key}</td>
                   <td className="break-all px-3 py-1.5 font-mono text-[11px]">{renderValue(val)}</td>
                 </tr>
               ))}

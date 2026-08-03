@@ -4,16 +4,16 @@ import {ConnectControllerButton} from "@/components/glasses/ConnectDeviceButton"
 import {Header, Screen, Icon} from "@/components/ignite"
 import {Spacer} from "@/components/ui/Spacer"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n/translate"
-import {useGlassesStore} from "@/stores/glasses"
-import {SETTINGS, useSetting} from "@/stores/settings"
+import {SETTINGS, useSetting} from "@mentra/engine"
 import {getGlassesImage} from "@/utils/getGlassesImage"
 import {Group} from "@/components/ui"
 import {RouteButton} from "@/components/ui/RouteButton"
 
 import {DeviceTypes} from "@/../../cloud/packages/types/src"
-import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
+import {engine} from "@mentra/engine"
 
 import {EmptyState} from "@/components/glasses/info/EmptyState"
 import {showAlert} from "@/contexts/ModalContext"
@@ -21,7 +21,9 @@ import {showAlert} from "@/contexts/ModalContext"
 function DeviceSettings() {
   const {theme} = useAppTheme()
   const [defaultController] = useSetting(SETTINGS.default_controller.key)
-  const controllerConnected = useGlassesStore((state) => state.controllerConnected)
+  const controllerConnected = useEngineSnapshot(engine.glasses.controller.status, (onChange) =>
+    engine.glasses.controller.onStatus(onChange),
+  ).connected
   const [superMode] = useSetting(SETTINGS.super_mode.key)
 
   const {push, goBack} = useNavigationStore.getState()
@@ -35,14 +37,16 @@ function DeviceSettings() {
     })
     if (result === 1) {
       try {
-        BluetoothSdk.forgetController()
+        await engine.glasses.controller.forget()
+        // give us a second to forget the glasses before going back
+        setTimeout(() => {
+          goBack()
+        }, 500)
       } catch (e) {
-        console.log(e)
+        // Unpair failed — stay on the screen (dismissing would imply success
+        // while the controller is still paired).
+        console.warn("controller: forget failed:", e)
       }
-      // give us a second to forget the glasses before going back
-      setTimeout(() => {
-        goBack()
-      }, 500)
     }
   }
 
@@ -55,7 +59,11 @@ function DeviceSettings() {
     })
 
     if (result === 1) {
-      BluetoothSdk.disconnectController()
+      try {
+        await engine.glasses.controller.disconnect()
+      } catch (e) {
+        console.log(e)
+      }
     }
   }
 
@@ -98,7 +106,9 @@ export default function ControllerSettings() {
   const {theme} = useAppTheme()
   const [defaultController] = useSetting(SETTINGS.default_controller.key)
   const {goBack} = useNavigationStore.getState()
-  const controllerConnected = useGlassesStore((state) => state.controllerConnected)
+  const controllerConnected = useEngineSnapshot(engine.glasses.controller.status, (onChange) =>
+    engine.glasses.controller.onStatus(onChange),
+  ).connected
 
   const formatGlassesTitle = (title: string) => title.replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase())
   let pageSubtitle

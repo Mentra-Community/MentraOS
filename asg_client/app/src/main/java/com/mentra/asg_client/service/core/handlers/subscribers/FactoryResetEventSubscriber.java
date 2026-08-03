@@ -310,7 +310,7 @@ public final class FactoryResetEventSubscriber implements IPeripheralBus.McuEven
      * Download the ASG client APK from the OTA manifest and install it directly — without the full
      * OTA pipeline's version gate, firmware-update steps, or phone-side orchestration.
      *
-     * <p>The manifest at {@link OtaConstants#VERSION_JSON_URL} is fetched and the
+     * <p>The manifest at {@link OtaConstants#RESCUE_FLEET_MANIFEST_URL} is fetched and the
      * {@code com.mentra.asg_client} entry is read. A dedicated {@code recoveryApkUrl} field is
      * preferred when present (allows the server to publish a pinned recovery build); the normal
      * {@code apkUrl} is used as a fallback. The APK is downloaded to
@@ -348,7 +348,7 @@ public final class FactoryResetEventSubscriber implements IPeripheralBus.McuEven
         try {
             // 1. Fetch the OTA manifest.
             HttpURLConnection conn =
-                    (HttpURLConnection) new URL(OtaConstants.VERSION_JSON_URL).openConnection();
+                    (HttpURLConnection) new URL(OtaConstants.RESCUE_FLEET_MANIFEST_URL).openConnection();
             conn.setConnectTimeout(OtaConstants.CONNECT_TIMEOUT_MS);
             conn.setReadTimeout(OtaConstants.READ_TIMEOUT_MS);
             conn.connect();

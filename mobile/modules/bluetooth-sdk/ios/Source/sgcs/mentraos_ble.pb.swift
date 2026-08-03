@@ -1,3 +1,7 @@
+// Regenerated from Mentra-Zephyr-Glasses-Client proto/mentraos_ble.proto
+// branch ya/add-bitmap-rendering-support @ b2ffae8 (canvas system; NOT yet on fw main).
+// Toolchain: protoc 35.1 + protoc-gen-swift 1.38.1 (SwiftProtobuf 1.x, matches podspec ~> 1.0).
+// Android counterpart: sgcs/MentraosBle.java (protoc 4.29.6, same proto revision).
 // DO NOT EDIT.
 // swift-format-ignore-file
 // swiftlint:disable all
@@ -15,13 +19,57 @@ import SwiftProtobuf
 // incompatible with the version of SwiftProtobuf to which you are linking.
 // Please ensure that you are building against the same version of the API
 // that was used to generate this file.
-fileprivate struct _GeneratedWithProtocGenSwiftVersion: SwiftProtobuf.ProtobufAPIVersionCheck {
+fileprivate nonisolated struct _GeneratedWithProtocGenSwiftVersion: SwiftProtobuf.ProtobufAPIVersionCheck {
   struct _2: SwiftProtobuf.ProtobufAPIVersion_2 {}
   typealias Version = _2
 }
 
+nonisolated enum Mentraos_Ble_CanvasComponentType: SwiftProtobuf.Enum, Swift.CaseIterable {
+  typealias RawValue = Int
+
+  /// 1-bit bitmap; pixels streamed via CanvasUpdateImage
+  case canvasBitmap // = 0
+
+  /// single wrapped text box
+  case canvasTextbox // = 1
+
+  /// text box with a phone-driven vertical scroll offset
+  case canvasScrollTextbox // = 2
+  case UNRECOGNIZED(Int)
+
+  init() {
+    self = .canvasBitmap
+  }
+
+  init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .canvasBitmap
+    case 1: self = .canvasTextbox
+    case 2: self = .canvasScrollTextbox
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  var rawValue: Int {
+    switch self {
+    case .canvasBitmap: return 0
+    case .canvasTextbox: return 1
+    case .canvasScrollTextbox: return 2
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  static let allCases: [Mentraos_Ble_CanvasComponentType] = [
+    .canvasBitmap,
+    .canvasTextbox,
+    .canvasScrollTextbox,
+  ]
+
+}
+
 /// All messages from phone to glasses
-struct Mentraos_Ble_PhoneToGlasses: Sendable {
+nonisolated struct Mentraos_Ble_PhoneToGlasses: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -292,9 +340,50 @@ struct Mentraos_Ble_PhoneToGlasses: Sendable {
     set {payload = .factoryReset(newValue)}
   }
 
+  /// Canvas System — retained components addressed by phone-assigned id
+  var canvasCreateComponent: Mentraos_Ble_CanvasCreateComponent {
+    get {
+      if case .canvasCreateComponent(let v)? = payload {return v}
+      return Mentraos_Ble_CanvasCreateComponent()
+    }
+    set {payload = .canvasCreateComponent(newValue)}
+  }
+
+  var canvasUpdateText: Mentraos_Ble_CanvasUpdateText {
+    get {
+      if case .canvasUpdateText(let v)? = payload {return v}
+      return Mentraos_Ble_CanvasUpdateText()
+    }
+    set {payload = .canvasUpdateText(newValue)}
+  }
+
+  var canvasUpdateImage: Mentraos_Ble_CanvasUpdateImage {
+    get {
+      if case .canvasUpdateImage(let v)? = payload {return v}
+      return Mentraos_Ble_CanvasUpdateImage()
+    }
+    set {payload = .canvasUpdateImage(newValue)}
+  }
+
+  var canvasDeleteComponent: Mentraos_Ble_CanvasDeleteComponent {
+    get {
+      if case .canvasDeleteComponent(let v)? = payload {return v}
+      return Mentraos_Ble_CanvasDeleteComponent()
+    }
+    set {payload = .canvasDeleteComponent(newValue)}
+  }
+
+  var canvasClear: Mentraos_Ble_CanvasClear {
+    get {
+      if case .canvasClear(let v)? = payload {return v}
+      return Mentraos_Ble_CanvasClear()
+    }
+    set {payload = .canvasClear(newValue)}
+  }
+
   var unknownFields = SwiftProtobuf.UnknownStorage()
 
-  enum OneOf_Payload: Equatable, Sendable {
+  nonisolated enum OneOf_Payload: Equatable, Sendable {
     /// Connection Management
     case disconnect(Mentraos_Ble_DisconnectRequest)
     case batteryState(Mentraos_Ble_BatteryStateRequest)
@@ -332,6 +421,12 @@ struct Mentraos_Ble_PhoneToGlasses: Sendable {
     /// System Control
     case restart(Mentraos_Ble_RestartRequest)
     case factoryReset(Mentraos_Ble_FactoryResetRequest)
+    /// Canvas System — retained components addressed by phone-assigned id
+    case canvasCreateComponent(Mentraos_Ble_CanvasCreateComponent)
+    case canvasUpdateText(Mentraos_Ble_CanvasUpdateText)
+    case canvasUpdateImage(Mentraos_Ble_CanvasUpdateImage)
+    case canvasDeleteComponent(Mentraos_Ble_CanvasDeleteComponent)
+    case canvasClear(Mentraos_Ble_CanvasClear)
 
   }
 
@@ -339,7 +434,7 @@ struct Mentraos_Ble_PhoneToGlasses: Sendable {
 }
 
 /// All messages from glasses to phone
-struct Mentraos_Ble_GlassesToPhone: Sendable {
+nonisolated struct Mentraos_Ble_GlassesToPhone: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -396,13 +491,21 @@ struct Mentraos_Ble_GlassesToPhone: Sendable {
     set {payload = .vadEvent(newValue)}
   }
 
-  /// Display System  
+  /// Display System
   var imageTransferComplete: Mentraos_Ble_ImageTransferComplete {
     get {
       if case .imageTransferComplete(let v)? = payload {return v}
       return Mentraos_Ble_ImageTransferComplete()
     }
     set {payload = .imageTransferComplete(newValue)}
+  }
+
+  var canvasResult: Mentraos_Ble_CanvasResult {
+    get {
+      if case .canvasResult(let v)? = payload {return v}
+      return Mentraos_Ble_CanvasResult()
+    }
+    set {payload = .canvasResult(newValue)}
   }
 
   /// User Input
@@ -432,7 +535,7 @@ struct Mentraos_Ble_GlassesToPhone: Sendable {
 
   var unknownFields = SwiftProtobuf.UnknownStorage()
 
-  enum OneOf_Payload: Equatable, Sendable {
+  nonisolated enum OneOf_Payload: Equatable, Sendable {
     /// Connection Management
     case batteryStatus(Mentraos_Ble_BatteryStatus)
     case chargingState(Mentraos_Ble_ChargingState)
@@ -441,8 +544,9 @@ struct Mentraos_Ble_GlassesToPhone: Sendable {
     case headUpAngleSet(Mentraos_Ble_HeadUpAngleResponse)
     /// Audio System
     case vadEvent(Mentraos_Ble_VadEvent)
-    /// Display System  
+    /// Display System
     case imageTransferComplete(Mentraos_Ble_ImageTransferComplete)
+    case canvasResult(Mentraos_Ble_CanvasResult)
     /// User Input
     case imuData(Mentraos_Ble_ImuData)
     case buttonEvent(Mentraos_Ble_ButtonEvent)
@@ -453,7 +557,7 @@ struct Mentraos_Ble_GlassesToPhone: Sendable {
   init() {}
 }
 
-struct Mentraos_Ble_DisconnectRequest: Sendable {
+nonisolated struct Mentraos_Ble_DisconnectRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -463,7 +567,7 @@ struct Mentraos_Ble_DisconnectRequest: Sendable {
   init() {}
 }
 
-struct Mentraos_Ble_BatteryStateRequest: Sendable {
+nonisolated struct Mentraos_Ble_BatteryStateRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -473,7 +577,7 @@ struct Mentraos_Ble_BatteryStateRequest: Sendable {
   init() {}
 }
 
-struct Mentraos_Ble_BatteryStatus: Sendable {
+nonisolated struct Mentraos_Ble_BatteryStatus: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -488,7 +592,7 @@ struct Mentraos_Ble_BatteryStatus: Sendable {
   init() {}
 }
 
-struct Mentraos_Ble_ChargingState: Sendable {
+nonisolated struct Mentraos_Ble_ChargingState: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -497,7 +601,7 @@ struct Mentraos_Ble_ChargingState: Sendable {
 
   var unknownFields = SwiftProtobuf.UnknownStorage()
 
-  enum State: SwiftProtobuf.Enum, Swift.CaseIterable {
+  nonisolated enum State: SwiftProtobuf.Enum, Swift.CaseIterable {
     typealias RawValue = Int
     case notCharging // = 0
     case charging // = 1
@@ -534,7 +638,7 @@ struct Mentraos_Ble_ChargingState: Sendable {
   init() {}
 }
 
-struct Mentraos_Ble_GlassesInfoRequest: Sendable {
+nonisolated struct Mentraos_Ble_GlassesInfoRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -544,7 +648,7 @@ struct Mentraos_Ble_GlassesInfoRequest: Sendable {
   init() {}
 }
 
-struct Mentraos_Ble_DeviceInfo: Sendable {
+nonisolated struct Mentraos_Ble_DeviceInfo: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -554,11 +658,11 @@ struct Mentraos_Ble_DeviceInfo: Sendable {
   var hwModel: String = String()
 
   var features: Mentraos_Ble_DeviceFeatures {
-    get {return _features ?? Mentraos_Ble_DeviceFeatures()}
+    get {_features ?? Mentraos_Ble_DeviceFeatures()}
     set {_features = newValue}
   }
   /// Returns true if `features` has been explicitly set.
-  var hasFeatures: Bool {return self._features != nil}
+  var hasFeatures: Bool {self._features != nil}
   /// Clears the value of `features`. Subsequent reads from it will return its default value.
   mutating func clearFeatures() {self._features = nil}
 
@@ -569,7 +673,7 @@ struct Mentraos_Ble_DeviceInfo: Sendable {
   fileprivate var _features: Mentraos_Ble_DeviceFeatures? = nil
 }
 
-struct Mentraos_Ble_DeviceFeatures: Sendable {
+nonisolated struct Mentraos_Ble_DeviceFeatures: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -596,7 +700,7 @@ struct Mentraos_Ble_DeviceFeatures: Sendable {
   init() {}
 }
 
-struct Mentraos_Ble_PairingModeRequest: Sendable {
+nonisolated struct Mentraos_Ble_PairingModeRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -606,7 +710,7 @@ struct Mentraos_Ble_PairingModeRequest: Sendable {
   init() {}
 }
 
-struct Mentraos_Ble_HeadPositionRequest: Sendable {
+nonisolated struct Mentraos_Ble_HeadPositionRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -616,7 +720,7 @@ struct Mentraos_Ble_HeadPositionRequest: Sendable {
   init() {}
 }
 
-struct Mentraos_Ble_HeadPosition: Sendable {
+nonisolated struct Mentraos_Ble_HeadPosition: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -629,7 +733,7 @@ struct Mentraos_Ble_HeadPosition: Sendable {
   init() {}
 }
 
-struct Mentraos_Ble_HeadUpAngleConfig: Sendable {
+nonisolated struct Mentraos_Ble_HeadUpAngleConfig: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -642,7 +746,7 @@ struct Mentraos_Ble_HeadUpAngleConfig: Sendable {
   init() {}
 }
 
-struct Mentraos_Ble_HeadUpAngleResponse: Sendable {
+nonisolated struct Mentraos_Ble_HeadUpAngleResponse: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -654,7 +758,7 @@ struct Mentraos_Ble_HeadUpAngleResponse: Sendable {
   init() {}
 }
 
-struct Mentraos_Ble_MicStateConfig: Sendable {
+nonisolated struct Mentraos_Ble_MicStateConfig: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -666,7 +770,7 @@ struct Mentraos_Ble_MicStateConfig: Sendable {
   init() {}
 }
 
-struct Mentraos_Ble_VadEnabledConfig: Sendable {
+nonisolated struct Mentraos_Ble_VadEnabledConfig: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -678,7 +782,7 @@ struct Mentraos_Ble_VadEnabledConfig: Sendable {
   init() {}
 }
 
-struct Mentraos_Ble_VadConfig: Sendable {
+nonisolated struct Mentraos_Ble_VadConfig: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -691,7 +795,7 @@ struct Mentraos_Ble_VadConfig: Sendable {
   init() {}
 }
 
-struct Mentraos_Ble_VadEvent: Sendable {
+nonisolated struct Mentraos_Ble_VadEvent: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -700,7 +804,7 @@ struct Mentraos_Ble_VadEvent: Sendable {
 
   var unknownFields = SwiftProtobuf.UnknownStorage()
 
-  enum State: SwiftProtobuf.Enum, Swift.CaseIterable {
+  nonisolated enum State: SwiftProtobuf.Enum, Swift.CaseIterable {
     typealias RawValue = Int
     case inactive // = 0
     case active // = 1
@@ -737,7 +841,7 @@ struct Mentraos_Ble_VadEvent: Sendable {
   init() {}
 }
 
-struct Mentraos_Ble_DisplayText: Sendable {
+nonisolated struct Mentraos_Ble_DisplayText: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -763,7 +867,7 @@ struct Mentraos_Ble_DisplayText: Sendable {
 }
 
 /// Initiates bitmap transfer - actual data comes via binary protocol
-struct Mentraos_Ble_DisplayImage: Sendable {
+nonisolated struct Mentraos_Ble_DisplayImage: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -789,7 +893,7 @@ struct Mentraos_Ble_DisplayImage: Sendable {
   init() {}
 }
 
-struct Mentraos_Ble_PreloadImage: Sendable {
+nonisolated struct Mentraos_Ble_PreloadImage: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -812,7 +916,7 @@ struct Mentraos_Ble_PreloadImage: Sendable {
   init() {}
 }
 
-struct Mentraos_Ble_DisplayCachedImage: Sendable {
+nonisolated struct Mentraos_Ble_DisplayCachedImage: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -832,7 +936,7 @@ struct Mentraos_Ble_DisplayCachedImage: Sendable {
   init() {}
 }
 
-struct Mentraos_Ble_ClearCachedImage: Sendable {
+nonisolated struct Mentraos_Ble_ClearCachedImage: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -844,7 +948,7 @@ struct Mentraos_Ble_ClearCachedImage: Sendable {
   init() {}
 }
 
-struct Mentraos_Ble_DisplayScrollingText: Sendable {
+nonisolated struct Mentraos_Ble_DisplayScrollingText: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -882,7 +986,7 @@ struct Mentraos_Ble_DisplayScrollingText: Sendable {
 
   var unknownFields = SwiftProtobuf.UnknownStorage()
 
-  enum Alignment: SwiftProtobuf.Enum, Swift.CaseIterable {
+  nonisolated enum Alignment: SwiftProtobuf.Enum, Swift.CaseIterable {
     typealias RawValue = Int
     case left // = 0
     case center // = 1
@@ -923,7 +1027,7 @@ struct Mentraos_Ble_DisplayScrollingText: Sendable {
   init() {}
 }
 
-struct Mentraos_Ble_ClearDisplay: Sendable {
+nonisolated struct Mentraos_Ble_ClearDisplay: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -933,7 +1037,7 @@ struct Mentraos_Ble_ClearDisplay: Sendable {
   init() {}
 }
 
-struct Mentraos_Ble_DisplayPowerConfig: Sendable {
+nonisolated struct Mentraos_Ble_DisplayPowerConfig: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -946,7 +1050,7 @@ struct Mentraos_Ble_DisplayPowerConfig: Sendable {
   init() {}
 }
 
-struct Mentraos_Ble_BrightnessConfig: Sendable {
+nonisolated struct Mentraos_Ble_BrightnessConfig: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -959,7 +1063,7 @@ struct Mentraos_Ble_BrightnessConfig: Sendable {
   init() {}
 }
 
-struct Mentraos_Ble_AutoBrightnessConfig: Sendable {
+nonisolated struct Mentraos_Ble_AutoBrightnessConfig: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -971,7 +1075,7 @@ struct Mentraos_Ble_AutoBrightnessConfig: Sendable {
   init() {}
 }
 
-struct Mentraos_Ble_AutoBrightnessMultiplier: Sendable {
+nonisolated struct Mentraos_Ble_AutoBrightnessMultiplier: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -984,7 +1088,7 @@ struct Mentraos_Ble_AutoBrightnessMultiplier: Sendable {
   init() {}
 }
 
-struct Mentraos_Ble_DrawLine: Sendable {
+nonisolated struct Mentraos_Ble_DrawLine: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -1006,7 +1110,7 @@ struct Mentraos_Ble_DrawLine: Sendable {
   init() {}
 }
 
-struct Mentraos_Ble_DrawRect: Sendable {
+nonisolated struct Mentraos_Ble_DrawRect: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -1028,7 +1132,7 @@ struct Mentraos_Ble_DrawRect: Sendable {
   init() {}
 }
 
-struct Mentraos_Ble_DrawCircle: Sendable {
+nonisolated struct Mentraos_Ble_DrawCircle: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -1048,7 +1152,7 @@ struct Mentraos_Ble_DrawCircle: Sendable {
   init() {}
 }
 
-struct Mentraos_Ble_CommitDisplay: Sendable {
+nonisolated struct Mentraos_Ble_CommitDisplay: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -1058,7 +1162,7 @@ struct Mentraos_Ble_CommitDisplay: Sendable {
   init() {}
 }
 
-struct Mentraos_Ble_DisplayDistanceConfig: Sendable {
+nonisolated struct Mentraos_Ble_DisplayDistanceConfig: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -1070,7 +1174,7 @@ struct Mentraos_Ble_DisplayDistanceConfig: Sendable {
   init() {}
 }
 
-struct Mentraos_Ble_DisplayHeightConfig: Sendable {
+nonisolated struct Mentraos_Ble_DisplayHeightConfig: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -1082,7 +1186,7 @@ struct Mentraos_Ble_DisplayHeightConfig: Sendable {
   init() {}
 }
 
-struct Mentraos_Ble_ImageTransferComplete: Sendable {
+nonisolated struct Mentraos_Ble_ImageTransferComplete: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -1096,7 +1200,7 @@ struct Mentraos_Ble_ImageTransferComplete: Sendable {
 
   var unknownFields = SwiftProtobuf.UnknownStorage()
 
-  enum Status: SwiftProtobuf.Enum, Swift.CaseIterable {
+  nonisolated enum Status: SwiftProtobuf.Enum, Swift.CaseIterable {
     typealias RawValue = Int
     case ok // = 0
     case incomplete // = 1
@@ -1133,7 +1237,163 @@ struct Mentraos_Ble_ImageTransferComplete: Sendable {
   init() {}
 }
 
-struct Mentraos_Ble_ImuEnabledConfig: Sendable {
+/// Create (or replace, if the id already exists) a component on the canvas.
+nonisolated struct Mentraos_Ble_CanvasCreateComponent: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// phone-assigned; must fall in the pool for `type`
+  var id: UInt32 = 0
+
+  var type: Mentraos_Ble_CanvasComponentType = .canvasBitmap
+
+  var x: UInt32 = 0
+
+  var y: UInt32 = 0
+
+  var width: UInt32 = 0
+
+  var height: UInt32 = 0
+
+  /// 0 = no border
+  var borderWidth: UInt32 = 0
+
+  /// corner radius in px
+  var borderRadius: UInt32 = 0
+
+  /// inner padding in px
+  var padding: UInt32 = 0
+
+  var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  init() {}
+}
+
+/// Set the text of a TEXTBOX / SCROLL_TEXTBOX component.
+nonisolated struct Mentraos_Ble_CanvasUpdateText: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  var id: UInt32 = 0
+
+  var text: String = String()
+
+  /// SCROLL_TEXTBOX only: vertical scroll in px
+  var scrollOffset: UInt32 = 0
+
+  var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  init() {}
+}
+
+/// Begin streaming a 1-bit BMP into a BITMAP component. Pixels arrive as
+/// [0xB0][streamId_hi][streamId_lo][chunkIndex][data...] packets, same as DisplayImage.
+nonisolated struct Mentraos_Ble_CanvasUpdateImage: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  var id: UInt32 = 0
+
+  /// 2-byte hex string like "002A"
+  var streamID: String = String()
+
+  var totalChunks: UInt32 = 0
+
+  var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  init() {}
+}
+
+nonisolated struct Mentraos_Ble_CanvasDeleteComponent: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  var id: UInt32 = 0
+
+  var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  init() {}
+}
+
+/// Delete all components and exit the canvas view.
+nonisolated struct Mentraos_Ble_CanvasClear: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  init() {}
+}
+
+/// Ack for CanvasCreateComponent (and CanvasClear). id echoes the component id (0 for clear).
+nonisolated struct Mentraos_Ble_CanvasResult: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  var id: UInt32 = 0
+
+  var code: Mentraos_Ble_CanvasResult.ResultCode = .ok
+
+  var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  nonisolated enum ResultCode: SwiftProtobuf.Enum, Swift.CaseIterable {
+    typealias RawValue = Int
+    case ok // = 0
+
+    /// bad id for the type, or unknown component
+    case invalid // = 1
+
+    /// bitmap exceeds the max supported dimensions
+    case oversize // = 2
+
+    /// no backing storage available
+    case oom // = 3
+    case UNRECOGNIZED(Int)
+
+    init() {
+      self = .ok
+    }
+
+    init?(rawValue: Int) {
+      switch rawValue {
+      case 0: self = .ok
+      case 1: self = .invalid
+      case 2: self = .oversize
+      case 3: self = .oom
+      default: self = .UNRECOGNIZED(rawValue)
+      }
+    }
+
+    var rawValue: Int {
+      switch self {
+      case .ok: return 0
+      case .invalid: return 1
+      case .oversize: return 2
+      case .oom: return 3
+      case .UNRECOGNIZED(let i): return i
+      }
+    }
+
+    // The compiler won't synthesize support with the UNRECOGNIZED case.
+    static let allCases: [Mentraos_Ble_CanvasResult.ResultCode] = [
+      .ok,
+      .invalid,
+      .oversize,
+      .oom,
+    ]
+
+  }
+
+  init() {}
+}
+
+nonisolated struct Mentraos_Ble_ImuEnabledConfig: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -1145,7 +1405,7 @@ struct Mentraos_Ble_ImuEnabledConfig: Sendable {
   init() {}
 }
 
-struct Mentraos_Ble_ImuSingleRequest: Sendable {
+nonisolated struct Mentraos_Ble_ImuSingleRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -1155,7 +1415,7 @@ struct Mentraos_Ble_ImuSingleRequest: Sendable {
   init() {}
 }
 
-struct Mentraos_Ble_ImuStreamConfig: Sendable {
+nonisolated struct Mentraos_Ble_ImuStreamConfig: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -1167,35 +1427,35 @@ struct Mentraos_Ble_ImuStreamConfig: Sendable {
   init() {}
 }
 
-struct Mentraos_Ble_ImuData: Sendable {
+nonisolated struct Mentraos_Ble_ImuData: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
   var accel: Mentraos_Ble_Vector3 {
-    get {return _accel ?? Mentraos_Ble_Vector3()}
+    get {_accel ?? Mentraos_Ble_Vector3()}
     set {_accel = newValue}
   }
   /// Returns true if `accel` has been explicitly set.
-  var hasAccel: Bool {return self._accel != nil}
+  var hasAccel: Bool {self._accel != nil}
   /// Clears the value of `accel`. Subsequent reads from it will return its default value.
   mutating func clearAccel() {self._accel = nil}
 
   var gyro: Mentraos_Ble_Vector3 {
-    get {return _gyro ?? Mentraos_Ble_Vector3()}
+    get {_gyro ?? Mentraos_Ble_Vector3()}
     set {_gyro = newValue}
   }
   /// Returns true if `gyro` has been explicitly set.
-  var hasGyro: Bool {return self._gyro != nil}
+  var hasGyro: Bool {self._gyro != nil}
   /// Clears the value of `gyro`. Subsequent reads from it will return its default value.
   mutating func clearGyro() {self._gyro = nil}
 
   var mag: Mentraos_Ble_Vector3 {
-    get {return _mag ?? Mentraos_Ble_Vector3()}
+    get {_mag ?? Mentraos_Ble_Vector3()}
     set {_mag = newValue}
   }
   /// Returns true if `mag` has been explicitly set.
-  var hasMag: Bool {return self._mag != nil}
+  var hasMag: Bool {self._mag != nil}
   /// Clears the value of `mag`. Subsequent reads from it will return its default value.
   mutating func clearMag() {self._mag = nil}
 
@@ -1208,7 +1468,7 @@ struct Mentraos_Ble_ImuData: Sendable {
   fileprivate var _mag: Mentraos_Ble_Vector3? = nil
 }
 
-struct Mentraos_Ble_Vector3: Sendable {
+nonisolated struct Mentraos_Ble_Vector3: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -1224,7 +1484,7 @@ struct Mentraos_Ble_Vector3: Sendable {
   init() {}
 }
 
-struct Mentraos_Ble_ButtonEvent: Sendable {
+nonisolated struct Mentraos_Ble_ButtonEvent: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -1235,7 +1495,7 @@ struct Mentraos_Ble_ButtonEvent: Sendable {
 
   var unknownFields = SwiftProtobuf.UnknownStorage()
 
-  enum Button: SwiftProtobuf.Enum, Swift.CaseIterable {
+  nonisolated enum Button: SwiftProtobuf.Enum, Swift.CaseIterable {
     typealias RawValue = Int
     case center // = 0
     case left // = 1
@@ -1273,7 +1533,7 @@ struct Mentraos_Ble_ButtonEvent: Sendable {
 
   }
 
-  enum State: SwiftProtobuf.Enum, Swift.CaseIterable {
+  nonisolated enum State: SwiftProtobuf.Enum, Swift.CaseIterable {
     typealias RawValue = Int
     case up // = 0
     case down // = 1
@@ -1310,7 +1570,7 @@ struct Mentraos_Ble_ButtonEvent: Sendable {
   init() {}
 }
 
-struct Mentraos_Ble_HeadGesture: Sendable {
+nonisolated struct Mentraos_Ble_HeadGesture: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -1319,7 +1579,7 @@ struct Mentraos_Ble_HeadGesture: Sendable {
 
   var unknownFields = SwiftProtobuf.UnknownStorage()
 
-  enum Gesture: SwiftProtobuf.Enum, Swift.CaseIterable {
+  nonisolated enum Gesture: SwiftProtobuf.Enum, Swift.CaseIterable {
     typealias RawValue = Int
     case nod // = 0
     case shake // = 1
@@ -1360,7 +1620,7 @@ struct Mentraos_Ble_HeadGesture: Sendable {
   init() {}
 }
 
-struct Mentraos_Ble_HeadGestureConfig: Sendable {
+nonisolated struct Mentraos_Ble_HeadGestureConfig: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -1374,7 +1634,7 @@ struct Mentraos_Ble_HeadGestureConfig: Sendable {
   init() {}
 }
 
-struct Mentraos_Ble_RestartRequest: Sendable {
+nonisolated struct Mentraos_Ble_RestartRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -1384,7 +1644,7 @@ struct Mentraos_Ble_RestartRequest: Sendable {
   init() {}
 }
 
-struct Mentraos_Ble_FactoryResetRequest: Sendable {
+nonisolated struct Mentraos_Ble_FactoryResetRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -1396,11 +1656,15 @@ struct Mentraos_Ble_FactoryResetRequest: Sendable {
 
 // MARK: - Code below here is support for the SwiftProtobuf runtime.
 
-fileprivate let _protobuf_package = "mentraos.ble"
+fileprivate nonisolated let _protobuf_package = "mentraos.ble"
 
-extension Mentraos_Ble_PhoneToGlasses: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Mentraos_Ble_CanvasComponentType: SwiftProtobuf._ProtoNameProviding {
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0CANVAS_BITMAP\0\u{1}CANVAS_TEXTBOX\0\u{1}CANVAS_SCROLL_TEXTBOX\0")
+}
+
+nonisolated extension Mentraos_Ble_PhoneToGlasses: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".PhoneToGlasses"
-  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}msg_id\0\u{2}\u{9}disconnect\0\u{3}battery_state\0\u{3}glasses_info\0\u{3}pairing_mode\0\u{3}head_position\0\u{3}head_up_angle\0\u{4}\u{5}mic_state\0\u{3}vad_enabled\0\u{3}vad_config\0\u{4}\u{8}display_text\0\u{3}display_image\0\u{3}preload_image\0\u{3}display_cached_image\0\u{3}clear_cached_image\0\u{3}display_scrolling_text\0\u{3}display_power\0\u{1}brightness\0\u{3}auto_brightness\0\u{3}auto_brightness_mult\0\u{3}draw_line\0\u{3}draw_rect\0\u{3}draw_circle\0\u{1}commit\0\u{3}display_distance\0\u{3}display_height\0\u{3}clear_display\0\u{4}\u{4}imu_enabled\0\u{3}imu_single\0\u{3}imu_stream\0\u{3}head_gesture\0\u{2}\u{7}restart\0\u{3}factory_reset\0")
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}msg_id\0\u{2}\u{9}disconnect\0\u{3}battery_state\0\u{3}glasses_info\0\u{3}pairing_mode\0\u{3}head_position\0\u{3}head_up_angle\0\u{4}\u{5}mic_state\0\u{3}vad_enabled\0\u{3}vad_config\0\u{4}\u{8}display_text\0\u{3}display_image\0\u{3}preload_image\0\u{3}display_cached_image\0\u{3}clear_cached_image\0\u{3}display_scrolling_text\0\u{3}display_power\0\u{1}brightness\0\u{3}auto_brightness\0\u{3}auto_brightness_mult\0\u{3}draw_line\0\u{3}draw_rect\0\u{3}draw_circle\0\u{1}commit\0\u{3}display_distance\0\u{3}display_height\0\u{3}clear_display\0\u{4}\u{4}imu_enabled\0\u{3}imu_single\0\u{3}imu_stream\0\u{3}head_gesture\0\u{2}\u{7}restart\0\u{3}factory_reset\0\u{3}canvas_create_component\0\u{3}canvas_update_text\0\u{3}canvas_update_image\0\u{3}canvas_delete_component\0\u{3}canvas_clear\0")
 
   mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1825,6 +2089,71 @@ extension Mentraos_Ble_PhoneToGlasses: SwiftProtobuf.Message, SwiftProtobuf._Mes
           self.payload = .factoryReset(v)
         }
       }()
+      case 62: try {
+        var v: Mentraos_Ble_CanvasCreateComponent?
+        var hadOneofValue = false
+        if let current = self.payload {
+          hadOneofValue = true
+          if case .canvasCreateComponent(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.payload = .canvasCreateComponent(v)
+        }
+      }()
+      case 63: try {
+        var v: Mentraos_Ble_CanvasUpdateText?
+        var hadOneofValue = false
+        if let current = self.payload {
+          hadOneofValue = true
+          if case .canvasUpdateText(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.payload = .canvasUpdateText(v)
+        }
+      }()
+      case 64: try {
+        var v: Mentraos_Ble_CanvasUpdateImage?
+        var hadOneofValue = false
+        if let current = self.payload {
+          hadOneofValue = true
+          if case .canvasUpdateImage(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.payload = .canvasUpdateImage(v)
+        }
+      }()
+      case 65: try {
+        var v: Mentraos_Ble_CanvasDeleteComponent?
+        var hadOneofValue = false
+        if let current = self.payload {
+          hadOneofValue = true
+          if case .canvasDeleteComponent(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.payload = .canvasDeleteComponent(v)
+        }
+      }()
+      case 66: try {
+        var v: Mentraos_Ble_CanvasClear?
+        var hadOneofValue = false
+        if let current = self.payload {
+          hadOneofValue = true
+          if case .canvasClear(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.payload = .canvasClear(v)
+        }
+      }()
       default: break
       }
     }
@@ -1967,6 +2296,26 @@ extension Mentraos_Ble_PhoneToGlasses: SwiftProtobuf.Message, SwiftProtobuf._Mes
       guard case .factoryReset(let v)? = self.payload else { preconditionFailure() }
       try visitor.visitSingularMessageField(value: v, fieldNumber: 61)
     }()
+    case .canvasCreateComponent?: try {
+      guard case .canvasCreateComponent(let v)? = self.payload else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 62)
+    }()
+    case .canvasUpdateText?: try {
+      guard case .canvasUpdateText(let v)? = self.payload else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 63)
+    }()
+    case .canvasUpdateImage?: try {
+      guard case .canvasUpdateImage(let v)? = self.payload else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 64)
+    }()
+    case .canvasDeleteComponent?: try {
+      guard case .canvasDeleteComponent(let v)? = self.payload else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 65)
+    }()
+    case .canvasClear?: try {
+      guard case .canvasClear(let v)? = self.payload else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 66)
+    }()
     case nil: break
     }
     try unknownFields.traverse(visitor: &visitor)
@@ -1980,9 +2329,9 @@ extension Mentraos_Ble_PhoneToGlasses: SwiftProtobuf.Message, SwiftProtobuf._Mes
   }
 }
 
-extension Mentraos_Ble_GlassesToPhone: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Mentraos_Ble_GlassesToPhone: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".GlassesToPhone"
-  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{4}\u{a}battery_status\0\u{3}charging_state\0\u{3}device_info\0\u{3}head_position\0\u{3}head_up_angle_set\0\u{4}\u{6}vad_event\0\u{4}\u{a}image_transfer_complete\0\u{4}\u{a}imu_data\0\u{3}button_event\0\u{3}head_gesture\0")
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{4}\u{a}battery_status\0\u{3}charging_state\0\u{3}device_info\0\u{3}head_position\0\u{3}head_up_angle_set\0\u{4}\u{6}vad_event\0\u{4}\u{a}image_transfer_complete\0\u{3}canvas_result\0\u{4}\u{9}imu_data\0\u{3}button_event\0\u{3}head_gesture\0")
 
   mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -2081,6 +2430,19 @@ extension Mentraos_Ble_GlassesToPhone: SwiftProtobuf.Message, SwiftProtobuf._Mes
           self.payload = .imageTransferComplete(v)
         }
       }()
+      case 31: try {
+        var v: Mentraos_Ble_CanvasResult?
+        var hadOneofValue = false
+        if let current = self.payload {
+          hadOneofValue = true
+          if case .canvasResult(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.payload = .canvasResult(v)
+        }
+      }()
       case 40: try {
         var v: Mentraos_Ble_ImuData?
         var hadOneofValue = false
@@ -2159,6 +2521,10 @@ extension Mentraos_Ble_GlassesToPhone: SwiftProtobuf.Message, SwiftProtobuf._Mes
       guard case .imageTransferComplete(let v)? = self.payload else { preconditionFailure() }
       try visitor.visitSingularMessageField(value: v, fieldNumber: 30)
     }()
+    case .canvasResult?: try {
+      guard case .canvasResult(let v)? = self.payload else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 31)
+    }()
     case .imuData?: try {
       guard case .imuData(let v)? = self.payload else { preconditionFailure() }
       try visitor.visitSingularMessageField(value: v, fieldNumber: 40)
@@ -2183,7 +2549,7 @@ extension Mentraos_Ble_GlassesToPhone: SwiftProtobuf.Message, SwiftProtobuf._Mes
   }
 }
 
-extension Mentraos_Ble_DisconnectRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Mentraos_Ble_DisconnectRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".DisconnectRequest"
   static let _protobuf_nameMap = SwiftProtobuf._NameMap()
 
@@ -2202,7 +2568,7 @@ extension Mentraos_Ble_DisconnectRequest: SwiftProtobuf.Message, SwiftProtobuf._
   }
 }
 
-extension Mentraos_Ble_BatteryStateRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Mentraos_Ble_BatteryStateRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".BatteryStateRequest"
   static let _protobuf_nameMap = SwiftProtobuf._NameMap()
 
@@ -2221,7 +2587,7 @@ extension Mentraos_Ble_BatteryStateRequest: SwiftProtobuf.Message, SwiftProtobuf
   }
 }
 
-extension Mentraos_Ble_BatteryStatus: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Mentraos_Ble_BatteryStatus: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".BatteryStatus"
   static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}level\0\u{1}charging\0")
 
@@ -2256,7 +2622,7 @@ extension Mentraos_Ble_BatteryStatus: SwiftProtobuf.Message, SwiftProtobuf._Mess
   }
 }
 
-extension Mentraos_Ble_ChargingState: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Mentraos_Ble_ChargingState: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".ChargingState"
   static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}state\0")
 
@@ -2286,11 +2652,11 @@ extension Mentraos_Ble_ChargingState: SwiftProtobuf.Message, SwiftProtobuf._Mess
   }
 }
 
-extension Mentraos_Ble_ChargingState.State: SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Mentraos_Ble_ChargingState.State: SwiftProtobuf._ProtoNameProviding {
   static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0NOT_CHARGING\0\u{1}CHARGING\0")
 }
 
-extension Mentraos_Ble_GlassesInfoRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Mentraos_Ble_GlassesInfoRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".GlassesInfoRequest"
   static let _protobuf_nameMap = SwiftProtobuf._NameMap()
 
@@ -2309,7 +2675,7 @@ extension Mentraos_Ble_GlassesInfoRequest: SwiftProtobuf.Message, SwiftProtobuf.
   }
 }
 
-extension Mentraos_Ble_DeviceInfo: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Mentraos_Ble_DeviceInfo: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".DeviceInfo"
   static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}fw_version\0\u{3}hw_model\0\u{1}features\0")
 
@@ -2353,7 +2719,7 @@ extension Mentraos_Ble_DeviceInfo: SwiftProtobuf.Message, SwiftProtobuf._Message
   }
 }
 
-extension Mentraos_Ble_DeviceFeatures: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Mentraos_Ble_DeviceFeatures: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".DeviceFeatures"
   static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}camera\0\u{1}display\0\u{3}audio_tx\0\u{3}audio_rx\0\u{1}imu\0\u{1}vad\0\u{3}mic_switching\0\u{3}image_chunk_buffer\0")
 
@@ -2418,7 +2784,7 @@ extension Mentraos_Ble_DeviceFeatures: SwiftProtobuf.Message, SwiftProtobuf._Mes
   }
 }
 
-extension Mentraos_Ble_PairingModeRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Mentraos_Ble_PairingModeRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".PairingModeRequest"
   static let _protobuf_nameMap = SwiftProtobuf._NameMap()
 
@@ -2437,7 +2803,7 @@ extension Mentraos_Ble_PairingModeRequest: SwiftProtobuf.Message, SwiftProtobuf.
   }
 }
 
-extension Mentraos_Ble_HeadPositionRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Mentraos_Ble_HeadPositionRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".HeadPositionRequest"
   static let _protobuf_nameMap = SwiftProtobuf._NameMap()
 
@@ -2456,7 +2822,7 @@ extension Mentraos_Ble_HeadPositionRequest: SwiftProtobuf.Message, SwiftProtobuf
   }
 }
 
-extension Mentraos_Ble_HeadPosition: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Mentraos_Ble_HeadPosition: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".HeadPosition"
   static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}angle\0")
 
@@ -2486,7 +2852,7 @@ extension Mentraos_Ble_HeadPosition: SwiftProtobuf.Message, SwiftProtobuf._Messa
   }
 }
 
-extension Mentraos_Ble_HeadUpAngleConfig: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Mentraos_Ble_HeadUpAngleConfig: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".HeadUpAngleConfig"
   static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}angle\0")
 
@@ -2516,7 +2882,7 @@ extension Mentraos_Ble_HeadUpAngleConfig: SwiftProtobuf.Message, SwiftProtobuf._
   }
 }
 
-extension Mentraos_Ble_HeadUpAngleResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Mentraos_Ble_HeadUpAngleResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".HeadUpAngleResponse"
   static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}success\0")
 
@@ -2546,7 +2912,7 @@ extension Mentraos_Ble_HeadUpAngleResponse: SwiftProtobuf.Message, SwiftProtobuf
   }
 }
 
-extension Mentraos_Ble_MicStateConfig: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Mentraos_Ble_MicStateConfig: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".MicStateConfig"
   static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}enabled\0")
 
@@ -2576,7 +2942,7 @@ extension Mentraos_Ble_MicStateConfig: SwiftProtobuf.Message, SwiftProtobuf._Mes
   }
 }
 
-extension Mentraos_Ble_VadEnabledConfig: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Mentraos_Ble_VadEnabledConfig: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".VadEnabledConfig"
   static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}enabled\0")
 
@@ -2606,7 +2972,7 @@ extension Mentraos_Ble_VadEnabledConfig: SwiftProtobuf.Message, SwiftProtobuf._M
   }
 }
 
-extension Mentraos_Ble_VadConfig: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Mentraos_Ble_VadConfig: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".VadConfig"
   static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}sensitivity\0")
 
@@ -2636,7 +3002,7 @@ extension Mentraos_Ble_VadConfig: SwiftProtobuf.Message, SwiftProtobuf._MessageI
   }
 }
 
-extension Mentraos_Ble_VadEvent: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Mentraos_Ble_VadEvent: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".VadEvent"
   static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}state\0")
 
@@ -2666,11 +3032,11 @@ extension Mentraos_Ble_VadEvent: SwiftProtobuf.Message, SwiftProtobuf._MessageIm
   }
 }
 
-extension Mentraos_Ble_VadEvent.State: SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Mentraos_Ble_VadEvent.State: SwiftProtobuf._ProtoNameProviding {
   static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0INACTIVE\0\u{1}ACTIVE\0")
 }
 
-extension Mentraos_Ble_DisplayText: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Mentraos_Ble_DisplayText: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".DisplayText"
   static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}text\0\u{1}color\0\u{3}font_code\0\u{1}x\0\u{1}y\0\u{1}size\0")
 
@@ -2725,7 +3091,7 @@ extension Mentraos_Ble_DisplayText: SwiftProtobuf.Message, SwiftProtobuf._Messag
   }
 }
 
-extension Mentraos_Ble_DisplayImage: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Mentraos_Ble_DisplayImage: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".DisplayImage"
   static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}stream_id\0\u{1}x\0\u{1}y\0\u{1}width\0\u{1}height\0\u{1}encoding\0\u{3}total_chunks\0")
 
@@ -2785,7 +3151,7 @@ extension Mentraos_Ble_DisplayImage: SwiftProtobuf.Message, SwiftProtobuf._Messa
   }
 }
 
-extension Mentraos_Ble_PreloadImage: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Mentraos_Ble_PreloadImage: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".PreloadImage"
   static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}stream_id\0\u{3}image_id\0\u{1}width\0\u{1}height\0\u{1}encoding\0\u{3}total_chunks\0")
 
@@ -2840,7 +3206,7 @@ extension Mentraos_Ble_PreloadImage: SwiftProtobuf.Message, SwiftProtobuf._Messa
   }
 }
 
-extension Mentraos_Ble_DisplayCachedImage: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Mentraos_Ble_DisplayCachedImage: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".DisplayCachedImage"
   static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}image_id\0\u{1}x\0\u{1}y\0\u{1}width\0\u{1}height\0")
 
@@ -2890,7 +3256,7 @@ extension Mentraos_Ble_DisplayCachedImage: SwiftProtobuf.Message, SwiftProtobuf.
   }
 }
 
-extension Mentraos_Ble_ClearCachedImage: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Mentraos_Ble_ClearCachedImage: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".ClearCachedImage"
   static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}image_id\0")
 
@@ -2920,7 +3286,7 @@ extension Mentraos_Ble_ClearCachedImage: SwiftProtobuf.Message, SwiftProtobuf._M
   }
 }
 
-extension Mentraos_Ble_DisplayScrollingText: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Mentraos_Ble_DisplayScrollingText: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".DisplayScrollingText"
   static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}text\0\u{1}color\0\u{3}font_code\0\u{1}x\0\u{1}y\0\u{1}width\0\u{1}height\0\u{1}align\0\u{3}line_spacing\0\u{1}speed\0\u{1}size\0\u{1}loop\0\u{3}pause_ms\0")
 
@@ -3010,11 +3376,11 @@ extension Mentraos_Ble_DisplayScrollingText: SwiftProtobuf.Message, SwiftProtobu
   }
 }
 
-extension Mentraos_Ble_DisplayScrollingText.Alignment: SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Mentraos_Ble_DisplayScrollingText.Alignment: SwiftProtobuf._ProtoNameProviding {
   static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0LEFT\0\u{1}CENTER\0\u{1}RIGHT\0")
 }
 
-extension Mentraos_Ble_ClearDisplay: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Mentraos_Ble_ClearDisplay: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".ClearDisplay"
   static let _protobuf_nameMap = SwiftProtobuf._NameMap()
 
@@ -3033,7 +3399,7 @@ extension Mentraos_Ble_ClearDisplay: SwiftProtobuf.Message, SwiftProtobuf._Messa
   }
 }
 
-extension Mentraos_Ble_DisplayPowerConfig: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Mentraos_Ble_DisplayPowerConfig: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".DisplayPowerConfig"
   static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}on\0")
 
@@ -3063,7 +3429,7 @@ extension Mentraos_Ble_DisplayPowerConfig: SwiftProtobuf.Message, SwiftProtobuf.
   }
 }
 
-extension Mentraos_Ble_BrightnessConfig: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Mentraos_Ble_BrightnessConfig: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".BrightnessConfig"
   static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}value\0")
 
@@ -3093,7 +3459,7 @@ extension Mentraos_Ble_BrightnessConfig: SwiftProtobuf.Message, SwiftProtobuf._M
   }
 }
 
-extension Mentraos_Ble_AutoBrightnessConfig: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Mentraos_Ble_AutoBrightnessConfig: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".AutoBrightnessConfig"
   static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}enabled\0")
 
@@ -3123,7 +3489,7 @@ extension Mentraos_Ble_AutoBrightnessConfig: SwiftProtobuf.Message, SwiftProtobu
   }
 }
 
-extension Mentraos_Ble_AutoBrightnessMultiplier: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Mentraos_Ble_AutoBrightnessMultiplier: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".AutoBrightnessMultiplier"
   static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}multiplier\0")
 
@@ -3153,7 +3519,7 @@ extension Mentraos_Ble_AutoBrightnessMultiplier: SwiftProtobuf.Message, SwiftPro
   }
 }
 
-extension Mentraos_Ble_DrawLine: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Mentraos_Ble_DrawLine: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".DrawLine"
   static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}color\0\u{1}stroke\0\u{1}x1\0\u{1}y1\0\u{1}x2\0\u{1}y2\0")
 
@@ -3208,7 +3574,7 @@ extension Mentraos_Ble_DrawLine: SwiftProtobuf.Message, SwiftProtobuf._MessageIm
   }
 }
 
-extension Mentraos_Ble_DrawRect: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Mentraos_Ble_DrawRect: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".DrawRect"
   static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}color\0\u{1}stroke\0\u{1}x\0\u{1}y\0\u{1}width\0\u{1}height\0")
 
@@ -3263,7 +3629,7 @@ extension Mentraos_Ble_DrawRect: SwiftProtobuf.Message, SwiftProtobuf._MessageIm
   }
 }
 
-extension Mentraos_Ble_DrawCircle: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Mentraos_Ble_DrawCircle: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".DrawCircle"
   static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}color\0\u{1}stroke\0\u{1}x\0\u{1}y\0\u{1}radius\0")
 
@@ -3313,7 +3679,7 @@ extension Mentraos_Ble_DrawCircle: SwiftProtobuf.Message, SwiftProtobuf._Message
   }
 }
 
-extension Mentraos_Ble_CommitDisplay: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Mentraos_Ble_CommitDisplay: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".CommitDisplay"
   static let _protobuf_nameMap = SwiftProtobuf._NameMap()
 
@@ -3332,7 +3698,7 @@ extension Mentraos_Ble_CommitDisplay: SwiftProtobuf.Message, SwiftProtobuf._Mess
   }
 }
 
-extension Mentraos_Ble_DisplayDistanceConfig: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Mentraos_Ble_DisplayDistanceConfig: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".DisplayDistanceConfig"
   static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}distance_cm\0")
 
@@ -3362,7 +3728,7 @@ extension Mentraos_Ble_DisplayDistanceConfig: SwiftProtobuf.Message, SwiftProtob
   }
 }
 
-extension Mentraos_Ble_DisplayHeightConfig: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Mentraos_Ble_DisplayHeightConfig: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".DisplayHeightConfig"
   static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}height\0")
 
@@ -3392,7 +3758,7 @@ extension Mentraos_Ble_DisplayHeightConfig: SwiftProtobuf.Message, SwiftProtobuf
   }
 }
 
-extension Mentraos_Ble_ImageTransferComplete: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Mentraos_Ble_ImageTransferComplete: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".ImageTransferComplete"
   static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}stream_id\0\u{1}status\0\u{3}missing_chunks\0")
 
@@ -3432,11 +3798,249 @@ extension Mentraos_Ble_ImageTransferComplete: SwiftProtobuf.Message, SwiftProtob
   }
 }
 
-extension Mentraos_Ble_ImageTransferComplete.Status: SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Mentraos_Ble_ImageTransferComplete.Status: SwiftProtobuf._ProtoNameProviding {
   static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0OK\0\u{1}INCOMPLETE\0")
 }
 
-extension Mentraos_Ble_ImuEnabledConfig: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Mentraos_Ble_CanvasCreateComponent: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  static let protoMessageName: String = _protobuf_package + ".CanvasCreateComponent"
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{1}type\0\u{1}x\0\u{1}y\0\u{1}width\0\u{1}height\0\u{3}border_width\0\u{3}border_radius\0\u{1}padding\0")
+
+  mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularUInt32Field(value: &self.id) }()
+      case 2: try { try decoder.decodeSingularEnumField(value: &self.type) }()
+      case 3: try { try decoder.decodeSingularUInt32Field(value: &self.x) }()
+      case 4: try { try decoder.decodeSingularUInt32Field(value: &self.y) }()
+      case 5: try { try decoder.decodeSingularUInt32Field(value: &self.width) }()
+      case 6: try { try decoder.decodeSingularUInt32Field(value: &self.height) }()
+      case 7: try { try decoder.decodeSingularUInt32Field(value: &self.borderWidth) }()
+      case 8: try { try decoder.decodeSingularUInt32Field(value: &self.borderRadius) }()
+      case 9: try { try decoder.decodeSingularUInt32Field(value: &self.padding) }()
+      default: break
+      }
+    }
+  }
+
+  func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.id != 0 {
+      try visitor.visitSingularUInt32Field(value: self.id, fieldNumber: 1)
+    }
+    if self.type != .canvasBitmap {
+      try visitor.visitSingularEnumField(value: self.type, fieldNumber: 2)
+    }
+    if self.x != 0 {
+      try visitor.visitSingularUInt32Field(value: self.x, fieldNumber: 3)
+    }
+    if self.y != 0 {
+      try visitor.visitSingularUInt32Field(value: self.y, fieldNumber: 4)
+    }
+    if self.width != 0 {
+      try visitor.visitSingularUInt32Field(value: self.width, fieldNumber: 5)
+    }
+    if self.height != 0 {
+      try visitor.visitSingularUInt32Field(value: self.height, fieldNumber: 6)
+    }
+    if self.borderWidth != 0 {
+      try visitor.visitSingularUInt32Field(value: self.borderWidth, fieldNumber: 7)
+    }
+    if self.borderRadius != 0 {
+      try visitor.visitSingularUInt32Field(value: self.borderRadius, fieldNumber: 8)
+    }
+    if self.padding != 0 {
+      try visitor.visitSingularUInt32Field(value: self.padding, fieldNumber: 9)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  static func ==(lhs: Mentraos_Ble_CanvasCreateComponent, rhs: Mentraos_Ble_CanvasCreateComponent) -> Bool {
+    if lhs.id != rhs.id {return false}
+    if lhs.type != rhs.type {return false}
+    if lhs.x != rhs.x {return false}
+    if lhs.y != rhs.y {return false}
+    if lhs.width != rhs.width {return false}
+    if lhs.height != rhs.height {return false}
+    if lhs.borderWidth != rhs.borderWidth {return false}
+    if lhs.borderRadius != rhs.borderRadius {return false}
+    if lhs.padding != rhs.padding {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Mentraos_Ble_CanvasUpdateText: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  static let protoMessageName: String = _protobuf_package + ".CanvasUpdateText"
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{1}text\0\u{3}scroll_offset\0")
+
+  mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularUInt32Field(value: &self.id) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.text) }()
+      case 3: try { try decoder.decodeSingularUInt32Field(value: &self.scrollOffset) }()
+      default: break
+      }
+    }
+  }
+
+  func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.id != 0 {
+      try visitor.visitSingularUInt32Field(value: self.id, fieldNumber: 1)
+    }
+    if !self.text.isEmpty {
+      try visitor.visitSingularStringField(value: self.text, fieldNumber: 2)
+    }
+    if self.scrollOffset != 0 {
+      try visitor.visitSingularUInt32Field(value: self.scrollOffset, fieldNumber: 3)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  static func ==(lhs: Mentraos_Ble_CanvasUpdateText, rhs: Mentraos_Ble_CanvasUpdateText) -> Bool {
+    if lhs.id != rhs.id {return false}
+    if lhs.text != rhs.text {return false}
+    if lhs.scrollOffset != rhs.scrollOffset {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Mentraos_Ble_CanvasUpdateImage: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  static let protoMessageName: String = _protobuf_package + ".CanvasUpdateImage"
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{3}stream_id\0\u{3}total_chunks\0")
+
+  mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularUInt32Field(value: &self.id) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.streamID) }()
+      case 3: try { try decoder.decodeSingularUInt32Field(value: &self.totalChunks) }()
+      default: break
+      }
+    }
+  }
+
+  func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.id != 0 {
+      try visitor.visitSingularUInt32Field(value: self.id, fieldNumber: 1)
+    }
+    if !self.streamID.isEmpty {
+      try visitor.visitSingularStringField(value: self.streamID, fieldNumber: 2)
+    }
+    if self.totalChunks != 0 {
+      try visitor.visitSingularUInt32Field(value: self.totalChunks, fieldNumber: 3)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  static func ==(lhs: Mentraos_Ble_CanvasUpdateImage, rhs: Mentraos_Ble_CanvasUpdateImage) -> Bool {
+    if lhs.id != rhs.id {return false}
+    if lhs.streamID != rhs.streamID {return false}
+    if lhs.totalChunks != rhs.totalChunks {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Mentraos_Ble_CanvasDeleteComponent: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  static let protoMessageName: String = _protobuf_package + ".CanvasDeleteComponent"
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0")
+
+  mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularUInt32Field(value: &self.id) }()
+      default: break
+      }
+    }
+  }
+
+  func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.id != 0 {
+      try visitor.visitSingularUInt32Field(value: self.id, fieldNumber: 1)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  static func ==(lhs: Mentraos_Ble_CanvasDeleteComponent, rhs: Mentraos_Ble_CanvasDeleteComponent) -> Bool {
+    if lhs.id != rhs.id {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Mentraos_Ble_CanvasClear: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  static let protoMessageName: String = _protobuf_package + ".CanvasClear"
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap()
+
+  mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    // Load everything into unknown fields
+    while try decoder.nextFieldNumber() != nil {}
+  }
+
+  func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  static func ==(lhs: Mentraos_Ble_CanvasClear, rhs: Mentraos_Ble_CanvasClear) -> Bool {
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Mentraos_Ble_CanvasResult: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  static let protoMessageName: String = _protobuf_package + ".CanvasResult"
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{1}code\0")
+
+  mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularUInt32Field(value: &self.id) }()
+      case 2: try { try decoder.decodeSingularEnumField(value: &self.code) }()
+      default: break
+      }
+    }
+  }
+
+  func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.id != 0 {
+      try visitor.visitSingularUInt32Field(value: self.id, fieldNumber: 1)
+    }
+    if self.code != .ok {
+      try visitor.visitSingularEnumField(value: self.code, fieldNumber: 2)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  static func ==(lhs: Mentraos_Ble_CanvasResult, rhs: Mentraos_Ble_CanvasResult) -> Bool {
+    if lhs.id != rhs.id {return false}
+    if lhs.code != rhs.code {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Mentraos_Ble_CanvasResult.ResultCode: SwiftProtobuf._ProtoNameProviding {
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0OK\0\u{1}INVALID\0\u{1}OVERSIZE\0\u{1}OOM\0")
+}
+
+nonisolated extension Mentraos_Ble_ImuEnabledConfig: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".ImuEnabledConfig"
   static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}enabled\0")
 
@@ -3466,7 +4070,7 @@ extension Mentraos_Ble_ImuEnabledConfig: SwiftProtobuf.Message, SwiftProtobuf._M
   }
 }
 
-extension Mentraos_Ble_ImuSingleRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Mentraos_Ble_ImuSingleRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".ImuSingleRequest"
   static let _protobuf_nameMap = SwiftProtobuf._NameMap()
 
@@ -3485,7 +4089,7 @@ extension Mentraos_Ble_ImuSingleRequest: SwiftProtobuf.Message, SwiftProtobuf._M
   }
 }
 
-extension Mentraos_Ble_ImuStreamConfig: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Mentraos_Ble_ImuStreamConfig: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".ImuStreamConfig"
   static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}enabled\0")
 
@@ -3515,7 +4119,7 @@ extension Mentraos_Ble_ImuStreamConfig: SwiftProtobuf.Message, SwiftProtobuf._Me
   }
 }
 
-extension Mentraos_Ble_ImuData: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Mentraos_Ble_ImuData: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".ImuData"
   static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}accel\0\u{1}gyro\0\u{1}mag\0")
 
@@ -3559,7 +4163,7 @@ extension Mentraos_Ble_ImuData: SwiftProtobuf.Message, SwiftProtobuf._MessageImp
   }
 }
 
-extension Mentraos_Ble_Vector3: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Mentraos_Ble_Vector3: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".Vector3"
   static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}x\0\u{1}y\0\u{1}z\0")
 
@@ -3599,7 +4203,7 @@ extension Mentraos_Ble_Vector3: SwiftProtobuf.Message, SwiftProtobuf._MessageImp
   }
 }
 
-extension Mentraos_Ble_ButtonEvent: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Mentraos_Ble_ButtonEvent: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".ButtonEvent"
   static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}button\0\u{1}state\0")
 
@@ -3634,15 +4238,15 @@ extension Mentraos_Ble_ButtonEvent: SwiftProtobuf.Message, SwiftProtobuf._Messag
   }
 }
 
-extension Mentraos_Ble_ButtonEvent.Button: SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Mentraos_Ble_ButtonEvent.Button: SwiftProtobuf._ProtoNameProviding {
   static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0CENTER\0\u{1}LEFT\0\u{1}RIGHT\0")
 }
 
-extension Mentraos_Ble_ButtonEvent.State: SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Mentraos_Ble_ButtonEvent.State: SwiftProtobuf._ProtoNameProviding {
   static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0UP\0\u{1}DOWN\0")
 }
 
-extension Mentraos_Ble_HeadGesture: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Mentraos_Ble_HeadGesture: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".HeadGesture"
   static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}gesture\0")
 
@@ -3672,11 +4276,11 @@ extension Mentraos_Ble_HeadGesture: SwiftProtobuf.Message, SwiftProtobuf._Messag
   }
 }
 
-extension Mentraos_Ble_HeadGesture.Gesture: SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Mentraos_Ble_HeadGesture.Gesture: SwiftProtobuf._ProtoNameProviding {
   static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0NOD\0\u{1}SHAKE\0\u{1}HEAD_UP\0")
 }
 
-extension Mentraos_Ble_HeadGestureConfig: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Mentraos_Ble_HeadGestureConfig: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".HeadGestureConfig"
   static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}gesture\0\u{1}enabled\0")
 
@@ -3711,7 +4315,7 @@ extension Mentraos_Ble_HeadGestureConfig: SwiftProtobuf.Message, SwiftProtobuf._
   }
 }
 
-extension Mentraos_Ble_RestartRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Mentraos_Ble_RestartRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".RestartRequest"
   static let _protobuf_nameMap = SwiftProtobuf._NameMap()
 
@@ -3730,7 +4334,7 @@ extension Mentraos_Ble_RestartRequest: SwiftProtobuf.Message, SwiftProtobuf._Mes
   }
 }
 
-extension Mentraos_Ble_FactoryResetRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Mentraos_Ble_FactoryResetRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".FactoryResetRequest"
   static let _protobuf_nameMap = SwiftProtobuf._NameMap()
 

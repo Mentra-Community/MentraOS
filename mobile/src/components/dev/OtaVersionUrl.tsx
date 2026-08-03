@@ -3,9 +3,8 @@ import {TextInput, View, ViewStyle, TextStyle, TouchableOpacity} from "react-nat
 
 import {Button, Text} from "@/components/ignite"
 import GlassView from "@/components/ui/GlassView"
-import {OTA_VERSION_URL_PROD, OTA_VERSION_URL_STAGING} from "@/config/ota"
 import {useAppTheme} from "@/contexts/ThemeContext"
-import {SETTINGS, useSetting} from "@/stores/settings"
+import {SETTINGS, useSetting} from "@mentra/engine"
 import {ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
 
@@ -149,7 +148,8 @@ export default function OtaVersionUrl() {
       <View style={themed($textContainer)}>
         <Text style={themed($label)}>Custom OTA Manifest URL</Text>
         <Text style={themed($subtitle)}>
-          Override the default glasses OTA manifest URL. Leave blank to use default.
+          Override the OTA manifest URL this app drives (default: this build's pinned manifest). Leave blank to use
+          default.
           {otaVersionUrl && `\nCurrently using: ${otaVersionUrl}`}
         </Text>
         <TextInput
@@ -206,24 +206,6 @@ export default function OtaVersionUrl() {
             <Text style={themed($chipHint)}>Tap to fill · Long-press to remove</Text>
           </View>
         )}
-
-        {/* Environment presets */}
-        <View style={themed($buttonColumn)}>
-          <Button
-            compact
-            text="Production"
-            onPress={() => setCustomUrlInput(OTA_VERSION_URL_PROD)}
-            flexContainer={false}
-            flex
-          />
-          <Button
-            compact
-            tx="developer:staging"
-            onPress={() => setCustomUrlInput(OTA_VERSION_URL_STAGING)}
-            flexContainer={false}
-            flex
-          />
-        </View>
       </View>
     </GlassView>
   )
@@ -267,13 +249,6 @@ const $buttonRow: ThemedStyle<ViewStyle> = () => ({
   flexDirection: "row",
   justifyContent: "space-between",
   marginTop: 10,
-})
-
-const $buttonColumn: ThemedStyle<ViewStyle> = () => ({
-  flexDirection: "row",
-  gap: 12,
-  justifyContent: "space-between",
-  marginTop: 12,
 })
 
 const $savedSection: ThemedStyle<ViewStyle> = () => ({

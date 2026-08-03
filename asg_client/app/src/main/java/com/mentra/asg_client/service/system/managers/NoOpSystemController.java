@@ -35,7 +35,7 @@ public class NoOpSystemController implements ISystemController {
 
     @Override
     public String getSystemOtaVersion() {
-        return "20241130";
+        return "";
     }
 
     @Override

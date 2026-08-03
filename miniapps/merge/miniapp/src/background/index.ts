@@ -16,6 +16,7 @@ import type {
   MergeSnapshot,
   MergeTranscript,
 } from "../shared/types"
+import {speakInsightText} from "./speech"
 
 type Send = <C extends keyof Channels & string>(channel: C, payload: Channels[C]) => void
 type On = <C extends keyof Channels & string>(channel: C, cb: (payload: Channels[C]) => void) => () => void
@@ -170,7 +171,7 @@ class MergeController {
         this.clearDisplayTimer()
         this.lastError = null
         this.backendStatus = "idle"
-        this.session.display.clear()
+        void this.session.display.render([])
         this.session.speaker.stop()
         this.sendSnapshot()
       }),
@@ -355,7 +356,10 @@ class MergeController {
 
   private async analyze(chunks: AnalysisChunk[]): Promise<void> {
     const primary = chunks[chunks.length - 1]
-    const chunkText = chunks.map((chunk) => chunk.text).join("\n").trim()
+    const chunkText = chunks
+      .map((chunk) => chunk.text)
+      .join("\n")
+      .trim()
     if (!chunkText) return
 
     const currentTranscript = this.transcripts.find((t) => t.id === primary.transcriptId)
@@ -540,10 +544,21 @@ class MergeController {
     this.clearDisplayTimer()
     this.activeDisplayUntil = Date.now() + DISPLAY_DURATION_MS
     if (capabilityHasDisplay(this.session.capabilities)) {
-      this.session.display.showTextWall(`// Merge\n${insight.text}`, {
-        durationMs: DISPLAY_DURATION_MS,
-        breakMode: "word",
-      })
+      // Full-canvas text element; durationMs auto-clears after the display
+      // window, same semantics as the legacy layout options.
+      const d = this.session.capabilities?.display
+      void this.session.display.render(
+        [
+          {
+            type: "text",
+            id: "insight",
+            box: {x: 0, y: 0, w: d?.width ?? 576, h: d?.height ?? 288},
+            text: `// Merge\n${insight.text}`,
+            style: {breakMode: "word"},
+          },
+        ],
+        {durationMs: DISPLAY_DURATION_MS},
+      )
     } else {
       // No display (e.g. Mentra Live): speak the insight so the app is still
       // useful on audio-only glasses. Fire-and-forget — speak() only resolves
@@ -558,7 +573,7 @@ class MergeController {
     try {
       // stopOtherAudio mirrors "replace" display semantics for audio: a newer
       // insight cuts off one that is still being spoken instead of overlapping.
-      await this.session.speaker.speak(insight.text, {stopOtherAudio: true})
+      await speakInsightText(this.session.speaker, insight.text)
     } catch (err) {
       console.log("LocalMerge: failed to speak insight", err)
     }

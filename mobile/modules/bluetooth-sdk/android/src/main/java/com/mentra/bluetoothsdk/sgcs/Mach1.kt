@@ -350,7 +350,7 @@ class Mach1 : SGCManager() {
         destroy()
     }
 
-    override fun requestWifiScan() {
+    override fun requestWifiScan(scanId: String?) {
 
     }
 

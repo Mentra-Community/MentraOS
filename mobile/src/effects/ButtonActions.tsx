@@ -2,10 +2,11 @@ import {useEffect} from "react"
 
 import {DeviceTypes} from "@/../../cloud/packages/types/src"
 import {useAppTheme} from "@/contexts/ThemeContext"
-import {useApps, useStart} from "@mentra/island"
-import {SETTINGS, useSetting, useSettingsStore} from "@/stores/settings"
+import {useApps, useStart, engine, SETTINGS, useSetting} from "@mentra/engine"
 import {askPermissionsUI} from "@/utils/PermissionsUtils"
-import BluetoothSdk, {ButtonPressEvent} from "@mentra/bluetooth-sdk"
+import {ButtonPressEvent} from "@mentra/bluetooth-sdk"
+
+import {shouldUseMentraLiveNativeCapture} from "@/effects/buttonCapturePolicy"
 
 export function ButtonActions() {
   const applets = useApps()
@@ -20,7 +21,7 @@ export function ButtonActions() {
     if (defaultWearable !== DeviceTypes.LIVE) return
 
     const validateAndSetDefaultApp = async () => {
-      const currentDefaultApp = await useSettingsStore.getState().getSetting(SETTINGS.default_button_action_app.key)
+      const currentDefaultApp = await engine.settings.get(SETTINGS.default_button_action_app.key)
 
       // 1. If camera app is available and compatible, ALWAYS prefer it
       // This ensures glasses with cameras always default to camera app
@@ -31,7 +32,7 @@ export function ButtonActions() {
       if (cameraApp) {
         if (currentDefaultApp !== cameraApp.packageName) {
           console.log("BUTTON_ACTION: Setting default button app to camera (glasses have camera)")
-          await useSettingsStore.getState().setSetting(SETTINGS.default_button_action_app.key, cameraApp.packageName)
+          await engine.settings.set(SETTINGS.default_button_action_app.key, cameraApp.packageName)
         }
         return
       }
@@ -52,9 +53,7 @@ export function ButtonActions() {
 
       if (firstCompatibleApp) {
         console.log("BUTTON_ACTION: Setting default button app to:", firstCompatibleApp.packageName)
-        await useSettingsStore
-          .getState()
-          .setSetting(SETTINGS.default_button_action_app.key, firstCompatibleApp.packageName)
+        await engine.settings.set(SETTINGS.default_button_action_app.key, firstCompatibleApp.packageName)
       }
     }
 
@@ -76,35 +75,27 @@ export function ButtonActions() {
       // }
 
       // Check if default button action is enabled
-      const defaultButtonActionEnabled = await useSettingsStore
-        .getState()
-        .getSetting(SETTINGS.default_button_action_enabled.key)
+      const defaultButtonActionEnabled = await engine.settings.get(SETTINGS.default_button_action_enabled.key)
 
       if (!defaultButtonActionEnabled) {
         console.log("BUTTON_ACTION: Default button action is disabled")
         return
       }
 
-      // Check if any standard or background app is running. A running background app
-      // (e.g. one that listens for hardware button presses) already receives this event
-      // server-side, so it owns the button. Launching the default app here would also
-      // re-enable gallery mode (camera running), recreating the duplicate native-capture +
-      // SDK requestPhoto() race that GalleryModeSync suppresses. Keep this predicate in sync
-      // with GalleryModeSync.
-      const activeButtonHandlingApp = applets.find(
-        (app) => (app.type === "standard" || app.type === "background") && app.running,
-      )
-
-      if (activeButtonHandlingApp) {
+      // A running miniapp only owns Mentra Live's hardware button while it has
+      // an active button_press subscription. This keeps UI-only miniapps such
+      // as Give Feedback from disabling native photo/video capture.
+      const buttonPressSubscribers = engine.miniapps.buttonPressSubscribers()
+      if (!shouldUseMentraLiveNativeCapture(buttonPressSubscribers)) {
         console.log(
-          "BUTTON_ACTION: App is running - button event already sent to server for app:",
-          activeButtonHandlingApp.name,
+          "BUTTON_ACTION: Button event delivered to subscribed miniapp(s):",
+          buttonPressSubscribers.join(", "),
         )
         return
       }
 
-      // No foreground app running - start default app
-      const defaultAppPackageName = await useSettingsStore.getState().getSetting(SETTINGS.default_button_action_app.key)
+      // No miniapp owns this button press - start the default app.
+      const defaultAppPackageName = await engine.settings.get(SETTINGS.default_button_action_app.key)
 
       if (!defaultAppPackageName) {
         console.log("BUTTON_ACTION: No default app configured")
@@ -134,10 +125,10 @@ export function ButtonActions() {
       startApplet(targetApp, {skipNavigation: true})
     }
 
-    let sub = BluetoothSdk.addListener("button_press", onButtonPress)
+    let unsub = engine.glasses.onButtonPress(onButtonPress)
 
     return () => {
-      sub.remove()
+      unsub()
     }
   }, [applets, startApplet, theme, defaultWearable])
 

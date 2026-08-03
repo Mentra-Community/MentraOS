@@ -1,13 +1,14 @@
 import * as Clipboard from "expo-clipboard"
-import {useEffect, useRef, useState} from "react"
+import {useRef} from "react"
 import {Linking, TextStyle, TouchableOpacity, View} from "react-native"
 import Toast from "react-native-toast-message"
 
 import {Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {translate} from "@/i18n"
-import udp from "@/services/UdpManager"
-import {SETTINGS, useSetting} from "@/stores/settings"
+import {engine} from "@mentra/engine"
+import {SETTINGS, useSetting} from "@mentra/engine"
 import {ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
 import mentraAuth from "@/utils/auth/authClient"
@@ -16,27 +17,10 @@ export const VersionInfo = () => {
   const {themed} = useAppTheme()
   const [debugMode, setDebugMode] = useSetting(SETTINGS.debug_mode.key)
   const [_superMode, setSuperMode] = useSetting(SETTINGS.super_mode.key)
-  const [storeUrl] = useSetting(SETTINGS.store_url.key)
-  const [backendUrl] = useSetting(SETTINGS.backend_url.key)
-  const [audioTransport, setAudioTransport] = useState<string>("websocket")
-
-  // Update audio transport info periodically (since it can change)
-  useEffect(() => {
-    if (!debugMode) return
-
-    const updateAudioTransport = () => {
-      if (udp.enabledAndReady()) {
-        const endpoint = udp.getEndpoint()
-        setAudioTransport(endpoint ? `udp @ ${endpoint}` : "udp")
-      } else {
-        setAudioTransport("websocket")
-      }
-    }
-
-    updateAudioTransport()
-    const interval = setInterval(updateAudioTransport, 2000)
-    return () => clearInterval(interval)
-  }, [debugMode])
+  const [coreUrl] = useSetting(SETTINGS.cloud_core_url.key)
+  const audioTransport = useEngineSnapshot(engine.session.status, (onChange) =>
+    engine.session.onStatus(onChange),
+  ).audioTransport
 
   const pressCount = useRef(0)
   const lastPressTime = useRef(0)
@@ -91,8 +75,7 @@ export const VersionInfo = () => {
       `branch: ${process.env.EXPO_PUBLIC_BUILD_BRANCH}`,
       `time: ${process.env.EXPO_PUBLIC_BUILD_TIME}`,
       `commit: ${process.env.EXPO_PUBLIC_BUILD_COMMIT}`,
-      `store_url: ${storeUrl}`,
-      `backend_url: ${backendUrl}`,
+      `cloud_core_url: ${coreUrl || "(default)"}`,
       `audio: ${audioTransport}`,
     ]
 
@@ -152,10 +135,7 @@ export const VersionInfo = () => {
             <Text style={themed($buildInfo)} text={`${process.env.EXPO_PUBLIC_BUILD_COMMIT}`} />
           </View>
           <View className="flex-row gap-2">
-            <Text style={themed($buildInfo)} text={storeUrl} />
-          </View>
-          <View className="flex-row gap-2">
-            <Text style={themed($buildInfo)} text={`${backendUrl}`} />
+            <Text style={themed($buildInfo)} text={`${coreUrl || "(default cloud)"}`} />
           </View>
           <View className="flex-row gap-2">
             <Text style={themed($buildInfo)} text={`audio: ${audioTransport}`} />

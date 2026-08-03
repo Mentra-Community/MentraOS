@@ -55,7 +55,7 @@ transport happens entirely on the phone, and miniapp code never notices.
 ## 2. How a local miniapp runs on-device (PR #3086)
 
 A local miniapp bundle (a ZIP) ships two entry points
-(`mobile/modules/island/src/services/AppRegistry.ts`, "Two-layer bundles ship
+(`mobile/modules/engine/src/services/AppRegistry.ts`, "Two-layer bundles ship
 `entry.background` and optional `entry.ui`"):
 
 - **Background layer:** `src/background/index.ts`, the miniapp's logic. It runs in a
@@ -74,7 +74,7 @@ the background over an **RPC bridge** (`window.mentra` / the `ui` module) and th
 background does the actual session work. So all the cloud-facing calls come from one
 place, the background.
 
-Three bridges wire it together (all `mobile/modules/island/src/services/`):
+Three bridges wire it together (all `mobile/modules/engine/src/services/`):
 
 | Bridge | Connects | File |
 | --- | --- | --- |
@@ -320,7 +320,7 @@ surface.
 
 ## 8. Current vs proposed v2: the code that changes
 
-The host-injected transport hook (`mobile/modules/island/src/runtime/config.ts`),
+The host-injected transport hook (`mobile/modules/engine/src/runtime/config.ts`),
 today then v2:
 
 ```ts
@@ -342,7 +342,7 @@ interface CloudRuntimeAdapter {
 ```
 
 The call site that builds subscriptions
-(`mobile/modules/island/src/services/LocalMiniappRuntime.ts`,
+(`mobile/modules/engine/src/services/LocalMiniappRuntime.ts`,
 `updateCloudSubscriptions()`), today then v2:
 
 ```ts
@@ -449,9 +449,9 @@ from the start; the legacy v1 stack stays on its own separate path until it's re
 - [`../001-cloud-core/auth/design.md`](../001-cloud-core/auth/design.md): how auth
   moves into `cloud.auth`.
 - On-device code (base + PR #3086 `fixes-navigation-bitmaps`):
-  `mobile/modules/island/src/services/LocalMiniappRuntime.ts`,
-  `mobile/modules/island/src/runtime/config.ts`,
-  `mobile/modules/island/src/services/MentraJSRouter.ts`,
+  `mobile/modules/engine/src/services/LocalMiniappRuntime.ts`,
+  `mobile/modules/engine/src/runtime/config.ts`,
+  `mobile/modules/engine/src/services/MentraJSRouter.ts`,
   `mobile/modules/miniapp/src/session.ts`,
   `mobile/src/services/{MantleManager,SocketComms,RestComms,WebSocketManager}.ts`,
   `agents/local-app-runtime-plan.md`.

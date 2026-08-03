@@ -2,7 +2,7 @@
 
 Umbrella issue for **Mentra Runtime Services** (`@mentra/cloud-runtime`): the
 self-hostable, per-user runtime product that backs the on-device Mentra OEM
-Integration Toolkit. An OEM can run their own or proxy to Mentra's. Audio is one
+Mentra Engine. An OEM can run their own or proxy to Mentra's. Audio is one
 subset of it.
 
 The product is made of **services**, each in its own subfolder. They share one

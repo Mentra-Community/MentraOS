@@ -58,11 +58,11 @@ import {
   seedSubscriptions,
   takeoverSubscriptions,
 } from "../services/session/subscriptions-store";
-import { clientToCloudMessage } from "../protocol/messages";
-import { envelopeSchema, PROTOCOL_MAJOR } from "../protocol/envelope";
-import type { ProtocolError, ProtocolErrorCode } from "../protocol/errors";
-import { PROTOCOL_ERROR_CODES } from "../protocol/errors";
-import type { ConnectionInit } from "../protocol/handshake";
+import { clientToCloudMessage } from "@mentra/cloud-protocol/messages";
+import { envelopeSchema, PROTOCOL_MAJOR } from "@mentra/cloud-protocol/envelope";
+import type { ProtocolError, ProtocolErrorCode } from "@mentra/cloud-protocol/errors";
+import { PROTOCOL_ERROR_CODES } from "@mentra/cloud-protocol/errors";
+import type { ConnectionInit } from "@mentra/cloud-protocol/handshake";
 
 const logger = createLogger("audio").child({ service: "session.service" });
 

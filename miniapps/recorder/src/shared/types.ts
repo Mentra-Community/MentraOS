@@ -54,6 +54,8 @@ export interface Usage {
 export interface RecorderSnapshot {
   /** Non-null while recording. */
   recording: RecorderStatus | null
+  /** True after stop is requested while the capture tail is being saved. */
+  stopping: boolean
   recordings: RecordingItem[]
   usage: Usage
   /** Id of the recording currently playing back, or null. */

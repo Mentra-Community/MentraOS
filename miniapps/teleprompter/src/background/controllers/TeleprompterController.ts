@@ -73,6 +73,17 @@ const PROBE_WORDS = 6
 /** Rolling cap on remembered spoken words. */
 const SPOKEN_HISTORY = 16
 
+/**
+ * Preserve blank viewport rows without emitting consecutive newlines. Even
+ * Realities G2 shuts down its EvenHub page when a text container contains an
+ * interior empty line (`\n\n`), leaving the display blank until that row
+ * scrolls away. A zero-width space survives the host's line trimming and
+ * renders as the same blank row without tripping the firmware parser.
+ */
+export function serializeDisplayLines(lines: string[]): string {
+  return lines.map((line) => (line === "" ? "\u200B" : line)).join("\n")
+}
+
 export class TeleprompterController {
   private started = false
   private readonly unsubs: Array<() => void> = []
@@ -134,9 +145,7 @@ export class TeleprompterController {
 
     // React to glasses model / display changes.
     try {
-      this.unsubs.push(
-        this.session.onCapabilitiesChange(() => this.onCapabilitiesChanged()),
-      )
+      this.unsubs.push(this.session.onCapabilitiesChange(() => this.onCapabilitiesChanged()))
     } catch {
       /* capabilities-change not available — keep current profile */
     }
@@ -673,17 +682,20 @@ export class TeleprompterController {
     const display = this.composeDisplay(content)
     this.currentVisible = display
 
-    const text = display.join("\n")
+    const text = serializeDisplayLines(display)
     // Only mark text as rendered when we actually push it. If we skipped the
     // push because no display was attached yet, leave the cache untouched so
     // the first push after the glasses connect isn't deduped away.
     if (this.hasDisplay && text !== this.lastRenderedText) {
-      try {
-        this.session.display.showTextWall(text, {view: "main"})
-        this.lastRenderedText = text
-      } catch (err) {
-        console.log("Teleprompter: display error", err)
-      }
+      // One full-canvas text element with a stable id: each scroll step updates
+      // it in place on the glasses. Box coordinates are raw device px — read
+      // from capabilities, falling back to the largest canvas (the host clamps
+      // to the real one). render() never throws.
+      const d = this.session.capabilities?.display
+      void this.session.display.render([
+        {type: "text", id: "script", box: {x: 0, y: 0, w: d?.width ?? 576, h: d?.height ?? 288}, text},
+      ])
+      this.lastRenderedText = text
     }
   }
 

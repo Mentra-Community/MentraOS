@@ -52,6 +52,8 @@ lands.
 | **[014-enterprise-portal](./014-enterprise-portal/)** | Draft | separate enterprise/OEM portal with `EnterpriseOrg`, `EnterpriseMembership`, and standards-aligned `TrustedIssuer` model |
 | **[015-internal-admin](./015-internal-admin/)** | Draft | internal admin site and admin CLI for reviews, incidents, preinstalled registry, admin audit logs |
 | **[016-miniapp-signing-and-dev-attestation](./016-miniapp-signing-and-dev-attestation/)** | In progress | PRD and implementation issue for `@mentra/cli` developer signing keys, signed release metadata, and signed dev attestations for miniapp auto-auth |
+| **[019-incident-reporting-migration](./019-incident-reporting-migration/)** | Implemented / partial | initial Cloud V2 core + cloud-client + engine filing path is built. Left: durable attachment storage service, admin retrieval, runtime/cloud-log enrichment, and v1 mobile cleanup |
+| **[020-glasses-status-boundary](./020-glasses-status-boundary/)** | Implemented | removed host access to raw glasses/gallery runtime stores and replaced it with typed engine read models, events, and commands |
 
 ## Open decisions
 

@@ -5,7 +5,12 @@ import com.mentra.bluetoothsdk.DeviceManager
 import com.mentra.bluetoothsdk.PhotoRequest
 import com.mentra.bluetoothsdk.DeviceStore
 
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Canvas
+import android.graphics.ColorMatrix
+import android.graphics.ColorMatrixColorFilter
+import android.graphics.Paint
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothGatt
@@ -75,6 +80,13 @@ class MentraNex : SGCManager() {
         // callback is normally near-instant; this only guards against a callback that
         // never arrives, so a dropped write can't wedge the send queue forever.
         private const val WRITE_CALLBACK_TIMEOUT_MS: Long = 10
+        // Upper bound for an acked (write-with-response) fragment. The callback only
+        // fires after the firmware's ATT Write Response — at least one connection
+        // interval — so 10ms is far too short here: timing out early would let the
+        // worker issue the next write while this one is still outstanding, which the
+        // stack rejects (one GATT op at a time) and the fragment is dropped. This is a
+        // safety bound only; the ack normally arrives within an interval or two.
+        private const val WRITE_ACK_TIMEOUT_MS: Long = 400
 
         private const val INITIAL_CONNECTION_DELAY_MS = 350L // Adjust this value as needed
         // Window to let a queued DisconnectRequest flush to the glasses before we close GATT.
@@ -97,6 +109,14 @@ class MentraNex : SGCManager() {
         // actions of NEX Glasses
         private const val MAIN_TASK_HANDLER_CODE_BATTERY_QUERY: Int = 620
         private const val MAIN_TASK_HANDLER_CODE_HEART_BEAT: Int = 630
+
+        // Fixed rect for the live-captions box (G2-style): a single full-canvas text container
+        // reused across caption updates, so each caption is an in-place text change that coexists
+        // with any bitmap/other components. Matches the 500x220 Mentra display canvas.
+        private const val CAPTION_BOX_X: Int = 0
+        private const val CAPTION_BOX_Y: Int = 0
+        private const val CAPTION_BOX_W: Int = 500
+        private const val CAPTION_BOX_H: Int = 220
     }
 
     private var heartbeatCount: Int = 0;
@@ -252,7 +272,12 @@ class MentraNex : SGCManager() {
     private var currentImageChunks: MutableList<ByteArray> = mutableListOf()
 
     // Data class to represent a send request
-    private data class SendRequest( val data: ByteArray, var waitTime: Int = -1) {
+    // ack=true issues the fragment as a write-WITH-response (WRITE_TYPE_DEFAULT): the
+    // firmware ATT-acks each write, so the worker knows it landed. ack=false is a
+    // no-response write (WRITE_TYPE_NO_RESPONSE) — fire-and-forget, used for captions
+    // where the newest frame supersedes the last and throughput matters more than
+    // per-packet delivery. See processQueue() for how the write type is applied.
+    private data class SendRequest( val data: ByteArray, var waitTime: Int = -1, val ack: Boolean = true) {
         override fun equals(other: Any?): Boolean {
             if (this === other) return true
             if (javaClass != other?.javaClass) return false
@@ -261,6 +286,7 @@ class MentraNex : SGCManager() {
 
             if (!data.contentEquals(other.data)) return false
             if (waitTime != other.waitTime) return false
+            if (ack != other.ack) return false
 
             return true
         }
@@ -268,6 +294,7 @@ class MentraNex : SGCManager() {
         override fun hashCode(): Int {
             var result = data.contentHashCode()
             result = 31 * result + waitTime
+            result = 31 * result + ack.hashCode()
             return result
         }
     }
@@ -307,7 +334,7 @@ class MentraNex : SGCManager() {
     }
 
     // Network Management
-    override fun requestWifiScan () { Bridge.log("Nex: requestWifiScan operation not supported") }
+    override fun requestWifiScan (scanId: String?) { Bridge.log("Nex: requestWifiScan operation not supported") }
     override fun sendWifiCredentials(ssid: String, password: String) { Bridge.log("Nex: sendWifiCredentials operation not supported") }
     override fun forgetWifiNetwork(ssid: String) { }
     override fun sendHotspotState(enabled: Boolean) { Bridge.log("Nex: sendHotspotState operation not supported") }
@@ -496,61 +523,236 @@ class MentraNex : SGCManager() {
         sendProtobuf(autoBrightnessCmdBytes, 10)
     }
 
-    override fun clearDisplay() { 
-        Bridge.log("Nex: clearDisplay() - sending clear display request command bytes");
+    override fun clearDisplay() {
+        Bridge.log("Nex: clearDisplay() - clearing canvas + caption");
+        // Tear down any canvas components (bitmap + positioned text) and forget the element mapping
+        // + active layout, then clear the caption text path too so either kind of screen is wiped.
+        canvasElements.clear()
+        currentLayoutId = null
+        sendProtobuf(NexProtobufUtils.generateCanvasClearCommandBytes(), 10)
         val clearDisplayPackets = NexProtobufUtils.generateClearDisplayRequestCommandBytes()
         sendProtobuf(clearDisplayPackets, 10)
-        // sendTextWall(" ")
-        Bridge.log("Nex: clearDisplay() - sent clear display request command bytes");
+        Bridge.log("Nex: clearDisplay() - sent");
     }
     
 
     override fun sendText(text: String) {
         Bridge.log("Nex: sendText() - text: " + text);
-        val textChunks: ByteArray = createTextWallChunksForNex(text)
-        sendProtobuf(textChunks)
+        showCaptionText(text)
     }
 
     override fun sendTextWall(text: String) {
         Bridge.log("Nex: sendTextWall() - text: " + text);
-        val textChunks: ByteArray = createTextWallChunksForNex(text)
-        sendProtobuf(textChunks)
+        showCaptionText(text)
     }
 
     override fun sendDoubleTextWall(top: String, bottom: String) {
         Bridge.log("Nex: sendDoubleTextWall() - top: " + top + ", bottom: " + bottom);
-        val finalText: String = buildString {
-            top?.let { append(it) }
-            top?.let { append("\n") }
-            bottom?.let { append(it) }
-        }
-        val textChunks = createTextWallChunksForNex(finalText)
-        sendProtobuf(textChunks)
+        val finalText: String = listOf(top, bottom).filter { it.isNotEmpty() }.joinToString("\n")
+        showCaptionText(finalText)
     }
 
-    override fun displayBitmap(
-            base64ImageData: String,
-            x: Int?,
-            y: Int?,
-            width: Int?,
-            height: Int?
-    ): Boolean {
-        try {
-            val bmpData: ByteArray? = android.util.Base64.decode(base64ImageData, android.util.Base64.DEFAULT)
+    // Live captions / text walls render into a single reused canvas text container (the caption
+    // box), like Even G2: the first call creates it, each subsequent call is an in-place text
+    // update on the same component (reused by rect via sendPositionedText), so captions can sit
+    // alongside a navigation minimap or other canvas components instead of owning the screen.
+    private fun showCaptionText(text: String) {
+        // Captions are high-frequency, replace-in-place updates where the newest frame
+        // supersedes the last, so they go out WITHOUT ATT acks (write-no-response) for
+        // throughput — every other command uses acked writes. Route through upsertText
+        // directly (rather than the public sendPositionedText override, which can't take
+        // an ack flag) using the same rect-synthesized element id so reuse still works.
+        val elementId = "text@$CAPTION_BOX_X,$CAPTION_BOX_Y,${CAPTION_BOX_W}x$CAPTION_BOX_H,0,0"
+        upsertText(elementId, null, text, CAPTION_BOX_X, CAPTION_BOX_Y, CAPTION_BOX_W, CAPTION_BOX_H, 0, 0, ack = false)
+    }
+
+    // ---- Canvas text containers (G2-style) -------------------------------------------------
+    // Positioned text is drawn as canvas TEXTBOX components so it coexists with the bitmap
+    // component (a navigation screen = minimap + several text boxes shown together). Components
+    // are keyed by their rect+border and reused so repeated updates don't recreate the LVGL
+    // object; ids come from the firmware's text pool (1..6) with oldest-out eviction.
+    // Retained-mode canvas registry: elementId -> firmware component. The layout path (nav HUD)
+    // passes explicit element ids; legacy callers (captions, one-off bitmaps) synthesize an id from
+    // their rect, so reuse/update works for them through the same path. Text ids come from the
+    // firmware pool 1..6, bitmaps from 10..13.
+    private data class CanvasElement(val firmwareId: Int, val isBitmap: Boolean, val rect: String)
+    private val canvasElements = LinkedHashMap<String, CanvasElement>()
+    private val canvasTextIdPool: List<Int> = listOf(1, 2, 3, 4, 5, 6)
+    private val canvasBitmapIdPool: List<Int> = listOf(10, 11, 12, 13)
+    // Active layout/scene id. A display call carrying a DIFFERENT layoutId clears the previous scene
+    // first (retained-mode contract); legacy calls (null layoutId) leave it untouched.
+    private var currentLayoutId: String? = null
+
+    /**
+     * Handle a scene/layout change. DeviceManager sweeps the previous app's
+     * elements before a cross-app frame arrives, so the registry is usually
+     * empty here and switching costs nothing. Only when stale components remain
+     * (e.g. legacy callers with no sweep) do we delete them — individually, NOT
+     * via CanvasClear: clear also exits the canvas VIEW (the first create
+     * re-activates it), which reads as a full-screen flash.
+     */
+    private fun ensureLayout(layoutId: String?) {
+        if (layoutId != null && layoutId != currentLayoutId) {
+            if (canvasElements.isNotEmpty()) {
+                for (el in canvasElements.values) {
+                    sendProtobuf(NexProtobufUtils.generateCanvasDeleteComponentCommandBytes(el.firmwareId))
+                }
+                canvasElements.clear()
+            }
+            currentLayoutId = layoutId
+        }
+    }
+
+    /**
+     * A replay frame (reconnect / firmware recovery / re-dispatch) repaints from
+     * scratch: forget the registry so every element takes the CREATE path.
+     * Create-on-existing-id is replace in firmware, so repainting over a live
+     * canvas is safe, and updates-to-dead-ids (which firmware drops silently)
+     * can never happen.
+     */
+    override fun onSceneReplay(appId: String) {
+        canvasElements.clear()
+        currentLayoutId = appId
+    }
+
+    /**
+     * Free firmware id from the type's pool. When the pool is exhausted the
+     * OLDEST registered element of that type is evicted for real: its firmware
+     * component is deleted and its id reused (LinkedHashMap preserves insertion
+     * order).
+     */
+    private fun allocFirmwareId(isBitmap: Boolean): Int? {
+        val pool = if (isBitmap) canvasBitmapIdPool else canvasTextIdPool
+        val used = canvasElements.values.filter { it.isBitmap == isBitmap }.map { it.firmwareId }.toSet()
+        pool.firstOrNull { it !in used }?.let {
+            return it
+        }
+        // Pool full — evict the oldest same-type element.
+        val oldest = canvasElements.entries.firstOrNull { it.value.isBitmap == isBitmap } ?: return null
+        Bridge.log("Nex: pool full — evicting oldest ${if (isBitmap) "bitmap" else "text"} element '${oldest.key}' (fw id ${oldest.value.firmwareId})")
+        sendProtobuf(NexProtobufUtils.generateCanvasDeleteComponentCommandBytes(oldest.value.firmwareId))
+        canvasElements.remove(oldest.key)
+        return oldest.value.firmwareId
+    }
+
+    // Legacy positioned text: identity is the rect, so repeated updates reuse the component.
+    override fun sendPositionedText(
+        text: String, x: Int, y: Int, width: Int, height: Int, borderWidth: Int, borderRadius: Int
+    ) {
+        upsertText("text@$x,$y,${width}x$height,$borderWidth,$borderRadius", null,
+            text, x, y, width, height, borderWidth, borderRadius)
+    }
+
+    override fun drawLayoutText(
+        text: String, x: Int, y: Int, width: Int, height: Int,
+        borderWidth: Int, borderRadius: Int, elementId: String, layoutId: String?
+    ) {
+        upsertText(elementId, layoutId, text, x, y, width, height, borderWidth, borderRadius)
+    }
+
+    private fun upsertText(
+        elementId: String, layoutId: String?, text: String,
+        x: Int, y: Int, width: Int, height: Int, borderWidth: Int, borderRadius: Int,
+        ack: Boolean = true
+    ) {
+        ensureLayout(layoutId)
+        val rect = "$x,$y,${width}x$height,$borderWidth,$borderRadius"
+        val existing = canvasElements[elementId]
+        if (existing != null && !existing.isBitmap) {
+            if (existing.rect != rect) {
+                // Geometry moved/resized — recreate the box at the SAME firmware id, then set text.
+                sendProtobuf(NexProtobufUtils.generateCanvasCreateTextboxCommandBytes(
+                    existing.firmwareId, x, y, width, height, borderWidth, borderRadius), ack = ack)
+                canvasElements[elementId] = existing.copy(rect = rect)
+            }
+            sendProtobuf(NexProtobufUtils.generateCanvasUpdateTextCommandBytes(existing.firmwareId, text), ack = ack)
+            return
+        }
+        val fid = allocFirmwareId(false)
+        if (fid == null) {
+            Bridge.log("Nex: text pool full (>6) — dropping element '$elementId'")
+            return
+        }
+        canvasElements[elementId] = CanvasElement(fid, false, rect)
+        sendProtobuf(NexProtobufUtils.generateCanvasCreateTextboxCommandBytes(
+            fid, x, y, width, height, borderWidth, borderRadius), ack = ack)
+        sendProtobuf(NexProtobufUtils.generateCanvasUpdateTextCommandBytes(fid, text), ack = ack)
+    }
+
+    override fun removeLayoutElement(elementId: String, layoutId: String?) {
+        val slot = canvasElements.remove(elementId) ?: return
+        sendProtobuf(NexProtobufUtils.generateCanvasDeleteComponentCommandBytes(slot.firmwareId))
+    }
+
+    private data class NexBmp(val data: ByteArray, val w: Int, val h: Int)
+
+    /**
+     * Decode a base64 image to the glasses-native 1-bit BMP at the requested size. The panel is
+     * 1-bpp and renders white-on-black, so we scale to the rect, invert, then Floyd–Steinberg dither
+     * (preserving gradients as dot patterns instead of a hard 50% threshold) before the 1-bit encode.
+     */
+    private fun decodeBitmapForNex(base64ImageData: String, width: Int?, height: Int?): NexBmp? {
+        return try {
+            val bmpData = android.util.Base64.decode(base64ImageData, android.util.Base64.DEFAULT)
             if (bmpData == null || bmpData.isEmpty()) {
-                Log.e(TAG, "Failed to decode base64 image data");
-                return false;
+                Log.e(TAG, "Failed to decode base64 image data")
+                return null
             }
             val bmp = BitmapFactory.decodeByteArray(bmpData, 0, bmpData.size)
-
-            displayBitmapImageForNexGlasses(bmpData, bmp.width,  bmp.height)
-            return true
-
+            val destW = width ?: bmp.width
+            val destH = height ?: bmp.height
+            val scaled = Bitmap.createScaledBitmap(bmp, destW, destH, true)
+            val inverted = invertBitmap(scaled)
+            val dithered = floydSteinbergDither(inverted)
+            NexBmp(BitmapJavaUtils.convertBitmapTo1BitBmpBytes(dithered, false), destW, destH)
         } catch (e: Exception) {
-            Log.e(TAG, "Error in displaying bitmap: " + e.message);
-            return false
+            Log.e(TAG, "Error decoding bitmap: " + e.message)
+            null
         }
+    }
 
+    // Legacy one-off bitmap: identity is the rect (no layout scene).
+    override fun displayBitmap(
+            base64ImageData: String, x: Int?, y: Int?, width: Int?, height: Int?
+    ): Boolean {
+        val nb = decodeBitmapForNex(base64ImageData, width, height) ?: return false
+        upsertBitmap("bmp@${x ?: 0},${y ?: 0},${nb.w}x${nb.h}", null, nb.data, x ?: 0, y ?: 0, nb.w, nb.h)
+        return true
+    }
+
+    override fun drawLayoutBitmap(
+            base64ImageData: String, x: Int, y: Int, width: Int, height: Int,
+            elementId: String, layoutId: String?
+    ): Boolean {
+        val nb = decodeBitmapForNex(base64ImageData, width, height) ?: return false
+        upsertBitmap(elementId, layoutId, nb.data, x, y, nb.w, nb.h)
+        return true
+    }
+
+    private fun upsertBitmap(
+        elementId: String, layoutId: String?, bmpData: ByteArray, x: Int, y: Int, w: Int, h: Int
+    ) {
+        ensureLayout(layoutId)
+        val rect = "$x,$y,${w}x$h"
+        val existing = canvasElements[elementId]
+        val fid: Int
+        if (existing != null && existing.isBitmap) {
+            fid = existing.firmwareId
+            if (existing.rect != rect) {
+                sendProtobuf(NexProtobufUtils.generateCanvasCreateBitmapCommandBytes(fid, x, y, w, h))
+                canvasElements[elementId] = existing.copy(rect = rect)
+            }
+        } else {
+            val alloc = allocFirmwareId(true)
+            if (alloc == null) {
+                Bridge.log("Nex: bitmap pool full (>4) — dropping element '$elementId'")
+                return
+            }
+            fid = alloc
+            canvasElements[elementId] = CanvasElement(fid, true, rect)
+            sendProtobuf(NexProtobufUtils.generateCanvasCreateBitmapCommandBytes(fid, x, y, w, h))
+        }
+        streamBitmapPixels(fid, bmpData)
     }
     override fun showDashboard() {
         exit()
@@ -653,7 +855,14 @@ class MentraNex : SGCManager() {
             private fun handleDisconnection(gatt: BluetoothGatt) {
                 Bridge.log("glass disconnected, stopping heartbeats")
                 Bridge.log("Entering STATE_DISCONNECTED branch")
-                
+
+                // The glasses lose their canvas on disconnect — forget the
+                // component registry so post-reconnect frames take the CREATE
+                // path (firmware silently drops updates to dead component ids).
+                // The host replays the current scene after reconnect.
+                canvasElements.clear()
+                currentLayoutId = null
+
                 // Save current microphone state before disconnection
                 microphoneStateBeforeDisconnection = isMicrophoneEnabled
                 Bridge.log("Saved microphone state before disconnection: $microphoneStateBeforeDisconnection")
@@ -691,6 +900,12 @@ class MentraNex : SGCManager() {
             }
 
             private fun handleConnectionFailure(gatt: BluetoothGatt, status: Int) {
+                // Same as handleDisconnection: the glasses lose their canvas —
+                // forget the component registry so post-reconnect frames take
+                // the CREATE path (fw silently drops updates to dead ids).
+                canvasElements.clear()
+                currentLayoutId = null
+
                 // Save current microphone state before connection failure
                 microphoneStateBeforeDisconnection = isMicrophoneEnabled
                 Bridge.log("Saved microphone state before connection failure: $microphoneStateBeforeDisconnection")
@@ -870,7 +1085,7 @@ class MentraNex : SGCManager() {
         Bridge.log("Nex: 📤 Requesting MTU: $MTU_517 bytes")
         gatt.requestMtu(MTU_517) // Request our maximum MTU
 
-        val uartService: BluetoothGattService = gatt.getService(NexBluetoothConstants.MAIN_SERVICE_UUID)
+        val uartService: BluetoothGattService? = gatt.getService(NexBluetoothConstants.MAIN_SERVICE_UUID)
 
         if (uartService != null) {
             val writeChar = uartService.getCharacteristic(NexBluetoothConstants.WRITE_CHAR_UUID)
@@ -878,17 +1093,13 @@ class MentraNex : SGCManager() {
 
             writeChar?.let {
                 mainWriteChar = it
-                // Write-without-response on the characteristic we actually write
-                // to (the firmware RX char advertises WRITE_WITHOUT_RESP). This
-                // is what unblocks TX from the ~1-packet-per-connection-interval
-                // ATT round-trip — critical when the phone sleeps and the
-                // interval is relaxed. Android defaults a freshly-discovered
-                // characteristic to WRITE_TYPE_DEFAULT (with response), and the
-                // reference is reassigned on every service rediscovery, so set
-                // it here. (Previously this was set on the notify char in
-                // enableNotification(), where it had no effect on writes.)
-                it.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
-                Bridge.log("Nex: glass TX characteristic found (write type NO_RESPONSE)")
+                // Write type is now chosen PER FRAGMENT in processQueue (acked for
+                // everything except captions), so it's set there right before each
+                // write rather than once here. Captions still use write-without-
+                // response — which unblocks TX from the ~1-packet-per-connection-
+                // interval ATT round-trip when the phone sleeps and the interval is
+                // relaxed — while every other command is acked for reliable delivery.
+                Bridge.log("Nex: glass TX characteristic found (write type set per-fragment)")
             }
 
             notifyChar?.let {
@@ -1248,37 +1459,93 @@ class MentraNex : SGCManager() {
         }
     }
 
-    private fun displayBitmapImageForNexGlasses(bmpData: ByteArray, width: Int, height: Int) {
-        Bridge.log("Starting BMP display process for ${width}x$height image")
+    /**
+     * Returns a colour-inverted copy of [src] (white <-> black). The firmware decoder normalises
+     * BMP palette polarity, so the only way to flip the on-glass result from the SGC is to invert
+     * the actual pixel content here.
+     */
+    private fun invertBitmap(src: Bitmap): Bitmap {
+        val out = Bitmap.createBitmap(src.width, src.height, Bitmap.Config.ARGB_8888)
+        val paint = Paint().apply {
+            colorFilter = ColorMatrixColorFilter(
+                ColorMatrix(
+                    floatArrayOf(
+                        -1f, 0f, 0f, 0f, 255f,
+                        0f, -1f, 0f, 0f, 255f,
+                        0f, 0f, -1f, 0f, 255f,
+                        0f, 0f, 0f, 1f, 0f
+                    )
+                )
+            )
+        }
+        Canvas(out).drawBitmap(src, 0f, 0f, paint)
+        return out
+    }
 
+    /**
+     * Floyd-Steinberg error-diffusion dithering to monochrome. Returns a copy of [src] whose pixels
+     * are pure black or white but whose dot density approximates the original luminance, preserving
+     * far more perceived detail on a 1-bpp panel than a flat threshold. Luminance uses Rec. 601
+     * weights; quantization error is pushed to the right/below neighbours (7/3/5/1 over 16).
+     */
+    private fun floydSteinbergDither(src: Bitmap): Bitmap {
+        val w = src.width
+        val h = src.height
+        val px = IntArray(w * h)
+        src.getPixels(px, 0, w, 0, 0, w, h)
+
+        // Working luminance buffer (float so diffused error can over/undershoot 0..255).
+        val lum = FloatArray(w * h)
+        for (i in 0 until w * h) {
+            val c = px[i]
+            val r = (c shr 16) and 0xFF
+            val g = (c shr 8) and 0xFF
+            val b = c and 0xFF
+            lum[i] = 0.299f * r + 0.587f * g + 0.114f * b
+        }
+
+        for (y in 0 until h) {
+            for (x in 0 until w) {
+                val idx = y * w + x
+                val old = lum[idx]
+                val newVal = if (old < 128f) 0f else 255f
+                val err = old - newVal
+                px[idx] = if (newVal >= 128f) 0xFFFFFFFF.toInt() else 0xFF000000.toInt()
+
+                if (x + 1 < w) lum[idx + 1] += err * 7f / 16f
+                if (y + 1 < h) {
+                    if (x - 1 >= 0) lum[idx + w - 1] += err * 3f / 16f
+                    lum[idx + w] += err * 5f / 16f
+                    if (x + 1 < w) lum[idx + w + 1] += err * 1f / 16f
+                }
+            }
+        }
+
+        val out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        out.setPixels(px, 0, w, 0, 0, w, h)
+        return out
+    }
+
+    /** Stream 1-bit BMP pixels into an already-created canvas bitmap component [componentId]. */
+    private fun streamBitmapPixels(componentId: Int, bmpData: ByteArray) {
         try {
             if (bmpData.isEmpty()) {
-                Log.e(TAG,"Invalid BMP data provided")
+                Log.e(TAG, "Invalid BMP data provided")
                 return
             }
-
-            Bridge.log("Processing BMP data, size: ${bmpData.size} bytes")
-
-            // Generate proper 2-byte hex stream ID (e.g., "002A") as per protobuf specification
+            // 4-digit hex stream id per the canvas image protocol.
             val totalChunks = (bmpData.size + bmpChunkSize - 1) / bmpChunkSize
-            val streamId = "%04X".format(random.nextInt(0x10000)) // 4-digit hex format
-            
-            val startImageSendingBytes = NexProtobufUtils.generateDisplayImageCommandBytes(streamId, totalChunks, width, height)
-            sendProtobuf(startImageSendingBytes)
+            val streamId = "%04X".format(random.nextInt(0x10000))
 
-            // Send all chunks with proper stream ID parsing
+            sendProtobuf(NexProtobufUtils.generateCanvasUpdateImageCommandBytes(
+                componentId, streamId, totalChunks))
+
             val chunks = NexProtobufUtils.createBmpChunksForNexGlasses(streamId, bmpData, totalChunks, bmpChunkSize)
             currentImageChunks.clear()
             currentImageChunks.addAll(chunks)
             sendDataSequentially(chunks)
-
-            // Note: The following are commented out in the original
-            // sendBmpEndCommand()
-            // sendBmpCRC(bmpData)
-            // lastThingDisplayedWasAnImage = true
-
         } catch (e: Exception) {
-            Log.e(TAG,"Error in displayBitmapImage: ${e.message}")
+            Log.e(TAG, "Error streaming bitmap pixels: ${e.message}")
         }
     }
 
@@ -1486,6 +1753,19 @@ class MentraNex : SGCManager() {
                     // EventBus.getDefault().post(GlassesHeadDownEvent())
                     // EventBus.getDefault().post(GlassesTapOutputEvent(2, isRight, System.currentTimeMillis()))
                 }
+                GlassesToPhone.PayloadCase.CANVAS_RESULT -> {
+                    // Ack for CanvasCreateComponent / CanvasClear (updates are
+                    // unacked). Firmware codes: OK / INVALID (bad id for type) /
+                    // OVERSIZE (bitmap > 200x200) / OOM (no backing storage).
+                    // Consumed for observability — a silent blank screen becomes
+                    // a diagnosable log line. Non-OK codes also invalidate the
+                    // registry entry so the next frame recreates the component.
+                    val canvasResult = glassesToPhone.canvasResult
+                    if (canvasResult.code != mentraos.ble.MentraosBle.CanvasResult.ResultCode.OK) {
+                        Bridge.log("Nex: CANVAS_RESULT id=${canvasResult.id} code=${canvasResult.code} — dropping registry entry for recreate")
+                        canvasElements.entries.removeAll { it.value.firmwareId == canvasResult.id.toInt() }
+                    }
+                }
                 GlassesToPhone.PayloadCase.PAYLOAD_NOT_SET,
                 null -> {
                     // Do nothing
@@ -1594,8 +1874,9 @@ class MentraNex : SGCManager() {
      *
      * @param protobufBytes raw serialized PhoneToGlasses bytes (no framing)
      * @param waitTime optional post-message delay in ms applied after the last fragment (-1 = none)
+     * @param ack when true (default) each fragment is a write-with-response; captions pass false
      */
-    private fun sendProtobuf(protobufBytes: ByteArray, waitTime: Int = -1) {
+    private fun sendProtobuf(protobufBytes: ByteArray, waitTime: Int = -1, ack: Boolean = true) {
         val headerSize = 4 // [0x02][seq][totalChunks][chunkIndex]
         val maxFragment = (maxChunkSize - headerSize).coerceAtLeast(1)
         val totalChunks =
@@ -1622,7 +1903,7 @@ class MentraNex : SGCManager() {
                 System.arraycopy(protobufBytes, start, frame, headerSize, fragLen)
             }
             // Carry the post-message delay on the final fragment only.
-            SendRequest(frame, if (index == totalChunks - 1) waitTime else -1)
+            SendRequest(frame, if (index == totalChunks - 1) waitTime else -1, ack)
         }
 
         sendQueue.offer(frames)
@@ -1665,6 +1946,15 @@ class MentraNex : SGCManager() {
                         var writeStarted = false
                         if (canSend) {
                             mainWaiter.setTrue()
+                            // Per-request write type: acked fragments go out WITH response
+                            // (firmware ATT-acks each), captions go out WITHOUT response for
+                            // throughput. Set on the shared char just before the write — the
+                            // worker is single-threaded so there's no concurrent write to race.
+                            mainWriteChar?.writeType = if (request.ack) {
+                                BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+                            } else {
+                                BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+                            }
                             mainWriteChar?.value = request.data
                             // Honor the return value: writeCharacteristic returns false when the
                             // stack is busy / out of buffers, and in that case no callback fires.
@@ -1683,7 +1973,11 @@ class MentraNex : SGCManager() {
                         }
 
                         if (writeStarted) {
-                            mainWaiter.waitWhileTrue(WRITE_CALLBACK_TIMEOUT_MS)
+                            // Acked writes need to wait for the real ATT response (a
+                            // connection interval or two); no-response writes get the
+                            // near-instant fast-path bound.
+                            val timeout = if (request.ack) WRITE_ACK_TIMEOUT_MS else WRITE_CALLBACK_TIMEOUT_MS
+                            mainWaiter.waitWhileTrue(timeout)
                         }
 
 

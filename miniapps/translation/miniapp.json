@@ -1,7 +1,7 @@
 {
   "$schema": "./node_modules/@mentra/miniapp-cli/schema/miniapp.schema.json",
   "packageName": "com.mentra.translation",
-  "version": "1.0.8",
+  "version": "1.0.18",
   "name": "Translation",
   "description": "Local cloud-v2 translation tester. Translates any detected source language into the selected target language and renders the result on the glasses display.",
   "type": "standard",
@@ -40,9 +40,17 @@
         "properties": {
           "targetLanguage": {
             "type": "string",
-            "description": "The language the user wants to read the translation in, as a BCP-47 code (e.g. 'en', 'es', 'fr', 'de', 'pt', 'it', 'ja', 'zh', 'ko', 'ar', 'hi'). Omit to keep the user's saved target language."
+            "description": "The language the user wants to read the translation in, as a BCP-47 code (e.g. 'en', 'es', 'fr', 'de', 'pt', 'it', 'ja', 'zh', 'ko', 'ar', 'hi', 'vi'). Omit to keep the user's saved target language."
           }
         }
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "targetLanguage": {"type": "string"},
+          "status": {"type": "string"}
+        },
+        "required": ["targetLanguage", "status"]
       }
     }
   ]

@@ -20,7 +20,9 @@ import android.util.Size;
 import com.dev.api.DevApi;
 import com.mentra.asg_client.camera.UvcStreamingState;
 import com.mentra.asg_client.io.bluetooth.interfaces.ICompanionTransport;
+import com.mentra.asg_client.io.media.utils.MediaStorage;
 import com.mentra.asg_client.io.bluetooth.interfaces.TransportListener;
+import com.mentra.asg_client.io.bluetooth.managers.K900BluetoothManager;
 import com.mentra.asg_client.io.file.core.FileManager;
 import com.mentra.asg_client.io.hardware.interfaces.IHardwareManager;
 import com.mentra.asg_client.io.hardware.interfaces.RgbLedConstants;
@@ -43,6 +45,7 @@ import com.mentra.asg_client.service.system.interfaces.IConfigurationManager;
 import com.mentra.asg_client.service.system.interfaces.IServiceLifecycle;
 import com.mentra.asg_client.service.system.interfaces.IStateManager;
 import com.mentra.asg_client.service.system.managers.AsgNotificationManager;
+import com.mentra.asg_client.service.utils.ProcessSessionId;
 import com.mentra.asg_client.service.utils.ServiceUtils;
 import com.mentra.asg_client.service.utils.SysProp;
 import dagger.hilt.android.AndroidEntryPoint;
@@ -127,11 +130,6 @@ public class AsgClientService extends Service implements NetworkStateListener, T
             "com.mentra.recovery.ACTION_INSTALLATION_PROGRESS";
     public static final String ACTION_OTA_HEARTBEAT = "com.mentra.recovery.ACTION_PING";
 
-    // Service health monitoring
-    private static final String ACTION_HEARTBEAT = "com.mentra.asg_client.ACTION_HEARTBEAT";
-    private static final String ACTION_HEARTBEAT_ACK = "com.mentra.asg_client.ACTION_HEARTBEAT_ACK";
-    private static final long HEARTBEAT_TIMEOUT_MS = 35000; // 35 seconds timeout
-
     /** Solid white RGB LED duration while USB UVC streaming (same as video recording). */
     private static final int UVC_STREAMING_LED_DURATION_MS = 1_800_000;
 
@@ -156,7 +154,6 @@ public class AsgClientService extends Service implements NetworkStateListener, T
     private static final AtomicBoolean serviceRunning = new AtomicBoolean(false);
     private boolean lastI2sPlaying = false;
     private boolean lastUvcStreaming = false;
-    private boolean isConnected = false; // Track connection state based on heartbeat
 
     /**
      * Used before {@link ServiceInitializer} exists so FGS promotion is not delayed by heavy init.
@@ -181,12 +178,6 @@ public class AsgClientService extends Service implements NetworkStateListener, T
     private BroadcastReceiver restartReceiver;
     private BroadcastReceiver otaProgressReceiver;
     private BroadcastReceiver mtkUpdateReceiver;
-
-    // ---------------------------------------------
-    // Heartbeat Timeout Management
-    // ---------------------------------------------
-    private Handler heartbeatTimeoutHandler;
-    private Runnable heartbeatTimeoutRunnable;
 
     // ---------------------------------------------
     // Lifecycle Methods
@@ -255,10 +246,6 @@ public class AsgClientService extends Service implements NetworkStateListener, T
             // Send version info
             Log.d(TAG, "📋 Sending initial version information");
             sendVersionInfo();
-
-            // Start heartbeat monitoring
-            Log.d(TAG, "💓 Starting heartbeat monitoring");
-            startHeartbeatMonitoring();
 
             // Clean up orphaned BLE transfer files from previous sessions
             Log.d(TAG, "🗑️ Cleaning up orphaned BLE transfer files");
@@ -846,9 +833,6 @@ public class AsgClientService extends Service implements NetworkStateListener, T
                 Log.d(TAG, "⏭️ MTK update receiver is null - skipping");
             }
 
-            // Stop heartbeat monitoring
-            stopHeartbeatMonitoring();
-
             Log.d(TAG, "✅ All receivers unregistered successfully");
         } catch (IllegalArgumentException e) {
             Log.w(TAG, "⚠️ Receiver was not registered: " + e.getMessage());
@@ -1103,10 +1087,11 @@ public class AsgClientService extends Service implements NetworkStateListener, T
     }
 
     /**
-     * Send version information to phone in two chunks to work around BLE MTU limitations. Chunk 1
-     * (version_info_1): app_version, build_number, device_model, android_version Chunk 2
-     * (version_info_2): ota_version_url, firmware_version, bt_mac_address Phone will accumulate
-     * both chunks and process when complete.
+     * Send version information to phone in chunks to work around BLE MTU limitations. Chunk 1
+     * (version_info_1): app_version, build_number, device_model, android_version. Chunk 3
+     * (version_info_3): bes_fw_version, mtk_fw_version, bt_mac_address, serial_number. The phone
+     * parses any version_info* message field-by-field, so chunk numbering gaps are fine
+     * (version_info_2 used to carry ota_version_url; the glasses no longer advertise a manifest).
      */
     public void sendVersionInfo() {
         Log.i(TAG, "📊 Sending version information (chunked for MTU)");
@@ -1136,7 +1121,6 @@ public class AsgClientService extends Service implements NetworkStateListener, T
 
             String deviceModel = ServiceUtils.getDeviceTypeString(this);
             String androidVersion = android.os.Build.VERSION.RELEASE;
-            String otaVersionUrl = OtaConstants.VERSION_JSON_URL;
 
             // Include BES firmware version (cached from hs_syvr command)
             String besFirmwareVersion = "";
@@ -1154,6 +1138,7 @@ public class AsgClientService extends Service implements NetworkStateListener, T
 
             // Include BES BT MAC address as unique device identifier (stored in system properties)
             String besBtMac = SysProp.getBesBtMac(this);
+            String deviceSerial = SysProp.getDeviceSerial(this);
 
             Log.d(
                     TAG,
@@ -1167,8 +1152,8 @@ public class AsgClientService extends Service implements NetworkStateListener, T
                             + mtkFirmwareVersion
                             + ", BT MAC: "
                             + besBtMac
-                            + ", OTA URL: "
-                            + otaVersionUrl);
+                            + ", Android device serial available: "
+                            + !deviceSerial.isEmpty());
 
             if (serviceInitializer.getServiceManager().getBluetoothManager() != null
                     && serviceInitializer.getServiceManager().getBluetoothManager().isConnected()) {
@@ -1181,6 +1166,9 @@ public class AsgClientService extends Service implements NetworkStateListener, T
                 chunk1.put("device_model", deviceModel);
                 chunk1.put("android_version", androidVersion);
                 chunk1.put("system_time_ms", System.currentTimeMillis());
+                // Process session id: lets the phone detect an asg restart under a
+                // surviving BLE link (the boot version_info push is the announcement).
+                chunk1.put("sid", ProcessSessionId.SID);
 
                 Log.d(TAG, "📤 Sending version_info_1: " + chunk1.toString());
                 serviceInitializer
@@ -1195,32 +1183,18 @@ public class AsgClientService extends Service implements NetworkStateListener, T
                     Thread.currentThread().interrupt();
                 }
 
-                // Chunk 2: OTA URL only (isolated due to length)
-                JSONObject chunk2 = new JSONObject();
-                chunk2.put("type", "version_info_2");
-                chunk2.put("ota_version_url", otaVersionUrl);
-
-                Log.d(TAG, "📤 Sending version_info_2: " + chunk2.toString());
-                serviceInitializer
-                        .getServiceManager()
-                        .getBluetoothManager()
-                        .sendMessage(chunk2.toString().getBytes(StandardCharsets.UTF_8));
-
-                // Small delay between chunks to ensure proper ordering
-                try {
-                    Thread.sleep(100);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                }
-
                 // Chunk 3: Firmware info (BES version, MTK version, BT MAC)
                 JSONObject chunk3 = new JSONObject();
                 chunk3.put("type", "version_info_3");
                 chunk3.put("bes_fw_version", besFirmwareVersion);
                 chunk3.put("mtk_fw_version", mtkFirmwareVersion);
                 chunk3.put("bt_mac_address", besBtMac);
+                if (!deviceSerial.isEmpty()) {
+                    chunk3.put("serial_number", deviceSerial);
+                }
+                addPhoneWireCapsIfSupported(chunk3);
 
-                Log.d(TAG, "📤 Sending version_info_3: " + chunk3.toString());
+                Log.d(TAG, "📤 Sending version_info_3");
                 serviceInitializer
                         .getServiceManager()
                         .getBluetoothManager()
@@ -1237,6 +1211,16 @@ public class AsgClientService extends Service implements NetworkStateListener, T
             Log.e(TAG, "💥 Error creating version info JSON", e);
         } catch (Exception e) {
             Log.e(TAG, "💥 Error sending version info", e);
+        }
+    }
+
+    private void addPhoneWireCapsIfSupported(JSONObject message) {
+        if (serviceInitializer == null || serviceInitializer.getServiceManager() == null) {
+            return;
+        }
+        Object bluetoothManager = serviceInitializer.getServiceManager().getBluetoothManager();
+        if (bluetoothManager instanceof K900BluetoothManager) {
+            ((K900BluetoothManager) bluetoothManager).addPhoneWireCapsIfSupported(message);
         }
     }
 
@@ -1396,6 +1380,45 @@ public class AsgClientService extends Service implements NetworkStateListener, T
             }
 
             @Override
+            public boolean sendFileViaBluetooth(byte[] data, String fileName) {
+                Log.d(
+                        TAG,
+                        "📁 sendFileViaBluetooth(byte[]) called - "
+                                + (data != null ? data.length : 0)
+                                + " bytes as "
+                                + fileName);
+
+                if (serviceInitializer.getServiceManager().getBluetoothManager() != null) {
+                    boolean started =
+                            serviceInitializer
+                                    .getServiceManager()
+                                    .getBluetoothManager()
+                                    .sendFile(data, fileName);
+                    if (started) {
+                        Log.i(TAG, "✅ In-memory BLE file transfer started for: " + fileName);
+                    } else {
+                        Log.e(TAG, "❌ Failed to start in-memory BLE file transfer for: " + fileName);
+                    }
+                    return started;
+                } else {
+                    Log.w(TAG, "⚠️ Bluetooth manager is null - cannot send file");
+                    return false;
+                }
+            }
+
+            @Override
+            public boolean sendFileViaBluetooth(byte[] data, String fileName, byte[] prelude) {
+                if (serviceInitializer.getServiceManager().getBluetoothManager() == null) {
+                    Log.w(TAG, "Bluetooth manager is null - cannot send file with prelude");
+                    return false;
+                }
+                return serviceInitializer
+                        .getServiceManager()
+                        .getBluetoothManager()
+                        .sendFile(data, fileName, prelude);
+            }
+
+            @Override
             public boolean isBleTransferInProgress() {
                 Log.d(TAG, "📊 isBleTransferInProgress() called");
 
@@ -1452,103 +1475,11 @@ public class AsgClientService extends Service implements NetworkStateListener, T
         }
     }
 
-    /** Reset heartbeat timeout - called when heartbeat is received */
-    private void resetHeartbeatTimeout() {
-        Log.d(TAG, "💓 Resetting heartbeat timeout");
-
-        try {
-            // Cancel any existing timeout
-            heartbeatTimeoutHandler.removeCallbacks(heartbeatTimeoutRunnable);
-
-            // Mark as connected
-            isConnected = true;
-            Log.d(TAG, "🔌 Connection state changed to CONNECTED");
-
-            // Schedule new timeout
-            heartbeatTimeoutHandler.postDelayed(heartbeatTimeoutRunnable, HEARTBEAT_TIMEOUT_MS);
-            Log.d(TAG, "⏰ Heartbeat timeout scheduled for " + HEARTBEAT_TIMEOUT_MS + "ms");
-
-        } catch (Exception e) {
-            Log.e(TAG, "💥 Error resetting heartbeat timeout", e);
-        }
-    }
-
-    /** Start heartbeat monitoring - call this when service becomes active */
-    public void startHeartbeatMonitoring() {
-        Log.d(TAG, "💓 Starting heartbeat monitoring");
-
-        try {
-            // Initialize heartbeat timeout handler if not already done
-            if (heartbeatTimeoutHandler == null) {
-                Log.d(TAG, "💓 Initializing heartbeat timeout handler");
-                heartbeatTimeoutHandler = new Handler(Looper.getMainLooper());
-                heartbeatTimeoutRunnable =
-                        () -> {
-                            Log.w(TAG, "⚠️ Heartbeat timeout - marking as disconnected");
-                            isConnected = false;
-                            Log.i(
-                                    TAG,
-                                    "🔌 Connection state changed to DISCONNECTED due to heartbeat"
-                                            + " timeout");
-                        };
-            }
-
-            // Cancel any existing timeout
-            heartbeatTimeoutHandler.removeCallbacks(heartbeatTimeoutRunnable);
-
-            // Don't set connected state - wait for first heartbeat
-            isConnected = false;
-            Log.d(
-                    TAG,
-                    "🔌 Connection state initialized as DISCONNECTED - waiting for first"
-                            + " heartbeat");
-
-            // Schedule initial timeout to detect if no heartbeat comes
-            heartbeatTimeoutHandler.postDelayed(heartbeatTimeoutRunnable, HEARTBEAT_TIMEOUT_MS);
-            Log.d(TAG, "⏰ Initial heartbeat timeout scheduled for " + HEARTBEAT_TIMEOUT_MS + "ms");
-
-        } catch (Exception e) {
-            Log.e(TAG, "💥 Error starting heartbeat monitoring", e);
-        }
-    }
-
-    /** Stop heartbeat monitoring - call this when service becomes inactive */
-    public void stopHeartbeatMonitoring() {
-        Log.d(TAG, "💓 Stopping heartbeat monitoring");
-
-        try {
-            heartbeatTimeoutHandler.removeCallbacks(heartbeatTimeoutRunnable);
-            isConnected = false;
-            Log.d(TAG, "🔌 Connection state changed to DISCONNECTED (monitoring stopped)");
-        } catch (Exception e) {
-            Log.e(TAG, "💥 Error stopping heartbeat monitoring", e);
-        }
-    }
-
-    /** Get current connection state */
-    public boolean isConnected() {
-        return isConnected;
-    }
-
-    /** Handle the phone_ready/glasses_ready handshake completing over Bluetooth. */
-    public void onPhoneReadyHandshakeComplete() {
-        Log.d(TAG, "📱 Phone ready handshake complete - marking phone connection active");
-        resetHeartbeatTimeout();
-    }
-
-    /** Handle any standard command received from the phone over Bluetooth. */
-    public void onPhoneCommandReceived() {
-        Log.d(TAG, "📱 Phone command received - marking phone connection active");
-        resetHeartbeatTimeout();
-    }
-
-    /** Handle service heartbeat received from MentraLiveSGC */
-    public void onServiceHeartbeatReceived() {
-        Log.d(TAG, "💓 Service heartbeat received from MentraLiveSGC");
-
-        // Reset heartbeat timeout and mark as connected
-        resetHeartbeatTimeout();
-    }
+    // The heartbeat-inferred phone "connected" flag (isConnected / resetHeartbeatTimeout /
+    // start/stopHeartbeatMonitoring) was deleted: its only consumer was the button-press local
+    // capture gate, which now reads the BES-reported phone BLE presence from the transport
+    // LinkStateMachine. Ping/heartbeat commands still get their acks; they just no longer feed
+    // an inference.
 
     private void registerRestartReceiver() {
         Log.d(TAG, "🔄 registerRestartReceiver() started");
@@ -1840,8 +1771,8 @@ public class AsgClientService extends Service implements NetworkStateListener, T
      */
     private void cleanupOrphanedBleTransfers() {
         try {
-            // App's external files directory where compressed files are stored
-            java.io.File appFilesDir = getExternalFilesDir("");
+            // Media root where the per-package BLE transfer files are stored
+            java.io.File appFilesDir = MediaStorage.getMediaRoot(this);
             if (appFilesDir == null || !appFilesDir.exists()) {
                 Log.d(TAG, "🗑️ App files directory does not exist, skipping cleanup");
                 return;

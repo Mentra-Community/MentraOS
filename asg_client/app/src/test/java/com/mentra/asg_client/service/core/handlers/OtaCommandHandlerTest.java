@@ -1,6 +1,7 @@
 package com.mentra.asg_client.service.core.handlers;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -29,15 +30,17 @@ public class OtaCommandHandlerTest {
     }
 
     @Test
-    public void handleOtaStart_withInjectedHelper_startsPhoneOta() throws Exception {
+    public void handleOtaStart_withoutVersionUrl_isRejected() throws Exception {
+        // ota_version_url is mandatory: the glasses have no baked fallback manifest, so a
+        // URL-less ota_start (older phone SDKs) must be refused rather than guessed at.
         OtaHelper otaHelper = mock(OtaHelper.class);
         OtaCommandHandler handler =
                 new OtaCommandHandler(otaHelper, mock(ICommunicationManager.class));
 
         boolean handled = handler.handleCommand("ota_start", new JSONObject());
 
-        assertThat(handled).isTrue();
-        verify(otaHelper).startOtaFromPhone(null);
+        assertThat(handled).isFalse();
+        verify(otaHelper, never()).startOtaFromPhone(any());
     }
 
     @Test
@@ -80,8 +83,7 @@ public class OtaCommandHandlerTest {
                 handler.handleCommand("ota_start", new JSONObject().put("ota_version_url", " "));
 
         assertThat(handled).isFalse();
-        verify(otaHelper, never()).startOtaFromPhone();
-        verify(otaHelper, never()).startOtaFromPhone(null);
+        verify(otaHelper, never()).startOtaFromPhone(any());
     }
 
     @Test
@@ -95,8 +97,7 @@ public class OtaCommandHandlerTest {
                         "ota_start", new JSONObject().put("ota_version_url", "file:///tmp/x"));
 
         assertThat(handled).isFalse();
-        verify(otaHelper, never()).startOtaFromPhone();
-        verify(otaHelper, never()).startOtaFromPhone(null);
+        verify(otaHelper, never()).startOtaFromPhone(any());
     }
 
     @Test

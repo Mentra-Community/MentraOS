@@ -1,6 +1,6 @@
 import type {OtaProgress, OtaStatus} from "@mentra/bluetooth-sdk-internal"
 
-import {OtaProgressMessages} from "@/app/ota/otaProgressTimeouts"
+import {OtaProgressMessages} from "@mentra/engine"
 
 import {getOtaErrorMessage, shouldShowChangeWifiForOtaDownloadFailure} from "@/utils/otaErrorMapping"
 

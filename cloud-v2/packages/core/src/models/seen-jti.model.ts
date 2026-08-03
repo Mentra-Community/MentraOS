@@ -16,7 +16,8 @@
  * Spec: docs/issues/001-oem-auth/design.md ("Data model" / "seenJtis")
  */
 
-import { Schema, model, type InferSchemaType } from "mongoose";
+import { Schema, type InferSchemaType } from "mongoose";
+import { registerModel } from "./register-model";
 
 const SeenJtiSchema = new Schema(
   {
@@ -43,4 +44,4 @@ SeenJtiSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 SeenJtiSchema.index({ jti: 1, tenantId: 1 }, { unique: true });
 
 export type SeenJti = InferSchemaType<typeof SeenJtiSchema>;
-export const SeenJtiModel = model("SeenJti", SeenJtiSchema);
+export const SeenJtiModel = registerModel("SeenJti", SeenJtiSchema);

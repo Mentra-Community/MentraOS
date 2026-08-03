@@ -7,7 +7,9 @@ import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.os.Build;
 import android.util.Log;
+import com.mentra.asg_client.io.bluetooth.utils.BleJsonCompact;
 import java.nio.charset.StandardCharsets;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.json.JSONException;
 import org.json.JSONObject;
 
@@ -26,14 +28,53 @@ public class BesWireFormat {
     public static final byte CMD_TYPE_MUSIC = 0x33; // Music file type
     public static final byte CMD_TYPE_AUDIO = 0x34; // Audio file type
     public static final byte CMD_TYPE_DATA = 0x35; // Generic data type
+    public static final byte CMD_TYPE_BINARY_MSG = 0x40; // BLE Wire Protocol v2
 
-    // File transfer constants
-    public static final int FILE_PACK_SIZE_MAX =
-            221; // 256 MTU - 3 ATT bytes - 32 protocol overhead
-    public static final int FILE_PACK_SIZE_DEFAULT =
-            FILE_PACK_SIZE_MAX; // Safe default before phone MTU config arrives
+    // BLE Wire Protocol v2 — binary fragment flags (little-endian wire)
+    public static final byte FLAG_FIRST_FRAG = 0x01;
+    public static final byte FLAG_LAST_FRAG = 0x02;
+    public static final byte FLAG_WAKE = 0x04;
+    public static final byte FLAG_HANDSHAKE = 0x08;
+    public static final byte FLAG_ACK_REQUESTED = 0x10;
+
+    public static final int BINARY_HEADER_SIZE = 7;
+    public static final int LENGTH_CMD_MIN_SIZE = 7; // ## + type + innerLen(2) + $$
+    public static final int MTU_TARGET = 509;
+    public static final int MAX_FRAGMENT_PAYLOAD = 480;
+    public static final int MAX_PACKED_FRAME_SIZE = MTU_TARGET;
+    public static final int PROTOCOL_VERSION_V1 = 1;
+    public static final int PROTOCOL_VERSION_V2 = 2;
+    public static final String HANDSHAKE_PAYLOAD_V2 = "v2";
+
+    private static final AtomicInteger ACTIVE_PROTOCOL_VERSION =
+            new AtomicInteger(PROTOCOL_VERSION_V1);
+    private static final AtomicInteger NEXT_BINARY_MSG_ID = new AtomicInteger(1);
+
+    // File transfer constants. Legacy peers use 400-byte payloads. Firmware that advertises
+    // wire_caps.file_payload_v2 can use all 474 data bytes available at ATT MTU 509, or a larger
+    // payload selected from the actual CoC transmit MTU.
+    public static final int FILE_PACK_SIZE_LEGACY = 400;
+    public static final int FILE_PACK_SIZE_GATT_MAX = 474;
+    public static final int FILE_PACK_SIZE_COC_MAX = 800;
+    public static final int FILE_PACK_SIZE_MAX = FILE_PACK_SIZE_COC_MAX;
+    public static final int FILE_PACK_SIZE_DEFAULT = FILE_PACK_SIZE_LEGACY;
     public static final int FILE_PACK_SIZE_MIN = 100; // Minimum safe packet size
+    // File frame flags bit 0: sender streams push-mode and accepts batched acks
+    // (BES >= 17.26.7.6 then acks every 8th pack instead of each one).
+    public static final int FILE_FLAG_PUSH_BATCH_ACK = 0x0001;
+    // Bit 1 declares that fileSize and packet indices use this transfer's packSize instead of the
+    // OEM's hardcoded 400-byte packet-count convention.
+    public static final int FILE_FLAG_DYNAMIC_PAYLOAD = 0x0002;
     private static int filePackSize = FILE_PACK_SIZE_DEFAULT; // Configurable packet size
+
+    /**
+     * Convert a BES file-transfer response index to the sender's zero-based packet index.
+     * Success responses are cumulative and carry the next expected index. Failure responses
+     * already carry the exact packet index BES needs retransmitted.
+     */
+    public static int fileAckPacketIndex(int state, int responseIndex) {
+        return state == 1 ? responseIndex - 1 : responseIndex;
+    }
     public static final int LENGTH_FILE_START = 2;
 
     /**
@@ -51,21 +92,39 @@ public class BesWireFormat {
      *
      * @param mtu The negotiated BLE MTU from the phone
      */
-    public static void setFilePackSizeFromMtu(int mtu) {
+    public static void setFilePackSizeFromMtu(int mtu, boolean dynamicPayloadSupported) {
         // MTU - 3 (ATT header) - 32 (protocol overhead) = max data size
         int newPackSize = mtu - 3 - 32;
 
         // Clamp to valid range
         if (newPackSize < FILE_PACK_SIZE_MIN) {
             newPackSize = FILE_PACK_SIZE_MIN;
-        } else if (newPackSize > FILE_PACK_SIZE_MAX) {
-            newPackSize = FILE_PACK_SIZE_MAX;
+        }
+        int maximum =
+                dynamicPayloadSupported ? FILE_PACK_SIZE_GATT_MAX : FILE_PACK_SIZE_LEGACY;
+        if (newPackSize > maximum) {
+            newPackSize = maximum;
         }
 
         filePackSize = newPackSize;
         Log.i(
                 "BesWireFormat",
-                "📦 File pack size set to " + filePackSize + " bytes (MTU=" + mtu + ")");
+                "📦 File pack size set to "
+                        + filePackSize
+                        + " bytes (MTU="
+                        + mtu
+                        + ", dynamic="
+                        + dynamicPayloadSupported
+                        + ")");
+    }
+
+    /** Select an explicitly negotiated payload, clamped to the protocol ceiling. */
+    public static void setFilePackSize(int payloadSize) {
+        filePackSize =
+                Math.max(
+                        FILE_PACK_SIZE_MIN,
+                        Math.min(payloadSize, FILE_PACK_SIZE_COC_MAX));
+        Log.i("BesWireFormat", "📦 File pack size set to " + filePackSize + " bytes");
     }
 
     /** Reset file pack size to default safe BLE payload size. */
@@ -88,6 +147,200 @@ public class BesWireFormat {
     public static final String FIELD_V = "V"; // Version field
     public static final String FIELD_B = "B"; // Body field
 
+    public static boolean isBinaryProtocolActive() {
+        return ACTIVE_PROTOCOL_VERSION.get() >= PROTOCOL_VERSION_V2;
+    }
+
+    public static void setBinaryProtocolActive(boolean active) {
+        ACTIVE_PROTOCOL_VERSION.set(active ? PROTOCOL_VERSION_V2 : PROTOCOL_VERSION_V1);
+        if (active) {
+            BleJsonCompact.markSessionConnected(System.currentTimeMillis());
+        } else {
+            BleJsonCompact.resetSession();
+        }
+        Log.i(
+                "BesWireFormat",
+                "BLE wire protocol set to v" + ACTIVE_PROTOCOL_VERSION.get());
+    }
+
+    public static int getActiveProtocolVersion() {
+        return ACTIVE_PROTOCOL_VERSION.get();
+    }
+
+    public static void resetBinaryProtocol() {
+        ACTIVE_PROTOCOL_VERSION.set(PROTOCOL_VERSION_V1);
+        BleJsonCompact.resetSession();
+    }
+
+    public static int allocateBinaryMsgId() {
+        return NEXT_BINARY_MSG_ID.getAndIncrement() & 0xFFFF;
+    }
+
+    /** Parsed header for {@link #CMD_TYPE_BINARY_MSG} frames. */
+    public static final class BinaryHeader {
+        public final byte flags;
+        public final int msgId;
+        public final int fragIdx;
+        public final int fragCount;
+        public final int payloadLen;
+        public final byte[] payload;
+        public final boolean valid;
+
+        BinaryHeader(
+                byte flags,
+                int msgId,
+                int fragIdx,
+                int fragCount,
+                int payloadLen,
+                byte[] payload,
+                boolean valid) {
+            this.flags = flags;
+            this.msgId = msgId;
+            this.fragIdx = fragIdx;
+            this.fragCount = fragCount;
+            this.payloadLen = payloadLen;
+            this.payload = payload;
+            this.valid = valid;
+        }
+    }
+
+    public static boolean isBinaryWireFrame(byte[] data) {
+        return data != null
+                && data.length >= LENGTH_CMD_MIN_SIZE + BINARY_HEADER_SIZE
+                && isK900ProtocolFormat(data)
+                && data[2] == CMD_TYPE_BINARY_MSG;
+    }
+
+    /**
+     * Validate a frame strongly enough to use it as evidence that both UART endpoints agree on
+     * baud. Marker-shaped garbage is insufficient: STRING frames must have an exact encoded length
+     * and a JSON command field, while binary frames must have an exact fragment length and sane
+     * fragment indices.
+     */
+    public static boolean isValidLinkHealthFrame(byte[] frame) {
+        if (isBinaryWireFrame(frame)) {
+            BinaryHeader header = parseBinaryHeader(frame);
+            return header.valid
+                    && header.fragCount > 0
+                    && header.fragIdx < header.fragCount
+                    && frame.length == LENGTH_CMD_MIN_SIZE + BINARY_HEADER_SIZE + header.payloadLen;
+        }
+        if (!isK900ProtocolFormat(frame) || frame[2] != CMD_TYPE_STRING) {
+            return false;
+        }
+        K900LengthCodec.Detected detected = K900LengthCodec.detectLength(frame);
+        if (detected == null || frame.length != detected.length + K900LengthCodec.FRAME_OVERHEAD) {
+            return false;
+        }
+        try {
+            byte[] payload = new byte[detected.length];
+            System.arraycopy(
+                    frame,
+                    K900LengthCodec.PAYLOAD_OFFSET,
+                    payload,
+                    0,
+                    detected.length);
+            return new JSONObject(new String(payload, StandardCharsets.UTF_8)).has(FIELD_C);
+        } catch (JSONException e) {
+            return false;
+        }
+    }
+
+    public static boolean isCameraCommand(String jsonData) {
+        if (jsonData == null || jsonData.isEmpty()) {
+            return false;
+        }
+        return jsonData.contains("cs_pho")
+                || jsonData.contains("cs_cpho")
+                || jsonData.contains("cs_vid")
+                || jsonData.contains("\"type\":\"take_photo\"");
+    }
+
+    public static byte[] packBinaryFragment(
+            byte flags, int msgId, int fragIdx, int fragCount, byte[] payload) {
+        int payloadLen = payload != null ? payload.length : 0;
+        int innerLen = BINARY_HEADER_SIZE + payloadLen;
+        int total = LENGTH_CMD_MIN_SIZE + innerLen;
+        byte[] frame = new byte[total];
+
+        frame[0] = CMD_START_CODE[0];
+        frame[1] = CMD_START_CODE[1];
+        frame[2] = CMD_TYPE_BINARY_MSG;
+        writeLe16(frame, 3, innerLen);
+
+        int headerOffset = 5;
+        frame[headerOffset] = flags;
+        writeLe16(frame, headerOffset + 1, msgId);
+        frame[headerOffset + 3] = (byte) fragIdx;
+        frame[headerOffset + 4] = (byte) fragCount;
+        writeLe16(frame, headerOffset + 5, payloadLen);
+
+        if (payloadLen > 0 && payload != null) {
+            System.arraycopy(payload, 0, frame, headerOffset + BINARY_HEADER_SIZE, payloadLen);
+        }
+
+        frame[total - 2] = CMD_END_CODE[0];
+        frame[total - 1] = CMD_END_CODE[1];
+        return frame;
+    }
+
+    public static byte[] packV2HandshakeFrame() {
+        byte[] payload = HANDSHAKE_PAYLOAD_V2.getBytes(StandardCharsets.UTF_8);
+        byte flags = (byte) (FLAG_FIRST_FRAG | FLAG_LAST_FRAG | FLAG_HANDSHAKE);
+        return packBinaryFragment(flags, allocateBinaryMsgId(), 0, 1, payload);
+    }
+
+    public static boolean isV2HandshakePayload(byte[] payload) {
+        if (payload == null) {
+            return false;
+        }
+        return HANDSHAKE_PAYLOAD_V2.equals(new String(payload, StandardCharsets.UTF_8));
+    }
+
+    public static BinaryHeader parseBinaryHeader(byte[] frame) {
+        if (!isBinaryWireFrame(frame)) {
+            return new BinaryHeader((byte) 0, 0, 0, 0, 0, null, false);
+        }
+
+        int innerLen = readLe16(frame, 3);
+        if (innerLen < BINARY_HEADER_SIZE) {
+            return new BinaryHeader((byte) 0, 0, 0, 0, 0, null, false);
+        }
+        if (LENGTH_CMD_MIN_SIZE + innerLen > frame.length) {
+            return new BinaryHeader((byte) 0, 0, 0, 0, 0, null, false);
+        }
+
+        int headerOffset = 5;
+        byte flags = frame[headerOffset];
+        int msgId = readLe16(frame, headerOffset + 1);
+        int fragIdx = frame[headerOffset + 3] & 0xFF;
+        int fragCount = frame[headerOffset + 4] & 0xFF;
+        int payloadLen = readLe16(frame, headerOffset + 5);
+
+        if (BINARY_HEADER_SIZE + payloadLen > innerLen) {
+            return new BinaryHeader((byte) 0, 0, 0, 0, 0, null, false);
+        }
+
+        if (frame[headerOffset + innerLen] != CMD_END_CODE[0]
+                || frame[headerOffset + innerLen + 1] != CMD_END_CODE[1]) {
+            return new BinaryHeader((byte) 0, 0, 0, 0, 0, null, false);
+        }
+
+        byte[] payload = new byte[payloadLen];
+        if (payloadLen > 0) {
+            System.arraycopy(
+                    frame, headerOffset + BINARY_HEADER_SIZE, payload, 0, payloadLen);
+        }
+
+        return new BinaryHeader(
+                flags, msgId, fragIdx, fragCount, payloadLen, payload, true);
+    }
+
+    public static byte[] extractBinaryPayload(byte[] frame) {
+        BinaryHeader header = parseBinaryHeader(frame);
+        return header.valid ? header.payload : null;
+    }
+
     /**
      * Pack a JSON string into the proper K900 format: 1. Wrap with C-field: {"C": jsonData} 2. Then
      * pack with BES2700 protocol: ## + type + length + {"C": jsonData} + $$
@@ -96,6 +349,10 @@ public class BesWireFormat {
      * @return Byte array with packed data according to protocol format
      */
     public static byte[] packJsonCommand(String jsonData) {
+        return packJsonCommand(jsonData, K900LengthCodec.Endian.LE);
+    }
+
+    public static byte[] packJsonCommand(String jsonData, K900LengthCodec.Endian endian) {
         if (jsonData == null) {
             return null;
         }
@@ -110,7 +367,7 @@ public class BesWireFormat {
 
             // Then pack with BES2700 protocol format
             byte[] jsonBytes = wrappedJson.getBytes(StandardCharsets.UTF_8);
-            return packDataCommand(jsonBytes, CMD_TYPE_STRING);
+            return packDataCommand(jsonBytes, CMD_TYPE_STRING, endian);
 
         } catch (JSONException e) {
             Log.e("BesWireFormat", "Error creating JSON wrapper", e);
@@ -127,6 +384,17 @@ public class BesWireFormat {
      * @return Byte array with packed data according to protocol format
      */
     public static byte[] packDataCommand(byte[] data, byte cmdType) {
+        // Historic default is little-endian (the wire-v2 convention). Callers that
+        // know the negotiated link endianness should use the overload below.
+        return packDataCommand(data, cmdType, K900LengthCodec.Endian.LE);
+    }
+
+    /**
+     * Pack raw byte data with K900 BES2700 protocol format, writing the 2-byte length field with an
+     * explicit endianness. Use the negotiated per-link endianness so both legacy big-endian and
+     * wire-v2 little-endian peers can parse the frame.
+     */
+    public static byte[] packDataCommand(byte[] data, byte cmdType, K900LengthCodec.Endian endian) {
         if (data == null) {
             return null;
         }
@@ -143,13 +411,8 @@ public class BesWireFormat {
         // Command type
         result[2] = cmdType;
 
-        // Length (2 bytes, big-endian)
-        result[3] = (byte) ((dataLength >> 8) & 0xFF); // MSB first
-        result[4] = (byte) (dataLength & 0xFF); // LSB second
-
-        // Original little-endian implementation (commented out)
-        // result[3] = (byte)(dataLength & 0xFF);        // LSB first
-        // result[4] = (byte)((dataLength >> 8) & 0xFF); // MSB second
+        // Length (2 bytes, negotiated endianness)
+        K900LengthCodec.writeLength(result, 3, dataLength, endian);
 
         // Copy the data
         System.arraycopy(data, 0, result, 5, dataLength);
@@ -159,80 +422,6 @@ public class BesWireFormat {
         result[6 + dataLength] = CMD_END_CODE[1]; // $
 
         return result;
-    }
-
-    /**
-     * Pack raw byte data with K900 BES2700 protocol format for phone-to-device communication
-     * Format: ## + command_type + length(2bytes) + data + $$ Uses little-endian byte order for
-     * length field
-     *
-     * @param data The raw data to pack
-     * @param cmdType The command type (use CMD_TYPE_STRING for JSON)
-     * @return Byte array with packed data according to protocol format
-     */
-    public static byte[] packDataToK900(byte[] data, byte cmdType) {
-        if (data == null) {
-            return null;
-        }
-
-        int dataLength = data.length;
-
-        // Command structure: ## + type + length(2 bytes) + data + $$
-        byte[] result = new byte[dataLength + 7]; // 2(start) + 1(type) + 2(length) + data + 2(end)
-
-        // Start code ##
-        result[0] = CMD_START_CODE[0]; // #
-        result[1] = CMD_START_CODE[1]; // #
-
-        // Command type
-        result[2] = cmdType;
-
-        // Length (2 bytes, little-endian for phone-to-device)
-        result[3] = (byte) (dataLength & 0xFF); // LSB first
-        result[4] = (byte) ((dataLength >> 8) & 0xFF); // MSB second
-
-        // Copy the data
-        System.arraycopy(data, 0, result, 5, dataLength);
-
-        // End code $$
-        result[5 + dataLength] = CMD_END_CODE[0]; // $
-        result[6 + dataLength] = CMD_END_CODE[1]; // $
-
-        return result;
-    }
-
-    /**
-     * Pack a JSON string for phone-to-K900 device communication 1. Wrap with C-field: {"C":
-     * jsonData} 2. Then pack with BES2700 protocol using little-endian: ## + type + length + {"C":
-     * jsonData} + $$
-     *
-     * @param jsonData The JSON string to pack
-     * @return Byte array with packed data according to protocol format
-     */
-    public static byte[] packJsonToK900(String jsonData, boolean wakeup) {
-        if (jsonData == null) {
-            return null;
-        }
-
-        try {
-            // First wrap with C-field
-            JSONObject wrapper = new JSONObject();
-            wrapper.put(FIELD_C, jsonData);
-            if (wakeup) {
-                wrapper.put("W", 1); // Add W field as seen in MentraLiveSGC
-            }
-
-            // Convert to string
-            String wrappedJson = wrapper.toString();
-
-            // Then pack with BES2700 protocol format using little-endian
-            byte[] jsonBytes = wrappedJson.getBytes(StandardCharsets.UTF_8);
-            return packDataToK900(jsonBytes, CMD_TYPE_STRING);
-
-        } catch (JSONException e) {
-            Log.e("BesWireFormat", "Error creating JSON wrapper for K900", e);
-            return null;
-        }
     }
 
     /**
@@ -244,15 +433,29 @@ public class BesWireFormat {
      * @return Formatted bytes ready for transmission
      */
     public static byte[] formatMessageForTransmission(String jsonData) {
+        return formatMessageForTransmission(jsonData, K900LengthCodec.Endian.BE);
+    }
+
+    /**
+     * Format an ASG-client JSON message for transmission, writing STRING frame lengths with the
+     * negotiated per-link endianness. Binary v2 frames are always little-endian and ignore the
+     * {@code endian} argument.
+     */
+    public static byte[] formatMessageForTransmission(String jsonData, K900LengthCodec.Endian endian) {
         try {
             Log.d("BesWireFormat", "🔄 Formatting message: " + jsonData);
+
+            if (isBinaryProtocolActive()) {
+                return formatBinaryMessageForTransmission(jsonData);
+            }
 
             String wrappedJson = createTransmissionWrapperJson(jsonData);
             Log.d("BesWireFormat", "🔄 After C-wrapping: " + wrappedJson);
 
             // Now format with BES2700 protocol
             byte[] result =
-                    packDataCommand(wrappedJson.getBytes(StandardCharsets.UTF_8), CMD_TYPE_STRING);
+                    packDataCommand(
+                            wrappedJson.getBytes(StandardCharsets.UTF_8), CMD_TYPE_STRING, endian);
 
             // Log some bytes for debugging
             StringBuilder hexDump = new StringBuilder();
@@ -267,7 +470,7 @@ public class BesWireFormat {
         } catch (JSONException e) {
             Log.e("BesWireFormat", "❌ Error in formatMessageForTransmission", e);
             // Fallback: if json is invalid, still try to pack it without validation
-            return packJsonCommand(jsonData);
+            return packJsonCommand(jsonData, endian);
         }
     }
 
@@ -279,13 +482,51 @@ public class BesWireFormat {
      */
     public static String createTransmissionWrapperJson(String jsonData) throws JSONException {
         // Validate that input is proper JSON before embedding it as the C payload.
-        new JSONObject(jsonData);
+        JSONObject message = new JSONObject(jsonData);
+        String wirePayload =
+                isBinaryProtocolActive()
+                        ? BleJsonCompact.encode(message).toString()
+                        : jsonData;
+
+        if (isBinaryProtocolActive() && !isCameraCommand(jsonData)) {
+            return wirePayload;
+        }
 
         JSONObject wrapper = new JSONObject();
-        wrapper.put(FIELD_C, jsonData);
-        wrapper.put(FIELD_V, 1); // Optional version field
-        wrapper.put(FIELD_B, new JSONObject()); // Optional body field
+        wrapper.put(FIELD_C, wirePayload);
+        if (!isBinaryProtocolActive()) {
+            wrapper.put(FIELD_V, 1);
+            wrapper.put(FIELD_B, new JSONObject());
+        }
         return wrapper.toString();
+    }
+
+    /** Build outbound payload bytes for v2 binary transport (Phase 3: no C/V/B except camera). */
+    public static byte[] buildOutboundPayloadBytes(String jsonData) throws JSONException {
+        String wireJson = createTransmissionWrapperJson(jsonData);
+        return wireJson.getBytes(StandardCharsets.UTF_8);
+    }
+
+    public static byte[] formatBinaryMessageForTransmission(String jsonData) throws JSONException {
+        byte[] payload = buildOutboundPayloadBytes(jsonData);
+        byte flags = (byte) (FLAG_FIRST_FRAG | FLAG_LAST_FRAG);
+        return packBinaryFragment(flags, allocateBinaryMsgId(), 0, 1, payload);
+    }
+
+    private static void writeLe16(byte[] buffer, int offset, int value) {
+        buffer[offset] = (byte) (value & 0xFF);
+        buffer[offset + 1] = (byte) ((value >> 8) & 0xFF);
+    }
+
+    private static int readLe16(byte[] buffer, int offset) {
+        return (buffer[offset] & 0xFF) | ((buffer[offset + 1] & 0xFF) << 8);
+    }
+
+    private static JSONObject expandCompactWireJson(JSONObject json) throws JSONException {
+        if (!isBinaryProtocolActive()) {
+            return json;
+        }
+        return BleJsonCompact.decodeIfSupported(json);
     }
 
     /**
@@ -350,23 +591,45 @@ public class BesWireFormat {
      * @return Raw payload data or null if format is invalid
      */
     public static byte[] extractPayload(byte[] protocolData) {
+        return extractPayload(protocolData, K900LengthCodec.Endian.LE);
+    }
+
+    /**
+     * Extract payload from a K900 STRING frame, reading the length field with an explicit
+     * endianness. Prefer {@link #extractPayloadAuto} on receive when the peer endianness is not yet
+     * negotiated.
+     */
+    public static byte[] extractPayload(byte[] protocolData, K900LengthCodec.Endian endian) {
         if (!isK900ProtocolFormat(protocolData) || protocolData.length < 7) {
             return null;
         }
 
-        // Extract length (big-endian)
-        int length = ((protocolData[3] & 0xFF) << 8) | (protocolData[4] & 0xFF);
-
-        // Original little-endian implementation (commented out)
-        // int length = (protocolData[3] & 0xFF) | ((protocolData[4] & 0xFF) << 8);
+        int length = K900LengthCodec.readLength(protocolData, 3, endian);
 
         if (length + 7 > protocolData.length) {
             return null; // Invalid length
         }
 
-        // Extract payload
         byte[] payload = new byte[length];
         System.arraycopy(protocolData, 5, payload, 0, length);
+        return payload;
+    }
+
+    /**
+     * Extract payload from a K900 STRING frame, heuristically detecting the length field's
+     * endianness. This is the safe RX entry point when talking to a peer of unknown vintage (fixes
+     * the {@code Extracted length=9472} misframe against legacy big-endian BES firmware).
+     */
+    public static byte[] extractPayloadAuto(byte[] protocolData) {
+        if (!isK900ProtocolFormat(protocolData) || protocolData.length < 7) {
+            return null;
+        }
+        K900LengthCodec.Detected detected = K900LengthCodec.detectLength(protocolData);
+        if (detected == null) {
+            return null;
+        }
+        byte[] payload = new byte[detected.length];
+        System.arraycopy(protocolData, 5, payload, 0, detected.length);
         return payload;
     }
 
@@ -377,40 +640,9 @@ public class BesWireFormat {
      * @return Raw payload data or null if format is invalid
      */
     public static byte[] extractPayloadFromK900(byte[] protocolData) {
-        if (!isK900ProtocolFormat(protocolData) || protocolData.length < 7) {
-            Log.e(
-                    "BesWireFormat",
-                    "extractPayloadFromK900: Not K900 format or too short. Length="
-                            + (protocolData != null ? protocolData.length : 0));
-            return null;
-        }
-
-        // Extract length (little-endian for device-to-phone)
-        int length = (protocolData[3] & 0xFF) | ((protocolData[4] & 0xFF) << 8);
-
-        Log.d(
-                "BesWireFormat",
-                "extractPayloadFromK900: Extracted length="
-                        + length
-                        + ", message length="
-                        + protocolData.length
-                        + ", expected total="
-                        + (length + 7));
-
-        if (length + 7 > protocolData.length) {
-            Log.e(
-                    "BesWireFormat",
-                    "extractPayloadFromK900: Invalid length. Need "
-                            + (length + 7)
-                            + " bytes but have "
-                            + protocolData.length);
-            return null; // Invalid length
-        }
-
-        // Extract payload
-        byte[] payload = new byte[length];
-        System.arraycopy(protocolData, 5, payload, 0, length);
-        return payload;
+        // Retained for backward compatibility: device-to-phone frames may arrive in either
+        // endianness depending on firmware vintage, so auto-detect rather than assuming LE.
+        return extractPayloadAuto(protocolData);
     }
 
     /**
@@ -438,8 +670,18 @@ public class BesWireFormat {
         // Extract the command type
         byte commandType = data[2];
 
-        // Extract the length using big-endian format (MSB first)
-        int payloadLength = ((data[3] & 0xFF) << 8) | (data[4] & 0xFF);
+        if (commandType == CMD_TYPE_BINARY_MSG) {
+            Log.d("BesWireFormat", "Binary wire frame — use parseBinaryHeader()");
+            return null;
+        }
+
+        // Extract the length, auto-detecting endianness so we parse both legacy big-endian
+        // and wire-v2 little-endian frames.
+        K900LengthCodec.Detected detected = K900LengthCodec.detectLength(data);
+        int payloadLength =
+                detected != null
+                        ? detected.length
+                        : ((data[3] & 0xFF) | ((data[4] & 0xFF) << 8));
 
         Log.d(
                 "BesWireFormat",
@@ -507,7 +749,7 @@ public class BesWireFormat {
                 // Try to parse the inner content as JSON
                 try {
                     JSONObject innerJson = new JSONObject(innerContent);
-                    return innerJson;
+                    return expandCompactWireJson(innerJson);
                 } catch (JSONException e) {
                     Log.d(
                             "BesWireFormat",
@@ -517,7 +759,7 @@ public class BesWireFormat {
                 }
             } else {
                 // Not C-wrapped, return the JSON directly
-                return json;
+                return expandCompactWireJson(json);
             }
         } catch (JSONException e) {
             Log.e("BesWireFormat", "Error parsing JSON payload: " + e.getMessage(), e);
@@ -713,7 +955,7 @@ public class BesWireFormat {
             String fileName,
             int flags,
             byte fileType) {
-        if (fileData == null || packSize > getFilePackSize()) {
+        if (fileData == null || packSize > FILE_PACK_SIZE_MAX) {
             return null;
         }
 

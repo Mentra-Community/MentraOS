@@ -278,7 +278,7 @@ Thin fetch wrapper for the three new cloud routes. Reuses existing auth helper (
 
 ### Phase 3 — re-wire `LocalMiniappRuntime`
 
-**Edit:** `mobile/modules/island/src/services/LocalMiniappRuntime.ts`
+**Edit:** `mobile/modules/engine/src/services/LocalMiniappRuntime.ts`
 
 - `handleStreamStart` (line ~1741): replace `socketComms.sendMessage({type: "stream_request", ...})` + pending-cloud-request bookkeeping with `streaming.startUnmanaged(packageName, payload)`. On resolve, `sendResult(packageName, requestId, true, {streamId})`.
 - `handleStreamStop` (line ~1755): replace with `streaming.stop(packageName, payload.streamId)`.
@@ -323,7 +323,7 @@ streaming: {
 
 Preserves the island module's dependency-direction discipline (island stays decoupled from the host service layer, same as `audioPlayback` / `socketComms` / `navigation`).
 
-**Edit:** `mobile/modules/island/src/runtime/config.ts`
+**Edit:** `mobile/modules/engine/src/runtime/config.ts`
 
 Add the `StreamingAdapter` interface and field in `RuntimeHooks`. Match the existing adapter pattern.
 

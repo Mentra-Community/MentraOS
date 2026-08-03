@@ -22,7 +22,7 @@ import {
   PROTOCOL_MAJOR,
   type ConnectionInit,
   type ConnectionAck,
-} from "@mentra/cloud-runtime/protocol";
+} from "@mentra/cloud-protocol";
 
 /**
  * A scriptable `WebSocketLike` that records its callbacks so the test can drive

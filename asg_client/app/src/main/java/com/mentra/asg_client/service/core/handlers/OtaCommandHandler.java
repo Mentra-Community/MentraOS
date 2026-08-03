@@ -108,8 +108,9 @@ public class OtaCommandHandler implements ICommandHandler {
         otaStartRetryCount = 0;
 
         String otaVersionUrl = getValidatedOtaVersionUrl(data);
-        if (INVALID_OTA_VERSION_URL.equals(otaVersionUrl)) {
-            sendOtaError("Invalid ota_version_url. Must be a non-empty http(s) URL.");
+        if (otaVersionUrl == null || INVALID_OTA_VERSION_URL.equals(otaVersionUrl)) {
+            sendOtaError(
+                    "ota_start requires a valid http(s) ota_version_url. Please update the app.");
             return false;
         }
 
@@ -120,10 +121,13 @@ public class OtaCommandHandler implements ICommandHandler {
     }
 
     private String getValidatedOtaVersionUrl(JSONObject data) {
+        // ota_version_url is MANDATORY: the glasses have no baked fallback manifest, so an
+        // ota_start without one (older phone SDKs) is hard-refused rather than guessed at.
         if (data == null
                 || !data.has(OTA_VERSION_URL_FIELD)
                 || data.isNull(OTA_VERSION_URL_FIELD)) {
-            return null;
+            Log.w(TAG, "Rejecting ota_start without ota_version_url (older app/SDK?)");
+            return INVALID_OTA_VERSION_URL;
         }
 
         String rawUrl = data.optString(OTA_VERSION_URL_FIELD, "").trim();

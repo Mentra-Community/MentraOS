@@ -1,4 +1,5 @@
-import { Schema, model, type InferSchemaType } from "mongoose";
+import { Schema, type InferSchemaType } from "mongoose";
+import { registerModel } from "./register-model";
 
 /**
  * Per-(org, user) role, stored and owned entirely in our DB. Roles are uniform:
@@ -37,7 +38,7 @@ DeveloperOrgMembershipSchema.index(
 );
 
 export type DeveloperOrgMembership = InferSchemaType<typeof DeveloperOrgMembershipSchema>;
-export const DeveloperOrgMembershipModel = model(
+export const DeveloperOrgMembershipModel = registerModel(
   "DeveloperOrgMembership",
   DeveloperOrgMembershipSchema,
 );

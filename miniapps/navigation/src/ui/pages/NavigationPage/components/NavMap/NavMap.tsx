@@ -16,7 +16,9 @@ import type {LatLng} from "@/shared/types"
 import {isDev} from "@/ui/lib/env"
 import {useDevOverride} from "@/ui/lib/devOverride"
 import {getMapbox, mapboxgl} from "@/ui/lib/mapbox"
-import {MAPBOX_STYLE_URL} from "./mapStyle"
+import {useColorScheme} from "@mentra/miniapp/ui"
+
+import {mapboxStyleUrl} from "./mapStyle"
 import {useDrawerOffset} from "@/ui/components/Drawer/DrawerOffsetContext"
 
 // GeoJSON helpers — Mapbox is [lng, lat] (GeoJSON order), the opposite of
@@ -186,13 +188,17 @@ export function NavMap({
   // compass badge can rotate counter to it.
   const [mapHeading, setMapHeading] = useState(0)
 
+  // Basemap follows the host color scheme (read once; the host reloads the
+  // WebView on theme flips, so no live restyle is needed).
+  const scheme = useColorScheme()
+
   // One-time map init
   useEffect(() => {
     if (!ready || !containerRef.current || mapRef.current) return
     const center = me ?? destination ?? {lat: 37.7956, lng: -122.3933}
     const map = new mapboxgl.Map({
       container: containerRef.current,
-      style: MAPBOX_STYLE_URL,
+      style: mapboxStyleUrl(scheme),
       center: toLngLat(center),
       zoom: 17,
       minZoom: 3,
@@ -757,13 +763,13 @@ export function NavMap({
       <div ref={containerRef} className="w-full h-full select-none touch-manipulation [-webkit-touch-callout:none]" />
 
       {!ready ? (
-        <div className="absolute inset-0 flex items-center justify-center bg-neutral-100 text-neutral-500 text-[13px]">
+        <div className="absolute inset-0 flex items-center justify-center bg-neutral-100 dark:bg-zinc-900 text-neutral-500 dark:text-zinc-400 text-[13px]">
           loading map…
         </div>
       ) : !me && !destination ? (
-        <div className="absolute inset-0 flex items-center justify-center bg-neutral-100">
+        <div className="absolute inset-0 flex items-center justify-center bg-neutral-100 dark:bg-zinc-900">
           <div
-            className="w-8 h-8 rounded-full border-[3px] border-neutral-300 border-t-neutral-700 animate-spin"
+            className="w-8 h-8 rounded-full border-[3px] border-neutral-300 dark:border-zinc-700 border-t-neutral-700 dark:border-t-zinc-200 animate-spin"
             role="status"
             aria-label="Finding your location"
           />

@@ -12,7 +12,9 @@ import type {
   CaptionsLiveTranscript,
   CaptionsSettings,
   CapabilitiesSnapshot,
+  CalendarSnapshotResult,
   ConnectionSnapshot,
+  ElevenLabsSnapshot,
   TesterEventPayload,
   TesterInvoke,
   TesterInvokeResult,
@@ -49,6 +51,9 @@ export interface Channels {
   /** Streamed tester events (subscribe-based testers only). */
   "tester:event": TesterEventPayload
 
+  /** ElevenLabs ConvAI tester snapshot (full state). */
+  "elevenlabs:update": ElevenLabsSnapshot
+
   // ── UI → background broadcasts ─────────────────────────────────────────
 
   "captions:clear": Record<string, never>
@@ -68,6 +73,32 @@ export interface Channels {
    * the `tester:event` stream). The new shape is plain async/await.
    */
   "tester:invoke": Rpc<TesterInvoke, TesterInvokeResult>
+
+  /** Demonstrates the nested session.phone.calendar.listEvents request API. */
+  "tester:calendar-list": Rpc<{startsAt: string; endsAt: string; limit?: number}, CalendarSnapshotResult>
+
+  /**
+   * speaker.createStream E2E: the background generates a sine tone and pumps
+   * it through a live PCM stream (write → backpressure → close). Can't go
+   * through tester:invoke — the SpeakerStreamWriter can't cross the bridge,
+   * so the whole pump loop runs background-side and only a summary returns.
+   */
+  "tester:speaker-stream-tone": Rpc<
+    {seconds?: number; freqHz?: number; sampleRate?: 16000 | 24000 | 48000},
+    {streamId: string; durationMs?: number; chunks: number; lastBufferedMs: number}
+  >
+
+  /** Start ElevenLabs ConvAI session (signed URL → WS → mic PCM). */
+  "elevenlabs:start": Rpc<Record<string, never>, {ok: true}>
+
+  /** Stop ElevenLabs ConvAI session and release mic. */
+  "elevenlabs:stop": Rpc<Record<string, never>, {ok: true}>
+
+  /** Play the last saved mic recording from phone storage. */
+  "elevenlabs:play-recording": Rpc<Record<string, never>, {ok: true}>
+
+  /** Stop playback of the saved mic recording. */
+  "elevenlabs:stop-playback": Rpc<Record<string, never>, {ok: true}>
 }
 
 declare global {

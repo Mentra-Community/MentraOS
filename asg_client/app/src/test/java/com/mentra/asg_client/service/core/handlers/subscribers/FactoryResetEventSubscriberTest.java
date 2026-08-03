@@ -112,7 +112,7 @@ public class FactoryResetEventSubscriberTest {
                             OtaHelper.installApk(
                                     any(Context.class), eq(OtaConstants.ASG_UPDATE_APK_PATH)));
             verify(otaHelper, never()).reinstallApkFromBackup();
-            verify(otaHelper, never()).startOtaFromPhone();
+            verify(otaHelper, never()).startOtaFromPhone(any());
         }
     }
 
@@ -146,7 +146,7 @@ public class FactoryResetEventSubscriberTest {
                             OtaHelper.installApk(
                                     any(Context.class), eq(OtaConstants.BACKUP_APK_PATH)));
             verify(otaHelper, never()).reinstallApkFromBackup();
-            verify(otaHelper, never()).startOtaFromPhone();
+            verify(otaHelper, never()).startOtaFromPhone(any());
         }
     }
 
@@ -169,7 +169,7 @@ public class FactoryResetEventSubscriberTest {
                             OtaHelper.installApk(
                                     any(Context.class), eq(OtaConstants.BACKUP_APK_PATH)));
             verify(otaHelper, never()).reinstallApkFromBackup();
-            verify(otaHelper, never()).startOtaFromPhone();
+            verify(otaHelper, never()).startOtaFromPhone(any());
         }
     }
 

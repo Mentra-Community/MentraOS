@@ -7,7 +7,7 @@
   "icon": "icon.png",
   "type": "standard",
   "sdkVersion": "0.3.0",
-  "minHostVersion": "1.42.0",
+  "minHostVersion": "2.13.0",
   "entry": {
     "background": "background/index.js",
     "ui": "ui/index.html"
@@ -15,7 +15,7 @@
   "permissions": [
     {
       "type": "MICROPHONE",
-      "description": "Used for live transcription"
+      "description": "Used for live transcription and the ElevenLabs ConvAI tester"
     },
     {
       "type": "CAMERA",
@@ -31,7 +31,7 @@
     },
     {
       "type": "CALENDAR",
-      "description": "Exercised by the SDK Tester page"
+      "description": "Lists phone calendar events in the SDK Tester"
     }
   ],
   "hardwareRequirements": [
@@ -44,6 +44,11 @@
       "type": "MICROPHONE",
       "level": "REQUIRED",
       "description": "Captures speech for transcription"
+    },
+    {
+      "type": "SPEAKER",
+      "level": "OPTIONAL",
+      "description": "Plays ElevenLabs agent audio / TTS on audio glasses"
     },
     {
       "type": "CAMERA",

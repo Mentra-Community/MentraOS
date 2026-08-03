@@ -1,4 +1,5 @@
-import { Schema, model, type InferSchemaType } from "mongoose";
+import { Schema, type InferSchemaType } from "mongoose";
+import { registerModel } from "./register-model";
 
 /**
  * Org-scoped developer API key, owned entirely in our DB (no WorkOS). The full
@@ -26,4 +27,4 @@ const DeveloperOrgApiKeySchema = new Schema(
 DeveloperOrgApiKeySchema.index({ orgId: 1, revokedAt: 1 });
 
 export type DeveloperOrgApiKey = InferSchemaType<typeof DeveloperOrgApiKeySchema>;
-export const DeveloperOrgApiKeyModel = model("DeveloperOrgApiKey", DeveloperOrgApiKeySchema);
+export const DeveloperOrgApiKeyModel = registerModel("DeveloperOrgApiKey", DeveloperOrgApiKeySchema);

@@ -3,7 +3,7 @@ import {Platform, View} from "react-native"
 import {Gesture, GestureDetector} from "react-native-gesture-handler"
 
 import {useNavigationStore} from "@/stores/navigation"
-import {BgTimer} from "@mentra/island"
+import {BgTimer} from "@mentra/engine"
 
 type Direction = "up" | "down" | "left" | "right"
 

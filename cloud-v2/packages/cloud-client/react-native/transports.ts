@@ -26,6 +26,7 @@ import type {
   WebSocketLike,
   UdpSocketLike,
   KeyValueStore,
+  HttpTransport,
 } from "../src/transports";
 
 /**
@@ -77,8 +78,7 @@ function adaptWebSocket(raw: GlobalWebSocket): WebSocketLike {
       raw.onmessage = (ev: { data: unknown }) => cb(String(ev.data));
     },
     onClose(cb: (info: { code: number; reason: string }) => void): void {
-      raw.onclose = (ev: { code: number; reason: string }) =>
-        cb({ code: ev.code, reason: ev.reason });
+      raw.onclose = (ev: { code: number; reason: string }) => cb({ code: ev.code, reason: ev.reason });
     },
     onError(cb: (err: unknown) => void): void {
       raw.onerror = (ev: unknown) => cb(ev);
@@ -138,6 +138,20 @@ export function setNativeUdp(factory: NativeUdpFactory): void {
  * react-native-keychain) via `setSecureStorage`.
  */
 let secureStorage: KeyValueStore | null = null;
+
+let nativeHttp: HttpTransport | null = null;
+
+/** Wire a background-capable native HTTP executor into the phone client. */
+export function setNativeHttp(http: HttpTransport): void {
+  nativeHttp = http;
+}
+
+function makeHttpTransport(): HttpTransport {
+  return (input, init) => {
+    const execute = nativeHttp ?? globalThis.fetch;
+    return execute(input, init);
+  };
+}
 
 /**
  * Wire in the platform's secure storage.
@@ -212,5 +226,6 @@ export function reactNativeTransports(): CloudClientTransports {
     ws: makeWsFactory(),
     udp: makeUdpFactory(),
     storage: makeSecureStorage(),
+    http: makeHttpTransport(),
   };
 }

@@ -15,7 +15,7 @@ registerMiniapp((session) => {
   session.input.onButtonPress(async () => {
     if (!session.capabilities?.hasCamera) return;
     const photo = await session.camera.takePhoto();
-    session.display.showBitmapView(photo.photoUrl);
+    session.display.render([{type: "image", id: "photo", box: {x: 144, y: 44, w: 288, h: 200}, data: photo.photoUrl}]);
   });
 });
 ```
@@ -45,10 +45,13 @@ All options are optional. The defaults are listed below.
 | Option | Type | Default | What it does |
 |---|---|---|---|
 | `size` | `"low" \| "medium" \| "high" \| "max"` | `"medium"` | Capture resolution. |
+| `transferMethod` | `"auto" \| "direct" \| "ble"` | `"auto"` | Use `"direct"` for webhook upload without BLE fallback, or `"ble"` to always relay through the phone. |
 | `compress` | `"none" \| "low" \| "medium" \| "high"` | `"none"` | JPEG compression applied before upload. |
 | `sound` | `boolean` | `true` | Play a shutter sound on the glasses. |
 | `saveToGallery` | `boolean` | `false` | Keep a copy in the glasses gallery. |
 | `exposureTimeNs` | `number` | auto | Manual shutter time in nanoseconds. Honored only on cameras with manual exposure; ignored otherwise. Omit to auto-expose. |
+
+Unknown runtime `transferMethod` values are rejected instead of being treated as `"auto"`.
 
 The result is a `PhotoTaken`:
 
@@ -61,10 +64,12 @@ The result is a `PhotoTaken`:
 
 ## Field of view
 
-`setFov` applies a camera FOV/ROI setting on the glasses and resolves after the
-ASG client reports it was applied. It applies to all captures (photos and video),
-and takes a single request object: either a named preset, or an explicit FOV plus
-optional region.
+`setFov` applies a temporary FOV/ROI override owned by the calling miniapp and
+resolves after the ASG client reports it was applied. It applies to all captures
+(photos and video) while that miniapp is active. When the miniapp closes, the host
+restores the previous live miniapp override or the persistent base setting. The
+factory/missing base is the centered `standard` preset (102 degrees); existing
+saved user values are preserved.
 
 ```typescript
 // A named preset. The simplest option, always center ROI.
@@ -105,10 +110,12 @@ Wrap calls in `try`/`catch` and read `code`.
 ```typescript
 try {
   const photo = await session.camera.takePhoto();
-  session.display.showBitmapView(photo.photoUrl);
+  session.display.render([{type: "image", id: "photo", box: {x: 144, y: 44, w: 288, h: 200}, data: photo.photoUrl}]);
 } catch (err) {
   if (err.code === "PERMISSION_NOT_DECLARED") {
-    session.display.showTextWall("Camera permission not granted");
+    session.display.render([
+      {type: "text", id: "msg", box: {x: 0, y: 0, w: 576, h: 288}, text: "Camera permission not granted"},
+    ]);
   }
 }
 ```

@@ -12,6 +12,7 @@ import {
   parseLanguageStream,
 } from "@mentra/sdk";
 import UserSession from "../UserSession";
+import { classifySonioxCredentialFailure } from "../soniox/SonioxKeyPool";
 import { PosthogService } from "../../logging/posthog.service";
 import { MemoryOwnerStat } from "../../metrics/memory-census";
 import { estimateArrayBufferBytes, sumEstimatedBytes } from "../../metrics/memory-estimate";
@@ -985,6 +986,22 @@ export class TranslationManager {
         sessionId: this.userSession.sessionId,
       });
       return;
+    }
+
+    if (error.message.includes("No available Soniox translation credentials")) {
+      this.logger.warn({ subscription, message: error.message }, "Soniox translation credentials cooling down");
+    } else if (error.message.includes("Soniox error")) {
+      const credentialFailure = classifySonioxCredentialFailure(error);
+      if (
+        credentialFailure.kind === "quota" ||
+        credentialFailure.kind === "concurrency" ||
+        credentialFailure.kind === "rate_limit"
+      ) {
+        this.logger.warn(
+          { subscription, failureKind: credentialFailure.kind, message: error.message },
+          "Soniox translation credential capacity error - retrying so fallback credentials can be tried",
+        );
+      }
     }
 
     // Schedule retry

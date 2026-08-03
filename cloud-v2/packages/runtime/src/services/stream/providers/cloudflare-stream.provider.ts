@@ -23,7 +23,7 @@
  *   POST   /accounts/:acct/stream/live_inputs/:uid/outputs   (restream destinations)
  */
 
-import type { ManagedStream, StreamOptions, StreamStatusResult } from "../../../protocol/camera";
+import type { ManagedStream, StreamOptions, StreamStatusResult } from "@mentra/cloud-protocol/camera";
 import type { StreamProvider } from "../stream.service";
 
 const CF_API = "https://api.cloudflare.com/client/v4";

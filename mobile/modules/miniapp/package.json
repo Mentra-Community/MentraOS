@@ -1,6 +1,6 @@
 {
   "name": "@mentra/miniapp",
-  "version": "0.3.0-dev.0",
+  "version": "0.3.0-dev.1",
   "description": "SDK for building MentraOS local miniapps (browser/WebView)",
   "author": "Mentra Labs",
   "license": "MIT",
@@ -53,6 +53,7 @@
     }
   },
   "dependencies": {
+    "@mentra/cloud-protocol": "workspace:*",
     "@mentra/types": "1.0.0-beta.2",
     "eventemitter3": "^5.0.1"
   },
@@ -63,12 +64,22 @@
   },
   "files": [
     "dist",
-    "src"
+    "src",
+    "!src/**/*.test.ts"
   ],
   "keywords": [
     "mentra",
     "mentraos",
     "miniapp",
     "smart-glasses"
-  ]
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Mentra-Community/MentraOS.git",
+    "directory": "mobile/modules/miniapp"
+  },
+  "homepage": "https://github.com/Mentra-Community/MentraOS/tree/dev/mobile/modules/miniapp#readme",
+  "bugs": {
+    "url": "https://github.com/Mentra-Community/MentraOS/issues"
+  }
 }

@@ -3,16 +3,9 @@ import {Languages} from "lucide-react"
 import {TranslationSettings} from "../hooks/useSettings"
 import {getLanguageName, getFlagEmoji} from "../lib/languages"
 
-/**
- * The fake app bar's surface — the app's primary blue, with white title text.
- * Exported so the App root can paint the top safe-area inset the same color,
- * making the status-bar area blend into the app bar.
- */
-export const APP_BAR_BACKGROUND = "#2089F3"
-export const APP_BAR_FOREGROUND = "#FFFFFF"
-
 interface HeaderProps {
   connected: boolean
+  appBarBackground: string
   accentColor: string
   accentForeground: string
   error: string | null
@@ -24,6 +17,7 @@ interface HeaderProps {
 
 export function Header({
   connected,
+  appBarBackground,
   accentColor,
   accentForeground,
   error,
@@ -37,13 +31,11 @@ export function Header({
       {/* Top header bar */}
       <div
         className="w-full h-[46px] px-6 backdrop-blur-lg flex justify-center items-center"
-        style={{background: APP_BAR_BACKGROUND}}>
+        style={{backgroundColor: appBarBackground}}>
         {/* Title with icon */}
         <div className="flex justify-start items-center gap-2">
-          <Languages className="w-6 h-6" color={APP_BAR_FOREGROUND} />
-          <div
-            className="text-center text-lg font-semibold font-['Red_Hat_Display'] leading-6"
-            style={{color: APP_BAR_FOREGROUND}}>
+          <Languages className="w-6 h-6" color="#FFFFFF" />
+          <div className="text-center text-white text-lg font-semibold font-['Red_Hat_Display'] leading-6">
             Translation
           </div>
         </div>
@@ -51,10 +43,10 @@ export function Header({
 
       {/* Connection error banner */}
       {error && (
-        <div className="w-full px-4 py-2 bg-amber-50 border-b border-amber-200 flex justify-between items-center gap-2">
+        <div className="w-full px-4 py-2 bg-amber-50 dark:bg-amber-950 border-b border-amber-200 dark:border-amber-900 flex justify-between items-center gap-2">
           <div className="flex items-center gap-2 flex-1 min-w-0">
             <div className="w-2 h-2 rounded-full bg-amber-500 flex-shrink-0" />
-            <span className="text-amber-800 text-sm font-medium truncate">{error}</span>
+            <span className="text-amber-800 dark:text-amber-200 text-sm font-medium truncate">{error}</span>
           </div>
           <button
             onClick={onReconnect}
@@ -68,7 +60,7 @@ export function Header({
       {!isTargetLanguageSelectorOpen && (
         <button
           onClick={onToggleTargetLanguageSelector}
-          className="w-full px-3 py-3 bg-white rounded-bl-2xl rounded-br-2xl backdrop-blur-lg hover:bg-gray-50 transition-colors flex items-center gap-2 shadow-md">
+          className="w-full px-3 py-3 bg-white dark:bg-zinc-900 rounded-bl-2xl rounded-br-2xl backdrop-blur-lg hover:bg-gray-50 dark:hover:bg-zinc-800 transition-colors flex items-center gap-2 shadow-md">
           {settings && (
             <>
               {/* Connection status indicator - before all chips */}
@@ -83,12 +75,12 @@ export function Header({
               {/* Scrollable chips container with fade-out edges */}
               <div className="relative flex-1 min-w-0">
                 {/* Left fade gradient */}
-                <div className="absolute left-0 top-0 bottom-0 w-1 bg-gradient-to-r from-white to-transparent pointer-events-none z-10" />
+                <div className="absolute left-0 top-0 bottom-0 w-1 bg-gradient-to-r from-white dark:from-zinc-900 to-transparent pointer-events-none z-10" />
 
                 {/* Scrollable chips */}
                 <div className="flex items-center gap-3 overflow-x-auto scrollbar-hide">
                   <div className="px-0"></div>
-                  <span className="text-sm font-semibold text-gray-700 flex-shrink-0">Target</span>
+                  <span className="text-sm font-semibold text-gray-700 dark:text-zinc-200 flex-shrink-0">Target</span>
                   <div
                     className="flex items-center gap-2 px-3 py-1.5 rounded-full flex-shrink-0"
                     style={{backgroundColor: accentColor, color: accentForeground}}>
@@ -101,7 +93,7 @@ export function Header({
                 </div>
 
                 {/* Right fade gradient */}
-                <div className="absolute right-0 top-0 bottom-0 w-1 bg-gradient-to-l from-white to-transparent pointer-events-none z-10" />
+                <div className="absolute right-0 top-0 bottom-0 w-1 bg-gradient-to-l from-white dark:from-zinc-900 to-transparent pointer-events-none z-10" />
               </div>
 
               {/* Dropdown arrow - fixed at right edge, always visible */}
@@ -118,7 +110,7 @@ export function Header({
                   strokeWidth="2"
                   strokeLinecap="round"
                   strokeLinejoin="round"
-                  className="text-gray-600"
+                  className="text-gray-600 dark:text-zinc-300"
                 />
               </svg>
             </>

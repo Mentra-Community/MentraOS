@@ -1,0 +1,71 @@
+name: Deploy cloud-v2 isaiah
+
+# Personal sandbox env (cloud-isaiah) — issue 019 account-auth testing while
+# cloud-debug is frozen for enterprise customers. Same shape as cloud-debug.
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - mentra-account-auth
+      - cloud-v2/isaiah
+      - cloud-v2/isaiah/**
+      - isaiah/os-1746-captions-language-hints
+    paths:
+      - "cloud-v2/**"
+      - ".github/workflows/cloud-v2-isaiah.yml"
+
+concurrency:
+  group: cloud-v2-isaiah-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy cloud-isaiah to AWS us-west-2
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    env:
+      PORTER_CLUSTER: "5692"
+      PORTER_PROJECT: "15081"
+      PORTER_DEPLOYMENT_TARGET_ID: 87f939d6-b019-4955-9f4b-1050e8ff57bd
+      PORTER_HOST: https://dashboard.porter.run
+      PORTER_APP_NAME: cloud-isaiah
+      PORTER_REPO_NAME: ${{ github.event.repository.name }}
+      PORTER_TOKEN: ${{ secrets.PORTER_TOKEN }}
+      CORE_HOSTNAME: core.isaiah.us-west-2.mentraglass.com
+      RUNTIME_HOSTNAME: runtime.isaiah.us-west-2.mentraglass.com
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set Git SHA tag
+        id: vars
+        run: echo "sha_short=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+
+      - name: Setup Porter CLI
+        uses: porter-dev/setup-porter@v0.1.0
+
+      - name: Deploy cloud-isaiah app
+        timeout-minutes: 45
+        working-directory: cloud-v2
+        env:
+          PORTER_TAG: ${{ steps.vars.outputs.sha_short }}
+        run: porter apply -w -f porter.isaiah.yaml
+
+      - name: Verify isaiah health
+        run: |
+          set -euo pipefail
+          if ! getent hosts "${CORE_HOSTNAME}" >/dev/null || ! getent hosts "${RUNTIME_HOSTNAME}" >/dev/null; then
+            echo "::warning::Isaiah DNS is not configured yet; skipping public health checks."
+            exit 0
+          fi
+          curl --retry 12 --retry-delay 10 --retry-all-errors -fsS "https://${CORE_HOSTNAME}/healthz"
+          echo
+          curl --retry 12 --retry-delay 10 --retry-all-errors -fsS "https://${RUNTIME_HOSTNAME}/healthz"
+          echo

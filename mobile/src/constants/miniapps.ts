@@ -1,8 +1,6 @@
 export const cameraPackageName = "com.mentra.camera"
-export const captionsPackageName = "com.mentra.offline_captions"
 export const galleryPackageName = "com.mentra.gallery"
 export const settingsPackageName = "com.mentra.settings"
-export const storePackageName = "com.mentra.store"
 export const simulatedPackageName = "com.mentra.simulated"
 export const mirrorPackageName = "com.mentra.mirror"
 export const mentraAiPackageName = "com.mentra.ai"
@@ -15,19 +13,17 @@ export const isChinaBuild = (): boolean => process.env.EXPO_PUBLIC_DEPLOYMENT_RE
 
 /**
  * Apps that are not shipped in the China build: Mentra Map (navigation),
- * Offline Captions, Notify, and Feedback. Enforced at every registration
- * surface — bundled-miniapp install, the offline-app catalog, and the
- * post-process filter that the cloud/local merge flows through.
+ * Notify, and Feedback. Enforced at every registration surface —
+ * bundled-miniapp install, the offline-app catalog, and the post-process
+ * filter that the cloud/local merge flows through.
  */
-export const CHINA_HIDDEN_APPS = [navigationPackageName, captionsPackageName, notifyPackageName, feedbackPackageName]
+export const CHINA_HIDDEN_APPS = [navigationPackageName, notifyPackageName, feedbackPackageName]
 
 // these apps cannot be uninstalled:
 export const SYSTEM_APPS = [
   cameraPackageName,
-  captionsPackageName,
   galleryPackageName,
   settingsPackageName,
-  storePackageName,
   simulatedPackageName,
   mirrorPackageName,
   mentraAiPackageName,

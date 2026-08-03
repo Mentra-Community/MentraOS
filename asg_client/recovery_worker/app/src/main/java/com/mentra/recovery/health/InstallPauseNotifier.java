@@ -9,11 +9,11 @@ import com.mentra.recovery.util.RecoveryConstants;
  * {@link com.mentra.recovery.service.RecoveryService}. Avoids permission-gated broadcasts for
  * same-package control, which break while ASG is uninstalled during backup reinstall.
  *
- * <p>Also exposes a readable {@link #isInstallPaused()} flag so the remediation worker can defer
- * its own download/install while an ASG-driven install is in flight, avoiding racing installs. The
- * pause self-expires after {@link RecoveryConstants#INSTALL_PAUSE_MAX_MS} so a missing completion
- * signal (e.g. a stuck/failed ASG OTA that never broadcasts {@code ACTION_INSTALL_COMPLETED})
- * cannot disable remediation indefinitely. This mirrors the HealthMonitor pause watchdog.
+ * <p>Also exposes a readable {@link #isInstallPaused()} flag so recovery-side install paths can
+ * defer while an ASG-driven install is in flight, avoiding racing installs. The pause self-expires
+ * after {@link RecoveryConstants#INSTALL_PAUSE_MAX_MS} so a missing completion signal (e.g. a
+ * stuck/failed ASG OTA that never broadcasts {@code ACTION_INSTALL_COMPLETED}) cannot pause
+ * recovery indefinitely. This mirrors the HealthMonitor pause watchdog.
  */
 public final class InstallPauseNotifier {
   public interface Listener {
@@ -34,7 +34,7 @@ public final class InstallPauseNotifier {
     listener = null;
   }
 
-  /** True while an install (ASG OTA or recovery reinstall/remediation) is in progress. */
+  /** True while an install (ASG OTA or recovery backup reinstall) is in progress. */
   public static boolean isInstallPaused() {
     long expiry = pauseExpiryMs;
     if (expiry == 0L) {

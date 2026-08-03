@@ -15,6 +15,7 @@
 
 import {writeFileSync, mkdirSync} from 'fs';
 import {dirname, resolve} from 'path';
+import {fileURLToPath} from 'url';
 import {
   ALLOWED_PERMISSIONS,
   ALLOWED_HARDWARE_TYPES,
@@ -82,7 +83,7 @@ export function generateSchema(): Record<string, unknown> {
           },
           ui: {
             type: 'string',
-            description: "Path to the UI bundle entry HTML, relative to the bundle root (e.g. ui/index.html). Optional — pure-background miniapps don't need a WebView.",
+            description: "Path to the UI bundle entry HTML, relative to the bundle root (e.g. ui/index.html). Optional  -- pure-background miniapps don't need a WebView.",
           },
         },
       },
@@ -156,7 +157,7 @@ export function generateSchema(): Record<string, unknown> {
             },
             description: {
               type: 'string',
-              description: 'AI-facing contract — say when to use the action.',
+              description: 'AI-facing contract  -- say when to use the action.',
             },
             parameters: {
               type: 'object',
@@ -182,6 +183,10 @@ export function generateSchema(): Record<string, unknown> {
                 },
                 required: {type: 'array', items: {type: 'string'}},
               },
+            },
+            outputSchema: {
+              type: 'object',
+              description: 'JSON-Schema descriptor for the structured action result (MCP outputSchema).',
             },
           },
         },
@@ -211,9 +216,10 @@ export function schemaPrint(): void {
  * own scripts (e.g. as a build step) so the published file stays in sync.
  */
 export function regenerateSchemaFile(): void {
-  // Resolve relative to this file: sdk/miniapp-cli/src/schema.ts → ../schema/miniapp.schema.json
-  const here = new URL(import.meta.url).pathname;
+  // Resolve relative to this file: sdk/miniapp-cli/src/schema.ts  -> ../schema/miniapp.schema.json
+  const here = fileURLToPath(import.meta.url);
   const target = resolve(here, '..', '..', 'schema', 'miniapp.schema.json');
   writeSchemaFile(target);
   process.stdout.write(`Wrote ${target}\n`);
 }
+

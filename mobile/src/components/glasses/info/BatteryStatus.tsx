@@ -4,9 +4,10 @@ import {Text, Icon} from "@/components/ignite"
 import {Group} from "@/components/ui/Group"
 import {StatusCard} from "@/components/ui/RouteButton"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {translate} from "@/i18n"
-import {useGlassesStore} from "@/stores/glasses"
 import {ThemedStyle} from "@/theme"
+import {engine} from "@mentra/engine"
 
 interface BatteryStatusProps {
   compact?: boolean
@@ -15,11 +16,12 @@ interface BatteryStatusProps {
 export function BatteryStatus({compact}: BatteryStatusProps) {
   const {theme, themed} = useAppTheme()
 
-  const caseBatteryLevel = useGlassesStore((state) => state.caseBatteryLevel)
-  const caseCharging = useGlassesStore((state) => state.caseCharging)
-  const caseRemoved = useGlassesStore((state) => state.caseRemoved)
-  const glassesBatteryLevel = useGlassesStore((state) => state.batteryLevel)
-  const glassesCharging = useGlassesStore((state) => state.charging)
+  const status = useEngineSnapshot(engine.glasses.status, (onChange) => engine.glasses.onStatus(onChange))
+  const caseBatteryLevel = status.case.battery
+  const caseCharging = status.case.charging
+  const caseRemoved = status.case.removed
+  const glassesBatteryLevel = status.battery
+  const glassesCharging = status.charging
 
   if (glassesBatteryLevel === undefined || glassesBatteryLevel === -1) {
     return null

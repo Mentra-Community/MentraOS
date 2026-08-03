@@ -188,7 +188,7 @@ class Simulated : SGCManager() {
     override fun dbg2() {}
 
     // Network Management
-    override fun requestWifiScan() {
+    override fun requestWifiScan(scanId: String?) {
         Bridge.log("requestWifiScan")
     }
 

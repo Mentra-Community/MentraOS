@@ -34,7 +34,14 @@ describe("MiniappsModule (session.miniapps)", () => {
         version: "1.0.0",
         running: false,
         compatibility: {isCompatible: true, missingRequired: [], missingOptional: [], warnings: []},
-        actions: [],
+        actions: [
+          {
+            id: "add_todo",
+            description: "Add a todo.",
+            parameters: {type: "object"},
+            outputSchema: {type: "object", properties: {added: {type: "string"}}},
+          },
+        ],
       },
     ]
     ;(session.sendRequest as unknown) = (payload: object) => {

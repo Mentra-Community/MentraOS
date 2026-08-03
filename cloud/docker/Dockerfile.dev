@@ -14,17 +14,11 @@ WORKDIR /app
 
 # Copy package.json and tsconfig files
 COPY package.json tsconfig.json tsconfig.base.json ./
-COPY patches/ ./patches/
 COPY packages/types/package.json packages/types/tsconfig.json ./packages/types/
 COPY packages/display-utils/package.json packages/display-utils/tsconfig.json ./packages/display-utils/
 COPY packages/sdk/package.json packages/sdk/tsconfig.json ./packages/sdk/
 COPY packages/utils/package.json packages/utils/tsconfig.json ./packages/utils/
 COPY packages/cloud/package.json packages/cloud/tsconfig.json ./packages/cloud/
-
-# Bun's patchedDependencies (cloud/package.json) requires the patch file to
-# exist at install time — without it, `bun install` errors with
-# "could not find patch file".
-COPY patches ./patches
 
 # Install dependencies only (skip prepare scripts that build SDK)
 # SDK will be built at runtime after volume mount

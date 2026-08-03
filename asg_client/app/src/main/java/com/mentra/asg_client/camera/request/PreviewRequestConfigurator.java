@@ -32,6 +32,36 @@ public final class PreviewRequestConfigurator {
             int photoJpegQuality,
             int jpegOrientation,
             CameraSettings cameraSettings) {
+        configure(
+                previewBuilder,
+                forVideo,
+                videoFps,
+                eisEnabled,
+                selectedFpsRange,
+                hasAutoFocus,
+                userExposureCompensation,
+                sizeForMetering,
+                photoJpegQuality,
+                jpegOrientation,
+                cameraSettings,
+                cameraSettings != null
+                        && (cameraSettings.mAsgSettings.isZslEnabled()
+                                || cameraSettings.mAsgSettings.isMfnrEnabled()));
+    }
+
+    public static void configure(
+            CaptureRequest.Builder previewBuilder,
+            boolean forVideo,
+            int videoFps,
+            boolean eisEnabled,
+            Range<Integer> selectedFpsRange,
+            boolean hasAutoFocus,
+            int userExposureCompensation,
+            Size sizeForMetering,
+            int photoJpegQuality,
+            int jpegOrientation,
+            CameraSettings cameraSettings,
+            boolean zsl) {
         previewBuilder.set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO);
         previewBuilder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON);
 
@@ -84,7 +114,7 @@ public final class PreviewRequestConfigurator {
             Log.d(TAG, "Setting JPEG orientation: " + jpegOrientation);
 
             if (cameraSettings != null && cameraSettings.isZslSupported()) {
-                cameraSettings.configurePreviewBuilder(previewBuilder);
+                cameraSettings.configurePreviewBuilder(previewBuilder, zsl);
             }
         }
     }

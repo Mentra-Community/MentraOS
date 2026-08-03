@@ -1,12 +1,12 @@
 package com.mentra.bluetoothsdk.camera
 
 import com.mentra.bluetoothsdk.PhotoCompression
+import com.mentra.bluetoothsdk.PhotoMode
 import com.mentra.bluetoothsdk.PhotoRequest
 import com.mentra.bluetoothsdk.PhotoSize
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertNull
-import kotlin.test.assertTrue
+import org.assertj.core.api.Assertions.assertThat
+import org.assertj.core.api.Assertions.assertThatThrownBy
+import org.junit.Test
 
 class PhotoRequestTest {
     @Test
@@ -19,7 +19,7 @@ class PhotoRequestTest {
                 sound = true,
             )
 
-        assertTrue(request.requestId.startsWith("photo-"))
+        assertThat(request.requestId).startsWith("photo-")
     }
 
     @Test
@@ -35,7 +35,9 @@ class PhotoRequestTest {
                 )
             )
 
-        assertNull(request.exposureTimeNs)
+        assertThat(request.exposureTimeNs).isNull()
+        assertThat(request.mode).isEqualTo(PhotoMode.PHOTO)
+        assertThat(request.transferMethod).isEqualTo("auto")
     }
 
     @Test
@@ -60,8 +62,8 @@ class PhotoRequestTest {
                 )
             )
 
-        assertTrue(withoutRequestId.requestId.startsWith("photo-"))
-        assertTrue(blankRequestId.requestId.startsWith("photo-"))
+        assertThat(withoutRequestId.requestId).startsWith("photo-")
+        assertThat(blankRequestId.requestId).startsWith("photo-")
     }
 
     @Test
@@ -77,6 +79,63 @@ class PhotoRequestTest {
                 )
             )
 
-        assertEquals("photo-1", request.requestId)
+        assertThat(request.requestId).isEqualTo("photo-1")
+    }
+
+    @Test
+    fun `fromMap preserves text mode`() {
+        val request =
+            PhotoRequest.fromMap(
+                mapOf(
+                    "size" to "medium",
+                    "mode" to "text",
+                    "webhookUrl" to "https://example.com/upload",
+                )
+            )
+
+        assertThat(request.mode).isEqualTo(PhotoMode.TEXT)
+    }
+
+    @Test
+    fun `fromMap preserves forced BLE transfer`() {
+        val request =
+            PhotoRequest.fromMap(
+                mapOf(
+                    "size" to "medium",
+                    "transferMethod" to "ble",
+                    "webhookUrl" to "https://example.com/upload",
+                )
+            )
+
+        assertThat(request.transferMethod).isEqualTo("ble")
+    }
+
+    @Test
+    fun `fromMap preserves direct transfer without BLE fallback`() {
+        val request =
+            PhotoRequest.fromMap(
+                mapOf(
+                    "size" to "medium",
+                    "transferMethod" to "direct",
+                    "webhookUrl" to "https://example.com/upload",
+                )
+            )
+
+        assertThat(request.transferMethod).isEqualTo("direct")
+    }
+
+    @Test
+    fun `fromMap rejects an unknown transfer method`() {
+        assertThatThrownBy {
+            PhotoRequest.fromMap(
+                mapOf(
+                    "size" to "medium",
+                    "transferMethod" to "wifi",
+                    "webhookUrl" to "https://example.com/upload",
+                )
+            )
+        }
+            .isInstanceOf(IllegalArgumentException::class.java)
+            .hasMessage("Invalid transferMethod \"wifi\". Expected auto, direct, or ble.")
     }
 }

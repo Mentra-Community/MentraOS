@@ -12,7 +12,7 @@ import {showAlert} from "@/utils/AlertUtils"
 import {PermissionFeatures, checkConnectivityRequirementsUI, requestFeaturePermissions} from "@/utils/PermissionsUtils"
 import {useState} from "react"
 import GlassesTroubleshootingModal from "@/components/glasses/GlassesTroubleshootingModal"
-import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
+import {engine} from "@mentra/engine"
 
 type BluetoothPermission = Permission | "android.permission.BLUETOOTH" | "android.permission.BLUETOOTH_ADMIN"
 
@@ -195,7 +195,7 @@ export default function PairingPrepScreen() {
 
     // skip pairing for simulated glasses:
     if (deviceModel.startsWith(DeviceTypes.SIMULATED)) {
-      await BluetoothSdk.connectSimulated()
+      await engine.glasses.connectSimulated()
       clearHistoryAndGoHome()
       return
     }
@@ -228,10 +228,7 @@ export default function PairingPrepScreen() {
             className="text-lg text-secondary-foreground"
             text="1. Disconnect your G2 from within the Even Realities app, or uninstall the Even Realities app"
           />
-          <Text
-            className="text-lg text-secondary-foreground"
-            text="2. Place your G2 in the charging case with the lid open."
-          />
+          <Text className="text-lg text-secondary-foreground" text="2. Place your G2 in the charging case." />
         </View>
       </View>
     )

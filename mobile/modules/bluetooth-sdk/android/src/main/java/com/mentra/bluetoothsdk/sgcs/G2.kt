@@ -575,16 +575,18 @@ private object DevSettingsProto {
     /// TimeSync submessage: f1 = (Unix seconds + TZ offset seconds) as Int32, no TZ field.
     /// Firmware appears to ignore the TZ field, so we pre-shift the timestamp itself
     /// to make UTC interpretation read as local. Empirically confirmed via probe variants in dbg1().
-    fun timeSync(magicRandom: Int): ByteArray {
+    fun timeSync(
+        magicRandom: Int,
+        timestampMs: Long = System.currentTimeMillis()
+    ): ByteArray {
         val w = ProtobufWriter()
         w.writeInt32Field(1, DevCfgCommandId.TIME_SYNC.value)
         w.writeInt32Field(2, magicRandom)
 
         val tsW = ProtobufWriter()
-        val nowMs = System.currentTimeMillis()
-        val nowSec = nowMs / 1000
-        val tzSec = (TimeZone.getDefault().getOffset(nowMs) / 1000).toLong()
-        tsW.writeInt32Field(1, (nowSec + tzSec).toInt())
+        val timestampSec = timestampMs / 1000
+        val tzSec = (TimeZone.getDefault().getOffset(timestampMs) / 1000).toLong()
+        tsW.writeInt32Field(1, (timestampSec + tzSec).toInt())
         w.writeMessageField(128, tsW.toByteArray())
         return w.toByteArray()
     }
@@ -1469,6 +1471,13 @@ class G2 : SGCManager() {
     private val imageContainerIDPool: List<Int> = listOf(10, 11, 12, 13)
     private val textContainerIDPool: List<Int> = listOf(1, 2, 3, 4, 5, 6)
 
+    /**
+     * One firmware text line (hardware-calibrated 2026-07-03: 28px overflows —
+     * the fw draws its overflow-indicator tick — 40px is clean). Text
+     * containers are silently grown to at least this.
+     */
+    private val minTextContainerHeight = 40
+
     /** Default container seeded into every fresh page: 200x100 centered at 188,44. */
     private val defaultImgX = 188
     private val defaultImgY = 44
@@ -1700,7 +1709,7 @@ class G2 : SGCManager() {
                 payload = payload,
                 reserveFlag = true
             )
-        sendToGlasses(packets)
+        sendToGlasses(packets, left = true, right = true)
     }
 
     // ---------- Authentication Sequence ----------
@@ -1725,7 +1734,7 @@ class G2 : SGCManager() {
 
         delay(200)
         val timeSync = DevSettingsProto.timeSync(sendManager.nextMagicRandom())
-        sendDevSettingsCommand(timeSync)
+        sendDevSettingsCommand(timeSync, left = true, right = true)
 
         // Skip onboarding on connect
         delay(200)
@@ -2038,13 +2047,19 @@ class G2 : SGCManager() {
         }
 
         val rx = x ?: defaultTextX
-        val ry = y ?: defaultTextY
+        // Legacy callers can hand us y beyond the canvas — clamp it first so
+        // the height formula below can't go negative/below one fw line.
+        val ry = minOf(maxOf(y ?: defaultTextY, 0), 288 - minTextContainerHeight)
         val rw = width ?: defaultTextWidth
-        val rh = height ?: defaultTextHeight
-        val rBorderWidth = defaultTextBorderWidth
-        val rBorderColor = defaultTextBorderColor
-        val rBorderRadius = defaultTextBorderRadius
-        val rPaddingLength = defaultTextPaddingLength
+        // Firmware guard: grow to at least one fw line, clamped to the canvas.
+        // Content-independent so rect keys stay stable across updates.
+        val rh = minOf(maxOf(height ?: defaultTextHeight, minTextContainerHeight), 288 - ry)
+        // Honor caller-provided border styling (scene rects render as bordered
+        // empty containers — a border of 0-by-default here made them invisible).
+        val rBorderWidth = borderWidth ?: defaultTextBorderWidth
+        val rBorderColor = borderColor ?: defaultTextBorderColor
+        val rBorderRadius = borderRadius ?: defaultTextBorderRadius
+        val rPaddingLength = paddingLength ?: defaultTextPaddingLength
         val content = if (text.isEmpty()) " " else text
 
         // Pure state mutation: update the container's content and schedule its sends; the reconcile
@@ -2101,7 +2116,7 @@ class G2 : SGCManager() {
             textContainers[newIndex].pendingSends = 1 + EVEN_HUB_RESEND_COUNT
         }
         signalDisplayDirty()
-        rebuildPage()
+        requestPageRebuild()
     }
 
     override fun sendDoubleTextWall(top: String, bottom: String) {
@@ -2122,7 +2137,7 @@ class G2 : SGCManager() {
         // loop pushes the blanked text on a live page, and a dead page is only resurrected for
         // meaningful (non-blank) content, so a clear can't churn it back up.
         for (i in textContainers.indices) {
-            textContainers[i].content = " "
+            textContainers[i].content = "\n"
             textContainers[i].pendingSends = 1 + EVEN_HUB_RESEND_COUNT
         }
         for (i in imageContainers.indices) {
@@ -2136,6 +2151,24 @@ class G2 : SGCManager() {
             }
         }
         signalDisplayDirty()
+
+        // Purge scene HUD containers structurally: a blanked small box still
+        // renders the firmware's overflow tick (a "\n" husk is two empty lines
+        // in a one-line box) and corrupts whatever app draws next. Full-canvas
+        // containers stay blanked-in-place — the shipped caption-gap behavior,
+        // storm-safe (no rebuild on ordinary clears). Only when positioned HUD
+        // husks exist (app exit) do we drop them + rebuild ONCE.
+        val huskIds = textContainers
+            .filter { !(it.x == 0 && it.y == 0 && it.width >= defaultTextWidth && it.height >= defaultTextHeight) }
+            .map { it.id }
+            .toSet()
+        if (huskIds.isNotEmpty()) {
+            textContainers.removeAll { it.id in huskIds }
+            sceneTextByElement.entries.removeAll { it.value in huskIds }
+            sceneImageByElement.clear()
+            Bridge.log("G2: clearDisplay() — purging ${huskIds.size} positioned husk container(s), one rebuild")
+            displayScope.launch { coalescedPageRebuild() }
+        }
     }
 
     /**
@@ -2196,7 +2229,7 @@ class G2 : SGCManager() {
             // A brand-new page needs its structure built before the loop can push pixels; the dirty
             // flag stays set so the reconcile loop sends the image once the page exists.
             if (!pageCreated) {
-                displayScope.launch { rebuildPage() }
+                if (sceneBatchActive) sceneStructuralPending = true else displayScope.launch { coalescedPageRebuild() }
             }
             return true
         } else {
@@ -2208,10 +2241,432 @@ class G2 : SGCManager() {
             signalDisplayDirty()
             Bridge.log("G2: displayBitmap() - added container ${container.id} for rect $rx,$ry ${rw}x$rh, rebuilding page")
             // New container changes page structure: rebuild it, then the loop sends the pixels.
-            displayScope.launch { rebuildPage() }
+            if (sceneBatchActive) sceneStructuralPending = true else displayScope.launch { coalescedPageRebuild() }
         }
 
         return true
+    }
+
+    // ── Scene verbs (display.render() pipeline) ─────────────────────────────
+    // Element-id-aware wrappers over the container machinery. The base
+    // SGCManager.applySceneFrame walks host-diffed frames into these; identity
+    // is the element id (DeviceManager sweeps the previous app's elements on an
+    // app switch, so at most one app's ids are live at a time). Containers are
+    // still rect-keyed underneath — the maps pin element↔container so content
+    // updates go in place and moves recreate at the SAME container id.
+    private val sceneTextByElement = mutableMapOf<String, Int>()
+
+    // Images map to an ARRAY of containers: firmware refuses image transfers
+    // into containers beyond ~200x100 (hardware-verified 2026-07-03), so bigger
+    // images tile across multiple containers (400x100 → two side-by-side,
+    // 150x150 → two stacked).
+    private val sceneImageByElement = mutableMapOf<String, List<Int>>()
+
+    private data class ImageTile(val dx: Int, val dy: Int, val w: Int, val h: Int)
+
+    /** Tile rects (relative to the element box) with firmware-acceptable sizes. Row-major. */
+    private fun imageTileRects(w: Int, h: Int): List<ImageTile> {
+        val maxW = 200
+        val maxH = 100
+        val cols = (w + maxW - 1) / maxW
+        val rows = (h + maxH - 1) / maxH
+        val out = ArrayList<ImageTile>(cols * rows)
+        for (r in 0 until rows) {
+            for (c in 0 until cols) {
+                val dx = c * maxW
+                val dy = r * maxH
+                out.add(ImageTile(dx, dy, minOf(maxW, w - dx), minOf(maxH, h - dy)))
+            }
+        }
+        return out
+    }
+
+    // Scene-frame rebuild batching. A frame with several new containers must
+    // NOT rebuild the page once per create: rebuildPage sends SHUTDOWN_PAGE,
+    // and 4-5 shutdown/recover cycles back-to-back are a firmware rebuild
+    // storm — the G2 punishes those by dropping the BLE link (same failure
+    // family as the mic-session incidents). While a frame is being applied,
+    // structural changes only mark the flag; applySceneFrame does ONE rebuild
+    // at the end. Both flags are only touched on displayScope (Dispatchers.Main).
+    private var sceneBatchActive = false
+    private var sceneStructuralPending = false
+
+    /** Rebuild now — or, inside an applySceneFrame batch, once at frame end. */
+    private suspend fun requestPageRebuild() {
+        if (sceneBatchActive) {
+            sceneStructuralPending = true
+            return
+        }
+        coalescedPageRebuild()
+    }
+
+    /**
+     * Structural change: tear down + rebuild ONLY when the page is actually
+     * live. When the page is already down (mid-recovery, or a prior frame's
+     * rebuild in flight), sending another SHUTDOWN_PAGE restarts the firmware
+     * recovery cycle — frames arriving faster than recovery completes then keep
+     * the page down FOREVER (nothing renders, image fragments all fail). A down
+     * page just needs the dirty signal: the reconcile loop resurrects it once,
+     * with the full current container list, which already includes every
+     * structural change accumulated while it was down.
+     */
+    private suspend fun coalescedPageRebuild() {
+        if (pageCreated) {
+            rebuildPage()
+        } else {
+            Bridge.log("G2: structural change while page down — deferring to reconcile rebuild (no extra shutdown)")
+            signalDisplayDirty()
+        }
+    }
+
+    /**
+     * G2 override of the default paint-then-sweep: identical walk, but run as
+     * ONE displayScope coroutine with structural rebuilds coalesced to a single
+     * shutdown/rebuild per frame.
+     */
+    override fun applySceneFrame(frame: SceneFrame) {
+        displayScope.launch {
+            if (frame.replay) {
+                sceneTextByElement.clear()
+                sceneImageByElement.clear()
+            }
+            sceneBatchActive = true
+            sceneStructuralPending = false
+            try {
+                // Type-changed ids (removed AND re-painted this frame) must be
+                // removed BEFORE the paint — post-paint removal would delete
+                // the just-painted replacement (registries key by id).
+                val paintedIds = frame.elements.mapTo(HashSet()) { it.id }
+                for (id in frame.removed) {
+                    if (id in paintedIds) applySceneRemove(id)
+                }
+                for (el in frame.elements) {
+                    if (!frame.replay && el.change == "unchanged") continue
+                    when (el.type) {
+                        "text" ->
+                            applySceneText(el.text ?: "", el.x, el.y, el.w, el.h, el.border, el.radius, el.id)
+                        "rect" ->
+                            applySceneText("", el.x, el.y, el.w, el.h, maxOf(1, el.border), el.radius, el.id)
+                        "image" ->
+                            el.data?.let { applySceneBitmap(it, el.x, el.y, el.w, el.h, el.id) }
+                        else -> Bridge.log("G2: applySceneFrame: unknown element type ${el.type}")
+                    }
+                }
+                for (id in frame.removed) {
+                    if (id !in paintedIds) applySceneRemove(id)
+                }
+            } finally {
+                // Flush inside finally: a mid-frame exception must not strand
+                // a pending structural rebuild (the page would sit stale until
+                // the next frame happened to be structural).
+                sceneBatchActive = false
+                if (sceneStructuralPending) {
+                    sceneStructuralPending = false
+                    Bridge.log("G2: applySceneFrame — structural changes, ONE coalesced rebuild for the whole frame")
+                    coalescedPageRebuild()
+                }
+            }
+        }
+    }
+
+    override fun onSceneReplay(appId: String) {
+        // A replay frame repaints from scratch through the create path; forget
+        // the element mapping so creates re-match/re-register cleanly.
+        sceneTextByElement.clear()
+        sceneImageByElement.clear()
+    }
+
+    override fun drawLayoutText(
+        text: String,
+        x: Int,
+        y: Int,
+        width: Int,
+        height: Int,
+        borderWidth: Int,
+        borderRadius: Int,
+        elementId: String,
+        layoutId: String?
+    ) {
+        displayScope.launch { applySceneText(text, x, y, width, height, borderWidth, borderRadius, elementId) }
+    }
+
+    /** Scene text upsert — runs on displayScope; rebuilds go through [requestPageRebuild]. */
+    private suspend fun applySceneText(
+        text: String,
+        x: Int,
+        y: Int,
+        width: Int,
+        height: Int,
+        borderWidth: Int,
+        borderRadius: Int,
+        elementId: String
+    ) {
+        // Same firmware min-height guard as sendText2, applied before the
+        // registry rect checks so grown rects stay consistent across calls.
+        @Suppress("NAME_SHADOWING")
+        val y = minOf(maxOf(y, 0), 288 - minTextContainerHeight)
+        @Suppress("NAME_SHADOWING")
+        val height = minOf(maxOf(height, minTextContainerHeight), 288 - y)
+        run {
+            val content = if (text.isEmpty()) " " else text
+            val existingId = sceneTextByElement[elementId]
+            if (existingId != null) {
+                val idx = textContainers.indexOfFirst { it.id == existingId }
+                if (idx >= 0) {
+                    val c = textContainers[idx]
+                    if (c.x == x && c.y == y && c.width == width && c.height == height &&
+                        c.borderWidth == borderWidth && c.borderRadius == borderRadius
+                    ) {
+                        // Content-only change: update in place — NEVER a page
+                        // rebuild. On G2 this is correctness, not perf: page
+                        // teardown couples to mic state and firmware recovery
+                        // storms (design doc §3.4.1 hard rule).
+                        c.content = content
+                        c.pendingSends = 1 + EVEN_HUB_RESEND_COUNT
+                        signalDisplayDirty()
+                        return@run
+                    }
+                    // Moved/restyled: recreate at the SAME container id (structural).
+                    textContainers[idx] =
+                        TextContainer(
+                            id = existingId,
+                            x = x,
+                            y = y,
+                            width = width,
+                            height = height,
+                            content = content,
+                            borderWidth = borderWidth,
+                            borderColor = defaultTextBorderColor,
+                            borderRadius = borderRadius,
+                            paddingLength = defaultTextPaddingLength,
+                            pendingSends = 1 + EVEN_HUB_RESEND_COUNT
+                        )
+                    signalDisplayDirty()
+                    requestPageRebuild()
+                    return@run
+                }
+                // Container got evicted underneath us — fall through to create.
+                sceneTextByElement.remove(elementId)
+            }
+
+            sendText2(
+                content,
+                x,
+                y,
+                width,
+                height,
+                borderWidth,
+                defaultTextBorderColor,
+                borderRadius,
+                defaultTextPaddingLength
+            )
+            val idx =
+                textContainers.indexOfFirst {
+                    it.matches(x, y, width, height, borderWidth, defaultTextBorderColor, borderRadius, defaultTextPaddingLength)
+                }
+            if (idx >= 0) {
+                val cid = textContainers[idx].id
+                // The container id may have been LRU-recycled from another element.
+                sceneTextByElement.entries.removeAll { it.value == cid }
+                sceneTextByElement[elementId] = cid
+            }
+        }
+    }
+
+    override fun drawLayoutBitmap(
+        base64ImageData: String,
+        x: Int,
+        y: Int,
+        width: Int,
+        height: Int,
+        elementId: String,
+        layoutId: String?
+    ): Boolean {
+        // applySceneBitmap is suspend (tile encodes + batched rebuilds); legacy
+        // per-element callers fire it on displayScope like every other verb.
+        displayScope.launch { applySceneBitmap(base64ImageData, x, y, width, height, elementId) }
+        return true
+    }
+
+    /** Scene bitmap upsert — rebuilds go through the batch flag (see applySceneFrame). */
+    private suspend fun applySceneBitmap(
+        base64ImageData: String,
+        x: Int,
+        y: Int,
+        width: Int,
+        height: Int,
+        elementId: String
+    ): Boolean {
+        val tiles = imageTileRects(width, height)
+        if (tiles.size > imageContainerIDPool.size) {
+            Bridge.log(
+                "G2: applySceneBitmap '$elementId' ${width}x$height needs ${tiles.size} tiles — exceeds the ${imageContainerIDPool.size}-container pool, dropping"
+            )
+            return false
+        }
+
+        // Element moved or re-tiled: blacken any containers whose rects no
+        // longer belong to this element's tile set.
+        sceneImageByElement[elementId]?.let { existing ->
+            val wantedRects = tiles.map { listOf(x + it.dx, y + it.dy, it.w, it.h) }.toSet()
+            for (cid in existing) {
+                val idx = imageContainers.indexOfFirst { it.id == cid }
+                if (idx >= 0) {
+                    val c = imageContainers[idx]
+                    val stillWanted = listOf(c.x, c.y, c.width, c.height) in wantedRects
+                    if (!stillWanted && c.bmpData.isNotEmpty()) {
+                        c.bmpData = ByteArray(0)
+                        c.dirty = true
+                        signalDisplayDirty()
+                    }
+                }
+            }
+        }
+        sceneImageByElement.remove(elementId)
+
+        val cids = mutableListOf<Int>()
+        if (tiles.size == 1) {
+            // Single container — the existing path (decode, aspect-fit, encode).
+            if (!displayBitmap(base64ImageData, x, y, width, height)) return false
+            val idx = imageContainers.indexOfFirst { it.matches(x, y, width, height) }
+            if (idx < 0) return false
+            cids.add(imageContainers[idx].id)
+        } else {
+            // Tiled: render the whole image to grayscale ONCE at the element
+            // size, then slice per-tile rows into their own 4-bit BMPs, one
+            // firmware container per tile.
+            val rawData = Base64.decode(base64ImageData, Base64.DEFAULT) ?: return false
+            val gray = renderG2Grayscale(rawData, width, height) ?: run {
+                Bridge.log("G2: applySceneBitmap - failed to render grayscale")
+                return false
+            }
+            Bridge.log("G2: applySceneBitmap '$elementId' ${width}x$height → ${tiles.size} tiles")
+            for (t in tiles) {
+                val tilePixels = ByteArray(t.w * t.h)
+                for (row in 0 until t.h) {
+                    System.arraycopy(gray, (t.dy + row) * width + t.dx, tilePixels, row * t.w, t.w)
+                }
+                val bmp = build4BitBmp(tilePixels, t.w, t.h) ?: run {
+                    Bridge.log("G2: applySceneBitmap - tile encode failed")
+                    return false
+                }
+                val tx = x + t.dx
+                val ty = y + t.dy
+                val idx = imageContainers.indexOfFirst { it.matches(tx, ty, t.w, t.h) }
+                if (idx >= 0) {
+                    imageContainers[idx].bmpData = bmp
+                    imageContainers[idx].dirty = true
+                    cids.add(imageContainers[idx].id)
+                } else {
+                    val container = addImageContainer(tx, ty, t.w, t.h, bmp)
+                    val j = imageContainers.indexOfFirst { it.id == container.id }
+                    if (j >= 0) imageContainers[j].dirty = true
+                    cids.add(container.id)
+                    requestPageRebuild()
+                }
+            }
+            signalDisplayDirty()
+        }
+
+        // Container ids may have been LRU-recycled from other elements.
+        val taken = cids.toSet()
+        val keys = sceneImageByElement.keys.toList()
+        for (key in keys) {
+            val remaining = sceneImageByElement[key]?.filter { it !in taken } ?: continue
+            if (remaining.isEmpty()) sceneImageByElement.remove(key) else sceneImageByElement[key] = remaining
+        }
+        sceneImageByElement[elementId] = cids
+        return true
+    }
+
+    /**
+     * Decode an image and render it to raw 8-bit grayscale at target size
+     * (aspect-fit, centered on black) — the front half of [convertToG2Bmp],
+     * exposed for the tiler which encodes per-tile BMPs from one render.
+     */
+    private fun renderG2Grayscale(data: ByteArray, targetWidth: Int, targetHeight: Int): ByteArray? {
+        val srcBitmap = BitmapFactory.decodeByteArray(data, 0, data.size) ?: return null
+        val scale = minOf(targetWidth.toDouble() / srcBitmap.width, targetHeight.toDouble() / srcBitmap.height)
+        val scaledW = maxOf(1, (srcBitmap.width * scale).toInt())
+        val scaledH = maxOf(1, (srcBitmap.height * scale).toInt())
+        val offsetX = (targetWidth - scaledW) / 2
+        val offsetY = (targetHeight - scaledH) / 2
+
+        val destBitmap = Bitmap.createBitmap(targetWidth, targetHeight, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(destBitmap)
+        canvas.drawColor(Color.BLACK)
+        canvas.drawBitmap(
+            srcBitmap,
+            Rect(0, 0, srcBitmap.width, srcBitmap.height),
+            Rect(offsetX, offsetY, offsetX + scaledW, offsetY + scaledH),
+            Paint(Paint.FILTER_BITMAP_FLAG)
+        )
+
+        val gray = ByteArray(targetWidth * targetHeight)
+        for (yy in 0 until targetHeight) {
+            for (xx in 0 until targetWidth) {
+                val pixel = destBitmap.getPixel(xx, yy)
+                val v = (Color.red(pixel) * 299 + Color.green(pixel) * 587 + Color.blue(pixel) * 114) / 1000
+                gray[yy * targetWidth + xx] = v.toByte()
+            }
+        }
+        srcBitmap.recycle()
+        destBitmap.recycle()
+        return gray
+    }
+
+    override fun removeLayoutElement(elementId: String, layoutId: String?) {
+        displayScope.launch { applySceneRemove(elementId) }
+    }
+
+    /**
+     * Scene element removal — STRUCTURAL. Blanked-in-place containers still
+     * RENDER (the firmware draws a cursor-like mark at a whitespace container's
+     * content origin — the stray tick; legacy never saw it because its only
+     * container's origin sat above the visible eyebox). A removed element
+     * leaves the page: drop it from the tracked list (freeing the pool id) and
+     * mark the frame structural — the batched frame-end rebuild recreates the
+     * page without it. Never a per-remove shutdown (mic coupling).
+     */
+    private suspend fun applySceneRemove(elementId: String) {
+        sceneTextByElement.remove(elementId)?.let { id ->
+            val idx = textContainers.indexOfFirst { it.id == id }
+            if (idx >= 0) {
+                textContainers.removeAt(idx)
+                requestPageRebuild()
+            }
+        }
+        sceneImageByElement.remove(elementId)?.let { ids ->
+            for (id in ids) {
+                val idx = imageContainers.indexOfFirst { it.id == id }
+                if (idx >= 0 && imageContainers[idx].bmpData.isNotEmpty()) {
+                    imageContainers[idx].bmpData = ByteArray(0)
+                    imageContainers[idx].dirty = true
+                }
+            }
+            signalDisplayDirty()
+            requestPageRebuild()
+        }
+    }
+
+    /**
+     * Sweep a set of scene elements as ONE batched structural change (called by
+     * DeviceManager on scene→legacy and cross-app transitions, outside any
+     * applySceneFrame batch — without batching, each remove would rebuild).
+     */
+    override fun clearSceneElements(elementIds: List<String>) {
+        displayScope.launch {
+            sceneBatchActive = true
+            try {
+                for (id in elementIds) applySceneRemove(id)
+            } finally {
+                sceneBatchActive = false
+            }
+            if (sceneStructuralPending) {
+                sceneStructuralPending = false
+                coalescedPageRebuild()
+            }
+        }
     }
 
     /**
@@ -2684,10 +3139,30 @@ class G2 : SGCManager() {
     // ---------- Private Display Helpers ----------
 
     private fun createPageWithContainers() {
-        // build the page's text containers from the live tracked list.
-        val textContainerProps: List<ByteArray> = ArrayList<ByteArray>(textContainers.size).apply {
-            for (i in textContainers.indices) {
-                val c = textContainers[i]
+        // Dedicated event-capture container: id 0, 1x1, borderless, empty — the
+        // designated event-capture slot per the RE demos ("container 0 is
+        // event-capture"). Touch events keep flowing through it, and no REAL
+        // container carries the flag: marking whichever container happened to
+        // be first painted a visible artifact once pages stopped being one
+        // full-screen box (the stray persistent line).
+        val textContainerProps: List<ByteArray> = ArrayList<ByteArray>(textContainers.size + 1).apply {
+            add(
+                EvenHubProto.textContainerProperty(
+                    x = 0,
+                    y = 0,
+                    width = 1,
+                    height = 1,
+                    borderWidth = 0,
+                    borderColor = 0,
+                    borderRadius = 0,
+                    paddingLength = 0,
+                    containerID = 0,
+                    containerName = "evt-0",
+                    isEventCapture = true,
+                    content = ""
+                )
+            )
+            for (c in textContainers) {
                 add(
                     EvenHubProto.textContainerProperty(
                         x = c.x,
@@ -2700,7 +3175,7 @@ class G2 : SGCManager() {
                         paddingLength = c.paddingLength,
                         containerID = c.id,
                         containerName = c.name,
-                        isEventCapture = i == 0,// the first container is the event capture container
+                        isEventCapture = false,
                         content = c.content
                     )
                 )
@@ -3290,7 +3765,12 @@ class G2 : SGCManager() {
     /// time-zone travel, or a long sleep where the glasses' clock has drifted.
     fun syncTime() {
         Bridge.log("G2: syncTime()")
-        val msg = DevSettingsProto.timeSync(sendManager.nextMagicRandom())
+        sendSetSystemTime(System.currentTimeMillis())
+    }
+
+    override fun sendSetSystemTime(timestampMs: Long) {
+        Bridge.log("G2: sendSetSystemTime()")
+        val msg = DevSettingsProto.timeSync(sendManager.nextMagicRandom(), timestampMs)
         sendDevSettingsCommand(msg, left = true, right = true)
     }
 
@@ -3309,7 +3789,7 @@ class G2 : SGCManager() {
 
     // ---------- SGCManager: Network (G2 has no WiFi) ----------
 
-    override fun requestWifiScan() {}
+    override fun requestWifiScan(scanId: String?) {}
     override fun sendWifiCredentials(ssid: String, password: String) {}
     override fun forgetWifiNetwork(ssid: String) {}
     override fun sendHotspotState(enabled: Boolean) {}

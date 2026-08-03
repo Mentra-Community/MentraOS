@@ -217,25 +217,79 @@ public struct StreamResolvedConfig: Equatable {
     }
 }
 
+private func streamInt64Value(_ value: Any?) -> Int64? {
+    if let int64 = value as? Int64 { return int64 }
+    if let int = value as? Int { return Int64(int) }
+    if let number = value as? NSNumber { return number.int64Value }
+    return nil
+}
+
+/// Live encoder and device telemetry reported by the glasses while streaming.
+public struct StreamLiveStats: Equatable {
+    public let bitrate: Int64?
+    public let fps: Double?
+    public let droppedFrames: Int64?
+    public let duration: Int64?
+    public let temperatureC: Double?
+
+    public init(
+        bitrate: Int64? = nil,
+        fps: Double? = nil,
+        droppedFrames: Int64? = nil,
+        duration: Int64? = nil,
+        temperatureC: Double? = nil
+    ) {
+        self.bitrate = bitrate
+        self.fps = fps
+        self.droppedFrames = droppedFrames
+        self.duration = duration
+        self.temperatureC = temperatureC
+    }
+
+    init?(values: [String: Any]?) {
+        guard let values else { return nil }
+        self.init(
+            bitrate: streamInt64Value(values["bitrate"]),
+            fps: doubleValue(values["fps"]),
+            droppedFrames: streamInt64Value(values["droppedFrames"]),
+            duration: streamInt64Value(values["duration"]),
+            temperatureC: doubleValue(values["temperatureC"])
+        )
+    }
+
+    var values: [String: Any] {
+        var values: [String: Any] = [:]
+        if let bitrate { values["bitrate"] = bitrate }
+        if let fps { values["fps"] = fps }
+        if let droppedFrames { values["droppedFrames"] = droppedFrames }
+        if let duration { values["duration"] = duration }
+        if let temperatureC { values["temperatureC"] = temperatureC }
+        return values
+    }
+}
+
 public struct StreamRequest {
     public let streamUrl: String
     public let streamId: String
     public let sound: Bool
     public let video: StreamVideoConfig?
     public let audio: StreamAudioConfig?
+    public let authToken: String?
 
     public init(
         streamUrl: String,
         streamId: String = "",
         sound: Bool = true,
         video: StreamVideoConfig? = nil,
-        audio: StreamAudioConfig? = nil
+        audio: StreamAudioConfig? = nil,
+        authToken: String? = nil
     ) {
         self.streamUrl = streamUrl
         self.streamId = streamId
         self.sound = sound
         self.video = video
         self.audio = audio
+        self.authToken = authToken
     }
 
     init(values: [String: Any]) {
@@ -248,7 +302,8 @@ public struct StreamRequest {
             streamId: values["streamId"] as? String ?? "",
             sound: values["sound"] as? Bool ?? true,
             video: StreamVideoConfig(values: values["video"] as? [String: Any]),
-            audio: StreamAudioConfig(values: values["audio"] as? [String: Any])
+            audio: StreamAudioConfig(values: values["audio"] as? [String: Any]),
+            authToken: values["authToken"] as? String ?? values["auth_token"] as? String
         )
     }
 
@@ -263,6 +318,9 @@ public struct StreamRequest {
         }
         if let audioValues = audio?.dictionary, !audioValues.isEmpty {
             values["audio"] = audioValues
+        }
+        if let authToken, !authToken.isEmpty {
+            values["authToken"] = authToken
         }
         return values
     }
@@ -553,13 +611,22 @@ public enum StreamStatus: CustomStringConvertible, Equatable {
 
 public struct StreamStatusEvent: CustomStringConvertible {
     public let status: StreamStatus
+    public let stats: StreamLiveStats?
+    /// True when the glasses will retry the failed publisher themselves
+    /// (emitting side lands in PR #3488); absent on older firmware and on
+    /// events not parsed from a glasses status map. Carried here instead of
+    /// as an `.error` associated value so the public case stays unchanged.
+    public private(set) var willRetry: Bool?
 
-    public init(status: StreamStatus) {
+    public init(status: StreamStatus, stats: StreamLiveStats? = nil) {
         self.status = status
+        self.stats = stats
     }
 
     public init(values: [String: Any]) {
         status = StreamStatus(values: values)
+        stats = StreamLiveStats(values: values["stats"] as? [String: Any])
+        willRetry = boolValue(values, "willRetry")
     }
 
     public var state: StreamState {
@@ -577,6 +644,12 @@ public struct StreamStatusEvent: CustomStringConvertible {
     public var values: [String: Any] {
         var values = status.values
         values["type"] = "stream_status"
+        if let stats {
+            values["stats"] = stats.values
+        }
+        if let willRetry {
+            values["willRetry"] = willRetry
+        }
         return values
     }
 

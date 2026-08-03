@@ -1,11 +1,19 @@
 import {ScrollText, Settings as SettingsGlyph} from "lucide-react"
 
+import {useColorScheme} from "@mentra/miniapp/ui"
+
 import type {HoldHandlers} from "../hooks/useDeveloperMode"
-import {ACCENT, ACCENT_FG} from "../lib/theme"
+import {ACCENT, ACCENT_FG, ACCENT_TEXT} from "../lib/theme"
 
 export type Tab = "script" | "settings"
 
 const INACTIVE = "#3F3F46"
+const INACTIVE_DARK = "#A1A1AA"
+
+/** Inactive icon/label ink for the current host color scheme. */
+function useInactiveColor(): string {
+  return useColorScheme() === "dark" ? INACTIVE_DARK : INACTIVE
+}
 
 interface BottomNavProps {
   activeTab: Tab
@@ -15,8 +23,9 @@ interface BottomNavProps {
 }
 
 export function BottomNav({activeTab, onTabChange, settingsHoldHandlers}: BottomNavProps) {
+  const inactive = useInactiveColor()
   return (
-    <div className="w-full h-16 bg-white/85 backdrop-blur-lg border-t border-zinc-200 flex items-stretch">
+    <div className="w-full h-16 bg-white/85 dark:bg-zinc-900/85 backdrop-blur-lg border-t border-zinc-200 dark:border-zinc-800 flex items-stretch">
       <NavButton
         label="Script"
         active={activeTab === "script"}
@@ -25,7 +34,7 @@ export function BottomNav({activeTab, onTabChange, settingsHoldHandlers}: Bottom
           <ScrollText
             className="w-6 h-6"
             strokeWidth={2}
-            color={activeTab === "script" ? ACCENT_FG : INACTIVE}
+            color={activeTab === "script" ? ACCENT_FG : inactive}
             opacity={activeTab === "script" ? 1 : 0.65}
           />
         }
@@ -39,7 +48,7 @@ export function BottomNav({activeTab, onTabChange, settingsHoldHandlers}: Bottom
           <SettingsGlyph
             className="w-6 h-6"
             strokeWidth={2}
-            color={activeTab === "settings" ? ACCENT_FG : INACTIVE}
+            color={activeTab === "settings" ? ACCENT_FG : inactive}
             opacity={activeTab === "settings" ? 1 : 0.65}
           />
         }
@@ -61,6 +70,7 @@ function NavButton({
   icon: React.ReactNode
   holdHandlers?: HoldHandlers
 }) {
+  const inactive = useInactiveColor()
   return (
     <button
       aria-label={label}
@@ -77,7 +87,7 @@ function NavButton({
       </span>
       <span
         className="text-[11px] font-medium transition-colors"
-        style={{color: active ? ACCENT : INACTIVE, opacity: active ? 1 : 0.7}}>
+        style={{color: active ? ACCENT_TEXT : inactive, opacity: active ? 1 : 0.7}}>
         {label}
       </span>
     </button>

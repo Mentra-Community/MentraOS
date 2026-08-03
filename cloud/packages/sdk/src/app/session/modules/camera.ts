@@ -48,6 +48,8 @@ export interface PhotoRequestOptions {
    * - max: largest sensor resolution
    */
   size?: "low" | "medium" | "high" | "max";
+  /** Capture normally, or localize and crop around readable text on supported glasses. */
+  mode?: "photo" | "text";
   /** Image compression level for upload optimization. Defaults to "none". */
   compress?: "none" | "medium" | "heavy";
   /** Controls shutter sound. Defaults to true if omitted. */
@@ -211,6 +213,7 @@ export class CameraModule {
           customWebhookUrl: options?.customWebhookUrl,
           authToken: options?.authToken,
           size: options?.size || "medium",
+          mode: options?.mode || "photo",
           compress: options?.compress || "none",
           sound: options?.sound,
           ...(includeExp ? { exposureTimeNs: expNs } : {}),
@@ -225,6 +228,7 @@ export class CameraModule {
             saveToGallery: options?.saveToGallery,
             hasCustomWebhook: !!options?.customWebhookUrl,
             hasAuthToken: !!options?.authToken,
+            mode: options?.mode ?? "photo",
             exposureTimeNs: includeExp ? expNs : undefined,
           },
           `📸 Photo request sent`,

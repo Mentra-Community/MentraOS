@@ -1,11 +1,9 @@
 import {DeviceTypes} from "@/../../cloud/packages/types/src"
 import {useEffect, useRef, useState} from "react"
-import {ScrollView, View} from "react-native"
+import {Platform, ScrollView, View} from "react-native"
 
-import BackendUrl from "@/components/dev/BackendUrl"
 import CloudUrl from "@/components/dev/CloudUrl"
 import OtaVersionUrl from "@/components/dev/OtaVersionUrl"
-import StoreUrl from "@/components/dev/StoreUrl"
 import {Header, Icon, Screen, Text} from "@/components/ignite"
 import SelectSetting from "@/components/settings/SelectSetting"
 import ToggleSetting from "@/components/settings/ToggleSetting"
@@ -15,10 +13,8 @@ import {Spacer} from "@/components/ui/Spacer"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
-import {SETTINGS, useSetting} from "@/stores/settings"
-import navigationService from "@/services/NavigationService"
-import ws from "@/services/WebSocketManager"
-import socketComms from "@/services/SocketComms"
+import {SETTINGS, useSetting} from "@mentra/engine"
+import {navigationService} from "@mentra/engine/internal"
 import showAlert from "@/utils/AlertUtils"
 
 // Hardcoded test destination for the nav POC. SF Ferry Building.
@@ -37,11 +33,15 @@ export default function DebugSettingsScreen() {
   const {goBack, push, replaceAll, clearHistoryAndGoHome} = useNavigationStore.getState()
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
   const [debugMode, setDebugMode] = useSetting(SETTINGS.debug_mode.key)
+  const [androidNotificationListenerEnabled, setAndroidNotificationListenerEnabled] = useSetting(
+    SETTINGS.android_notification_listener_enabled.key,
+  )
   const [superMode] = useSetting(SETTINGS.super_mode.key)
   const [powerSavingMode, setPowerSavingMode] = useSetting(SETTINGS.power_saving_mode.key)
   const [reconnectOnAppForeground, setReconnectOnAppForeground] = useSetting(SETTINGS.reconnect_on_app_foreground.key)
   const [enableSquircles, setEnableSquircles] = useSetting(SETTINGS.enable_squircles.key)
   const [appearanceMenuEnabled, setAppearanceMenuEnabled] = useSetting(SETTINGS.appearance_menu_enabled.key)
+  const [miniappDevMode, setMiniappDevMode] = useSetting(SETTINGS.miniapp_dev_mode.key)
   const [appBootExtraInfo, setAppBootExtraInfo] = useSetting(SETTINGS.app_boot_extra_info.key)
   const [debugConsole, setDebugConsole] = useSetting(SETTINGS.debug_console.key)
   const [_onboardingOsCompleted, setOnboardingOsCompleted] = useSetting(SETTINGS.onboarding_os_completed.key)
@@ -78,6 +78,14 @@ export default function DebugSettingsScreen() {
               value={debugMode}
               onValueChange={(value) => setDebugMode(value)}
             />
+            {Platform.OS === "android" && (
+              <ToggleSetting
+                label="Android Notification Listener"
+                subtitle="Emergency kill switch for Android notification capture"
+                value={androidNotificationListenerEnabled}
+                onValueChange={(value) => setAndroidNotificationListenerEnabled(value)}
+              />
+            )}
             <ToggleSetting
               label={translate("settings:reconnectOnAppForeground")}
               subtitle={translate("settings:reconnectOnAppForegroundSubtitle")}
@@ -104,6 +112,13 @@ export default function DebugSettingsScreen() {
               subtitle="Show the Appearance settings menu"
               value={appearanceMenuEnabled}
               onValueChange={(value) => setAppearanceMenuEnabled(value)}
+            />
+
+            <ToggleSetting
+              label="Miniapp Developer Settings"
+              subtitle="Show the Miniapp Developer settings menu"
+              value={miniappDevMode}
+              onValueChange={(value) => setMiniappDevMode(value)}
             />
 
             <ToggleSetting
@@ -154,31 +169,18 @@ export default function DebugSettingsScreen() {
             />
 
             <RouteButton
-              label="Mentra OS Onboarding"
-              subtitle="Start the Mentra Live onboarding"
+              label="MentraOS Onboarding"
+              subtitle="Reset and start the MentraOS onboarding"
               onPress={() => {
+                setOnboardingOsCompleted(false)
                 clearHistoryAndGoHome()
                 push("/onboarding/os")
-              }}
-            />
-
-            <RouteButton
-              label="Test switcher"
-              onPress={() => {
-                clearHistoryAndGoHome()
-                push("/test/switcher")
               }}
             />
           </Group>
 
           <Group title="Misc">
             <RouteButton label="Test Mini App" subtitle="Test the Mini App" onPress={() => push("/test/mini-app")} />
-
-            <RouteButton
-              label="Buffer Recording Debug"
-              subtitle="Control 30-second video buffer on glasses"
-              onPress={() => push("/miniapps/settings/buffer-debug")}
-            />
 
             <RouteButton
               label={navRunning ? "Stop Test Nav" : "Start Test Nav"}
@@ -224,17 +226,6 @@ export default function DebugSettingsScreen() {
                 showAlert("Nav", "T&C cache cleared. Start Test Nav to see the dialog again.")
               }}
             />
-
-            <RouteButton
-              label="Clear Websocket"
-              subtitle="Clear the Websocket"
-              onPress={async () => {
-                await ws.cleanup()
-                await socketComms.cleanup()
-                await new Promise((resolve) => setTimeout(resolve, 3000))
-                await socketComms.restartConnection()
-              }}
-            />
           </Group>
 
           <Group title="Test Errors">
@@ -278,24 +269,14 @@ export default function DebugSettingsScreen() {
               onValueChange={async (value) => {
                 const frameSize = parseInt(value, 10)
                 setLc3FrameSize(frameSize)
-                // Apply immediately to native encoder and cloud
-                try {
-                  await socketComms.configureAudioFormat()
-                } catch (err) {
-                  console.error("Failed to apply LC3 frame size:", err)
-                }
               }}
               description="Higher bitrates improve transcription quality but use more bandwidth."
             />
           </Group>
 
-          <BackendUrl />
-
           <Group title="Cloud V2 (core + runtime)">
             <CloudUrl />
           </Group>
-
-          <StoreUrl />
 
           {/* Super mode only: a wrong OTA manifest can brick glasses */}
           {superMode && <OtaVersionUrl />}

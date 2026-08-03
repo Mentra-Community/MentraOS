@@ -1,5 +1,4 @@
 import {useFocusEffect} from "@react-navigation/native"
-import BluetoothSdk from "@mentra/bluetooth-sdk"
 import {useCallback, useEffect, useRef, useState} from "react"
 import {ActivityIndicator, BackHandler, Platform, ScrollView, View} from "react-native"
 
@@ -9,14 +8,14 @@ import {Spacer} from "@/components/ui/Spacer"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
+import {engine, useStopAll} from "@mentra/engine"
 import {
   offlineSpeechModelService,
   sttModelManager as STTModelManager,
   ttsModelManager as TTSModelManager,
-  useStopAll,
   type OfflineModelDownloadStatus as DownloadStatus,
-} from "@mentra/island"
-import {SETTINGS, useSetting} from "@/stores/settings"
+} from "@mentra/engine/internal"
+import {SETTINGS, useSetting} from "@mentra/engine"
 import showAlert from "@/utils/AlertUtils"
 
 export default function SpeechSettingsScreen() {
@@ -40,7 +39,6 @@ export default function SpeechSettingsScreen() {
   const [autoStatus, setAutoStatus] = useState<DownloadStatus | null>(offlineSpeechModelService.getStatus())
 
   const [isLoading, setIsLoading] = useState(true)
-  const [_offlineCaptionsAppRunning, setOfflineCaptionsAppRunning] = useSetting(SETTINGS.offline_captions_running.key)
   const [_enforceLocalTranscription, setEnforceLocalTranscription] = useSetting(
     SETTINGS.enforce_local_transcription.key,
   )
@@ -74,8 +72,6 @@ export default function SpeechSettingsScreen() {
           onPress: async () => {
             if (!offlineMode) {
               await stopAllApps()
-            } else {
-              setOfflineCaptionsAppRunning(false)
             }
             setOfflineMode(!offlineMode)
           },
@@ -150,14 +146,32 @@ export default function SpeechSettingsScreen() {
   // Merge auto-download status with the manually-driven per-screen state.
   // Manual tap state wins when set (user is in control); otherwise surface the
   // background service's progress on the matching row.
-  const sttAuto = autoStatus?.kind === "stt" && (autoStatus.stage === "downloading" || autoStatus.stage === "extracting")
-  const ttsAuto = autoStatus?.kind === "tts" && (autoStatus.stage === "downloading" || autoStatus.stage === "extracting")
+  const sttAuto =
+    autoStatus?.kind === "stt" && (autoStatus.stage === "downloading" || autoStatus.stage === "extracting")
+  const ttsAuto =
+    autoStatus?.kind === "tts" && (autoStatus.stage === "downloading" || autoStatus.stage === "extracting")
   const sttRowDownloading = sttDownloading ?? (sttAuto ? autoStatus!.languageCode : undefined)
-  const sttRowDownloadPercent = sttDownloading ? sttDownloadPercent : sttAuto && autoStatus!.stage === "downloading" ? autoStatus!.percent : 0
-  const sttRowExtractPercent = sttDownloading ? sttExtractPercent : sttAuto && autoStatus!.stage === "extracting" ? autoStatus!.percent : 0
+  const sttRowDownloadPercent = sttDownloading
+    ? sttDownloadPercent
+    : sttAuto && autoStatus!.stage === "downloading"
+      ? autoStatus!.percent
+      : 0
+  const sttRowExtractPercent = sttDownloading
+    ? sttExtractPercent
+    : sttAuto && autoStatus!.stage === "extracting"
+      ? autoStatus!.percent
+      : 0
   const ttsRowDownloading = ttsDownloading ?? (ttsAuto ? autoStatus!.languageCode : undefined)
-  const ttsRowDownloadPercent = ttsDownloading ? ttsDownloadPercent : ttsAuto && autoStatus!.stage === "downloading" ? autoStatus!.percent : 0
-  const ttsRowExtractPercent = ttsDownloading ? ttsExtractPercent : ttsAuto && autoStatus!.stage === "extracting" ? autoStatus!.percent : 0
+  const ttsRowDownloadPercent = ttsDownloading
+    ? ttsDownloadPercent
+    : ttsAuto && autoStatus!.stage === "downloading"
+      ? autoStatus!.percent
+      : 0
+  const ttsRowExtractPercent = ttsDownloading
+    ? ttsExtractPercent
+    : ttsAuto && autoStatus!.stage === "extracting"
+      ? autoStatus!.percent
+      : 0
 
   const handleCancelDownload = async () => {
     try {
@@ -242,7 +256,7 @@ export default function SpeechSettingsScreen() {
           if (target == null) return
           try {
             await STTModelManager.activateLanguage(target)
-            await BluetoothSdk.restartTranscriber()
+            await engine.speech.restartTranscriber()
           } catch (error: any) {
             console.error("STT activation failed:", error)
             showAlert("Error", error?.message ?? "Failed to switch language", [{text: "OK"}])
@@ -262,7 +276,7 @@ export default function SpeechSettingsScreen() {
       )
       await refreshLists()
       await STTModelManager.activateLanguage(code)
-      await BluetoothSdk.restartTranscriber()
+      await engine.speech.restartTranscriber()
       setSttCurrent(code)
       STTModelManager.setCurrentLanguage(code)
       sttDesiredRef.current = code

@@ -6,6 +6,12 @@ declare class CrustModule extends NativeModule<CrustModuleEvents> {
   PI: number
   hello(): string
   setValueAsync(value: string): Promise<void>
+  nativeHttpRequest(
+    method: string,
+    url: string,
+    headers: Record<string, string>,
+    body?: string | null,
+  ): Promise<{status: number; statusText: string; headers: Record<string, string>; body: string}>
   showAVRoutePicker(tintColor?: string | null): void
 
   /**
@@ -17,15 +23,14 @@ declare class CrustModule extends NativeModule<CrustModuleEvents> {
    * Pass `[]` to restore default behavior. Android: no-op (Android has no
    * per-app equivalent; system gestures are configured at the OS level).
    */
-  setDeferredSystemGestures(
-    edges: Array<"top" | "bottom" | "left" | "right" | "all">,
-  ): Promise<void>
+  setDeferredSystemGestures(edges: Array<"top" | "bottom" | "left" | "right" | "all">): Promise<void>
 
   // MentraOS Notification Commands
-  setNotificationConfig(enabled: boolean, blocklist: string[]): Promise<void>
+  setNotificationConfig(listenerEnabled: boolean, blocklist: string[]): Promise<void>
   getInstalledApps(): Promise<InstalledApp[]>
   getInstalledAppsForNotifications(): Promise<InstalledApp[]>
   hasNotificationListenerPermission(): Promise<boolean>
+  refreshNotificationListener(): Promise<boolean>
   openNotificationListenerSettings(): Promise<boolean>
   isBetaBuild(): Promise<boolean>
   // location services commands
@@ -82,6 +87,7 @@ declare class CrustModule extends NativeModule<CrustModuleEvents> {
     success: boolean
     uri?: string
     identifier?: string
+    existing?: boolean
     error?: string
   }>
 

@@ -7,7 +7,7 @@
  * Lifecycle:
  *   const session = new MiniappSession()
  *   await session.connect()          // sends CONNECT, resolves on CONNECT_ACK
- *   session.display.showTextWall(...)
+ *   session.display.render([...])
  *   ...
  *   session.disconnect()
  */
@@ -20,12 +20,11 @@ import {MiniappErrorCode, MiniappRequestType, MiniappResponseType} from "./proto
 import {createTransport, CreateTransportOptions} from "./transport/auto"
 import {Transport} from "./transport/types"
 import {CameraModule} from "./modules/camera"
-import {CanvasManager} from "./modules/canvas"
 import {AuthModule} from "./modules/auth"
 import {CloudModule} from "./modules/cloud"
 import {DashboardAPI} from "./modules/dashboard"
 import {DisplayManager} from "./modules/display"
-import {EventManager, type UnsubscribeFn} from "./modules/events"
+import {EventManager, type TranscriptionEventRoute, type UnsubscribeFn} from "./modules/events"
 import {GlassesModule} from "./modules/glasses"
 import {HeadingModule} from "./modules/heading"
 import {ImuModule} from "./modules/imu"
@@ -51,8 +50,33 @@ import {BlobModule} from "./modules/blob"
 // Public types
 // ---------------------------------------------------------------------------
 
+/**
+ * Typed display capabilities for the scene API. All limit fields are optional
+ * in the type because older hosts don't send them — treat absence as "unknown",
+ * not zero. Populated on the "ready" event (null in `start()`).
+ */
+export interface DisplayCapabilities {
+  /** Public drawable canvas in px — raw coordinate space for `display.render()` boxes. */
+  width?: number
+  height?: number
+  /** False ⇒ the device can't position elements; scenes degrade to text walls host-side. */
+  canPosition?: boolean
+  /** Element budgets. Rects share the text pool on container-based devices. */
+  maxTextElements?: number
+  maxImageElements?: number
+  /** Per-image dimension cap (box-level), when the device has one. */
+  maxImagePx?: {width: number; height: number}
+  shapes?: string[]
+  intensityLevels?: number
+  partialUpdate?: boolean
+  /** Legacy capability fields (resolution, isColor, maxTextLines, …) ride along. */
+  [key: string]: unknown
+}
+
 /** Minimal snapshot of the currently-connected glasses. Phone-provided. */
 export interface GlassesCapabilities {
+  /** Display block — null/absent on displayless devices (e.g. Mentra Live). */
+  display?: DisplayCapabilities | null
   [key: string]: unknown
 }
 
@@ -157,7 +181,7 @@ type SessionEmitterEvents = {
    * Last-chance hook before the transport closes. Fires when the phone
    * sends WILL_DISCONNECT, or when this session calls `disconnect()`
    * locally. Handlers run synchronously and may issue one final
-   * `sendOneShot` (e.g. `display.clear()`); async work won't complete
+   * `sendOneShot`/`sendRequest` (e.g. `display.render([])`); async work won't complete
    * before the socket closes.
    */
   beforeDisconnect: (reason: string) => void
@@ -170,9 +194,12 @@ type SessionEmitterEvents = {
   auth: (auth: MiniappAuthState) => void
 }
 
-export class MiniappSession {
+// The default preserves the pre-channel-registry behavior for code that creates
+// or accepts a bare MiniappSession. `registerMiniapp<Channels>` supplies the
+// concrete mapping for scaffolded miniapps.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export class MiniappSession<TChannels extends object = any> {
   public readonly auth: AuthModule
-  public readonly canvas: CanvasManager
   public readonly display: DisplayManager
   /**
    * Internal subscription registry + escape hatch.
@@ -215,7 +242,7 @@ export class MiniappSession {
    * with inverted buffering policy (background drops when no WebView is
    * bound; the WebView buffers until ready).
    */
-  public readonly ui: UIModule
+  public readonly ui: UIModule<TChannels>
   /**
    * Inter-miniapp lifecycle + discovery (list / start / stop). SYSTEM-only —
    * calls reject with NOT_PERMITTED unless this miniapp is a system app.
@@ -282,7 +309,6 @@ export class MiniappSession {
     this.events = new EventManager(this)
     this.speaker = new SpeakerModule(this)
     this.camera = new CameraModule(this)
-    this.canvas = new CanvasManager(this)
     this.cloud = new CloudModule(this)
     this.dashboard = new DashboardAPI(this)
     this.display = new DisplayManager(this)
@@ -302,7 +328,7 @@ export class MiniappSession {
     this.system = new SystemModule(this)
     this.transcription = new TranscriptionModule(this)
     this.translation = new TranslationModule(this)
-    this.ui = new UIModuleImpl(this)
+    this.ui = new UIModuleImpl<TChannels>(this)
     this.miniapps = new MiniappsModule(this)
     this.actions = new ActionsModule(this)
   }
@@ -370,8 +396,12 @@ export class MiniappSession {
    * session.transcription.on(...)
    * etc. instead."
    */
-  _subscribe(streamType: string, handler: (data: unknown) => void): UnsubscribeFn {
-    return this.events.subscribe(streamType, handler)
+  _subscribe(
+    streamType: string,
+    handler: (data: unknown) => void,
+    options: {forceLocal?: boolean} = {},
+  ): UnsubscribeFn {
+    return this.events.subscribe(streamType, handler, options)
   }
 
   // -------------------------------------------------------------------------
@@ -440,7 +470,7 @@ export class MiniappSession {
     if (this.disposed) return
     this.disposed = true
     // Give listeners one synchronous chance to flush final messages
-    // (e.g. display.clear()) before we tear down the transport.
+    // (e.g. display.render([])) before we tear down the transport.
     try {
       this.emitter.emit("beforeDisconnect", "disconnect called")
     } catch (err) {
@@ -529,7 +559,7 @@ export class MiniappSession {
    * phone notifies the session of an imminent disconnect (~50ms grace
    * window before the socket is torn down) or when this session's
    * `disconnect()` is called locally. Use it to flush final cleanup
-   * messages — e.g. `display.clear()` — synchronously. Async work
+   * messages — e.g. `display.render([])` — synchronously. Async work
    * started here will not complete before the socket closes.
    */
   onBeforeDisconnect(handler: (reason: string) => void): () => void {
@@ -655,7 +685,11 @@ export class MiniappSession {
       case MiniappResponseType.EVENT: {
         const streamType = payload.streamType as string | undefined
         if (!streamType) return
-        this.events._forwardEvent(streamType, payload.data)
+        this.events._forwardEvent(
+          streamType,
+          payload.data,
+          payload.transcriptionRoute as TranscriptionEventRoute | undefined,
+        )
         return
       }
 

@@ -1,3 +1,4 @@
+import CryptoKit
 import ExpoModulesCore
 import Foundation
 
@@ -61,9 +62,11 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             "stream_status",
             "keep_alive_ack",
             "mtk_update_complete",
+            "glasses_session_changed",
             "ota_progress",
             "ota_start_ack",
             "ota_status",
+            "ar99_ota_status",
             "send_command_to_ble",
             "receive_command_from_ble",
             "miniapp_selected",
@@ -79,6 +82,9 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
         }
 
         OnDestroy {
+            Task {
+                await PcmStreamManager.abortAll()
+            }
             Task { @MainActor [weak self] in
                 self?.sdk?.invalidate()
                 self?.sdk = nil
@@ -328,6 +334,11 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             try await sdk.setVoiceActivityDetectionEnabled(enabled)
         }
 
+        AsyncFunction("setLoudnessGateEnabled") { (enabled: Bool) in
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            try await sdk.setLoudnessGateEnabled(enabled)
+        }
+
         AsyncFunction("setPhotoCaptureDefaults") { (params: [String: Any]) in
             let sdk = await MainActor.run { self.bluetoothSdk() }
             return try await sdk.setPhotoCaptureDefaults(PhotoCaptureDefaults.from(params: params)).values
@@ -350,6 +361,42 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             )
             let sdk = await MainActor.run { self.bluetoothSdk() }
             return try await sdk.setCameraFov(CameraFov(fov: value, roiPosition: roiPosition)).values
+        }
+
+        AsyncFunction("setLegacyCameraFov") { (fov: [String: Any]) in
+            let value = intValue(fov["fov"]) ?? CameraFov.defaultFov
+            let roiPosition = CameraRoiPosition.from(
+                rawValue: intValue(fov["roiPosition"]) ?? intValue(fov["roi_position"])
+            )
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            return try sdk.setLegacyCameraFov(CameraFov(fov: value, roiPosition: roiPosition)).values
+        }
+
+        AsyncFunction("restoreLegacyCameraFov") {
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            try sdk.restoreLegacyCameraFov()
+        }
+
+        AsyncFunction("setCameraFovOverride") { (params: [String: Any]) in
+            guard let leaseId = params["leaseId"] as? String, !leaseId.isEmpty else {
+                throw BluetoothSdkError(code: "invalid_request", message: "leaseId is required")
+            }
+            let value = intValue(params["fov"]) ?? CameraFov.defaultFov
+            let roiPosition = CameraRoiPosition.from(
+                rawValue: intValue(params["roiPosition"]) ?? intValue(params["roi_position"])
+            )
+            let ttlMs = intValue(params["ttlMs"]) ?? 300_000
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            return try await sdk.setCameraFovOverride(
+                leaseId: leaseId,
+                fov: CameraFov(fov: value, roiPosition: roiPosition),
+                ttlMs: ttlMs
+            ).values
+        }
+
+        AsyncFunction("releaseCameraFovOverride") { (leaseId: String) in
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            return try await sdk.releaseCameraFovOverride(leaseId: leaseId).values
         }
 
         AsyncFunction("setCameraTuningConfig") { (anrOn: Bool, gainOn: Bool) in
@@ -379,7 +426,7 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
         }
 
         AsyncFunction("requestPhoto") { (params: [String: Any]) in
-            let req = PhotoRequest.from(params: params)
+            let req = try PhotoRequest.from(params: params)
             Bridge.log(
                 "NATIVE: PHOTO PIPELINE [3/6] BluetoothSdk.requestPhoto requestId=\(req.requestId) size=\(req.size.rawValue) compress=\(req.compress?.rawValue ?? "none") aeDivisor=\(req.aeExposureDivisor.map { String($0) } ?? "nil")"
             )
@@ -392,6 +439,7 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             let requestId = params["requestId"] as? String
             let sizeRaw = params["size"] as? String ?? "medium"
             let size = PhotoSize(normalizedRawValue: sizeRaw)
+            let mode = PhotoMode(normalizedRawValue: params["mode"] as? String)
             let exposureTimeNs: Double?
             switch params["exposureTimeNs"] {
             case let value as Double:
@@ -406,14 +454,24 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             }
             let durationRaw = intValue(params["durationMs"]) ?? 0
             let durationMs = durationRaw > 0 ? durationRaw : 15000
+            let zsl = params["zsl"] as? Bool
+            let mfnr = params["mfnr"] as? Bool
 
             let sdk = await MainActor.run { self.bluetoothSdk() }
             return try await sdk.warmUpCamera(
                 requestId: requestId,
                 size: size,
+                mode: mode,
                 exposureTimeNs: exposureTimeNs,
-                durationMs: durationMs
+                durationMs: durationMs,
+                zsl: zsl,
+                mfnr: mfnr
             ).values
+        }
+
+        AsyncFunction("stopCameraWarmUp") { (requestId: String) in
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            try sdk.stopCameraWarmUp(requestId: requestId)
         }
 
         // MARK: - OTA Commands
@@ -450,6 +508,27 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             return try await sdk.sendOtaQueryStatus().values
         }
 
+        AsyncFunction("startAr99OtaFromFile") { (path: String) in
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            return try await MainActor.run { try sdk.startAr99OtaFromFile(path) }
+        }
+
+        AsyncFunction("cancelAr99Ota") {
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            await MainActor.run { sdk.cancelAr99Ota() }
+        }
+
+        AsyncFunction("sendAr99FactoryReset") {
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            try await MainActor.run { try sdk.sendAr99FactoryReset() }
+        }
+
+
+        Function("buildAr99OtaSignature") { (secret: String, appName: String, currentVersion: String, serialNumber: String, nonce: String) in
+            let raw = secret + appName + "juxinOTA" + currentVersion + serialNumber.trimmingCharacters(in: .whitespacesAndNewlines) + nonce
+            let digest = Insecure.MD5.hash(data: Data(raw.utf8))
+            return digest.map { String(format: "%02x", $0) }.joined()
+        }
         // MARK: - Version Info Commands
 
         AsyncFunction("requestVersionInfo") {
@@ -530,6 +609,32 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             await MainActor.run {
                 self.bluetoothSdk().setOwnAppAudioPlaying(playing)
             }
+        }
+
+        // MARK: - Live PCM output stream (miniapp speaker.createStream)
+
+        AsyncFunction("pcmStreamOpen") {
+            (streamId: String, sampleRate: Int, channels: Int, volume: Double) async throws in
+            try PcmStreamManager.open(
+                streamId: streamId,
+                sampleRate: sampleRate,
+                channels: channels,
+                volume: Float(volume)
+            )
+        }
+
+        AsyncFunction("pcmStreamWrite") {
+            (streamId: String, base64: String) async throws -> [String: Int64] in
+            try ["bufferedMs": await PcmStreamManager.write(streamId: streamId, base64: base64)]
+        }
+
+        AsyncFunction("pcmStreamClose") {
+            (streamId: String) async throws -> [String: Int64] in
+            try ["durationMs": await PcmStreamManager.close(streamId: streamId)]
+        }
+
+        AsyncFunction("pcmStreamAbort") { (streamId: String) async in
+            await PcmStreamManager.abort(streamId: streamId)
         }
 
         AsyncFunction("getGlassesMediaVolume") { () async throws -> [String: Any] in
@@ -830,3 +935,9 @@ private extension ConnectOptions {
         )
     }
 }
+
+
+
+
+
+

@@ -1,5 +1,5 @@
 import {Capabilities, getModelCapabilities} from "@/../../cloud/packages/types/src"
-import BluetoothSdk from "@mentra/bluetooth-sdk"
+import {engine} from "@mentra/engine"
 import {useEffect, useState} from "react"
 import {ScrollView, TextInput, TextStyle, TouchableOpacity, View, ViewStyle} from "react-native"
 
@@ -9,8 +9,7 @@ import {RouteButton} from "@/components/ui/RouteButton"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n/translate"
-import {selectGlassesConnected, useGlassesStore} from "@/stores/glasses"
-import {SETTINGS, useSetting} from "@/stores/settings"
+import {SETTINGS, useSetting} from "@mentra/engine"
 import {ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
 import {MOCK_CONNECTION} from "@/utils/Constants"
@@ -256,7 +255,7 @@ export default function NexDeveloperSettings() {
   const {theme, themed} = useAppTheme()
   const {push} = useNavigationStore.getState()
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
-  const glassesConnected = useGlassesStore(selectGlassesConnected)
+  const [glassesConnected, setGlassesConnected] = useState(() => engine.glasses.status().state === "connected")
   const features: Capabilities = getModelCapabilities(defaultWearable)
 
   // Mentra Display BLE test state variables
@@ -286,6 +285,13 @@ export default function NexDeveloperSettings() {
   // BLE Command display state variables
   const [showFullSenderCommand, setShowFullSenderCommand] = useState(false)
   const [showFullReceiverCommand, setShowFullReceiverCommand] = useState(false)
+
+  useEffect(() => {
+    setGlassesConnected(engine.glasses.status().state === "connected")
+    return engine.glasses.onStatus((status) => {
+      setGlassesConnected(status.state === "connected")
+    })
+  }, [])
 
   // Mentra Display BLE test event handlers
   useEffect(() => {
@@ -324,7 +330,7 @@ export default function NexDeveloperSettings() {
         ])
         return
       }
-      await BluetoothSdk.displayText(text, parseInt(positionX, 10), parseInt(positionY, 10), parseInt(size, 10))
+      await engine.display.text(text, parseInt(positionX, 10), parseInt(positionY, 10), parseInt(size, 10))
     } else {
       showAlert("Please connect to the device", "Please connect to the device", [
         {
@@ -360,7 +366,7 @@ export default function NexDeveloperSettings() {
 
   const onClearDisplayClick = async () => {
     if (glassesConnected) {
-      await BluetoothSdk.clearDisplay()
+      await engine.display.clear()
     } else {
       showAlert("Please connect to the device", "Please connect to the device", [
         {
@@ -663,8 +669,8 @@ export default function NexDeveloperSettings() {
             <View style={themed($settingsGroup)}>
               <Text style={themed($sectionTitle)}>🈶 Chinese Captions</Text>
               <Text style={themed($description)}>
-                Allow non-ASCII (Chinese/CJK) characters in display text. When off, text is sanitized to ASCII
-                before being sent to the glasses.
+                Allow non-ASCII (Chinese/CJK) characters in display text. When off, text is sanitized to ASCII before
+                being sent to the glasses.
               </Text>
 
               <ToggleSetting

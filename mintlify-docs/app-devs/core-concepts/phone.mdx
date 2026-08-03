@@ -10,7 +10,7 @@ Register a handler and the events start arriving.
 
 ```typescript src/background/index.ts
 session.phone.notifications.on((data) => {
-  session.display.showTextWall(`${data.app}: ${data.title}`);
+  session.display.render([{type: "text", id: "msg", box: {x: 0, y: 0, w: 576, h: 288}, text: `${data.app}: ${data.title}`}]);
 });
 ```
 
@@ -69,27 +69,34 @@ fire. The matching `notifications.on()` post-event works on both platforms.
 
 ## Calendar
 
-`session.phone.calendar.on()` fires for calendar events from the phone.
+`session.phone.calendar.listEvents()` reads a current snapshot from all event
+calendars on the phone. Declare `CALENDAR` as a required permission; the Mentra
+App requests access before opening the miniapp.
 
 ```typescript
-session.phone.calendar.on((data) => {
-  // data: CalendarEventData
+const result = await session.phone.calendar.listEvents({
+  startsAt: new Date(),
+  endsAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+  limit: 50,
 });
 ```
 
-Each event is a `CalendarEventData`:
+The date window may span at most 31 days. `limit` defaults to 50 and may not
+exceed 100. The result contains `events` and a `truncated` flag. Each event has:
 
 | Field | Type | Notes |
 |---|---|---|
-| `eventId` | `string` | The calendar event id. |
+| `id` | `string` | Unique occurrence id, including recurring instances. |
+| `calendarId` | `string` | Id of the source calendar. |
 | `title` | `string` | The event title. |
-| `dtStart` | `string` | ISO 8601 start time. |
-| `dtEnd` | `string` | ISO 8601 end time. |
-| `timezone` | `string` | The event's timezone. |
+| `startsAt` | `string` | ISO 8601 start time. All-day events preserve their calendar timezone offset. |
+| `endsAt` | `string` | ISO 8601 end time. All-day events preserve their calendar timezone offset. |
+| `timezone` | `string?` | The event's timezone. |
 | `allDay` | `boolean` | Whether it's an all-day event. |
-| `location` | `string` | The event location. |
-| `notes` | `string` | The event notes. |
-| `calendarId` | `string` | Id of the calendar the event belongs to. |
+| `location` | `string?` | The event location. |
+| `notes` | `string?` | The event notes. |
+| `url` | `string?` | The platform calendar URL field, when available. |
+| `links` | `string[]` | Deduplicated HTTPS links found in URL, location, and notes. |
 
 ## Phone battery
 
@@ -111,20 +118,20 @@ Each event is a `BatteryData`:
 
 ## Cleaning up
 
-Every subscription returns an unsubscribe function. The `notifications` and
-`calendar` sub-modules each also have a `stop()` that tears down every
-subscription that sub-module owns at once.
+Every subscription returns an unsubscribe function. The `notifications`
+sub-module also has a `stop()` that tears down every notification subscription
+at once. Calendar snapshots do not create a subscription.
 
 ```typescript
 const off = session.phone.notifications.on(handler);
 off();                              // drop this one
 
 session.phone.notifications.stop(); // drop all notification subscriptions
-session.phone.calendar.stop();      // drop all calendar subscriptions
 ```
 
 `session.phone.notifications.hasPermission` tells you whether `READ_NOTIFICATIONS`
 is declared in your manifest, and `session.phone.calendar.hasPermission` tells you
 whether `CALENDAR` is declared. Neither tells you whether the user granted the OS
-prompt: if they denied it, your handler simply never fires. See
+prompt. A calendar request rejects with `PERMISSION_DENIED` if access was later
+revoked. See
 [Permissions](/app-devs/core-concepts/permissions).

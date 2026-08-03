@@ -1,4 +1,4 @@
-import {BgTimer} from "@mentra/island"
+import {BgTimer} from "@mentra/engine"
 
 export class TranscriptProcessor {
   private maxCharsPerLine: number = 44

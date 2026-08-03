@@ -14,7 +14,7 @@ import { registerMiniapp } from "@mentra/miniapp/background";
 
 registerMiniapp((session) => {
   if (session.cloud.connected) {
-    session.display.showTextWall("Online");
+    session.display.render([{type: "text", id: "msg", box: {x: 0, y: 0, w: 576, h: 288}, text: "Online"}]);
   }
 
   session.cloud.onStatusChanged((status) => {

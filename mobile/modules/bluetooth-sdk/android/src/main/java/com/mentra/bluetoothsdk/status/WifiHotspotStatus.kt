@@ -66,15 +66,31 @@ sealed interface WifiStatus {
     }
 }
 
-data class WifiStatusEvent(
+data class WifiStatusEvent @JvmOverloads constructor(
     val status: WifiStatus,
+    /**
+     * Glasses-reported provisioning failure reason when THIS event is the verdict of a
+     * failed connect attempt; null for routine link-state updates. An attempt property,
+     * not a link property — which is why it lives on the event and not on [WifiStatus]:
+     * "connect_timeout" arrives with a disconnected status (never associated), while
+     * "connected_to_other_network" arrives with a *connected* status — the attempt
+     * failed and Android's auto-join left the glasses on (or returned them to) a
+     * different SSID than requested, so the link is genuinely up while the request
+     * genuinely failed. Sent by ASG client builds that include the WiFi error
+     * surfacing (v40+); older glasses never set it.
+     */
+    val error: String? = null,
 ) {
-    internal constructor(values: Map<String, Any>) : this(WifiStatus.fromMap(values) ?: WifiStatus.Disconnected)
+    internal constructor(values: Map<String, Any>) : this(
+        WifiStatus.fromMap(values) ?: WifiStatus.Disconnected,
+        stringValue(values, "error")?.takeIf { it.isNotEmpty() },
+    )
     internal constructor(connected: Boolean, ssid: String?, localIp: String?) : this(
         WifiStatus.fromStoreFields(connected, ssid, localIp) ?: WifiStatus.Disconnected
     )
 
-    val values: Map<String, Any> get() = status.toEventMap()
+    val values: Map<String, Any>
+        get() = status.toEventMap() + (error?.let { mapOf("error" to it) } ?: emptyMap())
 }
 
 sealed interface HotspotStatus {

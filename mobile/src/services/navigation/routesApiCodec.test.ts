@@ -1,4 +1,6 @@
-import {decodePolyline, parseDurationSeconds} from "./routesApiCodec"
+// routesApiCodec moved into island; this jest test stays here (CI-gated) and imports
+// the moved util by path (the island module's own test runner is bit-rotted).
+import {decodePolyline, parseDurationSeconds} from "../../../modules/engine/src/services/navigation/routesApiCodec"
 
 describe("decodePolyline", () => {
   test("returns [] for empty input", () => {

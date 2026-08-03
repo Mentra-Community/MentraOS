@@ -1,17 +1,14 @@
 package com.mentra.asg_client.service.core.handlers;
 
 import android.util.Log;
-
-import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
 import com.mentra.asg_client.service.legacy.interfaces.ICommandHandler;
-
+import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
+import java.util.Set;
 import org.json.JSONObject;
 
-import java.util.Set;
-
 /**
- * Handler for transfer_complete commands from phone.
- * This handler processes phone confirmations about file transfer completion.
+ * Handler for transfer_complete commands from phone. This handler processes phone confirmations
+ * about file transfer completion.
  */
 public class TransferCompleteCommandHandler implements ICommandHandler {
     private static final String TAG = "TransferCompleteHandler";
@@ -43,9 +40,7 @@ public class TransferCompleteCommandHandler implements ICommandHandler {
         }
     }
 
-    /**
-     * Handle transfer_complete command from phone
-     */
+    /** Handle transfer_complete command from phone */
     private boolean handleTransferComplete(JSONObject data) {
         try {
             String fileName = data.optString("fileName", "");
@@ -62,10 +57,20 @@ public class TransferCompleteCommandHandler implements ICommandHandler {
 
             // Forward to the active transport
             if (serviceManager != null && serviceManager.getBluetoothManager() != null) {
-                serviceManager
-                        .getBluetoothManager()
-                        .onFileTransferConfirmation(fileName, success);
+                var bluetoothManager = serviceManager.getBluetoothManager();
+                bluetoothManager.onFileTransferConfirmation(fileName, success);
                 Log.d(TAG, "✅ Forwarded transfer_complete to transport");
+
+                // A negative confirmation can synchronously start a full-file retry. Preserve the
+                // original photo timing state until the transport reaches a terminal result.
+                boolean transferInProgress = bluetoothManager.isFileTransferInProgress();
+                if (!transferInProgress && serviceManager.getMediaCaptureService() != null) {
+                    serviceManager
+                            .getMediaCaptureService()
+                            .onBlePhotoTransferComplete(fileName, success);
+                } else if (transferInProgress) {
+                    Log.d(TAG, "⏱️ BLE transfer retry active; deferring terminal photo timing");
+                }
                 return true;
             } else {
                 Log.e(TAG, "❌ BluetoothManager not available");

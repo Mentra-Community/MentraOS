@@ -30,8 +30,8 @@ CameraNeoService.takePictureWithCallback(
     context,
     filePath, // if null/empty, a default path is generated
     new CameraNeoService.PhotoCaptureCallback() {
-      @Override public void onPhotoCaptured(String filePath) {}
-      @Override public void onPhotoError(String error) {}
+      @Override public void onPhotoCaptured(String filePath, JSONObject captureMetadata) {}
+      @Override public void onPhotoError(String errorMessage) {}
     }
 );
 
@@ -197,8 +197,9 @@ Notes:
 
 ```java
 public interface PhotoCaptureCallback {
-  void onPhotoCaptured(String filePath);
+  void onPhotoCaptured(String filePath, @Nullable JSONObject captureMetadata);
   void onPhotoError(String errorMessage);
+  default void onPhotoError(CameraOperationError error);
 }
 
 public interface VideoRecordingCallback {

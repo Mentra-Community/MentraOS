@@ -226,6 +226,9 @@ function syntheticDataFor(requestId: string, requestType: string, requestPayload
       // Atlantic, which makes maps/navigation unusable in the WebView.
       return {lat: 37.7956, lng: -122.3933, accuracy: 0, timestamp: Date.now()}
 
+    case MiniappRequestType.CALENDAR_LIST_EVENTS:
+      return {events: [], truncated: false}
+
     case MiniappRequestType.STORAGE_GET:
       return {value: null}
 

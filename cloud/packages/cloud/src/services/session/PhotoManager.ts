@@ -68,6 +68,7 @@ export class PhotoManager {
       size = "medium",
       compress = "none",
     } = appRequest;
+    const mode = appRequest.mode === "text" ? "text" : "photo";
 
     this.logger.info(
       {
@@ -75,6 +76,7 @@ export class PhotoManager {
         requestId,
         saveToGallery,
         size,
+        mode,
         hasCustomWebhook: !!customWebhookUrl,
         hasAuthToken: !!authToken,
         rawExposureTimeNs: appRequest.exposureTimeNs,
@@ -138,6 +140,7 @@ export class PhotoManager {
       webhookUrl, // Use custom webhookUrl if provided, otherwise default
       authToken, // Include authToken for webhook authentication
       size, // Propagate desired size
+      mode, // Propagate normalized capture mode
       compress, // Propagate compression setting
       flash, // Controls privacy flash LED (cloud-controlled)
       sound, // Controls shutter sound (app-controllable via SDK)
@@ -156,6 +159,7 @@ export class PhotoManager {
           hasAuthToken: !!authToken,
           flash,
           sound,
+          mode,
           exposureTimeNs: includeExposure ? expNs : undefined,
         },
         `PHOTO PIPELINE [cloud] PHOTO_REQUEST sent to phone websocket (flash=${flash}, sound=${sound}).`,

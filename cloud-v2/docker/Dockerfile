@@ -23,6 +23,7 @@ COPY cloud-v2/packages/shared/package.json ./packages/shared/
 COPY cloud-v2/packages/auth/package.json ./packages/auth/
 COPY cloud-v2/packages/cli/package.json ./packages/cli/
 COPY cloud-v2/packages/core/package.json ./packages/core/
+COPY cloud-v2/packages/protocol/package.json ./packages/protocol/
 COPY cloud-v2/packages/runtime/package.json ./packages/runtime/
 COPY cloud-v2/packages/proxy/package.json ./packages/proxy/
 COPY cloud-v2/packages/cloud-client/package.json ./packages/cloud-client/

@@ -15,6 +15,8 @@ export interface Channels {
   "rec:snapshot": RecorderSnapshot
   /** Live capture status (while recording). */
   "rec:status": RecorderStatus
+  /** Stop was accepted and the capture is being finalized. */
+  "rec:stopping": Record<string, never>
   /** Recording ended — clears the live status. */
   "rec:stopped": Record<string, never>
   /** Updated recordings list + usage (after save/delete/clear). */

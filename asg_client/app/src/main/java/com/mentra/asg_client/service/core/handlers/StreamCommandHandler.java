@@ -4,6 +4,7 @@ import android.content.Context;
 import android.hardware.camera2.CameraAccessException;
 import android.hardware.camera2.CameraCharacteristics;
 import android.hardware.camera2.CameraManager;
+import android.os.SystemClock;
 import android.util.Log;
 import com.mentra.asg_client.io.media.core.MediaCaptureService;
 import com.mentra.asg_client.io.streaming.config.RtmpStreamConfig;
@@ -19,6 +20,8 @@ import com.mentra.asg_client.service.media.interfaces.IMediaManager;
 import com.mentra.asg_client.service.system.core.SystemControllerFactory;
 import com.mentra.asg_client.service.system.interfaces.IStateManager;
 import com.mentra.asg_client.service.utils.ServiceConstants;
+import com.mentra.asg_client.service.utils.ServiceUtils;
+import io.github.thibaultbee.streampack.internal.sources.camera.CameraController;
 import java.util.Set;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -36,7 +39,7 @@ public class StreamCommandHandler implements ICommandHandler {
      * key). When false, EIS is disabled for the duration of the stream to reduce camera HAL thermal
      * load.
      */
-    private static final boolean EIS_IN_LIVESTREAMS = true;
+    private static final boolean EIS_IN_LIVESTREAMS = false;
 
     /**
      * EIS only kicks in below this pixel budget. Higher resolutions push the camera HAL into
@@ -107,8 +110,10 @@ public class StreamCommandHandler implements ICommandHandler {
 
     /** Handle start stream command — routes to RTMP, SRT, or WHIP service based on URL. */
     private boolean handleStartCommand(JSONObject data) {
+        long startupStartedAtMs = SystemClock.elapsedRealtime();
         boolean eisChanged = false;
         boolean streamStarted = false;
+        String streamId = data.optString("streamId", "");
         try {
             // Accept streamUrl first, then legacy rtmpUrl / srtUrl keys
             String streamUrl = data.optString("streamUrl", "");
@@ -118,20 +123,20 @@ public class StreamCommandHandler implements ICommandHandler {
 
             if (streamUrl.isEmpty()) {
                 Log.e(TAG, "Cannot start stream - missing stream URL");
-                streamingManager.sendStreamStatusResponse(
-                        false,
-                        ServiceConstants.STATUS_ERROR,
-                        ServiceConstants.ERROR_MISSING_STREAM_URL);
+                sendStreamErrorStatus(streamId, ServiceConstants.ERROR_MISSING_STREAM_URL);
                 return false;
             }
 
             Protocol protocol = detectProtocol(streamUrl);
             if (protocol == Protocol.UNKNOWN) {
                 Log.e(TAG, "Unknown stream URL protocol: " + streamUrl);
-                streamingManager.sendStreamStatusResponse(
-                        false, ServiceConstants.STATUS_ERROR, "Unknown stream URL protocol");
+                sendStreamErrorStatus(streamId, "Unknown stream URL protocol");
                 return false;
             }
+
+            // Mentra Live accepts synthetic [fps,fps] inside a wider AE band; keep the
+            // StreamPackLite workaround off for generic Android HALs (Codex P1).
+            CameraController.forceFixedFpsInsideSupportedBand = ServiceUtils.isK900Device(context);
 
             // BATTERY CHECK
             if (stateManager != null) {
@@ -139,9 +144,8 @@ public class StreamCommandHandler implements ICommandHandler {
                 if (batteryLevel >= 0 && batteryLevel < BatteryConstants.MIN_BATTERY_LEVEL) {
                     Log.w(TAG, "🚫 Stream rejected - battery too low (" + batteryLevel + "%)");
                     MediaCaptureService.playBatteryLowSound(context);
-                    streamingManager.sendStreamStatusResponse(
-                            false,
-                            ServiceConstants.STATUS_ERROR,
+                    sendStreamErrorStatus(
+                            streamId,
                             "Battery level too low ("
                                     + batteryLevel
                                     + "%) - minimum "
@@ -156,17 +160,19 @@ public class StreamCommandHandler implements ICommandHandler {
             // WiFi check (WHIP streams may work on mobile data; skip only for WHIP if needed)
             if (stateManager != null && !stateManager.isConnectedToWifi()) {
                 Log.e(TAG, "Cannot start stream - no WiFi connection");
-                streamingManager.sendStreamStatusResponse(
-                        false,
-                        ServiceConstants.STATUS_ERROR,
-                        ServiceConstants.ERROR_NO_WIFI_CONNECTION);
+                sendStreamErrorStatus(streamId, ServiceConstants.ERROR_NO_WIFI_CONNECTION);
                 return false;
             }
 
             // Stop any existing stream
-            stopAllServices();
+            boolean stoppedExistingStream = stopAllServices();
+            Log.i(
+                    TAG,
+                    "[STREAM_STARTUP] stage=existing_streams_checked elapsedMs="
+                            + (SystemClock.elapsedRealtime() - startupStartedAtMs)
+                            + " stoppedExisting="
+                            + stoppedExistingStream);
 
-            String streamId = data.optString("streamId", "");
             // Capture light is mandatory for privacy; ignore any caller-supplied flash value.
             boolean flash = true;
             boolean sound = data.optBoolean("sound", true);
@@ -181,7 +187,8 @@ public class StreamCommandHandler implements ICommandHandler {
                 case RTMP:
                     {
                         RtmpStreamConfig config = RtmpStreamConfig.fromJson(videoJson, audioJson);
-                        if (!preflightCameraCaptureForPackStreaming(config)) {
+                        Log.i(TAG, "[VideoQuality] parsed RTMP config " + config);
+                        if (!preflightCameraCaptureForPackStreaming(config, streamId)) {
                             return false;
                         }
                         // Toggle EIS for the duration of the stream (see EIS_IN_LIVESTREAMS).
@@ -198,7 +205,8 @@ public class StreamCommandHandler implements ICommandHandler {
                 case SRT:
                     {
                         RtmpStreamConfig config = RtmpStreamConfig.fromJson(videoJson, audioJson);
-                        if (!preflightCameraCaptureForPackStreaming(config)) {
+                        Log.i(TAG, "[VideoQuality] parsed SRT config " + config);
+                        if (!preflightCameraCaptureForPackStreaming(config, streamId)) {
                             return false;
                         }
                         applyEisForStreaming(config.getVideoWidth(), config.getVideoHeight());
@@ -213,14 +221,27 @@ public class StreamCommandHandler implements ICommandHandler {
                 case WHIP:
                     {
                         WhipStreamConfig config = WhipStreamConfig.fromJson(videoJson, audioJson);
-                        if (!preflightCameraCaptureForWhip(config)) {
+                        Log.i(TAG, "[VideoQuality] parsed WHIP config " + config);
+                        if (!preflightCameraCaptureForWhip(config, streamId)) {
                             return false;
                         }
                         applyEisForStreaming(config.getVideoWidth(), config.getVideoHeight());
                         eisChanged = true;
+                        Log.i(
+                                TAG,
+                                "[STREAM_STARTUP] stage=service_start_requested protocol=whip elapsedMs="
+                                        + (SystemClock.elapsedRealtime() - startupStartedAtMs));
                         Log.d(TAG, "Starting WHIP stream to: " + streamUrl);
+                        String authToken = null;
+                        if (data.has("authToken")) {
+                            String value = data.optString("authToken", "");
+                            if (!value.isEmpty()) authToken = value;
+                        } else if (data.has("auth_token")) {
+                            String value = data.optString("auth_token", "");
+                            if (!value.isEmpty()) authToken = value;
+                        }
                         WhipStreamingService.startStreaming(
-                                context, streamUrl, streamId, flash, sound, config);
+                                context, streamUrl, streamId, flash, sound, config, authToken);
                         streamStarted = true;
                         WhipStreamingService.setStateManager(stateManager);
                         break;
@@ -233,8 +254,7 @@ public class StreamCommandHandler implements ICommandHandler {
                 restoreEisAfterStreaming();
             }
             Log.e(TAG, "Error handling start stream command", e);
-            streamingManager.sendStreamStatusResponse(
-                    false, ServiceConstants.STATUS_ERROR, e.getMessage());
+            sendStreamErrorStatus(streamId, e.getMessage());
             return false;
         }
     }
@@ -270,7 +290,8 @@ public class StreamCommandHandler implements ICommandHandler {
      * RTMP/SRT: reject if no native mode can cover the requested output without upscaling; stamps
      * {@link RtmpStreamConfig#setCaptureSize(int, int)} for StreamPackLite.
      */
-    private boolean preflightCameraCaptureForPackStreaming(RtmpStreamConfig config) {
+    private boolean preflightCameraCaptureForPackStreaming(
+            RtmpStreamConfig config, String streamId) {
         try {
             if (!WhipCameraFormatSelector.stampCaptureSizeOntoConfig(context, config)) {
                 Log.w(
@@ -280,18 +301,14 @@ public class StreamCommandHandler implements ICommandHandler {
                                 + "x"
                                 + config.getVideoHeight());
                 restoreEisAfterStreaming();
-                streamingManager.sendStreamStatusResponse(
-                        false, ServiceConstants.STATUS_ERROR, "Resolution not supported by camera");
+                sendStreamErrorStatus(streamId, "Resolution not supported by camera");
                 return false;
             }
             return true;
         } catch (CameraAccessException e) {
             Log.w(TAG, "Camera access failed during stream preflight", e);
             restoreEisAfterStreaming();
-            streamingManager.sendStreamStatusResponse(
-                    false,
-                    ServiceConstants.STATUS_ERROR,
-                    "Could not access camera for resolution check");
+            sendStreamErrorStatus(streamId, "Could not access camera for resolution check");
             return false;
         }
     }
@@ -299,15 +316,14 @@ public class StreamCommandHandler implements ICommandHandler {
     /**
      * WHIP: reject upscale-only requests. On validation failure, match legacy behavior and allow.
      */
-    private boolean preflightCameraCaptureForWhip(WhipStreamConfig config) {
+    private boolean preflightCameraCaptureForWhip(WhipStreamConfig config, String streamId) {
         try {
             CameraManager cameraManager =
                     (CameraManager) context.getSystemService(Context.CAMERA_SERVICE);
             if (cameraManager == null) {
                 Log.w(TAG, "Rejecting WHIP stream request because camera manager is unavailable");
                 restoreEisAfterStreaming();
-                streamingManager.sendStreamStatusResponse(
-                        false, ServiceConstants.STATUS_ERROR, "Could not access camera");
+                sendStreamErrorStatus(streamId, "Could not access camera");
                 return false;
             }
 
@@ -315,8 +331,7 @@ public class StreamCommandHandler implements ICommandHandler {
             if (cameraId == null) {
                 Log.w(TAG, "Rejecting WHIP stream request because no camera is available");
                 restoreEisAfterStreaming();
-                streamingManager.sendStreamStatusResponse(
-                        false, ServiceConstants.STATUS_ERROR, "Could not access camera");
+                sendStreamErrorStatus(streamId, "Could not access camera");
                 return false;
             }
 
@@ -331,8 +346,7 @@ public class StreamCommandHandler implements ICommandHandler {
                                 + "x"
                                 + config.getVideoHeight());
                 restoreEisAfterStreaming();
-                streamingManager.sendStreamStatusResponse(
-                        false, ServiceConstants.STATUS_ERROR, "Resolution not supported by camera");
+                sendStreamErrorStatus(streamId, "Resolution not supported by camera");
                 return false;
             }
 
@@ -355,21 +369,18 @@ public class StreamCommandHandler implements ICommandHandler {
     public boolean handleStopCommand() {
         try {
             if (RtmpStreamingService.isStreaming() || RtmpStreamingService.isReconnecting()) {
-                streamingManager.sendStreamStatusResponse(
-                        true, ServiceConstants.STATUS_STOPPING, null);
+                sendStreamStoppingStatus(RtmpStreamingService.getCurrentStreamId());
                 RtmpStreamingService.stopStreaming(context);
                 restoreEisAfterStreaming();
                 return true;
             } else if (SrtStreamingService.isStreaming() || SrtStreamingService.isReconnecting()) {
-                streamingManager.sendStreamStatusResponse(
-                        true, ServiceConstants.STATUS_STOPPING, null);
+                sendStreamStoppingStatus(SrtStreamingService.getCurrentStreamId());
                 SrtStreamingService.stopStreaming(context);
                 restoreEisAfterStreaming();
                 return true;
             } else if (WhipStreamingService.isStreaming()
                     || WhipStreamingService.isReconnecting()) {
-                streamingManager.sendStreamStatusResponse(
-                        true, ServiceConstants.STATUS_STOPPING, null);
+                sendStreamStoppingStatus(WhipStreamingService.getCurrentStreamId());
                 WhipStreamingService.stopStreaming(context);
                 restoreEisAfterStreaming();
                 return true;
@@ -383,6 +394,43 @@ public class StreamCommandHandler implements ICommandHandler {
             streamingManager.sendStreamStatusResponse(
                     false, ServiceConstants.STATUS_ERROR, e.getMessage());
             return false;
+        }
+    }
+
+    /** Send an error stream status echoing the rejected command's streamId when it carried one. */
+    private void sendStreamErrorStatus(String streamId, String details) {
+        if (streamId == null || streamId.isEmpty()) {
+            streamingManager.sendStreamStatusResponse(
+                    false, ServiceConstants.STATUS_ERROR, details);
+            return;
+        }
+        try {
+            JSONObject status = new JSONObject();
+            status.put("status", ServiceConstants.STATUS_ERROR);
+            if (details != null) {
+                status.put("errorDetails", details);
+            }
+            status.put("streamId", streamId);
+            streamingManager.sendStreamStatusResponse(false, status);
+        } catch (JSONException e) {
+            Log.e(TAG, "Error creating stream error status", e);
+        }
+    }
+
+    /** Send a stopping stream status carrying the id of the stream being stopped. */
+    private void sendStreamStoppingStatus(String streamId) {
+        if (streamId == null || streamId.isEmpty()) {
+            streamingManager.sendStreamStatusResponse(
+                    true, ServiceConstants.STATUS_STOPPING, null);
+            return;
+        }
+        try {
+            JSONObject status = new JSONObject();
+            status.put("status", ServiceConstants.STATUS_STOPPING);
+            status.put("streamId", streamId);
+            streamingManager.sendStreamStatusResponse(true, status);
+        } catch (JSONException e) {
+            Log.e(TAG, "Error creating stream stopping status", e);
         }
     }
 
@@ -493,21 +541,29 @@ public class StreamCommandHandler implements ICommandHandler {
     // Helpers
     // -------------------------------------------------------------------------
 
-    private void stopAllServices() {
+    private boolean stopAllServices() {
+        boolean stoppedExistingStream = false;
         if (RtmpStreamingService.isStreaming() || RtmpStreamingService.isReconnecting()) {
             RtmpStreamingService.stopStreaming(context);
+            stoppedExistingStream = true;
         }
         if (SrtStreamingService.isStreaming() || SrtStreamingService.isReconnecting()) {
             SrtStreamingService.stopStreaming(context);
+            stoppedExistingStream = true;
         }
         if (WhipStreamingService.isStreaming() || WhipStreamingService.isReconnecting()) {
             WhipStreamingService.stopStreaming(context);
+            stoppedExistingStream = true;
         }
-        // Brief pause to let services clean up before starting a new one
-        try {
-            Thread.sleep(500);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
+        if (stoppedExistingStream) {
+            // Give an active service time to release camera/encoder resources
+            // before replacing it. Cold starts do not need this delay.
+            try {
+                Thread.sleep(500);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
         }
+        return stoppedExistingStream;
     }
 }

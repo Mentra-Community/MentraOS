@@ -93,6 +93,8 @@ export interface ManifestAction {
   /** AI-facing contract — when to use the action. Required, non-empty. */
   description: string;
   parameters?: ManifestActionParameters;
+  /** JSON-Schema descriptor for the structured value returned by the handler. */
+  outputSchema?: Record<string, unknown>;
 }
 
 export interface MiniappManifestV1 {
@@ -319,6 +321,12 @@ export function validateManifest(manifest: unknown): { valid: boolean; errors: s
         }
         if (a.parameters !== undefined) {
           validateActionParameters(a.parameters, i, errors);
+        }
+        if (
+          a.outputSchema !== undefined &&
+          (typeof a.outputSchema !== 'object' || a.outputSchema === null || Array.isArray(a.outputSchema))
+        ) {
+          errors.push(`actions[${i}].outputSchema must be a JSON-Schema object when set`);
         }
       });
     }

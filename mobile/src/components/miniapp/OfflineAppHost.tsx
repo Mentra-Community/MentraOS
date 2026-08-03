@@ -26,6 +26,7 @@
  * internal stack change (effects keyed on depth) — the host always wins.
  */
 
+import {engine} from "@mentra/engine"
 import {useCallback, useEffect, useRef, useState} from "react"
 import {StyleSheet, View} from "react-native"
 import {Screen as NativeScreen, ScreenStack} from "react-native-screens"
@@ -36,7 +37,6 @@ import {offlineAppRegistry} from "@/components/miniapp/offlineAppRegistry"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useCapsuleStore} from "@/stores/capsule"
 import {useNavigationStore, type NavInterceptor} from "@/stores/navigation"
-import {useAppStatusStore} from "@mentra/island"
 
 interface OfflineAppHostProps {
   packageName: string
@@ -122,7 +122,7 @@ export default function OfflineAppHost({packageName, appName, iconUrl, onExit, o
         // External route — close the overlay and let the real push proceed.
         activeRef.current = false
         onShouldCaptureRef.current?.()
-        useAppStatusStore.getState().clearForeground()
+        engine.miniapps.clearForeground()
         return false
       },
       replace: (path, params) => {
@@ -133,7 +133,7 @@ export default function OfflineAppHost({packageName, appName, iconUrl, onExit, o
         }
         // e.g. sign-out replace("/") — close the overlay first.
         activeRef.current = false
-        useAppStatusStore.getState().clearForeground()
+        engine.miniapps.clearForeground()
         return false
       },
       goBack: () => {
@@ -183,7 +183,7 @@ export default function OfflineAppHost({packageName, appName, iconUrl, onExit, o
         // the animation), so stopping now — which only flips the `running` flag
         // — doesn't interrupt it. Deferring stop() (previously by 1s) left the
         // app lingering in the tray for the whole animation, then popping out.
-        useAppStatusStore.getState().stop(packageName)
+        engine.miniapps.stop(packageName)
         beginExit()
       },
     }

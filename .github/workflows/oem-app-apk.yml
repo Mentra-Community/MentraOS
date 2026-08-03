@@ -1,0 +1,218 @@
+name: OEM Example App APK
+
+# Publishes an installable APK of sdk/example-oem-app — the reference second
+# host built against the public @mentra/engine entry — as a workflow artifact
+# on every dev push that touches its inputs (mirroring how the MentraOS app
+# APK is produced on dev pushes by "Mobile App Android Build").
+#
+# Retention IS the cleanup story: artifacts expire after RETENTION_DAYS, so
+# nothing accumulates and no delete step is needed. The APK is a release
+# build signed with the debug keystore (the expo-generated default when no
+# upload key is configured): installable anywhere, JS bundled, no secrets.
+#
+# The pull_request path filter names only THIS file, but pull_request path
+# filters match the whole PR diff — so while a PR touches this file, every
+# push to that PR re-runs the full build (which is how workflow changes get
+# proven in CI before landing on dev).
+
+on:
+  push:
+    branches:
+      - dev
+    paths:
+      - "mobile/modules/engine/**"
+      - "mobile/modules/bluetooth-sdk/**"
+      - "mobile/modules/crust/**"
+      - "mobile/modules/miniapp/**"
+      - "sdk/example-oem-app/**"
+      - "sdk/package.json"
+      - "sdk/bun.lock"
+      - ".github/workflows/oem-app-apk.yml"
+  pull_request:
+    paths:
+      - ".github/workflows/oem-app-apk.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: oem-app-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  # Upload/replace assets on the rolling `oem-app-builds` release.
+  contents: write
+
+jobs:
+  build:
+    # Same runner class as the MentraOS Android build: an ubuntu compile job
+    # that doesn't need the self-hosted Mac pool.
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Get cache week number
+        id: cache-week
+        run: echo "week=$(date +%Y-%U)" >> $GITHUB_OUTPUT
+
+      - name: Free up disk space
+        # RN Android release builds (NDK + Gradle + workspace installs) can
+        # exhaust the runner's free tier disk; drop toolchains we never use.
+        run: |
+          echo "Before:"; df -h / | tail -1
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup \
+            /usr/local/share/powershell /usr/local/share/chromium \
+            /opt/hostedtoolcache/CodeQL /usr/local/lib/node_modules 2>/dev/null || true
+          sudo docker image prune --all --force 2>/dev/null || true
+          echo "After:"; df -h / | tail -1
+
+      - name: Setup Java
+        uses: actions/setup-java@v3
+        with:
+          java-version: "17"
+          distribution: "temurin"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+
+      - name: Cache Gradle dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-oem-${{ runner.environment }}-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-${{ hashFiles('sdk/example-oem-app/app.json', 'sdk/bun.lock') }}
+          restore-keys: |
+            gradle-oem-${{ runner.environment }}-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-
+            gradle-oem-${{ runner.environment }}-${{ runner.os }}-
+
+      - name: Cache Bun dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-oem-${{ runner.environment }}-${{ runner.os }}-${{ hashFiles('sdk/bun.lock') }}
+          restore-keys: |
+            bun-oem-${{ runner.environment }}-${{ runner.os }}-
+
+      - name: Install SDK workspace
+        working-directory: sdk
+        run: bun install --frozen-lockfile
+
+      - name: Build bluetooth-sdk
+        working-directory: mobile/modules/bluetooth-sdk
+        run: bun run build
+
+      - name: Build crust
+        working-directory: mobile/modules/crust
+        run: bun run build
+
+      - name: Build engine
+        working-directory: mobile/modules/engine
+        run: bun run build
+
+      - name: Run Expo prebuild
+        working-directory: sdk/example-oem-app
+        run: bun expo prebuild --platform android
+
+      - name: Build release APK (debug-signed)
+        working-directory: sdk/example-oem-app/android
+        run: ./gradlew assembleRelease --build-cache --parallel
+        env:
+          # Authenticates Mapbox's private Downloads registry so gradle can
+          # resolve com.mapbox.navigationcore:* (pulled in by @mentra/crust);
+          # the repo block is injected at prebuild by the app's
+          # withMentraStackGradle config plugin. Build-time only.
+          MAPBOX_DOWNLOADS_TOKEN: ${{ secrets.MAPBOX_DOWNLOADS_TOKEN }}
+
+      - name: Stamp APK with commit
+        id: apk
+        env:
+          # On pull_request runs GITHUB_SHA is the synthetic merge commit —
+          # stamp the head commit humans can check out. github.sha is correct
+          # for dev pushes and dispatches.
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          sha="${HEAD_SHA::7}"
+          src=sdk/example-oem-app/android/app/build/outputs/apk/release/app-release.apk
+          [ -f "$src" ] || { echo "::error::APK not produced at $src"; exit 1; }
+          out="example-oem-app-${sha}.apk"
+          cp "$src" "$out"
+          echo "name=$out" >> "$GITHUB_OUTPUT"
+          ls -lh "$out"
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.apk.outputs.name }}
+          path: ${{ steps.apk.outputs.name }}
+          # The whole cleanup policy: GitHub deletes expired artifacts itself.
+          retention-days: 14
+
+      - name: Publish APK to the oem-app-builds rolling release
+        # Dev builds only — PR runs stay as run-scoped artifacts. The rolling
+        # release is the browsable index (mirrors the pr-builds release the
+        # MentraOS Android build maintains for PR APKs):
+        # https://github.com/Mentra-Community/MentraOS/releases/tag/oem-app-builds
+        if: github.event_name != 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const {owner, repo} = context.repo;
+            const tag = 'oem-app-builds';
+            const apkName = '${{ steps.apk.outputs.name }}';
+
+            let release;
+            try {
+              release = (await github.rest.repos.getReleaseByTag({owner, repo, tag})).data;
+            } catch (e) {
+              if (e.status !== 404) throw e;
+              release = (await github.rest.repos.createRelease({
+                owner, repo, tag_name: tag, name: 'Example OEM app builds (rolling)',
+                body: 'Rolling dev builds of sdk/example-oem-app — the reference second host built against the public @mentra/engine entry. Debug-keystore-signed release APKs, one per dev commit that touches the OEM stack. Assets older than 14 days are swept automatically.',
+                prerelease: true,
+              })).data;
+            }
+
+            for (const asset of release.assets) {
+              if (asset.name === apkName) {
+                await github.rest.repos.deleteReleaseAsset({owner, repo, asset_id: asset.id});
+              }
+            }
+
+            const data = fs.readFileSync(apkName);
+            console.log(`Uploading ${apkName} (${data.length} bytes)...`);
+            await github.rest.repos.uploadReleaseAsset({
+              owner, repo, release_id: release.id, name: apkName, data,
+            });
+
+      - name: Sweep old release assets
+        if: github.event_name != 'pull_request'
+        continue-on-error: true
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const {owner, repo} = context.repo;
+            const cutoff = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
+            try {
+              const release = (await github.rest.repos.getReleaseByTag({owner, repo, tag: 'oem-app-builds'})).data;
+              for (const asset of release.assets) {
+                if (new Date(asset.created_at) < cutoff) {
+                  console.log(`Deleting expired asset: ${asset.name} (created ${asset.created_at})`);
+                  await github.rest.repos.deleteReleaseAsset({owner, repo, asset_id: asset.id});
+                }
+              }
+            } catch (e) {
+              console.log('Sweep skipped:', e.message);
+            }

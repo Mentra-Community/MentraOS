@@ -6,6 +6,7 @@
   "android": {
     "modules": [
       "com.mentra.bluetoothsdk.BluetoothSdkModule",
+      "com.mentra.bluetoothsdk.MentraLocalNetworkModule",
       "com.mentra.bluetoothsdk.photoreceiver.MentraPhotoReceiverModule"
     ]
   }

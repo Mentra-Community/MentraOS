@@ -1,4 +1,4 @@
-# Island — the MentraOS OEM Integration Toolkit
+# Island — the MentraOS OEM Integration Engine
 
 > **Status:** design / build plan. **Base branch:** `dev`. The cloud-client move (#5)
 > sequences last, once `cloud-v2` has merged into `dev` (days out).
@@ -7,10 +7,10 @@
 
 ## Why
 
-We are turning `@mentra/island` into the **MentraOS OEM Integration Toolkit**: a single
+We are turning `@mentra/engine` into the **MentraOS OEM Integration Engine**: a single
 library a glasses OEM drops into their app to get *all* of MentraOS — glasses connection,
 the miniapp runtime, backend services, OTA, pairing, settings, sensors — while writing
-their own UI. The Mentra app becomes the first consumer of that same toolkit: a thin UI
+their own UI. The Mentra app becomes the first consumer of that same engine: a thin UI
 layer over island, with no privileged backdoor.
 
 Today the logic is inverted — business logic lives in React screens and the app reaches
@@ -21,7 +21,7 @@ makes island the single boundary the UI talks to.
 Mentra's *own* glasses (the SGCs already in `@mentra/bluetooth-sdk`: G1/G2/Live/Nex/Mach1/
 Simulated) and the app becomes a UI layer. **Phase 2** (separate, later) makes the glasses
 layer *injectable* — an OEM registers its own SGC(s) at runtime instead of PRing them into
-`@mentra/bluetooth-sdk` — turning island into a true third-party toolkit. Phase 1 is the
+`@mentra/bluetooth-sdk` — turning island into a true third-party engine. Phase 1 is the
 prerequisite; Phase 2's adapter dynamics are TBD and out of scope here.
 
 ## What
@@ -35,7 +35,7 @@ prerequisite; Phase 2's adapter dynamics are TBD and out of scope here.
   the host needs, it *reads from* or *calls on* island.
 
 > **Governing principle — if the Mentra app's UI uses it, island exposes it.** The Mentra
-> app is OEM #1 and the reference consumer; the toolkit surface is the *union* of
+> app is OEM #1 and the reference consumer; the engine surface is the *union* of
 > everything the Mentra app needs. A third-party OEM consumes whatever subset it wants.
 
 The complete host→island injection:
@@ -183,7 +183,7 @@ The re-exported `@mentra/bluetooth-sdk` command + event surface, namespaced unde
 `on(event, cb)` (e.g. `ota_status`, `version_info`). It exists so the host can drive
 device-specific things island does **not** model — chiefly **OTA**, the Mentra-Live firmware
 flow (APK→MTK→BES), which lives in the Mentra app (its only consumer). Because the call routes
-through island, the app's OTA code imports only `@mentra/island`.
+through island, the app's OTA code imports only `@mentra/engine`.
 
 > **Facades vs passthrough.** Model *shared* capabilities (connection, settings, wifi, pairing)
 > as typed facades; reach for `glasses.btsdk` only for the *long tail* no facade covers. If a
@@ -291,7 +291,7 @@ reimplement any of it.**
 Therefore the contract is a single mountable component:
 
 ```tsx
-import { MiniappView } from "@mentra/island"
+import { MiniappView } from "@mentra/engine"
 <MiniappView packageName={pkg} onExit={...} />   // island owns spawn, shim, routing, handshake, respawn, the capsule menu
 ```
 
@@ -363,13 +363,13 @@ and its comms route their btsdk imports through island in the sweep; island cons
 
 ## The native dependency boundary
 
-End-state: the app imports `@mentra/island` only; island imports `crust` + `@mentra/bluetooth-sdk`
+End-state: the app imports `@mentra/engine` only; island imports `crust` + `@mentra/bluetooth-sdk`
 and exposes their surface. Today the app reaches past island in **80 files** (67 btsdk + 13
 crust). Most die for free — when a coordinator lands, its screens stop importing btsdk because the
 device port owns the calls. The sweep (#8) mops up the orphans: re-export btsdk through
 `island/index.ts`; wrap `crust`'s capabilities (heading, nav, media, notifications) as island
 services. An ESLint `no-restricted-imports` rule banning `crust`/`@mentra/bluetooth-sdk` outside
-`mobile/modules/island/**` ratchets the boundary shut per migrated surface.
+`mobile/modules/engine/**` ratchets the boundary shut per migrated surface.
 
 Two special cases: `stores/glasses.ts` + `stores/core.ts` move **into** island (they *are* the
 device-state store the coordinators read); the `photo`/`video`/`streaming` coordinators collapse
@@ -388,7 +388,7 @@ The embedded RN runtime lives as long as its host **process** does:
   runtime: `connectedDevice`, `+microphone`/`+dataSync` while streaming), started/stopped from
   `DeviceManager` on connect/disconnect.
 
-The toolkit's Android packaging has **two layers that merge differently**: a library module's
+The engine's Android packaging has **two layers that merge differently**: a library module's
 AndroidManifest **auto-merges** into the consuming app; **Gradle build config does not.**
 `mobile/plugins/android.ts` is the *Mentra app's* Expo config plugin (runs only in Mentra's
 prebuild; an OEM never runs it), so anything an island module needs that currently lives there
@@ -419,7 +419,7 @@ overrides by shadowing the resource — no code fork.
 ### Layer 2 — Gradle (does **not** merge)
 Two different things hide here; separate them.
 
-**(a) Config the consuming app genuinely must set → ship as `@mentra/island/plugin`** (an Expo
+**(a) Config the consuming app genuinely must set → ship as `@mentra/engine/plugin`** (an Expo
 config plugin in the island package; native OEMs follow the same snippets):
 - enable `coreLibraryDesugaring` (`+ desugar_jdk_libs`) — AGP requires the *app* to enable it
   because crust's Nav SDK uses Java 8+ APIs; crust enables it module-side, the app must too.
@@ -435,10 +435,10 @@ app's `settings.gradle` must register `:lc3Lib`. Fix at the source — btsdk dep
 consumer `settings.gradle` entry exists.
 
 Mentra's app-only glue (signing, versionName, Sentry, deep-link scheme, heap/node-path) stays in
-`mobile/plugins/android.ts` and is not part of the toolkit.
+`mobile/plugins/android.ts` and is not part of the engine.
 
 ### OEM residual obligations (irreducible — policy / branding / keys)
-1. Apply `@mentra/island/plugin` (Expo) or the documented Gradle steps (native).
+1. Apply `@mentra/engine/plugin` (Expo) or the documented Gradle steps (native).
 2. Supply a Google Nav API key value (or use Mentra's).
 3. Play Console: justify the FGS types (`connectedDevice`, `microphone`) and `QUERY_ALL_PACKAGES`.
 4. iOS: add the `bluetooth-central` background mode to `Info.plist`.
@@ -463,7 +463,7 @@ Mentra's app-only glue (signing, versionName, Sentry, deep-link scheme, heap/nod
 
 Regenerate: `grep -rl "@mentra/bluetooth-sdk" mobile/src | grep -v __tests__` (67) ·
 `grep -rlE "from ['\"]crust['\"]" mobile/src` (13). Bucketed by the PR that removes the import
-(✅ a coordinator owns the calls so the import vanishes; 🔁 re-point to `@mentra/island` in the
+(✅ a coordinator owns the calls so the import vanishes; 🔁 re-point to `@mentra/engine` in the
 sweep):
 
 - **OTA** 🔁 (stays in the app; re-point to `island.glasses.btsdk`) `app/ota/{check-for-updates,progress,progress-legacy,deriveOtaDisplayState}.tsx`,

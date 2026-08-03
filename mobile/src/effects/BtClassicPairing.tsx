@@ -1,19 +1,20 @@
 import {useEffect, useRef} from "react"
 import {Platform} from "react-native"
 
-import {SETTINGS, useSetting} from "@/stores/settings"
-import {isGlassesConnected, selectGlassesConnected, useGlassesStore} from "@/stores/glasses"
+import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
+import {SETTINGS, useSetting} from "@mentra/engine"
 import {usePathname} from "expo-router"
 import {DeviceTypes} from "@/../../cloud/packages/types/src"
 import showAlert from "@/utils/AlertUtils"
 import {translate} from "@/i18n"
 import {useNavigationStore} from "@/stores/navigation"
+import {engine} from "@mentra/engine"
 
 export function BtClassicPairing() {
-  const bluetoothClassicConnected = useGlassesStore((state) => state.bluetoothClassicConnected)
-  const glassesConnected = useGlassesStore(selectGlassesConnected)
+  const readiness = useEngineSnapshot(engine.pairing.readiness, (onChange) => engine.pairing.onReadiness(onChange))
+  const bluetoothClassicConnected = readiness.bluetoothClassicConnected
+  const glassesConnected = readiness.connected
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
-  const [deviceName] = useSetting(SETTINGS.device_name.key)
   const {push} = useNavigationStore.getState()
 
   const pathname = usePathname()
@@ -29,9 +30,8 @@ export function BtClassicPairing() {
 
     const timeout = setTimeout(() => {
       // re-check the glasses state after 2 seconds to see if it's still in this state:
-      const glassesState = useGlassesStore.getState()
-      const connected = isGlassesConnected(glassesState.connection)
-      if (ignoreRef.current || !connected || glassesState.bluetoothClassicConnected) return
+      const latestReadiness = engine.pairing.readiness()
+      if (ignoreRef.current || !latestReadiness.connected || latestReadiness.bluetoothClassicConnected) return
 
       showAlert(translate("pairing:btClassicDisconnected"), translate("pairing:btClassicDisconnectedMessage"), [
         {

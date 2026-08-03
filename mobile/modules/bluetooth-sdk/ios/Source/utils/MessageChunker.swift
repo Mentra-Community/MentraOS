@@ -24,6 +24,8 @@ class MessageChunker {
     private static let MIN_CHUNK_DATA_SIZE = 4
     private static let MAX_PACKED_CHUNK_SIZE = 253
     private static let K900_FRAME_OVERHEAD = 7
+    private static let MAX_BINARY_FRAGMENT_PAYLOAD = BleWireProtocol.maxFragmentPayload
+    private static let MAX_BINARY_FRAME_SIZE = BleWireProtocol.mtuTarget
 
     /**
      * Check if a message needs to be chunked
@@ -202,6 +204,77 @@ class MessageChunker {
             data: data,
             messageId: messageId
         )
+    }
+
+    static func needsBinaryFragmenting(_ payload: Data) -> Bool {
+        payload.count > MAX_BINARY_FRAGMENT_PAYLOAD
+    }
+
+    static func needsBinaryFragmenting(_ json: String) -> Bool {
+        guard let data = json.data(using: .utf8) else { return false }
+        return needsBinaryFragmenting(data)
+    }
+
+    struct BinaryFragment {
+        let flags: UInt8
+        let msgId: UInt16
+        let fragIdx: UInt8
+        let fragCount: UInt8
+        let payload: Data
+    }
+
+    static func createBinaryFragments(
+        payload: Data,
+        msgId: UInt16 = 0,
+        wakeUp: Bool = false,
+        ackRequested: Bool = false
+    ) -> [BinaryFragment] {
+        let fragCount = max(1, (payload.count + MAX_BINARY_FRAGMENT_PAYLOAD - 1) / MAX_BINARY_FRAGMENT_PAYLOAD)
+        guard fragCount <= 255 else { return [] }
+
+        var fragments: [BinaryFragment] = []
+        for i in 0 ..< fragCount {
+            let offset = i * MAX_BINARY_FRAGMENT_PAYLOAD
+            let end = min(offset + MAX_BINARY_FRAGMENT_PAYLOAD, payload.count)
+            let fragPayload = payload.subdata(in: offset ..< end)
+
+            var flags: UInt8 = 0
+            if i == 0 { flags |= BleWireProtocol.flagFirstFrag }
+            if i == fragCount - 1 { flags |= BleWireProtocol.flagLastFrag }
+            if wakeUp, i == 0 { flags |= BleWireProtocol.flagWake }
+            if ackRequested, i == fragCount - 1 { flags |= BleWireProtocol.flagAckRequested }
+
+            fragments.append(
+                BinaryFragment(
+                    flags: flags,
+                    msgId: msgId,
+                    fragIdx: UInt8(i),
+                    fragCount: UInt8(fragCount),
+                    payload: fragPayload
+                )
+            )
+        }
+
+        print("MessageChunker: Created \(fragments.count) binary fragments for \(payload.count) bytes")
+        return fragments
+    }
+
+    static func allBinaryFragmentsFit(_ fragments: [BinaryFragment]) -> Bool {
+        for fragment in fragments {
+            guard let packed = BleWireProtocol.packBinaryFragment(
+                flags: fragment.flags,
+                msgId: fragment.msgId,
+                fragIdx: fragment.fragIdx,
+                fragCount: fragment.fragCount,
+                payload: fragment.payload
+            ) else {
+                return false
+            }
+            if packed.count > MAX_BINARY_FRAME_SIZE {
+                return false
+            }
+        }
+        return true
     }
 
     /**

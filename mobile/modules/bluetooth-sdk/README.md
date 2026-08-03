@@ -152,11 +152,13 @@ reordering rows just because RSSI metadata arrives later.
 
 ## Mentra SDK Usage Analytics
 
-The SDK sends two anonymous usage events to Mentra's PostHog project by default
-so Mentra can understand SDK adoption and successful glasses connections:
+The SDK sends three usage events to Mentra's PostHog project by default so
+Mentra can understand SDK adoption, successful glasses connections, and
+enterprise device deployments:
 
 - `bluetooth_sdk_started`: sent once per app runtime after the native SDK starts.
 - `bluetooth_sdk_glasses_connected`: sent when SDK status transitions from not connected to connected.
+- `bluetooth_sdk_glasses_identified`: sent once per connection after the SDK receives a valid manufacturing serial from the glasses. This fires for every supported model that reports a serial. G1 and Ar99 decode the serial from the glasses' BLE advertisement. Mentra Live reports the product serial provisioned by its Android firmware through `asg_client`.
 
 Analytics delivery is fire-and-forget: events are submitted asynchronously, do
 not block Bluetooth SDK behavior, and are not retried if delivery fails.
@@ -190,14 +192,23 @@ write token, not a private PostHog personal API key. Apps do not configure the
 analytics destination; these SDK usage events are always sent to Mentra's
 PostHog project unless analytics are disabled.
 
-Captured properties are limited to non-sensitive SDK/app metadata:
-`event_source`, `sdk_platform`, `sdk_surface`, `sdk_version`, the app package or
-bundle identifier, OS platform/version, `event_kind`, and for connection events
-only `fully_booted` plus a glasses model value when the SDK knows it. The SDK
-does not upload BLE MAC addresses, CoreBluetooth identifiers, serial numbers,
-Bluetooth device names, user ids, tokens, Wi-Fi credentials, microphone data,
-photos, or transcripts. PostHog receives a locally generated anonymous SDK
-install id as `distinct_id`, and events include `$process_person_profile: false`.
+Captured properties include `event_source`, `sdk_platform`, `sdk_surface`,
+`sdk_version`, `app_identifier` (the Android package or iOS bundle identifier),
+the platform-specific `app_package` or `app_bundle_identifier`, OS
+platform/version, and `event_kind`. Connection events also include
+`fully_booted` and a glasses model value when known. The identification event
+intentionally includes the glasses manufacturing serial as `glasses_device_id`,
+with `glasses_device_id_type=manufacturing_serial`, so Mentra can correlate
+fleet deployments across supported models. This serial identifies the glasses
+hardware, not the user or the host phone. Its source depends on the model:
+Mentra Live reports the serial provisioned in BES NV storage, while G1 and Ar99
+decode it from the glasses' BLE advertisement / manufacturer data.
+
+Apart from that glasses serial, the SDK does not upload BLE MAC addresses,
+CoreBluetooth identifiers, the host phone's Android device serial, Bluetooth
+device names, user ids, tokens, Wi-Fi credentials, microphone data, photos, or
+transcripts. PostHog receives a locally generated anonymous SDK install id as
+`distinct_id`, and events include `$process_person_profile: false`.
 
 ## React Hooks
 
@@ -380,11 +391,15 @@ const photo = await BluetoothSdk.requestPhoto({
 console.log('photo delivered', photo.photoUrl ?? photo.uploadUrl, photo.fileSizeBytes)
 ```
 
-`requestPhoto(...)` resolves only after the full photo action reaches terminal success: capture completed and the photo was delivered to the webhook, either directly from the glasses over Wi-Fi or through the phone's Bluetooth fallback relay. If you omit `requestId`, the SDK generates one and the terminal response includes it. It rejects if the ASG reports `state: "error"`, if phone-side fallback upload fails, if the SDK cannot send the command, or if no terminal `photo_response` arrives before the command timeout. Use `photo_status` for intermediate stages such as `accepted`, `configuring`, `capturing`, `captured`, `uploading`, `ble_fallback_compression`, `ready_for_transfer`, and `transferring`; `photo_status` is progress, while `photo_response` is terminal success/error. The raw `photo_response` event stream still includes both success and error events for subscribers. The webhook should accept multipart form data with a `photo` file and `requestId`. If `authToken` is provided, the uploader adds `Authorization: Bearer <token>`. The camera light is always enabled for photo capture.
+`requestPhoto(...)` resolves only after the full photo action reaches terminal success: capture completed and the photo was delivered to the webhook, either directly from the glasses over Wi-Fi or through the phone's Bluetooth fallback relay. If you omit `requestId`, the SDK generates one and the terminal response includes it. It rejects if the ASG reports `state: "error"`, if phone-side fallback upload fails, if the SDK cannot send the command, or if no terminal `photo_response` arrives within 30 seconds. Photo requests use this longer operation-specific deadline because max-quality BLE fallback can legitimately exceed the 15-second deadline used by ordinary commands. Use `photo_status` for intermediate stages such as `accepted`, `configuring`, `capturing`, `captured`, `uploading`, `ble_fallback_compression`, `ready_for_transfer`, and `transferring`; `photo_status` is progress, while `photo_response` is terminal success/error. The raw `photo_response` event stream still includes both success and error events for subscribers. The webhook should accept multipart form data with a `photo` file and `requestId`. If `authToken` is provided, the uploader adds `Authorization: Bearer <token>`. The camera light is always enabled for photo capture.
 
 For one-shot manual capture tuning, pass `exposureTimeNs` and `iso` together. `exposureTimeNs` is sensor exposure time in nanoseconds; `iso` is sensor ISO. If `exposureTimeNs` is omitted, `null`, invalid, or unsupported by the connected glasses, the camera uses auto exposure and ignores `iso`.
 
+To own and explicitly release a warm camera, pass a request ID to `warmUpCamera({requestId, ...})`, then call `stopCameraWarmUp(requestId)` when the foreground UI closes. Warm holds default to 15 seconds and are capped at 60 seconds. Stopping while the camera is opening rejects the pending warm-up with `camera_warm_up_cancelled`; stopping after `ready` emits `stopped`. Compatible ready leases share the camera and expire independently.
+
 Use `setCameraFov({fov, roiPosition})` to configure Mentra Live camera field of view and crop position. FOV is clamped to 62-118 degrees; ROI position is `"center"`, `"bottom"`, or `"top"`. You can also call `setCameraFov({preset: "narrow" | "standard" | "wide"})`; presets map to 82, 102, and 118 degrees with center ROI. The returned `CameraFovResult` resolves only after the ASG client reports that the setting was applied to camera hardware after the restart cooldown, and the promise rejects if the glasses report an error, persist the setting without hardware application, or time out. Raw `settings_ack` events remain available through `addListener("settings_ack", ...)` for diagnostic fields such as `hardwareApplied`. Treat FOV as a framing/ROI control; output resolution and effective detail can vary by capture path, firmware, and camera mode.
+
+The missing/factory persistent FOV base is 102 degrees with centered ROI; existing saved values are not migrated. Use `setCameraFovOverride({leaseId, fov, roiPosition, ttlMs})` for a memory-only crop and `releaseCameraFovOverride(leaseId)` to restore the persistent base. A stale release is a safe no-op, and refreshing the same lease/config extends its TTL without another HAL restart.
 
 `startVideoRecording(...)` resolves from the ASG `video_recording_status` event whose status is `recording_started`. `stopVideoRecording(...)` without a webhook resolves from `recording_stopped`; with a webhook it waits for `recording_stopped` plus a video `media_success`, and rejects on `media_error`. Raw `video_recording_status`, `media_success`, and `media_error` events remain available through listeners.
 
@@ -404,7 +419,7 @@ await BluetoothSdk.stopStream()
 ```
 
 Use `rtmp://` or `rtmps://` for RTMP, `srt://` for SRT, and `http://` or `https://` for WHIP/WebRTC ingest. `startStream()` resolves with the correlated `stream_status` event once the glasses report `status: "streaming"`; `stopStream()` resolves when the glasses report `status: "stopped"` or confirms the stream was already stopped / not streaming. `stopStream()` returns a normalized stopped event for that already-stopped case. Stream starts reject if the glasses report an error before streaming; stream stops reject for real stop errors, send failure, another stop in flight, or timeout. Stream video input fields are `width`, `height`, `bitrate`, and `fps`. The SDK sends stream keep-alives automatically while streaming and reports keep-alive failures through `stream_status`. The camera light is always enabled while streaming.
-`stream_status` events may include `resolvedConfig`, which reports the effective transport, video, and audio settings after glasses defaults, clamps, and camera preflight. The resolved effective frame rate is reported as `resolvedConfig.video.fps`.
+`stream_status` events may include `resolvedConfig`, which reports the effective transport, video, and audio settings after glasses defaults, clamps, and camera preflight. The resolved effective frame rate is reported as `resolvedConfig.video.fps`. While live, supported firmware emits periodic `streaming` events whose `stats` object contains `bitrate` (bits per second), `fps`, `droppedFrames`, `duration` (seconds), and `temperatureC` when the CPU sensor is available.
 
 ## Events
 
@@ -475,7 +490,7 @@ For bare native iOS apps, use the public SwiftPM repository:
 https://github.com/Mentra-Community/mentra-bluetooth-sdk-ios.git
 ```
 
-Select version `0.1.18`, then add the `MentraBluetoothSDK` product to your app target.
+Select version `0.1.20`, then add the `MentraBluetoothSDK` product to your app target.
 
 For local SDK development, add this package folder directly in Xcode:
 

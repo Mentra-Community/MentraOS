@@ -36,6 +36,9 @@ import type {
   TranscriptionProvider,
   TranscriptEvent,
 } from "./provider";
+import { createLogger } from "@mentra/cloud-shared";
+
+const logger = createLogger("runtime").child({ module: "soniox" });
 
 const SONIOX_MODEL = process.env.SONIOX_MODEL ?? "stt-rt-v4";
 function audioGapConfig(): { checkIntervalMs: number; thresholdMs: number } {
@@ -98,6 +101,39 @@ export interface CreateSonioxProviderOptions extends ProviderOptions {
   targetLanguage?: string;
 }
 
+/**
+ * Build Soniox `language_hints` from the subscription. A specific language is
+ * its own hint (region stripped: "en-US" -> "en"). For "auto" we pass the
+ * miniapp's detection hints, each reduced to Soniox's bare-code format and
+ * deduped; unknown/empty yields undefined (no hints). Passing a BCP-47 tag or
+ * an unrecognized code makes Soniox reject the session ("Invalid language
+ * hint"), so everything is normalized here (issue 021).
+ */
+export function sonioxLanguageHints(
+  language: string | undefined,
+  hints: string[] | undefined,
+): string[] | undefined {
+  const toBareCode = (code: string) => code.split("-")[0].toLowerCase();
+  if (language && language !== "auto") {
+    return [toBareCode(language)];
+  }
+  if (!hints || hints.length === 0) return undefined;
+  const bare = [...new Set(hints.map(toBareCode).filter(Boolean))];
+  return bare.length > 0 ? bare : undefined;
+}
+
+/**
+ * Soniox one-way translation target. Like `language_hints`, Soniox's
+ * `translation.target_language` takes a bare ISO 639-1 code — a BCP-47 tag
+ * ("es-ES") is rejected with "Invalid language in translation.target_language"
+ * and kills the session, so strip the region (mirrors v1's SonioxSdkStream,
+ * which used `targetLanguage.split("-")[0]`). Subscription keys and result
+ * routing keep the full tag; only the provider config is reduced (issue 021).
+ */
+export function sonioxTranslationTarget(target: string): string {
+  return target.split("-")[0].toLowerCase();
+}
+
 /** Shared client per worker. Soniox SDK is happy with one client for many streams. */
 let sharedClient: SonioxNodeClient | null = null;
 function getClient(): SonioxNodeClient {
@@ -143,13 +179,22 @@ export async function createSonioxProvider(
     enable_endpoint_detection: true,
     enable_speaker_diarization: true,
     max_endpoint_delay_ms: 2_000,
-    language_hints:
-      opts.language && opts.language !== "auto" ? [opts.language] : undefined,
+    // Soniox hints take bare ISO 639-1 codes ("en"), but subscriptions carry
+    // BCP-47 tags ("en-US") — strip the region like v1's SonioxSdkStream did,
+    // or the hint is unrecognized and does nothing. For a specific language the
+    // language itself is the hint; for "auto" we pass the miniapp's detection
+    // hints (already bare codes) so language identification is biased without
+    // being pinned.
+    language_hints: sonioxLanguageHints(opts.language, opts.languageHints),
+    context: {
+      terms: ["Mentra", "Hey Mentra"],
+      text: "Mentra, Hey Mentra (an AI assistant)",
+    },
     // For translation subs, configure Soniox's one-way translation. Result
     // tokens then carry `translation_status: "original" | "translation"`
     // and we filter to the translation half.
     translation: opts.targetLanguage
-      ? { type: "one_way", target_language: opts.targetLanguage }
+      ? { type: "one_way", target_language: sonioxTranslationTarget(opts.targetLanguage) }
       : undefined,
   } as SttSessionConfig;
   const isTranslation = !!opts.targetLanguage;
@@ -416,11 +461,22 @@ export async function createSonioxProvider(
     // parallel `originalText` accumulator and the detected SOURCE language.
     // For transcription subs, keep everything (translation_status will be
     // 'none' since we didn't request translation).
+    //
+    // SAME-LANGUAGE PASSTHROUGH (issue 021 / OS-1762): when the spoken
+    // language already equals the translation target, Soniox skips translation
+    // entirely and emits plain transcription tokens with NO translation_status
+    // (verified empirically 2026-07-21: EN speech -> target en yields only
+    // untagged tokens; EN -> es yields original/translation pairs). Keep those
+    // untagged tokens as emitted text so target-language speech surfaces as a
+    // transcription instead of silently vanishing. Because the SAME session
+    // makes both the detection and the translation decision, this cannot
+    // double-emit: an utterance either has translation tokens (cross-language)
+    // or untagged tokens (same-language), never both halves for one segment.
     const tokens = isTranslation
       ? allTokens.filter(
           (t) =>
-            (t as { translation_status?: string }).translation_status ===
-            "translation",
+            (t as { translation_status?: string }).translation_status !==
+            "original",
         )
       : allTokens;
     const originalTokens = isTranslation
@@ -469,6 +525,15 @@ export async function createSonioxProvider(
       if (t.language) {
         language = t.language;
         currentLanguage = t.language;
+        // Untagged tokens on a translation session are the same-language
+        // passthrough: their language IS the detected source. (Cross-language
+        // source tracking comes from the original-token loop below.)
+        if (
+          isTranslation &&
+          (t as { translation_status?: string }).translation_status == null
+        ) {
+          currentSourceLanguage = t.language;
+        }
       }
 
       if (t.is_final) {
@@ -631,9 +696,7 @@ export async function createSonioxProvider(
   // The `disconnected` handler is named so the same function is wired onto every
   // session instance (original + each reconnect) and can be `off`-ed on close.
   const handleDisconnected = (reason: unknown) => {
-    console.log(
-      `[soniox] disconnected scope=${opts.scope} reason=${typeof reason === "string" ? reason : JSON.stringify(reason)}`,
-    );
+    logger.info(`disconnected scope=${opts.scope} reason=${typeof reason === "string" ? reason : JSON.stringify(reason)}`);
     // An UNEXPECTED disconnect (not our own close()) means the upstream session
     // is gone. Self-heal in place so the provider keeps producing transcripts
     // for the audio that is still arriving. An expected disconnect (closed=true)
@@ -642,13 +705,13 @@ export async function createSonioxProvider(
   };
 
   const handleConnected = () => {
-    console.log(
-      `[soniox] connected scope=${opts.scope} lang=${opts.language}${opts.targetLanguage ? ` → ${opts.targetLanguage}` : ""}`,
+    logger.info(
+      `connected scope=${opts.scope} lang=${opts.language}${opts.targetLanguage ? ` → ${opts.targetLanguage}` : ""}`,
     );
   };
 
   const handleFinished = () => {
-    console.log(`[soniox] finished scope=${opts.scope}`);
+    logger.info(`finished scope=${opts.scope}`);
     commitPendingFinal();
     emitFinal();
   };
@@ -703,9 +766,9 @@ export async function createSonioxProvider(
       try {
         session.pause();
         pausedForGap = true;
-        console.log(`[soniox] auto-paused scope=${opts.scope} after audio gap`);
+        logger.info(`auto-paused scope=${opts.scope} after audio gap`);
       } catch (err) {
-        console.warn(`[soniox] auto-pause failed scope=${opts.scope}:`, err);
+        logger.warn({ err }, `auto-pause failed scope=${opts.scope}`);
       }
     }, gapConfig.checkIntervalMs);
   };
@@ -733,9 +796,7 @@ export async function createSonioxProvider(
       while (!closed) {
         reconnectAttempts += 1;
         if (reconnectAttempts > reconnect.maxAttempts) {
-          console.error(
-            `[soniox] self-heal gave up scope=${opts.scope} after ${reconnect.maxAttempts} attempts (trigger=${trigger})`,
-          );
+          logger.error(`self-heal gave up scope=${opts.scope} after ${reconnect.maxAttempts} attempts (trigger=${trigger})`);
           opts.onError?.(
             new Error(`soniox session lost and could not reconnect (scope=${opts.scope})`),
           );
@@ -747,9 +808,7 @@ export async function createSonioxProvider(
           reconnect.maxMs,
           reconnect.baseMs * 2 ** (reconnectAttempts - 1),
         );
-        console.log(
-          `[soniox] self-heal reconnect scope=${opts.scope} attempt=${reconnectAttempts} delayMs=${delay} trigger=${trigger}`,
-        );
+        logger.info(`self-heal reconnect scope=${opts.scope} attempt=${reconnectAttempts} delayMs=${delay} trigger=${trigger}`);
         await new Promise((resolve) => setTimeout(resolve, delay));
         if (closed) break;
 
@@ -765,13 +824,10 @@ export async function createSonioxProvider(
           reconnecting = false;
           reconnectAttempts = 0;
           startGapDetection();
-          console.log(`[soniox] self-heal reconnected scope=${opts.scope}`);
+          logger.info(`self-heal reconnected scope=${opts.scope}`);
           return;
         } catch (err) {
-          console.error(
-            `[soniox] self-heal connect failed scope=${opts.scope} attempt=${reconnectAttempts}:`,
-            err,
-          );
+          logger.error({ err }, `self-heal connect failed scope=${opts.scope} attempt=${reconnectAttempts}`);
           unwireSession(next);
           try {
             await next.close();
@@ -793,7 +849,7 @@ export async function createSonioxProvider(
     await session.connect();
     startGapDetection();
   } catch (err) {
-    console.error(`[soniox] connect failed scope=${opts.scope}:`, err);
+    logger.error({ err }, `connect failed scope=${opts.scope}`);
     opts.onError?.(err as Error);
     throw err;
   }
@@ -813,9 +869,9 @@ export async function createSonioxProvider(
           session.resume();
           pausedForGap = false;
           resetActiveUtterance();
-          console.log(`[soniox] resumed scope=${opts.scope} after audio gap`);
+          logger.info(`resumed scope=${opts.scope} after audio gap`);
         } catch (err) {
-          console.warn(`[soniox] resume failed scope=${opts.scope}:`, err);
+          logger.warn({ err }, `resume failed scope=${opts.scope}`);
         }
       }
       try {

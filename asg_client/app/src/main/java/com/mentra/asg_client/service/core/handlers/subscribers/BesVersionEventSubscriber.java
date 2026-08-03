@@ -50,24 +50,33 @@ public final class BesVersionEventSubscriber implements IPeripheralBus.McuEventL
         Log.i(TAG, "📋 BLE Name: " + bleName + ", BT Name: " + btName);
         Log.i(TAG, "📋 BT Address: " + btAddr + ", BLE Address: " + bleAddr);
 
+        boolean metadataUpdated = false;
+
         // Cache the MCU firmware version so it can be sent to phone when connected
         if (serviceManager != null
                 && serviceManager.getAsgSettings() != null
                 && !version.equals("unknown")
                 && !version.isEmpty()) {
             serviceManager.getAsgSettings().setMcuFirmwareVersion(version);
+            metadataUpdated = true;
+        }
 
-            // Re-send version info to phone now that we have fresh BES version
-            // This ensures phone has accurate firmware version for OTA checking
+        Context context = serviceManager != null ? serviceManager.getContext() : null;
+        if (context != null && !SysProp.normalizeBesBtMac(btAddr).isEmpty()) {
+            SysProp.setBesBtMac(context, btAddr);
+            metadataUpdated = true;
+        }
+
+        // Re-send version info once all fresh BES metadata has been cached.
+        if (metadataUpdated && serviceManager != null) {
             if (serviceManager.getService() != null) {
-                Log.i(TAG, "📋 BES version cached - re-sending version info to phone");
+                Log.i(TAG, "📋 BES metadata cached - re-sending version info to phone");
                 serviceManager.getService().sendVersionInfo();
             }
         }
 
         // Request BT MAC address from BES chip (if not already saved)
         // This is a good time to request since we know UART is working
-        Context context = serviceManager != null ? serviceManager.getContext() : null;
         if (context != null) {
             String existingMac = SysProp.getBesBtMac(context);
             if (existingMac == null || existingMac.isEmpty()) {

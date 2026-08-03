@@ -1,4 +1,4 @@
-import type {OtaProgress, OtaStatus} from "@mentra/bluetooth-sdk-internal"
+import type {OtaProgress, OtaStatus} from "@mentra/engine"
 
 function isDownloadPhaseSnapshot(
   otaStatus: OtaStatus | null | undefined,
