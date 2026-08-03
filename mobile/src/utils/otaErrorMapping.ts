@@ -1,5 +1,7 @@
 import type {OtaProgress, OtaStatus} from "@mentra/engine"
 
+export const BES_REBOOT_REQUIRED_ERROR = "bes_reboot_required"
+
 function isDownloadPhaseSnapshot(
   otaStatus: OtaStatus | null | undefined,
   otaProgress: OtaProgress | null | undefined,
@@ -55,7 +57,31 @@ export function getOtaErrorMessage(error?: string): string {
       return "Update verification failed — please try again or contact support"
     case "install_failed":
       return "Install failed — please try again"
+    case BES_REBOOT_REQUIRED_ERROR:
+      return "Restart your glasses to safely exit firmware update mode before trying again"
     default:
       return error || "Update failed"
   }
+}
+
+/**
+ * Once a BES install has started, silence may mean BES switched from framed JSON to its raw OTA
+ * parser before the authorization reply was lost. The phone must infer reboot-required from a
+ * local stall too, because ASG cannot safely send JSON through that same quarantined UART.
+ */
+export function shouldRequireGlassesRebootForBesFailure(
+  otaStatus: OtaStatus | null | undefined,
+  _otaProgress: OtaProgress | null | undefined,
+  localErrorMessage: string,
+): boolean {
+  if (otaStatus?.error === BES_REBOOT_REQUIRED_ERROR) {
+    return true
+  }
+  if (otaStatus?.stepType !== "bes" || otaStatus.phase !== "install") {
+    return false
+  }
+  // A phone-side watchdog is the other ambiguous case: ASG may be unable to report its stable
+  // code after quarantining a UART that BES has switched to raw OTA parsing. A delivered generic
+  // failure is not enough evidence; for example, an explicit authorization denial is retryable.
+  return Boolean(localErrorMessage)
 }

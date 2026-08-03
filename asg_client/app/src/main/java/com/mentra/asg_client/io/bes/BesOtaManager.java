@@ -293,7 +293,7 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
             EventBus.getDefault()
                     .post(
                             BesOtaProgressEvent.createFailed(
-                                    "Restart glasses before retrying BES update"));
+                                    AsgConstants.BES_OTA_REBOOT_REQUIRED_ERROR));
             return false;
         }
 
@@ -389,16 +389,28 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
         }
     }
 
+    /**
+     * Preserve detailed diagnostics locally while exposing one stable recovery contract to the
+     * phone after {@code mh_ota} may have switched BES into its raw parser.
+     */
+    private void postFailure(String diagnostic) {
+        String phoneError =
+                authorizationAttempted
+                        ? AsgConstants.BES_OTA_REBOOT_REQUIRED_ERROR
+                        : diagnostic;
+        if (!phoneError.equals(diagnostic)) {
+            Log.e(TAG, diagnostic + "; phone recovery=" + phoneError);
+        }
+        EventBus.getDefault().post(BesOtaProgressEvent.createFailed(phoneError));
+    }
+
     void onAuthorizationWriteComplete(boolean attempted, boolean success) {
         synchronized (mTransferGate) {
             if (!isWaitingForAuthorization) {
                 return;
             }
             if (!attempted) {
-                EventBus.getDefault()
-                        .post(
-                                BesOtaProgressEvent.createFailed(
-                                        "BES UART was not ready for authorization"));
+                postFailure("BES UART was not ready for authorization");
                 cleanupLocked();
                 return;
             }
@@ -422,11 +434,7 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
                                     "BES OTA authorization timeout after "
                                             + BES_AUTH_TIMEOUT_MS
                                             + "ms");
-                            EventBus.getDefault()
-                                    .post(
-                                            BesOtaProgressEvent.createFailed(
-                                                    "BES chip did not respond to authorization"
-                                                            + " request"));
+                            postFailure("BES chip did not respond to authorization request");
                             cleanupLocked();
                         }
                     };
@@ -517,8 +525,7 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
 
             if (!transportCoordinator.promoteOtaAuthorizationToTransfer(transportLease)) {
                 Log.e(TAG, "Could not promote UART to BES OTA transfer mode");
-                EventBus.getDefault()
-                        .post(BesOtaProgressEvent.createFailed("BES UART is no longer ready"));
+                postFailure("BES UART is no longer ready");
                 cleanupLocked();
                 return;
             }
@@ -545,8 +552,7 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
                 Log.i(TAG, "BES OTA protocol started successfully");
             } else {
                 Log.e(TAG, "Failed to send first protocol command");
-                EventBus.getDefault()
-                        .post(BesOtaProgressEvent.createFailed("Failed to start protocol"));
+                postFailure("Failed to start protocol");
                 cleanupLocked();
             }
         }
@@ -562,10 +568,9 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
                 authTimeoutHandler = null;
                 authTimeoutRunnable = null;
             }
-            EventBus.getDefault()
-                    .post(BesOtaProgressEvent.createFailed("BES chip denied OTA authorization"));
             authorizationGate.clear();
             authorizationAttempted = false;
+            postFailure("BES chip denied OTA authorization");
             cleanupLocked();
         }
     }
@@ -970,13 +975,10 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
                         } catch (Exception ignored) {
                             // Trace logging must never affect the abort itself.
                         }
-                        EventBus.getDefault()
-                                .post(
-                                        BesOtaProgressEvent.createFailed(
-                                                "No response from BES for "
-                                                        + (AsgConstants.BES_OTA_RESPONSE_TIMEOUT_MS
-                                                                / 1000)
-                                                        + "s"));
+                        postFailure(
+                                "No response from BES for "
+                                        + (AsgConstants.BES_OTA_RESPONSE_TIMEOUT_MS / 1000)
+                                        + "s");
                         cleanup();
                     }
                 };
@@ -1008,10 +1010,7 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
                     "BES firmware update timeout — chip may be unresponsive (elapsed: "
                             + (android.os.SystemClock.elapsedRealtime() - operationStartTime)
                             + "ms)");
-            EventBus.getDefault()
-                    .post(
-                            BesOtaProgressEvent.createFailed(
-                                    "BES firmware update timeout — chip may be unresponsive"));
+            postFailure("BES firmware update timeout — chip may be unresponsive");
             cleanup();
             return;
         }
@@ -1203,8 +1202,7 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
                 }
             } else {
                 Log.e(TAG, "Segment verify error");
-                EventBus.getDefault()
-                        .post(BesOtaProgressEvent.createFailed("Segment verification failed"));
+                postFailure("Segment verification failed");
                 cleanup();
             }
         } else if (msg.cmd == BesProtocolConstants.RCMD_SEND_FINISH) {
@@ -1244,10 +1242,7 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
                     Log.e(TAG, "❌ SIZE MISMATCH! sentPos=" + sentPos + " != fileLen=" + fileLen);
                 }
                 Log.e(TAG, "❌ =============================================");
-                EventBus.getDefault()
-                        .post(
-                                BesOtaProgressEvent.createFailed(
-                                        "Whole CRC32 check failed - data corruption?"));
+                postFailure("Whole CRC32 check failed - data corruption?");
                 cleanup();
             }
         } else if (msg.cmd == BesProtocolConstants.RCMD_APPLY) {
@@ -1261,8 +1256,7 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
                 }
             } else {
                 Log.e(TAG, "Apply firmware error");
-                EventBus.getDefault()
-                        .post(BesOtaProgressEvent.createFailed("Failed to apply firmware"));
+                postFailure("Failed to apply firmware");
             }
             // Cleanup regardless
             cleanup();
@@ -1291,8 +1285,7 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
             addSentSize(payloadSize);
         } else {
             Log.e(TAG, "❌ Failed to send file data packet at sentPos=" + sentPos);
-            EventBus.getDefault()
-                    .post(BesOtaProgressEvent.createFailed("Failed to send firmware data"));
+            postFailure("Failed to send firmware data");
             cleanup();
         }
     }

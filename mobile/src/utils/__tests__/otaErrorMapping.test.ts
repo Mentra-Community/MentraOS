@@ -1,8 +1,10 @@
 import type {OtaProgress, OtaStatus} from "@mentra/bluetooth-sdk-internal"
 
-import {OtaProgressMessages} from "@mentra/engine"
-
-import {getOtaErrorMessage, shouldShowChangeWifiForOtaDownloadFailure} from "@/utils/otaErrorMapping"
+import {
+  getOtaErrorMessage,
+  shouldRequireGlassesRebootForBesFailure,
+  shouldShowChangeWifiForOtaDownloadFailure,
+} from "@/utils/otaErrorMapping"
 
 function baseOtaStatus(overrides: Partial<OtaStatus> = {}): OtaStatus {
   return {
@@ -71,6 +73,12 @@ describe("getOtaErrorMessage", () => {
     expect(getOtaErrorMessage("install_failed")).toBe("Install failed — please try again")
   })
 
+  it("maps bes_reboot_required to manual recovery instructions", () => {
+    expect(getOtaErrorMessage("bes_reboot_required")).toBe(
+      "Restart your glasses to safely exit firmware update mode before trying again",
+    )
+  })
+
   it("returns generic message for undefined error", () => {
     expect(getOtaErrorMessage(undefined)).toBe("Update failed")
   })
@@ -81,6 +89,55 @@ describe("getOtaErrorMessage", () => {
 
   it("returns generic message for empty string", () => {
     expect(getOtaErrorMessage("")).toBe("Update failed")
+  })
+})
+
+describe("shouldRequireGlassesRebootForBesFailure", () => {
+  it("accepts the explicit ASG recovery code", () => {
+    expect(
+      shouldRequireGlassesRebootForBesFailure(
+        baseOtaStatus({stepType: "bes", phase: "install", error: "bes_reboot_required"}),
+        null,
+        "",
+      ),
+    ).toBe(true)
+  })
+
+  it("infers reboot-required when the phone watchdog fires during BES install", () => {
+    expect(
+      shouldRequireGlassesRebootForBesFailure(
+        baseOtaStatus({stepType: "bes", phase: "install", status: "in_progress"}),
+        null,
+        "Update appears stalled",
+      ),
+    ).toBe(true)
+  })
+
+  it("does not require reboot for download or non-BES failures", () => {
+    expect(
+      shouldRequireGlassesRebootForBesFailure(
+        baseOtaStatus({stepType: "bes", phase: "download", error: "download_failed"}),
+        null,
+        "",
+      ),
+    ).toBe(false)
+    expect(
+      shouldRequireGlassesRebootForBesFailure(
+        baseOtaStatus({stepType: "apk", phase: "install", error: "install_failed"}),
+        null,
+        "",
+      ),
+    ).toBe(false)
+  })
+
+  it("keeps a delivered generic BES authorization failure retryable", () => {
+    expect(
+      shouldRequireGlassesRebootForBesFailure(
+        baseOtaStatus({stepType: "bes", phase: "install", status: "failed", error: "install_failed"}),
+        baseOtaProgress({stage: "install"}),
+        "",
+      ),
+    ).toBe(false)
   })
 })
 
@@ -121,14 +178,14 @@ describe("shouldShowChangeWifiForOtaDownloadFailure", () => {
       shouldShowChangeWifiForOtaDownloadFailure(
         baseOtaStatus({status: "in_progress", phase: "download"}),
         null,
-        OtaProgressMessages.globalTimeout,
+        "Update timed out",
       ),
     ).toBe(true)
     expect(
       shouldShowChangeWifiForOtaDownloadFailure(
         baseOtaStatus({status: "in_progress", phase: "download"}),
         null,
-        OtaProgressMessages.stalledOrStuck,
+        "Update appears stalled",
       ),
     ).toBe(true)
   })
@@ -138,14 +195,14 @@ describe("shouldShowChangeWifiForOtaDownloadFailure", () => {
       shouldShowChangeWifiForOtaDownloadFailure(
         baseOtaStatus({status: "in_progress", phase: "install"}),
         null,
-        OtaProgressMessages.globalTimeout,
+        "Update timed out",
       ),
     ).toBe(false)
   })
 
   it("is false for BLE / ack errors with no download phase in store", () => {
-    expect(shouldShowChangeWifiForOtaDownloadFailure(null, null, OtaProgressMessages.noAckResponse)).toBe(false)
-    expect(shouldShowChangeWifiForOtaDownloadFailure(null, null, OtaProgressMessages.sendOtaStartFailed)).toBe(false)
+    expect(shouldShowChangeWifiForOtaDownloadFailure(null, null, "No acknowledgement")).toBe(false)
+    expect(shouldShowChangeWifiForOtaDownloadFailure(null, null, "Could not start update")).toBe(false)
   })
 
   it("is false when nothing indicates a download-step failure", () => {

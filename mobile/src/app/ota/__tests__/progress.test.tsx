@@ -213,6 +213,29 @@ describe("progress.tsx display states", () => {
     expect(getByText("Retry")).toBeDefined()
   })
 
+  it("requires a glasses reboot and removes Retry after a BES authorization ambiguity", () => {
+    setGlassesConnected()
+    const {getByText, queryByText} = render(<OtaProgressScreen />)
+
+    act(() => {
+      useGlassesStore.getState().setOtaStatus({
+        sessionId: "s1",
+        totalSteps: 1,
+        currentStep: 1,
+        stepType: "bes",
+        phase: "install",
+        stepPercent: 0,
+        overallPercent: 0,
+        status: "failed",
+        error: "bes_reboot_required",
+      })
+    })
+
+    expect(getByText("Restart your glasses to safely exit firmware update mode before trying again")).toBeDefined()
+    expect(getByText("Done")).toBeDefined()
+    expect(queryByText("Retry")).toBeNull()
+  })
+
   it("shows disconnected state when not connected and not terminal", () => {
     setGlassesDisconnected()
     const {getByText} = render(<OtaProgressScreen />)

@@ -8,7 +8,11 @@ import {focusEffectPreventBack} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useConnectionOverlayConfig} from "@/contexts/ConnectionOverlayContext"
 import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
-import {getOtaErrorMessage, shouldShowChangeWifiForOtaDownloadFailure} from "@/utils/otaErrorMapping"
+import {
+  getOtaErrorMessage,
+  shouldRequireGlassesRebootForBesFailure,
+  shouldShowChangeWifiForOtaDownloadFailure,
+} from "@/utils/otaErrorMapping"
 import {useNavigationStore} from "@/stores/navigation"
 import {SETTINGS, useSetting} from "@mentra/engine"
 
@@ -256,7 +260,10 @@ export default function OtaProgressScreen() {
     }
 
     if (displayState === "failed") {
-      const displayedError = errorMsg || getOtaErrorMessage(otaStatus?.error)
+      const requiresGlassesReboot = shouldRequireGlassesRebootForBesFailure(otaStatus, otaProgress, errorMsg)
+      const displayedError = requiresGlassesReboot
+        ? getOtaErrorMessage("bes_reboot_required")
+        : errorMsg || getOtaErrorMessage(otaStatus?.error)
       const showChangeWifi = shouldShowChangeWifiForOtaDownloadFailure(otaStatus, otaProgress, errorMsg)
       return (
         <>
@@ -268,7 +275,11 @@ export default function OtaProgressScreen() {
             <Text text={displayedError} className="text-sm text-center text-secondary-foreground" />
           </View>
           <View className="gap-3">
-            <Button preset="primary" text="Retry" flexContainer onPress={handleRetry} />
+            {requiresGlassesReboot ? (
+              <Button preset="primary" text="Done" flexContainer onPress={handleDone} />
+            ) : (
+              <Button preset="primary" text="Retry" flexContainer onPress={handleRetry} />
+            )}
             {showChangeWifi ? (
               <Button preset="secondary" text="Change WiFi" flexContainer onPress={handleChangeWifi} />
             ) : null}

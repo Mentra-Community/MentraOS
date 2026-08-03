@@ -6,6 +6,7 @@ import static org.robolectric.Shadows.shadowOf;
 import android.app.Application;
 import android.os.Looper;
 import androidx.test.core.app.ApplicationProvider;
+import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.io.bes.events.BesOtaProgressEvent;
 import java.lang.reflect.Field;
 import java.time.Duration;
@@ -60,8 +61,9 @@ public class BesOtaResponseWatchdogTest {
     }
 
     @Test
-    public void timeoutWithNoResponse_abortsAndReportsFailure() {
+    public void timeoutWithNoResponse_abortsAndReportsFailure() throws Exception {
         BesOtaManager.isBesOtaInProgress = true;
+        setBooleanField("authorizationAttempted", true);
         manager.rearmResponseWatchdog();
 
         // Pass the deadline, then let the dispatched callback run with no response racing it.
@@ -70,6 +72,8 @@ public class BesOtaResponseWatchdogTest {
 
         assertThat(BesOtaManager.isBesOtaInProgress).isFalse();
         assertThat(events).hasSize(1);
+        assertThat(events.get(0).getErrorMessage())
+                .isEqualTo(AsgConstants.BES_OTA_REBOOT_REQUIRED_ERROR);
     }
 
     @Test
@@ -104,6 +108,7 @@ public class BesOtaResponseWatchdogTest {
     public void ambiguousAuthorizationWriteWaitsForBesResponseBeforeFailing() throws Exception {
         BesOtaManager.isBesOtaInProgress = true;
         setBooleanField("isWaitingForAuthorization", true);
+        setBooleanField("authorizationAttempted", true);
 
         manager.onAuthorizationWriteComplete(true, false);
 
@@ -115,6 +120,8 @@ public class BesOtaResponseWatchdogTest {
 
         assertThat(BesOtaManager.isBesOtaInProgress).isFalse();
         assertThat(events).hasSize(1);
+        assertThat(events.get(0).getErrorMessage())
+                .isEqualTo(AsgConstants.BES_OTA_REBOOT_REQUIRED_ERROR);
     }
 
     @Test
@@ -126,6 +133,22 @@ public class BesOtaResponseWatchdogTest {
 
         assertThat(BesOtaManager.isBesOtaInProgress).isFalse();
         assertThat(events).hasSize(1);
+        assertThat(events.get(0).getErrorMessage())
+                .isEqualTo("BES UART was not ready for authorization");
+    }
+
+    @Test
+    public void explicitAuthorizationDenialRemainsRetryable() throws Exception {
+        BesOtaManager.isBesOtaInProgress = true;
+        setBooleanField("isWaitingForAuthorization", true);
+        setBooleanField("authorizationAttempted", true);
+
+        manager.onAuthorizationDenied();
+
+        assertThat(BesOtaManager.isBesOtaInProgress).isFalse();
+        assertThat(events).hasSize(1);
+        assertThat(events.get(0).getErrorMessage())
+                .isEqualTo("BES chip denied OTA authorization");
     }
 
     private void setBooleanField(String name, boolean value) throws Exception {
