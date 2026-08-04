@@ -192,17 +192,40 @@ public class BesOtaAuthorizationGateTest {
         bootId.set("linux:boot-b");
         assertThat(gate.isPostApplyVerificationPendingForCurrentBoot()).isTrue();
 
-        assertThat(gate.abandonPostApplyVerification()).isTrue();
+        assertThat(gate.abandonPostApplyVerification())
+                .isEqualTo(BesOtaAuthorizationGate.PostApplyAbandonment.ABANDONED);
 
         BesOtaHandoffStore.TerminalOutcome outcome =
                 new BesOtaHandoffStore(context).getPendingTerminalOutcome();
         assertThat(outcome).isNotNull();
         assertThat(outcome.getStatus()).isEqualTo("FAILED");
+        assertThat(gate.verifyPostApplyVersion("17.26.7.24"))
+                .isEqualTo(BesOtaAuthorizationGate.PostApplyVerification.NOT_PENDING);
 
         BesOtaAuthorizationGate afterProcessRestart =
                 new BesOtaAuthorizationGate(context, bootId::get);
         assertThat(afterProcessRestart.isQuarantinedForCurrentBoot()).isTrue();
         bootId.set("linux:boot-c");
         assertThat(afterProcessRestart.isQuarantinedForCurrentBoot()).isFalse();
+    }
+
+    @Test
+    public void dispatchedTimeoutCannotOverwriteVerifiedSuccess() {
+        assertThat(gate.tryReserveCurrentBoot("17.26.7.24")).isTrue();
+        assertThat(gate.markApplyPending()).isTrue();
+        bootId.set("linux:boot-b");
+
+        assertThat(gate.verifyPostApplyVersion("17.26.7.24"))
+                .isEqualTo(BesOtaAuthorizationGate.PostApplyVerification.VERIFIED);
+        assertThat(
+                        gate.abandonPostApplyVerification(
+                                "BES rebooted but target version could not be verified"))
+                .isEqualTo(BesOtaAuthorizationGate.PostApplyAbandonment.ALREADY_RESOLVED);
+
+        BesOtaHandoffStore.TerminalOutcome outcome =
+                new BesOtaHandoffStore(context).getPendingTerminalOutcome();
+        assertThat(outcome).isNotNull();
+        assertThat(outcome.getStatus()).isEqualTo("FINISHED");
+        assertThat(gate.isQuarantinedForCurrentBoot()).isFalse();
     }
 }

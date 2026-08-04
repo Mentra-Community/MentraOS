@@ -90,6 +90,16 @@ public class BesOtaPostApplyVerificationTest {
                 new BesOtaHandoffStore(context).getPendingTerminalOutcome();
         assertThat(outcome).isNotNull();
         assertThat(outcome.getStatus()).isEqualTo("FINISHED");
+
+        // Reproduce the high-severity ordering: the already-dispatched timeout runs after the
+        // verifier commits success but before BesOtaManager receives its UART listener callback.
+        Runnable timeout = (Runnable) field("postApplyVerificationRunnable").get(manager);
+        assertThat(timeout).isNotNull();
+        timeout.run();
+        assertThat(events).isEmpty();
+        assertThat(new BesOtaHandoffStore(context).getPendingTerminalOutcome().getStatus())
+                .isEqualTo("FINISHED");
+
         manager.onBesPostApplyVerification(
                 true, "17.26.7.24", "17.26.7.24", "BES target version verified");
 
@@ -113,8 +123,12 @@ public class BesOtaPostApplyVerificationTest {
     }
 
     private BesOtaAuthorizationGate authorizationGate() throws Exception {
-        Field field = BesOtaManager.class.getDeclaredField("authorizationGate");
+        return (BesOtaAuthorizationGate) field("authorizationGate").get(manager);
+    }
+
+    private Field field(String name) throws Exception {
+        Field field = BesOtaManager.class.getDeclaredField(name);
         field.setAccessible(true);
-        return (BesOtaAuthorizationGate) field.get(manager);
+        return field;
     }
 }

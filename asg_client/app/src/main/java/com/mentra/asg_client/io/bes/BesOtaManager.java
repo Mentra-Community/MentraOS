@@ -571,13 +571,23 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
                             return;
                         }
                         Log.e(TAG, "Timed out waiting for BES post-reboot target-version readback");
-                        if (transportCoordinator != null) {
-                            transportCoordinator.quarantineCurrentSession();
-                        }
                         String diagnostic =
                                 "BES rebooted but target version could not be verified; reboot glasses";
-                        if (!authorizationGate.abandonPostApplyVerification(diagnostic)) {
+                        BesOtaAuthorizationGate.PostApplyAbandonment abandonment =
+                                authorizationGate.abandonPostApplyVerification(diagnostic);
+                        if (abandonment
+                                == BesOtaAuthorizationGate.PostApplyAbandonment.ALREADY_RESOLVED) {
+                            Log.i(TAG, "BES verification resolved while its timeout was dispatched");
+                            finishPostApplyVerificationLocked();
+                            return;
+                        }
+                        if (abandonment
+                                == BesOtaAuthorizationGate.PostApplyAbandonment
+                                        .PERSISTENCE_FAILURE) {
                             Log.e(TAG, "Could not durably record BES verification timeout");
+                        }
+                        if (transportCoordinator != null) {
+                            transportCoordinator.quarantineCurrentSession();
                         }
                         postFailure(diagnostic);
                         finishPostApplyVerificationLocked();

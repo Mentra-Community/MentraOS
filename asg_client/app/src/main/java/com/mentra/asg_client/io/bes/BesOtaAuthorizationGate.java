@@ -24,6 +24,12 @@ public final class BesOtaAuthorizationGate implements BesUartTransportCoordinato
         PERSISTENCE_FAILURE
     }
 
+    public enum PostApplyAbandonment {
+        ABANDONED,
+        ALREADY_RESOLVED,
+        PERSISTENCE_FAILURE
+    }
+
     public BesOtaAuthorizationGate(Context context) {
         this(context, null);
     }
@@ -194,6 +200,13 @@ public final class BesOtaAuthorizationGate implements BesUartTransportCoordinato
                         "BES rebooted with an unexpected firmware version");
             }
             if (!editor.commit()) {
+                // commit() updates this process's preference memory before reporting a disk error.
+                // Replace any visible-but-uncommitted success with failure/quarantine now; the
+                // timeout path must never be asked to guess whether this transition committed.
+                if (!persistTerminalFailureQuarantineLocked(
+                        current, "Could not durably complete BES version verification")) {
+                    Log.e(TAG, "Could not persist fail-closed BES verification outcome");
+                }
                 return PostApplyVerification.PERSISTENCE_FAILURE;
             }
             return matches
@@ -203,36 +216,43 @@ public final class BesOtaAuthorizationGate implements BesUartTransportCoordinato
     }
 
     /** Convert a timed-out verification into durable quarantine for the rest of this boot. */
-    public boolean abandonPostApplyVerification() {
+    public PostApplyAbandonment abandonPostApplyVerification() {
         return abandonPostApplyVerification(
                 "BES rebooted but target version could not be verified; reboot glasses");
     }
 
-    /** Persist a terminal failure while converting this boot into fail-closed quarantine. */
-    public boolean abandonPostApplyVerification(String diagnostic) {
+    /** Atomically claim timeout failure, or report that verification already resolved the record. */
+    public PostApplyAbandonment abandonPostApplyVerification(String diagnostic) {
         synchronized (RESERVATION_LOCK) {
+            if (!isApplyPendingLocked()) {
+                // A successful/mismatched verification replaces apply_pending and terminal status
+                // in one commit under this same lock. A late timeout must not overwrite it.
+                return PostApplyAbandonment.ALREADY_RESOLVED;
+            }
             String current = currentBootId();
             if (current == null) {
-                return false;
+                return PostApplyAbandonment.PERSISTENCE_FAILURE;
             }
-            // Do not short-circuit when apply_pending appears cleared. SharedPreferences.commit()
-            // updates memory before disk and can return false, so a failed success transition may
-            // already look consumed in this process. Overwrite it with failure/quarantine before
-            // any listener can replay an uncommitted success.
-            // Persist the boot that timed out as the ordinary authorization boot marker. This
-            // restores quarantine after an ASG/serial restart until the user reboots once more.
-            return preferences
-                    .edit()
-                    .putString(AsgConstants.BES_OTA_AUTH_GATE_BOOT_ID_KEY, current)
-                    .remove(AsgConstants.BES_OTA_AUTH_GATE_TARGET_VERSION_KEY)
-                    .putBoolean(AsgConstants.BES_OTA_AUTH_GATE_APPLY_PENDING_KEY, false)
-                    .remove(AsgConstants.BES_OTA_AUTH_GATE_VERIFICATION_BOOT_ID_KEY)
-                    .putString(AsgConstants.BES_OTA_HANDOFF_TERMINAL_STATUS_KEY, "FAILED")
-                    .putString(
-                            AsgConstants.BES_OTA_HANDOFF_TERMINAL_ERROR_KEY,
-                            diagnostic != null ? diagnostic : "BES update failed")
-                    .commit();
+            return persistTerminalFailureQuarantineLocked(current, diagnostic)
+                    ? PostApplyAbandonment.ABANDONED
+                    : PostApplyAbandonment.PERSISTENCE_FAILURE;
         }
+    }
+
+    private boolean persistTerminalFailureQuarantineLocked(String current, String diagnostic) {
+        // Persist the boot that failed as the ordinary authorization marker. This restores UART
+        // quarantine after an ASG/serial restart until the user reboots once more.
+        return preferences
+                .edit()
+                .putString(AsgConstants.BES_OTA_AUTH_GATE_BOOT_ID_KEY, current)
+                .remove(AsgConstants.BES_OTA_AUTH_GATE_TARGET_VERSION_KEY)
+                .putBoolean(AsgConstants.BES_OTA_AUTH_GATE_APPLY_PENDING_KEY, false)
+                .remove(AsgConstants.BES_OTA_AUTH_GATE_VERIFICATION_BOOT_ID_KEY)
+                .putString(AsgConstants.BES_OTA_HANDOFF_TERMINAL_STATUS_KEY, "FAILED")
+                .putString(
+                        AsgConstants.BES_OTA_HANDOFF_TERMINAL_ERROR_KEY,
+                        diagnostic != null ? diagnostic : "BES update failed")
+                .commit();
     }
 
     private String attemptedBootId() {
