@@ -87,6 +87,7 @@ struct SystemScreen: View {
 
                 wifiCard.padding(.horizontal, 16).padding(.top, 8)
                 hotspotCard.padding(.horizontal, 16).padding(.top, 12)
+                wifiAdbCard.padding(.horizontal, 16).padding(.top, 8)
                 microphoneCard.padding(.horizontal, 16).padding(.top, 8)
                 inputsCard.padding(.horizontal, 16).padding(.top, 12)
                 ledCard.padding(.horizontal, 16).padding(.top, 12)
@@ -345,6 +346,47 @@ struct SystemScreen: View {
                 .foregroundColor(model.galleryServerReachable == true ? AppColor.greenAccent : model.galleryServerReachable == false ? AppColor.red : AppColor.muted)
                 .lineLimit(2)
                 .minimumScaleFactor(0.8)
+                .padding(.top, 8)
+        }
+    }
+
+    private var wifiAdbCard: some View {
+        GlassCard(corner: 22, padding: EdgeInsets(top: 14, leading: 16, bottom: 14, trailing: 16)) {
+            HStack(spacing: 10) {
+                iconTileSm(systemName: "antenna.radiowaves.left.and.right")
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Wi-Fi ADB").font(.system(size: 16, weight: .bold)).foregroundColor(AppColor.ink)
+                    Text(
+                        model.glassesConnected
+                            ? (model.wifiAdbEnabled
+                                ? "Wireless debugging enabled (Mentra Live)"
+                                : "Wireless debugging off (default)")
+                            : "connect glasses first"
+                    )
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(model.wifiAdbEnabled ? AppColor.greenAccent : AppColor.muted)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.8)
+                }
+                Spacer(minLength: 0)
+            }
+
+            HStack(spacing: 8) {
+                let wifiAdbBusy =
+                    model.activeAction == "Enable Wi-Fi ADB" ||
+                    model.activeAction == "Disable Wi-Fi ADB"
+                HotspotActionChip(title: "Enable", enabled: model.glassesConnected && !wifiAdbBusy) {
+                    model.setWifiAdbState(enabled: true)
+                }
+                HotspotActionChip(title: "Disable", enabled: model.glassesConnected && !wifiAdbBusy) {
+                    model.setWifiAdbState(enabled: false)
+                }
+            }
+            .padding(.top, 12)
+
+            Text("Mentra Live only · watch Console if nothing changes")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(AppColor.muted)
                 .padding(.top, 8)
         }
     }

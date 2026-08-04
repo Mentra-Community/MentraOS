@@ -22,6 +22,7 @@
 		B2C9CEB092C7392809B1920E /* StreamScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = B886745ADD1960CBF8453687 /* StreamScreen.swift */; };
 		B9993996613A5A1F552A67D5 /* ConsoleScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28C1C2066D3512195360A795 /* ConsoleScreen.swift */; };
 		DD75B705FEBE9ABBE4E144C5 /* SystemScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF07FC3FFCAAB31DD442E58C /* SystemScreen.swift */; };
+		E1627001AADB000000000001 /* WifiAdbSdkCompat.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1627001AADB000000000011 /* WifiAdbSdkCompat.swift */; };
 		FF34A5EFAA30E55E2BDCEF81 /* DeviceScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4558D51EE6D8AEE7C32E4C58 /* DeviceScreen.swift */; };
 /* End PBXBuildFile section */
 
@@ -44,6 +45,7 @@
 		BB9A9B8B86FC0ACF59F91AF8 /* MentraExampleApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MentraExampleApp.swift; sourceTree = "<group>"; };
 		C44F0B2F295E4B4593F7C2D7 /* BluetoothViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BluetoothViewModel.swift; sourceTree = "<group>"; };
 		C1B2C3D4E5F60718293A4B5C /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		E1627001AADB000000000011 /* WifiAdbSdkCompat.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WifiAdbSdkCompat.swift; sourceTree = "<group>"; };
 		EA0ECF511371DFD443892300 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -96,6 +98,7 @@
 				AF07FC3FFCAAB31DD442E58C /* SystemScreen.swift */,
 				4334B27A5FE9C5FECB2F7DF8 /* Theme.swift */,
 				A10000000000000000000013 /* WhipHeaderProxy.swift */,
+				E1627001AADB000000000011 /* WifiAdbSdkCompat.swift */,
 			);
 			path = MentraExample;
 			sourceTree = "<group>";
@@ -214,6 +217,7 @@
 				DD75B705FEBE9ABBE4E144C5 /* SystemScreen.swift in Sources */,
 				ACC7B6CBE3726BEDEFC145A5 /* Theme.swift in Sources */,
 				A10000000000000000000003 /* WhipHeaderProxy.swift in Sources */,
+				E1627001AADB000000000001 /* WifiAdbSdkCompat.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

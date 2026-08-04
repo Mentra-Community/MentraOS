@@ -284,6 +284,58 @@ fun SystemScreen(controller: MentraExampleController) {
             }
         }
 
+        // Wi-Fi ADB card (Mentra Live debug)
+        Box(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
+            GlassCard(
+                modifier = Modifier.fillMaxWidth(),
+                corner = 22,
+                padding = PaddingValues(horizontal = 16.dp, vertical = 14.dp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    IconTile(Icons.Outlined.BugReport)
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Wi-Fi ADB", color = AppColor.ink, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                        Text(
+                            if (connected) {
+                                if (state.wifiAdbEnabled) {
+                                    "Wireless debugging enabled (Mentra Live)"
+                                } else {
+                                    "Wireless debugging off (default)"
+                                }
+                            } else {
+                                "connect glasses first"
+                            },
+                            color = if (state.wifiAdbEnabled) AppColor.greenAccent else AppColor.muted,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium,
+                        )
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    val wifiAdbBusy =
+                        state.activeAction == "Enable Wi-Fi ADB" ||
+                            state.activeAction == "Disable Wi-Fi ADB"
+                    HotspotActionChip("Enable", enabled = connected && !wifiAdbBusy) {
+                        controller.setWifiAdbState(true)
+                    }
+                    HotspotActionChip("Disable", enabled = connected && !wifiAdbBusy) {
+                        controller.setWifiAdbState(false)
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "Mentra Live only · watch Console if nothing changes",
+                    color = AppColor.muted,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                )
+            }
+        }
+
         // Microphone card
         GlassCard(
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),

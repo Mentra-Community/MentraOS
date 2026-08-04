@@ -357,6 +357,8 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     private var activeActionOrder: [Int] = []
     private let glassesHotspotConnector = GlassesHotspotConnector()
     private var galleryConnectionGeneration = 0
+    /// BLE session generation — advances only on glasses disconnect/reconnect.
+    private var glassesConnectionGeneration = 0
     private var pendingHotspotConnection: PendingHotspotConnection?
     private var photoDestinationBeforeGlasses: PhotoDestination = .thisPhone
     private var streamConfigurationChangeInProgress = false
@@ -422,6 +424,8 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     @Published private(set) var streamStatus = "Ready to start stream"
     @Published private(set) var galleryModeEnabled = false
     @Published private(set) var hotspotEnabled = false
+    /// Optimistic local toggle — glasses do not report Wi-Fi ADB status.
+    @Published private(set) var wifiAdbEnabled = false
     @Published private(set) var galleryServerReachable: Bool?
     @Published private(set) var galleryServerStatus = "Gallery server: enable hotspot to check"
     @Published private(set) var micRecording = false
@@ -2037,6 +2041,19 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         }
     }
 
+    func setWifiAdbState(enabled: Bool) {
+        runAsyncAction(enabled ? "Enable Wi-Fi ADB" : "Disable Wi-Fi ADB") { [self] in
+            try requireConnected("toggle Wi-Fi ADB")
+            let generation = glassesConnectionGeneration
+            try await mentraBluetoothSdk.setWifiAdbState(enabled: enabled)
+            // Ignore completions from a prior BLE session after disconnect/reconnect.
+            // Do not use galleryConnectionGeneration — hotspot/gallery flows bump that while BLE stays up.
+            guard generation == glassesConnectionGeneration, glassesConnected else { return }
+            wifiAdbEnabled = enabled
+            append(tag: "LIVE", text: "Wi-Fi ADB \(enabled ? "enabled" : "disabled")")
+        }
+    }
+
     func openGalleryServer() {
         runAction("Open gallery server") {
             let baseUrl = try requireGalleryServerUrl()
@@ -2820,7 +2837,9 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         stopMicElapsedTimer()
         stopMicPlayback()
         hotspotEnabled = false
+        wifiAdbEnabled = false
         galleryConnectionGeneration += 1
+        glassesConnectionGeneration += 1
         if let pendingHotspotConnection {
             glassesHotspotConnector.disconnect(ssid: pendingHotspotConnection.ssid)
         }

@@ -383,6 +383,8 @@ export type BluetoothSdkExampleState = {
   galleryServerStatus: string;
   glasses: GlassesRuntimeState;
   hotspotEnabled: boolean;
+  /** Optimistic local toggle — glasses do not report Wi-Fi ADB status. */
+  wifiAdbEnabled: boolean;
   lastAction: string;
   lastMicBytes: number;
   lastMicDurationSeconds: number | null;
@@ -516,6 +518,7 @@ export type BluetoothSdkExampleActions = {
   startOtaUpdate: () => Promise<void>;
   testWebhook: () => Promise<void>;
   toggleHotspot: () => Promise<void>;
+  setWifiAdbState: (enabled: boolean) => Promise<void>;
   toggleMic: () => Promise<void>;
   toggleVideoRecording: () => Promise<void>;
   toggleStream: () => Promise<void>;
@@ -676,6 +679,8 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   const photoDestinationRef = useRef<PhotoDestination>('phone');
   const photoDestinationBeforeGlassesRef = useRef<Exclude<PhotoDestination, 'glasses'>>('phone');
   const galleryConnectionGenerationRef = useRef(0);
+  /** BLE session generation — advances only on glasses disconnect/reconnect. */
+  const glassesConnectionGenerationRef = useRef(0);
   const galleryConnectionPromiseRef = useRef<Promise<void> | null>(null);
   const galleryServerReachableRef = useRef<boolean | null>(null);
   const galleryBaseUrlRef = useRef<string | null>(null);
@@ -762,6 +767,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   const scanActive = bluetooth.scan.active;
   const galleryModeEnabled = phone.galleryMode.enabled;
   const hotspotEnabled = enabledHotspotStatus(glasses) !== null;
+  const [wifiAdbEnabled, setWifiAdbEnabled] = useState(false);
   const selectedDiscoveredDevice = bluetooth.scan.selectedDevice;
   const selectedScanModel = scanModelFromDeviceModel(bluetooth.scan.model);
   activeTabRef.current = activeTab;
@@ -773,6 +779,15 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   glassesConnectedRef.current = glassesConnected;
   glassesWifiConnectedRef.current = glassesWifiConnected;
   galleryServerReachableRef.current = galleryServerReachable;
+
+  // Optimistic Wi-Fi ADB UI only — reset on disconnect. Do not key off the full
+  // connectedDeviceKey: late-arriving identity fields (serial/model) rewrite that
+  // string mid-session and would clear a successful toggle.
+  useEffect(() => {
+    if (connectedDeviceKey === null) {
+      setWifiAdbEnabled(false);
+    }
+  }, [connectedDeviceKey]);
 
   useEffect(() => {
     let cancelled = false;
@@ -3437,6 +3452,47 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     });
   }
 
+  async function setWifiAdbState(enabled: boolean) {
+    await runAction(enabled ? 'Enable Wi-Fi ADB' : 'Disable Wi-Fi ADB', async () => {
+      requireConnected('toggle Wi-Fi ADB');
+      const requestGeneration = glassesConnectionGenerationRef.current;
+      const rebuildHint =
+        Platform.OS === 'ios'
+          ? 'bun run ios (link MentraOS bluetooth-sdk and define MENTRA_SDK_HAS_WIFI_ADB)'
+          : 'bun run android';
+      const sdkWithWifiAdb = BluetoothSdk as typeof BluetoothSdk & {
+        setWifiAdbState?: (value: boolean) => Promise<void>;
+      };
+      if (typeof sdkWithWifiAdb.setWifiAdbState !== 'function') {
+        throw new Error(
+          `BluetoothSdk.setWifiAdbState is missing from JS. Point MENTRA_BLUETOOTH_SDK_PACKAGE_PATH at MentraOS mobile/modules/bluetooth-sdk and rebuild via: ${rebuildHint}`,
+        );
+      }
+      try {
+        await sdkWithWifiAdb.setWifiAdbState(enabled);
+      } catch (error) {
+        const message = formatError(error);
+        const isCompatGap =
+          /unavailable|not implemented|NoSuchMethod|does not exist|MENTRA_SDK_HAS_WIFI_ADB|predates OS-1627/i.test(
+            message,
+          );
+        if (isCompatGap) {
+          throw new Error(
+            `${message} — native SDK likely predates OS-1627. Rebuild with MentraOS bluetooth-sdk (auto-picked when nested under MentraOS) via: ${rebuildHint}`,
+          );
+        }
+        throw error instanceof Error ? error : new Error(message);
+      }
+      // Ignore completions from a prior BLE session after disconnect/reconnect.
+      // Do not use galleryConnectionGeneration — hotspot/gallery flows bump that while BLE stays up.
+      if (requestGeneration !== glassesConnectionGenerationRef.current) {
+        return;
+      }
+      setWifiAdbEnabled(enabled);
+      addEvent('LIVE', `Wi-Fi ADB ${enabled ? 'enabled' : 'disabled'}`);
+    });
+  }
+
   async function openGalleryServer() {
     await runAction('Open gallery server', async () => {
       const baseUrl = requireGalleryServerUrl(glasses, hotspotEnabled);
@@ -3838,6 +3894,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     setGalleryServerReachable(null);
     setGalleryServerStatus('Gallery server: connect glasses first');
     galleryConnectionGenerationRef.current += 1;
+    glassesConnectionGenerationRef.current += 1;
     galleryConnectionPromiseRef.current = null;
     const hotspotSsid = galleryHotspotSsidRef.current;
     galleryBaseUrlRef.current = null;
@@ -4085,9 +4142,11 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     streamUrl,
     testWebhook,
     toggleHotspot,
+    setWifiAdbState,
     toggleMic,
     toggleVideoRecording,
     toggleStream,
+    wifiAdbEnabled,
     voiceActivityDetectionEnabled,
     webhookUrl,
     wifiConnectError,

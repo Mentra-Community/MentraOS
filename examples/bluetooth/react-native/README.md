@@ -78,6 +78,17 @@ ANDROID_SERIAL=<phone-serial> bun run android:dev
 
 Do not use `expo run:android` directly; it may install on whatever device Expo picks (including Mentra Live).
 
+### Faster Android installs
+
+`bun run android` defaults to the fast path:
+
+- Builds `arm64-v8a` only (physical phones). Override with `REACT_NATIVE_ARCHITECTURES=...` if you need emulators.
+- Skips the old forced `:mentra-bluetooth-sdk:clean --rerun-tasks` Gradle pass. Use `SDK_CLEAN=1` only when you need a hard refresh of the SDK module.
+
+Local on-device STT/TTS via Sherpa-ONNX is **not** bundled in the public Android SDK (no-op stubs). Cloud transcription still works. That also avoids the ~54MB GitHub AAR download during Gradle configure.
+
+Day-to-day iteration: prefer `bun run android:dev` after the first successful install.
+
 ## SDK Plugin Configuration
 
 The example's `app.json` already includes the Mentra SDK plugin:

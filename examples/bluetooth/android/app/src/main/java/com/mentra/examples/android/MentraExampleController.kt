@@ -244,6 +244,8 @@ data class MentraExampleState(
     val glassesMediaVolume: Int? = null,
     val glassesVolumeStatus: String = "Glasses volume: not checked",
     val hotspotEnabled: Boolean = false,
+    /** Optimistic local toggle — glasses do not report Wi-Fi ADB status. */
+    val wifiAdbEnabled: Boolean = false,
     val lastAction: String = "No actions yet.",
     val ledColor: String = "green",
     val ledMode: String = "Off",
@@ -343,6 +345,8 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     private var activeStreamId: String? = null
     private var pollGeneration = 0
     private var galleryConnectionGeneration = 0
+    /** BLE session generation — advances only on glasses disconnect/reconnect. */
+    private var glassesConnectionGeneration = 0
     private var pendingHotspotConnection: PendingHotspotConnection? = null
     private var photoDestinationBeforeGlasses = PhotoDestination.THIS_PHONE
     private var videoPollGeneration = 0
@@ -2013,6 +2017,19 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         addEvent("LIVE", "hotspot ${summarize(status.values)}")
     }
 
+    fun setWifiAdbState(enabled: Boolean) = runAction(if (enabled) "Enable Wi-Fi ADB" else "Disable Wi-Fi ADB") {
+        requireConnected("toggle Wi-Fi ADB")
+        val generation = glassesConnectionGeneration
+        withContext(Dispatchers.IO) { invokeSetWifiAdbState(mentraBluetoothSdk, enabled) }
+        // Ignore completions from a prior BLE session after disconnect/reconnect.
+        // Do not use galleryConnectionGeneration — hotspot/gallery flows bump that while BLE stays up.
+        if (generation != glassesConnectionGeneration || !isGlassesConnected()) {
+            return@runAction
+        }
+        state = state.copy(wifiAdbEnabled = enabled)
+        addEvent("LIVE", "Wi-Fi ADB ${if (enabled) "enabled" else "disabled"}")
+    }
+
     fun openGalleryServer() = runAction("Open gallery server") {
         val baseUrl = requireGalleryServerUrl()
         state = state.copy(
@@ -3134,6 +3151,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         directPhotoTimeoutJob = null
         photoUploadServer.stop()
         galleryConnectionGeneration += 1
+        glassesConnectionGeneration += 1
         pendingHotspotConnection = null
         glassesHotspotConnector.disconnect()
         otaStartingAppIdentity = null
@@ -3158,6 +3176,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             streamStartedAt = null,
             streamStatus = status,
             hotspotEnabled = false,
+            wifiAdbEnabled = false,
             mentraLiveVersions = MentraLiveVersions(),
             otaStartPending = false,
             otaStatus = null,
@@ -4514,6 +4533,25 @@ fun durationText(seconds: Int): String {
     val m = (elapsed % 3600) / 60
     val s = elapsed % 60
     return "%02d:%02d:%02d".format(h, m, s)
+}
+
+/**
+ * Call [MentraBluetoothSdk.setWifiAdbState] when present. Uses reflection so the example still
+ * compiles against published AARs that predate OS-1627.
+ */
+private fun invokeSetWifiAdbState(sdk: MentraBluetoothSdk, enabled: Boolean) {
+    val method = try {
+        sdk.javaClass.getMethod("setWifiAdbState", Boolean::class.javaPrimitiveType)
+    } catch (_: NoSuchMethodException) {
+        throw IllegalStateException(
+            "MentraBluetoothSdk.setWifiAdbState is unavailable. Use a Mentra Bluetooth SDK build that includes OS-1627.",
+        )
+    }
+    try {
+        method.invoke(sdk, enabled)
+    } catch (error: java.lang.reflect.InvocationTargetException) {
+        throw error.cause ?: error
+    }
 }
 
 private fun ByteArrayOutputStream.writeAscii(value: String) {
