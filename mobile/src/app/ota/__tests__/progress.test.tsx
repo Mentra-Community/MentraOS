@@ -213,7 +213,7 @@ describe("progress.tsx display states", () => {
     expect(getByText("Retry")).toBeDefined()
   })
 
-  it("requires a glasses reboot and removes Retry after a BES authorization ambiguity", () => {
+  it("requires a glasses restart for the existing generic BES install failure", () => {
     setGlassesConnected()
     const {getByText, queryByText} = render(<OtaProgressScreen />)
 
@@ -227,7 +227,7 @@ describe("progress.tsx display states", () => {
         stepPercent: 0,
         overallPercent: 0,
         status: "failed",
-        error: "bes_reboot_required",
+        error: "install_failed",
       })
     })
 

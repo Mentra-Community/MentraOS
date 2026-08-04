@@ -169,9 +169,6 @@ public class AsgConstants {
     /** Android boot id in which {@code mh_ota} was last attempted. */
     public static final String BES_OTA_AUTH_GATE_BOOT_ID_KEY = "attempted_boot_id";
 
-    /** Stable phone-facing error when BES parser state requires a full glasses reboot. */
-    public static final String BES_OTA_REBOOT_REQUIRED_ERROR = "bes_reboot_required";
-
     /** Rendezvous baud shared by every ASG and BES firmware generation. */
     public static final int UART_RENDEZVOUS_BAUD = 460800;
 

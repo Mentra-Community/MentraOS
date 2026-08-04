@@ -304,7 +304,7 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
             EventBus.getDefault()
                     .post(
                             BesOtaProgressEvent.createFailed(
-                                    AsgConstants.BES_OTA_REBOOT_REQUIRED_ERROR));
+                                    "BES OTA retry blocked until glasses reboot"));
             return false;
         }
 
@@ -413,17 +413,9 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
         }
     }
 
-    /**
-     * Preserve detailed diagnostics locally while exposing one stable recovery contract to the
-     * phone after {@code mh_ota} may have switched BES into its raw parser.
-     */
+    /** Preserve detailed diagnostics; the terminal wire encoder reduces them to install_failed. */
     private void postFailure(String diagnostic) {
-        String phoneError =
-                authorizationAttempted ? AsgConstants.BES_OTA_REBOOT_REQUIRED_ERROR : diagnostic;
-        if (!phoneError.equals(diagnostic)) {
-            Log.e(TAG, diagnostic + "; phone recovery=" + phoneError);
-        }
-        EventBus.getDefault().post(BesOtaProgressEvent.createFailed(phoneError));
+        EventBus.getDefault().post(BesOtaProgressEvent.createFailed(diagnostic));
     }
 
     void onAuthorizationWriteComplete(boolean attempted, boolean success) {

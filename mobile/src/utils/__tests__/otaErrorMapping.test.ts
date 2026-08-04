@@ -1,6 +1,7 @@
 import type {OtaProgress, OtaStatus} from "@mentra/bluetooth-sdk-internal"
 
 import {
+  BES_INSTALL_RESTART_MESSAGE,
   getOtaErrorMessage,
   shouldRequireGlassesRebootForBesFailure,
   shouldShowChangeWifiForOtaDownloadFailure,
@@ -73,8 +74,8 @@ describe("getOtaErrorMessage", () => {
     expect(getOtaErrorMessage("install_failed")).toBe("Install failed — please try again")
   })
 
-  it("maps bes_reboot_required to manual recovery instructions", () => {
-    expect(getOtaErrorMessage("bes_reboot_required")).toBe(
+  it("keeps the BES restart instruction as phone-side UI copy", () => {
+    expect(BES_INSTALL_RESTART_MESSAGE).toBe(
       "Restart your glasses to safely exit firmware update mode before trying again",
     )
   })
@@ -93,10 +94,10 @@ describe("getOtaErrorMessage", () => {
 })
 
 describe("shouldRequireGlassesRebootForBesFailure", () => {
-  it("accepts the explicit ASG recovery code", () => {
+  it("infers restart-required from an existing generic BES install failure", () => {
     expect(
       shouldRequireGlassesRebootForBesFailure(
-        baseOtaStatus({stepType: "bes", phase: "install", error: "bes_reboot_required"}),
+        baseOtaStatus({stepType: "bes", phase: "install", status: "failed", error: "install_failed"}),
         null,
         "",
       ),
@@ -130,11 +131,11 @@ describe("shouldRequireGlassesRebootForBesFailure", () => {
     ).toBe(false)
   })
 
-  it("keeps a delivered generic BES authorization failure retryable", () => {
+  it("does not require restart while BES install remains healthy", () => {
     expect(
       shouldRequireGlassesRebootForBesFailure(
-        baseOtaStatus({stepType: "bes", phase: "install", status: "failed", error: "install_failed"}),
-        baseOtaProgress({stage: "install"}),
+        baseOtaStatus({stepType: "bes", phase: "install", status: "in_progress"}),
+        null,
         "",
       ),
     ).toBe(false)

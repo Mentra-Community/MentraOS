@@ -1,4 +1,4 @@
-import {engine} from "@mentra/engine"
+import {engine, SETTINGS, useSetting} from "@mentra/engine"
 import {useCallback, useEffect} from "react"
 import {View, ActivityIndicator} from "react-native"
 
@@ -9,12 +9,12 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import {useConnectionOverlayConfig} from "@/contexts/ConnectionOverlayContext"
 import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {
+  BES_INSTALL_RESTART_MESSAGE,
   getOtaErrorMessage,
   shouldRequireGlassesRebootForBesFailure,
   shouldShowChangeWifiForOtaDownloadFailure,
 } from "@/utils/otaErrorMapping"
 import {useNavigationStore} from "@/stores/navigation"
-import {SETTINGS, useSetting} from "@mentra/engine"
 
 /**
  * Pure renderer over the island OTA install state machine
@@ -42,8 +42,7 @@ export default function OtaProgressScreen() {
 
   focusEffectPreventBack()
 
-  const isFirmwareCompleting =
-    (!connected && displayState === "restarting") || versionChangePhase === "restarting"
+  const isFirmwareCompleting = (!connected && displayState === "restarting") || versionChangePhase === "restarting"
 
   const {setConfig, clearConfig} = useConnectionOverlayConfig()
   useEffect(() => {
@@ -109,7 +108,11 @@ export default function OtaProgressScreen() {
           <View className="h-4" />
           <ActivityIndicator size="large" color={theme.colors.foreground} />
           <View className="h-4" />
-          <Text tx="ota:versionChangeKeepNearby" className="text-sm text-center" style={{color: theme.colors.textDim}} />
+          <Text
+            tx="ota:versionChangeKeepNearby"
+            className="text-sm text-center"
+            style={{color: theme.colors.textDim}}
+          />
           <View className="h-2" />
           <Text tx="ota:downgradeDuration" className="text-sm text-center" style={{color: theme.colors.textDim}} />
         </View>
@@ -262,7 +265,7 @@ export default function OtaProgressScreen() {
     if (displayState === "failed") {
       const requiresGlassesReboot = shouldRequireGlassesRebootForBesFailure(otaStatus, otaProgress, errorMsg)
       const displayedError = requiresGlassesReboot
-        ? getOtaErrorMessage("bes_reboot_required")
+        ? BES_INSTALL_RESTART_MESSAGE
         : errorMsg || getOtaErrorMessage(otaStatus?.error)
       const showChangeWifi = shouldShowChangeWifiForOtaDownloadFailure(otaStatus, otaProgress, errorMsg)
       return (

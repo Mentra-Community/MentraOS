@@ -6,7 +6,6 @@ import static org.robolectric.Shadows.shadowOf;
 import android.app.Application;
 import android.os.Looper;
 import androidx.test.core.app.ApplicationProvider;
-import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.io.bes.events.BesOtaProgressEvent;
 import java.lang.reflect.Field;
 import java.time.Duration;
@@ -72,8 +71,7 @@ public class BesOtaResponseWatchdogTest {
 
         assertThat(BesOtaManager.isBesOtaInProgress).isFalse();
         assertThat(events).hasSize(1);
-        assertThat(events.get(0).getErrorMessage())
-                .isEqualTo(AsgConstants.BES_OTA_REBOOT_REQUIRED_ERROR);
+        assertThat(events.get(0).getErrorMessage()).isEqualTo("No response from BES for 30s");
     }
 
     @Test
@@ -121,7 +119,7 @@ public class BesOtaResponseWatchdogTest {
         assertThat(BesOtaManager.isBesOtaInProgress).isFalse();
         assertThat(events).hasSize(1);
         assertThat(events.get(0).getErrorMessage())
-                .isEqualTo(AsgConstants.BES_OTA_REBOOT_REQUIRED_ERROR);
+                .isEqualTo("BES chip did not respond to authorization request");
     }
 
     @Test

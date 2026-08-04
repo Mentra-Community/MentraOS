@@ -59,17 +59,17 @@ public class CommunicationManagerOtaTerminalTest {
     }
 
     @Test
-    public void rebootRequiredCodeSurvivesTerminalCompaction() throws Exception {
+    public void existingCompactErrorCodeSurvivesTerminalCompaction() throws Exception {
         JSONObject status = new JSONObject();
         status.put("type", "ota_status");
         status.put("status", "failed");
         status.put("st", "bes");
         status.put("phase", "install");
-        status.put("error_message", "bes_reboot_required");
+        status.put("error_message", "firmware_verify_failed");
 
         JSONObject compact = CommunicationManager.compactTerminalOtaStatus(status);
 
-        assertThat(compact.getString("err")).isEqualTo("bes_reboot_required");
+        assertThat(compact.getString("err")).isEqualTo("firmware_verify_failed");
         assertSingleLegacyFrame(compact);
     }
 

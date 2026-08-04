@@ -13,7 +13,6 @@ import static org.robolectric.Shadows.shadowOf;
 import android.app.Application;
 import android.os.Looper;
 import androidx.test.core.app.ApplicationProvider;
-import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.io.bes.events.BesOtaProgressEvent;
 import com.mentra.asg_client.io.bluetooth.managers.K900BluetoothManager;
 import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.BesUartTransportCoordinator;
@@ -114,7 +113,7 @@ public class BesOtaAuthorizationRecoveryProbeTest {
                                                 .contains("\"C\":\"cs_syvr\"")));
         assertThat(events).hasSize(1);
         assertThat(events.get(0).getErrorMessage())
-                .isEqualTo(AsgConstants.BES_OTA_REBOOT_REQUIRED_ERROR);
+                .isEqualTo("BES OTA state could not be reconciled");
         assertThat(BesOtaManager.isBesOtaInProgress).isFalse();
     }
 
