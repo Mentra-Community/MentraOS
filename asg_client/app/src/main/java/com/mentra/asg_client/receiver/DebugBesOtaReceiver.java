@@ -14,8 +14,7 @@ import java.io.File;
  * Debug receiver for testing BES firmware updates directly via adb.
  *
  * <p>Usage: 1. Push firmware file: adb push firmware.bin /storage/emulated/0/asg/bes_firmware.bin
- * 2. Trigger update: adb shell am broadcast -a com.mentra.DEBUG_BES_OTA --es target_version
- * 17.26.7.24
+ * 2. Trigger update: adb shell am broadcast -a com.mentra.DEBUG_BES_OTA --es target_version 17.26.7.24
  *
  * <p>This bypasses all cloud/phone logic and directly triggers BesOtaManager. FOR
  * DEVELOPMENT/TESTING ONLY.

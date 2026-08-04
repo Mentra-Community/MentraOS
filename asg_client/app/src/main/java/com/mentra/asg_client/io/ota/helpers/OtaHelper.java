@@ -745,7 +745,11 @@ public class OtaHelper {
                 Log.w(TAG, "Force installing BES firmware from local file");
                 Log.w(TAG, "Skipping version check and download");
                 Log.w(TAG, "========================================");
-                boolean besUpdateStarted = debugInstallBesFirmware(context);
+                JSONObject debugBesInfo = rootJson.optJSONObject("bes_firmware");
+                String debugTargetVersion =
+                        debugBesInfo == null ? "" : debugBesInfo.optString("version", "");
+                boolean besUpdateStarted =
+                        debugInstallBesFirmware(context, debugTargetVersion);
                 if (besUpdateStarted) {
                     Log.i(TAG, "DEBUG: BES firmware install triggered");
                 } else {
@@ -3076,9 +3080,10 @@ public class OtaHelper {
      * Use for testing only!
      *
      * @param context Application context
+     * @param expectedVersion exact dotted target version expected after BES reboots
      * @return true if install started successfully
      */
-    public static boolean debugInstallBesFirmware(Context context) {
+    public static boolean debugInstallBesFirmware(Context context, String expectedVersion) {
         try {
             IBesOtaRegistry registry =
                     dagger.hilt.android.EntryPointAccessors.fromApplication(
@@ -3110,7 +3115,9 @@ public class OtaHelper {
             }
 
             Log.i(TAG, "DEBUG: Starting BES firmware update via BES OTA controller");
-            boolean started = manager.startFirmwareUpdate(OtaConstants.BES_FIRMWARE_PATH);
+            boolean started =
+                    manager.startFirmwareUpdate(
+                            OtaConstants.BES_FIRMWARE_PATH, expectedVersion);
 
             if (started) {
                 Log.i(TAG, "DEBUG: BES firmware install initiated - monitor BesOtaProgressEvent for progress");

@@ -48,11 +48,6 @@ public interface IBesOtaController {
      */
     boolean startFirmwareUpdate(String filePath, String expectedVersion);
 
-    /** Debug-only compatibility entrypoint; production callers must supply the target version. */
-    default boolean startFirmwareUpdate(String filePath) {
-        return startFirmwareUpdate(filePath, null);
-    }
-
     /** Called by the MCU event subscriber when BES authorizes the update. */
     void onAuthorizationGranted();
 

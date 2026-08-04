@@ -63,8 +63,6 @@ public class BesOtaPostApplyVerificationTest {
     public void applyAckDoesNotFinishUntilRebootedTargetVersionIsReadBack() throws Exception {
         BesOtaAuthorizationGate gate = authorizationGate();
         assertThat(gate.tryReserveCurrentBoot("17.26.7.24")).isTrue();
-        setField("expectedTargetVersion", "17.26.7.24");
-        setField("authorizationAttempted", true);
         BesOtaManager.isBesOtaInProgress = true;
 
         BesOtaMessage apply = new BesOtaMessage();
@@ -107,11 +105,5 @@ public class BesOtaPostApplyVerificationTest {
         Field field = BesOtaManager.class.getDeclaredField("authorizationGate");
         field.setAccessible(true);
         return (BesOtaAuthorizationGate) field.get(manager);
-    }
-
-    private void setField(String name, Object value) throws Exception {
-        Field field = BesOtaManager.class.getDeclaredField(name);
-        field.setAccessible(true);
-        field.set(manager, value);
     }
 }

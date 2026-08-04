@@ -142,4 +142,15 @@ public class BesOtaAuthorizationGateTest {
                 .isEqualTo(BesOtaAuthorizationGate.PostApplyVerification.VERSION_MISMATCH);
         assertThat(gate.isQuarantinedForCurrentBoot()).isFalse();
     }
+
+    @Test
+    public void exactByteVersionCanonicalizesLeadingZerosButRejectsDisplaySuffixes() {
+        assertThat(gate.tryReserveCurrentBoot("017.026.007.024")).isTrue();
+        assertThat(gate.getExpectedTargetVersion()).isEqualTo("17.26.7.24");
+        assertThat(gate.markApplyPending()).isTrue();
+        assertThat(gate.verifyPostApplyVersion("17.26.7.24"))
+                .isEqualTo(BesOtaAuthorizationGate.PostApplyVerification.VERIFIED);
+
+        assertThat(gate.tryReserveCurrentBoot("17.26.7.24-fix1")).isFalse();
+    }
 }

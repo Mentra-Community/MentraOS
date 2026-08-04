@@ -325,8 +325,8 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
                 Log.e(TAG, "BES OTA is already active");
                 return false;
             }
-            String target = expectedVersion == null ? "" : expectedVersion.trim();
-            if (!target.matches("\\d{1,3}(?:\\.\\d{1,3}){3}")) {
+            String target = BesOtaAuthorizationGate.canonicalExactTargetVersion(expectedVersion);
+            if (target == null) {
                 postFailure("BES OTA requires an exact target version for reboot verification");
                 return false;
             }

@@ -60,8 +60,8 @@ public final class BesOtaAuthorizationGate implements BesUartTransportCoordinato
                 Log.e(TAG, "BES OTA authorization is already reserved for this glasses boot");
                 return false;
             }
-            String target = targetVersion == null ? "" : targetVersion.trim();
-            if (!target.matches("\\d{1,3}(?:\\.\\d{1,3}){3}")) {
+            String target = canonicalExactTargetVersion(targetVersion);
+            if (target == null) {
                 Log.e(TAG, "Cannot reserve BES OTA without an exact dotted target version");
                 return false;
             }
@@ -134,7 +134,7 @@ public final class BesOtaAuthorizationGate implements BesUartTransportCoordinato
                 return PostApplyVerification.NOT_PENDING;
             }
             String expected = expectedTargetVersionLocked();
-            String actual = actualVersion == null ? "" : actualVersion.trim();
+            String actual = canonicalExactTargetVersion(actualVersion);
             boolean matches = expected.equals(actual);
             if (!clearLocked()) {
                 return PostApplyVerification.PERSISTENCE_FAILURE;
@@ -173,6 +173,41 @@ public final class BesOtaAuthorizationGate implements BesUartTransportCoordinato
                 .remove(AsgConstants.BES_OTA_AUTH_GATE_TARGET_VERSION_KEY)
                 .remove(AsgConstants.BES_OTA_AUTH_GATE_APPLY_PENDING_KEY)
                 .commit();
+    }
+
+    /**
+     * Canonical four-byte firmware identity used by release metadata and the embedded image.
+     * Runtime feature gates tolerate display suffixes, but a suffixed value cannot be proven from
+     * the four version bytes validated in the OTA artifact and therefore remains inadmissible here.
+     */
+    static String canonicalExactTargetVersion(String value) {
+        if (value == null) {
+            return null;
+        }
+        String[] parts = value.trim().split("\\.", -1);
+        if (parts.length != 4) {
+            return null;
+        }
+        StringBuilder canonical = new StringBuilder();
+        for (String part : parts) {
+            if (!part.matches("\\d{1,3}")) {
+                return null;
+            }
+            int component;
+            try {
+                component = Integer.parseInt(part);
+            } catch (NumberFormatException e) {
+                return null;
+            }
+            if (component > 255) {
+                return null;
+            }
+            if (canonical.length() > 0) {
+                canonical.append('.');
+            }
+            canonical.append(component);
+        }
+        return canonical.toString();
     }
 
     String currentBootId() {
