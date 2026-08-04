@@ -9,6 +9,7 @@ import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 
 import OtaProgressScreen from "@/app/ota/progress"
 import {MINIMUM_OTA_STATUS_BUILD, OtaProgressMessages} from "@mentra/engine"
+import {BES_INSTALL_RESTART_MESSAGE} from "@/utils/otaErrorMapping"
 
 const mockReplace = jest.fn()
 
@@ -231,7 +232,7 @@ describe("progress.tsx display states", () => {
       })
     })
 
-    expect(getByText("Restart your glasses to safely exit firmware update mode before trying again")).toBeDefined()
+    expect(getByText(BES_INSTALL_RESTART_MESSAGE)).toBeDefined()
     expect(getByText("Done")).toBeDefined()
     expect(queryByText("Retry")).toBeNull()
   })
@@ -394,7 +395,7 @@ describe("progress.tsx watchdog timers", () => {
 
   it("fails progress stall after PROGRESS_TIMEOUT_MS with frozen ota_status", async () => {
     setGlassesConnected()
-    const {getByText} = render(<OtaProgressScreen />)
+    const {getByText, queryByText} = render(<OtaProgressScreen />)
 
     act(() => {
       useGlassesStore.getState().setOtaStatus({
@@ -414,7 +415,9 @@ describe("progress.tsx watchdog timers", () => {
     })
 
     expect(getByText("Update Failed")).toBeDefined()
-    expect(getByText(OtaProgressMessages.stalledOrStuck)).toBeDefined()
+    expect(getByText(BES_INSTALL_RESTART_MESSAGE)).toBeDefined()
+    expect(getByText("Done")).toBeDefined()
+    expect(queryByText("Retry")).toBeNull()
   })
 
   it("queries the resumed session without starting a second OTA after a multi-step APK reconnect", async () => {
