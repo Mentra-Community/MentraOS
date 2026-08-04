@@ -3449,6 +3449,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   async function setWifiAdbState(enabled: boolean) {
     await runAction(enabled ? 'Enable Wi-Fi ADB' : 'Disable Wi-Fi ADB', async () => {
       requireConnected('toggle Wi-Fi ADB');
+      const requestDeviceKey = connectedDeviceKeyRef.current;
       const rebuildHint =
         Platform.OS === 'ios'
           ? 'bun run ios (link MentraOS bluetooth-sdk and define MENTRA_SDK_HAS_WIFI_ADB)'
@@ -3475,6 +3476,11 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
           );
         }
         throw error instanceof Error ? error : new Error(message);
+      }
+      // Don't re-apply optimistic state if we disconnected / switched devices during
+      // the await — the connectedDeviceKey effect already cleared wifiAdbEnabled.
+      if (!requestDeviceKey || connectedDeviceKeyRef.current !== requestDeviceKey) {
+        return;
       }
       setWifiAdbEnabled(enabled);
       addEvent('LIVE', `Wi-Fi ADB ${enabled ? 'enabled' : 'disabled'}`);

@@ -2043,6 +2043,9 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         runAsyncAction(enabled ? "Enable Wi-Fi ADB" : "Disable Wi-Fi ADB") { [self] in
             try requireConnected("toggle Wi-Fi ADB")
             try mentraBluetoothSdk.setWifiAdbState(enabled: enabled)
+            // Don't re-apply optimistic state if we disconnected during the await —
+            // applyDisconnectedState already cleared wifiAdbEnabled.
+            guard glassesConnected else { return }
             wifiAdbEnabled = enabled
             append(tag: "LIVE", text: "Wi-Fi ADB \(enabled ? "enabled" : "disabled")")
         }
