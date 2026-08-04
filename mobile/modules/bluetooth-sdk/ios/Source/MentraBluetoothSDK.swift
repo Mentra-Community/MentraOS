@@ -890,7 +890,10 @@ public final class MentraBluetoothSDK {
         }
     }
 
+    /// Fire-and-forget Mentra Live Wi-Fi ADB toggle. Glasses do not ack this
+    /// command, so there is no pending-response wait (unlike hotspot / Wi-Fi forget).
     public func setWifiAdbState(enabled: Bool) async throws {
+        try requireGlassesConnected(operation: "toggle Wi-Fi ADB")
         DeviceManager.shared.setWifiAdbState(enabled)
     }
 
