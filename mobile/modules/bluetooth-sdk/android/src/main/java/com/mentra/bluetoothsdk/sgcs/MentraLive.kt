@@ -4488,55 +4488,28 @@ class MentraLive : SGCManager() {
                                         "%"
                         )
 
-                        // Determine status and error message based on type
-                        val besOtaStatus: String
-                        val besOtaProgressVal: Int
-                        var besOtaErrorMessage: String? = null
-
-                        // Order matters here: check completion (rawProgress >= 100 OR success)
-                        // BEFORE
-                        // type=="update", because some BES firmware emits the final 100% tick with
-                        // type=="update" rather than type=="success". Treating that as PROGRESS
-                        // would
-                        // leave the UI stuck at 100% forever.
-                        if ("success" == type || rawProgress >= 100) {
-                            besOtaStatus = "FINISHED"
-                            besOtaProgressVal = 100
+                        val mapping =
+                            mapBesOtaProgress(
+                                type,
+                                rawProgress,
+                                progress,
+                                bodyObj.optString("message", "BES update failed"),
+                            )
+                        val besOtaStatus = mapping.status
+                        val besOtaProgressVal = mapping.progress
+                        val besOtaErrorMessage = mapping.errorMessage
+                        if ("FAILED" == besOtaStatus) {
                             lastBesOtaProgress = -1 // Reset for next OTA
-                        } else if ("error" == type || "fail" == type) {
-                            besOtaStatus = "FAILED"
-                            besOtaProgressVal = progress
-                            besOtaErrorMessage = bodyObj.optString("message", "BES update failed")
-                            lastBesOtaProgress = -1 // Reset for next OTA
-                        } else if ("update" == type) {
-                            besOtaStatus = "PROGRESS"
-                            besOtaProgressVal = progress
                         } else {
-                            // Unknown type, treat as progress
-                            besOtaStatus = "PROGRESS"
-                            besOtaProgressVal = progress
+                            lastBesOtaProgress = besOtaProgressVal
                         }
 
-                        val syntheticStatus: String
-                        if ("FINISHED" == besOtaStatus) {
-                            // The glasses power-cycle right after the final BES tick, so a
-                            // session whose BES step is the LAST step never gets a follow-up
-                            // ota_status from the glasses — consumers mapping on this synthetic
-                            // status would otherwise never see a terminal state. Emit "complete"
-                            // for the final step; mid-session BES steps keep "step_complete" so
-                            // session-level trackers advance normally. Unknown sessions
-                            // (cachedOtaTotalSteps == 0, e.g. legacy glasses that never sent an
-                            // ota_status) conservatively keep "step_complete".
-                            syntheticStatus =
-                                    if (cachedOtaTotalSteps > 0 &&
-                                                    cachedOtaCurrentStep >= cachedOtaTotalSteps
-                                    )
-                                            "complete"
-                                    else "step_complete"
-                        } else if ("FAILED" == besOtaStatus) {
-                            syntheticStatus = "failed"
+                        val syntheticStatus = if ("FAILED" == besOtaStatus) {
+                            "failed"
                         } else {
-                            syntheticStatus = "in_progress"
+                            // success/100 means apply was accepted, not that the target booted.
+                            // ASG sends the existing terminal ota_status after fresh sr_syvr proof.
+                            "in_progress"
                         }
                         val sid = if (cachedOtaSessionId != null) cachedOtaSessionId!! else ""
                         val totalSteps = if (cachedOtaTotalSteps > 0) cachedOtaTotalSteps else 1

@@ -11,8 +11,10 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
 import org.greenrobot.eventbus.EventBus;
 import org.greenrobot.eventbus.Subscribe;
+import org.json.JSONObject;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -26,6 +28,7 @@ public class BesOtaPostApplyVerificationTest {
     private final List<BesOtaProgressEvent> events = new ArrayList<>();
     private Application context;
     private BesOtaManager manager;
+    private AtomicReference<String> bootId;
 
     @Subscribe
     public void onEvent(BesOtaProgressEvent event) {
@@ -39,12 +42,11 @@ public class BesOtaPostApplyVerificationTest {
                 .edit()
                 .clear()
                 .commit();
+        context.getSharedPreferences("ota_session", 0).edit().clear().commit();
+        bootId = new AtomicReference<>("linux:test-boot-a");
         manager =
                 new BesOtaManager(
-                        null,
-                        null,
-                        context,
-                        new BesOtaAuthorizationGate(context, () -> "linux:test-boot"));
+                        null, null, context, new BesOtaAuthorizationGate(context, bootId::get));
         EventBus.getDefault().register(this);
     }
 
@@ -57,6 +59,7 @@ public class BesOtaPostApplyVerificationTest {
                 .edit()
                 .clear()
                 .commit();
+        context.getSharedPreferences("ota_session", 0).edit().clear().commit();
     }
 
     @Test
@@ -76,6 +79,15 @@ public class BesOtaPostApplyVerificationTest {
         assertThat(events).isEmpty();
         assertThat(gate.isPostApplyVerificationPendingForCurrentBoot()).isTrue();
         assertThat(BesOtaManager.isBesOtaInProgress).isTrue();
+        JSONObject persistedSession =
+                new JSONObject(
+                        context.getSharedPreferences("ota_session", 0)
+                                .getString("ota_session_data", "{}"));
+        assertThat(persistedSession.optBoolean("bes_install_pending_across_reboot")).isTrue();
+
+        assertThat(gate.verifyPostApplyVersion("17.26.7.24"))
+                .isEqualTo(BesOtaAuthorizationGate.PostApplyVerification.NOT_PENDING);
+        bootId.set("linux:test-boot-b");
 
         assertThat(gate.verifyPostApplyVersion("17.26.7.24"))
                 .isEqualTo(BesOtaAuthorizationGate.PostApplyVerification.VERIFIED);

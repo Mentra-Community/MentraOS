@@ -236,14 +236,18 @@ public class OtaHelper {
     public void onPhoneConnected() {
         if (sessionManager == null || phoneConnectionProvider == null) return;
         String pendingStatus = sessionManager.consumePendingApkStatus();
-        if (pendingStatus == null) return;
-        JSONObject apkDoneJson = sessionManager.buildApkDoneJson(pendingStatus);
-        if (apkDoneJson == null) {
-            Log.w(TAG, "onPhoneConnected: buildApkDoneJson returned null, skipping APK done signal");
-            return;
+        if (pendingStatus != null) {
+            JSONObject apkDoneJson = sessionManager.buildApkDoneJson(pendingStatus);
+            if (apkDoneJson == null) {
+                Log.w(TAG, "onPhoneConnected: buildApkDoneJson returned null, skipping APK done signal");
+            } else {
+                Log.i(TAG, "onPhoneConnected: sending explicit APK done signal status=" + pendingStatus);
+                phoneConnectionProvider.sendOtaStatus(apkDoneJson);
+            }
         }
-        Log.i(TAG, "onPhoneConnected: sending explicit APK done signal status=" + pendingStatus);
-        phoneConnectionProvider.sendOtaStatus(apkDoneJson);
+        if (sessionManager.isBesTerminalDeliveryPending()) {
+            scheduleTerminalStatusResends("BES terminal reconnect");
+        }
     }
 
     public JSONObject getOtaSessionState() {
@@ -2928,8 +2932,36 @@ public class OtaHelper {
      */
     public void sendBesInstallProgressToPhone(String status, int progress, String message) {
         currentUpdateType = "bes";
+        boolean terminal = "FINISHED".equals(status) || "FAILED".equals(status);
+        if (terminal && sessionManager != null) {
+            sessionManager.setPendingBesTerminalDelivery();
+        }
         sendProgressToPhone("install", progress, 0, 0, status,
             "FAILED".equals(status) ? message : null);
+        if (terminal) {
+            scheduleTerminalStatusResends("verified BES " + status);
+        }
+    }
+
+    private void scheduleTerminalStatusResends(String reason) {
+        for (int attempt = 1; attempt <= AsgConstants.OTA_COMPLETION_RESEND_ATTEMPTS; attempt++) {
+            final int attemptNumber = attempt;
+            handler.postDelayed(
+                    () -> {
+                        Log.i(
+                                TAG,
+                                reason
+                                        + " push attempt "
+                                        + attemptNumber
+                                        + "/"
+                                        + AsgConstants.OTA_COMPLETION_RESEND_ATTEMPTS
+                                        + " (phoneConnected="
+                                        + isPhoneConnected()
+                                        + ")");
+                        sendOtaStatus();
+                    },
+                    (attempt - 1) * AsgConstants.OTA_COMPLETION_RESEND_INTERVAL_MS);
+        }
     }
 
     /**

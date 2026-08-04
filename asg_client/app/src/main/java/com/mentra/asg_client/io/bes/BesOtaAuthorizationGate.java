@@ -38,6 +38,9 @@ public final class BesOtaAuthorizationGate implements BesUartTransportCoordinato
 
     boolean isRetryBlockedThisBoot() {
         synchronized (RESERVATION_LOCK) {
+            if (isApplyPendingLocked()) {
+                return true;
+            }
             String current = currentBootId();
             String attempted = attemptedBootId();
             return current == null || current.equals(attempted);
@@ -56,6 +59,10 @@ public final class BesOtaAuthorizationGate implements BesUartTransportCoordinato
                         "Cannot prove the glasses boot identity; refusing BES OTA authorization");
                 return false;
             }
+            if (isApplyPendingLocked()) {
+                Log.e(TAG, "BES OTA target verification is still pending; refusing a new update");
+                return false;
+            }
             if (current.equals(attemptedBootId())) {
                 Log.e(TAG, "BES OTA authorization is already reserved for this glasses boot");
                 return false;
@@ -70,6 +77,7 @@ public final class BesOtaAuthorizationGate implements BesUartTransportCoordinato
                     .putString(AsgConstants.BES_OTA_AUTH_GATE_BOOT_ID_KEY, current)
                     .putString(AsgConstants.BES_OTA_AUTH_GATE_TARGET_VERSION_KEY, target)
                     .putBoolean(AsgConstants.BES_OTA_AUTH_GATE_APPLY_PENDING_KEY, false)
+                    .remove(AsgConstants.BES_OTA_AUTH_GATE_VERIFICATION_BOOT_ID_KEY)
                     .commit();
         }
     }
@@ -86,6 +94,7 @@ public final class BesOtaAuthorizationGate implements BesUartTransportCoordinato
             return preferences
                     .edit()
                     .putBoolean(AsgConstants.BES_OTA_AUTH_GATE_APPLY_PENDING_KEY, true)
+                    .remove(AsgConstants.BES_OTA_AUTH_GATE_VERIFICATION_BOOT_ID_KEY)
                     .commit();
         }
     }
@@ -106,7 +115,21 @@ public final class BesOtaAuthorizationGate implements BesUartTransportCoordinato
                 return false;
             }
             String current = currentBootId();
-            return current == null || current.equals(attempted);
+            if (current == null) {
+                return true;
+            }
+            if (!isApplyPendingLocked()) {
+                return current.equals(attempted);
+            }
+
+            String verificationBoot = claimVerificationBootLocked(current, attempted);
+            // Apply discovery is allowed before the power cycle on the attempted boot and on the
+            // first boot after it. A second unverified reboot is ambiguous and stays quarantined.
+            if (!current.equals(attempted) && !current.equals(verificationBoot)) {
+                replaceWithCurrentBootQuarantineLocked(current);
+                return true;
+            }
+            return false;
         }
     }
 
@@ -114,10 +137,12 @@ public final class BesOtaAuthorizationGate implements BesUartTransportCoordinato
     public boolean isPostApplyVerificationPendingForCurrentBoot() {
         synchronized (RESERVATION_LOCK) {
             String current = currentBootId();
-            return current != null
-                    && current.equals(attemptedBootId())
-                    && preferences.getBoolean(
-                            AsgConstants.BES_OTA_AUTH_GATE_APPLY_PENDING_KEY, false);
+            String attempted = attemptedBootId();
+            if (current == null || attempted == null || !isApplyPendingLocked()) {
+                return false;
+            }
+            String verificationBoot = claimVerificationBootLocked(current, attempted);
+            return current.equals(attempted) || current.equals(verificationBoot);
         }
     }
 
@@ -131,6 +156,13 @@ public final class BesOtaAuthorizationGate implements BesUartTransportCoordinato
     public PostApplyVerification verifyPostApplyVersion(String actualVersion) {
         synchronized (RESERVATION_LOCK) {
             if (!isPostApplyVerificationPendingForCurrentBoot()) {
+                return PostApplyVerification.NOT_PENDING;
+            }
+            String current = currentBootId();
+            String attempted = attemptedBootId();
+            String verificationBoot = verificationBootId();
+            if (current == null || current.equals(attempted) || !current.equals(verificationBoot)) {
+                // A normal-mode reply from the authorization boot is not post-reboot proof.
                 return PostApplyVerification.NOT_PENDING;
             }
             String expected = expectedTargetVersionLocked();
@@ -151,15 +183,60 @@ public final class BesOtaAuthorizationGate implements BesUartTransportCoordinato
             if (!isPostApplyVerificationPendingForCurrentBoot()) {
                 return true;
             }
+            String current = currentBootId();
+            if (current == null) {
+                return false;
+            }
+            // Persist the boot that timed out as the ordinary authorization boot marker. This
+            // restores quarantine after an ASG/serial restart until the user reboots once more.
             return preferences
                     .edit()
+                    .putString(AsgConstants.BES_OTA_AUTH_GATE_BOOT_ID_KEY, current)
+                    .remove(AsgConstants.BES_OTA_AUTH_GATE_TARGET_VERSION_KEY)
                     .putBoolean(AsgConstants.BES_OTA_AUTH_GATE_APPLY_PENDING_KEY, false)
+                    .remove(AsgConstants.BES_OTA_AUTH_GATE_VERIFICATION_BOOT_ID_KEY)
                     .commit();
         }
     }
 
     private String attemptedBootId() {
         return preferences.getString(AsgConstants.BES_OTA_AUTH_GATE_BOOT_ID_KEY, null);
+    }
+
+    private String verificationBootId() {
+        return preferences.getString(AsgConstants.BES_OTA_AUTH_GATE_VERIFICATION_BOOT_ID_KEY, null);
+    }
+
+    private boolean isApplyPendingLocked() {
+        return preferences.getBoolean(AsgConstants.BES_OTA_AUTH_GATE_APPLY_PENDING_KEY, false);
+    }
+
+    private String claimVerificationBootLocked(String current, String attempted) {
+        if (current == null || attempted == null || current.equals(attempted)) {
+            return verificationBootId();
+        }
+        String verificationBoot = verificationBootId();
+        if (verificationBoot != null) {
+            return verificationBoot;
+        }
+        if (!preferences
+                .edit()
+                .putString(AsgConstants.BES_OTA_AUTH_GATE_VERIFICATION_BOOT_ID_KEY, current)
+                .commit()) {
+            Log.e(TAG, "Could not durably claim the BES post-apply verification boot");
+            return null;
+        }
+        return current;
+    }
+
+    private boolean replaceWithCurrentBootQuarantineLocked(String current) {
+        return preferences
+                .edit()
+                .putString(AsgConstants.BES_OTA_AUTH_GATE_BOOT_ID_KEY, current)
+                .remove(AsgConstants.BES_OTA_AUTH_GATE_TARGET_VERSION_KEY)
+                .putBoolean(AsgConstants.BES_OTA_AUTH_GATE_APPLY_PENDING_KEY, false)
+                .remove(AsgConstants.BES_OTA_AUTH_GATE_VERIFICATION_BOOT_ID_KEY)
+                .commit();
     }
 
     private String expectedTargetVersionLocked() {
@@ -172,6 +249,7 @@ public final class BesOtaAuthorizationGate implements BesUartTransportCoordinato
                 .remove(AsgConstants.BES_OTA_AUTH_GATE_BOOT_ID_KEY)
                 .remove(AsgConstants.BES_OTA_AUTH_GATE_TARGET_VERSION_KEY)
                 .remove(AsgConstants.BES_OTA_AUTH_GATE_APPLY_PENDING_KEY)
+                .remove(AsgConstants.BES_OTA_AUTH_GATE_VERIFICATION_BOOT_ID_KEY)
                 .commit();
     }
 

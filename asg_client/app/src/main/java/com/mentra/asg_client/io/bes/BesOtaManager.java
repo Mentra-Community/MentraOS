@@ -10,6 +10,7 @@ import com.mentra.asg_client.io.bluetooth.managers.K900BluetoothManager;
 import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.BesUartTransportCoordinator;
 import com.mentra.asg_client.io.bluetooth.utils.ByteUtil;
 import com.mentra.asg_client.io.ota.interfaces.IBesOtaController;
+import com.mentra.asg_client.io.ota.session.OtaSessionManager;
 import com.mentra.asg_client.logging.BleTraceLogger;
 import com.mentra.asg_client.utils.WakeLockManager;
 import java.io.File;
@@ -1472,6 +1473,12 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
             if (msg.len == 1 && msg.body != null && msg.body[0] == 1) {
                 Log.i(TAG, "BES accepted firmware apply; waiting for rebooted version readback");
                 if (authorizationGate.markApplyPending()) {
+                    if (!new OtaSessionManager(mContext)
+                            .setBesInstallPendingAcrossReboot(true)) {
+                        // Version verification remains armed because BES may already be committed
+                        // to reboot. The compact terminal can still fall back to its legacy shape.
+                        Log.e(TAG, "Could not durably preserve the phone OTA session across reboot");
+                    }
                     beginPostApplyVerificationLocked();
                     return;
                 }

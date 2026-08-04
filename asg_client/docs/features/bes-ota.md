@@ -53,8 +53,9 @@ UART transport is owned by `ComManager` (the K900 UART driver). When BES OTA is 
    | Send finish                  | `0x88`         | `0x84`  |
    | Apply (BES reboots)          | `0x92`         | `0x93`  |
 
-6. **Verify after reboot.** The `0x93` apply acknowledgement is not success. ASG persists a post-apply phase, reopens BES at the rendezvous baud, and accepts `FINISHED` only after a fresh `sr_syvr` exactly matches the target version bound to the admitted artifact. The pending verification survives an ASG process restart. A mismatch, timeout, or durable-state write failure reports `FAILED`; it never reports a false success.
-7. **Progress events.** `BesOtaProgressEvent`s fire on EventBus throughout (`STARTED`, `PROGRESS`, `FINISHED`, `FAILED`).
+6. **Verify after the glasses power cycle.** The `0x93` apply acknowledgement is not success. It schedules a BES reset and an Android shutdown, so ASG records the authorization boot separately from the first subsequent verification boot. The exact target and active phone OTA session survive that boot transition and ASG process restarts on the verification boot. Only a fresh `sr_syvr` from that one claimed boot can produce `FINISHED`; a second reboot without proof is quarantined.
+7. **Deliver one verified terminal state.** BES sends `sr_adota` directly to the phone while UART is owned by the transfer, but its success/100% value means only that apply was accepted. The phone keeps that value nonterminal. After version proof, ASG persists and resends the existing compact `ota_status` terminal snapshot until normal UART/phone delivery has had time to recover. A mismatch, timeout, or durable-state failure reports `FAILED`; it never relies on correcting an earlier false success.
+8. **Progress events.** `BesOtaProgressEvent`s fire on EventBus throughout (`STARTED`, `PROGRESS`, `FINISHED`, `FAILED`).
 
 ## Wire-format constants
 

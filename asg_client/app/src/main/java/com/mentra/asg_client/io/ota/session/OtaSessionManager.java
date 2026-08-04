@@ -21,6 +21,8 @@ public class OtaSessionManager {
      * Set by OtaService.resumeFromSession() and consumed by OtaHelper.onPhoneConnected().
      */
     private static final String KEY_PENDING_APK_STATUS = "pending_apk_status";
+    /** Durable terminal BES snapshot remains eligible for resend after the OTA power cycle. */
+    private static final String KEY_PENDING_BES_TERMINAL = "pending_bes_terminal";
     private static final long SESSION_EXPIRY_MS = 30 * 60 * 1000L;
     /**
      * Cooldown after APK install before auto-resuming the next OTA step (MTK/BES).
@@ -42,6 +44,7 @@ public class OtaSessionManager {
     private String mVersionJsonUrl;
     private long mLastActivityAtElapsed;
     private long mRestartingSinceElapsed;
+    private boolean mBesInstallPendingAcrossReboot;
 
     private int mLastPersistedPercent;
 
@@ -72,6 +75,7 @@ public class OtaSessionManager {
         if ("failed".equals(mStatus) || "complete".equals(mStatus)) {
             clear();
         }
+        mPrefs.edit().remove(KEY_PENDING_BES_TERMINAL).apply();
 
         mSessionId = UUID.randomUUID().toString().substring(0, 8);
         mTotalSteps = stepSequence.length;
@@ -99,6 +103,9 @@ public class OtaSessionManager {
         }
         if ("failed".equals(mStatus) || "complete".equals(mStatus) || "idle".equals(mStatus)) {
             return false;
+        }
+        if (mBesInstallPendingAcrossReboot) {
+            return true;
         }
         long now = SystemClock.elapsedRealtime();
         // Skip expiry check during APK restart path — but cap how long we trust it. Without
@@ -150,7 +157,9 @@ public class OtaSessionManager {
         // on terminal status here — callers may still need to read the final "complete" or
         // "failed" snapshot to send it to the phone. We only suppress the snapshot when the
         // session is well past its idle deadline AND not in restart guard.
-        if (mRestartingSinceElapsed < 0) {
+        if (mRestartingSinceElapsed < 0
+                && !mBesInstallPendingAcrossReboot
+                && !isBesTerminalDeliveryPending()) {
             long now = SystemClock.elapsedRealtime();
             if (mLastActivityAtElapsed > 0
                     && (now < mLastActivityAtElapsed
@@ -215,6 +224,7 @@ public class OtaSessionManager {
     public synchronized void setFailed(String errorMessage) {
         mStatus = "failed";
         mErrorMessage = errorMessage;
+        mBesInstallPendingAcrossReboot = false;
         mLastActivityAtElapsed = SystemClock.elapsedRealtime();
         persist();
         Log.e(TAG, "Session failed: " + errorMessage);
@@ -223,6 +233,7 @@ public class OtaSessionManager {
     public synchronized void setComplete() {
         mStatus = "complete";
         mStepPercent = 100;
+        mBesInstallPendingAcrossReboot = false;
         mLastActivityAtElapsed = SystemClock.elapsedRealtime();
         persist();
         Log.i(TAG, "Session complete: " + mSessionId);
@@ -255,6 +266,23 @@ public class OtaSessionManager {
     public synchronized void clearRestartGuard() {
         mRestartingSinceElapsed = -1;
         persist();
+    }
+
+    /** Keep the active BES step and its phone session identity across the OTA power cycle. */
+    public synchronized boolean setBesInstallPendingAcrossReboot(boolean pending) {
+        mBesInstallPendingAcrossReboot = pending;
+        mLastActivityAtElapsed = SystemClock.elapsedRealtime();
+        return persist(true);
+    }
+
+    /** Mark the persisted terminal snapshot for resend after UART and phone readiness return. */
+    public void setPendingBesTerminalDelivery() {
+        mPrefs.edit().putBoolean(KEY_PENDING_BES_TERMINAL, true).commit();
+    }
+
+    /** Terminal BES delivery is idempotent and remains pending until a later OTA supersedes it. */
+    public boolean isBesTerminalDeliveryPending() {
+        return mPrefs.getBoolean(KEY_PENDING_BES_TERMINAL, false);
     }
 
     /**
@@ -325,8 +353,9 @@ public class OtaSessionManager {
         mVersionJsonUrl = null;
         mLastActivityAtElapsed = 0;
         mRestartingSinceElapsed = -1;
+        mBesInstallPendingAcrossReboot = false;
         mLastPersistedPercent = 0;
-        mPrefs.edit().remove(KEY_SESSION_DATA).apply();
+        mPrefs.edit().remove(KEY_SESSION_DATA).remove(KEY_PENDING_BES_TERMINAL).apply();
     }
 
     public synchronized String getStepType(int index) {
@@ -494,6 +523,10 @@ public class OtaSessionManager {
     }
 
     private void persist() {
+        persist(false);
+    }
+
+    private boolean persist(boolean synchronous) {
         try {
             JSONObject json = new JSONObject();
             json.put("session_id", mSessionId != null ? mSessionId : JSONObject.NULL);
@@ -507,9 +540,17 @@ public class OtaSessionManager {
             json.put("version_json_url", mVersionJsonUrl != null ? mVersionJsonUrl : JSONObject.NULL);
             json.put("last_activity_at_elapsed", mLastActivityAtElapsed);
             json.put("restarting_since_elapsed", mRestartingSinceElapsed);
-            mPrefs.edit().putString(KEY_SESSION_DATA, json.toString()).apply();
+            json.put("bes_install_pending_across_reboot", mBesInstallPendingAcrossReboot);
+            SharedPreferences.Editor editor =
+                    mPrefs.edit().putString(KEY_SESSION_DATA, json.toString());
+            if (synchronous) {
+                return editor.commit();
+            }
+            editor.apply();
+            return true;
         } catch (JSONException e) {
             Log.e(TAG, "Failed to persist session", e);
+            return false;
         }
     }
 
@@ -534,11 +575,14 @@ public class OtaSessionManager {
             mVersionJsonUrl = json.isNull("version_json_url") ? null : json.optString("version_json_url", null);
             mLastActivityAtElapsed = json.optLong("last_activity_at_elapsed", 0);
             mRestartingSinceElapsed = json.optLong("restarting_since_elapsed", -1);
+            mBesInstallPendingAcrossReboot =
+                    json.optBoolean("bes_install_pending_across_reboot", false);
             mLastPersistedPercent = mStepPercent;
         } catch (JSONException e) {
             Log.e(TAG, "Failed to load session", e);
             mStepSequence = new JSONArray();
             mRestartingSinceElapsed = -1;
+            mBesInstallPendingAcrossReboot = false;
         }
     }
 }

@@ -175,6 +175,9 @@ public class AsgConstants {
     /** True after BES accepts apply and until a rebooted {@code sr_syvr} proves the target. */
     public static final String BES_OTA_AUTH_GATE_APPLY_PENDING_KEY = "apply_pending";
 
+    /** First post-apply Android boot allowed to provide the one target-version proof. */
+    public static final String BES_OTA_AUTH_GATE_VERIFICATION_BOOT_ID_KEY = "verification_boot_id";
+
     /** Rendezvous baud shared by every ASG and BES firmware generation. */
     public static final int UART_RENDEZVOUS_BAUD = 460800;
 

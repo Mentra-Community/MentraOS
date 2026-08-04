@@ -313,12 +313,18 @@ public class OtaService extends Service {
             case FINISHED:
                 Log.i(TAG, "BES firmware update finished successfully");
                 updateNotification("BES firmware updated successfully");
-                // Note: BES chip will send sr_adota with progress=100 or type=success
+                if (otaHelper != null) {
+                    // sr_adota=100 only proves that BES accepted apply. The phone-visible terminal
+                    // status originates here, after boot B returned the exact target in sr_syvr.
+                    otaHelper.sendBesInstallProgressToPhone("FINISHED", 100, null);
+                    otaHelper.deleteDownloadedArtifactForType("bes");
+                }
                 break;
             case FAILED:
                 Log.e(TAG, "BES firmware update failed: " + event.getErrorMessage());
                 updateNotification("BES firmware update failed: " + event.getErrorMessage());
-                // Try to notify phone of failure (might work if UART recovers)
+                // Persist and retry the terminal snapshot: mismatch can race baud negotiation,
+                // while timeout deliberately quarantines UART until the user reboots.
                 if (otaHelper != null) {
                     otaHelper.sendBesInstallProgressToPhone("FAILED", 0, event.getErrorMessage());
                     otaHelper.deleteDownloadedArtifactForType("bes");

@@ -120,9 +120,14 @@ public class BesOtaAuthorizationGateTest {
     }
 
     @Test
-    public void applyPendingSurvivesProcessRestartUntilExactVersionReadback() {
+    public void applyPendingSurvivesPowerCycleAndProcessRestartUntilExactVersionReadback() {
         assertThat(gate.tryReserveCurrentBoot("17.26.7.24")).isTrue();
         assertThat(gate.markApplyPending()).isTrue();
+
+        assertThat(gate.verifyPostApplyVersion("17.26.7.24"))
+                .isEqualTo(BesOtaAuthorizationGate.PostApplyVerification.NOT_PENDING);
+
+        bootId.set("linux:boot-b");
 
         BesOtaAuthorizationGate afterProcessRestart =
                 new BesOtaAuthorizationGate(context, bootId::get);
@@ -137,10 +142,54 @@ public class BesOtaAuthorizationGateTest {
     public void unexpectedPostApplyVersionIsSafeButDoesNotReportSuccess() {
         assertThat(gate.tryReserveCurrentBoot("17.26.7.24")).isTrue();
         assertThat(gate.markApplyPending()).isTrue();
+        bootId.set("linux:boot-b");
 
         assertThat(gate.verifyPostApplyVersion("17.26.7.23"))
                 .isEqualTo(BesOtaAuthorizationGate.PostApplyVerification.VERSION_MISMATCH);
         assertThat(gate.isQuarantinedForCurrentBoot()).isFalse();
     }
 
+    @Test
+    public void applyPendingBlocksNewAuthorizationOnVerificationBoot() {
+        assertThat(gate.tryReserveCurrentBoot("17.26.7.24")).isTrue();
+        assertThat(gate.markApplyPending()).isTrue();
+        bootId.set("linux:boot-b");
+
+        assertThat(gate.isRetryBlockedThisBoot()).isTrue();
+        assertThat(gate.tryReserveCurrentBoot("17.26.7.25")).isFalse();
+    }
+
+    @Test
+    public void onlyFirstPostApplyBootCanVerifyTarget() {
+        assertThat(gate.tryReserveCurrentBoot("17.26.7.24")).isTrue();
+        assertThat(gate.markApplyPending()).isTrue();
+        bootId.set("linux:boot-b");
+        assertThat(gate.isPostApplyVerificationPendingForCurrentBoot()).isTrue();
+
+        bootId.set("linux:boot-c");
+
+        assertThat(gate.isPostApplyVerificationPendingForCurrentBoot()).isFalse();
+        assertThat(gate.isQuarantinedForCurrentBoot()).isTrue();
+        assertThat(gate.verifyPostApplyVersion("17.26.7.24"))
+                .isEqualTo(BesOtaAuthorizationGate.PostApplyVerification.NOT_PENDING);
+
+        bootId.set("linux:boot-d");
+        assertThat(gate.isQuarantinedForCurrentBoot()).isFalse();
+    }
+
+    @Test
+    public void verificationTimeoutRestoresQuarantineAcrossProcessRestart() {
+        assertThat(gate.tryReserveCurrentBoot("17.26.7.24")).isTrue();
+        assertThat(gate.markApplyPending()).isTrue();
+        bootId.set("linux:boot-b");
+        assertThat(gate.isPostApplyVerificationPendingForCurrentBoot()).isTrue();
+
+        assertThat(gate.abandonPostApplyVerification()).isTrue();
+
+        BesOtaAuthorizationGate afterProcessRestart =
+                new BesOtaAuthorizationGate(context, bootId::get);
+        assertThat(afterProcessRestart.isQuarantinedForCurrentBoot()).isTrue();
+        bootId.set("linux:boot-c");
+        assertThat(afterProcessRestart.isQuarantinedForCurrentBoot()).isFalse();
+    }
 }
