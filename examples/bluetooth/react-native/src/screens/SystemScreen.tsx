@@ -225,6 +225,48 @@ export function SystemScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
         </Text>
       </LinearGradient>
 
+      {/* Wi-Fi ADB (Mentra Live debug) */}
+      <LinearGradient colors={['rgba(255,255,255,0.7)', 'rgba(255,255,255,0.5)']} style={styles.wifiAdbCard}>
+        <View style={styles.tileHead}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+            <View style={styles.iconTileSm}>
+              <Svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={colors.greenInk} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                <Path d="M12 20h.01" />
+                <Path d="M8.5 16.429a5 5 0 0 1 7 0" />
+                <Path d="M5 12.859a10 10 0 0 1 5.17-2.857" />
+                <Path d="M19 12.859a10 10 0 0 0-2.007-1.523" />
+                <Path d="M2 8.82a15 15 0 0 1 4.177-2.643" />
+                <Path d="M22 8.82a15 15 0 0 0-11.288-3.764" />
+                <Path d="m2 2 20 20" />
+              </Svg>
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.tileTitle}>Wi-Fi ADB</Text>
+              <Text style={[styles.tileSub, { color: sdk.wifiAdbEnabled ? colors.greenAccent : colors.muted }]}>
+                {connected
+                  ? sdk.wifiAdbEnabled
+                    ? 'Wireless debugging enabled (Mentra Live)'
+                    : 'Wireless debugging off (default)'
+                  : 'connect glasses to toggle'}
+              </Text>
+            </View>
+          </View>
+          <Pressable
+            disabled={!connected}
+            hitSlop={10}
+            onPress={() => {
+              void sdk.setWifiAdbState(!sdk.wifiAdbEnabled);
+            }}
+            style={[
+              styles.toggleOn,
+              { borderColor: sdk.wifiAdbEnabled ? 'rgba(52,199,89,0.72)' : 'rgba(15,42,29,0.18)' },
+              !connected && styles.disabled,
+            ]}>
+            <View style={[styles.toggleKnob, !sdk.wifiAdbEnabled && { backgroundColor: colors.mutedSoft, alignSelf: 'flex-start' }]} />
+          </Pressable>
+        </View>
+      </LinearGradient>
+
       {/* Microphone */}
       <LinearGradient colors={['rgba(255,255,255,0.7)', 'rgba(255,255,255,0.5)']} style={[styles.micCard, !connected && styles.disabled]}>
         <View style={styles.tileHead}>
@@ -687,6 +729,7 @@ const styles = StyleSheet.create({
   wifiExpandText: { color: colors.greenInk, fontSize: 12, fontWeight: '700' },
   tileCard: { flex: 1, borderRadius: 22, paddingVertical: 16, paddingHorizontal: 16, gap: 10, borderWidth: 1, borderColor: colors.borderSoft },
   hotspotCard: { marginHorizontal: 16, marginTop: 12, borderRadius: 22, paddingVertical: 14, paddingHorizontal: 16, gap: 10, borderWidth: 1, borderColor: colors.borderSoft },
+  wifiAdbCard: { marginHorizontal: 16, marginTop: 8, borderRadius: 22, paddingVertical: 14, paddingHorizontal: 16, gap: 10, borderWidth: 1, borderColor: colors.borderSoft },
   hotspotDivider: { height: 1, backgroundColor: 'rgba(15,42,29,0.05)' },
   hotspotGalleryRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 },
   hotspotGalleryTitle: { color: colors.ink, fontSize: 13, fontWeight: '700' },

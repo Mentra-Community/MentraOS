@@ -87,6 +87,7 @@ struct SystemScreen: View {
 
                 wifiCard.padding(.horizontal, 16).padding(.top, 8)
                 hotspotCard.padding(.horizontal, 16).padding(.top, 12)
+                wifiAdbCard.padding(.horizontal, 16).padding(.top, 8)
                 microphoneCard.padding(.horizontal, 16).padding(.top, 8)
                 inputsCard.padding(.horizontal, 16).padding(.top, 12)
                 ledCard.padding(.horizontal, 16).padding(.top, 12)
@@ -346,6 +347,53 @@ struct SystemScreen: View {
                 .lineLimit(2)
                 .minimumScaleFactor(0.8)
                 .padding(.top, 8)
+        }
+    }
+
+    private var wifiAdbCard: some View {
+        GlassCard(corner: 22, padding: EdgeInsets(top: 14, leading: 16, bottom: 14, trailing: 16)) {
+            HStack {
+                HStack(spacing: 10) {
+                    iconTileSm(systemName: "antenna.radiowaves.left.and.right")
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Wi-Fi ADB").font(.system(size: 16, weight: .bold)).foregroundColor(AppColor.ink)
+                        Text(
+                            model.glassesConnected
+                                ? (model.wifiAdbEnabled
+                                    ? "Wireless debugging enabled (Mentra Live)"
+                                    : "Wireless debugging off (default)")
+                                : "connect glasses to toggle"
+                        )
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(model.wifiAdbEnabled ? AppColor.greenAccent : AppColor.muted)
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.8)
+                    }
+                }
+                Spacer()
+                Button(action: { model.setWifiAdbState(enabled: !model.wifiAdbEnabled) }) {
+                    ZStack(alignment: model.wifiAdbEnabled ? .trailing : .leading) {
+                        Capsule()
+                            .fill(Color.white)
+                            .overlay(
+                                Capsule()
+                                    .stroke(
+                                        model.wifiAdbEnabled ? AppColor.greenAccent.opacity(0.72) : AppColor.ink.opacity(0.18),
+                                        lineWidth: 1.2
+                                    )
+                            )
+                            .frame(width: 38, height: 22)
+                        Circle()
+                            .fill(model.wifiAdbEnabled ? AppColor.greenAccent : AppColor.mutedSoft)
+                            .frame(width: 18, height: 18)
+                            .padding(2)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(!model.glassesConnected)
+                .opacity(model.glassesConnected ? 1 : 0.45)
+            }
         }
     }
 

@@ -284,6 +284,73 @@ fun SystemScreen(controller: MentraExampleController) {
             }
         }
 
+        // Wi-Fi ADB card (Mentra Live debug)
+        Box(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
+            GlassCard(
+                modifier = Modifier.fillMaxWidth(),
+                corner = 22,
+                padding = PaddingValues(horizontal = 16.dp, vertical = 14.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        IconTile(Icons.Outlined.BugReport)
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Wi-Fi ADB", color = AppColor.ink, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                            Text(
+                                if (connected) {
+                                    if (state.wifiAdbEnabled) {
+                                        "Wireless debugging enabled (Mentra Live)"
+                                    } else {
+                                        "Wireless debugging off (default)"
+                                    }
+                                } else {
+                                    "connect glasses to toggle"
+                                },
+                                color = if (state.wifiAdbEnabled) AppColor.greenAccent else AppColor.muted,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Medium,
+                            )
+                        }
+                    }
+                    Box(
+                        modifier = Modifier
+                            .size(width = 48.dp, height = 44.dp)
+                            .clickable(enabled = connected) { controller.setWifiAdbState(!state.wifiAdbEnabled) },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(width = 44.dp, height = 26.dp)
+                                .clip(RoundedCornerShape(999.dp))
+                                .background(Color.White)
+                                .border(
+                                    1.2.dp,
+                                    if (state.wifiAdbEnabled) AppColor.greenAccent.copy(alpha = 0.72f) else AppColor.ink.copy(alpha = 0.18f),
+                                    RoundedCornerShape(999.dp),
+                                )
+                                .padding(horizontal = 3.dp),
+                            contentAlignment = if (state.wifiAdbEnabled) Alignment.CenterEnd else Alignment.CenterStart,
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(20.dp)
+                                    .clip(CircleShape)
+                                    .background(if (state.wifiAdbEnabled) AppColor.greenAccent else AppColor.mutedSoft),
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
         // Microphone card
         GlassCard(
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),

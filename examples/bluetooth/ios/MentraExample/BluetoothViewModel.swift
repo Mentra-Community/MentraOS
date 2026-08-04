@@ -422,6 +422,8 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     @Published private(set) var streamStatus = "Ready to start stream"
     @Published private(set) var galleryModeEnabled = false
     @Published private(set) var hotspotEnabled = false
+    /// Optimistic local toggle — glasses do not report Wi-Fi ADB status.
+    @Published private(set) var wifiAdbEnabled = false
     @Published private(set) var galleryServerReachable: Bool?
     @Published private(set) var galleryServerStatus = "Gallery server: enable hotspot to check"
     @Published private(set) var micRecording = false
@@ -2034,6 +2036,15 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             let next = !current
             let status = try await mentraBluetoothSdk.setHotspotState(enabled: next)
             append(tag: "LIVE", text: "hotspot \(summarize(status.values))")
+        }
+    }
+
+    func setWifiAdbState(enabled: Bool) {
+        runAsyncAction(enabled ? "Enable Wi-Fi ADB" : "Disable Wi-Fi ADB") { [self] in
+            try requireConnected("toggle Wi-Fi ADB")
+            try mentraBluetoothSdk.setWifiAdbState(enabled: enabled)
+            wifiAdbEnabled = enabled
+            append(tag: "LIVE", text: "Wi-Fi ADB \(enabled ? "enabled" : "disabled")")
         }
     }
 

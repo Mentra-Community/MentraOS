@@ -244,6 +244,8 @@ data class MentraExampleState(
     val glassesMediaVolume: Int? = null,
     val glassesVolumeStatus: String = "Glasses volume: not checked",
     val hotspotEnabled: Boolean = false,
+    /** Optimistic local toggle — glasses do not report Wi-Fi ADB status. */
+    val wifiAdbEnabled: Boolean = false,
     val lastAction: String = "No actions yet.",
     val ledColor: String = "green",
     val ledMode: String = "Off",
@@ -2011,6 +2013,13 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         val next = !current
         val status = withContext(Dispatchers.IO) { mentraBluetoothSdk.setHotspotState(next) }
         addEvent("LIVE", "hotspot ${summarize(status.values)}")
+    }
+
+    fun setWifiAdbState(enabled: Boolean) = runAction(if (enabled) "Enable Wi-Fi ADB" else "Disable Wi-Fi ADB") {
+        requireConnected("toggle Wi-Fi ADB")
+        withContext(Dispatchers.IO) { invokeSetWifiAdbState(mentraBluetoothSdk, enabled) }
+        state = state.copy(wifiAdbEnabled = enabled)
+        addEvent("LIVE", "Wi-Fi ADB ${if (enabled) "enabled" else "disabled"}")
     }
 
     fun openGalleryServer() = runAction("Open gallery server") {
@@ -4514,6 +4523,21 @@ fun durationText(seconds: Int): String {
     val m = (elapsed % 3600) / 60
     val s = elapsed % 60
     return "%02d:%02d:%02d".format(h, m, s)
+}
+
+/**
+ * Call [MentraBluetoothSdk.setWifiAdbState] when present. Uses reflection so the example still
+ * compiles against published AARs that predate OS-1627.
+ */
+private fun invokeSetWifiAdbState(sdk: MentraBluetoothSdk, enabled: Boolean) {
+    val method = try {
+        sdk.javaClass.getMethod("setWifiAdbState", Boolean::class.javaPrimitiveType)
+    } catch (_: NoSuchMethodException) {
+        throw IllegalStateException(
+            "MentraBluetoothSdk.setWifiAdbState is unavailable. Use a Mentra Bluetooth SDK build that includes OS-1627.",
+        )
+    }
+    method.invoke(sdk, enabled)
 }
 
 private fun ByteArrayOutputStream.writeAscii(value: String) {

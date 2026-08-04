@@ -383,6 +383,8 @@ export type BluetoothSdkExampleState = {
   galleryServerStatus: string;
   glasses: GlassesRuntimeState;
   hotspotEnabled: boolean;
+  /** Optimistic local toggle — glasses do not report Wi-Fi ADB status. */
+  wifiAdbEnabled: boolean;
   lastAction: string;
   lastMicBytes: number;
   lastMicDurationSeconds: number | null;
@@ -516,6 +518,7 @@ export type BluetoothSdkExampleActions = {
   startOtaUpdate: () => Promise<void>;
   testWebhook: () => Promise<void>;
   toggleHotspot: () => Promise<void>;
+  setWifiAdbState: (enabled: boolean) => Promise<void>;
   toggleMic: () => Promise<void>;
   toggleVideoRecording: () => Promise<void>;
   toggleStream: () => Promise<void>;
@@ -762,6 +765,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   const scanActive = bluetooth.scan.active;
   const galleryModeEnabled = phone.galleryMode.enabled;
   const hotspotEnabled = enabledHotspotStatus(glasses) !== null;
+  const [wifiAdbEnabled, setWifiAdbEnabled] = useState(false);
   const selectedDiscoveredDevice = bluetooth.scan.selectedDevice;
   const selectedScanModel = scanModelFromDeviceModel(bluetooth.scan.model);
   activeTabRef.current = activeTab;
@@ -3437,6 +3441,23 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     });
   }
 
+  async function setWifiAdbState(enabled: boolean) {
+    await runAction(enabled ? 'Enable Wi-Fi ADB' : 'Disable Wi-Fi ADB', async () => {
+      requireConnected('toggle Wi-Fi ADB');
+      const sdkWithWifiAdb = BluetoothSdk as typeof BluetoothSdk & {
+        setWifiAdbState?: (value: boolean) => Promise<void>;
+      };
+      if (typeof sdkWithWifiAdb.setWifiAdbState !== 'function') {
+        throw new Error(
+          'BluetoothSdk.setWifiAdbState is unavailable. Use a Mentra Bluetooth SDK build that includes OS-1627.',
+        );
+      }
+      await sdkWithWifiAdb.setWifiAdbState(enabled);
+      setWifiAdbEnabled(enabled);
+      addEvent('LIVE', `Wi-Fi ADB ${enabled ? 'enabled' : 'disabled'}`);
+    });
+  }
+
   async function openGalleryServer() {
     await runAction('Open gallery server', async () => {
       const baseUrl = requireGalleryServerUrl(glasses, hotspotEnabled);
@@ -4085,9 +4106,11 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     streamUrl,
     testWebhook,
     toggleHotspot,
+    setWifiAdbState,
     toggleMic,
     toggleVideoRecording,
     toggleStream,
+    wifiAdbEnabled,
     voiceActivityDetectionEnabled,
     webhookUrl,
     wifiConnectError,
