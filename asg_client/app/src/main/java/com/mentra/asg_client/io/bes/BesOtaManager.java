@@ -10,6 +10,7 @@ import com.mentra.asg_client.io.bluetooth.managers.K900BluetoothManager;
 import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.BesUartTransportCoordinator;
 import com.mentra.asg_client.io.bluetooth.utils.ByteUtil;
 import com.mentra.asg_client.io.ota.interfaces.IBesOtaController;
+import com.mentra.asg_client.io.ota.session.OtaSessionManager;
 import com.mentra.asg_client.logging.BleTraceLogger;
 import com.mentra.asg_client.utils.WakeLockManager;
 import java.io.File;
@@ -91,6 +92,11 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
     private boolean awaitingPostApplyVerification = false;
     private String expectedTargetVersion = "";
     private String expectedOtaSessionId = "";
+    // Every callback created by one OTA run captures this token. Handler.removeCallbacks() cannot
+    // retract work that is already dispatched, so the token is the final ownership check before a
+    // delayed callback is allowed to mutate the next run.
+    private long nextRunGeneration = 0;
+    private long activeRunGeneration = 0;
 
     private final Runnable otaAppliedCallback;
     private final BesOtaAuthorizationGate authorizationGate;
@@ -134,6 +140,7 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
                                 ? sharedGate
                                 : new BesOtaAuthorizationGate(this.mContext);
         if (authorizationGate.isPostApplyVerificationPendingForCurrentBoot()) {
+            activeRunGeneration = ++nextRunGeneration;
             awaitingPostApplyVerification = true;
             expectedTargetVersion = authorizationGate.getExpectedTargetVersion();
             expectedOtaSessionId = authorizationGate.getOtaSessionId();
@@ -330,13 +337,17 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
                 return false;
             }
             String owner = otaSessionId == null ? "" : otaSessionId.trim();
-            expectedOtaSessionId = owner.isEmpty() ? "standalone-" + UUID.randomUUID() : owner;
+            String runOwner = owner.isEmpty() ? "standalone-" + UUID.randomUUID() : owner;
             String target = BesOtaAuthorizationGate.canonicalExactTargetVersion(expectedVersion);
             if (target == null) {
-                postFailure("BES OTA requires an exact target version for reboot verification");
+                postFailureForOwner(
+                        runOwner,
+                        "BES OTA requires an exact target version for reboot verification");
                 return false;
             }
+            expectedOtaSessionId = runOwner;
             expectedTargetVersion = target;
+            activeRunGeneration = ++nextRunGeneration;
             return startFirmwareUpdateLocked(filePath);
         }
     }
@@ -386,6 +397,7 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
 
         if (k900BluetoothManager != null) {
             byte[] authorizationRequest = buildAuthorizationRequest();
+            final long runGeneration = activeRunGeneration;
             boolean queued =
                     authorizationRequest != null
                             && k900BluetoothManager.queueBesOtaAuthorization(
@@ -395,7 +407,8 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
                                         public boolean onLeaseAcquired(
                                                 BesUartTransportCoordinator.OperationLease lease) {
                                             synchronized (mTransferGate) {
-                                                if (!isWaitingForAuthorization) {
+                                                if (!isCurrentRunLocked(runGeneration)
+                                                        || !isWaitingForAuthorization) {
                                                     return false;
                                                 }
                                                 transportLease = lease;
@@ -410,7 +423,8 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
                                         @Override
                                         public void onWriteComplete(
                                                 boolean attempted, boolean success) {
-                                            onAuthorizationWriteComplete(attempted, success);
+                                            onAuthorizationWriteComplete(
+                                                    runGeneration, attempted, success);
                                         }
                                     });
             if (queued) {
@@ -443,22 +457,42 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
 
     /** Preserve detailed diagnostics; the terminal wire encoder reduces them to install_failed. */
     private void postFailure(String diagnostic) {
-        String owner = expectedOtaSessionId;
+        postFailureForRun(activeRunGeneration, expectedOtaSessionId, diagnostic);
+    }
+
+    private void postFailureForRun(long runGeneration, String owner, String diagnostic) {
+        if (!isCurrentRunLocked(runGeneration)) {
+            Log.w(TAG, "Ignoring BES failure from superseded run " + runGeneration);
+            return;
+        }
+        postFailureForOwner(owner, diagnostic);
+    }
+
+    private void postFailureForOwner(String owner, String diagnostic) {
         if (owner == null || owner.trim().isEmpty()) {
             Log.e(TAG, "Cannot publish BES failure without an owning OTA session");
             return;
         }
-        if (!new BesOtaHandoffStore(mContext).persistFailure(owner, diagnostic)) {
-            // The owner still travels with the live event, so OtaService can safely attempt a
-            // current-session fallback without confusing it with a delayed prior-session failure.
-            Log.e(TAG, "Could not durably persist BES failure for OTA session " + owner);
+        // New-session admission and this write use the same process-wide lock. An old manager or an
+        // already-dispatched callback can still emit its owner-bound live event, but it can never
+        // replace the durable terminal handoff after a newer phone session has been admitted.
+        if (!new OtaSessionManager(mContext).persistBesFailureForSession(owner, diagnostic)) {
+            Log.w(
+                    TAG,
+                    "Could not durably persist BES failure for OTA session "
+                            + owner
+                            + "; the owner is no longer current or storage failed");
         }
         EventBus.getDefault().post(BesOtaProgressEvent.createFailed(owner, diagnostic));
     }
 
     void onAuthorizationWriteComplete(boolean attempted, boolean success) {
+        onAuthorizationWriteComplete(activeRunGeneration, attempted, success);
+    }
+
+    void onAuthorizationWriteComplete(long runGeneration, boolean attempted, boolean success) {
         synchronized (mTransferGate) {
-            if (!isWaitingForAuthorization) {
+            if (!isCurrentRunLocked(runGeneration) || !isWaitingForAuthorization) {
                 return;
             }
             if (!attempted) {
@@ -475,10 +509,12 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
             }
 
             authTimeoutHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+            final long timeoutRunGeneration = runGeneration;
             authTimeoutRunnable =
                     () -> {
                         synchronized (mTransferGate) {
-                            if (!isWaitingForAuthorization) {
+                            if (!isCurrentRunLocked(timeoutRunGeneration)
+                                    || !isWaitingForAuthorization) {
                                 return;
                             }
                             Log.e(
@@ -549,9 +585,13 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
 
         authorizationRecoveryProbeHandler =
                 new android.os.Handler(android.os.Looper.getMainLooper());
+        final long probeRunGeneration = activeRunGeneration;
         authorizationRecoveryProbeRunnable =
                 () -> {
                     synchronized (mTransferGate) {
+                        if (!isCurrentRunLocked(probeRunGeneration)) {
+                            return;
+                        }
                         sendNextAuthorizationRecoveryProbeLocked();
                     }
                 };
@@ -575,10 +615,12 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
             postApplyVerificationHandler.removeCallbacks(postApplyVerificationRunnable);
         }
         postApplyVerificationHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+        final long verificationRunGeneration = activeRunGeneration;
         postApplyVerificationRunnable =
                 () -> {
                     synchronized (mTransferGate) {
-                        if (!awaitingPostApplyVerification) {
+                        if (!isCurrentRunLocked(verificationRunGeneration)
+                                || !awaitingPostApplyVerification) {
                             return;
                         }
                         Log.e(TAG, "Timed out waiting for BES post-reboot target-version readback");
@@ -645,6 +687,7 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
         authorizationAttempted = false;
         expectedTargetVersion = "";
         expectedOtaSessionId = "";
+        activeRunGeneration = 0;
         synchronized (mLeaseGate) {
             isBesOtaInProgress = false;
             WakeLockManager.release(WakeLockManager.WakeOwner.BES_OTA);
@@ -725,6 +768,7 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
         confirmTimes = 0;
         expectedTargetVersion = "";
         expectedOtaSessionId = "";
+        activeRunGeneration = 0;
     }
 
     /**
@@ -1197,10 +1241,11 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
         if (responseWatchdogRunnable != null) {
             responseWatchdogHandler.removeCallbacks(responseWatchdogRunnable);
         }
+        final long watchdogRunGeneration = activeRunGeneration;
         Runnable watchdog =
                 () -> {
                     synchronized (mTransferGate) {
-                        if (!isBesOtaInProgress) {
+                        if (!isCurrentRunLocked(watchdogRunGeneration) || !isBesOtaInProgress) {
                             return;
                         }
                         if (android.os.SystemClock.elapsedRealtime() < responseWatchdogDeadlineMs) {
@@ -1239,6 +1284,10 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
         // a concurrent teardown nulling it can never turn this into postDelayed(null).
         responseWatchdogRunnable = watchdog;
         responseWatchdogHandler.postDelayed(watchdog, AsgConstants.BES_OTA_RESPONSE_TIMEOUT_MS);
+    }
+
+    private boolean isCurrentRunLocked(long runGeneration) {
+        return runGeneration != 0 && runGeneration == activeRunGeneration;
     }
 
     private void dealOtaRecvCmd(BesOtaMessage msg) {

@@ -60,6 +60,7 @@ public class BesOtaAuthorizationRecoveryProbeTest {
         setField("isWaitingForAuthorization", true);
         setField("authorizationAttempted", true);
         setField("expectedOtaSessionId", "ota-session-a");
+        setField("activeRunGeneration", 1L);
         BesOtaManager.isBesOtaInProgress = true;
         events.clear();
         EventBus.getDefault().register(this);

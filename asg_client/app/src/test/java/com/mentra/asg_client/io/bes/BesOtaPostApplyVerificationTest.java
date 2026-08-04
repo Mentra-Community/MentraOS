@@ -47,6 +47,7 @@ public class BesOtaPostApplyVerificationTest {
                 new BesOtaManager(
                         null, null, context, new BesOtaAuthorizationGate(context, bootId::get));
         field("expectedOtaSessionId").set(manager, "ota-session-a");
+        field("activeRunGeneration").set(manager, 1L);
         EventBus.getDefault().register(this);
     }
 

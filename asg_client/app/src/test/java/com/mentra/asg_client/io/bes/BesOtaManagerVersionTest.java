@@ -4,13 +4,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 
 import android.content.Context;
-
 import androidx.test.core.app.ApplicationProvider;
-
 import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.io.bluetooth.managers.K900BluetoothManager;
 import com.mentra.asg_client.io.ota.interfaces.IBesOtaController;
-
+import com.mentra.asg_client.io.ota.session.OtaSessionManager;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -29,6 +27,7 @@ public class BesOtaManagerVersionTest {
 
     private IBesOtaController controller;
     private Context context;
+    private OtaSessionManager sessionManager;
     private boolean previousInProgressFlag;
 
     @Before
@@ -38,6 +37,8 @@ public class BesOtaManagerVersionTest {
                 .edit()
                 .clear()
                 .commit();
+        sessionManager = new OtaSessionManager(context);
+        sessionManager.clear();
         controller = new BesOtaManager(null, mock(K900BluetoothManager.class), context);
         previousInProgressFlag = BesOtaManager.isBesOtaInProgress;
     }
@@ -50,6 +51,7 @@ public class BesOtaManagerVersionTest {
                 .edit()
                 .clear()
                 .commit();
+        sessionManager.clear();
     }
 
     @Test
@@ -118,15 +120,44 @@ public class BesOtaManagerVersionTest {
     @Test
     public void rejectedStartPersistsFailureWithTheRequestingSessionOwner() {
         BesOtaManager.isBesOtaInProgress = false;
+        assertThat(
+                        sessionManager.createSession(
+                                new String[] {"bes"}, "https://example.test/version.json"))
+                .isTrue();
+        String sessionId = sessionManager.getSessionId();
 
-        assertThat(controller.startFirmwareUpdate(
-                        "/does/not/matter.bin", null, "session-b"))
+        assertThat(controller.startFirmwareUpdate("/does/not/matter.bin", null, sessionId))
                 .isFalse();
 
         BesOtaHandoffStore.TerminalOutcome outcome =
                 new BesOtaHandoffStore(context).getPendingTerminalOutcome();
         assertThat(outcome).isNotNull();
-        assertThat(outcome.getSessionId()).isEqualTo("session-b");
+        assertThat(outcome.getSessionId()).isEqualTo(sessionId);
         assertThat(outcome.getStatus()).isEqualTo("FAILED");
+    }
+
+    @Test
+    public void rejectedStaleStartCannotOverwriteCurrentSessionHandoff() {
+        BesOtaManager.isBesOtaInProgress = false;
+        assertThat(
+                        sessionManager.createSession(
+                                new String[] {"bes"}, "https://example.test/current.json"))
+                .isTrue();
+        String currentSessionId = sessionManager.getSessionId();
+        assertThat(
+                        new BesOtaHandoffStore(context)
+                                .persistFailure(currentSessionId, "current terminal"))
+                .isTrue();
+
+        assertThat(
+                        controller.startFirmwareUpdate(
+                                "/does/not/matter.bin", null, "superseded-session"))
+                .isFalse();
+
+        BesOtaHandoffStore.TerminalOutcome outcome =
+                new BesOtaHandoffStore(context).getPendingTerminalOutcome();
+        assertThat(outcome).isNotNull();
+        assertThat(outcome.getSessionId()).isEqualTo(currentSessionId);
+        assertThat(outcome.getErrorMessage()).isEqualTo("current terminal");
     }
 }

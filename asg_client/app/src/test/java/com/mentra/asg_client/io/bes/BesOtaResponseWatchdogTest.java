@@ -48,6 +48,7 @@ public class BesOtaResponseWatchdogTest {
     public void setUp() throws Exception {
         manager = new BesOtaManager(null, null, ApplicationProvider.getApplicationContext());
         setField("expectedOtaSessionId", "ota-session-a");
+        setField("activeRunGeneration", 1L);
         BesOtaManager.isBesOtaInProgress = false;
         events.clear();
         EventBus.getDefault().register(this);
@@ -134,6 +135,19 @@ public class BesOtaResponseWatchdogTest {
         assertThat(events).hasSize(1);
         assertThat(events.get(0).getErrorMessage())
                 .isEqualTo("BES UART was not ready for authorization");
+    }
+
+    @Test
+    public void delayedAuthorizationCallbackCannotFailNewerRun() throws Exception {
+        BesOtaManager.isBesOtaInProgress = true;
+        setBooleanField("isWaitingForAuthorization", true);
+        setField("activeRunGeneration", 2L);
+        setField("expectedOtaSessionId", "ota-session-b");
+
+        manager.onAuthorizationWriteComplete(1L, false, false);
+
+        assertThat(BesOtaManager.isBesOtaInProgress).isTrue();
+        assertThat(events).isEmpty();
     }
 
     @Test
