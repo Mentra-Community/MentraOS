@@ -1,7 +1,10 @@
 package com.mentra.asg_client.io.media.core.textdetect;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import android.graphics.Bitmap;
@@ -11,6 +14,7 @@ import androidx.test.core.app.ApplicationProvider;
 
 import com.google.android.gms.tasks.Task;
 import com.google.android.gms.tasks.TaskCompletionSource;
+import com.google.mlkit.vision.common.InputImage;
 import com.google.mlkit.vision.text.Text;
 import com.google.mlkit.vision.text.TextRecognizer;
 
@@ -58,6 +62,20 @@ public class MlKitTextRoiDetectorTest {
         Field recognizerField = MlKitTextRoiDetector.class.getDeclaredField("recognizer");
         recognizerField.setAccessible(true);
         assertThat(recognizerField.get(detector)).isSameAs(created);
+        detector.close();
+    }
+
+    @Test
+    public void warmupFallsBackWhenInputImageCannotReadMlKitContext() {
+        TextRecognizer recognizer = mock(TextRecognizer.class);
+        MlKitTextRoiDetector detector = new MlKitTextRoiDetector(1280, recognizer);
+
+        // The injected-recognizer constructor deliberately has no Context, so Robolectric's
+        // InputImage cannot read MlKitContext. This reproduces the incident's synchronous failure
+        // and verifies that warm-up degrades to a full-frame transfer instead of aborting capture.
+        assertThatCode(detector::warmUp).doesNotThrowAnyException();
+
+        verify(recognizer, never()).process(org.mockito.ArgumentMatchers.any(InputImage.class));
         detector.close();
     }
 
