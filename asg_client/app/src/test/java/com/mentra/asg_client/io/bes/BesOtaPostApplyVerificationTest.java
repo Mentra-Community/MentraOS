@@ -64,7 +64,7 @@ public class BesOtaPostApplyVerificationTest {
     @Test
     public void applyAckDoesNotFinishUntilRebootedTargetVersionIsReadBack() throws Exception {
         BesOtaAuthorizationGate gate = authorizationGate();
-        assertThat(gate.tryReserveCurrentBoot("17.26.7.24")).isTrue();
+        assertThat(gate.tryReserveCurrentBoot("17.26.7.24", "ota-session-a")).isTrue();
         BesOtaManager.isBesOtaInProgress = true;
 
         BesOtaMessage apply = new BesOtaMessage();

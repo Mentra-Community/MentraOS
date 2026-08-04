@@ -129,6 +129,16 @@ public final class BesUartTransportCoordinator {
         default boolean isPostApplyVerificationPendingForCurrentBoot() {
             return false;
         }
+
+        default PostApplyFailureResolution abandonPostApplyVerification(String diagnostic) {
+            return PostApplyFailureResolution.PERSISTENCE_FAILURE;
+        }
+    }
+
+    public enum PostApplyFailureResolution {
+        ABANDONED,
+        ALREADY_RESOLVED,
+        PERSISTENCE_FAILURE
     }
 
     private static final int[] RECOVERY_BAUDS = {
@@ -644,17 +654,39 @@ public final class BesUartTransportCoordinator {
     /** Fail closed from post-apply discovery when durable version verification cannot complete. */
     public void quarantineCurrentSession() {
         synchronized (monitor) {
-            cancelAllTimersLocked();
-            cancelDeferredNormalWritesLocked("BES OTA verification could not complete");
-            cancelOutboundDrainLocked();
-            phaseGeneration++;
-            otaRawRouting = false;
-            host.setFastReceive(false);
-            operation = Operation.NONE;
-            operationLease = null;
-            state = State.QUARANTINED;
-            Log.e(TAG, "UART quarantined because BES post-apply verification failed closed");
+            quarantineCurrentSessionLocked();
         }
+    }
+
+    /**
+     * Resolve a post-apply failure while the UART monitor excludes every probe, parser, and write.
+     *
+     * <p>The durable gate transition runs before quarantine, but both occur under this monitor. A
+     * verified terminal result therefore keeps the link open, while a timeout/persistence failure
+     * cannot expose a gap in which ordinary UART traffic reaches an ambiguous BES state.
+     */
+    public PostApplyFailureResolution resolvePostApplyFailure(String diagnostic) {
+        synchronized (monitor) {
+            PostApplyFailureResolution resolution =
+                    otaSafetyState.abandonPostApplyVerification(diagnostic);
+            if (resolution != PostApplyFailureResolution.ALREADY_RESOLVED) {
+                quarantineCurrentSessionLocked();
+            }
+            return resolution;
+        }
+    }
+
+    private void quarantineCurrentSessionLocked() {
+        cancelAllTimersLocked();
+        cancelDeferredNormalWritesLocked("BES OTA verification could not complete");
+        cancelOutboundDrainLocked();
+        phaseGeneration++;
+        otaRawRouting = false;
+        host.setFastReceive(false);
+        operation = Operation.NONE;
+        operationLease = null;
+        state = State.QUARANTINED;
+        Log.e(TAG, "UART quarantined because BES post-apply verification failed closed");
     }
 
     /**

@@ -424,6 +424,72 @@ public class BesUartTransportCoordinatorTest {
     }
 
     @Test
+    public void postApplyFailurePersistenceAndQuarantineExcludeAllWrites() throws Exception {
+        CountDownLatch persistenceEntered = new CountDownLatch(1);
+        CountDownLatch allowPersistence = new CountDownLatch(1);
+        coordinator.shutdown();
+        coordinator =
+                new BesUartTransportCoordinator(
+                        host,
+                        new BesUartTransportCoordinator.OtaSafetyState() {
+                            @Override
+                            public boolean isQuarantinedForCurrentBoot() {
+                                return false;
+                            }
+
+                            @Override
+                            public BesUartTransportCoordinator.PostApplyFailureResolution
+                                    abandonPostApplyVerification(String diagnostic) {
+                                persistenceEntered.countDown();
+                                try {
+                                    if (!allowPersistence.await(5, TimeUnit.SECONDS)) {
+                                        throw new AssertionError(
+                                                "timed out waiting to finish persistence");
+                                    }
+                                } catch (InterruptedException e) {
+                                    Thread.currentThread().interrupt();
+                                    throw new AssertionError(e);
+                                }
+                                return BesUartTransportCoordinator.PostApplyFailureResolution
+                                        .ABANDONED;
+                            }
+                        });
+        coordinator.onSerialReady(host.session);
+        assertThat(systemVersion("17.26.7.4"))
+                .isEqualTo(BesUartTransportCoordinator.SystemVersionResult.READY);
+
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        CountDownLatch writeActionRan = new CountDownLatch(1);
+        try {
+            Future<BesUartTransportCoordinator.PostApplyFailureResolution> resolution =
+                    executor.submit(
+                            () -> coordinator.resolvePostApplyFailure("verification timed out"));
+            assertThat(persistenceEntered.await(1, TimeUnit.SECONDS)).isTrue();
+            Future<Boolean> write =
+                    executor.submit(
+                            () ->
+                                    coordinator.runNormalWrite(
+                                            () -> {
+                                                writeActionRan.countDown();
+                                                return true;
+                                            }));
+
+            assertThat(writeActionRan.await(100, TimeUnit.MILLISECONDS)).isFalse();
+            allowPersistence.countDown();
+
+            assertThat(resolution.get(1, TimeUnit.SECONDS))
+                    .isEqualTo(BesUartTransportCoordinator.PostApplyFailureResolution.ABANDONED);
+            assertThat(write.get(1, TimeUnit.SECONDS)).isFalse();
+            assertThat(writeActionRan.getCount()).isEqualTo(1);
+            assertThat(coordinator.getState())
+                    .isEqualTo(BesUartTransportCoordinator.State.QUARANTINED);
+        } finally {
+            allowPersistence.countDown();
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
     public void postApplyRestart_waitsForSystemVersionInsteadOfOpeningOnAnyFrame() {
         coordinator.shutdown();
         coordinator =
@@ -442,8 +508,7 @@ public class BesUartTransportCoordinatorTest {
                         });
 
         coordinator.onSerialReady(host.session);
-        assertThat(coordinator.getState())
-                .isEqualTo(BesUartTransportCoordinator.State.DISCOVERING);
+        assertThat(coordinator.getState()).isEqualTo(BesUartTransportCoordinator.State.DISCOVERING);
         assertThat(host.controlCommands).isEmpty();
 
         coordinator.onValidFrame(host.session);
@@ -766,6 +831,7 @@ public class BesUartTransportCoordinatorTest {
                                 0, AsgConstants.UART_FAST_BAUD, coordinator.getSerialSession()))
                 .isTrue();
         awaitState(BesUartTransportCoordinator.State.VERIFYING_FAST);
+        awaitSerialSessionAtBaud(AsgConstants.UART_FAST_BAUD);
         assertThat(systemVersion("17.26.7.23"))
                 .isEqualTo(BesUartTransportCoordinator.SystemVersionResult.READY);
     }

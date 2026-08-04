@@ -10,6 +10,7 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import java.util.Objects;
 import java.util.UUID;
 
 public class OtaSessionManager {
@@ -22,6 +23,7 @@ public class OtaSessionManager {
      * Set by OtaService.resumeFromSession() and consumed by OtaHelper.onPhoneConnected().
      */
     private static final String KEY_PENDING_APK_STATUS = "pending_apk_status";
+    private static final Object OTA_TRANSITION_LOCK = new Object();
     private static final long SESSION_EXPIRY_MS = 30 * 60 * 1000L;
     /**
      * Cooldown after APK install before auto-resuming the next OTA step (MTK/BES).
@@ -47,57 +49,114 @@ public class OtaSessionManager {
 
     private int mLastPersistedPercent;
 
+    public enum BesTerminalReconciliation {
+        NONE,
+        SESSION_MISMATCH,
+        PERSISTENCE_FAILURE,
+        DELIVERY_FAILURE,
+        DELIVERED
+    }
+
+    public enum SessionAdmission {
+        CREATED,
+        CONTINUING,
+        REJECTED
+    }
+
+    @FunctionalInterface
+    public interface BesTerminalDelivery {
+        void deliver(BesOtaHandoffStore.TerminalOutcome outcome);
+    }
+
     public OtaSessionManager(Context context) {
         mPrefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
         mBesOtaHandoffStore = new BesOtaHandoffStore(context);
         load();
     }
 
-    public synchronized boolean createSession(String[] stepSequence, String versionJsonUrl) {
+    public boolean createSession(String[] stepSequence, String versionJsonUrl) {
+        return admitSession(stepSequence, versionJsonUrl, false) == SessionAdmission.CREATED;
+    }
+
+    /** Atomically continue the matching active session or admit a new durable generation. */
+    public SessionAdmission admitOrContinueSession(
+            String[] stepSequence, String versionJsonUrl) {
+        return admitSession(stepSequence, versionJsonUrl, true);
+    }
+
+    private SessionAdmission admitSession(
+            String[] stepSequence, String versionJsonUrl, boolean allowContinuation) {
         // Defensive: a session with no steps is meaningless (and would later divide-by-zero
         // in computeOverallPercent / computeStepWeights). Refuse to create one and let the
         // caller decide how to recover (typically by skipping OTA entirely).
         if (stepSequence == null || stepSequence.length == 0) {
             Log.w(TAG, "createSession refused: stepSequence is null or empty");
-            return false;
+            return SessionAdmission.REJECTED;
         }
         for (String step : stepSequence) {
             if (step == null || step.isEmpty()) {
                 Log.w(TAG, "createSession refused: stepSequence contains null/empty entry");
-                return false;
+                return SessionAdmission.REJECTED;
             }
         }
-        if ("in_progress".equals(mStatus) || "step_complete".equals(mStatus)) {
-            if (hasActiveSession()) {
-                return false;
-            }
-        }
-        if ("failed".equals(mStatus) || "complete".equals(mStatus)) {
-            clear();
-        }
-        if (!mBesOtaHandoffStore.clearTerminalOutcome()) {
-            Log.e(TAG, "createSession refused: could not clear the prior BES terminal handoff");
-            return false;
-        }
+        synchronized (OTA_TRANSITION_LOCK) {
+            synchronized (this) {
+                // Service startup can temporarily create more than one manager instance. Reload
+                // under the process-wide transition lock before admitting a new generation.
+                load();
+                if (("in_progress".equals(mStatus) || "step_complete".equals(mStatus))
+                        && hasActiveSession()) {
+                    return allowContinuation && Objects.equals(versionJsonUrl, mVersionJsonUrl)
+                            ? SessionAdmission.CONTINUING
+                            : SessionAdmission.REJECTED;
+                }
 
-        mSessionId = UUID.randomUUID().toString().substring(0, 8);
-        mTotalSteps = stepSequence.length;
-        mStepSequence = new JSONArray();
-        for (String step : stepSequence) {
-            mStepSequence.put(step);
+                String previousSessionData = mPrefs.getString(KEY_SESSION_DATA, null);
+
+                mSessionId = UUID.randomUUID().toString().substring(0, 8);
+                mTotalSteps = stepSequence.length;
+                mStepSequence = new JSONArray();
+                for (String step : stepSequence) {
+                    mStepSequence.put(step);
+                }
+                mCurrentStepIndex = 0;
+                mCurrentPhase = "download";
+                mStepPercent = 0;
+                mStatus = "in_progress";
+                mErrorMessage = null;
+                mVersionJsonUrl = versionJsonUrl;
+                mLastActivityAtElapsed = SystemClock.elapsedRealtime();
+                mRestartingSinceElapsed = -1;
+                mLastPersistedPercent = 0;
+                if (!persist(true)) {
+                    Log.e(TAG, "createSession refused: could not durably admit the OTA session");
+                    // SharedPreferences updates its in-process map even when commit() reports a
+                    // disk failure. Restore that map before returning so another manager cannot
+                    // mistake the rejected generation for a durable session.
+                    SharedPreferences.Editor restore = mPrefs.edit();
+                    if (previousSessionData == null) {
+                        restore.remove(KEY_SESSION_DATA);
+                    } else {
+                        restore.putString(KEY_SESSION_DATA, previousSessionData);
+                    }
+                    restore.apply();
+                    load();
+                    return SessionAdmission.REJECTED;
+                }
+
+                // The committed id is the generation boundary. Clear an older terminal only after
+                // that boundary exists; owner mismatch keeps replay harmless if cleanup fails.
+                BesOtaHandoffStore.TerminalOutcome previous =
+                        mBesOtaHandoffStore.getPendingTerminalOutcome();
+                if (previous != null
+                        && !mSessionId.equals(previous.getSessionId())
+                        && !mBesOtaHandoffStore.clearTerminalOutcome()) {
+                    Log.e(TAG, "Could not clear superseded BES terminal handoff");
+                }
+                Log.i(TAG, "Created session " + mSessionId + " with " + mTotalSteps + " steps");
+                return SessionAdmission.CREATED;
+            }
         }
-        mCurrentStepIndex = 0;
-        mCurrentPhase = "download";
-        mStepPercent = 0;
-        mStatus = "in_progress";
-        mErrorMessage = null;
-        mVersionJsonUrl = versionJsonUrl;
-        mLastActivityAtElapsed = SystemClock.elapsedRealtime();
-        mRestartingSinceElapsed = -1;
-        mLastPersistedPercent = 0;
-        persist();
-        Log.i(TAG, "Created session " + mSessionId + " with " + mTotalSteps + " steps");
-        return true;
     }
 
     public synchronized boolean hasActiveSession() {
@@ -137,6 +196,10 @@ public class OtaSessionManager {
     public synchronized String getStatus() {
         if (mStatus == null) return "idle";
         return mStatus;
+    }
+
+    public synchronized String getSessionId() {
+        return mSessionId;
     }
 
     /**
@@ -275,9 +338,26 @@ public class OtaSessionManager {
      * <p>The BES handoff remains terminal-pending if this commit fails, so service startup or phone
      * reconnect can replay the same outcome without depending on an in-memory event.
      */
-    public synchronized boolean applyBesTerminalOutcome(boolean success, String errorMessage) {
-        if (mSessionId == null) {
-            Log.e(TAG, "Cannot attach verified BES outcome: OTA session is unavailable");
+    public boolean applyBesTerminalOutcome(
+            String terminalSessionId, boolean success, String errorMessage) {
+        synchronized (OTA_TRANSITION_LOCK) {
+            synchronized (this) {
+                load();
+                return applyBesTerminalOutcomeLocked(terminalSessionId, success, errorMessage);
+            }
+        }
+    }
+
+    private boolean applyBesTerminalOutcomeLocked(
+            String terminalSessionId, boolean success, String errorMessage) {
+        if (mSessionId == null
+                || terminalSessionId == null
+                || !mSessionId.equals(terminalSessionId)) {
+            Log.e(TAG,
+                    "Cannot attach BES outcome owned by "
+                            + terminalSessionId
+                            + " to OTA session "
+                            + mSessionId);
             return false;
         }
         for (int i = 0; i < mTotalSteps; i++) {
@@ -295,9 +375,83 @@ public class OtaSessionManager {
         return persist(true);
     }
 
+    /**
+     * Atomically reconcile and enqueue one session-bound terminal handoff.
+     *
+     * <p>New-session admission uses the same process-wide lock. The delivery callback therefore
+     * runs before a newer session can become current, while a handoff already superseded on disk is
+     * rejected by owner id instead of mutating the new session.
+     */
+    public BesTerminalReconciliation reconcilePendingBesTerminal(
+            BesTerminalDelivery delivery) {
+        synchronized (OTA_TRANSITION_LOCK) {
+            synchronized (this) {
+                load();
+                BesOtaHandoffStore.TerminalOutcome outcome =
+                        mBesOtaHandoffStore.getPendingTerminalOutcome();
+                if (outcome == null) {
+                    return BesTerminalReconciliation.NONE;
+                }
+                if (outcome.getSessionId() == null
+                        || !outcome.getSessionId().equals(mSessionId)) {
+                    Log.w(TAG,
+                            "Ignoring BES terminal handoff for superseded session "
+                                    + outcome.getSessionId()
+                                    + " (current="
+                                    + mSessionId
+                                    + ")");
+                    return BesTerminalReconciliation.SESSION_MISMATCH;
+                }
+                boolean success = "FINISHED".equals(outcome.getStatus());
+                if (!applyBesTerminalOutcomeLocked(
+                        outcome.getSessionId(), success, outcome.getErrorMessage())) {
+                    return BesTerminalReconciliation.PERSISTENCE_FAILURE;
+                }
+                if (delivery != null) {
+                    try {
+                        delivery.deliver(outcome);
+                    } catch (RuntimeException e) {
+                        Log.e(TAG, "Could not enqueue BES terminal status for the phone", e);
+                        return BesTerminalReconciliation.DELIVERY_FAILURE;
+                    }
+                }
+                return BesTerminalReconciliation.DELIVERED;
+            }
+        }
+    }
+
+    /** Persist a direct BES failure with the current session as its immutable owner. */
+    public boolean persistBesFailureForCurrentSession(String errorMessage) {
+        synchronized (OTA_TRANSITION_LOCK) {
+            synchronized (this) {
+                load();
+                return mSessionId != null
+                        && mBesOtaHandoffStore.persistFailure(mSessionId, errorMessage);
+            }
+        }
+    }
+
+    /** Enqueue a delayed resend only if its originating session is still current. */
+    public boolean runIfCurrentSession(String sessionId, Runnable action) {
+        synchronized (OTA_TRANSITION_LOCK) {
+            synchronized (this) {
+                load();
+                if (sessionId == null || !sessionId.equals(mSessionId)) {
+                    return false;
+                }
+                action.run();
+                return true;
+            }
+        }
+    }
+
     /** Terminal BES delivery is idempotent and remains pending until a later OTA supersedes it. */
-    public boolean isBesTerminalDeliveryPending() {
-        return mBesOtaHandoffStore.getPendingTerminalOutcome() != null;
+    public synchronized boolean isBesTerminalDeliveryPending() {
+        BesOtaHandoffStore.TerminalOutcome outcome =
+                mBesOtaHandoffStore.getPendingTerminalOutcome();
+        return outcome != null
+                && mSessionId != null
+                && mSessionId.equals(outcome.getSessionId());
     }
 
     /**
@@ -370,9 +524,6 @@ public class OtaSessionManager {
         mRestartingSinceElapsed = -1;
         mLastPersistedPercent = 0;
         mPrefs.edit().remove(KEY_SESSION_DATA).apply();
-        if (!mBesOtaHandoffStore.clearTerminalOutcome()) {
-            Log.e(TAG, "Failed to clear superseded BES terminal handoff");
-        }
     }
 
     public synchronized String getStepType(int index) {

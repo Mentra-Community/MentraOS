@@ -16,6 +16,7 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.util.UUID;
 import org.greenrobot.eventbus.EventBus;
 import org.json.JSONObject;
 
@@ -89,6 +90,7 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
     private Runnable postApplyVerificationRunnable;
     private boolean awaitingPostApplyVerification = false;
     private String expectedTargetVersion = "";
+    private String expectedOtaSessionId = "";
 
     private final Runnable otaAppliedCallback;
     private final BesOtaAuthorizationGate authorizationGate;
@@ -319,7 +321,8 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
      * @return true if started successfully
      */
     @Override
-    public boolean startFirmwareUpdate(String filePath, String expectedVersion) {
+    public boolean startFirmwareUpdate(
+            String filePath, String expectedVersion, String otaSessionId) {
         synchronized (mTransferGate) {
             if (isBesOtaInProgress || isWaitingForAuthorization) {
                 Log.e(TAG, "BES OTA is already active");
@@ -331,6 +334,8 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
                 return false;
             }
             expectedTargetVersion = target;
+            String owner = otaSessionId == null ? "" : otaSessionId.trim();
+            expectedOtaSessionId = owner.isEmpty() ? "standalone-" + UUID.randomUUID() : owner;
             return startFirmwareUpdateLocked(filePath);
         }
     }
@@ -397,7 +402,8 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
                                                 transportLease = lease;
                                                 authorizationAttempted =
                                                         authorizationGate.tryReserveCurrentBoot(
-                                                                expectedTargetVersion);
+                                                                expectedTargetVersion,
+                                                                expectedOtaSessionId);
                                                 return authorizationAttempted;
                                             }
                                         }
@@ -573,21 +579,24 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
                         Log.e(TAG, "Timed out waiting for BES post-reboot target-version readback");
                         String diagnostic =
                                 "BES rebooted but target version could not be verified; reboot glasses";
-                        BesOtaAuthorizationGate.PostApplyAbandonment abandonment =
-                                authorizationGate.abandonPostApplyVerification(diagnostic);
+                        BesUartTransportCoordinator.PostApplyFailureResolution abandonment =
+                                transportCoordinator != null
+                                        ? transportCoordinator.resolvePostApplyFailure(diagnostic)
+                                        : authorizationGate.abandonPostApplyVerification(
+                                                diagnostic);
                         if (abandonment
-                                == BesOtaAuthorizationGate.PostApplyAbandonment.ALREADY_RESOLVED) {
-                            Log.i(TAG, "BES verification resolved while its timeout was dispatched");
+                                == BesUartTransportCoordinator.PostApplyFailureResolution
+                                        .ALREADY_RESOLVED) {
+                            Log.i(
+                                    TAG,
+                                    "BES verification resolved while its timeout was dispatched");
                             finishPostApplyVerificationLocked();
                             return;
                         }
                         if (abandonment
-                                == BesOtaAuthorizationGate.PostApplyAbandonment
+                                == BesUartTransportCoordinator.PostApplyFailureResolution
                                         .PERSISTENCE_FAILURE) {
                             Log.e(TAG, "Could not durably record BES verification timeout");
-                        }
-                        if (transportCoordinator != null) {
-                            transportCoordinator.quarantineCurrentSession();
                         }
                         postFailure(diagnostic);
                         finishPostApplyVerificationLocked();
@@ -630,6 +639,7 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
         awaitingPostApplyVerification = false;
         authorizationAttempted = false;
         expectedTargetVersion = "";
+        expectedOtaSessionId = "";
         synchronized (mLeaseGate) {
             isBesOtaInProgress = false;
             WakeLockManager.release(WakeLockManager.WakeOwner.BES_OTA);
@@ -709,6 +719,7 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
         sentPos = 0;
         confirmTimes = 0;
         expectedTargetVersion = "";
+        expectedOtaSessionId = "";
     }
 
     /**

@@ -24,12 +24,6 @@ public final class BesOtaAuthorizationGate implements BesUartTransportCoordinato
         PERSISTENCE_FAILURE
     }
 
-    public enum PostApplyAbandonment {
-        ABANDONED,
-        ALREADY_RESOLVED,
-        PERSISTENCE_FAILURE
-    }
-
     public BesOtaAuthorizationGate(Context context) {
         this(context, null);
     }
@@ -56,7 +50,7 @@ public final class BesOtaAuthorizationGate implements BesUartTransportCoordinato
     /**
      * Atomically reserve and persist this boot before the first authorization byte can reach BES.
      */
-    boolean tryReserveCurrentBoot(String targetVersion) {
+    boolean tryReserveCurrentBoot(String targetVersion, String otaSessionId) {
         synchronized (RESERVATION_LOCK) {
             String current = currentBootId();
             if (current == null) {
@@ -78,10 +72,16 @@ public final class BesOtaAuthorizationGate implements BesUartTransportCoordinato
                 Log.e(TAG, "Cannot reserve BES OTA without an exact dotted target version");
                 return false;
             }
+            String sessionId = otaSessionId == null ? "" : otaSessionId.trim();
+            if (sessionId.isEmpty()) {
+                Log.e(TAG, "Cannot reserve BES OTA without an owning OTA session");
+                return false;
+            }
             return preferences
                     .edit()
                     .putString(AsgConstants.BES_OTA_AUTH_GATE_BOOT_ID_KEY, current)
                     .putString(AsgConstants.BES_OTA_AUTH_GATE_TARGET_VERSION_KEY, target)
+                    .putString(AsgConstants.BES_OTA_HANDOFF_SESSION_ID_KEY, sessionId)
                     .putBoolean(AsgConstants.BES_OTA_AUTH_GATE_APPLY_PENDING_KEY, false)
                     .remove(AsgConstants.BES_OTA_AUTH_GATE_VERIFICATION_BOOT_ID_KEY)
                     .remove(AsgConstants.BES_OTA_HANDOFF_TERMINAL_STATUS_KEY)
@@ -134,7 +134,10 @@ public final class BesOtaAuthorizationGate implements BesUartTransportCoordinato
             // Apply discovery is allowed before the power cycle on the attempted boot and on the
             // first boot after it. A second unverified reboot is ambiguous and stays quarantined.
             if (!current.equals(attempted) && !current.equals(verificationBoot)) {
-                replaceWithCurrentBootQuarantineLocked(current);
+                if (!persistTerminalFailureQuarantineLocked(
+                        current, "BES rebooted again before target version was verified")) {
+                    Log.e(TAG, "Could not durably record second unverified BES reboot");
+                }
                 return true;
             }
             return false;
@@ -150,6 +153,16 @@ public final class BesOtaAuthorizationGate implements BesUartTransportCoordinato
                 return false;
             }
             String verificationBoot = claimVerificationBootLocked(current, attempted);
+            if (!current.equals(attempted) && !current.equals(verificationBoot)) {
+                // Persist the terminal failure as soon as any startup component probes the gate.
+                // Do not rely on the later UART-ready callback: OtaService may already be waiting
+                // to replay the durable result to the phone.
+                if (!persistTerminalFailureQuarantineLocked(
+                        current, "BES rebooted again before target version was verified")) {
+                    Log.e(TAG, "Could not durably record second unverified BES reboot");
+                }
+                return false;
+            }
             return current.equals(attempted) || current.equals(verificationBoot);
         }
     }
@@ -216,27 +229,40 @@ public final class BesOtaAuthorizationGate implements BesUartTransportCoordinato
     }
 
     /** Convert a timed-out verification into durable quarantine for the rest of this boot. */
-    public PostApplyAbandonment abandonPostApplyVerification() {
+    public BesUartTransportCoordinator.PostApplyFailureResolution abandonPostApplyVerification() {
         return abandonPostApplyVerification(
                 "BES rebooted but target version could not be verified; reboot glasses");
     }
 
-    /** Atomically claim timeout failure, or report that verification already resolved the record. */
-    public PostApplyAbandonment abandonPostApplyVerification(String diagnostic) {
+    /**
+     * Atomically claim timeout failure, or report that verification already resolved the record.
+     */
+    @Override
+    public BesUartTransportCoordinator.PostApplyFailureResolution abandonPostApplyVerification(
+            String diagnostic) {
         synchronized (RESERVATION_LOCK) {
             if (!isApplyPendingLocked()) {
                 // A successful/mismatched verification replaces apply_pending and terminal status
-                // in one commit under this same lock. A late timeout must not overwrite it.
-                return PostApplyAbandonment.ALREADY_RESOLVED;
+                // in one commit under this same lock. Only that durable terminal proves a late
+                // timeout lost the race; a missing terminal must itself fail closed.
+                if (hasTerminalOutcomeLocked()) {
+                    return BesUartTransportCoordinator.PostApplyFailureResolution.ALREADY_RESOLVED;
+                }
             }
             String current = currentBootId();
             if (current == null) {
-                return PostApplyAbandonment.PERSISTENCE_FAILURE;
+                return BesUartTransportCoordinator.PostApplyFailureResolution.PERSISTENCE_FAILURE;
             }
             return persistTerminalFailureQuarantineLocked(current, diagnostic)
-                    ? PostApplyAbandonment.ABANDONED
-                    : PostApplyAbandonment.PERSISTENCE_FAILURE;
+                    ? BesUartTransportCoordinator.PostApplyFailureResolution.ABANDONED
+                    : BesUartTransportCoordinator.PostApplyFailureResolution.PERSISTENCE_FAILURE;
         }
+    }
+
+    private boolean hasTerminalOutcomeLocked() {
+        String status =
+                preferences.getString(AsgConstants.BES_OTA_HANDOFF_TERMINAL_STATUS_KEY, null);
+        return "FINISHED".equals(status) || "FAILED".equals(status);
     }
 
     private boolean persistTerminalFailureQuarantineLocked(String current, String diagnostic) {
@@ -285,16 +311,6 @@ public final class BesOtaAuthorizationGate implements BesUartTransportCoordinato
         return current;
     }
 
-    private boolean replaceWithCurrentBootQuarantineLocked(String current) {
-        return preferences
-                .edit()
-                .putString(AsgConstants.BES_OTA_AUTH_GATE_BOOT_ID_KEY, current)
-                .remove(AsgConstants.BES_OTA_AUTH_GATE_TARGET_VERSION_KEY)
-                .putBoolean(AsgConstants.BES_OTA_AUTH_GATE_APPLY_PENDING_KEY, false)
-                .remove(AsgConstants.BES_OTA_AUTH_GATE_VERIFICATION_BOOT_ID_KEY)
-                .commit();
-    }
-
     private String expectedTargetVersionLocked() {
         return preferences.getString(AsgConstants.BES_OTA_AUTH_GATE_TARGET_VERSION_KEY, "").trim();
     }
@@ -306,6 +322,7 @@ public final class BesOtaAuthorizationGate implements BesUartTransportCoordinato
                 .remove(AsgConstants.BES_OTA_AUTH_GATE_TARGET_VERSION_KEY)
                 .remove(AsgConstants.BES_OTA_AUTH_GATE_APPLY_PENDING_KEY)
                 .remove(AsgConstants.BES_OTA_AUTH_GATE_VERIFICATION_BOOT_ID_KEY)
+                .remove(AsgConstants.BES_OTA_HANDOFF_SESSION_ID_KEY)
                 .commit();
     }
 

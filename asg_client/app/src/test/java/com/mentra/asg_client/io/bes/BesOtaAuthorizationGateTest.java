@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import android.app.Application;
 import androidx.test.core.app.ApplicationProvider;
 import com.mentra.asg_client.AsgConstants;
+import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.BesUartTransportCoordinator;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -20,6 +21,7 @@ import org.robolectric.annotation.Config;
 @RunWith(RobolectricTestRunner.class)
 @Config(application = Application.class, sdk = 33)
 public class BesOtaAuthorizationGateTest {
+    private static final String OTA_SESSION_ID = "ota-session-a";
     private Application context;
     private AtomicReference<String> bootId;
     private BesOtaAuthorizationGate gate;
@@ -46,9 +48,9 @@ public class BesOtaAuthorizationGateTest {
     @Test
     public void authorizationCanBeAttemptedOnlyOncePerGlassesBoot() {
         assertThat(gate.isRetryBlockedThisBoot()).isFalse();
-        assertThat(gate.tryReserveCurrentBoot("17.26.7.24")).isTrue();
+        assertThat(gate.tryReserveCurrentBoot("17.26.7.24", OTA_SESSION_ID)).isTrue();
         assertThat(gate.isRetryBlockedThisBoot()).isTrue();
-        assertThat(gate.tryReserveCurrentBoot("17.26.7.24")).isFalse();
+        assertThat(gate.tryReserveCurrentBoot("17.26.7.24", OTA_SESSION_ID)).isFalse();
 
         BesOtaAuthorizationGate afterProcessRestart =
                 new BesOtaAuthorizationGate(context, bootId::get);
@@ -57,7 +59,7 @@ public class BesOtaAuthorizationGateTest {
 
     @Test
     public void newGlassesBootAllowsOneFreshAttempt() {
-        assertThat(gate.tryReserveCurrentBoot("17.26.7.24")).isTrue();
+        assertThat(gate.tryReserveCurrentBoot("17.26.7.24", OTA_SESSION_ID)).isTrue();
 
         bootId.set("linux:boot-b");
 
@@ -66,7 +68,7 @@ public class BesOtaAuthorizationGateTest {
 
     @Test
     public void explicitResolutionClearsTheGate() {
-        assertThat(gate.tryReserveCurrentBoot("17.26.7.24")).isTrue();
+        assertThat(gate.tryReserveCurrentBoot("17.26.7.24", OTA_SESSION_ID)).isTrue();
 
         assertThat(gate.clear()).isTrue();
 
@@ -78,7 +80,7 @@ public class BesOtaAuthorizationGateTest {
         bootId.set(null);
 
         assertThat(gate.isRetryBlockedThisBoot()).isTrue();
-        assertThat(gate.tryReserveCurrentBoot("17.26.7.24")).isFalse();
+        assertThat(gate.tryReserveCurrentBoot("17.26.7.24", OTA_SESSION_ID)).isFalse();
     }
 
     @Test
@@ -91,13 +93,14 @@ public class BesOtaAuthorizationGateTest {
                     executor.submit(
                             () -> {
                                 start.await();
-                                return gate.tryReserveCurrentBoot("17.26.7.24");
+                                return gate.tryReserveCurrentBoot("17.26.7.24", OTA_SESSION_ID);
                             });
             Future<Boolean> second =
                     executor.submit(
                             () -> {
                                 start.await();
-                                return secondGate.tryReserveCurrentBoot("17.26.7.24");
+                                return secondGate.tryReserveCurrentBoot(
+                                        "17.26.7.24", OTA_SESSION_ID);
                             });
             start.countDown();
 
@@ -109,7 +112,7 @@ public class BesOtaAuthorizationGateTest {
 
     @Test
     public void persistedReservationRestoresQuarantineOnlyForSameBoot() {
-        assertThat(gate.tryReserveCurrentBoot("17.26.7.24")).isTrue();
+        assertThat(gate.tryReserveCurrentBoot("17.26.7.24", OTA_SESSION_ID)).isTrue();
         BesOtaAuthorizationGate afterProcessRestart =
                 new BesOtaAuthorizationGate(context, bootId::get);
 
@@ -121,7 +124,7 @@ public class BesOtaAuthorizationGateTest {
 
     @Test
     public void applyPendingSurvivesPowerCycleAndProcessRestartUntilExactVersionReadback() {
-        assertThat(gate.tryReserveCurrentBoot("17.26.7.24")).isTrue();
+        assertThat(gate.tryReserveCurrentBoot("17.26.7.24", OTA_SESSION_ID)).isTrue();
         assertThat(gate.markApplyPending()).isTrue();
 
         assertThat(gate.verifyPostApplyVersion("17.26.7.24"))
@@ -138,13 +141,14 @@ public class BesOtaAuthorizationGateTest {
         BesOtaHandoffStore.TerminalOutcome outcome =
                 new BesOtaHandoffStore(context).getPendingTerminalOutcome();
         assertThat(outcome).isNotNull();
+        assertThat(outcome.getSessionId()).isEqualTo(OTA_SESSION_ID);
         assertThat(outcome.getStatus()).isEqualTo("FINISHED");
         assertThat(afterProcessRestart.isQuarantinedForCurrentBoot()).isFalse();
     }
 
     @Test
     public void unexpectedPostApplyVersionIsSafeButDoesNotReportSuccess() {
-        assertThat(gate.tryReserveCurrentBoot("17.26.7.24")).isTrue();
+        assertThat(gate.tryReserveCurrentBoot("17.26.7.24", OTA_SESSION_ID)).isTrue();
         assertThat(gate.markApplyPending()).isTrue();
         bootId.set("linux:boot-b");
 
@@ -153,23 +157,24 @@ public class BesOtaAuthorizationGateTest {
         BesOtaHandoffStore.TerminalOutcome outcome =
                 new BesOtaHandoffStore(context).getPendingTerminalOutcome();
         assertThat(outcome).isNotNull();
+        assertThat(outcome.getSessionId()).isEqualTo(OTA_SESSION_ID);
         assertThat(outcome.getStatus()).isEqualTo("FAILED");
         assertThat(gate.isQuarantinedForCurrentBoot()).isFalse();
     }
 
     @Test
     public void applyPendingBlocksNewAuthorizationOnVerificationBoot() {
-        assertThat(gate.tryReserveCurrentBoot("17.26.7.24")).isTrue();
+        assertThat(gate.tryReserveCurrentBoot("17.26.7.24", OTA_SESSION_ID)).isTrue();
         assertThat(gate.markApplyPending()).isTrue();
         bootId.set("linux:boot-b");
 
         assertThat(gate.isRetryBlockedThisBoot()).isTrue();
-        assertThat(gate.tryReserveCurrentBoot("17.26.7.25")).isFalse();
+        assertThat(gate.tryReserveCurrentBoot("17.26.7.25", OTA_SESSION_ID)).isFalse();
     }
 
     @Test
     public void onlyFirstPostApplyBootCanVerifyTarget() {
-        assertThat(gate.tryReserveCurrentBoot("17.26.7.24")).isTrue();
+        assertThat(gate.tryReserveCurrentBoot("17.26.7.24", OTA_SESSION_ID)).isTrue();
         assertThat(gate.markApplyPending()).isTrue();
         bootId.set("linux:boot-b");
         assertThat(gate.isPostApplyVerificationPendingForCurrentBoot()).isTrue();
@@ -177,7 +182,14 @@ public class BesOtaAuthorizationGateTest {
         bootId.set("linux:boot-c");
 
         assertThat(gate.isPostApplyVerificationPendingForCurrentBoot()).isFalse();
+        BesOtaHandoffStore.TerminalOutcome outcome =
+                new BesOtaHandoffStore(context).getPendingTerminalOutcome();
+        assertThat(outcome).isNotNull();
+        assertThat(outcome.getSessionId()).isEqualTo(OTA_SESSION_ID);
+        assertThat(outcome.getStatus()).isEqualTo("FAILED");
         assertThat(gate.isQuarantinedForCurrentBoot()).isTrue();
+        assertThat(gate.abandonPostApplyVerification())
+                .isEqualTo(BesUartTransportCoordinator.PostApplyFailureResolution.ALREADY_RESOLVED);
         assertThat(gate.verifyPostApplyVersion("17.26.7.24"))
                 .isEqualTo(BesOtaAuthorizationGate.PostApplyVerification.NOT_PENDING);
 
@@ -187,17 +199,18 @@ public class BesOtaAuthorizationGateTest {
 
     @Test
     public void verificationTimeoutRestoresQuarantineAcrossProcessRestart() {
-        assertThat(gate.tryReserveCurrentBoot("17.26.7.24")).isTrue();
+        assertThat(gate.tryReserveCurrentBoot("17.26.7.24", OTA_SESSION_ID)).isTrue();
         assertThat(gate.markApplyPending()).isTrue();
         bootId.set("linux:boot-b");
         assertThat(gate.isPostApplyVerificationPendingForCurrentBoot()).isTrue();
 
         assertThat(gate.abandonPostApplyVerification())
-                .isEqualTo(BesOtaAuthorizationGate.PostApplyAbandonment.ABANDONED);
+                .isEqualTo(BesUartTransportCoordinator.PostApplyFailureResolution.ABANDONED);
 
         BesOtaHandoffStore.TerminalOutcome outcome =
                 new BesOtaHandoffStore(context).getPendingTerminalOutcome();
         assertThat(outcome).isNotNull();
+        assertThat(outcome.getSessionId()).isEqualTo(OTA_SESSION_ID);
         assertThat(outcome.getStatus()).isEqualTo("FAILED");
         assertThat(gate.verifyPostApplyVersion("17.26.7.24"))
                 .isEqualTo(BesOtaAuthorizationGate.PostApplyVerification.NOT_PENDING);
@@ -211,7 +224,7 @@ public class BesOtaAuthorizationGateTest {
 
     @Test
     public void dispatchedTimeoutCannotOverwriteVerifiedSuccess() {
-        assertThat(gate.tryReserveCurrentBoot("17.26.7.24")).isTrue();
+        assertThat(gate.tryReserveCurrentBoot("17.26.7.24", OTA_SESSION_ID)).isTrue();
         assertThat(gate.markApplyPending()).isTrue();
         bootId.set("linux:boot-b");
 
@@ -220,11 +233,12 @@ public class BesOtaAuthorizationGateTest {
         assertThat(
                         gate.abandonPostApplyVerification(
                                 "BES rebooted but target version could not be verified"))
-                .isEqualTo(BesOtaAuthorizationGate.PostApplyAbandonment.ALREADY_RESOLVED);
+                .isEqualTo(BesUartTransportCoordinator.PostApplyFailureResolution.ALREADY_RESOLVED);
 
         BesOtaHandoffStore.TerminalOutcome outcome =
                 new BesOtaHandoffStore(context).getPendingTerminalOutcome();
         assertThat(outcome).isNotNull();
+        assertThat(outcome.getSessionId()).isEqualTo(OTA_SESSION_ID);
         assertThat(outcome.getStatus()).isEqualTo("FINISHED");
         assertThat(gate.isQuarantinedForCurrentBoot()).isFalse();
     }

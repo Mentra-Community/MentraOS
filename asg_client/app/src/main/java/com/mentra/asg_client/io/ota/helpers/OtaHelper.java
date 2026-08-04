@@ -44,7 +44,6 @@ import java.util.stream.Collectors;
 import java.util.concurrent.locks.ReentrantLock;
 
 import com.mentra.asg_client.io.ota.session.OtaSessionManager;
-import com.mentra.asg_client.io.bes.BesOtaHandoffStore;
 import com.mentra.asg_client.io.ota.utils.BesFirmwareArtifactValidator;
 import com.mentra.asg_client.io.ota.utils.DowngradeGate;
 import com.mentra.asg_client.io.ota.utils.FirmwareDownloadException;
@@ -120,7 +119,6 @@ public class OtaHelper {
 
     // Session manager for persisting OTA state across APK restarts
     private OtaSessionManager sessionManager;
-    private BesOtaHandoffStore besOtaHandoffStore;
 
     // Track phone-initiated vs glasses-initiated OTA
     private static volatile boolean isPhoneInitiatedOta = false;
@@ -171,7 +169,6 @@ public class OtaHelper {
         this.context = context.getApplicationContext(); // Use application context to avoid memory leaks
         handler = new Handler(Looper.getMainLooper());
         sessionManager = new OtaSessionManager(this.context);
-        besOtaHandoffStore = new BesOtaHandoffStore(this.context);
 
         // Register for EventBus to receive battery status updates
         EventBus.getDefault().register(this);
@@ -635,8 +632,16 @@ public class OtaHelper {
             if (!steps.isEmpty()) {
                 // Non-null: every check runs through startVersionCheckWithUrl, which stores the
                 // phone-supplied URL under the version-check lock before reaching here.
-                sessionManager.createSession(steps.toArray(new String[0]), lastVersionJsonUrl);
-                Log.i(TAG, "OTA session created with steps: " + steps);
+                OtaSessionManager.SessionAdmission admission =
+                        sessionManager.admitOrContinueSession(
+                                steps.toArray(new String[0]), lastVersionJsonUrl);
+                if (admission == OtaSessionManager.SessionAdmission.CONTINUING) {
+                    Log.i(TAG, "Continuing durable OTA session with steps: " + steps);
+                } else if (admission == OtaSessionManager.SessionAdmission.REJECTED) {
+                    throw new IllegalStateException("Could not durably admit the OTA session");
+                } else {
+                    Log.i(TAG, "OTA session created with steps: " + steps);
+                }
             }
         }
 
@@ -2130,9 +2135,17 @@ public class OtaHelper {
             IBesOtaController manager = besOtaRegistry.getInstance();
             if (manager != null) {
                 Log.i(TAG, "Starting BES firmware update from: " + OtaConstants.BES_FIRMWARE_PATH);
+                String otaSessionId =
+                        sessionManager == null ? null : sessionManager.getSessionId();
+                if (otaSessionId == null || otaSessionId.isEmpty()) {
+                    Log.e(TAG, "BES firmware install blocked - no durable owning OTA session");
+                    return false;
+                }
                 boolean started =
                         manager.startFirmwareUpdate(
-                                OtaConstants.BES_FIRMWARE_PATH, manifestVersion);
+                                OtaConstants.BES_FIRMWARE_PATH,
+                                manifestVersion,
+                                otaSessionId);
                 if (started) {
                     Log.i(TAG, "BES firmware update initiated successfully");
                     return true;
@@ -2949,23 +2962,30 @@ public class OtaHelper {
 
         boolean success = "FINISHED".equals(status);
         if (!success
-                && besOtaHandoffStore != null
-                && besOtaHandoffStore.getPendingTerminalOutcome() == null
-                && !besOtaHandoffStore.persistFailure(message)) {
+                && sessionManager != null
+                && !sessionManager.isBesTerminalDeliveryPending()
+                && !sessionManager.persistBesFailureForCurrentSession(message)) {
             Log.e(TAG, "Could not durably record direct BES failure for reconnect delivery");
         }
-        if (sessionManager == null
-                || !sessionManager.applyBesTerminalOutcome(success, message)) {
-            // The gate-owned terminal record remains pending, so a later service/process can retry
-            // this attachment. Keep a minimal in-memory shape for best-effort delivery now.
-            Log.e(TAG, "Could not durably attach verified BES outcome to the phone OTA session");
+        if (replayPendingBesTerminalOutcome("direct BES " + status)) {
+            return;
         }
-        lastOtaPhoneStage = "install";
-        lastOtaPhoneProgress = success ? 100 : 0;
-        lastOtaPhoneEventStatus = status;
-        lastOtaPhoneError = success ? null : message;
-        sendOtaStatus();
-        scheduleTerminalStatusResends("verified BES " + status);
+        if (success) {
+            // Never turn a bare in-process event into success. Verified success must arrive through
+            // the session-bound durable gate handoff so restart/order races cannot forge completion.
+            Log.e(TAG, "Refusing BES success without a session-bound durable handoff");
+            return;
+        }
+
+        // Last-resort live failure delivery when durable storage itself failed. It remains bound to
+        // the current session and can never be applied to a later generation.
+        String sessionId = sessionManager == null ? null : sessionManager.getSessionId();
+        if (sessionId == null
+                || !sessionManager.applyBesTerminalOutcome(sessionId, false, message)) {
+            Log.e(TAG, "Could not attach direct BES failure to the current OTA session");
+            return;
+        }
+        enqueueBesTerminalStatus(sessionId, "FAILED", message);
     }
 
     /**
@@ -2974,23 +2994,38 @@ public class OtaHelper {
      * @return true when a durable terminal handoff was present
      */
     public boolean replayPendingBesTerminalOutcome(String reason) {
-        if (besOtaHandoffStore == null) {
+        if (sessionManager == null) {
             return false;
         }
-        BesOtaHandoffStore.TerminalOutcome outcome =
-                besOtaHandoffStore.getPendingTerminalOutcome();
-        if (outcome == null) {
-            return false;
+        OtaSessionManager.BesTerminalReconciliation result =
+                sessionManager.reconcilePendingBesTerminal(
+                        outcome -> {
+                            Log.i(TAG, "Replaying durable BES terminal outcome after " + reason);
+                            enqueueBesTerminalStatus(
+                                    outcome.getSessionId(),
+                                    outcome.getStatus(),
+                                    outcome.getErrorMessage());
+                        });
+        if (result == OtaSessionManager.BesTerminalReconciliation.PERSISTENCE_FAILURE
+                || result == OtaSessionManager.BesTerminalReconciliation.DELIVERY_FAILURE) {
+            Log.e(TAG, "Could not reconcile durable BES terminal outcome: " + result);
         }
-        Log.i(TAG, "Replaying durable BES terminal outcome after " + reason);
-        sendBesInstallProgressToPhone(
-                outcome.getStatus(),
-                "FINISHED".equals(outcome.getStatus()) ? 100 : 0,
-                outcome.getErrorMessage());
-        return true;
+        // A mismatched handoff belongs to an older generation and is intentionally suppressed; it
+        // is still "handled" so an old EventBus failure cannot fall through onto the new session.
+        return result != OtaSessionManager.BesTerminalReconciliation.NONE;
     }
 
-    private void scheduleTerminalStatusResends(String reason) {
+    private void enqueueBesTerminalStatus(String sessionId, String status, String message) {
+        boolean success = "FINISHED".equals(status);
+        lastOtaPhoneStage = "install";
+        lastOtaPhoneProgress = success ? 100 : 0;
+        lastOtaPhoneEventStatus = status;
+        lastOtaPhoneError = success ? null : message;
+        sendOtaStatus();
+        scheduleTerminalStatusResends(sessionId, "verified BES " + status);
+    }
+
+    private void scheduleTerminalStatusResends(String sessionId, String reason) {
         for (int attempt = 1; attempt <= AsgConstants.OTA_COMPLETION_RESEND_ATTEMPTS; attempt++) {
             final int attemptNumber = attempt;
             handler.postDelayed(
@@ -3005,7 +3040,11 @@ public class OtaHelper {
                                         + " (phoneConnected="
                                         + isPhoneConnected()
                                         + ")");
-                        sendOtaStatus();
+                        if (sessionManager != null
+                                && !sessionManager.runIfCurrentSession(
+                                        sessionId, this::sendOtaStatus)) {
+                            Log.i(TAG, "Skipping terminal resend for superseded session " + sessionId);
+                        }
                     },
                     (attempt - 1) * AsgConstants.OTA_COMPLETION_RESEND_INTERVAL_MS);
         }

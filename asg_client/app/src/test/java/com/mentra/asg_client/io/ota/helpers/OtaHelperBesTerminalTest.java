@@ -7,6 +7,7 @@ import androidx.test.core.app.ApplicationProvider;
 import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.io.ota.interfaces.IBesOtaController;
 import com.mentra.asg_client.io.ota.interfaces.IBesOtaRegistry;
+import com.mentra.asg_client.io.ota.session.OtaSessionManager;
 import java.util.ArrayList;
 import java.util.List;
 import org.json.JSONObject;
@@ -49,12 +50,14 @@ public class OtaHelperBesTerminalTest {
     public void verifiedBesSuccessPersistsAndResendsTerminalSessionStatus() {
         assertThat(
                         helper.getSessionManager()
-                                .createSession(
-                                        new String[] {"bes"}, "https://example.test/v.json"))
+                                .createSession(new String[] {"bes"}, "https://example.test/v.json"))
                 .isTrue();
         helper.getSessionManager().advanceStep(0, "install");
         context.getSharedPreferences(AsgConstants.BES_OTA_AUTH_GATE_PREFS, 0)
                 .edit()
+                .putString(
+                        AsgConstants.BES_OTA_HANDOFF_SESSION_ID_KEY,
+                        helper.getSessionManager().getSessionId())
                 .putString(AsgConstants.BES_OTA_HANDOFF_TERMINAL_STATUS_KEY, "FINISHED")
                 .commit();
         RecordingPhone phone = new RecordingPhone();
@@ -68,6 +71,41 @@ public class OtaHelperBesTerminalTest {
         assertThat(phone.statuses).isNotEmpty();
         assertThat(phone.statuses.get(phone.statuses.size() - 1).optString("status"))
                 .isEqualTo("complete");
+    }
+
+    @Test
+    public void supersededTerminalCannotCompleteNewSessionOrResendIntoIt() {
+        assertThat(
+                        helper.getSessionManager()
+                                .createSession(new String[] {"bes"}, "https://example.test/a.json"))
+                .isTrue();
+        String firstSessionId = helper.getSessionManager().getSessionId();
+        context.getSharedPreferences(AsgConstants.BES_OTA_AUTH_GATE_PREFS, 0)
+                .edit()
+                .putString(AsgConstants.BES_OTA_HANDOFF_SESSION_ID_KEY, firstSessionId)
+                .putString(AsgConstants.BES_OTA_HANDOFF_TERMINAL_STATUS_KEY, "FINISHED")
+                .commit();
+
+        RecordingPhone phone = new RecordingPhone();
+        helper.setPhoneConnectionProvider(phone);
+        assertThat(helper.getSessionManager().getStatus()).isEqualTo("complete");
+        assertThat(phone.statuses).hasSize(1);
+
+        assertThat(
+                        helper.getSessionManager()
+                                .admitOrContinueSession(
+                                        new String[] {"bes"}, "https://example.test/b.json"))
+                .isEqualTo(OtaSessionManager.SessionAdmission.CREATED);
+        String secondSessionId = helper.getSessionManager().getSessionId();
+        assertThat(secondSessionId).isNotEqualTo(firstSessionId);
+        assertThat(helper.getSessionManager().applyBesTerminalOutcome(firstSessionId, true, null))
+                .isFalse();
+
+        Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
+
+        assertThat(helper.getSessionManager().getSessionId()).isEqualTo(secondSessionId);
+        assertThat(helper.getSessionManager().getStatus()).isEqualTo("in_progress");
+        assertThat(phone.statuses).hasSize(1);
     }
 
     private static final class EmptyBesRegistry implements IBesOtaRegistry {

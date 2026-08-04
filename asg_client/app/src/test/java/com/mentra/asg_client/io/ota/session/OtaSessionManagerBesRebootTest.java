@@ -26,8 +26,7 @@ public class OtaSessionManagerBesRebootTest {
         context = ApplicationProvider.getApplicationContext();
         preferences = context.getSharedPreferences("ota_session", 0);
         preferences.edit().clear().commit();
-        handoffPreferences =
-                context.getSharedPreferences(AsgConstants.BES_OTA_AUTH_GATE_PREFS, 0);
+        handoffPreferences = context.getSharedPreferences(AsgConstants.BES_OTA_AUTH_GATE_PREFS, 0);
         handoffPreferences.edit().clear().commit();
     }
 
@@ -83,10 +82,14 @@ public class OtaSessionManagerBesRebootTest {
         beforeReboot.advanceStep(0, "install");
         handoffPreferences
                 .edit()
+                .putString(AsgConstants.BES_OTA_HANDOFF_SESSION_ID_KEY, beforeReboot.getSessionId())
                 .putString(AsgConstants.BES_OTA_HANDOFF_TERMINAL_STATUS_KEY, "FAILED")
                 .putString(AsgConstants.BES_OTA_HANDOFF_TERMINAL_ERROR_KEY, "install_failed")
                 .commit();
-        assertThat(beforeReboot.applyBesTerminalOutcome(false, "install_failed")).isTrue();
+        assertThat(
+                        beforeReboot.applyBesTerminalOutcome(
+                                beforeReboot.getSessionId(), false, "install_failed"))
+                .isTrue();
         emulateElapsedRealtimeReset();
 
         OtaSessionManager afterReboot = new OtaSessionManager(context);

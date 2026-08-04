@@ -1251,6 +1251,10 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                                 if (verification[0]
                                         == BesOtaAuthorizationGate.PostApplyVerification
                                                 .PERSISTENCE_FAILURE) {
+                                    // onSystemVersion invokes this callback under the coordinator
+                                    // monitor. Quarantine before unwinding so no probe/write can
+                                    // slip between the durable failure and the in-memory state.
+                                    transportCoordinator.quarantineCurrentSession();
                                     throw new PostApplyPersistenceException();
                                 }
                             });
@@ -1282,11 +1286,6 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             return true; // Handled
         } catch (PostApplyPersistenceException e) {
             String diagnostic = "Could not durably complete BES version verification";
-            if (besOtaAuthorizationGate.abandonPostApplyVerification(diagnostic)
-                    == BesOtaAuthorizationGate.PostApplyAbandonment.PERSISTENCE_FAILURE) {
-                Log.e(TAG, "Could not durably record BES verification persistence failure");
-            }
-            transportCoordinator.quarantineCurrentSession();
             notifyBesOtaVerification(false, expectedVersion[0], actualVersion[0], diagnostic);
             return true;
         } catch (Exception e) {

@@ -184,6 +184,9 @@ public class AsgConstants {
     /** Compact diagnostic associated with a pending verified BES failure. */
     public static final String BES_OTA_HANDOFF_TERMINAL_ERROR_KEY = "terminal_error";
 
+    /** OTA session that owns the durable BES authorization and terminal handoff. */
+    public static final String BES_OTA_HANDOFF_SESSION_ID_KEY = "ota_session_id";
+
     /** Rendezvous baud shared by every ASG and BES firmware generation. */
     public static final int UART_RENDEZVOUS_BAUD = 460800;
 

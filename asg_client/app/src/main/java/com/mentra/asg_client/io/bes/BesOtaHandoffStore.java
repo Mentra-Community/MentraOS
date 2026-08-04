@@ -34,13 +34,18 @@ public final class BesOtaHandoffStore {
             return null;
         }
         String error = preferences.getString(AsgConstants.BES_OTA_HANDOFF_TERMINAL_ERROR_KEY, null);
-        return new TerminalOutcome(status, error);
+        String sessionId = preferences.getString(AsgConstants.BES_OTA_HANDOFF_SESSION_ID_KEY, null);
+        return new TerminalOutcome(sessionId, status, error);
     }
 
     /** Persist a direct pre-apply BES failure so reconnect delivery remains restart-safe. */
-    public boolean persistFailure(String errorMessage) {
+    public boolean persistFailure(String sessionId, String errorMessage) {
+        if (sessionId == null || sessionId.trim().isEmpty()) {
+            return false;
+        }
         return preferences
                 .edit()
+                .putString(AsgConstants.BES_OTA_HANDOFF_SESSION_ID_KEY, sessionId.trim())
                 .putString(AsgConstants.BES_OTA_HANDOFF_TERMINAL_STATUS_KEY, "FAILED")
                 .putString(
                         AsgConstants.BES_OTA_HANDOFF_TERMINAL_ERROR_KEY,
@@ -52,6 +57,7 @@ public final class BesOtaHandoffStore {
     public boolean clearTerminalOutcome() {
         return preferences
                 .edit()
+                .remove(AsgConstants.BES_OTA_HANDOFF_SESSION_ID_KEY)
                 .remove(AsgConstants.BES_OTA_HANDOFF_TERMINAL_STATUS_KEY)
                 .remove(AsgConstants.BES_OTA_HANDOFF_TERMINAL_ERROR_KEY)
                 .commit();
@@ -59,12 +65,18 @@ public final class BesOtaHandoffStore {
 
     /** Immutable terminal result persisted by boot-B verification. */
     public static final class TerminalOutcome {
+        private final String sessionId;
         private final String status;
         private final String errorMessage;
 
-        TerminalOutcome(String status, String errorMessage) {
+        TerminalOutcome(String sessionId, String status, String errorMessage) {
+            this.sessionId = sessionId;
             this.status = status;
             this.errorMessage = errorMessage;
+        }
+
+        public String getSessionId() {
+            return sessionId;
         }
 
         public String getStatus() {

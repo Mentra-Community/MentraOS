@@ -44,9 +44,17 @@ public interface IBesOtaController {
      *
      * @param filePath path to the firmware binary
      * @param expectedVersion exact dotted target version bound to the validated artifact
+     * @param otaSessionId durable phone OTA session that owns the eventual terminal handoff, or
+     *     {@code null} for a standalone debug install
      * @return true if the update was started successfully
      */
-    boolean startFirmwareUpdate(String filePath, String expectedVersion);
+    boolean startFirmwareUpdate(
+            String filePath, String expectedVersion, @Nullable String otaSessionId);
+
+    /** Standalone debug compatibility entrypoint without a phone OTA session. */
+    default boolean startFirmwareUpdate(String filePath, String expectedVersion) {
+        return startFirmwareUpdate(filePath, expectedVersion, null);
+    }
 
     /** Called by the MCU event subscriber when BES authorizes the update. */
     void onAuthorizationGranted();

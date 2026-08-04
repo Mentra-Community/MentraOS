@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import android.app.Application;
 import androidx.test.core.app.ApplicationProvider;
 import com.mentra.asg_client.AsgConstants;
+import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.BesUartTransportCoordinator;
 import com.mentra.asg_client.io.ota.helpers.OtaHelper;
 import com.mentra.asg_client.io.ota.interfaces.IBesOtaController;
 import com.mentra.asg_client.io.ota.interfaces.IBesOtaRegistry;
@@ -58,7 +59,7 @@ public class BesOtaStartupHandoffTest {
 
         AtomicReference<String> bootId = new AtomicReference<>("linux:boot-a");
         BesOtaAuthorizationGate gate = new BesOtaAuthorizationGate(context, bootId::get);
-        assertThat(gate.tryReserveCurrentBoot("17.26.7.24")).isTrue();
+        assertThat(gate.tryReserveCurrentBoot("17.26.7.24", session.getSessionId())).isTrue();
         assertThat(gate.markApplyPending()).isTrue();
         bootId.set("linux:boot-b");
 
@@ -75,6 +76,58 @@ public class BesOtaStartupHandoffTest {
         assertThat(phone.statuses).isNotEmpty();
         assertThat(phone.statuses.get(phone.statuses.size() - 1).optString("status"))
                 .isEqualTo("complete");
+    }
+
+    @Test
+    public void bootBVersionMismatchBeforeConsumerIsReplayedAsFailure() {
+        OtaSessionManager session = new OtaSessionManager(context);
+        assertThat(session.createSession(new String[] {"bes"}, "https://example.test/v.json"))
+                .isTrue();
+        session.advanceStep(0, "install");
+
+        AtomicReference<String> bootId = new AtomicReference<>("linux:boot-a");
+        BesOtaAuthorizationGate gate = new BesOtaAuthorizationGate(context, bootId::get);
+        assertThat(gate.tryReserveCurrentBoot("17.26.7.24", session.getSessionId())).isTrue();
+        assertThat(gate.markApplyPending()).isTrue();
+        bootId.set("linux:boot-b");
+        assertThat(gate.verifyPostApplyVersion("17.26.7.23"))
+                .isEqualTo(BesOtaAuthorizationGate.PostApplyVerification.VERSION_MISMATCH);
+
+        helper = new OtaHelper(context, new EmptyBesRegistry());
+        RecordingPhone phone = new RecordingPhone();
+        helper.setPhoneConnectionProvider(phone);
+        Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
+
+        assertThat(helper.getSessionManager().getStatus()).isEqualTo("failed");
+        assertThat(phone.statuses).isNotEmpty();
+        assertThat(phone.statuses.get(phone.statuses.size() - 1).optString("status"))
+                .isEqualTo("failed");
+    }
+
+    @Test
+    public void bootBTimeoutBeforeConsumerIsReplayedAsFailure() {
+        OtaSessionManager session = new OtaSessionManager(context);
+        assertThat(session.createSession(new String[] {"bes"}, "https://example.test/v.json"))
+                .isTrue();
+        session.advanceStep(0, "install");
+
+        AtomicReference<String> bootId = new AtomicReference<>("linux:boot-a");
+        BesOtaAuthorizationGate gate = new BesOtaAuthorizationGate(context, bootId::get);
+        assertThat(gate.tryReserveCurrentBoot("17.26.7.24", session.getSessionId())).isTrue();
+        assertThat(gate.markApplyPending()).isTrue();
+        bootId.set("linux:boot-b");
+        assertThat(gate.abandonPostApplyVerification())
+                .isEqualTo(BesUartTransportCoordinator.PostApplyFailureResolution.ABANDONED);
+
+        helper = new OtaHelper(context, new EmptyBesRegistry());
+        RecordingPhone phone = new RecordingPhone();
+        helper.setPhoneConnectionProvider(phone);
+        Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
+
+        assertThat(helper.getSessionManager().getStatus()).isEqualTo("failed");
+        assertThat(phone.statuses).isNotEmpty();
+        assertThat(phone.statuses.get(phone.statuses.size() - 1).optString("status"))
+                .isEqualTo("failed");
     }
 
     private static final class EmptyBesRegistry implements IBesOtaRegistry {
