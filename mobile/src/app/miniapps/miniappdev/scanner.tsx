@@ -12,6 +12,7 @@ import {decideDevLaunchRoute, engine} from "@mentra/engine"
 import {appRegistry, registerDevApp, type DevAppRecord} from "@mentra/engine/internal"
 import {askPermissionsUI, checkPermissionsUI, PERMISSION_CONFIG} from "@/utils/PermissionsUtils"
 import {markMiniappDevMode} from "@/utils/miniappDevMode"
+import {storage} from "@/utils/storage/storage"
 import type {AppletInterface, AppletPermission} from "@/../../cloud/packages/types/src"
 
 export default function MiniappDeveloperScannerScreen() {
@@ -63,6 +64,7 @@ export default function MiniappDeveloperScannerScreen() {
       let packageName: string | undefined
       let name: string | undefined
       let devPort: string | undefined
+      let mdnsHost: string | undefined
       let devAttestation: string | undefined
 
       if (data.startsWith("miniapp://dev")) {
@@ -71,6 +73,7 @@ export default function MiniappDeveloperScannerScreen() {
         name = url.searchParams.get("name") || undefined
         packageName = url.searchParams.get("package") || undefined
         devPort = url.searchParams.get("dev") || undefined
+        mdnsHost = url.searchParams.get("mdns") || undefined
         devAttestation = url.searchParams.get("attestation") || undefined
       } else if (data.startsWith("http://") || data.startsWith("https://")) {
         devUrl = data
@@ -92,7 +95,11 @@ export default function MiniappDeveloperScannerScreen() {
         return
       }
 
-      const launchResult = await decideDevLaunchRoute(packageName ?? "", devUrl)
+      // Pass mDNS up front — storage hasn't been written yet on first scan, so
+      // decideDevLaunchRoute can't read `_dev_mdns` until we persist below.
+      const launchResult = await decideDevLaunchRoute(packageName ?? "", devUrl, {
+        alternateHosts: mdnsHost ? [mdnsHost] : undefined,
+      })
 
       const manifest = launchResult.manifest
       packageName = manifest?.packageName || packageName || "com.dev.unknown"
@@ -102,12 +109,15 @@ export default function MiniappDeveloperScannerScreen() {
         ? (manifest!.permissions as AppletPermission[])
         : []
 
+      const resolvedBase = (launchResult.resolvedUrl || devUrl).replace(/\/$/, "")
       let iconUrl: string | undefined
       if (iconPath) {
         iconUrl = /^https?:\/\//.test(iconPath)
           ? iconPath
-          : `${devUrl.replace(/\/$/, "")}/${iconPath.replace(/^\//, "")}`
+          : `${resolvedBase}/${iconPath.replace(/^\//, "")}`
       }
+
+      const portNum = devPort ? parseInt(devPort, 10) : NaN
 
       // Persist a package-keyed home tile and routing record so this dev
       // miniapp remains independently launchable without rescanning. Its icon
@@ -119,21 +129,28 @@ export default function MiniappDeveloperScannerScreen() {
         // flip the flag, matching the URL loader's behavior.
         markMiniappDevMode()
 
-        const portNum = devPort ? parseInt(devPort, 10) : NaN
         const existing = engine.miniapps.list().find((app) => app.packageName === packageName)
         if (existing?.running) await engine.miniapps.stop(packageName)
         await registerDevApp({
           packageName,
           name: name ?? packageName,
-          iconUrl: iconUrl ?? `${devUrl.replace(/\/$/, "")}/icon.png`,
-          devUrl: devUrl,
+          iconUrl: iconUrl ?? `${resolvedBase}/icon.png`,
+          // Prefer the host that actually answered (may be mDNS / Metro failover).
+          devUrl: launchResult.resolvedUrl || devUrl,
           devPort: Number.isFinite(portNum) ? portNum : undefined,
+          mdnsHost,
           devAttestation,
           type: manifest.type as DevAppRecord["type"],
           permissions: manifest.permissions as DevAppRecord["permissions"],
           hardwareRequirements: manifest.hardwareRequirements as DevAppRecord["hardwareRequirements"],
           actions: manifest.actions as DevAppRecord["actions"],
         })
+      } else if (packageName) {
+        // Reachability failed — still stash URL + mDNS so "Try again" can recover
+        // after a laptop Wi-Fi IP change without forcing a re-scan.
+        storage.save(`${packageName}_dev_url`, devUrl)
+        if (mdnsHost) storage.save(`${packageName}_dev_mdns`, mdnsHost)
+        if (Number.isFinite(portNum)) storage.save(`${packageName}_dev_port`, portNum)
       }
 
       if (launchResult.decision === "offline") {

@@ -551,6 +551,7 @@ class AppRegistry {
     }
     storage.remove(`${packageName}_dev_url`)
     storage.remove(`${packageName}_dev_port`)
+    storage.remove(`${packageName}_dev_mdns`)
     storage.remove(`${packageName}_dev_last_reachable`)
     // HTTP-direct dev miniapps are indexed by their real package name. A
     // release install/uninstall of that same package should remove only its
@@ -939,6 +940,12 @@ export interface DevAppRecord {
   iconUrl: string
   devUrl: string
   devPort?: number
+  /**
+   * Bonjour / mDNS hostname from the QR (`ComputerName.local`). Used as a
+   * failover host when the raw LAN IP in `devUrl` goes stale after a Wi-Fi
+   * change — phones that resolve `.local` can relaunch without re-scanning.
+   */
+  mdnsHost?: string
   type?: AppletType
   permissions?: Array<string | {type: string; required?: boolean; description?: string}>
   hardwareRequirements?: Array<{type: string; level: string; description?: string}>
@@ -1063,6 +1070,7 @@ function removeDevRecordKeys(packageName: string): void {
   storage.remove(`${packageName}_dev_meta`)
   storage.remove(`${packageName}_dev_url`)
   storage.remove(`${packageName}_dev_port`)
+  storage.remove(`${packageName}_dev_mdns`)
   storage.remove(`${packageName}_dev_last_reachable`)
 }
 
@@ -1105,6 +1113,7 @@ function migrateLegacyDevSlot(): void {
   storage.remove(`${DEV_APP_PACKAGE_NAME}_dev_meta`)
   storage.remove(`${DEV_APP_PACKAGE_NAME}_dev_url`)
   storage.remove(`${DEV_APP_PACKAGE_NAME}_dev_port`)
+  storage.remove(`${DEV_APP_PACKAGE_NAME}_dev_mdns`)
   storage.remove(`${DEV_APP_PACKAGE_NAME}_dev_last_reachable`)
 
   const index = Array.from(new Set(getDevAppIndex().map((pkg) => (pkg === DEV_APP_PACKAGE_NAME ? targetPackage : pkg))))
@@ -1134,6 +1143,12 @@ export async function registerDevApp(record: DevAppRecord): Promise<void> {
     storage.save(`${packageName}_dev_port`, record.devPort)
   } else {
     storage.remove(`${packageName}_dev_port`)
+  }
+  const mdns = record.mdnsHost?.trim()
+  if (mdns) {
+    storage.save(`${packageName}_dev_mdns`, mdns)
+  } else {
+    storage.remove(`${packageName}_dev_mdns`)
   }
   const idx = getDevAppIndex()
   if (!idx.includes(packageName)) {
