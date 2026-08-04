@@ -345,6 +345,8 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     private var activeStreamId: String? = null
     private var pollGeneration = 0
     private var galleryConnectionGeneration = 0
+    /** BLE session generation — advances only on glasses disconnect/reconnect. */
+    private var glassesConnectionGeneration = 0
     private var pendingHotspotConnection: PendingHotspotConnection? = null
     private var photoDestinationBeforeGlasses = PhotoDestination.THIS_PHONE
     private var videoPollGeneration = 0
@@ -2017,10 +2019,11 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
 
     fun setWifiAdbState(enabled: Boolean) = runAction(if (enabled) "Enable Wi-Fi ADB" else "Disable Wi-Fi ADB") {
         requireConnected("toggle Wi-Fi ADB")
-        val generation = galleryConnectionGeneration
+        val generation = glassesConnectionGeneration
         withContext(Dispatchers.IO) { invokeSetWifiAdbState(mentraBluetoothSdk, enabled) }
-        // Ignore completions from a prior connection session after disconnect/reconnect.
-        if (generation != galleryConnectionGeneration || !isGlassesConnected()) {
+        // Ignore completions from a prior BLE session after disconnect/reconnect.
+        // Do not use galleryConnectionGeneration — hotspot/gallery flows bump that while BLE stays up.
+        if (generation != glassesConnectionGeneration || !isGlassesConnected()) {
             return@runAction
         }
         state = state.copy(wifiAdbEnabled = enabled)
@@ -3148,6 +3151,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         directPhotoTimeoutJob = null
         photoUploadServer.stop()
         galleryConnectionGeneration += 1
+        glassesConnectionGeneration += 1
         pendingHotspotConnection = null
         glassesHotspotConnector.disconnect()
         otaStartingAppIdentity = null

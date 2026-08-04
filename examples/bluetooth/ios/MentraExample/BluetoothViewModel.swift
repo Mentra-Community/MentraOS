@@ -357,6 +357,8 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     private var activeActionOrder: [Int] = []
     private let glassesHotspotConnector = GlassesHotspotConnector()
     private var galleryConnectionGeneration = 0
+    /// BLE session generation — advances only on glasses disconnect/reconnect.
+    private var glassesConnectionGeneration = 0
     private var pendingHotspotConnection: PendingHotspotConnection?
     private var photoDestinationBeforeGlasses: PhotoDestination = .thisPhone
     private var streamConfigurationChangeInProgress = false
@@ -2042,10 +2044,11 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     func setWifiAdbState(enabled: Bool) {
         runAsyncAction(enabled ? "Enable Wi-Fi ADB" : "Disable Wi-Fi ADB") { [self] in
             try requireConnected("toggle Wi-Fi ADB")
-            let generation = galleryConnectionGeneration
+            let generation = glassesConnectionGeneration
             try await mentraBluetoothSdk.setWifiAdbState(enabled: enabled)
-            // Ignore completions from a prior connection session after disconnect/reconnect.
-            guard generation == galleryConnectionGeneration, glassesConnected else { return }
+            // Ignore completions from a prior BLE session after disconnect/reconnect.
+            // Do not use galleryConnectionGeneration — hotspot/gallery flows bump that while BLE stays up.
+            guard generation == glassesConnectionGeneration, glassesConnected else { return }
             wifiAdbEnabled = enabled
             append(tag: "LIVE", text: "Wi-Fi ADB \(enabled ? "enabled" : "disabled")")
         }
@@ -2836,6 +2839,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         hotspotEnabled = false
         wifiAdbEnabled = false
         galleryConnectionGeneration += 1
+        glassesConnectionGeneration += 1
         if let pendingHotspotConnection {
             glassesHotspotConnector.disconnect(ssid: pendingHotspotConnection.ssid)
         }
