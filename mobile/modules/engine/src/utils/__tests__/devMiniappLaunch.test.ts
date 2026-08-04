@@ -108,6 +108,32 @@ describe("decideDevLaunchRoute", () => {
     expect(savedKeys.some((s) => s.key === "com.dev.example_dev_url" && s.value === result.resolvedUrl)).toBe(true)
   })
 
+  test("failover leaves a cached file:// icon alone and rehosts a served icon", async () => {
+    fetchImpl = async (url) => {
+      if (url.includes("192.168.1.50")) throw new TypeError("timed out")
+      return new Response(JSON.stringify({packageName: "com.dev.example"}), {status: 200})
+    }
+    const readMeta = () => {
+      const saved = savedKeys.filter((s) => s.key === "com.dev.example_dev_meta").pop()
+      return JSON.parse(String(saved?.value)) as {devUrl?: string; iconUrl?: string}
+    }
+
+    stored.set(
+      "com.dev.example_dev_meta",
+      JSON.stringify({devUrl: DEV_URL, iconUrl: "file:///var/mobile/dev-icons/com.dev.example.png"}),
+    )
+    await decideDevLaunchRoute("com.dev.example", DEV_URL, {alternateHosts: ["Mentas-MacBook-Pro.local"]})
+    expect(readMeta().iconUrl).toBe("file:///var/mobile/dev-icons/com.dev.example.png")
+
+    savedKeys.length = 0
+    stored.set(
+      "com.dev.example_dev_meta",
+      JSON.stringify({devUrl: DEV_URL, iconUrl: "http://192.168.1.50:3000/icon.png"}),
+    )
+    await decideDevLaunchRoute("com.dev.example", DEV_URL, {alternateHosts: ["Mentas-MacBook-Pro.local"]})
+    expect(readMeta().iconUrl).toBe("http://mentas-macbook-pro.local:3000/icon.png")
+  })
+
   test("reads stored mDNS host as an alternate", async () => {
     stored.set("com.dev.example_dev_mdns", "Mentas-MacBook-Pro.local")
     fetchImpl = async (url) => {

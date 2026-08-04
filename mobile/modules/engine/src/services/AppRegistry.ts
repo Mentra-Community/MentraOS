@@ -1120,6 +1120,12 @@ function migrateLegacyDevSlot(): void {
   storage.save(DEV_APPS_INDEX_KEY, JSON.stringify(index))
 }
 
+function readStoredMdnsHost(packageName: string): string | undefined {
+  const res = storage.load<string>(`${packageName}_dev_mdns`)
+  if (!res.is_ok()) return undefined
+  return res.value.trim() || undefined
+}
+
 /**
  * Register or update one dev miniapp under its real manifest package. Different
  * package names coexist; rescanning the same package updates that package only.
@@ -1130,12 +1136,18 @@ export async function registerDevApp(record: DevAppRecord): Promise<void> {
   if (!packageName) throw new Error("Dev miniapp manifest is missing packageName")
 
   const iconUrl = await cacheDevAppIcon(packageName, record.iconUrl)
+  // Relaunch paths (developer-URL screen, loadDevMiniapp) omit mdnsHost, so an
+  // omitted field keeps whatever the QR scan stored instead of wiping the
+  // `.local` failover host.
+  const mdnsHost =
+    record.mdnsHost !== undefined ? record.mdnsHost.trim() || undefined : readStoredMdnsHost(packageName)
   const devRecord: DevAppRecord = {
     ...record,
     packageName,
     sourcePackageName: packageName,
     name: record.name || DEV_APP_NAME,
     iconUrl,
+    mdnsHost,
   }
   storage.save(`${packageName}_dev_meta`, JSON.stringify(devRecord))
   storage.save(`${packageName}_dev_url`, record.devUrl)
@@ -1144,9 +1156,8 @@ export async function registerDevApp(record: DevAppRecord): Promise<void> {
   } else {
     storage.remove(`${packageName}_dev_port`)
   }
-  const mdns = record.mdnsHost?.trim()
-  if (mdns) {
-    storage.save(`${packageName}_dev_mdns`, mdns)
+  if (mdnsHost) {
+    storage.save(`${packageName}_dev_mdns`, mdnsHost)
   } else {
     storage.remove(`${packageName}_dev_mdns`)
   }

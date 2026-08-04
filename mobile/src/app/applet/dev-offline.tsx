@@ -6,6 +6,7 @@ import {View} from "react-native"
 import {Button, Screen, Text} from "@/components/ignite"
 import {useNavigationStore} from "@/stores/navigation"
 import {decideDevLaunchRoute, engine, useApps} from "@mentra/engine"
+import {registerDevApp, type DevAppRecord} from "@mentra/engine/internal"
 import {storage} from "@/utils/storage/storage"
 import {useRegisterCapsule} from "@/stores/capsule"
 import {useRef} from "react"
@@ -61,6 +62,28 @@ export default function DevMiniappOfflineScreen() {
     // re-scan. If up, replace into /applet/local.
     const launchResult = await decideDevLaunchRoute(packageName, devUrlRes.value)
     if (launchResult.decision === "live") {
+      // A scan whose very first probe failed only stashed routing keys, so the
+      // package may not be registered yet. Register from the manifest we just
+      // fetched — otherwise setForeground has no app to bring up.
+      const manifest = launchResult.manifest
+      if (manifest && !apps.some(app => app.packageName === packageName)) {
+        const base = (launchResult.resolvedUrl || devUrlRes.value).replace(/\/$/, "")
+        const icon = typeof manifest.icon === "string" ? manifest.icon : undefined
+        const port = storage.load<number>(`${packageName}_dev_port`)
+        await registerDevApp({
+          packageName,
+          name: manifest.name || resolvedName || packageName,
+          iconUrl:
+            icon && /^https?:\/\//.test(icon) ? icon : `${base}/${(icon ?? "icon.png").replace(/^\//, "")}`,
+          devUrl: launchResult.resolvedUrl || devUrlRes.value,
+          devPort: port.is_ok() ? port.value : undefined,
+          type: manifest.type as DevAppRecord["type"],
+          permissions: manifest.permissions as DevAppRecord["permissions"],
+          hardwareRequirements: manifest.hardwareRequirements as DevAppRecord["hardwareRequirements"],
+          actions: manifest.actions as DevAppRecord["actions"],
+        })
+        await engine.miniapps.refresh()
+      }
       await engine.miniapps.setForeground(packageName)
     }
     // else: stay put — the "Last reached" line stays accurate, user can

@@ -85,6 +85,23 @@ function rewriteHost(devUrl: string, host: string): string | null {
   }
 }
 
+/**
+ * Point an http(s) icon at the host that actually answered. Cached dev icons are
+ * local `file://` paths and third-party icons live on unrelated hosts, so only
+ * icons still served by the stale dev host are rewritten.
+ */
+function rewriteIconHost(iconUrl: string, staleDevUrl: string, resolvedDevUrl: string): string | null {
+  try {
+    const icon = new URL(iconUrl)
+    if (icon.protocol !== "http:" && icon.protocol !== "https:") return null
+    if (icon.hostname !== new URL(staleDevUrl).hostname) return null
+    icon.hostname = new URL(resolvedDevUrl).hostname
+    return icon.toString()
+  } catch {
+    return null
+  }
+}
+
 function collectAlternateHosts(packageName: string, extra?: string[]): string[] {
   const hosts: string[] = []
   const push = (h: string | undefined | null) => {
@@ -168,14 +185,8 @@ export async function decideDevLaunchRoute(
             const meta = JSON.parse(metaRes.value) as {devUrl?: string; iconUrl?: string}
             meta.devUrl = candidate
             if (typeof meta.iconUrl === "string") {
-              try {
-                const icon = new URL(meta.iconUrl)
-                const resolved = new URL(candidate)
-                icon.hostname = resolved.hostname
-                meta.iconUrl = icon.toString()
-              } catch {
-                /* keep prior iconUrl */
-              }
+              const rewritten = rewriteIconHost(meta.iconUrl, devUrl, candidate)
+              if (rewritten) meta.iconUrl = rewritten
             }
             storage.save(`${packageName}_dev_meta`, JSON.stringify(meta))
           } catch {
