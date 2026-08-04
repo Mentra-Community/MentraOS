@@ -857,6 +857,7 @@ class MentraBluetoothSdk private constructor(
     }
 
     fun setWifiAdbState(enabled: Boolean) {
+        requireGlassesConnected("toggle Wi-Fi ADB")
         deviceManager.setWifiAdbState(enabled)
     }
 
