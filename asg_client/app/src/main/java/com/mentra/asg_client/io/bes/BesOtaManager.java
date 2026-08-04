@@ -1184,6 +1184,7 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
     public void onBesPostApplyVerification(
             boolean success, String expectedVersion, String actualVersion, String diagnostic) {
         synchronized (mTransferGate) {
+            boolean recoveredDuringStartup = !awaitingPostApplyVerification;
             if (!awaitingPostApplyVerification) {
                 // K900 starts its serial reader before this listener is registered. After an ASG
                 // process restart it can therefore verify and durably clear the pending target,
@@ -1207,7 +1208,16 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
                                 + expectedVersion
                                 + " actual="
                                 + actualVersion);
-                postFailure(diagnostic);
+                // When K900 consumed the boot-B proof before this listener existed, the durable
+                // gate owner is the generation boundary; there is deliberately no in-memory run
+                // token to validate. Route that owner through the session guard directly. A live
+                // run still uses its captured generation so a delayed callback cannot fail its
+                // successor.
+                if (recoveredDuringStartup) {
+                    postFailureForOwner(expectedOtaSessionId, diagnostic);
+                } else {
+                    postFailure(diagnostic);
+                }
             }
             finishPostApplyVerificationLocked();
         }

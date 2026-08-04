@@ -7,6 +7,7 @@ import androidx.test.core.app.ApplicationProvider;
 import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.io.bes.events.BesOtaProgressEvent;
 import com.mentra.asg_client.io.bes.protocol.BesProtocolConstants;
+import com.mentra.asg_client.io.ota.session.OtaSessionManager;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
@@ -111,7 +112,23 @@ public class BesOtaPostApplyVerificationTest {
     }
 
     @Test
-    public void recoveredVersionMismatchReportsFailureNotSuccess() {
+    public void recoveredVersionMismatchReportsFailureNotSuccess() throws Exception {
+        OtaSessionManager session = new OtaSessionManager(context);
+        assertThat(session.createSession(new String[] {"bes"}, "https://example.test/v.json"))
+                .isTrue();
+        session.advanceStep(0, "install");
+
+        BesOtaAuthorizationGate gate = authorizationGate();
+        assertThat(gate.tryReserveCurrentBoot("17.26.7.24", session.getSessionId())).isTrue();
+        assertThat(gate.markApplyPending()).isTrue();
+        bootId.set("linux:test-boot-b");
+        assertThat(gate.verifyPostApplyVersion("17.26.7.23"))
+                .isEqualTo(BesOtaAuthorizationGate.PostApplyVerification.VERSION_MISMATCH);
+
+        // Reconstruct the real startup ordering: K900 consumed the proof before the listener's
+        // manager existed, so this new manager has no in-memory run generation.
+        manager = new BesOtaManager(null, null, context, gate);
+        assertThat(field("activeRunGeneration").getLong(manager)).isZero();
         manager.onBesPostApplyVerification(
                 false,
                 "17.26.7.24",
@@ -122,6 +139,11 @@ public class BesOtaPostApplyVerificationTest {
         assertThat(events.get(0).getStatus()).isEqualTo(BesOtaProgressEvent.OtaStatus.FAILED);
         assertThat(events.get(0).getErrorMessage())
                 .isEqualTo("BES rebooted with an unexpected firmware version");
+        BesOtaHandoffStore.TerminalOutcome outcome =
+                new BesOtaHandoffStore(context).getPendingTerminalOutcome();
+        assertThat(outcome).isNotNull();
+        assertThat(outcome.getSessionId()).isEqualTo(session.getSessionId());
+        assertThat(outcome.getStatus()).isEqualTo("FAILED");
     }
 
     private BesOtaAuthorizationGate authorizationGate() throws Exception {
