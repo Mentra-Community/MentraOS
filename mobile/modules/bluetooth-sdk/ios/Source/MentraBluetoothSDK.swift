@@ -890,7 +890,7 @@ public final class MentraBluetoothSDK {
         }
     }
 
-    public func setWifiAdbState(enabled: Bool) {
+    public func setWifiAdbState(enabled: Bool) async throws {
         DeviceManager.shared.setWifiAdbState(enabled)
     }
 
