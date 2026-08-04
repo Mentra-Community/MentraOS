@@ -107,7 +107,7 @@ public class OtaSessionManagerBesRebootTest {
     }
 
     @Test
-    public void newSessionCannotContinueUntilOlderTerminalHandoffIsRetired() {
+    public void committedNewSessionSupersedesOlderHandoffEvenWhenCleanupFails() {
         OtaSessionManager firstManager = new OtaSessionManager(context);
         assertThat(firstManager.createSession(
                         new String[] {"bes"}, "https://example.test/a.json"))
@@ -125,13 +125,15 @@ public class OtaSessionManagerBesRebootTest {
         OtaSessionManager manager = new OtaSessionManager(context, handoffStore);
         assertThat(manager.admitOrContinueSession(
                         new String[] {"bes"}, "https://example.test/b.json"))
-                .isEqualTo(OtaSessionManager.SessionAdmission.REJECTED);
+                .isEqualTo(OtaSessionManager.SessionAdmission.CREATED);
         assertThat(manager.getSessionId()).isNotEqualTo(firstSessionId);
+        String secondSessionId = manager.getSessionId();
 
-        // The durable B record cannot bypass the orphan guard on a retry.
+        // A retry continues the accepted generation; failed cleanup never creates a hidden B.
         assertThat(manager.admitOrContinueSession(
                         new String[] {"bes"}, "https://example.test/b.json"))
-                .isEqualTo(OtaSessionManager.SessionAdmission.REJECTED);
+                .isEqualTo(OtaSessionManager.SessionAdmission.CONTINUING);
+        assertThat(manager.getSessionId()).isEqualTo(secondSessionId);
         verify(handoffStore, times(2)).clearTerminalOutcome();
     }
 

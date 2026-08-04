@@ -93,7 +93,7 @@ public final class BesOtaHandoffStore {
         }
     }
 
-    static boolean isVisibleTerminalStateKnownDurable() {
+    public static boolean isTerminalStateKnownDurable() {
         synchronized (HANDOFF_LOCK) {
             return !terminalStateWriteFailed;
         }

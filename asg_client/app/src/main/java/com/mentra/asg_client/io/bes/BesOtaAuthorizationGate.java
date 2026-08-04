@@ -258,7 +258,7 @@ public final class BesOtaAuthorizationGate implements BesUartTransportCoordinato
                 // in one commit under this same lock. Only that durable terminal proves a late
                 // timeout lost the race; a missing terminal must itself fail closed.
                 if (hasTerminalOutcomeLocked()
-                        && BesOtaHandoffStore.isVisibleTerminalStateKnownDurable()) {
+                        && BesOtaHandoffStore.isTerminalStateKnownDurable()) {
                     return BesUartTransportCoordinator.PostApplyFailureResolution.ALREADY_RESOLVED;
                 }
             }

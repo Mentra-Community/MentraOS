@@ -108,9 +108,7 @@ public class OtaSessionManager {
                 // Service startup can temporarily create more than one manager instance. Reload
                 // under the process-wide transition lock before admitting a new generation.
                 load();
-                if (!retireMismatchedTerminalLocked()) {
-                    return SessionAdmission.REJECTED;
-                }
+                retireMismatchedTerminalLocked();
                 if (("in_progress".equals(mStatus) || "step_complete".equals(mStatus))
                         && hasActiveSession()) {
                     return allowContinuation && Objects.equals(versionJsonUrl, mVersionJsonUrl)
@@ -153,11 +151,7 @@ public class OtaSessionManager {
 
                 // The committed id is the generation boundary. Clear an older terminal only after
                 // that boundary exists; owner mismatch keeps replay harmless if cleanup fails.
-                if (!retireMismatchedTerminalLocked()) {
-                    // The new session id is already durable, but no download or hardware mutation
-                    // has started. Refuse this attempt until the prior generation can be retired.
-                    return SessionAdmission.REJECTED;
-                }
+                retireMismatchedTerminalLocked();
                 Log.i(TAG, "Created session " + mSessionId + " with " + mTotalSteps + " steps");
                 return SessionAdmission.CREATED;
             }
@@ -390,22 +384,25 @@ public class OtaSessionManager {
         return persist(true);
     }
 
-    private boolean retireMismatchedTerminalLocked() {
+    private void retireMismatchedTerminalLocked() {
         BesOtaHandoffStore.TerminalOutcome outcome =
                 mBesOtaHandoffStore.getPendingTerminalOutcome();
         if (outcome == null || Objects.equals(mSessionId, outcome.getSessionId())) {
-            return true;
+            return;
         }
         if (mBesOtaHandoffStore.clearTerminalOutcome()) {
-            return true;
+            return;
         }
-        Log.e(TAG,
-                "Cannot admit OTA session "
-                        + mSessionId
-                        + " while terminal handoff for "
+        // The durable session id is the generation boundary. Every terminal producer, consumer,
+        // resend, and artifact cleanup checks that owner, so a failed deletion cannot let this old
+        // record affect the current session. Do not reject an already-committed session and leave
+        // an invisible zombie; a later terminal write or admission will retry the cleanup.
+        Log.w(TAG,
+                "Could not delete terminal handoff for "
                         + outcome.getSessionId()
-                        + " remains durable");
-        return false;
+                        + " after OTA session "
+                        + mSessionId
+                        + " superseded it by owner");
     }
 
     /**
@@ -494,7 +491,8 @@ public class OtaSessionManager {
                 mBesOtaHandoffStore.getPendingTerminalOutcome();
         return outcome != null
                 && mSessionId != null
-                && mSessionId.equals(outcome.getSessionId());
+                && mSessionId.equals(outcome.getSessionId())
+                && BesOtaHandoffStore.isTerminalStateKnownDurable();
     }
 
     /**
