@@ -328,18 +328,15 @@ repositories {
       continue
     }
     const existing = fs.existsSync(dest) ? fs.readFileSync(dest, "utf8") : ""
-    if (existing.includes("not bundled in the public Android SDK")) {
+    // Earlier android-run builds wrote the TTS stub under the wrong package. That
+    // stale file already carries the "already stubbed" marker, so it has to be
+    // checked before the marker short-circuit or upgraders stay broken.
+    const isStaleWrongPackageStub = existing.includes("package com.mentra.core.tts")
+    if (!isStaleWrongPackageStub && existing.includes("not bundled in the public Android SDK")) {
       continue
     }
-    // Only replace missing files, sources that still import Sherpa-ONNX, or the
-    // known stale wrong-package TTS stub from earlier android-run builds.
-    if (
-      !(
-        existing.includes("com.k2fsa.sherpa.onnx") ||
-        existing.length === 0 ||
-        existing.includes("package com.mentra.core.tts")
-      )
-    ) {
+    // Otherwise only replace missing files or sources that still import Sherpa-ONNX.
+    if (!(isStaleWrongPackageStub || existing.includes("com.k2fsa.sherpa.onnx") || existing.length === 0)) {
       continue
     }
     const body =
