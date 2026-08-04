@@ -3449,10 +3449,17 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       };
       if (typeof sdkWithWifiAdb.setWifiAdbState !== 'function') {
         throw new Error(
-          'BluetoothSdk.setWifiAdbState is unavailable. Use a Mentra Bluetooth SDK build that includes OS-1627.',
+          'BluetoothSdk.setWifiAdbState is missing from JS. Point MENTRA_BLUETOOTH_SDK_PACKAGE_PATH at MentraOS mobile/modules/bluetooth-sdk and rebuild the native app (bun run android).',
         );
       }
-      await sdkWithWifiAdb.setWifiAdbState(enabled);
+      try {
+        await sdkWithWifiAdb.setWifiAdbState(enabled);
+      } catch (error) {
+        const message = formatError(error);
+        throw new Error(
+          `${message} — native SDK likely predates OS-1627. Rebuild with MentraOS bluetooth-sdk (auto-picked when nested under MentraOS) via: bun run android`,
+        );
+      }
       setWifiAdbEnabled(enabled);
       addEvent('LIVE', `Wi-Fi ADB ${enabled ? 'enabled' : 'disabled'}`);
     });

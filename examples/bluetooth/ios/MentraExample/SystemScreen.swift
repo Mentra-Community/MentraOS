@@ -352,48 +352,39 @@ struct SystemScreen: View {
 
     private var wifiAdbCard: some View {
         GlassCard(corner: 22, padding: EdgeInsets(top: 14, leading: 16, bottom: 14, trailing: 16)) {
-            HStack {
-                HStack(spacing: 10) {
-                    iconTileSm(systemName: "antenna.radiowaves.left.and.right")
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Wi-Fi ADB").font(.system(size: 16, weight: .bold)).foregroundColor(AppColor.ink)
-                        Text(
-                            model.glassesConnected
-                                ? (model.wifiAdbEnabled
-                                    ? "Wireless debugging enabled (Mentra Live)"
-                                    : "Wireless debugging off (default)")
-                                : "connect glasses to toggle"
-                        )
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(model.wifiAdbEnabled ? AppColor.greenAccent : AppColor.muted)
-                        .lineLimit(2)
-                        .minimumScaleFactor(0.8)
-                    }
+            HStack(spacing: 10) {
+                iconTileSm(systemName: "antenna.radiowaves.left.and.right")
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Wi-Fi ADB").font(.system(size: 16, weight: .bold)).foregroundColor(AppColor.ink)
+                    Text(
+                        model.glassesConnected
+                            ? (model.wifiAdbEnabled
+                                ? "Wireless debugging enabled (Mentra Live)"
+                                : "Wireless debugging off (default)")
+                            : "connect glasses first"
+                    )
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(model.wifiAdbEnabled ? AppColor.greenAccent : AppColor.muted)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.8)
                 }
-                Spacer()
-                Button(action: { model.setWifiAdbState(enabled: !model.wifiAdbEnabled) }) {
-                    ZStack(alignment: model.wifiAdbEnabled ? .trailing : .leading) {
-                        Capsule()
-                            .fill(Color.white)
-                            .overlay(
-                                Capsule()
-                                    .stroke(
-                                        model.wifiAdbEnabled ? AppColor.greenAccent.opacity(0.72) : AppColor.ink.opacity(0.18),
-                                        lineWidth: 1.2
-                                    )
-                            )
-                            .frame(width: 38, height: 22)
-                        Circle()
-                            .fill(model.wifiAdbEnabled ? AppColor.greenAccent : AppColor.mutedSoft)
-                            .frame(width: 18, height: 18)
-                            .padding(2)
-                    }
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .disabled(!model.glassesConnected)
-                .opacity(model.glassesConnected ? 1 : 0.45)
+                Spacer(minLength: 0)
             }
+
+            HStack(spacing: 8) {
+                HotspotActionChip(title: "Enable", enabled: model.glassesConnected) {
+                    model.setWifiAdbState(enabled: true)
+                }
+                HotspotActionChip(title: "Disable", enabled: model.glassesConnected) {
+                    model.setWifiAdbState(enabled: false)
+                }
+            }
+            .padding(.top, 12)
+
+            Text("Mentra Live only · watch Console if nothing changes")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(AppColor.muted)
+                .padding(.top, 8)
         }
     }
 
