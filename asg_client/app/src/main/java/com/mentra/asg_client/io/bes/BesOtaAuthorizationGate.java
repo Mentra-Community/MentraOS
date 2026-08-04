@@ -12,7 +12,8 @@ import java.io.FileReader;
 public final class BesOtaAuthorizationGate implements BesUartTransportCoordinator.OtaSafetyState {
     private static final String TAG = "BesOtaAuthGate";
     private static final String LINUX_BOOT_ID_PATH = "/proc/sys/kernel/random/boot_id";
-    private static final Object RESERVATION_LOCK = new Object();
+    // Reservation state and the terminal handoff share preference keys and must be one snapshot.
+    private static final Object RESERVATION_LOCK = BesOtaHandoffStore.HANDOFF_LOCK;
 
     private final BootIdProvider bootIdProvider;
     private final SharedPreferences preferences;
@@ -77,7 +78,7 @@ public final class BesOtaAuthorizationGate implements BesUartTransportCoordinato
                 Log.e(TAG, "Cannot reserve BES OTA without an owning OTA session");
                 return false;
             }
-            return preferences
+            boolean committed = preferences
                     .edit()
                     .putString(AsgConstants.BES_OTA_AUTH_GATE_BOOT_ID_KEY, current)
                     .putString(AsgConstants.BES_OTA_AUTH_GATE_TARGET_VERSION_KEY, target)
@@ -87,6 +88,8 @@ public final class BesOtaAuthorizationGate implements BesUartTransportCoordinato
                     .remove(AsgConstants.BES_OTA_HANDOFF_TERMINAL_STATUS_KEY)
                     .remove(AsgConstants.BES_OTA_HANDOFF_TERMINAL_ERROR_KEY)
                     .commit();
+            BesOtaHandoffStore.recordTerminalStateCommit(committed);
+            return committed;
         }
     }
 
@@ -219,7 +222,9 @@ public final class BesOtaAuthorizationGate implements BesUartTransportCoordinato
                         AsgConstants.BES_OTA_HANDOFF_TERMINAL_ERROR_KEY,
                         "BES rebooted with an unexpected firmware version");
             }
-            if (!editor.commit()) {
+            boolean committed = editor.commit();
+            BesOtaHandoffStore.recordTerminalStateCommit(committed);
+            if (!committed) {
                 // commit() updates this process's preference memory before reporting a disk error.
                 // Replace any visible-but-uncommitted success with failure/quarantine now; the
                 // timeout path must never be asked to guess whether this transition committed.
@@ -252,7 +257,8 @@ public final class BesOtaAuthorizationGate implements BesUartTransportCoordinato
                 // A successful/mismatched verification replaces apply_pending and terminal status
                 // in one commit under this same lock. Only that durable terminal proves a late
                 // timeout lost the race; a missing terminal must itself fail closed.
-                if (hasTerminalOutcomeLocked()) {
+                if (hasTerminalOutcomeLocked()
+                        && BesOtaHandoffStore.isVisibleTerminalStateKnownDurable()) {
                     return BesUartTransportCoordinator.PostApplyFailureResolution.ALREADY_RESOLVED;
                 }
             }
@@ -275,7 +281,7 @@ public final class BesOtaAuthorizationGate implements BesUartTransportCoordinato
     private boolean persistTerminalFailureQuarantineLocked(String current, String diagnostic) {
         // Persist the boot that failed as the ordinary authorization marker. This restores UART
         // quarantine after an ASG/serial restart until the user reboots once more.
-        return preferences
+        boolean committed = preferences
                 .edit()
                 .putString(AsgConstants.BES_OTA_AUTH_GATE_BOOT_ID_KEY, current)
                 .remove(AsgConstants.BES_OTA_AUTH_GATE_TARGET_VERSION_KEY)
@@ -286,6 +292,8 @@ public final class BesOtaAuthorizationGate implements BesUartTransportCoordinato
                         AsgConstants.BES_OTA_HANDOFF_TERMINAL_ERROR_KEY,
                         diagnostic != null ? diagnostic : "BES update failed")
                 .commit();
+        BesOtaHandoffStore.recordTerminalStateCommit(committed);
+        return committed;
     }
 
     private String attemptedBootId() {

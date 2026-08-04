@@ -765,10 +765,9 @@ public class OtaSessionManager {
     }
 
     private void load() {
+        resetLoadedState();
         String data = mPrefs.getString(KEY_SESSION_DATA, null);
         if (data == null) {
-            mStepSequence = new JSONArray();
-            mRestartingSinceElapsed = -1;
             return;
         }
         try {
@@ -788,8 +787,22 @@ public class OtaSessionManager {
             mLastPersistedPercent = mStepPercent;
         } catch (JSONException e) {
             Log.e(TAG, "Failed to load session", e);
-            mStepSequence = new JSONArray();
-            mRestartingSinceElapsed = -1;
+            resetLoadedState();
         }
+    }
+
+    private void resetLoadedState() {
+        mSessionId = null;
+        mTotalSteps = 0;
+        mStepSequence = new JSONArray();
+        mCurrentStepIndex = 0;
+        mCurrentPhase = "download";
+        mStepPercent = 0;
+        mStatus = null;
+        mErrorMessage = null;
+        mVersionJsonUrl = null;
+        mLastActivityAtElapsed = 0;
+        mRestartingSinceElapsed = -1;
+        mLastPersistedPercent = 0;
     }
 }

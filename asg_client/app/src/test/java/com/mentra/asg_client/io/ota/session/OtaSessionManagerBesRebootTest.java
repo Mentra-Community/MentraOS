@@ -135,6 +135,21 @@ public class OtaSessionManagerBesRebootTest {
         verify(handoffStore, times(2)).clearTerminalOutcome();
     }
 
+    @Test
+    public void reloadClearsInMemoryGenerationWhenDurableSessionDisappears() {
+        OtaSessionManager manager = new OtaSessionManager(context);
+        assertThat(manager.createSession(
+                        new String[] {"bes"}, "https://example.test/a.json"))
+                .isTrue();
+        String removedSessionId = manager.getSessionId();
+
+        preferences.edit().remove("ota_session_data").commit();
+
+        assertThat(manager.isCurrentSession(removedSessionId)).isFalse();
+        assertThat(manager.getSessionId()).isNull();
+        assertThat(manager.hasActiveSession()).isFalse();
+    }
+
     private void emulateElapsedRealtimeReset() throws Exception {
         JSONObject persisted = new JSONObject(preferences.getString("ota_session_data", "{}"));
         persisted.put("last_activity_at_elapsed", Long.MAX_VALUE);

@@ -33,6 +33,7 @@ public class BesOtaAuthorizationGateTest {
                 .edit()
                 .clear()
                 .commit();
+        BesOtaHandoffStore.recordTerminalStateCommit(true);
         bootId = new AtomicReference<>("linux:boot-a");
         gate = new BesOtaAuthorizationGate(context, bootId::get);
     }
@@ -43,6 +44,27 @@ public class BesOtaAuthorizationGateTest {
                 .edit()
                 .clear()
                 .commit();
+        BesOtaHandoffStore.recordTerminalStateCommit(true);
+    }
+
+    @Test
+    public void visibleTerminalFromFailedCommitDoesNotSuppressTimeoutFailure() {
+        context.getSharedPreferences(AsgConstants.BES_OTA_AUTH_GATE_PREFS, 0)
+                .edit()
+                .putString(AsgConstants.BES_OTA_HANDOFF_SESSION_ID_KEY, "ota-session-a")
+                .putString(AsgConstants.BES_OTA_HANDOFF_TERMINAL_STATUS_KEY, "FINISHED")
+                .commit();
+        BesOtaHandoffStore.recordTerminalStateCommit(false);
+
+        assertThat(gate.abandonPostApplyVerification("verification durability failed"))
+                .isEqualTo(
+                        BesUartTransportCoordinator.PostApplyFailureResolution.ABANDONED);
+
+        BesOtaHandoffStore.TerminalOutcome outcome =
+                new BesOtaHandoffStore(context).getPendingTerminalOutcome();
+        assertThat(outcome).isNotNull();
+        assertThat(outcome.getStatus()).isEqualTo("FAILED");
+        assertThat(outcome.getErrorMessage()).isEqualTo("verification durability failed");
     }
 
     @Test
