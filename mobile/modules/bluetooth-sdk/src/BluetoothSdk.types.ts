@@ -1056,6 +1056,8 @@ export interface BluetoothSdkPublicModule {
   sendWifiCredentials(ssid: string, password: string): Promise<WifiStatusChangeEvent>
   forgetWifiNetwork(ssid: string): Promise<WifiStatusChangeEvent>
   setHotspotState(enabled: boolean): Promise<HotspotStatusChangeEvent>
+  /** Enable or disable Wi-Fi ADB on Mentra Live (no-op on other devices). */
+  setWifiAdbState(enabled: boolean): Promise<void>
 
   setGalleryModeEnabled(enabled: boolean): Promise<SettingsAckSuccessEvent>
   setVoiceActivityDetectionEnabled(enabled: boolean): Promise<void>

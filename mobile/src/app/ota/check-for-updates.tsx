@@ -122,9 +122,9 @@ export default function OtaCheckForUpdatesScreen() {
         }
 
         if (result.skippedReason === "dev_build") {
-          // Development builds are exempt from OTA. Shown as its own state — NOT
+          // Locally built mobile apps are exempt from OTA. Shown as its own state — NOT
           // "up to date", which would be an unverified claim.
-          console.log("OTA: Check skipped (dev_build) - glasses run a development build")
+          console.log("OTA: Check skipped (dev_build) - mobile app is a development build")
           checkCompletedRef.current = true
           engine.ota.clearUpdateAvailable()
           setCheckState("dev_build")
@@ -291,7 +291,7 @@ export default function OtaCheckForUpdatesScreen() {
       )
     }
 
-    // Development build: OTA exempt — distinct from "up to date" (unverified claim).
+    // Local mobile development build: OTA exempt — distinct from "up to date".
     if (checkState === "dev_build") {
       return (
         <>

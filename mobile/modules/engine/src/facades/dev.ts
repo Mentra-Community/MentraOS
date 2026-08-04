@@ -143,25 +143,29 @@ export const dev = {
       return {ok: false, error: "dev server unreachable, or no miniapp.json served there"}
     }
     const manifest = result.manifest
+    const appName = name ?? manifest.name ?? "Dev Miniapp"
+    const packageName = (manifest.packageName as string | undefined) ?? DEV_APP_PACKAGE_NAME
+    // Persist the host that answered — not the stale input IP — so home-tile
+    // relaunches skip a dead LAN address after mDNS/Metro failover.
+    const resolvedUrl = result.resolvedUrl || devUrl
     // The `mentra-miniapp dev` server puts the hot-reload/log sidecar on the
     // user port PLUS ONE — same convention as the first-party developer-URL
     // screen's deriveDevPort.
     let devPort: number | undefined
     try {
-      const parsed = Number(new URL(devUrl).port)
+      const parsed = Number(new URL(resolvedUrl).port)
       devPort = Number.isFinite(parsed) && parsed > 0 ? parsed + 1 : undefined
     } catch {
       devPort = undefined
     }
-    const appName = name ?? manifest.name ?? "Dev Miniapp"
-    const packageName = (manifest.packageName as string | undefined) ?? DEV_APP_PACKAGE_NAME
     const existing = useAppStatusStore.getState().apps.find((app) => app.packageName === packageName)
     if (existing?.running) await useAppStatusStore.getState().stop(packageName)
     await registerDevApp({
       packageName,
       name: appName,
-      iconUrl: manifest.icon ? new URL(manifest.icon, `${devUrl}/`).toString() : `${devUrl}/icon.png`,
-      devUrl,
+      iconUrl: manifest.icon ? new URL(manifest.icon, `${resolvedUrl}/`).toString() : `${resolvedUrl}/icon.png`,
+      // Persist the host that answered — not the stale input IP.
+      devUrl: resolvedUrl,
       devPort,
       type: manifest.type as DevAppRecord["type"],
       permissions: manifest.permissions as DevAppRecord["permissions"],

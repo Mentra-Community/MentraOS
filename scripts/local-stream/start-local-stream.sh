@@ -277,8 +277,32 @@ WHIP_WATCH_URL="http://${LAN_IP}:8889/live"
 echo "LAN IP                  : $LAN_IP"
 echo "MTX_WEBRTCADDITIONALHOSTS=$MTX_WEBRTCADDITIONALHOSTS"
 echo ""
+
+# Prefer offline image tarball when present (no Docker Hub pull).
+if [[ -f "$SCRIPT_DIR/offline/images/mediamtx-1-linux-amd64.tar" || -f "$SCRIPT_DIR/offline/images/mediamtx-1-linux-arm64.tar" ]]; then
+  if ! docker image inspect bluenviron/mediamtx:1 >/dev/null 2>&1; then
+    echo "Loading offline MediaMTX image…"
+    if [[ "$(uname -m)" == "arm64" || "$(uname -m)" == "aarch64" ]]; then
+      TAR="$SCRIPT_DIR/offline/images/mediamtx-1-linux-arm64.tar"
+    else
+      TAR="$SCRIPT_DIR/offline/images/mediamtx-1-linux-amd64.tar"
+    fi
+    if [[ ! -f "$TAR" ]]; then
+      # fall back to whichever tar exists
+      TAR="$(ls "$SCRIPT_DIR"/offline/images/mediamtx-1-linux-*.tar 2>/dev/null | head -1 || true)"
+    fi
+    docker load -i "$TAR"
+    docker tag bluenviron/mediamtx:1-amd64 bluenviron/mediamtx:1 2>/dev/null || \
+      docker tag bluenviron/mediamtx:1-arm64 bluenviron/mediamtx:1 2>/dev/null || true
+  fi
+fi
+
+docker rm -f mentra-local-stream >/dev/null 2>&1 || true
+echo "Building mentra-local-mediamtx:1 (config baked in, no bind-mount)…"
+docker build -t mentra-local-mediamtx:1 "$SCRIPT_DIR"
+
 echo "Starting MediaMTX (RTMP primary, SRT + WHIP available)…"
-docker compose -f "$SCRIPT_DIR/docker-compose.yml" up -d
+docker compose -f "$SCRIPT_DIR/docker-compose.yml" up -d --pull never --no-build
 
 echo ""
 echo "────────────────────────────────────────────────────────"

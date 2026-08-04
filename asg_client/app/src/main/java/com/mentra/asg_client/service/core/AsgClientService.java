@@ -239,6 +239,24 @@ public class AsgClientService extends Service implements NetworkStateListener, T
                             },
                             3000);
 
+            // Apply persisted Wi-Fi ADB preference (default off for security — OS-1627)
+            new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                try {
+                    boolean wifiAdbEnabled = false;
+                    if (serviceInitializer != null
+                            && serviceInitializer.getServiceManager() != null
+                            && serviceInitializer.getServiceManager().getAsgSettings() != null) {
+                        wifiAdbEnabled =
+                                serviceInitializer.getServiceManager().getAsgSettings().isWifiAdbEnabled();
+                    }
+                    Log.d(TAG, "🔧 Applying Wi-Fi ADB state on boot: " + wifiAdbEnabled);
+                    SystemControllerFactory.get(this).setWifiAdb(wifiAdbEnabled);
+                } catch (Exception e) {
+                    Log.w(TAG, "Could not apply Wi-Fi ADB state on boot; forcing disabled", e);
+                    SystemControllerFactory.get(this).setWifiAdb(false);
+                }
+            }, 3000);
+
             // Register receivers
             Log.d(TAG, "📻 Registering broadcast receivers");
             registerReceivers();

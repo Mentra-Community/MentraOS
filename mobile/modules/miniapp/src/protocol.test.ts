@@ -38,6 +38,8 @@ describe("MiniappRequestType wire values", () => {
     expect(MiniappRequestType.MIC_SET_VAD_ENABLED).toBe("miniapp_mic_set_vad_enabled"))
   test("MIC_SET_LOUDNESS_GATE_ENABLED", () =>
     expect(MiniappRequestType.MIC_SET_LOUDNESS_GATE_ENABLED).toBe("miniapp_mic_set_loudness_gate_enabled"))
+  test("SET_WIFI_ADB_STATE", () =>
+    expect(MiniappRequestType.SET_WIFI_ADB_STATE).toBe("miniapp_set_wifi_adb_state"))
   test("PING", () => expect(MiniappRequestType.PING).toBe("miniapp_ping"))
   test("DASHBOARD_CONTENT_UPDATE", () =>
     expect(MiniappRequestType.DASHBOARD_CONTENT_UPDATE).toBe("miniapp_dashboard_content_update"))

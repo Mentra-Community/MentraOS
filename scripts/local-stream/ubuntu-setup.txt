@@ -1,0 +1,103 @@
+MentraOS local stream — Ubuntu setup
+====================================
+
+Same Wi-Fi for glasses, phone, and this Ubuntu machine.
+These steps install Docker, start MediaMTX, and point Livestreamer at it.
+
+
+1) Install Docker Engine + Compose (Ubuntu)
+------------------------------------------
+
+sudo apt update
+sudo apt install -y ca-certificates curl
+
+sudo install -m 0755 -d /etc/apt/keyrings
+sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+sudo chmod a+r /etc/apt/keyrings/docker.asc
+
+echo \
+  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu \
+  $(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}") stable" | \
+  sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+sudo apt update
+sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+sudo usermod -aG docker "$USER"
+newgrp docker
+
+
+2) Verify Docker
+----------------
+
+docker --version
+docker compose version
+docker run --rm hello-world
+
+
+3) Optional: ffprobe (for receive FPS in the monitor)
+-----------------------------------------------------
+
+sudo apt install -y ffmpeg
+
+
+4) Firewall (if ufw is enabled)
+-------------------------------
+
+sudo ufw allow 1935/tcp comment 'MediaMTX RTMP'
+sudo ufw allow 8888/tcp comment 'MediaMTX HLS'
+sudo ufw allow 8890/udp comment 'MediaMTX SRT'
+sudo ufw allow 8889/tcp comment 'MediaMTX WHIP'
+sudo ufw allow 8189/udp comment 'MediaMTX WHIP ICE'
+sudo ufw status
+
+
+5) Start the local MediaMTX server
+----------------------------------
+
+From the MentraOS repo root:
+
+./scripts/local-stream/start-local-stream.sh
+
+The script prints your LAN IP and publish URLs, for example:
+
+  RTMP:  rtmp://<LAN_IP>:1935/live/stream
+  SRT:   srt://<LAN_IP>:8890?streamid=publish:live/stream
+  HLS:   http://<LAN_IP>:8888/live/stream
+  WHIP:  http://<LAN_IP>:8889/live/whip
+
+Leave this terminal open to see [RECV] stats.
+Ctrl-C stops the stats monitor; MediaMTX keeps running in Docker.
+
+
+6) Livestreamer on the phone (Custom + Local network)
+-----------------------------------------------------
+
+- Platform: Custom
+- Protocol: RTMP (or SRT / WHIP)
+- Stream Server URL: the publish URL from step 5
+- Stream key: leave blank for the full URLs above
+- Enable Local network
+- Connect -> Go Live
+
+Phone shows no preview for local/unmanaged streams by design.
+Watch on the Ubuntu machine:
+
+  Browser:  http://<LAN_IP>:8888/live/stream/
+  VLC:      rtmp://<LAN_IP>:1935/live/stream
+            or rtsp://<LAN_IP>:8554/live/stream
+
+
+7) Stop MediaMTX
+----------------
+
+docker compose -f scripts/local-stream/docker-compose.yml down
+
+
+Notes
+-----
+
+- Official Docker install docs: https://docs.docker.com/engine/install/ubuntu/
+- If "permission denied" on docker, log out/in after usermod, or run: newgrp docker
+- If LAN IP detection fails: hostname -I
+- More detail: scripts/local-stream/README.md

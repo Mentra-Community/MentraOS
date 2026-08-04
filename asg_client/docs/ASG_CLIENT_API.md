@@ -439,6 +439,16 @@ Sets the glasses system clock from the phone. Sent only when the phone detects c
 
 No response is required for V1 (fire-and-forget).
 
+#### `set_wifi_adb_state`
+
+Enable or disable Wi-Fi ADB (wireless debugging) on Mentra Live. Persisted on the glasses; boot applies the saved preference (default `false` for security).
+
+```json
+{"type": "set_wifi_adb_state", "enabled": true}
+```
+
+No response is required (fire-and-forget).
+
 #### `disconnect_wifi`
 
 ```json

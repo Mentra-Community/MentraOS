@@ -13,6 +13,7 @@
   "exports": {
     ".": "./src/api.ts",
     "./build-helpers": "./src/build-helpers.ts",
+    "./lan": "./src/lan.ts",
     "./package.json": "./package.json"
   },
   "scripts": {
