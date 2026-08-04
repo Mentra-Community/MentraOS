@@ -331,8 +331,15 @@ repositories {
     if (existing.includes("not bundled in the public Android SDK")) {
       continue
     }
-    // Only replace missing files or sources that still import Sherpa-ONNX.
-    if (!(existing.includes("com.k2fsa.sherpa.onnx") || existing.length === 0)) {
+    // Only replace missing files, sources that still import Sherpa-ONNX, or the
+    // known stale wrong-package TTS stub from earlier android-run builds.
+    if (
+      !(
+        existing.includes("com.k2fsa.sherpa.onnx") ||
+        existing.length === 0 ||
+        existing.includes("package com.mentra.core.tts")
+      )
+    ) {
       continue
     }
     const body =

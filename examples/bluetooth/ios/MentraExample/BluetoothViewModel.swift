@@ -2042,10 +2042,10 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     func setWifiAdbState(enabled: Bool) {
         runAsyncAction(enabled ? "Enable Wi-Fi ADB" : "Disable Wi-Fi ADB") { [self] in
             try requireConnected("toggle Wi-Fi ADB")
-            try mentraBluetoothSdk.setWifiAdbState(enabled: enabled)
-            // Don't re-apply optimistic state if we disconnected during the await —
-            // applyDisconnectedState already cleared wifiAdbEnabled.
-            guard glassesConnected else { return }
+            let generation = galleryConnectionGeneration
+            try await mentraBluetoothSdk.setWifiAdbState(enabled: enabled)
+            // Ignore completions from a prior connection session after disconnect/reconnect.
+            guard generation == galleryConnectionGeneration, glassesConnected else { return }
             wifiAdbEnabled = enabled
             append(tag: "LIVE", text: "Wi-Fi ADB \(enabled ? "enabled" : "disabled")")
         }

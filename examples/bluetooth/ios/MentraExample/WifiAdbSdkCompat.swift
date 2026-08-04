@@ -11,7 +11,7 @@ import MentraBluetoothSDK
 ///
 /// Once a published SDK includes the API, remove this shim (or keep the flag).
 extension MentraBluetoothSDK {
-    func setWifiAdbState(enabled: Bool) throws {
+    func setWifiAdbState(enabled: Bool) async throws {
         throw NSError(
             domain: "MentraExample",
             code: 1627,

@@ -2017,10 +2017,10 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
 
     fun setWifiAdbState(enabled: Boolean) = runAction(if (enabled) "Enable Wi-Fi ADB" else "Disable Wi-Fi ADB") {
         requireConnected("toggle Wi-Fi ADB")
+        val generation = galleryConnectionGeneration
         withContext(Dispatchers.IO) { invokeSetWifiAdbState(mentraBluetoothSdk, enabled) }
-        // Don't re-apply optimistic state if we disconnected during the await —
-        // applyDisconnectedState already cleared wifiAdbEnabled.
-        if (!isGlassesConnected()) {
+        // Ignore completions from a prior connection session after disconnect/reconnect.
+        if (generation != galleryConnectionGeneration || !isGlassesConnected()) {
             return@runAction
         }
         state = state.copy(wifiAdbEnabled = enabled)
