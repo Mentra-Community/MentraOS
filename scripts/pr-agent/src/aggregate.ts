@@ -143,10 +143,19 @@ export function aggregateCycle(
     stagnationFixRounds = 0;
   }
 
+  // When path-scoped CI is red and the fixer still has budget, do not let the
+  // shared cycle counter force a human-ready handoff (#3224 / #3671). The
+  // fixer's own maxFixRounds cap governs that case instead.
+  const deferCycleCapForCiFix =
+    ciFailed && state.fixRound < config.limits.maxFixRounds;
+
   if (state.fixRound >= config.limits.maxFixRounds) {
     status = 'budget_exhausted';
     handoffReason = 'budget_exhausted';
-  } else if (state.cycle >= config.limits.maxOrchestratorCycles) {
+  } else if (
+    state.cycle >= config.limits.maxOrchestratorCycles &&
+    !deferCycleCapForCiFix
+  ) {
     status = 'budget_exhausted';
     handoffReason = 'budget_exhausted';
   } else if (newBlockingCount >= config.limits.maxNewBlockingPerCycle) {
@@ -162,6 +171,7 @@ export function aggregateCycle(
 
   const cleanHandoff =
     ciGreen &&
+    !ciFailed &&
     openCount === 0 &&
     consecutiveNoNewReviews >= config.limits.consecutiveNoNewReviewsForHandoff;
 
