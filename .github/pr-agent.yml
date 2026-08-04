@@ -1,0 +1,52 @@
+# PR Agent Orchestrator configuration
+# See notes/pr-agent-orchestrator-setup.md
+
+dryRun: false
+
+reviewModel: claude-opus-4-8
+fixModel: claude-opus-4-8
+
+authors:
+  # allowlist | all | label_only
+  # allowlist: PRs authored by anyone in `allowlist` run automatically (no
+  # opt-in label needed). The `agent-stop` label is the kill switch that halts
+  # the orchestrator on any PR. Drafts are reviewed like any other PR.
+  mode: allowlist
+  allowlist:
+    - nic-olo
+
+limits:
+  maxFixRounds: 5
+  maxOrchestratorCycles: 8
+  maxBugbotWaitMin: 12
+  maxCiWaitMin: 45
+  maxNewBlockingPerCycle: 5
+  maxFixAgentTurns: 80
+  consecutiveNoNewReviewsForHandoff: 2
+  discoveryCycles: 1
+
+# Path-scoped required CI check names (must match workflow `name:` fields)
+ciGates:
+  - paths:
+      - "cloud/**"
+    workflows:
+      - "🧪 Test Cloud build"
+  - paths:
+      - "cloud/packages/**"
+      - "cloud/bun.lock"
+      - "cloud/package.json"
+    workflows:
+      - "Run Cloud Tests ☁️"
+  - paths:
+      - "mobile/**"
+    workflows:
+      - "Mobile App Quality Checks"
+      - "Mobile App Android Build"
+  - paths:
+      - "asg_client/**"
+    workflows:
+      - "MentraOS ASG Client Build"
+  - paths:
+      - "cloud/packages/sdk/**"
+    workflows:
+      - "🧪 Test SDK build"

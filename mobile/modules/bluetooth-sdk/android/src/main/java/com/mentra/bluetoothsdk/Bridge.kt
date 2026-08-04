@@ -9,6 +9,7 @@ package com.mentra.bluetoothsdk
 
 import android.util.Base64
 import android.util.Log
+import com.mentra.bluetoothsdk.debug.BleTraceLogger
 import java.util.HashMap
 import java.util.UUID
 import kotlin.jvm.JvmStatic
@@ -29,6 +30,18 @@ public class Bridge private constructor() {
         private const val MIC_CHANNELS = 1
         private const val LC3_FRAME_DURATION_MS = 10
         private const val DEFAULT_LC3_FRAME_SIZE_BYTES = 60
+        private val AUDIO_TRACE_METADATA_KEYS =
+                listOf(
+                        "sampleRate",
+                        "bitsPerSample",
+                        "channels",
+                        "encoding",
+                        "frameDurationMs",
+                        "frameSizeBytes",
+                        "bitrate",
+                        "packetizedFromGlasses",
+                        "voiceActivityDetectionEnabled",
+                )
 
         @Volatile private var instance: Bridge? = null
 
@@ -106,6 +119,16 @@ public class Bridge private constructor() {
             sendTypedMessage("log", data as Map<String, Any>)
         }
 
+        /** Report tar.bz2 extraction progress to JavaScript. */
+        @JvmStatic
+        fun sendExtractionProgress(percentage: Int, bytesRead: Long, totalBytes: Long) {
+            val data = HashMap<String, Any>()
+            data["percentage"] = percentage
+            data["bytesRead"] = bytesRead
+            data["totalBytes"] = totalBytes
+            sendTypedMessage("extraction_progress", data as Map<String, Any>)
+        }
+
         /** Send head position event */
         @JvmStatic
         fun sendHeadUp(isUp: Boolean) {
@@ -152,7 +175,7 @@ public class Bridge private constructor() {
         private fun micPcmEventBody(data: ByteArray): HashMap<String, Any> {
             val voiceActivityDetectionEnabled =
                     DeviceStore.get("glasses", "voiceActivityDetectionEnabled") as? Boolean
-                            ?: true
+                            ?: BluetoothSdkDefaults.VOICE_ACTIVITY_DETECTION_ENABLED
             val body = HashMap<String, Any>()
             body["pcm"] = data
             body["sampleRate"] = MIC_SAMPLE_RATE
@@ -166,7 +189,7 @@ public class Bridge private constructor() {
         private fun micLc3EventBody(data: ByteArray): HashMap<String, Any> {
             val voiceActivityDetectionEnabled =
                     DeviceStore.get("glasses", "voiceActivityDetectionEnabled") as? Boolean
-                            ?: true
+                            ?: BluetoothSdkDefaults.VOICE_ACTIVITY_DETECTION_ENABLED
             val frameSizeBytes =
                     (DeviceStore.store.get("bluetooth", "lc3_frame_size") as? Number)?.toInt()
                             ?: DEFAULT_LC3_FRAME_SIZE_BYTES
@@ -227,7 +250,8 @@ public class Bridge private constructor() {
                 deviceModel: String,
                 deviceName: String,
                 deviceAddress: String = "",
-                rssi: Int? = null
+                rssi: Int? = null,
+                projectName: String? = null
         ) {
             val searchResults =
                     (DeviceStore.store.getCategory("bluetooth")["searchResults"] as? List<*>)
@@ -239,7 +263,7 @@ public class Bridge private constructor() {
                                         ?.toMap()
                             }
                             ?: emptyList()
-            val id = "$deviceModel:$deviceName"
+            val id = listOfNotNull(deviceModel, projectName?.takeIf { it.isNotBlank() }, deviceName).joinToString(":")
             val newResult =
                     buildMap<String, Any> {
                         put("id", id)
@@ -248,6 +272,7 @@ public class Bridge private constructor() {
                         if (deviceAddress.isNotBlank()) {
                             put("address", deviceAddress)
                         }
+                        projectName?.takeIf { it.isNotBlank() }?.let { put("projectName", it) }
                         rssi?.let { put("rssi", it) }
                     }
             // Keep the public searchResults array stable as glasses are added or removed.
@@ -347,14 +372,30 @@ public class Bridge private constructor() {
 
         @JvmStatic
         fun sendPhotoError(requestId: String, errorCode: String, errorMessage: String) {
+            val timestamp = System.currentTimeMillis()
             val event = HashMap<String, Any>()
             event["type"] = "photo_response"
             event["state"] = "error"
             event["requestId"] = requestId
             event["errorCode"] = errorCode
             event["errorMessage"] = errorMessage
-            event["timestamp"] = System.currentTimeMillis()
+            event["timestamp"] = timestamp
             sendTypedMessage("photo_response", event as Map<String, Any>)
+        }
+
+        @JvmStatic
+        fun sendPhotoStatus(statusJson: Map<String, Any>) {
+            sendTypedMessage("photo_status", statusJson)
+        }
+
+        @JvmStatic
+        fun sendCameraStatus(statusJson: Map<String, Any>) {
+            sendTypedMessage("camera_status", statusJson)
+        }
+
+        @JvmStatic
+        fun sendPhotoResponse(responseJson: Map<String, Any>) {
+            sendTypedMessage("photo_response", responseJson)
         }
 
         /** Send RGB LED control response */
@@ -373,6 +414,55 @@ public class Bridge private constructor() {
             } catch (e: Exception) {
                 log("Bridge: Error sending rgb_led_control_response: $e")
             }
+        }
+
+        @JvmStatic
+        fun sendSettingsAck(values: Map<String, Any>) {
+            val body = HashMap<String, Any>()
+            body["type"] = "settings_ack"
+            values.forEach { (key, value) ->
+                body[key] = value
+            }
+            sendTypedMessage("settings_ack", body)
+        }
+
+        @JvmStatic
+        fun sendVideoRecordingStatus(values: Map<String, Any>) {
+            val body = HashMap<String, Any>()
+            body["type"] = "video_recording_status"
+            values.forEach { (key, value) ->
+                body[key] = value
+            }
+            sendTypedMessage("video_recording_status", body)
+        }
+
+        @JvmStatic
+        fun sendMediaUploadEvent(type: String, values: Map<String, Any>) {
+            val body = HashMap<String, Any>()
+            body["type"] = type
+            values.forEach { (key, value) ->
+                body[key] = value
+            }
+            sendTypedMessage(type, body)
+        }
+
+        @JvmStatic
+        fun sendVersionInfo(values: Map<String, Any>) {
+            fun stringField(vararg keys: String): String =
+                    keys.firstNotNullOfOrNull { key -> values[key] as? String } ?: ""
+            val body = HashMap<String, Any>()
+            body["type"] = "version_info"
+            body["androidVersion"] = stringField("androidVersion", "android_version")
+            body["firmwareVersion"] = stringField("firmwareVersion", "firmware_version")
+            body["besFirmwareVersion"] = stringField("besFirmwareVersion", "bes_fw_version")
+            body["mtkFirmwareVersion"] = stringField("mtkFirmwareVersion", "mtk_fw_version")
+            body["buildNumber"] = stringField("buildNumber", "build_number")
+            (values["systemTimeMs"] as? Number ?: values["system_time_ms"] as? Number)?.let {
+                body["systemTimeMs"] = it.toLong()
+            }
+            body["otaVersionUrl"] = stringField("otaVersionUrl", "ota_version_url")
+            body["appVersion"] = stringField("appVersion", "app_version")
+            sendTypedMessage("version_info", body)
         }
 
         /**
@@ -432,27 +522,82 @@ public class Bridge private constructor() {
             sendTypedMessage("glasses_serial_number", body as Map<String, Any>)
         }
 
-        /** Send WiFi status change */
+        /**
+         * Send WiFi status change. [error] is the glasses' provisioning failure reason
+         * (e.g. "connect_timeout", "connected_to_other_network") when this status is the
+         * verdict of a failed connect attempt; null for routine link-state updates.
+         */
         @JvmStatic
-        fun sendWifiStatusChange(connected: Boolean, ssid: String?, localIp: String?) {
+        @JvmOverloads
+        fun sendWifiStatusChange(
+                connected: Boolean,
+                ssid: String?,
+                localIp: String?,
+                error: String? = null
+        ) {
             val status = WifiStatus.fromStoreFields(connected, ssid, localIp) ?: return
-            sendTypedMessage("wifi_status_change", status.toMap())
+            val payload =
+                    if (error != null) status.toMap() + mapOf("error" to error)
+                    else status.toMap()
+            sendTypedMessage("wifi_status_change", payload)
+        }
+
+        /**
+         * Claim the WiFi scan-results store for a newly requested scan. Called by the
+         * SDK when it generates the scanId, BEFORE the scan command goes out: store
+         * ownership is decided at request time, not by whichever chunk arrives first,
+         * so a delayed chunk from an older, abandoned scan can never reset or clobber
+         * the current scan's accumulator.
+         */
+        @JvmStatic
+        fun claimWifiScanResults(scanId: String) {
+            DeviceStore.apply("bluetooth", "wifiScanActiveScanId", scanId)
         }
 
         /** Send WiFi scan results */
         @JvmStatic
-        fun updateWifiScanResults(networks: List<Map<String, Any>>) {
-            var storedNetworks: List<Map<String, Any>> =
-                    DeviceStore.get("bluetooth", "wifiScanResults") as? List<Map<String, Any>>
-                            ?: emptyList()
-            // add the networks to the storedNetworks array, removing duplicates by ssid
-            val updatedNetworks = storedNetworks.toMutableList()
-            for (network in networks) {
-                if (!updatedNetworks.any { it["ssid"] as? String == network["ssid"] as? String }) {
-                    updatedNetworks.add(network)
+        fun updateWifiScanResults(
+                networks: List<Map<String, Any>>,
+                scanComplete: Boolean,
+                scanId: String? = null
+        ) {
+            // Only chunks echoing the active scanId claimed at request time may mutate
+            // the store; foreign chunks are still forwarded to the SDK sink, which
+            // drops stale ids itself. Scan-id-less chunks (old firmware) keep the
+            // legacy accumulate-forever store behavior.
+            val ownsStore =
+                    scanId == null || scanId == DeviceStore.get("bluetooth", "wifiScanActiveScanId")
+            var updatedNetworks: List<Map<String, Any>> = networks
+            if (ownsStore) {
+                var storedNetworks: List<Map<String, Any>> =
+                        DeviceStore.get("bluetooth", "wifiScanResults") as? List<Map<String, Any>>
+                                ?: emptyList()
+                val lastScanId = DeviceStore.get("bluetooth", "wifiScanResultsScanId")
+                if (scanId != null && scanId != lastScanId) {
+                    // First chunk of a new scan: drop networks accumulated for a previous scan
+                    // so stale entries never carry over into this scan's store.
+                    storedNetworks = emptyList()
+                    DeviceStore.apply("bluetooth", "wifiScanResultsScanId", scanId)
                 }
+                // add the networks to the storedNetworks array, removing duplicates by ssid
+                val merged = storedNetworks.toMutableList()
+                for (network in networks) {
+                    if (!merged.any { it["ssid"] as? String == network["ssid"] as? String }) {
+                        merged.add(network)
+                    }
+                }
+                DeviceStore.apply("bluetooth", "wifiScanResults", merged)
+                updatedNetworks = merged
             }
-            DeviceStore.apply("bluetooth", "wifiScanResults", updatedNetworks)
+            val body = HashMap<String, Any>()
+            // Correlated scans: the SDK accumulates and dedupes chunks per scanId itself,
+            // so forward only this chunk; the merged store list is for UI consumers.
+            body["networks"] = if (scanId != null) networks else updatedNetworks
+            body["scanComplete"] = scanComplete
+            if (scanId != null) {
+                body["scanId"] = scanId
+            }
+            sendTypedMessage("wifi_scan_result", body)
         }
 
         /** Send gallery status - matches iOS MentraLive.swift handleGalleryStatus pattern */
@@ -462,14 +607,21 @@ public class Bridge private constructor() {
                 videoCount: Int,
                 totalCount: Int,
                 totalSize: Long,
-                hasContent: Boolean
+                hasContent: Boolean,
+                cameraBusy: Boolean,
+                cameraBusyReason: String?
         ) {
             val galleryData = HashMap<String, Any>()
+            galleryData["type"] = "gallery_status"
             galleryData["photos"] = photoCount
             galleryData["videos"] = videoCount
             galleryData["total"] = totalCount
             galleryData["totalSize"] = totalSize
             galleryData["hasContent"] = hasContent
+            galleryData["cameraBusy"] = cameraBusy
+            if (!cameraBusyReason.isNullOrBlank()) {
+                galleryData["cameraBusyReason"] = cameraBusyReason
+            }
 
             sendTypedMessage("gallery_status", galleryData as Map<String, Any>)
         }
@@ -503,26 +655,6 @@ public class Bridge private constructor() {
             eventBody["message"] = message
             eventBody["timestamp"] = System.currentTimeMillis()
             sendTypedMessage("mtk_update_complete", eventBody as Map<String, Any>)
-        }
-
-        /**
-         * Send OTA update available notification - glasses have detected an available update
-         * (background mode)
-         */
-        @JvmStatic
-        fun sendOtaUpdateAvailable(
-                versionCode: Long,
-                versionName: String,
-                updates: List<String>,
-                totalSize: Long
-        ) {
-            val eventBody = HashMap<String, Any>()
-            eventBody["version_code"] = versionCode
-            eventBody["version_name"] = versionName
-            eventBody["updates"] = updates
-            eventBody["total_size"] = totalSize
-
-            sendTypedMessage("ota_update_available", eventBody as Map<String, Any>)
         }
 
         /** Send ota_start_ack — glasses confirmed receipt of ota_start command */
@@ -609,6 +741,20 @@ public class Bridge private constructor() {
             sendTypedMessage("imu_gesture_event", eventBody as Map<String, Any>)
         }
 
+        /**
+         * Send a single accelerometer reading from the glasses IMU - matches iOS
+         * Bridge.sendAccelEvent. A richer combined IMU event (gyro + magnetometer) is future work.
+         */
+        @JvmStatic
+        fun sendAccelEvent(x: Float, y: Float, z: Float, timestamp: Long) {
+            val body = HashMap<String, Any>()
+            body["x"] = x
+            body["y"] = y
+            body["z"] = z
+            body["timestamp"] = timestamp
+            sendTypedMessage("accel_event", body as Map<String, Any>)
+        }
+
         // Arbitrary WS Comms (don't use these, make a dedicated function for your use case):
 
         /** Send WebSocket text message */
@@ -650,6 +796,20 @@ public class Bridge private constructor() {
                     return
                 }
 
+                val tracePayload = tracePayloadForTypedMessage(type, mutableBody as Map<String, Any>)
+                if (tracePayload != null) {
+                    try {
+                        BleTraceLogger.logMap(
+                            "phone_to_app",
+                            "sdk_event_dispatch",
+                            type,
+                            tracePayload,
+                        )
+                    } catch (e: Exception) {
+                        Log.d(TAG, "BLE trace logging failed for typed message '$type'", e)
+                    }
+                }
+
                 // Send directly using type as event name - no JSON serialization
                 sinks.forEach { sink ->
                     try {
@@ -667,6 +827,44 @@ public class Bridge private constructor() {
                 Log.e(TAG, "Error sending typed message of type '$type'", e)
             }
         }
+
+        private fun tracePayloadForTypedMessage(
+                type: String,
+                body: Map<String, Any>
+        ): Map<String, Any>? =
+                when {
+                    type == "log" -> null
+                    isAudioPayloadEvent(type) -> audioTracePayload(type, body)
+                    else -> body
+                }
+
+        private fun isAudioPayloadEvent(type: String): Boolean =
+                type == "mic_pcm" || type == "mic_lc3"
+
+        private fun audioTracePayload(type: String, body: Map<String, Any>): Map<String, Any> {
+            val payload = HashMap<String, Any>()
+            payload["type"] = type
+            payload["timestamp"] = System.currentTimeMillis()
+            payload["payloadOmitted"] = true
+            payload["payloadOmittedReason"] = "audio"
+
+            val audioBytes =
+                    when (type) {
+                        "mic_pcm" -> (body["pcm"] as? ByteArray)?.size
+                        "mic_lc3" -> (body["lc3"] as? ByteArray)?.size
+                        else -> null
+                    }
+            audioBytes?.let { payload["audioBytes"] = it }
+
+            AUDIO_TRACE_METADATA_KEYS.forEach { key ->
+                val value = body[key]
+                if (value != null) {
+                    payload[key] = value
+                }
+            }
+
+            return payload
+        }
     }
 
     init {
@@ -676,3 +874,6 @@ public class Bridge private constructor() {
         }
     }
 }
+
+
+

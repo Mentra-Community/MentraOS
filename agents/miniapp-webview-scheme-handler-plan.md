@@ -56,7 +56,7 @@ which has two unfixable problems:
 
 Fix: replace `react-native-webview` with a small Expo module that owns
 the WebView and registers a custom URL scheme handler. Each miniapp
-loads from `mentra-miniapp://<package>/<path>`. Native code resolves
+loads from `miniapp://<package>/<path>`. Native code resolves
 the path to `lmas/<package>/<active-version>/<path>` and serves it
 with proper headers.
 
@@ -123,19 +123,19 @@ mobile/src/components/miniapp/MiniappHost.tsx
                                        drop react-native-webview for miniapps
 ```
 
-#### Scheme: `mentra-miniapp://`
+#### Scheme: `miniapp://`
 
-URL shape: `mentra-miniapp://<package>/<path>`
+URL shape: `miniapp://<package>/<path>`
 
 - `<package>` — `com.mentra.example` etc. Becomes the host. Origin
-  isolation kicks in here: WebView treats `mentra-miniapp://com.a` and
-  `mentra-miniapp://com.b` as different origins. Storage, cookies,
+  isolation kicks in here: WebView treats `miniapp://com.a` and
+  `miniapp://com.b` as different origins. Storage, cookies,
   service workers all scoped per-host automatically.
 - `<path>` — `index.html`, `assets/main.js`, `fonts/inter.woff2`, etc.
   Resolved against `lmas/<package>/<active-version>/`.
 
 A miniapp's index would load from
-`mentra-miniapp://com.mentra.example/index.html`. Its bundled assets
+`miniapp://com.mentra.example/index.html`. Its bundled assets
 are referenced as relative paths in the HTML (`./main.js`) and the
 WebView resolves them against the same origin → all served from disk.
 
@@ -145,7 +145,7 @@ Implements `WKURLSchemeHandler`. Two methods:
 
 ```swift
 func webView(_ webView: WKWebView, start urlSchemeTask: WKURLSchemeTask) {
-  // 1. Parse the URL: mentra-miniapp://<package>/<path>
+  // 1. Parse the URL: miniapp://<package>/<path>
   // 2. Look up active version for <package>
   //    (passed in via prop / set on the handler when MiniappWebView
   //    mounts, refreshed on prop change)
@@ -276,7 +276,7 @@ just with `liveUrl` set in the dev case and absent (or null) for
 installed. The WebView's source is implicit:
 
 - `liveUrl` set → load `liveUrl` directly (http/https)
-- `liveUrl` absent → load `mentra-miniapp://<packageName>/index.html`
+- `liveUrl` absent → load `miniapp://<packageName>/index.html`
 
 So `MountedMiniapp.source` collapses from `{uri: string}` to one of
 two implicit cases derived from `liveUrl`. Cleaner.
@@ -317,7 +317,7 @@ Skip.
 After this work:
 
 - Dev miniapps load from `http://laptop:3000` (real HTTP origin).
-- Installed miniapps load from `mentra-miniapp://<pkg>` (real custom-
+- Installed miniapps load from `miniapp://<pkg>` (real custom-
   scheme origin).
 
 Two URL shapes, both "real" origins. Both let modules work. Both let
@@ -441,7 +441,7 @@ ignores it. Only same-origin (relative) requests hit the handler.
 
 Bun/Vite/etc. emit absolute paths starting with `/` in some
 configurations: `<script src="/main.js">`. Those resolve against the
-origin's root: `mentra-miniapp://com.x/main.js`. Scheme handler
+origin's root: `miniapp://com.x/main.js`. Scheme handler
 strips the leading `/` from path → reads `<lmas>/<pkg>/<v>/main.js`.
 Works. Just need to be consistent: the path component IS the file
 path within the bundle.
@@ -475,13 +475,13 @@ during PR 1's rollout window. Drop in PR 2 once we're confident.
 
 ## Open questions
 
-1. **Should `mentra-miniapp://` be the canonical URL also surfaced to
+1. **Should `miniapp://` be the canonical URL also surfaced to
    the user (e.g. in deep links, the SDK's `window.location`)?** The
    miniapp's JS will see this URL. It's a stable identity for the
    package. SDK methods that emit links could use it. → Probably yes,
    defer the call until we have a concrete need.
 
-2. **Same scheme on both platforms?** Yes — `mentra-miniapp://` works
+2. **Same scheme on both platforms?** Yes — `miniapp://` works
    identically on iOS and Android. Keeps things mentally simple.
 
 3. **What about the auth/store WebViews still using
@@ -587,7 +587,7 @@ We don't need:
 - JS injection from the asset handler. We have RN-side JS injection.
 
 What we DO use directly from their playbook:
-- The `mentra-miniapp://` scheme name structure (analogous to
+- The `miniapp://` scheme name structure (analogous to
   Capacitor's `capacitor://`).
 - The pattern of "host = identity, path = asset path" in URL parsing.
 - Range-request support on iOS for media (their snippet is

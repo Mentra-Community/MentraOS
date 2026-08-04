@@ -160,4 +160,163 @@ describe('validateManifest', () => {
       expect(valid).toBe(true);
     });
   });
+
+  describe('Two-layer fields (sdkVersion / minHostVersion / entry / type)', () => {
+    test('accepts a two-layer manifest with full two-layer fields', () => {
+      const {valid, errors} = validateManifest({
+        ...minimalValid,
+        sdkVersion: '0.2.0',
+        minHostVersion: '1.42.0',
+        entry: {background: 'dist/background/index.js', ui: 'dist/ui/index.html'},
+        type: 'standard',
+      });
+      expect(errors).toEqual([]);
+      expect(valid).toBe(true);
+    });
+
+    test('sdkVersion must be a non-empty string when set', () => {
+      const {errors} = validateManifest({...minimalValid, sdkVersion: ''});
+      expect(errors.some((e) => e.includes('sdkVersion'))).toBe(true);
+    });
+
+    test('minHostVersion must be a non-empty string when set', () => {
+      const {errors} = validateManifest({...minimalValid, minHostVersion: 42});
+      expect(errors.some((e) => e.includes('minHostVersion'))).toBe(true);
+    });
+
+    test('entry.background is required when entry is set', () => {
+      const {errors} = validateManifest({...minimalValid, entry: {ui: 'dist/ui/index.html'}});
+      expect(errors.some((e) => e.includes('entry.background'))).toBe(true);
+    });
+
+    test('entry.ui must be a string when set', () => {
+      const {errors} = validateManifest({
+        ...minimalValid,
+        entry: {background: 'dist/background/index.js', ui: 42},
+      });
+      expect(errors.some((e) => e.includes('entry.ui'))).toBe(true);
+    });
+
+    test('entry must be an object (not array, not string)', () => {
+      const {errors} = validateManifest({...minimalValid, entry: 'dist/index.js'});
+      expect(errors.some((e) => e.includes('entry'))).toBe(true);
+    });
+
+    test('type must be "standard" or "background" when set', () => {
+      const {errors} = validateManifest({...minimalValid, type: 'weird'});
+      expect(errors.some((e) => e.includes('type'))).toBe(true);
+    });
+
+    test('type accepts "background" miniapps', () => {
+      const {valid} = validateManifest({...minimalValid, type: 'background'});
+      expect(valid).toBe(true);
+    });
+
+    test('manifests without two-layer fields still validate (legacy single-layer)', () => {
+      const {valid, errors} = validateManifest(minimalValid);
+      expect(errors).toEqual([]);
+      expect(valid).toBe(true);
+    });
+  });
+
+  describe('actions', () => {
+    test('accepts a well-formed action with typed parameters', () => {
+      const {valid, errors} = validateManifest({
+        ...minimalValid,
+        actions: [
+          {
+            id: 'add_todo',
+            description: 'Add an item to the user\'s todo list.',
+            parameters: {
+              type: 'object',
+              properties: {
+                text: {type: 'string', description: 'The todo text'},
+                tags: {type: 'array', items: {type: 'string'}},
+              },
+              required: ['text'],
+            },
+            outputSchema: {
+              type: 'object',
+              properties: {
+                ok: {type: 'boolean'},
+                message: {type: 'string'},
+              },
+              required: ['ok'],
+            },
+          },
+        ],
+      });
+      expect(errors).toEqual([]);
+      expect(valid).toBe(true);
+    });
+
+    test('rejects a non-object output schema', () => {
+      const {valid, errors} = validateManifest({
+        ...minimalValid,
+        actions: [{id: 'go', description: 'x', outputSchema: 'not-a-schema'}],
+      });
+      expect(valid).toBe(false);
+      expect(errors.some((e) => e.includes('outputSchema'))).toBe(true);
+    });
+
+    test('accepts an action with no parameters', () => {
+      const {valid} = validateManifest({
+        ...minimalValid,
+        actions: [{id: 'snooze', description: 'Snooze the current reminder.'}],
+      });
+      expect(valid).toBe(true);
+    });
+
+    test('rejects an id that breaks the pattern', () => {
+      const {valid, errors} = validateManifest({
+        ...minimalValid,
+        actions: [{id: 'Add-Todo', description: 'x'}],
+      });
+      expect(valid).toBe(false);
+      expect(errors.some((e) => e.includes('actions[0].id'))).toBe(true);
+    });
+
+    test('rejects duplicate action ids', () => {
+      const {valid, errors} = validateManifest({
+        ...minimalValid,
+        actions: [
+          {id: 'go', description: 'one'},
+          {id: 'go', description: 'two'},
+        ],
+      });
+      expect(valid).toBe(false);
+      expect(errors.some((e) => e.includes('duplicated'))).toBe(true);
+    });
+
+    test('rejects a missing/empty description', () => {
+      const {valid, errors} = validateManifest({
+        ...minimalValid,
+        actions: [{id: 'go', description: '   '}],
+      });
+      expect(valid).toBe(false);
+      expect(errors.some((e) => e.includes('description'))).toBe(true);
+    });
+
+    test('rejects "integer" param type (use "number")', () => {
+      const {valid, errors} = validateManifest({
+        ...minimalValid,
+        actions: [
+          {id: 'go', description: 'x', parameters: {type: 'object', properties: {n: {type: 'integer'}}}},
+        ],
+      });
+      expect(valid).toBe(false);
+      expect(errors.some((e) => e.includes('.type must be one of'))).toBe(true);
+    });
+
+    test('rejects an array param without items.type', () => {
+      const {valid, errors} = validateManifest({
+        ...minimalValid,
+        actions: [
+          {id: 'go', description: 'x', parameters: {type: 'object', properties: {a: {type: 'array'}}}},
+        ],
+      });
+      expect(valid).toBe(false);
+      expect(errors.some((e) => e.includes('items.type'))).toBe(true);
+    });
+  });
 });

@@ -63,6 +63,9 @@ augmentos_npm/
 **/expo-env.d.ts
 *.tsbuildinfo
 .tsbuildinfo
+.cloud-v2-storage/
+miniapps/**/build/*.zip
+mobile/.env.*-backup
 
 ### PYTHON
 #
@@ -113,7 +116,10 @@ aiohttp/_http_writer.c
 aiohttp/_http_writer.html
 aiohttp/_websocket.c
 aiohttp/_websocket.html
+# Python virtualenv bin directories. Negation lets through real
+# `bin/` directories that ship CLI entry points (scaffolders, etc.).
 bin
+!sdk/*/bin/
 # Python build directory (specific to Python projects)
 **/python/build
 coverage.xml
@@ -343,6 +349,10 @@ cython_debug/
 # macos garbage
 .DS_Store
 
+# BLE photo benchmark outputs are generated locally; only the summary README is committed
+benchmarks/jpeg_quality_80_100/*/*.jpg
+benchmarks/jpeg_quality_80_100/*/*.avif
+
 # ContextualSearchEngine
 server/images/cse/
 server/package-lock.json
@@ -357,7 +367,6 @@ server/auth/serviceAccountKey.json
 .env.development
 .env.production
 .env.staging
-asg_client/StreamPackLite/
 
 
 ### iOS Large Files - XCFrameworks and Models
@@ -371,6 +380,47 @@ nicelogs.txt
 # mentra-miniapp install cache (built+packed zips ready to serve)
 **/.mentra/
 
+
+issues
+!cloud-v2/docs/issues/
+!cloud-v2/docs/issues/**
+!cloud/issues/
+!cloud/issues/**
+# Re-ignore macOS junk under the cloud/issues un-ignore above
+cloud/issues/.DS_Store
+cloud/issues/**/.DS_Store
+
+# Local pulled text-detection debug dumps (adb / analysis artifacts)
+mobile/textdetect_debug_pulled/
+
+# Local session notes
+MEMORY.md
 # Cursor IDE local config (MCP, etc.)
-.cursor/
+.cursor/*
+!.cursor/BUGBOT.md
+
+# PR agent orchestrator local outputs
+.pr-agent/
+
+# Local agent/tooling state
+.mcp.json
+.codex/
+
+# Graphify knowledge graph output (local AST extract)
+graphify-out/
+
+# Local Cursor/agent skills
+mobile/agents/
+
+# Nested starter-kit repo (separate git history)
 Mentra-Bluetooth-SDK-Starter-Kit/
+
+# Nested Zephyr glasses client repo (separate git history)
+Mentra-Zephyr-Glasses-Client/
+
+# Navigation miniapp build output
+miniapps/navigation/build/
+
+# Downloaded bug report bundles (scripts/fetch-incident-logs.sh)
+incident-logs/
+asg_client/StreamPackLite.zip

@@ -53,15 +53,10 @@ public class ServiceHeartbeatCommandHandler implements ICommandHandler {
             int heartbeatCounter = data.optInt("heartbeat_counter", -1);
             
             Log.d(TAG, "💓 Service heartbeat #" + heartbeatCounter + " received at " + timestamp);
-            
-            // Notify AsgClientService about heartbeat to reset timeout
-            if (serviceManager != null) {
-                serviceManager.onServiceHeartbeatReceived();
-                return true;
-            } else {
-                Log.e(TAG, "❌ ServiceManager is null - cannot process heartbeat");
-                return false;
-            }
+
+            // Plain ack path: the heartbeat no longer feeds a connection inference (phone
+            // presence comes from the BES via the transport LinkStateMachine).
+            return true;
         } catch (Exception e) {
             Log.e(TAG, "💥 Error handling service heartbeat command", e);
             return false;

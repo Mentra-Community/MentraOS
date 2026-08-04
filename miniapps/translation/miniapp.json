@@ -1,0 +1,57 @@
+{
+  "$schema": "./node_modules/@mentra/miniapp-cli/schema/miniapp.schema.json",
+  "packageName": "com.mentra.translation",
+  "version": "1.0.18",
+  "name": "Translation",
+  "description": "Local cloud-v2 translation tester. Translates any detected source language into the selected target language and renders the result on the glasses display.",
+  "type": "standard",
+  "sdkVersion": "0.3.0",
+  "minHostVersion": "1.42.0",
+  "port": 3110,
+  "entry": {
+    "background": "background/index.js",
+    "ui": "ui/index.html"
+  },
+  "permissions": [
+    {
+      "type": "MICROPHONE",
+      "description": "Used for live translation"
+    }
+  ],
+  "hardwareRequirements": [
+    {
+      "type": "DISPLAY",
+      "level": "OPTIONAL",
+      "description": "Shows live translation on display glasses; the phone UI works without one"
+    },
+    {
+      "type": "MICROPHONE",
+      "level": "REQUIRED",
+      "description": "Captures speech for translation"
+    }
+  ],
+  "icon": "icon.png",
+  "actions": [
+    {
+      "id": "start_translation",
+      "description": "Start live translation on the glasses. It listens to ANY spoken language around the user and translates it into one chosen target language, showing the result on the glasses in real time — so the user understands speech in a language they don't speak. Use when the user wants to translate what they're hearing, understand a foreign-language conversation, or 'translate to <language>'. Pass targetLanguage to set the language they want to read; omit it to keep their saved choice.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "targetLanguage": {
+            "type": "string",
+            "description": "The language the user wants to read the translation in, as a BCP-47 code (e.g. 'en', 'es', 'fr', 'de', 'pt', 'it', 'ja', 'zh', 'ko', 'ar', 'hi', 'vi'). Omit to keep the user's saved target language."
+          }
+        }
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "targetLanguage": {"type": "string"},
+          "status": {"type": "string"}
+        },
+        "required": ["targetLanguage", "status"]
+      }
+    }
+  ]
+}

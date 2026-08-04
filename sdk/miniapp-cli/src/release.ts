@@ -4,14 +4,14 @@
  * Flow:
  *   1. Detect package manager, run `<pm> run build` so the user's bundler
  *      produces dist/.
- *   2. Validate manifest + pack dist/ → .mentra/<pkg>-<v>.zip (uses pack()).
+ *   2. Validate manifest + pack dist/ → build/<pkg>-<v>.zip (uses pack()).
  *   3. Spin up a tiny HTTP server on the LAN that serves the zip and
  *      manifest at fixed paths.
- *   4. Print a QR with `mentra-miniapp://release?url=<lan-base>&...`.
+ *   4. Print a QR with `miniapp://release?url=<lan-base>&...`.
  *   5. Stay up (default persistent) so multiple devices can install. Print a
  *      ✓ line whenever a phone successfully fetches /bundle.zip.
  *
- * Phone-side: scanner branches on `mentra-miniapp://release`, downloads the
+ * Phone-side: scanner branches on `miniapp://release`, downloads the
  * zip via composer.installMiniApp(<base>/bundle.zip). The miniapp lands in
  * lmas/<pkg>/<manifestVersion>/ and behaves like any installed local
  * miniapp — runs offline, persists across restarts, no laptop required.
@@ -22,11 +22,12 @@
  * collision and matches Android's `installRelease` mental model.
  */
 
-import {readFileSync, existsSync, statSync, readdirSync} from 'fs'
+import {readFileSync, existsSync, statSync, readdirSync, unlinkSync} from 'fs'
 import os from 'os'
 import {resolve, join} from 'path'
+import {buildProduction} from './build.js'
 import {pack} from './pack.js'
-import {printQR} from './qr.js'
+import {printQR, writeQRPng} from './qr.js'
 import {validateManifest} from './manifest.js'
 
 const DEFAULT_PORT_START = 6789
@@ -38,6 +39,7 @@ const BUNDLE_PATH = '/bundle.zip'
 
 interface ReleaseOptions {
   noCache?: boolean
+  qrOutput?: string
 }
 
 export async function release(opts: ReleaseOptions = {}): Promise<void> {
@@ -68,7 +70,7 @@ export async function release(opts: ReleaseOptions = {}): Promise<void> {
   const name = (manifest.name as string) ?? packageName
 
   // ---- 2. Build (or skip via cache) -----------------------------------
-  const cacheDir = resolve(cwd, '.mentra')
+  const cacheDir = resolve(cwd, 'build')
   const cachedZipName = `${packageName}-${version}.zip`
   const cachedZipPath = join(cacheDir, cachedZipName)
 
@@ -76,37 +78,11 @@ export async function release(opts: ReleaseOptions = {}): Promise<void> {
   if (cacheValid) {
     console.log(`✓ Using cached build (${cachedZipName})`)
   } else {
-    const pm = detectPackageManager(cwd)
-    if (!packageJsonHasBuildScript(cwd)) {
-      console.error(
-        'Error: no "build" script in package.json. Add one (e.g. "build": "vite build") and re-run.',
-      )
-      process.exit(1)
-    }
-    console.log(`Building with ${pm} run build...`)
-    const buildStart = Date.now()
-    const buildProc = Bun.spawn([pm, 'run', 'build'], {
-      cwd,
-      stdout: 'inherit',
-      stderr: 'inherit',
-    })
-    const buildCode = await buildProc.exited
-    if (buildCode !== 0) {
-      console.error('Error: build failed')
-      process.exit(1)
-    }
-    const distDir = resolve(cwd, 'dist')
-    if (!existsSync(distDir)) {
-      console.error(
-        'Error: build succeeded but dist/ does not exist. Configure your bundler to output to dist/.',
-      )
-      process.exit(1)
-    }
-    console.log(`✓ Built (${((Date.now() - buildStart) / 1000).toFixed(1)}s)`)
+    await buildProduction(cwd)
 
-    // Pack into .mentra/<pkg>-<v>.zip
+    // Pack into build/<pkg>-<v>.zip
     const packStart = Date.now()
-    const zipPath = await pack({outDir: '.mentra', silent: true})
+    const zipPath = await pack({outDir: 'build', silent: true})
     const sizeKb = Math.round(statSync(zipPath).size / 1024)
     console.log(`✓ Packed ${packageName}@${version} (${sizeKb} KB) in ${((Date.now() - packStart) / 1000).toFixed(1)}s`)
   }
@@ -166,7 +142,7 @@ export async function release(opts: ReleaseOptions = {}): Promise<void> {
   })
 
   // ---- 5. QR + banner --------------------------------------------------
-  const qrUrl = `mentra-miniapp://release?url=${encodeURIComponent(baseUrl)}&package=${encodeURIComponent(packageName)}&version=${encodeURIComponent(version)}&name=${encodeURIComponent(name)}`
+  const qrUrl = `miniapp://release?url=${encodeURIComponent(baseUrl)}&package=${encodeURIComponent(packageName)}&version=${encodeURIComponent(version)}&name=${encodeURIComponent(name)}`
 
   console.log('\n╔══════════════════════════════════════════════════════════════╗')
   console.log('║  Install your mini app on a phone:                           ║')
@@ -181,17 +157,37 @@ export async function release(opts: ReleaseOptions = {}): Promise<void> {
   console.log('║  Ctrl+C to stop.                                             ║')
   console.log('╚══════════════════════════════════════════════════════════════╝\n')
 
-  printQR(qrUrl)
-  console.log(`\n${qrUrl}\n`)
+  const defaultQrPath = join(os.tmpdir(), `mentra-release-qr-${packageName}.png`)
+  const qrOutputPath = resolve(opts.qrOutput ?? defaultQrPath)
+  const cleanupQrOnExit = !opts.qrOutput
+
+  await printQR(qrUrl)
+  const wrotePng = await writeQRPng(qrUrl, qrOutputPath)
+  console.log(`\n${qrUrl}`)
+  if (wrotePng) {
+    console.log(`PNG QR: ${qrOutputPath}\n`)
+  } else {
+    console.log(`PNG QR: (not written — see warning above)\n`)
+  }
   console.log(`Serving on ${baseUrl}`)
 
-  // ---- 6. Wait for SIGINT ---------------------------------------------
-  await new Promise<void>((resolve) => {
-    process.on('SIGINT', () => {
+  // ---- 6. Wait for SIGINT / SIGTERM -----------------------------------
+  await new Promise<void>((resolvePromise) => {
+    const shutdown = () => {
       console.log('\nShutting down...')
+      // Only remove the auto temp path — keep an explicit --qr-output artifact.
+      if (cleanupQrOnExit) {
+        try {
+          unlinkSync(qrOutputPath)
+        } catch {
+          // best-effort cleanup of temp PNG
+        }
+      }
       server.stop()
-      resolve()
-    })
+      resolvePromise()
+    }
+    process.on('SIGINT', shutdown)
+    process.on('SIGTERM', shutdown)
   })
 }
 
@@ -226,32 +222,14 @@ async function pickPort(start: number, limit: number): Promise<number> {
   process.exit(1)
 }
 
-function detectPackageManager(cwd: string): 'bun' | 'pnpm' | 'yarn' | 'npm' {
-  if (existsSync(join(cwd, 'bun.lock')) || existsSync(join(cwd, 'bun.lockb'))) return 'bun'
-  if (existsSync(join(cwd, 'pnpm-lock.yaml'))) return 'pnpm'
-  if (existsSync(join(cwd, 'yarn.lock'))) return 'yarn'
-  return 'npm'
-}
-
-function packageJsonHasBuildScript(cwd: string): boolean {
-  const pkgPath = join(cwd, 'package.json')
-  if (!existsSync(pkgPath)) return false
-  try {
-    const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'))
-    return typeof pkg?.scripts?.build === 'string' && pkg.scripts.build.length > 0
-  } catch {
-    return false
-  }
-}
-
 /**
  * Cache is fresh if the zip exists and is newer than every source file in
- * the project (excluding node_modules / dist / .mentra / .git).
+ * the project (excluding node_modules / dist / build / .git).
  */
 function isCacheFresh(zipPath: string, cwd: string): boolean {
   if (!existsSync(zipPath)) return false
   const zipMtime = statSync(zipPath).mtimeMs
-  return walkAllNewerThan(cwd, zipMtime, ['node_modules', 'dist', '.mentra', '.git']) === false
+  return walkAllNewerThan(cwd, zipMtime, ['node_modules', 'dist', 'build', '.git']) === false
 }
 
 /**

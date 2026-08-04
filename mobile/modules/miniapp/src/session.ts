@@ -7,48 +7,76 @@
  * Lifecycle:
  *   const session = new MiniappSession()
  *   await session.connect()          // sends CONNECT, resolves on CONNECT_ACK
- *   session.display.showTextWall(...)
+ *   session.display.render([...])
  *   ...
  *   session.disconnect()
  */
 
 import {EventEmitter} from "eventemitter3"
 
-import {
-  makeRequestId,
-  MiniappEnvelope,
-  parseEnvelope,
-  serializeEnvelope,
-} from "./envelope"
+import {makeRequestId, MiniappEnvelope, parseEnvelope, serializeEnvelope} from "./envelope"
 import {getMentraOSGlobals, MiniappColorScheme} from "./globals"
 import {MiniappErrorCode, MiniappRequestType, MiniappResponseType} from "./protocol"
 import {createTransport, CreateTransportOptions} from "./transport/auto"
 import {Transport} from "./transport/types"
 import {CameraModule} from "./modules/camera"
+import {AuthModule} from "./modules/auth"
+import {CloudModule} from "./modules/cloud"
 import {DashboardAPI} from "./modules/dashboard"
 import {DisplayManager} from "./modules/display"
-import {EventManager, type UnsubscribeFn} from "./modules/events"
+import {EventManager, type TranscriptionEventRoute, type UnsubscribeFn} from "./modules/events"
 import {GlassesModule} from "./modules/glasses"
+import {HeadingModule} from "./modules/heading"
 import {ImuModule} from "./modules/imu"
 import {InputModule} from "./modules/input"
 import {LedModule} from "./modules/led"
 import {LocationModule} from "./modules/location"
 import {MicModule} from "./modules/mic"
+import {NavigationModule} from "./modules/navigation"
 import {PermissionsModule} from "./modules/permissions"
 import {PhoneModule} from "./modules/phone"
 import {TranscriptionModule} from "./modules/transcription"
 import {TranslationModule} from "./modules/translation"
+import {UIModuleImpl, type UIModule} from "./modules/ui"
 import {SimpleStorage} from "./modules/storage"
 import {SpeakerModule} from "./modules/speaker"
 import {StreamModule} from "./modules/stream"
 import {SystemModule} from "./modules/system"
+import {MiniappsModule} from "./modules/miniapps"
+import {ActionsModule} from "./modules/actions"
+import {BlobModule} from "./modules/blob"
 
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
 
+/**
+ * Typed display capabilities for the scene API. All limit fields are optional
+ * in the type because older hosts don't send them — treat absence as "unknown",
+ * not zero. Populated on the "ready" event (null in `start()`).
+ */
+export interface DisplayCapabilities {
+  /** Public drawable canvas in px — raw coordinate space for `display.render()` boxes. */
+  width?: number
+  height?: number
+  /** False ⇒ the device can't position elements; scenes degrade to text walls host-side. */
+  canPosition?: boolean
+  /** Element budgets. Rects share the text pool on container-based devices. */
+  maxTextElements?: number
+  maxImageElements?: number
+  /** Per-image dimension cap (box-level), when the device has one. */
+  maxImagePx?: {width: number; height: number}
+  shapes?: string[]
+  intensityLevels?: number
+  partialUpdate?: boolean
+  /** Legacy capability fields (resolution, isColor, maxTextLines, …) ride along. */
+  [key: string]: unknown
+}
+
 /** Minimal snapshot of the currently-connected glasses. Phone-provided. */
 export interface GlassesCapabilities {
+  /** Display block — null/absent on displayless devices (e.g. Mentra Live). */
+  display?: DisplayCapabilities | null
   [key: string]: unknown
 }
 
@@ -75,6 +103,24 @@ export interface ConnectAckPayload {
    * declaration-only; OS-grant state is not modeled.
    */
   permissions?: PermissionRecord
+  /** Miniapp-scoped backend auth. Never a Core or runtime token. */
+  auth?: MiniappAuthState
+}
+
+export interface MiniappAuthState {
+  mentraUserId: string
+  oemId?: string
+  token: string
+  expiresAt: number
+}
+
+export interface AuthUpdatePayload {
+  type: MiniappResponseType.AUTH_UPDATE
+  auth?: MiniappAuthState
+}
+
+interface AuthRefreshResult {
+  auth?: MiniappAuthState
 }
 
 /**
@@ -113,22 +159,47 @@ interface PendingRequest {
   requestId: string
   resolve: (value: unknown) => void
   reject: (error: MiniappRequestError) => void
+  /** Timeout handle; cleared when the response (or a transport failure) settles the request. */
+  timer?: ReturnType<typeof setTimeout>
 }
 
 const DEFAULT_CONNECT_TIMEOUT_MS = 10_000
 
+// Hard ceiling on how long a single bridge request waits for the host's
+// REQUEST_RESULT. Without it, a host that never responds (a hung cloud call, a
+// GPS fix that never arrives, a native handler that stalls) leaves the request
+// promise pending FOREVER — which is what stalled navigation at "Starting…"
+// (the controller's `starting` guard never reset because start() never settled).
+// 60s is generous: it covers a slow route computation while still guaranteeing
+// the promise eventually rejects so callers can roll back / surface an error.
+const DEFAULT_REQUEST_TIMEOUT_MS = 60_000
+
 type SessionEmitterEvents = {
   ready: () => void
   error: (error: Error) => void
+  /**
+   * Last-chance hook before the transport closes. Fires when the phone
+   * sends WILL_DISCONNECT, or when this session calls `disconnect()`
+   * locally. Handlers run synchronously and may issue one final
+   * `sendOneShot`/`sendRequest` (e.g. `display.render([])`); async work won't complete
+   * before the socket closes.
+   */
+  beforeDisconnect: (reason: string) => void
   disconnect: (reason: string) => void
   visibility: (v: MiniappVisibility) => void
   capabilities: (cap: GlassesCapabilities | null) => void
   colorScheme: (scheme: MiniappColorScheme) => void
   permissions: (perms: PermissionRecord) => void
   speakerState: (event: import("./modules/speaker").SpeakerStateEvent) => void
+  auth: (auth: MiniappAuthState) => void
 }
 
-export class MiniappSession {
+// The default preserves the pre-channel-registry behavior for code that creates
+// or accepts a bare MiniappSession. `registerMiniapp<Channels>` supplies the
+// concrete mapping for scaffolded miniapps.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export class MiniappSession<TChannels extends object = any> {
+  public readonly auth: AuthModule
   public readonly display: DisplayManager
   /**
    * Internal subscription registry + escape hatch.
@@ -141,20 +212,47 @@ export class MiniappSession {
   public readonly events: EventManager
   public readonly speaker: SpeakerModule
   public readonly camera: CameraModule
+  public readonly cloud: CloudModule
   public readonly dashboard: DashboardAPI
   public readonly glasses: GlassesModule
+  public readonly heading: HeadingModule
   public readonly imu: ImuModule
   public readonly input: InputModule
   public readonly led: LedModule
   public readonly location: LocationModule
   public readonly mic: MicModule
+  public readonly navigation: NavigationModule
   public readonly permissions: PermissionsModule
   public readonly phone: PhoneModule
   public readonly storage: SimpleStorage
+  /**
+   * Phone-local persistent BINARY storage (`session.blob`) — the binary
+   * counterpart to `session.storage`. Files on disk, scoped to this miniapp.
+   * Writes/reads are chunked so large payloads (e.g. captured audio fed in via
+   * `session.mic.onAudioChunk`) never cross the bridge in one message.
+   */
+  public readonly blob: BlobModule
   public readonly stream: StreamModule
   public readonly system: SystemModule
   public readonly transcription: TranscriptionModule
   public readonly translation: TranslationModule
+  /**
+   * UI message bus to the bound WebView (when one is open).
+   * Background-only API surface; mirrors the WebView's `mentra` global
+   * with inverted buffering policy (background drops when no WebView is
+   * bound; the WebView buffers until ready).
+   */
+  public readonly ui: UIModule<TChannels>
+  /**
+   * Inter-miniapp lifecycle + discovery (list / start / stop). SYSTEM-only —
+   * calls reject with NOT_PERMITTED unless this miniapp is a system app.
+   */
+  public readonly miniapps: MiniappsModule
+  /**
+   * Inter-miniapp action layer. `invoke` (SYSTEM-only) calls another miniapp's
+   * declared action; `handle` (open to all) exposes one of your own.
+   */
+  public readonly actions: ActionsModule
 
   /** Phone-declared glasses capabilities. Null until CONNECT_ACK arrives. */
   public capabilities: GlassesCapabilities | null = null
@@ -170,6 +268,14 @@ export class MiniappSession {
   private readonly transport: Transport
   private readonly connectTimeoutMs: number
   private readonly emitter = new EventEmitter<SessionEmitterEvents>()
+  private authState: MiniappAuthState | null = null
+  private readonly authWaiters = new Set<{
+    minTtlMs: number
+    resolve: (auth: MiniappAuthState) => void
+    reject: (error: Error) => void
+    timer: ReturnType<typeof setTimeout>
+  }>()
+  private authRefreshPromise: Promise<MiniappAuthState | null> | null = null
 
   /**
    * Outbound queue for anything sent before CONNECT_ACK. Flushed in FIFO order
@@ -199,24 +305,32 @@ export class MiniappSession {
       this.colorScheme = injected.colorScheme
     }
 
+    this.auth = new AuthModule(this)
     this.events = new EventManager(this)
     this.speaker = new SpeakerModule(this)
     this.camera = new CameraModule(this)
+    this.cloud = new CloudModule(this)
     this.dashboard = new DashboardAPI(this)
     this.display = new DisplayManager(this)
     this.glasses = new GlassesModule(this)
+    this.heading = new HeadingModule(this)
     this.imu = new ImuModule(this)
     this.input = new InputModule(this)
     this.led = new LedModule(this)
     this.location = new LocationModule(this)
     this.mic = new MicModule(this)
+    this.navigation = new NavigationModule(this)
     this.permissions = new PermissionsModule(this)
     this.phone = new PhoneModule(this)
     this.storage = new SimpleStorage(this)
+    this.blob = new BlobModule(this)
     this.stream = new StreamModule(this)
     this.system = new SystemModule(this)
     this.transcription = new TranscriptionModule(this)
     this.translation = new TranslationModule(this)
+    this.ui = new UIModuleImpl<TChannels>(this)
+    this.miniapps = new MiniappsModule(this)
+    this.actions = new ActionsModule(this)
   }
 
   /**
@@ -244,6 +358,37 @@ export class MiniappSession {
     return {...this._permissions}
   }
 
+  /** @internal — current miniapp-scoped backend auth, if the host provided one. */
+  _getAuth(): MiniappAuthState | null {
+    return this.authState ? {...this.authState} : null
+  }
+
+  /**
+   * @internal — wait for a scoped miniapp token. Used by session.auth; not part
+   * of the public SDK surface because authors should never manage wire events.
+   */
+  _waitForAuth(minTtlMs: number, timeoutMs = 10_000): Promise<MiniappAuthState> {
+    const current = this.authState
+    if (current && this.authHasTtl(current, minTtlMs)) {
+      return Promise.resolve({...current})
+    }
+
+    void this.requestAuthRefresh(minTtlMs)
+
+    return new Promise((resolve, reject) => {
+      const waiter = {
+        minTtlMs,
+        resolve,
+        reject,
+        timer: setTimeout(() => {
+          this.authWaiters.delete(waiter)
+          reject(new NotConnectedError("Miniapp auth token is not available"))
+        }, timeoutMs),
+      }
+      this.authWaiters.add(waiter)
+    })
+  }
+
   /**
    * @internal — subscribe to a raw stream type. Domain modules call this; it
    * delegates to the EventManager registry. Underscore prefix signals "not
@@ -251,8 +396,12 @@ export class MiniappSession {
    * session.transcription.on(...)
    * etc. instead."
    */
-  _subscribe(streamType: string, handler: (data: unknown) => void): UnsubscribeFn {
-    return this.events.subscribe(streamType, handler)
+  _subscribe(
+    streamType: string,
+    handler: (data: unknown) => void,
+    options: {forceLocal?: boolean} = {},
+  ): UnsubscribeFn {
+    return this.events.subscribe(streamType, handler, options)
   }
 
   // -------------------------------------------------------------------------
@@ -320,6 +469,14 @@ export class MiniappSession {
   disconnect(): void {
     if (this.disposed) return
     this.disposed = true
+    // Give listeners one synchronous chance to flush final messages
+    // (e.g. display.render([])) before we tear down the transport.
+    try {
+      this.emitter.emit("beforeDisconnect", "disconnect called")
+    } catch (err) {
+      // A throwing handler must not block teardown.
+      console.warn("[MiniappSession] beforeDisconnect handler threw:", err)
+    }
     this.failAllPending({code: MiniappErrorCode.REQUEST_ABORTED, message: "Session disconnected"})
     try {
       this.transport.close()
@@ -343,18 +500,42 @@ export class MiniappSession {
   /**
    * Send a request and get a Promise that resolves with the REQUEST_RESULT payload.
    * Rejects with a MiniappRequestError if the phone returns an error result.
+   *
+   * `opts.timeoutMs` overrides the default request timeout. Pass `0` to disable
+   * it entirely for inherently long-running requests whose duration is unbounded
+   * (e.g. audio playback that resolves only when the clip finishes) — those still
+   * settle via REQUEST_RESULT or `failAllPending` on disconnect, so they can't
+   * leak. Most requests should keep the default ceiling.
    */
-  sendRequest<TResult = unknown>(payload: object): Promise<TResult> {
+  sendRequest<TResult = unknown>(payload: object, opts?: {timeoutMs?: number}): Promise<TResult> {
     if (this.disposed) {
       return Promise.reject(new NotConnectedError())
     }
     const requestId = makeRequestId()
     const envelope: MiniappEnvelope = {payload, requestId}
+    const timeoutMs = opts?.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS
     return new Promise<TResult>((resolve, reject) => {
+      // Reject (and drop) the request if the host never sends a REQUEST_RESULT,
+      // so the promise can't hang forever. The REQUEST_RESULT / failAllPending
+      // paths clear this timer before settling. A non-positive timeout opts out
+      // (long-running requests rely on the host result / disconnect to settle).
+      const timer =
+        timeoutMs > 0
+          ? setTimeout(() => {
+              const pending = this.pendingRequests.get(requestId)
+              if (!pending) return
+              this.pendingRequests.delete(requestId)
+              pending.reject({
+                code: MiniappErrorCode.ACTION_TIMEOUT,
+                message: "Request timed out waiting for a response from the host",
+              })
+            }, timeoutMs)
+          : undefined
       this.pendingRequests.set(requestId, {
         requestId,
         resolve: resolve as (v: unknown) => void,
         reject,
+        timer,
       })
       this.enqueueOrSend(serializeEnvelope(envelope))
     })
@@ -371,6 +552,18 @@ export class MiniappSession {
 
   off<K extends keyof SessionEmitterEvents>(event: K, handler: SessionEmitterEvents[K]): void {
     this.emitter.off(event, handler as (...args: unknown[]) => void)
+  }
+
+  /**
+   * Last-chance hook before the transport closes. Fires either when the
+   * phone notifies the session of an imminent disconnect (~50ms grace
+   * window before the socket is torn down) or when this session's
+   * `disconnect()` is called locally. Use it to flush final cleanup
+   * messages — e.g. `display.render([])` — synchronously. Async work
+   * started here will not complete before the socket closes.
+   */
+  onBeforeDisconnect(handler: (reason: string) => void): () => void {
+    return this.on("beforeDisconnect", handler)
   }
 
   onVisibilityChange(handler: (v: MiniappVisibility) => void): () => void {
@@ -430,6 +623,10 @@ export class MiniappSession {
         if (ack.colorScheme === "light" || ack.colorScheme === "dark") {
           this.colorScheme = ack.colorScheme
         }
+        if (ack.auth) {
+          this.applyAuth(ack.auth)
+          if (!this.userId) this.userId = ack.auth.mentraUserId
+        }
         // Populate the manifest-declared permission cache. Older runtimes
         // that don't send `permissions` leave the all-false default in place
         // — `hasPermission` getters will simply return false.
@@ -441,6 +638,15 @@ export class MiniappSession {
         return
       }
 
+      case MiniappResponseType.AUTH_UPDATE: {
+        const next = (payload as unknown as AuthUpdatePayload).auth
+        if (next) {
+          this.applyAuth(next)
+          if (!this.userId) this.userId = next.mentraUserId
+        }
+        return
+      }
+
       case MiniappResponseType.PERMISSIONS_UPDATE: {
         const next = payload.permissions as PermissionRecord | undefined
         if (next) this.applyPermissions(next)
@@ -448,13 +654,7 @@ export class MiniappSession {
       }
 
       case MiniappResponseType.SPEAKER_STATE: {
-        const state = payload.state as
-          | "idle"
-          | "loading"
-          | "playing"
-          | "stopped"
-          | "error"
-          | undefined
+        const state = payload.state as "idle" | "loading" | "playing" | "stopped" | "error" | undefined
         if (!state) return
         const event = {
           state,
@@ -485,7 +685,24 @@ export class MiniappSession {
       case MiniappResponseType.EVENT: {
         const streamType = payload.streamType as string | undefined
         if (!streamType) return
-        this.events._forwardEvent(streamType, payload.data)
+        this.events._forwardEvent(
+          streamType,
+          payload.data,
+          payload.transcriptionRoute as TranscriptionEventRoute | undefined,
+        )
+        return
+      }
+
+      case MiniappResponseType.ACTION_CALL: {
+        // Another miniapp invoked one of our declared actions. Route to the
+        // registered handler (or buffer briefly for one to register). The SDK
+        // replies with an ACTION_RESULT request keyed by callId.
+        const callId = payload.callId as string | undefined
+        const actionId = payload.actionId as string | undefined
+        if (!callId || !actionId) return
+        const params = (payload.params as Record<string, unknown> | undefined) ?? {}
+        const callerPackageName = (payload.callerPackageName as string | undefined) ?? ""
+        this.actions._deliver(callId, actionId, params, {callerPackageName})
         return
       }
 
@@ -520,6 +737,7 @@ export class MiniappSession {
         const pending = this.pendingRequests.get(requestId)
         if (!pending) return
         this.pendingRequests.delete(requestId)
+        if (pending.timer) clearTimeout(pending.timer)
         if (payload.ok === false) {
           const err = (payload.error as MiniappRequestError | undefined) ?? {
             code: MiniappErrorCode.INTERNAL,
@@ -528,6 +746,16 @@ export class MiniappSession {
           pending.reject(err)
         } else {
           pending.resolve(payload.data ?? null)
+        }
+        return
+      }
+
+      case MiniappResponseType.WILL_DISCONNECT: {
+        const reason = (payload.reason as string | undefined) ?? "phone unregistering"
+        try {
+          this.emitter.emit("beforeDisconnect", reason)
+        } catch (err) {
+          console.warn("[MiniappSession] beforeDisconnect handler threw:", err)
         }
         return
       }
@@ -552,9 +780,59 @@ export class MiniappSession {
 
   private failAllPending(error: MiniappRequestError): void {
     for (const pending of this.pendingRequests.values()) {
+      if (pending.timer) clearTimeout(pending.timer)
       pending.reject(error)
     }
     this.pendingRequests.clear()
+    // Auth waiters live outside pendingRequests — they're resolved by an
+    // AUTH_UPDATE push, not a correlated REQUEST_RESULT — so a transport drop,
+    // dispose, or CONNECT_ACK timeout must reject them here too. Otherwise an
+    // in-flight session.auth.getToken()/fetch() hangs until its 10s waiter
+    // timeout instead of failing fast with the disconnect error.
+    for (const waiter of Array.from(this.authWaiters)) {
+      clearTimeout(waiter.timer)
+      this.authWaiters.delete(waiter)
+      waiter.reject(new NotConnectedError(error.message))
+    }
+  }
+
+  private authHasTtl(auth: MiniappAuthState, minTtlMs: number): boolean {
+    return auth.expiresAt - Date.now() > minTtlMs
+  }
+
+  private requestAuthRefresh(minTtlMs: number): Promise<MiniappAuthState | null> {
+    if (this.authRefreshPromise) return this.authRefreshPromise
+    if (!this.ready || !this.transport.isOpen()) return Promise.resolve(null)
+
+    this.authRefreshPromise = this.sendRequest<AuthRefreshResult>({
+      type: MiniappRequestType.AUTH_REFRESH,
+      minTtlMs,
+    })
+      .then((result) => {
+        const auth = result?.auth
+        if (auth) this.applyAuth(auth)
+        return auth ?? null
+      })
+      .catch((err) => {
+        console.warn("[MiniappSession] auth refresh failed:", err)
+        return null
+      })
+      .finally(() => {
+        this.authRefreshPromise = null
+      })
+
+    return this.authRefreshPromise
+  }
+
+  private applyAuth(next: MiniappAuthState): void {
+    this.authState = {...next}
+    for (const waiter of Array.from(this.authWaiters)) {
+      if (!this.authHasTtl(next, waiter.minTtlMs)) continue
+      clearTimeout(waiter.timer)
+      this.authWaiters.delete(waiter)
+      waiter.resolve({...next})
+    }
+    this.emitter.emit("auth", {...next})
   }
 
   /**

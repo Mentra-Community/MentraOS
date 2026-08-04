@@ -1,10 +1,12 @@
 package com.mentra.bluetoothsdk.sgcs
 
+import com.mentra.bluetoothsdk.BluetoothSdkDefaults
 import com.mentra.bluetoothsdk.Bridge
 import com.mentra.bluetoothsdk.DeviceManager
+import com.mentra.bluetoothsdk.PhotoRequest
+import com.mentra.bluetoothsdk.DeviceStore
 import com.mentra.bluetoothsdk.utils.ConnTypes
 import com.mentra.bluetoothsdk.utils.DeviceTypes
-import com.mentra.bluetoothsdk.DeviceStore
 
 class Simulated : SGCManager() {
 
@@ -14,7 +16,11 @@ class Simulated : SGCManager() {
         DeviceStore.apply("glasses", "connected", true)
         DeviceStore.apply("glasses", "connectionState", ConnTypes.CONNECTED)
         DeviceStore.apply("glasses", "micEnabled", false)
-        DeviceStore.apply("glasses", "voiceActivityDetectionEnabled", true)
+        DeviceStore.apply(
+            "glasses",
+            "voiceActivityDetectionEnabled",
+            BluetoothSdkDefaults.VOICE_ACTIVITY_DETECTION_ENABLED
+        )
     }
 
     // Audio Control
@@ -27,18 +33,8 @@ class Simulated : SGCManager() {
     }
 
     // Camera & Media
-    override fun requestPhoto(
-            requestId: String,
-            appId: String,
-            size: String,
-            webhookUrl: String?,
-            authToken: String?,
-            compress: String?,
-            flash: Boolean,
-            sound: Boolean,
-            exposureTimeNs: Long?,
-    ) {
-        Bridge.log("requestPhoto flash=$flash, sound=$sound")
+    override fun requestPhoto(request: PhotoRequest) {
+        Bridge.log("requestPhoto save=${request.save}, sound=${request.sound}")
     }
 
     override fun startStream(message: MutableMap<String, Any>) {
@@ -53,8 +49,8 @@ class Simulated : SGCManager() {
         Bridge.log("sendStreamKeepAlive")
     }
 
-    override fun startVideoRecording(requestId: String, save: Boolean, flash: Boolean, sound: Boolean) {
-        Bridge.log("startVideoRecording flash=$flash, sound=$sound")
+    override fun startVideoRecording(requestId: String, save: Boolean, sound: Boolean) {
+        Bridge.log("startVideoRecording sound=$sound")
     }
 
     override fun stopVideoRecording(requestId: String) {
@@ -74,10 +70,6 @@ class Simulated : SGCManager() {
         Bridge.log("sendButtonMaxRecordingTime")
     }
 
-    override fun sendButtonCameraLedSetting() {
-        Bridge.log("sendButtonCameraLedSetting")
-    }
-
     override fun sendCameraFovSetting() {
         Bridge.log("sendCameraFovSetting")
     }
@@ -90,6 +82,10 @@ class Simulated : SGCManager() {
     override fun clearDisplay() {
         Bridge.log("clearDisplay")
     }
+    
+    override fun sendText(text: String) {
+        Bridge.log("sendText")
+    }
 
     override fun sendTextWall(text: String) {
         Bridge.log("sendTextWall")
@@ -99,7 +95,13 @@ class Simulated : SGCManager() {
         Bridge.log("sendDoubleTextWall")
     }
 
-    override fun displayBitmap(base64ImageData: String): Boolean {
+    override fun displayBitmap(
+            base64ImageData: String,
+            x: Int?,
+            y: Int?,
+            width: Int?,
+            height: Int?
+    ): Boolean {
         Bridge.log("displayBitmap")
         return false
     }
@@ -186,7 +188,7 @@ class Simulated : SGCManager() {
     override fun dbg2() {}
 
     // Network Management
-    override fun requestWifiScan() {
+    override fun requestWifiScan(scanId: String?) {
         Bridge.log("requestWifiScan")
     }
 

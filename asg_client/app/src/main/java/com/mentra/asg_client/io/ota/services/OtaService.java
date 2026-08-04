@@ -13,23 +13,23 @@ import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 import android.util.Log;
-
 import androidx.core.app.NotificationCompat;
-
-import com.mentra.asg_client.io.ota.utils.OtaConstants;
+import com.mentra.asg_client.events.BatteryStatusEvent;
+import com.mentra.asg_client.io.bes.events.BesOtaProgressEvent;
 import com.mentra.asg_client.io.ota.events.DownloadProgressEvent;
 import com.mentra.asg_client.io.ota.events.InstallationProgressEvent;
 import com.mentra.asg_client.io.ota.events.MtkOtaProgressEvent;
-import com.mentra.asg_client.io.bes.events.BesOtaProgressEvent;
 import com.mentra.asg_client.io.ota.helpers.OtaHelper;
 import com.mentra.asg_client.io.ota.session.OtaSessionManager;
-import com.mentra.asg_client.events.BatteryStatusEvent;
-import com.mentra.asg_client.SysControl;
-
+import com.mentra.asg_client.io.ota.utils.OtaConstants;
+import com.mentra.asg_client.service.system.core.SystemControllerFactory;
+import dagger.hilt.android.AndroidEntryPoint;
+import javax.inject.Inject;
 import org.greenrobot.eventbus.EventBus;
 import org.greenrobot.eventbus.Subscribe;
 import org.greenrobot.eventbus.ThreadMode;
 
+@AndroidEntryPoint
 public class OtaService extends Service {
     private static final String TAG = OtaConstants.TAG;
     private static final String CHANNEL_ID = "ota_service_channel";
@@ -41,31 +41,20 @@ public class OtaService extends Service {
     // "disconnected" spinner during the reboot.
     private static final long MTK_REBOOT_DELAY_MS = 3000;
 
-    private OtaHelper otaHelper;
-    
+    @Inject OtaHelper otaHelper;
+
     @Override
     public void onCreate() {
         super.onCreate();
         Log.d(TAG, "OtaService onCreate");
-        
+
         // Create notification channel
         createNotificationChannel();
-        
+
         // Start as foreground service
         startForeground(NOTIFICATION_ID, createNotification("OTA Service Running"));
-        
-        // TEMPORARY: Kill external OTA updater app if it's running
-        // This prevents dual OTA checks when updating from older versions
-        try {
-            Log.w(TAG, "Stopping external OTA updater app to prevent conflicts");
-            SysControl.stopApp(this, "com.augmentos.otaupdater");
-            Log.i(TAG, "External OTA updater stopped");
-        } catch (Exception e) {
-            Log.e(TAG, "Failed to stop external OTA updater", e);
-        }
-        
-        // Initialize OTA helper singleton
-        otaHelper = OtaHelper.initialize(this);
+
+        stopLegacyOtaUpdaterIfPresent();
 
         // Check if ASG client was just updated - if so, auto-resume OTA for MTK/BES
         checkAndResumeAfterApkUpdate();
@@ -75,56 +64,48 @@ public class OtaService extends Service {
             EventBus.getDefault().register(this);
         }
 
-        // OtaHelper will automatically start checking:
-        // - After 15 seconds (initial check)
-        // - Every 30 minutes (periodic checks)
-        // - When WiFi becomes available
-        Log.i(TAG, "OTA service initialized - checks will begin automatically");
+        Log.i(TAG, "OTA service initialized - waiting for phone-initiated ota_start");
     }
-    
+
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         Log.d(TAG, "OtaService onStartCommand");
         return START_STICKY;
     }
-    
+
     @Override
     public void onDestroy() {
         super.onDestroy();
         Log.d(TAG, "OtaService onDestroy");
-        
+
         // Unregister EventBus
         if (EventBus.getDefault().isRegistered(this)) {
             EventBus.getDefault().unregister(this);
         }
-        
-        // Clean up OTA helper
-        if (otaHelper != null) {
-            otaHelper.cleanup();
-        }
+
+        // OtaHelper is an app-scoped Hilt singleton shared by command handlers and debug
+        // receivers. Do not call cleanup() here; it tears down state that later OTA flows reuse.
     }
-    
+
     @Override
     public IBinder onBind(Intent intent) {
         return null;
     }
-    
+
     private void createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            NotificationChannel channel = new NotificationChannel(
-                    CHANNEL_ID,
-                    "OTA Update Service",
-                    NotificationManager.IMPORTANCE_LOW
-            );
+            NotificationChannel channel =
+                    new NotificationChannel(
+                            CHANNEL_ID, "OTA Update Service", NotificationManager.IMPORTANCE_LOW);
             channel.setDescription("OTA update service notifications");
-            
+
             NotificationManager manager = getSystemService(NotificationManager.class);
             if (manager != null) {
                 manager.createNotificationChannel(channel);
             }
         }
     }
-    
+
     private Notification createNotification(String contentText) {
         return new NotificationCompat.Builder(this, CHANNEL_ID)
                 .setContentTitle("ASG Client OTA")
@@ -134,18 +115,27 @@ public class OtaService extends Service {
                 .setOngoing(true)
                 .build();
     }
-    
+
     private void updateNotification(String contentText) {
         NotificationManager manager = getSystemService(NotificationManager.class);
         if (manager != null) {
             manager.notify(NOTIFICATION_ID, createNotification(contentText));
         }
     }
-    
+
+    private void stopLegacyOtaUpdaterIfPresent() {
+        try {
+            Log.i(TAG, "Stopping legacy OTA updater to prevent conflicts with internal OTA");
+            SystemControllerFactory.get(this).stopApp("com.augmentos.otaupdater");
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to stop legacy OTA updater", e);
+        }
+    }
+
     @Subscribe(threadMode = ThreadMode.MAIN)
     public void onDownloadProgress(DownloadProgressEvent event) {
         Log.d(TAG, "Download progress: " + event.toString());
-        
+
         switch (event.getStatus()) {
             case STARTED:
                 updateNotification("Downloading update...");
@@ -161,11 +151,11 @@ public class OtaService extends Service {
                 break;
         }
     }
-    
+
     @Subscribe(threadMode = ThreadMode.MAIN)
     public void onInstallationProgress(InstallationProgressEvent event) {
         Log.d(TAG, "Installation progress: " + event.toString());
-        
+
         switch (event.getStatus()) {
             case STARTED:
                 updateNotification("Installing update...");
@@ -178,18 +168,23 @@ public class OtaService extends Service {
                 break;
         }
     }
-    
+
     @Subscribe(threadMode = ThreadMode.MAIN)
     public void onBatteryStatus(BatteryStatusEvent event) {
         // OtaHelper is already subscribed to EventBus and will receive this event directly
         // No need to re-post the event - this was causing an infinite loop
-        Log.d(TAG, "Received battery status: " + event.getBatteryLevel() + "%, charging: " + event.isCharging());
+        Log.d(
+                TAG,
+                "Received battery status: "
+                        + event.getBatteryLevel()
+                        + "%, charging: "
+                        + event.isCharging());
     }
-    
+
     @Subscribe(threadMode = ThreadMode.MAIN)
     public void onMtkOtaProgress(MtkOtaProgressEvent event) {
         Log.d(TAG, "MTK OTA progress: " + event.toString());
-        
+
         // Parse progress percentage from message if available
         int progress = 0;
         try {
@@ -199,7 +194,7 @@ public class OtaService extends Service {
         } catch (NumberFormatException e) {
             // Message is not a number (e.g., "info" messages), ignore
         }
-        
+
         // Send MTK install progress to phone so user sees real progress during the long install
         switch (event.getStatus()) {
             case STARTED:
@@ -245,7 +240,9 @@ public class OtaService extends Service {
                     if (!advanced) {
                         // Legacy path (no active session): tell the phone MTK is done so it
                         // can decide whether to start another round.
-                        Log.i(TAG, "📱 MTK complete (no session) - notifying phone via legacy broadcast");
+                        Log.i(
+                                TAG,
+                                "📱 MTK complete (no session) - notifying phone via legacy broadcast");
                         sendMtkUpdateCompleteMessage();
                     }
                 } else {
@@ -265,11 +262,12 @@ public class OtaService extends Service {
                 // Send FAILED to phone so user knows something went wrong
                 if (otaHelper != null) {
                     otaHelper.sendMtkInstallProgressToPhone("FAILED", 0, event.getMessage());
+                    otaHelper.deleteDownloadedArtifactForType("mtk");
                 }
                 break;
         }
     }
-    
+
     private void sendMtkUpdateCompleteMessage() {
         Log.i(TAG, "Sending MTK update complete broadcast");
         Intent intent = new Intent("com.mentra.asg_client.MTK_UPDATE_COMPLETE");
@@ -291,16 +289,16 @@ public class OtaService extends Service {
                 + (MTK_REBOOT_DELAY_MS / 1000) + "s to apply staged firmware");
         new Handler(Looper.getMainLooper()).postDelayed(() -> {
             Log.i(TAG, "🔄 Rebooting now to apply staged MTK firmware update");
-            SysControl.reboot(getApplicationContext());
+            SystemControllerFactory.get(this).reboot();
         }, MTK_REBOOT_DELAY_MS);
     }
-    
+
     @Subscribe(threadMode = ThreadMode.MAIN)
     public void onBesOtaProgress(BesOtaProgressEvent event) {
         // Note: BES install PROGRESS is sent to phone via sr_adota from BES chip directly (via BLE)
         // We can't send via UART during BES OTA because it's busy with firmware transfer
         // We only handle STARTED/FINISHED/FAILED here for logging and internal state management
-        
+
         switch (event.getStatus()) {
             case STARTED:
                 Log.i(TAG, "BES firmware update started");
@@ -323,6 +321,7 @@ public class OtaService extends Service {
                 // Try to notify phone of failure (might work if UART recovers)
                 if (otaHelper != null) {
                     otaHelper.sendBesInstallProgressToPhone("FAILED", 0, event.getErrorMessage());
+                    otaHelper.deleteDownloadedArtifactForType("bes");
                 }
                 break;
         }
@@ -336,10 +335,15 @@ public class OtaService extends Service {
                 Log.i(TAG, "📱 Active OTA session found in restart guard - auto-continuing");
                 long waitMs = sessionManager.getRestartGuardRemainingMs();
                 if (waitMs > 0) {
-                    Log.i(TAG, "OTA restart guard: waiting " + waitMs + "ms before auto-continuing");
-                    new Handler(Looper.getMainLooper()).postDelayed(() -> {
-                        resumeFromSession(sessionManager);
-                    }, waitMs);
+                    Log.i(
+                            TAG,
+                            "OTA restart guard: waiting " + waitMs + "ms before auto-continuing");
+                    new Handler(Looper.getMainLooper())
+                            .postDelayed(
+                                    () -> {
+                                        resumeFromSession(sessionManager);
+                                    },
+                                    waitMs);
                     return;
                 }
                 resumeFromSession(sessionManager);
@@ -364,17 +368,27 @@ public class OtaService extends Service {
                 int currentStepIndex = sessionManager.getCurrentStepIndex();
                 String currentStepType = sessionManager.getStepType(currentStepIndex);
                 String currentPhase = sessionManager.getCurrentPhase();
-                boolean isApkInstallRestart = currentStepIndex == 0
-                        && "apk".equals(currentStepType)
-                        && "install".equals(currentPhase);
+                boolean isApkInstallRestart =
+                        currentStepIndex == 0
+                                && "apk".equals(currentStepType)
+                                && "install".equals(currentPhase);
                 if (isApkInstallRestart) {
-                    Log.i(TAG, "📱 Active APK install session found without restart guard — resuming next step");
+                    Log.i(
+                            TAG,
+                            "📱 Active APK install session found without restart guard — resuming next step");
                     resumeFromSession(sessionManager);
                     return;
                 }
-                Log.i(TAG, "📱 Active OTA session found without restart guard but not APK install restart "
-                        + "(step=" + currentStepIndex + " type=" + currentStepType + " phase=" + currentPhase
-                        + ") — leaving session in place, no auto-resume");
+                Log.i(
+                        TAG,
+                        "📱 Active OTA session found without restart guard but not APK install restart "
+                                + "(step="
+                                + currentStepIndex
+                                + " type="
+                                + currentStepType
+                                + " phase="
+                                + currentPhase
+                                + ") — leaving session in place, no auto-resume");
                 return;
             }
 
@@ -385,23 +399,30 @@ public class OtaService extends Service {
             long currentVersion = packageInfo.getLongVersionCode();
 
             if (previousVersion == -1) {
-                Log.i(TAG, "📱 First boot with version tracking - recording ASG version: " + currentVersion);
+                Log.i(
+                        TAG,
+                        "📱 First boot with version tracking - recording ASG version: "
+                                + currentVersion);
                 prefs.edit().putLong("last_seen_asg_version", currentVersion).apply();
+                // Clear any recovery heartbeat pause that may have been set before this install.
+                OtaHelper.notifyRecoveryInstallCompleted(this);
 
-                if (otaHelper != null) {
-                    Log.i(TAG, "📱 Triggering background OTA manifest check (first boot or update from old version)");
-                    otaHelper.startVersionCheck(this);
-                }
             } else if (currentVersion > previousVersion) {
-                Log.i(TAG, "📱 ASG client was updated from " + previousVersion + " to " + currentVersion);
+                Log.i(
+                        TAG,
+                        "📱 ASG client was updated from "
+                                + previousVersion
+                                + " to "
+                                + currentVersion);
                 prefs.edit().putLong("last_seen_asg_version", currentVersion).apply();
+                OtaHelper.notifyRecoveryInstallCompleted(this);
 
-                if (otaHelper != null) {
-                    Log.i(TAG, "📱 Auto-resuming background OTA manifest check for MTK/BES updates");
-                    otaHelper.startVersionCheck(this);
-                }
             } else {
-                Log.d(TAG, "ASG version unchanged (" + currentVersion + ") - no auto-resume needed");
+                Log.d(
+                        TAG,
+                        "ASG version unchanged (" + currentVersion + ") - no auto-resume needed");
+                // Safety net: clear any recovery heartbeat pause from a same-version reinstall.
+                OtaHelper.notifyRecoveryInstallCompleted(this);
             }
         } catch (Exception e) {
             Log.e(TAG, "Error checking for APK update auto-resume", e);
@@ -410,6 +431,8 @@ public class OtaService extends Service {
 
     private void resumeFromSession(OtaSessionManager sessionManager) {
         try {
+            // Clear any recovery heartbeat pause that was set before the APK install.
+            OtaHelper.notifyRecoveryInstallCompleted(this);
             sessionManager.clearRestartGuard();
             int nextStep = sessionManager.getCurrentStepIndex() + 1;
 
@@ -419,9 +442,10 @@ public class OtaService extends Service {
                 // can still read the correct session fields (total_steps, step_sequence, etc.).
                 sessionManager.setPendingApkStatus("complete");
                 sessionManager.setComplete();
-                // onPhoneConnected() is the primary delivery path for the APK done signal.
-                // sendCompletionToPhone() here is a fallback for the case where the phone
-                // is already connected when this code runs (unlikely but possible).
+                // sendCompletionToPhone() resends the completion on a fixed schedule, so
+                // delivery no longer depends on winning the startup race against the UART
+                // transport. onPhoneConnected() remains a complementary path for a real
+                // BLE drop/reconnect mid-session.
                 if (otaHelper != null) {
                     otaHelper.sendCompletionToPhone(sessionManager);
                 }
@@ -433,7 +457,14 @@ public class OtaService extends Service {
             sessionManager.setPendingApkStatus("step_complete");
             sessionManager.advanceStep(nextStep, "download");
             String stepType = sessionManager.getStepType(nextStep);
-            Log.i(TAG, "📱 Resuming OTA session: step " + (nextStep + 1) + "/" + sessionManager.getTotalSteps() + " type=" + stepType);
+            Log.i(
+                    TAG,
+                    "📱 Resuming OTA session: step "
+                            + (nextStep + 1)
+                            + "/"
+                            + sessionManager.getTotalSteps()
+                            + " type="
+                            + stepType);
 
             if (otaHelper == null) {
                 Log.e(TAG, "OtaHelper not available - cannot resume OTA session");

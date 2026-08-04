@@ -1,4 +1,4 @@
-import type {OtaProgress, OtaStatus} from "@mentra/bluetooth-sdk-internal"
+import type {OtaProgress, OtaStatus} from "@mentra/engine"
 
 function isDownloadPhaseSnapshot(
   otaStatus: OtaStatus | null | undefined,
@@ -51,6 +51,8 @@ export function getOtaErrorMessage(error?: string): string {
       return "Firmware file is unexpectedly large — please contact support"
     case "firmware_verify_failed":
       return "Firmware verification failed — please try again or contact support"
+    case "apk_verify_failed":
+      return "Update verification failed — please try again or contact support"
     case "install_failed":
       return "Install failed — please try again"
     default:

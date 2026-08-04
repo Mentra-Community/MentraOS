@@ -25,6 +25,8 @@ The current live monitor primarily uses machine-readable `E2E_METRIC` log lines 
 - `display_store_update`
 - `display_view_changed`
 
+By default, the monitor only consumes `display_store_update` events for the `main` display view. This avoids treating dashboard-only content such as date/time ticks as caption activity.
+
 For the current dashboard, delay is computed from:
 
 - observed timestamp: first accepted visible word match from `display_store_update`
@@ -98,6 +100,15 @@ cd /path/to/MentraOS/mobile/e2e-tests
 python3 scripts/live_word_monitor.py \
   --output-dir results \
   --port 8765
+```
+
+If you need to inspect a different display lane, you can override the default filter:
+
+```bash
+python3 scripts/live_word_monitor.py \
+  --output-dir results \
+  --port 8765 \
+  --display-view dashboard
 ```
 
 If you want the monitor to verify a specific macOS output device and raise incidents when playback would route elsewhere, run it with the extra device flag:
@@ -235,7 +246,9 @@ Incident thresholds now live in:
 This file defines per-incident names and thresholds. Current examples:
 
 - `drop_event`
+- `captions_app_not_running`
 - `audio_output_device_mismatch`
+- `app_not_foreground`
 - `high_average_latency`
 
 Each incident can have its own:
@@ -253,6 +266,8 @@ Some incident types can also use extra fields. For example, `high_average_latenc
 The monitor reads this file at startup.
 
 For `audio_output_device_mismatch`, the thresholds live in the TOML config, but the expected device name is still provided at runtime with `--audio-output-device`. That keeps the policy shared in git while letting a MacBook and Mac mini use different local hardware.
+
+For `captions_app_not_running`, the thresholds live in the TOML config, but the specific monitored app package is still provided at runtime with `--captions-package` and defaults to `com.mentra.captions`. The monitor opens this incident when logcat shows `SOCKET: Received app_stopped message for package: ...` for that package, and resolves it on the matching `app_started` log.
 
 When an alert is raised, the monitor also broadcasts an Android intent to the connected phone by default. This is intended for the `internal` Android build, which registers the `com.mentra.CAPTIONS_TESTER_INCIDENT` receiver and files a normal automatic incident through the mobile app.
 
@@ -388,15 +403,45 @@ That should stop both full macOS updates and the background security/system-file
 Connect the phone with a data-USB cable
 Open the Captions app, go back to the home screen.
 
-# Terminal 1
+#### From your local machine
+
+```
+./mobile/e2e-tests/scripts/redeploy_mentra_mini.sh
+```
+
+That helper will:
+
+- ssh to `mentra-mini`
+- fast-forward pull the current local branch
+- rebuild `mobile/e2e-tests/ui`
+- restart `live_word_monitor.py` with the known-good Homebrew Python runtime
+- auto-detect attached Android phones on the Mac mini and pass them as repeated `--device` flags
+
+If you want to target specific phones explicitly, you can also pass repeatable device flags:
+
+```sh
+./mobile/e2e-tests/scripts/redeploy_mentra_mini.sh \
+  --device Q92024100001877 \
+  --device RFCX71TH0CR
+```
+
+#### Terminal 1
 
 ```
 cd /Users/mentraconference/Documents/MentraOS/mobile/e2e-tests
 python3 scripts/live_word_monitor.py --output-dir results --port 8765 --audio-output-device "External Headphones"
 ```
 
-# Terminal 2
+#### Terminal 2
 
 ```
 cloudflared --config /Users/mentraconference/.cloudflared/config.yml tunnel run captions
+```
+
+### Misc
+
+To login, run
+
+```
+maestro test ~/Documents/Playground/maestro/captions.yaml
 ```

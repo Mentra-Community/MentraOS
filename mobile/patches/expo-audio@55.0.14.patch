@@ -1,0 +1,34 @@
+diff --git a/android/src/main/java/expo/modules/audio/AudioUtils.kt b/android/src/main/java/expo/modules/audio/AudioUtils.kt
+index dca91c32a2787a7bc3ecba26f0f3f2ad9cc40d3d..4bf95c84dcf076e5e330bdaf1f1fcd49132c6bb3 100644
+--- a/android/src/main/java/expo/modules/audio/AudioUtils.kt
++++ b/android/src/main/java/expo/modules/audio/AudioUtils.kt
+@@ -3,6 +3,7 @@ package expo.modules.audio
+ import android.content.Context
+ import android.media.AudioDeviceInfo
+ import android.os.Bundle
++import androidx.media3.common.Player
+ import androidx.media3.exoplayer.ExoPlayer
+ import androidx.media3.session.MediaSession
+ import java.io.File
+@@ -34,5 +35,21 @@ fun getMapFromDeviceInfo(deviceInfo: AudioDeviceInfo): Bundle {
+ fun buildBasicMediaSession(context: Context, player: ExoPlayer): MediaSession {
+   return MediaSession.Builder(context, player)
+     .setId("ExpoAudioBasicMediaSession_${player.hashCode()}")
++    .setCallback(object : MediaSession.Callback {
++      override fun onConnect(
++        session: MediaSession,
++        controller: MediaSession.ControllerInfo
++      ): MediaSession.ConnectionResult {
++        // Mentra owns the lifecycle of short-form TTS. Hardware media keys
++        // must not pause or later resume a transient utterance.
++        return MediaSession.ConnectionResult.AcceptedResultBuilder(session)
++          .setAvailablePlayerCommands(
++            MediaSession.ConnectionResult.DEFAULT_PLAYER_COMMANDS.buildUpon()
++              .remove(Player.COMMAND_PLAY_PAUSE)
++              .build()
++          )
++          .build()
++      }
++    })
+     .build()
+ }

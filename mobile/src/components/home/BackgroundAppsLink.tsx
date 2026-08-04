@@ -6,7 +6,7 @@ import {Badge} from "@/components/ui"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
-import {useBackgroundApps} from "@mentra/island"
+import {useBackgroundApps} from "@mentra/engine"
 
 export const BackgroundAppsLink = ({style}: {style?: ViewStyle}) => {
   const {theme} = useAppTheme()

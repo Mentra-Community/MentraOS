@@ -1,0 +1,11 @@
+{
+  "points": [
+    {"lat": 0, "lng": 0},
+    {"lat": 0, "lng": 0.001},
+    {"lat": 0.001, "lng": 0.001}
+  ],
+  "steps": [
+    {"lat": 0, "lng": 0, "routeIndex": 0, "maneuver": "DEPART", "distanceMeters": 100, "road": "First"},
+    {"lat": 0, "lng": 0.001, "routeIndex": 1, "maneuver": "TURN_RIGHT", "distanceMeters": 100, "road": "Second"}
+  ]
+}

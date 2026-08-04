@@ -28,6 +28,8 @@
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE"/>
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION"/>
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"/>
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE"/>
 
   <!-- Other permissions -->
@@ -35,6 +37,6 @@
   <uses-permission android:name="android.permission.VIBRATE"/>
 
   <application>
-    <service android:name="com.mentra.bluetoothsdk.services.ForegroundService" android:exported="false" android:foregroundServiceType="dataSync|connectedDevice|microphone"/>
+    <service android:name="com.mentra.bluetoothsdk.services.ForegroundService" android:exported="false" android:foregroundServiceType="dataSync|connectedDevice|location|mediaPlayback|microphone"/>
   </application>
 </manifest>

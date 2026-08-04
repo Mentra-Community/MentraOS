@@ -1,4 +1,4 @@
-import {describe, expect, test, beforeEach, mock} from "bun:test"
+import {describe, expect, test} from "bun:test"
 import {MockTransport} from "./mock"
 import {parseEnvelope, serializeEnvelope, makeRequestId} from "../envelope"
 import {MiniappRequestType, MiniappResponseType} from "../protocol"
@@ -62,7 +62,7 @@ describe("MockTransport", () => {
     const payload = env!.payload as {type: string; ok: boolean; data: any}
     expect(payload.type).toBe(MiniappResponseType.REQUEST_RESULT)
     expect(payload.ok).toBe(true)
-    expect(payload.data).toEqual({lat: 0, lng: 0, accuracy: 0, timestamp: expect.any(Number)})
+    expect(payload.data).toEqual({lat: 37.7956, lng: -122.3933, accuracy: 0, timestamp: expect.any(Number)})
   })
 
   test("PHOTO returns a placeholder data: URL", async () => {
@@ -76,6 +76,45 @@ describe("MockTransport", () => {
 
     const payload = parseEnvelope(received[0])!.payload as {data: {photoUrl: string}}
     expect(payload.data.photoUrl.startsWith("data:image/png;base64,")).toBe(true)
+  })
+
+  test("CALENDAR_LIST_EVENTS returns an empty snapshot", async () => {
+    const t = new MockTransport({silent: true})
+    const received: string[] = []
+    t.onMessage((raw) => received.push(raw))
+    await t.open()
+
+    t.send(
+      envelope(
+        {
+          type: MiniappRequestType.CALENDAR_LIST_EVENTS,
+          startsAt: "2026-07-16T12:00:00.000Z",
+          endsAt: "2026-07-17T12:00:00.000Z",
+        },
+        "rid-calendar",
+      ),
+    )
+    await new Promise((r) => queueMicrotask(() => r(null)))
+
+    const payload = parseEnvelope(received[0])!.payload as {data: unknown}
+    expect(payload.data).toEqual({events: [], truncated: false})
+  })
+
+  test("CAMERA_FOV returns a synthetic ready result", async () => {
+    const t = new MockTransport({silent: true})
+    const received: string[] = []
+    t.onMessage((raw) => received.push(raw))
+    await t.open()
+
+    t.send(envelope({type: MiniappRequestType.CAMERA_FOV, fov: 102, roiPosition: "top"}, "rid-fov"))
+    await new Promise((r) => queueMicrotask(() => r(null)))
+
+    const payload = parseEnvelope(received[0])!.payload as {data: Record<string, unknown>}
+    expect(payload.data).toMatchObject({
+      requestId: "rid-fov",
+      fov: 102,
+      roiPosition: "top",
+    })
   })
 
   test("SUBSCRIBE silently no-ops (no events fire)", async () => {

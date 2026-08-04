@@ -1,0 +1,43 @@
+# Android/Gradle
+/.gradle/
+/build/
+/local.properties
+*.iml
+.gradle/
+/.idea/
+/out/
+/captures/
+/.cxx/
+
+# ndk-build / CMake outputs
+obj/
+*.so
+
+# Keystore files (e.g., debug.keystore)
+*.jks
+*.keystore
+
+# Logs and generated files
+*.log
+
+# IntelliJ / Android Studio files
+*.ipr
+*.iws
+.idea/
+*.bak
+
+# MacOS
+.DS_Store
+
+# VS Code
+.vscode/
+
+# Yarn (if using Yarn 2+)
+.yarn/*
+!.yarn/releases
+
+# Node (if using React Native or hybrid apps)
+node_modules/
+
+# Others
+.env

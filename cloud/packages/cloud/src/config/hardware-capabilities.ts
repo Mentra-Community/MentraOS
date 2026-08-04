@@ -13,6 +13,7 @@ import { mentraDisplay } from "./capabilities/mentra-display";
 import { mentraLive } from "./capabilities/mentra-live";
 import { simulatedGlasses } from "./capabilities/simulated-glasses";
 import { vuzixZ100 } from "./capabilities/vuzix-z100";
+import { nimo } from "./capabilities/nimo";
 import { Capabilities } from "@mentra/sdk";
 
 /**
@@ -27,6 +28,7 @@ export const HARDWARE_CAPABILITIES: Record<string, Capabilities> = {
   [mentraLive.modelName]: mentraLive,
   [simulatedGlasses.modelName]: simulatedGlasses,
   [vuzixZ100.modelName]: vuzixZ100,
+  [nimo.modelName]: nimo,
 };
 
 /**

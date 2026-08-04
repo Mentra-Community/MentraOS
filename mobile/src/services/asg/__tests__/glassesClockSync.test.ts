@@ -1,22 +1,25 @@
 import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
 
-import {detectClockSkew} from "@/services/asg/gallerySyncClock"
+// glassesClockSync + gallerySyncClock moved into island; this jest test imports by path.
+import {detectClockSkew} from "../../../../modules/engine/src/services/gallerySyncClock"
 import {
   fixGlassesClockIfSkewed,
   handleOtaClockSkewFromGlasses,
   maybeFixGlassesClockFromVersionInfo,
   resetOtaClockFixCooldownForTests,
-} from "@/services/asg/glassesClockSync"
+} from "../../../../modules/engine/src/services/glassesClockSync"
 
 jest.mock("@mentra/bluetooth-sdk-internal", () => ({
   __esModule: true,
   default: {
     setSystemTime: jest.fn().mockResolvedValue(undefined),
-    retryOtaVersionCheck: jest.fn().mockResolvedValue(undefined),
+    startOtaUpdate: jest.fn().mockResolvedValue({type: "ota_start_ack", timestamp: 1_700_000_000_000}),
   },
+  sdkPinnedOtaManifestUrl: () =>
+    "https://github.com/Mentra-Community/MentraOS/releases/download/bluetooth-sdk-ota/bluetooth-sdk-0.0.0-test-version.json",
 }))
 
-jest.mock("@mentra/island", () => ({
+jest.mock("../../../../modules/engine/src/utils/timers", () => ({
   BgTimer: {
     setTimeout: (fn: () => void) => {
       fn()
@@ -26,11 +29,13 @@ jest.mock("@mentra/island", () => ({
 }))
 
 const mockSetSystemTime = BluetoothSdk.setSystemTime as jest.Mock
-const mockRetryOta = BluetoothSdk.retryOtaVersionCheck as jest.Mock
+const mockStartOta = BluetoothSdk.startOtaUpdate as jest.Mock
 
-jest.mock("@/stores/glasses", () => ({
+jest.mock("../../../../modules/engine/src/stores/glasses", () => ({
   useGlassesStore: {
     getState: jest.fn(() => ({
+      buildNumber: "100000",
+      otaVersionUrl: "https://example.com/live_version.json",
       wifi: {state: "connected"},
     })),
   },
@@ -65,7 +70,11 @@ describe("glassesClockSync", () => {
     const fixed = await handleOtaClockSkewFromGlasses("clock_skew", glassesTime)
     expect(fixed).toBe(true)
     expect(mockSetSystemTime).toHaveBeenCalled()
-    expect(mockRetryOta).toHaveBeenCalled()
+    // The phone owns manifest selection: the retry drives the SDK-pinned manifest URL, not the
+    // glasses-reported one (which is only a legacy fallback).
+    expect(mockStartOta).toHaveBeenCalledWith(
+      "https://github.com/Mentra-Community/MentraOS/releases/download/bluetooth-sdk-ota/bluetooth-sdk-0.0.0-test-version.json",
+    )
   })
 
   it("handleOtaClockSkewFromGlasses maps ssl_error with drift to clock fix", async () => {
@@ -73,21 +82,21 @@ describe("glassesClockSync", () => {
     expect(detectClockSkew(Date.now(), glassesTime, 0).skewed).toBe(true)
     const fixed = await handleOtaClockSkewFromGlasses("ssl_error", glassesTime)
     expect(fixed).toBe(true)
-    expect(mockRetryOta).toHaveBeenCalled()
+    expect(mockStartOta).toHaveBeenCalled()
   })
 
   it("handleOtaClockSkewFromGlasses ignores ssl_error without glasses time", async () => {
     const fixed = await handleOtaClockSkewFromGlasses("ssl_error")
     expect(fixed).toBe(false)
     expect(mockSetSystemTime).not.toHaveBeenCalled()
-    expect(mockRetryOta).not.toHaveBeenCalled()
+    expect(mockStartOta).not.toHaveBeenCalled()
   })
 
-  it("maybeFixGlassesClockFromVersionInfo retries OTA when WiFi connected", async () => {
+  it("maybeFixGlassesClockFromVersionInfo fixes time without starting OTA", async () => {
     const glassesTime = Date.now() - 365 * 24 * 60 * 60 * 1000
     const fixed = await maybeFixGlassesClockFromVersionInfo(glassesTime)
     expect(fixed).toBe(true)
-    expect(mockRetryOta).toHaveBeenCalled()
+    expect(mockStartOta).not.toHaveBeenCalled()
   })
 
   it("handleOtaClockSkewFromGlasses coalesces concurrent calls into one fix", async () => {
@@ -101,6 +110,6 @@ describe("glassesClockSync", () => {
     expect(a).toBe(true)
     expect(b).toBe(true)
     expect(mockSetSystemTime).toHaveBeenCalledTimes(1)
-    expect(mockRetryOta).toHaveBeenCalledTimes(1)
+    expect(mockStartOta).toHaveBeenCalledTimes(1)
   })
 })

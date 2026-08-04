@@ -1,0 +1,146 @@
+---
+title: "The UI layer"
+description: "Build the miniapp's WebView UI with React, talking to the background over the injected mentra global."
+icon: "browser"
+---
+
+The UI layer is the on-demand half of a [two-layer miniapp](/app-devs/core-concepts/two-layer-architecture). It is a normal React app that mounts when the user opens your tile and is destroyed when they leave. It has zero direct hardware access. To reach the glasses it sends messages to its own [background layer](/app-devs/core-concepts/session), which holds the `session` and translates those messages into `session.*` calls. The bridge is a single injected global named `mentra`.
+
+The entry point is small: create a React root, wrap it in `<MentraProvider>`, and call `mentra.ready()`.
+
+```tsx src/ui/main.tsx
+import { createRoot } from "react-dom/client";
+import { MentraProvider } from "@mentra/miniapp/ui";
+import "../shared/channels";
+import { App } from "./App";
+
+createRoot(document.getElementById("root")!).render(
+  <MentraProvider>
+    <App />
+  </MentraProvider>,
+);
+
+mentra.ready(); // flush any messages background buffered while the WebView mounted
+```
+
+UI imports come from two sub-paths. `@mentra/miniapp/ui` re-exports everything (the `mentra` global types, the React hooks, `<MentraProvider>`, `<MiniappHeader>`), and `@mentra/miniapp/react` exports the hooks and components directly. There is no `@mentra/sdk` here and no hosted server: the UI never authenticates, never opens a port, and never owns a session.
+
+<Note>
+The UI layer must not construct a `MiniappSession`. That class is the background (JSContext) API. Inside a WebView its `CONNECT` never gets acked by the host's UI router, so `session.connect()` times out with `CONNECT_ACK timeout`. UI code reaches the glasses only through `mentra`, and reads host state through the hooks below.
+</Note>
+
+## The `mentra` global
+
+The host injects `mentra` into every UI WebView before your content loads. It carries the typed bus to background plus the two lifecycle signals.
+
+```tsx
+mentra.send("ping", { at: Date.now() });             // fire-and-forget, UI → background
+const off = mentra.on("pong", ({ roundtripMs }) => { /* … */ }); // subscribe, returns an unsubscribe fn
+const res = await mentra.request("getNotes", {});    // request/response (RPC)
+mentra.ready();                                       // call once on bootstrap
+```
+
+| Method | What it does |
+|---|---|
+| `mentra.send(channel, payload)` | Broadcast a message to background. Buffered until `ready()` is acked, then flushes; after that it fires immediately. Compile-error on an RPC channel. |
+| `mentra.on(channel, cb)` | Subscribe to broadcasts from background. Returns an unsubscribe function. Compile-error on an RPC channel. |
+| `mentra.request(channel, payload, options?)` | Call a background `session.ui.handle(channel, …)` handler and await its return. No default timeout; pass `options.timeout` and `options.signal` to bound it. |
+| `mentra.onOpen(cb)` | Fires when the bridge is open and `send` is flushable. Fires immediately if you subscribe after `ready()`. Returns an unsubscribe function. |
+| `mentra.onClose(cb)` | Fires when the host is about to destroy the WebView. Snapshot state into background via `send` here if you want it to survive. |
+| `mentra.ready()` | Call once on bootstrap. Tells the host the WebView is mounted; background's `session.ui.onOpen` handlers fire after this lands. Idempotent. |
+
+The two sides are asymmetric on purpose. `mentra.send` from the UI buffers until `ready()`, while `session.ui.send` from the background drops silently when no WebView is open. See [Talking between layers](/app-devs/core-concepts/two-layer-architecture#talking-between-layers) for the background side (`session.ui.handle`, `on`, `send`).
+
+`mentra.request` rejects with an `Error` whose `name` is `MentraRpcError` (the handler threw), `MentraRpcTimeoutError` (the `timeout` elapsed), or `AbortError` (the `signal` aborted). Branch on `err.name`, not `instanceof`: these errors come from the WebView's bare runtime scope, so `instanceof` checks are unreliable across the bridge.
+
+## Typed channels
+
+Declare every channel once in `src/shared/channels.ts`. Both halves import this file, so channel names and payload shapes are checked at compile time on both sides of the bridge. `MentraTyped<Channels>` types the global; importing the file for its `declare global` side effect is what wires the types in.
+
+```typescript src/shared/channels.ts
+import type { MentraTyped } from "@mentra/miniapp/ui";
+
+export interface Channels {
+  ping: { at: number };                       // UI → background
+  pong: { at: number; roundtripMs: number };  // background → UI
+}
+
+declare global {
+  // eslint-disable-next-line no-var
+  var mentra: MentraTyped<Channels>;
+}
+```
+
+For request/response channels, mark the entry as an RPC shape so `mentra.request` (and `useRpc`) infer the request and response types. `send`/`on` then reject that channel at compile time, and `request` rejects the broadcast channels.
+
+## React hooks
+
+Each hook is a thin read over host-injected state or the `mentra` bridge. The host injects safe-area and color-scheme values once before content loads, so those hooks read at mount and do not update at runtime (a theme or orientation change forces a reload).
+
+| Hook | Signature | Returns |
+|---|---|---|
+| `useConnected` | `useConnected(): boolean` | `true` while the `mentra` bridge is open (after `ready()`, before close). Tracks `onOpen`/`onClose`. |
+| `useColorScheme` | `useColorScheme(): MiniappColorScheme` | The host's color scheme, `"light"` or `"dark"`, read once at mount. |
+| `useSafeArea` | `useSafeArea(): UseSafeAreaResult` | `{ insets, capsuleMenu }`: pixel insets to pad your root with, plus the capsule menu rect (`null` when the host renders none). |
+| `useCapsuleHeaderStyle` | `useCapsuleHeaderStyle(options?): CSSProperties` | Ready-to-spread CSS that vertically aligns a header row with the floating capsule menu. |
+| `useCapabilities` | `useCapabilities(): GlassesCapabilities \| null` | Always `null` in the UI. The glasses profile is background-only; relay it over a channel instead (read `session.capabilities`, `session.ui.send` it, then `mentra.on` it). |
+| `useRpc` | `useRpc<Channels, C>(channel): RpcCallable` | A stable callable around `mentra.request(channel, …)` for one RPC channel, plus `.abort()`. |
+
+`useRpc` recreates its `AbortController` per call: calling it again aborts the previous in-flight request (good for per-keystroke autocomplete), and unmount aborts everything pending. A caller-provided `options.signal` is merged with the internal one.
+
+```tsx
+import { useRpc } from "@mentra/miniapp/react";
+
+const autocomplete = useRpc<Channels, "places:autocomplete">("places:autocomplete");
+const results = await autocomplete({ query: "blue bot" });
+autocomplete.abort(); // cancel the latest in-flight call
+```
+
+<Note>
+`useCapabilities` returns `null` by design. It does not construct a `MiniappSession` (which would time out in a WebView). When a UI page needs the glasses profile, read `session.capabilities` in a background `session.ui.onOpen` handler, `session.ui.send` it on a channel, and pick it up in the UI with `mentra.on`.
+</Note>
+
+## Components
+
+### `<MentraProvider>`
+
+The optional root provider. Today it keeps `<html class="dark">` in sync with the host's color scheme so shared theme CSS switches automatically. The toggle runs synchronously during render, so children paint with the right class on first mount and there is no theme flash. Pass `syncColorScheme={false}` if your app owns the `dark` class itself (for example when integrating a theming library).
+
+```tsx
+<MentraProvider syncColorScheme>
+  <App />
+</MentraProvider>
+```
+
+### `<MiniappHeader>`
+
+A drop-in header that aligns with the host's capsule menu, leaving the top-right clear. It has three slots: `left`, `title`, and `right`. A string `title` renders as a semantic `<h1>`; pass a node for custom markup. Set `onBack` to render a back chevron in the left slot (ignored if `left` is set). The component layers `useCapsuleHeaderStyle` underneath, so its `UseCapsuleHeaderStyleOptions` (`leftPadding`, `rightGap`, `fallbackHeight`, `fallbackMarginTop`) are accepted as props.
+
+```tsx
+import { MiniappHeader } from "@mentra/miniapp/react";
+
+<MiniappHeader
+  title="My Miniapp"
+  onBack={() => history.back()}
+  right={<Badge>Connected</Badge>}
+/>
+```
+
+Use `useCapsuleHeaderStyle` directly when you want full control over header markup but want the alignment math done for you. For the capsule-menu rect, the safe-area insets, and where you may not place clickable content, see [Safe Areas & Layout](/app-devs/core-concepts/webviews/safe-areas).
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Two-layer architecture" icon="layer-group" href="/app-devs/core-concepts/two-layer-architecture">
+    The bus model and how background and UI talk.
+  </Card>
+  <Card title="Safe areas & layout" icon="border-outer" href="/app-devs/core-concepts/webviews/safe-areas">
+    Keep content clear of the capsule menu.
+  </Card>
+  <Card title="The session" icon="plug" href="/app-devs/core-concepts/session">
+    The background-side `session` your UI sends to.
+  </Card>
+  <Card title="Interop & Actions" icon="arrows-left-right" href="/app-devs/core-concepts/miniapp-interop">
+    Let other miniapps call yours.
+  </Card>
+</CardGroup>

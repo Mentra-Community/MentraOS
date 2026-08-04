@@ -58,7 +58,6 @@ Core interface for OTA helper operations:
 
 - `initialize(Context context)` - Initialize the OTA helper
 - `startVersionCheck(Context context)` - Start version checking
-- `isCheckingVersion()` - Check if version checking is in progress
 - `isUpdating()` - Check if update is in progress
 - `downloadApk(String urlStr, JSONObject json, Context context)` - Download APK file
 - `installApk(Context context)` - Install APK file
@@ -67,8 +66,6 @@ Core interface for OTA helper operations:
 - `saveBackupApk(String sourceApkPath)` - Save backup APK
 - `getBatteryStatusString()` - Get battery status string
 - `isBatterySufficientForUpdates()` - Check if battery is sufficient
-- `startPeriodicChecks()` - Start periodic checks
-- `registerNetworkCallback(Context context)` - Register network callback
 - `cleanup()` - Cleanup resources
 
 #### **OtaProgressCallback**
@@ -121,7 +118,7 @@ OTA service implementation:
 - **Notification Management**: User-friendly notifications
 - **Event Handling**: EventBus integration for progress updates
 - **Battery Monitoring**: Battery status monitoring
-- **Network Monitoring**: Network availability monitoring
+- **Phone-Controlled Install**: OTA checks and installs start from the phone-controlled flow
 - **External App Management**: Prevents conflicts with external OTA updaters
 
 ### **OTA Helpers**
@@ -255,8 +252,9 @@ if (success) {
 ### **OTA Helper Operations**
 
 ```java
-// Create OTA helper
-OtaHelper otaHelper = new OtaHelper(context);
+// OtaHelper is Hilt-injected; obtain the instance via @Inject or AsgClientEntryPoint.
+// For testing or non-Hilt contexts use the two-arg constructor:
+//   OtaHelper otaHelper = new OtaHelper(context, new BesOtaRegistry());
 
 // Start version check
 boolean checkStarted = otaHelper.startVersionCheck(context);

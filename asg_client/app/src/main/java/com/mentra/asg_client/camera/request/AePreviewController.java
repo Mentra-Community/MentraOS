@@ -22,18 +22,19 @@ public final class AePreviewController {
             CameraCaptureSession.CaptureCallback callback,
             Handler handler,
             CameraSettings cameraSettings,
-            AeStateMachine aeStateMachine) {
+            AeStateMachine aeStateMachine,
+            boolean zsl) {
         if (session == null || !hasCameraDevice || previewBuilder == null) {
             Log.w(TAG, "Cannot lock AE: session/camera is null");
             return false;
         }
 
         try {
-            Log.d(TAG, "🔍 Requesting AE lock by updating repeating request");
+            Log.d(TAG, "Requesting AE lock by updating repeating request");
             previewBuilder.set(CaptureRequest.CONTROL_AE_LOCK, true);
 
             if (cameraSettings != null && cameraSettings.isZslSupported()) {
-                cameraSettings.configurePreviewBuilder(previewBuilder);
+                cameraSettings.configurePreviewBuilder(previewBuilder, zsl);
             }
 
             session.setRepeatingRequest(previewBuilder.build(), callback, handler);
@@ -59,23 +60,24 @@ public final class AePreviewController {
             Handler handler,
             CameraSettings cameraSettings,
             AeStateMachine aeStateMachine,
-            boolean clearAeWaitFlags) {
+            boolean clearAeWaitFlags,
+            boolean zsl) {
         try {
             if (session == null || !hasCameraDevice || previewBuilder == null) {
                 Log.w(TAG, "Cannot restore preview: session/camera is null");
                 return;
             }
 
-            Log.d(TAG, "🔍 Restoring preview after capture (unlocking AE)");
+            Log.d(TAG, "Restoring preview after capture (unlocking AE)");
             previewBuilder.set(CaptureRequest.CONTROL_AE_LOCK, false);
             if (clearAeWaitFlags) {
                 aeStateMachine.clearWaitFlags();
             } else {
-                Log.i(TAG, "🔍 Preserving AE wait flags during preview restore (precapture active)");
+                Log.i(TAG, "Preserving AE wait flags during preview restore (precapture active)");
             }
 
             if (cameraSettings != null && cameraSettings.isZslSupported()) {
-                cameraSettings.configurePreviewBuilder(previewBuilder);
+                cameraSettings.configurePreviewBuilder(previewBuilder, zsl);
             }
 
             session.setRepeatingRequest(previewBuilder.build(), callback, handler);

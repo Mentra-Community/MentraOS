@@ -1,0 +1,127 @@
+---
+title: "Display"
+description: "Render scenes of positioned text, images, and shapes on the glasses."
+icon: "display"
+---
+
+`session.display.render()` draws to the glasses HUD. Each call describes the
+whole frame: everything that should be on screen right now. The phone diffs it
+against the previous frame, so elements with a stable `id` update in place (no
+flicker), anything you leave out of the new frame comes off the screen, and
+`render([])` clears it. Your job is to describe the frame; the phone works out
+what changed.
+
+```typescript
+session.display.render([
+  {type: "text",  id: "stats", box: {x: 12, y: 9, w: 200, h: 40},   text: "863 m · 11 min"},
+  {type: "image", id: "map",   box: {x: 335, y: 14, w: 150, h: 150}, data: mapPng},
+  {type: "rect",  id: "frame", box: {x: 4, y: 4, w: 490, h: 210},   style: {border: 2, radius: 6}},
+]);
+```
+
+Display needs no permission, but the glasses do need a screen. Declare a `DISPLAY`
+hardware requirement in your [manifest](/app-devs/core-concepts/miniapp-manifest)
+so the miniapp only installs on glasses that can show anything.
+
+## Elements
+
+| Element | Fields | Shows |
+|---|---|---|
+| `{type: "text", box, text, style?, id?}` | `style`: `border`, `radius`, `overflow`, `breakMode` | Wrapped text inside the box. |
+| `{type: "image", box, data, id?}` | `data`: base64 PNG/JPEG | A bitmap, converted to the glasses' native format by the phone. |
+| `{type: "rect", box, style?, id?}` | `style`: `border`, `radius` | An empty bordered box. |
+
+## Screen sizes
+
+`box` is `{x, y, w, h}` in raw device pixels. Coordinates map 1:1 to the
+device canvas, with the origin at the top-left:
+
+| Glasses | Canvas | Positioned elements |
+|---|---|---|
+| Even Realities G2 | 576 × 288 | Yes |
+| NIMO | 500 × 220 | Yes |
+| Even Realities G1 | 640 × 200 panel | Text fallback |
+| Vuzix Z100 | 640 × 480 panel | Text fallback |
+
+**We recommend designing your layout for 500 × 220.** A frame that fits
+500 × 220 renders as-is on every positioning device; on the G2's larger canvas
+it sits in the top-left with some margin. Boxes that run past the edge are
+clamped, and elements past the device's budget are dropped tail-first. Both
+show up in the render result, so you find out.
+
+When you want an exact fit instead (a full-screen caption, an element pinned
+to the bottom edge), compute boxes from the connected device's real canvas.
+`session.capabilities.display` carries it, populated on the `"ready"` event:
+
+```typescript
+const d = session.capabilities?.display;
+session.display.render([
+  {type: "text", id: "caption", box: {x: 0, y: 0, w: d?.width ?? 576, h: d?.height ?? 288}, text},
+]);
+```
+
+## Older glasses
+
+Even Realities G1 and Vuzix Z100 show text but can't place elements at
+coordinates, and their displays can't show bitmaps. Render the same scene
+anyway: the phone converts it for them. Text elements collapse into a single
+full-view text layout in reading order (top to bottom, then left to right),
+and image and rect elements are dropped. The result tells you what happened
+(`degraded: true`, plus the dropped ids), and
+`session.capabilities.display.canPosition` tells you up front which kind of
+device you're on.
+
+In practice a text-first miniapp works everywhere with zero branching: a
+caption app's single full-canvas text element reads the same on every device.
+If your layout leans on positioning or images, like a HUD with a minimap,
+check `canPosition` and render a text-only variant for these devices.
+
+## Updating and clearing
+
+Give any element that changes over time a stable `id`. Re-rendering with the
+same id updates that element in place on the glasses, and unchanged elements
+never re-cross Bluetooth, so pushing the whole frame on every change is cheap.
+To take something off screen, leave it out of the next frame. To clear
+everything:
+
+```typescript
+session.display.render([]);
+```
+
+## Options and results
+
+`render(elements, options?)` takes `{view, durationMs}` — `view` picks
+`"main"` (default) or `"dashboard"`, and `durationMs` auto-clears the frame
+after that many milliseconds.
+
+Awaiting is opt-in. A plain fire-and-forget call is fine, and the returned
+promise never rejects:
+
+```typescript
+const result = await session.display.render(elements);
+// result.status   — "displayed" (sent to the device) or "blocked" (another
+//                   app owns the display; result.reason says why)
+// result.degraded — true when the phone adjusted the scene for the device
+// result.dropped  — ids of elements the phone had to drop
+```
+
+## Just showing text
+
+The simplest useful frame is one text element covering the whole canvas —
+a status line, a caption, a "Saved" confirmation:
+
+```typescript
+const d = session.capabilities?.display;
+session.display.render([
+  {type: "text", id: "message", box: {x: 0, y: 0, w: d?.width ?? 576, h: d?.height ?? 288}, text: "Saved"},
+], {durationMs: 2000});
+```
+
+Per-element `style.breakMode` (`"character" | "character-no-hyphen" | "word" |
+"strict-word"`) controls how the text wraps inside its box.
+
+## Dashboard view
+
+`render(elements, {view: "dashboard"})` targets the dashboard view, the
+glasses' status view that the user brings up with a glasses-specific gesture
+(head-up on G1, a double-tap on others). The default is `"main"`.

@@ -29,6 +29,7 @@ import androidx.annotation.Nullable;
 import androidx.annotation.RequiresPermission;
 import androidx.core.app.NotificationCompat;
 
+import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.camera.CameraNeoService;
 import com.mentra.asg_client.utils.WakeLockManager;
 import com.mentra.asg_client.reporting.domains.StreamingReporting;
@@ -45,6 +46,7 @@ import com.mentra.asg_client.audio.AudioAssets;
 import org.greenrobot.eventbus.EventBus;
 import org.greenrobot.eventbus.Subscribe;
 import org.greenrobot.eventbus.ThreadMode;
+import org.json.JSONObject;
 
 import io.github.thibaultbee.streampack.data.AudioConfig;
 import io.github.thibaultbee.streampack.data.VideoConfig;
@@ -66,7 +68,8 @@ public class RtmpStreamingService extends Service {
     private static final int NOTIFICATION_ID = 8888;
 
     // Static instance reference for static method access
-    private static RtmpStreamingService sInstance;
+    private static final Object sConfigLock = new Object();
+    private static volatile RtmpStreamingService sInstance;
 
     // Static callback for streaming status
     private static StreamingStatusCallback sStatusCallback;
@@ -127,6 +130,7 @@ public class RtmpStreamingService extends Service {
     // Stream duration tracking
     private long mStreamStartTime = 0;
     private long mLastReconnectionTime = 0;
+    private PeriodicStreamMetricsReporter mMetricsReporter;
 
     // Reconnection sequence tracking to prevent stale handlers
     private int mReconnectionSequence = 0;
@@ -152,20 +156,30 @@ public class RtmpStreamingService extends Service {
     public void onCreate() {
         super.onCreate();
 
-        // Store static instance reference
-        sInstance = this;
+        boolean appliedPendingStateManager = false;
+        boolean appliedPendingStreamConfig = false;
+        synchronized (sConfigLock) {
+            // Apply pending StateManager if it was set before service started
+            if (sPendingStateManager != null) {
+                mStateManager = sPendingStateManager;
+                sPendingStateManager = null; // Clear pending after applying
+                appliedPendingStateManager = true;
+            }
 
-        // Apply pending StateManager if it was set before service started
-        if (sPendingStateManager != null) {
-            mStateManager = sPendingStateManager;
-            sPendingStateManager = null; // Clear pending after applying
+            // Apply pending stream config before publishing the service instance.
+            if (sPendingStreamConfig != null) {
+                mStreamConfig = sPendingStreamConfig;
+                sPendingStreamConfig = null; // Clear pending after applying
+                appliedPendingStreamConfig = true;
+            }
+
+            // Store static instance reference after pending config has been applied.
+            sInstance = this;
+        }
+        if (appliedPendingStateManager) {
             Log.d(TAG, "✅ Applied pending StateManager during onCreate");
         }
-
-        // Apply pending stream config if it was set before service started
-        if (sPendingStreamConfig != null) {
-            mStreamConfig = sPendingStreamConfig;
-            sPendingStreamConfig = null; // Clear pending after applying
+        if (appliedPendingStreamConfig) {
             Log.d(TAG, "✅ Applied pending stream config during onCreate: " + mStreamConfig.toString());
         }
 
@@ -179,6 +193,7 @@ public class RtmpStreamingService extends Service {
 
         // Initialize handler for reconnection logic
         mReconnectHandler = new Handler(Looper.getMainLooper());
+        mMetricsReporter = createMetricsReporter();
 
         // Initialize handler for timeout logic
         mTimeoutHandler = new Handler(Looper.getMainLooper());
@@ -237,8 +252,10 @@ public class RtmpStreamingService extends Service {
     @Override
     public void onDestroy() {
         // Clear static instance reference
-        if (sInstance == this) {
-            sInstance = null;
+        synchronized (sConfigLock) {
+            if (sInstance == this) {
+                sInstance = null;
+            }
         }
 
         // Cancel any pending reconnections
@@ -483,6 +500,7 @@ public class RtmpStreamingService extends Service {
 
                         // Start battery monitoring
                         startBatteryMonitoring();
+                        startMetricsReporting();
 
                         EventBus.getDefault().post(new StreamingEvent.Connected());
                         EventBus.getDefault().post(new StreamingEvent.Started());
@@ -500,6 +518,7 @@ public class RtmpStreamingService extends Service {
                     mLastReconnectionTime = currentTime;
 
                     Log.e(TAG, "RTMP connection failed: " + message);
+                    stopMetricsReporting();
                     EventBus.getDefault().post(new StreamingEvent.ConnectionFailed(message));
 
                     // Report connection failure
@@ -561,6 +580,7 @@ public class RtmpStreamingService extends Service {
                     mLastReconnectionTime = currentTime;
 
                     Log.i(TAG, "RTMP connection lost: " + message);
+                    stopMetricsReporting();
                     EventBus.getDefault().post(new StreamingEvent.Disconnected());
 
                     // Report connection lost
@@ -610,8 +630,8 @@ public class RtmpStreamingService extends Service {
             // Use config values (either from SDK or defaults)
             int videoWidth = mStreamConfig.getVideoWidth();
             int videoHeight = mStreamConfig.getVideoHeight();
-            int captureW = mStreamConfig.getCaptureSurfaceWidth();
-            int captureH = mStreamConfig.getCaptureSurfaceHeight();
+            int captureWidth = mStreamConfig.getCaptureSurfaceWidth();
+            int captureHeight = mStreamConfig.getCaptureSurfaceHeight();
             int videoBitrate = mStreamConfig.getVideoBitrate();
             int videoFps = mStreamConfig.getVideoFps();
             int audioBitrate = mStreamConfig.getAudioBitrate();
@@ -638,10 +658,10 @@ public class RtmpStreamingService extends Service {
             int profile = VideoConfig.Companion.getBestProfile(mimeType);
             int level = VideoConfig.Companion.getBestLevel(mimeType, profile);
 
-            // Encode at output size; camera buffer at native capture size when it differs
+            // Encode at output size; camera buffer at native capture size when it differs.
             Size captureSize =
-                (captureW != videoWidth || captureH != videoHeight)
-                    ? new Size(captureW, captureH)
+                (captureWidth != videoWidth || captureHeight != videoHeight)
+                    ? new Size(captureWidth, captureHeight)
                     : null;
             VideoConfig videoConfig = new VideoConfig(
                     MediaFormat.MIMETYPE_VIDEO_AVC,
@@ -699,8 +719,45 @@ public class RtmpStreamingService extends Service {
      * @param url Stream URL (rtmp:// or rtmps://)
      */
     public void setRtmpUrl(String url) {
-        this.mRtmpUrl = url;
-        Log.i(TAG, "RTMP URL set to: " + url);
+        String normalized = normalizeRtmpUrlForStreamPack(url);
+        this.mRtmpUrl = normalized;
+        if (normalized != null && !normalized.equals(url)) {
+            Log.i(TAG, "RTMP URL normalized for StreamPack: " + url + " → " + normalized);
+        } else {
+            Log.i(TAG, "RTMP URL set to: " + normalized);
+        }
+    }
+
+    /**
+     * StreamPack's RTMP client requires {@code rtmp://host/app/streamKey} (two path
+     * segments). MediaMTX and many servers accept a single-segment path like
+     * {@code rtmp://host/live}; append a default stream key so those URLs still work.
+     */
+    static String normalizeRtmpUrlForStreamPack(String url) {
+        if (url == null || url.isEmpty()) {
+            return url;
+        }
+        String trimmed = url.trim();
+        if (!trimmed.regionMatches(true, 0, "rtmp://", 0, 7)
+                && !trimmed.regionMatches(true, 0, "rtmps://", 0, 8)) {
+            return trimmed;
+        }
+        try {
+            java.net.URI uri = java.net.URI.create(trimmed);
+            String path = uri.getPath();
+            if (path == null || path.isEmpty() || "/".equals(path)) {
+                return trimmed.endsWith("/") ? trimmed + "live/stream" : trimmed + "/live/stream";
+            }
+            String withoutSlash = path.startsWith("/") ? path.substring(1) : path;
+            // Already app/streamKey (or deeper) — leave alone.
+            if (withoutSlash.contains("/")) {
+                return trimmed;
+            }
+            return trimmed.endsWith("/") ? trimmed + "stream" : trimmed + "/stream";
+        } catch (Exception e) {
+            Log.w(TAG, "Could not normalize RTMP URL: " + trimmed, e);
+            return trimmed;
+        }
     }
 
     /**
@@ -873,7 +930,7 @@ public class RtmpStreamingService extends Service {
                             mIsStreaming = false;
                             EventBus.getDefault().post(new StreamingEvent.Error(errorMsg));
                             if (sStatusCallback != null) {
-                                sStatusCallback.onStreamError(errorMsg, mCurrentStreamId);
+                                sStatusCallback.onStreamError(errorMsg, mCurrentStreamId, true);
                             }
 
                             // Report stream start failure
@@ -935,7 +992,7 @@ public class RtmpStreamingService extends Service {
             }
             EventBus.getDefault().post(new StreamingEvent.Error(errorMsg));
             if (sStatusCallback != null) {
-                sStatusCallback.onStreamError(errorMsg, mCurrentStreamId);
+                sStatusCallback.onStreamError(errorMsg, mCurrentStreamId, true);
             }
 
             // Report stream start failure
@@ -972,10 +1029,19 @@ public class RtmpStreamingService extends Service {
     private void forceStopStreamingInternal(boolean preserveSession) {
         Log.d(TAG, "Force stopping stream and cleaning up resources (preserveSession=" + preserveSession + ")");
 
+        // Capture the id up front - cancelStreamTimeout() and the state reset below
+        // both clear it, and the stopped callback must identify the stream being
+        // stopped.
+        final String stoppedStreamId;
+        synchronized (mStateLock) {
+            stoppedStreamId = mCurrentStreamId;
+        }
+
         // Stop battery monitoring if not preserving session
         if (!preserveSession) {
             stopBatteryMonitoring();
         }
+        stopMetricsReporting();
 
         // Increment reconnection sequence to invalidate any pending handlers
         mReconnectionSequence++;
@@ -1016,9 +1082,13 @@ public class RtmpStreamingService extends Service {
                     StreamingReporting.reportStreamStopFailure(RtmpStreamingService.this,
                         "stream_stop_error", (Throwable) o);
 
-                    // Notify TPA developer of cleanup failure
+                    // Notify TPA developer of cleanup failure. Use the id captured
+                    // before cleanup: this continuation can resume after the state
+                    // reset cleared mCurrentStreamId or a replacement stream
+                    // overwrote it, and the failure belongs to the stream being
+                    // stopped.
                     if (sStatusCallback != null) {
-                        sStatusCallback.onStreamError("Failed to stop stream: " + ((Throwable) o).getMessage(), mCurrentStreamId);
+                        sStatusCallback.onStreamError("Failed to stop stream: " + ((Throwable) o).getMessage(), stoppedStreamId);
                     }
                 }
                 Log.d(TAG, "Stream stop completed");
@@ -1120,7 +1190,7 @@ public class RtmpStreamingService extends Service {
             Log.d(TAG, "Stream resources released for reconnection");
         } else {
             if (sStatusCallback != null) {
-                sStatusCallback.onStreamStopped(mCurrentStreamId);
+                sStatusCallback.onStreamStopped(stoppedStreamId);
             }
             EventBus.getDefault().post(new StreamingEvent.Stopped());
             Log.i(TAG, "Streaming stopped and cleaned up");
@@ -1214,6 +1284,74 @@ public class RtmpStreamingService extends Service {
         return (long) (INITIAL_RECONNECT_DELAY_MS * Math.pow(BACKOFF_MULTIPLIER, attempt - 1) + jitter);
     }
 
+    private PeriodicStreamMetricsReporter createMetricsReporter() {
+        return new PeriodicStreamMetricsReporter(
+                mReconnectHandler,
+                AsgConstants.STREAM_METRICS_INTERVAL_MS,
+                "rtmp",
+                () -> {
+                    synchronized (mStateLock) {
+                        return mStreamState == StreamState.STREAMING
+                                && mIsStreaming
+                                && !mReconnecting;
+                    }
+                },
+                () -> {
+                    double measuredFps = Double.NaN;
+                    long measuredBitrateBps = -1L;
+                    double cameraFps = Double.NaN;
+                    try {
+                        if (mStreamer != null) {
+                            measuredFps = mStreamer.getSettings().getVideo().getMeasuredFps();
+                            measuredBitrateBps =
+                                    mStreamer.getSettings().getVideo().getMeasuredBitrateBps();
+                            cameraFps = mStreamer.getSettings().getMeasuredCaptureFps();
+                        }
+                    } catch (Exception ignored) {
+                        // Keep n/a measured fields
+                    }
+                    return new PeriodicStreamMetricsReporter.MetricsSample(
+                            mStreamConfig.getVideoWidth(),
+                            mStreamConfig.getVideoHeight(),
+                            mStreamConfig.getVideoBitrate(),
+                            measuredBitrateBps,
+                            mStreamConfig.getVideoFps(),
+                            measuredFps,
+                            cameraFps,
+                            0,
+                            mStreamStartTime > 0
+                                    ? Math.max(
+                                            0,
+                                            (System.currentTimeMillis() - mStreamStartTime)
+                                                    / 1_000L)
+                                    : 0,
+                            StreamThermalReader.readCpuTemperatureC());
+                },
+                new PeriodicStreamMetricsReporter.CallbackProvider() {
+                    @Override
+                    public StreamingStatusCallback getCallback() {
+                        return sStatusCallback;
+                    }
+
+                    @Override
+                    public String getStreamId() {
+                        return mCurrentStreamId;
+                    }
+                });
+    }
+
+    private void startMetricsReporting() {
+        if (mMetricsReporter != null) {
+            mMetricsReporter.start();
+        }
+    }
+
+    private void stopMetricsReporting() {
+        if (mMetricsReporter != null) {
+            mMetricsReporter.stop();
+        }
+    }
+
     /**
      * Interface for monitoring streaming status changes
      */
@@ -1238,6 +1376,11 @@ public class RtmpStreamingService extends Service {
 
         mCurrentStreamId = streamId;
         mIsStreamingActive = true;
+
+        if (AsgConstants.DISABLE_STREAM_KEEP_ALIVE_TIMEOUT) {
+            Log.i(TAG, "Keep-alive timeout disabled; stream will not auto-stop: " + streamId);
+            return;
+        }
 
         mRtmpStreamTimeoutTimer = new Timer("RtmpStreamTimeout-" + streamId);
         mRtmpStreamTimeoutTimer.schedule(new TimerTask() {
@@ -1297,14 +1440,16 @@ public class RtmpStreamingService extends Service {
      * @param stateManager StateManager instance
      */
     public static void setStateManager(IStateManager stateManager) {
-        if (sInstance != null) {
-            // Service is running, apply immediately
-            sInstance.mStateManager = stateManager;
-            Log.d(TAG, "✅ StateManager set for battery monitoring");
-        } else {
-            // Service not yet started, store in pending field to apply during onCreate()
-            sPendingStateManager = stateManager;
-            Log.d(TAG, "✅ StateManager stored as pending - will be applied when service starts");
+        synchronized (sConfigLock) {
+            if (sInstance != null) {
+                // Service is running, apply immediately
+                sInstance.mStateManager = stateManager;
+                Log.d(TAG, "✅ StateManager set for battery monitoring");
+            } else {
+                // Service not yet started, store in pending field to apply during onCreate()
+                sPendingStateManager = stateManager;
+                Log.d(TAG, "✅ StateManager stored as pending - will be applied when service starts");
+            }
         }
     }
 
@@ -1412,12 +1557,27 @@ public class RtmpStreamingService extends Service {
         if (config == null) {
             config = new RtmpStreamConfig(); // Use defaults if null
         }
-        if (sInstance != null) {
-            sInstance.mStreamConfig = config;
-            Log.d(TAG, "✅ Stream config set: " + config.toString());
-        } else {
-            sPendingStreamConfig = config;
-            Log.d(TAG, "✅ Stream config stored as pending: " + config.toString());
+        synchronized (sConfigLock) {
+            if (sInstance != null) {
+                sInstance.mStreamConfig = config;
+                Log.d(TAG, "✅ Stream config set: " + config.toString());
+            } else {
+                sPendingStreamConfig = config;
+                Log.d(TAG, "✅ Stream config stored as pending: " + config.toString());
+            }
+        }
+    }
+
+    /** Returns the effective configuration for the active or pending RTMP stream. */
+    public static JSONObject getCurrentResolvedConfig() {
+        synchronized (sConfigLock) {
+            RtmpStreamConfig config = null;
+            if (sInstance != null) {
+                config = sInstance.mStreamConfig;
+            } else if (sPendingStreamConfig != null) {
+                config = sPendingStreamConfig;
+            }
+            return config != null ? config.toStatusJson("rtmp") : null;
         }
     }
 
@@ -1514,10 +1674,33 @@ public class RtmpStreamingService extends Service {
      * @return true if streaming, false if not or if service is not running
      */
     public static boolean isStreaming() {
-        if (sInstance != null) {
-            synchronized (sInstance.mStateLock) {
-                return sInstance.mStreamState == StreamState.STREAMING ||
-                       sInstance.mStreamState == StreamState.STARTING;
+        RtmpStreamingService instance = sInstance;
+        if (instance != null) {
+            synchronized (instance.mStateLock) {
+                return instance.mStreamState == StreamState.STREAMING ||
+                       instance.mStreamState == StreamState.STARTING;
+            }
+        }
+        return false;
+    }
+
+    /** @return true only after the RTMP connection is live. */
+    public static boolean isActivelyStreaming() {
+        RtmpStreamingService instance = sInstance;
+        if (instance != null) {
+            synchronized (instance.mStateLock) {
+                return instance.mStreamState == StreamState.STREAMING;
+            }
+        }
+        return false;
+    }
+
+    /** @return true while RTMP startup is in progress before the connection is live. */
+    public static boolean isStarting() {
+        RtmpStreamingService instance = sInstance;
+        if (instance != null) {
+            synchronized (instance.mStateLock) {
+                return instance.mStreamState == StreamState.STARTING;
             }
         }
         return false;
@@ -1564,7 +1747,7 @@ public class RtmpStreamingService extends Service {
                 Log.d(TAG, "Resetting stream timeout for streamId: " + streamId +
                         ", active: " + sInstance.mIsStreamingActive +
                         ", state: " + sInstance.mStreamState);
-                WakeLockManager.acquireFullWakeLockAndBringToForeground(sInstance.getApplicationContext(), 2180000, 5000); // 3 min CPU, 5 sec screen
+                WakeLockManager.acquireFullWakeLockAndBringToForeground(sInstance.getApplicationContext(), WakeLockManager.WakeOwner.STREAMING, 2180000, 5000); // 36 min CPU, 5 sec screen
                 sInstance.scheduleStreamTimeout(streamId); // Reschedule with fresh timeout
                 return true;
             } else {
@@ -1709,14 +1892,14 @@ public class RtmpStreamingService extends Service {
         // Use the WakeLockManager to acquire both CPU and screen wake locks AND bring app to foreground
         // This prevents "Camera disabled by policy" errors when app is backgrounded
         // For streaming we use longer timeout for CPU wake lock than for photo capture
-        WakeLockManager.acquireFullWakeLockAndBringToForeground(this, 2180000, 5000); // 3 min CPU, 5 sec screen
+        WakeLockManager.acquireFullWakeLockAndBringToForeground(this, WakeLockManager.WakeOwner.STREAMING, 2180000, 5000); // 36 min CPU, 5 sec screen
     }
 
     /**
      * Release any held wake locks
      */
     private void releaseWakeLocks() {
-        WakeLockManager.releaseAllWakeLocks();
+        WakeLockManager.release(WakeLockManager.WakeOwner.STREAMING);
     }
 
     /**

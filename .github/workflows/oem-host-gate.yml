@@ -1,0 +1,112 @@
+name: OEM Host Boundary Gate
+
+# Proves the engine/host boundary from the CONSUMER side: the example OEM app
+# must typecheck against @mentra/engine's BUILT public types (build/*.d.ts via
+# the exports map) with zero access to the /internal migration surface. The
+# in-repo Mentra app enforces the boundary on itself with
+# scripts/check-mobile-runtime-boundary.sh; this gate is the half that check
+# can't cover — that the PUBLIC entry alone is sufficient and self-consistent
+# for a second host. A change that breaks it either broke the public API shape
+# or leaked a host need that belongs behind a facade.
+#
+# Registered in ci-gate.yml (workflow_run list + GATED set) — keep the
+# workflow name in sync with both.
+
+on:
+  pull_request:
+    paths:
+      - "mobile/modules/engine/**"
+      - "mobile/modules/bluetooth-sdk/**"
+      - "mobile/modules/crust/**"
+      - "mobile/modules/miniapp/**"
+      - "sdk/example-oem-app/**"
+      - "sdk/package.json"
+      - "sdk/bun.lock"
+      - ".github/workflows/oem-host-gate.yml"
+  push:
+    branches:
+      - main
+      - dev
+    paths:
+      - "mobile/modules/engine/**"
+      - "mobile/modules/bluetooth-sdk/**"
+      - "mobile/modules/crust/**"
+      - "mobile/modules/miniapp/**"
+      - "sdk/example-oem-app/**"
+      - "sdk/package.json"
+      - "sdk/bun.lock"
+      - ".github/workflows/oem-host-gate.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: oem-host-gate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  typecheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+
+      - name: Install SDK workspace
+        working-directory: sdk
+        # The sdk postinstall builds @mentra/miniapp, whose types engine's
+        # build imports — let it run.
+        run: bun install --frozen-lockfile
+
+      - name: Build bluetooth-sdk types
+        # engine's public entry re-exports event types from
+        # @mentra/bluetooth-sdk, so its build/*.d.ts must exist first.
+        working-directory: mobile/modules/bluetooth-sdk
+        run: bun run build
+
+      - name: Build crust types
+        # engine's services import @mentra/crust, whose types point at its
+        # build output.
+        working-directory: mobile/modules/crust
+        run: bun run build
+
+      - name: Build engine public types
+        working-directory: mobile/modules/engine
+        run: bun run build
+
+      - name: Typecheck example OEM app against the built public entry
+        working-directory: sdk/example-oem-app
+        run: bunx tsc --noEmit
+
+      - name: Forbid internal-surface imports in the OEM app
+        # The app must consume the public entry (plus /devtools for its debug
+        # panel) only. A hit here means someone taught the example host to
+        # reach into the migration-era internals — the exact dependency shape
+        # this gate exists to prevent.
+        run: |
+          set -euo pipefail
+          violations=$(grep -RIn --include='*.ts' --include='*.tsx' \
+            --exclude-dir=node_modules \
+            -e '@mentra/engine/internal' \
+            -e '@mentra/bluetooth-sdk/internal' \
+            -e '@mentra/bluetooth-sdk-internal' \
+            sdk/example-oem-app || true)
+          if [ -n "$violations" ]; then
+            echo "Internal-surface imports found in the example OEM app:" >&2
+            echo "$violations" >&2
+            exit 1
+          fi
+          if grep -n 'internal' sdk/example-oem-app/tsconfig.json; then
+            echo "tsconfig.json must not path-map internal entries" >&2
+            exit 1
+          fi
+          echo "OEM app consumes the public surface only"

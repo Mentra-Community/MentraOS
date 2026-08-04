@@ -16,19 +16,29 @@ import {
 import {Icon, Text, Button} from "@/components/ignite"
 import {Group} from "@/components/ui/Group"
 import {useAppTheme} from "@/contexts/ThemeContext"
-import {ModelInfo, STTModelManager} from "@/services/STTModelManager"
+import {STTModelManager} from "@mentra/engine/internal"
 import {ThemedStyle} from "@/theme"
+
+type SelectableModelInfo = {
+  name: string
+  size: number
+  downloaded: boolean
+  modelId: string
+}
 
 type ModelSelectorProps = {
   selectedModelId: string
-  models: ModelInfo[]
+  models: SelectableModelInfo[]
   onModelChange: (modelId: string) => void
   onDownload: (modelId: string) => void
   onDelete: (modelId: string) => void
   isDownloading: boolean
   downloadProgress: number
   extractionProgress: number
-  currentModelInfo: ModelInfo | null
+  currentModelInfo: SelectableModelInfo | null
+  title?: string
+  downloadButtonText?: string
+  formatBytes?: (bytes: number) => string
 }
 
 const ModelSelector: React.FC<ModelSelectorProps> = ({
@@ -41,6 +51,9 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
   downloadProgress,
   extractionProgress,
   currentModelInfo: _currentModelInfo,
+  title = "Offline Mode Speech Model",
+  downloadButtonText = "Download Model",
+  formatBytes = STTModelManager.formatBytes,
 }) => {
   const {theme, themed} = useAppTheme()
   const [modalVisible, setModalVisible] = useState(false)
@@ -68,14 +81,14 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
       }
     }
 
-    const sizeText = STTModelManager.formatBytes(selectedModel.size)
+    const sizeText = formatBytes(selectedModel.size)
     if (isDownloaded) {
       return `${sizeText} • Downloaded`
     }
     return `${sizeText} • Not downloaded`
   }
 
-  const renderModelOption = ({item}: {item: ModelInfo}) => {
+  const renderModelOption = ({item}: {item: SelectableModelInfo}) => {
     const isSelected = item.modelId === selectedModelId
     const isModelDownloaded = item.downloaded
 
@@ -98,7 +111,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
               ]}
             />
             <Text
-              text={`${STTModelManager.formatBytes(item.size)}${isModelDownloaded ? " • Downloaded" : ""}`}
+              text={`${formatBytes(item.size)}${isModelDownloaded ? " • Downloaded" : ""}`}
               style={themed($optionSubtext)}
             />
           </View>
@@ -112,7 +125,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
 
   return (
     <View style={themed($container)}>
-      <Group title="Offline Mode Speech Model">
+      <Group title={title}>
         <TouchableOpacity style={themed($selector)} onPress={() => setModalVisible(true)} activeOpacity={0.7}>
           <View style={themed($selectorContent)}>
             <View style={themed($selectorTextContainer)}>
@@ -136,10 +149,10 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
       {selectedModel && !isDownloaded && !isDownloading && (
         <Button
           preset="primary"
-          text="Download Model"
+          text={downloadButtonText}
           onPress={() => onDownload(selectedModelId)}
           style={{marginTop: theme.spacing.s4}}
-          LeftAccessory={() => <Icon name="download" size={20} color={theme.colors.primary_foreground} />}
+          LeftAccessory={() => <Icon name="world-download" size={20} color={theme.colors.primary_foreground} />}
         />
       )}
 

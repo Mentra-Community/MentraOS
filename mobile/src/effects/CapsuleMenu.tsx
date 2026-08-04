@@ -2,28 +2,30 @@ import {Button, Icon, Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useCapsuleStore} from "@/stores/capsule"
 
-import {Dimensions, PixelRatio, Platform, Share, View} from "react-native"
+import {Dimensions, InteractionManager, PixelRatio, Platform, Share, View} from "react-native"
 import {Pressable} from "react-native-gesture-handler"
 import {forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState} from "react"
 import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
 import GlassView from "@/components/ui/GlassView"
 import {usePathname} from "expo-router"
-import {ClientApp, useAppStatusStore} from "@mentra/island"
+import {ClientApp, engine} from "@mentra/engine"
+import {Directory, File, Paths} from "expo-file-system"
 import * as ImageManipulator from "expo-image-manipulator"
 import {captureRef} from "react-native-view-shot"
 import {Image as RNImage} from "react-native"
 import {BottomSheetBackdrop, BottomSheetModal} from "@gorhom/bottom-sheet"
 import AppIcon from "@/components/home/AppIcon"
-import {SETTINGS, useSetting} from "@/stores/settings"
+import {SETTINGS, useSetting} from "@mentra/engine"
 import {useNavigationStore} from "@/stores/navigation"
 import {SYSTEM_APPS} from "@/constants/miniapps"
+import {enqueueScreenshotPersistence} from "@/effects/screenshotPersistenceQueue"
 
 interface CapsuleButtonProps {
-  onMinusPress?: () => void
-  onEllipsisPress?: () => void
+  onRightPress?: () => void
+  onLeftPress?: () => void
 }
 
-function CapsuleButton({onMinusPress, onEllipsisPress}: CapsuleButtonProps) {
+function CapsuleButton({onRightPress, onLeftPress}: CapsuleButtonProps) {
   const {theme} = useAppTheme()
 
   // On Android, GlassView is just a plain View with no blur, so the capsule
@@ -38,7 +40,7 @@ function CapsuleButton({onMinusPress, onEllipsisPress}: CapsuleButtonProps) {
   //     style={androidStyle}>
   //     <Pressable
   //       hitSlop={10}
-  //       onPress={onMinusPress}
+  //       onPress={onRightPress}
   //       style={({pressed}) => [
   //         pressed && {backgroundColor: theme.colors.input},
   //         {
@@ -58,12 +60,12 @@ function CapsuleButton({onMinusPress, onEllipsisPress}: CapsuleButtonProps) {
   // )
   return (
     <GlassView
-      transparent={true}
-      className="flex-row justify-between rounded-full h-8 w-20 items-center"
+      transparent={false}
+      className="flex-row justify-between rounded-full h-8 w-20 items-center bg-background/60"
       style={androidStyle}>
       <Pressable
         hitSlop={10}
-        onPress={onEllipsisPress}
+        onPress={onLeftPress}
         // className="w-8 h-full items-center justify-center rounded-l-full bg-red-500"
         style={({pressed}) => [
           pressed && {backgroundColor: theme.colors.input},
@@ -78,12 +80,18 @@ function CapsuleButton({onMinusPress, onEllipsisPress}: CapsuleButtonProps) {
             borderBottomLeftRadius: 40,
           },
         ]}>
-        <Icon name="ellipsis" size={20} color={theme.colors.foreground} />
+        {/* <View className="relative -top-[1px] left-0 w-4 h-4">
+          <View className="w-5.5 h-5.5 bg-input rounded-full z-0 absolute -top-0.5 -left-0.5" />
+          <Icon name={"minus"} size={16} color={theme.colors.foreground} className="z-0 absolute top-[1px] left-[1px]" />
+        </View> */}
+        {/* <View className="border-1 border-red-500"> */}
+          <Icon name="minimize" size={13} color={theme.colors.foreground} className="mr-0.5" />
+        {/* </View> */}
       </Pressable>
-      <View className="h-4 w-px bg-primary-foreground/80 absolute left-1/2 -translate-x-1/2" />
+      <View className="h-4 w-px bg-primary-foreground absolute left-1/2 -translate-x-1/2" />
       <Pressable
         hitSlop={10}
-        onPress={onMinusPress}
+        onPress={onRightPress}
         style={({pressed}) => [
           pressed && {backgroundColor: theme.colors.input},
           {
@@ -98,10 +106,11 @@ function CapsuleButton({onMinusPress, onEllipsisPress}: CapsuleButtonProps) {
           },
         ]}>
         {/* position circle under the icon: */}
-        <View className="relative -top-[1px] left-0 w-4 h-4">
+        {/* <View className="relative -top-[1px] left-0 w-4 h-4">
           <View className="w-5.5 h-5.5 bg-input rounded-full z-0 absolute -top-0.5 -left-0.5" />
           <Icon name={"x"} size={16} color={theme.colors.foreground} className="z-0 absolute top-[1px] left-[1px]" />
-        </View>
+        </View> */}
+        <Icon name={"close"} size={14} color={theme.colors.foreground} className="z-0 ml-0.5" />
       </Pressable>
     </GlassView>
   )
@@ -144,259 +153,307 @@ export default function CapsuleMenu({forceShow}: {forceShow: boolean}) {
       style={{top: top, right: right}}
       pointerEvents="box-none">
       <CapsuleButton
-        onMinusPress={() => active?.handleExit(true)}
-        onEllipsisPress={() => {
-          bottomSheetRef.current?.present()
-        }}
+        onRightPress={() => active?.handleRightPress(true)}
+        onLeftPress={() => active?.handleLeftPress(true)}
       />
-      <MiniAppMoreActionsSheet
+      {/* <MiniAppMoreActionsSheet
         ref={bottomSheetRef}
         packageName={active?.packageName ?? ""}
         appNameOverride={active?.appNameOverride}
         iconUrlOverride={active?.iconUrlOverride}
-      />
+      /> */}
     </View>
   )
+}
+
+/** Longest we'll delay a close waiting for the UI to go idle before capturing. */
+const CAPTURE_SETTLE_TIMEOUT_MS = 300
+let screenshotFileSequence = 0
+
+/**
+ * Resolve once the UI has settled enough to photograph, or after
+ * CAPTURE_SETTLE_TIMEOUT_MS, whichever comes first. Two nested frames after
+ * interactions finish: the first lets React commit the released pressed state,
+ * the second lets the native view tree draw it.
+ */
+function settleBeforeCapture(): Promise<void> {
+  return new Promise<void>((resolve) => {
+    let settled = false
+    const finish = () => {
+      if (settled) return
+      settled = true
+      resolve()
+    }
+    const guard = setTimeout(finish, CAPTURE_SETTLE_TIMEOUT_MS)
+    InteractionManager.runAfterInteractions(() => {
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => {
+          clearTimeout(guard)
+          finish()
+        }),
+      )
+    })
+  })
 }
 
 export async function captureScreenshot(
   viewShotRef: React.RefObject<View | null>,
   packageName: string,
   topInsetOffset: number = 0,
+  options: {settle?: boolean} = {},
 ) {
-  if (Platform.OS === "ios") {
-    captureRef(viewShotRef, {
+  if (!viewShotRef.current) {
+    console.warn(`captureScreenshot: viewShotRef is null ${viewShotRef.current}`)
+    return
+  }
+
+  try {
+    // Capsule presses can leave pressed/layout transients in the image. Gesture
+    // exits must capture immediately because their callers start teardown or a
+    // compositor transform as soon as this function returns.
+    if (options.settle) await settleBeforeCapture()
+
+    let screenshotUri = await captureRef(viewShotRef, {
       format: "jpg",
-      quality: 0.1,
+      quality: Platform.OS === "ios" ? 0.1 : 0.5,
       result: "tmpfile",
     })
-      .then(async (uri) => {
-        const {width, height} = await new Promise<{width: number; height: number}>((resolve, reject) => {
-          RNImage.getSize(uri, (w, h) => resolve({width: w, height: h}), reject)
-        })
-        let amountToChop = topInsetOffset * PixelRatio.get()
-        amountToChop = 0
-        const context = ImageManipulator.ImageManipulator.manipulate(uri)
-        context.crop({originX: 0, originY: amountToChop, width: width, height: height - amountToChop})
-        const imageRef = await context.renderAsync()
-        const cropped = await imageRef.saveAsync({
-          format: ImageManipulator.SaveFormat.JPEG,
-          compress: 0.1,
-        })
-        await useAppStatusStore.getState().saveScreenshot(packageName, cropped.uri)
+
+    if (Platform.OS === "ios") {
+      const {width, height} = await new Promise<{width: number; height: number}>((resolve, reject) => {
+        RNImage.getSize(screenshotUri, (w, h) => resolve({width: w, height: h}), reject)
       })
-      .catch((e) => {
-        console.warn("screenshot failed:", e)
+      let amountToChop = topInsetOffset * PixelRatio.get()
+      amountToChop = 0
+      const context = ImageManipulator.ImageManipulator.manipulate(screenshotUri)
+      context.crop({originX: 0, originY: amountToChop, width, height: height - amountToChop})
+      const imageRef = await context.renderAsync()
+      const cropped = await imageRef.saveAsync({
+        format: ImageManipulator.SaveFormat.JPEG,
+        compress: 0.1,
       })
-  } else {
-    captureRef(viewShotRef, {
-      format: "jpg",
-      // handleGLSurfaceViewOnAndroid: true,
-      quality: 0.5, // android needs a higher quality to avoid compression artifacts
-      result: "tmpfile",
+      screenshotUri = cropped.uri
+    }
+
+    await enqueueScreenshotPersistence(async () => {
+      const screenshotDirectory = new Directory(Paths.document, "miniapp-screenshots")
+      if (!screenshotDirectory.exists) screenshotDirectory.create()
+
+      const safePackageName = packageName.replace(/[^a-zA-Z0-9._-]/g, "_")
+      // Unique filename per capture. The app switcher renders this uri through
+      // expo-image, which caches by uri, so reusing one path meant every fresh
+      // capture landed on disk but the card kept showing the first image ever
+      // loaded (OS-1810). Changing the uri is what actually invalidates it.
+      const prefix = `${safePackageName}-`
+      const legacyName = `${safePackageName}.jpg`
+      const captureId = `${Date.now()}-${screenshotFileSequence++}`
+      const persistentFile = new File(screenshotDirectory, `${prefix}${captureId}.jpg`)
+      new File(screenshotUri).copy(persistentFile)
+
+      // Publish the new URI before removing older files. Persistence is
+      // serialized so another capture cannot publish a file this sweep deletes.
+      await engine.miniapps.saveScreenshot(packageName, persistentFile.uri)
+
+      for (const entry of screenshotDirectory.list()) {
+        if (
+          entry instanceof File &&
+          (entry.name === legacyName || entry.name.startsWith(prefix)) &&
+          entry.name !== persistentFile.name
+        ) {
+          try {
+            entry.delete()
+          } catch {
+            // A stale file we can't remove is harmless; don't fail the capture.
+          }
+        }
+      }
     })
-      .then(async (uri) => {
-        // android is weird and the crop doesn't work properly:
-        useAppStatusStore.getState().saveScreenshot(packageName, uri)
-      })
-      .catch((e) => {
-        console.warn("screenshot failed:", e)
-      })
+  } catch (error) {
+    console.warn("screenshot failed:", error)
   }
 }
 
-interface MiniAppMoreActionsSheetProps {
-  packageName: string
-  appNameOverride?: string
-  iconUrlOverride?: string
-}
+// interface MiniAppMoreActionsSheetProps {
+//   packageName: string
+//   appNameOverride?: string
+//   iconUrlOverride?: string
+// }
 
-export const MiniAppMoreActionsSheet = forwardRef<BottomSheetModal, MiniAppMoreActionsSheetProps>(
-  function MiniAppMoreActionsSheet({packageName, appNameOverride, iconUrlOverride}, ref) {
-    const {theme} = useAppTheme()
-    const screenHeight = Dimensions.get("window").height
-    const snapPoints = useMemo(() => [screenHeight < 700 ? "70%" : "50%"], [screenHeight])
-    const internalRef = useRef<BottomSheetModal>(null)
-    const insets = useSaferAreaInsets()
-    const [app, setApp] = useState<ClientApp | null>(null)
-    const [superMode] = useSetting(SETTINGS.super_mode.key)
+// export const MiniAppMoreActionsSheet = forwardRef<BottomSheetModal, MiniAppMoreActionsSheetProps>(
+//   function MiniAppMoreActionsSheet({packageName, appNameOverride, iconUrlOverride}, ref) {
+//     const {theme} = useAppTheme()
+//     const screenHeight = Dimensions.get("window").height
+//     const snapPoints = useMemo(() => [screenHeight < 700 ? "70%" : "50%"], [screenHeight])
+//     const internalRef = useRef<BottomSheetModal>(null)
+//     const insets = useSaferAreaInsets()
+//     const [app, setApp] = useState<ClientApp | null>(null)
+//     const [superMode] = useSetting(SETTINGS.super_mode.key)
 
-    useEffect(() => {
-      const storeApp = useAppStatusStore.getState().apps.find((a) => a.packageName === packageName)
-      if (storeApp) {
-        setApp(storeApp)
-      } else if (appNameOverride || iconUrlOverride) {
-        // Dev-sideloaded miniapp not in the applet store — synthesize a minimal
-        // record so the sheet can show a name + icon.
-        setApp({
-          packageName,
-          name: appNameOverride ?? packageName,
-          logoUrl: iconUrlOverride ?? "",
-          loading: false,
-          running: true,
-          hidden: false,
-          healthy: true,
-          permissions: [],
-        } as unknown as ClientApp)
-      }
-    }, [packageName, appNameOverride, iconUrlOverride])
+//     useEffect(() => {
+//       const storeApp = engine.miniapps.list().find((a) => a.packageName === packageName)
+//       if (storeApp) {
+//         setApp(storeApp)
+//       } else if (appNameOverride || iconUrlOverride) {
+//         // Dev-sideloaded miniapp not in the applet store — synthesize a minimal
+//         // record so the sheet can show a name + icon.
+//         setApp({
+//           packageName,
+//           name: appNameOverride ?? packageName,
+//           logoUrl: iconUrlOverride ?? "",
+//           loading: false,
+//           running: true,
+//           hidden: false,
+//           healthy: true,
+//           permissions: [],
+//         } as unknown as ClientApp)
+//       }
+//     }, [packageName, appNameOverride, iconUrlOverride])
 
-    // Merge refs so both the parent and internal ref work
-    useImperativeHandle(ref, () => internalRef.current!)
+//     // Merge refs so both the parent and internal ref work
+//     useImperativeHandle(ref, () => internalRef.current!)
 
-    const renderBackdrop = useCallback(
-      (props: any) => (
-        <BottomSheetBackdrop {...props} disappearsOnIndex={-1} appearsOnIndex={0} pressBehavior="close" />
-      ),
-      [],
-    )
+//     const renderBackdrop = useCallback(
+//       (props: any) => (
+//         <BottomSheetBackdrop {...props} disappearsOnIndex={-1} appearsOnIndex={0} pressBehavior="close" />
+//       ),
+//       [],
+//     )
 
-    const handleAddRemoveFromHome = useCallback(() => {
-      useAppStatusStore.getState().setHiddenStatus(packageName, !app?.hidden)
-      internalRef.current?.dismiss()
-      useNavigationStore.getState().clearHistoryAndGoHome()
-    }, [packageName, app?.hidden])
+//     const handleAddRemoveFromHome = useCallback(() => {
+//       engine.miniapps.setHiddenStatus(packageName, !app?.hidden)
+//       internalRef.current?.dismiss()
+//       useNavigationStore.getState().clearHistoryAndGoHome()
+//     }, [packageName, app?.hidden])
 
-    const handleShare = useCallback(() => {
-      const storeUrl = `https://apps.mentraglass.com/package/${packageName}`
-      // on Android, Share.share ignores `url` and only uses `message`
-      Share.share(
-        Platform.OS === "android"
-          ? {message: `${app?.name ?? packageName}\n${storeUrl}`}
-          : {message: app?.name ?? packageName, url: storeUrl},
-      )
-    }, [packageName, app?.name])
+//     const handleFeedback = useCallback(() => {
+//       internalRef.current?.dismiss()
+//       useNavigationStore.getState().push("/miniapps/settings/feedback", {
+//         triggerSource: "applet_capsule_menu",
+//         triggerReason: "manual_bug_report",
+//         sourceAppletPackageName: packageName,
+//         sourceAppletName: app?.name,
+//       })
+//     }, [packageName, app?.name])
 
-    const handleFeedback = useCallback(() => {
-      internalRef.current?.dismiss()
-      useNavigationStore.getState().push("/miniapps/settings/feedback", {
-        submissionMode: "USER_INITIATED",
-        triggerArea: "applet_capsule_menu",
-        triggerReason: "manual_bug_report",
-        sourceAppletPackageName: packageName,
-        sourceAppletName: app?.name,
-      })
-    }, [packageName, app?.name])
+//     const handleSettings = useCallback(() => {
+//       internalRef.current?.dismiss()
+//       useNavigationStore.getState().push("/applet/settings", {
+//         packageName: packageName,
+//         appName: app?.name,
+//       })
+//     }, [packageName, app?.name])
 
-    const handleSettings = useCallback(() => {
-      internalRef.current?.dismiss()
-      useNavigationStore.getState().push("/applet/settings", {
-        packageName: packageName,
-        appName: app?.name,
-      })
-    }, [packageName, app?.name])
+//     const isSystemApp = SYSTEM_APPS.includes(packageName)
+//     const size = 28
 
-    const isSystemApp = SYSTEM_APPS.includes(packageName)
-    const size = 28
+//     return (
+//       <BottomSheetModal
+//         ref={internalRef}
+//         snapPoints={snapPoints}
+//         backdropComponent={renderBackdrop}
+//         enablePanDownToClose
+//         enableDynamicSizing={false}
+//         backgroundStyle={{backgroundColor: theme.colors.primary_foreground}}
+//         handleIndicatorStyle={{backgroundColor: theme.colors.muted_foreground}}>
+//         <View className="px-4 flex-1 gap-6" style={{paddingBottom: insets.bottom}}>
+//           {/* <View className="gap-4 px-4 mb-2">
+//             <Text className="text-lg font-bold text-foreground text-center" tx="home:incompatibleApps" />
+//             <Text className="text-sm text-muted-foreground font-medium" tx="home:incompatibleAppsDescription" />
+//           </View> */}
 
-    return (
-      <BottomSheetModal
-        ref={internalRef}
-        snapPoints={snapPoints}
-        backdropComponent={renderBackdrop}
-        enablePanDownToClose
-        enableDynamicSizing={false}
-        backgroundStyle={{backgroundColor: theme.colors.primary_foreground}}
-        handleIndicatorStyle={{backgroundColor: theme.colors.muted_foreground}}>
-        <View className="px-4 flex-1 gap-6" style={{paddingBottom: insets.bottom}}>
-          {/* <View className="gap-4 px-4 mb-2">
-            <Text className="text-lg font-bold text-foreground text-center" tx="home:incompatibleApps" />
-            <Text className="text-sm text-muted-foreground font-medium" tx="home:incompatibleAppsDescription" />
-          </View> */}
+//           <View />
 
-          <View />
+//           <View className="flex-row items-center justify-center gap-4">
+//             {app && <AppIcon app={app as ClientApp} disableLoader={true} className="w-12 h-12" />}
+//             <View className="gap-1 flex-col">
+//               <Text className="text-lg font-bold text-foreground text-center" text={app?.name} />
+//               {superMode && <Text className="text-sm text-chart-4 font-medium" text={app?.packageName} />}
+//             </View>
+//           </View>
 
-          <View className="flex-row items-center justify-center gap-4">
-            {app && <AppIcon app={app as ClientApp} disableLoader={true} className="w-12 h-12" />}
-            <View className="gap-1 flex-col">
-              <Text className="text-lg font-bold text-foreground text-center" text={app?.name} />
-              {superMode && <Text className="text-sm text-chart-4 font-medium" text={app?.packageName} />}
-            </View>
-          </View>
+//           <View className="flex-1 flex-row flex-wrap">
+//             {/* <View className="flex-col gap-2 items-center w-16">
+//               <Button compactIcon onPress={() => {}} preset="alternate" className="rounded-2xl w-16 h-16">
+//                 <Icon name="share" color={theme.colors.foreground} size={size} />
+//               </Button>
+//               <Text className="text-sm text-muted-foreground w-full text-center" text="[settings]" />
+//             </View> */}
+//             <View className="flex-col gap-2 items-center w-1/4" style={isSystemApp ? {opacity: 0.8} : undefined}>
+//               <Button
+//                 compactIcon
+//                 onPress={isSystemApp ? undefined : handleShare}
+//                 preset="alternate"
+//                 className="rounded-2xl w-16 h-16"
+//                 disabled={isSystemApp}>
+//                 <Icon name="share" color={theme.colors.foreground} size={size} />
+//               </Button>
+//               <Text className="text-sm text-muted-foreground w-full text-center" tx="appInfo:share" />
+//             </View>
+//             {app && app.hidden && (
+//               <View className="flex-col gap-2 items-center w-1/4">
+//                 <Button
+//                   compactIcon
+//                   onPress={handleAddRemoveFromHome}
+//                   preset="alternate"
+//                   className="rounded-2xl w-16 h-16">
+//                   <Icon name="plus" color={theme.colors.foreground} size={size} />
+//                 </Button>
+//                 <Text className="text-sm text-muted-foreground w-full text-center" tx="appInfo:addToHome" />
+//               </View>
+//             )}
+//             {app && !app.hidden && (
+//               <View className="flex-col gap-2 items-center w-1/4">
+//                 <Button
+//                   compactIcon
+//                   onPress={handleAddRemoveFromHome}
+//                   preset="alternate"
+//                   className="rounded-2xl w-16 h-16">
+//                   <Icon name="minus" color={theme.colors.foreground} size={size} />
+//                 </Button>
+//                 <Text className="text-sm text-muted-foreground w-full text-center" tx="appInfo:removeFromHome" />
+//               </View>
+//             )}
 
-          <View className="flex-1 flex-row flex-wrap">
-            {/* <View className="flex-col gap-2 items-center w-16">
-              <Button compactIcon onPress={() => {}} preset="alternate" className="rounded-2xl w-16 h-16">
-                <Icon name="share" color={theme.colors.foreground} size={size} />
-              </Button>
-              <Text className="text-sm text-muted-foreground w-full text-center" text="[settings]" />
-            </View> */}
-            <View className="flex-col gap-2 items-center w-1/4" style={isSystemApp ? {opacity: 0.8} : undefined}>
-              <Button
-                compactIcon
-                onPress={isSystemApp ? undefined : handleShare}
-                preset="alternate"
-                className="rounded-2xl w-16 h-16"
-                disabled={isSystemApp}>
-                <Icon name="share" color={theme.colors.foreground} size={size} />
-              </Button>
-              <Text className="text-sm text-muted-foreground w-full text-center" tx="appInfo:share" />
-            </View>
-            {app && app.hidden && (
-              <View className="flex-col gap-2 items-center w-1/4">
-                <Button
-                  compactIcon
-                  onPress={handleAddRemoveFromHome}
-                  preset="alternate"
-                  className="rounded-2xl w-16 h-16">
-                  <Icon name="plus" color={theme.colors.foreground} size={size} />
-                </Button>
-                <Text className="text-sm text-muted-foreground w-full text-center" tx="appInfo:addToHome" />
-              </View>
-            )}
-            {app && !app.hidden && (
-              <View className="flex-col gap-2 items-center w-1/4">
-                <Button
-                  compactIcon
-                  onPress={handleAddRemoveFromHome}
-                  preset="alternate"
-                  className="rounded-2xl w-16 h-16">
-                  <Icon name="minus" color={theme.colors.foreground} size={size} />
-                </Button>
-                <Text className="text-sm text-muted-foreground w-full text-center" tx="appInfo:removeFromHome" />
-              </View>
-            )}
+//             <View className="flex-col gap-2 items-center w-1/4">
+//               <Button compactIcon onPress={handleFeedback} preset="alternate" className="rounded-2xl w-16 h-16">
+//                 <Icon name="message-2-star" color={theme.colors.foreground} size={size} />
+//               </Button>
+//               <Text className="text-sm text-muted-foreground w-full text-center" tx="appInfo:feedback" />
+//             </View>
 
-            <View className="flex-col gap-2 items-center w-1/4">
-              <Button compactIcon onPress={handleFeedback} preset="alternate" className="rounded-2xl w-16 h-16">
-                <Icon name="message-2-star" color={theme.colors.foreground} size={size} />
-              </Button>
-              <Text className="text-sm text-muted-foreground w-full text-center" tx="appInfo:feedback" />
-            </View>
+//             <View className="flex-col gap-2 items-center w-1/4" style={isSystemApp ? {opacity: 0.8} : undefined}>
+//               <Button
+//                 compactIcon
+//                 onPress={isSystemApp ? undefined : handleSettings}
+//                 preset="alternate"
+//                 className="rounded-2xl w-16 h-16"
+//                 disabled={isSystemApp}>
+//                 <Icon name="cog" color={theme.colors.foreground} size={size} />
+//               </Button>
+//               <Text className="text-sm text-muted-foreground w-full text-center" tx="appInfo:settings" />
+//             </View>
 
-            <View className="flex-col gap-2 items-center w-1/4" style={isSystemApp ? {opacity: 0.8} : undefined}>
-              <Button
-                compactIcon
-                onPress={isSystemApp ? undefined : handleSettings}
-                preset="alternate"
-                className="rounded-2xl w-16 h-16"
-                disabled={isSystemApp}>
-                <Icon name="cog" color={theme.colors.foreground} size={size} />
-              </Button>
-              <Text className="text-sm text-muted-foreground w-full text-center" tx="appInfo:settings" />
-            </View>
+//             {/* Uninstall removed from 3-dot menu - users can uninstall from miniapp settings page */}
+//             {/* {isUninstallable && (
+//               <View className="flex-col gap-2 items-center w-1/4">
+//                 <Button compactIcon onPress={handleUninstall} preset="alternate" className="rounded-2xl w-16 h-16">
+//                   <Icon name="trash" color={theme.colors.destructive} size={size} />
+//                 </Button>
+//                 <Text className="text-sm text-muted-foreground w-full text-center" tx="appInfo:uninstall" />
+//               </View>
+//             )} */}
+//           </View>
 
-            {/* Uninstall removed from 3-dot menu - users can uninstall from miniapp settings page */}
-            {/* {isUninstallable && (
-              <View className="flex-col gap-2 items-center w-1/4">
-                <Button compactIcon onPress={handleUninstall} preset="alternate" className="rounded-2xl w-16 h-16">
-                  <Icon name="trash" color={theme.colors.destructive} size={size} />
-                </Button>
-                <Text className="text-sm text-muted-foreground w-full text-center" tx="appInfo:uninstall" />
-              </View>
-            )} */}
-          </View>
+//           <View className="flex-1" />
 
-          <View className="flex-1" />
-
-          <Button
-            tx="common:cancel"
-            onPress={() => {
-              internalRef.current?.dismiss()
-            }}
-          />
-        </View>
-      </BottomSheetModal>
-    )
-  },
-)
+//           <Button
+//             tx="common:cancel"
+//             onPress={() => {
+//               internalRef.current?.dismiss()
+//             }}
+//           />
+//         </View>
+//       </BottomSheetModal>
+//     )
+//   },
+// )

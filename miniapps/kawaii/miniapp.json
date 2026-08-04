@@ -1,0 +1,22 @@
+{
+  "$schema": "./node_modules/@mentra/miniapp-cli/schema/miniapp.schema.json",
+  "packageName": "com.mentra.kawaii",
+  "version": "0.1.9",
+  "name": "Kawaii",
+  "description": "A tiny cute-face miniapp used to verify Cloud V2 preinstall and auto-update behavior.",
+  "icon": "icon.png",
+  "type": "standard",
+  "sdkVersion": "0.3.0",
+  "minHostVersion": "1.42.0",
+  "entry": {
+    "background": "background/index.js",
+    "ui": "ui/index.html"
+  },
+  "hardwareRequirements": [
+    {
+      "type": "DISPLAY",
+      "level": "OPTIONAL",
+      "description": "Optional display support; the miniapp works in phone mode."
+    }
+  ]
+}

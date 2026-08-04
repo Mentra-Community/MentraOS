@@ -1,0 +1,59 @@
+plugins {
+    alias(libs.plugins.android.application)
+}
+
+android {
+    namespace 'com.mentra.recovery'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId "com.mentra.recovery"
+        minSdk 29
+        targetSdk 35
+        versionCode 8
+        versionName "1.1.0"
+
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    signingConfigs {
+        release {
+            storeFile file("../credentials/recovery-keystore.jks")
+            // Try dedicated recovery credentials, then shared OTA env vars, then ASG Gradle
+            // properties (for runners that use asg-keystore.jks as a shared signing keystore).
+            storePassword System.getenv("RECOVERY_STORE_PASSWORD")
+                ?: System.getenv("OTA_STORE_PASSWORD")
+                ?: (project.hasProperty("ASG_STORE_PASSWORD") ? project.property("ASG_STORE_PASSWORD") : "android")
+            keyAlias System.getenv("RECOVERY_KEY_ALIAS")
+                ?: System.getenv("OTA_KEY_ALIAS")
+                ?: (project.hasProperty("ASG_KEY_ALIAS") ? project.property("ASG_KEY_ALIAS") : "asg")
+            keyPassword System.getenv("RECOVERY_KEY_PASSWORD")
+                ?: System.getenv("OTA_KEY_PASSWORD")
+                ?: (project.hasProperty("ASG_KEY_PASSWORD") ? project.property("ASG_KEY_PASSWORD") : "android")
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.release
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+
+    implementation libs.work.runtime
+    implementation libs.core
+    testImplementation libs.junit
+    // Real org.json on the JVM so RemediationPolicy.fromJson can be unit-tested
+    // (android.jar's org.json is a stub that throws under plain JVM unit tests).
+    testImplementation 'org.json:json:20240303'
+    androidTestImplementation libs.ext.junit
+    androidTestImplementation libs.espresso.core
+}

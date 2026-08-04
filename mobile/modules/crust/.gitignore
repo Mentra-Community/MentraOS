@@ -55,3 +55,9 @@ yarn-error.log
 
 # Expo
 .expo/*
+
+# MentraJS polyfill mirror — regenerated on every build of
+# @mentra/jspolyfill. Source of truth lives in that module's
+# assets/ directory; this mirror only exists because CocoaPods silently
+# drops `..` paths from `resource_bundles`.
+ios/Resources/startup.js

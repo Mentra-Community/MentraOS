@@ -5,6 +5,8 @@ import android.util.Log;
 
 import androidx.annotation.NonNull;
 
+import com.mentra.asg_client.io.media.utils.MediaStorage;
+
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -71,7 +73,7 @@ public class PhotoQueueManager {
      */
     public PhotoQueueManager(@NonNull Context context) {
         mContext = context.getApplicationContext();
-        mQueueDir = new File(mContext.getExternalFilesDir(null), QUEUE_DIR_NAME);
+        mQueueDir = new File(MediaStorage.getMediaRoot(mContext), QUEUE_DIR_NAME);
         mManifestFile = new File(mQueueDir, MANIFEST_FILENAME);
         mExecutor = Executors.newSingleThreadExecutor();
         
@@ -119,14 +121,14 @@ public class PhotoQueueManager {
      */
     public void takePhoto(PhotoCaptureCallback callback) {
         String timeStamp = new java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US).format(new java.util.Date());
-        String photoFilePath = mContext.getExternalFilesDir(null) + java.io.File.separator + "IMG_" + timeStamp + ".jpg";
+        String photoFilePath = MediaStorage.getMediaRoot(mContext) + java.io.File.separator + "IMG_" + timeStamp + ".jpg";
         
         CameraNeoService.takePictureWithCallback(
                 mContext,
                 photoFilePath,
                 new CameraNeoService.PhotoCaptureCallback() {
                     @Override
-                    public void onPhotoCaptured(String filePath) {
+                    public void onPhotoCaptured(String filePath, JSONObject captureMetadata) {
                         callback.onPhotoCaptured(filePath);
                     }
                     

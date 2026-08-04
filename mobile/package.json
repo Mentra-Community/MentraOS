@@ -4,7 +4,8 @@
   "private": true,
   "main": "expo-router/entry",
   "workspaces": [
-    "modules/*"
+    "modules/*",
+    "../cloud-v2/packages/*"
   ],
   "scripts": {
     "preinstall": "zx ./scripts/preinstall.mjs",
@@ -25,6 +26,7 @@
     "release:android": "zx ./scripts/release-android.mjs",
     "release:ios": "zx ./scripts/release-ios.mjs",
     "ios-release": "zx ./scripts/ios-release.mjs",
+    "ios-release-stable": "zx ./scripts/ios-release-stable.mjs",
     "android-wireless": "zx ./scripts/android-wireless.mjs",
     "android-release": "zx ./scripts/android-release.mjs",
     "android-internal": "zx ./scripts/android-internal.mjs",
@@ -36,14 +38,17 @@
     "release-all": "zx ./scripts/release-all.mjs",
     "release-android": "zx ./scripts/release-android.mjs",
     "release-ios": "zx ./scripts/release-ios.mjs",
+    "generate-bundled-miniapps": "zx ./scripts/generate-bundled-miniapps.mjs",
+    "pull:glasses-photos": "bash ./scripts/pull-glasses-photos.sh",
+    "wipe:glasses-photos": "bash ./scripts/wipe-glasses-photos.sh",
     "compile": "tsc --noEmit -p . --pretty",
     "lint": "eslint . --fix",
     "lint:check": "eslint .",
     "patch": "patch-package",
-    "test": "jest",
+    "test": "jest --no-watchman",
     "test:watch": "jest --watch",
-    "test:maestro": "maestro test -e MAESTRO_APP_ID=com.mentra.mentra .maestro/flows",
-    "test:maestro:ci": "maestro test -e MAESTRO_APP_ID=com.mentra.mentra .maestro/flows",
+    "test:maestro": "maestro test -e MAESTRO_APP_ID=${APP_PACKAGE_NAME:-com.mentra.mentra} .maestro/flows",
+    "test:maestro:ci": "maestro test -e MAESTRO_APP_ID=${APP_PACKAGE_NAME:-com.mentra.mentra} .maestro/flows",
     "adb": "adb reverse tcp:9090 tcp:9090 && adb reverse tcp:3000 tcp:3000 && adb reverse tcp:9001 tcp:9001 && adb reverse tcp:8081 tcp:8081",
     "dev:logs": "bunx zx ./scripts/start.mjs 2>&1 | ./scripts/log-viewer.sh",
     "dev:logs-dashboard": "bunx zx ./scripts/start.mjs 2>&1 | ./scripts/log-dashboard.sh",
@@ -52,6 +57,7 @@
   "dependencies": {
     "@babel/runtime": "^7.28.6",
     "@config-plugins/react-native-webrtc": "^13.0.0",
+    "@craftzdog/react-native-buffer": "^6.1.2",
     "@douglowder/expo-av-route-picker-view": "^0.0.5",
     "@dr.pogodin/react-native-fs": "^2.37.0",
     "@expo-google-fonts/red-hat-display": "^0.4.1",
@@ -64,7 +70,10 @@
     "@livekit/react-native-expo-plugin": "^1.0.1",
     "@livekit/react-native-webrtc": "^137.0.2",
     "@mentra/bluetooth-sdk": "workspace:*",
-    "@mentra/island": "workspace:*",
+    "@mentra/crust": "workspace:*",
+    "@mentra/cloud-client": "workspace:*",
+    "@mentra/engine": "workspace:*",
+    "@mentra/jspolyfill": "workspace:*",
     "@mentra/miniapp": "workspace:*",
     "@react-native-community/netinfo": "11.5.2",
     "@react-native-community/slider": "5.1.2",
@@ -75,11 +84,9 @@
     "@sentry/react-native": "~7.11.0",
     "@shopify/flash-list": "2.0.2",
     "@shopify/react-native-skia": "2.4.18",
-    "@supabase/supabase-js": "^2.99.0",
     "authing-js-sdk": "^4.23.55",
     "axios": "^1.13.6",
     "babel-plugin-module-resolver": "5.0.0",
-    "crust": "workspace:*",
     "date-fns": "^4.1.0",
     "dotenv": "^17.3.1",
     "expo": "~55.0.24",
@@ -117,6 +124,7 @@
     "expo-task-manager": "~55.0.16",
     "expo-video": "~55.0.17",
     "expo-web-browser": "~55.0.16",
+    "exifr": "^7.1.3",
     "i18next": "^25.8.17",
     "intl-pluralrules": "^2.0.1",
     "lucide-react-native": "^0.553.0",
@@ -177,14 +185,17 @@
     "@testing-library/react-native": "^13.3.3",
     "@types/react": "~19.2.14",
     "@types/semver": "^7.7.1",
+    "bun-types": "^1.0.17",
     "eslint": "^9.39.4",
+    "glob": "^13.0.6",
     "jest": "~29.7.0",
     "jest-expo": "~55.0.17",
     "patch-package": "^8.0.1",
     "react-native-svg-transformer": "^1.5.3",
     "react-test-renderer": "19.2.0",
     "tsx": "^4.21.0",
-    "typescript": "~5.9.2"
+    "typescript": "~5.9.2",
+    "zod": "^3.24.1"
   },
   "engines": {
     "node": "^20.19.4 || ^22.13.0 || ^24.3.0 || ^25.0.0"
@@ -198,7 +209,9 @@
     "react-native-draggable-masonry@1.3.0": "patches/react-native-draggable-masonry@1.3.0.patch",
     "react-native-executorch@0.7.2": "patches/react-native-executorch@0.7.2.patch",
     "expo-speech-transcriber@0.1.9": "patches/expo-speech-transcriber@0.1.9.patch",
-    "react-native-inner-shadow@2.4.0": "patches/react-native-inner-shadow@2.4.0.patch"
+    "react-native-inner-shadow@2.4.0": "patches/react-native-inner-shadow@2.4.0.patch",
+    "react-native-webview@13.16.0": "patches/react-native-webview@13.16.0.patch",
+    "expo-audio@55.0.14": "patches/expo-audio@55.0.14.patch"
   },
   "trustedDependencies": [
     "@sentry/cli",

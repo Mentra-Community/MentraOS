@@ -1,0 +1,77 @@
+@import url("https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@400;500;600;700&display=swap");
+@import "tailwindcss";
+
+/* Dark mode is class-based: `.dark` on <html>, toggled from useColorScheme
+   (what the Mentra host reports). Light stays the untouched default. */
+@custom-variant dark (&:is(.dark *));
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  overflow: hidden;
+  background: #f4f4f5;
+  color: #18181b;
+  font-family: "Red Hat Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+/*
+ * Make the app feel native: chrome (labels, buttons, badges) can't be
+ * long-press selected. Only content explicitly tagged `.selectable-text`
+ * (the incoming insight text itself) is selectable.
+ */
+:root {
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.selectable-text {
+  user-select: text;
+  -webkit-user-select: text;
+  -webkit-touch-callout: default;
+}
+
+/*
+ * Form controls must stay selectable/editable — the global no-select rule
+ * inherits onto them and, on WebKit hosts, suppresses the caret/selection
+ * handles inside text fields. Opt them back in explicitly.
+ */
+input,
+textarea,
+select,
+[contenteditable] {
+  user-select: text;
+  -webkit-user-select: text;
+  -webkit-touch-callout: default;
+}
+
+/*
+ * Dark palette — purely additive overrides. Zinc neutrals; the pink brand
+ * accent is untouched (it carries enough contrast on dark surfaces).
+ */
+.dark body {
+  background: #0b0b0d;
+  color: #fafafa;
+}
+
+/*
+ * The app shell paints its light gradient via an inline style object in
+ * App.tsx (MERGE_SHELL_STYLE), which class utilities can't beat. Override it
+ * here for dark only — `!important` is required to outrank the inline style.
+ */
+.dark .merge-shell {
+  background: linear-gradient(180deg, #0b0b0d 0%, #0e0e12 42%, #131318 100%) !important;
+}

@@ -1,24 +1,26 @@
 /**
  * @fileoverview useColorScheme — React hook that returns the host's current
- * color scheme and updates when the user flips light/dark.
+ * color scheme.
  *
- * Initial value comes from window.MentraOS (set before the miniapp loads).
- * Subsequent changes arrive as COLOR_SCHEME_CHANGE messages on the session.
+ * WebView-side hook: reads `window.MentraOS.colorScheme`, injected by the host
+ * before the miniapp's content loads. Like `useSafeArea`, this is read once at
+ * mount — the host doesn't push color-scheme changes to the WebView at runtime;
+ * flipping the phone's theme forces a reload.
+ *
+ * IMPORTANT: this hook must NOT construct a `MiniappSession`. `MiniappSession`
+ * is the *background* (JSContext) API; inside a UI WebView its transport falls
+ * back to PostMessage and its `CONNECT` never gets an ACK from the host's UI
+ * router, so `session.connect()` times out ("CONNECT_ACK timeout"). UI hooks
+ * read host-injected globals instead (see `useSafeArea`).
  */
 
-import {useEffect, useState} from "react"
+import {useState} from "react"
 
-import {type MiniappColorScheme} from "../globals"
-import {useSession} from "./useSession"
+import {getMentraOSGlobals, type MiniappColorScheme} from "../globals"
 
 export function useColorScheme(): MiniappColorScheme {
-  const session = useSession()
-  const [scheme, setScheme] = useState<MiniappColorScheme>(session.colorScheme)
-
-  useEffect(() => {
-    setScheme(session.colorScheme)
-    return session.onColorSchemeChange(setScheme)
-  }, [session])
-
+  const [scheme] = useState<MiniappColorScheme>(() => {
+    return getMentraOSGlobals().colorScheme === "dark" ? "dark" : "light"
+  })
   return scheme
 }

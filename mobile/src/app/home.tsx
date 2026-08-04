@@ -1,7 +1,6 @@
 import {useFocusEffect} from "@react-navigation/native"
 import {useCallback, useEffect, useRef} from "react"
 import {Platform, ScrollView, View} from "react-native"
-import {useSharedValue} from "react-native-reanimated"
 import {LinearGradient} from "expo-linear-gradient"
 import MaskedView from "@react-native-masked-view/masked-view"
 
@@ -10,10 +9,10 @@ import {AppsGrid} from "@/components/home/AppsGrid"
 import {PairGlassesCard} from "@/components/home/PairGlassesCard"
 import {Screen} from "@/components/ignite"
 import {Group} from "@/components/ui"
-import {BgTimer, useRefresh} from "@mentra/island"
-import {SETTINGS, useSetting} from "@/stores/settings"
-import {selectGlassesConnected, useGlassesStore} from "@/stores/glasses"
-import {useCoreStore} from "@/stores/core"
+import {BgTimer, engine, useRefresh} from "@mentra/engine"
+import {SETTINGS, useSetting} from "@mentra/engine"
+import {appSwitcherProgress} from "@/stores/appSwitcher"
+import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import AppSwitcherButton from "@/components/home/AppSwitcherButtton"
 import AppSwitcher from "@/components/home/AppSwitcher"
 import {GlassesStatus, ControllerStatus} from "@/components/home/DeviceStatus"
@@ -25,11 +24,14 @@ import {BlurTargetView, BlurView} from "expo-blur"
 
 export default function Homepage() {
   const refreshApps = useRefresh()
-  const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
-  const glassesConnected = useGlassesStore(selectGlassesConnected)
-  const isSearching = useCoreStore((state) => state.searching)
+  // Pairing-identity read-model: none | pending (chosen, never paired) | paired.
+  const identity = useEngineSnapshot(engine.pairing.identity, (onChange) => engine.pairing.onIdentity(onChange))
+  const pairedModel = identity.kind === "paired" ? identity.model : ""
+  const glassesConnected =
+    useEngineSnapshot(engine.glasses.status, (onChange) => engine.glasses.onStatus(onChange)).state === "connected"
+  const isSearching = useEngineSnapshot(engine.pairing.scanning, (onChange) => engine.pairing.onScanning(onChange))
   const hasAttemptedInitialConnect = useRef(false)
-  const swipeProgress = useSharedValue(0)
+  const swipeProgress = appSwitcherProgress
   const insets = useSaferAreaInsets()
   const bottomSheetRef = useRef<BottomSheet>(null)
   const blurTargetRef = useRef<View | null>(null)
@@ -56,10 +58,12 @@ export default function Homepage() {
     }
 
     attemptInitialConnect()
-  }, [glassesConnected, isSearching, defaultWearable])
+  }, [glassesConnected, isSearching, pairedModel])
 
   const renderContent = () => {
-    if (!defaultWearable) {
+    // A pending selection (model chosen, pairing never completed) renders the
+    // glasses card in its finish-pairing state rather than the first-run card.
+    if (identity.kind === "none") {
       return (
         <>
           <Group>

@@ -1,0 +1,10 @@
+# Temporary allowlist for production host files that still touch raw island
+# glasses/gallery stores during the glasses-status boundary migration.
+# This must stay empty unless a new entry includes an explicit migration plan.
+# Cloud V1 remnants (tier 5): raw settings-store access (getWsUrl/subscribe)
+# until the V1 websocket path is retired — see integration-review.md tier plan.
+mobile/src/services/SocketComms.ts
+mobile/src/services/WebSocketManager.ts
+# Dev-tooling storage-failure fallback: in-memory forced setting write with no
+# facade equivalent by design (becomes a facade op if a second consumer appears).
+mobile/src/utils/dev/devModeAllowlist.ts

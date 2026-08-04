@@ -41,11 +41,11 @@ describe("CameraManager.startStream", () => {
     expect(sent.length).toBe(0);
   });
 
-  it("throws RangeError for direct stream with invalid frameRate and does not sendMessage", async () => {
+  it("throws RangeError for direct stream with frameRate below the minimum and does not sendMessage", async () => {
     await expect(
       mgr.startStream({
         direct: "srt://127.0.0.1:4201?mode=caller",
-        video: { frameRate: 9 },
+        video: { frameRate: 4 },
       }),
     ).rejects.toThrow(RangeError);
     expect(sent.length).toBe(0);

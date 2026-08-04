@@ -1,6 +1,8 @@
 package com.mentra.bluetoothsdk.controllers
 
+import com.mentra.bluetoothsdk.BluetoothSdkDefaults
 import com.mentra.bluetoothsdk.DeviceStore
+import com.mentra.bluetoothsdk.PhotoRequest
 
 abstract class ControllerManager {
     @JvmField var type: String = ""
@@ -14,35 +16,30 @@ abstract class ControllerManager {
     abstract fun sendJson(jsonOriginal: Map<String, Any>, wakeUp: Boolean, requireAck: Boolean)
 
     // Camera & Media
-    abstract fun requestPhoto(
-        requestId: String,
-        appId: String,
-        size: String?,
-        webhookUrl: String?,
-        authToken: String?,
-        compress: String?,
-        flash: Boolean,
-        sound: Boolean,
-        exposureTimeNs: Long?,
-    )
+    abstract fun requestPhoto(request: PhotoRequest)
     abstract fun startStream(message: Map<String, Any>)
     abstract fun stopStream()
     abstract fun sendStreamKeepAlive(message: Map<String, Any>)
-    abstract fun startVideoRecording(requestId: String, save: Boolean, flash: Boolean, sound: Boolean)
+    abstract fun startVideoRecording(requestId: String, save: Boolean, sound: Boolean)
     abstract fun stopVideoRecording(requestId: String)
 
     // Button Settings
     abstract fun sendButtonPhotoSettings()
     abstract fun sendButtonVideoRecordingSettings()
     abstract fun sendButtonMaxRecordingTime()
-    abstract fun sendButtonCameraLedSetting()
 
     // Display Control
     abstract fun setBrightness(level: Int, autoMode: Boolean)
     abstract fun clearDisplay()
     abstract fun sendTextWall(text: String)
     abstract fun sendDoubleTextWall(top: String, bottom: String)
-    abstract fun displayBitmap(base64ImageData: String): Boolean
+    abstract fun displayBitmap(
+            base64ImageData: String,
+            x: Int? = null,
+            y: Int? = null,
+            width: Int? = null,
+            height: Int? = null
+    ): Boolean
     abstract fun showDashboard()
     abstract fun setDashboardPosition(height: Int, depth: Int)
 
@@ -78,7 +75,7 @@ abstract class ControllerManager {
     abstract fun sendWifiCredentials(ssid: String, password: String)
     abstract fun forgetWifiNetwork(ssid: String)
     abstract fun sendHotspotState(enabled: Boolean)
-    abstract fun sendOtaStart()
+    abstract fun sendOtaStart(otaVersionUrl: String? = null)
 
     // User Context (for crash reporting)
     abstract fun sendUserEmailToGlasses(email: String)
@@ -134,7 +131,9 @@ abstract class ControllerManager {
         get() = DeviceStore.get("glasses", "micEnabled") as? Boolean ?: false
 
     val voiceActivityDetectionEnabled: Boolean
-        get() = DeviceStore.get("glasses", "voiceActivityDetectionEnabled") as? Boolean ?: true
+        get() =
+            DeviceStore.get("glasses", "voiceActivityDetectionEnabled") as? Boolean
+                ?: BluetoothSdkDefaults.VOICE_ACTIVITY_DETECTION_ENABLED
 
     val batteryLevel: Int
         get() = DeviceStore.get("glasses", "batteryLevel") as? Int ?: -1

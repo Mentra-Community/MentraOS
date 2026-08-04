@@ -1,0 +1,107 @@
+---
+title: "Permissions"
+description: "Query the permissions your miniapp declared, and react to changes."
+icon: "lock"
+---
+
+`session.permissions` tells you which permissions your miniapp declared in its
+[`miniapp.json`](/app-devs/core-concepts/miniapp-manifest). `has(type)` is a
+synchronous boolean, `getAll()` returns the full record, and `onUpdate` /
+`onPermissionError` let you react to changes and to typed permission errors.
+
+```typescript src/background/index.ts
+import { registerMiniapp } from "@mentra/miniapp/background";
+
+registerMiniapp((session) => {
+  if (session.permissions.has("microphone")) {
+    session.transcription.on((data) => {
+      session.display.render([{type: "text", id: "msg", box: {x: 0, y: 0, w: 576, h: 288}, text: data.text}]);
+    });
+  }
+});
+```
+
+<Warning>
+`has()` and `getAll()` report what you **declared** in the manifest, not whether
+the user granted the OS prompt. `has("microphone") === true` only means your
+manifest lists `MICROPHONE`. If the user denied the OS permission, that
+subscription stays silent and receives nothing. The way to know a permission was
+actually granted is whether events arrive (and `onPermissionError` for the typed
+declaration error). See [the manifest](/app-devs/core-concepts/miniapp-manifest)
+for how to declare permissions.
+</Warning>
+
+## Methods
+
+| Method | Returns | Notes |
+|---|---|---|
+| `has(type)` | `boolean` | Whether `type` is declared in the manifest. |
+| `getAll()` | `PermissionRecord` | Fresh copy of the full declared record. |
+| `onUpdate(handler)` | `UnsubscribeFn` | Fires when the declared record changes. |
+| `onPermissionError(handler)` | `UnsubscribeFn` | Fires on a typed `PERMISSION_NOT_DECLARED` error. |
+
+`onUpdate` does not fire with the current value when you subscribe. Call
+`getAll()` yourself if you want the starting state. The record changes on the
+connect handshake (`CONNECT_ACK`), or when the phone pushes an update (for
+example a dev miniapp re-scanned with an updated manifest). The handler receives
+the full record, not a list.
+
+```typescript
+const stop = session.permissions.onUpdate((perms) => {
+  // perms: { microphone: true, location: false, camera: false, ... }
+  if (!perms.microphone) {
+    session.display.render([{type: "text", id: "msg", box: {x: 0, y: 0, w: 576, h: 288}, text: "Microphone not declared"}]);
+  }
+});
+```
+
+## Permission types
+
+`has()` and the keys of `PermissionRecord` use these canonical names. Each maps
+from the UPPER_CASE manifest `type` values.
+
+| `PermissionType` | Declared by manifest `type` |
+|---|---|
+| `microphone` | `MICROPHONE` |
+| `camera` | `CAMERA` |
+| `location` | `LOCATION`, `BACKGROUND_LOCATION` |
+| `notifications` | `READ_NOTIFICATIONS`, `POST_NOTIFICATIONS` |
+| `calendar` | `CALENDAR` |
+
+`location` is true if you declared either `LOCATION` or `BACKGROUND_LOCATION`, and
+`notifications` is true if you declared either notification permission.
+`PermissionRecord` is `Record<PermissionType, boolean>`, so `getAll()` always
+returns all five keys with a boolean each.
+
+## Permission errors
+
+If you call a capability whose permission you never declared, the phone runtime
+rejects with `PERMISSION_NOT_DECLARED`. `onPermissionError` is a filtered view of
+the session `error` event that surfaces only those.
+
+```typescript
+session.permissions.onPermissionError((err) => {
+  // err.permission   – the manifest permission name (UPPER_CASE) that was missing
+  // err.subscription – the subscription that triggered the rejection
+  // err.operation    – the operation that triggered the rejection
+});
+```
+
+| Field | Type | Notes |
+|---|---|---|
+| `code` | `string` | `PERMISSION_NOT_DECLARED` today; reserved for future codes. |
+| `message` | `string` | Human-readable error message. |
+| `permission` | `string \| undefined` | The missing manifest permission (UPPER_CASE). |
+| `subscription` | `string \| undefined` | The subscription that triggered it. |
+| `operation` | `string \| undefined` | The operation that triggered it. |
+
+This error means the permission is missing from your manifest, which is a fix you
+make in `miniapp.json`. It is separate from the user denying the OS prompt, which
+produces no error and instead leaves the relevant stream silent.
+
+<Note>
+Checking OS-grant state directly (`isGranted`) and prompting for a permission
+(`request`) are not implemented yet. They are planned to land on this same module
+alongside `has` / `getAll`, without renaming today's methods. For now, treat the
+arrival of events as the signal that a permission was granted.
+</Note>

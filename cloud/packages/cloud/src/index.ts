@@ -137,6 +137,12 @@ function _shouldUseLegacyExpress(pathname: string): boolean {
 const _server = Bun.serve({
   port: PORT,
 
+  // Long-poll routes (e.g. /api/v2/client/photo/:requestId) hang up to 30s
+  // waiting for an upstream event. Bun's default is 10s, which would kill
+  // them before completion. Margin is 5s so the 408 response can flush
+  // before the idle timer fires.
+  idleTimeout: 35,
+
   // Native Bun WebSocket handlers
   websocket: websocketHandlers,
 

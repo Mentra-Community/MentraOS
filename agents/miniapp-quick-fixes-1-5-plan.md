@@ -61,7 +61,7 @@ Responsibilities:
 ### 2. CLI changes — `sdk/miniapp-cli/src/dev.ts`
 
 - After spawning the user's `bun run --hot server.ts`, also start the sidecar.
-- Encode the sidecar port into the QR URL: `mentra-miniapp://dev?url=<miniapp>&name=<n>&package=<p>&dev=<sidecar-port>`. The `dev` param is optional — phones with older CLIs ignore it and run without live reload / console bridge.
+- Encode the sidecar port into the QR URL: `miniapp://dev?url=<miniapp>&name=<n>&package=<p>&dev=<sidecar-port>`. The `dev` param is optional — phones with older CLIs ignore it and run without live reload / console bridge.
 - Print both URLs + the QR.
 
 ### 3. Phone-side WebSocket bridge — `mobile/src/services/DevServerBridge.ts` (new)

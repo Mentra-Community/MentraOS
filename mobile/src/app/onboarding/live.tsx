@@ -1,18 +1,22 @@
-import {Screen} from "@/components/ignite"
-import {OnboardingGuide, OnboardingStep} from "@/components/onboarding/OnboardingGuide"
-import {waitForButtonPress, waitForTouchGesture} from "@/components/onboarding/waitForGlassesEvent"
-import {useNavigationStore} from "@/stores/navigation"
-import {translate} from "@/i18n"
-import {SETTINGS, useSetting} from "@/stores/settings"
-import showAlert from "@/utils/AlertUtils"
+import {SETTINGS, useSetting} from "@mentra/engine"
 import {useMemo} from "react"
 import {Platform} from "react-native"
 
-const CDN_BASE = "https://mentra-videos-cdn.mentraglass.com/onboarding/mentra-live/light"
+import {Screen} from "@/components/ignite"
+import {OnboardingGuide, OnboardingStep} from "@/components/onboarding/OnboardingGuide"
+import {waitForButtonPress, waitForTouchGesture} from "@/components/onboarding/waitForGlassesEvent"
+import {CDN_BASE_URL} from "@/constants/appConfig"
+import {translate} from "@/i18n"
+import {useNavigationStore} from "@/stores/navigation"
+import showAlert from "@/utils/AlertUtils"
+import {getNextOnboardingRoute} from "@/utils/onboarding/getNextOnboardingRoute"
+
+const CDN_BASE = `${CDN_BASE_URL}/onboarding/mentra-live/light`
 
 export default function MentraLiveOnboarding() {
-  const {clearHistoryAndGoHome} = useNavigationStore.getState()
+  const {clearHistoryAndGoHome, replace} = useNavigationStore.getState()
   const [_onboardingLiveCompleted, setOnboardingLiveCompleted] = useSetting(SETTINGS.onboarding_live_completed.key)
+  const [onboardingOsCompleted] = useSetting<boolean>(SETTINGS.onboarding_os_completed.key)
 
   // NOTE: you can't have 2 transition videos in a row or things will break:
   // Memoized so each step's `waitFn` keeps a stable identity across re-renders.
@@ -167,25 +171,36 @@ export default function MentraLiveOnboarding() {
   //   steps = steps.slice(0, 2)
   // }
 
+  const continueToNextOnboarding = () => {
+    const nextRoute = getNextOnboardingRoute({
+      includeMentraLive: false,
+      onboardingLiveCompleted: true,
+      onboardingOsCompleted,
+    })
+    if (nextRoute) {
+      replace(nextRoute)
+      return
+    }
+    clearHistoryAndGoHome()
+  }
+
+  const completeMentraLiveOnboarding = () => {
+    setOnboardingLiveCompleted(true)
+    continueToNextOnboarding()
+  }
+
   const handleCloseButton = () => {
-    showAlert(translate("onboarding:liveEndOnboardingTitle"), translate("onboarding:liveEndOnboardingMessage"), [
+    const messageKey = onboardingOsCompleted
+      ? "onboarding:liveEndOnboardingHomeMessage"
+      : "onboarding:liveEndOnboardingMessage"
+
+    showAlert(translate("onboarding:liveEndOnboardingTitle"), translate(messageKey), [
       {text: translate("common:no"), onPress: () => {}},
       {
         text: translate("onboarding:confirmSkip"),
-        onPress: () => {
-          handleExit()
-        },
+        onPress: completeMentraLiveOnboarding,
       },
     ])
-  }
-
-  const handleExit = () => {
-    clearHistoryAndGoHome()
-  }
-
-  const handleEndButton = () => {
-    setOnboardingLiveCompleted(true)
-    clearHistoryAndGoHome()
   }
 
   return (
@@ -197,7 +212,7 @@ export default function MentraLiveOnboarding() {
         preventBack={true}
         requiresGlassesConnection={true}
         skipFn={handleCloseButton}
-        endButtonFn={handleEndButton}
+        endButtonFn={completeMentraLiveOnboarding}
         startButtonText={translate("onboarding:continueOnboarding")}
         endButtonText={translate("common:continue")}
       />

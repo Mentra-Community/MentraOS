@@ -4,10 +4,8 @@ import {FlatList, TextStyle, TouchableOpacity, View, ViewStyle} from "react-nati
 import {Text} from "@/components/ignite"
 import AppIcon from "@/components/home/AppIcon"
 import {useAppTheme} from "@/contexts/ThemeContext"
-import {useNavigationStore} from "@/stores/navigation"
-import {DUMMY_APPLET, useBackgroundApps, useStart, type ClientApp} from "@mentra/island"
+import {DUMMY_APPLET, useBackgroundApps, useStart, type ClientApp} from "@mentra/engine"
 
-import {storePackageName} from "@/constants/miniapps"
 import {ThemedStyle} from "@/theme"
 import {askPermissionsUI} from "@/utils/PermissionsUtils"
 
@@ -17,7 +15,6 @@ export const BackgroundAppsGrid = () => {
   const {themed, theme} = useAppTheme()
   const {inactive} = useBackgroundApps()
   const startApplet = useStart()
-  const {push} = useNavigationStore.getState()
 
   const gridData = useMemo(() => {
     // Filter out incompatible apps and running apps
@@ -47,11 +44,6 @@ export const BackgroundAppsGrid = () => {
   }, [inactive])
 
   const handlePress = async (app: ClientApp) => {
-    if (app.packageName === storePackageName) {
-      push("/store")
-      return
-    }
-
     const result = await askPermissionsUI(app, theme)
     if (result !== 1) {
       return

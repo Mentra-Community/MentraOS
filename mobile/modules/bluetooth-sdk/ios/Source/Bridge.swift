@@ -10,11 +10,22 @@ import Foundation
 /// Bridge for Bluetooth SDK communication between Expo modules and native iOS code
 /// Has commands for the Bluetooth SDK to use to send messages to JavaScript
 class Bridge {
-    private static let micSampleRate = 16_000
+    private static let micSampleRate = 16000
     private static let pcmBitsPerSample = 16
     private static let micChannels = 1
     private static let lc3FrameDurationMs = 10
     private static let defaultLc3FrameSizeBytes = 60
+    private static let audioTraceMetadataKeys = [
+        "sampleRate",
+        "bitsPerSample",
+        "channels",
+        "encoding",
+        "frameDurationMs",
+        "frameSizeBytes",
+        "bitrate",
+        "packetizedFromGlasses",
+        "voiceActivityDetectionEnabled",
+    ]
     private static let eventSinkLock = NSLock()
     private static let defaultEventSinkId = "default"
     private static var eventSinks: [String: (String, [String: Any]) -> Void] = [:]
@@ -67,6 +78,16 @@ class Bridge {
         Bridge.sendTypedMessage("log", body: data)
     }
 
+    /// Report tar.bz2 extraction progress to JavaScript.
+    static func sendExtractionProgress(percentage: Int, bytesRead: Int64, totalBytes: Int64) {
+        let body: [String: Any] = [
+            "percentage": percentage,
+            "bytesRead": bytesRead,
+            "totalBytes": totalBytes,
+        ]
+        Bridge.sendTypedMessage("extraction_progress", body: body)
+    }
+
     static func sendHeadUp(_ isUp: Bool) {
         let data = ["up": isUp]
         Bridge.sendTypedMessage("head_up", body: data)
@@ -90,7 +111,8 @@ class Bridge {
     @MainActor
     private static func micPcmEventBody(_ data: Data) -> [String: Any] {
         let voiceActivityDetectionEnabled =
-            DeviceStore.shared.get("glasses", "voiceActivityDetectionEnabled") as? Bool ?? true
+            DeviceStore.shared.get("glasses", "voiceActivityDetectionEnabled") as? Bool
+                ?? BluetoothSdkDefaults.voiceActivityDetectionEnabled
         return [
             "pcm": data,
             "sampleRate": micSampleRate,
@@ -104,7 +126,8 @@ class Bridge {
     @MainActor
     private static func micLc3EventBody(_ data: Data) -> [String: Any] {
         let voiceActivityDetectionEnabled =
-            DeviceStore.shared.get("glasses", "voiceActivityDetectionEnabled") as? Bool ?? true
+            DeviceStore.shared.get("glasses", "voiceActivityDetectionEnabled") as? Bool
+                ?? BluetoothSdkDefaults.voiceActivityDetectionEnabled
         let frameSizeBytes = DeviceStore.shared.get("bluetooth", "lc3_frame_size") as? Int ?? defaultLc3FrameSizeBytes
         return [
             "lc3": data,
@@ -154,12 +177,15 @@ class Bridge {
         _ deviceModel: String,
         _ deviceName: String,
         deviceAddress: String = "",
-        rssi: Int? = nil
+        rssi: Int? = nil,
+        projectName: String? = nil
     ) {
         Task {
             await MainActor.run {
                 let searchResults = DeviceStore.shared.get("bluetooth", "searchResults") as? [[String: Any]] ?? []
-                let id = "\(deviceModel):\(deviceName)"
+                let id = [deviceModel, projectName?.isEmpty == false ? projectName! : nil, deviceName]
+                    .compactMap { $0 }
+                    .joined(separator: ":")
                 var newResult: [String: Any] = [
                     "id": id,
                     "model": deviceModel,
@@ -167,6 +193,9 @@ class Bridge {
                 ]
                 if !deviceAddress.isEmpty {
                     newResult["address"] = deviceAddress
+                }
+                if let projectName, !projectName.isEmpty {
+                    newResult["projectName"] = projectName
                 }
                 if let rssi {
                     newResult["rssi"] = rssi
@@ -239,6 +268,16 @@ class Bridge {
         Bridge.sendTypedMessage("touch_event", body: body)
     }
 
+    static func sendAccelEvent(x: Float, y: Float, z: Float, timestamp: Int64) {
+        let body: [String: Any] = [
+            "x": x,
+            "y": y,
+            "z": z,
+            "timestamp": timestamp,
+        ]
+        Bridge.sendTypedMessage("accel_event", body: body)
+    }
+
     static func sendSwipeVolumeStatus(enabled: Bool, timestamp: Int64) {
         let body: [String: Any] = [
             "enabled": enabled,
@@ -269,12 +308,48 @@ class Bridge {
         Bridge.sendTypedMessage("rgb_led_control_response", body: body)
     }
 
+    static func sendSettingsAck(_ values: [String: Any]) {
+        var body = values
+        body["type"] = "settings_ack"
+        Bridge.sendTypedMessage("settings_ack", body: body)
+    }
+
+    static func sendVideoRecordingStatus(_ values: [String: Any]) {
+        var body = values
+        body["type"] = "video_recording_status"
+        Bridge.sendTypedMessage("video_recording_status", body: body)
+    }
+
+    static func sendMediaUploadEvent(type: String, values: [String: Any]) {
+        var body = values
+        body["type"] = type
+        Bridge.sendTypedMessage(type, body: body)
+    }
+
+    static func sendVersionInfo(_ values: [String: Any]) {
+        var body: [String: Any] = [
+            "type": "version_info",
+            "androidVersion": stringValue(values, "androidVersion", "android_version") ?? "",
+            "firmwareVersion": stringValue(values, "firmwareVersion", "firmware_version") ?? "",
+            "besFirmwareVersion": stringValue(values, "besFirmwareVersion", "bes_fw_version") ?? "",
+            "mtkFirmwareVersion": stringValue(values, "mtkFirmwareVersion", "mtk_fw_version") ?? "",
+            "buildNumber": stringValue(values, "buildNumber", "build_number") ?? "",
+            "otaVersionUrl": stringValue(values, "otaVersionUrl", "ota_version_url") ?? "",
+            "appVersion": stringValue(values, "appVersion", "app_version") ?? "",
+        ]
+        if let systemTimeMs = intValue(values["systemTimeMs"]) ?? intValue(values["system_time_ms"]) {
+            body["systemTimeMs"] = systemTimeMs
+        }
+        Bridge.sendTypedMessage("version_info", body: body)
+    }
+
     static func sendPhotoError(requestId: String, errorCode: String, errorMessage: String) {
+        let timestamp = Int(Date().timeIntervalSince1970 * 1000)
         var event: [String: Any] = [
             "type": "photo_response",
             "state": "error",
             "requestId": requestId,
-            "timestamp": Int(Date().timeIntervalSince1970 * 1000),
+            "timestamp": timestamp,
         ]
         if !errorCode.isEmpty {
             event["errorCode"] = errorCode
@@ -283,6 +358,18 @@ class Bridge {
             event["errorMessage"] = errorMessage
         }
         Bridge.sendTypedMessage("photo_response", body: event)
+    }
+
+    static func sendPhotoStatus(_ status: [String: Any]) {
+        Bridge.sendTypedMessage("photo_status", body: status)
+    }
+
+    static func sendCameraStatus(_ status: [String: Any]) {
+        Bridge.sendTypedMessage("camera_status", body: status)
+    }
+
+    static func sendPhotoResponse(_ response: [String: Any]) {
+        Bridge.sendTypedMessage("photo_response", body: response)
     }
 
     static func sendMiniappSelected(packageName: String) {
@@ -319,7 +406,10 @@ class Bridge {
         Bridge.sendTypedMessage("glasses_serial_number", body: body)
     }
 
-    static func sendWifiStatusChange(connected: Bool, ssid: String?, localIp: String?) {
+    /// `error` is the glasses' provisioning failure reason (e.g. "connect_timeout",
+    /// "connected_to_other_network") when this status is the verdict of a failed
+    /// connect attempt; nil for routine link-state updates.
+    static func sendWifiStatusChange(connected: Bool, ssid: String?, localIp: String?, error: String? = nil) {
         guard let status = WifiStatus.fromStoreFields(
             connected: connected,
             ssid: ssid,
@@ -327,23 +417,78 @@ class Bridge {
         ) else {
             return
         }
-        Bridge.sendTypedMessage("wifi_status_change", body: status.values)
+        var body = status.values
+        if let error {
+            body["error"] = error
+        }
+        Bridge.sendTypedMessage("wifi_status_change", body: body)
     }
 
-    static func updateWifiScanResults(_ networks: [[String: Any]]) {
-        Task {
-            await MainActor.run {
-                var storedNetworks: [[String: Any]] =
-                    DeviceStore.shared.get("bluetooth", "wifiScanResults") as? [[String: Any]] ?? []
-                // add the networks to the storedNetworks array, removing duplicates by ssid
-                for network in networks {
-                    if !storedNetworks.contains(where: {
-                        $0["ssid"] as? String == network["ssid"] as? String
-                    }) {
-                        storedNetworks.append(network)
-                    }
+    /// Claim the WiFi scan-results store for a newly requested scan. Called by the
+    /// SDK when it generates the scanId, BEFORE the scan command goes out: store
+    /// ownership is decided at request time, not by whichever chunk arrives first,
+    /// so a delayed chunk from an older, abandoned scan can never reset or clobber
+    /// the current scan's accumulator.
+    @MainActor
+    static func claimWifiScanResults(scanId: String) {
+        DeviceStore.shared.apply("bluetooth", "wifiScanActiveScanId", scanId)
+    }
+
+    static func updateWifiScanResults(
+        _ networks: [[String: Any]],
+        scanComplete: Bool,
+        scanId: String? = nil
+    ) {
+        // Correlated scans accumulate chunks until the terminal scan_complete, so
+        // chunks must reach the SDK in receive order. A Task per message can reach
+        // the MainActor out of creation order; DispatchQueue.main keeps the FIFO
+        // order of the serial bluetooth queue that delivers these.
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated {
+                // Only chunks echoing the active scanId claimed at request time may
+                // mutate the store; foreign chunks are still forwarded to the SDK
+                // sink, which drops stale ids itself. Scan-id-less chunks (old
+                // firmware) keep the legacy accumulate-forever store behavior.
+                let ownsStore: Bool
+                if let scanId {
+                    ownsStore =
+                        scanId == DeviceStore.shared.get("bluetooth", "wifiScanActiveScanId") as? String
+                } else {
+                    ownsStore = true
                 }
-                DeviceStore.shared.apply("bluetooth", "wifiScanResults", storedNetworks)
+                var updatedNetworks: [[String: Any]] = networks
+                if ownsStore {
+                    var storedNetworks: [[String: Any]] =
+                        DeviceStore.shared.get("bluetooth", "wifiScanResults") as? [[String: Any]] ?? []
+                    if let scanId,
+                       scanId != DeviceStore.shared.get("bluetooth", "wifiScanResultsScanId") as? String
+                    {
+                        // First chunk of a new scan: drop networks accumulated for a previous scan
+                        // so stale entries never carry over into this scan's store.
+                        storedNetworks = []
+                        DeviceStore.shared.apply("bluetooth", "wifiScanResultsScanId", scanId)
+                    }
+                    // add the networks to the storedNetworks array, removing duplicates by ssid
+                    for network in networks {
+                        if !storedNetworks.contains(where: {
+                            $0["ssid"] as? String == network["ssid"] as? String
+                        }) {
+                            storedNetworks.append(network)
+                        }
+                    }
+                    DeviceStore.shared.apply("bluetooth", "wifiScanResults", storedNetworks)
+                    updatedNetworks = storedNetworks
+                }
+                // Correlated scans: the SDK accumulates and dedupes chunks per scanId itself,
+                // so forward only this chunk; the merged store list is for UI consumers.
+                var body: [String: Any] = [
+                    "networks": scanId != nil ? networks : updatedNetworks,
+                    "scanComplete": scanComplete,
+                ]
+                if let scanId {
+                    body["scanId"] = scanId
+                }
+                Bridge.sendTypedMessage("wifi_scan_result", body: body)
             }
         }
     }
@@ -356,28 +501,12 @@ class Bridge {
         Bridge.sendTypedMessage("mtk_update_complete", body: eventBody)
     }
 
-    /// Send ota_start_ack — glasses confirmed receipt of ota_start command
+    /// Send ota_start_ack —glasses confirmed receipt of ota_start command
     static func sendOtaStartAck() {
         let eventBody: [String: Any] = [
             "timestamp": Int64(Date().timeIntervalSince1970 * 1000),
         ]
         Bridge.sendTypedMessage("ota_start_ack", body: eventBody)
-    }
-
-    /// Send OTA update available notification - glasses have detected an available update (background mode)
-    static func sendOtaUpdateAvailable(
-        versionCode: Int64,
-        versionName: String,
-        updates: [String],
-        totalSize: Int64
-    ) {
-        let eventBody: [String: Any] = [
-            "version_code": versionCode,
-            "version_name": versionName,
-            "updates": updates,
-            "total_size": totalSize,
-        ]
-        Bridge.sendTypedMessage("ota_update_available", body: eventBody)
     }
 
     static func sendOtaStatus(
@@ -428,7 +557,65 @@ class Bridge {
     static func sendTypedMessage(_ type: String, body: [String: Any]) {
         var body = body
         body["type"] = type
+        if let tracePayload = tracePayloadForTypedMessage(type, body: body) {
+            BleTraceLogger.logMap(
+                direction: "phone_to_app",
+                layer: "sdk_event_dispatch",
+                type: type,
+                payload: tracePayload
+            )
+        }
         // Send directly using type as event name - no JSON serialization
         dispatchEvent(type, body)
     }
+
+    private static func tracePayloadForTypedMessage(_ type: String, body: [String: Any]) -> [String: Any]? {
+        if type == "log" {
+            return nil
+        }
+        if isAudioPayloadEvent(type) {
+            return audioTracePayload(type, body: body)
+        }
+        return body
+    }
+
+    private static func isAudioPayloadEvent(_ type: String) -> Bool {
+        type == "mic_pcm" || type == "mic_lc3"
+    }
+
+    private static func audioTracePayload(_ type: String, body: [String: Any]) -> [String: Any] {
+        var payload: [String: Any] = [
+            "type": type,
+            "timestamp": Int(Date().timeIntervalSince1970 * 1000),
+            "payloadOmitted": true,
+            "payloadOmittedReason": "audio",
+        ]
+
+        switch type {
+        case "mic_pcm":
+            if let data = body["pcm"] as? Data {
+                payload["audioBytes"] = data.count
+            }
+        case "mic_lc3":
+            if let data = body["lc3"] as? Data {
+                payload["audioBytes"] = data.count
+            }
+        default:
+            break
+        }
+
+        for key in audioTraceMetadataKeys {
+            if let value = body[key] {
+                payload[key] = value
+            }
+        }
+
+        return payload
+    }
 }
+
+
+
+
+
+

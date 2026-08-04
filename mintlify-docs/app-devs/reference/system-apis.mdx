@@ -1,0 +1,69 @@
+---
+title: "System Miniapp APIs"
+description: "APIs restricted to system miniapps for discovering, launching, and invoking other miniapps."
+icon: "shield-halved"
+---
+
+<Warning>
+These APIs are restricted to **system miniapps** (Mentra AI today). A regular
+miniapp that calls them gets `NOT_PERMITTED`. They're documented here for
+reference. To make your own miniapp callable, expose actions instead, see
+[Actions](/app-devs/core-concepts/miniapp-interop).
+</Warning>
+
+System miniapps can discover other miniapps, control their lifecycle, and invoke
+the actions those miniapps expose.
+
+## Discover and control miniapps
+
+`session.miniapps` lists installed miniapps and starts or stops them.
+
+```ts
+// Compatible miniapps only by default; each action can carry input and output schemas.
+const apps = await session.miniapps.list();
+const all = await session.miniapps.list({ includeIncompatible: true });
+
+// start() runs a miniapp in the BACKGROUND: it spawns the background context and
+// reports as running, without changing phone navigation or foregrounding anything
+// (the WebView mounts only if the user opens it).
+await session.miniapps.start("com.mentra.todo");
+await session.miniapps.stop("com.mentra.todo");
+```
+
+| Method | Returns | Notes |
+|---|---|---|
+| `list(options?)` | `Promise<MiniappInfo[]>` | `options.includeIncompatible` defaults to `false`. Each entry carries its declared `actions`. |
+| `start(packageName)` | `Promise<void>` | Background-spawn; no foreground change. |
+| `stop(packageName)` | `Promise<void>` | Stop a running miniapp. |
+
+## Invoke an action
+
+`session.actions.invoke` calls an action another miniapp exposed via
+`session.actions.handle`. It headless-wakes the target if it's stopped, runs the
+handler, and returns the result.
+
+```ts
+const res = await session.actions.invoke(
+  "com.mentra.todo",
+  "add_todo",
+  { text: "milk" },
+  { timeoutMs: 30000 }, // default 30s, max 120s
+);
+```
+
+`invoke()` rejects with `{ code, message }` where `code` is one of:
+
+| Code | Meaning |
+|---|---|
+| `NOT_PERMITTED` | The caller isn't a system miniapp. |
+| `APP_NOT_FOUND` | No miniapp with that package name. |
+| `APP_NOT_COMPATIBLE` | The target can't run on the connected glasses. |
+| `ACTION_NOT_FOUND` | The target doesn't declare that action. |
+| `NO_ACTION_HANDLER` | The action is declared but no handler is registered. |
+| `WAKE_FAILED` | The target couldn't be headless-woken. |
+| `ACTION_TIMEOUT` | The handler didn't resolve within `timeoutMs`. |
+| `PAYLOAD_TOO_LARGE` | Params or result exceeded 256 KB. |
+
+A thrown handler in the target surfaces its own error message to the caller.
+The action descriptor returned by `session.miniapps.list()` includes an optional
+`outputSchema`, which describes the structured result for result-aware callers.

@@ -1,9 +1,9 @@
 import {waitForButtonPress, waitForTouchGesture} from "@/components/onboarding/waitForGlassesEvent"
-import {emitCoreModuleEvent, getCoreModuleListenerCount, resetCoreModuleMock} from "@/test-utils/mockCoreModule"
+import {emitBluetoothSdkEvent, getBluetoothSdkListenerCount, resetBluetoothSdkMock} from "@/test-utils/mockBluetoothSdk"
 
 describe("waitForGlassesEvent", () => {
   beforeEach(() => {
-    resetCoreModuleMock()
+    resetBluetoothSdkMock()
   })
 
   describe("waitForButtonPress", () => {
@@ -14,18 +14,18 @@ describe("waitForGlassesEvent", () => {
       // This is exactly what the native module sends to JS: NO `type` field.
       // The old code gated on data.type === "button_press" and never resolved,
       // leaving the "take a photo" step stuck.
-      emitCoreModuleEvent("button_press", {buttonId: "camera", pressType: "short", timestamp: 123})
+      emitBluetoothSdkEvent("button_press", {buttonId: "camera", pressType: "short", timestamp: 123})
 
       await expect(done).resolves.toBeUndefined()
       // Listener removed after resolving.
-      expect(getCoreModuleListenerCount("button_press")).toBe(0)
+      expect(getBluetoothSdkListenerCount("button_press")).toBe(0)
     })
 
     it("matches any of the accepted press types (long or short)", async () => {
       const controller = new AbortController()
       const done = waitForButtonPress(controller.signal, ["long", "short"])
 
-      emitCoreModuleEvent("button_press", {buttonId: "camera", pressType: "long", timestamp: 1})
+      emitBluetoothSdkEvent("button_press", {buttonId: "camera", pressType: "long", timestamp: 1})
 
       await expect(done).resolves.toBeUndefined()
     })
@@ -37,19 +37,19 @@ describe("waitForGlassesEvent", () => {
         resolved = true
       })
 
-      emitCoreModuleEvent("button_press", {buttonId: "camera", pressType: "long", timestamp: 1})
+      emitBluetoothSdkEvent("button_press", {buttonId: "camera", pressType: "long", timestamp: 1})
 
       expect(resolved).toBe(false)
-      expect(getCoreModuleListenerCount("button_press")).toBe(1)
+      expect(getBluetoothSdkListenerCount("button_press")).toBe(1)
     })
 
     it("removes its listener when the signal aborts (no leak)", () => {
       const controller = new AbortController()
       waitForButtonPress(controller.signal, ["short"])
-      expect(getCoreModuleListenerCount("button_press")).toBe(1)
+      expect(getBluetoothSdkListenerCount("button_press")).toBe(1)
 
       controller.abort()
-      expect(getCoreModuleListenerCount("button_press")).toBe(0)
+      expect(getBluetoothSdkListenerCount("button_press")).toBe(0)
     })
   })
 
@@ -58,19 +58,19 @@ describe("waitForGlassesEvent", () => {
       const controller = new AbortController()
       const done = waitForTouchGesture(controller.signal, ["double_tap"])
 
-      emitCoreModuleEvent("touch_event", {type: "touch_event", gestureName: "double_tap", timestamp: 1})
+      emitBluetoothSdkEvent("touch_event", {type: "touch_event", gestureName: "double_tap", timestamp: 1})
 
       await expect(done).resolves.toBeUndefined()
-      expect(getCoreModuleListenerCount("touch_event")).toBe(0)
+      expect(getBluetoothSdkListenerCount("touch_event")).toBe(0)
     })
 
     it("removes its listener when the signal aborts (no leak)", () => {
       const controller = new AbortController()
       waitForTouchGesture(controller.signal, ["double_tap"])
-      expect(getCoreModuleListenerCount("touch_event")).toBe(1)
+      expect(getBluetoothSdkListenerCount("touch_event")).toBe(1)
 
       controller.abort()
-      expect(getCoreModuleListenerCount("touch_event")).toBe(0)
+      expect(getBluetoothSdkListenerCount("touch_event")).toBe(0)
     })
   })
 })

@@ -1,5 +1,36 @@
-import {Platform} from "react-native"
+import {Platform, type ImageSourcePropType} from "react-native"
 import {DeviceTypes} from "@/../../cloud/packages/types/src"
+export const AR99_MODEL_OPTIONS = [
+  {
+    key: "xingyi_ar99",
+    deviceModel: DeviceTypes.AR99,
+    projectName: "AR99",
+    manufacturerName: "Xingyi Intelligent",
+    displayName: "Xingyi AR99",
+    imageSource: require("../../assets/glasses/ar99_display.png"),
+  },
+] as const
+
+export type Ar99ModelOption = (typeof AR99_MODEL_OPTIONS)[number]
+export type Ar99ProjectName = Ar99ModelOption["projectName"]
+
+export const getAr99ModelOptionByProjectName = (projectName?: string | null): Ar99ModelOption | null => {
+  const normalized = projectName?.trim().toUpperCase()
+  if (!normalized) return null
+  return AR99_MODEL_OPTIONS.find((option) => option.projectName === normalized) ?? null
+}
+
+export const getAr99DisplayName = (projectName?: string | null): string => {
+  return getAr99ModelOptionByProjectName(projectName)?.displayName ?? "AR99"
+}
+
+export const getAr99ManufacturerName = (projectName?: string | null): string => {
+  return getAr99ModelOptionByProjectName(projectName)?.manufacturerName ?? "AR99"
+}
+
+export const getAr99ImageSource = (projectName?: string | null): ImageSourcePropType => {
+  return getAr99ModelOptionByProjectName(projectName)?.imageSource ?? require("../../assets/glasses/ar99_display.png")
+}
 
 export const getGlassesImage = (glasses: string | null) => {
   switch (glasses) {
@@ -29,6 +60,14 @@ export const getGlassesImage = (glasses: string | null) => {
     case "evenrealities_g2":
     case "g2":
       return require("../../assets/glasses/even_realities_g2/even_realities_g2.png")
+    case DeviceTypes.NIMO:
+    case "nimo":
+      return require("../../assets/glasses/nimo.png")
+    case DeviceTypes.AR99:
+    case "ar99":
+    case "AR99":
+    case "Xingyi AR99":
+      return require("../../assets/glasses/ar99_display.png")
     case "virtual-wearable":
     case "Audio Wearable":
       return require("../../assets/glasses/audio_wearable.png")

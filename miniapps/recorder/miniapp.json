@@ -1,0 +1,65 @@
+{
+  "$schema": "./node_modules/@mentra/miniapp-cli/schema/miniapp.schema.json",
+  "packageName": "com.mentra.recorder",
+  "version": "1.0.7",
+  "name": "Recorder",
+  "description": "Capture the glasses microphone to a real audio file on your phone — record, play back, and export WAV. A debugging tool for the audio system, built on session.recorder + session.blob.",
+  "icon": "icon.png",
+  "type": "background",
+  "sdkVersion": "0.3.0",
+  "minHostVersion": "1.42.0",
+  "port": 3170,
+  "entry": {
+    "background": "background/index.js",
+    "ui": "ui/index.html"
+  },
+  "permissions": [
+    {
+      "type": "MICROPHONE",
+      "description": "Records audio from the connected glasses microphone"
+    }
+  ],
+  "hardwareRequirements": [
+    {
+      "type": "MICROPHONE",
+      "level": "REQUIRED",
+      "description": "Captures audio from the glasses to record"
+    }
+  ],
+  "actions": [
+    {
+      "id": "start_recording",
+      "description": "Start recording audio from the connected glasses microphone. Use when the user asks to record, capture audio, or begin a voice recording. The recording also captures a live transcript when transcription is available.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "status": {"type": "string"},
+          "recordingId": {"type": "string"},
+          "startedAt": {"type": "number"},
+          "paused": {"type": "boolean"}
+        },
+        "required": ["status", "recordingId", "startedAt", "paused"]
+      }
+    },
+    {
+      "id": "stop_recording",
+      "description": "Stop and save the active Recorder capture. Use when the user asks to stop, finish, or save the current recording. Waits for the WAV and transcript metadata to finish saving before returning.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "status": {"type": "string"},
+          "recording": {"type": ["object", "null"]}
+        },
+        "required": ["status", "recording"]
+      }
+    }
+  ]
+}

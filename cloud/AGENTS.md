@@ -63,21 +63,21 @@ The following improvements have been implemented to enhance system reliability:
 - Apps can register their servers with MentraOS Cloud
 - Tracks sessions by App server to enable recovery after restarts
 - Provides automatic reconnection when App servers restart
-- Documentation in `/docs/App-SERVER-REGISTRATION.md`
+- Current reference: `/cloud/packages/cloud/src/services/core/docs/current-websocket-implementation.md` (App Server Registration) and `/cloud/packages/cloud/src/services/layout/docs/websocket-reliability-design.md` (session recovery)
 
 ### Enhanced Error Handling in SDK
 
 - Prevents Apps from crashing when receiving invalid data
 - Adds robust validation and sanitization of all messages
 - Improves error recovery for WebSocket connections
-- Documentation in `/docs/sdk/ERROR-HANDLING-ENHANCEMENTS.md`
+- Current reference: `/cloud/packages/sdk/src/app/session/index.ts`, `/cloud/packages/sdk/src/logging/errors.ts`, and `/mintlify-docs/app-devs/reference/interfaces/message-types.mdx`
 
 ### Automatic Resource Management
 
 - Automatically tracks and cleans up resources to prevent memory leaks
 - Provides a unified API for managing timers, event handlers, and connections
 - Integrated with AppSession for better connection management
-- Documentation in `/docs/sdk/RESOURCE-TRACKER.md`
+- Current reference: `/mintlify-docs/app-devs/reference/utilities.mdx`, `/cloud/packages/sdk/src/utils/resource-tracker.ts`, and `/cloud/packages/cloud/src/utils/resource-tracker.ts`
 
 ### Connection Health Monitoring
 
@@ -85,7 +85,7 @@ The following improvements have been implemented to enhance system reliability:
 - Tracks connection activity and detects stale connections
 - Automatically closes dead connections to prevent resource wastage
 - Provides system health statistics for monitoring
-- Documentation in `/docs/CONNECTION-HEALTH-MONITORING.md`
+- Current reference: `/cloud/packages/cloud/src/services/core/docs/heartbeat-manager.md` and `/cloud/packages/cloud/src/services/layout/docs/websocket-reliability-design.md`
 
 ## Planned Improvements
 
@@ -97,7 +97,7 @@ The following improvements have been implemented to enhance system reliability:
 - ✅ Implemented robust throttling with proper queue management
 - ◻️ Complete integration and testing
 - ◻️ Optimize performance based on metrics
-- Documentation in `/docs/DISPLAY-MANAGER-IMPROVEMENTS.md`
+- Current reference: `/cloud/docs/cloud-architecture/managers/display-manager.mdx` and `/cloud/packages/cloud/src/services/layout/DisplayManager6.1.ts`
 
 ## Working with Smart Glasses Hardware
 

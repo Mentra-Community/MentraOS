@@ -1,0 +1,42 @@
+// Vendored from https://github.com/gkonovalov/android-vad (silero module, v2.0.10)
+// Consumed in-place by the bluetooth-sdk so we can pin ORT to a version that
+// matches our other ORT consumer (sherpa-onnx) without depending on a Jitpack
+// AAR whose prebuilt JNI was built against a different ORT.
+plugins {
+    id 'com.android.library'
+    id 'kotlin-android'
+}
+
+android {
+    namespace "com.konovalov.vad.silero"
+    compileSdk 36
+
+    defaultConfig {
+        minSdkVersion 24
+        targetSdkVersion 36
+
+        ndk {
+            abiFilters "armeabi-v7a", "x86", "x86_64", "arm64-v8a"
+        }
+    }
+
+    aaptOptions {
+        noCompress "onnx"
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+}
+
+dependencies {
+    // 1.24.3 matches the ORT version sherpa-onnx 1.13.2 was built against, so
+    // both consumers can share a single libonnxruntime.so (same versioned
+    // OrtGetApiBase@@VERS_1.24.3 symbol). Keep these versions in lockstep.
+    implementation 'com.microsoft.onnxruntime:onnxruntime-android:1.24.3'
+}

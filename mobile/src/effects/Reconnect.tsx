@@ -1,32 +1,30 @@
 import {useEffect} from "react"
 import {AppState} from "react-native"
 
-import {SETTINGS, useSetting, useSettingsStore} from "@/stores/settings"
+import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {checkConnectivityRequirementsUI} from "@/utils/PermissionsUtils"
-import BluetoothSdk from "@mentra/bluetooth-sdk"
-import {isGlassesConnected, selectGlassesConnected, useGlassesStore} from "@/stores/glasses"
-import {useCoreStore} from "@/stores/core"
+import {decideReconnect, engine, SETTINGS, useSetting} from "@mentra/engine"
 import {DeviceTypes} from "@/../../cloud/packages/types/src"
 
 export async function attemptReconnectToDefaultWearable(): Promise<boolean> {
-  const reconnectOnAppForeground = await useSettingsStore
-    .getState()
-    .getSetting(SETTINGS.reconnect_on_app_foreground.key)
-  if (!reconnectOnAppForeground) {
-    return true
-  }
+  const reconnectOnAppForeground = await engine.settings.get(SETTINGS.reconnect_on_app_foreground.key)
+  const defaultWearable = await engine.settings.get<string>(SETTINGS.default_wearable.key)
 
-  const defaultWearable = await useSettingsStore.getState().getSetting(SETTINGS.default_wearable.key)
-  const glassesConnected = isGlassesConnected(useGlassesStore.getState().connection)
-  const isSearching = await useCoreStore.getState().searching
-
-  // Don't try to reconnect if no glasses have been paired yet (skip simulated glasses)
-  if (!defaultWearable || defaultWearable.includes(DeviceTypes.SIMULATED)) {
-    return false
-  }
-
-  if (glassesConnected || isSearching) {
-    return true
+  const decision = decideReconnect({
+    reconnectOnForeground: !!reconnectOnAppForeground,
+    defaultWearable,
+    isSimulated: !!defaultWearable && defaultWearable.includes(DeviceTypes.SIMULATED),
+    connected: engine.pairing.readiness().connected,
+    nativeLinkBusy: engine.pairing.readiness().nativeLinkBusy,
+    // Fail open on a bridge/hydration error: pass true so the flow proceeds to
+    // connectDefault(), whose existing catch handles a genuinely missing
+    // device (the pre-guard behavior) — a transient native failure must not
+    // throw out of the app-foreground handler.
+    hasDefaultDevice: await engine.glasses.hasDefaultDevice().catch(() => true),
+    searching: engine.pairing.scanning(),
+  })
+  if (decision.kind === "skip") {
+    return decision.result
   }
 
   // check if we have bluetooth perms in case they got removed:
@@ -35,7 +33,9 @@ export async function attemptReconnectToDefaultWearable(): Promise<boolean> {
     return true
   }
   try {
-    await BluetoothSdk.connectDefault()
+    // connectDefault() seeds the phone's device settings to native before the
+    // connect handshake (the seed moved into the island facade).
+    await engine.glasses.connectDefault()
   } catch (error) {
     console.warn("RECONNECT: failed to connect default wearable:", error)
     return false
@@ -44,9 +44,11 @@ export async function attemptReconnectToDefaultWearable(): Promise<boolean> {
 }
 
 export function Reconnect() {
-  const glassesConnected = useGlassesStore(selectGlassesConnected)
-  const isSearching = useCoreStore((state) => state.searching)
-  const defaultWearable = useSetting(SETTINGS.default_wearable.key)
+  const glassesConnected = useEngineSnapshot(engine.pairing.readiness, (onChange) =>
+    engine.pairing.onReadiness(onChange),
+  ).connected
+  const isSearching = useEngineSnapshot(engine.pairing.scanning, (onChange) => engine.pairing.onScanning(onChange))
+  const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
 
   // Add a listener for app state changes to detect when the app comes back from background
   useEffect(() => {

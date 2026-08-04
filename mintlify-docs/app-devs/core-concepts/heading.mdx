@@ -1,0 +1,49 @@
+---
+title: "Heading"
+description: "The phone's compass heading, as a continuous stream of degrees."
+icon: "compass"
+---
+
+`session.heading` reports the phone's compass heading. Subscribe with
+`onUpdate()` to get a `HeadingData` every time the heading changes.
+
+```typescript src/background/index.ts
+const off = session.heading.onUpdate((data) => {
+  session.display.render([{type: "text", id: "msg", box: {x: 0, y: 0, w: 576, h: 288}, text: `${Math.round(data.degrees)}°`}]);
+});
+```
+
+Heading needs the `LOCATION` permission in your
+[manifest](/app-devs/core-concepts/miniapp-manifest), the same key
+[`session.location`](/app-devs/core-concepts/location) uses.
+
+## Continuous updates
+
+`onUpdate()` delivers a `HeadingData` on each heading change. It returns an
+unsubscribe function.
+
+```typescript
+const off = session.heading.onUpdate((data) => {
+  session.display.render([{type: "text", id: "msg", box: {x: 0, y: 0, w: 576, h: 288}, text: `${Math.round(data.degrees)}°`}]);
+});
+
+off(); // stop receiving updates
+```
+
+## HeadingData
+
+| Field | Type | Notes |
+|---|---|---|
+| `degrees` | `number` | Compass heading in degrees. `0` = north, `90` = east. |
+
+## Permission
+
+`session.heading.hasPermission` is `true` when `LOCATION` is declared in your
+manifest. It reports the manifest declaration, not the OS grant: if the user
+denied the system location prompt, `onUpdate()` produces no reading. See
+[Permissions](/app-devs/core-concepts/permissions).
+
+<Note>
+`session.heading` works on both Android and iOS. It shares the `LOCATION` manifest
+key with [`session.location`](/app-devs/core-concepts/location).
+</Note>

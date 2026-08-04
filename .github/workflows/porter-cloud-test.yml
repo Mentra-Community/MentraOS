@@ -5,6 +5,9 @@ on:
   pull_request:
     paths:
       - "cloud/**"
+      # Docs-only areas: no reason to build and deploy the cloud for these
+      - "!cloud/issues/**"
+      - "!cloud/runbooks/**"
       - ".github/workflows/porter-cloud-test.yml"
     branches:
       - main

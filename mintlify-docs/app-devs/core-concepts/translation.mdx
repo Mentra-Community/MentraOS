@@ -1,0 +1,115 @@
+---
+title: "Translation"
+description: "Real-time translation of speech from the glasses microphone."
+icon: "language"
+---
+
+`session.translation` turns spoken speech into translated text. Register a handler
+for the language pair you care about and results start arriving; the SDK handles
+the subscription for you.
+
+```typescript
+session.translation.to("es", (data) => {
+  if (data.isFinal) {
+    session.display.render([{type: "text", id: "msg", box: {x: 0, y: 0, w: 576, h: 288}, text: data.text}]);
+  }
+});
+```
+
+Translation needs the `MICROPHONE` permission in your
+[manifest](/app-devs/core-concepts/miniapp-manifest). Without it the phone drops
+the subscription and no events arrive. The rejection is silent: there is no error
+event, your handler just never fires.
+
+## Results
+
+Each event is a `TranslationData`:
+
+| Field | Type | Notes |
+|---|---|---|
+| `text` | `string` | The translated text so far. |
+| `isFinal` | `boolean` | `false` for interim results that keep updating, `true` once the utterance is settled. |
+| `sourceLanguage` | `string` | Language the speech was recognized in. |
+| `targetLanguage` | `string` | Language `text` was translated into. |
+| `originalText` | `string?` | Source-language text of the same utterance, when the provider supplies it. |
+| `utteranceId` | `string?` | Stable id correlating interim and final results of one utterance. |
+| `speakerId` | `string?` | Speaker id when the provider reports diarization. |
+
+Interim results stream as the user speaks and get replaced; wait for `isFinal` if
+you only want settled text. Use `utteranceId` to match an interim result to the
+final one that supersedes it.
+
+## Choosing what to listen for
+
+Three methods select which translations reach your handler. They differ only in how
+they pin the source and target language.
+
+| Method | Listens for |
+|---|---|
+| `on(handler)` | Every translation event, any source, any target. |
+| `to(target, handler)` | Any source, translated to `target`. Pass an array of targets to fan one handler across several. |
+| `fromTo(source, target, handler)` | A specific `source` to `target` pair. Pass an array for `target` to fan one source across several targets. |
+
+Each returns an unsubscribe function. `source` and `target` are language tags
+(for example `"en"`, `"es"`).
+
+```typescript
+// Any language the user hears, translated to Spanish.
+session.translation.to("es", handler);
+
+// Several targets at once, one handler.
+session.translation.to(["es", "fr"], handler);
+
+// A specific direction: English speech to Spanish text.
+session.translation.fromTo("en", "es", handler);
+
+// One source fanned across multiple targets.
+session.translation.fromTo("en", ["es", "fr"], handler);
+```
+
+`on()` is the broad case. It registers cheaply on your side but asks the cloud to
+fan every active pair out to you, so reach for `to` or `fromTo` once you know the
+language(s) you want.
+
+When the provider supplies `originalText`, you can show the source and the
+translation together:
+
+```typescript
+session.translation.to("es", (data) => {
+  if (data.originalText) {
+    session.display.showDoubleTextWall(data.originalText, data.text);
+  } else {
+    session.display.render([{type: "text", id: "msg", box: {x: 0, y: 0, w: 576, h: 288}, text: data.text}]);
+  }
+});
+```
+
+<Note>
+`forLanguagePair(fromLang, toLang, handler)` is a deprecated alias for
+`fromTo(source, target, handler)`. Use `fromTo` in new code; the alias will be
+removed in a future release.
+</Note>
+
+## Cleaning up
+
+Every subscription returns an unsubscribe function. `stop()` tears down every
+subscription this module owns at once:
+
+```typescript
+const off = session.translation.to("es", handler);
+off();                      // drop this one
+
+session.translation.stop(); // drop all of them
+```
+
+`session.translation.hasPermission` tells you whether `MICROPHONE` is declared in
+your manifest. It does not tell you whether the user granted the OS prompt: if they
+denied it, your handler simply never fires. See
+[Permissions](/app-devs/core-concepts/permissions).
+
+<Note>
+Translation gives you translated text. For the untranslated transcript in the
+spoken language, use
+[`session.transcription`](/app-devs/core-concepts/microphone/speech-to-text).
+Subscribing to one does not subscribe you to the other.
+</Note>

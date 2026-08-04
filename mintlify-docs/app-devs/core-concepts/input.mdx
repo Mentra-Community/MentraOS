@@ -1,0 +1,95 @@
+---
+title: "Input"
+description: "Glasses button presses and touchpad gestures."
+icon: "hand-pointer"
+---
+
+`session.input` delivers the physical controls on the glasses: button presses and
+touchpad gestures. The starter scaffold wires a button press to the display, so a
+short press shows a text wall.
+
+```typescript src/background/index.ts
+import { registerMiniapp } from "@mentra/miniapp/background";
+
+registerMiniapp((session) => {
+  session.input.onButtonPress((press) => {
+    session.display.render([{type: "text", id: "msg", box: {x: 0, y: 0, w: 576, h: 288}, text: `${press.buttonId}: ${press.pressType}`}]);
+  });
+});
+```
+
+Button events only reach glasses that have a button. Declare a `BUTTON` hardware
+requirement in your [manifest](/app-devs/core-concepts/miniapp-manifest) to gate
+the miniapp to those glasses.
+
+## Button presses
+
+`onButtonPress` fires on every press of a physical button:
+
+```typescript
+session.input.onButtonPress((press) => {
+  if (press.pressType === "long") session.display.render([]);
+});
+```
+
+Each `ButtonPressData` has:
+
+| Field | Type | Notes |
+|---|---|---|
+| `buttonId` | `string` | Which button fired. |
+| `pressType` | `"short" \| "long"` | Press duration. |
+
+## Touch gestures
+
+`onTouch` subscribes to touchpad gestures. Pass a handler for every gesture, a
+single gesture name to filter, or an array of names for one subscription across
+several gestures.
+
+```typescript
+// Every touch gesture.
+session.input.onTouch((touch) => {
+  session.display.render([{type: "text", id: "msg", box: {x: 0, y: 0, w: 576, h: 288}, text: touch.kind}]);
+});
+
+// One gesture.
+session.input.onTouch("single_tap", () => {
+  session.display.render([{type: "text", id: "msg", box: {x: 0, y: 0, w: 576, h: 288}, text: "Tap"}]);
+});
+
+// Several gestures, one subscription.
+session.input.onTouch(["swipe_up", "swipe_down"], (touch) => {
+  // touch.kind tells you which one.
+});
+```
+
+Each `TouchData` has:
+
+| Field | Type | Notes |
+|---|---|---|
+| `kind` | `string` | The gesture. See the values below. |
+
+The gesture values the runtime reports:
+
+| `kind` | Gesture |
+|---|---|
+| `"single_tap"` | A single tap on the touchpad. |
+| `"double_tap"` | Two quick taps. |
+| `"triple_tap"` | Three quick taps. |
+| `"long_press"` | A press and hold. |
+| `"swipe_up"` | A swipe up. |
+| `"swipe_down"` | A swipe down. |
+
+Glasses can send other `kind` strings, so `kind` is typed as `string`. Match the
+values you handle and ignore the rest.
+
+## Cleaning up
+
+`onButtonPress` and every `onTouch` form return an unsubscribe function:
+
+```typescript
+const off = session.input.onTouch("single_tap", handler);
+off(); // stop listening
+```
+
+Calling `onTouch` with an array returns one unsubscribe function that drops all of
+the gestures it registered.

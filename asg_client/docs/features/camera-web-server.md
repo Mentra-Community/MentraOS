@@ -98,6 +98,14 @@ Bulk-delete a list of filenames. Used by the phone app when the user removes ite
 
 Files that don't exist are reported as `success: false` in the per-file results but don't fail the whole request.
 
+### Capture IDs and `request_id`
+
+Captures live in directories named `<IMG|VID>_<yyyyMMdd_HHmmss_SSS>_<rand>[_<requestId>]`. The directory name is the `capture_id` returned by `/api/sync`, and the optional trailing segment is the (sanitized) `requestId` of the SDK `take_photo` / video request that produced the capture — the same convention videos have always used, extended to photos.
+
+When a capture ID embeds a request ID, `/api/sync` capture groups and `/api/gallery` entries include it as an explicit `request_id` field (extracted by `CaptureRequestId.extractFromCaptureId`), so clients can correlate bulk-synced files with the originating photo request instead of timestamp-matching. Button-press captures have no originating request; their stable ID is the `capture_id` itself, which is also used as the `requestId` in the photo status messages the glasses emit during the capture. Legacy files and button captures simply omit `request_id`.
+
+The capture ID is also stamped into the photo's EXIF `ImageUniqueID` tag at save time (`PhotoExifMetadataWriter.writeCaptureIdFromPath`), and carried onto re-encoded upload copies, so the correlation survives file renames and camera-roll export where the directory name is lost.
+
 ### Active recording exclusion
 
 `AsgCameraServer.ActiveRecordingProvider` lets the capture service inform the server about videos that are currently being written. The server uses this to:

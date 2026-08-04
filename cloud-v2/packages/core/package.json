@@ -1,0 +1,20 @@
+{
+  "name": "@mentra/cloud-core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "scripts": {
+    "dev": "bun --watch src/index.ts",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@mentra/cloud-shared": "workspace:*",
+    "@workos-inc/node": "^10.3.0",
+    "hono": "^4.11.1",
+    "jose": "^5.9.6",
+    "mongoose": "^8.8.4",
+    "ulid": "^3.0.2",
+    "zod": "^3.24.1"
+  }
+}

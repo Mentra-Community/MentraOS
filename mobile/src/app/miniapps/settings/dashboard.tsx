@@ -7,10 +7,11 @@ import HeadUpAngleComponent from "@/components/settings/HeadUpAngleComponent"
 import ToggleSetting from "@/components/settings/ToggleSetting"
 import {RouteButton} from "@/components/ui/RouteButton"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n/translate"
-import {selectGlassesConnected, useGlassesStore} from "@/stores/glasses"
-import {SETTINGS, useSetting} from "@/stores/settings"
+import {SETTINGS, useSetting} from "@mentra/engine"
+import {engine} from "@mentra/engine"
 
 export default function DashboardSettingsScreen() {
   const {theme} = useAppTheme()
@@ -20,24 +21,12 @@ export default function DashboardSettingsScreen() {
   const [headUpAngle, setHeadUpAngle] = useSetting(SETTINGS.head_up_angle.key)
   const [contextualDashboardEnabled, setContextualDashboardEnabled] = useSetting(SETTINGS.contextual_dashboard.key)
   const [metricSystemEnabled, setMetricSystemEnabled] = useSetting(SETTINGS.metric_system.key)
+  const [twelveHourTimeEnabled, setTwelveHourTimeEnabled] = useSetting(SETTINGS.twelve_hour_time.key)
   const features = getModelCapabilities(defaultWearable)
-  const glassesConnected = useGlassesStore(selectGlassesConnected)
+  const glassesConnected =
+    useEngineSnapshot(engine.glasses.status, (onChange) => engine.glasses.onStatus(onChange)).state === "connected"
 
   // -- Handlers --
-  const toggleContextualDashboard = async () => {
-    const newVal = !contextualDashboardEnabled
-    await setContextualDashboardEnabled(newVal)
-  }
-
-  const toggleMetricSystem = async () => {
-    const newVal = !metricSystemEnabled
-    try {
-      await setMetricSystemEnabled(newVal)
-    } catch (error) {
-      console.error("Error toggling metric system:", error)
-    }
-  }
-
   const onSaveHeadUpAngle = async (newHeadUpAngle: number) => {
     if (!glassesConnected) {
       Alert.alert("Glasses not connected", "Please connect your smart glasses first.")
@@ -64,14 +53,21 @@ export default function DashboardSettingsScreen() {
             label={translate("settings:contextualDashboardLabel")}
             subtitle={translate("settings:contextualDashboardSubtitle")}
             value={contextualDashboardEnabled}
-            onValueChange={toggleContextualDashboard}
+            onValueChange={() => setContextualDashboardEnabled(!contextualDashboardEnabled)}
           />
 
           <ToggleSetting
             label={translate("settings:metricSystemLabel")}
             subtitle={translate("settings:metricSystemSubtitle")}
             value={metricSystemEnabled}
-            onValueChange={toggleMetricSystem}
+            onValueChange={() => setMetricSystemEnabled(!metricSystemEnabled)}
+          />
+
+          <ToggleSetting
+            label={translate("settings:twelveHourTimeLabel")}
+            subtitle={translate("settings:twelveHourTimeSubtitle")}
+            value={twelveHourTimeEnabled}
+            onValueChange={() => setTwelveHourTimeEnabled(!twelveHourTimeEnabled)}
           />
 
           {defaultWearable && features?.hasIMU && (

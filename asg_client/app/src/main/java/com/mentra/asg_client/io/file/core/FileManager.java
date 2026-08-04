@@ -24,9 +24,16 @@ public interface FileManager extends FileOperations, FileMetadataOperations, Pac
      * caller asked us NOT to keep ({@code save=false}). Files written under this directory are
      * intentionally hidden from {@link #listFiles(String)} so they cannot leak into gallery
      * counts or Wi-Fi sync responses while their upload is still in flight. The directory is
-     * still walked by {@link #cleanupOldFiles(String, long)} so orphans get age-cleaned.
+     * still walked by {@link #cleanupOldSdkPendingFiles(String, long)} so orphans get age-cleaned
+     * without applying gallery cleanup policy to live captures.
      */
     String SDK_PENDING_DIR_NAME = "_sdk_pending";
+
+    /** Hidden recoverable trash; never expose acknowledged captures to gallery clients. */
+    String GALLERY_TRASH_DIR_NAME = "_gallery_trash";
+
+    /** Cached hashes and other derived transfer metadata; never user-visible media. */
+    String GALLERY_METADATA_DIR_NAME = "_gallery_metadata";
 
     /**
      * File operation result containing success status and metadata
@@ -117,4 +124,4 @@ public interface FileManager extends FileOperations, FileMetadataOperations, Pac
      * @return ThumbnailManager instance
      */
     ThumbnailManager getThumbnailManager();
-} 
+}

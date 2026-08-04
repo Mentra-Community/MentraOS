@@ -71,7 +71,7 @@
 - Delete deprecated state containers (`activeSessionStreams`, standalone managed keep-alive maps).
 - Consolidate metrics APIs (e.g. `getStats`, `getManagedStreamViewers`) under registry.
 - Instrument lifecycle with structured logs and counters (missed ACKs, socket-down recoveries).
-- Document architecture in `docs/cloud-architecture`.
+- Document architecture in `notes/cloud-architecture`.
 
 ## Detailed Task Breakdown
 

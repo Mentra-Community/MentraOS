@@ -1,0 +1,529 @@
+name: PR Agent Orchestrator
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+  workflow_run:
+    workflows:
+      - "🧪 Test Cloud build"
+      - "Run Cloud Tests ☁️"
+      - "🧪 Test SDK build"
+      - "Mobile App Quality Checks"
+      - "Bun Lockfile Checks"
+      - "MentraOS ASG Client Build"
+      - "Mobile App Android Build"
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: PR number (required for manual run)
+        required: true
+        type: string
+      force_rotation:
+        description: Force reviewer rotation
+        required: false
+        type: boolean
+        default: false
+
+concurrency:
+  # For pull_request events: keyed on PR number (stable, deduplicated).
+  # For workflow_run events: keyed on the head branch so successive CI completions
+  # for the same branch cancel the prior run rather than piling up independently.
+  # For workflow_dispatch: keyed on the explicit PR number input.
+  # Fallback to run_id only for unknown event types (no cancellation intended).
+  group: >-
+    pr-agent-${{
+      github.event.pull_request.number ||
+      github.event.inputs.pr_number ||
+      github.event.workflow_run.head_branch ||
+      github.run_id
+    }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  checks: read
+  actions: read
+
+env:
+  FORCE_ROTATION: ${{ github.event.inputs.force_rotation || 'false' }}
+
+jobs:
+  resolve-context:
+    name: Resolve PR context
+    runs-on: ubuntu-latest
+    outputs:
+      pr_number: ${{ steps.ctx.outputs.pr_number }}
+      head_sha: ${{ steps.ctx.outputs.head_sha }}
+      head_ref: ${{ steps.ctx.outputs.head_ref }}
+      base_ref: ${{ steps.ctx.outputs.base_ref }}
+      pr_author: ${{ steps.ctx.outputs.pr_author }}
+      pr_is_fork: ${{ steps.ctx.outputs.pr_is_fork }}
+      ci_trigger_failed: ${{ steps.ctx.outputs.ci_trigger_failed }}
+      ci_recheck_only: ${{ steps.ctx.outputs.ci_recheck_only }}
+    steps:
+      - name: Resolve from event
+        id: ctx
+        uses: actions/github-script@v7
+        with:
+          script: |
+            let pr = context.payload.pull_request;
+            let ciFailed = 'false';
+            let workflowRunSha = null;
+
+            if (
+              pr &&
+              context.eventName === 'pull_request' &&
+              context.payload.action === 'labeled'
+            ) {
+              const label = context.payload.label?.name;
+              const internalLabels = [
+                'agent-in-progress',
+                'ready-for-human-review',
+                'agent-needs-human',
+              ];
+              if (internalLabels.includes(label)) {
+                core.setOutput('pr_number', '');
+                return;
+              }
+            }
+
+            if (context.eventName === 'workflow_run') {
+              workflowRunSha = context.payload.workflow_run.head_sha;
+            }
+
+            if (!pr && context.eventName === 'workflow_run') {
+              const run = context.payload.workflow_run;
+              const isFailure =
+                run.conclusion === 'failure' || run.conclusion === 'cancelled';
+              const isSuccess = run.conclusion === 'success';
+              if (!isFailure && !isSuccess) {
+                core.setOutput('pr_number', '');
+                return;
+              }
+              ciFailed = String(isFailure);
+              core.setOutput('ci_recheck_only', String(isSuccess));
+              const headOwner =
+                run.head_repository?.owner?.login ?? context.repo.owner;
+              const pulls = await github.rest.pulls.list({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                head: `${headOwner}:${run.head_branch}`,
+                state: 'open',
+              });
+              if (pulls.data.length === 1) {
+                // Unambiguous branch: use it even if the head advanced past the CI sha.
+                pr = pulls.data[0];
+              } else {
+                // Multiple open PRs share this branch: require an exact head_sha
+                // match. Never guess — bail if it is ambiguous or absent.
+                const shaMatches = pulls.data.filter(
+                  (p) => p.head.sha === run.head_sha,
+                );
+                pr = shaMatches.length === 1 ? shaMatches[0] : undefined;
+              }
+            } else {
+              core.setOutput('ci_recheck_only', 'false');
+            }
+
+            if (!pr && context.eventName === 'workflow_dispatch') {
+              const n = parseInt('${{ github.event.inputs.pr_number }}', 10);
+              const { data } = await github.rest.pulls.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: n,
+              });
+              pr = data;
+            }
+
+            if (!pr) {
+              core.setOutput('pr_number', '');
+              return;
+            }
+
+            core.setOutput('pr_number', String(pr.number));
+            core.setOutput('head_sha', workflowRunSha ?? pr.head.sha);
+            core.setOutput('head_ref', pr.head.ref);
+            core.setOutput('base_ref', pr.base.ref);
+            core.setOutput('pr_author', pr.user.login);
+            core.setOutput(
+              'pr_is_fork',
+              String(pr.head.repo.full_name !== pr.base.repo.full_name),
+            );
+            core.setOutput('ci_trigger_failed', ciFailed);
+
+  plan:
+    name: Plan agent cycle
+    needs: resolve-context
+    if: needs.resolve-context.outputs.pr_number != ''
+    runs-on: ubuntu-latest
+    outputs:
+      should_skip: ${{ steps.plan.outputs.should_skip }}
+      skip_reason: ${{ steps.plan.outputs.skip_reason }}
+      run_bugbot: ${{ steps.plan.outputs.run_bugbot }}
+      run_standards: ${{ steps.plan.outputs.run_standards }}
+      run_depth: ${{ steps.plan.outputs.run_depth }}
+      active_pair: ${{ steps.plan.outputs.active_pair }}
+      is_dry_run: ${{ steps.plan.outputs.is_dry_run }}
+      should_handoff: ${{ steps.plan.outputs.should_handoff }}
+      handoff_reason: ${{ steps.plan.outputs.handoff_reason }}
+      recheck_only: ${{ steps.plan.outputs.recheck_only }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: oven-sh/setup-bun@v1
+
+      - name: Install pr-agent deps
+        working-directory: scripts/pr-agent
+        run: bun install --frozen-lockfile || bun install
+
+      - name: Plan
+        id: plan
+        env:
+          PR_NUMBER: ${{ needs.resolve-context.outputs.pr_number }}
+          PR_AUTHOR: ${{ needs.resolve-context.outputs.pr_author }}
+          PR_IS_FORK: ${{ needs.resolve-context.outputs.pr_is_fork }}
+          CI_RECHECK_ONLY: ${{ needs.resolve-context.outputs.ci_recheck_only }}
+          GITHUB_TOKEN: ${{ secrets.PR_AGENT_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
+        run: bun run cli plan
+        working-directory: scripts/pr-agent
+
+      - name: Mark in progress
+        if: steps.plan.outputs.should_skip != 'true'
+        uses: actions/github-script@v7
+        env:
+          PR_NUMBER: ${{ needs.resolve-context.outputs.pr_number }}
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: parseInt(process.env.PR_NUMBER, 10),
+              labels: ['agent-in-progress'],
+            });
+
+  review-standards:
+    name: Review (standards)
+    needs: [resolve-context, plan]
+    if: needs.plan.outputs.should_skip != 'true' && needs.plan.outputs.recheck_only != 'true' && needs.plan.outputs.run_standards == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve-context.outputs.head_sha }}
+          fetch-depth: 0
+
+      - run: git fetch origin ${{ needs.resolve-context.outputs.base_ref }}
+
+      - uses: oven-sh/setup-bun@v1
+
+      - working-directory: scripts/pr-agent
+        run: bun install --frozen-lockfile || bun install
+
+      - name: Run standards review
+        working-directory: scripts/pr-agent
+        env:
+          PR_NUMBER: ${{ needs.resolve-context.outputs.pr_number }}
+          BASE_REF: ${{ needs.resolve-context.outputs.base_ref }}
+          CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.PR_AGENT_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
+        run: bun run cli review standards
+
+      - name: Upload review output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-agent-review-standards
+          path: .pr-agent/review-standards.txt
+          if-no-files-found: ignore
+
+  review-depth:
+    name: Review (depth)
+    needs: [resolve-context, plan]
+    if: needs.plan.outputs.should_skip != 'true' && needs.plan.outputs.recheck_only != 'true' && needs.plan.outputs.run_depth == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve-context.outputs.head_sha }}
+          fetch-depth: 0
+
+      - run: git fetch origin ${{ needs.resolve-context.outputs.base_ref }}
+
+      - uses: oven-sh/setup-bun@v1
+
+      - working-directory: scripts/pr-agent
+        run: bun install --frozen-lockfile || bun install
+
+      - name: Run depth review
+        working-directory: scripts/pr-agent
+        env:
+          PR_NUMBER: ${{ needs.resolve-context.outputs.pr_number }}
+          BASE_REF: ${{ needs.resolve-context.outputs.base_ref }}
+          CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.PR_AGENT_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
+        run: bun run cli review depth
+
+      - name: Upload review output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-agent-review-depth
+          path: .pr-agent/review-depth.txt
+          if-no-files-found: ignore
+
+  review-bugbot:
+    name: Review (Bugbot)
+    needs: [resolve-context, plan]
+    if: needs.plan.outputs.should_skip != 'true' && needs.plan.outputs.recheck_only != 'true' && needs.plan.outputs.run_bugbot == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      bugbot_completed: ${{ steps.poll.outputs.bugbot_completed }}
+      bugbot_success: ${{ steps.poll.outputs.bugbot_success }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v1
+
+      - working-directory: scripts/pr-agent
+        run: bun install --frozen-lockfile || bun install
+
+      - name: Trigger Bugbot
+        working-directory: scripts/pr-agent
+        env:
+          PR_NUMBER: ${{ needs.resolve-context.outputs.pr_number }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bun run cli bugbot-trigger
+
+      - name: Poll Bugbot check
+        id: poll
+        working-directory: scripts/pr-agent
+        env:
+          HEAD_SHA: ${{ needs.resolve-context.outputs.head_sha }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bun run cli bugbot-poll
+
+  aggregate:
+    name: Aggregate findings
+    needs:
+      - resolve-context
+      - plan
+      - review-standards
+      - review-depth
+      - review-bugbot
+    if: always() && needs.plan.outputs.should_skip != 'true' && needs.plan.outputs.recheck_only != 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      should_fix: ${{ steps.agg.outputs.should_fix }}
+      should_handoff: ${{ steps.agg.outputs.should_handoff }}
+      handoff_reason: ${{ steps.agg.outputs.handoff_reason }}
+      ci_failed: ${{ steps.agg.outputs.ci_failed }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve-context.outputs.head_sha }}
+
+      - uses: oven-sh/setup-bun@v1
+
+      - working-directory: scripts/pr-agent
+        run: bun install --frozen-lockfile || bun install
+
+      - name: Download review artifacts
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          pattern: pr-agent-review-*
+          merge-multiple: true
+          path: .pr-agent
+
+      - name: Aggregate
+        id: agg
+        working-directory: scripts/pr-agent
+        env:
+          PR_NUMBER: ${{ needs.resolve-context.outputs.pr_number }}
+          HEAD_SHA: ${{ needs.resolve-context.outputs.head_sha }}
+          ACTIVE_PAIR: ${{ needs.plan.outputs.active_pair }}
+          BUGBOT_COMPLETED: ${{ needs.review-bugbot.outputs.bugbot_completed || 'false' }}
+          BUGBOT_SUCCESS: ${{ needs.review-bugbot.outputs.bugbot_success || 'false' }}
+          CI_TRIGGER_FAILED: ${{ needs.resolve-context.outputs.ci_trigger_failed }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bun run cli aggregate
+
+  fix:
+    name: Fix
+    needs: [resolve-context, plan, aggregate]
+    if: |
+      always() &&
+      needs.resolve-context.result == 'success' &&
+      needs.plan.result == 'success' &&
+      needs.aggregate.result == 'success' &&
+      needs.aggregate.outputs.should_handoff != 'true' &&
+      needs.aggregate.outputs.should_fix == 'true' &&
+      needs.resolve-context.outputs.pr_is_fork != 'true' &&
+      needs.plan.outputs.is_dry_run != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve-context.outputs.head_ref }}
+          fetch-depth: 0
+          token: ${{ secrets.PR_AGENT_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - uses: oven-sh/setup-bun@v1
+
+      - working-directory: scripts/pr-agent
+        run: bun install --frozen-lockfile || bun install
+
+      - name: Run fixer
+        working-directory: scripts/pr-agent
+        env:
+          PR_NUMBER: ${{ needs.resolve-context.outputs.pr_number }}
+          PR_HEAD_REF: ${{ needs.resolve-context.outputs.head_ref }}
+          CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
+          CI_LOG_EXCERPT: "${{ github.event.workflow_run && format('Failed workflow: {0}', github.event.workflow_run.html_url) || '' }}"
+          GITHUB_TOKEN: ${{ secrets.PR_AGENT_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
+        run: bun run cli fix
+
+  wait-ci:
+    name: Wait for CI
+    needs: [resolve-context, plan, aggregate, fix]
+    if: |
+      always() && needs.plan.outputs.should_skip != 'true' &&
+      (needs.fix.result == 'success' || needs.fix.result == 'skipped') &&
+      needs.aggregate.outputs.should_handoff != 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      ci_green: ${{ steps.wait.outputs.ci_green }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v1
+
+      - working-directory: scripts/pr-agent
+        run: bun install --frozen-lockfile || bun install
+
+      - name: Poll CI checks
+        id: wait
+        working-directory: scripts/pr-agent
+        env:
+          PR_NUMBER: ${{ needs.resolve-context.outputs.pr_number }}
+          HEAD_SHA: ${{ needs.resolve-context.outputs.head_sha }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bun run cli wait-ci
+
+  recheck-handoff:
+    name: Recheck handoff after CI
+    needs: [resolve-context, plan, aggregate, fix, wait-ci]
+    if: |
+      always() && needs.plan.outputs.should_skip != 'true' &&
+      (needs.plan.outputs.recheck_only == 'true' ||
+        (needs.aggregate.result == 'success' &&
+          needs.aggregate.outputs.should_handoff != 'true' &&
+          (needs.wait-ci.result == 'success' || needs.wait-ci.result == 'skipped') &&
+          needs.wait-ci.outputs.ci_green == 'true'))
+    runs-on: ubuntu-latest
+    outputs:
+      should_handoff: ${{ steps.recheck.outputs.should_handoff }}
+      handoff_reason: ${{ steps.recheck.outputs.handoff_reason }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v1
+
+      - working-directory: scripts/pr-agent
+        run: bun install --frozen-lockfile || bun install
+
+      - name: Recheck clean handoff
+        id: recheck
+        working-directory: scripts/pr-agent
+        env:
+          PR_NUMBER: ${{ needs.resolve-context.outputs.pr_number }}
+          HEAD_SHA: ${{ needs.resolve-context.outputs.head_sha }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bun run cli recheck-handoff
+
+  finalize:
+    name: Finalize handoff
+    needs: [resolve-context, plan, aggregate, recheck-handoff]
+    if: |
+      always() && (
+        needs.plan.outputs.should_handoff == 'true' ||
+        (needs.aggregate.result == 'success' && needs.aggregate.outputs.should_handoff == 'true') ||
+        (needs.recheck-handoff.result == 'success' && needs.recheck-handoff.outputs.should_handoff == 'true')
+      )
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v1
+
+      - working-directory: scripts/pr-agent
+        run: bun install --frozen-lockfile || bun install
+
+      - name: Post handoff
+        working-directory: scripts/pr-agent
+        env:
+          PR_NUMBER: ${{ needs.resolve-context.outputs.pr_number }}
+          HEAD_SHA: ${{ needs.resolve-context.outputs.head_sha }}
+          HANDOFF_REASON: ${{ needs.plan.outputs.should_handoff == 'true' && needs.plan.outputs.handoff_reason || needs.aggregate.outputs.handoff_reason || needs.recheck-handoff.outputs.handoff_reason || 'human_handoff' }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bun run cli finalize
+
+  cleanup-progress-label:
+    name: Clear progress label
+    needs:
+      - resolve-context
+      - plan
+      - review-standards
+      - review-depth
+      - review-bugbot
+      - aggregate
+      - fix
+      - wait-ci
+      - recheck-handoff
+      - finalize
+    if: always() && needs.resolve-context.outputs.pr_number != ''
+    runs-on: ubuntu-latest
+    steps:
+      - name: Remove agent-in-progress
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const pr = parseInt('${{ needs.resolve-context.outputs.pr_number }}', 10);
+            try {
+              await github.rest.issues.removeLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pr,
+                name: 'agent-in-progress',
+              });
+            } catch (e) {
+              if (e.status !== 404) throw e;
+            }
+
+  notify-failure:
+    name: Notify on failure
+    needs: [resolve-context, plan, aggregate, fix, recheck-handoff, finalize]
+    if: failure() && needs.resolve-context.outputs.pr_number != '' && needs.plan.outputs.should_skip != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Post failure comment
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const pr = parseInt('${{ needs.resolve-context.outputs.pr_number }}', 10);
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pr,
+              body: `PR Agent Orchestrator failed. See run: ${runUrl}`,
+            });

@@ -4,6 +4,7 @@ Android application that runs on Mentra Live smart glasses, bridging hardware an
 
 ## Getting started
 
+- [Mentra Live product and platform spec](mentra-live-spec.md) — required reference for Mentra Live behavior when working in `asg_client`
 - [Overview](overview.md) — architecture, K900/Mentra Live naming, key components
 - [Top-level README](../README.md) — environment setup, ADB (USB + WiFi), building and installing your fork
 
@@ -16,10 +17,15 @@ Android application that runs on Mentra Live smart glasses, bridging hardware an
 - [Button press system](features/button-press-system.md) — camera button, gallery-mode gate, video/photo dispatch
 - [Live streaming (RTMP / SRT / WHIP)](features/rtmp-streaming.md) — protocols, lifecycle, keep-alive, reconnect
 - [Camera web server](features/camera-web-server.md) — embedded HTTP server for gallery sync, downloads, deletion
-- [LED control](features/led-control.md) — local MTK recording LED + RGB ring (BES authority handoff)
+- [LED control](features/led-control.md) — local MTK recording LED, RGB status LED, and charging-case indicator
 - [Command processor](features/command-processor.md) — handler registry, protocol detection, ACK/dedup
 - [File manager integration](features/file-manager-integration.md) — package-namespaced media storage
 - [BES MCU firmware OTA](features/bes-ota.md) — pushing new BES firmware over UART
+
+## Testing and characterization
+
+- [Mentra Live WHIP battery and thermal characterization](mentra-live-whip-battery-tests.md) — runtime, stability, bitrate, and peak internal-temperature matrix
+- [Recording FPS vs. thermals](fps-thermal-test/README.md) — controlled local-recording thermal sweep
 
 ## Compatibility
 

@@ -4,7 +4,7 @@
  * Mirrors cloud SDK v3's PhoneManager structure. Sub-namespaced by concern:
  *
  *   session.phone.notifications.{on, hasPermission, stop}
- *   session.phone.calendar.{on, hasPermission, stop}
+ *   session.phone.calendar.{listEvents, hasPermission}
  *   session.phone.onBattery(...)                          // stays flat
  *
  * Imperative phone-OS calls (share, openUrl, copyToClipboard, download) live
@@ -16,15 +16,9 @@
  * subscribing on iOS is a no-op even though the API is present.
  */
 
-import {MiniappStreamType} from "../protocol"
+import {MiniappRequestType, MiniappStreamType} from "../protocol"
 import {MiniappSession} from "../session"
-import type {
-  BatteryData,
-  CalendarEventData,
-  NotificationDismissedData,
-  PhoneNotificationData,
-  UnsubscribeFn,
-} from "./events"
+import type {BatteryData, NotificationDismissedData, PhoneNotificationData, UnsubscribeFn} from "./events"
 
 class TrackedSubs {
   private readonly unsubs = new Set<UnsubscribeFn>()
@@ -55,9 +49,7 @@ export class PhoneNotificationsModule extends TrackedSubs {
   }
 
   on(handler: (data: PhoneNotificationData) => void): UnsubscribeFn {
-    return this.track(
-      this.session._subscribe(MiniappStreamType.PHONE_NOTIFICATION, handler as (data: unknown) => void),
-    )
+    return this.track(this.session._subscribe(MiniappStreamType.PHONE_NOTIFICATION, handler as (data: unknown) => void))
   }
 
   /**
@@ -71,10 +63,7 @@ export class PhoneNotificationsModule extends TrackedSubs {
    */
   onDismissed(handler: (data: NotificationDismissedData) => void): UnsubscribeFn {
     return this.track(
-      this.session._subscribe(
-        MiniappStreamType.PHONE_NOTIFICATION_DISMISSED,
-        handler as (data: unknown) => void,
-      ),
+      this.session._subscribe(MiniappStreamType.PHONE_NOTIFICATION_DISMISSED, handler as (data: unknown) => void),
     )
   }
 
@@ -84,21 +73,67 @@ export class PhoneNotificationsModule extends TrackedSubs {
   }
 }
 
-export class PhoneCalendarModule extends TrackedSubs {
-  constructor(private readonly session: MiniappSession) {
-    super()
-  }
+export interface CalendarListOptions {
+  /** Inclusive start of the query window. */
+  startsAt: string | Date
+  /** Exclusive end of the query window. Must be after startsAt. */
+  endsAt: string | Date
+  /** Maximum events to return. Defaults to 50 and may not exceed 100. */
+  limit?: number
+}
 
-  on(handler: (data: CalendarEventData) => void): UnsubscribeFn {
-    return this.track(
-      this.session._subscribe(MiniappStreamType.CALENDAR_EVENT, handler as (data: unknown) => void),
-    )
+export interface CalendarEvent {
+  /** Stable occurrence id, unique across calendars and recurring instances. */
+  id: string
+  calendarId: string
+  title: string
+  /** ISO 8601 start time. All-day events preserve their calendar timezone offset. */
+  startsAt: string
+  /** ISO 8601 end time. All-day events preserve their calendar timezone offset. */
+  endsAt: string
+  timezone?: string
+  allDay: boolean
+  location?: string
+  notes?: string
+  url?: string
+  /** Deduplicated HTTPS links found in the event URL, location, and notes. */
+  links: string[]
+}
+
+export interface CalendarListResult {
+  events: CalendarEvent[]
+  /** True when more matching events existed than the requested limit. */
+  truncated: boolean
+}
+
+export class PhoneCalendarModule {
+  constructor(private readonly session: MiniappSession) {}
+
+  /**
+   * Read calendar events in a bounded window. CALENDAR must be declared in
+   * miniapp.json and granted before the miniapp opens.
+   */
+  listEvents(options: CalendarListOptions): Promise<CalendarListResult> {
+    const startsAt = normalizeCalendarDate(options?.startsAt, "startsAt")
+    const endsAt = normalizeCalendarDate(options?.endsAt, "endsAt")
+    return this.session.sendRequest<CalendarListResult>({
+      type: MiniappRequestType.CALENDAR_LIST_EVENTS,
+      startsAt,
+      endsAt,
+      ...(options.limit === undefined ? {} : {limit: options.limit}),
+    })
   }
 
   /** True iff `CALENDAR` is declared in the miniapp's manifest. */
   get hasPermission(): boolean {
     return this.session._hasManifestPermission("CALENDAR")
   }
+}
+
+function normalizeCalendarDate(value: string | Date | undefined, field: string): string {
+  const date = value instanceof Date ? value : new Date(value ?? "")
+  if (Number.isNaN(date.getTime())) throw new TypeError(`${field} must be a valid Date or ISO 8601 string`)
+  return date.toISOString()
 }
 
 export class PhoneModule {

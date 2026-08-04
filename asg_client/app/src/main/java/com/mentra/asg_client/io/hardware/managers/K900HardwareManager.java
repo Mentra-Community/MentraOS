@@ -3,22 +3,26 @@ package com.mentra.asg_client.io.hardware.managers;
 import android.content.Context;
 import android.util.Log;
 
-import com.mentra.asg_client.io.hardware.core.BaseHardwareManager;
+import com.mentra.asg_client.audio.I2SAudioController;
 import com.mentra.asg_client.hardware.K900LedController;
 import com.mentra.asg_client.hardware.K900RgbLedController;
-import com.mentra.asg_client.audio.I2SAudioController;
+import com.mentra.asg_client.io.bluetooth.interfaces.ICompanionTransport;
 import com.mentra.asg_client.io.bluetooth.managers.K900BluetoothManager;
+import com.mentra.asg_client.io.hardware.core.BaseHardwareManager;
+import com.mentra.asg_client.io.hardware.interfaces.Capability;
 
 import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.nio.charset.StandardCharsets;
+import java.util.EnumSet;
+import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Implementation of IHardwareManager for K900 devices.
- * Uses K900-specific hardware APIs including the xydev library for LED control.
+ * Implementation of IHardwareManager for K900 devices. Uses K900-specific hardware APIs including
+ * the xydev library for LED control.
  */
 public class K900HardwareManager extends BaseHardwareManager {
     private static final String TAG = "K900HardwareManager";
@@ -38,23 +42,24 @@ public class K900HardwareManager extends BaseHardwareManager {
     private long lastBatteryQueryTime = 0;
     private CountDownLatch batteryResponseLatch;
     private final Object batteryLock = new Object();
-    
+
     /**
      * Create a new K900HardwareManager
+     *
      * @param context The application context
      */
     public K900HardwareManager(Context context) {
         super(context);
     }
-    
+
     @Override
     public void initialize() {
         Log.d(TAG, "🔧 =========================================");
         Log.d(TAG, "🔧 K900 HARDWARE MANAGER INITIALIZE");
         Log.d(TAG, "🔧 =========================================");
-        
+
         super.initialize();
-        
+
         // Initialize the K900 LED controller
         try {
             ledController = K900LedController.getInstance();
@@ -72,13 +77,13 @@ public class K900HardwareManager extends BaseHardwareManager {
 
         Log.d(TAG, "🔧 ✅ K900 Hardware Manager initialized");
     }
-    
+
     @Override
     public boolean supportsRecordingLed() {
         // K900 devices support recording LED
         return ledController != null;
     }
-    
+
     @Override
     public void setRecordingLedOn() {
         if (ledController != null) {
@@ -88,7 +93,7 @@ public class K900HardwareManager extends BaseHardwareManager {
             Log.w(TAG, "LED controller not available");
         }
     }
-    
+
     @Override
     public void setRecordingLedOff() {
         if (ledController != null) {
@@ -98,7 +103,7 @@ public class K900HardwareManager extends BaseHardwareManager {
             Log.w(TAG, "LED controller not available");
         }
     }
-    
+
     @Override
     public void setRecordingLedBlinking() {
         if (ledController != null) {
@@ -108,18 +113,21 @@ public class K900HardwareManager extends BaseHardwareManager {
             Log.w(TAG, "LED controller not available");
         }
     }
-    
+
     @Override
     public void setRecordingLedBlinking(long onDurationMs, long offDurationMs) {
         if (ledController != null) {
             ledController.startBlinking(onDurationMs, offDurationMs);
-            Log.d(TAG, String.format("🔴⚫ Recording LED set to BLINKING (on=%dms, off=%dms)", 
-                                     onDurationMs, offDurationMs));
+            Log.d(
+                    TAG,
+                    String.format(
+                            "🔴⚫ Recording LED set to BLINKING (on=%dms, off=%dms)",
+                            onDurationMs, offDurationMs));
         } else {
             Log.w(TAG, "LED controller not available");
         }
     }
-    
+
     @Override
     public void stopRecordingLedBlinking() {
         if (ledController != null) {
@@ -129,7 +137,7 @@ public class K900HardwareManager extends BaseHardwareManager {
             Log.w(TAG, "LED controller not available");
         }
     }
-    
+
     @Override
     public void flashRecordingLed(long durationMs) {
         if (ledController != null) {
@@ -139,7 +147,7 @@ public class K900HardwareManager extends BaseHardwareManager {
             Log.w(TAG, "LED controller not available");
         }
     }
-    
+
     @Override
     public boolean isRecordingLedOn() {
         if (ledController != null) {
@@ -147,7 +155,7 @@ public class K900HardwareManager extends BaseHardwareManager {
         }
         return false;
     }
-    
+
     @Override
     public boolean isRecordingLedBlinking() {
         if (ledController != null) {
@@ -155,15 +163,20 @@ public class K900HardwareManager extends BaseHardwareManager {
         }
         return false;
     }
-    
+
     @Override
     public String getDeviceModel() {
         return "K900";
     }
-    
+
     @Override
-    public boolean isK900Device() {
-        return true;
+    public Set<Capability> getCapabilities() {
+        return EnumSet.of(
+                Capability.RECORDING_LED,
+                Capability.LED_BRIGHTNESS,
+                Capability.RGB_LED,
+                Capability.MCU_AUDIO,
+                Capability.MCU_BATTERY);
     }
 
     @Override
@@ -181,6 +194,44 @@ public class K900HardwareManager extends BaseHardwareManager {
     }
 
     @Override
+    public long playAudioAssetTracked(String assetName) {
+        if (audioController != null) {
+            return audioController.playAssetTracked(assetName);
+        }
+        Log.w(TAG, "Audio controller not available");
+        return 0L;
+    }
+
+    @Override
+    public boolean replaceAudioAssetIfCurrent(long playbackToken, String assetName) {
+        return audioController != null
+                && audioController.replaceAssetIfCurrent(playbackToken, assetName);
+    }
+
+    @Override
+    public void playAudioAssetOverlay(String assetName) {
+        if (audioController != null) {
+            audioController.playOverlayAsset(assetName);
+        } else {
+            Log.w(TAG, "Audio controller not available");
+        }
+    }
+
+    @Override
+    public long playAudioAssetOverlayTracked(String assetName) {
+        if (audioController != null) {
+            return audioController.playOverlayAssetTracked(assetName);
+        }
+        Log.w(TAG, "Audio controller not available");
+        return 0L;
+    }
+
+    @Override
+    public boolean stopAudioOverlayPlayback(long playbackToken) {
+        return audioController != null && audioController.stopOverlayPlayback(playbackToken);
+    }
+
+    @Override
     public void stopAudioPlayback() {
         if (audioController != null) {
             audioController.stopPlayback();
@@ -188,21 +239,23 @@ public class K900HardwareManager extends BaseHardwareManager {
     }
 
     @Override
-    public void setBluetoothManager(Object bluetoothManager) {
-        if (bluetoothManager instanceof K900BluetoothManager) {
-            this.bluetoothManager = (K900BluetoothManager) bluetoothManager;
+    public boolean stopAudioPlaybackIfCurrent(long playbackToken) {
+        return audioController != null && audioController.stopPlaybackIfCurrent(playbackToken);
+    }
+
+    @Override
+    public void setTransport(ICompanionTransport transport) {
+        if (transport instanceof K900BluetoothManager) {
+            this.bluetoothManager = (K900BluetoothManager) transport;
             try {
                 rgbLedController = new K900RgbLedController(this.bluetoothManager);
-                Log.d(TAG, "🔧 ✅ K900 RGB LED controller initialized successfully");
+                Log.d(TAG, "K900 RGB LED controller initialized");
             } catch (Exception e) {
-                Log.e(TAG, "🔧 ❌ Failed to initialize K900 RGB LED controller", e);
+                Log.e(TAG, "Failed to initialize K900 RGB LED controller", e);
                 rgbLedController = null;
             }
-
-            // Note: BES system version query is handled by K900CommandHandler.requestSystemVersion()
-            // which will be called when K900CommandHandler is available and BluetoothManager is ready
         } else {
-            Log.w(TAG, "Invalid BluetoothManager provided (expected K900BluetoothManager)");
+            Log.w(TAG, "Invalid transport for K900 hardware (expected K900BluetoothManager)");
         }
     }
 
@@ -229,7 +282,11 @@ public class K900HardwareManager extends BaseHardwareManager {
     public void setRecordingLedBrightness(int percent, int durationMs) {
         if (ledController != null) {
             ledController.setBrightness(percent, durationMs);
-            Log.d(TAG, String.format("💡 Recording LED brightness set to %d%% for %dms", percent, durationMs));
+            Log.d(
+                    TAG,
+                    String.format(
+                            "💡 Recording LED brightness set to %d%% for %dms",
+                            percent, durationMs));
         } else {
             Log.w(TAG, "LED controller not available");
         }
@@ -266,8 +323,11 @@ public class K900HardwareManager extends BaseHardwareManager {
     public void setRgbLedOn(int ledIndex, int ontime, int offtime, int count) {
         if (rgbLedController != null) {
             rgbLedController.setLedOn(ledIndex, ontime, offtime, count);
-            Log.d(TAG, String.format("🚨 RGB LED ON - Index: %d, OnTime: %dms, OffTime: %dms, Count: %d",
-                    ledIndex, ontime, offtime, count));
+            Log.d(
+                    TAG,
+                    String.format(
+                            "🚨 RGB LED ON - Index: %d, OnTime: %dms, OffTime: %dms, Count: %d",
+                            ledIndex, ontime, offtime, count));
         } else {
             Log.w(TAG, "RGB LED controller not available - call setBluetoothManager() first");
         }
@@ -277,8 +337,12 @@ public class K900HardwareManager extends BaseHardwareManager {
     public void setRgbLedOn(int ledIndex, int ontime, int offtime, int count, int brightness) {
         if (rgbLedController != null) {
             rgbLedController.setLedOn(ledIndex, ontime, offtime, count, brightness);
-            Log.d(TAG, String.format("🚨 RGB LED ON - Index: %d, OnTime: %dms, OffTime: %dms, Count: %d, Brightness: %d",
-                    ledIndex, ontime, offtime, count, brightness));
+            Log.d(
+                    TAG,
+                    String.format(
+                            "🚨 RGB LED ON - Index: %d, OnTime: %dms, OffTime: %dms, Count: %d,"
+                                    + " Brightness: %d",
+                            ledIndex, ontime, offtime, count, brightness));
         } else {
             Log.w(TAG, "RGB LED controller not available - call setBluetoothManager() first");
         }
@@ -308,7 +372,11 @@ public class K900HardwareManager extends BaseHardwareManager {
     public void flashRgbLedWhite(int durationMs, int brightness) {
         if (rgbLedController != null) {
             rgbLedController.flashWhite(durationMs, brightness);
-            Log.d(TAG, String.format("📸 RGB LED white flash for %dms at brightness %d", durationMs, brightness));
+            Log.d(
+                    TAG,
+                    String.format(
+                            "📸 RGB LED white flash for %dms at brightness %d",
+                            durationMs, brightness));
         } else {
             Log.w(TAG, "RGB LED controller not available");
         }
@@ -335,14 +403,17 @@ public class K900HardwareManager extends BaseHardwareManager {
             long now = System.currentTimeMillis();
 
             // Return cached value if still fresh
-            if (cachedBatteryLevel >= 0 && (now - lastBatteryQueryTime) < BATTERY_CACHE_DURATION_MS) {
+            if (cachedBatteryLevel >= 0
+                    && (now - lastBatteryQueryTime) < BATTERY_CACHE_DURATION_MS) {
                 Log.d(TAG, "🔋 Returning cached battery level: " + cachedBatteryLevel + "%");
                 return cachedBatteryLevel;
             }
 
             // Query BES for fresh battery status
             if (!queryBatteryFromBes()) {
-                Log.w(TAG, "🔋 Battery query failed, returning cached value: " + cachedBatteryLevel);
+                Log.w(
+                        TAG,
+                        "🔋 Battery query failed, returning cached value: " + cachedBatteryLevel);
                 return cachedBatteryLevel;
             }
 
@@ -356,14 +427,18 @@ public class K900HardwareManager extends BaseHardwareManager {
             long now = System.currentTimeMillis();
 
             // Return cached value if still fresh
-            if (cachedBatteryLevel >= 0 && (now - lastBatteryQueryTime) < BATTERY_CACHE_DURATION_MS) {
+            if (cachedBatteryLevel >= 0
+                    && (now - lastBatteryQueryTime) < BATTERY_CACHE_DURATION_MS) {
                 Log.d(TAG, "🔋 Returning cached charging status: " + cachedChargingStatus);
                 return cachedChargingStatus;
             }
 
             // Query BES for fresh battery status
             if (!queryBatteryFromBes()) {
-                Log.w(TAG, "🔋 Battery query failed, returning cached charging status: " + cachedChargingStatus);
+                Log.w(
+                        TAG,
+                        "🔋 Battery query failed, returning cached charging status: "
+                                + cachedChargingStatus);
                 return cachedChargingStatus;
             }
 
@@ -372,8 +447,9 @@ public class K900HardwareManager extends BaseHardwareManager {
     }
 
     /**
-     * Query battery status from BES chipset.
-     * Sends mh_batv command and waits up to 50ms for hm_batv response.
+     * Query battery status from BES chipset. Sends mh_batv command and waits up to 50ms for hm_batv
+     * response.
+     *
      * @return true if query succeeded and cache was updated, false otherwise
      */
     private boolean queryBatteryFromBes() {
@@ -396,14 +472,16 @@ public class K900HardwareManager extends BaseHardwareManager {
             Log.d(TAG, "🔋 Querying battery from BES: " + commandStr);
 
             // Send command to BES
-            boolean sent = bluetoothManager.sendData(commandStr.getBytes(StandardCharsets.UTF_8));
+            boolean sent =
+                    bluetoothManager.sendMessage(commandStr.getBytes(StandardCharsets.UTF_8));
             if (!sent) {
                 Log.e(TAG, "🔋 Failed to send battery query command");
                 return false;
             }
 
             // Wait for response with timeout
-            boolean received = batteryResponseLatch.await(BATTERY_QUERY_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+            boolean received =
+                    batteryResponseLatch.await(BATTERY_QUERY_TIMEOUT_MS, TimeUnit.MILLISECONDS);
             if (received) {
                 Log.d(TAG, "🔋 Battery query response received within timeout");
                 return true;
@@ -423,21 +501,33 @@ public class K900HardwareManager extends BaseHardwareManager {
     }
 
     /**
-     * Called by K900CommandHandler when hm_batv response is received from BES.
-     * Updates the cached battery values and signals any waiting query.
+     * Called by K900CommandHandler when hm_batv response is received from BES. Updates the cached
+     * battery values and signals any waiting query.
+     *
      * @param batteryLevel Battery percentage (0-100)
      * @param batteryVoltage Battery voltage in mV
+     */
+    @Override
+    public void notifyBatteryReading(int percent, int voltageMv) {
+        onBatteryResponse(percent, voltageMv);
+    }
+
+    /**
+     * @deprecated Use {@link #notifyBatteryReading(int, int)} via {@link IHardwareManager}.
      */
     public void onBatteryResponse(int batteryLevel, int batteryVoltage) {
         synchronized (batteryLock) {
             cachedBatteryLevel = batteryLevel;
-            // Infer charging status from voltage (same logic as K900CommandHandler)
             cachedChargingStatus = batteryVoltage > 3900;
             lastBatteryQueryTime = System.currentTimeMillis();
 
-            Log.d(TAG, "🔋 Battery cache updated: " + cachedBatteryLevel + "%, charging=" + cachedChargingStatus);
+            Log.d(
+                    TAG,
+                    "🔋 Battery cache updated: "
+                            + cachedBatteryLevel
+                            + "%, charging="
+                            + cachedChargingStatus);
 
-            // Signal any waiting query
             if (batteryResponseLatch != null) {
                 batteryResponseLatch.countDown();
             }
@@ -449,7 +539,11 @@ public class K900HardwareManager extends BaseHardwareManager {
         Log.d(TAG, "setRgbLedSolidWhite(" + durationMs + ", " + brightness + ") called");
         if (rgbLedController != null) {
             rgbLedController.setSolidWhite(durationMs, brightness);
-            Log.d(TAG, String.format("🎥 RGB LED solid white for %dms at brightness %d", durationMs, brightness));
+            Log.d(
+                    TAG,
+                    String.format(
+                            "🎥 RGB LED solid white for %dms at brightness %d",
+                            durationMs, brightness));
         } else {
             Log.w(TAG, "RGB LED controller not available");
         }

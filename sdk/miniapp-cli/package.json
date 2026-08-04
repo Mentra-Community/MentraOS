@@ -1,10 +1,19 @@
 {
   "name": "@mentra/miniapp-cli",
-  "version": "0.1.0",
+  "version": "0.1.0-dev.1",
   "description": "Dev tools for MentraOS miniapps",
   "type": "module",
   "bin": {
     "mentra-miniapp": "./src/index.ts"
+  },
+  "publishConfig": {
+    "access": "public",
+    "tag": "dev"
+  },
+  "exports": {
+    ".": "./src/api.ts",
+    "./build-helpers": "./src/build-helpers.ts",
+    "./package.json": "./package.json"
   },
   "scripts": {
     "build": "bun src/index.ts schema regenerate",
@@ -13,11 +22,30 @@
   "dependencies": {
     "@clack/prompts": "^1.2.0",
     "jszip": "^3.10.1",
-    "qrcode-terminal": "^0.12.0"
-  },
-  "devDependencies": {
-    "@types/qrcode-terminal": "^0.12.0",
+    "qrcode": "^1.5.4",
     "typescript": "^5.0.0"
   },
-  "files": ["src", "schema"]
+  "devDependencies": {
+    "@types/qrcode": "^1.5.5",
+    "bun-types": "^1.3.14"
+  },
+  "files": [
+    "src",
+    "schema"
+  ],
+  "keywords": [
+    "mentra",
+    "mentraos",
+    "miniapp",
+    "cli"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Mentra-Community/MentraOS.git",
+    "directory": "sdk/miniapp-cli"
+  },
+  "homepage": "https://github.com/Mentra-Community/MentraOS/tree/dev/sdk/miniapp-cli#readme",
+  "bugs": {
+    "url": "https://github.com/Mentra-Community/MentraOS/issues"
+  }
 }

@@ -68,7 +68,7 @@ public class GalleryCommandHandler implements ICommandHandler {
             String cameraState = getCameraBusyState();
             if (cameraState != null) {
                 Log.d(TAG, "📸 Camera busy (" + cameraState + ") - sending empty gallery status to prevent syncing incomplete files");
-                return sendEmptyGalleryStatus();
+                return sendEmptyGalleryStatus(cameraState);
             }
 
             // Get FileManager from the camera server (same way HTTP server does it)
@@ -119,6 +119,10 @@ public class GalleryCommandHandler implements ICommandHandler {
      * Send empty gallery status when FileManager is not available
      */
     private boolean sendEmptyGalleryStatus() {
+        return sendEmptyGalleryStatus(null);
+    }
+
+    private boolean sendEmptyGalleryStatus(String cameraBusyReason) {
         try {
             JSONObject response = new JSONObject();
             response.put("type", "gallery_status");
@@ -127,6 +131,9 @@ public class GalleryCommandHandler implements ICommandHandler {
             response.put("total", 0);
             response.put("total_size", 0);
             response.put("has_content", false);
+            if (cameraBusyReason != null && !cameraBusyReason.isEmpty()) {
+                response.put("camera_busy", cameraBusyReason);
+            }
 
             return communicationManager.sendBluetoothResponse(response);
         } catch (Exception e) {

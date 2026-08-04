@@ -1,8 +1,10 @@
-import {render, act} from "@testing-library/react-native"
+import {act, fireEvent, render} from "@testing-library/react-native"
 
 import {OnboardingGuide, OnboardingStep} from "@/components/onboarding/OnboardingGuide"
-import {getCoreModuleListenerCount, resetCoreModuleMock} from "@/test-utils/mockCoreModule"
+import {getBluetoothSdkListenerCount, resetBluetoothSdkMock} from "@/test-utils/mockBluetoothSdk"
 import BluetoothSdk from "@mentra/bluetooth-sdk"
+
+const mockFocusEffectPreventBack = jest.fn()
 
 // --- Heavy / native deps that OnboardingGuide pulls in ---
 
@@ -40,16 +42,11 @@ jest.mock("@/contexts/ThemeContext", () => ({
 }))
 
 jest.mock("@/contexts/NavigationHistoryContext", () => ({
-  focusEffectPreventBack: jest.fn(),
+  focusEffectPreventBack: (callback: () => void) => mockFocusEffectPreventBack(callback),
 }))
 
 jest.mock("@/stores/navigation", () => ({
   useNavigationStore: {getState: () => ({clearHistoryAndGoHome: jest.fn()})},
-}))
-
-jest.mock("@/stores/settings", () => ({
-  SETTINGS: {super_mode: {key: "super_mode"}},
-  useSetting: () => [false, jest.fn()],
 }))
 
 jest.mock("@/components/ignite", () => {
@@ -57,8 +54,8 @@ jest.mock("@/components/ignite", () => {
   const React = require("react")
   return {
     Text: ({text, children}: any) => React.createElement(RNText, null, text ?? children),
-    Button: ({text, onPress}: any) =>
-      React.createElement(TouchableOpacity, {onPress}, React.createElement(RNText, null, text)),
+    Button: ({text, tx, onPress}: any) =>
+      React.createElement(TouchableOpacity, {onPress}, React.createElement(RNText, null, text ?? tx)),
     Header: () => null,
     Icon: () => null,
   }
@@ -111,7 +108,8 @@ const buildSteps = (): OnboardingStep[] => [
 
 describe("OnboardingGuide waitFn lifecycle", () => {
   beforeEach(() => {
-    resetCoreModuleMock()
+    resetBluetoothSdkMock()
+    mockFocusEffectPreventBack.mockClear()
     jest.useFakeTimers()
   })
 
@@ -143,6 +141,110 @@ describe("OnboardingGuide waitFn lifecycle", () => {
     // BUG: each re-render registers a new button_press listener without removing
     // the previous one, so the count grows unbounded. There should be at most
     // one active listener for the current step.
-    expect(getCoreModuleListenerCount("button_press")).toBeLessThanOrEqual(1)
+    expect(getBluetoothSdkListenerCount("button_press")).toBeLessThanOrEqual(1)
+  })
+
+  it("renders structured image-step details and actions", () => {
+    const handleAction = jest.fn()
+    const {getByText} = render(
+      <OnboardingGuide
+        autoStart={true}
+        requiresGlassesConnection={false}
+        steps={[
+          {
+            type: "image",
+            source: {uri: "step.png"},
+            name: "MentraOS step",
+            transition: false,
+            title: "Start using a miniapp",
+            details: [
+              {
+                title: "Tap to launch",
+                description: "Tap any miniapp to have it launch instantly.",
+              },
+            ],
+            action: {
+              label: "Open MentraOS Legacy",
+              onPress: handleAction,
+            },
+          },
+        ]}
+      />,
+    )
+
+    expect(getByText("Tap to launch")).toBeTruthy()
+    expect(getByText("Tap any miniapp to have it launch instantly.")).toBeTruthy()
+    fireEvent.press(getByText("Open MentraOS Legacy"))
+    expect(handleAction).toHaveBeenCalledTimes(1)
+  })
+
+  it("advances from a transition welcome after the start gate", () => {
+    const {getByText, queryByText} = render(
+      <OnboardingGuide
+        autoStart={false}
+        startButtonText="Start onboarding"
+        steps={[
+          {
+            type: "image",
+            source: {uri: "welcome.png"},
+            name: "Welcome",
+            transition: true,
+            duration: 500,
+            title: "Welcome to Mentra",
+          },
+          {
+            type: "image",
+            source: {uri: "first.png"},
+            name: "First",
+            transition: false,
+            title: "First lesson",
+          },
+        ]}
+      />,
+    )
+
+    fireEvent.press(getByText("Start onboarding"))
+    act(() => {
+      jest.advanceTimersByTime(500)
+    })
+
+    expect(getByText("First lesson")).toBeTruthy()
+    expect(queryByText("Welcome to Mentra")).toBeNull()
+  })
+
+  it("navigates back to a peer first step without reopening the start gate", () => {
+    const {getByText, queryByText} = render(
+      <OnboardingGuide
+        autoStart={false}
+        preventBack={true}
+        startButtonText="Start onboarding"
+        steps={[
+          {
+            type: "image",
+            source: {uri: "first.png"},
+            name: "First",
+            transition: false,
+            title: "First step",
+          },
+          {
+            type: "image",
+            source: {uri: "second.png"},
+            name: "Second",
+            transition: false,
+            title: "Second step",
+          },
+        ]}
+      />,
+    )
+
+    fireEvent.press(getByText("Start onboarding"))
+    fireEvent.press(getByText("common:continue"))
+    expect(getByText("Second step")).toBeTruthy()
+
+    const backHandler = mockFocusEffectPreventBack.mock.calls.at(-1)?.[0]
+    act(() => backHandler())
+
+    expect(getByText("First step")).toBeTruthy()
+    expect(queryByText("Start onboarding")).toBeNull()
   })
 })

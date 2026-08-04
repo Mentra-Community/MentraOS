@@ -7,12 +7,81 @@ plugins {
 }
 
 def packageJson = new JsonSlurper().parse(file("../../package.json"))
+def mavenGroupId = 'com.mentraglass'
+def mavenPublishVersion = (findProperty('mentraMavenVersion') ?: System.getenv('MENTRA_MAVEN_VERSION') ?: packageJson.version).toString()
 
-group = 'com.mentra'
-version = packageJson.version
+group = mavenGroupId
+version = mavenPublishVersion
 
-def isPublishTask = {
-    gradle.taskGraph.allTasks.any { it.name.toLowerCase().contains("publish") }
+def credentialValue = { List<String> propertyNames, List<String> envNames ->
+    for (propertyName in propertyNames) {
+        def value = findProperty(propertyName)
+        if (value != null && value.toString().trim()) {
+            return value.toString()
+        }
+    }
+    for (envName in envNames) {
+        def value = System.getenv(envName)
+        if (value != null && value.trim()) {
+            return value
+        }
+    }
+    return null
+}
+
+def centralTokenParts = { boolean failOnInvalid = false ->
+    def token = credentialValue(['sonatypeTokenBase64', 'mavenCentralTokenBase64'], ['SONATYPE_TOKEN_BASE64', 'MAVEN_CENTRAL_TOKEN_BASE64'])
+    if (!token) {
+        return null
+    }
+    def decoded
+    try {
+        decoded = new String(token.decodeBase64(), 'UTF-8')
+    } catch (Exception e) {
+        if (failOnInvalid) {
+            throw new GradleException('Sonatype token must be valid base64 for username:password', e)
+        }
+        return null
+    }
+    def separator = decoded.indexOf(':')
+    if (separator <= 0) {
+        if (failOnInvalid) {
+            throw new GradleException('Sonatype token must decode to username:password')
+        }
+        return null
+    }
+    return [decoded.substring(0, separator), decoded.substring(separator + 1)]
+}
+
+def centralUsername = { boolean failOnInvalidToken = false ->
+    credentialValue(['sonatypeUsername', 'mavenCentralUsername'], ['SONATYPE_USERNAME', 'MAVEN_CENTRAL_USERNAME']) ?: centralTokenParts(failOnInvalidToken)?.get(0)
+}
+
+def centralPassword = { boolean failOnInvalidToken = false ->
+    credentialValue(['sonatypePassword', 'mavenCentralPassword'], ['SONATYPE_PASSWORD', 'MAVEN_CENTRAL_PASSWORD']) ?: centralTokenParts(failOnInvalidToken)?.get(1)
+}
+
+def signingKey = {
+    credentialValue(['signingKey'], ['SIGNING_KEY'])
+}
+
+def signingPassword = {
+    credentialValue(['signingPassword'], ['SIGNING_PASSWORD'])
+}
+
+def shouldUseGpgCmd = {
+    (credentialValue(['signing.useGpgCmd'], ['SIGNING_USE_GPG_CMD']) ?: 'false').toBoolean()
+}
+
+def isCentralPublishTask = {
+    gradle.taskGraph.allTasks.any { it.name.toLowerCase().contains('sonatypecentral') }
+}
+
+gradle.taskGraph.whenReady {
+    if (isCentralPublishTask()) {
+        centralUsername(true)
+        centralPassword(true)
+    }
 }
 
 android {
@@ -67,7 +136,7 @@ afterEvaluate {
     publishing {
         publications {
             release(MavenPublication) {
-                groupId = 'com.mentra'
+                groupId = mavenGroupId
                 artifactId = 'lc3Lib'
                 version = project.version
 
@@ -98,12 +167,32 @@ afterEvaluate {
                 }
             }
         }
+        repositories {
+            maven {
+                name = 'sonatypeCentral'
+                url = uri('https://ossrh-staging-api.central.sonatype.com/service/local/staging/deploy/maven2/')
+                credentials {
+                    username = centralUsername()
+                    password = centralPassword()
+                }
+            }
+        }
     }
 
     signing {
+        def inMemorySigningKey = signingKey()
+        if (inMemorySigningKey) {
+            useInMemoryPgpKeys(inMemorySigningKey, signingPassword())
+        } else if (shouldUseGpgCmd()) {
+            useGpgCmd()
+        }
         required {
-            isPublishTask() && (findProperty("signing.keyId") || findProperty("signingKey"))
+            isCentralPublishTask()
         }
         sign publishing.publications.release
     }
+}
+
+tasks.withType(Sign).configureEach {
+    onlyIf { isCentralPublishTask() }
 }

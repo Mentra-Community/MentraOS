@@ -1,4 +1,5 @@
-import BluetoothSdk, {type Device, type DeviceModel} from "@mentra/bluetooth-sdk-internal"
+import {type Device, type DeviceModel} from "@mentra/bluetooth-sdk-internal"
+import {engine} from "@mentra/engine"
 import {useLocalSearchParams} from "expo-router"
 import {useEffect, useState} from "react"
 import {ActivityIndicator, Image, Platform, ScrollView, TouchableOpacity, View} from "react-native"
@@ -10,11 +11,12 @@ import Divider from "@/components/ui/Divider"
 import {Group} from "@/components/ui/Group"
 import {focusEffectPreventBack} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {translate} from "@/i18n"
 import showAlert from "@/utils/AlertUtils"
+import {routePairingKickoffFailure} from "@/utils/PairingUtils"
 import {PermissionFeatures, requestFeaturePermissions} from "@/utils/PermissionsUtils"
 import {getGlassesOpenImage} from "@/utils/getGlassesImage"
-import {useCoreStore} from "@/stores/core"
 import GlassView from "@/components/ui/GlassView"
 import {useNavigationStore} from "@/stores/navigation"
 
@@ -23,7 +25,9 @@ export default function SelectGlassesBluetoothScreen() {
   const {theme} = useAppTheme()
   const {goBack, replace} = useNavigationStore.getState()
   const [showTroubleshootingModal, setShowTroubleshootingModal] = useState(false)
-  const searchResults = useCoreStore((state) => state.searchResults)
+  const searchResults = useEngineSnapshot(engine.pairing.searchResults, (onChange) =>
+    engine.pairing.onFound(onChange),
+  )
   const [rememberedSearchResults, setRememberedSearchResults] = useState<Device[]>(searchResults)
 
   // useFocusEffect(
@@ -37,8 +41,8 @@ export default function SelectGlassesBluetoothScreen() {
     if (event && event.actionType !== "GO_BACK" && event.actionType !== "POP") {
       return
     }
-    BluetoothSdk.disconnectController()
-    BluetoothSdk.forgetController()
+    engine.glasses.controller.disconnect()
+    engine.glasses.controller.forget()
     goBack()
   }, true)
 
@@ -53,7 +57,7 @@ export default function SelectGlassesBluetoothScreen() {
   useEffect(() => {
     const initializeAndSearchForDevices = async () => {
       try {
-        await BluetoothSdk.startScan(deviceModel)
+        await engine.pairing.scan(deviceModel)
       } catch (error) {
         console.error("Failed to start controller scan:", error)
       }
@@ -92,8 +96,9 @@ export default function SelectGlassesBluetoothScreen() {
 
   const startPairing = async (device: Device) => {
     setTimeout(() => {
-      BluetoothSdk.connect(device).catch((error) => {
+      engine.pairing.pair(device).catch((error) => {
         console.error("Failed to connect to controller:", error)
+        routePairingKickoffFailure(device.model)
       })
     }, 2000)
     replace("/pairing/loading", {deviceModel: device.model, deviceName: device.name})

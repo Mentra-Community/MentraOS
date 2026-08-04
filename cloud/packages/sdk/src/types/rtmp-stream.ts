@@ -40,7 +40,7 @@ import type { StreamStatus } from "./messages/glasses-to-cloud";
 export const VIDEO_CONFIG_LIMITS = {
   width: {min: 320, max: 1920, default: 854},
   height: {min: 240, max: 1080, default: 480},
-  frameRate: {min: 10, max: 60, default: 15},
+  frameRate: {min: 5, max: 30, default: 15},
   bitrate: {min: 100_000, max: 10_000_000, default: 1_000_000},
 } as const;
 
@@ -107,7 +107,7 @@ export interface VideoConfig {
   height?: number;
   /** Bitrate in bits per second; default 1_000_000; allowed 100_000–10_000_000 */
   bitrate?: number;
-  /** Frame rate in fps; default 15; allowed 10–60 */
+  /** Frame rate in fps; default 15; allowed 5–30 */
   frameRate?: number;
 }
 

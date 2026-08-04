@@ -2,6 +2,7 @@ package com.mentra.asg_client.service.core.handlers;
 
 import android.util.Log;
 
+import com.mentra.asg_client.service.communication.interfaces.ICommunicationManager;
 import com.mentra.asg_client.service.legacy.interfaces.ICommandHandler;
 import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
 
@@ -21,9 +22,13 @@ public class GalleryModeCommandHandler implements ICommandHandler {
     private static final String TAG = "GalleryModeCommandHandler";
     
     private final AsgClientServiceManager serviceManager;
+    private final ICommunicationManager communicationManager;
 
-    public GalleryModeCommandHandler(AsgClientServiceManager serviceManager) {
+    public GalleryModeCommandHandler(
+            AsgClientServiceManager serviceManager,
+            ICommunicationManager communicationManager) {
         this.serviceManager = serviceManager;
+        this.communicationManager = communicationManager;
     }
 
     @Override
@@ -55,14 +60,17 @@ public class GalleryModeCommandHandler implements ICommandHandler {
     private boolean handleGalleryModeState(JSONObject data) {
         try {
             boolean active = data.optBoolean("active", false);
+            String requestId = getRequestId(data);
             
             if (serviceManager != null && serviceManager.getAsgSettings() != null) {
                 serviceManager.getAsgSettings().setSaveInGalleryMode(active);
                 Log.i(TAG, "📸 Gallery mode state updated: " + (active ? "ACTIVE" : "INACTIVE") + 
                           " - Button captures " + (active ? "ENABLED" : "DISABLED"));
+                sendSettingsAck(requestId, active);
                 return true;
             } else {
                 Log.e(TAG, "Service manager or settings not available");
+                sendSettingsError(requestId, "settings_unavailable", "Settings are not available.");
                 return false;
             }
         } catch (Exception e) {
@@ -70,5 +78,51 @@ public class GalleryModeCommandHandler implements ICommandHandler {
             return false;
         }
     }
-}
 
+    private String getRequestId(JSONObject data) {
+        String requestId = data.optString("requestId", "");
+        if (requestId == null || requestId.isEmpty()) {
+            requestId = data.optString("request_id", "");
+        }
+        return requestId == null ? "" : requestId;
+    }
+
+    private void sendSettingsAck(String requestId, boolean active) {
+        if (requestId == null || requestId.isEmpty()) {
+            return;
+        }
+        try {
+            JSONObject ack = new JSONObject();
+            ack.put("type", "settings_ack");
+            ack.put("request_id", requestId);
+            ack.put("setting", "gallery_mode");
+            ack.put("status", "applied");
+            ack.put("active", active);
+            ack.put("ready", true);
+            ack.put("timestamp", System.currentTimeMillis());
+            communicationManager.sendBluetoothResponse(ack);
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to send gallery mode settings ack", e);
+        }
+    }
+
+    private void sendSettingsError(String requestId, String errorCode, String errorMessage) {
+        if (requestId == null || requestId.isEmpty()) {
+            return;
+        }
+        try {
+            JSONObject ack = new JSONObject();
+            ack.put("type", "settings_ack");
+            ack.put("request_id", requestId);
+            ack.put("setting", "gallery_mode");
+            ack.put("status", "error");
+            ack.put("ready", false);
+            ack.put("error_code", errorCode);
+            ack.put("error_message", errorMessage);
+            ack.put("timestamp", System.currentTimeMillis());
+            communicationManager.sendBluetoothResponse(ack);
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to send gallery mode settings error", e);
+        }
+    }
+}

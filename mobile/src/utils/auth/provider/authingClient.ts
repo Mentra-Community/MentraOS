@@ -1,6 +1,6 @@
 import {EventEmitter} from "events"
 
-import {AuthenticationClient} from "authing-js-sdk"
+import {AuthenticationClient, EmailScene} from "authing-js-sdk"
 import type {AuthenticationClientOptions, User} from "authing-js-sdk"
 import {Result, result as Res, AsyncResult} from "typesafe-ts"
 
@@ -16,6 +16,29 @@ interface Session {
 }
 
 const SESSION_KEY = "authing_session"
+
+/**
+ * The authing-js-sdk's GraphQLClient rejects with a plain `{code, message, data}`
+ * object rather than an `Error` (see node_modules/authing-js-sdk GraphQLClient,
+ * `throw { code, message, data }`). `Res.try_async`'s default wrapping turns a
+ * non-Error into `new Error(String(value))`, which for an object collapses to
+ * the useless `"[object Object]"` — discarding the code/message that
+ * `mapAuthError` needs to show a real message.
+ *
+ * This mapper preserves the payload by serializing it into an Error whose
+ * `.message` is the JSON string `parseAuthingError` already knows how to read.
+ */
+const toAuthingError = (e: unknown): Error => {
+  if (e instanceof Error) return e
+  if (e && typeof e === "object") {
+    try {
+      return new Error(JSON.stringify(e))
+    } catch {
+      return new Error(String(e))
+    }
+  }
+  return new Error(String(e))
+}
 
 type AuthChangeEvent =
   | "SIGNED_IN"
@@ -133,7 +156,7 @@ export class AuthingWrapperClient extends AuthClient {
         user: mentraUser,
       }
       return mentraSigninResponse
-    })
+    }, toAuthingError)
   }
 
   public signInWithPassword(credentials: {email: string; password: string}): AsyncResult<MentraSigninResponse, Error> {
@@ -176,7 +199,7 @@ export class AuthingWrapperClient extends AuthClient {
       }
 
       throw new Error("Failed to sign in")
-    })
+    }, toAuthingError)
   }
 
   public signOut(): AsyncResult<void, Error> {
@@ -312,8 +335,16 @@ export class AuthingWrapperClient extends AuthClient {
     this.authing.logout()
   }
 
-  public resetPasswordForEmail(_email: string): AsyncResult<any, Error> {
-    return Res.error_async(new Error("Method not implemented"))
+  public resetPasswordForEmail(email: string): AsyncResult<void, Error> {
+    return Res.try_async(async () => {
+      await this.authing.sendEmail(email, EmailScene.ResetPassword)
+    }, toAuthingError)
+  }
+
+  public resetPasswordByCode(email: string, code: string, newPassword: string): AsyncResult<void, Error> {
+    return Res.try_async(async () => {
+      await this.authing.resetPasswordByEmailCode(email, code, newPassword)
+    }, toAuthingError)
   }
 
   public updateUserPassword(_password: string): AsyncResult<void, Error> {
@@ -330,6 +361,22 @@ export class AuthingWrapperClient extends AuthClient {
 
   public googleSignIn(): AsyncResult<string, Error> {
     return Res.error_async(new Error("Method not implemented"))
+  }
+
+  /** cloud-client subject token for the China deployment. Reproduces the
+   * pre-cutover MantleManager behavior exactly: hand over the session token
+   * with the "supabase" type tag, which the China cloud's exchange accepts.
+   * (The 019 cutover moved this seam from MantleManager into the providers;
+   * without this override China sign-in worked but cloud-client could never
+   * authenticate.) */
+  public getSubjectToken(): AsyncResult<{token: string; type: string}, Error> {
+    return Res.try_async(async () => {
+      const res = await this.getSession()
+      if (res.is_error() || !res.value.token) {
+        throw new Error("getSubjectToken: no session token available")
+      }
+      return {token: res.value.token, type: "supabase"}
+    })
   }
 }
 

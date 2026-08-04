@@ -5,7 +5,9 @@ import android.util.Log;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 /**
@@ -20,8 +22,8 @@ import java.util.List;
  *   d  = chunk data payload
  *
  * Each chunk after C-wrapping + K900 framing must fit within the BES2700's
- * 253-byte BLE write limit. With compact keys, 80 bytes of raw data produces
- * a final packed size of ~245 bytes worst-case (with heavy JSON escaping).
+ * 253-byte BLE write limit. Payload size is selected by measuring the final
+ * packed chunk so JSON escaping cannot push a chunk over the BLE limit.
  */
 public class MessageChunker {
     private static final String TAG = "MessageChunker";
@@ -30,9 +32,11 @@ public class MessageChunker {
     // BES2700 limit is 253 bytes; anything over ~200 bytes packed needs chunking.
     private static final int MESSAGE_SIZE_THRESHOLD = 200;
 
-    // Maximum raw bytes per chunk. After double JSON escaping + compact envelope
-    // + C-wrapper + K900 framing, 80 bytes stays under the 253-byte BLE limit.
-    private static final int CHUNK_DATA_SIZE = 80;
+    private static final int INITIAL_CHUNK_DATA_SIZE = 80;
+    private static final int MIN_CHUNK_DATA_SIZE = 4;
+    private static final int MAX_PACKED_CHUNK_SIZE = 253;
+    private static final int MAX_BINARY_FRAGMENT_PAYLOAD = BleWireProtocol.MAX_FRAGMENT_PAYLOAD;
+    private static final int MAX_BINARY_FRAME_SIZE = BleWireProtocol.MTU_TARGET;
 
     /**
      * Check if a message needs to be chunked
@@ -44,7 +48,7 @@ public class MessageChunker {
             return false;
         }
 
-        int messageBytes = message.getBytes().length;
+        int messageBytes = message.getBytes(StandardCharsets.UTF_8).length;
         boolean needsChunking = messageBytes > MESSAGE_SIZE_THRESHOLD;
 
         if (needsChunking) {
@@ -62,29 +66,39 @@ public class MessageChunker {
      * @return List of chunk JSON objects ready to be C-wrapped and sent
      */
     public static List<JSONObject> createChunks(String originalJson, long messageId) throws JSONException {
+        return createChunks(originalJson, messageId, false);
+    }
+
+    public static List<JSONObject> createChunks(String originalJson, long messageId, boolean wakeup) throws JSONException {
         if (originalJson == null) {
             throw new IllegalArgumentException("Cannot chunk null message");
         }
 
-        List<JSONObject> chunks = new ArrayList<>();
-        byte[] messageBytes = originalJson.getBytes();
+        byte[] messageBytes = originalJson.getBytes(StandardCharsets.UTF_8);
         int totalBytes = messageBytes.length;
 
         // Compact chunk session ID: messageId_timestamp (no "chunk_" prefix)
         String chunkId = messageId + "_" + System.currentTimeMillis();
 
-        // Calculate total chunks needed
-        int totalChunks = (int) Math.ceil((double) totalBytes / CHUNK_DATA_SIZE);
+        for (int chunkSize = INITIAL_CHUNK_DATA_SIZE; chunkSize >= MIN_CHUNK_DATA_SIZE; chunkSize--) {
+            List<JSONObject> chunks = buildChunks(messageBytes, chunkId, messageId, chunkSize);
+            if (allChunksFit(chunks, wakeup)) {
+                Log.d(TAG, "Creating " + chunks.size() + " chunks for message of size " + totalBytes
+                        + " bytes using " + chunkSize + "-byte UTF-8 slices");
+                return chunks;
+            }
+        }
 
-        Log.d(TAG, "Creating " + totalChunks + " chunks for message of size " + totalBytes + " bytes");
+        throw new JSONException("Unable to create K900 chunks within " + MAX_PACKED_CHUNK_SIZE + " bytes");
+    }
+
+    private static List<JSONObject> buildChunks(byte[] messageBytes, String chunkId, long messageId, int chunkSize) throws JSONException {
+        List<JSONObject> chunks = new ArrayList<>();
+        List<String> chunkDataList = splitUtf8(messageBytes, chunkSize);
+        int totalChunks = chunkDataList.size();
 
         for (int i = 0; i < totalChunks; i++) {
-            int startIndex = i * CHUNK_DATA_SIZE;
-            int endIndex = Math.min(startIndex + CHUNK_DATA_SIZE, totalBytes);
-            int chunkLength = endIndex - startIndex;
-
-            // Extract chunk data as string
-            String chunkData = new String(messageBytes, startIndex, chunkLength);
+            String chunkData = chunkDataList.get(i);
 
             // Create chunk JSON with compact keys
             JSONObject chunk = new JSONObject();
@@ -101,10 +115,45 @@ public class MessageChunker {
 
             chunks.add(chunk);
 
-            Log.d(TAG, "Created chunk " + i + "/" + (totalChunks - 1) + " with " + chunkLength + " bytes");
+            Log.d(TAG, "Created chunk " + i + "/" + (totalChunks - 1) + " with " + chunkData.getBytes(StandardCharsets.UTF_8).length + " bytes");
         }
 
         return chunks;
+    }
+
+    private static boolean allChunksFit(List<JSONObject> chunks, boolean wakeup) {
+        for (int i = 0; i < chunks.size(); i++) {
+            byte[] packed = K900ProtocolUtils.packJsonToK900(chunks.get(i).toString(), wakeup && i == 0);
+            if (packed == null || packed.length > MAX_PACKED_CHUNK_SIZE) {
+                Log.d(TAG, "Chunk " + i + " packed to " + (packed != null ? packed.length : 0)
+                        + " bytes, exceeding " + MAX_PACKED_CHUNK_SIZE);
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static List<String> splitUtf8(byte[] messageBytes, int chunkSize) {
+        List<String> chunkDataList = new ArrayList<>();
+        int offset = 0;
+        while (offset < messageBytes.length) {
+            int endIndex = findUtf8ChunkEnd(messageBytes, offset, chunkSize);
+            chunkDataList.add(new String(messageBytes, offset, endIndex - offset, StandardCharsets.UTF_8));
+            offset = endIndex;
+        }
+        return chunkDataList;
+    }
+
+    private static int findUtf8ChunkEnd(byte[] messageBytes, int startIndex, int chunkSize) {
+        int endIndex = Math.min(startIndex + chunkSize, messageBytes.length);
+        while (endIndex > startIndex && endIndex < messageBytes.length && isUtf8ContinuationByte(messageBytes[endIndex])) {
+            endIndex--;
+        }
+        return endIndex > startIndex ? endIndex : Math.min(startIndex + chunkSize, messageBytes.length);
+    }
+
+    private static boolean isUtf8ContinuationByte(byte value) {
+        return (value & 0xC0) == 0x80;
     }
 
     /**
@@ -159,6 +208,96 @@ public class MessageChunker {
             return json.optInt(fullKey, defaultValue);
         }
         return json.optInt(compactKey, defaultValue);
+    }
+
+    public static boolean needsBinaryFragmenting(byte[] payload) {
+        return payload != null && payload.length > MAX_BINARY_FRAGMENT_PAYLOAD;
+    }
+
+    public static boolean needsBinaryFragmenting(String json) {
+        if (json == null) {
+            return false;
+        }
+        return needsBinaryFragmenting(json.getBytes(StandardCharsets.UTF_8));
+    }
+
+    /**
+     * Split raw UTF-8 payload into binary wire fragments (v2 path).
+     */
+    public static List<BinaryFragment> createBinaryFragments(
+            byte[] payload, int msgId, boolean wakeup, boolean ackRequested) {
+        if (payload == null) {
+            throw new IllegalArgumentException("Cannot fragment null payload");
+        }
+
+        int fragCount = (payload.length + MAX_BINARY_FRAGMENT_PAYLOAD - 1) / MAX_BINARY_FRAGMENT_PAYLOAD;
+        if (fragCount > 255) {
+            throw new IllegalArgumentException("Payload too large for binary fragmentation");
+        }
+        if (fragCount == 0) {
+            fragCount = 1;
+        }
+
+        List<BinaryFragment> fragments = new ArrayList<>(fragCount);
+        for (int i = 0; i < fragCount; i++) {
+            int offset = i * MAX_BINARY_FRAGMENT_PAYLOAD;
+            int len = Math.min(MAX_BINARY_FRAGMENT_PAYLOAD, payload.length - offset);
+            byte[] fragPayload = Arrays.copyOfRange(payload, offset, offset + len);
+
+            byte flags = 0;
+            if (i == 0) {
+                flags |= BleWireProtocol.BLE_WIRE_FLAG_FIRST_FRAG;
+            }
+            if (i == fragCount - 1) {
+                flags |= BleWireProtocol.BLE_WIRE_FLAG_LAST_FRAG;
+            }
+            if (wakeup && i == 0) {
+                flags |= BleWireProtocol.BLE_WIRE_FLAG_WAKE;
+            }
+            if (ackRequested && i == fragCount - 1) {
+                flags |= BleWireProtocol.BLE_WIRE_FLAG_ACK_REQUESTED;
+            }
+
+            fragments.add(new BinaryFragment(flags, msgId, i, fragCount, fragPayload));
+        }
+
+        Log.d(TAG, "Created " + fragments.size() + " binary fragments for "
+                + payload.length + " byte payload");
+        return fragments;
+    }
+
+    public static boolean allBinaryFragmentsFit(List<BinaryFragment> fragments) {
+        for (BinaryFragment fragment : fragments) {
+            byte[] packed = K900ProtocolUtils.packBinaryFragment(
+                    fragment.flags,
+                    fragment.msgId,
+                    fragment.fragIdx,
+                    fragment.fragCount,
+                    fragment.payload);
+            if (packed == null || packed.length > MAX_BINARY_FRAME_SIZE) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Container for binary wire fragment metadata
+     */
+    public static class BinaryFragment {
+        public final byte flags;
+        public final int msgId;
+        public final int fragIdx;
+        public final int fragCount;
+        public final byte[] payload;
+
+        public BinaryFragment(byte flags, int msgId, int fragIdx, int fragCount, byte[] payload) {
+            this.flags = flags;
+            this.msgId = msgId;
+            this.fragIdx = fragIdx;
+            this.fragCount = fragCount;
+            this.payload = payload;
+        }
     }
 
     /**

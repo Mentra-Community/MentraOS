@@ -22,20 +22,30 @@ public class PhotoResolutionPolicyTest {
     }
 
     @Test
-    public void targetSize_sdkSupportsFull() {
-        assertThat(PhotoResolutionPolicy.targetSize(true, CameraConstants.SIZE_FULL))
-                .isEqualTo(new Size(CameraConstants.SDK_WIDTH_FULL, CameraConstants.SDK_HEIGHT_FULL));
+    public void targetSize_sdkHigh() {
+        assertThat(PhotoResolutionPolicy.targetSize(true, CameraConstants.SIZE_HIGH))
+                .isEqualTo(new Size(CameraConstants.SDK_WIDTH_LARGE, CameraConstants.SDK_HEIGHT_LARGE));
     }
 
     @Test
-    public void targetSize_buttonIgnoresFullAndDefaultsToMedium() {
-        assertThat(PhotoResolutionPolicy.targetSize(false, CameraConstants.SIZE_FULL))
-                .isEqualTo(new Size(CameraConstants.BUTTON_WIDTH_MEDIUM, CameraConstants.BUTTON_HEIGHT_MEDIUM));
+    public void targetSize_sdkLegacyFullMapsToMaxViaNormalizer() {
+        assertThat(PhotoResolutionPolicy.targetSize(true, "full"))
+                .isEqualTo(new Size(CameraConstants.SDK_WIDTH_MEDIUM, CameraConstants.SDK_HEIGHT_MEDIUM));
     }
 
     @Test
-    public void targetSize_buttonLarge() {
-        assertThat(PhotoResolutionPolicy.targetSize(false, CameraConstants.SIZE_LARGE))
+    public void targetSize_buttonHigh() {
+        assertThat(PhotoResolutionPolicy.targetSize(false, CameraConstants.SIZE_HIGH))
                 .isEqualTo(new Size(CameraConstants.BUTTON_WIDTH_LARGE, CameraConstants.BUTTON_HEIGHT_LARGE));
+    }
+
+    @Test
+    public void targetSize_textModeUsesAsgSensorConstants() {
+        assertThat(PhotoResolutionPolicy.targetSize(true, CameraConstants.SIZE_TEXT))
+                .isEqualTo(PhotoResolutionPolicy.textModeSensorTarget());
+        assertThat(PhotoResolutionPolicy.targetSize(false, CameraConstants.SIZE_TEXT))
+                .isEqualTo(PhotoResolutionPolicy.textModeSensorTarget());
+        assertThat(PhotoResolutionPolicy.textModeSensorTarget().getWidth()).isEqualTo(3840);
+        assertThat(PhotoResolutionPolicy.textModeSensorTarget().getHeight()).isEqualTo(2160);
     }
 }

@@ -1,7 +1,7 @@
 import {DeviceTypes} from "@/../../cloud/packages/types/src"
 import {useRoute} from "@react-navigation/native"
-import {Linking, PermissionsAndroid, Image, Platform, View} from "react-native"
-import type {Permission} from "react-native"
+import {Linking, PermissionsAndroid, Image, Platform, ScrollView, View} from "react-native"
+import type {ImageStyle, Permission, ViewStyle} from "react-native"
 
 import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
 import {Button, Header, Icon, Screen, Text} from "@/components/ignite"
@@ -14,15 +14,19 @@ import GlassesDisplayMirror from "@/components/mirror/GlassesDisplayMirror"
 import {useState} from "react"
 import GlassesTroubleshootingModal from "@/components/glasses/GlassesTroubleshootingModal"
 import {OnboardingGuide, OnboardingStep} from "@/components/onboarding/OnboardingGuide"
-import {useAppStatusStore} from "@mentra/island"
-import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
+import {CDN_BASE_URL} from "@/constants/appConfig"
+import {engine} from "@mentra/engine"
+import {getAr99DisplayName, getAr99ImageSource} from "@/utils/getGlassesImage"
+import {ThemedStyle} from "@/theme"
 
 type BluetoothPermission = Permission | "android.permission.BLUETOOTH" | "android.permission.BLUETOOTH_ADMIN"
 
 export default function PairingPrepScreen() {
   const route = useRoute()
-  const {deviceModel} = route.params as {deviceModel: string}
+  const {deviceModel, ar99ProjectName} = route.params as {deviceModel: string; ar99ProjectName?: string}
+  const displayName = deviceModel === DeviceTypes.AR99 ? getAr99DisplayName(ar99ProjectName) : deviceModel
   const {goBack, push, clearHistoryAndGoHome} = useNavigationStore.getState()
+  const {themed} = useAppTheme()
 
   const advanceToPairing = async () => {
     if (deviceModel == null || deviceModel == "") {
@@ -192,18 +196,21 @@ export default function PairingPrepScreen() {
 
     console.log("needsBluetoothPermissions", needsBluetoothPermissions)
 
-    // Stop any running apps from previous sessions to prevent mic race conditions
-    // This is symmetric with the logic in DeviceSettings that stops apps when unpairing
-    await useAppStatusStore.getState().stopAll()
+    // Stop any running apps from previous sessions to prevent mic race conditions.
+    // This is symmetric with the logic in DeviceSettings that stops apps when unpairing.
+    // Fire-and-forget: stopAll() awaits a per-app backend stop call that can take many
+    // seconds (or hang with no internet / NO_ACTIVE_SESSION). We don't need it to finish
+    // before navigating to the scan screen, so don't block pairing on it.
+    void engine.miniapps.stopAll()
 
     // skip pairing for simulated glasses:
     if (deviceModel.startsWith(DeviceTypes.SIMULATED)) {
-      await BluetoothSdk.connectSimulated()
+      await engine.glasses.connectSimulated()
       clearHistoryAndGoHome()
       return
     }
 
-    push("/pairing/scan", {deviceModel})
+    push("/pairing/scan", {deviceModel, ar99ProjectName})
   }
 
   const SimulatedPairingGuide = () => {
@@ -220,7 +227,7 @@ export default function PairingPrepScreen() {
   }
 
   const MentraLivePairingGuide = () => {
-    const CDN_BASE = "https://mentra-videos-cdn.mentraglass.com/onboarding/mentra-live/light"
+    const CDN_BASE = `${CDN_BASE_URL}/onboarding/mentra-live/light`
     let steps: OnboardingStep[] = [
       {
         name: "power_on_tutorial",
@@ -376,10 +383,7 @@ export default function PairingPrepScreen() {
             className="text-lg text-secondary-foreground"
             text="1. Disconnect your G2 from within the Even Realities app, or uninstall the Even Realities app"
           />
-          <Text
-            className="text-lg text-secondary-foreground"
-            text="2. Place your G2 in the charging case with the lid open."
-          />
+          <Text className="text-lg text-secondary-foreground" text="2. Place your G2 in the charging case." />
         </View>
       </View>
     )
@@ -391,7 +395,7 @@ export default function PairingPrepScreen() {
       <>
         <View className="gap-4">
           <Button tx="pairing:g1Ready" onPress={advanceToPairing} />
-          <Button tx="pairing:g1NotReady" preset="secondary" onPress={() => setShowTroubleshootingModal(true)} />
+          <Button tx="pairing:g2NotReady" preset="secondary" onPress={() => setShowTroubleshootingModal(true)} />
         </View>
         <GlassesTroubleshootingModal
           isVisible={showTroubleshootingModal}
@@ -399,6 +403,60 @@ export default function PairingPrepScreen() {
           deviceModel={deviceModel}
         />
       </>
+    )
+  }
+
+  const NimoPairingGuide = () => {
+    return (
+      <View className="flex-1 mt-6">
+        <ScrollView showsVerticalScrollIndicator={false}>
+          <Text tx="pairing:instructions" className="text-2xl font-bold mb-4 text-secondary-foreground" />
+          <Text
+            className="text-lg text-secondary-foreground mb-2"
+            text="1. Make sure your NIMO glasses are fully charged and turned on."
+          />
+          <Text
+            className="text-lg text-secondary-foreground mb-2"
+            text="2. Disconnect your glasses from the NIMO app, or uninstall the NIMO app."
+          />
+          <Text
+            className="text-lg text-secondary-foreground mb-2"
+            text="3. If your glasses were previously connected to the NIMO app, force stop that app, then try connecting again."
+          />
+          <Text
+            className="text-lg text-secondary-foreground mb-2"
+            text="4. If the glasses aren't responding, close both arms for about 8 seconds, then try again."
+          />
+          <Text
+            className="text-lg text-secondary-foreground mb-2"
+            text="5. If nothing else works, reset the glasses by holding the left and right touch areas at the same time for a few seconds, then restart them."
+          />
+          {Platform.OS === "ios" && (
+            <Text
+              className="text-lg text-secondary-foreground mb-2"
+              text="6. If prompted, allow the Bluetooth pairing request."
+            />
+          )}
+          <View className="h-6" />
+        </ScrollView>
+      </View>
+    )
+  }
+
+  const Ar99PairingGuide = () => {
+    return (
+      <View className="flex-1 mt-6">
+        <ScrollView showsVerticalScrollIndicator={false}>
+          <View
+            className="self-center flex-col items-center justify-center bg-primary-foreground rounded-xl mb-6 overflow-hidden"
+            style={themed($ar99ImageContainer)}>
+            <Image source={getAr99ImageSource(ar99ProjectName)} resizeMode="contain" style={themed($ar99Image)} />
+          </View>
+          <Text tx="pairing:instructions" className="text-2xl font-bold mb-4 text-secondary-foreground" />
+          <Text className="text-lg text-secondary-foreground mb-2" tx="pairing:ar99Step1" />
+          <Text className="text-lg text-secondary-foreground mb-2" tx="pairing:ar99Step2" />
+        </ScrollView>
+      </View>
     )
   }
 
@@ -418,6 +476,10 @@ export default function PairingPrepScreen() {
         return <VuzixZ100PairingGuide />
       case DeviceTypes.NEX:
         return <MentraDisplayGlassesPairingGuide />
+      case DeviceTypes.NIMO:
+        return <NimoPairingGuide />
+      case DeviceTypes.AR99:
+        return <Ar99PairingGuide />
     }
 
     throw new Error(`Unknown model name: ${deviceModel}`)
@@ -439,7 +501,7 @@ export default function PairingPrepScreen() {
   return (
     <Screen preset="fixed" safeAreaEdges={["bottom"]} extraAndroidInsets>
       <Header
-        title={deviceModel}
+        title={displayName}
         leftIcon="chevron-left"
         onLeftPress={goBack}
         RightActionComponent={<MentraLogoStandalone />}
@@ -449,3 +511,13 @@ export default function PairingPrepScreen() {
     </Screen>
   )
 }
+
+const $ar99Image: ThemedStyle<ImageStyle> = () => ({
+  height: "88%",
+  width: "88%",
+})
+
+const $ar99ImageContainer: ThemedStyle<ViewStyle> = () => ({
+  height: 240,
+  width: 320,
+})

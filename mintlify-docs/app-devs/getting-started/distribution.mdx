@@ -1,0 +1,82 @@
+---
+title: "Distribution"
+description: "Pack a release and get your miniapp onto users' glasses."
+icon: "upload"
+---
+
+import LegacyCloudNote from '/snippets/legacy-cloud-note.mdx'
+
+A miniapp is a **bundle that runs on the user's phone**: there's no server to
+host, no domain, no uptime to manage. Distribution means producing that bundle
+and getting it installed. There are three ways to get a miniapp onto a device,
+from quickest to widest reach.
+
+<LegacyCloudNote />
+
+## 1. Dev install (you, iterating)
+
+While you're building, [`mentra-miniapp dev`](/app-devs/reference/cli#dev) serves
+your project over the LAN with hot reload. Scan the QR from the Mentra App and
+your changes reload on save. This is the inner loop; see the
+[Quickstart](/app-devs/getting-started/quickstart).
+
+Dev mode is not an installation: the computer and CLI must remain running to
+serve each miniapp's runtime bundle. The Mentra App keeps a separate dev entry
+for each manifest package name and caches its name and icon, so you can scan and
+test multiple dev miniapps together. Rescanning the same package updates that
+entry. Use a release install when you want the miniapp to run without the
+computer.
+
+## 2. Release install (sharing a build over LAN)
+
+To put a real, installed build on one or more phones without going through the Mentra Miniapp Store, run:
+
+```bash
+mentra-miniapp release
+```
+
+This builds, packs, and serves the bundle behind a `miniapp://release` QR. Anyone
+on the same network can scan it to install. The miniapp installs on the device,
+**runs offline, and persists across restarts**: no laptop required once it's
+installed. Great for testers, demos, and dogfooding.
+
+Each install is logged in your terminal, and the server stays up so multiple
+devices can install from the same QR.
+
+## 3. Store submission (reaching everyone)
+
+To reach users who aren't on your network, publish to the Mentra Miniapp Store.
+The artifact is the ZIP produced by:
+
+```bash
+mentra-miniapp pack
+```
+
+Submit `build/<packageName>-<version>.zip` through the Developer Console. Make
+sure your [`miniapp.json`](/app-devs/core-concepts/miniapp-manifest) is accurate
+before you pack: its `hardwareRequirements` decide which glasses can see your
+miniapp, and its `permissions` drive the OS prompts users see.
+
+<Note>
+Camera, photo, and live-streaming features run through the on-glasses Bluetooth
+stack, not a cloud server. See the [Bluetooth SDK docs](/mentra-live/overview)
+for those workflows.
+</Note>
+
+## Versioning
+
+Bump `version` in `miniapp.json` for every release you distribute. The CLI names
+the artifact `<packageName>-<version>.zip`, and installed miniapps are stored per
+version (`lmas/<package>/<version>/`), so a new version installs cleanly alongside
+or over the old one.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="CLI reference" icon="terminal" href="/app-devs/reference/cli">
+    `dev`, `release`, and `pack` in detail.
+  </Card>
+  <Card title="The manifest" icon="file-code" href="/app-devs/core-concepts/miniapp-manifest">
+    Get permissions and hardware requirements right before you ship.
+  </Card>
+</CardGroup>

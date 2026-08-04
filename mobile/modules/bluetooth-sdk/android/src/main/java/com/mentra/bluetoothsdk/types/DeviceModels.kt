@@ -3,11 +3,12 @@ package com.mentra.bluetoothsdk
 import com.mentra.bluetoothsdk.utils.ControllerTypes
 import com.mentra.bluetoothsdk.utils.DeviceTypes
 
-data class MentraBluetoothSdkConfig(
+data class MentraBluetoothSdkConfig @JvmOverloads constructor(
     val deliverCallbacksOnMainThread: Boolean = true,
+    val analytics: BluetoothSdkAnalyticsConfig = BluetoothSdkAnalyticsConfig(),
 )
 
-class BluetoothException(
+class BluetoothSdkException(
     val code: String,
     message: String,
     cause: Throwable? = null,
@@ -21,6 +22,8 @@ enum class DeviceModel(val deviceType: String) {
     MACH1(DeviceTypes.MACH1),
     Z100(DeviceTypes.Z100),
     FRAME(DeviceTypes.FRAME),
+    NIMO(DeviceTypes.NIMO),
+    AR99(DeviceTypes.AR99),
     SIMULATED(DeviceTypes.SIMULATED),
     R1(ControllerTypes.R1);
 
@@ -36,6 +39,7 @@ data class Device(
     val name: String,
     /** Android Bluetooth address when available. */
     val address: String? = null,
+    val projectName: String? = null,
     val rssi: Int? = null,
     /** Stable app-facing scan-result key. Do not parse; use typed fields instead. */
     val id: String = address?.takeIf { it.isNotBlank() } ?: "${model.deviceType}:$name",
@@ -48,6 +52,9 @@ data class Device(
             address?.takeIf { it.isNotBlank() }?.let {
                 put("address", it)
             }
+            projectName?.takeIf { it.isNotBlank() }?.let {
+                put("projectName", it)
+            }
             rssi?.let { put("rssi", it) }
         }
 
@@ -56,12 +63,14 @@ data class Device(
             val model = stringValue(values, "model") ?: return null
             val name = stringValue(values, "name") ?: return null
             val address = stringValue(values, "address")?.takeIf { it.isNotBlank() }
+            val projectName = stringValue(values, "projectName")?.takeIf { it.isNotBlank() }
             val rssi = numberValue(values, "rssi")
             val id = stringValue(values, "id")?.takeIf { it.isNotBlank() } ?: address ?: "${model}:$name"
             return Device(
                 model = DeviceModel.fromDeviceType(model),
                 name = name,
                 address = address,
+                projectName = projectName,
                 rssi = rssi,
                 id = id,
             )

@@ -12,7 +12,7 @@ MentraOS is an open source operating system, app store, and development framewor
 - iOS native module: `mobile/ios`
 - Backend & web portals: `cloud` (includes developer portal & app store)
 - Android-based smart glasses client: `asg_client` (uses `android_core` as a library)
-- MentraOS Store: `cloud/store/` (web app for app discovery)
+- MentraOS Store: `cloud/websites/store/` (web app for app discovery)
 - Developer Console: `cloud/websites/console/` (web app for app management)
 
 ## Monorepo Structure
@@ -28,7 +28,7 @@ Consult module-specific AGENTS.md when working within that module.
 
 ## Project Structure & Module Organization
 
-Core client app lives in `mobile/` (Expo React Native). Backend services, the TypeScript SDK, and the store front end sit in `cloud/packages/`, with integration tests in `cloud/tests/`. Platform SDKs are in `android_core/`, `android_library/`, `sdk_ios/`; hardware tooling lives in `mcu_client/`. Notes and plans live in `agents/` and `docs/`.
+Core client app lives in `mobile/` (Expo React Native). Backend services and the TypeScript SDK sit in `cloud/packages/`, while the Developer Console and Store front ends live in `cloud/websites/`; cloud integration tests are in `cloud/tests/`. Platform SDKs are in `android_core/`, `android_library/`, `sdk_ios/`; hardware tooling lives in `mcu_client/`. Public Mintlify docs live in `mintlify-docs/`; notes and plans live in `agents/` and `notes/` — see [`notes/README.md`](notes/README.md) for the specs/plans convention.
 
 ## Build Commands
 
@@ -41,6 +41,19 @@ Core client app lives in `mobile/` (Expo React Native). Backend services, the Ty
 - Lint code: `npm run lint` or `bun lint`
 - iOS setup: `cd ios && pod install && cd ..`
 - Prebuild: `bun expo prebuild` (syncs native projects - NEVER use --clean or --clear flags!)
+
+### Local Android compile checks
+
+- ASG client compile check: `./scripts/check-android-compile.sh asg`
+- Bluetooth SDK Android compile check: `./scripts/check-android-compile.sh bluetooth-sdk`
+- Both checks: `./scripts/check-android-compile.sh`
+
+The Bluetooth SDK Android sources under `mobile/modules/bluetooth-sdk/android`
+are compiled through the generated Expo Android project at `mobile/android`,
+matching CI. Do not rely on a system `gradle` install from the SDK source
+directory; use the repo script so the Gradle wrapper and prebuild setup are
+consistent. The Bluetooth SDK check runs with `-PmentraPublicSdk=true` so it
+validates the public Maven artifact dependency shape.
 
 ### Cloud Backend (cloud)
 
@@ -102,8 +115,23 @@ Core client app lives in `mobile/` (Expo React Native). Backend services, the Ty
 
 ## Naming Conventions
 
-- User-facing names: CamelCase ("MentraOS App", "MentraOS Store", "MentraOS Manager")
 - Code follows language-specific conventions (Java, TypeScript, Swift)
+
+### Product & terminology (user-facing copy, docs, marketing)
+
+- **`miniapp`** is always one word, lowercase, in running text.
+- **Products take a capital `M`**: "Mentra Miniapp SDK", "Mentra Miniapp Store".
+  When you write "miniapp SDK" capitalize it as "**Miniapp SDK**"; the full
+  product name is "**Mentra Miniapp SDK**" (not "MentraOS miniapp SDK").
+- The **iOS/Android mobile app** is the "**Mentra App**" (not "MentraOS app",
+  not "Mentra app").
+- **Miniapps in general** (apps that run on the Mentra platform) are "**Mentra
+  miniapp**" / "**Mentra miniapps**" (not "MentraOS apps").
+- The store is the "**Mentra Miniapp Store**".
+- "**MentraOS**" stays as-is when it names the operating system / platform /
+  repo (e.g. "MentraOS is the operating system for smart glasses"). Don't swap
+  it for "Mentra" in those cases.
+- The package identifier `@mentra/miniapp` is code; leave it in code formatting.
 
 ## Testing Guidelines
 
@@ -138,31 +166,53 @@ Automated ransomware scanners actively target exposed MongoDB instances. Use Mon
 - [GitHub Project Board - General Tasks](https://github.com/orgs/Mentra-Community/projects/2)
 - [Discord Community](https://discord.gg/5ukNvkEAqT)
 
+### Related Miniapp Repositories
+
+- [Mentra Notes Miniapp](https://github.com/Mentra-Community/Mentra-Notes-Miniapp)
+- [Livestreamer Miniapp](https://github.com/Mentra-Community/Livestreamer-Miniapp)
+- [Mentra AI Miniapp](https://github.com/Mentra-Community/Mentra-AI-Miniapp)
+- [Mentra Enterprise Miniapp](https://github.com/Mentra-Community/Mentra-Enterprise-Miniapp)
+
+If a MentraOS PR also requires changes to one of the external miniapps above, or
+you are otherwise asked to change one of those miniapps:
+
+1. Clone the external miniapp repository if needed, or pull the latest `main`
+   branch if it is already available locally.
+2. Make the changes in the external miniapp repository, bump its version, and
+   push the changes directly to that repository's `main` branch.
+3. Package the updated miniapp as a ZIP archive.
+4. Add the new ZIP archive to `mobile/assets/miniapps/` in the MentraOS
+   monorepo so the external miniapp update is included in the MentraOS mobile
+   PR.
+
 ## Bug Report Logs
 
-When working on bug reports linked to `console.mentra.glass/admin/incidents/{id}`:
+Bug reports and feedback filed from the Mentra App land in the Cloud V2 reports system. Report ids look like `rep_01...` and appear in the reports Slack notifications and in the admin console's Incident system page (admin.mentraglass.com).
 
-1. Extract the incident ID from the URL
-2. Fetch logs: `./scripts/fetch-incident-logs.sh {incidentId}`
-3. Requires `MENTRA_AGENT_API_KEY` in your environment
+1. Get the report id (from Slack, the admin console, or the user)
+2. Fetch it: `./scripts/fetch-incident-logs.sh {reportId}` — downloads `report.json` plus every artifact into `./incident-logs/{reportId}/`
+3. Requires `MENTRA_ADMIN_TOKEN` in your environment: an org API key (`msk_...`) whose synthetic email is allowlisted via `CLOUD_CORE_ADMIN_EMAILS`, or a WorkOS access token of an admin user
+4. Without an environment override, the script tries prod, dev, then staging and reports which backend succeeded. Use `--env prod|dev|staging` or `MENTRA_CORE_URL` to target one backend explicitly.
 
-The logs JSON contains:
+What you get:
 
-- `phoneLogs` - Last 10 min of mobile app logs
-- `cloudLogs` - Last 10 min of cloud service logs
-- `glassesLogs` - Last 10 min of glasses logs (if available)
-- `appTelemetryLogs` - Logs from third-party apps (if telemetry enabled)
-- `phoneState` - Snapshot of app state at time of report
-- `feedback` - User's bug report description
+- `report.json` - Full report document: `kind` (bug/feedback/automatic), `trigger`, `report` (actual/expected behavior, severity, contact email), `feedback`, `context` (phone/glasses/app state snapshot), artifact metadata, and asset rows
+- `NN-logs-{source}.json` - Log bundles uploaded by the devices (e.g. phone, glasses), each `{entries: [{timestamp, level, message, source?}]}`
+- `NN-screenshot-phone-*.{png,jpg}` - Screenshots attached by the user
+
+Other modes: `--json` prints the raw report JSON to stdout (no downloads); `--list [--kind ...] [--status ...] [--limit N]` lists recent reports.
 
 Example:
 
 ```bash
-export MENTRA_AGENT_API_KEY=your-api-key
-./scripts/fetch-incident-logs.sh 550e8400-e29b-41d4-a716-446655440000
+export MENTRA_ADMIN_TOKEN=msk_your-admin-key
+./scripts/fetch-incident-logs.sh rep_01JZWY3V8N0F2E9GQ4T6KXH5RD
 ```
+
+Note: the **mentra-console** MCP server (`cloud/packages/console-mcp`, tools `incident_get` / `incident_get_logs`) still targets the legacy V1 incidents API (`/api/agent/incidents`, `X-Agent-Key`) and has not been ported to the V2 reports API yet.
 
 ## Additional Documentation
 
-- Architecture specs and design docs: `/docs/`
+- Mintlify docs: `/mintlify-docs/`
+- Architecture specs, design docs, and working notes: `/notes/` (convention: [`notes/README.md`](notes/README.md))
 - Module-specific implementation details: See module-specific `AGENTS.md` files

@@ -5,8 +5,7 @@ import path from "path"
 import {
   ConfigPlugin,
   withAppBuildGradle,
-  withProjectBuildGradle,
-  // withSettingsGradle,
+  withSettingsGradle,
   withGradleProperties,
   withAndroidManifest,
 } from "@expo/config-plugins"
@@ -17,12 +16,11 @@ import {
  */
 const withAndroidWorkingConfig: ConfigPlugin = (config) => {
   // Apply all modifications in sequence
-  config = withProjectBuildGradleModifications(config)
   config = withAppBuildGradleModifications(config)
   config = withAndroidManifestModifications(config)
   config = withXmlResourceFiles(config)
   config = withGradlePropertiesModifications(config)
-  // config = withSettingsGradleModifications(config)
+  config = withSettingsGradleModifications(config)
 
   return config
 }
@@ -32,30 +30,6 @@ const withAndroidWorkingConfig: ConfigPlugin = (config) => {
 // hardcode the base package (e.g. the DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION).
 function getAndroidPackageName(config: any): string {
   return config?.android?.package || "com.mentra.mentra"
-}
-
-/**
- * Modify root build.gradle to exclude protobuf-javalite globally
- * (conflicts with protobuf-java required by core module's MentraosBle)
- */
-function withProjectBuildGradleModifications(config: any) {
-  return withProjectBuildGradle(config, (config) => {
-    let buildGradle = config.modResults.contents
-
-    if (!buildGradle.includes("exclude group: 'com.google.protobuf', module: 'protobuf-javalite'")) {
-      buildGradle = buildGradle.replace(
-        /(allprojects\s*\{[^}]*repositories\s*\{[^}]*\})/s,
-        `$1
-  // Exclude protobuf-javalite globally to avoid conflicts with protobuf-java
-  configurations.all {
-    exclude group: 'com.google.protobuf', module: 'protobuf-javalite'
-  }`,
-      )
-    }
-
-    config.modResults.contents = buildGradle
-    return config
-  })
 }
 
 /**
@@ -73,20 +47,27 @@ function withAppBuildGradleModifications(config: any) {
 
     // 1. Add release credentials and conditional Sentry script (after jscFlavor)
     if (!buildGradle.includes("releaseStorePassword =")) {
+      // China builds (EXPO_PUBLIC_DEPLOYMENT_REGION=china) use a separate keystore
+      // so the global upload key cannot accidentally sign a China APK.
+      const isChinaBuild = process.env.EXPO_PUBLIC_DEPLOYMENT_REGION === "china"
+      const keystoreFilename = isChinaBuild ? "china-upload-keystore.jks" : "upload-keystore.jks"
+      const regionLabel = isChinaBuild ? "china" : "default"
       const credentialsAndSentry = `
 /**
  * Release-Store credentials.
  * Looks for keystore in shared location (~/.mentra/credentials/) first,
  * then falls back to repo-local credentials/ folder.
+ * Keystore filename is selected at prebuild time based on EXPO_PUBLIC_DEPLOYMENT_REGION.
  * If no keystore is found, falls back to debug keystore for local development.
  */
 def releaseStorePassword = project.hasProperty("MENTRAOS_UPLOAD_STORE_PASSWORD") ? project.property("MENTRAOS_UPLOAD_STORE_PASSWORD") : ""
 def releaseKeyPassword = project.hasProperty("MENTRAOS_UPLOAD_KEY_PASSWORD") ? project.property("MENTRAOS_UPLOAD_KEY_PASSWORD") : ""
 def releaseKeyAlias = project.hasProperty("MENTRAOS_UPLOAD_KEY_ALIAS") ? project.property("MENTRAOS_UPLOAD_KEY_ALIAS") : "upload"
+def releaseRegion = "${regionLabel}"
 
 // Find keystore: check shared location first, then local
-def sharedKeystore = new File(System.getProperty("user.home"), ".mentra/credentials/upload-keystore.jks")
-def localKeystore = file('../../credentials/upload-keystore.jks')
+def sharedKeystore = new File(System.getProperty("user.home"), ".mentra/credentials/${keystoreFilename}")
+def localKeystore = file('../../credentials/${keystoreFilename}')
 def releaseKeystoreFile = sharedKeystore.exists() ? sharedKeystore : (localKeystore.exists() ? localKeystore : null)
 
 // Check if we have valid release signing credentials
@@ -97,6 +78,7 @@ println ""
 println "=============================================="
 println "[MentraOS] Signing Configuration"
 println "=============================================="
+println "  Region: \${releaseRegion}"
 if (hasReleaseSigningConfig) {
     println "  Using RELEASE keystore: \${releaseKeystoreFile.absolutePath}"
     println "  Key alias: \${releaseKeyAlias}"
@@ -126,8 +108,8 @@ if (project.hasProperty("sentryUploadEnabled") && project.property("sentryUpload
       )
     }
 
-    // 2. Update versionName to 2.11.0
-    buildGradle = buildGradle.replace(/versionName\s+["'][^"']*["']/, 'versionName "2.11.0"')
+    // 2. Update versionName to 2.12.0
+    buildGradle = buildGradle.replace(/versionName\s+["'][^"']*["']/, 'versionName "2.12.0"')
 
     // 3. Add externalNativeBuild configuration in defaultConfig
     if (!buildGradle.includes("externalNativeBuild")) {
@@ -276,13 +258,14 @@ function withAndroidManifestModifications(config: any) {
       {name: "android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE"},
       {name: "android.permission.FOREGROUND_SERVICE_DATA_SYNC"},
       {name: "android.permission.FOREGROUND_SERVICE_LOCATION"},
+      {name: "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"},
       {name: "android.permission.FOREGROUND_SERVICE_MICROPHONE"},
       {name: "android.permission.NEARBY_DEVICES"},
       {name: "android.permission.POST_NOTIFICATIONS"},
       {name: "android.permission.QUERY_ALL_PACKAGES"},
       {name: "android.permission.READ_PHONE_STATE"},
       {name: "android.permission.RECEIVE_BOOT_COMPLETED"},
-      {name: `${pkg}.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION`},
+      {name: `${config.android?.package}.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION`},
     ]
 
     // Ensure uses-permission array exists
@@ -325,9 +308,7 @@ function withAndroidManifestModifications(config: any) {
       manifest.permission = []
     }
     const customPermName = `${pkg}.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION`
-    const customPermExists = manifest.permission.find(
-      (p: any) => p.$["android:name"] === customPermName,
-    )
+    const customPermExists = manifest.permission.find((p: any) => p.$["android:name"] === customPermName)
     if (!customPermExists) {
       manifest.permission.push({
         $: {
@@ -345,6 +326,54 @@ function withAndroidManifestModifications(config: any) {
       if (!app.$["android:enableOnBackInvokedCallback"]) {
         app.$["android:enableOnBackInvokedCallback"] = "true"
       }
+
+      // Android navigation runs on the Mapbox Navigation SDK (migrated off
+      // the Google Navigation SDK), so the Google geo API_KEY meta-data is
+      // no longer injected here. iOS still uses the Google Nav SDK
+      // (GoogleNavigation pod + GOOGLE_NAV_API_KEY in Info.plist) until the
+      // iOS migration lands -- that path is untouched. See
+      // issues/mapbox-navigation-migration.md.
+      const isChinaBuild = process.env.EXPO_PUBLIC_DEPLOYMENT_REGION === "china"
+      if (!app["meta-data"]) {
+        app["meta-data"] = []
+      }
+
+      // Inject the Mapbox runtime token (pk....) as manifest meta-data
+      // `com.mapbox.token`. NavigationManager.kt reads this tag from the
+      // merged manifest at boot and passes it to MapboxOptions.accessToken —
+      // the same provisioning shape the Google geo key above uses. Public
+      // token, safe to ship. The secret Downloads:Read token (sk....) is
+      // build-time-only (~/.gradle/gradle.properties) and never reaches the
+      // manifest. Fail loudly in CI/EAS; warn in local dev.
+      // See issues/mapbox-navigation-migration.md.
+      if (!isChinaBuild) {
+        const mapboxToken = process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN ?? ""
+        if (!mapboxToken) {
+          const isCiOrEas =
+            process.env.CI === "true" ||
+            process.env.CI === "1" ||
+            process.env.EAS_BUILD === "true" ||
+            process.env.NODE_ENV === "production"
+          const msg =
+            "EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN is not set. Android navigation will fail at runtime -- " +
+            "set it in mobile/.env (see mobile/.env.example) before building."
+          if (isCiOrEas) {
+            throw new Error(msg)
+          }
+          console.warn(`[mobile/plugins/android] ${msg}`)
+        }
+        const existingMapbox = app["meta-data"].find((m: any) => m.$["android:name"] === "com.mapbox.token")
+        if (existingMapbox) {
+          existingMapbox.$["android:value"] = mapboxToken
+        } else {
+          app["meta-data"].push({
+            $: {
+              "android:name": "com.mapbox.token",
+              "android:value": mapboxToken,
+            },
+          })
+        }
+      }
     }
 
     // Add additional scheme to MainActivity intent-filter
@@ -356,11 +385,11 @@ function withAndroidManifestModifications(config: any) {
       })
 
       if (schemeFilter && schemeFilter.data) {
-        const hasExtraScheme = schemeFilter.data.some((d: any) => d.$["android:scheme"] === "com.mentra.mentra")
+        const hasExtraScheme = schemeFilter.data.some((d: any) => d.$["android:scheme"] === config.android?.package)
 
         if (!hasExtraScheme) {
           schemeFilter.data.push({
-            $: {"android:scheme": "com.mentra.mentra"},
+            $: {"android:scheme": config.android?.package},
           })
         }
       }
@@ -467,6 +496,12 @@ function withGradlePropertiesModifications(config: any) {
       })
     }
 
+    // On Windows, leave node resolution to PATH to avoid malformed JVM args under Program Files.
+    if (process.platform === "win32") {
+      config.modResults = props
+      return config
+    }
+
     // Get node path and add to org.gradle.jvmargs
     try {
       const nodeExecutable = execSync("which node", {encoding: "utf-8"}).trim()
@@ -506,23 +541,28 @@ function withGradlePropertiesModifications(config: any) {
 }
 
 /**
- * Modify settings.gradle to include lc3Lib module
+ * Modify settings.gradle to include lc3Lib module.
+ *
+ * The native LC3 codec lives inside `modules/bluetooth-sdk/android/lc3Lib`
+ * (it moved from the legacy `core` module during the bluetooth-sdk refactor).
+ * The bluetooth-sdk's build.gradle references `implementation project(':lc3Lib')`,
+ * so we have to register that gradle subproject pointing at the right path —
+ * Expo prebuild doesn't generate this on its own.
  */
-// function withSettingsGradleModifications(config: any) {
-//   return withSettingsGradle(config, config => {
-//     let settingsGradle = config.modResults.contents
+function withSettingsGradleModifications(config: any) {
+  return withSettingsGradle(config, (config) => {
+    let settingsGradle = config.modResults.contents
 
-//     // Add lc3Lib module if not present
-//     if (!settingsGradle.includes("include ':lc3Lib'")) {
-//       settingsGradle += `
-// include ':lc3Lib'
-// project(':lc3Lib').projectDir = new File(rootDir, '../modules/bluetooth-sdk/android/lc3Lib')
-// `
-//     }
+    if (!settingsGradle.includes("include ':lc3Lib'")) {
+      settingsGradle += `
+include ':lc3Lib'
+project(':lc3Lib').projectDir = new File(rootDir, '../modules/bluetooth-sdk/android/lc3Lib')
+`
+    }
 
-//     config.modResults.contents = settingsGradle
-//     return config
-//   })
-// }
+    config.modResults.contents = settingsGradle
+    return config
+  })
+}
 
 export default withAndroidWorkingConfig

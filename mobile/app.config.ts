@@ -2,6 +2,38 @@ import "tsx/cjs"
 import {ExpoConfig, ConfigContext} from "@expo/config"
 import {getBuildNumber} from "./scripts/build-number.mjs"
 
+const VARIANTS = {
+  default: {
+    appName: "Mentra",
+    packageName: "com.mentra.mentra",
+    includeFirebase: true,
+    googleServicesFile: "./google-services.json",
+    googleServicesPlist: "./GoogleService-Info.plist",
+    icon: "./assets/app-icons/ic_launcher.png",
+    adaptiveIcon: "./assets/app-icons/ic_launcher_foreground.png",
+  },
+  cn: {
+    appName: "Mentra",
+    packageName: "com.mentra.mentra.cn",
+    includeFirebase: false,
+    googleServicesFile: null,
+    googleServicesPlist: null,
+    icon: "./assets/app-icons/ic_launcher_china.png",
+    adaptiveIcon: "./assets/app-icons/ic_launcher_foreground_china.png",
+  },
+  stable: {
+    appName: "Mentra Stable",
+    packageName: "com.mentra.mentra.stable",
+    includeFirebase: true,
+    googleServicesFile: "./google-services.json",
+    googleServicesPlist: "./GoogleService-Info.plist",
+    icon: "./assets/app-icons/ic_launcher.png",
+    adaptiveIcon: "./assets/app-icons/ic_launcher_foreground.png",
+  },
+} as const
+
+const variant = process.env.EXPO_PUBLIC_DEPLOYMENT_REGION === "china" ? VARIANTS.cn : VARIANTS.default
+
 /**
  * @param config ExpoConfig coming from the static config app.json if it exists
  *
@@ -13,16 +45,45 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
   // a parallel-installable build with package com.mentra.mentra.stable and app
   // label "stable". Leave unset for the normal Mentra build.
   const variantName = process.env.MENTRAOS_BUILD_NAME?.trim() || null
-  const isValidVariant = variantName && /^[a-zA-Z][a-zA-Z0-9_]*$/.test(variantName)
+  const isValidVariant = variantName && /^[a-zA-Z][a-zA-Z0-9_ ]*$/.test(variantName)
   if (variantName && !isValidVariant) {
     throw new Error(
-      `MENTRAOS_BUILD_NAME="${variantName}" is invalid. Must start with a letter and contain only letters, digits, or underscores.`,
+      `MENTRAOS_BUILD_NAME="${variantName}" is invalid. Must start with a letter and contain only letters, digits, spaces, or underscores.`,
     )
   }
-  const appName = isValidVariant ? variantName : "Mentra"
-  const baseId = "com.mentra.mentra"
-  const androidPackage = isValidVariant ? `${baseId}.${variantName}` : baseId
-  const iosBundleId = isValidVariant ? `${baseId}.${variantName}` : baseId
+  const appName = isValidVariant ? variantName : variant.appName
+  const baseId = variant.packageName
+  // replace non-alphanumeric characters with underscores:
+  const normalizedVariantId = variantName?.toLowerCase().replace(/[^a-zA-Z0-9_]/g, "")
+  const androidPackage = isValidVariant ? `${baseId}.${normalizedVariantId}` : baseId
+  const iosBundleId = isValidVariant ? `${baseId}.${normalizedVariantId}` : baseId
+
+  // Mapbox runtime token (pk.…) — boots the Mapbox Navigation SDK v3 on BOTH
+  // platforms now (iOS migrated off Google Nav to match Android). Injected as:
+  //   • Android: AndroidManifest meta-data `com.mapbox.token` (read by
+  //     NavigationManager.kt → MapboxOptions.accessToken).
+  //   • iOS: Info.plist `MBXAccessToken` (read by the Mapbox iOS SDK at boot).
+  // Public token, safe to ship; the secret Downloads:Read token (sk.…) is
+  // build-time-only and lives in ~/.gradle/gradle.properties (Android) / the
+  // CocoaPods netrc (iOS), never here. Fail loudly in CI/EAS, warn in local
+  // dev. See issues/mapbox-navigation-migration.md.
+  // The China build (cn variant) ships without Mentra Map, so it has no nav
+  const isChinaBuild = variant === VARIANTS.cn
+  const mapboxAccessToken = process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN ?? ""
+  if (!mapboxAccessToken && !isChinaBuild) {
+    const isCiOrEas =
+      process.env.CI === "true" ||
+      process.env.CI === "1" ||
+      process.env.EAS_BUILD === "true" ||
+      process.env.NODE_ENV === "production"
+    const msg =
+      "EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN is not set. Navigation (iOS + Android) will fail at " +
+      "runtime — set it in mobile/.env (see mobile/.env.example) before building."
+    if (isCiOrEas) {
+      throw new Error(msg)
+    }
+    console.warn(`[mobile/app.config] ${msg}`)
+  }
 
   const buildNumber = getBuildNumber()
 
@@ -30,11 +91,11 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
     ...config,
     name: appName,
     slug: "Mentra",
-    version: process.env.EXPO_PUBLIC_MENTRAOS_VERSION || "0.0.1",
+    version: process.env.EXPO_PUBLIC_MENTRAOS_VERSION || "2.9.1",
     scheme: "com.mentra",
     orientation: "portrait",
     userInterfaceStyle: "automatic",
-    icon: "./assets/app-icons/ic_launcher.png",
+    icon: variant.icon,
     updates: {
       fallbackToCacheTimeout: 0,
     },
@@ -43,21 +104,27 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
     android: {
       // icon: "./assets/app-icons/ic_launcher.png",
       package: androidPackage,
-      googleServicesFile: "./google-services.json",
+      ...(variant.googleServicesFile ? {googleServicesFile: variant.googleServicesFile} : {}),
       versionCode: buildNumber,
       adaptiveIcon: {
-        foregroundImage: "./assets/app-icons/ic_launcher_foreground.png",
+        foregroundImage: variant.adaptiveIcon,
         // backgroundImage: "./assets/app-icons/ic_launcher.png",
         backgroundColor: "#fff",
       },
       allowBackup: false,
       permissions: [
         "ACCESS_FINE_LOCATION",
+        "NEARBY_WIFI_DEVICES",
         "ACCESS_WIFI_STATE",
         "ACCESS_NETWORK_STATE",
         "CHANGE_WIFI_STATE",
         "CHANGE_NETWORK_STATE",
       ],
+      // The Google Navigation SDK manifest merges in ACCESS_BACKGROUND_LOCATION,
+      // but navigation runs in a location foreground service and works with
+      // while-in-use permission only. Blocking it avoids the Play Store
+      // background-location declaration/video review.
+      blockedPermissions: ["android.permission.ACCESS_BACKGROUND_LOCATION"],
       intentFilters: [
         {
           action: "VIEW",
@@ -79,13 +146,13 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
       ],
     },
     ios: {
-      icon: "./assets/app-icons/ic_launcher.png",
+      icon: variant.icon,
       supportsTablet: false,
       requireFullScreen: true,
       buildNumber: String(buildNumber),
       bundleIdentifier: iosBundleId,
       appleTeamId: "T5XXXL6N36",
-      googleServicesFile: "./GoogleService-Info.plist",
+      ...(variant.googleServicesPlist ? {googleServicesFile: variant.googleServicesPlist} : {}),
       associatedDomains: ["applinks:apps.mentra.glass", "applinks:apps.mentraglass.com"],
       infoPlist: {
         NSCameraUsageDescription: "This app needs access to your camera to capture images.",
@@ -109,6 +176,12 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
           "This app needs access to your notifications to provide you with notifications.",
         NSLocalNetworkUsageDescription:
           "Mentra needs to access your local network to connect to Mentra Live glasses for viewing photos and media stored on the device.",
+        // Required because miniapps subscribed to `heading_update` cause
+        // the host's HeadingService to read the device compass via
+        // CoreMotion. iOS hard-crashes any access to motion sensors
+        // without this usage string declared.
+        NSMotionUsageDescription:
+          "Mentra reads your device compass to show heading direction in navigation and similar miniapps on your glasses.",
         NSBonjourServices: ["_mentra-live._tcp", "_http._tcp"],
         NSAppTransportSecurity: {
           NSAllowsLocalNetworking: true,
@@ -128,6 +201,12 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
           "UIInterfaceOrientationPortraitUpsideDown",
         ],
         BGTaskSchedulerPermittedIdentifiers: ["com.mentra.background-timer"],
+        // Mapbox Navigation SDK v3 (iOS) reads its public access token from
+        // Info.plist under `MBXAccessToken` at boot. Replaces the old
+        // GOOGLE_NAV_API_KEY now that iOS nav is Mapbox (matching Android,
+        // which injects the same pk.… token as AndroidManifest meta-data).
+        // Public token, safe to ship.
+        MBXAccessToken: mapboxAccessToken,
       },
       config: {
         usesNonExemptEncryption: false,
@@ -140,7 +219,24 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
     plugins: [
       // our custom plugins:
       "./plugins/remove-ipad-orientations.js",
+      // crust's own config plugin carries its Android build contract (Mapbox
+      // downloads repo, protobuf-javalite exclusion, core-library desugaring).
+      "@mentra/crust",
       "./plugins/android.ts",
+      // Mapbox Navigation SDK v3 for iOS — added as a Swift Package (SPM is the
+      // ONLY supported v3 install path; CocoaPods can't resolve it). The
+      // mapbox-navigation-ios package transitively brings MapboxMaps,
+      // MapboxCommon, MapboxCoreMaps, and Turf, so SPM is the SOLE Mapbox
+      // provider. We intentionally do NOT use @rnmapbox/maps — its CocoaPods
+      // copies of those same frameworks collided with SPM's at the build-graph
+      // level ("Multiple commands produce …MapboxCommon.framework"). The runtime
+      // pk. token is injected into Info.plist as MBXAccessToken (above); the
+      // secret Downloads:Read token is read from ~/.netrc at build time.
+      "./plugins/mapbox-nav-ios.ts",
+      // Crust is a CocoaPods target; SPM products linked to the app project
+      // aren't visible to it. This links the Mapbox products into the Crust
+      // pod target (via Podfile post_install) so its Swift can import them.
+      "./plugins/mapbox-nav-crust-link.ts",
       [
         "./modules/bluetooth-sdk/app.plugin.js",
         {
@@ -209,6 +305,7 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
             minSdkVersion: 28,
             targetSdkVersion: 35,
             compileSdkVersion: 36,
+            enableCoreLibraryDesugaring: true,
           },
           ios: {
             deploymentTarget: "15.5", // for react-native-zip-archive
@@ -277,7 +374,7 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
           locationAlwaysAndWhenInUsePermission: "Allow Mentra to use your location.",
         },
       ],
-      "@react-native-firebase/app",
+      ...(variant.includeFirebase ? ["@react-native-firebase/app"] : []),
       "expo-audio",
       [
         "expo-video",

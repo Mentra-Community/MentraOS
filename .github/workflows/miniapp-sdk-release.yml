@@ -1,0 +1,257 @@
+name: Release Miniapp SDK
+
+# Publishes the @mentra/miniapp SDK family + the Cloud V2 developer packages to
+# npm: @mentra/miniapp, @mentra/miniapp-cli, create-mentra-miniapp, @mentra/auth,
+# and @mentra/cli.
+#
+# Channel promotion (see .github/scripts/npm-channel.mjs): git holds one
+# prerelease base version per package (X.Y.Z-dev.N, only edited on dev) and the
+# branch derives what publishes:
+#   dev      -> X.Y.Z-dev.N   (dev tag)
+#   staging  -> X.Y.Z-beta.N  (beta tag)
+#   main     -> X.Y.Z         (latest tag)
+# Merging up the chain IS the promotion; no version edits ride the branches. A
+# package publishes when its derived version is absent from npm (E404-strict),
+# so re-runs and re-merges are no-ops. First-ever publishes require a
+# supervised workflow_dispatch with force_release=true.
+#
+# Publish mode per channel: dev publishes DIRECTLY (fast internal iteration);
+# beta and latest go through npm's STAGING QUEUE (`npm stage publish`) and a
+# maintainer must approve each version in the npm UI before it goes live. Why:
+# the engine's peer ranges are carets, so a new peer version floats into
+# already-approved engine installs on the same channel — every version that
+# can reach beta/latest therefore needs its own human approval. That approval
+# is the only gate past merge: merging to main IS the go signal.
+#
+# Before packing, manifests are stamped to the channel's derived versions and
+# ranges (stamp-channel-manifests.mjs), then workspace `file:` deps are
+# rewritten to exact published versions (rewrite-file-deps.mjs) so wrappers
+# like @mentra/cli install cleanly for users.
+#
+# Requires repo secret NPM_TOKEN: an npm *automation* token (bypasses 2FA) for
+# an account with publish rights on the @mentra org. See sdk/PUBLISHING.md.
+
+# No paths filter, deliberately: detection is registry-state ("publish when
+# the derived version is absent from npm"), so the trigger must be too — a
+# promotion merge doesn't necessarily touch any package tree, and missing
+# versions (e.g. after a failed or gated run) should heal on the next push.
+# Every push reconciles; the detect job is a few seconds and no-ops when
+# nothing is missing.
+on:
+  push:
+    branches: [main, staging, dev]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Build + pack but do not publish to npm"
+        required: true
+        default: true
+        type: boolean
+      force_release:
+        description: "Bootstrap first-ever publishes (packages absent from npm never auto-release)."
+        required: true
+        default: false
+        type: boolean
+
+concurrency:
+  group: miniapp-sdk-release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  detect:
+    name: Detect version changes
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.info.outputs.matrix }}
+      has_publishes: ${{ steps.info.outputs.has_publishes }}
+      dry_run: ${{ steps.info.outputs.dry_run }}
+      force_release: ${{ steps.info.outputs.force_release }}
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        # Depth 1 is fine: the decision reads the working tree + the npm
+        # registry, never git history.
+
+      - name: Decide releases for this channel
+        id: info
+        run: node .github/scripts/miniapp-sdk-release-info.mjs
+        env:
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
+          FORCE_RELEASE: ${{ github.event_name == 'workflow_dispatch' && inputs.force_release || false }}
+
+  publish:
+    name: Publish ${{ matrix.pkg.name }}@${{ matrix.pkg.version }}
+    needs: detect
+    if: needs.detect.outputs.has_publishes == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      # Sequential + dependency-ordered: the scaffolder's template pins
+      # @mentra/miniapp and @mentra/miniapp-cli, so those publish first.
+      # fail-fast: the detect script admits a package on the promise that its
+      # deps publish earlier in this run — if an upstream job fails, later
+      # packages would ship pins to versions that never landed, so the whole
+      # matrix stops. Re-running after a fix is safe: already-published
+      # versions skip.
+      max-parallel: 1
+      fail-fast: true
+      matrix:
+        pkg: ${{ fromJSON(needs.detect.outputs.matrix) }}
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Use npm with staged publishing support
+        # beta/latest publishes go through npm's staging queue for human
+        # approval. `npm stage publish` needs npm >=11.15.0; pin the major so
+        # the release path doesn't pick up whatever npm shipped this morning.
+        if: github.ref_name != 'dev'
+        run: |
+          npm install -g npm@11
+          npm stage --help >/dev/null 2>&1 || { echo "::error::this npm ($(npm --version)) lacks 'npm stage' — staged publishing needs >=11.15.0."; exit 1; }
+
+      - name: Cache Bun cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-cache-miniapp-sdk-${{ matrix.pkg.installDir }}
+          restore-keys: |
+            ${{ runner.os }}-bun-cache-miniapp-sdk-
+
+      - name: Install workspace dependencies
+        working-directory: ${{ matrix.pkg.installDir }}
+        run: bun install
+
+      - name: Build package
+        if: matrix.pkg.buildCmd != ''
+        working-directory: ${{ matrix.pkg.dir }}
+        run: ${{ matrix.pkg.buildCmd }}
+
+      # After install+build (a frozen install would reject changed version
+      # fields): stamp every channel-released manifest to this branch's derived
+      # versions and cross-package ranges. The later rewrite/stamp steps read
+      # the stamped manifests, so their pins come out channel-correct. This
+      # only mutates the checkout that gets packed/published — never committed.
+      - name: Stamp channel versions
+        run: node .github/scripts/stamp-channel-manifests.mjs
+
+      # Rewrite workspace `file:` deps to exact published versions so the tarball
+      # installs for end users (no-op for packages without them).
+      - name: "Rewrite workspace file: deps"
+        run: node .github/scripts/rewrite-file-deps.mjs "${{ matrix.pkg.dir }}"
+
+      # Stamp the scaffolder's template pins to the exact versions being published
+      # this run, so a scaffolded project installs on any channel (the caret pins
+      # in the repo can't reach -dev prereleases). No-op for packages without a
+      # template/package.json. Packed checkout only — never committed.
+      - name: Stamp scaffolder template versions
+        run: node .github/scripts/stamp-template-versions.mjs "${{ matrix.pkg.dir }}"
+
+      - name: Check npm registry
+        id: registry
+        run: |
+          set -euo pipefail
+          # E404 is the ONLY absence signal; any other npm failure (5xx,
+          # network, auth) fails the job rather than being read as "absent".
+          check_absent() {
+            local spec="$1" out code
+            set +e
+            out=$(npm view "$spec" version --json --registry=https://registry.npmjs.org 2>&1)
+            code=$?
+            set -e
+            if [[ $code -eq 0 ]]; then echo "exists"; return 0; fi
+            if echo "$out" | grep -q '"code": *"E404"' || echo "$out" | grep -q "code E404"; then
+              echo "absent"; return 0
+            fi
+            echo "::error::npm view '$spec' failed with a non-404 error — refusing to guess registry state." >&2
+            echo "$out" >&2
+            return 1
+          }
+
+          pkg_state=$(check_absent "${{ matrix.pkg.name }}")
+          echo "package_exists=$([[ "$pkg_state" == "exists" ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
+          ver_state=$(check_absent "${{ matrix.pkg.name }}@${{ matrix.pkg.version }}")
+          if [[ "$ver_state" == "exists" ]]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "npm already has ${{ matrix.pkg.name }}@${{ matrix.pkg.version }}; nothing to do."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Pack (dry run)
+        if: steps.registry.outputs.exists != 'true'
+        working-directory: ${{ matrix.pkg.dir }}
+        run: npm pack --dry-run
+
+      - name: Bootstrap gate — first publish must be supervised
+        # A package that has NEVER been published does not auto-release from a
+        # version bump landing on a branch: its first publish is a deliberate
+        # workflow_dispatch with force_release=true (same rule as the engine
+        # release workflow). Established packages auto-release as before.
+        if: needs.detect.outputs.dry_run != 'true' && steps.registry.outputs.exists != 'true' && steps.registry.outputs.package_exists != 'true' && needs.detect.outputs.force_release != 'true'
+        run: |
+          echo "::notice::${{ matrix.pkg.name }} is not on npm yet — skipping auto-publish. Bootstrap it with a workflow_dispatch (force_release=true)."
+
+      # Direct publish covers the dev channel (fast internal iteration) and
+      # bootstraps (npm cannot stage a package that does not exist — those are
+      # supervised force_release dispatches anyway). Everything else on
+      # beta/latest goes through the staging queue below: engine peer ranges
+      # are carets, so a new peer version FLOATS into already-approved engine
+      # installs — every version that can reach those channels needs its own
+      # human approval.
+      - name: Publish to npm (dev channel / bootstrap)
+        if: needs.detect.outputs.dry_run != 'true' && steps.registry.outputs.exists != 'true' && (github.ref_name == 'dev' || steps.registry.outputs.package_exists != 'true') && (steps.registry.outputs.package_exists == 'true' || needs.detect.outputs.force_release == 'true')
+        working-directory: ${{ matrix.pkg.dir }}
+        run: npm publish --tag "${{ matrix.pkg.tag }}" --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Stage for approval (beta/latest channels)
+        if: needs.detect.outputs.dry_run != 'true' && steps.registry.outputs.exists != 'true' && steps.registry.outputs.package_exists == 'true' && github.ref_name != 'dev'
+        working-directory: ${{ matrix.pkg.dir }}
+        # The tag is immutable once staged, so it must be right here. A staged
+        # version is not live yet (npm view won't list it), so a re-merge before
+        # anyone approves re-attempts the stage — tolerate that one error.
+        run: |
+          set +e
+          out=$(npm stage publish --tag "${{ matrix.pkg.tag }}" --access public 2>&1)
+          code=$?
+          set -e
+          echo "$out"
+          if [[ $code -ne 0 ]]; then
+            if echo "$out" | grep -qi "already"; then
+              echo "::notice::${{ matrix.pkg.name }}@${{ matrix.pkg.version }} is already in the staging queue — approve or reject it in the npm UI."
+            else
+              exit $code
+            fi
+          else
+            echo "::notice::${{ matrix.pkg.name }}@${{ matrix.pkg.version }} staged for '${{ matrix.pkg.tag }}' — a maintainer must approve it in the npm UI before it goes live."
+          fi
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Summarize
+        if: always()
+        run: |
+          {
+            echo "## ${{ matrix.pkg.name }}"
+            echo ""
+            echo "- Version: \`${{ matrix.pkg.version }}\`"
+            echo "- Dist-tag: \`${{ matrix.pkg.tag }}\`"
+            echo "- Already on npm: \`${{ steps.registry.outputs.exists }}\`"
+            echo "- Dry run: \`${{ needs.detect.outputs.dry_run }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

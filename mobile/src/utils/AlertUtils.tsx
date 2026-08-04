@@ -1,12 +1,13 @@
 import * as NavigationBar from "expo-navigation-bar"
 import {StatusBar} from "expo-status-bar"
 import {useState, useEffect, useRef} from "react"
-import {Alert, BackHandler, Platform, Animated} from "react-native"
+import {Alert, BackHandler, Linking, Platform, Animated} from "react-native"
 
 import {Icon, IconTypes} from "@/components/ignite"
 import BasicDialog from "@/components/ui/BasicDialog"
 
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {translate} from "@/i18n"
 
 import {SettingsNavigationUtils} from "./SettingsNavigationUtils"
 
@@ -87,6 +88,19 @@ export function ModalProvider({children}: {children: React.ReactNode}) {
   // Animation values - start at final values if not using new UI
   const fadeAnim = useRef(new Animated.Value(0)).current
   const scaleAnim = useRef(new Animated.Value(0.93)).current
+  const pendingDismissCallback = useRef<(() => void) | undefined>(undefined)
+  const visibleRef = useRef(visible)
+  visibleRef.current = visible
+
+  // Effects run after React commits. Dispatch callbacks from here so a button
+  // that opens a native surface cannot race the custom overlay's removal.
+  useEffect(() => {
+    if (visible || !pendingDismissCallback.current) return
+
+    const callback = pendingDismissCallback.current
+    pendingDismissCallback.current = undefined
+    callback()
+  }, [visible])
 
   useEffect(() => {
     const backHandler = () => {
@@ -172,7 +186,7 @@ export function ModalProvider({children}: {children: React.ReactNode}) {
   useEffect(() => {
     // Register the modal functions for global access
     setModalRef({
-      isVisible: () => visible,
+      isVisible: () => visibleRef.current,
       showModal: (title, message, alertButtons = [], opts = {}) => {
         setTitle(title)
         setMessage(message)
@@ -200,9 +214,9 @@ export function ModalProvider({children}: {children: React.ReactNode}) {
     return () => {
       setModalRef(null)
     }
-  }, [visible])
+  }, [])
 
-  const handleDismiss = () => {
+  const handleDismiss = (onDismiss?: () => void) => {
     // Animate out before hiding (only for new UI)
     Animated.parallel([
       Animated.timing(fadeAnim, {
@@ -216,6 +230,7 @@ export function ModalProvider({children}: {children: React.ReactNode}) {
         useNativeDriver: true,
       }),
     ]).start(() => {
+      pendingDismissCallback.current = onDismiss
       setVisible(false)
     })
   }
@@ -263,19 +278,13 @@ export function ModalProvider({children}: {children: React.ReactNode}) {
             onLeftPress={
               buttons.length > 1
                 ? () => {
-                    buttons[0].onPress?.()
-                    handleDismiss()
+                    handleDismiss(buttons[0].onPress)
                   }
                 : undefined
             }
             rightButtonText={buttons.length > 1 ? buttons[1].text : buttons[0].text}
             onRightPress={() => {
-              if (buttons.length > 1) {
-                buttons[1].onPress?.()
-              } else {
-                buttons[0].onPress?.()
-              }
-              handleDismiss()
+              handleDismiss(buttons.length > 1 ? buttons[1].onPress : buttons[0].onPress)
             }}
           />
         </Animated.View>
@@ -491,6 +500,23 @@ const showPermissionsAlert = (title: string, message: string, options?: Connecti
 }
 
 /**
+ * Shows a "you are leaving the app" confirmation before opening an external URL
+ * in the system browser. Use this anywhere we hand the user off to an outside
+ * link (privacy policy, docs, etc.) so the copy and behavior stay consistent.
+ */
+const showLeaveAppAlert = (url: string) => {
+  showAlert(translate("settings:leaveAppTitle"), translate("settings:leaveAppMessage"), [
+    {text: translate("common:cancel"), style: "cancel"},
+    {
+      text: translate("common:continue"),
+      onPress: () => {
+        Linking.openURL(url).catch((error) => console.error("Failed to open external URL:", url, error))
+      },
+    },
+  ])
+}
+
+/**
  * Shows a destructive action alert with proper styling
  * Uses the new modal system with BasicDialog for consistent design
  */
@@ -516,6 +542,7 @@ export {
   showLocationServicesAlert,
   showPermissionsAlert,
   showDestructiveAlert,
+  showLeaveAppAlert,
 }
 
 export default showAlert

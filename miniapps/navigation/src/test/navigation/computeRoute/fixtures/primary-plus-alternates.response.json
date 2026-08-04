@@ -1,0 +1,17 @@
+{
+  "ok": true,
+  "routes": [
+    {
+      "points": [{"lat": 0, "lng": 0}],
+      "totalDistanceMeters": 1000,
+      "totalDurationSeconds": 300,
+      "summary": "via A St"
+    },
+    {
+      "points": [{"lat": 0, "lng": 0}],
+      "totalDistanceMeters": 1100,
+      "totalDurationSeconds": 320,
+      "summary": "via B St"
+    }
+  ]
+}

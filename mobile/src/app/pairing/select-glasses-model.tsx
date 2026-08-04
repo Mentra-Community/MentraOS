@@ -1,40 +1,44 @@
 import {DeviceTypes} from "@/../../cloud/packages/types/src"
-import BluetoothSdk from "@mentra/bluetooth-sdk"
-import {useFocusEffect} from "expo-router"
-import {useCallback} from "react"
 import {View, TouchableOpacity, Platform, ScrollView, Image} from "react-native"
 
 import {EvenRealitiesLogo} from "@/components/brands/EvenRealitiesLogo"
 import {MentraLogo} from "@/components/brands/MentraLogo"
 import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
+import {NimoLogo} from "@/components/brands/NimoLogo"
 import {VuzixLogo} from "@/components/brands/VuzixLogo"
+import {XingyiLogo} from "@/components/brands/XingyiLogo"
 import {Text, Header} from "@/components/ignite"
 import {Screen} from "@/components/ignite/Screen"
 import {Spacer} from "@/components/ui/Spacer"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
-import {SETTINGS, useSetting} from "@/stores/settings"
-import {getGlassesImage} from "@/utils/getGlassesImage"
+import {SETTINGS, useSetting} from "@mentra/engine"
+import {AR99_MODEL_OPTIONS, type Ar99ProjectName, getGlassesImage} from "@/utils/getGlassesImage"
 import GlassView from "@/components/ui/GlassView"
 
-// import {useLocalSearchParams} from "expo-router"
+type GlassesOption = {
+  key: string
+  deviceModel: string
+  projectName?: Ar99ProjectName
+  manufacturerName?: string
+  displayName?: string
+  imageSource?: any
+}
 
 export default function SelectGlassesModelScreen() {
   const {theme} = useAppTheme()
   const {push, goBack} = useNavigationStore.getState()
   const [superMode] = useSetting(SETTINGS.super_mode.key)
 
-  // when this screen is focused, forget any glasses that may be paired:
-  useFocusEffect(
-    useCallback(() => {
-      BluetoothSdk.forget()
-      return () => {}
-    }, []),
-  )
+  const getManufacturerLogo = (option: GlassesOption) => {
+    if (option.manufacturerName) {
+      if (option.projectName?.trim().toUpperCase() === "AR99") {
+        return <XingyiLogo color={theme.colors.text} />
+      }
+      return <Text text={option.manufacturerName} className="text-foreground font-semibold text-lg" />
+    }
 
-  // Get logo component for manufacturer
-  const getManufacturerLogo = (deviceModel: string) => {
-    switch (deviceModel) {
+    switch (option.deviceModel) {
       case DeviceTypes.G1:
       case DeviceTypes.G2:
         return <EvenRealitiesLogo color={theme.colors.text} />
@@ -44,41 +48,45 @@ export default function SelectGlassesModelScreen() {
         return <MentraLogo color={theme.colors.text} />
       case DeviceTypes.Z100:
         return <VuzixLogo color={theme.colors.text} />
+      case DeviceTypes.NIMO:
+        return <NimoLogo />
       default:
         return null
     }
   }
 
-  // Glasses models that should only be visible in super mode.
-  const SUPER_MODE_ONLY_MODELS = new Set<string>([DeviceTypes.NEX])
+  const getDisplayName = (option: GlassesOption) => option.displayName ?? option.deviceModel
+  const getImageSource = (option: GlassesOption) => option.imageSource ?? getGlassesImage(option.deviceModel)
 
-  // Platform-specific glasses options
-  const glassesOptions =
-    Platform.OS === "ios"
-      ? [
-          // {deviceModel: DeviceTypes.SIMULATED, key: DeviceTypes.SIMULATED},
-          {deviceModel: DeviceTypes.G1, key: "evenrealities_g1"},
-          {deviceModel: DeviceTypes.G2, key: "evenrealities_g2"},
-          {deviceModel: DeviceTypes.LIVE, key: "mentra_live"},
-          {deviceModel: DeviceTypes.MACH1, key: "mentra_mach1"},
-          {deviceModel: DeviceTypes.Z100, key: "vuzix-z100"},
-          {deviceModel: DeviceTypes.NEX, key: "mentra_nex"},
-          //{deviceModel: "Brilliant Labs Frame", key: "frame"},
-        ]
-      : [
-          // Android:
-          // {deviceModel: DeviceTypes.SIMULATED, key: DeviceTypes.SIMULATED},
-          {deviceModel: DeviceTypes.G1, key: "evenrealities_g1"},
-          {deviceModel: DeviceTypes.G2, key: "evenrealities_g2"},
-          {deviceModel: DeviceTypes.LIVE, key: "mentra_live"},
-          {deviceModel: DeviceTypes.MACH1, key: "mentra_mach1"},
-          {deviceModel: DeviceTypes.Z100, key: "vuzix-z100"},
-          {deviceModel: DeviceTypes.NEX, key: "mentra_nex"},
-          // {deviceModel: "Brilliant Labs Frame", key: "frame"},
-        ]
+  const SUPER_MODE_ONLY_MODELS = new Set<string>([DeviceTypes.NEX, DeviceTypes.NIMO])
 
-  const triggerGlassesPairingGuide = async (deviceModel: string) => {
-    push("/pairing/prep", {deviceModel: deviceModel})
+  const ar99Options: GlassesOption[] = AR99_MODEL_OPTIONS.map((option) => ({
+    key: option.key,
+    deviceModel: option.deviceModel,
+    projectName: option.projectName,
+    manufacturerName: option.manufacturerName,
+    displayName: option.displayName,
+    imageSource: option.imageSource,
+  }))
+
+  const sharedOptions: GlassesOption[] = [
+    {deviceModel: DeviceTypes.LIVE, key: "mentra_live"},
+    ...ar99Options,
+    {deviceModel: DeviceTypes.G1, key: "evenrealities_g1"},
+    {deviceModel: DeviceTypes.G2, key: "evenrealities_g2"},
+    {deviceModel: DeviceTypes.MACH1, key: "mentra_mach1"},
+    {deviceModel: DeviceTypes.Z100, key: "vuzix-z100"},
+    {deviceModel: DeviceTypes.NEX, key: "mentra_nex"},
+    {deviceModel: DeviceTypes.NIMO, key: "nimo"},
+  ]
+
+  const glassesOptions = Platform.OS === "ios" ? sharedOptions : sharedOptions
+
+  const triggerGlassesPairingGuide = async (option: GlassesOption) => {
+    push("/pairing/prep", {
+      deviceModel: option.deviceModel,
+      ar99ProjectName: option.projectName,
+    })
   }
 
   return (
@@ -97,22 +105,21 @@ export default function SelectGlassesModelScreen() {
           {glassesOptions
             .filter((glasses) => !SUPER_MODE_ONLY_MODELS.has(glasses.deviceModel) || superMode)
             .map((glasses) => (
-              <TouchableOpacity key={glasses.key} onPress={() => triggerGlassesPairingGuide(glasses.deviceModel)}>
+              <TouchableOpacity key={glasses.key} onPress={() => triggerGlassesPairingGuide(glasses)}>
                 <GlassView className="bg-primary-foreground flex-col items-center justify-center p-6 rounded-2xl overflow-hidden">
                   <View className="flex-row gap-4">
                     <View className="flex-col flex-1 justify-center">
-                      <View className="justify-center min-h-6">{getManufacturerLogo(glasses.deviceModel)}</View>
+                      {getManufacturerLogo(glasses) ? (
+                        <View className="justify-center min-h-6">{getManufacturerLogo(glasses)}</View>
+                      ) : null}
                       <Text
                         className="text-2xl text-foreground font-medium"
                         numberOfLines={1}
                         adjustsFontSizeToFit
-                        text={glasses.deviceModel}
+                        text={getDisplayName(glasses)}
                       />
                     </View>
-                    <Image
-                      source={getGlassesImage(glasses.deviceModel)}
-                      className="w-[90px] max-h-[80px] object-contain"
-                    />
+                    <Image source={getImageSource(glasses)} className="w-[90px] max-h-[80px] object-contain" />
                   </View>
                 </GlassView>
               </TouchableOpacity>

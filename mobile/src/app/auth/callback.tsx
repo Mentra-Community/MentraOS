@@ -1,24 +1,13 @@
 import {Screen} from "@/components/ignite"
 import {SplashVideo} from "@/components/splash/SplashVideo"
-import {useAppTheme} from "@/contexts/ThemeContext"
-import {SETTINGS, useSetting} from "@/stores/settings"
-import {View} from "react-native"
+import {SETTINGS, useSetting} from "@mentra/engine"
 
 export default function AuthCallback() {
-  const [superMode] = useSetting(SETTINGS.super_mode.key)
-  const {theme} = useAppTheme()
-
-  if (superMode) {
-    return (
-      <Screen preset="fixed">
-        <SplashVideo colorOverride={theme.colors.chart_5} />
-      </Screen>
-    )
-  }
+  const [appBootExtraInfo] = useSetting(SETTINGS.app_boot_extra_info.key)
 
   return (
     <Screen preset="fixed">
-      <SplashVideo />
+      <SplashVideo label={appBootExtraInfo ? "Finishing sign-in…" : undefined} />
     </Screen>
   )
 }

@@ -39,7 +39,19 @@ export function formatAge(ms?: number | null): string {
   if (!ms) {
     return "-"
   }
-  return `${((Date.now() - ms) / 1000).toFixed(1)}s ago`
+  return `${(Math.max(0, Date.now() - ms) / 1000).toFixed(1)}s ago`
+}
+
+export function formatEndpointLabel(value?: string | null): string {
+  if (!value) {
+    return "-"
+  }
+  try {
+    const url = new URL(value)
+    return url.host
+  } catch {
+    return value
+  }
 }
 
 export function trimmedMean(values: number[], trimFraction = 0.1): number | null {

@@ -1,0 +1,22 @@
+{
+  "name": "@mentra/pr-agent",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "cli": "tsx src/cli.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@connectrpc/connect-node": "^1.6.1",
+    "@cursor/sdk": "^1.0.0",
+    "@octokit/rest": "^21.1.1",
+    "minimatch": "^10.0.1",
+    "yaml": "^2.7.0",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2"
+  }
+}

@@ -1,5 +1,13 @@
 {
-  "dependencies": {},
+  "workspaces": [
+    "cloud-v2/packages/*",
+    "miniapps/*",
+    "sdk/miniapp-cli",
+    "mobile/modules/miniapp"
+  ],
+  "trustedDependencies": [
+    "bun"
+  ],
   "devDependencies": {
     "@eslint/css": "^0.10.0",
     "@eslint/js": "^9.36.0",
@@ -16,6 +24,7 @@
     "eslint-plugin-react": "^7.37.5",
     "eslint-plugin-react-native": "^5.0.0",
     "eslint-plugin-reactotron": "^0.1.9",
+    "globals": "^16.3.0",
     "husky": "^9.1.7",
     "lint-staged": "^16.2.1",
     "prettier": "^3.6.2",
@@ -25,6 +34,9 @@
   },
   "scripts": {
     "prepare": "husky",
-    "generate-licenses": "bun docs/generate-licenses.ts"
+    "generate-licenses": "bun mintlify-docs/generate-licenses.ts",
+    "build:miniapp": "cd mobile/modules/miniapp && bun run build",
+    "sync-miniapp": "bun scripts/sync-miniapp.mjs",
+    "postinstall": "bun run build:miniapp || echo '\\n[postinstall] WARNING: failed to build @mentra/miniapp. Miniapps will not run until you build it manually:\\n  cd mobile/modules/miniapp && bun run build\\n'"
   }
 }

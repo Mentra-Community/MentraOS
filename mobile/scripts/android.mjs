@@ -5,6 +5,13 @@ await setBuildEnv()
 // prebuild android:
 await $({stdio: "inherit"})`bun expo prebuild --platform android`
 
+// Bust stale RN autolinking caches. The RN gradle plugin caches autolinking.json
+// keyed only by its own inputs, not by android/app/build.gradle. Prebuild can
+// rewrite the namespace between runs, but the cached JSON keeps the old
+// packageName — producing a wrong-package BuildConfig reference in the
+// generated ReactNativeApplicationEntryPoint.java. Wipe after every prebuild.
+await $({stdio: "inherit", nothrow: true})`rm -rf android/build/generated/autolinking android/app/build/generated/autolinking`
+
 // Get connected devices with details
 const adbOutput = await $`adb devices -l`
 const lines = adbOutput.stdout.trim().split('\n').slice(1)

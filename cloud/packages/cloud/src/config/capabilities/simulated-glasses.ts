@@ -73,4 +73,7 @@ export const simulatedGlasses: Capabilities = {
 
   // WiFi capabilities - does not support WiFi
   hasWifi: false,
+
+  // OTA capabilities - simulated glasses do not support OTA
+  hasOta: false,
 };

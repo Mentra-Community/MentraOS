@@ -1,0 +1,241 @@
+---
+title: "Navigation"
+description: "Turn-by-turn directions on the glasses, driven by the phone's GPS."
+icon: "route"
+---
+
+`session.navigation` runs a turn-by-turn trip. Call `start()` with a destination,
+then read live maneuvers from `onUpdate()` as the user moves. The phone owns the
+trip lifecycle; your miniapp starts it, listens, and stops it.
+
+```typescript src/background/index.ts
+const off = session.navigation.onUpdate((update) => {
+  if (update.kind === "maneuver" && update.instruction) {
+    session.display.render([{type: "text", id: "msg", box: {x: 0, y: 0, w: 576, h: 288}, text: update.instruction}]);
+  }
+});
+
+session.navigation.start({lat: 37.7764, lng: -122.4242, mode: "walking"});
+```
+
+Navigation needs the `LOCATION` permission in your
+[manifest](/app-devs/core-concepts/miniapp-manifest). The gated methods
+(`requestPermission`, `start`, `computeRoute`) check the declaration before doing
+anything; without it they resolve `{ok: false, error}` and never reach the phone.
+
+<Note>
+Navigation works on both iOS and Android. Every method resolves with an
+`{ok, error?}` shape and nothing throws, so branch on `result.ok` rather than
+wrapping in try/catch.
+</Note>
+
+## Permission
+
+`session.navigation.hasPermission` is `true` when `LOCATION` is declared in your
+manifest. It reports the declaration, not the OS grant: if the user denied the
+system location prompt, a trip still won't get fixes.
+
+`requestPermission()` confirms the navigation SDK's terms up front, before the
+user hits start. On platforms with a terms gate it shows the dialog; where there
+isn't one it resolves immediately. It's idempotent, and resolves a
+`NavPermissionResult`:
+
+| Field | Type | Notes |
+|---|---|---|
+| `ok` | `boolean` | `false` when `LOCATION` isn't declared. |
+| `accepted` | `boolean` | `true` once the user accepts the SDK terms (always `true` where there's no terms gate). |
+| `error` | `string?` | Set when `ok` is `false`. |
+
+```typescript
+const result = await session.navigation.requestPermission();
+if (result.ok && result.accepted) {
+  // ready to start a trip
+}
+```
+
+## Starting a trip
+
+`start(options)` accepts a single destination (`lat` / `lng`) or an ordered list
+of `stops`. A resolved `{ok: true}` means the phone accepted the request, not that
+a route exists yet. Watch `onUpdate()` and `onRoute()` for the route and live
+maneuvers.
+
+```typescript
+await session.navigation.start({
+  stops: [
+    {lat: 37.7764, lng: -122.4242},
+    {lat: 37.7858, lng: -122.4065},
+  ],
+  mode: "walking",
+  avoid: {highways: true},
+});
+```
+
+| Option | Type | Notes |
+|---|---|---|
+| `lat` / `lng` | `number` | Single-destination shorthand. Rewritten to `stops: [{lat, lng}]`. |
+| `stops` | `LatLng[]` | Ordered stops; the last is the final destination. Needs at least one entry. |
+| `mode` | `TravelMode` | Defaults to `"driving"`. |
+| `avoid` | `RouteAvoidances` | `highways` / `tolls` / `ferries`, each defaulting to `false`. |
+| `simulate` | `boolean` | Dev/testing only. Fakes walking the route. |
+| `speedMultiplier` | `number` | Simulation speed factor. Defaults to `1`. |
+| `pivots` | `PivotOptions` | Override pivot-detection radii for this trip. |
+| `missedTurnRerouteMeters` | `number` | Reroute once the user is this many meters past a missed turn. Omit or `0` for host defaults. |
+
+### Travel modes
+
+`mode` is one of:
+
+| Value | |
+|---|---|
+| `"driving"` | The default. |
+| `"walking"` | |
+| `"cycling"` | |
+| `"two_wheeler"` | |
+
+## Live updates
+
+`onUpdate(handler)` delivers a `NavUpdate` every time the trip changes. Discriminate
+on `kind`. It returns an unsubscribe function.
+
+```typescript
+const off = session.navigation.onUpdate((update) => {
+  switch (update.kind) {
+    case "maneuver":
+      // update.instruction, update.distanceMeters, update.nextStepRoad
+      break;
+    case "off_route":
+      // update.offRouteDistanceMeters
+      break;
+    case "rerouting":
+      break;
+    case "arrived":
+      off();
+      break;
+    case "error":
+      // update.message
+      break;
+  }
+});
+```
+
+| `kind` | Carries |
+|---|---|
+| `"maneuver"` | The current step: `maneuverType`, `distanceMeters`, `instruction`, `nextStepRoad`, plus distance/time to destination and current speed/limit. |
+| `"off_route"` | `offRouteDistanceMeters`: perpendicular distance from the route. |
+| `"rerouting"` | Nothing. The host is computing a new route. |
+| `"arrived"` | Nothing. The trip is done. |
+| `"error"` | `message`. |
+
+On a `"maneuver"`, prefer `instruction` (the host's verbatim text, render as-is)
+and `nextStepRoad` (the street after the turn) over the legacy `toRoad` field.
+Distance and time fields use `-1` for unknown; the speed and heading fields use
+`null`.
+
+## The route polyline
+
+`onRoute(handler)` fires once per route build, on the initial start and again on
+each reroute, with the full path. It returns an unsubscribe function.
+
+```typescript
+const off = session.navigation.onRoute((route) => {
+  // route.points, route.totalDistanceMeters, route.steps
+});
+```
+
+A `NavRoute` carries `points` (the polyline as `LatLng[]`), optional
+`totalDistanceMeters` and `totalDurationSeconds`, and optional `steps` (ordered
+`NavStep` segments, each ending in a maneuver).
+
+## Reading current state
+
+`getState()` resolves a `NavState` snapshot of the running trip, or `null` when no
+trip is active. It's shaped like the streaming events, so a miniapp opened
+mid-trip can hydrate without waiting for the next update.
+
+```typescript
+const state = await session.navigation.getState();
+if (state?.active) {
+  // state.mode, state.currentStopIndex, state.route, state.maneuver
+}
+```
+
+## Stopping
+
+`stop()` ends the active trip and detaches pivot tracking. It's fire-and-forget
+and a no-op when nothing is running.
+
+```typescript
+session.navigation.stop();
+```
+
+## Computing a route without starting
+
+`computeRoute(options)` returns route geometry without starting a trip. Use it to
+preview a route or show distance and time before the user commits.
+
+```typescript
+const result = await session.navigation.computeRoute({
+  origin: {lat: 37.7764, lng: -122.4242},
+  stops: [{lat: 37.7858, lng: -122.4065}],
+  mode: "walking",
+  alternatives: 2,
+});
+
+if (result.ok && result.routes) {
+  const primary = result.routes[0]; // alternates follow
+}
+```
+
+| Option | Type | Notes |
+|---|---|---|
+| `origin` | `LatLng` | Start coordinate. |
+| `stops` | `LatLng[]` | At least one entry; the last is the final destination. |
+| `mode` | `TravelMode` | Defaults to `"driving"`. |
+| `avoid` | `RouteAvoidances` | Same flags as `start()`. |
+| `alternatives` | `number` | Up to N routes when the engine offers them. Defaults to `1`. |
+
+It resolves `{ok, error?, routes?}`. Each `ComputedRoute` has `points`,
+`totalDistanceMeters`, `totalDurationSeconds`, an optional `summary`, and optional
+`steps`. The primary route is first; alternates follow.
+
+## Pivots
+
+A pivot is a real turn along the route (a left or right), derived once per route
+build and re-derived on reroute. Pivots let you cue the user as a turn approaches
+rather than reacting to raw maneuver updates.
+
+`onPivot(handler)` subscribes to pivot events and returns an unsubscribe function.
+Each pivot fires `approaching` → `entered` → `exited`, once per kind, then the
+cursor advances to the next pivot.
+
+```typescript
+const off = session.navigation.onPivot((event) => {
+  if (event.kind === "approaching") {
+    // event.pivot.direction, event.distanceMeters
+  }
+});
+```
+
+Three reads of the pivot list are available without subscribing:
+
+| Method | Returns |
+|---|---|
+| `getPivots()` | The full `Pivot[]` for the active route. Empty before the first `onRoute`. |
+| `getActivePivot()` | The pivot the user is currently inside (between `entered` and `exited`), or `null`. |
+| `getUpcomingPivot()` | The next pivot ahead, or `null` once all pivots are passed. |
+
+A `Pivot` carries its `index`, `lat` / `lng`, `direction` (`"left"` or `"right"`),
+the `fromRoad` and `toRoad` names (each `null` when the engine has none), the
+`maneuver`, the `distanceAlongRouteMeters` from trip start, and the `radiusMeters`
+that counts as "turning now".
+
+Tune detection per trip with `pivots` on `start()`: `radiusMeters` sets the
+"turning now" radius and `approachThresholdMeters` sets the "approaching" radius.
+Both fall back to mode-aware defaults when omitted.
+
+## Simulation helpers
+
+`session.navigation.dev` holds simulator-only helpers for testing trips, including
+`deviate(offsetMeters)`, which nudges the simulated position off-route to trigger a
+reroute. These are dev tooling, not part of a normal trip flow.

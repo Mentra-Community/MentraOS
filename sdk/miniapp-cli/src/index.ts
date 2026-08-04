@@ -15,8 +15,10 @@ function printUsage(): void {
   console.log('Usage: mentra-miniapp <command>\n');
   console.log('Commands:');
   console.log('  dev                              Start dev server with hot reload and QR code');
+  console.log('                                   Options: --qr-output <path>  write PNG QR to path');
   console.log('  release                          Build, pack, and serve a QR to install on a phone');
-  console.log('  pack                             Package miniapp into a distributable ZIP');
+  console.log('                                   Options: --no-cache  --qr-output <path>');
+  console.log('  pack                             Production-build and package miniapp into build/<pkg>-<version>.zip (--no-build to skip build)');
   console.log('  manifest                         Edit miniapp.json interactively');
   console.log('  permission list                  List declared permissions');
   console.log('  permission add [TYPE]            Add a permission (interactive without TYPE)');
@@ -28,15 +30,32 @@ function printUsage(): void {
   console.log('  schema regenerate                Regenerate the published schema file (CLI internal)');
 }
 
+function flagValue(flag: string): string | undefined {
+  const idx = process.argv.indexOf(flag);
+  if (idx === -1) return undefined;
+  const value = process.argv[idx + 1];
+  if (!value || value.startsWith('-')) {
+    console.error(`Error: ${flag} requires a path argument`);
+    process.exit(1);
+  }
+  return value;
+}
+
 switch (subcommand) {
   case 'dev':
-    await dev();
+    await dev({qrOutput: flagValue('--qr-output')});
     break;
   case 'release':
-    await release({noCache: process.argv.includes('--no-cache')});
+    await release({
+      noCache: process.argv.includes('--no-cache'),
+      qrOutput: flagValue('--qr-output'),
+    });
     break;
   case 'pack':
-    await pack();
+    // Build with NODE_ENV=production before zipping, so `pack` never ships
+    // a stale dev-mode dist/ left behind by `dev`. `--no-build` zips dist/
+    // as-is for callers that manage the build themselves.
+    await pack({build: !process.argv.includes('--no-build')});
     break;
   case 'manifest':
     await runManifestWizard();

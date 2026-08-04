@@ -68,7 +68,7 @@ session.camera.onLocalLivestreamStatus((status) => {
 
 Control the camera's field of view and crop region with `session.camera.setFov()`.
 
-The `fov` value (82--118 degrees) directly sets the FOV of the raw image the camera produces -- the crop happens at the sensor level, not in software after capture. At `fov: 118` the camera uses its full sensor with no crop. Values below 118 tell the sensor to apply an ROI (Region of Interest) crop so the output image is that narrower angle. Lower values mean a narrower view (more zoomed in).
+The `fov` value (62--118 degrees) directly sets the FOV of the raw image the camera produces -- the crop happens at the sensor level, not in software after capture. At `fov: 118` the camera uses its full sensor with no crop. Values below 118 tell the sensor to apply an ROI (Region of Interest) crop so the output image is that narrower angle. Lower values mean a narrower view (more zoomed in).
 
 `roiPosition` controls where the crop window sits vertically on the sensor: `"top"` shifts it upward, `"bottom"` shifts it downward, and `"center"` keeps it in the middle. This lets apps pan the visible area up or down without the user physically tilting the glasses. At `fov: 118` there is no crop, so `roiPosition` has no effect.
 
@@ -87,7 +87,7 @@ await session.camera.setFov({ fov: 118 });
 
 **Parameters:**
 
-- `fov` (required) -- number between 82 and 118. The FOV in degrees of the camera output. 118 = full sensor, no crop.
+- `fov` (required) -- number between 62 and 118. The FOV in degrees of the camera output. 118 = full sensor, no crop.
 - `roiPosition` (optional) -- `"center"` | `"top"` | `"bottom"`. Where the crop window sits vertically. Defaults to `"center"`. Ignored when `fov` is 118.
 
 **Behavior notes:**

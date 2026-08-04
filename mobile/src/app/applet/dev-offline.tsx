@@ -3,13 +3,13 @@ import {useLocalSearchParams} from "expo-router"
 import {SquircleView} from "expo-squircle-view"
 import {View} from "react-native"
 
-import {Button, Header, Screen, Text} from "@/components/ignite"
+import {Button, Screen, Text} from "@/components/ignite"
 import {useNavigationStore} from "@/stores/navigation"
-import {useApps} from "@mentra/island"
-import {decideDevLaunchRoute} from "@mentra/island"
+import {decideDevLaunchRoute, engine, useApps} from "@mentra/engine"
 import {storage} from "@/utils/storage/storage"
 import {useRegisterCapsule} from "@/stores/capsule"
 import {useRef} from "react"
+import CapsuleMenu from "@/effects/CapsuleMenu"
 
 /**
  * Shown when a dev miniapp is launched while the dev server is unreachable.
@@ -28,14 +28,14 @@ export default function DevMiniappOfflineScreen() {
     name?: string
     iconUrl?: string
   }>()
-  const {goBack, replace, push} = useNavigationStore.getState()
+  const {push} = useNavigationStore.getState()
   const apps = useApps()
   const viewShotRef = useRef<View>(null)
 
   useRegisterCapsule({
     packageName,
     viewShotRef,
-    visibleOnRoutes: ["/applet/dev-offline"],
+    visibleOnRoutes: ["/applet/dev-tools"],
   })
 
   // Fall back to the store entry's logoUrl/name if the route didn't carry
@@ -49,11 +49,11 @@ export default function DevMiniappOfflineScreen() {
 
   const lastReachableLabel = lastReachable && lastReachable.is_ok() ? formatRelative(lastReachable.value) : "never"
 
-  const onTryAgain = async () => {
+  const handleTryAgain = async () => {
     if (!packageName) return
     const devUrlRes = storage.load<string>(`${packageName}_dev_url`)
     if (!devUrlRes.is_ok()) {
-      push("/miniapps/settings/miniapp-developer-scanner")
+      push("/miniapps/miniappdev/scanner")
       return
     }
     // Pre-flight reachability before deciding the route. If still down,
@@ -61,53 +61,50 @@ export default function DevMiniappOfflineScreen() {
     // re-scan. If up, replace into /applet/local.
     const launchResult = await decideDevLaunchRoute(packageName, devUrlRes.value)
     if (launchResult.decision === "live") {
-      replace("/applet/local", {
-        packageName,
-        devUrl: devUrlRes.value,
-        appName: name,
-        iconUrl,
-      })
+      await engine.miniapps.setForeground(packageName)
     }
     // else: stay put — the "Last reached" line stays accurate, user can
     // tap again or re-scan.
   }
 
-  const onRescan = () => {
-    push("/miniapps/settings/miniapp-developer-scanner")
+  const handleRescan = () => {
+    push("/miniapps/miniappdev/scanner")
   }
 
   const displayName = resolvedName ?? packageName ?? "Dev mini app"
 
   return (
-    <Screen preset="fixed" ref={viewShotRef}>
-      <View className="flex-1 items-center justify-center px-8 bg-background">
-        {resolvedIconUrl ? (
-          <SquircleView
-            cornerSmoothing={100}
-            preserveSmoothing={true}
-            className="w-32 h-32 rounded-3xl overflow-hidden items-center justify-center mb-6">
-            <Image
-              source={resolvedIconUrl}
-              style={{width: "100%", height: "100%"}}
-              contentFit="cover"
-              transition={200}
-              cachePolicy="memory-disk"
-            />
-          </SquircleView>
-        ) : null}
+    <Screen preset="fixed" ref={viewShotRef} safeAreaEdges={["bottom"]} extraAndroidInsets>
+      <View className="flex-1 items-center justify-between">
+        <View className="flex-1 items-center justify-center">
+          {resolvedIconUrl ? (
+            <SquircleView
+              cornerSmoothing={100}
+              preserveSmoothing={true}
+              className="w-32 h-32 rounded-3xl overflow-hidden items-center justify-center mb-6">
+              <Image
+                source={resolvedIconUrl}
+                style={{width: "100%", height: "100%"}}
+                contentFit="cover"
+                transition={200}
+                cachePolicy="memory-disk"
+              />
+            </SquircleView>
+          ) : null}
 
-        <Text className="text-xl font-semibold text-foreground text-center" text={displayName} />
-        <Text className="text-base text-foreground text-center mt-2" text="Dev server offline" />
-        <Text
-          className="text-sm text-muted-foreground text-center mt-1 mb-6"
-          text={`Last reached: ${lastReachableLabel}`}
-        />
-
-        <View className="w-full max-w-[320px] gap-3">
-          <Button text="Try again" onPress={onTryAgain} preset="alternate" />
-          <Button text="Re-scan QR" onPress={onRescan} preset="default" />
+          <Text className="text-xl font-semibold text-foreground text-center" text={displayName} />
+          <Text className="text-base text-foreground text-center mt-2" text="Dev server offline" />
+          <Text
+            className="text-sm text-muted-foreground text-center mt-1 mb-6"
+            text={`Last reached: ${lastReachableLabel}`}
+          />
+        </View>
+        <View className="w-full gap-3">
+          <Button text="Try again" onPress={handleTryAgain} preset="primary" />
+          <Button text="Re-scan QR" onPress={handleRescan} preset="secondary" />
         </View>
       </View>
+      <CapsuleMenu forceShow={true} />
     </Screen>
   )
 }

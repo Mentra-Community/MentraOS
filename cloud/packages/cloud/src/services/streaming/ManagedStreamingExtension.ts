@@ -447,6 +447,7 @@ export class ManagedStreamingExtension {
         undefined,
         undefined,
         undefined,
+        status.resolvedConfig,
       );
     }
 
@@ -1094,6 +1095,7 @@ export class ManagedStreamingExtension {
     webrtcUrl?: string,
     previewUrl?: string,
     thumbnailUrl?: string,
+    resolvedConfig?: ManagedStreamStatus["resolvedConfig"],
   ): Promise<void> {
     const stream = this.stateManager.getStreamByStreamId(streamId);
     if (!stream || stream.type !== "managed") return;
@@ -1124,6 +1126,7 @@ export class ManagedStreamingExtension {
       thumbnailUrl: thumbnailUrl,
       streamId,
       message,
+      resolvedConfig,
       outputs,
     };
 
@@ -1138,7 +1141,10 @@ export class ManagedStreamingExtension {
         lastStatus.hlsUrl === statusMessage.hlsUrl &&
         lastStatus.dashUrl === statusMessage.dashUrl &&
         lastStatus.webrtcUrl === statusMessage.webrtcUrl &&
+        lastStatus.previewUrl === statusMessage.previewUrl &&
+        lastStatus.thumbnailUrl === statusMessage.thumbnailUrl &&
         lastStatus.message === statusMessage.message &&
+        JSON.stringify(lastStatus.resolvedConfig) === JSON.stringify(statusMessage.resolvedConfig) &&
         JSON.stringify(lastStatus.outputs) === JSON.stringify(statusMessage.outputs);
 
       if (isDuplicate) {

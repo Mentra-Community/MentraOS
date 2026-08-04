@@ -1,10 +1,10 @@
 {
   "apps": {
     "com.mentra.asg_client": {
-      "versionCode": 37,
-      "versionName": "37.0",
-      "apkUrl": "https://github.com/Mentra-Community/MentraOS/releases/download/asg-client/asg_client_37-test.apk",
-      "sha256": "9fe9510a3c92dda9d6d15416303be7625908388caf02ff1be72a918170371628"
+      "versionCode": 38,
+      "versionName": "38.0",
+      "apkUrl": "https://github.com/Mentra-Community/MentraOS/releases/download/asg-client/asg-client-38-test.apk",
+      "sha256": "d504e1f164e50109419c8c2181428f468a393575884294700270fcffe0cc7b59"
     },
     "com.augmentos.otaupdater": {
       "versionCode": 0,

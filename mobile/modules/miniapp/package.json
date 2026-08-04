@@ -1,6 +1,6 @@
 {
   "name": "@mentra/miniapp",
-  "version": "0.3.0",
+  "version": "0.3.0-dev.1",
   "description": "SDK for building MentraOS local miniapps (browser/WebView)",
   "author": "Mentra Labs",
   "license": "MIT",
@@ -13,6 +13,14 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
+    "./background": {
+      "types": "./dist/background/index.d.ts",
+      "default": "./dist/background/index.js"
+    },
+    "./ui": {
+      "types": "./dist/ui/index.d.ts",
+      "default": "./dist/ui/index.js"
+    },
     "./react": {
       "types": "./dist/react/index.d.ts",
       "default": "./dist/react/index.js"
@@ -23,13 +31,18 @@
     },
     "./package.json": "./package.json"
   },
+  "publishConfig": {
+    "access": "public",
+    "tag": "dev"
+  },
   "sideEffects": false,
   "scripts": {
     "build": "rm -rf dist tsconfig.tsbuildinfo && bun x tsc -p tsconfig.json",
     "dev": "bun x tsc --watch",
     "typecheck": "bun x tsc --noEmit",
     "test": "bun test",
-    "prepare": "bun run build"
+    "prepare": "bun run build",
+    "prepublishOnly": "bun run build"
   },
   "peerDependencies": {
     "react": ">=18.0.0"
@@ -40,6 +53,7 @@
     }
   },
   "dependencies": {
+    "@mentra/cloud-protocol": "workspace:*",
     "@mentra/types": "1.0.0-beta.2",
     "eventemitter3": "^5.0.1"
   },
@@ -50,12 +64,22 @@
   },
   "files": [
     "dist",
-    "src"
+    "src",
+    "!src/**/*.test.ts"
   ],
   "keywords": [
     "mentra",
     "mentraos",
     "miniapp",
     "smart-glasses"
-  ]
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Mentra-Community/MentraOS.git",
+    "directory": "mobile/modules/miniapp"
+  },
+  "homepage": "https://github.com/Mentra-Community/MentraOS/tree/dev/mobile/modules/miniapp#readme",
+  "bugs": {
+    "url": "https://github.com/Mentra-Community/MentraOS/issues"
+  }
 }

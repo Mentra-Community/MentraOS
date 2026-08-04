@@ -1,0 +1,160 @@
+{
+  "$schema": "./node_modules/@mentra/miniapp-cli/schema/miniapp.schema.json",
+  "packageName": "com.mentra.navigation",
+  "version": "1.1.26",
+  "name": "Mentra Maps",
+  "description": "Turn-by-turn navigation with visual or spoken directions.",
+  "icon": "icon.png",
+  "type": "standard",
+  "sdkVersion": "0.3.0",
+  "minHostVersion": "1.42.0",
+  "entry": {
+    "background": "background/index.js",
+    "ui": "ui/index.html"
+  },
+  "permissions": [
+    {
+      "type": "LOCATION",
+      "description": "Used for live position, compass heading, and turn-by-turn directions"
+    },
+    {
+      "type": "BACKGROUND_LOCATION",
+      "description": "Used for live position, compass heading, and turn-by-turn directions"
+    }
+  ],
+  "hardwareRequirements": [
+    {
+      "type": "DISPLAY",
+      "level": "OPTIONAL",
+      "description": "Shows next maneuver and distance on glasses"
+    },
+    {
+      "type": "SPEAKER",
+      "level": "OPTIONAL",
+      "description": "Speaks turn-by-turn directions on audio glasses"
+    }
+  ],
+  "actions": [
+    {
+      "id": "start_navigation",
+      "description": "Start turn-by-turn navigation to a destination and provide visual or spoken directions on the glasses. Use when the user wants to go somewhere \u2014 e.g. 'navigate to Blue Bottle Coffee', 'directions to the airport', 'take me home'. Give the destination as a place name or address in `query` (it gets looked up near the user's current location); only pass latitude/longitude instead if you already have exact coordinates. Defaults to walking directions.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "The destination as a place name or address (e.g. 'Blue Bottle Coffee', '369 Hayes St, San Francisco'). Resolved via place search biased to the user's current location. Provide this OR latitude+longitude."
+          },
+          "latitude": {
+            "type": "number",
+            "description": "Destination latitude. Provide latitude+longitude together as an alternative to query, when exact coordinates are known."
+          },
+          "longitude": {
+            "type": "number",
+            "description": "Destination longitude. Provide latitude+longitude together as an alternative to query."
+          },
+          "destination_name": {
+            "type": "string",
+            "description": "Optional friendly label for the destination, shown in the UI (e.g. 'Home', 'Blue Bottle')."
+          },
+          "travel_mode": {
+            "type": "string",
+            "enum": [
+              "walking",
+              "driving",
+              "cycling",
+              "two_wheeler"
+            ],
+            "description": "How the user is traveling. Defaults to 'walking'."
+          }
+        }
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "ok": {"type": "boolean"},
+          "error": {"type": "string"},
+          "destination": {
+            "type": "object",
+            "properties": {
+              "lat": {"type": "number"},
+              "lng": {"type": "number"},
+              "name": {"type": "string"},
+              "address": {"type": "string"},
+              "placeId": {"type": "string"}
+            }
+          }
+        },
+        "required": ["ok"]
+      }
+    },
+    {
+      "id": "get_saved_addresses",
+      "description": "Get the user's saved Home and Work addresses. Use before starting navigation when the user refers to Home or Work without giving an address. Returns the configured slots only; missing slots are omitted.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "addresses": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "type": {"type": "string"},
+                "name": {"type": "string"},
+                "address": {"type": "string"},
+                "latitude": {"type": "number"},
+                "longitude": {"type": "number"}
+              }
+            }
+          }
+        },
+        "required": ["addresses"]
+      }
+    },
+    {
+      "id": "set_saved_address",
+      "description": "Save or replace the user's Home or Work address. Use when the user asks to remember, set, or update where Home or Work is. The address is resolved with place search near the user's current location.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "home",
+              "work"
+            ],
+            "description": "Which saved-address slot to set. Only Home and Work are supported."
+          },
+          "address": {
+            "type": "string",
+            "description": "The place name or street address to save (e.g. '369 Hayes St, San Francisco')."
+          }
+        },
+        "required": [
+          "type",
+          "address"
+        ]
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "address": {
+            "type": "object",
+            "properties": {
+              "type": {"type": "string"},
+              "name": {"type": "string"},
+              "address": {"type": "string"},
+              "latitude": {"type": "number"},
+              "longitude": {"type": "number"}
+            }
+          }
+        },
+        "required": ["address"]
+      }
+    }
+  ]
+}

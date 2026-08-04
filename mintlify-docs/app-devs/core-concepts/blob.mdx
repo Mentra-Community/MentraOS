@@ -1,0 +1,187 @@
+---
+title: "Blob"
+description: "Persistent binary storage for files, images, and audio."
+icon: "box-archive"
+---
+
+`session.blob` stores arbitrary bytes (PDFs, EPUBs, audio, video, model files,
+caches) as files on the phone. It's scoped to the user and your miniapp, so your
+keys never collide with another miniapp's, and the files survive restarts. Where
+[`session.storage`](/app-devs/core-concepts/storage) holds small strings, blob
+holds binary data.
+
+```typescript src/background/index.ts
+import { registerMiniapp } from "@mentra/miniapp/background";
+
+registerMiniapp(async (session) => {
+  await session.blob.set("logo", pngBytes, { mimeType: "image/png" });
+  const meta = await session.blob.get("logo");
+  // meta.uri -> "file://…", meta.bytes, meta.mimeType
+});
+```
+
+Blob needs no permission and no hardware. Every method is async and round-trips
+to the phone. A stored blob's `uri` is a `file://` path in your miniapp's private
+storage, which you can hand to `session.speaker.play`, `session.blob.share`, or
+another host capability.
+
+## Reading and writing
+
+`set` takes a `Uint8Array`, an `ArrayBuffer`, or a base64 string, and returns the
+stored blob's [metadata](#blobmeta). `get` returns that metadata (including the
+`uri`) or `null`. `bytes` reads the whole file into memory.
+
+```typescript
+await session.blob.set("note.pdf", pdfBytes, {
+  mimeType: "application/pdf",
+  name: "note.pdf",
+});
+
+const meta = await session.blob.get("note.pdf"); // BlobMeta, or null if absent
+const raw = await session.blob.bytes("note.pdf"); // Uint8Array, or null if absent
+
+await session.blob.delete("note.pdf");
+const exists = await session.blob.has("note.pdf"); // false
+```
+
+`bytes` throws once a blob crosses `BLOB_READ_ALL_MAX_BYTES` (32 MB). Read
+anything larger as a [stream](#large-files-streaming).
+
+### Downloading and importing without crossing the bridge
+
+`setFromUrl` downloads a URL straight to disk host-side, and `importFile` opens
+the OS file picker and stores the chosen file. In both cases the bytes never pass
+through your JS context, which keeps large files off the bridge.
+
+```typescript
+// Host downloads the URL to disk. opts.headers can carry an auth token.
+const cover = await session.blob.setFromUrl(
+  "cover",
+  "https://example.com/cover.jpg",
+  { mimeType: "image/jpeg" },
+);
+
+// OS file picker. Resolves to BlobMeta, or null if the user cancels.
+const picked = await session.blob.importFile({ mimeType: "audio/wav" });
+if (picked) {
+  await session.speaker.play({ audioUrl: picked.uri });
+}
+```
+
+### Usage and quota
+
+`usage` reports how much you've stored and the quota ceiling, all in bytes.
+
+```typescript
+const { bytes, count, quotaBytes } = await session.blob.usage();
+```
+
+## Large files: streaming
+
+For files past the in-memory caps, stream them. `createWriteStream` opens a
+`BlobWriter`: call `write` or `writeBase64` as many times as you need (each call
+auto-splits into bridge-safe chunks of `BLOB_WRITE_CHUNK_BYTES`, 1 MB raw), then
+`close` to publish or `abort` to discard the partial blob.
+
+```typescript
+const writer = await session.blob.createWriteStream("recording.pcm", {
+  mimeType: "audio/L16",
+});
+
+session.mic.onAudioChunk(async (b64) => {
+  await writer.writeBase64(b64); // base64 straight from the mic
+});
+
+// later, when capture ends:
+const meta = await writer.close({ source: "mic" }); // optional meta merges in
+```
+
+`createReadStream` opens a `BlobReader`. Call `read` for the next chunk until
+`done` is true, then `close`.
+
+```typescript
+const reader = await session.blob.createReadStream("recording.pcm");
+for (;;) {
+  const { bytes, done } = await reader.read(); // default chunk = BLOB_WRITE_CHUNK_BYTES
+  process(bytes);
+  if (done) break;
+}
+await reader.close();
+```
+
+### BlobWriter
+
+| Method | Returns | Notes |
+|---|---|---|
+| `write(chunk)` | `Promise<void>` | Append a `Uint8Array`/`ArrayBuffer`. Auto-chunked. |
+| `writeBase64(b64)` | `Promise<void>` | Append base64 bytes (e.g. from `mic.onAudioChunk`). |
+| `writeAt(offset, chunk)` | `Promise<void>` | Overwrite within already-written bytes (a seek write). Advanced. |
+| `close(meta?)` | `Promise<BlobMeta>` | Finalize and return the metadata. `meta` merges into the record. |
+| `abort()` | `Promise<void>` | Discard the partial blob. Idempotent. |
+| `key` | `string` | The key being written. |
+
+### BlobReader
+
+| Method | Returns | Notes |
+|---|---|---|
+| `read(maxBytes?)` | `Promise<{ bytes: Uint8Array; done: boolean }>` | Read up to `maxBytes` (default one chunk). `done` is true at end of file. |
+| `close()` | `Promise<void>` | Close the reader. |
+| `handle` | `string` | The reader's handle. |
+| `meta` | `BlobMeta` | Metadata for the blob being read. |
+
+## Method reference
+
+| Method | Returns | Notes |
+|---|---|---|
+| `set(key, data, opts?)` | `Promise<BlobMeta>` | Store `Uint8Array`/`ArrayBuffer`/base64 bytes. |
+| `setFromUrl(key, url, opts?)` | `Promise<BlobMeta>` | Host downloads `url` to disk. `opts.headers` for auth. |
+| `importFile(opts?)` | `Promise<BlobMeta \| null>` | OS file picker. `null` if cancelled. |
+| `createWriteStream(key, opts?)` | `Promise<BlobWriter>` | Streaming writer for large payloads. |
+| `get(key)` | `Promise<BlobMeta \| null>` | Metadata (incl. `uri`), or `null` if absent. |
+| `stat(key)` | `Promise<BlobMeta \| null>` | Alias of `get`. |
+| `has(key)` | `Promise<boolean>` | Whether a blob is stored under `key`. |
+| `keys()` | `Promise<string[]>` | Every key, newest first. |
+| `list()` | `Promise<BlobMeta[]>` | Every blob you own, newest first. |
+| `createReadStream(key)` | `Promise<BlobReader>` | Streaming reader. |
+| `bytes(key)` | `Promise<Uint8Array \| null>` | Read whole blob into memory. Throws past the cap. |
+| `usage()` | `Promise<{ bytes: number; count: number; quotaBytes: number }>` | Per-app usage and quota ceiling, in bytes. |
+| `delete(key)` | `Promise<void>` | Delete the blob. No-op if absent. |
+| `clear()` | `Promise<void>` | Delete every blob you own. |
+| `share(key)` | `Promise<{ success: boolean; cancelled?: boolean }>` | Hand the file to the OS share sheet (host shares from disk). |
+
+## BlobMeta
+
+`get`, `stat`, `list`, and `close` resolve to a `BlobMeta`.
+
+| Field | Type | Description |
+|---|---|---|
+| `key` | `string` | The key it's stored under. |
+| `name` | `string` | Optional display/file name (e.g. the original filename for an import). |
+| `mimeType` | `string` | MIME type, e.g. `"application/pdf"`. |
+| `bytes` | `number` | Size on disk in bytes. |
+| `createdAt` | `number` | Epoch ms first written. |
+| `updatedAt` | `number` | Epoch ms last written. |
+| `md5` | `string` | Content md5 (lowercase hex). Skipped for very large blobs. |
+| `uri` | `string` | `file://` URI. Feed to `session.speaker.play`, `session.blob.share`, etc. |
+| `meta` | `Record<string, string \| number \| boolean>` | App-defined metadata persisted with the blob. |
+
+## Size limits
+
+| Constant | Value | Meaning |
+|---|---|---|
+| `BLOB_READ_ALL_MAX_BYTES` | 32 MB | Max `bytes()` buffers before throwing. Read larger blobs as a stream. |
+| `BLOB_WRITE_CHUNK_BYTES` | 1 MB | Raw bytes per chunked write, and the default `read()` chunk size. |
+
+## Errors
+
+| Message | When |
+|---|---|
+| `BlobWriter is already closed/aborted` | Writing to a `BlobWriter` after `close()` or `abort()`. |
+| `BlobReader is closed` | Reading from a `BlobReader` after `close()`. |
+| `Blob "<key>" exceeds the in-memory read cap` | `bytes(key)` read a blob past `BLOB_READ_ALL_MAX_BYTES`. Stream it with `createReadStream()` instead. |
+
+<Note>
+For small strings (counters, flags, serialized settings), use
+[`session.storage`](/app-devs/core-concepts/storage) instead. To share or export
+a file you didn't store as a blob, see `session.system`.
+</Note>

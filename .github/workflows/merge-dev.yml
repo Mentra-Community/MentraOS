@@ -1,0 +1,44 @@
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - dev
+      - codex/console2-scaffold
+    paths:
+      - "miniapps/merge/**"
+      - "cloud-v2/packages/auth/**"
+      - ".github/workflows/merge-dev.yml"
+
+name: Deploy Local Merge dev to Porter
+
+permissions:
+  contents: read
+
+concurrency:
+  group: merge-dev-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  porter-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set Github tag
+        id: vars
+        run: echo "sha_short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+
+      - name: Setup porter
+        uses: porter-dev/setup-porter@v0.1.0
+
+      - name: Deploy stack
+        timeout-minutes: 30
+        run: exec porter apply -f miniapps/merge/porter.dev.yaml
+        env:
+          PORTER_CLUSTER: 5783
+          PORTER_HOST: https://dashboard.porter.run
+          PORTER_PROJECT: 15081
+          PORTER_APP_NAME: merge-dev
+          PORTER_TAG: ${{ steps.vars.outputs.sha_short }}
+          PORTER_TOKEN: ${{ secrets.PORTER_APP_15081_5783 || secrets.PORTER_TOKEN }}

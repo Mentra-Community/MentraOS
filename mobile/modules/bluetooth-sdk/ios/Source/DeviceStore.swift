@@ -28,13 +28,16 @@ class DeviceStore {
         store.set("glasses", "deviceModel", "")
         store.set("glasses", "firmwareVersion", "")
         store.set("glasses", "micEnabled", false)
-        store.set("glasses", "voiceActivityDetectionEnabled", true)
+        store.set("glasses", "voiceActivityDetectionEnabled", BluetoothSdkDefaults.voiceActivityDetectionEnabled)
         store.set("glasses", "bluetoothClassicConnected", false)
         store.set("glasses", "caseRemoved", true)
         store.set("glasses", "caseOpen", true)
         store.set("glasses", "caseCharging", false)
         store.set("glasses", "caseBatteryLevel", -1)
         store.set("glasses", "headUp", false)
+        store.set("glasses", "bluetoothMacAddress", "")
+        store.set("glasses", "leftMacAddress", "")
+        store.set("glasses", "rightMacAddress", "")
         store.set("glasses", "serialNumber", "")
         store.set("glasses", "style", "")
         store.set("glasses", "color", "")
@@ -84,12 +87,15 @@ class DeviceStore {
         store.set("bluetooth", "dashboard_height", 4)
         store.set("bluetooth", "dashboard_depth", 2)
         store.set("bluetooth", "head_up_angle", 30)
+        store.set("bluetooth", "imu_enabled", false)
         store.set("bluetooth", "contextual_dashboard", true)
         store.set("bluetooth", "gallery_mode", true)
-        store.set("bluetooth", "voice_activity_detection_enabled", true)
+        store.set("bluetooth", "voice_activity_detection_enabled", BluetoothSdkDefaults.voiceActivityDetectionEnabled)
+        store.set("bluetooth", "loudness_gate_enabled", BluetoothSdkDefaults.loudnessGateEnabled)
+        // Mentra Nex feature flag (off by default; toggled from Nex Developer Settings):
+        store.set("bluetooth", "nex_chinese_captions", false)
         store.set("bluetooth", "screen_disabled", false)
-        store.set("bluetooth", "button_photo_size", "medium")
-        store.set("bluetooth", "button_camera_led", true)
+        store.set("bluetooth", "button_photo_size", "max")
         store.set("bluetooth", "button_max_recording_time", 10)
         store.set("bluetooth", "camera_fov", ["fov": 118, "roi_position": 0])
         store.set("bluetooth", "button_video_width", 1280)
@@ -113,6 +119,10 @@ class DeviceStore {
         store.set(category, key, value)
     }
 
+    func remove(_ category: String, _ key: String) {
+        store.remove(category, key)
+    }
+
     private func scheduleDashboardHeightToGlasses() {
         dashboardHeightDebounceTask?.cancel()
         dashboardHeightDebounceTask = Task { @MainActor in
@@ -134,16 +144,16 @@ class DeviceStore {
     /// Apply changes with side effects
     func apply(_ category: String, _ key: String, _ value: Any) {
         let oldValue = store.get(category, key)
+        let storeWouldSkipSet = store.wouldSkipSet(category, key, value)
         store.set(category, key, value)
+        if storeWouldSkipSet {
+            return
+        }
 
         // Trigger hardware updates based on setting changes
         switch (category, key) {
         case ("glasses", "fullyBooted"):
             Bridge.log("STORE: Glasses fullyBooted changed to \(value)")
-            // skip if the value is the same as the old value:
-            if let ready = value as? Bool, ready == oldValue as? Bool {
-                return
-            }
             if let ready = value as? Bool {
                 if ready {
                     DeviceManager.shared.handleDeviceReady()
@@ -184,7 +194,7 @@ class DeviceStore {
             let auto = store.get("bluetooth", "auto_brightness") as? Bool ?? true
             Task {
                 DeviceManager.shared.sgc?.setBrightness(b, autoMode: auto)
-                DeviceManager.shared.sgc?.sendTextWall("Set brightness to \(b)%")
+                await DeviceManager.shared.sgc?.sendTextWall("Set brightness to \(b)%")
                 try? await Task.sleep(nanoseconds: 800_000_000) // 0.8 seconds
                 DeviceManager.shared.sgc?.clearDisplay()
             }
@@ -196,7 +206,7 @@ class DeviceStore {
             Task {
                 DeviceManager.shared.sgc?.setBrightness(b, autoMode: auto)
                 if autoBrightnessChanged {
-                    DeviceManager.shared.sgc?.sendTextWall(
+                    await DeviceManager.shared.sgc?.sendTextWall(
                         auto ? "Enabled auto brightness" : "Disabled auto brightness"
                     )
                     try? await Task.sleep(nanoseconds: 800_000_000) // 0.8 seconds
@@ -215,16 +225,32 @@ class DeviceStore {
                 DeviceManager.shared.sgc?.setHeadUpAngle(angle)
             }
 
+        case ("bluetooth", "imu_enabled"):
+            if let enabled = value as? Bool {
+                Task { await DeviceManager.shared.sgc?.setImuEnabled(enabled) }
+            }
+
         case ("bluetooth", "menu_apps"):
             if let items = value as? [[String: Any]] {
                 DeviceManager.shared.sgc?.setDashboardMenu(items)
             }
+
+        case ("bluetooth", "calendar_events"), ("core", "calendar_events"):
+            if let items = value as? [[String: Any]] {
+                DeviceManager.shared.sgc?.sendCalendarEvents(items)
+            }
+
+        case ("bluetooth", "metric_system"), ("bluetooth", "twelve_hour_time"):
+            DeviceManager.shared.sgc?.sendDashboardDisplaySettings()
 
         case ("bluetooth", "gallery_mode"):
             DeviceManager.shared.sgc?.sendGalleryMode()
 
         case ("bluetooth", "voice_activity_detection_enabled"):
             DeviceManager.shared.sgc?.sendVoiceActivityDetectionSetting()
+
+        case ("bluetooth", "loudness_gate_enabled"):
+            DeviceManager.shared.sgc?.sendLoudnessGateSetting()
 
         case ("bluetooth", "screen_disabled"):
             if let disabled = value as? Bool {
@@ -238,15 +264,17 @@ class DeviceStore {
         case ("bluetooth", "button_photo_size"):
             DeviceManager.shared.sgc?.sendButtonPhotoSettings()
 
-        case ("bluetooth", "button_camera_led"):
-            DeviceManager.shared.sgc?.sendButtonCameraLedSetting()
-
         case ("bluetooth", "button_max_recording_time"):
             DeviceManager.shared.sgc?.sendButtonMaxRecordingTime()
 
         case ("bluetooth", "camera_fov"):
             DeviceManager.shared.sgc?.sendCameraFovSetting()
 
+        case ("bluetooth", "button_video_settings"):
+            DeviceManager.shared.sgc?.sendButtonVideoRecordingSettings()
+
+        // Legacy scalar keys remain supported for older hosts. New code should write the
+        // canonical button_video_settings object so width/height/fps update atomically.
         case ("bluetooth", "button_video_width"), ("bluetooth", "button_video_height"),
              ("bluetooth", "button_video_fps"):
             DeviceManager.shared.sgc?.sendButtonVideoRecordingSettings()
@@ -254,11 +282,6 @@ class DeviceStore {
         case ("bluetooth", "preferred_mic"):
             if let mic = value as? String {
                 apply("bluetooth", "micRanking", MicMap.map[mic] ?? MicMap.map["auto"]!)
-                DeviceManager.shared.setMicState()
-            }
-
-        case ("bluetooth", "offline_captions_running"):
-            if let running = value as? Bool {
                 DeviceManager.shared.setMicState()
             }
 

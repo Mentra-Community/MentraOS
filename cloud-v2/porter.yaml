@@ -1,0 +1,88 @@
+version: v2
+name: cloud-v2
+
+# Secrets + non-secret env come from a Porter env group that the Doppler
+# integration auto-syncs from `cloud-v2` project, `dev_aws` config. The
+# integration is set up in the Porter dashboard under Integrations → Doppler.
+# Service token to use: `doppler configs tokens create … --config dev_aws`.
+envGroups:
+  - cloud-v2-dev-doppler
+
+# Single image, multiple services running different entry points.
+build:
+  method: docker
+  context: ../
+  dockerfile: ./docker/Dockerfile
+
+services:
+  # ── core ───────────────────────────────────────────────────────────
+  - name: core
+    type: web
+    run: bun packages/core/src/index.ts
+    port: 3000
+    instances: 1
+    cpuCores: 0.25
+    ramMegabytes: 1024
+    domains:
+      - name: core.us-west-2.dev.mentraglass.com
+    env:
+      PORT: "3000"
+      LOG_STDOUT_JSON: "true"
+      SERVICE_NAME: "core"
+    livenessCheck:
+      enabled: true
+      httpPath: /healthz
+      timeoutSeconds: 3
+      initialDelaySeconds: 15
+    readinessCheck:
+      enabled: true
+      httpPath: /ready
+      timeoutSeconds: 5
+      initialDelaySeconds: 15
+    # WS endpoints don't live on core in v2 (audio owns the per-user WS),
+    # but core's REST endpoints can also see brief silent periods. Bumping
+    # nginx timeouts is harmless and matches v1's lesson (issue 035).
+    ingressAnnotations:
+      nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+      nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+      nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
+    terminationGracePeriodSeconds: 10
+
+  # ── runtime ────────────────────────────────────────────────────────
+  # Holds the per-user WS, ingests UDP, runs LC3 + Soniox in Bun Workers.
+  - name: runtime
+    type: web
+    run: bun packages/runtime/src/index.ts
+    port: 3001
+    instances: 1
+    cpuCores: 0.5
+    ramMegabytes: 2048
+    domains:
+      - name: runtime.us-west-2.dev.mentraglass.com
+    env:
+      PORT: "3001"
+      AUDIO_UDP_PORT: "8000"
+      LOG_STDOUT_JSON: "true"
+      SERVICE_NAME: "runtime"
+      AUDIO_WORKERS: "1"
+    livenessCheck:
+      enabled: true
+      httpPath: /healthz
+      timeoutSeconds: 3
+      initialDelaySeconds: 15
+    readinessCheck:
+      enabled: true
+      httpPath: /ready
+      timeoutSeconds: 5
+      initialDelaySeconds: 15
+    # Per-user WS for transcript delivery — long idle periods (silence)
+    # are normal. Lesson from v1 issue 035: bump nginx WS timeouts to 1h.
+    ingressAnnotations:
+      nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+      nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+      nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
+    terminationGracePeriodSeconds: 10
+    additionalPorts:
+      - port: 8000
+        protocol: UDP
+        name: udp-audio

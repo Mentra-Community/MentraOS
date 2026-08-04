@@ -1,0 +1,58 @@
+{
+  "name": "@mentra/cloud-client",
+  "version": "0.1.0-dev.0",
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./react-native": "./react-native/index.ts",
+    "./node": "./node/index.ts"
+  },
+  "scripts": {
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@mentra/cloud-protocol": "^0.1.0-dev.0",
+    "tweetnacl": "^1.0.3"
+  },
+  "devDependencies": {
+    "ws": "^8.18.0",
+    "@types/ws": "^8.5.12"
+  },
+  "peerDependencies": {
+    "ws": "^8.18.0"
+  },
+  "peerDependenciesMeta": {
+    "ws": {
+      "optional": true
+    }
+  },
+  "files": [
+    "src",
+    "react-native",
+    "node",
+    "!src/**/*.test.ts",
+    "!react-native/**/*.test.ts",
+    "!node/**/*.test.ts"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Mentra-Community/MentraOS.git",
+    "directory": "cloud-v2/packages/cloud-client"
+  },
+  "description": "MentraOS cloud client — handshake, envelopes and module message flows over the cloud wire protocol",
+  "keywords": [
+    "mentra",
+    "mentraos",
+    "cloud",
+    "client",
+    "websocket"
+  ],
+  "homepage": "https://github.com/Mentra-Community/MentraOS/tree/dev/cloud-v2/packages/cloud-client#readme",
+  "bugs": {
+    "url": "https://github.com/Mentra-Community/MentraOS/issues"
+  }
+}

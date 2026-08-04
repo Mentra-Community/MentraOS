@@ -3,6 +3,19 @@ name: Run Cloud Tests ☁️
 
 # trigger
 on:
+  # Run on PRs into dev/staging/main so cloud tests gate PRs (via ci-gate).
+  # Path-filtered so non-cloud PRs don't run it — matching the rest of the
+  # cloud builders and keeping the ci-gate per-area.
+  pull_request:
+    branches:
+      - main
+      - dev
+      - staging
+    paths:
+      - "cloud/packages/**"
+      - "cloud/bun.lock"
+      - "cloud/package.json"
+      - ".github/workflows/cloud-tests.yml"
   push:
     paths:
       - "cloud/packages/**"

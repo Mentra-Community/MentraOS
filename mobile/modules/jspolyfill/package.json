@@ -1,0 +1,40 @@
+{
+  "name": "@mentra/jspolyfill",
+  "version": "0.1.0-dev.0",
+  "description": "MentraJS polyfill bundle \u2014 installed into each per-miniapp JSContext (iOS-JSC, Android-QuickJS) at spawn time. Provides browser-like globals (console, timers, fetch, WebSocket, localStorage, crypto.subtle) over a single __dispatch native bridge, plus the __deliver / signalReady plumbing the host runtime relies on.",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "bun test",
+    "clean": "rm -rf dist assets/startup.js ../crust/ios/Resources/startup.js",
+    "prepare": "node scripts/build.mjs"
+  },
+  "files": [
+    "src",
+    "dist",
+    "assets",
+    "!src/**/*.test.ts"
+  ],
+  "keywords": [
+    "mentra",
+    "mentrajs",
+    "polyfill"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "esbuild": "^0.23.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Mentra-Community/MentraOS.git",
+    "directory": "mobile/modules/jspolyfill"
+  },
+  "homepage": "https://github.com/Mentra-Community/MentraOS/tree/dev/mobile/modules/jspolyfill#readme",
+  "bugs": {
+    "url": "https://github.com/Mentra-Community/MentraOS/issues"
+  }
+}

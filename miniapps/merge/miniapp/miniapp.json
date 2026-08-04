@@ -1,0 +1,39 @@
+{
+  "$schema": "./node_modules/@mentra/miniapp-cli/schema/miniapp.schema.json",
+  "packageName": "com.mentra.merge",
+  "version": "0.1.29",
+  "name": "Merge",
+  "description": "Merge proactive AI assistant. Listens to conversations and surfaces concise contextual insights through a backend that keeps AI secrets off-device.",
+  "type": "background",
+  "sdkVersion": "0.3.0",
+  "minHostVersion": "1.42.0",
+  "port": 3122,
+  "entry": {
+    "background": "background/index.js",
+    "ui": "ui/index.html"
+  },
+  "permissions": [
+    {
+      "type": "MICROPHONE",
+      "description": "Used to subscribe to live transcription"
+    }
+  ],
+  "hardwareRequirements": [
+    {
+      "type": "MICROPHONE",
+      "level": "REQUIRED",
+      "description": "Captures speech for transcription"
+    },
+    {
+      "type": "DISPLAY",
+      "level": "OPTIONAL",
+      "description": "Shows insights on the glasses display when one is available"
+    },
+    {
+      "type": "SPEAKER",
+      "level": "OPTIONAL",
+      "description": "Speaks insights aloud on glasses without a display (e.g. Mentra Live)"
+    }
+  ],
+  "icon": "icon.png"
+}

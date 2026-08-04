@@ -57,7 +57,7 @@ public class MediaUtils {
                 break;
         }
         
-        File mediaDir = new File(context.getExternalFilesDir(null), dirName);
+        File mediaDir = new File(MediaStorage.getMediaRoot(context), dirName);
         if (!mediaDir.exists()) {
             if (!mediaDir.mkdirs()) {
                 Log.e(TAG, "Failed to create media directory: " + mediaDir.getAbsolutePath());
@@ -135,11 +135,11 @@ public class MediaUtils {
             return -1;
         }
         
-        File externalDir = context.getExternalFilesDir(null);
+        File externalDir = MediaStorage.getMediaRoot(context);
         if (externalDir == null) {
             return -1;
         }
-        
+
         return externalDir.getFreeSpace();
     }
     

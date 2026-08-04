@@ -10,7 +10,7 @@ This document outlines the implementation plan for redesigning the MentraOS Deve
 
 | Question | Answer |
 |----------|--------|
-| Docs base URL | `docs.mentraglass.com` (Mintlify-powered, source in `/docs`) |
+| Docs base URL | `docs.mentraglass.com` (Mintlify-powered, source in `/mintlify-docs`) |
 | Server URL verification | HTTP reachability check, hit `/health` endpoint |
 | Onboarding Instructions | Remove from frontend entirely |
 | Webview URL toggle | When OFF, send `${serverUrl}/webview` to backend (all apps have a webview) |
@@ -21,7 +21,7 @@ This document outlines the implementation plan for redesigning the MentraOS Deve
 
 ## Documentation Links Reference
 
-Based on `/docs/docs.json`, here are the existing docs pages we can link to:
+Based on `/mintlify-docs/docs.json`, here are the existing docs pages we can link to:
 
 | Console Section | Docs Page Path | Full URL |
 |-----------------|----------------|----------|

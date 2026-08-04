@@ -2,6 +2,7 @@
 import {describe, expect, test} from "bun:test"
 
 import {parseEnvelope, serializeEnvelope} from "./envelope"
+import {CLOUD_STATUS_STREAM} from "./modules/cloud"
 import {MiniappRequestType, MiniappResponseType} from "./protocol"
 import {MiniappSession} from "./session"
 import {Transport, TransportDisconnectHandler, TransportMessageHandler} from "./transport/types"
@@ -62,8 +63,10 @@ describe("MiniappSession queue-before-ACK", () => {
     const connectPromise = session.connect()
 
     // Call things BEFORE the phone responds with CONNECT_ACK. These should queue.
-    session.display.showTextWall("queued-1")
-    session.display.showTextWall("queued-2")
+    // (sendOneShot is the public escape hatch — the same path every module's
+    // fire-and-forget sends ride.)
+    session.sendOneShot({type: "test_one_shot", text: "queued-1"})
+    session.sendOneShot({type: "test_one_shot", text: "queued-2"})
     expect(session.ready).toBe(false)
 
     // Let the connect() IIFE resume past `await transport.open()` so CONNECT is sent.
@@ -90,9 +93,8 @@ describe("MiniappSession queue-before-ACK", () => {
     expect(transport.sent.length).toBe(3)
     const queued1 = parseEnvelope(transport.sent[1]!)
     const queued2 = parseEnvelope(transport.sent[2]!)
-    // showTextWall produces {type: DISPLAY, view, layout: {layoutType, text}, durationMs}.
-    expect((queued1!.payload as {layout: {text: string}}).layout.text).toBe("queued-1")
-    expect((queued2!.payload as {layout: {text: string}}).layout.text).toBe("queued-2")
+    expect((queued1!.payload as {text: string}).text).toBe("queued-1")
+    expect((queued2!.payload as {text: string}).text).toBe("queued-2")
   })
 
   test("post-ACK calls bypass the queue", async () => {
@@ -108,7 +110,7 @@ describe("MiniappSession queue-before-ACK", () => {
     await connectPromise
 
     const before = transport.sent.length
-    session.display.showTextWall("hello post-ack")
+    session.sendOneShot({type: "test_one_shot", text: "hello post-ack"})
     expect(transport.sent.length).toBe(before + 1)
   })
 })
@@ -137,6 +139,176 @@ describe("MiniappSession auto-PONG", () => {
   })
 })
 
+describe("MiniappSession auth", () => {
+  test("session.auth reads miniapp token from CONNECT_ACK", async () => {
+    const transport = new FakeTransport()
+    const session = new MiniappSession({transport})
+    const connectPromise = session.connect()
+    transport.deliverFromPhone({
+      type: MiniappResponseType.CONNECT_ACK,
+      userId: "user_123",
+      packageName: "com.test.auth",
+      capabilities: null,
+      auth: {
+        mentraUserId: "user_123",
+        oemId: "test-oem",
+        token: "miniapp-token",
+        expiresAt: Date.now() + 60_000,
+      },
+    })
+    await connectPromise
+
+    expect(await session.auth.getToken()).toBe("miniapp-token")
+    expect(await session.auth.getAuthHeader()).toBe("Bearer miniapp-token")
+    expect(session.auth.current?.mentraUserId).toBe("user_123")
+  })
+
+  test("session.auth waits for AUTH_UPDATE when token misses CONNECT_ACK", async () => {
+    const transport = new FakeTransport()
+    const session = new MiniappSession({transport})
+    const connectPromise = session.connect()
+    transport.deliverFromPhone({
+      type: MiniappResponseType.CONNECT_ACK,
+      userId: "",
+      packageName: "com.test.auth.update",
+      capabilities: null,
+    })
+    await connectPromise
+
+    const tokenPromise = session.auth.getToken()
+    transport.deliverFromPhone({
+      type: MiniappResponseType.AUTH_UPDATE,
+      auth: {
+        mentraUserId: "user_later",
+        token: "later-token",
+        expiresAt: Date.now() + 60_000,
+      },
+    })
+
+    expect(await tokenPromise).toBe("later-token")
+    expect(session.userId).toBe("user_later")
+  })
+
+  test("session.auth requests a fresh token when the cached token expires", async () => {
+    const transport = new FakeTransport()
+    const session = new MiniappSession({transport})
+    const connectPromise = session.connect()
+    transport.deliverFromPhone({
+      type: MiniappResponseType.CONNECT_ACK,
+      userId: "user_expired",
+      packageName: "com.test.auth.expired",
+      capabilities: null,
+      auth: {
+        mentraUserId: "user_expired",
+        token: "expired-token",
+        expiresAt: Date.now() - 1_000,
+      },
+    })
+    await connectPromise
+
+    const tokenPromise = session.auth.getToken()
+    const outbound = parseEnvelope(transport.sent[transport.sent.length - 1]!)
+    expect((outbound!.payload as {type?: string}).type).toBe(MiniappRequestType.AUTH_REFRESH)
+    expect(outbound!.requestId).toBeDefined()
+
+    transport.deliverFromPhone(
+      {
+        type: MiniappResponseType.REQUEST_RESULT,
+        ok: true,
+        data: {
+          auth: {
+            mentraUserId: "user_expired",
+            token: "fresh-token",
+            expiresAt: Date.now() + 60_000,
+          },
+        },
+      },
+      outbound!.requestId!,
+    )
+
+    expect(await tokenPromise).toBe("fresh-token")
+    expect(session.auth.current?.token).toBe("fresh-token")
+  })
+
+  test("session.auth.fetch attaches bearer token", async () => {
+    const transport = new FakeTransport()
+    const session = new MiniappSession({transport})
+    const connectPromise = session.connect()
+    transport.deliverFromPhone({
+      type: MiniappResponseType.CONNECT_ACK,
+      userId: "user_fetch",
+      packageName: "com.test.auth.fetch",
+      capabilities: null,
+      auth: {
+        mentraUserId: "user_fetch",
+        token: "fetch-token",
+        expiresAt: Date.now() + 60_000,
+      },
+    })
+    await connectPromise
+
+    const originalFetch = globalThis.fetch
+    let observedAuth = ""
+    globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+      observedAuth = new Headers(init?.headers).get("Authorization") ?? ""
+      return Promise.resolve(new Response(JSON.stringify({ok: true}), {status: 200}))
+    }) as typeof fetch
+
+    try {
+      const res = await session.auth.fetch("https://example.test/api", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+      })
+      expect(res.status).toBe(200)
+      expect(observedAuth).toBe("Bearer fetch-token")
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  test("session.auth.fetch works when Headers is unavailable", async () => {
+    const transport = new FakeTransport()
+    const session = new MiniappSession({transport})
+    const connectPromise = session.connect()
+    transport.deliverFromPhone({
+      type: MiniappResponseType.CONNECT_ACK,
+      userId: "user_fetch_no_headers",
+      packageName: "com.test.auth.fetch.noheaders",
+      capabilities: null,
+      auth: {
+        mentraUserId: "user_fetch_no_headers",
+        token: "fetch-token-no-headers",
+        expiresAt: Date.now() + 60_000,
+      },
+    })
+    await connectPromise
+
+    const originalFetch = globalThis.fetch
+    const originalHeaders = globalThis.Headers
+    let observedHeaders: HeadersInit | undefined
+    globalThis.Headers = undefined as never
+    globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit) => {
+      observedHeaders = init?.headers
+      return Promise.resolve(new Response(JSON.stringify({ok: true}), {status: 200}))
+    }) as typeof fetch
+
+    try {
+      const res = await session.auth.fetch("https://example.test/api", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+      })
+      expect(res.status).toBe(200)
+      expect(observedHeaders).toEqual({
+        "Content-Type": "application/json",
+        "Authorization": "Bearer fetch-token-no-headers",
+      })
+    } finally {
+      globalThis.fetch = originalFetch
+      globalThis.Headers = originalHeaders
+    }
+  })
+})
+
 describe("MiniappSession request correlation", () => {
   test("REQUEST_RESULT with matching requestId resolves the promise", async () => {
     const transport = new FakeTransport()
@@ -156,10 +328,7 @@ describe("MiniappSession request correlation", () => {
     expect(outbound!.requestId).toBeDefined()
     const reqId = outbound!.requestId!
 
-    transport.deliverFromPhone(
-      {type: MiniappResponseType.REQUEST_RESULT, ok: true, data: {value: "hello"}},
-      reqId,
-    )
+    transport.deliverFromPhone({type: MiniappResponseType.REQUEST_RESULT, ok: true, data: {value: "hello"}}, reqId)
     const value = await resultPromise
     expect(value).toBe("hello")
   })
@@ -223,6 +392,36 @@ describe("MiniappSession event fan-out", () => {
 
     expect(received.length).toBe(1)
     expect((received[0] as {buttonId: string}).buttonId).toBe("primary")
+
+    unsub()
+  })
+
+  test("cloud status pushes update session.cloud without sending SUBSCRIBE", async () => {
+    const transport = new FakeTransport()
+    const session = new MiniappSession({transport})
+    const connectPromise = session.connect()
+    transport.deliverFromPhone({
+      type: MiniappResponseType.CONNECT_ACK,
+      userId: "u",
+      packageName: "com.test.cloud",
+      capabilities: null,
+    })
+    await connectPromise
+
+    const values: string[] = []
+    const unsub = session.cloud.onStatusChanged((s) => values.push(`${s.status}:${s.audioTransport}`))
+    const sentBefore = transport.sent.length
+
+    transport.deliverFromPhone({
+      type: MiniappResponseType.EVENT,
+      streamType: CLOUD_STATUS_STREAM,
+      data: {status: "connected", audioTransport: "udp"},
+    })
+
+    expect(session.cloud.status).toEqual({status: "connected", audioTransport: "udp"})
+    expect(session.cloud.connected).toBe(true)
+    expect(values).toEqual(["disconnected:none", "connected:udp"])
+    expect(transport.sent.length).toBe(sentBefore)
 
     unsub()
   })
@@ -297,5 +496,33 @@ describe("MiniappSession transport disconnect", () => {
     expect(caught).toBeDefined()
     expect((caught as {code: string}).code).toBe("NOT_CONNECTED")
     expect(session.ready).toBe(false)
+  })
+
+  test("disconnect rejects pending auth waiters instead of leaving them to time out", async () => {
+    const transport = new FakeTransport()
+    const session = new MiniappSession({transport})
+    const connectPromise = session.connect()
+    // CONNECT_ACK without an auth block, so getToken() must register a waiter
+    // and wait for an AUTH_UPDATE that will never arrive once the transport drops.
+    transport.deliverFromPhone({
+      type: MiniappResponseType.CONNECT_ACK,
+      userId: "",
+      packageName: "com.test.auth.disc",
+      capabilities: null,
+    })
+    await connectPromise
+
+    const tokenPromise = session.auth.getToken()
+    transport.fireDisconnect("test disconnect")
+
+    let caught: unknown
+    try {
+      await tokenPromise
+    } catch (e) {
+      caught = e
+    }
+    expect(caught).toBeDefined()
+    expect((caught as {code: string}).code).toBe("NOT_CONNECTED")
+    expect((caught as Error).message).toContain("test disconnect")
   })
 })

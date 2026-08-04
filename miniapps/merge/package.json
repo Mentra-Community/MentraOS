@@ -1,0 +1,35 @@
+{
+  "name": "local-merge",
+  "private": true,
+  "description": "Local Merge proactive AI miniapp for conversation insights",
+  "scripts": {
+    "dev": "bun run dev:doppler",
+    "dev:local": "bun run backend:dev:local & bun run miniapp:dev; wait",
+    "dev:doppler": "doppler run --project local-merge --config dev --preserve-env -- sh -c 'MERGE_BACKEND_URL=${MENTRA_PUBLIC_MERGE_BACKEND_URL:-http://localhost:3130}; MERGE_PORT=${LOCAL_MERGE_PORT:-3130}; MERGE_JWKS_URL=${MENTRA_AUTH_JWKS_URL:-https://core.dev.us-west-2.mentraglass.com/.well-known/jwks.json}; MERGE_ISSUERS=${MENTRA_AUTH_ISSUERS:-cloud-core,mentra}; MERGE_WEB_SEARCH=${MERGE_ENABLE_WEB_SEARCH:-true}; PORT=$MERGE_PORT MENTRA_AUTH_JWKS_URL=$MERGE_JWKS_URL MENTRA_AUTH_ISSUERS=$MERGE_ISSUERS MERGE_ENABLE_WEB_SEARCH=$MERGE_WEB_SEARCH MENTRA_PUBLIC_MERGE_BACKEND_URL=$MERGE_BACKEND_URL bun run backend:dev:local & MENTRA_PUBLIC_MERGE_BACKEND_URL=$MERGE_BACKEND_URL bun run miniapp:dev; wait'",
+    "dev:tunnel": "MENTRA_PUBLIC_MERGE_BACKEND_URL=https://local-merge-isaiah.mentraglass.com bun run dev:doppler",
+    "backend:dev": "bun run backend:dev:doppler",
+    "backend:dev:local": "bun --watch backend/src/index.ts",
+    "backend:dev:doppler": "doppler run --project local-merge --config dev --preserve-env -- sh -c 'MENTRA_AUTH_JWKS_URL=${MENTRA_AUTH_JWKS_URL:-https://core.dev.us-west-2.mentraglass.com/.well-known/jwks.json} MENTRA_AUTH_ISSUERS=${MENTRA_AUTH_ISSUERS:-cloud-core,mentra} MERGE_ENABLE_WEB_SEARCH=${MERGE_ENABLE_WEB_SEARCH:-true} PORT=${LOCAL_MERGE_PORT:-3130} bun run backend:dev:local'",
+    "backend:start": "bun backend/src/index.ts",
+    "miniapp:dev": "cd miniapp && bun ../node_modules/.bin/mentra-miniapp dev",
+    "miniapp:build": "cd miniapp && bun run build.ts",
+    "miniapp:pack": "cd miniapp && PKG=$(node -p \"require('./miniapp.json').packageName\") && VERSION=$(node -p \"require('./miniapp.json').version\") && rm -f build/$PKG-$VERSION.zip && mkdir -p build && cd dist && zip -qr ../build/$PKG-$VERSION.zip .",
+    "build": "bun run miniapp:build",
+    "pack": "bun run miniapp:build && bun run miniapp:pack"
+  },
+  "dependencies": {
+    "@mentra/auth": "workspace:*",
+    "@mentra/miniapp": "workspace:*",
+    "hono": "^4.11.1",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "tailwindcss": "^4.0.8"
+  },
+  "devDependencies": {
+    "@mentra/miniapp-cli": "workspace:*",
+    "@types/react": "^19.1.6",
+    "@types/react-dom": "^19.1.6",
+    "bun-types": "^1.3.14",
+    "bun-plugin-tailwind": "^0.1.2"
+  }
+}

@@ -8,7 +8,7 @@
 
 import {MiniappRequestType, MiniappStreamType} from "../protocol"
 import {MiniappSession} from "../session"
-import type {BatteryData, ConnectionData, UnsubscribeFn} from "./events"
+import type {BatteryData, ConnectionData, UnsubscribeFn, WifiData} from "./events"
 
 export class GlassesModule {
   constructor(private readonly session: MiniappSession) {}
@@ -19,6 +19,27 @@ export class GlassesModule {
 
   onConnection(handler: (data: ConnectionData) => void): UnsubscribeFn {
     return this.session._subscribe(MiniappStreamType.GLASSES_CONNECTION, handler as (data: unknown) => void)
+  }
+
+  /**
+   * Subscribe to glasses Wi-Fi state. Fires the current state on subscribe and
+   * on every change. `connected` is false on glasses without Wi-Fi. Streaming
+   * requires Wi-Fi — pair this with {@link requestWifiSetup} to prompt the user.
+   */
+  onWifi(handler: (data: WifiData) => void): UnsubscribeFn {
+    return this.session._subscribe(MiniappStreamType.GLASSES_WIFI, handler as (data: unknown) => void)
+  }
+
+  /**
+   * Ask the host to open the glasses Wi-Fi setup flow on the phone. Mirrors the
+   * cloud SDK's `session.requestWifiSetup(reason)`. `reason` is a user-facing
+   * line shown in the setup prompt (e.g. "Streaming needs your glasses on Wi-Fi").
+   */
+  async requestWifiSetup(reason?: string): Promise<void> {
+    await this.session.sendRequest<void>({
+      type: MiniappRequestType.REQUEST_WIFI_SETUP,
+      reason,
+    })
   }
 
   /**

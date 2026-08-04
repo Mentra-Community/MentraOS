@@ -1,19 +1,21 @@
 {
-  "name": "crust",
-  "version": "0.1.0",
+  "name": "@mentra/crust",
+  "version": "0.1.0-dev.1",
   "description": "Mentra Native Module",
   "main": "build/index.js",
   "types": "build/index.d.ts",
+  "app.plugin": "app.plugin.js",
   "scripts": {
-    "build": "expo-module build",
+    "build": "expo-module build && expo-module build plugin",
     "clean": "expo-module clean",
     "lint": "expo-module lint",
     "test": "expo-module test",
-    "prepare": "expo-module prepare",
+    "prepare": "expo-module prepare && EXPO_NONINTERACTIVE=1 expo-module build plugin",
     "prepublishOnly": "expo-module prepublishOnly",
     "expo-module": "expo-module",
     "open:ios": "xed example/ios",
-    "open:android": "open -a \"Android Studio\" example/android"
+    "open:android": "open -a \"Android Studio\" example/android",
+    "build:plugin": "expo-module build plugin"
   },
   "keywords": [
     "react-native",
@@ -28,13 +30,40 @@
   "author": "fossephate <6175367+fossephate@users.noreply.github.com> (https://github.com/fossephate)",
   "license": "MIT",
   "homepage": "https://github.com/fossephate/crust#readme",
-  "dependencies": {},
+  "dependencies": {
+    "@mentra/jspolyfill": "^0.1.0-dev.0"
+  },
   "devDependencies": {
-    "expo-module-scripts": "^55.0.2"
+    "@expo/config-plugins": ">=8.0.0",
+    "expo-module-scripts": "^55.0.2",
+    "typescript": "~5.9.2"
   },
   "peerDependencies": {
+    "@types/react": "*",
     "expo": "*",
     "react": "*",
     "react-native": "*"
-  }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "android",
+    "!android/.gradle",
+    "!android/.gradle/**",
+    "!android/build",
+    "!android/build/**",
+    "ios",
+    "!ios/build",
+    "!ios/build/**",
+    "!ios/Pods",
+    "!ios/Pods/**",
+    "app.plugin.js",
+    "build",
+    "plugin/build",
+    "expo-module.config.json",
+    "src",
+    "!src/__tests__",
+    "README.md"
+  ]
 }

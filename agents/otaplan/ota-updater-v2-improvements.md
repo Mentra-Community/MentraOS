@@ -130,7 +130,7 @@ private void processAppsSequentially(JSONObject apps) throws Exception {
     // Process apps in order - important for sequential updates
     String[] orderedPackages = {
         "com.mentra.asg_client",     // Update ASG client first
-        "com.augmentos.otaupdater"      // Then OTA updater
+        "com.mentra.recovery"      // Then OTA updater
     };
 
     for (String packageName : orderedPackages) {
@@ -194,7 +194,7 @@ If you prefer order defined in version.json:
       "sha256": "..."
     },
     {
-      "packageName": "com.augmentos.otaupdater",
+      "packageName": "com.mentra.recovery",
       "versionCode": 2,
       "apkUrl": "https://...",
       "sha256": "..."
@@ -235,8 +235,8 @@ Add this note to the implementation:
  *
  * ASG Client can start the service with:
  * Intent serviceIntent = new Intent();
- * serviceIntent.setClassName("com.augmentos.otaupdater",
- *                           "com.augmentos.otaupdater.OtaUpdaterService");
+ * serviceIntent.setClassName("com.mentra.recovery",
+ *                           "com.mentra.recovery.service.RecoveryService");
  * startForegroundService(serviceIntent);
  */
 ```

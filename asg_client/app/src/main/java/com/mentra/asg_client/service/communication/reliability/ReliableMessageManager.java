@@ -8,6 +8,7 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.security.SecureRandom;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -23,6 +24,7 @@ public class ReliableMessageManager {
     private static final int MAX_RETRIES = 2;             // 2 retries (3 total attempts)
     private static final long MAX_PENDING_MESSAGES = 10;  // Resource constraint
     private static final long CLEANUP_INTERVAL_MS = 30000; // 30 seconds
+    private static final long QUEUED_SEND_CLEANUP_MS = CLEANUP_INTERVAL_MS * 10; // 5 minutes
 
     // State
     private final ConcurrentHashMap<Long, PendingMessage> pendingMessages;
@@ -44,7 +46,17 @@ public class ReliableMessageManager {
      * Implemented by the class that has access to Bluetooth.
      */
     public interface IMessageSender {
-        boolean sendData(byte[] data);
+        boolean sendData(byte[] data, SendCompletionCallback callback, SendGate gate);
+    }
+
+    public interface SendCompletionCallback {
+        void onComplete(boolean success);
+    }
+
+    public interface SendGate {
+        boolean shouldSend();
+
+        Object lock();
     }
 
     /**
@@ -54,13 +66,12 @@ public class ReliableMessageManager {
         final JSONObject message;
         final long timestamp;
         final int retryCount;
-        final Runnable timeoutRunnable;
+        volatile Runnable timeoutRunnable;
 
-        PendingMessage(JSONObject message, int retryCount, Runnable timeoutRunnable) {
+        PendingMessage(JSONObject message, int retryCount) {
             this.message = message;
             this.timestamp = System.currentTimeMillis();
             this.retryCount = retryCount;
-            this.timeoutRunnable = timeoutRunnable;
         }
     }
 
@@ -103,15 +114,27 @@ public class ReliableMessageManager {
             long messageId = generateMessageId();
             message.put("mId", messageId);
 
-            // Track the message
-            trackMessage(messageId, message);
+            PendingMessage pending = new PendingMessage(message, 0);
+            pendingMessages.put(messageId, pending);
 
-            // Send immediately
-            boolean sent = sendDirectly(message);
-            if (sent) {
-                totalMessagesSent++;
+            // Accept ACKs immediately, but start the timeout only after the queued transport send
+            // actually completes so outbound queue delay does not consume the ACK window.
+            boolean accepted =
+                    sendDirectly(
+                            message,
+                            success -> {
+                                if (success) {
+                                    startAckTimeoutIfPending(messageId, pending, ACK_TIMEOUT_MS);
+                                    totalMessagesSent++;
+                                } else if (pendingMessages.remove(messageId, pending)) {
+                                    totalFailures++;
+                                }
+                            },
+                            pendingGate(messageId, pending));
+            if (!accepted && pendingMessages.remove(messageId, pending)) {
+                totalFailures++;
             }
-            return sent;
+            return accepted;
 
         } catch (JSONException e) {
             Log.e(TAG, "Error adding message ID", e);
@@ -124,15 +147,23 @@ public class ReliableMessageManager {
      * @param messageId The message ID being acknowledged
      */
     public void handleAck(long messageId) {
-        PendingMessage pending = pendingMessages.remove(messageId);
+        PendingMessage pending = pendingMessages.get(messageId);
         if (pending != null) {
-            // Cancel timeout
-            retryHandler.removeCallbacks(pending.timeoutRunnable);
-            totalAcksReceived++;
+            synchronized (pending) {
+                if (!pendingMessages.remove(messageId, pending)) {
+                    return;
+                }
 
-            Log.d(TAG, String.format("ACK received for message %d (attempts: %d, time: %dms)",
-                messageId, pending.retryCount + 1,
-                System.currentTimeMillis() - pending.timestamp));
+                // Cancel timeout
+                if (pending.timeoutRunnable != null) {
+                    retryHandler.removeCallbacks(pending.timeoutRunnable);
+                }
+                totalAcksReceived++;
+
+                Log.d(TAG, String.format("ACK received for message %d (attempts: %d, time: %dms)",
+                    messageId, pending.retryCount + 1,
+                    System.currentTimeMillis() - pending.timestamp));
+            }
         }
     }
 
@@ -163,19 +194,18 @@ public class ReliableMessageManager {
     }
 
     /**
-     * Track a message for retry if ACK not received.
+     * Arm the ACK timeout if the message is still pending.
      * @param messageId The message ID to track
-     * @param message The message content
+     * @param pending The pending message to arm
      */
-    private void trackMessage(long messageId, JSONObject message) {
+    private void startAckTimeoutIfPending(long messageId, PendingMessage pending, long timeoutMs) {
         Runnable timeoutRunnable = () -> handleTimeout(messageId);
+        pending.timeoutRunnable = timeoutRunnable;
 
-        PendingMessage pending = new PendingMessage(message, 0, timeoutRunnable);
-
-        pendingMessages.put(messageId, pending);
-
-        // Schedule timeout check
-        retryHandler.postDelayed(timeoutRunnable, ACK_TIMEOUT_MS);
+        retryHandler.postDelayed(timeoutRunnable, timeoutMs);
+        if (pendingMessages.get(messageId) != pending) {
+            retryHandler.removeCallbacks(timeoutRunnable);
+        }
     }
 
     /**
@@ -209,21 +239,30 @@ public class ReliableMessageManager {
      * @param pending The pending message information
      */
     private void retryMessage(long messageId, PendingMessage pending) {
-        // Create updated pending message with incremented retry count
-        PendingMessage updated = new PendingMessage(
-            pending.message,
-            pending.retryCount + 1,
-            pending.timeoutRunnable
-        );
-
-        pendingMessages.put(messageId, updated);
-
-        // Send again
-        sendDirectly(pending.message);
-
-        // Reschedule timeout with exponential backoff
+        int nextRetryCount = pending.retryCount + 1;
         long backoffDelay = ACK_TIMEOUT_MS * (1L << pending.retryCount);
-        retryHandler.postDelayed(pending.timeoutRunnable, backoffDelay);
+        PendingMessage retryPending = new PendingMessage(pending.message, nextRetryCount);
+
+        if (!pendingMessages.replace(messageId, pending, retryPending)) {
+            return;
+        }
+
+        // Keep accepting ACKs while the retry is queued, but restart the ACK timeout only after
+        // the queued retry actually completes.
+        boolean accepted =
+                sendDirectly(
+                        pending.message,
+                        success -> {
+                            if (success) {
+                                startAckTimeoutIfPending(messageId, retryPending, backoffDelay);
+                            } else if (pendingMessages.remove(messageId, retryPending)) {
+                                totalFailures++;
+                            }
+                        },
+                        pendingGate(messageId, retryPending));
+        if (!accepted && pendingMessages.remove(messageId, retryPending)) {
+            totalFailures++;
+        }
     }
 
     /**
@@ -232,13 +271,32 @@ public class ReliableMessageManager {
      * @return true if sent successfully, false otherwise
      */
     private boolean sendDirectly(JSONObject message) {
+        return sendDirectly(message, null, null);
+    }
+
+    private boolean sendDirectly(
+            JSONObject message, SendCompletionCallback callback, SendGate gate) {
         try {
             String jsonString = message.toString();
-            return messageSender.sendData(jsonString.getBytes());
+            return messageSender.sendData(jsonString.getBytes(), callback, gate);
         } catch (Exception e) {
             Log.e(TAG, "Error sending message", e);
             return false;
         }
+    }
+
+    private SendGate pendingGate(long messageId, PendingMessage pending) {
+        return new SendGate() {
+            @Override
+            public boolean shouldSend() {
+                return pendingMessages.get(messageId) == pending;
+            }
+
+            @Override
+            public Object lock() {
+                return pending;
+            }
+        };
     }
 
     /**
@@ -257,16 +315,31 @@ public class ReliableMessageManager {
     private void cleanupOldMessages() {
         long now = System.currentTimeMillis();
         long cutoff = now - (CLEANUP_INTERVAL_MS * 2);
+        long queuedCutoff = now - QUEUED_SEND_CLEANUP_MS;
 
-        pendingMessages.entrySet().removeIf(entry -> {
+        for (Map.Entry<Long, PendingMessage> entry : pendingMessages.entrySet()) {
+            long messageId = entry.getKey();
             PendingMessage pending = entry.getValue();
-            if (pending.timestamp < cutoff) {
-                Log.w(TAG, "Removing stale message: " + entry.getKey());
-                retryHandler.removeCallbacks(pending.timeoutRunnable);
-                return true;
+
+            synchronized (pending) {
+                // The ACK timer is armed only after the queued transport send completes.
+                if (pending.timeoutRunnable == null) {
+                    if (pending.timestamp < queuedCutoff
+                            && pendingMessages.remove(messageId, pending)) {
+                        Log.w(TAG, "Removing stale queued message: " + messageId);
+                        totalFailures++;
+                    }
+                    continue;
+                }
+
+                if (pending.timestamp < cutoff
+                        && pendingMessages.remove(messageId, pending)) {
+                    Log.w(TAG, "Removing stale message: " + messageId);
+                    retryHandler.removeCallbacks(pending.timeoutRunnable);
+                    totalFailures++;
+                }
             }
-            return false;
-        });
+        }
     }
 
     /**

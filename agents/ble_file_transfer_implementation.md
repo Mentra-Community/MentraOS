@@ -65,10 +65,15 @@ The implementation achieves remarkable speed (13KB in ~600ms) because:
 
 ### 3. BES ACK Index Behavior (MANDATORY)
 
-- BES sends `index = packet_index + 1`
-- For packet 0, BES sends index=1
-- For packet 1, BES sends index=2
-- This is NOT an error - it's the expected behavior
+BES response indices are asymmetric:
+
+- Success (`state=1`) is cumulative and sends the next expected index. For example,
+  `index=16` acknowledges packets 0 through 15, so the sender maps it to packet 15.
+- Failure (`state=0`) sends the exact zero-based packet BES still expects. For example,
+  `index=16` means resend packet 16; do not subtract one.
+
+Treating a failure index as one-based causes the sender to retry an already-ACKed packet,
+discard the failure as stale, and eventually time out every packet after the gap.
 
 ### 4. Phone-Side Changes Required in MentraLiveSGC.java
 

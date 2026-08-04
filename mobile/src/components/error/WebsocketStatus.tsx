@@ -2,13 +2,12 @@ import {useEffect, useRef, useState} from "react"
 import {TouchableOpacity, View} from "react-native"
 
 import {Icon, Text, type IconTypes} from "@/components/ignite"
+import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {translate} from "@/i18n"
-import {WebSocketStatus} from "@/services/WebSocketManager"
-import {useRefresh} from "@mentra/island"
-import {useConnectionStore} from "@/stores/connection"
-import {BgTimer} from "@mentra/island"
+import {engine, useRefresh} from "@mentra/engine"
+import {BgTimer} from "@mentra/engine"
 import {useAppTheme} from "@/contexts/ThemeContext"
-import {SETTINGS, useSetting} from "@/stores/settings"
+import {SETTINGS, useSetting} from "@mentra/engine"
 import {useNavigationStore} from "@/stores/navigation"
 
 type DisplayStatus = "connected" | "warning" | "disconnected"
@@ -35,7 +34,12 @@ const STATUS_CONFIG: Record<DisplayStatus, {icon: IconTypes; label: () => string
 }
 
 export default function WebsocketStatus() {
-  const connectionStatus = useConnectionStore((state) => state.status)
+  // Cloud-v2 runtime connection (the Cloud V1 websocket this pill used to
+  // render is retired).
+  const connectionStatus = useEngineSnapshot(
+    () => engine.session.status().status,
+    (onChange) => engine.session.onStatus(() => onChange()),
+  )
   const [displayStatus, setDisplayStatus] = useState<DisplayStatus>("connected")
   const [offlineMode] = useSetting(SETTINGS.offline_mode.key)
   const [superMode] = useSetting(SETTINGS.super_mode.key)
@@ -62,9 +66,9 @@ export default function WebsocketStatus() {
     const prevStatus = prevConnectionStatusRef.current
     prevConnectionStatusRef.current = connectionStatus
 
-    console.log(`WSM: useEffect: connectionStatus: ${connectionStatus}`)
+    console.log(`CLOUD-STATUS: useEffect: connectionStatus: ${connectionStatus}`)
 
-    if (connectionStatus === WebSocketStatus.CONNECTED) {
+    if (connectionStatus === "connected") {
       if (disconnectionTimerRef.current) {
         BgTimer.clearTimeout(disconnectionTimerRef.current)
         disconnectionTimerRef.current = null
@@ -78,7 +82,7 @@ export default function WebsocketStatus() {
     }
 
     // Now you can compare:
-    if (prevStatus === WebSocketStatus.CONNECTED) {
+    if (prevStatus === "connected") {
       // we just disconnected
       setDisplayStatus("warning")
       if (disconnectionTimerRef.current) {
@@ -107,7 +111,7 @@ export default function WebsocketStatus() {
     return (
       <TouchableOpacity
         onPress={() => {
-          push("/miniapps/settings/transcription")
+          push("/miniapps/settings/speech")
         }}>
         <View
           className={`flex-row items-center self-center align-middle justify-center py-1 px-2 rounded-full bg-destructive`}>

@@ -1,0 +1,137 @@
+---
+title: "Phone"
+description: "Phone notifications, calendar events, and phone battery."
+icon: "mobile"
+---
+
+`session.phone` reports state from the user's phone: notifications as they post,
+calendar events, and the phone's own battery. Each concern is its own sub-module.
+Register a handler and the events start arriving.
+
+```typescript src/background/index.ts
+session.phone.notifications.on((data) => {
+  session.display.render([{type: "text", id: "msg", box: {x: 0, y: 0, w: 576, h: 288}, text: `${data.app}: ${data.title}`}]);
+});
+```
+
+Notifications need the `READ_NOTIFICATIONS` permission and calendar events need
+the `CALENDAR` permission, both declared in your
+[manifest](/app-devs/core-concepts/miniapp-manifest). Phone battery needs no
+permission.
+
+## Notifications
+
+`session.phone.notifications.on()` fires when a notification posts on the phone.
+
+```typescript
+session.phone.notifications.on((data) => {
+  // data: PhoneNotificationData
+});
+```
+
+Each event is a `PhoneNotificationData`:
+
+| Field | Type | Notes |
+|---|---|---|
+| `notificationId` | `string` | Stable id from the phone's notification listener. |
+| `app` | `string` | Human app name (e.g. `"Messages"`). |
+| `title` | `string` | The notification title. |
+| `content` | `string` | The notification body. |
+| `priority` | `string` | Android priority string; empty on iOS. |
+| `timestamp` | `number` | Unix ms timestamp. |
+| `packageName` | `string` | Reverse-DNS package/bundle id of the originating app. |
+
+### Dismissals
+
+`session.phone.notifications.onDismissed()` fires when the user swipes away or
+clears a notification.
+
+```typescript
+session.phone.notifications.onDismissed((data) => {
+  // data: NotificationDismissedData
+});
+```
+
+Each event is a `NotificationDismissedData`:
+
+| Field | Type | Notes |
+|---|---|---|
+| `notificationId` | `string` | Same id as the matching post event from `notifications.on(...)`. |
+| `notificationKey` | `string?` | Android NotificationKey. More stable than `notificationId` across reposts. |
+| `packageName` | `string?` | Reverse-DNS package/bundle id of the originating app. |
+| `timestamp` | `number` | Unix ms timestamp of the dismissal. |
+
+<Note>
+`onDismissed` is **Android only**. iOS does not expose dismiss callbacks to apps
+(an Apple privacy restriction), so subscribing on iOS succeeds but no events ever
+fire. The matching `notifications.on()` post-event works on both platforms.
+</Note>
+
+## Calendar
+
+`session.phone.calendar.listEvents()` reads a current snapshot from all event
+calendars on the phone. Declare `CALENDAR` as a required permission; the Mentra
+App requests access before opening the miniapp.
+
+```typescript
+const result = await session.phone.calendar.listEvents({
+  startsAt: new Date(),
+  endsAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+  limit: 50,
+});
+```
+
+The date window may span at most 31 days. `limit` defaults to 50 and may not
+exceed 100. The result contains `events` and a `truncated` flag. Each event has:
+
+| Field | Type | Notes |
+|---|---|---|
+| `id` | `string` | Unique occurrence id, including recurring instances. |
+| `calendarId` | `string` | Id of the source calendar. |
+| `title` | `string` | The event title. |
+| `startsAt` | `string` | ISO 8601 start time. All-day events preserve their calendar timezone offset. |
+| `endsAt` | `string` | ISO 8601 end time. All-day events preserve their calendar timezone offset. |
+| `timezone` | `string?` | The event's timezone. |
+| `allDay` | `boolean` | Whether it's an all-day event. |
+| `location` | `string?` | The event location. |
+| `notes` | `string?` | The event notes. |
+| `url` | `string?` | The platform calendar URL field, when available. |
+| `links` | `string[]` | Deduplicated HTTPS links found in URL, location, and notes. |
+
+## Phone battery
+
+`session.phone.onBattery()` reports the phone's battery. It stays flat (not
+sub-namespaced) because it's a single event.
+
+```typescript
+session.phone.onBattery((data) => {
+  // data: BatteryData
+});
+```
+
+Each event is a `BatteryData`:
+
+| Field | Type | Notes |
+|---|---|---|
+| `level` | `number` | Battery level. |
+| `charging` | `boolean` | Whether the phone is charging. |
+
+## Cleaning up
+
+Every subscription returns an unsubscribe function. The `notifications`
+sub-module also has a `stop()` that tears down every notification subscription
+at once. Calendar snapshots do not create a subscription.
+
+```typescript
+const off = session.phone.notifications.on(handler);
+off();                              // drop this one
+
+session.phone.notifications.stop(); // drop all notification subscriptions
+```
+
+`session.phone.notifications.hasPermission` tells you whether `READ_NOTIFICATIONS`
+is declared in your manifest, and `session.phone.calendar.hasPermission` tells you
+whether `CALENDAR` is declared. Neither tells you whether the user granted the OS
+prompt. A calendar request rejects with `PERMISSION_DENIED` if access was later
+revoked. See
+[Permissions](/app-devs/core-concepts/permissions).

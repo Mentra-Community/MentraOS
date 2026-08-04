@@ -1,0 +1,120 @@
+{
+  "name": "@mentra/engine",
+  "version": "0.1.0-dev.0",
+  "description": "Mentra Engine — miniapp registry, WebView bridge, and miniapp store",
+  "main": "build/index.js",
+  "react-native": "src/index.ts",
+  "types": "build/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./build/index.d.ts",
+      "react-native": "./src/index.ts",
+      "default": "./build/index.js"
+    },
+    "./internal": {
+      "types": "./build/internal.d.ts",
+      "react-native": "./src/internal.ts",
+      "default": "./build/internal.js"
+    },
+    "./devtools": {
+      "types": "./build/devtools.d.ts",
+      "react-native": "./src/devtools.ts",
+      "default": "./build/devtools.js"
+    },
+    "./build/*": null,
+    "./src/*": null,
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "build",
+    "README.md",
+    "src",
+    "!src/**/__tests__",
+    "!src/**/*.test.ts"
+  ],
+  "scripts": {
+    "build": "expo-module build",
+    "clean": "expo-module clean",
+    "lint": "expo-module lint",
+    "test": "bun test src",
+    "build:module": "expo-module prepare",
+    "prepublishOnly": "expo-module prepublishOnly",
+    "expo-module": "expo-module"
+  },
+  "keywords": [
+    "react-native",
+    "expo",
+    "engine",
+    "Engine",
+    "miniapp"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Mentra-Community/MentraOS.git",
+    "directory": "mobile/modules/engine"
+  },
+  "bugs": {
+    "url": "https://github.com/Mentra-Community/MentraOS/issues"
+  },
+  "author": "Mentra Community",
+  "license": "MIT",
+  "homepage": "https://github.com/Mentra-Community/MentraOS/tree/dev/mobile/modules/engine#readme",
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "dependencies": {
+    "buffer": "^6.0.3",
+    "events": "^3.3.0",
+    "semver": "^7.7.4",
+    "typesafe-ts": "^1.7.1"
+  },
+  "devDependencies": {
+    "@mentra/bluetooth-sdk": "workspace:*",
+    "@mentra/cloud-client": "workspace:*",
+    "@mentra/cloud-protocol": "workspace:*",
+    "@mentra/miniapp": "workspace:*",
+    "@types/semver": "^7.7.1",
+    "expo-module-scripts": "^55.0.2",
+    "expo-modules-core": "55.0.25",
+    "react-native-nitro-modules": "^0.31.10",
+    "typescript": "~5.9.2"
+  },
+  "peerDependencies": {
+    "expo": "*",
+    "expo-modules-core": "*",
+    "react": "*",
+    "react-native": "*",
+    "react-native-udp": "*",
+    "@types/react": "*",
+    "react-native-mmkv": "*",
+    "react-native-nitro-bg-timer": "*",
+    "react-native-nitro-modules": "*",
+    "react-native-reanimated": "*",
+    "expo-file-system": "*",
+    "react-native-zip-archive": "*",
+    "zustand": "*",
+    "expo-battery": "*",
+    "expo-audio": "*",
+    "expo-clipboard": "*",
+    "expo-calendar": "*",
+    "expo-constants": "*",
+    "expo-location": "*",
+    "expo-task-manager": "*",
+    "expo-notifications": "*",
+    "react-native-share": "*",
+    "react-native-localize": "*",
+    "react-native-ble-manager": "*",
+    "react-native-permissions": "*",
+    "react-native-wifi-reborn": "*",
+    "@react-native-community/netinfo": "*",
+    "@dr.pogodin/react-native-fs": "*",
+    "@craftzdog/react-native-buffer": "*",
+    "axios": "*",
+    "@mentra/bluetooth-sdk": "*",
+    "@mentra/crust": "^0.1.0-dev.0",
+    "@mentra/cloud-client": "^0.1.0-dev.0",
+    "@mentra/miniapp": "^0.3.0-dev.0",
+    "@mentra/cloud-protocol": "^0.1.0-dev.0"
+  }
+}

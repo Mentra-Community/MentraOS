@@ -1,6 +1,17 @@
 # Dependencies
 node_modules
 **/node_modules
+
+# Workspace uses cloud/bun.lock only: nested lockfiles confuse install in Docker.
+# IMPORTANT: no "!" negation patterns in this file. Porter's context packaging
+# treats any negation as switching the whole file to allowlist mode and ships an
+# almost-empty build context (plain docker handles negations fine, which is why
+# local builds pass while porter CI builds fail). Nested lockfiles are excluded
+# by explicit depth instead of **/bun.lock + !bun.lock.
+packages/*/bun.lock
+packages/*/*/bun.lock
+tools/*/bun.lock
+websites/*/bun.lock
 .npm
 npm-debug.log*
 yarn-debug.log*

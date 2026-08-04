@@ -1,13 +1,185 @@
 import groovy.json.JsonSlurper
+import java.security.MessageDigest
 
 apply plugin: 'com.android.library'
 apply plugin: 'maven-publish'
 apply plugin: 'signing'
 
 def packageJson = new JsonSlurper().parse(file("../package.json"))
+def mavenGroupId = 'com.mentraglass'
+def mavenPublishVersion = (findProperty('mentraMavenVersion') ?: System.getenv('MENTRA_MAVEN_VERSION') ?: packageJson.version).toString()
+def publicMavenSdk = (findProperty('mentraPublicSdk') ?: System.getenv('MENTRA_PUBLIC_SDK') ?: 'false').toString().toBoolean()
 
-group = 'com.mentra'
-version = packageJson.version
+// Download Sherpa-ONNX Android AAR from the upstream GitHub release and stage
+// it as a Maven artifact in a tiny on-disk repository under libs/maven/.
+// Why this shape:
+//   - Jitpack stopped publishing for v1.13.2+ (their build step fails because
+//     the AAR asset isn't present when its install-file step runs).
+//   - We can't just `implementation files("…aar")` because AGP refuses local
+//     .aar deps from library modules ("Direct local .aar file dependencies
+//     are not supported when building an AAR"). Maven-coord deps are fine.
+// The SHA-256 is pinned (matches the upstream checksum.txt for v1.13.2) so a
+// tampered or partially-written artifact is rejected before being used.
+def sherpaOnnxGroup = "com.k2fsa.sherpa.onnx"
+def sherpaOnnxArtifact = "sherpa-onnx"
+def sherpaOnnxVersion = "1.13.2"
+def sherpaOnnxSha256 = "aa5505c0ec4f8bdaee5f214a64ba3012be64f2aecc022e82a64f33392b8dd245"
+
+def sherpaOnnxMavenRoot = file("libs/maven")
+def sherpaOnnxRepoDir = new File(
+  sherpaOnnxMavenRoot,
+  "${sherpaOnnxGroup.replace('.', '/')}/${sherpaOnnxArtifact}/${sherpaOnnxVersion}"
+)
+def sherpaOnnxAar = new File(sherpaOnnxRepoDir, "${sherpaOnnxArtifact}-${sherpaOnnxVersion}.aar")
+def sherpaOnnxPom = new File(sherpaOnnxRepoDir, "${sherpaOnnxArtifact}-${sherpaOnnxVersion}.pom")
+
+def sha256OfFile = { File f ->
+  def digest = MessageDigest.getInstance("SHA-256")
+  f.withInputStream { input ->
+    def buf = new byte[64 * 1024]
+    int n
+    while ((n = input.read(buf)) != -1) {
+      digest.update(buf, 0, n)
+    }
+  }
+  digest.digest().collect { String.format("%02x", it & 0xff) }.join("")
+}
+
+// If a stale AAR exists with the wrong hash (e.g. from a previous failed
+// download or a version bump), drop it so we re-fetch.
+if (sherpaOnnxAar.exists() && sha256OfFile(sherpaOnnxAar) != sherpaOnnxSha256) {
+  logger.lifecycle("Sherpa-ONNX AAR checksum mismatch on disk; redownloading.")
+  if (!sherpaOnnxAar.delete()) {
+    throw new GradleException(
+      "Sherpa-ONNX AAR at ${sherpaOnnxAar.absolutePath} has a mismatched SHA-256 " +
+      "but could not be deleted. Refusing to continue with a potentially tampered artifact."
+    )
+  }
+}
+
+if (!sherpaOnnxAar.exists()) {
+  sherpaOnnxRepoDir.mkdirs()
+  def sherpaOnnxUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/v${sherpaOnnxVersion}/${sherpaOnnxArtifact}-${sherpaOnnxVersion}.aar"
+  logger.lifecycle("Downloading Sherpa-ONNX AAR v${sherpaOnnxVersion} from GitHub release…")
+  // Download to a .part sibling and rename only after the SHA-256 matches, so
+  // an interrupted or tampered download can't be silently accepted as valid.
+  def partial = file("${sherpaOnnxAar.absolutePath}.part")
+  try {
+    new URL(sherpaOnnxUrl).withInputStream { input ->
+      partial.withOutputStream { output -> output << input }
+    }
+    def actual = sha256OfFile(partial)
+    if (actual != sherpaOnnxSha256) {
+      throw new GradleException(
+        "Sherpa-ONNX AAR v${sherpaOnnxVersion} SHA-256 mismatch.\n" +
+        "  expected: ${sherpaOnnxSha256}\n" +
+        "  actual:   ${actual}\n" +
+        "Refusing to use the downloaded artifact."
+      )
+    }
+    if (!partial.renameTo(sherpaOnnxAar)) {
+      throw new GradleException("Failed to move ${partial.name} to ${sherpaOnnxAar.name}")
+    }
+  } finally {
+    if (partial.exists()) {
+      partial.delete()
+    }
+  }
+}
+
+// Minimal POM so the Maven resolver is happy. No transitive deps — the AAR
+// ships its own native libs and we already pin onnxruntime separately below.
+if (!sherpaOnnxPom.exists()) {
+  sherpaOnnxPom.text = """<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>${sherpaOnnxGroup}</groupId>
+  <artifactId>${sherpaOnnxArtifact}</artifactId>
+  <version>${sherpaOnnxVersion}</version>
+  <packaging>aar</packaging>
+</project>
+"""
+}
+
+repositories {
+  maven { url = uri(sherpaOnnxMavenRoot) }
+  maven { url 'https://jitpack.io' }
+}
+
+
+group = mavenGroupId
+version = mavenPublishVersion
+
+def credentialValue = { List<String> propertyNames, List<String> envNames ->
+  for (propertyName in propertyNames) {
+    def value = findProperty(propertyName)
+    if (value != null && value.toString().trim()) {
+      return value.toString()
+    }
+  }
+  for (envName in envNames) {
+    def value = System.getenv(envName)
+    if (value != null && value.trim()) {
+      return value
+    }
+  }
+  return null
+}
+
+def centralTokenParts = { boolean failOnInvalid = false ->
+  def token = credentialValue(['sonatypeTokenBase64', 'mavenCentralTokenBase64'], ['SONATYPE_TOKEN_BASE64', 'MAVEN_CENTRAL_TOKEN_BASE64'])
+  if (!token) {
+    return null
+  }
+  def decoded
+  try {
+    decoded = new String(token.decodeBase64(), 'UTF-8')
+  } catch (Exception e) {
+    if (failOnInvalid) {
+      throw new GradleException('Sonatype token must be valid base64 for username:password', e)
+    }
+    return null
+  }
+  def separator = decoded.indexOf(':')
+  if (separator <= 0) {
+    if (failOnInvalid) {
+      throw new GradleException('Sonatype token must decode to username:password')
+    }
+    return null
+  }
+  return [decoded.substring(0, separator), decoded.substring(separator + 1)]
+}
+
+def centralUsername = { boolean failOnInvalidToken = false ->
+  credentialValue(['sonatypeUsername', 'mavenCentralUsername'], ['SONATYPE_USERNAME', 'MAVEN_CENTRAL_USERNAME']) ?: centralTokenParts(failOnInvalidToken)?.get(0)
+}
+
+def centralPassword = { boolean failOnInvalidToken = false ->
+  credentialValue(['sonatypePassword', 'mavenCentralPassword'], ['SONATYPE_PASSWORD', 'MAVEN_CENTRAL_PASSWORD']) ?: centralTokenParts(failOnInvalidToken)?.get(1)
+}
+
+def signingKey = {
+  credentialValue(['signingKey'], ['SIGNING_KEY'])
+}
+
+def signingPassword = {
+  credentialValue(['signingPassword'], ['SIGNING_PASSWORD'])
+}
+
+def shouldUseGpgCmd = {
+  (credentialValue(['signing.useGpgCmd'], ['SIGNING_USE_GPG_CMD']) ?: 'false').toBoolean()
+}
+
+def isCentralPublishTask = {
+  gradle.taskGraph.allTasks.any { it.name.toLowerCase().contains('sonatypecentral') }
+}
+
+gradle.taskGraph.whenReady {
+  if (isCentralPublishTask()) {
+    centralUsername(true)
+    centralPassword(true)
+  }
+}
 
 def expoModulesCorePlugin = new File(project(":expo-modules-core").projectDir.absolutePath, "ExpoModulesCorePlugin.gradle")
 apply from: expoModulesCorePlugin
@@ -40,7 +212,8 @@ android {
   namespace "com.mentra.bluetoothsdk"
   defaultConfig {
     versionCode 1
-    versionName packageJson.version
+    versionName project.version
+    buildConfigField "String", "SDK_VERSION", "\"${project.version}\""
   }
   publishing {
     singleVariant("release") {
@@ -50,6 +223,11 @@ android {
   }
   lintOptions {
     abortOnError false
+  }
+  testOptions {
+    unitTests {
+      includeAndroidResources = true
+    }
   }
   packagingOptions {
     pickFirst '**/libjsc.so'
@@ -82,32 +260,82 @@ dependencies {
 
   // OkHttp for HTTP requests
   implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+  implementation 'androidx.exifinterface:exifinterface:1.3.7'
+
+  // AVIF decode for BLE photo fallback. Public Maven artifacts omit this
+  // JitPack-only decoder from runtime metadata; Android 12+ can still use the
+  // platform decoder, while MentraOS app builds keep HeifCoder for broader
+  // fallback support.
+  // Pinned to the JitPack 1.7.3 build (same as asg_client): the Maven Central
+  // 2.2.x releases transitively pull kotlin-stdlib 2.3.0, which breaks this
+  // project's Kotlin 2.1 compile of :expo.
+  dependencies.add(publicMavenSdk ? 'compileOnly' : 'implementation', 'com.github.awxkee:avif-coder:1.7.3')
+
+  testImplementation 'junit:junit:4.13.2'
+  testImplementation 'org.robolectric:robolectric:4.11.1'
+  testImplementation 'org.assertj:assertj-core:3.24.2'
+  testImplementation 'androidx.test:core:1.5.0'
+
+  // Local photo upload receiver
+  implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1"
+
+  // AR99 GATT Opus to PCM decoder.
+  implementation 'io.github.jaredmdobson:concentus:1.0.1'
 
   // LC3 audio codec library
   implementation project(':lc3Lib')
 
-  // Sherpa-ONNX for local transcription
-  implementation 'com.github.k2-fsa:sherpa-onnx:v1.12.8'
+  // These integrations are used by the full MentraOS app, but are not exposed
+  // through the public SDK API. Public Maven artifacts compile against them
+  // without publishing them as runtime transitives, so consumers only need
+  // Maven Central/Google repositories for normal SDK use.
+  def optionalMentraOsIntegrationDependency = publicMavenSdk ? 'compileOnly' : 'implementation'
 
-  // Vuzix Z100
-  implementation 'com.vuzix:ultralite-sdk-android:1.8'
-  implementation 'com.squareup.picasso:picasso:2.8'
+  // Sherpa-ONNX for local transcription. Jitpack's v1.13.2 build failed
+  // upstream, so we stage the prebuilt AAR into libs/maven/ (see top of file)
+  // and consume it as a Maven coord — AGP rejects raw files() .aar deps in
+  // library modules.
+  dependencies.add(optionalMentraOsIntegrationDependency, "${sherpaOnnxGroup}:${sherpaOnnxArtifact}:${sherpaOnnxVersion}@aar")
+
+  if (!publicMavenSdk) {
+    // Silero VAD — vendored source under silero/, wired as :silero
+    // sub-project (see settings.gradle). This replaces the previous Jitpack AAR
+    // (com.github.gkonovalov:android-vad:2.0.9) whose prebuilt JNI was bound to
+    // an ORT version incompatible with the one bundled by sherpa-onnx, causing a
+    // dlopen UnsatisfiedLinkError for OrtGetApiBase at VAD startup. By owning the
+    // source we control both the Java API surface and the ORT version it links
+    // against; today both consumers (Silero VAD and sherpa-onnx) load their own
+    // libonnxruntime.so — see packagingOptions pickFirst above.
+    implementation project(':silero')
+
+    // Vuzix Z100
+    implementation 'com.vuzix:ultralite-sdk-android:1.8'
+    implementation 'com.squareup.picasso:picasso:2.8'
+  } else {
+    compileOnly project(':silero')
+    compileOnly 'com.vuzix:ultralite-sdk-android:1.8'
+    compileOnly 'com.squareup.picasso:picasso:2.8'
+  }
 
   implementation 'com.google.protobuf:protobuf-java:4.32.0'
   implementation 'com.google.protobuf:protobuf-java-util:4.32.0'
 }
 
-// Force override onnxruntime version to 1.17.1
+// Pin onnxruntime-android to 1.24.3 — the version sherpa-onnx 1.13.2 was built
+// against (its libonnxruntime.so exports OrtGetApiBase@@VERS_1.24.3). Matching
+// this lets the :silero VAD module share a single libonnxruntime.so with
+// sherpa-onnx, resolving the ELF symbol-versioning conflict that crashed VAD
+// startup on previous mismatched versions.
 configurations.all {
   resolutionStrategy {
     eachDependency { DependencyResolveDetails details ->
       if (details.requested.group == 'com.microsoft.onnxruntime') {
-        details.useVersion '1.17.1'
-        details.because('Force override transitive onnxruntime version')
+        details.useVersion '1.24.3'
+        details.because('Match sherpa-onnx 1.13.2 ORT 1.24.3')
       }
       if (details.requested.name == 'onnxruntime-android') {
-        details.useVersion '1.17.1'
-        details.because('Force override transitive onnxruntime version')
+        details.useVersion '1.24.3'
+        details.because('Match sherpa-onnx 1.13.2 ORT 1.24.3')
       }
     }
   }
@@ -117,7 +345,7 @@ afterEvaluate {
   publishing {
     publications {
       release(MavenPublication) {
-        groupId = 'com.mentra'
+        groupId = mavenGroupId
         artifactId = 'bluetooth-sdk'
         version = project.version
 
@@ -148,13 +376,65 @@ afterEvaluate {
         }
       }
     }
+    repositories {
+      maven {
+        name = 'sonatypeCentral'
+        url = uri('https://ossrh-staging-api.central.sonatype.com/service/local/staging/deploy/maven2/')
+        credentials {
+          username = centralUsername()
+          password = centralPassword()
+        }
+      }
+    }
   }
 
   signing {
+    def inMemorySigningKey = signingKey()
+    if (inMemorySigningKey) {
+      useInMemoryPgpKeys(inMemorySigningKey, signingPassword())
+    } else if (shouldUseGpgCmd()) {
+      useGpgCmd()
+    }
     required {
-      gradle.taskGraph.allTasks.any { it.name.toLowerCase().contains("publish") } &&
-        (findProperty("signing.keyId") || findProperty("signingKey"))
+      isCentralPublishTask()
     }
     sign publishing.publications.release
+  }
+}
+
+tasks.withType(Sign).configureEach {
+  onlyIf { isCentralPublishTask() }
+}
+
+tasks.register('uploadSonatypeCentralDeployment') {
+  group = 'publishing'
+  description = "Uploads the ${mavenGroupId} OSSRH compatibility repository to the Central Portal."
+  def releasePublishTaskPath = project.path == ':'
+    ? ':publishReleasePublicationToSonatypeCentralRepository'
+    : "${project.path}:publishReleasePublicationToSonatypeCentralRepository"
+  dependsOn ':lc3Lib:publishReleasePublicationToSonatypeCentralRepository',
+    releasePublishTaskPath
+
+  doLast {
+    def username = centralUsername(true)
+    def password = centralPassword(true)
+    if (!username || !password) {
+      throw new GradleException('Set sonatypeTokenBase64 or sonatypeUsername/sonatypePassword before uploading to Central.')
+    }
+
+    def publishingType = (findProperty('sonatypePublishingType') ?: System.getenv('SONATYPE_PUBLISHING_TYPE') ?: 'user_managed').toString()
+    def endpoint = new URL("https://ossrh-staging-api.central.sonatype.com/manual/upload/defaultRepository/${mavenGroupId}?publishing_type=${publishingType}")
+    def connection = endpoint.openConnection()
+    connection.requestMethod = 'POST'
+    connection.setRequestProperty('Authorization', "Bearer ${"${username}:${password}".bytes.encodeBase64()}")
+    connection.setRequestProperty('Content-Length', '0')
+
+    def statusCode = connection.responseCode
+    def responseBody = statusCode >= 400 ? connection.errorStream?.text : connection.inputStream?.text
+    if (statusCode < 200 || statusCode >= 300) {
+      throw new GradleException("Central deployment upload failed with HTTP ${statusCode}: ${responseBody ?: ''}")
+    }
+
+    println "Sonatype Central deployment upload requested for ${mavenGroupId} (${publishingType})."
   }
 }

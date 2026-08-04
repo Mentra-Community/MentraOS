@@ -1,0 +1,77 @@
+{
+  "expo": {
+    "name": "Example OEM App",
+    "slug": "example-oem-app",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "scheme": "exampleoemapp",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.mentra.exampleoemapp",
+      "infoPlist": {
+        "NSBluetoothAlwaysUsageDescription": "This app connects to your smart glasses over Bluetooth.",
+        "NSMicrophoneUsageDescription": "This app uses the microphone when you enable audio features.",
+        "NSLocalNetworkUsageDescription": "This app connects to local photo and streaming helpers during development.",
+        "NSLocationWhenInUseUsageDescription": "Location is used while scanning for nearby glasses over Bluetooth.",
+        "NSCalendarsUsageDescription": "This app accesses your calendar so miniapps can display upcoming events on your smart glasses.",
+        "NSCalendarsFullAccessUsageDescription": "This app accesses your calendar so miniapps can display upcoming events on your smart glasses."
+      },
+      "appleTeamId": "T5XXXL6N36"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
+      },
+      "predictiveBackGestureEnabled": false,
+      "package": "com.mentra.exampleoemapp",
+      "permissions": [
+        "android.permission.BLUETOOTH",
+        "android.permission.BLUETOOTH_ADMIN",
+        "android.permission.BLUETOOTH_SCAN",
+        "android.permission.BLUETOOTH_CONNECT",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.INTERNET",
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.READ_CALENDAR",
+        "android.permission.WRITE_CALENDAR"
+      ]
+    },
+    "plugins": [
+      "@mentra/crust",
+      [
+        "@mentra/bluetooth-sdk",
+        {
+          "node": true
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "deploymentTarget": "15.5"
+          },
+          "android": {
+            "minSdkVersion": 28,
+            "packagingOptions": {
+              "pickFirst": [
+                "**/libc++_shared.so",
+                "**/libonnxruntime.so",
+                "**/libonnxruntime4j_jni.so"
+              ]
+            }
+          }
+        }
+      ]
+    ]
+  }
+}

@@ -24,12 +24,14 @@ import {
 } from "../../types";
 
 export interface PhotoOptions {
-  size?: "small" | "medium" | "large" | "full";
+  size?: "low" | "medium" | "high" | "max";
+  /** Capture normally, or localize and crop around readable text on supported glasses. */
+  mode?: "photo" | "text";
   compression?: "none" | "medium" | "heavy";
   saveToGallery?: boolean;
   sound?: boolean;
   /**
-   * Sensor exposure time for this photo request only, in nanoseconds (Camera2 `SENSOR_EXPOSURE_TIME`).
+   * Sensor exposure time for this photo request only, in nanoseconds.
    * Not saved as a camera preference. Omit for auto exposure. Invalid or unsupported values fall back to auto exposure on device.
    */
   exposureTimeNs?: number;
@@ -70,7 +72,7 @@ export interface StreamOptions {
   /** Enable WebRTC playback URL. Only applies to managed streaming. Default: true. */
   enableWebRTC?: boolean;
 
-  /** Video configuration (resolution, bitrate, fps) */
+  /** Video configuration (resolution, bitrate, frameRate) */
   video?: VideoConfig;
 
   /** Audio configuration (bitrate, sample rate) */
@@ -248,6 +250,7 @@ export class CameraManager {
         timestamp: new Date(),
         saveToGallery: opts?.saveToGallery ?? false,
         size: opts?.size ?? "medium",
+        mode: opts?.mode ?? "photo",
         compress: opts?.compression ?? "none",
         sound: opts?.sound,
         ...(includeExposure ? { exposureTimeNs: exposureNs } : {}),
@@ -259,6 +262,7 @@ export class CameraManager {
           {
             requestId,
             size: message.size,
+            mode: message.mode,
             compress: message.compress,
             saveToGallery: message.saveToGallery,
             exposureTimeNs: includeExposure ? exposureNs : undefined,

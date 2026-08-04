@@ -3,8 +3,8 @@
  *
  * Public entry point. Consumers do:
  *
- *   import {MiniappSession} from "@mentra/miniapp"
- *   import {useSession} from "@mentra/miniapp/react"
+ *   import {MiniappSession} from "@mentra/miniapp"            // background JSContext
+ *   import {useColorScheme} from "@mentra/miniapp/react"      // UI WebView hooks
  *   import {MiniappRequestType} from "@mentra/miniapp/protocol"
  */
 
@@ -17,25 +17,36 @@ installDevReloadListenerIfDevMode()
 
 export {MiniappSession, NotConnectedError} from "./session"
 export type {
+  AuthUpdatePayload,
   ConnectAckPayload,
+  DisplayCapabilities,
   GlassesCapabilities,
+  MiniappAuthState,
   MiniappRequestError,
   MiniappSessionOptions,
   MiniappVisibility,
 } from "./session"
+export type {AuthFetchOptions, AuthModule} from "./modules/auth"
 
 export {makeRequestId, parseEnvelope, serializeEnvelope} from "./envelope"
 export type {MiniappEnvelope} from "./envelope"
 
 export {getMentraOSGlobals} from "./globals"
-export type {
-  MentraOSGlobals,
-  MiniappCapsuleMenuRect,
-  MiniappColorScheme,
-  MiniappSafeAreaInsets,
-} from "./globals"
+export type {MentraOSGlobals, MiniappCapsuleMenuRect, MiniappColorScheme, MiniappSafeAreaInsets} from "./globals"
 
 export {MiniappErrorCode, MiniappRequestType, MiniappResponseType, MiniappStreamType} from "./protocol"
+export {CLOUD_STATUS_STREAM} from "./modules/cloud"
+
+// Language registry (issue 021): canonical language types + the validation
+// error the typed transcription/translation surfaces throw.
+export {
+  MiniappValidationError,
+  SUPPORTED_LANGUAGE_HINTS,
+  SUPPORTED_TRANSCRIPTION_LANGUAGES,
+  isTranscriptionLanguage,
+} from "./modules/languages"
+export type {LanguageHint, TranscriptionLanguage} from "./modules/languages"
+export type {CloudClientAudioTransport, CloudClientConnectionStatus, CloudClientStatus} from "./modules/cloud"
 
 // Hardware requirement types — re-exported from @mentra/types so miniapp
 // authors can type their miniapp.json manifest without pulling in the types
@@ -56,23 +67,22 @@ export type {Transport, TransportDisconnectHandler, TransportMessageHandler} fro
 
 // Module types — useful for typing handlers in consumer code
 export type {
-  BitmapView,
-  ClearView,
-  DashboardCard,
-  DisplayOptions,
-  DoubleTextWall,
-  Layout,
-  LayoutType,
-  ReferenceCard,
-  TextWall,
+  DisplayBreakMode,
+  RenderBox,
+  RenderElement,
+  RenderOptions,
+  RenderRectStyle,
+  RenderResult,
+  RenderTextStyle,
   ViewType,
 } from "./modules/display"
 export type {
+  AccelData,
   AudioChunkData,
   BatteryData,
   ButtonPressData,
-  CalendarEventData,
   ConnectionData,
+  HeadingData,
   HeadPositionData,
   LocationData,
   NotificationDismissedData,
@@ -82,25 +92,88 @@ export type {
   TranslationData,
   UnsubscribeFn,
   VadData,
+  WifiData,
 } from "./modules/events"
-export type {PlayAudioOptions, SpeakOptions, SpeakResult, SpeakerState, SpeakerStateEvent} from "./modules/speaker"
-export type {PhotoTaken, SetCameraFovOptions, TakePhotoOptions} from "./modules/camera"
+export type {CalendarEvent, CalendarListOptions, CalendarListResult} from "./modules/phone"
+export type {
+  PlayAudioOptions,
+  SpeakOptions,
+  SpeakResult,
+  SpeakerState,
+  SpeakerStateEvent,
+  SpeakerStreamOptions,
+  SpeakerStreamSampleRate,
+  SpeakerStreamWriteResult,
+} from "./modules/speaker"
+export {SpeakerStreamWriter, SPEAKER_STREAM_MAX_BUFFERED_MS, SPEAKER_WRITE_CHUNK_BYTES} from "./modules/speaker"
+export type {
+  CameraFovPreset,
+  CameraFovRequest,
+  CameraFovResult,
+  CameraRoiPosition,
+  PhotoTaken,
+  SetCameraFovOptions,
+  StartVideoRecordingOptions,
+  StopVideoRecordingOptions,
+  TakePhotoOptions,
+  VideoRecordingStarted,
+} from "./modules/camera"
 export type {DashboardMode} from "./modules/dashboard"
+export type {CloudModule} from "./modules/cloud"
 export type {LedColor, LedControlOptions} from "./modules/led"
-export type {StartUnmanagedOptions, StartManagedOptions, ManagedStreamResult, StreamStatus} from "./modules/stream"
+export type {
+  RestreamDestination,
+  StartStreamOptions,
+  StreamAudioConfig,
+  StreamResolvedConfig,
+  StreamResult,
+  StreamStatus,
+  StreamVideoConfig,
+} from "./modules/stream"
 export type {ShareOptions, ShareResult, DownloadOptions, DownloadResult} from "./modules/system"
+export type {MiniappInfo, MiniappActionInfo, MiniappCompatibility, ListMiniappsOptions} from "./modules/miniapps"
+export type {ActionContext, ActionHandler, InvokeOptions} from "./modules/actions"
 
 // Domain module types — exported so consumers can type module references
 // (rare; most authors interact via session.<module>.<method> directly).
 export type {DisplayManager} from "./modules/display"
+export type {MiniappsModule} from "./modules/miniapps"
+export type {ActionsModule} from "./modules/actions"
 export type {GlassesModule} from "./modules/glasses"
+export type {HeadingModule} from "./modules/heading"
 export type {ImuModule} from "./modules/imu"
 export type {InputModule} from "./modules/input"
 export type {LocationModule} from "./modules/location"
 export type {MicModule} from "./modules/mic"
+export type {
+  ComputedRoute,
+  ComputedRouteStep,
+  ComputeRouteOptions,
+  ComputeRouteResult,
+  LatLng,
+  NavArrived,
+  NavError,
+  NavigationModule,
+  NavManeuver,
+  NavOffRoute,
+  NavPermissionResult,
+  NavPlaceDetails,
+  NavPlaceSuggestion,
+  NavRerouting,
+  NavRoute,
+  NavState,
+  NavStep,
+  NavUpdate,
+  Pivot,
+  PivotEvent,
+  PivotOptions,
+  RouteAvoidances,
+  StartNavigationOptions,
+  TravelMode,
+} from "./modules/navigation"
 export type {PermissionsModule, PermissionErrorEvent} from "./modules/permissions"
 export type {PhoneModule, PhoneNotificationsModule, PhoneCalendarModule} from "./modules/phone"
-export type {TranscriptionModule, TranscriptionConfig} from "./modules/transcription"
+export type {TranscriptionModule, TranscriptionConfig, TranscriptionOptions} from "./modules/transcription"
 export type {TranslationModule} from "./modules/translation"
 export type {SpeakerModule} from "./modules/speaker"
 

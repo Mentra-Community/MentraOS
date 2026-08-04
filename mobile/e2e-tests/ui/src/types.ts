@@ -25,15 +25,22 @@ export interface IncidentRecord {
   incident_type: string
   incident_name?: string
   status: string
+  is_primary?: boolean
   started_at_ms: number
+  alert_threshold_ms?: number
   ended_at_ms?: number
   duration_ms?: number
   current_duration_ms?: number
+  primary_since_ms?: number | null
+  primary_duration_ms?: number | null
   alerted_at_ms?: number | null
   time_to_alert_ms?: number | null
   dataset_row_idx?: number | null
   utterance_text?: string | null
   reason?: string | null
+  secondary_to_incident_id?: string | null
+  secondary_to_incident_type?: string | null
+  secondary_to_incident_name?: string | null
 }
 
 export interface AlertRecord {
@@ -43,8 +50,10 @@ export interface AlertRecord {
   incident_name?: string
   status: string
   started_at_ms: number
+  primary_since_ms?: number | null
   alerted_at_ms: number
   duration_ms: number
+  primary_duration_ms?: number | null
   alert_threshold_ms: number
   dataset_row_idx?: number | null
   utterance_text?: string | null
@@ -73,11 +82,29 @@ export interface CompletedUtterance {
   max_logcat_true_delay_ms?: number | null
 }
 
+export interface DeviceSummary {
+  device_id: string
+  label: string
+  backend_url?: string | null
+  ws_url?: string | null
+  last_backend_config_ts_ms?: number | null
+  ongoing_incident_count: number
+  last_logcat_event_ts_ms?: number | null
+  primary_incident_id?: string | null
+  current_utterance_row_idx?: number | null
+}
+
 export interface MonitorSnapshot {
   status: string
   status_detail?: string | null
   last_error?: string | null
   started_at_ms: number
+  devices: DeviceSummary[]
+  selected_device_id: string
+  primary_incident_id?: string | null
+  backend_url?: string | null
+  ws_url?: string | null
+  last_backend_config_ts_ms?: number | null
   last_logcat_event_ts_ms?: number | null
   logcat_visible_lines: string[]
   current_utterance?: CurrentUtterance | null
@@ -87,4 +114,5 @@ export interface MonitorSnapshot {
   logcat_true_word_delay_points: DelayPoint[]
   word_delay_points: DelayPoint[]
   completed_utterances: CompletedUtterance[]
+  last_events: Record<string, unknown>[]
 }

@@ -1,0 +1,25 @@
+{
+  "name": "@mentra/cloud-runtime",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./protocol": "./src/protocol/index.ts"
+  },
+  "scripts": {
+    "dev": "bun --watch src/index.ts",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@mentra/cloud-protocol": "^0.1.0-dev.0",
+    "@mentra/cloud-shared": "workspace:*",
+    "@soniox/node": "^2.1.0",
+    "hono": "^4.11.1",
+    "ioredis": "^5.4.1",
+    "tweetnacl": "^1.0.3",
+    "ulid": "^3.0.2",
+    "zod": "^3.24.1"
+  }
+}

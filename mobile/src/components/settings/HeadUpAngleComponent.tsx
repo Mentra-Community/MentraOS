@@ -126,8 +126,8 @@ const HeadUpAngleArcModal = ({visible, initialAngle, maxAngle = 60, onCancel, on
               <View style={themed($svgWrapper)} {...panResponder.panHandlers}>
                 <Svg width={svgSize} height={svgSize}>
                   <Path d={backgroundArcPath} stroke={theme.colors.border} strokeWidth={7} fill="none" />
-                  <Path d={currentArcPath} stroke={"#007AFF"} strokeWidth={7} fill="none" />
-                  <Circle cx={knobPos.x} cy={knobPos.y} r={15} fill={"#007AFF"} />
+                  <Path d={currentArcPath} stroke={theme.colors.sliderTrackActive} strokeWidth={7} fill="none" />
+                  <Circle cx={knobPos.x} cy={knobPos.y} r={15} fill={theme.colors.sliderTrackActive} />
                 </Svg>
               </View>
 

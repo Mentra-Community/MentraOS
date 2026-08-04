@@ -41,13 +41,15 @@ export interface PhotoRequestOptions {
   /** Authentication token for custom webhook authentication */
   authToken?: string;
   /**
-   * Desired photo size. All sizes are optimized for fast transfer.
-   * - small: 640x480 (VGA) - ultra-fast transfers
-   * - medium: 1280x720 (720p) - good balance (default)
-   * - large: 1920x1080 (1080p) - high quality
-   * - full: native sensor resolution - maximum detail (slower transfer)
+   * Desired photo size.
+   * - low: smallest tier
+   * - medium: balanced default
+   * - high: high quality
+   * - max: largest sensor resolution
    */
-  size?: "small" | "medium" | "large" | "full";
+  size?: "low" | "medium" | "high" | "max";
+  /** Capture normally, or localize and crop around readable text on supported glasses. */
+  mode?: "photo" | "text";
   /** Image compression level for upload optimization. Defaults to "none". */
   compress?: "none" | "medium" | "heavy";
   /** Controls shutter sound. Defaults to true if omitted. */
@@ -83,7 +85,7 @@ export interface StreamOptions {
  * Options for setting the camera FOV and ROI position
  */
 export interface CameraFovOptions {
-  /** Field of view in degrees (82-118). 118 means full sensor, no crop. */
+  /** Field of view in degrees (62-118). 118 means full sensor, no crop. */
   fov: number;
   /** ROI crop position. Ignored when fov is 118. Defaults to "center". */
   roiPosition?: CameraRoiPosition;
@@ -211,6 +213,7 @@ export class CameraModule {
           customWebhookUrl: options?.customWebhookUrl,
           authToken: options?.authToken,
           size: options?.size || "medium",
+          mode: options?.mode || "photo",
           compress: options?.compress || "none",
           sound: options?.sound,
           ...(includeExp ? { exposureTimeNs: expNs } : {}),
@@ -225,6 +228,7 @@ export class CameraModule {
             saveToGallery: options?.saveToGallery,
             hasCustomWebhook: !!options?.customWebhookUrl,
             hasAuthToken: !!options?.authToken,
+            mode: options?.mode ?? "photo",
             exposureTimeNs: includeExp ? expNs : undefined,
           },
           `📸 Photo request sent`,
@@ -317,7 +321,7 @@ export class CameraModule {
    * Fire-and-forget: the promise resolves once the message is sent.
    * The phone applies the setting and pushes it to the glasses over BLE.
    *
-   * @param options - FOV (82-118) and optional ROI position
+   * @param options - FOV (62-118) and optional ROI position
    *
    * @example
    * ```typescript
@@ -332,8 +336,8 @@ export class CameraModule {
     const { fov } = options;
     let roiPosition: CameraRoiPosition = options.roiPosition ?? "center";
 
-    if (fov < 82 || fov > 118) {
-      throw new Error(`fov must be between 82 and 118, got ${fov}`);
+    if (fov < 62 || fov > 118) {
+      throw new Error(`fov must be between 62 and 118, got ${fov}`);
     }
 
     if (!VALID_ROI_POSITIONS.includes(roiPosition)) {

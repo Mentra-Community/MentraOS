@@ -6,19 +6,13 @@ package com.mentra.asg_client.io.ota.utils;
 public class OtaConstants {
     public static final String TAG = "ASGClientOTA";
 
-    // URLs
-    // Production OTA version JSON URL for ASG client 39+.
-    // prod_live_version.json intentionally remains the legacy rescue manifest for
-    // older clients that may be stuck on a corrupted artifact cache.
-    public static final String VERSION_JSON_URL = "https://ota.mentraglass.com/prod_live_version_v2.json";
-
-    // Test URLs (uncomment to use for testing)
-    // public static final String VERSION_JSON_URL = "https://github.com/Mentra-Community/MentraOS/releases/download/asg-client/live_version_test_non_production.json";
-    // public static final String VERSION_JSON_URL = "https://dev.mentraos-ota-site.pages.dev/versiondev.json";
-    
-    // Local file path option (for testing - uncomment to use local file instead of URL)
-    // Note: File must be accessible from the device (e.g., pushed via ADB to /storage/emulated/0/asg/live_version.json)
-    //public static final String VERSION_JSON_URL = "/storage/emulated/0/asg/live_version.json";
+    // There is deliberately NO baked manifest URL for OTA decisions: every manifest the glasses
+    // act on arrives via ota_start's mandatory ota_version_url, so update decisions are always
+    // phone-owned. The fleet manifest below exists ONLY as an artifact source for phone-less
+    // rescue paths (factory reset's recovery-APK download, the disabled standalone
+    // recovery-worker update); it must never feed an OTA availability check.
+    public static final String RESCUE_FLEET_MANIFEST_URL =
+            "https://ota.mentraglass.com/prod_live_version_v2.json";
 
     // Update actions
     public static final String ACTION_UPDATE_COMPLETED = "com.mentra.asg_client.ACTION_UPDATE_COMPLETED";
@@ -27,6 +21,12 @@ public class OtaConstants {
     public static final String BASE_DIR = "/storage/emulated/0/asg";
     public static final String BACKUP_APK_FILENAME = "asg_client_backup.apk";
     public static final String BACKUP_APK_PATH = BASE_DIR + "/" + BACKUP_APK_FILENAME;
+    public static final String ASG_UPDATE_APK_FILENAME = "asg_client_update.apk";
+    public static final String ASG_UPDATE_APK_PATH = BASE_DIR + "/" + ASG_UPDATE_APK_FILENAME;
+    // Copy of the currently installed ASG APK, staged here so the OEM SystemUI installer can
+    // read it during a factory reset (it cannot reliably read /data/app/... paths).
+    public static final String FACTORY_RESET_APK_FILENAME = "asg_client_factory_reset.apk";
+    public static final String FACTORY_RESET_APK_PATH = BASE_DIR + "/" + FACTORY_RESET_APK_FILENAME;
 
     // BES firmware paths
     public static final String BES_FIRMWARE_FILENAME = "bes_firmware.bin";
@@ -46,10 +46,8 @@ public class OtaConstants {
     public static final String APK_FILENAME = "update.apk";
     public static final String APK_FULL_PATH = BASE_DIR + "/" + APK_FILENAME;
     public static final String METADATA_JSON = "metadata.json";
-    public static final long PERIODIC_CHECK_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes in milliseconds
 
     // WorkManager
-    public static final String WORK_NAME_OTA_CHECK = "ota_check";
     public static final String WORK_NAME_OTA_HEARTBEAT = "ota_heartbeat";
 
     // Update handling
@@ -58,4 +56,77 @@ public class OtaConstants {
     // Download socket timeouts (prevents downloads from hanging indefinitely)
     public static final int CONNECT_TIMEOUT_MS = 15000;  // 15 seconds to establish connection
     public static final int READ_TIMEOUT_MS = 20000;     // 20 seconds to receive data (stall / dead WiFi fail faster)
+
+    // Recovery worker sidecar update (network-fetched, bypasses ASG bundled-asset path)
+    public static final String RECOVERY_WORKER_UPDATE_APK_FILENAME = "recovery_worker_update.apk";
+    public static final String RECOVERY_WORKER_UPDATE_APK_PATH =
+            BASE_DIR + "/" + RECOVERY_WORKER_UPDATE_APK_FILENAME;
+
+    // Recovery worker cross-app signals
+    public static final String ASG_PACKAGE = "com.mentra.asg_client";
+    public static final String RECOVERY_PACKAGE = "com.mentra.recovery";
+    public static final String RECOVERY_INSTALL_IN_PROGRESS =
+            "com.mentra.recovery.ACTION_INSTALL_IN_PROGRESS";
+    public static final String RECOVERY_INSTALL_COMPLETED =
+            "com.mentra.recovery.ACTION_INSTALL_COMPLETED";
+    public static final String RECOVERY_CONTROL_PERMISSION =
+            "com.mentra.recovery.permission.CONTROL";
+
+    // Pinned ASG downgrade handoff to the recovery worker (uninstall-then-reinstall detour).
+    // ASG cannot supervise its own downgrade: the uninstall kills this process and wipes every
+    // ASG-owned preference store, so recovery owns the transaction end to end.
+    public static final String RECOVERY_REQUEST_DOWNGRADE =
+            "com.mentra.recovery.ACTION_REQUEST_DOWNGRADE";
+    public static final String EXTRA_DOWNGRADE_TARGET_VERSION = "target_version_code";
+    public static final String EXTRA_DOWNGRADE_APK_PATH = "apk_path";
+    public static final String EXTRA_DOWNGRADE_APK_SHA256 = "apk_sha256";
+    public static final String DOWNGRADE_APK_FILENAME = "asg_client_downgrade.apk";
+    /**
+     * Grace period after a downgrade handoff before ASG concludes the recovery worker did not
+     * take the transaction. The watchdog only fires when the handoff was rejected/dropped,
+     * clearing the OTA-in-progress latch so future OTAs are not blocked. The window must cover
+     * the WORST-CASE legitimate queue time, not just the happy path: DowngradeWorker serializes
+     * behind the recovery install lock, which a backup reinstall may hold for up to its 60s
+     * observe window (recovery worker REINSTALL_OBSERVE_TIMEOUT_MS) before the uninstall can
+     * even be dispatched. 3 minutes = that hold + dispatch/uninstall time + margin, so a handoff
+     * queued behind an in-flight reinstall is not misreported as failed.
+     */
+    public static final long DOWNGRADE_HANDOFF_TIMEOUT_MS = 180_000L;
+
+    /** Verdict broadcast from the recovery worker's handoff decision (see RecoveryConstants). */
+    public static final String ACTION_DOWNGRADE_HANDOFF_RESULT =
+            "com.mentra.recovery.ACTION_DOWNGRADE_HANDOFF_RESULT";
+
+    public static final String EXTRA_HANDOFF_ACCEPTED = "accepted";
+    public static final String EXTRA_HANDOFF_REASON = "reason";
+
+    /**
+     * Long-stop after an ACCEPTED handoff: the transaction owns the detour, so the short
+     * watchdog is cancelled — but if ASG is somehow still alive this long after acceptance,
+     * the transaction has necessarily hit its own stale give-up (recovery's
+     * DOWNGRADE_TRANSACTION_STALE_MS is 30 min) and the OTA latch must not stay stuck.
+     */
+    public static final long DOWNGRADE_SUPERVISION_TIMEOUT_MS = 40 * 60 * 1000L;
+    /**
+     * Oldest recovery worker versionCode that understands the downgrade handoff
+     * ({@code ACTION_REQUEST_DOWNGRADE}). ASG deploys its bundled recovery worker asynchronously
+     * at startup, so a downgrade must not be staged until the installed recovery worker is at
+     * least this new — an older receiver would silently drop the handoff after ASG already
+     * reported the install as started.
+     */
+    // v8 = first worker that answers every handoff with an accepted/refused verdict and claims
+    // the staged APK by rename. The verdict is load-bearing: the watchdog treats "no answer" as
+    // "no transaction exists", which is only true when the worker is verdict-capable — an older
+    // silent worker could accept without answering and the timeout would misreport refusal.
+    public static final long MIN_RECOVERY_VERSION_FOR_DOWNGRADE = 8L;
+    /**
+     * Oldest ASG versionCode a pinned downgrade may target. Builds below this floor predate the
+     * downgrade-safe contract — most importantly the shared media root
+     * ({@code MediaStorage.MEDIA_ROOT_PATH}): older builds capture into the app-owned
+     * external-files tree, which the OEM uninstall deletes (hardware-verified 2026-07-21), and
+     * read media from the pre-relocation paths. Must be set to the versionCode of the first
+     * release shipping the media relocation before downgrades are enabled in production; 0 leaves
+     * the floor open for RFC/bench testing only.
+     */
+    public static final long DOWNGRADE_FLOOR_VERSION_CODE = 0L;
 }

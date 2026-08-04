@@ -5,6 +5,11 @@ import {withIosConfiguration} from "./withIos"
 
 export interface BluetoothSdkPluginProps {
   node?: boolean
+  analytics?: boolean | BluetoothSdkAnalyticsPluginProps
+}
+
+export interface BluetoothSdkAnalyticsPluginProps {
+  enabled?: boolean
 }
 
 const withBluetoothSdk: ConfigPlugin<BluetoothSdkPluginProps> = (config, props) => {

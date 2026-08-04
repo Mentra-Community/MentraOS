@@ -3,8 +3,6 @@ import {
   checkBesUpdate,
   checkVersionUpdateAvailable,
   getLatestVersionInfo,
-  mergeOtaCheckWithGlasses,
-  shouldShowCacheReadyPrompt,
 } from "@/effects/OtaUpdateChecker"
 
 describe("findMatchingMtkPatch", () => {
@@ -110,8 +108,15 @@ describe("checkVersionUpdateAvailable", () => {
     expect(checkVersionUpdateAvailable("100", newFormatJson)).toBe(false)
   })
 
-  it("returns false when current is newer in new format", () => {
+  it("does not flag a downgrade when the floor is disabled (production default 0)", () => {
+    // Floor 0 disables downgrades: a newer installed build than the exact pin is not offered.
     expect(checkVersionUpdateAvailable("200", newFormatJson)).toBe(false)
+  })
+
+  it("flags a downgrade when the floor is enabled at/below the pin", () => {
+    // With a positive floor at/below the pinned versionCode (100), the lower-than-installed pin
+    // is an actionable version change.
+    expect(checkVersionUpdateAvailable("200", newFormatJson, 100)).toBe(true)
   })
 
   it("detects update available in legacy format", () => {
@@ -159,102 +164,5 @@ describe("getLatestVersionInfo", () => {
 
   it("returns null for empty json", () => {
     expect(getLatestVersionInfo({} as any)).toBeNull()
-  })
-})
-
-describe("mergeOtaCheckWithGlasses", () => {
-  const phoneNo = {
-    hasCheckCompleted: true,
-    updateAvailable: false,
-    latestVersionInfo: {
-      versionCode: 38,
-      versionName: "38.0",
-      downloadUrl: "https://example/apk",
-      apkSize: 1,
-      sha256: "x",
-      releaseNotes: "",
-    },
-    updates: [] as string[],
-    mtkPatch: null,
-    besVersion: "17.26.2.22",
-  }
-
-  it("returns phone result when glasses have no hint", () => {
-    expect(mergeOtaCheckWithGlasses(phoneNo, null)).toEqual(phoneNo)
-  })
-
-  it("union-updates when glasses report ota_update_available (stale phone build case)", () => {
-    const merged = mergeOtaCheckWithGlasses(phoneNo, {
-      available: true,
-      versionCode: 38,
-      versionName: "38.0",
-      updates: ["apk", "bes"],
-      totalSize: 0,
-      cacheReady: true,
-    })
-    expect(merged.updateAvailable).toBe(true)
-    expect(merged.updates.sort()).toEqual(["apk", "bes"].sort())
-    expect(merged.latestVersionInfo?.versionCode).toBe(38)
-  })
-})
-
-describe("shouldShowCacheReadyPrompt", () => {
-  const cacheReady = {
-    available: true,
-    versionCode: 100,
-    versionName: "1.0",
-    updates: ["apk"],
-    totalSize: 5_000_000,
-    cacheReady: true,
-  }
-
-  const baseArgs = {
-    pathname: "/home",
-    glassesConnected: true,
-    glassesWifiConnected: true,
-    otaUpdateAvailable: cacheReady,
-  }
-
-  it("returns true when glasses report a cache-ready update on /home with WiFi", () => {
-    expect(shouldShowCacheReadyPrompt(baseArgs)).toBe(true)
-  })
-
-  it("returns false off the /home route", () => {
-    expect(shouldShowCacheReadyPrompt({...baseArgs, pathname: "/settings"})).toBe(false)
-    expect(shouldShowCacheReadyPrompt({...baseArgs, pathname: null})).toBe(false)
-  })
-
-  it("returns false when glasses are not connected", () => {
-    expect(shouldShowCacheReadyPrompt({...baseArgs, glassesConnected: false})).toBe(false)
-  })
-
-  it("returns false when glasses WiFi is offline", () => {
-    expect(shouldShowCacheReadyPrompt({...baseArgs, glassesWifiConnected: false})).toBe(false)
-  })
-
-  it("returns false when otaUpdateAvailable is null/undefined", () => {
-    expect(shouldShowCacheReadyPrompt({...baseArgs, otaUpdateAvailable: null})).toBe(false)
-    expect(shouldShowCacheReadyPrompt({...baseArgs, otaUpdateAvailable: undefined})).toBe(false)
-  })
-
-  it("returns false when available is false", () => {
-    expect(shouldShowCacheReadyPrompt({...baseArgs, otaUpdateAvailable: {...cacheReady, available: false}})).toBe(false)
-  })
-
-  it("returns false when updates list is empty", () => {
-    expect(shouldShowCacheReadyPrompt({...baseArgs, otaUpdateAvailable: {...cacheReady, updates: []}})).toBe(false)
-  })
-
-  // The most important case: this is exactly the in-flow write produced by
-  // check-for-updates.tsx. Without the cacheReady gate it would resurrect the popup
-  // on the next return to /home (e.g. after a completed update + a re-check that
-  // found nothing).
-  it("returns false when cacheReady is not strictly true (in-flow check-for-updates write)", () => {
-    expect(shouldShowCacheReadyPrompt({...baseArgs, otaUpdateAvailable: {...cacheReady, cacheReady: false}})).toBe(
-      false,
-    )
-    expect(shouldShowCacheReadyPrompt({...baseArgs, otaUpdateAvailable: {...cacheReady, cacheReady: undefined}})).toBe(
-      false,
-    )
   })
 })

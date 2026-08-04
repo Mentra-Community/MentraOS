@@ -1,0 +1,14 @@
+# Local-dev infrastructure for cloud-v2.
+#
+# Only Redis runs in Docker. MongoDB points at the shared dev Atlas cluster
+# via Doppler-managed connection string. Cloud-v2 services themselves run
+# natively on the host via `bun --watch`.
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: cloud-v2-redis-dev
+    ports:
+      - "127.0.0.1:6379:6379"
+    command: redis-server --save "" --appendonly no
+    restart: unless-stopped

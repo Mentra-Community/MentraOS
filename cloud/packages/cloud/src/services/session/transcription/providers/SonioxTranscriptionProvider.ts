@@ -634,7 +634,7 @@ class SonioxTranscriptionStream implements StreamInstance {
       language_hints: languageHints.length > 0 ? languageHints : undefined,
       // context: "Mentra, MentraOS, Mira, Hey Mira",
       context: {
-        terms: ["Mentra", "MentraOS", "Israelov"],
+        terms: ["Mentra", "Israelov"],
       },
     };
 

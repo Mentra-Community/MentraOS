@@ -1,0 +1,157 @@
+---
+title: "Safe areas & the capsule menu"
+description: "Lay out your webview UI around the host chrome: notch insets and the floating capsule menu."
+icon: "crop"
+---
+
+Your miniapp UI runs in a WebView inside the Mentra App, and the host draws its
+own chrome on top. Two things overlap your content: the device safe-area insets
+(notch, status bar, rounded corners) and a floating **capsule menu** the host
+parks in the top-right. If you lay out edge-to-edge, your header sits under the
+notch and your top-right button sits under the capsule, where taps go to the host
+instead of your app.
+
+`useSafeArea()` reads both regions so your layout can pad around them. It imports
+from `@mentra/miniapp/react`, the [UI layer](/app-devs/core-concepts/webviews/react-webviews)
+of the [two-layer architecture](/app-devs/core-concepts/two-layer-architecture).
+
+```tsx
+import { useSafeArea } from "@mentra/miniapp/react";
+
+function App() {
+  const { insets } = useSafeArea();
+
+  return (
+    <div
+      style={{
+        paddingTop: insets.top,
+        paddingBottom: insets.bottom,
+        paddingLeft: insets.left,
+        paddingRight: insets.right,
+      }}>
+      <h1>My Miniapp</h1>
+    </div>
+  );
+}
+```
+
+The host injects these values before your content loads. The hook reads them once
+at mount. They don't change at runtime today, so there's nothing to re-render on.
+
+## `useSafeArea()`
+
+Returns an object with two fields.
+
+| Field | Type | Description |
+|---|---|---|
+| `insets` | `MiniappSafeAreaInsets` | Pixel insets around the WebView content. Apply as padding on your root element. |
+| `capsuleMenu` | `MiniappCapsuleMenuRect \| null` | Bounding rect of the host's floating capsule menu. `null` when the host doesn't render one (e.g. older builds). |
+
+`insets` always has all four sides, defaulting to `0` when the host provides none
+(for example, a browser preview):
+
+| `insets` field | Type | Description |
+|---|---|---|
+| `top` | `number` | Inset from the top edge. |
+| `bottom` | `number` | Inset from the bottom edge. |
+| `left` | `number` | Inset from the left edge. |
+| `right` | `number` | Inset from the right edge. |
+
+`capsuleMenu` is the rect of the floating control in the top-right. Use it to keep
+interactive elements out from under the menu, since taps there reach the host.
+
+| `capsuleMenu` field | Type | Description |
+|---|---|---|
+| `top` | `number` | Distance from the top of the viewport to the menu. |
+| `right` | `number` | Distance from the right of the viewport to the menu. |
+| `bottom` | `number` | Distance from the top to the menu's bottom edge. |
+| `left` | `number` | Distance from the left to the menu's left edge. |
+| `width` | `number` | Menu width in CSS pixels. |
+| `height` | `number` | Menu height in CSS pixels. |
+
+<Note>
+Coordinates are in CSS pixels. Always handle `capsuleMenu === null` so your layout
+still works outside the Mentra App and on hosts that don't draw a menu.
+</Note>
+
+## `useCapsuleHeaderStyle()`
+
+When you want your own header markup but want the capsule alignment done for you,
+`useCapsuleHeaderStyle()` returns a `CSSProperties` object you spread onto your
+header element. It positions the row vertically centered on the capsule menu and
+reserves room on the right so your content doesn't slide under it.
+
+```tsx
+import { useCapsuleHeaderStyle } from "@mentra/miniapp/react";
+
+function Header() {
+  const style = useCapsuleHeaderStyle();
+
+  return (
+    <header style={style}>
+      <h1>Hello</h1>
+    </header>
+  );
+}
+```
+
+It accepts an options object. All four are optional and have fallbacks used when
+the host doesn't render a capsule menu.
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `leftPadding` | `number` | `20` | Extra left padding beyond the safe area. |
+| `rightGap` | `number` | `16` | Space between the header content and the capsule menu. |
+| `fallbackHeight` | `number` | `32` | Header height when no capsule menu is present. |
+| `fallbackMarginTop` | `number` | `16` | Top margin when no capsule menu is present. |
+
+The returned style sets `display: flex` with `justifyContent: "space-between"`, so
+a left child and a right child split to opposite ends of the row.
+
+## `<MiniappHeader>`
+
+For a stock header, `<MiniappHeader>` renders the aligned row for you. It has three
+slots (`left`, `title`, `right`) and respects the safe area and capsule menu the
+same way. It also accepts every `useCapsuleHeaderStyle()` option as a prop.
+
+```tsx
+import { MiniappHeader } from "@mentra/miniapp/react";
+
+function App() {
+  return (
+    <>
+      <MiniappHeader
+        title="My Miniapp"
+        onBack={() => history.back()}
+        right={<span>Connected</span>}
+      />
+      {/* page content */}
+    </>
+  );
+}
+```
+
+| Prop | Type | Description |
+|---|---|---|
+| `title` | `ReactNode` | A string renders as a semantic `<h1>`. Pass a node for custom markup. |
+| `left` | `ReactNode` | Left slot, typically a back button or logo. Overrides `onBack` if both are set. |
+| `onBack` | `() => void` | Renders a back chevron in the left slot that calls this handler. Ignored when `left` is set. |
+| `right` | `ReactNode` | Right slot, typically a badge or action buttons. Sits to the left of the capsule. |
+| `className` | `string` | Applied to the header element. |
+| `style` | `CSSProperties` | Inline overrides merged over the computed layout style. |
+| `bottomSpacer` | `boolean` | Adds an 8px spacer below the header so the next content isn't flush against it. Default `true`. |
+
+`<MiniappHeader>` also forwards `leftPadding`, `rightGap`, `fallbackHeight`, and
+`fallbackMarginTop` through to the underlying `useCapsuleHeaderStyle()`. The
+component ships only the layout, so use `className` or `style` for colors and fonts.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="React webviews" icon="react" href="/app-devs/core-concepts/webviews/react-webviews">
+    The UI layer overview and its hooks.
+  </Card>
+  <Card title="Two-layer architecture" icon="layer-group" href="/app-devs/core-concepts/two-layer-architecture">
+    How the UI and background layers split and talk.
+  </Card>
+</CardGroup>

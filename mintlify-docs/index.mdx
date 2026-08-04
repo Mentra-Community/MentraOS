@@ -1,0 +1,69 @@
+---
+title: "Welcome to MentraOS"
+description: "Cloud operating system for smart glasses"
+mode: "custom"
+---
+
+<div className="px-4 pt-16 pb-12 lg:pt-20 max-w-4xl mx-auto text-center space-y-6">
+  <h1 className="text-3xl lg:text-4xl font-bold text-gray-900 dark:text-zinc-50 tracking-tight mb-3">
+    Build with <span style={{color: "#00b869"}}>MentraOS</span>
+  </h1>
+
+<p className="max-w-2xl mx-auto text-base text-gray-600 dark:text-zinc-400 leading-relaxed">
+  Build miniapps and mobile apps for smart glasses on MentraOS.
+</p>
+
+  <a
+    href="/app-devs/getting-started/overview"
+    className="inline-flex items-center gap-1 text-sm text-gray-500 dark:text-zinc-500 hover:opacity-80 transition-colors mr-6"
+    style={{color: "#00b869"}}
+  >
+    Overview
+    <span className="group-hover:translate-x-0.5 transition-transform">→</span>
+  </a>
+
+  <a
+    href="/app-devs/getting-started/quickstart"
+    className="inline-flex items-center gap-1 text-sm text-gray-500 dark:text-zinc-500 hover:opacity-80 transition-colors"
+    style={{color: "#00b869"}}
+  >
+    Build your first app
+    <span className="group-hover:translate-x-0.5 transition-transform">→</span>
+  </a>
+</div>
+
+<section className="px-4 max-w-6xl mx-auto space-y-4">
+  <CardGroup cols={2}>
+    <Card
+      title="Build a MentraOS miniapp"
+      icon="Glasses"
+      href="/app-devs/getting-started/overview"
+    >
+      Use `@mentra/miniapp` to build on-device apps for smart glasses.
+    </Card>
+
+    <Card
+      title="Build a mobile Bluetooth app"
+      icon="bluetooth"
+      href="/mentra-live/overview"
+    >
+      Use the Mentra Bluetooth SDK to connect mobile apps directly to glasses.
+    </Card>
+
+    <Card
+      title="Contribute to MentraOS"
+      icon="users-gear"
+      href="/contributing"
+    >
+      Work on the Mentra App, cloud, SDK, miniapps, or smart-glasses client.
+    </Card>
+
+    <Card
+      title="Glasses OEMs: Run MentraOS on your custom hardware"
+      icon="industry-windows"
+      href="/glasses-oems/overview"
+    >
+      Companies building smart glasses that run MentraOS.
+    </Card>
+  </CardGroup>
+</section>

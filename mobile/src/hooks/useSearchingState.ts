@@ -1,13 +1,11 @@
-import type {GlassesConnectionStatus} from "@mentra/bluetooth-sdk"
 import {useState, useEffect, useCallback} from "react"
-import {isGlassesLinkLayerBusy} from "@/stores/glasses"
 
 /**
  * Debounces the `searching` flag by 500 ms so the UI doesn't flash a
  * "Connect" button in the gap between searching→false and connected→true.
  * Also folds in the native link-layer busy state (CONNECTING / SCANNING / BONDING).
  */
-export function useSearchingState(searching: boolean, connection: GlassesConnectionStatus) {
+export function useSearchingState(searching: boolean, nativeLinkBusy: boolean) {
   const [wasSearching, setWasSearching] = useState(false)
 
   useEffect(() => {
@@ -21,8 +19,6 @@ export function useSearchingState(searching: boolean, connection: GlassesConnect
     }
     return undefined
   }, [searching, wasSearching])
-
-  const nativeLinkBusy = isGlassesLinkLayerBusy(connection)
 
   const resetSearching = useCallback(() => {
     setWasSearching(false)

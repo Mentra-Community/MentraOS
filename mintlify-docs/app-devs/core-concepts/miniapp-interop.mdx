@@ -1,0 +1,98 @@
+---
+title: "Actions"
+description: "Expose typed actions from your miniapp so Mentra AI can call them."
+icon: arrows-left-right
+---
+
+Your miniapp can expose **actions**: typed, described capabilities that Mentra AI
+can call to drive it. You declare each action in `miniapp.json` and handle it in
+your background layer. Mentra AI reads your declarations and decides when to call
+them.
+
+Actions map 1:1 onto [MCP](https://modelcontextprotocol.io) tools (`id` to `name`,
+`description`, `parameters` to `inputSchema`, and `outputSchema`), so the same
+declarations can be surfaced to external agents later.
+
+## Declare an action
+
+List your actions in `miniapp.json`. The `description` is the contract Mentra AI
+reads, so say *when* the action should be used.
+
+```json miniapp.json
+{
+  "actions": [
+    {
+      "id": "add_todo",
+      "description": "Add an item to the user's todo list. Use when the user asks to remember, note, or add something.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "text": { "type": "string", "description": "The todo item text" }
+        },
+        "required": ["text"]
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "ok": { "type": "boolean" },
+          "count": { "type": "number" }
+        },
+        "required": ["ok", "count"]
+      }
+    }
+  ]
+}
+```
+
+| Field | Rules |
+|---|---|
+| `id` | `^[a-z][a-z0-9_]*$`, unique within your miniapp, ≤64 chars. |
+| `description` | Required, non-empty. The AI-facing contract: say when to use it. |
+| `parameters` | A JSON-Schema object (the MCP subset): top-level `type: "object"`, `properties` typed `string` / `number` / `boolean` / `array` (of primitives), plus `enum`, `description`, `items`, and a top-level `required` array. Use `number`, not `integer`. |
+| `outputSchema` | Optional JSON Schema describing the handler's structured return value. Declaring it lets result-aware agents interpret the result reliably instead of guessing from arbitrary JSON. |
+
+## Handle it
+
+Register a handler in your background layer with `session.actions.handle`. Its
+return value goes back to the caller.
+
+```ts background/index.ts
+session.actions.handle("add_todo", async (params, ctx) => {
+  // ctx.callerPackageName is host-stamped, so it's trustworthy.
+  await todos.add(String(params.text));
+  return { ok: true, count: todos.size };
+});
+```
+
+- One handler per `id`. Registering the same `id` twice throws.
+- A thrown handler rejects the caller, and your error message comes back to them.
+- The return value is serialized to the caller (max 256 KB).
+- Keep results structured and consistent with `outputSchema`. Do not return logs,
+  secrets, access tokens, or instructions intended for the agent.
+- `handle` returns a function that deregisters the handler.
+
+Mentra AI executes actions before producing its final answer. It sends the
+structured result through a result-finalization step, which turns values such as
+`{ "ok": true, "count": 3 }` into concise user-facing language. A thrown error
+or a result that explicitly reports failure produces a failure answer instead of
+an optimistic success message.
+
+## How a call reaches you
+
+When Mentra AI invokes one of your actions, the host **headless-wakes** your
+miniapp if it isn't already running: it spawns your background context (no UI, no
+foreground change, so whatever the user is doing is undisturbed), waits for your
+handlers to register, delivers the call, and returns your handler's result. Your
+miniapp keeps running afterward until it's stopped.
+
+Because an inbound call waits only briefly for a just-woken miniapp to register,
+call `session.actions.handle` at the top of your
+[`registerMiniapp`](/app-devs/core-concepts/two-layer-architecture#the-background-layer)
+handler rather than after async setup.
+
+<Note>
+Exposing actions with `handle` is open to every miniapp, so your miniapp is
+callable by Mentra AI today. The *calling* side (discovering, launching, and
+invoking other miniapps) is restricted to system miniapps. See
+[System Miniapp APIs](/app-devs/reference/system-apis).
+</Note>

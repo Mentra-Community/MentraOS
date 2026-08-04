@@ -1,21 +1,22 @@
 import {CameraView, useCameraPermissions} from "expo-camera"
 import * as Haptics from "expo-haptics"
 import {useEffect, useState} from "react"
-import {Linking, View} from "react-native"
+import {ActivityIndicator, Linking, View} from "react-native"
 
 import {Button, Header, Screen, Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import showAlert from "@/utils/AlertUtils"
-import {appRegistry, decideDevLaunchRoute} from "@mentra/island"
+import {decideDevLaunchRoute, engine} from "@mentra/engine"
+import {appRegistry, registerDevApp, type DevAppRecord} from "@mentra/engine/internal"
 import {askPermissionsUI, checkPermissionsUI, PERMISSION_CONFIG} from "@/utils/PermissionsUtils"
-import {storage} from "@/utils/storage/storage"
+import {markMiniappDevMode} from "@/utils/miniappDevMode"
 import type {AppletInterface, AppletPermission} from "@/../../cloud/packages/types/src"
 
 export default function MiniappDeveloperScannerScreen() {
   const {theme} = useAppTheme()
-  const {goBack, replace, push, clearHistoryAndGoHome} = useNavigationStore.getState()
+  const {goBack, push, clearHistoryAndGoHome} = useNavigationStore.getState()
   const [permission, requestPermission] = useCameraPermissions()
   const [scanned, setScanned] = useState(false)
 
@@ -28,8 +29,13 @@ export default function MiniappDeveloperScannerScreen() {
   const handleBarcodeScanned = async ({data}: {data: string}) => {
     if (scanned) return
     setScanned(true)
+    // Acknowledge the scan the instant it lands — a buzz the user feels before
+    // any of the async manifest fetch / permission flow below runs. The camera
+    // freezes (scanner is disabled while `scanned`) and the loading overlay
+    // covers it, so without this the scan would feel like nothing happened.
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {})
 
-    if (data.startsWith("mentra-miniapp://release")) {
+    if (data.startsWith("miniapp://release")) {
       try {
         const url = new URL(data)
         const baseUrl = decodeURIComponent(url.searchParams.get("url") || "")
@@ -42,7 +48,7 @@ export default function MiniappDeveloperScannerScreen() {
           ])
           return
         }
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {})
+        markMiniappDevMode()
         showAlert("Installed", `${res.value.name} v${res.value.version} is on your home screen.`, [
           {text: "OK", onPress: () => goBack()},
         ])
@@ -57,19 +63,21 @@ export default function MiniappDeveloperScannerScreen() {
       let packageName: string | undefined
       let name: string | undefined
       let devPort: string | undefined
+      let devAttestation: string | undefined
 
-      if (data.startsWith("mentra-miniapp://dev")) {
+      if (data.startsWith("miniapp://dev")) {
         const url = new URL(data)
         devUrl = decodeURIComponent(url.searchParams.get("url") || "")
         name = url.searchParams.get("name") || undefined
         packageName = url.searchParams.get("package") || undefined
         devPort = url.searchParams.get("dev") || undefined
+        devAttestation = url.searchParams.get("attestation") || undefined
       } else if (data.startsWith("http://") || data.startsWith("https://")) {
         devUrl = data
       } else {
         showAlert(
-          translate("devSettings:miniappScanInvalidQrTitle"),
-          translate("devSettings:miniappScanInvalidQrBody"),
+          translate("debugSettings:miniappScanInvalidQrTitle"),
+          translate("debugSettings:miniappScanInvalidQrBody"),
           [{text: "OK", onPress: () => setScanned(false)}],
         )
         return
@@ -77,8 +85,8 @@ export default function MiniappDeveloperScannerScreen() {
 
       if (!devUrl) {
         showAlert(
-          translate("devSettings:miniappScanInvalidQrTitle"),
-          translate("devSettings:miniappScanInvalidQrNoUrl"),
+          translate("debugSettings:miniappScanInvalidQrTitle"),
+          translate("debugSettings:miniappScanInvalidQrNoUrl"),
           [{text: "OK", onPress: () => setScanned(false)}],
         )
         return
@@ -87,8 +95,8 @@ export default function MiniappDeveloperScannerScreen() {
       const launchResult = await decideDevLaunchRoute(packageName ?? "", devUrl)
 
       const manifest = launchResult.manifest
-      packageName = packageName || manifest?.packageName || "com.dev.unknown"
-      name = name || manifest?.name || "Dev Miniapp"
+      packageName = manifest?.packageName || packageName || "com.dev.unknown"
+      name = manifest?.name || name || "Dev Miniapp"
       const iconPath = manifest?.icon as string | undefined
       const manifestPermissions: AppletPermission[] = Array.isArray(manifest?.permissions)
         ? (manifest!.permissions as AppletPermission[])
@@ -101,17 +109,32 @@ export default function MiniappDeveloperScannerScreen() {
           : `${devUrl.replace(/\/$/, "")}/${iconPath.replace(/^\//, "")}`
       }
 
-      if (packageName) {
-        storage.save(`${packageName}_dev_url`, devUrl)
-        if (devPort) {
-          const portNum = parseInt(devPort, 10)
-          if (Number.isFinite(portNum)) {
-            storage.save(`${packageName}_dev_port`, portNum)
-          }
-        }
-      }
+      // Persist a package-keyed home tile and routing record so this dev
+      // miniapp remains independently launchable without rescanning. Its icon
+      // is copied locally while the server is reachable.
+      if (manifest) {
+        // A fetched manifest means a real dev app loaded — latch the per-account
+        // "this user is a developer" signal (idempotent). Gated on the manifest
+        // so a failed/unreachable scan (decision "offline", no manifest) can't
+        // flip the flag, matching the URL loader's behavior.
+        markMiniappDevMode()
 
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {})
+        const portNum = devPort ? parseInt(devPort, 10) : NaN
+        const existing = engine.miniapps.list().find((app) => app.packageName === packageName)
+        if (existing?.running) await engine.miniapps.stop(packageName)
+        await registerDevApp({
+          packageName,
+          name: name ?? packageName,
+          iconUrl: iconUrl ?? `${devUrl.replace(/\/$/, "")}/icon.png`,
+          devUrl: devUrl,
+          devPort: Number.isFinite(portNum) ? portNum : undefined,
+          devAttestation,
+          type: manifest.type as DevAppRecord["type"],
+          permissions: manifest.permissions as DevAppRecord["permissions"],
+          hardwareRequirements: manifest.hardwareRequirements as DevAppRecord["hardwareRequirements"],
+          actions: manifest.actions as DevAppRecord["actions"],
+        })
+      }
 
       if (launchResult.decision === "offline") {
         clearHistoryAndGoHome()
@@ -144,13 +167,8 @@ export default function MiniappDeveloperScannerScreen() {
       }
 
       clearHistoryAndGoHome()
-      push("/applet/local", {
-        packageName,
-        devUrl,
-        appName: name,
-        iconUrl,
-        ...(devPort ? {devPort} : {}),
-      })
+      await engine.miniapps.refresh()
+      await engine.miniapps.setForeground(packageName)
     } catch (error) {
       showAlert("Error", String(error), [{text: "OK", onPress: () => setScanned(false)}])
     }
@@ -160,12 +178,12 @@ export default function MiniappDeveloperScannerScreen() {
     return (
       <Screen preset="fixed">
         <Header
-          title={translate("devSettings:miniappScanTitle")}
+          title={translate("debugSettings:miniappScanTitle")}
           leftIcon="chevron-left"
           onLeftPress={() => goBack()}
         />
         <View className="flex-1 items-center justify-center">
-          <Text className="text-[14px]" tx="devSettings:miniappScanCheckingPermission" />
+          <Text className="text-[14px]" tx="debugSettings:miniappScanCheckingPermission" />
         </View>
       </Screen>
     )
@@ -175,29 +193,30 @@ export default function MiniappDeveloperScannerScreen() {
     return (
       <Screen preset="fixed">
         <Header
-          title={translate("devSettings:miniappScanTitle")}
+          title={translate("debugSettings:miniappScanTitle")}
           leftIcon="chevron-left"
           onLeftPress={() => goBack()}
         />
         <View className="flex-1 justify-center px-6">
           <View className="rounded-xl bg-white dark:bg-zinc-900 p-6 items-center gap-3">
-            <Text
-              className="text-lg font-semibold text-center"
-              tx="devSettings:miniappScanPermissionTitle"
-            />
+            <Text className="text-lg font-semibold text-center" tx="debugSettings:miniappScanPermissionTitle" />
             <Text
               className="text-[13px] text-muted-foreground text-center mb-2 leading-[18px]"
-              tx="devSettings:miniappScanPermissionBody"
+              tx="debugSettings:miniappScanPermissionBody"
             />
             <Button
-              tx={permission.canAskAgain ? "devSettings:miniappScanGrantAccess" : "devSettings:miniappScanOpenSettings"}
+              tx={
+                permission.canAskAgain
+                  ? "debugSettings:miniappScanGrantAccess"
+                  : "debugSettings:miniappScanOpenSettings"
+              }
               onPress={async () => {
                 if (permission.canAskAgain) {
                   await requestPermission()
                 } else {
                   showAlert(
-                    translate("devSettings:miniappScanPermissionDeniedTitle"),
-                    translate("devSettings:miniappScanPermissionDeniedBody"),
+                    translate("debugSettings:miniappScanPermissionDeniedTitle"),
+                    translate("debugSettings:miniappScanPermissionDeniedBody"),
                     [{text: "OK"}],
                   )
                 }
@@ -213,14 +232,15 @@ export default function MiniappDeveloperScannerScreen() {
 
   return (
     <Screen preset="fixed">
-      <Header title={translate("devSettings:miniappScanTitle")} leftIcon="chevron-left" onLeftPress={() => goBack()} />
+      <Header
+        title={translate("debugSettings:miniappScanTitle")}
+        leftIcon="chevron-left"
+        onLeftPress={() => goBack()}
+      />
 
       <View className="px-4 pt-2 pb-4 gap-2">
-        <Text className="text-base font-semibold" tx="devSettings:miniappScanHeadline" />
-        <Text
-          className="text-[13px] leading-[18px] text-muted-foreground"
-          tx="devSettings:miniappScanBody"
-        />
+        <Text className="text-base font-semibold" tx="debugSettings:miniappScanHeadline" />
+        <Text className="text-[13px] leading-[18px] text-muted-foreground" tx="debugSettings:miniappScanBody" />
       </View>
 
       <View className="flex-1 mx-4 mt-4 mb-12 rounded-xl max-h-[420px] overflow-hidden bg-white">
@@ -230,16 +250,31 @@ export default function MiniappDeveloperScannerScreen() {
           onBarcodeScanned={scanned ? undefined : handleBarcodeScanned}
         />
 
-        <View className="absolute inset-0 items-center justify-center" pointerEvents="none">
-          <View className="w-[240px] h-[240px] rounded-xl border-2 border-indigo-500" />
-        </View>
+        {!scanned && (
+          <View className="absolute inset-0 items-center justify-center" pointerEvents="none">
+            <View className="w-[240px] h-[240px] rounded-xl border-2 border-indigo-500" />
+          </View>
+        )}
 
-        <View className="absolute left-0 right-0 bottom-6 items-center" pointerEvents="none">
-          <Text
-            className="text-[13px] px-3 py-1.5 rounded-full overflow-hidden"
-            tx="devSettings:miniappScanHint"
-          />
-        </View>
+        {!scanned && (
+          <View className="absolute left-0 right-0 bottom-6 items-center" pointerEvents="none">
+            <Text className="text-[13px] px-3 py-1.5 rounded-full overflow-hidden" tx="debugSettings:miniappScanHint" />
+          </View>
+        )}
+
+        {/* Post-scan acknowledgement: dim the (now-frozen) camera and show a
+            centered loading card while the manifest fetch / permission flow
+            runs. This is the visual half of the scan feedback — the haptic in
+            handleBarcodeScanned is the tactile half. No popup; it clears on its
+            own when we navigate away, or when an error path resets `scanned`. */}
+        {scanned && (
+          <View className="absolute inset-0 items-center justify-center bg-black/50">
+            <View className="flex-row items-center gap-3 rounded-2xl bg-white dark:bg-zinc-900 px-5 py-4">
+              <ActivityIndicator color={theme.colors.tint} />
+              <Text className="text-[15px] font-medium" tx="debugSettings:miniappScanLoading" />
+            </View>
+          </View>
+        )}
       </View>
     </Screen>
   )

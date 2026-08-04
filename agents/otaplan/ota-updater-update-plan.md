@@ -23,7 +23,7 @@ Your architectural insight is spot on - keeping these apps separate with mutual 
 ```java
 // In AsgClientService.java
 
-private static final String OTA_UPDATER_PACKAGE = "com.augmentos.otaupdater";
+private static final String OTA_UPDATER_PACKAGE = "com.mentra.recovery";
 
 @Override
 public void onCreate() {
@@ -46,8 +46,8 @@ private void ensureOtaUpdaterV2() {
             Log.i(TAG, "OTA Updater needs deployment/recovery. Version: " + currentVersion);
 
             // Extract from assets
-            InputStream assetStream = getAssets().open("ota_updater.apk");
-            File otaV2File = new File("/storage/emulated/0/asg/ota_updater.apk");
+            InputStream assetStream = getAssets().open("recovery_worker.apk");
+            File otaV2File = new File("/storage/emulated/0/asg/recovery_worker.apk");
 
             // Copy to filesystem
             try (FileOutputStream fos = new FileOutputStream(otaV2File)) {
@@ -133,7 +133,7 @@ private int getInstalledVersion(String packageName) {
   },
   "otaUpdater": {
     "versionCode": 2,
-    "packageName": "com.augmentos.otaupdater",
+    "packageName": "com.mentra.recovery",
     "apkUrl": "https://github.com/Mentra-Community/MentraOS/releases/...",
     "sha256": "...",
     "minAsgClientVersion": 6
@@ -155,7 +155,7 @@ private int getInstalledVersion(String packageName) {
       "apkUrl": "https://...",
       "sha256": "..."
     },
-    "com.augmentos.otaupdater": {
+    "com.mentra.recovery": {
       "versionCode": 2,
       "apkUrl": "https://...",
       "sha256": "..."

@@ -1,6 +1,6 @@
 import type {OtaProgress, OtaStatus} from "@mentra/bluetooth-sdk-internal"
 
-import {OtaProgressMessages} from "@/app/ota/otaProgressTimeouts"
+import {OtaProgressMessages} from "@mentra/engine"
 
 import {getOtaErrorMessage, shouldShowChangeWifiForOtaDownloadFailure} from "@/utils/otaErrorMapping"
 
@@ -58,6 +58,12 @@ describe("getOtaErrorMessage", () => {
   it("maps firmware_verify_failed to verify message", () => {
     expect(getOtaErrorMessage("firmware_verify_failed")).toBe(
       "Firmware verification failed — please try again or contact support",
+    )
+  })
+
+  it("maps apk_verify_failed to verify message", () => {
+    expect(getOtaErrorMessage("apk_verify_failed")).toBe(
+      "Update verification failed — please try again or contact support",
     )
   })
 

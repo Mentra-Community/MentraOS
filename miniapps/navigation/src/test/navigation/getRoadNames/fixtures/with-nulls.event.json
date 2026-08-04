@@ -1,0 +1,14 @@
+{
+  "points": [
+    {"lat": 0, "lng": 0},
+    {"lat": 0, "lng": 1},
+    {"lat": 1, "lng": 1},
+    {"lat": 1, "lng": 2}
+  ],
+  "steps": [
+    {"lat": 0, "lng": 0, "routeIndex": 0, "road": "Fell St", "maneuver": "DEPART", "distanceMeters": 100},
+    {"lat": 0, "lng": 1, "routeIndex": 1, "road": null, "maneuver": "STRAIGHT", "distanceMeters": 50},
+    {"lat": 1, "lng": 1, "routeIndex": 2, "maneuver": "TURN_RIGHT", "distanceMeters": 200},
+    {"lat": 1, "lng": 2, "routeIndex": 3, "road": "Geary Blvd", "maneuver": "ARRIVE", "distanceMeters": 100}
+  ]
+}

@@ -29,6 +29,7 @@ import androidx.annotation.Nullable;
 import androidx.annotation.RequiresPermission;
 import androidx.core.app.NotificationCompat;
 
+import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.camera.CameraNeoService;
 import com.mentra.asg_client.utils.WakeLockManager;
 import com.mentra.asg_client.reporting.domains.StreamingReporting;
@@ -45,6 +46,7 @@ import com.mentra.asg_client.audio.AudioAssets;
 import org.greenrobot.eventbus.EventBus;
 import org.greenrobot.eventbus.Subscribe;
 import org.greenrobot.eventbus.ThreadMode;
+import org.json.JSONObject;
 
 import io.github.thibaultbee.streampack.data.AudioConfig;
 import io.github.thibaultbee.streampack.data.VideoConfig;
@@ -64,7 +66,8 @@ public class SrtStreamingService extends Service {
   private static final String CHANNEL_ID = "SrtStreamingChannel";
   private static final int NOTIFICATION_ID = 8889;
 
-  private static SrtStreamingService sInstance;
+  private static final Object sConfigLock = new Object();
+  private static volatile SrtStreamingService sInstance;
   private static StreamingStatusCallback sStatusCallback;
 
   private final IBinder mBinder = new LocalBinder();
@@ -106,6 +109,7 @@ public class SrtStreamingService extends Service {
   private long mStreamStartTime = 0;
   private long mLastReconnectionTime = 0;
   private int mReconnectionSequence = 0;
+  private PeriodicStreamMetricsReporter mMetricsReporter;
 
   private IHardwareManager mHardwareManager;
   private boolean mLedEnabled = false;
@@ -125,17 +129,28 @@ public class SrtStreamingService extends Service {
   @Override
   public void onCreate() {
     super.onCreate();
-    sInstance = this;
 
-    if (sPendingStateManager != null) {
-      mStateManager = sPendingStateManager;
-      sPendingStateManager = null;
+    boolean appliedPendingStateManager = false;
+    boolean appliedPendingStreamConfig = false;
+    synchronized (sConfigLock) {
+      if (sPendingStateManager != null) {
+        mStateManager = sPendingStateManager;
+        sPendingStateManager = null;
+        appliedPendingStateManager = true;
+      }
+
+      if (sPendingStreamConfig != null) {
+        mStreamConfig = sPendingStreamConfig;
+        sPendingStreamConfig = null;
+        appliedPendingStreamConfig = true;
+      }
+
+      sInstance = this;
+    }
+    if (appliedPendingStateManager) {
       Log.d(TAG, "✅ Applied pending StateManager during onCreate");
     }
-
-    if (sPendingStreamConfig != null) {
-      mStreamConfig = sPendingStreamConfig;
-      sPendingStreamConfig = null;
+    if (appliedPendingStreamConfig) {
       Log.d(TAG, "✅ Applied pending stream config: " + mStreamConfig.toString());
     }
 
@@ -146,6 +161,7 @@ public class SrtStreamingService extends Service {
     }
 
     mReconnectHandler = new Handler(Looper.getMainLooper());
+    mMetricsReporter = createMetricsReporter();
     mTimeoutHandler = new Handler(Looper.getMainLooper());
     mHardwareManager = HardwareManagerFactory.getInstance(this);
 
@@ -192,7 +208,9 @@ public class SrtStreamingService extends Service {
 
   @Override
   public void onDestroy() {
-    if (sInstance == this) sInstance = null;
+    synchronized (sConfigLock) {
+      if (sInstance == this) sInstance = null;
+    }
 
     if (mReconnectHandler != null) mReconnectHandler.removeCallbacksAndMessages(null);
     cancelStreamTimeout();
@@ -342,6 +360,7 @@ public class SrtStreamingService extends Service {
             }
 
             startBatteryMonitoring();
+            startMetricsReporting();
             EventBus.getDefault().post(new StreamingEvent.Connected());
             EventBus.getDefault().post(new StreamingEvent.Started());
           }
@@ -355,6 +374,7 @@ public class SrtStreamingService extends Service {
           }
           mLastReconnectionTime = currentTime;
           Log.e(TAG, "SRT connection failed: " + message);
+          stopMetricsReporting();
           EventBus.getDefault().post(new StreamingEvent.ConnectionFailed(message));
           StreamingReporting.reportRtmpConnectionFailure(SrtStreamingService.this, mSrtUrl, message, null);
 
@@ -384,6 +404,17 @@ public class SrtStreamingService extends Service {
           long streamDuration = mStreamStartTime > 0 ? currentTime - mStreamStartTime : 0;
           Log.e(TAG, "🔴 SRT STREAM DISCONNECTED after " + formatDuration(streamDuration));
           mLastReconnectionTime = currentTime;
+          stopMetricsReporting();
+          synchronized (mStateLock) {
+            // StreamPack reports connection loss asynchronously. Mark the
+            // publisher non-streaming while we give its internal recovery a
+            // moment to succeed; otherwise the delayed check below always
+            // sees STREAMING/true and incorrectly concludes it recovered.
+            if (mStreamState == StreamState.STREAMING) {
+              mStreamState = StreamState.STARTING;
+              mIsStreaming = false;
+            }
+          }
           EventBus.getDefault().post(new StreamingEvent.Disconnected());
           StreamingReporting.reportRtmpConnectionLost(SrtStreamingService.this, mSrtUrl, streamDuration, message);
 
@@ -395,6 +426,8 @@ public class SrtStreamingService extends Service {
                 Log.d(TAG, "SRT library recovered internally");
               } else if (mStreamState == StreamState.IDLE || mStreamState == StreamState.STOPPING) {
                 Log.d(TAG, "SRT stream stopped, not reconnecting");
+              } else if (mReconnecting) {
+                Log.d(TAG, "SRT reconnection already scheduled");
               } else {
                 scheduleReconnect("connection_lost");
               }
@@ -414,8 +447,8 @@ public class SrtStreamingService extends Service {
 
       int videoWidth = mStreamConfig.getVideoWidth();
       int videoHeight = mStreamConfig.getVideoHeight();
-      int captureW = mStreamConfig.getCaptureSurfaceWidth();
-      int captureH = mStreamConfig.getCaptureSurfaceHeight();
+      int captureWidth = mStreamConfig.getCaptureSurfaceWidth();
+      int captureHeight = mStreamConfig.getCaptureSurfaceHeight();
       int videoBitrate = mStreamConfig.getVideoBitrate();
       int videoFps = mStreamConfig.getVideoFps();
       int audioBitrate = mStreamConfig.getAudioBitrate();
@@ -434,8 +467,8 @@ public class SrtStreamingService extends Service {
       int profile = VideoConfig.Companion.getBestProfile(mimeType);
       int level = VideoConfig.Companion.getBestLevel(mimeType, profile);
       Size captureSize =
-          (captureW != videoWidth || captureH != videoHeight)
-              ? new Size(captureW, captureH)
+          (captureWidth != videoWidth || captureHeight != videoHeight)
+              ? new Size(captureWidth, captureHeight)
               : null;
       VideoConfig videoConfig = new VideoConfig(
           mimeType, videoBitrate, new Size(videoWidth, videoHeight), videoFps, profile, level,
@@ -567,7 +600,7 @@ public class SrtStreamingService extends Service {
               Log.e(TAG, "Error starting SRT stream", (Throwable) o);
               mStreamState = StreamState.IDLE;
               mIsStreaming = false;
-              if (sStatusCallback != null) sStatusCallback.onStreamError(errorMsg, mCurrentStreamId);
+              if (sStatusCallback != null) sStatusCallback.onStreamError(errorMsg, mCurrentStreamId, true);
               StreamingReporting.reportStreamStartFailure(SrtStreamingService.this, mSrtUrl, ((Throwable) o).getMessage(), (Throwable) o);
               scheduleReconnect("start_error");
             } else {
@@ -587,7 +620,7 @@ public class SrtStreamingService extends Service {
       String errorMsg = "Failed to start SRT streaming: " + e.getMessage();
       Log.e(TAG, errorMsg, e);
       synchronized (mStateLock) { mStreamState = StreamState.IDLE; mIsStreaming = false; }
-      if (sStatusCallback != null) sStatusCallback.onStreamError(errorMsg, mCurrentStreamId);
+      if (sStatusCallback != null) sStatusCallback.onStreamError(errorMsg, mCurrentStreamId, true);
       StreamingReporting.reportStreamStartFailure(SrtStreamingService.this, mSrtUrl, e.getMessage(), e);
       scheduleReconnect("start_exception");
     }
@@ -605,7 +638,16 @@ public class SrtStreamingService extends Service {
   private void forceStopStreamingInternal(boolean preserveSession) {
     Log.d(TAG, "Force stopping SRT stream (preserveSession=" + preserveSession + ")");
 
+    // Capture the id up front - cancelStreamTimeout() and the state reset below
+    // both clear it, and the stopped callback must identify the stream being
+    // stopped.
+    final String stoppedStreamId;
+    synchronized (mStateLock) {
+      stoppedStreamId = mCurrentStreamId;
+    }
+
     if (!preserveSession) stopBatteryMonitoring();
+    stopMetricsReporting();
 
     mReconnectionSequence++;
     if (mReconnectHandler != null) mReconnectHandler.removeCallbacksAndMessages(null);
@@ -623,7 +665,10 @@ public class SrtStreamingService extends Service {
         if (o instanceof Throwable) {
           Log.e(TAG, "Error during SRT stream stop", (Throwable) o);
           StreamingReporting.reportStreamStopFailure(SrtStreamingService.this, "stream_stop_error", (Throwable) o);
-          if (sStatusCallback != null) sStatusCallback.onStreamError("Failed to stop SRT stream: " + ((Throwable) o).getMessage(), mCurrentStreamId);
+          // Use the id captured before cleanup: this continuation can resume after
+          // the state reset cleared mCurrentStreamId or a replacement stream
+          // overwrote it, and the failure belongs to the stream being stopped.
+          if (sStatusCallback != null) sStatusCallback.onStreamError("Failed to stop SRT stream: " + ((Throwable) o).getMessage(), stoppedStreamId);
         }
         Log.d(TAG, "SRT stream stop completed");
       }
@@ -669,7 +714,7 @@ public class SrtStreamingService extends Service {
     }
 
     if (!preserveSession) {
-      if (sStatusCallback != null) sStatusCallback.onStreamStopped(mCurrentStreamId);
+      if (sStatusCallback != null) sStatusCallback.onStreamStopped(stoppedStreamId);
       EventBus.getDefault().post(new StreamingEvent.Stopped());
       Log.i(TAG, "SRT streaming stopped");
     }
@@ -719,6 +764,68 @@ public class SrtStreamingService extends Service {
     return (long) (INITIAL_RECONNECT_DELAY_MS * Math.pow(BACKOFF_MULTIPLIER, attempt - 1) + jitter);
   }
 
+  private PeriodicStreamMetricsReporter createMetricsReporter() {
+    return new PeriodicStreamMetricsReporter(
+        mReconnectHandler,
+        AsgConstants.STREAM_METRICS_INTERVAL_MS,
+        "srt",
+        () -> {
+          synchronized (mStateLock) {
+            return mStreamState == StreamState.STREAMING && mIsStreaming && !mReconnecting;
+          }
+        },
+        () -> {
+          double measuredFps = Double.NaN;
+          long measuredBitrateBps = -1L;
+          double cameraFps = Double.NaN;
+          try {
+            if (mSrtStreamer != null) {
+              measuredFps = mSrtStreamer.getSettings().getVideo().getMeasuredFps();
+              measuredBitrateBps = mSrtStreamer.getSettings().getVideo().getMeasuredBitrateBps();
+              cameraFps = mSrtStreamer.getSettings().getMeasuredCaptureFps();
+            }
+          } catch (Exception ignored) {
+            // Keep n/a measured fields
+          }
+          return new PeriodicStreamMetricsReporter.MetricsSample(
+              mStreamConfig.getVideoWidth(),
+              mStreamConfig.getVideoHeight(),
+              mStreamConfig.getVideoBitrate(),
+              measuredBitrateBps,
+              mStreamConfig.getVideoFps(),
+              measuredFps,
+              cameraFps,
+              0,
+              mStreamStartTime > 0
+                  ? Math.max(0, (System.currentTimeMillis() - mStreamStartTime) / 1_000L)
+                  : 0,
+              StreamThermalReader.readCpuTemperatureC());
+        },
+        new PeriodicStreamMetricsReporter.CallbackProvider() {
+          @Override
+          public StreamingStatusCallback getCallback() {
+            return sStatusCallback;
+          }
+
+          @Override
+          public String getStreamId() {
+            return mCurrentStreamId;
+          }
+        });
+  }
+
+  private void startMetricsReporting() {
+    if (mMetricsReporter != null) {
+      mMetricsReporter.start();
+    }
+  }
+
+  private void stopMetricsReporting() {
+    if (mMetricsReporter != null) {
+      mMetricsReporter.stop();
+    }
+  }
+
   public static void setStreamingStatusCallback(StreamingStatusCallback callback) {
     sStatusCallback = callback;
     Log.d(TAG, "SRT streaming status callback " + (callback != null ? "registered" : "unregistered"));
@@ -728,6 +835,12 @@ public class SrtStreamingService extends Service {
     cancelStreamTimeout();
     mCurrentStreamId = streamId;
     mIsStreamingActive = true;
+
+    if (AsgConstants.DISABLE_STREAM_KEEP_ALIVE_TIMEOUT) {
+      Log.i(TAG, "Keep-alive timeout disabled; stream will not auto-stop: " + streamId);
+      return;
+    }
+
     mStreamTimeoutTimer = new Timer("SrtStreamTimeout-" + streamId);
     mStreamTimeoutTimer.schedule(new TimerTask() {
       @Override
@@ -756,12 +869,14 @@ public class SrtStreamingService extends Service {
   }
 
   public static void setStateManager(IStateManager stateManager) {
-    if (sInstance != null) {
-      sInstance.mStateManager = stateManager;
-      Log.d(TAG, "✅ StateManager set for SRT battery monitoring");
-    } else {
-      sPendingStateManager = stateManager;
-      Log.d(TAG, "✅ StateManager stored as pending for SRT service");
+    synchronized (sConfigLock) {
+      if (sInstance != null) {
+        sInstance.mStateManager = stateManager;
+        Log.d(TAG, "✅ StateManager set for SRT battery monitoring");
+      } else {
+        sPendingStateManager = stateManager;
+        Log.d(TAG, "✅ StateManager stored as pending for SRT service");
+      }
     }
   }
 
@@ -816,12 +931,27 @@ public class SrtStreamingService extends Service {
 
   public static void setStreamConfig(RtmpStreamConfig config) {
     if (config == null) config = new RtmpStreamConfig();
-    if (sInstance != null) {
-      sInstance.mStreamConfig = config;
-      Log.d(TAG, "✅ SRT stream config set: " + config.toString());
-    } else {
-      sPendingStreamConfig = config;
-      Log.d(TAG, "✅ SRT stream config stored as pending: " + config.toString());
+    synchronized (sConfigLock) {
+      if (sInstance != null) {
+        sInstance.mStreamConfig = config;
+        Log.d(TAG, "✅ SRT stream config set: " + config.toString());
+      } else {
+        sPendingStreamConfig = config;
+        Log.d(TAG, "✅ SRT stream config stored as pending: " + config.toString());
+      }
+    }
+  }
+
+  /** Returns the effective configuration for the active or pending SRT stream. */
+  public static JSONObject getCurrentResolvedConfig() {
+    synchronized (sConfigLock) {
+      RtmpStreamConfig config = null;
+      if (sInstance != null) {
+        config = sInstance.mStreamConfig;
+      } else if (sPendingStreamConfig != null) {
+        config = sPendingStreamConfig;
+      }
+      return config != null ? config.toStatusJson("srt") : null;
     }
   }
 
@@ -866,9 +996,30 @@ public class SrtStreamingService extends Service {
   }
 
   public static boolean isStreaming() {
-    if (sInstance != null) {
-      synchronized (sInstance.mStateLock) {
-        return sInstance.mStreamState == StreamState.STREAMING || sInstance.mStreamState == StreamState.STARTING;
+    SrtStreamingService instance = sInstance;
+    if (instance != null) {
+      synchronized (instance.mStateLock) {
+        return instance.mStreamState == StreamState.STREAMING || instance.mStreamState == StreamState.STARTING;
+      }
+    }
+    return false;
+  }
+
+  public static boolean isActivelyStreaming() {
+    SrtStreamingService instance = sInstance;
+    if (instance != null) {
+      synchronized (instance.mStateLock) {
+        return instance.mStreamState == StreamState.STREAMING;
+      }
+    }
+    return false;
+  }
+
+  public static boolean isStarting() {
+    SrtStreamingService instance = sInstance;
+    if (instance != null) {
+      synchronized (instance.mStateLock) {
+        return instance.mStreamState == StreamState.STARTING;
       }
     }
     return false;
@@ -885,7 +1036,7 @@ public class SrtStreamingService extends Service {
   public static boolean resetStreamTimeout(String streamId) {
     if (sInstance != null) {
       if (sInstance.mCurrentStreamId != null && sInstance.mCurrentStreamId.equals(streamId) && sInstance.mIsStreamingActive) {
-        WakeLockManager.acquireFullWakeLockAndBringToForeground(sInstance.getApplicationContext(), 2180000, 5000);
+        WakeLockManager.acquireFullWakeLockAndBringToForeground(sInstance.getApplicationContext(), WakeLockManager.WakeOwner.STREAMING, 2180000, 5000);
         sInstance.scheduleStreamTimeout(streamId);
         return true;
       }
@@ -935,11 +1086,11 @@ public class SrtStreamingService extends Service {
   }
 
   private void wakeUpScreen() {
-    WakeLockManager.acquireFullWakeLockAndBringToForeground(this, 2180000, 5000);
+    WakeLockManager.acquireFullWakeLockAndBringToForeground(this, WakeLockManager.WakeOwner.STREAMING, 2180000, 5000);
   }
 
   private void releaseWakeLocks() {
-    WakeLockManager.releaseAllWakeLocks();
+    WakeLockManager.release(WakeLockManager.WakeOwner.STREAMING);
   }
 
   private static String formatDuration(long durationMs) {

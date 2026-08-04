@@ -18,14 +18,11 @@ protocol ControllerManager {
 
     // MARK: - Camera & Media
 
-    func requestPhoto(
-        _ requestId: String, appId: String, size: String?, webhookUrl: String?, authToken: String?,
-        compress: String?, flash: Bool, sound: Bool, exposureTimeNs: Double?
-    )
+    func requestPhoto(_ request: PhotoRequest)
     func startStream(_ message: [String: Any])
     func stopStream()
     func sendStreamKeepAlive(_ message: [String: Any])
-    func startVideoRecording(requestId: String, save: Bool, flash: Bool, sound: Bool)
+    func startVideoRecording(requestId: String, save: Bool, sound: Bool)
     func stopVideoRecording(requestId: String)
 
     // MARK: - Button Settings
@@ -33,7 +30,6 @@ protocol ControllerManager {
     func sendButtonPhotoSettings()
     func sendButtonVideoRecordingSettings()
     func sendButtonMaxRecordingTime()
-    func sendButtonCameraLedSetting()
 
     // MARK: - Display Control
 
@@ -41,7 +37,7 @@ protocol ControllerManager {
     func clearDisplay()
     func sendTextWall(_ text: String)
     func sendDoubleTextWall(_ top: String, _ bottom: String)
-    func displayBitmap(base64ImageData: String) async -> Bool
+    func displayBitmap(base64ImageData: String, x: Int32?, y: Int32?, width: Int32?, height: Int32?) async -> Bool
     func showDashboard()
     func setDashboardPosition(_ height: Int, _ depth: Int)
 
@@ -75,7 +71,7 @@ protocol ControllerManager {
     func sendWifiCredentials(_ ssid: String, _ password: String)
     func forgetWifiNetwork(_ ssid: String)
     func sendHotspotState(_ enabled: Bool)
-    func sendOtaStart()
+    func sendOtaStart(otaVersionUrl: String?)
     func sendOtaQueryStatus()
 
     // MARK: - User Context (for crash reporting)
@@ -154,7 +150,8 @@ extension ControllerManager {
     }
 
     var voiceActivityDetectionEnabled: Bool {
-        DeviceStore.shared.get("glasses", "voiceActivityDetectionEnabled") as? Bool ?? true
+        DeviceStore.shared.get("glasses", "voiceActivityDetectionEnabled") as? Bool
+            ?? BluetoothSdkDefaults.voiceActivityDetectionEnabled
     }
 
     var batteryLevel: Int {

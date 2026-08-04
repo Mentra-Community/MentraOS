@@ -191,6 +191,11 @@ export class StreamLifecycleController {
   private onAckTimeout(ackId: string, sentAt: number): void {
     if (this.disposed) return;
 
+    // Race guard: handleAck may have processed the ACK between the timeout
+    // being scheduled and this callback running. Counting it as missed
+    // would falsely escalate.
+    if (!this.pendingAcks.has(ackId)) return;
+
     this.pendingAcks.delete(ackId);
     this.missedAcks += 1;
     const ageMs = this.now() - sentAt;

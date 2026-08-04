@@ -32,6 +32,11 @@ describe('generateSchema', () => {
     expect(schema.properties.permissions.items.additionalProperties).toBe(false);
   });
 
+  test('actions expose MCP outputSchema metadata', () => {
+    const schema = generateSchema() as any;
+    expect(schema.properties.actions.items.properties.outputSchema.type).toBe('object');
+  });
+
   test('top-level allows extras for forward-compat', () => {
     const schema = generateSchema() as any;
     expect(schema.additionalProperties).toBe(true);

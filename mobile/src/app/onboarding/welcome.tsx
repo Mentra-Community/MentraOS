@@ -1,40 +1,56 @@
 import {DeviceTypes} from "@/../../cloud/packages/types/src"
-import DontHaveGlassesSvg from "@assets/glasses/dont-have.svg"
-import HaveGlassesSvg from "@assets/glasses/have.svg"
-import {TouchableOpacity, View} from "react-native"
-import {SvgProps} from "react-native-svg"
+import {SETTINGS, useSetting} from "@mentra/engine"
+import {Image, TouchableOpacity, useWindowDimensions, View} from "react-native"
+import type {ImageSourcePropType, ImageStyle, ViewStyle} from "react-native"
 
-import {Screen, Text} from "@/components/ignite"
-import {useAppTheme} from "@/contexts/ThemeContext"
-import {useNavigationStore} from "@/stores/navigation"
-import {TxKeyPath} from "@/i18n"
-import {SETTINGS, useSetting} from "@/stores/settings"
 import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
+import {Screen, Text} from "@/components/ignite"
 import GlassView from "@/components/ui/GlassView"
+import type {TxKeyPath} from "@/i18n"
+import {useNavigationStore} from "@/stores/navigation"
 
 const CardButton = ({
+  imageHeight,
+  imageSource,
+  imageWidth,
   onPress,
+  testID,
   tx,
-  SvgComponent,
 }: {
+  imageHeight: number
+  imageSource: ImageSourcePropType
+  imageWidth: number
   onPress: () => void
-  tx: string
-  SvgComponent: React.FC<SvgProps>
-}) => (
-  <TouchableOpacity activeOpacity={0.6} onPress={onPress}>
-    <GlassView className="p-4 h-[190px] rounded-2xl justify-center items-center bg-primary-foreground">
-      <View className="w-[120px] h-[60px] items-center justify-center mb-2">
-        <SvgComponent width={120} height={60} />
-      </View>
-      <Text tx={tx as TxKeyPath} className="text-[20px] text-secondary_foreground" />
-    </GlassView>
-  </TouchableOpacity>
-)
+  testID: string
+  tx: TxKeyPath
+}) => {
+  const {width: screenWidth} = useWindowDimensions()
+  const horizontalPadding = screenWidth < 390 ? 16 : 32
+
+  return (
+    <TouchableOpacity
+      accessibilityRole="button"
+      activeOpacity={0.6}
+      className="w-full"
+      onPress={onPress}
+      testID={testID}>
+      <GlassView
+        className="h-[190px] flex-row items-center justify-between gap-2 overflow-hidden rounded-2xl bg-primary-foreground py-6"
+        style={{paddingHorizontal: horizontalPadding}}>
+        <Text tx={tx} className="shrink text-[20px] leading-7 tracking-[-0.05px] text-secondary_foreground" />
+        <Image
+          resizeMode="contain"
+          source={imageSource}
+          style={[$shrinkableImage, {height: imageHeight, width: imageWidth}]}
+        />
+      </GlassView>
+    </TouchableOpacity>
+  )
+}
 
 export default function OnboardingWelcome() {
   const {push} = useNavigationStore.getState()
   const [_onboarding, setOnboardingCompleted] = useSetting(SETTINGS.onboarding_completed.key)
-  const {theme} = useAppTheme()
 
   // User has smart glasses - go to glasses selection screen
   const handleHasGlasses = async () => {
@@ -54,23 +70,48 @@ export default function OnboardingWelcome() {
   }
 
   return (
-    <Screen preset="fixed" className="px-6" safeAreaEdges={["top"]}>
-      <View className="items-center justify-center mt-6 mb-8">
-        <MentraLogoStandalone width={100} height={48} />
+    <Screen preset="auto" className="px-6" contentContainerStyle={$content} safeAreaEdges={["top"]}>
+      <View className="mb-12 mt-6 items-center justify-center">
+        <MentraLogoStandalone width={108} height={58} />
       </View>
 
-      <View className="items-center w-full justify-center">
+      <View className="w-full items-center justify-center">
         <Text
           tx="onboarding:welcome"
-          className="text-[30px] leading-[30px] text-center text-secondary_foreground font-semibold"
+          className="text-center text-[30px] font-semibold leading-9 text-secondary_foreground"
         />
         <View className="h-4" />
-        <Text tx="onboarding:doYouHaveGlasses" className="text-[20px] text-center text-secondary_foreground" />
+        <Text
+          tx="onboarding:doYouHaveGlasses"
+          className="text-center text-[20px] leading-7 text-secondary_foreground"
+        />
       </View>
       <View className="h-12" />
-      <CardButton onPress={handleHasGlasses} tx="onboarding:haveGlasses" SvgComponent={HaveGlassesSvg} />
-      <View className="h-8" />
-      <CardButton onPress={handleNoGlasses} tx="onboarding:dontHaveGlasses" SvgComponent={DontHaveGlassesSvg} />
+      <CardButton
+        imageHeight={187}
+        imageSource={require("@assets/onboarding/welcome/glasses.png")}
+        imageWidth={122}
+        onPress={handleHasGlasses}
+        testID="onboarding-setup-with-glasses"
+        tx="onboarding:setupWithGlasses"
+      />
+      <View className="h-12" />
+      <CardButton
+        imageHeight={189}
+        imageSource={require("@assets/onboarding/welcome/phone.png")}
+        imageWidth={130}
+        onPress={handleNoGlasses}
+        testID="onboarding-setup-without-glasses"
+        tx="onboarding:setupWithoutGlasses"
+      />
     </Screen>
   )
+}
+
+const $content: ViewStyle = {
+  paddingBottom: 24,
+}
+
+const $shrinkableImage: ImageStyle = {
+  flexShrink: 1,
 }

@@ -5,6 +5,19 @@ import {StackAnimationTypes} from "react-native-screens"
 
 export type NavigationAnimation = StackAnimationTypes | string
 
+/**
+ * Registered by OfflineAppHost while an offline app is hosted in the
+ * Compositor overlay. Each handler returns true when the call was handled
+ * internally (the host's own stack) — the store then skips the real
+ * router/history mutation entirely. Returning false lets the call fall
+ * through to expo-router as usual.
+ */
+export interface NavInterceptor {
+  push: (path: string, params?: any) => boolean
+  replace: (path: string, params?: any) => boolean
+  goBack: () => boolean
+}
+
 type NavigationState = {
   // state
   history: string[]
@@ -15,6 +28,7 @@ type NavigationState = {
   androidBackFn: (() => void) | undefined
   animation: NavigationAnimation
   forceGestureEnabled: boolean
+  interceptor: NavInterceptor | null
 
   // actions
   push: (path: string, params?: any) => void
@@ -38,6 +52,7 @@ type NavigationState = {
   setAndroidBackFn: (fn: (() => void) | undefined) => void
   setAnimation: (animation: NavigationAnimation) => void
   setForceGestureEnabled: (value: boolean) => void
+  setInterceptor: (interceptor: NavInterceptor | null) => void
   // internal
   _trackPathname: (newPath: string) => void
   _resetAnimationDelayed: (animation?: NavigationAnimation) => void
@@ -52,8 +67,13 @@ export const useNavigationStore = create<NavigationState>((set, get) => ({
   androidBackFn: undefined,
   animation: "simple_push",
   forceGestureEnabled: false,
+  interceptor: null,
 
   push: (path, params) => {
+    if (get().interceptor?.push(path, params)) {
+      console.info("NAV: push() intercepted", path)
+      return
+    }
     console.info("NAV: push()", path)
     const {history, historyParams, _resetAnimationDelayed} = get()
     if (history[history.length - 1] === path) return
@@ -70,6 +90,10 @@ export const useNavigationStore = create<NavigationState>((set, get) => ({
   },
 
   replace: (path, params) => {
+    if (get().interceptor?.replace(path, params)) {
+      console.info("NAV: replace() intercepted", path)
+      return
+    }
     console.info("NAV: replace()", path)
     const {history, historyParams, _resetAnimationDelayed} = get()
     set({
@@ -89,6 +113,10 @@ export const useNavigationStore = create<NavigationState>((set, get) => ({
   },
 
   goBack: () => {
+    if (get().interceptor?.goBack()) {
+      console.info("NAV: goBack() intercepted")
+      return
+    }
     console.log("NAV: goBack()")
     const {history, historyParams, _resetAnimationDelayed} = get()
     const currentPath = history[history.length - 1]
@@ -192,6 +220,7 @@ export const useNavigationStore = create<NavigationState>((set, get) => ({
 
   setPreventBack: (value) => set({preventBack: value}),
   setAndroidBackFn: (fn) => set({androidBackFn: fn}),
+  setInterceptor: (interceptor) => set({interceptor}),
   setAnimation: (animation) => set({animation}),
   setForceGestureEnabled: (value) => set({forceGestureEnabled: value}),
 

@@ -11,13 +11,28 @@ on:
       - dev
   workflow_dispatch:
 
+# Cancel a branch's in-flight build when a newer commit is pushed to it.
+# Scoped per-ref so branches never cancel each other; keeps the runner
+# queue from filling with superseded builds.
+concurrency:
+  group: android-build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: write
   pull-requests: write
 
 jobs:
   build:
-    runs-on: self-hosted
+    # Blacksmith 4 vCPU Ubuntu: a compile/test check that release-signs with the
+    # upload key injected from secrets (no Play upload). It does not need the mac
+    # runners, so keeping it off them frees self-hosted macOS capacity for iOS +
+    # staging/release builds. Blacksmith (more vCPU + NVMe) is faster than the
+    # free ubuntu-latest tier; same provider we already use for cloud builds.
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    env:
+      EXPO_PUBLIC_AR99_RELEASE_DEVELOPER_ID: ${{ secrets.EXPO_PUBLIC_AR99_RELEASE_DEVELOPER_ID }}
+      EXPO_PUBLIC_AR99_RELEASE_CLIENT_KEY: ${{ secrets.EXPO_PUBLIC_AR99_RELEASE_CLIENT_KEY }}
 
     steps:
       - name: Update PR comment - Build started
@@ -74,6 +89,21 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Free up disk space
+        # GitHub-hosted ubuntu runners ship with ~14GB free, which a full RN
+        # Android release build (NDK + Gradle + node_modules + bun cache) can
+        # exhaust ("No space left on device"). Drop preinstalled toolchains we
+        # don't use to reclaim ~20GB+.
+        run: |
+          echo "Before:"; df -h / | tail -1
+          # Remove large preinstalled toolchains this build never uses (~15GB+).
+          # Keep the Android SDK — the build needs it.
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup \
+            /usr/local/share/powershell /usr/local/share/chromium \
+            /opt/hostedtoolcache/CodeQL /usr/local/lib/node_modules 2>/dev/null || true
+          sudo docker image prune --all --force 2>/dev/null || true
+          echo "After:"; df -h / | tail -1
+
       - name: Setup Java
         uses: actions/setup-java@v3
         with:
@@ -99,18 +129,21 @@ jobs:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: gradle-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-${{ hashFiles('mobile/android/**/*.gradle*', 'mobile/android/gradle/wrapper/gradle-wrapper.properties') }}
+          # Scope by runner.environment: a cache saved on a self-hosted Linux
+          # runner stores absolute symlink paths (/home/mentra/...) that break
+          # tar-restore on a github-hosted runner (/home/runner/...).
+          key: gradle-${{ runner.environment }}-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-${{ hashFiles('mobile/android/**/*.gradle*', 'mobile/android/gradle/wrapper/gradle-wrapper.properties') }}
           restore-keys: |
-            gradle-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-
-            gradle-${{ runner.os }}-
+            gradle-${{ runner.environment }}-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-
+            gradle-${{ runner.environment }}-${{ runner.os }}-
 
       - name: Cache Bun dependencies
         uses: actions/cache@v4
         with:
           path: ~/.bun/install/cache
-          key: bun-${{ runner.os }}-${{ hashFiles('mobile/bun.lockb') }}
+          key: bun-${{ runner.environment }}-${{ runner.os }}-${{ hashFiles('mobile/bun.lock') }}
           restore-keys: |
-            bun-${{ runner.os }}-
+            bun-${{ runner.environment }}-${{ runner.os }}-
 
       - name: Install dependencies
         working-directory: ./mobile
@@ -118,9 +151,74 @@ jobs:
 
       - name: Setup environment
         working-directory: ./mobile
+        # Copy the dummy .env, then overwrite the Mapbox runtime token line with
+        # the real public token (pk.…). app.config.ts bakes it into the Android
+        # manifest (com.mapbox.token) for the Nav SDK.
+        env:
+          MAPBOX_PUBLIC_TOKEN: ${{ secrets.MAPBOX_PUBLIC_TOKEN }}
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN_MOBILE_PRD }}
         run: |
           # Create .env from example (Expo reads from mobile/.env, not android/.env)
           cp .env.example .env
+          if [ -n "$MAPBOX_PUBLIC_TOKEN" ]; then
+            # Portable in-place edit. This job runs on bare `self-hosted`, which
+            # may be Linux (GNU sed); `sed -i ''` is BSD/macOS-only and on GNU sed
+            # treats the script as a filename ("can't read s|...|" → exit 2). The
+            # temp-file form works on both. (The iOS/staging jobs are macOS-pinned.)
+            sed "s|^EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN=.*|EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN=$MAPBOX_PUBLIC_TOKEN|" .env > .env.tmp && mv .env.tmp .env
+          else
+            echo "::warning::MAPBOX_PUBLIC_TOKEN secret not set — Android build will use the dummy token and on-device navigation will not work."
+          fi
+          # .env.example ships an empty EXPO_PUBLIC_SENTRY_DSN and SentrySetup.tsx
+          # returns early on an empty DSN *without logging*, so every CI build has
+          # shipped with crash reporting silently off (OS-1827). Warn rather than
+          # fail, but never be silent about it again.
+          # A release-producing lane must never ship a green build with crash
+          # reporting silently off -- that is the exact failure OS-1827 exists to
+          # remove. pull_request runs legitimately have no secrets (forks, and
+          # secrets are not exposed to PRs from outside collaborators), so those
+          # still warn and continue. Everything else -- push to a release branch,
+          # workflow_dispatch, staging -- is fatal.
+          #
+          # Note the curl below keeps `|| true` on purpose: a network failure or a
+          # changed response shape lands here as an empty DSN and is reported with
+          # an actionable message, rather than killing the step with a bare
+          # non-zero exit that says nothing about crash reporting.
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            SENTRY_DSN_REQUIRED=false
+          else
+            SENTRY_DSN_REQUIRED=true
+          fi
+          sentry_dsn_unavailable() {
+            if [ "$SENTRY_DSN_REQUIRED" = "true" ]; then
+              echo "::error::$1 A release build must have crash reporting (OS-1827)."
+              exit 1
+            fi
+            echo "::warning::$1 This PR build will have no crash reporting (OS-1827)."
+          }
+          if [ -n "$DOPPLER_TOKEN" ]; then
+            # curl, not the Doppler CLI action: that action verifies its own
+            # download with gpg and hard-fails where gpg is absent, which is the
+            # case on our self-hosted macOS runners. curl needs nothing that is
+            # not already on every runner. The single-secret endpoint keeps the
+            # rest of the config (MAPBOX_DOWNLOADS_TOKEN) out of the shell; a
+            # service token implies its own project and config.
+            SENTRY_DSN_RESPONSE="$(curl -sS --fail-with-body --retry 3 --retry-connrefused \
+              -u "$DOPPLER_TOKEN:" \
+              "https://api.doppler.com/v3/configs/config/secret?name=EXPO_PUBLIC_SENTRY_DSN" || true)"
+            # A DSN contains no double quote, so this extraction is exact.
+            SENTRY_DSN_VALUE="$(printf '%s' "$SENTRY_DSN_RESPONSE" | sed -n 's/.*"computed":"\([^"]*\)".*/\1/p')"
+            echo "::add-mask::$SENTRY_DSN_VALUE"
+            if [ -n "$SENTRY_DSN_VALUE" ]; then
+              # Same portable temp-file form as the Mapbox edit above: this job
+              # runs on Linux (GNU sed), where `sed -i ''` exits 2.
+              sed "s|^EXPO_PUBLIC_SENTRY_DSN=.*|EXPO_PUBLIC_SENTRY_DSN=$SENTRY_DSN_VALUE|" .env > .env.tmp && mv .env.tmp .env
+            else
+              sentry_dsn_unavailable "Doppler returned an empty EXPO_PUBLIC_SENTRY_DSN."
+            fi
+          else
+            sentry_dsn_unavailable "DOPPLER_TOKEN_MOBILE_PRD secret not set."
+          fi
 
       - name: Run Expo prebuild
         working-directory: ./mobile
@@ -134,6 +232,15 @@ jobs:
             ./fix-react-native-symlinks.sh
           fi
 
+      - name: Inject release signing key
+        uses: ./.github/actions/inject-signing
+        with:
+          mobile: "true"
+          upload-keystore-b64: ${{ secrets.UPLOAD_KEYSTORE_B64 }}
+          upload-store-password: ${{ secrets.MENTRAOS_UPLOAD_STORE_PASSWORD }}
+          upload-key-password: ${{ secrets.MENTRAOS_UPLOAD_KEY_PASSWORD }}
+          upload-key-alias: ${{ secrets.MENTRAOS_UPLOAD_KEY_ALIAS }}
+
       - name: Build Android Release APK
         id: gradle-build
         working-directory: ./mobile/android
@@ -141,6 +248,17 @@ jobs:
         continue-on-error: true
         env:
           SENTRY_DISABLE_AUTO_UPLOAD: "true"
+          # Mapbox Downloads:Read secret token (sk.…). Authenticates the private
+          # Maven repo so Gradle can fetch the Nav SDK (com.mapbox.navigationcore)
+          # binaries. Build-time only — never written into the APK.
+          # Passed under BOTH names: our hand-written repo block reads
+          # MAPBOX_DOWNLOADS_TOKEN, while the @rnmapbox/maps-generated repo block
+          # (allprojects, in mobile/android/build.gradle) reads
+          # RNMAPBOX_MAPS_DOWNLOAD_TOKEN. The generated block applies to ALL
+          # modules incl. :mentra-crust, so without the second name it adds the
+          # repo UNAUTHENTICATED → "Could not find navigationcore".
+          MAPBOX_DOWNLOADS_TOKEN: ${{ secrets.MAPBOX_DOWNLOADS_TOKEN }}
+          RNMAPBOX_MAPS_DOWNLOAD_TOKEN: ${{ secrets.MAPBOX_DOWNLOADS_TOKEN }}
 
       - name: Retry build with clean cache (if first attempt failed)
         if: steps.gradle-build.outcome == 'failure'
@@ -153,6 +271,7 @@ jobs:
           ./gradlew assembleRelease --build-cache --parallel
         env:
           SENTRY_DISABLE_AUTO_UPLOAD: "true"
+          MAPBOX_DOWNLOADS_TOKEN: ${{ secrets.MAPBOX_DOWNLOADS_TOKEN }}
 
       - name: Fail if both builds failed
         if: steps.gradle-build.outcome == 'failure'
@@ -162,6 +281,19 @@ jobs:
             echo "Both build attempts failed"
             exit 1
           fi
+
+      - name: Verify release signature (not debug)
+        run: |
+          APK=mobile/android/app/build/outputs/apk/release/app-release.apk
+          APKSIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner 2>/dev/null | sort | tail -1)
+          [ -n "$APKSIGNER" ] || { echo "::error::apksigner not found"; exit 1; }
+          CERTS=$("$APKSIGNER" verify --print-certs "$APK")
+          echo "$CERTS"
+          if echo "$CERTS" | grep -qi "CN=Android Debug"; then
+            echo "::error::Release APK is DEBUG-signed — upload keystore was not injected."
+            exit 1
+          fi
+          echo "Release APK is signed with the production upload key."
 
       - name: Upload Release APK (artifact)
         uses: actions/upload-artifact@v4

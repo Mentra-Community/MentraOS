@@ -1,0 +1,23 @@
+# Test-only infrastructure for `bun test`.
+#
+# Both Mongo and Redis run locally — tests don't touch the shared Atlas
+# cluster. Ports are bound to 127.0.0.1 ONLY (never expose Mongo to your
+# network; automated ransomware scanners hit open instances within hours).
+#
+# Used by `bun run setup --test` and `bun run test:ci`.
+
+services:
+  mongo:
+    image: mongo:7
+    container_name: cloud-v2-mongo-test
+    ports:
+      - "127.0.0.1:27017:27017"
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: cloud-v2-redis-test
+    ports:
+      - "127.0.0.1:6379:6379"
+    command: redis-server --save "" --appendonly no
+    restart: unless-stopped

@@ -1,0 +1,275 @@
+name: Release Mentra Engine
+
+# Publishes @mentra/engine to npm under the channel-promotion scheme (see
+# .github/scripts/npm-channel.mjs): git holds one prerelease base version
+# (X.Y.Z-dev.N, only edited on dev) and the branch derives what publishes —
+# dev -> X.Y.Z-dev.N (dev tag), staging -> X.Y.Z-beta.N (beta tag), main ->
+# X.Y.Z (latest tag). Merging up the chain IS the promotion; no version edits
+# ride the branches. A release fires when the derived version is absent from
+# npm (E404-strict), so re-runs and re-merges are no-ops.
+#
+# Publish mode per channel (same policy as the miniapp pipeline): dev publishes
+# DIRECTLY (fast internal iteration); beta and latest go through npm's staging
+# queue (`npm stage publish`) and a maintainer must approve each version in the
+# npm UI before it goes live. The engine's peer ranges are carets, so its peers
+# stage on those channels too — every version that can float into an approved
+# engine gets its own approval. That approval is the only gate past merge:
+# merging to main IS the go signal.
+#
+# FIRST PUBLISH (deliberately manual): @mentra/engine cannot go to npm before
+# its @mentra/* peer dependencies exist there (crust, cloud-client,
+# cloud-protocol, miniapp — npm >=7 auto-installs peers, so consumers would
+# E404). Once the peers are published, run a supervised workflow_dispatch with
+# force_release=true (dry_run=false); that first publish uses NPM_TOKEN because
+# npm cannot stage a package that does not exist.
+#
+# After the initial release, configure @mentra/engine's npm trusted publisher:
+#   organization: Mentra-Community
+#   repository: MentraOS
+#   workflow: engine-release.yml
+#   allowed action: npm stage publish
+
+# No paths filter, deliberately: detection is registry-state ("publish when
+# the derived version is absent from npm"), so the trigger must be too — a
+# promotion merge often doesn't touch the engine tree at all, and the engine
+# regularly needs a later, unrelated push to retry (e.g. after its peers'
+# staged versions get approved). Every push reconciles; the detect job is a
+# few seconds and no-ops when nothing is missing.
+on:
+  push:
+    branches:
+      - dev
+      - staging
+      - main
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Build and pack without publishing to npm"
+        required: true
+        default: true
+        type: boolean
+      force_release:
+        description: "Bootstrap the first-ever release (a package absent from npm never auto-publishes). Does NOT bypass the peer-availability gate."
+        required: true
+        default: false
+        type: boolean
+
+concurrency:
+  group: engine-release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  ENGINE_PACKAGE_DIR: mobile/modules/engine
+
+jobs:
+  detect:
+    name: Detect Engine version change
+    runs-on: ubuntu-latest
+    outputs:
+      package_name: ${{ steps.release-info.outputs.package_name }}
+      version: ${{ steps.release-info.outputs.version }}
+      dist_tag: ${{ steps.release-info.outputs.dist_tag }}
+      run_release: ${{ steps.release-info.outputs.run_release }}
+      dry_run: ${{ steps.release-info.outputs.dry_run }}
+      force_release: ${{ steps.release-info.outputs.force_release }}
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        # Depth 1 is fine: the decision reads the working tree + the npm
+        # registry, never git history.
+
+      - name: Decide release for this channel
+        id: release-info
+        run: node .github/scripts/engine-release-info.mjs
+        env:
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
+          FORCE_RELEASE: ${{ github.event_name == 'workflow_dispatch' && inputs.force_release || false }}
+
+      - name: Summarize release decision
+        run: |
+          {
+            echo "## Mentra Engine release decision"
+            echo ""
+            echo "- Package: \`${{ steps.release-info.outputs.package_name }}\`"
+            echo "- Derived version: \`${{ steps.release-info.outputs.version }}\` (dist-tag \`${{ steps.release-info.outputs.dist_tag }}\`)"
+            echo "- Dry run: \`${{ steps.release-info.outputs.dry_run }}\`"
+            echo "- Run release job: \`${{ steps.release-info.outputs.run_release }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  npm:
+    name: Release npm package
+    needs: detect
+    if: needs.detect.outputs.run_release == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Use npm with staged publishing support
+        # Pinned major: the release-critical path must not pick up whatever npm
+        # shipped this morning. Bump deliberately. `npm stage publish` needs
+        # >=11.15.0 (staged publishing GA).
+        run: |
+          npm install -g npm@11
+          npm stage --help >/dev/null 2>&1 || { echo "::error::this npm ($(npm --version)) lacks 'npm stage' — staged publishing needs >=11.15.0."; exit 1; }
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Cache Bun cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-cache-engine-${{ hashFiles('mobile/bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-cache-engine-
+
+      - name: Install mobile dependencies
+        working-directory: mobile
+        run: bun install --frozen-lockfile
+
+      # After the frozen install (which would reject changed version fields):
+      # stamp every channel-released manifest to this branch's derived versions
+      # so the packed engine carries the right version and peer ranges. Packed
+      # checkout only — never committed.
+      - name: Stamp channel versions
+        run: node .github/scripts/stamp-channel-manifests.mjs
+
+      - name: Build package
+        working-directory: ${{ env.ENGINE_PACKAGE_DIR }}
+        run: bun run build
+
+      - name: Check npm registry
+        id: npm-registry
+        # E404 is the ONLY signal that a package/version is absent. Any other
+        # npm error (5xx, network, auth) must FAIL this step — treating a flake
+        # as "doesn't exist" would route a routine release down the NPM_TOKEN
+        # bootstrap path, silently bypassing the OIDC staged flow.
+        run: |
+          set -euo pipefail
+          check_absent() {
+            local spec="$1"
+            local out code
+            set +e
+            out=$(npm view "$spec" version --json --registry=https://registry.npmjs.org 2>&1)
+            code=$?
+            set -e
+            if [[ $code -eq 0 ]]; then
+              echo "exists"
+              return 0
+            fi
+            if echo "$out" | grep -q '"code": *"E404"' || echo "$out" | grep -q "code E404"; then
+              echo "absent"
+              return 0
+            fi
+            echo "::error::npm view '$spec' failed with a non-404 error — refusing to guess registry state." >&2
+            echo "$out" >&2
+            return 1
+          }
+
+          pkg_state=$(check_absent "${{ needs.detect.outputs.package_name }}")
+          if [[ "$pkg_state" == "exists" ]]; then
+            echo "package_exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "package_exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          ver_state=$(check_absent "${{ needs.detect.outputs.package_name }}@${{ needs.detect.outputs.version }}")
+          if [[ "$ver_state" == "exists" ]]; then
+            echo "version_exists=true" >> "$GITHUB_OUTPUT"
+            echo "npm already has ${{ needs.detect.outputs.package_name }}@${{ needs.detect.outputs.version }}."
+          else
+            echo "version_exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Dry-run npm package
+        # Also on dry-run dispatches whose derived version already exists —
+        # the tarball preview is the whole point of a dry run.
+        if: steps.npm-registry.outputs.version_exists != 'true' || needs.detect.outputs.dry_run == 'true'
+        working-directory: ${{ env.ENGINE_PACKAGE_DIR }}
+        run: npm pack --dry-run
+
+      - name: Bootstrap gate — first publish must be supervised
+        # Same gate as the miniapp pipeline: a package that does not exist on
+        # npm never auto-publishes off a push (a version bump merged to dev
+        # must not mint the first release). Bootstrap is a workflow_dispatch
+        # with force_release=true.
+        if: needs.detect.outputs.dry_run != 'true' && steps.npm-registry.outputs.package_exists != 'true' && steps.npm-registry.outputs.version_exists != 'true' && needs.detect.outputs.force_release != 'true'
+        run: echo "::notice::${{ needs.detect.outputs.package_name }} does not exist on npm yet; skipping auto-publish. Bootstrap it with a supervised workflow_dispatch (force_release=true)."
+
+      - name: Check publish token
+        if: needs.detect.outputs.dry_run != 'true' && steps.npm-registry.outputs.version_exists != 'true' && (github.ref_name == 'dev' && steps.npm-registry.outputs.package_exists == 'true' || steps.npm-registry.outputs.package_exists != 'true' && needs.detect.outputs.force_release == 'true')
+        run: |
+          if [[ -z "${NODE_AUTH_TOKEN:-}" ]]; then
+            echo "::error::Set the NPM_TOKEN repository secret (needed for the bootstrap and dev-channel publishes)."
+            exit 1
+          fi
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      # Direct publish covers the dev channel (fast internal iteration) and the
+      # bootstrap (npm cannot stage a package that does not exist; that path is
+      # a supervised force_release dispatch). beta/latest go through the
+      # staging queue below — same policy as the miniapp pipeline.
+      - name: Publish npm package (dev channel / bootstrap)
+        if: needs.detect.outputs.dry_run != 'true' && steps.npm-registry.outputs.version_exists != 'true' && (github.ref_name == 'dev' && steps.npm-registry.outputs.package_exists == 'true' || steps.npm-registry.outputs.package_exists != 'true' && needs.detect.outputs.force_release == 'true')
+        working-directory: ${{ env.ENGINE_PACKAGE_DIR }}
+        # access/registry come from the package's publishConfig. The dist-tag is
+        # derived from the channel — without --tag, npm defaults any version
+        # onto `latest`.
+        run: npm publish --tag "${{ needs.detect.outputs.dist_tag }}"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Stage npm package for approval (beta/latest channels)
+        if: needs.detect.outputs.dry_run != 'true' && steps.npm-registry.outputs.package_exists == 'true' && steps.npm-registry.outputs.version_exists != 'true' && github.ref_name != 'dev'
+        working-directory: ${{ env.ENGINE_PACKAGE_DIR }}
+        # Same --tag logic as npm publish; the tag is immutable once staged, so
+        # it must be right here, not at approval time. A staged version is not
+        # live yet (npm view won't list it), so a re-merge before anyone
+        # approves re-attempts the stage — tolerate that one error.
+        run: |
+          set +e
+          out=$(npm stage publish --tag "${{ needs.detect.outputs.dist_tag }}" 2>&1)
+          code=$?
+          set -e
+          echo "$out"
+          if [[ $code -ne 0 ]]; then
+            if echo "$out" | grep -qi "already"; then
+              echo "::notice::${{ needs.detect.outputs.package_name }}@${{ needs.detect.outputs.version }} is already in the staging queue — approve or reject it in the npm UI."
+            else
+              exit $code
+            fi
+          else
+            echo "::notice::${{ needs.detect.outputs.package_name }}@${{ needs.detect.outputs.version }} staged for '${{ needs.detect.outputs.dist_tag }}' — a maintainer must approve it in the npm UI before it goes live."
+          fi
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Skip npm stage publish
+        if: steps.npm-registry.outputs.version_exists == 'true'
+        run: echo "Skipping npm stage publish because this version already exists on npm."
+
+      - name: Summarize
+        if: always()
+        run: |
+          {
+            echo "## ${{ needs.detect.outputs.package_name }}"
+            echo ""
+            echo "- Version: \`${{ needs.detect.outputs.version }}\`"
+            echo "- Package already exists: \`${{ steps.npm-registry.outputs.package_exists }}\`"
+            echo "- Version already exists: \`${{ steps.npm-registry.outputs.version_exists }}\`"
+            echo "- Dry run: \`${{ needs.detect.outputs.dry_run }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

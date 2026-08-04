@@ -1,0 +1,160 @@
+# BetterStack Logs Helm chart values for the cloud-v2 cluster (Porter 5692).
+#
+# Chart: betterstack-logs PINNED to v1.1.6. Do NOT install unpinned: v2.0.0
+# restructures the metrics pipeline under vector-aggregator, which would invalidate
+# this vector.customConfig layout. The Porter add-on has Chart Version pinned to v1.1.6.
+#
+# ONE Vector DaemonSet (one pod per node) tails every container stdout on the
+# node, filters to the five cloud-v2 Porter apps, flattens the pino JSON, and
+# routes each env to its OWN BetterStack source via a route transform. There is
+# no compute duplication: adding an env is a routing entry + a sink, not another
+# collector.
+#
+# Never ship logs in-process from the app (a pino HTTP transport buffers in a
+# worker thread and grows heap without bound under load). Pods write JSON to
+# stdout; Vector owns all network shipping.
+#
+# COST GUARD: cloudv2_only_filter is the only thing bounding ingest volume. It
+# matches ONLY the five cloud-* Porter apps; cluster 5692 also hosts kube-system,
+# ingress, karaoke, etc. which must never be ingested. Any new env is a
+# deliberate starts_with clause + a routed sink to its own source, never a
+# wildcard. Retention is 30 days per source (Betterstack API floor).
+#
+# Sources (all germany / eu-central-1a region; tokens are NOT committed, they
+# live in Doppler mentra-sre/dev and are injected into the sinks below):
+#   DEV      src 2616831  host s2616831.eu-central-1a.betterstackdata.com  token Doppler mentra-sre/dev BETTERSTACK_V2_SOURCE_TOKEN_DEV
+#   DEBUG    src 2616845  host s2616845.eu-central-1a.betterstackdata.com  token Doppler mentra-sre/dev BETTERSTACK_V2_SOURCE_TOKEN_DEBUG
+#   ISAIAH   src 2616847  host s2616847.eu-central-1a.betterstackdata.com  token Doppler mentra-sre/dev BETTERSTACK_V2_SOURCE_TOKEN_ISAIAH
+#   STAGING  src 2616849  host s2616849.eu-central-1a.betterstackdata.com  token Doppler mentra-sre/dev BETTERSTACK_V2_SOURCE_TOKEN_STAGING
+#   PROD     src 2616851  host s2616851.eu-central-1a.betterstackdata.com  token Doppler mentra-sre/dev BETTERSTACK_V2_SOURCE_TOKEN_PROD
+#
+# Deploy path: this cluster does NOT expose kubeconfig, so `porter helm`/`kubectl`
+# 400. Deploy through Porter Add-ons -> Helm Chart (dashboard) or its API with an
+# Admin token (Doppler mentra-sre/dev PORTER_TOKEN_ADMIN). Paste these values with
+# the real per-env tokens substituted for the PLACEHOLDER_*_TOKEN strings below.
+# The better_stack_http_metrics_sink override below MUST stay. The chart default
+# for that sink has token: null, which is invalid Vector config and crash-loops
+# the entire DaemonSet, stopping log shipping for ALL envs (this caused the
+# 2026-07-20/21 outage, addon revisions 3 and 4). With metrics-server disabled
+# the sink never receives events, so any valid token works; we reuse the dev one.
+
+vector:
+  customConfig:
+    transforms:
+      cloudv2_only_filter:
+        type: "filter"
+        inputs: ["better_stack_kubernetes_parser"]
+        condition: >
+          starts_with(to_string!(.kubernetes.container_name), "cloud-dev-") ||
+          starts_with(to_string!(.kubernetes.container_name), "cloud-debug-") ||
+          starts_with(to_string!(.kubernetes.container_name), "cloud-isaiah-") ||
+          starts_with(to_string!(.kubernetes.container_name), "cloud-staging-") ||
+          starts_with(to_string!(.kubernetes.container_name), "cloud-prod-")
+      flatten_pino:
+        type: "remap"
+        inputs: ["cloudv2_only_filter"]
+        source: |
+          kube_pod = to_string(.kubernetes.pod_name) ?? "unknown"
+          kube_container = to_string(.kubernetes.container_name) ?? "unknown"
+          pino_data = .message
+          if is_string(pino_data) {
+            parsed, err = parse_json(string!(pino_data))
+            if err == null {
+              pino_data = parsed
+            }
+          }
+          if is_object(pino_data) {
+            . = object!(pino_data)
+          }
+          if exists(.msg) {
+            .message = del(.msg)
+          }
+          if exists(.time) {
+            .dt = del(.time)
+          }
+          if is_integer(.level) {
+            numeric_level = to_int!(.level)
+            if numeric_level >= 60 {
+              .level = "fatal"
+            } else if numeric_level >= 50 {
+              .level = "error"
+            } else if numeric_level >= 40 {
+              .level = "warn"
+            } else if numeric_level >= 30 {
+              .level = "info"
+            } else if numeric_level >= 20 {
+              .level = "debug"
+            } else {
+              .level = "trace"
+            }
+          }
+          ._meta.kubernetes_pod = kube_pod
+          ._meta.kubernetes_container = kube_container
+          ._meta.log_source = "vector"
+      route_by_env:
+        type: "route"
+        inputs: ["flatten_pino"]
+        route:
+          dev: 'starts_with(to_string(._meta.kubernetes_container) ?? "", "cloud-dev-")'
+          debug: 'starts_with(to_string(._meta.kubernetes_container) ?? "", "cloud-debug-")'
+          isaiah: 'starts_with(to_string(._meta.kubernetes_container) ?? "", "cloud-isaiah-")'
+          staging: 'starts_with(to_string(._meta.kubernetes_container) ?? "", "cloud-staging-")'
+          prod: 'starts_with(to_string(._meta.kubernetes_container) ?? "", "cloud-prod-")'
+    sinks:
+      better_stack_http_sink:
+        inputs: ["route_by_env.dev"]
+        uri: "https://s2616831.eu-central-1a.betterstackdata.com/"
+        auth:
+          strategy: "bearer"
+          token: "PLACEHOLDER_DEV_TOKEN"
+      bs_debug:
+        type: http
+        method: post
+        uri: "https://s2616845.eu-central-1a.betterstackdata.com/"
+        encoding:
+          codec: json
+        compression: gzip
+        auth:
+          strategy: bearer
+          token: "PLACEHOLDER_DEBUG_TOKEN"
+        inputs: ["route_by_env.debug"]
+      bs_isaiah:
+        type: http
+        method: post
+        uri: "https://s2616847.eu-central-1a.betterstackdata.com/"
+        encoding:
+          codec: json
+        compression: gzip
+        auth:
+          strategy: bearer
+          token: "PLACEHOLDER_ISAIAH_TOKEN"
+        inputs: ["route_by_env.isaiah"]
+      bs_staging:
+        type: http
+        method: post
+        uri: "https://s2616849.eu-central-1a.betterstackdata.com/"
+        encoding:
+          codec: json
+        compression: gzip
+        auth:
+          strategy: bearer
+          token: "PLACEHOLDER_STAGING_TOKEN"
+        inputs: ["route_by_env.staging"]
+      bs_prod:
+        type: http
+        method: post
+        uri: "https://s2616851.eu-central-1a.betterstackdata.com/"
+        encoding:
+          codec: json
+        compression: gzip
+        auth:
+          strategy: bearer
+          token: "PLACEHOLDER_PROD_TOKEN"
+        inputs: ["route_by_env.prod"]
+      better_stack_http_metrics_sink:
+        uri: "https://s2616831.eu-central-1a.betterstackdata.com/metrics"
+        auth:
+          strategy: "bearer"
+          token: "PLACEHOLDER_DEV_TOKEN"
+metrics-server:
+  enabled: false

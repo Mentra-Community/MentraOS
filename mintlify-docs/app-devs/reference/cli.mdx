@@ -1,0 +1,133 @@
+---
+title: "CLI reference (mentra-miniapp)"
+description: "The author CLI for developing, packing, and releasing Mentra miniapps."
+icon: "terminal"
+---
+
+`@mentra/miniapp-cli` provides the `mentra-miniapp` command. It's installed as a
+dev dependency in every scaffolded project, so your `package.json` scripts call
+it directly (`"dev": "mentra-miniapp dev"`).
+
+```bash
+mentra-miniapp <command>
+```
+
+Run with no arguments to print the usage table.
+
+<Info>
+The CLI is **Bun-only**: it ships as TypeScript and runs under Bun. Use `bun`
+(or `bunx`), not `npx`/Node.
+</Info>
+
+| Command | What it does |
+|---|---|
+| [`dev`](#dev) | Dev server with hot reload; prints a QR to load the miniapp on a phone. |
+| [`release`](#release) | Builds, packs, and serves a QR to install a release on phones over LAN. |
+| [`pack`](#pack) | Validates the manifest and zips `dist/` into `<pkg>-<version>.zip`. |
+| [`manifest`](#manifest) | Interactive wizard for editing `miniapp.json`. |
+| [`permission`](#permission-and-hardware) | Add / remove / list manifest permissions. |
+| [`hardware`](#permission-and-hardware) | Add / remove / list manifest hardware requirements. |
+| [`schema print`](#schema) | Prints the canonical `miniapp.json` JSON Schema. |
+
+## `dev`
+
+```bash
+mentra-miniapp dev
+```
+
+Validates `miniapp.json`, builds both layers, serves them over your LAN, and
+prints a QR (and a `miniapp://dev?...` URL). It also runs a **dev sidecar**
+WebSocket on the next port up for live reload and console-log forwarding back to
+your terminal (non-fatal if it can't start). It watches for Wi-Fi/LAN-IP changes
+every 10 seconds and reprints the QR.
+
+The starting port comes from `"port"` in `miniapp.json` (default `3000`); if it or
+its sidecar neighbor is busy, the CLI scans upward for a free adjacent pair.
+
+**On the phone:** Mentra App → **Settings → Developer settings → Mini App
+Development → Scan Mini App QR Code**. Phone and laptop must share Wi-Fi. `Ctrl+C`
+stops everything.
+
+<Warning>
+`dev` is live and temporary. Keep the CLI and computer running: the Mentra App
+loads the runtime bundle from that LAN server. Dev miniapps are keyed by their
+manifest package name, so you can scan and test several side by side; rescanning
+the same package updates only that entry. The Mentra App caches each entry's name
+and icon. Use `bun run release` for an installed miniapp that works without the
+computer.
+</Warning>
+
+## `release`
+
+```bash
+mentra-miniapp release
+mentra-miniapp release --no-cache   # force rebuild even if the cached zip is fresh
+```
+
+The all-in-one path for putting a build on real devices: validate → build → pack
+→ serve behind a QR so you can install on as many phones as you want.
+
+It reuses a cached `build/<pkg>-<version>.zip` when every source file is older
+than the zip, otherwise rebuilds (auto-detecting your package manager from the
+lockfile). It serves the bundle, manifest, and icon over HTTP on `0.0.0.0` and
+prints a `miniapp://release?...` QR, then stays up so multiple devices can
+install. Each install logs a line. Installed miniapps run offline and persist
+across restarts; no laptop needed after install.
+
+## `pack`
+
+```bash
+mentra-miniapp pack
+mentra-miniapp pack --no-build   # zip the existing dist/ as-is
+```
+
+Produces the distributable artifact only (`release` calls this internally). It
+builds with `NODE_ENV=production`, verifies `dist/`, validates the manifest,
+copies `miniapp.json` + `icon.png` into `dist/`, and zips to
+`build/<pkg>-<version>.zip`. This ZIP is what you submit to the Mentra Miniapp Store.
+
+<Note>
+`pack` requires the `zip` binary on `PATH` (preinstalled on macOS and most Linux;
+on Windows use WSL). `build/` self-ignores from git.
+</Note>
+
+## `manifest`
+
+```bash
+mentra-miniapp manifest
+```
+
+An interactive wizard for `miniapp.json`: edit permissions and hardware
+requirements, show the current manifest, or finish. It saves after each confirmed
+change, so `Ctrl+C` never loses a saved edit.
+
+## `permission` and `hardware`
+
+Object-verb edits that share the wizard's validation:
+
+```bash
+mentra-miniapp permission list
+mentra-miniapp permission add [TYPE]      # interactive if TYPE omitted
+mentra-miniapp permission remove [TYPE]
+
+mentra-miniapp hardware list
+mentra-miniapp hardware add [TYPE] [LEVEL]
+mentra-miniapp hardware remove [TYPE]
+```
+
+Permission `TYPE`: `MICROPHONE`, `CAMERA`, `CALENDAR`, `LOCATION`,
+`BACKGROUND_LOCATION`, `READ_NOTIFICATIONS`, `POST_NOTIFICATIONS`. Hardware
+`TYPE`: `CAMERA`, `DISPLAY`, `MICROPHONE`, `SPEAKER`, `IMU`, `BUTTON`, `LIGHT`,
+`WIFI`; `LEVEL`: `REQUIRED`, `OPTIONAL`. See [the manifest](/app-devs/core-concepts/miniapp-manifest)
+for what each means.
+
+## `schema`
+
+```bash
+mentra-miniapp schema print
+```
+
+Prints the canonical `miniapp.json` JSON Schema to stdout: useful for CI
+validation or IDE config. The same schema ships at
+`node_modules/@mentra/miniapp-cli/schema/miniapp.schema.json`, which the `$schema`
+line in a scaffolded `miniapp.json` references for editor autocomplete.

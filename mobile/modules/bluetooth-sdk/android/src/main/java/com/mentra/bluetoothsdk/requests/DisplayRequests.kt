@@ -37,3 +37,20 @@ internal data class DashboardMenuItem(
             "packageName" to packageName,
         )
 }
+
+// Mirrors the TS `CalendarEvent` shape: { title, location?, time, endDate }
+// where `endDate` is Unix seconds.
+internal data class CalendarEvent(
+    val title: String,
+    val time: String,
+    val endDate: Long,
+    val location: String? = null,
+) {
+    fun toMap(): Map<String, Any> =
+        buildMap {
+            put("title", title)
+            put("time", time)
+            put("endDate", endDate)
+            location?.let { put("location", it) }
+        }
+}

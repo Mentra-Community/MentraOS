@@ -1,9 +1,16 @@
 package com.mentra.bluetoothsdk.sgcs
 
+import com.mentra.bluetoothsdk.BluetoothSdkDefaults
 import com.mentra.bluetoothsdk.DeviceManager
+import com.mentra.bluetoothsdk.PhotoRequest
 import com.mentra.bluetoothsdk.DeviceStore
 
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Canvas
+import android.graphics.ColorMatrix
+import android.graphics.ColorMatrixColorFilter
+import android.graphics.Paint
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothGatt
@@ -27,7 +34,6 @@ import mentraos.ble.MentraosBle.GlassesToPhone
 import mentraos.ble.MentraosBle.PhoneToGlasses
 import mentraos.ble.MentraosBle.ChargingState
 import mentraos.ble.MentraosBle.BatteryStatus
-import mentraos.ble.MentraosBle.VersionResponse
 import mentraos.ble.MentraosBle.HeadGesture
 import mentraos.ble.MentraosBle.ButtonEvent
 import mentraos.ble.MentraosBle.ImuData
@@ -69,9 +75,22 @@ class MentraNex : SGCManager() {
         private const val MTU_DEFAULT: Int = 23
         
         private const val MAX_CHUNK_SIZE_DEFAULT: Int = 176 // Maximum chunk size for BLE packets
-        private const val DELAY_BETWEEN_CHUNKS_SEND: Long = 10 // Adjust this value as needed
+        private const val DELAY_BETWEEN_CHUNKS_SEND: Long = 5 // Adjust this value as needed
+        // Upper bound on waiting for onCharacteristicWrite. A no-response write's
+        // callback is normally near-instant; this only guards against a callback that
+        // never arrives, so a dropped write can't wedge the send queue forever.
+        private const val WRITE_CALLBACK_TIMEOUT_MS: Long = 10
+        // Upper bound for an acked (write-with-response) fragment. The callback only
+        // fires after the firmware's ATT Write Response — at least one connection
+        // interval — so 10ms is far too short here: timing out early would let the
+        // worker issue the next write while this one is still outstanding, which the
+        // stack rejects (one GATT op at a time) and the fragment is dropped. This is a
+        // safety bound only; the ack normally arrives within an interval or two.
+        private const val WRITE_ACK_TIMEOUT_MS: Long = 400
 
         private const val INITIAL_CONNECTION_DELAY_MS = 350L // Adjust this value as needed
+        // Window to let a queued DisconnectRequest flush to the glasses before we close GATT.
+        private const val DISCONNECT_FLUSH_DELAY_MS = 250L
         private const val MICBEAT_INTERVAL_MS: Long = (1000 * 60) * 30; // micbeat every 30 minutes
 
         private const val MAIN_TASK_HANDLER_CODE_GATT_STATUS_CHANGED: Int = 110
@@ -90,6 +109,14 @@ class MentraNex : SGCManager() {
         // actions of NEX Glasses
         private const val MAIN_TASK_HANDLER_CODE_BATTERY_QUERY: Int = 620
         private const val MAIN_TASK_HANDLER_CODE_HEART_BEAT: Int = 630
+
+        // Fixed rect for the live-captions box (G2-style): a single full-canvas text container
+        // reused across caption updates, so each caption is an in-place text change that coexists
+        // with any bitmap/other components. Matches the 500x220 Mentra display canvas.
+        private const val CAPTION_BOX_X: Int = 0
+        private const val CAPTION_BOX_Y: Int = 0
+        private const val CAPTION_BOX_W: Int = 500
+        private const val CAPTION_BOX_H: Int = 220
     }
 
     private var heartbeatCount: Int = 0;
@@ -98,7 +125,9 @@ class MentraNex : SGCManager() {
     private var context: Context? = null
     // private var isDebug: Boolean = true
 
-    private var isLc3AudioEnabled: Boolean = true
+    // Off by default; toggled from Nex Developer Settings via the nex_lc3_audio_playback flag.
+    private val isLc3AudioEnabled: Boolean
+        get() = DeviceStore.get("bluetooth", "nex_lc3_audio_playback") as? Boolean ?: false
     private var lc3AudioPlayer: Lc3Player? = null
 
     private var lc3DecoderPtr: Long = 0
@@ -132,6 +161,7 @@ class MentraNex : SGCManager() {
 
     private var maxChunkSize: Int = MAX_CHUNK_SIZE_DEFAULT // Maximum chunk size for BLE packets
     private var bmpChunkSize: Int = 194 // BMP chunk size
+    private var protobufSeq: Int = 0 // Rolling sequence for fragmented control messages
 
     @Volatile private var isWorkerRunning = false
     // Queue to hold pending requests
@@ -148,8 +178,6 @@ class MentraNex : SGCManager() {
     private var isScanning: Boolean = false
 
     private var protobufVersionPosted: Boolean = false
-
-    private var hasConnectedThisSession: Boolean = false
 
     private var bleScanCallback: ScanCallback? = null
 
@@ -212,6 +240,17 @@ class MentraNex : SGCManager() {
         }
     }
 
+    /** Start/stop the LC3 player when the nex_lc3_audio_playback flag changes. */
+    override fun applyNexAudioPlaybackSetting() {
+        if (isLc3AudioEnabled) {
+            Bridge.log("Nex: LC3 audio playback enabled - starting player")
+            lc3AudioPlayer?.startPlay()
+        } else {
+            Bridge.log("Nex: LC3 audio playback disabled - stopping player")
+            lc3AudioPlayer?.stopPlay()
+        }
+    }
+
     private val random: Random = Random()
 
     private val mainGattCallback: BluetoothGattCallback = createGattCallback()
@@ -233,7 +272,12 @@ class MentraNex : SGCManager() {
     private var currentImageChunks: MutableList<ByteArray> = mutableListOf()
 
     // Data class to represent a send request
-    private data class SendRequest( val data: ByteArray, var waitTime: Int = -1) {
+    // ack=true issues the fragment as a write-WITH-response (WRITE_TYPE_DEFAULT): the
+    // firmware ATT-acks each write, so the worker knows it landed. ack=false is a
+    // no-response write (WRITE_TYPE_NO_RESPONSE) — fire-and-forget, used for captions
+    // where the newest frame supersedes the last and throughput matters more than
+    // per-packet delivery. See processQueue() for how the write type is applied.
+    private data class SendRequest( val data: ByteArray, var waitTime: Int = -1, val ack: Boolean = true) {
         override fun equals(other: Any?): Boolean {
             if (this === other) return true
             if (javaClass != other?.javaClass) return false
@@ -242,6 +286,7 @@ class MentraNex : SGCManager() {
 
             if (!data.contentEquals(other.data)) return false
             if (waitTime != other.waitTime) return false
+            if (ack != other.ack) return false
 
             return true
         }
@@ -249,6 +294,7 @@ class MentraNex : SGCManager() {
         override fun hashCode(): Int {
             var result = data.contentHashCode()
             result = 31 * result + waitTime
+            result = 31 * result + ack.hashCode()
             return result
         }
     }
@@ -261,6 +307,17 @@ class MentraNex : SGCManager() {
         fun waitWhileTrue() {
             while (flag) {
                 (this as Object).wait()
+            }
+        }
+
+        /** Bounded wait: returns early if the flag is still set after [timeoutMs]. */
+        @Synchronized
+        fun waitWhileTrue(timeoutMs: Long) {
+            val deadline = System.currentTimeMillis() + timeoutMs
+            while (flag) {
+                val remaining = deadline - System.currentTimeMillis()
+                if (remaining <= 0) break
+                (this as Object).wait(remaining)
             }
         }
 
@@ -277,7 +334,7 @@ class MentraNex : SGCManager() {
     }
 
     // Network Management
-    override fun requestWifiScan () { Bridge.log("Nex: requestWifiScan operation not supported") }
+    override fun requestWifiScan (scanId: String?) { Bridge.log("Nex: requestWifiScan operation not supported") }
     override fun sendWifiCredentials(ssid: String, password: String) { Bridge.log("Nex: sendWifiCredentials operation not supported") }
     override fun forgetWifiNetwork(ssid: String) { }
     override fun sendHotspotState(enabled: Boolean) { Bridge.log("Nex: sendHotspotState operation not supported") }
@@ -286,22 +343,39 @@ class MentraNex : SGCManager() {
     override fun queryGalleryStatus() { Bridge.log("Nex: queryGalleryStatus operation not supported") }
     override fun sendGalleryMode() { Bridge.log("Nex: sendGalleryMode operation not supported") }
 
+    override fun sendVoiceActivityDetectionSetting() {
+        val enabled =
+            DeviceStore.get("bluetooth", "voice_activity_detection_enabled") as? Boolean
+                ?: BluetoothSdkDefaults.VOICE_ACTIVITY_DETECTION_ENABLED
+        Bridge.log("Nex: 🎤 Sending Voice Activity Detection setting to glasses: $enabled")
+
+        if (connectionState != ConnTypes.CONNECTED) {
+            Bridge.log("Nex: Cannot send VAD setting - not connected")
+            return
+        }
+
+        val bytes = NexProtobufUtils.generateVadEnabledRequestCommandBytes(enabled)
+        sendDataSequentially(bytes)
+        Bridge.sendVoiceActivityDetectionStatus(enabled)
+    }
+
     // Version info: Not supported on Nex (uses protobuf for version info)
     override fun requestVersionInfo() { Bridge.log("Nex: requestVersionInfo operation not supported") }
 
     // Camera & Media: Not supported on Nex (No camera)
-    override fun requestPhoto(requestId: String, appId: String, size: String, webhookUrl: String?, authToken: String?, compress: String?, flash: Boolean, sound: Boolean, exposureTimeNs: Long?) { Bridge.log("Nex: requestPhoto operation not supported") }
+    override fun requestPhoto(request: PhotoRequest) {
+        Bridge.log("Nex: requestPhoto operation not supported")
+    }
     override fun startStream(message: MutableMap<String, Any>) { Bridge.log("Nex: startStream operation not supported") }
     override fun stopStream() { Bridge.log("Nex: stopStream operation not supported") }
     override fun sendStreamKeepAlive(message: MutableMap<String, Any>) { Bridge.log("Nex: sendStreamKeepAlive operation not supported") }
-    override fun startVideoRecording(requestId: String, save: Boolean, flash: Boolean, sound: Boolean) { Bridge.log("Nex: startVideoRecording operation not supported") }
+    override fun startVideoRecording(requestId: String, save: Boolean, sound: Boolean) { Bridge.log("Nex: startVideoRecording operation not supported") }
     override fun stopVideoRecording(requestId: String) { Bridge.log("Nex: stopVideoRecording operation not supported") }
 
     // Button Settings: Not supported on Nex
     override fun sendButtonPhotoSettings() { Bridge.log("Nex: sendButtonPhotoSettings operation not supported") }
     override fun sendButtonVideoRecordingSettings() { Bridge.log("Nex: sendButtonVideoRecordingSettings operation not supported") }
     override fun sendButtonMaxRecordingTime() { Bridge.log("Nex: sendButtonMaxRecordingTime operation not supported") }
-    override fun sendButtonCameraLedSetting() { Bridge.log("Nex: sendButtonCameraLedSetting operation not supported") }
 
     override fun sendCameraFovSetting() { Bridge.log("Nex: sendCameraFovSetting operation not supported") }
 
@@ -391,12 +465,12 @@ class MentraNex : SGCManager() {
 
     override fun disconnect() {
         DeviceStore.apply("glasses", "fullyBooted", false)
-        destroy();
+        destroy()
     }
 
     override fun forget() {
         DeviceStore.apply("glasses", "fullyBooted", false)
-        destroy();
+        destroy()
     }
 
     override fun cleanup() {
@@ -411,11 +485,10 @@ class MentraNex : SGCManager() {
         Bridge.log("Nex: === SENDING HEAD UP ANGLE COMMAND TO GLASSES ===")
         Bridge.log("Nex: Head Up Angle: $validatedAngle degrees (validated range: 0-60)")
         val cmdBytes = NexProtobufUtils.generateHeadUpAngleConfigCommandBytes(angle)
-        sendDataSequentially(cmdBytes, 10)
+        sendProtobuf(cmdBytes, 10)
     }
 
     override fun getBatteryStatus() {
-        Bridge.log("Nex: Requesting battery status");
         queryBatteryStatus()
     }
 
@@ -444,54 +517,242 @@ class MentraNex : SGCManager() {
         // TODO: test this logic. Is it correct? Should we send both or just one?
         Bridge.log("Nex: setBrightness() - level: " + level + "%, autoMode: " + autoMode);
         val brightnessCmdBytes = NexProtobufUtils.generateBrightnessConfigCommandBytes(level)
-        sendDataSequentially(brightnessCmdBytes, 10)
+        sendProtobuf(brightnessCmdBytes, 10)
 
         val autoBrightnessCmdBytes = NexProtobufUtils.generateAutoBrightnessConfigCommandBytes(autoMode)
-        sendDataSequentially(autoBrightnessCmdBytes, 10)
+        sendProtobuf(autoBrightnessCmdBytes, 10)
     }
 
-    override fun clearDisplay() { 
-        Bridge.log("Nex: clearDisplay() - sending clear display request command bytes");
+    override fun clearDisplay() {
+        Bridge.log("Nex: clearDisplay() - clearing canvas + caption");
+        // Tear down any canvas components (bitmap + positioned text) and forget the element mapping
+        // + active layout, then clear the caption text path too so either kind of screen is wiped.
+        canvasElements.clear()
+        currentLayoutId = null
+        sendProtobuf(NexProtobufUtils.generateCanvasClearCommandBytes(), 10)
         val clearDisplayPackets = NexProtobufUtils.generateClearDisplayRequestCommandBytes()
-        sendDataSequentially(clearDisplayPackets, 10)
-        // sendTextWall(" ")
-        Bridge.log("Nex: clearDisplay() - sent clear display request command bytes");
+        sendProtobuf(clearDisplayPackets, 10)
+        Bridge.log("Nex: clearDisplay() - sent");
+    }
+    
+
+    override fun sendText(text: String) {
+        Bridge.log("Nex: sendText() - text: " + text);
+        showCaptionText(text)
     }
 
     override fun sendTextWall(text: String) {
         Bridge.log("Nex: sendTextWall() - text: " + text);
-        val textChunks: ByteArray = createTextWallChunksForNex(text)
-        sendDataSequentially(textChunks);
+        showCaptionText(text)
     }
 
     override fun sendDoubleTextWall(top: String, bottom: String) {
         Bridge.log("Nex: sendDoubleTextWall() - top: " + top + ", bottom: " + bottom);
-        val finalText: String = buildString {
-            top?.let { append(it) }
-            top?.let { append("\n") }
-            bottom?.let { append(it) }
-        }
-        val textChunks = createTextWallChunksForNex(finalText)
-        sendDataSequentially(textChunks)
+        val finalText: String = listOf(top, bottom).filter { it.isNotEmpty() }.joinToString("\n")
+        showCaptionText(finalText)
     }
 
-    override fun displayBitmap(base64ImageData: String): Boolean {
-        try {
-            val bmpData: ByteArray? = android.util.Base64.decode(base64ImageData, android.util.Base64.DEFAULT)
+    // Live captions / text walls render into a single reused canvas text container (the caption
+    // box), like Even G2: the first call creates it, each subsequent call is an in-place text
+    // update on the same component (reused by rect via sendPositionedText), so captions can sit
+    // alongside a navigation minimap or other canvas components instead of owning the screen.
+    private fun showCaptionText(text: String) {
+        // Captions are high-frequency, replace-in-place updates where the newest frame
+        // supersedes the last, so they go out WITHOUT ATT acks (write-no-response) for
+        // throughput — every other command uses acked writes. Route through upsertText
+        // directly (rather than the public sendPositionedText override, which can't take
+        // an ack flag) using the same rect-synthesized element id so reuse still works.
+        val elementId = "text@$CAPTION_BOX_X,$CAPTION_BOX_Y,${CAPTION_BOX_W}x$CAPTION_BOX_H,0,0"
+        upsertText(elementId, null, text, CAPTION_BOX_X, CAPTION_BOX_Y, CAPTION_BOX_W, CAPTION_BOX_H, 0, 0, ack = false)
+    }
+
+    // ---- Canvas text containers (G2-style) -------------------------------------------------
+    // Positioned text is drawn as canvas TEXTBOX components so it coexists with the bitmap
+    // component (a navigation screen = minimap + several text boxes shown together). Components
+    // are keyed by their rect+border and reused so repeated updates don't recreate the LVGL
+    // object; ids come from the firmware's text pool (1..6) with oldest-out eviction.
+    // Retained-mode canvas registry: elementId -> firmware component. The layout path (nav HUD)
+    // passes explicit element ids; legacy callers (captions, one-off bitmaps) synthesize an id from
+    // their rect, so reuse/update works for them through the same path. Text ids come from the
+    // firmware pool 1..6, bitmaps from 10..13.
+    private data class CanvasElement(val firmwareId: Int, val isBitmap: Boolean, val rect: String)
+    private val canvasElements = LinkedHashMap<String, CanvasElement>()
+    private val canvasTextIdPool: List<Int> = listOf(1, 2, 3, 4, 5, 6)
+    private val canvasBitmapIdPool: List<Int> = listOf(10, 11, 12, 13)
+    // Active layout/scene id. A display call carrying a DIFFERENT layoutId clears the previous scene
+    // first (retained-mode contract); legacy calls (null layoutId) leave it untouched.
+    private var currentLayoutId: String? = null
+
+    /**
+     * Handle a scene/layout change. DeviceManager sweeps the previous app's
+     * elements before a cross-app frame arrives, so the registry is usually
+     * empty here and switching costs nothing. Only when stale components remain
+     * (e.g. legacy callers with no sweep) do we delete them — individually, NOT
+     * via CanvasClear: clear also exits the canvas VIEW (the first create
+     * re-activates it), which reads as a full-screen flash.
+     */
+    private fun ensureLayout(layoutId: String?) {
+        if (layoutId != null && layoutId != currentLayoutId) {
+            if (canvasElements.isNotEmpty()) {
+                for (el in canvasElements.values) {
+                    sendProtobuf(NexProtobufUtils.generateCanvasDeleteComponentCommandBytes(el.firmwareId))
+                }
+                canvasElements.clear()
+            }
+            currentLayoutId = layoutId
+        }
+    }
+
+    /**
+     * A replay frame (reconnect / firmware recovery / re-dispatch) repaints from
+     * scratch: forget the registry so every element takes the CREATE path.
+     * Create-on-existing-id is replace in firmware, so repainting over a live
+     * canvas is safe, and updates-to-dead-ids (which firmware drops silently)
+     * can never happen.
+     */
+    override fun onSceneReplay(appId: String) {
+        canvasElements.clear()
+        currentLayoutId = appId
+    }
+
+    /**
+     * Free firmware id from the type's pool. When the pool is exhausted the
+     * OLDEST registered element of that type is evicted for real: its firmware
+     * component is deleted and its id reused (LinkedHashMap preserves insertion
+     * order).
+     */
+    private fun allocFirmwareId(isBitmap: Boolean): Int? {
+        val pool = if (isBitmap) canvasBitmapIdPool else canvasTextIdPool
+        val used = canvasElements.values.filter { it.isBitmap == isBitmap }.map { it.firmwareId }.toSet()
+        pool.firstOrNull { it !in used }?.let {
+            return it
+        }
+        // Pool full — evict the oldest same-type element.
+        val oldest = canvasElements.entries.firstOrNull { it.value.isBitmap == isBitmap } ?: return null
+        Bridge.log("Nex: pool full — evicting oldest ${if (isBitmap) "bitmap" else "text"} element '${oldest.key}' (fw id ${oldest.value.firmwareId})")
+        sendProtobuf(NexProtobufUtils.generateCanvasDeleteComponentCommandBytes(oldest.value.firmwareId))
+        canvasElements.remove(oldest.key)
+        return oldest.value.firmwareId
+    }
+
+    // Legacy positioned text: identity is the rect, so repeated updates reuse the component.
+    override fun sendPositionedText(
+        text: String, x: Int, y: Int, width: Int, height: Int, borderWidth: Int, borderRadius: Int
+    ) {
+        upsertText("text@$x,$y,${width}x$height,$borderWidth,$borderRadius", null,
+            text, x, y, width, height, borderWidth, borderRadius)
+    }
+
+    override fun drawLayoutText(
+        text: String, x: Int, y: Int, width: Int, height: Int,
+        borderWidth: Int, borderRadius: Int, elementId: String, layoutId: String?
+    ) {
+        upsertText(elementId, layoutId, text, x, y, width, height, borderWidth, borderRadius)
+    }
+
+    private fun upsertText(
+        elementId: String, layoutId: String?, text: String,
+        x: Int, y: Int, width: Int, height: Int, borderWidth: Int, borderRadius: Int,
+        ack: Boolean = true
+    ) {
+        ensureLayout(layoutId)
+        val rect = "$x,$y,${width}x$height,$borderWidth,$borderRadius"
+        val existing = canvasElements[elementId]
+        if (existing != null && !existing.isBitmap) {
+            if (existing.rect != rect) {
+                // Geometry moved/resized — recreate the box at the SAME firmware id, then set text.
+                sendProtobuf(NexProtobufUtils.generateCanvasCreateTextboxCommandBytes(
+                    existing.firmwareId, x, y, width, height, borderWidth, borderRadius), ack = ack)
+                canvasElements[elementId] = existing.copy(rect = rect)
+            }
+            sendProtobuf(NexProtobufUtils.generateCanvasUpdateTextCommandBytes(existing.firmwareId, text), ack = ack)
+            return
+        }
+        val fid = allocFirmwareId(false)
+        if (fid == null) {
+            Bridge.log("Nex: text pool full (>6) — dropping element '$elementId'")
+            return
+        }
+        canvasElements[elementId] = CanvasElement(fid, false, rect)
+        sendProtobuf(NexProtobufUtils.generateCanvasCreateTextboxCommandBytes(
+            fid, x, y, width, height, borderWidth, borderRadius), ack = ack)
+        sendProtobuf(NexProtobufUtils.generateCanvasUpdateTextCommandBytes(fid, text), ack = ack)
+    }
+
+    override fun removeLayoutElement(elementId: String, layoutId: String?) {
+        val slot = canvasElements.remove(elementId) ?: return
+        sendProtobuf(NexProtobufUtils.generateCanvasDeleteComponentCommandBytes(slot.firmwareId))
+    }
+
+    private data class NexBmp(val data: ByteArray, val w: Int, val h: Int)
+
+    /**
+     * Decode a base64 image to the glasses-native 1-bit BMP at the requested size. The panel is
+     * 1-bpp and renders white-on-black, so we scale to the rect, invert, then Floyd–Steinberg dither
+     * (preserving gradients as dot patterns instead of a hard 50% threshold) before the 1-bit encode.
+     */
+    private fun decodeBitmapForNex(base64ImageData: String, width: Int?, height: Int?): NexBmp? {
+        return try {
+            val bmpData = android.util.Base64.decode(base64ImageData, android.util.Base64.DEFAULT)
             if (bmpData == null || bmpData.isEmpty()) {
-                Log.e(TAG, "Failed to decode base64 image data");
-                return false;
+                Log.e(TAG, "Failed to decode base64 image data")
+                return null
             }
             val bmp = BitmapFactory.decodeByteArray(bmpData, 0, bmpData.size)
-
-            displayBitmapImageForNexGlasses(bmpData, bmp.width,  bmp.height)
-            return true
-
+            val destW = width ?: bmp.width
+            val destH = height ?: bmp.height
+            val scaled = Bitmap.createScaledBitmap(bmp, destW, destH, true)
+            val inverted = invertBitmap(scaled)
+            val dithered = floydSteinbergDither(inverted)
+            NexBmp(BitmapJavaUtils.convertBitmapTo1BitBmpBytes(dithered, false), destW, destH)
         } catch (e: Exception) {
-            Log.e(TAG, "Error in displaying bitmap: " + e.message);
-            return false
+            Log.e(TAG, "Error decoding bitmap: " + e.message)
+            null
         }
+    }
 
+    // Legacy one-off bitmap: identity is the rect (no layout scene).
+    override fun displayBitmap(
+            base64ImageData: String, x: Int?, y: Int?, width: Int?, height: Int?
+    ): Boolean {
+        val nb = decodeBitmapForNex(base64ImageData, width, height) ?: return false
+        upsertBitmap("bmp@${x ?: 0},${y ?: 0},${nb.w}x${nb.h}", null, nb.data, x ?: 0, y ?: 0, nb.w, nb.h)
+        return true
+    }
+
+    override fun drawLayoutBitmap(
+            base64ImageData: String, x: Int, y: Int, width: Int, height: Int,
+            elementId: String, layoutId: String?
+    ): Boolean {
+        val nb = decodeBitmapForNex(base64ImageData, width, height) ?: return false
+        upsertBitmap(elementId, layoutId, nb.data, x, y, nb.w, nb.h)
+        return true
+    }
+
+    private fun upsertBitmap(
+        elementId: String, layoutId: String?, bmpData: ByteArray, x: Int, y: Int, w: Int, h: Int
+    ) {
+        ensureLayout(layoutId)
+        val rect = "$x,$y,${w}x$h"
+        val existing = canvasElements[elementId]
+        val fid: Int
+        if (existing != null && existing.isBitmap) {
+            fid = existing.firmwareId
+            if (existing.rect != rect) {
+                sendProtobuf(NexProtobufUtils.generateCanvasCreateBitmapCommandBytes(fid, x, y, w, h))
+                canvasElements[elementId] = existing.copy(rect = rect)
+            }
+        } else {
+            val alloc = allocFirmwareId(true)
+            if (alloc == null) {
+                Bridge.log("Nex: bitmap pool full (>4) — dropping element '$elementId'")
+                return
+            }
+            fid = alloc
+            canvasElements[elementId] = CanvasElement(fid, true, rect)
+            sendProtobuf(NexProtobufUtils.generateCanvasCreateBitmapCommandBytes(fid, x, y, w, h))
+        }
+        streamBitmapPixels(fid, bmpData)
     }
     override fun showDashboard() {
         exit()
@@ -501,23 +762,23 @@ class MentraNex : SGCManager() {
         Bridge.log("Nex: setDashboardPosition() - height: " + height + ", depth: " + depth)
         // Send display_height then display_distance; adjust order if Nex firmware requires otherwise.
         val heightBytes = NexProtobufUtils.generateDisplayHeightCommandBytes(height)
-        sendDataSequentially(heightBytes, 10)
+        sendProtobuf(heightBytes, 10)
         val distanceCm = NexProtobufUtils.dashboardDepthToDistanceCm(depth)
         val distanceBytes = NexProtobufUtils.generateDisplayDistanceCommandBytes(distanceCm)
-        sendDataSequentially(distanceBytes, 10)
+        sendProtobuf(distanceBytes, 10)
     }
 
     override fun setDashboardHeightOnly(height: Int) {
         Bridge.log("Nex: setDashboardHeightOnly() - height: $height")
         val heightBytes = NexProtobufUtils.generateDisplayHeightCommandBytes(height)
-        sendDataSequentially(heightBytes, 10)
+        sendProtobuf(heightBytes, 10)
     }
 
     override fun setDashboardDepthOnly(depth: Int) {
         Bridge.log("Nex: setDashboardDepthOnly() - depth: $depth")
         val distanceCm = NexProtobufUtils.dashboardDepthToDistanceCm(depth)
         val distanceBytes = NexProtobufUtils.generateDisplayDistanceCommandBytes(distanceCm)
-        sendDataSequentially(distanceBytes, 10)
+        sendProtobuf(distanceBytes, 10)
     }
 
     override fun ping() {
@@ -594,7 +855,14 @@ class MentraNex : SGCManager() {
             private fun handleDisconnection(gatt: BluetoothGatt) {
                 Bridge.log("glass disconnected, stopping heartbeats")
                 Bridge.log("Entering STATE_DISCONNECTED branch")
-                
+
+                // The glasses lose their canvas on disconnect — forget the
+                // component registry so post-reconnect frames take the CREATE
+                // path (firmware silently drops updates to dead component ids).
+                // The host replays the current scene after reconnect.
+                canvasElements.clear()
+                currentLayoutId = null
+
                 // Save current microphone state before disconnection
                 microphoneStateBeforeDisconnection = isMicrophoneEnabled
                 Bridge.log("Saved microphone state before disconnection: $microphoneStateBeforeDisconnection")
@@ -632,6 +900,12 @@ class MentraNex : SGCManager() {
             }
 
             private fun handleConnectionFailure(gatt: BluetoothGatt, status: Int) {
+                // Same as handleDisconnection: the glasses lose their canvas —
+                // forget the component registry so post-reconnect frames take
+                // the CREATE path (fw silently drops updates to dead ids).
+                canvasElements.clear()
+                currentLayoutId = null
+
                 // Save current microphone state before connection failure
                 microphoneStateBeforeDisconnection = isMicrophoneEnabled
                 Bridge.log("Saved microphone state before connection failure: $microphoneStateBeforeDisconnection")
@@ -696,29 +970,6 @@ class MentraNex : SGCManager() {
                 characteristic: BluetoothGattCharacteristic,
                 status: Int
             ) {
-                Bridge.log("onCharacteristicWrite callback - ")
-                val values = characteristic.value ?: byteArrayOf()
-                
-                if (status == BluetoothGatt.GATT_SUCCESS) {
-                    Bridge.log("[BLE] onCharacteristicWrite: SUCCESS len=${values.size}")
-                    val packetHex = values.joinToString("") { "%02X".format(it) }
-                    Bridge.log("onCharacteristicWrite Values - $packetHex")
-
-                    if (values.isNotEmpty()) {
-                        val packetType = values[0]
-                        val protobufData = values.copyOfRange(1, values.size)
-
-                        if (packetType == NexBluetoothPacketTypes.PACKET_TYPE_PROTOBUF) {
-                            // just for test
-                            decodeProtobufsByWrite(protobufData, packetHex)
-                        }
-                    }
-                } else {
-                    Log.e(TAG, "[BLE] onCharacteristicWrite: FAILED status=$status${if (status == 133) " (GATT_ERROR 133 - likely disconnected mid-write)" else ""}")
-                }
-
-                // clear the waiter
-                Bridge.log("[BLE] onCharacteristicWrite: releasing mainWaiter")
                 mainWaiter.setFalse()
             }
 
@@ -787,9 +1038,12 @@ class MentraNex : SGCManager() {
 
     private fun handleMainTaskMessage(msg: Message): Boolean {
         val msgCode = msg.what
-        Bridge.log("Nex: handleMessage msgCode: $msgCode")
-        Bridge.log("Nex: handleMessage obj: ${msg.obj}")
-        
+        // NOTE: do not log here. Every incoming BLE notification (including
+        // ~50 audio packets/sec) is dispatched through this handler on the
+        // main looper, and Bridge.log marshals an event across the RN bridge
+        // to JS. Per-message logging here floods the main thread and backs up
+        // the audio queue when the CPU downclocks at screen-off. (Matches G1,
+        // which does not log per audio packet.)
         when (msgCode) {
             MAIN_TASK_HANDLER_CODE_GATT_STATUS_CHANGED -> {}
             MAIN_TASK_HANDLER_CODE_DISCOVER_SERVICES -> {
@@ -817,7 +1071,6 @@ class MentraNex : SGCManager() {
             MAIN_TASK_HANDLER_CODE_HEART_BEAT -> {
                 // Note: Heartbeat is now handled by receiving ping from glasses
                 // This case is kept for backward compatibility but no longer used
-                Bridge.log("Nex: Heartbeat handler called - no longer sending periodic pings")
             }
             else -> { }
         }
@@ -832,15 +1085,21 @@ class MentraNex : SGCManager() {
         Bridge.log("Nex: 📤 Requesting MTU: $MTU_517 bytes")
         gatt.requestMtu(MTU_517) // Request our maximum MTU
 
-        val uartService: BluetoothGattService = gatt.getService(NexBluetoothConstants.MAIN_SERVICE_UUID)
+        val uartService: BluetoothGattService? = gatt.getService(NexBluetoothConstants.MAIN_SERVICE_UUID)
 
         if (uartService != null) {
             val writeChar = uartService.getCharacteristic(NexBluetoothConstants.WRITE_CHAR_UUID)
             val notifyChar = uartService.getCharacteristic(NexBluetoothConstants.NOTIFY_CHAR_UUID)
 
-            writeChar?.let { 
+            writeChar?.let {
                 mainWriteChar = it
-                Bridge.log("Nex: glass TX characteristic found")
+                // Write type is now chosen PER FRAGMENT in processQueue (acked for
+                // everything except captions), so it's set there right before each
+                // write rather than once here. Captions still use write-without-
+                // response — which unblocks TX from the ~1-packet-per-connection-
+                // interval ATT round-trip when the phone sleeps and the interval is
+                // relaxed — while every other command is acked for reliable delivery.
+                Bridge.log("Nex: glass TX characteristic found (write type set per-fragment)")
             }
 
             notifyChar?.let {
@@ -871,14 +1130,6 @@ class MentraNex : SGCManager() {
                 showHomeScreen() // Turn on the NexGlasses display
                 updateConnectionState()
 
-                if (hasConnectedThisSession) {
-                    Bridge.log("Nex: BLE reconnect detected — showing reconnected banner")
-                    sendTextWall("// MentraOS Reconnected")
-                    mainTaskHandler.postDelayed({ clearDisplay() }, 3000)
-                } else {
-                    hasConnectedThisSession = true
-                }
-
                 // Post protobuf schema version information (only once)
                 if (!protobufVersionPosted) {
                     postProtobufSchemaVersionInfo()
@@ -888,8 +1139,15 @@ class MentraNex : SGCManager() {
                 // Query glasses protobuf version from firmware
                 Bridge.log("=== SENDING GLASSES PROTOBUF VERSION REQUEST ===")
                 val versionQueryPacket = NexProtobufUtils.generateVersionRequestCommandBytes()
-                sendDataSequentially(versionQueryPacket, 100)
-                Bridge.log("Sent glasses protobuf version request")
+                if (versionQueryPacket.isNotEmpty()) {
+                    sendProtobuf(versionQueryPacket, 100)
+                    Bridge.log("Sent glasses protobuf version request")
+                } else {
+                    Bridge.log("Skipping version request: schema removed VersionRequest")
+                }
+
+                // Push current glasses-side Voice Activity Detection setting
+                sendVoiceActivityDetectionSetting()
             }
         } else {
             Log.e(TAG, " glass UART service not found")
@@ -903,9 +1161,10 @@ class MentraNex : SGCManager() {
         val result = gatt.setCharacteristicNotification(characteristic, true)
         Bridge.log("Nex: PROC_QUEUE - setCharacteristicNotification result: $result")
 
-        // Set write type for the characteristic
-        characteristic.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
-        Bridge.log("Nex: PROC_QUEUE - write type set")
+        // NOTE: write type is NOT set here. This receives the *notify*
+        // characteristic, which the phone never writes to — setting writeType
+        // on it had no effect. The write characteristic (mainWriteChar) is
+        // configured for WRITE_TYPE_NO_RESPONSE at its assignment instead.
 
         // Add delay
         Bridge.log("Nex: PROC_QUEUE - waiting to enable notification...")
@@ -928,15 +1187,16 @@ class MentraNex : SGCManager() {
         if (characteristic.uuid == NexBluetoothConstants.NOTIFY_CHAR_UUID) {
             val data = characteristic.value
             val deviceName = mainGlassGatt?.device?.name ?: return
-            val packetHex = data.joinToString("") { "%02X".format(it) }
-            Bridge.log("onCharacteristicChangedHandler len: ${data.size}")
-            Bridge.log("onCharacteristicChangedHandler: $packetHex")
-            
+            // NOTE: this runs on the main looper for every notification, audio
+            // included (~50/sec). Do not log or stringify the whole packet to
+            // hex on this hot path — Bridge.log crosses the RN bridge to JS and
+            // packetHex is O(n) per packet. Both back up the audio queue at
+            // screen-off. packetHex is only needed by the protobuf branch, so
+            // compute it lazily there.
             if (data.isEmpty()) return
-            
+
             val packetType = data[0]
-            Bridge.log("onCharacteristicChangedHandler packetType: ${String.format("%02X ", packetType)}")
-            
+
             when (packetType) {
                 NexBluetoothPacketTypes.PACKET_TYPE_JSON -> {
                     val jsonData = data.copyOfRange(1, data.size)
@@ -944,6 +1204,7 @@ class MentraNex : SGCManager() {
                 }
                 NexBluetoothPacketTypes.PACKET_TYPE_PROTOBUF -> {
                     val protobufData = data.copyOfRange(1, data.size)
+                    val packetHex = data.joinToString("") { "%02X".format(it) }
                     decodeProtobufs(protobufData, packetHex)
                 }
                 NexBluetoothPacketTypes.PACKET_TYPE_AUDIO -> {
@@ -960,17 +1221,17 @@ class MentraNex : SGCManager() {
 
                         val lc3Data = data.copyOfRange(2, data.size)
 
-                        Bridge.log("Received LC3 audio packet seq=$sequenceNumber, size=${lc3Data.size}")
+                        // No per-packet log here: this fires ~50x/sec and each
+                        // Bridge.log crosses the RN bridge to JS. (Matches G1.)
 
-                        // Play LC3 audio directly through LC3 player
+                        // Play LC3 audio directly through LC3 player.
+                        // No logging in any branch: this runs per audio packet
+                        // (~50/sec) and Bridge.log crosses the RN bridge to JS.
+                        // With isLc3AudioEnabled hardcoded off, the disabled
+                        // branch would otherwise log on every single packet.
                         if (lc3AudioPlayer != null && isLc3AudioEnabled) {
                             // Use the original packet format that LC3 player expects
                             lc3AudioPlayer?.write(data, 0, data.size)
-                            Bridge.log("Playing LC3 audio directly through LC3 player: ${data.size} bytes")
-                        } else if (!isLc3AudioEnabled) {
-                            Bridge.log("LC3 audio disabled - skipping LC3 audio output")
-                        } else {
-                            Bridge.log("LC3 player not available - skipping LC3 audio output")
                         }
 
                         DeviceManager.getInstance().handleGlassesMicData(lc3Data);
@@ -1085,6 +1346,21 @@ class MentraNex : SGCManager() {
     }
 
     private fun destroy() {
+        // Tell the glasses this teardown is intentional so they return to the welcome
+        // screen immediately instead of holding the last frame through the firmware's
+        // unexpected-disconnect grace period. Best-effort: if the write can't be sent
+        // or doesn't flush in time, the firmware grace period is the safety net.
+        val canSend = mainGlassGatt != null && mainWriteChar != null && isMainConnected
+        if (!canSend) {
+            performDestroy()
+            return
+        }
+        Bridge.log("Nex: Sending DisconnectRequest before teardown")
+        sendProtobuf(NexProtobufUtils.generateDisconnectRequestCommandBytes(), 100)
+        mainTaskHandler.postDelayed({ performDestroy() }, DISCONNECT_FLUSH_DELAY_MS)
+    }
+
+    private fun performDestroy() {
         Bridge.log("Nex: MentraNexSGC ONDESTROY")
         showHomeScreen()
         isKilled = true
@@ -1136,7 +1412,6 @@ class MentraNex : SGCManager() {
         sendQueue.offer(emptyArray()) // is this needed?
         isWorkerRunning = false
         isMainConnected = false
-        hasConnectedThisSession = false
         Bridge.log("Nex: MentraNexSGC cleanup complete")
     }
 
@@ -1184,37 +1459,93 @@ class MentraNex : SGCManager() {
         }
     }
 
-    private fun displayBitmapImageForNexGlasses(bmpData: ByteArray, width: Int, height: Int) {
-        Bridge.log("Starting BMP display process for ${width}x$height image")
+    /**
+     * Returns a colour-inverted copy of [src] (white <-> black). The firmware decoder normalises
+     * BMP palette polarity, so the only way to flip the on-glass result from the SGC is to invert
+     * the actual pixel content here.
+     */
+    private fun invertBitmap(src: Bitmap): Bitmap {
+        val out = Bitmap.createBitmap(src.width, src.height, Bitmap.Config.ARGB_8888)
+        val paint = Paint().apply {
+            colorFilter = ColorMatrixColorFilter(
+                ColorMatrix(
+                    floatArrayOf(
+                        -1f, 0f, 0f, 0f, 255f,
+                        0f, -1f, 0f, 0f, 255f,
+                        0f, 0f, -1f, 0f, 255f,
+                        0f, 0f, 0f, 1f, 0f
+                    )
+                )
+            )
+        }
+        Canvas(out).drawBitmap(src, 0f, 0f, paint)
+        return out
+    }
 
+    /**
+     * Floyd-Steinberg error-diffusion dithering to monochrome. Returns a copy of [src] whose pixels
+     * are pure black or white but whose dot density approximates the original luminance, preserving
+     * far more perceived detail on a 1-bpp panel than a flat threshold. Luminance uses Rec. 601
+     * weights; quantization error is pushed to the right/below neighbours (7/3/5/1 over 16).
+     */
+    private fun floydSteinbergDither(src: Bitmap): Bitmap {
+        val w = src.width
+        val h = src.height
+        val px = IntArray(w * h)
+        src.getPixels(px, 0, w, 0, 0, w, h)
+
+        // Working luminance buffer (float so diffused error can over/undershoot 0..255).
+        val lum = FloatArray(w * h)
+        for (i in 0 until w * h) {
+            val c = px[i]
+            val r = (c shr 16) and 0xFF
+            val g = (c shr 8) and 0xFF
+            val b = c and 0xFF
+            lum[i] = 0.299f * r + 0.587f * g + 0.114f * b
+        }
+
+        for (y in 0 until h) {
+            for (x in 0 until w) {
+                val idx = y * w + x
+                val old = lum[idx]
+                val newVal = if (old < 128f) 0f else 255f
+                val err = old - newVal
+                px[idx] = if (newVal >= 128f) 0xFFFFFFFF.toInt() else 0xFF000000.toInt()
+
+                if (x + 1 < w) lum[idx + 1] += err * 7f / 16f
+                if (y + 1 < h) {
+                    if (x - 1 >= 0) lum[idx + w - 1] += err * 3f / 16f
+                    lum[idx + w] += err * 5f / 16f
+                    if (x + 1 < w) lum[idx + w + 1] += err * 1f / 16f
+                }
+            }
+        }
+
+        val out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        out.setPixels(px, 0, w, 0, 0, w, h)
+        return out
+    }
+
+    /** Stream 1-bit BMP pixels into an already-created canvas bitmap component [componentId]. */
+    private fun streamBitmapPixels(componentId: Int, bmpData: ByteArray) {
         try {
             if (bmpData.isEmpty()) {
-                Log.e(TAG,"Invalid BMP data provided")
+                Log.e(TAG, "Invalid BMP data provided")
                 return
             }
-
-            Bridge.log("Processing BMP data, size: ${bmpData.size} bytes")
-
-            // Generate proper 2-byte hex stream ID (e.g., "002A") as per protobuf specification
+            // 4-digit hex stream id per the canvas image protocol.
             val totalChunks = (bmpData.size + bmpChunkSize - 1) / bmpChunkSize
-            val streamId = "%04X".format(random.nextInt(0x10000)) // 4-digit hex format
-            
-            val startImageSendingBytes = NexProtobufUtils.generateDisplayImageCommandBytes(streamId, totalChunks, width, height)
-            sendDataSequentially(startImageSendingBytes)
+            val streamId = "%04X".format(random.nextInt(0x10000))
 
-            // Send all chunks with proper stream ID parsing
+            sendProtobuf(NexProtobufUtils.generateCanvasUpdateImageCommandBytes(
+                componentId, streamId, totalChunks))
+
             val chunks = NexProtobufUtils.createBmpChunksForNexGlasses(streamId, bmpData, totalChunks, bmpChunkSize)
             currentImageChunks.clear()
             currentImageChunks.addAll(chunks)
             sendDataSequentially(chunks)
-
-            // Note: The following are commented out in the original
-            // sendBmpEndCommand()
-            // sendBmpCRC(bmpData)
-            // lastThingDisplayedWasAnImage = true
-
         } catch (e: Exception) {
-            Log.e(TAG,"Error in displayBitmapImage: ${e.message}")
+            Log.e(TAG, "Error streaming bitmap pixels: ${e.message}")
         }
     }
 
@@ -1231,7 +1562,6 @@ class MentraNex : SGCManager() {
         }
         sendSetMicEnabled(true, 10)
         micBeatRunnable = Runnable {
-            Bridge.log("Nex: SENDING MIC BEAT")
             sendSetMicEnabled(shouldUseGlassesMic, 1)
             micBeatHandler.postDelayed(micBeatRunnable!!, MICBEAT_INTERVAL_MS)
         }
@@ -1362,7 +1692,6 @@ class MentraNex : SGCManager() {
                     val batteryStatus: BatteryStatus = glassesToPhone.batteryStatus
                     DeviceStore.apply("glasses", "batteryLevel", batteryStatus.level)
                     // EventBus.getDefault().post(BatteryLevelEvent(batteryStatus.level, batteryStatus.charging))
-                    Bridge.log("batteryStatus: $batteryStatus")
                 }
                 GlassesToPhone.PayloadCase.CHARGING_STATE -> {
                     val chargingState: ChargingState = glassesToPhone.chargingState
@@ -1381,11 +1710,6 @@ class MentraNex : SGCManager() {
                 GlassesToPhone.PayloadCase.HEAD_UP_ANGLE_SET -> {
                     val headUpAngleResponse: HeadUpAngleResponse = glassesToPhone.headUpAngleSet
                     Bridge.log("headUpAngleResponse: $headUpAngleResponse")
-                }
-                GlassesToPhone.PayloadCase.PING -> {
-                    lastHeartbeatReceivedTime = System.currentTimeMillis()
-                    Bridge.log("=== RECEIVED PING FROM GLASSES === (Time: $lastHeartbeatReceivedTime)")
-                    sendPongResponse()
                 }
                 GlassesToPhone.PayloadCase.VAD_EVENT -> {
                     // val vadEvent = glassesToPhone.vadEvent
@@ -1429,27 +1753,18 @@ class MentraNex : SGCManager() {
                     // EventBus.getDefault().post(GlassesHeadDownEvent())
                     // EventBus.getDefault().post(GlassesTapOutputEvent(2, isRight, System.currentTimeMillis()))
                 }
-                GlassesToPhone.PayloadCase.VERSION_RESPONSE -> {
-                    val versionResponse: VersionResponse = glassesToPhone.versionResponse
-                    Bridge.log("=== RECEIVED GLASSES PROTOBUF VERSION RESPONSE ===")
-                    Bridge.log("Glasses Protobuf Version: ${versionResponse.version}")
-                    Bridge.log("Message ID: ${versionResponse.msgId}")
-                    DeviceStore.apply("glasses", "protobufVersion", versionResponse.version.toString())
-                    
-                    if (versionResponse.commit.isNotEmpty()) {
-                        Bridge.log("Commit: ${versionResponse.commit}")
+                GlassesToPhone.PayloadCase.CANVAS_RESULT -> {
+                    // Ack for CanvasCreateComponent / CanvasClear (updates are
+                    // unacked). Firmware codes: OK / INVALID (bad id for type) /
+                    // OVERSIZE (bitmap > 200x200) / OOM (no backing storage).
+                    // Consumed for observability — a silent blank screen becomes
+                    // a diagnosable log line. Non-OK codes also invalidate the
+                    // registry entry so the next frame recreates the component.
+                    val canvasResult = glassesToPhone.canvasResult
+                    if (canvasResult.code != mentraos.ble.MentraosBle.CanvasResult.ResultCode.OK) {
+                        Bridge.log("Nex: CANVAS_RESULT id=${canvasResult.id} code=${canvasResult.code} — dropping registry entry for recreate")
+                        canvasElements.entries.removeAll { it.value.firmwareId == canvasResult.id.toInt() }
                     }
-                    if (versionResponse.buildDate.isNotEmpty()) {
-                        Bridge.log("Build Date: ${versionResponse.buildDate}")
-                    }
-                    
-                    // Post glasses protobuf version event to update UI
-                    // EventBus.getDefault().post(ProtocolVersionResponseEvent(
-                    //     versionResponse.version,
-                    //     versionResponse.commit,
-                    //     versionResponse.buildDate,
-                    //     versionResponse.msgId
-                    // ))
                 }
                 GlassesToPhone.PayloadCase.PAYLOAD_NOT_SET,
                 null -> {
@@ -1490,38 +1805,6 @@ class MentraNex : SGCManager() {
         sendDataSequentially(missingChunks)
     }
 
-    private fun sendPongResponse() {
-        // Respond to ping from glasses with pong
-        lastHeartbeatReceivedTime = System.currentTimeMillis()
-        Bridge.log("=== SENDING PONG RESPONSE TO GLASSES === (Time: $lastHeartbeatReceivedTime)")
-        
-        val pongPacket = NexProtobufUtils.constructPongResponse()
-
-        // Send the pong response
-        if (pongPacket != null) {
-            sendDataSequentially(pongPacket, 100)
-            Bridge.log("Pong response sent successfully")
-            
-            // Notify mobile app about pong sent
-            lastHeartbeatSentTime = System.currentTimeMillis()
-            NexEventUtils.sendHeartbeatSentEvent(lastHeartbeatSentTime)
-            // EventBus.getDefault().post(HeartbeatSentEvent(timestamp))
-        } else {
-            Log.e(TAG,"Failed to construct pong response packet")
-        }
-
-        // Still query battery periodically (every 10 pings received)
-        if (batteryLevel == -1 || heartbeatCount % 10 == 0) {
-            mainTaskHandler.sendEmptyMessageDelayed(MAIN_TASK_HANDLER_CODE_BATTERY_QUERY, 500)
-        }
-
-        heartbeatCount++
-        
-        // Notify mobile app about heartbeat received
-        NexEventUtils.sendHeartbeatReceivedEvent(lastHeartbeatReceivedTime)
-        // EventBus.getDefault().post(HeartbeatReceivedEvent(lastHeartbeatReceivedTime))
-    }
-
     private fun createTextWallChunksForNex(text: String): ByteArray {
         // Create the PhoneToGlasses using its builder and set the DisplayText
         return NexProtobufUtils.generateDisplayTextCommandBytes(text)
@@ -1540,14 +1823,14 @@ class MentraNex : SGCManager() {
             }
             Bridge.log("Nex: === SENDING MICROPHONE STATE COMMAND TO GLASSES ===")
             val micConfigBytes = NexProtobufUtils.generateMicStateConfigCommandBytes(enable)
-            sendDataSequentially(micConfigBytes, 10) // wait some time to setup the mic
+            sendProtobuf(micConfigBytes, 10) // wait some time to setup the mic
             Bridge.log("Nex: Sent MIC command: ${micConfigBytes.joinToString("") { "%02x".format(it) }}")
         }, delay)
     }
 
     private fun queryBatteryStatus() {
         val batteryQueryPacket = NexProtobufUtils.generateBatteryStateRequestCommandBytes()
-        sendDataSequentially(batteryQueryPacket, 250)
+        sendProtobuf(batteryQueryPacket, 250)
     }
 
     ///// PROCESSING THREAD /////////////////
@@ -1581,6 +1864,52 @@ class MentraNex : SGCManager() {
         startWorkerIfNeeded()
     }
 
+    /**
+     * Frames a serialized protobuf message onto the 0x02 control channel and sends it.
+     *
+     * The message is split into fragments that each fit the negotiated MTU, prefixed with a
+     * 4-byte transport header: [0x02][seq][totalChunks][chunkIndex]. The firmware reassembles
+     * fragments by seq/index before decoding. Single-fragment messages (totalChunks == 1) are
+     * decoded directly by the firmware fast path.
+     *
+     * @param protobufBytes raw serialized PhoneToGlasses bytes (no framing)
+     * @param waitTime optional post-message delay in ms applied after the last fragment (-1 = none)
+     * @param ack when true (default) each fragment is a write-with-response; captions pass false
+     */
+    private fun sendProtobuf(protobufBytes: ByteArray, waitTime: Int = -1, ack: Boolean = true) {
+        val headerSize = 4 // [0x02][seq][totalChunks][chunkIndex]
+        val maxFragment = (maxChunkSize - headerSize).coerceAtLeast(1)
+        val totalChunks =
+            if (protobufBytes.isEmpty()) 1 else (protobufBytes.size + maxFragment - 1) / maxFragment
+
+        if (totalChunks > 255) {
+            Log.e(TAG, "Nex: Protobuf message too large to fragment ($totalChunks chunks) - dropping")
+            return
+        }
+
+        val seq = protobufSeq
+        protobufSeq = (protobufSeq + 1) and 0xFF
+
+        val frames = Array(totalChunks) { index ->
+            val start = index * maxFragment
+            val end = minOf(start + maxFragment, protobufBytes.size)
+            val fragLen = end - start
+            val frame = ByteArray(headerSize + fragLen)
+            frame[0] = NexBluetoothPacketTypes.PACKET_TYPE_PROTOBUF
+            frame[1] = seq.toByte()
+            frame[2] = totalChunks.toByte()
+            frame[3] = index.toByte()
+            if (fragLen > 0) {
+                System.arraycopy(protobufBytes, start, frame, headerSize, fragLen)
+            }
+            // Carry the post-message delay on the final fragment only.
+            SendRequest(frame, if (index == totalChunks - 1) waitTime else -1, ack)
+        }
+
+        sendQueue.offer(frames)
+        startWorkerIfNeeded()
+    }
+
     private fun processQueue() {
         // First wait until the services are ready to receive data
         Bridge.log("[BLE] PROC_QUEUE started — waiting for descriptor write (mainServicesWaiter)")
@@ -1597,9 +1926,7 @@ class MentraNex : SGCManager() {
                 mainServicesWaiter.waitWhileTrue()
 
                 // This will block until data is available
-                Bridge.log("[BLE] PROC_QUEUE waiting for data in sendQueue (size=${sendQueue.size})")
                 val requests = sendQueue.take()
-                Bridge.log("[BLE] PROC_QUEUE dequeued ${requests.size} request(s)")
 
                 for (request in requests) {
                     if (isKilled) {
@@ -1616,20 +1943,43 @@ class MentraNex : SGCManager() {
 
                         // Send to main glass
                         val canSend = mainGlassGatt != null && mainWriteChar != null && isMainConnected
-                        Bridge.log("[BLE] PROC_QUEUE send check: gatt=${mainGlassGatt != null} writeChar=${mainWriteChar != null} connected=$isMainConnected → canSend=$canSend len=${request.data.size}")
+                        var writeStarted = false
                         if (canSend) {
                             mainWaiter.setTrue()
+                            // Per-request write type: acked fragments go out WITH response
+                            // (firmware ATT-acks each), captions go out WITHOUT response for
+                            // throughput. Set on the shared char just before the write — the
+                            // worker is single-threaded so there's no concurrent write to race.
+                            mainWriteChar?.writeType = if (request.ack) {
+                                BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+                            } else {
+                                BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+                            }
                             mainWriteChar?.value = request.data
-                            mainGlassGatt?.writeCharacteristic(mainWriteChar)
-                            lastSendTimestamp = System.currentTimeMillis()
-                            Bridge.log("[BLE] PROC_QUEUE writeCharacteristic issued, waiting for onCharacteristicWrite callback")
+                            // Honor the return value: writeCharacteristic returns false when the
+                            // stack is busy / out of buffers, and in that case no callback fires.
+                            // Only wait for the callback if the write actually started, otherwise
+                            // the waiter would block until the next disconnect.
+                            val issued = mainGlassGatt?.writeCharacteristic(mainWriteChar) ?: false
+                            if (issued) {
+                                writeStarted = true
+                                lastSendTimestamp = System.currentTimeMillis()
+                            } else {
+                                mainWaiter.setFalse()
+                                Log.e(TAG, "[BLE] PROC_QUEUE writeCharacteristic returned false — stack busy, dropping fragment")
+                            }
                         } else {
                             Bridge.log("[BLE] PROC_QUEUE skipping write — not ready, packet dropped")
                         }
 
-                        mainWaiter.waitWhileTrue()
+                        if (writeStarted) {
+                            // Acked writes need to wait for the real ATT response (a
+                            // connection interval or two); no-response writes get the
+                            // near-instant fast-path bound.
+                            val timeout = if (request.ack) WRITE_ACK_TIMEOUT_MS else WRITE_CALLBACK_TIMEOUT_MS
+                            mainWaiter.waitWhileTrue(timeout)
+                        }
 
-                        Thread.sleep(DELAY_BETWEEN_CHUNKS_SEND)
 
                         // If the packet asked us to do a delay, then do it
                         if (request.waitTime != -1) {

@@ -66,13 +66,17 @@ object DeviceStore {
         store.set("glasses", "deviceModel", "")
         store.set("glasses", "firmwareVersion", "")
         store.set("glasses", "micEnabled", false)
-        store.set("glasses", "voiceActivityDetectionEnabled", true)
+        store.set("glasses", "voiceActivityDetectionEnabled", BluetoothSdkDefaults.VOICE_ACTIVITY_DETECTION_ENABLED)
         store.set("glasses", "bluetoothClassicConnected", false)
         store.set("glasses", "caseRemoved", true)
         store.set("glasses", "caseOpen", true)
         store.set("glasses", "caseCharging", false)
         store.set("glasses", "caseBatteryLevel", -1)
         store.set("glasses", "headUp", false)
+        store.set("glasses", "bluetoothMacAddress", "")
+        store.set("glasses", "leftMacAddress", "")
+        store.set("glasses", "rightMacAddress", "")
+        store.set("glasses", "macAddress", "")
         store.set("glasses", "serialNumber", "")
         store.set("glasses", "style", "")
         store.set("glasses", "color", "")
@@ -121,12 +125,13 @@ object DeviceStore {
         store.set("bluetooth", "dashboard_height", 4)
         store.set("bluetooth", "dashboard_depth", 2)
         store.set("bluetooth", "head_up_angle", 30)
+        store.set("bluetooth", "imu_enabled", false)
         store.set("bluetooth", "contextual_dashboard", true)
         store.set("bluetooth", "gallery_mode", true)
-        store.set("bluetooth", "voice_activity_detection_enabled", true)
+        store.set("bluetooth", "voice_activity_detection_enabled", BluetoothSdkDefaults.VOICE_ACTIVITY_DETECTION_ENABLED)
+        store.set("bluetooth", "loudness_gate_enabled", BluetoothSdkDefaults.LOUDNESS_GATE_ENABLED)
         store.set("bluetooth", "screen_disabled", false)
-        store.set("bluetooth", "button_photo_size", "medium")
-        store.set("bluetooth", "button_camera_led", true)
+        store.set("bluetooth", "button_photo_size", "max")
         store.set("bluetooth", "button_max_recording_time", 10)
         store.set("bluetooth", "camera_fov", mapOf("fov" to 118, "roi_position" to 0))
         store.set("bluetooth", "button_video_width", 1280)
@@ -140,6 +145,9 @@ object DeviceStore {
         store.set("bluetooth", "should_send_lc3", false)
         store.set("bluetooth", "should_send_transcript", false)
         store.set("bluetooth", "use_native_dashboard", false)
+        // Mentra Nex feature flags (off by default; toggled from Nex Developer Settings):
+        store.set("bluetooth", "nex_chinese_captions", false)
+        store.set("bluetooth", "nex_lc3_audio_playback", false)
     }
 
     fun get(category: String, key: String): Any? {
@@ -235,17 +243,44 @@ object DeviceStore {
                     DeviceManager.getInstance().sgc?.setHeadUpAngle(angle)
                 }
             }
+            "bluetooth" to "imu_enabled" -> {
+                (value as? Boolean)?.let { enabled ->
+                    CoroutineScope(Dispatchers.Main).launch {
+                        DeviceManager.getInstance().sgc?.setImuEnabled(enabled)
+                    }
+                }
+            }
             "bluetooth" to "menu_apps" -> {
                 @Suppress("UNCHECKED_CAST")
                 (value as? List<Map<String, Any>>)?.let { items ->
                     DeviceManager.getInstance().sgc?.setDashboardMenu(items)
                 }
             }
+            // `core` category is normalized to `bluetooth` before reaching this switch.
+            "bluetooth" to "calendar_events" -> {
+                @Suppress("UNCHECKED_CAST")
+                (value as? List<Map<String, Any>>)?.let { events ->
+                    DeviceManager.getInstance().sgc?.sendCalendarEvents(events)
+                }
+            }
+            "bluetooth" to "metric_system",
+            "bluetooth" to "twelve_hour_time" -> {
+                DeviceManager.getInstance().sgc?.sendDashboardDisplaySettings()
+            }
             "bluetooth" to "gallery_mode" -> {
                 DeviceManager.getInstance().sgc?.sendGalleryMode()
             }
             "bluetooth" to "voice_activity_detection_enabled" -> {
                 DeviceManager.getInstance().sgc?.sendVoiceActivityDetectionSetting()
+            }
+            "bluetooth" to "loudness_gate_enabled" -> {
+                DeviceManager.getInstance().sgc?.sendLoudnessGateSetting()
+            }
+            "bluetooth" to "nex_lc3_audio_playback" -> {
+                (value as? Boolean)?.let { enabled ->
+                    Bridge.log("DeviceStore: nex_lc3_audio_playback changed to $enabled")
+                    DeviceManager.getInstance().sgc?.applyNexAudioPlaybackSetting()
+                }
             }
             "bluetooth" to "screen_disabled" -> {
                 (value as? Boolean)?.let { disabled ->
@@ -259,15 +294,17 @@ object DeviceStore {
             "bluetooth" to "button_photo_size" -> {
                 DeviceManager.getInstance().sgc?.sendButtonPhotoSettings()
             }
-            "bluetooth" to "button_camera_led" -> {
-                DeviceManager.getInstance().sgc?.sendButtonCameraLedSetting()
-            }
             "bluetooth" to "button_max_recording_time" -> {
                 DeviceManager.getInstance().sgc?.sendButtonMaxRecordingTime()
             }
             "bluetooth" to "camera_fov" -> {
                 DeviceManager.getInstance().sgc?.sendCameraFovSetting()
             }
+            "bluetooth" to "button_video_settings" -> {
+                DeviceManager.getInstance().sgc?.sendButtonVideoRecordingSettings()
+            }
+            // Legacy scalar keys remain supported for older hosts. New code should write the
+            // canonical button_video_settings object so width/height/fps update atomically.
             "bluetooth" to "button_video_width",
             "bluetooth" to "button_video_height",
             "bluetooth" to "button_video_fps" -> {
@@ -276,12 +313,6 @@ object DeviceStore {
             "bluetooth" to "preferred_mic" -> {
                 (value as? String)?.let { mic ->
                     apply("bluetooth", "micRanking", MicMap.map[mic] ?: MicMap.map["auto"]!!)
-                    DeviceManager.getInstance().setMicState()
-                }
-            }
-            "bluetooth" to "offline_captions_running" -> {
-                (value as? Boolean)?.let { running ->
-                    Bridge.log("DeviceStore: offline_captions_running changed to $running")
                     DeviceManager.getInstance().setMicState()
                 }
             }

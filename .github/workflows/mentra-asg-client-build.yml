@@ -11,13 +11,24 @@ on:
       - dev
   workflow_dispatch:
 
+# Cancel a branch's in-flight build when a newer commit is pushed to it.
+# Scoped per-ref so branches never cancel each other; frees the shared Mac
+# runners from superseded builds.
+concurrency:
+  group: asg-client-build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: write
   pull-requests: write
 
 jobs:
   build:
-    runs-on: self-hosted
+    # Blacksmith 4 vCPU Ubuntu. Signing creds come from secrets via inject-signing
+    # (no longer needs the mac runners' ~/.mentra/credentials), keeping mac
+    # capacity free for iOS + staging/release builds. Faster than the free
+    # ubuntu-latest tier (more vCPU + NVMe); same provider as our cloud builds.
+    runs-on: blacksmith-4vcpu-ubuntu-2404
 
     steps:
       - name: Update PR comment - Build started
@@ -72,6 +83,24 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Init StreamPackLite submodule
+        # Path-scoped on purpose: .gitmodules also carries a dangling
+        # mcu_client/peripheral_uart_next/nrf5340 entry with an unfetchable relative
+        # self-URL; a blanket recursive init would break if its gitlink ever lands.
+        run: git submodule update --init asg_client/StreamPackLite
+
+      - name: Free up disk space
+        # GitHub-hosted ubuntu ships ~14GB free; a full ASG release build (NDK +
+        # Gradle + StreamPackLite) can exhaust it. Drop unused preinstalled
+        # toolchains to reclaim ~15GB+. Keep the Android SDK.
+        run: |
+          echo "Before:"; df -h / | tail -1
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup \
+            /usr/local/share/powershell /usr/local/share/chromium \
+            /opt/hostedtoolcache/CodeQL /usr/local/lib/node_modules 2>/dev/null || true
+          sudo docker image prune --all --force 2>/dev/null || true
+          echo "After:"; df -h / | tail -1
+
       - name: Setup Java
         uses: actions/setup-java@v3
         with:
@@ -87,26 +116,39 @@ jobs:
           # Create .env from example
           cp .env.example .env
 
-      - name: Clone StreamPackLite dependency
-        working-directory: ./asg_client
-        run: |
-          # Clone StreamPackLite repository
-          git clone https://github.com/Mentra-Community/StreamPackLite.git
-
-          # Checkout the working branch
-          cd StreamPackLite
-          git checkout working
-
       - name: Cache Gradle dependencies
         uses: actions/cache@v4
         with:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: asg-gradle-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-${{ hashFiles('asg_client/**/*.gradle*', 'asg_client/gradle/wrapper/gradle-wrapper.properties') }}
+          # Scope by runner.environment so a cache saved on self-hosted (absolute
+          # symlinks) can't break tar-restore on a github-hosted runner.
+          key: asg-gradle-${{ runner.environment }}-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-${{ hashFiles('asg_client/**/*.gradle*', 'asg_client/gradle/wrapper/gradle-wrapper.properties') }}
           restore-keys: |
-            asg-gradle-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-
-            asg-gradle-${{ runner.os }}-
+            asg-gradle-${{ runner.environment }}-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-
+            asg-gradle-${{ runner.environment }}-${{ runner.os }}-
+
+      # Inject BEFORE the recovery worker build: build_and_deploy.sh links its
+      # recovery keystore from asg_client/credentials/asg-keystore.jks (the repo-
+      # local fallback this action writes) and signs with the ASG_* gradle props,
+      # so it must run after injection or it falls back to ~/.mentra (the disk
+      # dependency this PR removes) and fails on a clean runner.
+      - name: Inject release signing key
+        uses: ./.github/actions/inject-signing
+        with:
+          asg: "true"
+          asg-keystore-b64: ${{ secrets.ASG_KEYSTORE_B64 }}
+          asg-store-password: ${{ secrets.ASG_STORE_PASSWORD }}
+          asg-key-password: ${{ secrets.ASG_KEY_PASSWORD }}
+          asg-key-alias: ${{ secrets.ASG_KEY_ALIAS }}
+
+      - name: Build recovery worker asset
+        working-directory: ./asg_client/recovery_worker
+        run: |
+          chmod +x ./build_and_deploy.sh
+          ./build_and_deploy.sh
+          test -f ../app/src/main/assets/recovery_worker.apk
 
       - name: Build Release APK
         id: gradle-build
@@ -132,6 +174,37 @@ jobs:
             echo "Both build attempts failed"
             exit 1
           fi
+
+      - name: Verify release signature (not debug)
+        # Guard against silent debug-key fallback: the APK MUST be signed with the
+        # production key, never CN=Android Debug. Fail the build if it is.
+        run: |
+          APK=asg_client/app/build/outputs/apk/release/app-release.apk
+          # Any build-tools apksigner can verify; pick the last one. Avoid
+          # `sort -V` (not portable to older BSD/macOS sort) — plain sort of the
+          # build-tools paths is fine for selecting one that exists.
+          APKSIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner 2>/dev/null | sort | tail -1)
+          [ -n "$APKSIGNER" ] || { echo "::error::apksigner not found"; exit 1; }
+          CERTS=$("$APKSIGNER" verify --print-certs "$APK")
+          echo "$CERTS"
+          if echo "$CERTS" | grep -qi "CN=Android Debug"; then
+            echo "::error::Release APK is DEBUG-signed — release keystore was not injected."
+            exit 1
+          fi
+          echo "Release APK is signed with the production key."
+
+      - name: Run unit tests
+        working-directory: ./asg_client
+        run: ./gradlew testDebugUnitTest
+
+     # Temporarily disabled while ASG Java files are reformatted in a follow-up.
+      # - name: Spotless check
+      #   working-directory: ./asg_client
+      #   run: ./gradlew spotlessCheck
+
+      - name: Mark build succeeded
+        id: build-ok
+        run: echo "ok=true" >> $GITHUB_OUTPUT
 
       - name: Upload Release APK (artifact)
         uses: actions/upload-artifact@v4
@@ -219,7 +292,7 @@ jobs:
             }
 
       - name: Update PR comment - Build succeeded
-        if: success() && github.event_name == 'pull_request'
+        if: steps.build-ok.outputs.ok == 'true' && github.event_name == 'pull_request'
         uses: actions/github-script@v7
         with:
           script: |
@@ -253,7 +326,7 @@ jobs:
             });
 
       - name: Update PR comment - Build failed
-        if: failure() && github.event_name == 'pull_request'
+        if: failure() && steps.build-ok.outcome != 'success' && github.event_name == 'pull_request'
         uses: actions/github-script@v7
         with:
           script: |

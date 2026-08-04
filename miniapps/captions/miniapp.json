@@ -1,0 +1,33 @@
+{
+  "$schema": "./node_modules/@mentra/miniapp-cli/schema/miniapp.schema.json",
+  "packageName": "com.mentra.captions",
+  "version": "1.0.15",
+  "name": "Captions",
+  "description": "Local (island-runtime) port of the MentraOS Live Captions app. Subscribes to transcription, renders captions on the glasses display, and exposes a WebView for language + display settings.",
+  "type": "standard",
+  "sdkVersion": "0.3.0",
+  "minHostVersion": "1.42.0",
+  "port": 3100,
+  "entry": {
+    "background": "background/index.js",
+    "ui": "ui/index.html"
+  },
+  "permissions": [
+    {
+      "type": "MICROPHONE",
+      "description": "Used for live transcription"
+    }
+  ],
+  "hardwareRequirements": [
+    {
+      "type": "DISPLAY",
+      "level": "OPTIONAL",
+      "description": "Shows live transcription on glasses with a display; webview works without one"
+    },
+    {
+      "type": "MICROPHONE",
+      "level": "REQUIRED",
+      "description": "Captures speech for transcription"
+    }
+  ]
+}

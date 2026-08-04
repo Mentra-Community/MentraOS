@@ -1,6 +1,7 @@
 import {TouchableOpacity, View, ViewStyle, TextStyle} from "react-native"
 
 import {Icon, Text} from "@/components/ignite"
+import GlassView from "@/components/ui/GlassView"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {ThemedStyle} from "@/theme"
 
@@ -16,24 +17,28 @@ const PermissionButton: React.FC<ToggleSettingProps> = ({label, subtitle, value:
   const {theme, themed} = useAppTheme()
 
   return (
-    <TouchableOpacity style={[themed($container), containerStyle]} onPress={onPress} activeOpacity={0.7}>
-      <View style={themed($textContainer)}>
-        <Text text={label} style={themed($label)} />
-        {subtitle && <Text text={subtitle} style={themed($subtitle)} />}
-      </View>
-      <View style={themed($iconContainer)}>
-        <Icon name="arrow-right" size={24} color={theme.colors.foreground} />
-      </View>
-    </TouchableOpacity>
+    <GlassView
+      androidShadowSize="sm"
+      className="bg-primary-foreground rounded-2xl"
+      style={[themed($container), containerStyle]}>
+      <TouchableOpacity
+        style={{flexDirection: "row", justifyContent: "space-between", alignItems: "center"}}
+        onPress={onPress}
+        activeOpacity={0.7}>
+        <View style={themed($textContainer)}>
+          <Text text={label} style={themed($label)} />
+          {subtitle && <Text text={subtitle} style={themed($subtitle)} />}
+        </View>
+        <View style={themed($iconContainer)}>
+          <Icon name="arrow-right" size={24} color={theme.colors.foreground} />
+        </View>
+      </TouchableOpacity>
+    </GlassView>
   )
 }
 
-const $container: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
-  flexDirection: "row",
-  justifyContent: "space-between",
-  alignItems: "center",
+const $container: ThemedStyle<ViewStyle> = ({spacing}) => ({
   width: "100%",
-  backgroundColor: colors.primary_foreground,
   paddingVertical: spacing.s4,
   paddingHorizontal: spacing.s4,
   borderRadius: spacing.s4,

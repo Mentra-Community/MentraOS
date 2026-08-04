@@ -1,0 +1,13 @@
+{
+  "points": [
+    {"lat": 0, "lng": 0},
+    {"lat": 0, "lng": 1},
+    {"lat": 0, "lng": 2},
+    {"lat": 1, "lng": 2}
+  ],
+  "steps": [
+    {"lat": 0, "lng": 0, "routeIndex": 0, "road": "Market St", "maneuver": "DEPART", "distanceMeters": 100},
+    {"lat": 0, "lng": 1, "routeIndex": 1, "road": "Market St", "maneuver": "STRAIGHT", "distanceMeters": 100},
+    {"lat": 0, "lng": 2, "routeIndex": 2, "road": "Castro St", "maneuver": "TURN_LEFT", "distanceMeters": 150}
+  ]
+}

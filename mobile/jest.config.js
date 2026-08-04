@@ -7,8 +7,32 @@ module.exports = {
     "^@/(.*)$": "<rootDir>/src/$1",
     "^@assets/(.*)$": "<rootDir>/assets/$1",
     "^@mentra/bluetooth-sdk-internal$": "<rootDir>/modules/bluetooth-sdk/src/_internal.ts",
+    "^@mentra/bluetooth-sdk/internal$": "<rootDir>/modules/bluetooth-sdk/src/_internal.ts",
+    // Mirror metro: the @mentra/engine entry points resolve to SOURCE, not the
+    // (stale) build/ output — tests must exercise the same code the app
+    // bundles. jest.setup.js mocks all three entries.
+    "^@mentra/engine$": "<rootDir>/modules/engine/src/index.ts",
+    "^@mentra/engine/internal$": "<rootDir>/modules/engine/src/internal.ts",
+    "^@mentra/engine/devtools$": "<rootDir>/modules/engine/src/devtools.ts",
+    "^expo/virtual/env$": "<rootDir>/src/test-utils/expoVirtualEnvMock.ts",
+    "^react-native$": "<rootDir>/node_modules/react-native",
+    "^crust$": "<rootDir>/modules/crust/src",
+    // island-internal code (e.g. RestComms) reaches the full btsdk surface via the
+    // relative build/_internal path (the @mentra/bluetooth-sdk-internal alias
+    // doesn't resolve in island's standalone build). Map it to the same source so
+    // the jest.setup mock applies — otherwise requireActual loads the real native module.
+    "bluetooth-sdk/build/_internal$": "<rootDir>/modules/bluetooth-sdk/src/_internal.ts",
   },
-  testPathIgnorePatterns: ["<rootDir>/modules/miniapp/"],
+  testPathIgnorePatterns: [
+    "<rootDir>/modules/engine/",
+    "<rootDir>/modules/jspolyfill/",
+    "<rootDir>/modules/miniapp/",
+    "<rootDir>/src/services/photo/",
+    "<rootDir>/src/services/streaming/",
+    // bun:test suites — run via `bun test`, not Jest (cannot resolve "bun:test").
+    "<rootDir>/src/stores/settings.test.ts",
+    "<rootDir>/src/__tests__/app/miniapps/settings/camera.test.tsx",
+  ],
   transformIgnorePatterns: [
     "node_modules/(?!((jest-)?react-native|@react-native(-community)?)|expo(nent)?|@expo(nent)?/.*|@expo-google-fonts/.*|react-navigation|@react-navigation/.*|@sentry/react-native|native-base|react-native-svg|core|typesafe-ts|uniwind)",
   ],

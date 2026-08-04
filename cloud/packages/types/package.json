@@ -19,8 +19,7 @@
   "scripts": {
     "build": "rm -rf dist tsconfig.tsbuildinfo && bun x tsc -p tsconfig.json",
     "dev": "bun x tsc --watch",
-    "typecheck": "bun x tsc --noEmit",
-    "prepare": "bun run build"
+    "typecheck": "bun x tsc --noEmit"
   },
   "devDependencies": {
     "typescript": "^5.0.0"

@@ -1,0 +1,84 @@
+name: Bun Lockfile Checks
+
+on:
+  pull_request:
+    branches: [dev]
+    paths:
+      - "package.json"
+      - "bun.lock"
+      - "mobile/package.json"
+      - "mobile/bun.lock"
+      - "mobile/modules/**/package.json"
+      - "cloud-v2/packages/**/package.json"
+      - "miniapps/**/package.json"
+      - "sdk/bun.lock"
+      - "sdk/**/package.json"
+      - ".github/workflows/bun-lockfile-checks.yml"
+      - ".github/workflows/ci-gate.yml"
+  push:
+    branches: [dev]
+    paths:
+      - "package.json"
+      - "bun.lock"
+      - "mobile/package.json"
+      - "mobile/bun.lock"
+      - "mobile/modules/**/package.json"
+      - "cloud-v2/packages/**/package.json"
+      - "miniapps/**/package.json"
+      - "sdk/bun.lock"
+      - "sdk/**/package.json"
+      - ".github/workflows/bun-lockfile-checks.yml"
+      - ".github/workflows/ci-gate.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: bun-lockfile-checks-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Cache Bun cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-lockfiles-${{ hashFiles('bun.lock', 'mobile/bun.lock', 'sdk/bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-lockfiles-
+
+      - name: Validate root Bun lockfile
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      - name: Validate mobile Bun lockfile
+        working-directory: mobile
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      - name: Validate SDK Bun lockfile
+        run: |
+          set -euo pipefail
+          tmp_dir="$(mktemp -d)"
+          trap 'rm -rf "$tmp_dir"' EXIT
+          git archive HEAD | tar -x -C "$tmp_dir"
+          docker run --rm \
+            --user "$(id -u):$(id -g)" \
+            -e BUN_INSTALL_CACHE_DIR=/tmp/bun-cache \
+            -v "$tmp_dir:/work" \
+            -w /work/sdk \
+            oven/bun:1.3.11 \
+            bun install --frozen-lockfile --ignore-scripts
+
+      - name: Internal @mentra ranges match workspace versions
+        # A drifted range makes bun silently install the npm tarball instead of
+        # linking local source once our packages exist on the registry — see
+        # the script header for the prerelease-tuple trap.
+        run: node .github/scripts/check-workspace-range-sync.mjs

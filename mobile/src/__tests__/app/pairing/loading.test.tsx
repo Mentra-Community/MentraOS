@@ -1,19 +1,19 @@
 import {act, render, waitFor} from "@testing-library/react-native"
 import type {ReactNode} from "react"
 
-import BluetoothSdk from "@mentra/bluetooth-sdk"
+import {engine} from "@mentra/engine"
 import {useRoute} from "@react-navigation/native"
 import {useNavigationStore} from "@/stores/navigation"
-import {submitAutomaticBugIncident} from "@/services/bugReport/automaticBugReport"
 import GlassesPairingLoadingScreen from "@/app/pairing/loading"
-import {useGlassesStore} from "@/stores/glasses"
-import {emitCoreModuleEvent, resetCoreModuleMock} from "@/test-utils/mockCoreModule"
+import {useGlassesStore} from "../../../../modules/engine/src/stores/glasses"
+import {emitBluetoothSdkEvent, resetBluetoothSdkMock} from "@/test-utils/mockBluetoothSdk"
 
 jest.mock("@mentra/bluetooth-sdk", () => {
-  const {coreModuleMock} = require("@/test-utils/mockCoreModule")
+  const {bluetoothSdkMock} = require("@/test-utils/mockBluetoothSdk")
   return {
     __esModule: true,
-    default: coreModuleMock,
+    default: bluetoothSdkMock,
+    ...bluetoothSdkMock,
   }
 })
 
@@ -27,10 +27,6 @@ jest.mock("@/contexts/NavigationHistoryContext", () => ({
 
 jest.mock("@/stores/navigation", () => ({
   useNavigationStore: {getState: jest.fn()},
-}))
-
-jest.mock("@/services/bugReport/automaticBugReport", () => ({
-  submitAutomaticBugIncident: jest.fn(() => Promise.resolve({status: "filed", incidentId: "inc-1"})),
 }))
 
 jest.mock("@/components/ignite", () => {
@@ -95,7 +91,7 @@ describe("pairing loading screen", () => {
 
   beforeEach(() => {
     jest.useFakeTimers()
-    resetCoreModuleMock()
+    resetBluetoothSdkMock()
     jest.clearAllMocks()
     useGlassesStore.getState().reset()
     ;(useRoute as jest.Mock).mockReturnValue({
@@ -114,16 +110,18 @@ describe("pairing loading screen", () => {
     expect(getByText("waiting")).toBeTruthy()
 
     act(() => {
-      emitCoreModuleEvent("glasses_not_ready", {message: "booting"})
+      emitBluetoothSdkEvent("glasses_not_ready", {message: "booting"})
     })
     expect(getByText("booting")).toBeTruthy()
 
     act(() => {
-      emitCoreModuleEvent("pair_failure", {error: "pairing:failed"})
+      emitBluetoothSdkEvent("pair_failure", {error: "pairing:failed"})
     })
 
     await waitFor(() => {
-      expect(BluetoothSdk.forget).toHaveBeenCalled()
+      // Attempt cleanup preserves a pre-existing pairing (re-pair) instead of
+      // an unconditional forget.
+      expect(engine.pairing.abandonAttempt).toHaveBeenCalled()
       expect(replace).toHaveBeenCalledWith("/pairing/failure", {
         error: "pairing:failed",
         deviceModel: "Mentra Live",
@@ -131,7 +129,7 @@ describe("pairing loading screen", () => {
     })
   })
 
-  it("navigates to success after boot and files a timeout incident after 35 seconds", async () => {
+  it("navigates to success after boot and files a timeout report after 35 seconds", async () => {
     const first = render(<GlassesPairingLoadingScreen />)
 
     act(() => {
@@ -144,9 +142,18 @@ describe("pairing loading screen", () => {
     await waitFor(() => {
       expect(replace).toHaveBeenCalledWith("/pairing/success", {deviceModel: "Mentra Live"})
     })
+    expect(engine.pairing.waitForReady).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deviceModel: "Mentra Live",
+        deviceName: "MENTRA_LIVE_BLE_001",
+        timeoutMs: 35_000,
+        route: "/pairing/loading",
+        signal: expect.any(AbortSignal),
+      }),
+    )
 
     first.unmount()
-    resetCoreModuleMock()
+    resetBluetoothSdkMock()
     replace.mockClear()
     useGlassesStore.getState().reset()
     render(<GlassesPairingLoadingScreen />)
@@ -155,16 +162,14 @@ describe("pairing loading screen", () => {
       jest.advanceTimersByTime(35_000)
     })
 
-    await waitFor(() => {
-      expect(submitAutomaticBugIncident).toHaveBeenCalledWith(
-        expect.objectContaining({
-          categorization: expect.objectContaining({
-            triggerArea: "pairing_loading",
-            triggerReason: "glasses_connect_timeout",
-          }),
-          dedupeKey: "pairing_timeout|Mentra Live|MENTRA_LIVE_BLE_001",
-        }),
-      )
-    })
+    expect(engine.pairing.waitForReady).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deviceModel: "Mentra Live",
+        deviceName: "MENTRA_LIVE_BLE_001",
+        timeoutMs: 35_000,
+        route: "/pairing/loading",
+        signal: expect.any(AbortSignal),
+      }),
+    )
   })
 })

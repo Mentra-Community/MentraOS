@@ -30,20 +30,24 @@ await app.start();
 | Translation   | `session.translation`   | Real-time translation                 |
 | Display       | `session.display`       | Show text and graphics on the glasses |
 | Camera        | `session.camera`        | Take photos and stream video          |
+| Speaker       | `session.speaker`       | Play audio and text-to-speech         |
+| Mic           | `session.mic`           | Raw audio input and voice activity detection |
+| Device        | `session.device`        | Hardware state, battery, connection, events |
+| Phone         | `session.phone`         | Notifications, calendar, phone battery |
+| Location      | `session.location`      | GPS coordinates                       |
+| Storage       | `session.storage`       | Persistent key-value storage          |
+| Permissions   | `session.permissions`   | Check app permissions at runtime      |
+| LED           | `session.led`           | Control the LED light                 |
+| Dashboard     | `session.dashboard`     | Write to the system dashboard view    |
+| Time          | `session.time`          | Timezone-aware time utilities         |
 
-### Manual shutter (per-photo exposure)
+### Manual shutter
 
-`await session.camera.takePhoto({ exposureTimeNs: 33_333_333 })` sets sensor exposure time in **nanoseconds** for that shot only (Camera2 `SENSOR_EXPOSURE_TIME`). It is **not** saved as a camera preference. Omit the field (or pass an invalid / non-positive value) for normal auto exposure. Unsupported hardware falls back to auto exposure on the glasses.
-| Speaker | `session.speaker` | Play audio and text-to-speech |
-| Mic | `session.mic` | Raw audio input and voice activity detection |
-| Device | `session.device` | Hardware state, battery, connection, events |
-| Phone | `session.phone` | Notifications, calendar, phone battery |
-| Location | `session.location` | GPS coordinates |
-| Storage | `session.storage` | Persistent key-value storage |
-| Permissions | `session.permissions` | Check app permissions at runtime |
-| LED | `session.led` | Control the LED light |
-| Dashboard | `session.dashboard` | Write to the system dashboard view |
-| Time | `session.time` | Timezone-aware time utilities |
+`await session.camera.takePhoto({ exposureTimeNs: 8_333_333 })` sets sensor exposure time in **nanoseconds** for that shot only. It is **not** saved as a camera preference. Omit the field, or pass an invalid / non-positive value, for normal auto exposure. Unsupported hardware falls back to auto exposure on the glasses.
+
+### Text capture
+
+`await session.camera.takePhoto({ mode: "text" })` captures at maximum source quality and, on supported glasses, crops around readable text before delivery. Omit `mode`, or use `"photo"`, for a normal full-frame photo.
 
 ## Migrating from v2?
 

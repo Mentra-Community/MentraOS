@@ -1,0 +1,65 @@
+---
+title: "Storage"
+description: "Persistent key-value storage scoped to your miniapp."
+icon: "database"
+---
+
+`session.storage` is a phone-local key-value store. It's scoped to the user and
+your miniapp, so your keys never collide with another miniapp's, and the data
+survives restarts. Keys and values are both strings.
+
+```typescript
+await session.storage.set("lastNote", "buy milk");
+const note = await session.storage.get("lastNote"); // "buy milk"
+```
+
+Storage needs no permission and no hardware. Every method is async and
+round-trips to the phone.
+
+## Reading and writing
+
+```typescript
+await session.storage.set("count", "3");
+const count = await session.storage.get("count");  // "3", or null if unset
+await session.storage.delete("count");
+const exists = await session.storage.has("count"); // false
+```
+
+| Method | Returns | Notes |
+|---|---|---|
+| `get(key)` | `Promise<string \| null>` | `null` when the key isn't set. |
+| `set(key, value)` | `Promise<void>` | Overwrites silently. |
+| `delete(key)` | `Promise<void>` | No-op if the key isn't set. |
+| `has(key)` | `Promise<boolean>` | Whether the key is set. |
+| `keys()` | `Promise<string[]>` | Every key in your namespace. |
+| `clear()` | `Promise<void>` | Drops every key in your namespace. |
+
+## Bulk operations
+
+For hydrating state on startup or saving several keys at once:
+
+```typescript
+const all = await session.storage.getAll();          // { count: "3", lastNote: "…" }
+await session.storage.setMultiple({ a: "1", b: "2" }); // one round-trip
+```
+
+| Method | Returns | Notes |
+|---|---|---|
+| `getAll()` | `Promise<Record<string, string>>` | Every key/value pair. |
+| `setMultiple(values)` | `Promise<void>` | Writes many pairs in one round-trip. |
+
+<Note>
+Keep the total stored payload small (think under ~1 MB). `getAll()` pulls
+everything across the bridge at once, and a large namespace will stall the
+background context while it resolves. For images, audio, or files, use
+[`session.blob`](/app-devs/core-concepts/blob) instead.
+</Note>
+
+## Storing objects
+
+Values are strings, so serialize structured data yourself:
+
+```typescript
+await session.storage.set("notes", JSON.stringify(notes));
+const notes = JSON.parse((await session.storage.get("notes")) ?? "[]");
+```

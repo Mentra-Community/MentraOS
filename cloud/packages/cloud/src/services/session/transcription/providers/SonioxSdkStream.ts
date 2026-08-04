@@ -977,8 +977,8 @@ export class SonioxSdkStream implements StreamInstance {
       // mid-utterance splits.
       max_endpoint_delay_ms: this.config.maxEndpointDelayMs,
       context: {
-        terms: ["Mentra", "MentraOS", "Hey Mentra"],
-        text: "Mentra MentraOS, Hey Mentra (an AI assistant)",
+        terms: ["Mentra", "Hey Mentra"],
+        text: "Mentra, Hey Mentra (an AI assistant)",
       },
     };
 

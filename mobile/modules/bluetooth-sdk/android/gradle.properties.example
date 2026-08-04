@@ -1,0 +1,9 @@
+# Copy these values into ~/.gradle/gradle.properties or inject them as CI
+# secrets before running Android Maven publishing tasks. Do not commit real
+# Sonatype tokens, GPG key names, or GPG passphrases.
+sonatypeTokenBase64=...
+sonatypePublishingType=user_managed
+signing.useGpgCmd=true
+signing.gnupg.executable=/opt/homebrew/bin/gpg
+signing.gnupg.keyName=...
+signing.gnupg.passphrase=...

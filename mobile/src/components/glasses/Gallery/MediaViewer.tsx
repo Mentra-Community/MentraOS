@@ -3,6 +3,8 @@
  * Handles both images and videos with smooth 60fps swiping
  */
 
+import {memo} from "react"
+
 import {PhotoInfo} from "@/types/asg"
 
 import {AwesomeGalleryViewer} from "./AwesomeGalleryViewer"
@@ -17,7 +19,16 @@ interface MediaViewerProps {
   onDelete?: () => void
 }
 
-export function MediaViewer({
+export function createMediaViewerSnapshot(
+  photos: readonly (PhotoInfo | undefined)[],
+  selectedPhotoName: string,
+): {photos: PhotoInfo[]; initialIndex: number} | null {
+  const availablePhotos = photos.filter((photo): photo is PhotoInfo => photo !== undefined)
+  const initialIndex = availablePhotos.findIndex((photo) => photo.name === selectedPhotoName)
+  return initialIndex >= 0 ? {photos: availablePhotos, initialIndex} : null
+}
+
+export const MediaViewer = memo(function MediaViewer({
   visible,
   photo,
   photos,
@@ -30,14 +41,7 @@ export function MediaViewer({
   const isGalleryMode = photos && photos.length > 0
   const displayPhotos = isGalleryMode ? photos : photo ? [photo] : []
 
-  console.log("📺 [MediaViewer] === RENDER ===")
-  console.log("📺 [MediaViewer] visible:", visible)
-  console.log("📺 [MediaViewer] isGalleryMode:", isGalleryMode)
-  console.log("📺 [MediaViewer] displayPhotos.length:", displayPhotos.length)
-  console.log("📺 [MediaViewer] initialIndex:", initialIndex)
-
   if (displayPhotos.length === 0) {
-    console.log("📺 [MediaViewer] No photos to display")
     return null
   }
 
@@ -51,4 +55,4 @@ export function MediaViewer({
       onShare={onShare}
     />
   )
-}
+})

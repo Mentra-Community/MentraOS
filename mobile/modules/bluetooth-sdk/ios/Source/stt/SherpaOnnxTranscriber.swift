@@ -54,6 +54,17 @@ class SherpaOnnxTranscriber {
         return storedPath
     }
 
+    private static func firstExistingFile(in directory: String, candidates: [String]) -> String? {
+        let fileManager = FileManager.default
+        for candidate in candidates {
+            let path = (directory as NSString).appendingPathComponent(candidate)
+            if fileManager.fileExists(atPath: path) {
+                return path
+            }
+        }
+        return nil
+    }
+
     /**
      * Constructor that accepts a UIViewController to load model assets.
      */
@@ -79,8 +90,14 @@ class SherpaOnnxTranscriber {
             // Check if we have a custom model path set
             if let customPath = SherpaOnnxTranscriber.customModelPath {
                 // Detect model type based on available files
-                let ctcModelPath = (customPath as NSString).appendingPathComponent("model.int8.onnx")
-                let transducerEncoderPath = (customPath as NSString).appendingPathComponent("encoder.onnx")
+                let ctcModelPath = Self.firstExistingFile(
+                    in: customPath,
+                    candidates: ["model.int8.onnx", "model.onnx"]
+                )
+                let transducerEncoderPath = Self.firstExistingFile(
+                    in: customPath,
+                    candidates: ["encoder.int8.onnx", "encoder.onnx"]
+                )
 
                 tokensPath = (customPath as NSString).appendingPathComponent("tokens.txt")
 
@@ -91,7 +108,7 @@ class SherpaOnnxTranscriber {
                     ])
                 }
 
-                if fileManager.fileExists(atPath: ctcModelPath) {
+                if let ctcModelPath {
                     // CTC model detected
                     modelType = "ctc"
                     Bridge.log("Detected CTC model at \(customPath)")
@@ -123,17 +140,23 @@ class SherpaOnnxTranscriber {
                     // Create recognizer with the wrapper
                     recognizer = SherpaOnnxRecognizer(config: &config)
 
-                } else if fileManager.fileExists(atPath: transducerEncoderPath) {
+                } else if let transducerEncoderPath {
                     // Transducer model detected
                     modelType = "transducer"
                     Bridge.log("Detected transducer model at \(customPath)")
 
-                    let decoderPath = (customPath as NSString).appendingPathComponent("decoder.onnx")
-                    let joinerPath = (customPath as NSString).appendingPathComponent("joiner.onnx")
+                    let decoderPath = Self.firstExistingFile(
+                        in: customPath,
+                        candidates: ["decoder.int8.onnx", "decoder.onnx"]
+                    )
+                    let joinerPath = Self.firstExistingFile(
+                        in: customPath,
+                        candidates: ["joiner.int8.onnx", "joiner.onnx"]
+                    )
 
                     // Verify all transducer files exist
-                    guard fileManager.fileExists(atPath: decoderPath),
-                          fileManager.fileExists(atPath: joinerPath)
+                    guard let decoderPath,
+                          let joinerPath
                     else {
                         throw NSError(domain: "SherpaOnnxTranscriber", code: 1, userInfo: [
                             NSLocalizedDescriptionKey: "Transducer model files incomplete at path: \(customPath)",

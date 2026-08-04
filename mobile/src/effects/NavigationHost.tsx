@@ -16,7 +16,18 @@ export default function NavigationHost() {
 
   useEffect(() => {
     const sub = BackHandler.addEventListener("hardwareBackPress", () => {
-      const {preventBack, androidBackFn, goBack} = useNavigationStore.getState()
+      const {preventBack, androidBackFn, goBack, interceptor} = useNavigationStore.getState()
+      // An offline-hosted miniapp (Settings, Store, …) registers a NavInterceptor
+      // and owns its own internal stack. Route hardware back straight through
+      // goBack() so it reaches interceptor.goBack() → the host's popOrExit: pop one
+      // sub-screen, and minimize to home only at the host's root. This bypasses
+      // the global androidBackFn slot, which the still-mounted root screen can
+      // clobber with its "minimize-to-home" handler on any re-render — the cause
+      // of Android back exiting the whole miniapp instead of going back one page.
+      if (interceptor) {
+        goBack()
+        return true
+      }
       if (!preventBack) {
         goBack()
         return true

@@ -14,6 +14,16 @@ public interface ICommunicationManager {
      * @param isConnected WiFi connection status
      */
     void sendWifiStatusOverBle(boolean isConnected);
+
+    /**
+     * Send WiFi status over Bluetooth with a failure reason. The error is included in the
+     * wifi_status message so the phone can show why a provisioning attempt failed instead
+     * of silently reporting "not connected".
+     *
+     * @param isConnected WiFi connection status
+     * @param error Failure reason (e.g. "connect_timeout"), or null when not applicable
+     */
+    void sendWifiStatusOverBle(boolean isConnected, String error);
     
     /**
      * Send battery status over Bluetooth
@@ -23,14 +33,19 @@ public interface ICommunicationManager {
     /**
      * Send WiFi scan results over Bluetooth
      * @param networks List of available networks (legacy format)
+     * @param scanId Correlation id of the scan that produced these results, echoed in
+     *               every chunk; null when the request carried none
      */
-    void sendWifiScanResultsOverBle(java.util.List<String> networks);
-    
+    void sendWifiScanResultsOverBle(java.util.List<String> networks, String scanId);
+
     /**
      * Send enhanced WiFi scan results over Bluetooth with security and signal info
      * @param networks List of NetworkInfo objects with enhanced data
+     * @param scanComplete Whether this payload is the terminal scan response
+     * @param scanId Correlation id of the scan that produced these results, echoed in
+     *               every chunk; null when the request carried none
      */
-    void sendWifiScanResultsOverBleEnhanced(java.util.List<NetworkInfo> networks);
+    void sendWifiScanResultsOverBleEnhanced(java.util.List<NetworkInfo> networks, boolean scanComplete, String scanId);
     
     /**
      * Send acknowledgment response
@@ -86,4 +101,4 @@ public interface ICommunicationManager {
      * Terminal events (complete/failed) are sent via reliable delivery.
      */
     void sendOtaStatus(JSONObject status);
-} 
+}

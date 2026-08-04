@@ -1,16 +1,18 @@
+import {engine, SETTINGS} from "@mentra/engine"
+import {useSettingsStore} from "@mentra/engine/internal"
+import {useRoute} from "@react-navigation/native"
 import {fireEvent, render, waitFor} from "@testing-library/react-native"
 import type {ReactNode} from "react"
 import {Platform} from "react-native"
 
-import {useRoute} from "@react-navigation/native"
-
 import PairingSuccessScreen from "@/app/pairing/success"
 import {usePushUnder} from "@/contexts/NavigationHistoryContext"
 import {useNavigationStore} from "@/stores/navigation"
-import {waitForGlassesState} from "@/stores/glasses"
-import {SETTINGS, useSettingsStore} from "@/stores/settings"
 
 jest.mock("@/../../cloud/packages/types/src", () => ({
+  ControllerTypes: {
+    R1: "Mentra Mach1",
+  },
   DeviceTypes: {
     LIVE: "Mentra Live",
     G1: "Even Realities G1",
@@ -18,7 +20,11 @@ jest.mock("@/../../cloud/packages/types/src", () => ({
     Z100: "Vuzix Z100",
     MACH1: "Mach1",
     NEX: "Mentra Nex",
+    AR99: "AR99",
   },
+  getModelCapabilities: jest.fn((deviceModel: string) => ({
+    hasOta: deviceModel === "Mentra Live" || deviceModel === "AR99",
+  })),
 }))
 
 jest.mock("@react-navigation/native", () => ({
@@ -34,11 +40,9 @@ jest.mock("@/stores/navigation", () => ({
   useNavigationStore: {getState: jest.fn()},
 }))
 
-jest.mock("@/stores/glasses", () => ({
-  waitForGlassesState: jest.fn(),
-}))
-
 jest.mock("@/utils/getGlassesImage", () => ({
+  getAr99DisplayName: jest.fn(() => "Xingyi AR99"),
+  getAr99ImageSource: jest.fn(() => 1),
   getGlassesImage: jest.fn(() => 1),
 }))
 
@@ -102,7 +106,7 @@ describe("pairing success screen", () => {
   })
 
   it("stacks missing Mentra Live setup steps in the expected order", async () => {
-    ;(waitForGlassesState as jest.Mock).mockResolvedValueOnce(false)
+    ;(engine.pairing.waitForBluetoothClassic as jest.Mock).mockResolvedValueOnce(false)
 
     const {getAllByText} = render(<PairingSuccessScreen />)
 
@@ -113,11 +117,11 @@ describe("pairing success screen", () => {
     expect(push).toHaveBeenCalledWith("/pairing/btclassic")
     expect(pushUnder).toHaveBeenCalledTimes(1)
     expect(pushUnder).toHaveBeenCalledWith("/ota/check-for-updates")
-    expect(waitForGlassesState).toHaveBeenCalledTimes(1)
+    expect(engine.pairing.waitForBluetoothClassic).toHaveBeenCalledWith({timeoutMs: 1000})
   })
 
   it("uses connected Mentra Live state to skip btclassic setup", async () => {
-    ;(waitForGlassesState as jest.Mock).mockResolvedValueOnce(true)
+    ;(engine.pairing.waitForBluetoothClassic as jest.Mock).mockResolvedValueOnce(true)
 
     const {getAllByText} = render(<PairingSuccessScreen />)
 
@@ -127,7 +131,7 @@ describe("pairing success screen", () => {
     await waitFor(() => expect(push).toHaveBeenCalledWith("/ota/check-for-updates"))
     expect(pushUnder).not.toHaveBeenCalled()
     expect(push).not.toHaveBeenCalledWith("/pairing/btclassic")
-    expect(waitForGlassesState).toHaveBeenCalledTimes(1)
+    expect(engine.pairing.waitForBluetoothClassic).toHaveBeenCalledWith({timeoutMs: 1000})
   })
 
   it("finishes non-Live pairing without adding setup routes", async () => {
@@ -141,6 +145,33 @@ describe("pairing success screen", () => {
 
     await waitFor(() => expect(clearHistoryAndGoHome).toHaveBeenCalled())
     expect(push).not.toHaveBeenCalled()
+    expect(pushUnder).not.toHaveBeenCalled()
+  })
+
+  it("finishes AR99 pairing without entering the generic OTA setup route", async () => {
+    ;(useRoute as jest.Mock).mockReturnValue({params: {deviceModel: "AR99", ar99ProjectName: "AR99"}})
+
+    const {getAllByText} = render(<PairingSuccessScreen />)
+
+    await waitFor(() => expect(getAllByText("common:continue").length).toBeGreaterThan(0))
+    fireEvent.press(getAllByText("common:continue")[1])
+
+    await waitFor(() => expect(clearHistoryAndGoHome).toHaveBeenCalled())
+    expect(push).not.toHaveBeenCalledWith("/ota/check-for-updates")
+    expect(pushUnder).not.toHaveBeenCalled()
+    expect(engine.pairing.waitForBluetoothClassic).not.toHaveBeenCalled()
+  })
+
+  it("opens MentraOS onboarding after pairing non-Live glasses when it is incomplete", async () => {
+    ;(useRoute as jest.Mock).mockReturnValue({params: {deviceModel: "Even Realities G1"}})
+
+    const {getAllByText} = render(<PairingSuccessScreen />)
+
+    await waitFor(() => expect(getAllByText("onboarding:continueSetup").length).toBeGreaterThan(0))
+    fireEvent.press(getAllByText("onboarding:continueSetup")[1])
+
+    await waitFor(() => expect(clearHistoryAndGoHome).toHaveBeenCalled())
+    expect(push).toHaveBeenCalledWith("/onboarding/os")
     expect(pushUnder).not.toHaveBeenCalled()
   })
 })

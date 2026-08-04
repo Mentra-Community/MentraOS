@@ -1,10 +1,10 @@
 import {AppState} from "react-native"
 import {AsyncResult, result as Res, Result} from "typesafe-ts"
 
-import {SETTINGS, useSettingsStore} from "@/stores/settings"
+import {SETTINGS, engine} from "@mentra/engine"
 import {MentraAuthSession, MentraAuthUser, MentraSigninResponse} from "@/utils/auth/authProvider.types"
 import {AuthingWrapperClient} from "@/utils/auth/provider/authingClient"
-import {SupabaseWrapperClient} from "@/utils/auth/provider/supabaseClient"
+import {AccountAuthProvider} from "@/utils/auth/provider/accountClient"
 
 export abstract class AuthClient {
   public onAuthStateChange(_callback: (event: string, session: MentraAuthSession) => void): Result<any, Error> {
@@ -31,11 +31,30 @@ export abstract class AuthClient {
     return Res.error_async(new Error("Method not implemented"))
   }
 
-  public updateUserPassword(_password: string): AsyncResult<void, Error> {
+  public resetPasswordByCode(_email: string, _code: string, _newPassword: string): AsyncResult<void, Error> {
     return Res.error_async(new Error("Method not implemented"))
   }
 
-  public updateUserEmail(_email: string): AsyncResult<void, Error> {
+  public updateUserPassword(_password: string, _currentPassword?: string): AsyncResult<void, Error> {
+    return Res.error_async(new Error("Method not implemented"))
+  }
+
+  public updateUserEmail(_email: string, _password?: string): AsyncResult<void, Error> {
+    return Res.error_async(new Error("Method not implemented"))
+  }
+
+  /** Second step of the email change: the code emailed to the NEW address. */
+  public confirmEmailChange(_code: string): AsyncResult<void, Error> {
+    return Res.error_async(new Error("Method not implemented"))
+  }
+
+  /** Start account deletion: the backend emails a confirmation code. */
+  public requestAccountDeletion(): AsyncResult<void, Error> {
+    return Res.error_async(new Error("Method not implemented"))
+  }
+
+  /** Finish account deletion with the emailed code. Destroys the account. */
+  public confirmAccountDeletion(_code: string): AsyncResult<void, Error> {
     return Res.error_async(new Error("Method not implemented"))
   }
 
@@ -66,6 +85,19 @@ export abstract class AuthClient {
   public googleSignIn(): AsyncResult<string, Error> {
     return Res.error_async(new Error("Method not implemented"))
   }
+
+  /** Return a token cloud-client can exchange at /api/client/auth/exchange.
+   * Providers back this differently (Supabase session token vs a minted OEM
+   * subject token). */
+  public getSubjectToken(): AsyncResult<{token: string; type: string}, Error> {
+    return Res.error_async(new Error("Method not implemented"))
+  }
+
+  /** Finish an OAuth flow: the deep link handed back `?code&state`; swap the
+   * handoff code + the in-app PKCE verifier for a session. */
+  public completeOAuthHandoff(_params: {code: string; state: string}): AsyncResult<void, Error> {
+    return Res.error_async(new Error("Method not implemented"))
+  }
 }
 
 function createLazyAuthClient(): AuthClient {
@@ -75,11 +107,13 @@ function createLazyAuthClient(): AuthClient {
   const ensureInit = async (): Promise<AuthClient> => {
     if (!initPromise) {
       initPromise = (async () => {
-        const isChina = useSettingsStore.getState().getSetting(SETTINGS.china_deployment.key)
+        const isChina = engine.settings.get(SETTINGS.china_deployment.key)
         if (isChina) {
           client = await AuthingWrapperClient.getInstance()
         } else {
-          client = await SupabaseWrapperClient.getInstance()
+          // Cloud V2 account auth (issue 019): Mentra's own OEM backend, no
+          // embedded Supabase, no legacy Cloud V1 exchange.
+          client = await AccountAuthProvider.getInstance()
         }
         return client
       })()

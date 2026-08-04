@@ -13,7 +13,7 @@ export default function ForgotPasswordScreen() {
   const [email, setEmail] = useState("")
   const [isLoading, setIsLoading] = useState(false)
 
-  const {goBack} = useNavigationStore.getState()
+  const {push, goBack} = useNavigationStore.getState()
   const {theme} = useAppTheme()
 
   const isEmailValid = email.includes("@") && email.includes(".")
@@ -36,10 +36,9 @@ export default function ForgotPasswordScreen() {
 
     setIsLoading(false)
 
-    // Show success alert and navigate back after dismissal
-    showAlert(translate("login:resetEmailSent"), translate("login:checkEmailForReset"), [
-      {text: translate("common:ok"), onPress: () => goBack()},
-    ])
+    // Both providers now email a numeric code (the account backend replaced
+    // Supabase's magic link), so everyone continues to the code-entry screen.
+    push("/auth/reset-password", {email})
   }
 
   return (
@@ -48,7 +47,7 @@ export default function ForgotPasswordScreen() {
       <ScrollView className="flex-grow" showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
         <View className="flex-1 p-4">
           <Text
-            tx="login:forgotPasswordSubtitle"
+            tx="login:forgotPasswordCodeSubtitle"
             className="text-base text-secondary-foreground text-left mb-6 leading-[22px]"
           />
 

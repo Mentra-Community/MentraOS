@@ -51,7 +51,9 @@ export interface PhotoRequest extends BaseMessage {
   customWebhookUrl?: string; // Custom webhook URL to override TPA's default
   authToken?: string; // Auth token for custom webhook authentication
   /** Desired photo size sent by App. Defaults to 'medium' if omitted. */
-  size?: "small" | "medium" | "large" | "full";
+  size?: "low" | "medium" | "high" | "max";
+  /** Capture mode. Text mode preserves source detail and enables on-glasses text ROI cropping. */
+  mode?: "photo" | "text";
   /** Image compression level: none, medium, or heavy. Defaults to none. */
   compress?: "none" | "medium" | "heavy";
   /** Controls shutter sound. Defaults to true if omitted. */
@@ -236,7 +238,7 @@ export interface CameraFovSetRequest extends BaseMessage {
   packageName: string;
   sessionId: string;
   requestId: string;
-  /** Field of view in degrees (82-118). 118 means no crop (full sensor). */
+  /** Field of view in degrees (62-118). 118 means no crop (full sensor). */
   fov: number;
   /** ROI crop position. Ignored when fov is 118. Defaults to "center". */
   roiPosition: CameraRoiPosition;

@@ -13,7 +13,7 @@ This document shows how all the pieces work together for the new OTA update syst
    - Registers PackageInstallReceiver
    - After 5 seconds, checks OTA updater version
 3. **OTA Updater v1 detected** (versionCode < 2)
-   - ASG Client extracts v2 APK from assets to `/storage/emulated/0/asg/ota_updater.apk`
+   - ASG Client extracts v2 APK from assets to `/storage/emulated/0/asg/recovery_worker.apk`
    - Sends install broadcast to system
 4. **System updates OTA Updater to v2**
    - Same package name, just newer versionCode
@@ -87,7 +87,7 @@ This document shows how all the pieces work together for the new OTA update syst
       "apkUrl": "https://...",
       "sha256": "..."
     },
-    "com.augmentos.otaupdater": {
+    "com.mentra.recovery": {
       "versionCode": 2,
       "apkUrl": "https://...",
       "sha256": "..."
@@ -110,7 +110,7 @@ This document shows how all the pieces work together for the new OTA update syst
 ├── ota_updater_update.apk        # OTA Updater self-updates
 ├── asg_client_backup.apk         # ASG Client backup
 ├── ota_updater_backup.apk        # OTA Updater backup
-├── ota_updater.apk           # Temporary during initial deployment
+├── recovery_worker.apk           # Temporary during initial deployment
 └── metadata.json                 # Version tracking
 ```
 

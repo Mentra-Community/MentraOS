@@ -1,0 +1,280 @@
+name: CI Gate (dev)
+
+# Single required status check for PRs into dev: `ci-gate-dev`.
+#
+# Why this exists:
+#   Branch protection requires a FIXED list of check names. Our area builders
+#   (iOS / Android / ASG / cloud) are PATH-FILTERED — a cloud-only PR never runs
+#   the iOS workflow, so an "iOS build" required check would sit forever in
+#   "Expected — waiting for status to be reported" and block the PR. Requiring
+#   the individual builders directly is therefore incompatible with per-area
+#   path filtering.
+#
+# How it works:
+#   This workflow runs on every PR into dev and again each time one of the
+#   builder workflows finishes (via workflow_run). It gates on WORKFLOW RUNS
+#   for the PR head commit — matched by WORKFLOW NAME against an explicit
+#   allowlist — and posts a single `ci-gate-dev` commit status:
+#     - PASS    if every gated workflow that ran finished success/skipped/neutral
+#     - FAIL    if any gated workflow that ran finished failure/cancelled/etc.
+#     - PENDING while a gated workflow that ran is still in progress / queued
+#   A gated workflow that DID NOT run (its path filter didn't match) is simply
+#   absent and is not gated on — exactly the "only require what this PR touches"
+#   behavior we want.
+#
+#   We match by WORKFLOW NAME, not by job/check-run name, on purpose: several
+#   workflows name their job "build" (iOS, Android, ASG, and the unrelated
+#   Recovery Worker Build), so a job-name match would be ambiguous and could
+#   pull in workflows we never intended to gate on. Workflow names are unique.
+#
+# Branch protection: require ONLY the `ci-gate-dev` context on dev. Never rename
+#   it — that name is the API branch protection pins to. A future
+#   `ci-gate-staging` can mirror this file for the staging branch.
+
+on:
+  # Post an initial pending status the moment a PR opens / updates, so the
+  # required check appears immediately rather than only after a builder starts.
+  #
+  # pull_request_target (not pull_request): fork PRs receive a read-only
+  # GITHUB_TOKEN on pull_request, so createCommitStatus 403s with
+  # "Resource not accessible by integration". pull_request_target runs in the
+  # base-repo context with statuses:write. Safe here because this workflow
+  # never checks out or executes PR-head code — it only reads Actions API
+  # state and posts a commit status for github.event.pull_request.head.sha.
+  pull_request_target:
+    branches: [dev]
+    types: [opened, reopened, synchronize]
+  # Manual retrigger. Needed for PRs whose head commit predates ci-gate.yml
+  # landing on dev (no pull_request_target event ever fired for them) — re-run
+  # this workflow against the PR branch to evaluate and post the status.
+  workflow_dispatch:
+  # Re-evaluate when a gated builder COMPLETES. This is what makes the gate
+  # self-correct after a builder is RE-RUN (e.g. a flaky failure that an
+  # engineer reruns to green) or after a builder registers/finishes later than
+  # the initial poll's settle — without it, the status would be frozen at
+  # whatever the one poll concluded. We listen only on `completed` (never
+  # `requested`), and concurrency below uses cancel-in-progress: false, so these
+  # re-evaluations queue-and-replace instead of producing a litter of cancelled
+  # runs (the original storm).
+  workflow_run:
+    workflows:
+      - "Mobile App iOS Build"
+      - "Mobile App Android Build"
+      - "MentraOS ASG Client Build"
+      - "Mobile App Quality Checks"
+      - "OEM Host Boundary Gate"
+      - "Bun Lockfile Checks"
+      - "🧪 Test Cloud build"
+      - "🧪 Test SDK build"
+      - "🧪 Test Console build"
+      - "🧪 Test Store build"
+      - "Run Cloud Tests ☁️"
+    types: [completed]
+
+concurrency:
+  # Key by the COMMIT (head SHA), consistently across every event type, so all
+  # evaluations of the same commit land in one group and never run in parallel
+  # (which would race on createCommitStatus for that SHA). Both the
+  # pull_request_target head SHA and the workflow_run head SHA refer to the
+  # same commit, so unrelated fork PRs sharing a branch name do NOT collide
+  # (different commits -> different groups). github.sha is the final fallback
+  # (e.g. workflow_dispatch).
+  group: ci-gate-dev-${{ github.event.pull_request.head.sha || github.event.workflow_run.head_sha || github.sha }}
+  # Do NOT cancel in progress: re-evaluations from builder completions should
+  # queue and replace, not cancel each other. Cancelling was what littered every
+  # PR with "cancelled" CI Gate runs. The poll loop exits quickly once settled,
+  # so the queue drains fast.
+  cancel-in-progress: false
+
+permissions:
+  actions: read
+  statuses: write
+  pull-requests: read
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    # Must stay ABOVE the poll ceiling (MAX_MS, currently 120 min) so the script's
+    # loop — not GitHub's job timeout — decides when to give up. If this is lower
+    # than the poll ceiling, a legitimately-pending gate (builders queued behind a
+    # backed-up Mac runner pool) gets hard-killed mid-wait and the gate never
+    # settles. Keep a small margin above MAX_MS for poll/post overhead.
+    timeout-minutes: 130
+    steps:
+      - name: Evaluate gated workflows and post ci-gate-dev status
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const STATUS_CONTEXT = "ci-gate-dev";
+
+            // Workflows this gate aggregates, matched by exact workflow name.
+            // A workflow absent from a commit's runs didn't run for this PR
+            // (its path filter didn't match) and is intentionally not gated on.
+            // NOTE: "Recovery Worker Build" is deliberately NOT here — it also
+            // names its job "build" but is not a required area builder.
+            const GATED = new Set([
+              "Mobile App iOS Build",
+              "Mobile App Android Build",
+              "MentraOS ASG Client Build",
+              "Mobile App Quality Checks",
+              "OEM Host Boundary Gate",
+              "Bun Lockfile Checks",
+              "🧪 Test Cloud build",
+              "🧪 Test SDK build",
+              "🧪 Test Console build",
+              "🧪 Test Store build",
+              "Run Cloud Tests ☁️",
+            ]);
+
+            // Resolve the head SHA for whichever event triggered us.
+            const sha =
+              context.payload.workflow_run?.head_sha ||
+              context.payload.pull_request?.head?.sha ||
+              context.sha;
+
+            const { owner, repo } = context.repo;
+
+            const BAD = new Set(["failure", "cancelled", "timed_out", "action_required", "startup_failure", "stale"]);
+            const OK = new Set(["success", "skipped", "neutral"]);
+
+            // Did an earlier ci-gate run already SETTLE this commit (post success
+            // or failure)? If so, every builder the PR triggers had already
+            // registered by then, so the grace window — whose only job is to wait
+            // for path-filtered builders to first appear — is no longer needed.
+            // Skipping grace when already settled does two things:
+            //   - a workflow_run re-eval of an already-green commit re-affirms
+            //     success immediately instead of regressing to pending for 90s;
+            //   - recovery after a failed builder rerun (prior status = failure)
+            //     posts success immediately instead of waiting the full window.
+            // Crucially we do NOT skip grace merely because a builder completion
+            // triggered the run: the builder that completed may be a fast cloud
+            // check while a path-filtered mobile build has not registered yet —
+            // skipping grace there could declare success without the heavy
+            // builders. "Already settled" is the correct signal, not the trigger.
+            let alreadySettled = false;
+            try {
+              const existing = await github.paginate(
+                github.rest.repos.listCommitStatusesForRef,
+                { owner, repo, ref: sha, per_page: 100 },
+              );
+              // listCommitStatusesForRef returns newest first; find the latest
+              // status for our context.
+              const latest = existing.find(s => s.context === STATUS_CONTEXT);
+              alreadySettled = latest?.state === "success" || latest?.state === "failure";
+            } catch (e) {
+              core.info(`could not read existing ci-gate-dev status: ${e.message}`);
+            }
+            core.info(`alreadySettled=${alreadySettled}`);
+
+            // The commit-status `description` field rejects 4-byte Unicode
+            // (422 "Description doesn't accept 4-byte Unicode"). Some gated
+            // workflow names contain emoji (e.g. "🧪 Test Cloud build"), so strip
+            // any astral-plane code points and clamp to the 140-char limit.
+            const sanitize = (s) =>
+              s.replace(/[\u{10000}-\u{10FFFF}]/gu, "").replace(/\s+/g, " ").trim().slice(0, 140);
+
+            const postStatus = (state, description) =>
+              github.rest.repos.createCommitStatus({
+                owner, repo, sha, state, context: STATUS_CONTEXT,
+                description: sanitize(description),
+                target_url: `https://github.com/${owner}/${repo}/actions/runs/${context.runId}`,
+              });
+
+            // Take one snapshot of the gated workflow runs for this commit and
+            // reduce it to a verdict. We match by unique WORKFLOW NAME (not the
+            // ambiguous job name "build"), and for reruns keep the NEWEST run per
+            // workflow (listWorkflowRunsForRepo returns newest first).
+            async function snapshot(elapsedMs) {
+              const allRuns = await github.paginate(
+                github.rest.actions.listWorkflowRunsForRepo,
+                { owner, repo, head_sha: sha, per_page: 100 },
+              );
+              const latestByName = new Map();
+              for (const run of allRuns) {
+                if (!GATED.has(run.name)) continue;
+                if (!latestByName.has(run.name)) latestByName.set(run.name, run);
+              }
+              const gated = [...latestByName.values()];
+
+              const incomplete = gated.filter(r => r.status !== "completed");
+              const failed = gated.filter(r => r.status === "completed" && BAD.has(r.conclusion));
+              const passed = gated.filter(r => r.status === "completed" && OK.has(r.conclusion));
+              // Completed but neither OK nor BAD -> treat conservatively as pending,
+              // never as a pass.
+              const unknown = gated.filter(r => r.status === "completed" && !OK.has(r.conclusion) && !BAD.has(r.conclusion));
+
+              let state, description, settled;
+              if (failed.length > 0) {
+                // A real failure settles immediately — no grace needed.
+                state = "failure"; settled = true;
+                description = `Failed: ${failed.map(r => r.name).join(", ")}`;
+              } else if (incomplete.length > 0 || unknown.length > 0) {
+                state = "pending"; settled = false;
+                description = `Waiting on: ${[...incomplete, ...unknown].map(r => r.name).join(", ")}`;
+              } else if (passed.length > 0 && (elapsedMs >= GRACE_MS || alreadySettled)) {
+                // Every gated workflow PRESENT has passed. Declare success when
+                // either:
+                //   - the grace window has elapsed (a slow-to-register builder has
+                //     had time to appear), OR
+                //   - a prior run already settled this commit (success or failure),
+                //     so all expected builders had already registered by then —
+                //     no need to re-wait grace. This re-affirms green without a
+                //     pending dip, and makes failure->rerun->green post at once.
+                state = "success"; settled = true;
+                description = `All required area builds passed (${passed.length})`;
+              } else if (passed.length > 0) {
+                // Present builders all passed, but this is a first evaluation still
+                // inside the grace window — a path-matched builder may not have
+                // registered its run yet. Hold pending until the window elapses.
+                state = "pending"; settled = false;
+                description = "Confirming all area builds have registered…";
+              } else {
+                // No gated workflow has appeared for this commit yet — builders are
+                // still spinning up. Not settled; keep polling.
+                state = "pending"; settled = false;
+                description = "Waiting for area builds to report";
+              }
+              core.info(`gated runs: ${gated.map(r => `${r.name}=${r.status}/${r.conclusion}`).join("; ") || "(none yet)"}`);
+              return { state, description, settled };
+            }
+
+            // Poll until the gated runs settle (all OK -> success, any BAD ->
+            // failure) or we hit the time budget. Polling makes the gate
+            // self-healing: it does not depend on a workflow_run wakeup arriving
+            // for every builder completion (those only fire once ci-gate.yml is on
+            // the base branch, and can race even then). We post intermediate
+            // pending statuses so the required check reflects live progress.
+            // Poll ceiling. Must cover the WORST-CASE wall time for a gated
+            // builder to go from "PR opened" to "completed", INCLUDING time spent
+            // queued behind a saturated self-hosted Mac runner pool. When all mac
+            // runners are busy, a mobile build can sit queued 30–60 min before it
+            // even starts, then build for ~10–15 min. 60 min was too tight and the
+            // gate timed out on legitimately-slow runs; 120 min covers the backlog
+            // case. The job's timeout-minutes MUST stay above this.
+            const MAX_MS = 120 * 60 * 1000;  // 120 min ceiling
+            const INTERVAL_MS = 20 * 1000;   // poll every 20s
+            // Minimum time before we'll declare success, so a path-matched builder
+            // that is slow to register a run (e.g. queued behind Mac runners) is
+            // not missed. A real failure still settles immediately regardless.
+            const GRACE_MS = 90 * 1000;      // 90s settle window
+            const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+            const start = Date.now();
+            const deadline = start + MAX_MS;
+
+            let result = await snapshot(Date.now() - start);
+            await postStatus(result.state, result.description);
+            core.info(`${STATUS_CONTEXT} -> ${result.state}: ${result.description}`);
+
+            while (!result.settled && Date.now() < deadline) {
+              await sleep(INTERVAL_MS);
+              result = await snapshot(Date.now() - start);
+              await postStatus(result.state, result.description);
+              core.info(`${STATUS_CONTEXT} -> ${result.state}: ${result.description}`);
+            }
+
+            if (!result.settled) {
+              // Timed out still pending — leave the pending status in place and
+              // fail this job so it is visible/rerunnable, rather than silently
+              // leaving the gate stuck.
+              core.setFailed(`ci-gate-dev did not settle within ${MAX_MS / 60000} min: ${result.description}`);
+            }
