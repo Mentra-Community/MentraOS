@@ -65,7 +65,9 @@ if (!(await signerHealthy())) {
   console.log(`[dev] ElevenLabs signer already healthy on :${port}`)
 }
 
-const miniapp = spawn("bunx", ["mentra-miniapp", "dev"], {
+// Use the workspace CLI bin (not bunx → npm), so LAN IP / QR updates match
+// the local @mentra/miniapp-cli sources in this monorepo.
+const miniapp = spawn("bun", [join(root, "node_modules/@mentra/miniapp-cli/src/index.ts"), "dev"], {
   cwd: root,
   env: process.env,
   stdio: "inherit",
