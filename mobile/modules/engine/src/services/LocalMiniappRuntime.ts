@@ -2907,8 +2907,16 @@ class LocalMiniappRuntime {
     payload: Record<string, unknown>,
     requestId?: string,
   ): Promise<void> {
+    if (typeof payload.enabled !== "boolean") {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INVALID_ARGUMENT,
+        message: "enabled must be a boolean",
+      })
+      return
+    }
+
     try {
-      const enabled = Boolean(payload.enabled)
+      const enabled = payload.enabled
       console.log(`${LOG_TAG}: set_wifi_adb_state enabled=${enabled} from ${packageName}`)
       await BluetoothSdk.setWifiAdbState(enabled)
       this.sendResult(packageName, requestId, true)

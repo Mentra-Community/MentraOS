@@ -413,4 +413,10 @@ public class AsgConstants {
     public static final int BLE_PHOTO_HIGH_TARGET_PX = 1600;
     public static final int BLE_PHOTO_HIGH_AVIF_QUALITY = 48;
     public static final int BLE_PHOTO_MAX_TARGET_PX = 1920;
+
+    /**
+     * Phone → glasses JSON command type to enable or disable Wi-Fi ADB (Mentra Live).
+     * Persisted via AsgSettings and applied at boot (default off).
+     */
+    public static final String COMMAND_SET_WIFI_ADB_STATE = "set_wifi_adb_state";
 }

@@ -8,8 +8,8 @@ import static org.mockito.Mockito.when;
 
 import android.app.Application;
 import androidx.test.core.app.ApplicationProvider;
+import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
-import com.mentra.asg_client.service.utils.ServiceConstants;
 import com.mentra.asg_client.settings.AsgSettings;
 import org.json.JSONObject;
 import org.junit.Test;
@@ -31,7 +31,7 @@ public class PowerCommandHandlerWifiAdbTest {
         PowerCommandHandler handler = new PowerCommandHandler(app, serviceManager);
         JSONObject data = new JSONObject().put("enabled", true);
 
-        assertTrue(handler.handleCommand(ServiceConstants.COMMAND_SET_WIFI_ADB_STATE, data));
+        assertTrue(handler.handleCommand(AsgConstants.COMMAND_SET_WIFI_ADB_STATE, data));
         assertTrue(settings.isWifiAdbEnabled());
         verify(serviceManager).getAsgSettings();
     }
@@ -45,7 +45,7 @@ public class PowerCommandHandlerWifiAdbTest {
         when(serviceManager.getAsgSettings()).thenReturn(settings);
 
         PowerCommandHandler handler = new PowerCommandHandler(app, serviceManager);
-        assertTrue(handler.handleCommand(ServiceConstants.COMMAND_SET_WIFI_ADB_STATE, new JSONObject()));
+        assertTrue(handler.handleCommand(AsgConstants.COMMAND_SET_WIFI_ADB_STATE, new JSONObject()));
         assertFalse(settings.isWifiAdbEnabled());
     }
 
@@ -53,6 +53,6 @@ public class PowerCommandHandlerWifiAdbTest {
     public void supportsSetWifiAdbStateCommand() {
         Application app = ApplicationProvider.getApplicationContext();
         PowerCommandHandler handler = new PowerCommandHandler(app, null);
-        assertTrue(handler.getSupportedCommandTypes().contains(ServiceConstants.COMMAND_SET_WIFI_ADB_STATE));
+        assertTrue(handler.getSupportedCommandTypes().contains(AsgConstants.COMMAND_SET_WIFI_ADB_STATE));
     }
 }
