@@ -10,6 +10,7 @@ import com.mentra.asg_client.io.bes.BesOtaStateStore.TerminalStatus;
 import com.mentra.asg_client.io.bes.BesOtaStateStore.TransitionResult;
 import com.mentra.asg_client.io.bes.BesOtaStateStore.UartPolicy;
 import com.mentra.asg_client.io.bes.BesOtaStateStore.VerificationDecision;
+
 import org.json.JSONObject;
 import org.junit.Before;
 import org.junit.Test;
@@ -232,6 +233,28 @@ public class BesOtaStateStoreTest {
         BesOtaStateStore second =
                 new BesOtaStateStore(secondStorage, new FakeBootIdProvider(BOOT_A));
         assertThat(second.read().isCorrupt()).isTrue();
+    }
+
+    @Test
+    public void blankPersistedRecordIsCorruptNotIdle() {
+        storage.raw = "   ";
+
+        assertThat(store.read().isCorrupt()).isTrue();
+        assertThat(store.prepareForNewSession(BOOT_A, true)).isEqualTo(StartDecision.CORRUPT);
+        assertThat(store.uartPolicy(BOOT_A, true, null)).isEqualTo(UartPolicy.QUARANTINED);
+    }
+
+    @Test
+    public void malformedPersistedVerificationBootCannotBeClaimedAgain() throws Exception {
+        reserveAndMarkApply();
+        JSONObject persisted = new JSONObject(storage.raw);
+        persisted.put("verification_boot_id", "   ");
+        storage.raw = persisted.toString();
+
+        assertThat(store.read().isCorrupt()).isTrue();
+        assertThat(store.claimOrResumeVerificationBoot(BOOT_B))
+                .isEqualTo(VerificationDecision.NOT_PENDING);
+        assertThat(store.uartPolicy(BOOT_B, true, null)).isEqualTo(UartPolicy.QUARANTINED);
     }
 
     @Test

@@ -13,7 +13,9 @@ import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 import android.util.Log;
+
 import androidx.core.app.NotificationCompat;
+
 import com.mentra.asg_client.events.BatteryStatusEvent;
 import com.mentra.asg_client.io.bes.events.BesOtaProgressEvent;
 import com.mentra.asg_client.io.ota.events.DownloadProgressEvent;
@@ -23,11 +25,14 @@ import com.mentra.asg_client.io.ota.helpers.OtaHelper;
 import com.mentra.asg_client.io.ota.session.OtaSessionManager;
 import com.mentra.asg_client.io.ota.utils.OtaConstants;
 import com.mentra.asg_client.service.system.core.SystemControllerFactory;
+
 import dagger.hilt.android.AndroidEntryPoint;
-import javax.inject.Inject;
+
 import org.greenrobot.eventbus.EventBus;
 import org.greenrobot.eventbus.Subscribe;
 import org.greenrobot.eventbus.ThreadMode;
+
+import javax.inject.Inject;
 
 @AndroidEntryPoint
 public class OtaService extends Service {
@@ -336,7 +341,13 @@ public class OtaService extends Service {
                 updateNotification("BES firmware update failed: " + event.getErrorMessage());
                 // Try to notify phone of failure (might work if UART recovers)
                 if (otaHelper != null) {
-                    otaHelper.sendAuthoritativeBesStatusToPhone();
+                    if (!otaHelper.sendAuthoritativeBesStatusToPhone()) {
+                        // Failures before mh_ota has been durably reserved intentionally have no
+                        // BES record. They still belong to the active top-level OTA session and
+                        // must terminate its phone UI instead of disappearing.
+                        otaHelper.sendBesInstallProgressToPhone(
+                                "FAILED", event.getProgress(), event.getErrorMessage());
+                    }
                     otaHelper.deleteDownloadedArtifactForType("bes");
                 }
                 break;

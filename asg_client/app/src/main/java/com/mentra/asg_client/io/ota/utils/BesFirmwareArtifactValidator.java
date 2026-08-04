@@ -2,6 +2,10 @@ package com.mentra.asg_client.io.ota.utils;
 
 import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.io.bes.BesOtaStateStore;
+
+import org.json.JSONObject;
+import org.tukaani.xz.LZMAInputStream;
+
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -12,8 +16,6 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.Locale;
 import java.util.zip.CRC32;
-import org.json.JSONObject;
-import org.tukaani.xz.LZMAInputStream;
 
 /** Fail-closed admission gate for a release-packaged Mentra Live BES OTA artifact. */
 public final class BesFirmwareArtifactValidator {
@@ -22,6 +24,11 @@ public final class BesFirmwareArtifactValidator {
             "CRC32_OF_IMAGE=0x".getBytes(StandardCharsets.US_ASCII);
     private static final int CRC_HEX_LENGTH = 8;
     private static final int LZMA_ALONE_HEADER_LENGTH = 13;
+    // The release packer uses `lzma -9`, whose LZMA-alone header declares a 64 MiB
+    // dictionary even though the BES image is under 2 MiB. Admit that exact ceiling,
+    // but reject hostile headers before the decoder allocates its dictionary.
+    private static final long MAX_LZMA_DICTIONARY_BYTES = 64L * 1024 * 1024;
+    private static final int MAX_LZMA_DECODER_MEMORY_KIB = 70 * 1024;
 
     private BesFirmwareArtifactValidator() {}
 
@@ -142,9 +149,15 @@ public final class BesFirmwareArtifactValidator {
             if (chunkSize < LZMA_ALONE_HEADER_LENGTH || (long) position + chunkSize > data.length) {
                 throw new ValidationException("Invalid or truncated BES OTA LZMA chunk");
             }
+            long dictionarySize = readLittleEndianUnsignedInt(data, position + 1);
+            if (dictionarySize <= 0 || dictionarySize > MAX_LZMA_DICTIONARY_BYTES) {
+                throw new ValidationException(
+                        "BES OTA LZMA dictionary exceeds the admission limit: " + dictionarySize);
+            }
 
             ByteArrayInputStream compressed = new ByteArrayInputStream(data, position, chunkSize);
-            try (LZMAInputStream lzma = new LZMAInputStream(compressed)) {
+            try (LZMAInputStream lzma =
+                    new LZMAInputStream(compressed, MAX_LZMA_DECODER_MEMORY_KIB)) {
                 byte[] buffer = new byte[8192];
                 int read;
                 while ((read = lzma.read(buffer)) != -1) {
@@ -191,12 +204,21 @@ public final class BesFirmwareArtifactValidator {
 
     private static void assertProduct(byte[] raw, String product) throws ValidationException {
         byte[] revInfo = "REV_INFO=".getBytes(StandardCharsets.US_ASCII);
-        byte[] productSuffix = (":" + product).getBytes(StandardCharsets.US_ASCII);
+        String productSuffix = ":" + product;
         int revOffset = indexOf(raw, revInfo, 0);
         while (revOffset >= 0) {
             int searchEnd = Math.min(raw.length, revOffset + 192);
-            int productOffset = indexOf(raw, productSuffix, revOffset + revInfo.length);
-            if (productOffset >= 0 && productOffset < searchEnd) {
+            int valueStart = revOffset + revInfo.length;
+            int valueEnd = valueStart;
+            while (valueEnd < searchEnd
+                    && raw[valueEnd] != 0
+                    && raw[valueEnd] != '\n'
+                    && raw[valueEnd] != '\r') {
+                valueEnd++;
+            }
+            String revision =
+                    new String(raw, valueStart, valueEnd - valueStart, StandardCharsets.US_ASCII);
+            if (revision.endsWith(productSuffix)) {
                 return;
             }
             revOffset = indexOf(raw, revInfo, revOffset + 1);
@@ -311,6 +333,13 @@ public final class BesFirmwareArtifactValidator {
                 | ((data[offset + 1] & 0xFF) << 16)
                 | ((data[offset + 2] & 0xFF) << 8)
                 | (data[offset + 3] & 0xFF);
+    }
+
+    private static long readLittleEndianUnsignedInt(byte[] data, int offset) {
+        return ((long) data[offset] & 0xFF)
+                | (((long) data[offset + 1] & 0xFF) << 8)
+                | (((long) data[offset + 2] & 0xFF) << 16)
+                | (((long) data[offset + 3] & 0xFF) << 24);
     }
 
     /** Validation failure safe to log in full while the phone receives a stable short code. */

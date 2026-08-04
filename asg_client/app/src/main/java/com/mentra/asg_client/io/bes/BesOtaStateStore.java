@@ -3,12 +3,15 @@ package com.mentra.asg_client.io.bes;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.util.Log;
+
 import com.mentra.asg_client.io.ota.utils.BesFirmwareArtifactValidator.ValidatedBesArtifact;
+
+import org.json.JSONException;
+import org.json.JSONObject;
+
 import java.io.BufferedReader;
 import java.io.FileReader;
 import java.util.Locale;
-import org.json.JSONException;
-import org.json.JSONObject;
 
 /**
  * Single durable authority for legacy BES OTA admission, apply, verification, and terminal state.
@@ -427,8 +430,11 @@ public final class BesOtaStateStore {
             return Snapshot.corrupt("prior commit failed");
         }
         String raw = storage.get();
-        if (raw == null || raw.trim().isEmpty()) {
+        if (raw == null) {
             return Snapshot.idle();
+        }
+        if (raw.trim().isEmpty()) {
+            return Snapshot.corrupt("empty state");
         }
         try {
             return Snapshot.fromJson(new JSONObject(raw));
@@ -641,8 +647,9 @@ public final class BesOtaStateStore {
             String target = canonicalVersion(json.getString("target_version"));
             String artifactId = canonicalNonempty(json.getString("artifact_id"));
             String sha = json.getString("artifact_sha256").toLowerCase(Locale.US);
+            boolean hasVerificationBoot = !json.isNull("verification_boot_id");
             String verification =
-                    json.isNull("verification_boot_id")
+                    !hasVerificationBoot
                             ? null
                             : canonicalBootId(json.getString("verification_boot_id"));
             TerminalStatus terminal =
@@ -658,6 +665,7 @@ public final class BesOtaStateStore {
                     || target == null
                     || artifactId == null
                     || !sha.matches("[0-9a-f]{64}")
+                    || (hasVerificationBoot && verification == null)
                     || (state == State.TERMINAL) != (terminal != null && code != null)
                     || (state != State.TERMINAL && (terminal != null || code != null))) {
                 throw new JSONException("invalid BES OTA state fields");

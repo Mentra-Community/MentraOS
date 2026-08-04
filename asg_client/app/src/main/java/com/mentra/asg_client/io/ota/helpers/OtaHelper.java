@@ -283,12 +283,20 @@ public class OtaHelper {
         return controller != null ? controller.getAuthoritativeStatus() : null;
     }
 
-    public void sendAuthoritativeBesStatusToPhone() {
+    /**
+     * Project durable BES state when one exists.
+     *
+     * @return true when a durable projection exists, even if the phone is currently disconnected
+     */
+    public boolean sendAuthoritativeBesStatusToPhone() {
         JSONObject status = getAuthoritativeBesStatus();
-        if (status == null || phoneConnectionProvider == null || !isPhoneConnected()) {
-            return;
+        if (status == null) {
+            return false;
         }
-        phoneConnectionProvider.sendOtaStatus(status);
+        if (phoneConnectionProvider != null && isPhoneConnected()) {
+            phoneConnectionProvider.sendOtaStatus(status);
+        }
+        return true;
     }
 
     public OtaSessionManager getSessionManager() {
@@ -2128,6 +2136,7 @@ public class OtaHelper {
             String firmwareUrl = firmwareInfo.optString("url", firmwareInfo.optString("firmwareUrl", ""));
             if (firmwareUrl.isEmpty()) {
                 Log.e(TAG, "BES firmware URL missing in JSON (expected 'url' or 'firmwareUrl')");
+                sendProgressToPhone("install", 0, 0, 0, "FAILED", "install_failed");
                 return false;
             }
 
@@ -2153,6 +2162,7 @@ public class OtaHelper {
                         sessionState != null ? sessionState.optString("sid", "").trim() : "";
                 if (ownerSessionId.isEmpty()) {
                     Log.e(TAG, "BES OTA has no owning top-level session");
+                    sendProgressToPhone("install", 0, 0, 0, "FAILED", "install_failed");
                     return false;
                 }
                 Log.i(TAG, "Starting validated BES firmware update artifact="
@@ -2163,12 +2173,14 @@ public class OtaHelper {
                     return true;
                 } else {
                     Log.e(TAG, "Failed to start BES firmware update");
+                    sendProgressToPhone("install", 0, 0, 0, "FAILED", "install_failed");
                     if (firmwareFile.exists() && !firmwareFile.delete()) {
                         Log.w(TAG, "Failed deleting BES firmware after install start failure");
                     }
                 }
             } else {
                 Log.e(TAG, "BesOtaManager not available");
+                sendProgressToPhone("install", 0, 0, 0, "FAILED", "install_failed");
                 File firmwareFile = new File(OtaConstants.BES_FIRMWARE_PATH);
                 if (firmwareFile.exists() && !firmwareFile.delete()) {
                     Log.w(TAG, "Failed deleting BES firmware when manager unavailable");
@@ -2176,6 +2188,9 @@ public class OtaHelper {
             }
         } catch (Exception e) {
             Log.e(TAG, "Failed to update BES firmware", e);
+            if (isPhoneInitiatedOta) {
+                sendProgressToPhone("install", 0, 0, 0, "FAILED", "install_failed");
+            }
             File firmwareFile = new File(OtaConstants.BES_FIRMWARE_PATH);
             if (firmwareFile.exists() && !firmwareFile.delete()) {
                 Log.w(TAG, "Failed deleting BES firmware after exception");

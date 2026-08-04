@@ -1,6 +1,7 @@
 package com.mentra.asg_client.service.communication.managers;
 
 import android.util.Log;
+
 import com.mentra.asg_client.io.bluetooth.interfaces.IBluetoothManager;
 import com.mentra.asg_client.io.bluetooth.interfaces.ICompanionTransport;
 import com.mentra.asg_client.io.bluetooth.managers.K900BluetoothManager;
@@ -11,11 +12,13 @@ import com.mentra.asg_client.io.ota.helpers.OtaHelper;
 import com.mentra.asg_client.logging.BleTraceLogger;
 import com.mentra.asg_client.service.communication.interfaces.ICommunicationManager;
 import com.mentra.asg_client.service.communication.reliability.ReliableMessageManager;
+
+import org.json.JSONException;
+import org.json.JSONObject;
+
 import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.List;
-import org.json.JSONException;
-import org.json.JSONObject;
 
 /**
  * Manages all communication operations (Bluetooth, WiFi status, etc.). Follows Single
@@ -705,7 +708,7 @@ public class CommunicationManager
     }
 
     private static String compactErrorCode(String error, String phase) {
-        if (error != null && error.matches("[a-z0-9_]{1,48}")) {
+        if (error.matches("[a-z0-9_]{1,48}")) {
             return error;
         }
         return "download".equals(phase) ? "download_failed" : "install_failed";

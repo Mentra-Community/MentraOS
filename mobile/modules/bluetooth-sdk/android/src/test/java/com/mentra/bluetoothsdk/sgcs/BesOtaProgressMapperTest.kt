@@ -32,6 +32,14 @@ class BesOtaProgressMapperTest {
     }
 
     @Test
+    fun blankBesErrorUsesStableFallback() {
+        val mapping = mapBesOtaProgress("error", 65, 65, "   ")
+
+        assertEquals("FAILED", mapping.status)
+        assertEquals("BES update failed", mapping.errorMessage)
+    }
+
+    @Test
     fun ordinaryUpdateProgressRemainsNonterminal() {
         val mapping = mapBesOtaProgress("update", 42, 40, null)
 

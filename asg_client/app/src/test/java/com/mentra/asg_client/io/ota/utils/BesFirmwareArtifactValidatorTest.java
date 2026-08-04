@@ -3,6 +3,15 @@ package com.mentra.asg_client.io.ota.utils;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.mentra.asg_client.AsgConstants;
+
+import org.json.JSONObject;
+import org.junit.Assume;
+import org.junit.Rule;
+import org.junit.Test;
+import org.junit.rules.TemporaryFolder;
+import org.tukaani.xz.LZMA2Options;
+import org.tukaani.xz.LZMAOutputStream;
+
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
@@ -11,13 +20,6 @@ import java.nio.file.Files;
 import java.security.MessageDigest;
 import java.util.Locale;
 import java.util.zip.CRC32;
-import org.json.JSONObject;
-import org.junit.Assume;
-import org.junit.Rule;
-import org.junit.Test;
-import org.junit.rules.TemporaryFolder;
-import org.tukaani.xz.LZMA2Options;
-import org.tukaani.xz.LZMAOutputStream;
 
 public class BesFirmwareArtifactValidatorTest {
     private static final byte[] CRC_PREFIX =
@@ -131,6 +133,42 @@ public class BesFirmwareArtifactValidatorTest {
     }
 
     @Test
+    public void oversizedLzmaDictionaryFailsBeforeDecoderAllocation() throws Exception {
+        TestArtifact artifact = createArtifact();
+        byte[] hostile = Files.readAllBytes(artifact.file.toPath());
+        // Container magic (4), chunk length (4), LZMA properties (1), then LE dictionary size.
+        hostile[9] = 0;
+        hostile[10] = 0;
+        hostile[11] = 0;
+        hostile[12] = 0x40; // 1 GiB
+        write(artifact.file, hostile);
+        artifact.metadata.put("sha256", sha256(hostile));
+
+        assertThatThrownBy(
+                        () ->
+                                BesFirmwareArtifactValidator.validate(
+                                        artifact.file, artifact.metadata))
+                .isInstanceOf(BesFirmwareArtifactValidator.ValidationException.class)
+                .hasMessageContaining("dictionary exceeds");
+    }
+
+    @Test
+    public void productMustTerminateTheSameRevisionRecord() throws Exception {
+        byte[] raw = createRaw("release-a:different_product");
+        byte[] misleadingSuffix =
+                (":" + AsgConstants.BES_OTA_PRODUCT).getBytes(StandardCharsets.US_ASCII);
+        System.arraycopy(misleadingSuffix, 0, raw, 300, misleadingSuffix.length);
+        TestArtifact artifact = createArtifact(raw);
+
+        assertThatThrownBy(
+                        () ->
+                                BesFirmwareArtifactValidator.validate(
+                                        artifact.file, artifact.metadata))
+                .isInstanceOf(BesFirmwareArtifactValidator.ValidationException.class)
+                .hasMessageContaining("does not identify");
+    }
+
+    @Test
     public void wrongEmbeddedProductOrVersionFailsClosed() throws Exception {
         TestArtifact artifact = createArtifact();
         artifact.metadata.put("product", "different_product");
@@ -180,6 +218,10 @@ public class BesFirmwareArtifactValidatorTest {
     }
 
     private TestArtifact createArtifact() throws Exception {
+        return createArtifact(createRaw("release-a:" + AsgConstants.BES_OTA_PRODUCT));
+    }
+
+    private byte[] createRaw(String revisionValue) {
         byte[] raw = new byte[512];
         for (int i = 0; i < raw.length; i++) {
             raw[i] = (byte) (i * 31);
@@ -188,11 +230,13 @@ public class BesFirmwareArtifactValidatorTest {
         raw[VERSION_OFFSET + 1] = 26;
         raw[VERSION_OFFSET + 2] = 7;
         raw[VERSION_OFFSET + 3] = 24;
-        byte[] revision =
-                ("REV_INFO=release-a:" + AsgConstants.BES_OTA_PRODUCT)
-                        .getBytes(StandardCharsets.US_ASCII);
+        byte[] revision = ("REV_INFO=" + revisionValue).getBytes(StandardCharsets.US_ASCII);
         System.arraycopy(revision, 0, raw, 192, revision.length);
+        raw[192 + revision.length] = 0;
+        return raw;
+    }
 
+    private TestArtifact createArtifact(byte[] raw) throws Exception {
         ByteArrayOutputStream compressed = new ByteArrayOutputStream();
         try (LZMAOutputStream lzma =
                 new LZMAOutputStream(compressed, new LZMA2Options(), raw.length)) {

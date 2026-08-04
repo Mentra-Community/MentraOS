@@ -19,7 +19,11 @@ internal fun mapBesOtaProgress(
 ): BesOtaProgressMapping {
     return when {
         type == "error" || type == "fail" ->
-            BesOtaProgressMapping("FAILED", roundedProgress, message ?: "BES update failed")
+            BesOtaProgressMapping(
+                "FAILED",
+                roundedProgress,
+                message?.takeIf { it.isNotBlank() } ?: "BES update failed",
+            )
         type == "success" || rawProgress >= 100 -> BesOtaProgressMapping("PROGRESS", 100)
         else -> BesOtaProgressMapping("PROGRESS", roundedProgress)
     }

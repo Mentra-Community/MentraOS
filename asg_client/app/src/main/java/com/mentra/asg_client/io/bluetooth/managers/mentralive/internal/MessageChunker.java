@@ -1,13 +1,16 @@
 package com.mentra.asg_client.io.bluetooth.managers.mentralive.internal;
 
 import android.util.Log;
+
 import com.mentra.asg_client.AsgConstants;
+
+import org.json.JSONException;
+import org.json.JSONObject;
+
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
-import org.json.JSONException;
-import org.json.JSONObject;
 
 /**
  * Splits large JSON messages into compact chunks that fit through the K900/BES BLE path.
@@ -38,7 +41,7 @@ public class MessageChunker {
     /** Compatibility no-op: the legacy v1 budget is always the conservative fixed ceiling. */
     public static void resetStringChunkBudget() {}
 
-    /** Compatibility no-op: link-state transitions cannot change the fixed legacy v1 ceiling. */
+    /** Compatibility no-op for old callers; production no longer subscribes to link caps. */
     public static void followLinkState(LinkStateMachine linkState) {}
 
     public static boolean needsChunking(String message) {

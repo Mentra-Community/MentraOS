@@ -2,6 +2,7 @@ package com.mentra.asg_client.io.bluetooth.managers;
 
 import android.content.Context;
 import android.util.Log;
+
 import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.io.bes.BesOtaStateStore;
 import com.mentra.asg_client.io.bes.BesOtaUartListener;
@@ -27,6 +28,10 @@ import com.mentra.asg_client.service.core.processors.ChunkedMessageProtocolStrat
 import com.mentra.asg_client.service.utils.SysProp;
 import com.mentra.asg_client.settings.AsgSettings;
 import com.mentra.asg_client.utils.WakeLockManager;
+
+import org.greenrobot.eventbus.EventBus;
+import org.json.JSONObject;
+
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
@@ -39,8 +44,6 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
-import org.greenrobot.eventbus.EventBus;
-import org.json.JSONObject;
 
 /**
  * Implementation of IBluetoothManager for K900 devices. Uses the K900's serial port to communicate
@@ -255,11 +258,6 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         // Initialize every callback dependency before the serial receive thread starts.
         messageParser = new BesMessageParser();
         fileTransferExecutor = Executors.newSingleThreadScheduledExecutor();
-
-        // Couple the v1 string chunk budget to the caps lifecycle before any transition can
-        // fire: every path that clears the caps (including reopen failures that never reach the
-        // serial callbacks) then also restores the fallback budget.
-        MessageChunker.followLinkState(linkState);
 
         // Create the communication manager
         comManager = new SerialPortBridge(context);
@@ -1384,8 +1382,8 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             Log.i(TAG, "📦 BES wire_caps advertised negotiated file payloads");
         }
         if (advertised != null && advertised.notifyCap > 0) {
-            // The string chunk budget follows the caps automatically: the MessageChunker
-            // subscription (followLinkState in the constructor) re-derives it on this transition.
+            // Diagnostic only. Legacy v1 strings stay at the fixed conservative ceiling;
+            // negotiated capacity is used only by the higher-capacity protocol.
             Log.i(TAG, "📏 BES wire_caps advertised notify_cap=" + advertised.notifyCap);
         }
         return advertised;
@@ -1770,6 +1768,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
         // Close transport state before releasing the file lease so cleanup cannot resume a
         // deferred baud transition on a port that is already going down.
+        framedPathProven = false;
         linkState.serialClosed();
         transportCoordinator.onSerialClosed();
         if (currentFileTransfer != null && currentFileTransfer.isActive) {
@@ -1986,6 +1985,9 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         Log.d(TAG, "🔌 =========================================");
         Log.d(TAG, "🔌 Serial path: " + serialPath);
 
+        // A proof belongs to one exact SerialSession. Never let an sr_syvr from the
+        // previous file descriptor authorize traffic on a newly adopted session.
+        framedPathProven = false;
         linkState.serialReady();
         transportCoordinator.onSerialReady(session);
         Log.d(TAG, "🔌 ✅ Serial port marked as open");
@@ -2021,6 +2023,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         if (bSucc) {
             linkState.serialReady();
         } else {
+            framedPathProven = false;
             linkState.serialClosed();
             transportCoordinator.onSerialClosed();
         }
