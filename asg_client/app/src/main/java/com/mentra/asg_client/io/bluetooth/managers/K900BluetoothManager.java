@@ -1281,13 +1281,12 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
             return true; // Handled
         } catch (PostApplyPersistenceException e) {
-            besOtaAuthorizationGate.abandonPostApplyVerification();
+            String diagnostic = "Could not durably complete BES version verification";
+            if (!besOtaAuthorizationGate.abandonPostApplyVerification(diagnostic)) {
+                Log.e(TAG, "Could not durably record BES verification persistence failure");
+            }
             transportCoordinator.quarantineCurrentSession();
-            notifyBesOtaVerification(
-                    false,
-                    expectedVersion[0],
-                    actualVersion[0],
-                    "Could not durably complete BES version verification");
+            notifyBesOtaVerification(false, expectedVersion[0], actualVersion[0], diagnostic);
             return true;
         } catch (Exception e) {
             Log.e(TAG, "💥 Error parsing sr_syvr response", e);

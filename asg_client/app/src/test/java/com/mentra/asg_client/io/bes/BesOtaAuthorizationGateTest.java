@@ -135,6 +135,10 @@ public class BesOtaAuthorizationGateTest {
         assertThat(afterProcessRestart.getExpectedTargetVersion()).isEqualTo("17.26.7.24");
         assertThat(afterProcessRestart.verifyPostApplyVersion("17.26.7.24"))
                 .isEqualTo(BesOtaAuthorizationGate.PostApplyVerification.VERIFIED);
+        BesOtaHandoffStore.TerminalOutcome outcome =
+                new BesOtaHandoffStore(context).getPendingTerminalOutcome();
+        assertThat(outcome).isNotNull();
+        assertThat(outcome.getStatus()).isEqualTo("FINISHED");
         assertThat(afterProcessRestart.isQuarantinedForCurrentBoot()).isFalse();
     }
 
@@ -146,6 +150,10 @@ public class BesOtaAuthorizationGateTest {
 
         assertThat(gate.verifyPostApplyVersion("17.26.7.23"))
                 .isEqualTo(BesOtaAuthorizationGate.PostApplyVerification.VERSION_MISMATCH);
+        BesOtaHandoffStore.TerminalOutcome outcome =
+                new BesOtaHandoffStore(context).getPendingTerminalOutcome();
+        assertThat(outcome).isNotNull();
+        assertThat(outcome.getStatus()).isEqualTo("FAILED");
         assertThat(gate.isQuarantinedForCurrentBoot()).isFalse();
     }
 
@@ -185,6 +193,11 @@ public class BesOtaAuthorizationGateTest {
         assertThat(gate.isPostApplyVerificationPendingForCurrentBoot()).isTrue();
 
         assertThat(gate.abandonPostApplyVerification()).isTrue();
+
+        BesOtaHandoffStore.TerminalOutcome outcome =
+                new BesOtaHandoffStore(context).getPendingTerminalOutcome();
+        assertThat(outcome).isNotNull();
+        assertThat(outcome.getStatus()).isEqualTo("FAILED");
 
         BesOtaAuthorizationGate afterProcessRestart =
                 new BesOtaAuthorizationGate(context, bootId::get);

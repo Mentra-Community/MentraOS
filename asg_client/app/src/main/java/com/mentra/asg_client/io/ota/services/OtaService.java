@@ -64,6 +64,12 @@ public class OtaService extends Service {
             EventBus.getDefault().register(this);
         }
 
+        // Boot-B verification can complete during Bluetooth initialization, before this delayed
+        // service exists. Replay the durable handoff after subscribing; EventBus is only a wakeup.
+        if (otaHelper != null) {
+            otaHelper.replayPendingBesTerminalOutcome("OTA service startup");
+        }
+
         Log.i(TAG, "OTA service initialized - waiting for phone-initiated ota_start");
     }
 
@@ -314,9 +320,11 @@ public class OtaService extends Service {
                 Log.i(TAG, "BES firmware update finished successfully");
                 updateNotification("BES firmware updated successfully");
                 if (otaHelper != null) {
-                    // sr_adota=100 only proves that BES accepted apply. The phone-visible terminal
-                    // status originates here, after boot B returned the exact target in sr_syvr.
-                    otaHelper.sendBesInstallProgressToPhone("FINISHED", 100, null);
+                    // The boot-B verifier persisted this outcome before consuming its one proof.
+                    // EventBus only wakes a live service; startup replay covers the opposite order.
+                    if (!otaHelper.replayPendingBesTerminalOutcome("verified BES event")) {
+                        Log.e(TAG, "Verified BES success event had no durable terminal handoff");
+                    }
                     otaHelper.deleteDownloadedArtifactForType("bes");
                 }
                 break;
@@ -326,7 +334,11 @@ public class OtaService extends Service {
                 // Persist and retry the terminal snapshot: mismatch can race baud negotiation,
                 // while timeout deliberately quarantines UART until the user reboots.
                 if (otaHelper != null) {
-                    otaHelper.sendBesInstallProgressToPhone("FAILED", 0, event.getErrorMessage());
+                    if (!otaHelper.replayPendingBesTerminalOutcome("failed BES event")) {
+                        // Pre-apply failures have no post-reboot handoff and remain direct events.
+                        otaHelper.sendBesInstallProgressToPhone(
+                                "FAILED", 0, event.getErrorMessage());
+                    }
                     otaHelper.deleteDownloadedArtifactForType("bes");
                 }
                 break;

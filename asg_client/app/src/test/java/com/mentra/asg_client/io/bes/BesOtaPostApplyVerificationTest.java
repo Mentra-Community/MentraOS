@@ -14,7 +14,6 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 import org.greenrobot.eventbus.EventBus;
 import org.greenrobot.eventbus.Subscribe;
-import org.json.JSONObject;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -79,11 +78,7 @@ public class BesOtaPostApplyVerificationTest {
         assertThat(events).isEmpty();
         assertThat(gate.isPostApplyVerificationPendingForCurrentBoot()).isTrue();
         assertThat(BesOtaManager.isBesOtaInProgress).isTrue();
-        JSONObject persistedSession =
-                new JSONObject(
-                        context.getSharedPreferences("ota_session", 0)
-                                .getString("ota_session_data", "{}"));
-        assertThat(persistedSession.optBoolean("bes_install_pending_across_reboot")).isTrue();
+        assertThat(new BesOtaHandoffStore(context).isApplyPending()).isTrue();
 
         assertThat(gate.verifyPostApplyVersion("17.26.7.24"))
                 .isEqualTo(BesOtaAuthorizationGate.PostApplyVerification.NOT_PENDING);
@@ -91,6 +86,10 @@ public class BesOtaPostApplyVerificationTest {
 
         assertThat(gate.verifyPostApplyVersion("17.26.7.24"))
                 .isEqualTo(BesOtaAuthorizationGate.PostApplyVerification.VERIFIED);
+        BesOtaHandoffStore.TerminalOutcome outcome =
+                new BesOtaHandoffStore(context).getPendingTerminalOutcome();
+        assertThat(outcome).isNotNull();
+        assertThat(outcome.getStatus()).isEqualTo("FINISHED");
         manager.onBesPostApplyVerification(
                 true, "17.26.7.24", "17.26.7.24", "BES target version verified");
 

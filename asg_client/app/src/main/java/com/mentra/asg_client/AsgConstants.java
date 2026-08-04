@@ -178,6 +178,12 @@ public class AsgConstants {
     /** First post-apply Android boot allowed to provide the one target-version proof. */
     public static final String BES_OTA_AUTH_GATE_VERIFICATION_BOOT_ID_KEY = "verification_boot_id";
 
+    /** Verified BES result waiting for the OTA service/phone delivery path to replay it. */
+    public static final String BES_OTA_HANDOFF_TERMINAL_STATUS_KEY = "terminal_status";
+
+    /** Compact diagnostic associated with a pending verified BES failure. */
+    public static final String BES_OTA_HANDOFF_TERMINAL_ERROR_KEY = "terminal_error";
+
     /** Rendezvous baud shared by every ASG and BES firmware generation. */
     public static final int UART_RENDEZVOUS_BAUD = 460800;
 

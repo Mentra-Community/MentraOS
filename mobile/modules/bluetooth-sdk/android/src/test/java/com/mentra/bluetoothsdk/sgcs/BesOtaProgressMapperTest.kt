@@ -30,4 +30,22 @@ class BesOtaProgressMapperTest {
         assertEquals(65, mapping.progress)
         assertEquals("CRC failed", mapping.errorMessage)
     }
+
+    @Test
+    fun ordinaryUpdateProgressRemainsNonterminal() {
+        val mapping = mapBesOtaProgress("update", 42, 40, null)
+
+        assertEquals("PROGRESS", mapping.status)
+        assertEquals(40, mapping.progress)
+        assertNull(mapping.errorMessage)
+    }
+
+    @Test
+    fun failAliasRemainsTerminalFailure() {
+        val mapping = mapBesOtaProgress("fail", 25, 25, "apply failed")
+
+        assertEquals("FAILED", mapping.status)
+        assertEquals(25, mapping.progress)
+        assertEquals("apply failed", mapping.errorMessage)
+    }
 }

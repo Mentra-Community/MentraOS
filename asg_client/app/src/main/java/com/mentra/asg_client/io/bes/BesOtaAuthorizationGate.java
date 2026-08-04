@@ -78,6 +78,8 @@ public final class BesOtaAuthorizationGate implements BesUartTransportCoordinato
                     .putString(AsgConstants.BES_OTA_AUTH_GATE_TARGET_VERSION_KEY, target)
                     .putBoolean(AsgConstants.BES_OTA_AUTH_GATE_APPLY_PENDING_KEY, false)
                     .remove(AsgConstants.BES_OTA_AUTH_GATE_VERIFICATION_BOOT_ID_KEY)
+                    .remove(AsgConstants.BES_OTA_HANDOFF_TERMINAL_STATUS_KEY)
+                    .remove(AsgConstants.BES_OTA_HANDOFF_TERMINAL_ERROR_KEY)
                     .commit();
         }
     }
@@ -152,7 +154,13 @@ public final class BesOtaAuthorizationGate implements BesUartTransportCoordinato
         }
     }
 
-    /** Consume one post-reboot version proof and clear the interlock only durably. */
+    /**
+     * Atomically replace one post-reboot version proof with its durable terminal handoff.
+     *
+     * <p>The terminal outcome is committed in the same preference transaction that consumes the
+     * target/boot record. This is why a result cannot disappear when verification happens before
+     * {@code OtaService} subscribes to EventBus.
+     */
     public PostApplyVerification verifyPostApplyVersion(String actualVersion) {
         synchronized (RESERVATION_LOCK) {
             if (!isPostApplyVerificationPendingForCurrentBoot()) {
@@ -168,7 +176,24 @@ public final class BesOtaAuthorizationGate implements BesUartTransportCoordinato
             String expected = expectedTargetVersionLocked();
             String actual = canonicalExactTargetVersion(actualVersion);
             boolean matches = expected.equals(actual);
-            if (!clearLocked()) {
+            SharedPreferences.Editor editor =
+                    preferences
+                            .edit()
+                            .remove(AsgConstants.BES_OTA_AUTH_GATE_BOOT_ID_KEY)
+                            .remove(AsgConstants.BES_OTA_AUTH_GATE_TARGET_VERSION_KEY)
+                            .remove(AsgConstants.BES_OTA_AUTH_GATE_APPLY_PENDING_KEY)
+                            .remove(AsgConstants.BES_OTA_AUTH_GATE_VERIFICATION_BOOT_ID_KEY)
+                            .putString(
+                                    AsgConstants.BES_OTA_HANDOFF_TERMINAL_STATUS_KEY,
+                                    matches ? "FINISHED" : "FAILED");
+            if (matches) {
+                editor.remove(AsgConstants.BES_OTA_HANDOFF_TERMINAL_ERROR_KEY);
+            } else {
+                editor.putString(
+                        AsgConstants.BES_OTA_HANDOFF_TERMINAL_ERROR_KEY,
+                        "BES rebooted with an unexpected firmware version");
+            }
+            if (!editor.commit()) {
                 return PostApplyVerification.PERSISTENCE_FAILURE;
             }
             return matches
@@ -179,14 +204,21 @@ public final class BesOtaAuthorizationGate implements BesUartTransportCoordinato
 
     /** Convert a timed-out verification into durable quarantine for the rest of this boot. */
     public boolean abandonPostApplyVerification() {
+        return abandonPostApplyVerification(
+                "BES rebooted but target version could not be verified; reboot glasses");
+    }
+
+    /** Persist a terminal failure while converting this boot into fail-closed quarantine. */
+    public boolean abandonPostApplyVerification(String diagnostic) {
         synchronized (RESERVATION_LOCK) {
-            if (!isPostApplyVerificationPendingForCurrentBoot()) {
-                return true;
-            }
             String current = currentBootId();
             if (current == null) {
                 return false;
             }
+            // Do not short-circuit when apply_pending appears cleared. SharedPreferences.commit()
+            // updates memory before disk and can return false, so a failed success transition may
+            // already look consumed in this process. Overwrite it with failure/quarantine before
+            // any listener can replay an uncommitted success.
             // Persist the boot that timed out as the ordinary authorization boot marker. This
             // restores quarantine after an ASG/serial restart until the user reboots once more.
             return preferences
@@ -195,6 +227,10 @@ public final class BesOtaAuthorizationGate implements BesUartTransportCoordinato
                     .remove(AsgConstants.BES_OTA_AUTH_GATE_TARGET_VERSION_KEY)
                     .putBoolean(AsgConstants.BES_OTA_AUTH_GATE_APPLY_PENDING_KEY, false)
                     .remove(AsgConstants.BES_OTA_AUTH_GATE_VERIFICATION_BOOT_ID_KEY)
+                    .putString(AsgConstants.BES_OTA_HANDOFF_TERMINAL_STATUS_KEY, "FAILED")
+                    .putString(
+                            AsgConstants.BES_OTA_HANDOFF_TERMINAL_ERROR_KEY,
+                            diagnostic != null ? diagnostic : "BES update failed")
                     .commit();
         }
     }

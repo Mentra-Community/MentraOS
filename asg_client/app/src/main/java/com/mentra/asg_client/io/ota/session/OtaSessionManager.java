@@ -4,6 +4,7 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.os.SystemClock;
 import android.util.Log;
+import com.mentra.asg_client.io.bes.BesOtaHandoffStore;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -21,8 +22,6 @@ public class OtaSessionManager {
      * Set by OtaService.resumeFromSession() and consumed by OtaHelper.onPhoneConnected().
      */
     private static final String KEY_PENDING_APK_STATUS = "pending_apk_status";
-    /** Durable terminal BES snapshot remains eligible for resend after the OTA power cycle. */
-    private static final String KEY_PENDING_BES_TERMINAL = "pending_bes_terminal";
     private static final long SESSION_EXPIRY_MS = 30 * 60 * 1000L;
     /**
      * Cooldown after APK install before auto-resuming the next OTA step (MTK/BES).
@@ -32,6 +31,7 @@ public class OtaSessionManager {
     private static final long APK_RESTART_GUARD_MS = 10_000L;
 
     private final SharedPreferences mPrefs;
+    private final BesOtaHandoffStore mBesOtaHandoffStore;
 
     private String mSessionId;
     private int mTotalSteps;
@@ -44,12 +44,12 @@ public class OtaSessionManager {
     private String mVersionJsonUrl;
     private long mLastActivityAtElapsed;
     private long mRestartingSinceElapsed;
-    private boolean mBesInstallPendingAcrossReboot;
 
     private int mLastPersistedPercent;
 
     public OtaSessionManager(Context context) {
         mPrefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        mBesOtaHandoffStore = new BesOtaHandoffStore(context);
         load();
     }
 
@@ -75,7 +75,10 @@ public class OtaSessionManager {
         if ("failed".equals(mStatus) || "complete".equals(mStatus)) {
             clear();
         }
-        mPrefs.edit().remove(KEY_PENDING_BES_TERMINAL).apply();
+        if (!mBesOtaHandoffStore.clearTerminalOutcome()) {
+            Log.e(TAG, "createSession refused: could not clear the prior BES terminal handoff");
+            return false;
+        }
 
         mSessionId = UUID.randomUUID().toString().substring(0, 8);
         mTotalSteps = stepSequence.length;
@@ -104,7 +107,7 @@ public class OtaSessionManager {
         if ("failed".equals(mStatus) || "complete".equals(mStatus) || "idle".equals(mStatus)) {
             return false;
         }
-        if (mBesInstallPendingAcrossReboot) {
+        if (mBesOtaHandoffStore.isApplyPending() || isBesTerminalDeliveryPending()) {
             return true;
         }
         long now = SystemClock.elapsedRealtime();
@@ -158,7 +161,7 @@ public class OtaSessionManager {
         // "failed" snapshot to send it to the phone. We only suppress the snapshot when the
         // session is well past its idle deadline AND not in restart guard.
         if (mRestartingSinceElapsed < 0
-                && !mBesInstallPendingAcrossReboot
+                && !mBesOtaHandoffStore.isApplyPending()
                 && !isBesTerminalDeliveryPending()) {
             long now = SystemClock.elapsedRealtime();
             if (mLastActivityAtElapsed > 0
@@ -224,7 +227,6 @@ public class OtaSessionManager {
     public synchronized void setFailed(String errorMessage) {
         mStatus = "failed";
         mErrorMessage = errorMessage;
-        mBesInstallPendingAcrossReboot = false;
         mLastActivityAtElapsed = SystemClock.elapsedRealtime();
         persist();
         Log.e(TAG, "Session failed: " + errorMessage);
@@ -233,7 +235,6 @@ public class OtaSessionManager {
     public synchronized void setComplete() {
         mStatus = "complete";
         mStepPercent = 100;
-        mBesInstallPendingAcrossReboot = false;
         mLastActivityAtElapsed = SystemClock.elapsedRealtime();
         persist();
         Log.i(TAG, "Session complete: " + mSessionId);
@@ -268,21 +269,35 @@ public class OtaSessionManager {
         persist();
     }
 
-    /** Keep the active BES step and its phone session identity across the OTA power cycle. */
-    public synchronized boolean setBesInstallPendingAcrossReboot(boolean pending) {
-        mBesInstallPendingAcrossReboot = pending;
+    /**
+     * Apply a verified BES outcome to the phone session with a synchronous durability boundary.
+     *
+     * <p>The BES handoff remains terminal-pending if this commit fails, so service startup or phone
+     * reconnect can replay the same outcome without depending on an in-memory event.
+     */
+    public synchronized boolean applyBesTerminalOutcome(boolean success, String errorMessage) {
+        if (mSessionId == null) {
+            Log.e(TAG, "Cannot attach verified BES outcome: OTA session is unavailable");
+            return false;
+        }
+        for (int i = 0; i < mTotalSteps; i++) {
+            if ("bes".equals(getStepType(i))) {
+                mCurrentStepIndex = i;
+                break;
+            }
+        }
+        mCurrentPhase = "install";
+        mStepPercent = success ? 100 : 0;
+        mLastPersistedPercent = mStepPercent;
+        mStatus = success ? "complete" : "failed";
+        mErrorMessage = success ? null : (errorMessage != null ? errorMessage : "Update failed");
         mLastActivityAtElapsed = SystemClock.elapsedRealtime();
         return persist(true);
     }
 
-    /** Mark the persisted terminal snapshot for resend after UART and phone readiness return. */
-    public void setPendingBesTerminalDelivery() {
-        mPrefs.edit().putBoolean(KEY_PENDING_BES_TERMINAL, true).commit();
-    }
-
     /** Terminal BES delivery is idempotent and remains pending until a later OTA supersedes it. */
     public boolean isBesTerminalDeliveryPending() {
-        return mPrefs.getBoolean(KEY_PENDING_BES_TERMINAL, false);
+        return mBesOtaHandoffStore.getPendingTerminalOutcome() != null;
     }
 
     /**
@@ -353,9 +368,11 @@ public class OtaSessionManager {
         mVersionJsonUrl = null;
         mLastActivityAtElapsed = 0;
         mRestartingSinceElapsed = -1;
-        mBesInstallPendingAcrossReboot = false;
         mLastPersistedPercent = 0;
-        mPrefs.edit().remove(KEY_SESSION_DATA).remove(KEY_PENDING_BES_TERMINAL).apply();
+        mPrefs.edit().remove(KEY_SESSION_DATA).apply();
+        if (!mBesOtaHandoffStore.clearTerminalOutcome()) {
+            Log.e(TAG, "Failed to clear superseded BES terminal handoff");
+        }
     }
 
     public synchronized String getStepType(int index) {
@@ -540,7 +557,6 @@ public class OtaSessionManager {
             json.put("version_json_url", mVersionJsonUrl != null ? mVersionJsonUrl : JSONObject.NULL);
             json.put("last_activity_at_elapsed", mLastActivityAtElapsed);
             json.put("restarting_since_elapsed", mRestartingSinceElapsed);
-            json.put("bes_install_pending_across_reboot", mBesInstallPendingAcrossReboot);
             SharedPreferences.Editor editor =
                     mPrefs.edit().putString(KEY_SESSION_DATA, json.toString());
             if (synchronous) {
@@ -575,14 +591,11 @@ public class OtaSessionManager {
             mVersionJsonUrl = json.isNull("version_json_url") ? null : json.optString("version_json_url", null);
             mLastActivityAtElapsed = json.optLong("last_activity_at_elapsed", 0);
             mRestartingSinceElapsed = json.optLong("restarting_since_elapsed", -1);
-            mBesInstallPendingAcrossReboot =
-                    json.optBoolean("bes_install_pending_across_reboot", false);
             mLastPersistedPercent = mStepPercent;
         } catch (JSONException e) {
             Log.e(TAG, "Failed to load session", e);
             mStepSequence = new JSONArray();
             mRestartingSinceElapsed = -1;
-            mBesInstallPendingAcrossReboot = false;
         }
     }
 }

@@ -44,6 +44,7 @@ import java.util.stream.Collectors;
 import java.util.concurrent.locks.ReentrantLock;
 
 import com.mentra.asg_client.io.ota.session.OtaSessionManager;
+import com.mentra.asg_client.io.bes.BesOtaHandoffStore;
 import com.mentra.asg_client.io.ota.utils.BesFirmwareArtifactValidator;
 import com.mentra.asg_client.io.ota.utils.DowngradeGate;
 import com.mentra.asg_client.io.ota.utils.FirmwareDownloadException;
@@ -119,6 +120,7 @@ public class OtaHelper {
 
     // Session manager for persisting OTA state across APK restarts
     private OtaSessionManager sessionManager;
+    private BesOtaHandoffStore besOtaHandoffStore;
 
     // Track phone-initiated vs glasses-initiated OTA
     private static volatile boolean isPhoneInitiatedOta = false;
@@ -169,6 +171,7 @@ public class OtaHelper {
         this.context = context.getApplicationContext(); // Use application context to avoid memory leaks
         handler = new Handler(Looper.getMainLooper());
         sessionManager = new OtaSessionManager(this.context);
+        besOtaHandoffStore = new BesOtaHandoffStore(this.context);
 
         // Register for EventBus to receive battery status updates
         EventBus.getDefault().register(this);
@@ -246,7 +249,7 @@ public class OtaHelper {
             }
         }
         if (sessionManager.isBesTerminalDeliveryPending()) {
-            scheduleTerminalStatusResends("BES terminal reconnect");
+            replayPendingBesTerminalOutcome("BES terminal reconnect");
         }
     }
 
@@ -2933,14 +2936,58 @@ public class OtaHelper {
     public void sendBesInstallProgressToPhone(String status, int progress, String message) {
         currentUpdateType = "bes";
         boolean terminal = "FINISHED".equals(status) || "FAILED".equals(status);
-        if (terminal && sessionManager != null) {
-            sessionManager.setPendingBesTerminalDelivery();
+        if (!terminal) {
+            sendProgressToPhone(
+                    "install",
+                    progress,
+                    0,
+                    0,
+                    status,
+                    "FAILED".equals(status) ? message : null);
+            return;
         }
-        sendProgressToPhone("install", progress, 0, 0, status,
-            "FAILED".equals(status) ? message : null);
-        if (terminal) {
-            scheduleTerminalStatusResends("verified BES " + status);
+
+        boolean success = "FINISHED".equals(status);
+        if (!success
+                && besOtaHandoffStore != null
+                && besOtaHandoffStore.getPendingTerminalOutcome() == null
+                && !besOtaHandoffStore.persistFailure(message)) {
+            Log.e(TAG, "Could not durably record direct BES failure for reconnect delivery");
         }
+        if (sessionManager == null
+                || !sessionManager.applyBesTerminalOutcome(success, message)) {
+            // The gate-owned terminal record remains pending, so a later service/process can retry
+            // this attachment. Keep a minimal in-memory shape for best-effort delivery now.
+            Log.e(TAG, "Could not durably attach verified BES outcome to the phone OTA session");
+        }
+        lastOtaPhoneStage = "install";
+        lastOtaPhoneProgress = success ? 100 : 0;
+        lastOtaPhoneEventStatus = status;
+        lastOtaPhoneError = success ? null : message;
+        sendOtaStatus();
+        scheduleTerminalStatusResends("verified BES " + status);
+    }
+
+    /**
+     * Replay the gate-owned terminal outcome after service startup or phone reconnect.
+     *
+     * @return true when a durable terminal handoff was present
+     */
+    public boolean replayPendingBesTerminalOutcome(String reason) {
+        if (besOtaHandoffStore == null) {
+            return false;
+        }
+        BesOtaHandoffStore.TerminalOutcome outcome =
+                besOtaHandoffStore.getPendingTerminalOutcome();
+        if (outcome == null) {
+            return false;
+        }
+        Log.i(TAG, "Replaying durable BES terminal outcome after " + reason);
+        sendBesInstallProgressToPhone(
+                outcome.getStatus(),
+                "FINISHED".equals(outcome.getStatus()) ? 100 : 0,
+                outcome.getErrorMessage());
+        return true;
     }
 
     private void scheduleTerminalStatusResends(String reason) {
