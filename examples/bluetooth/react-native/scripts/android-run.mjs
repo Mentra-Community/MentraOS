@@ -348,6 +348,92 @@ repositories {
   }
 }
 
+/**
+ * When linking MentraOS bluetooth-sdk, Gradle must see android/libs/maven for
+ * sherpa-onnx, and :lc3Lib/:silero must point at that same checkout. The RN
+ * example's generated android/ tree is gitignored, so re-apply every run.
+ */
+function ensureMentraOsSdkGradleWiring(projectRoot, sdkRoot) {
+  const buildGradlePath = path.join(projectRoot, "android/build.gradle")
+  const settingsGradlePath = path.join(projectRoot, "android/settings.gradle")
+  if (!fs.existsSync(buildGradlePath) || !fs.existsSync(settingsGradlePath)) {
+    return
+  }
+
+  let buildGradle = fs.readFileSync(buildGradlePath, "utf8")
+  if (!buildGradle.includes("android/libs/maven")) {
+    const repoBlock = `allprojects {
+  repositories {
+    // MentraOS bluetooth-sdk stages sherpa-onnx under android/libs/maven (not on Maven Central).
+    def mentraBluetoothSdkPackagePath = System.getenv("MENTRA_BLUETOOTH_SDK_PACKAGE_PATH")
+    if (mentraBluetoothSdkPackagePath) {
+      maven { url = uri(new File(mentraBluetoothSdkPackagePath, "android/libs/maven")) }
+    } else {
+      def npmSdk = new File(rootDir, "../node_modules/@mentra/bluetooth-sdk/android/libs/maven")
+      if (npmSdk.exists()) {
+        maven { url = uri(npmSdk) }
+      }
+    }
+    google()
+    mavenCentral()
+    maven { url 'https://www.jitpack.io' }
+  }
+}`
+    if (/allprojects\s*\{\s*repositories\s*\{[\s\S]*?\}\s*\}/.test(buildGradle)) {
+      buildGradle = buildGradle.replace(
+        /allprojects\s*\{\s*repositories\s*\{[\s\S]*?\}\s*\}/,
+        repoBlock,
+      )
+    } else {
+      buildGradle = `${buildGradle.trimEnd()}\n\n${repoBlock}\n`
+    }
+    fs.writeFileSync(buildGradlePath, buildGradle)
+    console.log("Wired MentraOS sherpa-onnx local Maven repo into android/build.gradle")
+  }
+
+  const resolveSdkNode = `const fs=require('fs');const path=require('path');const appRoot=path.join(process.cwd(),'..');const fromEnv=process.env.MENTRA_BLUETOOTH_SDK_PACKAGE_PATH;if(fromEnv&&fs.existsSync(path.join(fromEnv,'android'))){process.stdout.write(fs.realpathSync(fromEnv));process.exit(0);}const local=path.join(appRoot,'modules/bluetooth-sdk');if(fs.existsSync(path.join(local,'android/silero'))){process.stdout.write(fs.realpathSync(local));process.exit(0);}process.stdout.write(path.dirname(require.resolve('@mentra/bluetooth-sdk/package.json')));`
+  let settingsGradle = fs.readFileSync(settingsGradlePath, "utf8")
+  const resolveMarker = "MENTRA_BLUETOOTH_SDK_PACKAGE_PATH"
+  if (
+    !settingsGradle.includes(resolveMarker) ||
+    settingsGradle.includes("node_modules/@mentra/bluetooth-sdk\", 'android')")
+  ) {
+    settingsGradle = settingsGradle.replace(
+      /def mentraBluetoothSdkRoot = new File\(\s*providers\.exec \{\s*workingDir\(rootDir\)\s*commandLine\(\s*"node",\s*"-e",\s*"[^"]*"\s*\)\s*\}\.standardOutput\.asText\.get\(\)\.trim\(\)\s*\)/s,
+      `def mentraBluetoothSdkRoot = new File(
+  providers.exec {
+    workingDir(rootDir)
+    commandLine(
+      "node",
+      "-e",
+      "${resolveSdkNode.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"
+    )
+  }.standardOutput.asText.get().trim()
+)`,
+    )
+    settingsGradle = settingsGradle.replace(
+      /if \(findProject\(':mentra-bluetooth-sdk'\) != null\) \{\s*project\(':mentra-bluetooth-sdk'\)\.projectDir = new File\([^)]+\)\s*\}/s,
+      `if (findProject(':mentra-bluetooth-sdk') != null) {
+  project(':mentra-bluetooth-sdk').projectDir = new File(mentraBluetoothSdkRoot, 'android')
+}`,
+    )
+    fs.writeFileSync(settingsGradlePath, settingsGradle)
+    console.log("Pointed android/settings.gradle SDK paths at MENTRA_BLUETOOTH_SDK_PACKAGE_PATH")
+  }
+
+  const sherpaAar = path.join(
+    sdkRoot,
+    "android/libs/maven/com/k2fsa/sherpa/onnx/sherpa-onnx/1.13.2/sherpa-onnx-1.13.2.aar",
+  )
+  if (!fs.existsSync(sherpaAar)) {
+    console.warn(
+      `Sherpa-ONNX AAR missing at ${sherpaAar}. MentraOS bluetooth-sdk configure will try to download it from GitHub.`,
+    )
+  } else {
+    console.log(`Sherpa-ONNX local Maven artifact present: ${sherpaAar}`)
+  }
+}
+
 const target = resolveAndroidPhoneTarget()
 const expoDevice = expoDeviceName(target)
 
@@ -380,6 +466,7 @@ if (!fs.existsSync(path.join(projectRoot, "android/settings.gradle"))) {
   console.log("Generating the Android project...")
   run("bunx", ["expo", "prebuild", "--platform", "android"])
 }
+ensureMentraOsSdkGradleWiring(projectRoot, sdkRoot)
 
 // Opt-in only. Default used to always clean+--rerun-tasks, which forced a full
 // Gradle configure before expo run:android did it again.
