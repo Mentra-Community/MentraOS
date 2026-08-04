@@ -316,8 +316,15 @@ fun SystemScreen(controller: MentraExampleController) {
                 }
                 Spacer(Modifier.height(12.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    HotspotActionChip("Enable", enabled = connected) { controller.setWifiAdbState(true) }
-                    HotspotActionChip("Disable", enabled = connected) { controller.setWifiAdbState(false) }
+                    val wifiAdbBusy =
+                        state.activeAction == "Enable Wi-Fi ADB" ||
+                            state.activeAction == "Disable Wi-Fi ADB"
+                    HotspotActionChip("Enable", enabled = connected && !wifiAdbBusy) {
+                        controller.setWifiAdbState(true)
+                    }
+                    HotspotActionChip("Disable", enabled = connected && !wifiAdbBusy) {
+                        controller.setWifiAdbState(false)
+                    }
                 }
                 Spacer(Modifier.height(8.dp))
                 Text(

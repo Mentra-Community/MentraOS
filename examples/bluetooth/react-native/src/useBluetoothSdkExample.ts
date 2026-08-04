@@ -3449,21 +3449,32 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   async function setWifiAdbState(enabled: boolean) {
     await runAction(enabled ? 'Enable Wi-Fi ADB' : 'Disable Wi-Fi ADB', async () => {
       requireConnected('toggle Wi-Fi ADB');
+      const rebuildHint =
+        Platform.OS === 'ios'
+          ? 'bun run ios (link MentraOS bluetooth-sdk and define MENTRA_SDK_HAS_WIFI_ADB)'
+          : 'bun run android';
       const sdkWithWifiAdb = BluetoothSdk as typeof BluetoothSdk & {
         setWifiAdbState?: (value: boolean) => Promise<void>;
       };
       if (typeof sdkWithWifiAdb.setWifiAdbState !== 'function') {
         throw new Error(
-          'BluetoothSdk.setWifiAdbState is missing from JS. Point MENTRA_BLUETOOTH_SDK_PACKAGE_PATH at MentraOS mobile/modules/bluetooth-sdk and rebuild the native app (bun run android).',
+          `BluetoothSdk.setWifiAdbState is missing from JS. Point MENTRA_BLUETOOTH_SDK_PACKAGE_PATH at MentraOS mobile/modules/bluetooth-sdk and rebuild via: ${rebuildHint}`,
         );
       }
       try {
         await sdkWithWifiAdb.setWifiAdbState(enabled);
       } catch (error) {
         const message = formatError(error);
-        throw new Error(
-          `${message} — native SDK likely predates OS-1627. Rebuild with MentraOS bluetooth-sdk (auto-picked when nested under MentraOS) via: bun run android`,
-        );
+        const isCompatGap =
+          /unavailable|not implemented|NoSuchMethod|does not exist|MENTRA_SDK_HAS_WIFI_ADB|predates OS-1627/i.test(
+            message,
+          );
+        if (isCompatGap) {
+          throw new Error(
+            `${message} — native SDK likely predates OS-1627. Rebuild with MentraOS bluetooth-sdk (auto-picked when nested under MentraOS) via: ${rebuildHint}`,
+          );
+        }
+        throw error instanceof Error ? error : new Error(message);
       }
       setWifiAdbEnabled(enabled);
       addEvent('LIVE', `Wi-Fi ADB ${enabled ? 'enabled' : 'disabled'}`);

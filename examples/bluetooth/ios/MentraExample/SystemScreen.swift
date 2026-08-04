@@ -372,10 +372,13 @@ struct SystemScreen: View {
             }
 
             HStack(spacing: 8) {
-                HotspotActionChip(title: "Enable", enabled: model.glassesConnected) {
+                let wifiAdbBusy =
+                    model.activeAction == "Enable Wi-Fi ADB" ||
+                    model.activeAction == "Disable Wi-Fi ADB"
+                HotspotActionChip(title: "Enable", enabled: model.glassesConnected && !wifiAdbBusy) {
                     model.setWifiAdbState(enabled: true)
                 }
-                HotspotActionChip(title: "Disable", enabled: model.glassesConnected) {
+                HotspotActionChip(title: "Disable", enabled: model.glassesConnected && !wifiAdbBusy) {
                     model.setWifiAdbState(enabled: false)
                 }
             }

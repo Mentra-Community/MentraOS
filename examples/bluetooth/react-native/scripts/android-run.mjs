@@ -105,7 +105,7 @@ class SherpaOnnxTranscriber(@Suppress("UNUSED_PARAMETER") context: Context) {
 }
 `
 
-const STUB_TTS_TOOLS = `package com.mentra.core.tts
+const STUB_TTS_TOOLS = `package com.mentra.bluetoothsdk.tts
 
 import android.content.Context
 import com.mentra.bluetoothsdk.Bridge
@@ -331,14 +331,16 @@ repositories {
     if (existing.includes("not bundled in the public Android SDK")) {
       continue
     }
-    if (existing.includes("com.k2fsa.sherpa.onnx") || existing.length === 0 || fs.existsSync(dest)) {
-      const body =
-        preferredSource && fs.existsSync(preferredSource)
-          ? fs.readFileSync(preferredSource, "utf8")
-          : embeddedStub
-      fs.writeFileSync(dest, body)
-      patchedSources = true
+    // Only replace missing files or sources that still import Sherpa-ONNX.
+    if (!(existing.includes("com.k2fsa.sherpa.onnx") || existing.length === 0)) {
+      continue
     }
+    const body =
+      preferredSource && fs.existsSync(preferredSource)
+        ? fs.readFileSync(preferredSource, "utf8")
+        : embeddedStub
+    fs.writeFileSync(dest, body)
+    patchedSources = true
   }
 
   if (patchedGradle || patchedSources) {
@@ -353,6 +355,24 @@ repositories {
  * sherpa-onnx, and :lc3Lib/:silero must point at that same checkout. The RN
  * example's generated android/ tree is gitignored, so re-apply every run.
  */
+function ensureLocalSdkNodeModulesLink(sdkRoot) {
+  const scopeDir = path.join(projectRoot, "node_modules/@mentra")
+  const linkPath = path.join(scopeDir, "bluetooth-sdk")
+  const target = fs.realpathSync(sdkRoot)
+  fs.mkdirSync(scopeDir, {recursive: true})
+  try {
+    const existing = fs.lstatSync(linkPath)
+    if (existing.isSymbolicLink() && fs.realpathSync(linkPath) === target) {
+      return
+    }
+    fs.rmSync(linkPath, {recursive: true, force: true})
+  } catch {
+    // Missing link path is fine; create below.
+  }
+  fs.symlinkSync(target, linkPath, process.platform === "win32" ? "junction" : "dir")
+  console.log(`Linked node_modules/@mentra/bluetooth-sdk -> ${target}`)
+}
+
 function ensureMentraOsSdkGradleWiring(projectRoot, sdkRoot) {
   const buildGradlePath = path.join(projectRoot, "android/build.gradle")
   const settingsGradlePath = path.join(projectRoot, "android/settings.gradle")
@@ -362,9 +382,7 @@ function ensureMentraOsSdkGradleWiring(projectRoot, sdkRoot) {
 
   let buildGradle = fs.readFileSync(buildGradlePath, "utf8")
   if (!buildGradle.includes("android/libs/maven")) {
-    const repoBlock = `allprojects {
-  repositories {
-    // MentraOS bluetooth-sdk stages sherpa-onnx under android/libs/maven (not on Maven Central).
+    const mavenSnippet = `    // MentraOS bluetooth-sdk stages sherpa-onnx under android/libs/maven (not on Maven Central).
     def mentraBluetoothSdkPackagePath = System.getenv("MENTRA_BLUETOOTH_SDK_PACKAGE_PATH")
     if (mentraBluetoothSdkPackagePath) {
       maven { url = uri(new File(mentraBluetoothSdkPackagePath, "android/libs/maven")) }
@@ -374,33 +392,28 @@ function ensureMentraOsSdkGradleWiring(projectRoot, sdkRoot) {
         maven { url = uri(npmSdk) }
       }
     }
-    google()
-    mavenCentral()
-    maven { url 'https://www.jitpack.io' }
-  }
-}`
-    if (/allprojects\s*\{\s*repositories\s*\{[\s\S]*?\}\s*\}/.test(buildGradle)) {
+`
+    if (/allprojects\s*\{\s*repositories\s*\{/.test(buildGradle)) {
       buildGradle = buildGradle.replace(
-        /allprojects\s*\{\s*repositories\s*\{[\s\S]*?\}\s*\}/,
-        repoBlock,
+        /(allprojects\s*\{\s*repositories\s*\{)/,
+        `$1\n${mavenSnippet}`,
       )
     } else {
-      buildGradle = `${buildGradle.trimEnd()}\n\n${repoBlock}\n`
+      buildGradle = `${buildGradle.trimEnd()}\n
+allprojects {
+  repositories {
+${mavenSnippet}    google()
+    mavenCentral()
+  }
+}
+`
     }
     fs.writeFileSync(buildGradlePath, buildGradle)
     console.log("Wired MentraOS sherpa-onnx local Maven repo into android/build.gradle")
   }
 
   const resolveSdkNode = `const fs=require('fs');const path=require('path');const appRoot=path.join(process.cwd(),'..');const fromEnv=process.env.MENTRA_BLUETOOTH_SDK_PACKAGE_PATH;if(fromEnv&&fs.existsSync(path.join(fromEnv,'android'))){process.stdout.write(fs.realpathSync(fromEnv));process.exit(0);}const local=path.join(appRoot,'modules/bluetooth-sdk');if(fs.existsSync(path.join(local,'android/silero'))){process.stdout.write(fs.realpathSync(local));process.exit(0);}process.stdout.write(path.dirname(require.resolve('@mentra/bluetooth-sdk/package.json')));`
-  let settingsGradle = fs.readFileSync(settingsGradlePath, "utf8")
-  const resolveMarker = "MENTRA_BLUETOOTH_SDK_PACKAGE_PATH"
-  if (
-    !settingsGradle.includes(resolveMarker) ||
-    settingsGradle.includes("node_modules/@mentra/bluetooth-sdk\", 'android')")
-  ) {
-    settingsGradle = settingsGradle.replace(
-      /def mentraBluetoothSdkRoot = new File\(\s*providers\.exec \{\s*workingDir\(rootDir\)\s*commandLine\(\s*"node",\s*"-e",\s*"[^"]*"\s*\)\s*\}\.standardOutput\.asText\.get\(\)\.trim\(\)\s*\)/s,
-      `def mentraBluetoothSdkRoot = new File(
+  const resolveSdkBlock = `def mentraBluetoothSdkRoot = new File(
   providers.exec {
     workingDir(rootDir)
     commandLine(
@@ -409,16 +422,50 @@ function ensureMentraOsSdkGradleWiring(projectRoot, sdkRoot) {
       "${resolveSdkNode.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"
     )
   }.standardOutput.asText.get().trim()
-)`,
-    )
-    settingsGradle = settingsGradle.replace(
-      /if \(findProject\(':mentra-bluetooth-sdk'\) != null\) \{\s*project\(':mentra-bluetooth-sdk'\)\.projectDir = new File\([^)]+\)\s*\}/s,
-      `if (findProject(':mentra-bluetooth-sdk') != null) {
+)`
+  const nativeModuleWiring = `${resolveSdkBlock}
+
+include ':lc3Lib'
+project(':lc3Lib').projectDir = new File(mentraBluetoothSdkRoot, 'android/lc3Lib')
+
+include ':silero'
+project(':silero').projectDir = new File(mentraBluetoothSdkRoot, 'android/silero')
+
+if (findProject(':mentra-bluetooth-sdk') != null) {
   project(':mentra-bluetooth-sdk').projectDir = new File(mentraBluetoothSdkRoot, 'android')
-}`,
-    )
+}
+`
+
+  let settingsGradle = fs.readFileSync(settingsGradlePath, "utf8")
+  const resolveMarker = "MENTRA_BLUETOOTH_SDK_PACKAGE_PATH"
+  const hasFullWiring =
+    settingsGradle.includes(resolveMarker) &&
+    settingsGradle.includes("project(':lc3Lib').projectDir = new File(mentraBluetoothSdkRoot") &&
+    settingsGradle.includes("project(':silero').projectDir = new File(mentraBluetoothSdkRoot") &&
+    settingsGradle.includes(
+      "project(':mentra-bluetooth-sdk').projectDir = new File(mentraBluetoothSdkRoot, 'android')",
+    ) &&
+    !settingsGradle.includes("node_modules/@mentra/bluetooth-sdk\", 'android')")
+
+  if (!hasFullWiring) {
+    // Drop any prior MentraOS wiring block so we can rewrite it atomically.
+    settingsGradle = settingsGradle
+      .replace(
+        /def mentraBluetoothSdkRoot = new File\(\s*providers\.exec \{\s*workingDir\(rootDir\)\s*commandLine\(\s*"node",\s*"-e",\s*"[^"]*"\s*\)\s*\}\.standardOutput\.asText\.get\(\)\.trim\(\)\s*\)\s*/s,
+        "",
+      )
+      .replace(/include\s+':lc3Lib'\s*\nproject\(':lc3Lib'\)\.projectDir = new File\([^\n]+\)\s*/g, "")
+      .replace(/include\s+':silero'\s*\nproject\(':silero'\)\.projectDir = new File\([^\n]+\)\s*/g, "")
+      .replace(
+        /if \(findProject\(':mentra-bluetooth-sdk'\) != null\) \{\s*project\(':mentra-bluetooth-sdk'\)\.projectDir = new File\([^)]+\)\s*\}\s*/s,
+        "",
+      )
+      .trimEnd()
+    settingsGradle = `${settingsGradle}\n\n${nativeModuleWiring}`
     fs.writeFileSync(settingsGradlePath, settingsGradle)
-    console.log("Pointed android/settings.gradle SDK paths at MENTRA_BLUETOOTH_SDK_PACKAGE_PATH")
+    console.log(
+      "Pointed android/settings.gradle :mentra-bluetooth-sdk/:lc3Lib/:silero at MENTRA_BLUETOOTH_SDK_PACKAGE_PATH",
+    )
   }
 
   const sherpaAar = path.join(
@@ -442,19 +489,25 @@ removeStaleBluetoothSdkModuleEntry()
 console.log("Installing the package.json dependencies from npm...")
 run("bun", ["install"])
 
+if (localSdkOverride) {
+  if (!fs.existsSync(localSdkOverride)) {
+    throw new Error(`Local SDK override not found at ${localSdkOverride}`)
+  }
+  // Metro + Gradle both honor MENTRA_BLUETOOTH_SDK_PACKAGE_PATH; also link
+  // node_modules so native autolinking / require.resolve stay on the same tree.
+  ensureLocalSdkNodeModulesLink(localSdkOverride)
+}
+
 const sdkPackageJson = output("node", [
   "--print",
   "require.resolve('@mentra/bluetooth-sdk/package.json')",
 ]).trim()
-if (localSdkOverride && !fs.existsSync(localSdkOverride)) {
-  throw new Error(`Local SDK override not found at ${localSdkOverride}`)
-}
 const sdkRoot = localSdkOverride
   ? fs.realpathSync(localSdkOverride)
   : path.dirname(fs.realpathSync(sdkPackageJson))
 const sdkPackage = JSON.parse(fs.readFileSync(path.join(sdkRoot, "package.json"), "utf8"))
 console.log(`@mentra/bluetooth-sdk resolves to: ${sdkRoot} (version ${sdkPackage.version})`)
-console.log(localSdkOverride ? "SDK source: explicit local override" : "SDK source: npm dependency")
+console.log(localSdkOverride ? "SDK source: MentraOS / local override" : "SDK source: npm dependency")
 console.log(`Using Android phone: ${expoDevice} (serial ${target.serial})`)
 console.log("Skipping Mentra Live / emulator targets.")
 

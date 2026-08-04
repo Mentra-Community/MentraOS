@@ -4538,7 +4538,11 @@ private fun invokeSetWifiAdbState(sdk: MentraBluetoothSdk, enabled: Boolean) {
             "MentraBluetoothSdk.setWifiAdbState is unavailable. Use a Mentra Bluetooth SDK build that includes OS-1627.",
         )
     }
-    method.invoke(sdk, enabled)
+    try {
+        method.invoke(sdk, enabled)
+    } catch (error: java.lang.reflect.InvocationTargetException) {
+        throw error.cause ?: error
+    }
 }
 
 private fun ByteArrayOutputStream.writeAscii(value: String) {

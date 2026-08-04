@@ -252,14 +252,22 @@ export function SystemScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
         </View>
         <View style={styles.wifiAdbActions}>
           <HotspotActionChip
-            enabled={connected}
+            enabled={
+              connected &&
+              sdk.activeAction !== 'Enable Wi-Fi ADB' &&
+              sdk.activeAction !== 'Disable Wi-Fi ADB'
+            }
             label="Enable"
             onPress={() => {
               void sdk.setWifiAdbState(true);
             }}
           />
           <HotspotActionChip
-            enabled={connected}
+            enabled={
+              connected &&
+              sdk.activeAction !== 'Enable Wi-Fi ADB' &&
+              sdk.activeAction !== 'Disable Wi-Fi ADB'
+            }
             label="Disable"
             onPress={() => {
               void sdk.setWifiAdbState(false);
