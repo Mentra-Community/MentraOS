@@ -1,13 +1,18 @@
 import {checkCurrentGlassesForUpdate} from "../../modules/engine/src/services/OtaUpdateCheckService"
 import {useGlassesStore} from "../../modules/engine/src/stores/glasses"
+import {SETTINGS} from "@mentra/engine"
+import {useSettingsStore} from "@mentra/engine/internal"
 import {resetBluetoothSdkMock} from "@/test-utils/mockBluetoothSdk"
 
 describe("OtaUpdateCheckService", () => {
   const originalFetch = global.fetch
+  const originalEmbeddedManifestUrl = process.env.EXPO_PUBLIC_ASG_OTA_VERSION_URL
 
   beforeEach(() => {
+    process.env.EXPO_PUBLIC_ASG_OTA_VERSION_URL = "https://ota.example/app-pinned-version.json"
     resetBluetoothSdkMock()
     useGlassesStore.getState().reset()
+    useSettingsStore.getState().resetAllSettingsLocally()
     useGlassesStore.getState().setGlassesInfo({
       connection: {state: "connected", fullyBooted: true},
       buildNumber: "10",
@@ -21,8 +26,17 @@ describe("OtaUpdateCheckService", () => {
     global.fetch = originalFetch
   })
 
-  it("skips the check entirely for development builds", async () => {
-    useGlassesStore.getState().setGlassesInfo({appVersion: "49076573-dev"})
+  afterAll(() => {
+    if (originalEmbeddedManifestUrl === undefined) {
+      delete process.env.EXPO_PUBLIC_ASG_OTA_VERSION_URL
+    } else {
+      process.env.EXPO_PUBLIC_ASG_OTA_VERSION_URL = originalEmbeddedManifestUrl
+    }
+  })
+
+  it("skips the check entirely when the mobile app has no embedded OTA manifest pin", async () => {
+    delete process.env.EXPO_PUBLIC_ASG_OTA_VERSION_URL
+    useGlassesStore.getState().setGlassesInfo({appVersion: "staging.20260731.022348.189fe56"})
     global.fetch = jest.fn() as unknown as typeof fetch
 
     const result = await checkCurrentGlassesForUpdate({
@@ -34,8 +48,58 @@ describe("OtaUpdateCheckService", () => {
 
     expect(result.skippedReason).toBe("dev_build")
     expect(result.updateAvailable).toBe(false)
-    // The manifest must not even be fetched for a dev build.
+    // An unpinned phone build must not fetch or apply an automatic OTA manifest.
     expect(global.fetch).not.toHaveBeenCalled()
+  })
+
+  it("allows a pinned mobile build regardless of the ASG app version", async () => {
+    useGlassesStore.getState().setGlassesInfo({appVersion: "49076573-dev", buildNumber: "40"})
+    global.fetch = jest.fn(() =>
+      Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({apps: {"com.mentra.asg_client": {versionCode: 10}}}),
+      } as unknown as Response),
+    ) as unknown as typeof fetch
+
+    const result = await checkCurrentGlassesForUpdate({
+      refreshVersionInfo: false,
+      fixClockBeforeCheck: false,
+      waitForBesVersionMs: 0,
+      waitForMtkVersionMs: 0,
+    })
+
+    expect(result.skippedReason).toBeUndefined()
+    expect(result.hasCheckCompleted).toBe(true)
+    expect(global.fetch).toHaveBeenCalledWith("https://ota.example/app-pinned-version.json")
+  })
+
+  it("allows an explicit super-mode manifest override from an unpinned mobile build", async () => {
+    delete process.env.EXPO_PUBLIC_ASG_OTA_VERSION_URL
+    useGlassesStore.getState().setGlassesInfo({buildNumber: "40"})
+    useSettingsStore.setState((state) => ({
+      settings: {
+        ...state.settings,
+        [SETTINGS.super_mode.key]: true,
+        [SETTINGS.ota_version_url.key]: "https://ota.example/manual-version.json",
+      },
+    }))
+    global.fetch = jest.fn(() =>
+      Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({apps: {"com.mentra.asg_client": {versionCode: 40}}}),
+      } as unknown as Response),
+    ) as unknown as typeof fetch
+
+    const result = await checkCurrentGlassesForUpdate({
+      refreshVersionInfo: false,
+      fixClockBeforeCheck: false,
+      waitForBesVersionMs: 0,
+      waitForMtkVersionMs: 0,
+    })
+
+    expect(result.skippedReason).toBeUndefined()
+    expect(result.hasCheckCompleted).toBe(true)
+    expect(global.fetch).toHaveBeenCalledWith("https://ota.example/manual-version.json")
   })
 
   it("reports a failed check (never up-to-date) for a zeroed pin on modern glasses", async () => {
