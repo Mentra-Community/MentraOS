@@ -1,7 +1,11 @@
 package com.mentra.asg_client.io.bluetooth.managers.mentralive.internal;
 
 import android.util.Log;
+
 import com.mentra.asg_client.AsgConstants;
+
+import org.json.JSONObject;
+
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
 import java.util.concurrent.CancellationException;
@@ -12,7 +16,6 @@ import java.util.concurrent.FutureTask;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
-import org.json.JSONObject;
 
 /**
  * Single policy owner for the ASG-to-BES UART.
@@ -177,6 +180,7 @@ public final class BesUartTransportCoordinator {
     private ScheduledFuture<?> phaseTimeout;
     private ScheduledFuture<?> healthTimeout;
     private int safetyRawProbeAttempts;
+    private boolean safetyRecoveryListenerReady;
 
     public BesUartTransportCoordinator(Host host) {
         this(host, () -> SafetyPolicy.NORMAL);
@@ -245,13 +249,21 @@ public final class BesUartTransportCoordinator {
     /** Begin bounded raw-first recovery after the raw parser listener is registered. */
     public void startSafetyRecovery() {
         synchronized (monitor) {
+            // Listener registration and serial readiness can arrive in either order. Remember the
+            // registration so a later onSerialReady transition cannot strand the state machine in
+            // SAFETY_RECOVERING without ever sending its bounded probes.
+            safetyRecoveryListenerReady = true;
             if (state != State.SAFETY_RECOVERING || !otaRawRouting) {
                 return;
             }
-            safetyRawProbeAttempts = 0;
-            long phase = ++phaseGeneration;
-            scheduleNextSafetyRawProbeLocked(phase);
+            armSafetyRecoveryProbesLocked();
         }
+    }
+
+    private void armSafetyRecoveryProbesLocked() {
+        safetyRawProbeAttempts = 0;
+        long phase = ++phaseGeneration;
+        scheduleNextSafetyRawProbeLocked(phase);
     }
 
     /** Consume only a complete raw protocol-version response during bounded recovery. */
@@ -312,7 +324,12 @@ public final class BesUartTransportCoordinator {
                 otaRawRouting = true;
                 safetyRawProbeAttempts = 0;
                 phaseGeneration++;
-                Log.w(TAG, "Awaiting raw-first BES OTA recovery probe: " + policy);
+                if (safetyRecoveryListenerReady) {
+                    Log.w(TAG, "Starting raw-first BES OTA recovery probe: " + policy);
+                    armSafetyRecoveryProbesLocked();
+                } else {
+                    Log.w(TAG, "Awaiting raw parser listener before BES OTA recovery: " + policy);
+                }
                 return;
             }
             long phase = ++phaseGeneration;

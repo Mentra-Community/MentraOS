@@ -3,7 +3,16 @@ package com.mentra.asg_client.io.bluetooth.managers.mentralive.internal;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import android.app.Application;
+
 import com.mentra.asg_client.AsgConstants;
+
+import org.junit.After;
+import org.junit.Before;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.robolectric.RobolectricTestRunner;
+import org.robolectric.annotation.Config;
+
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Queue;
@@ -14,12 +23,6 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.robolectric.RobolectricTestRunner;
-import org.robolectric.annotation.Config;
 
 @RunWith(RobolectricTestRunner.class)
 @Config(application = Application.class, sdk = 33)
@@ -400,6 +403,20 @@ public class BesUartTransportCoordinatorTest {
         assertThat(safety.rawModeProven).isTrue();
         assertThat(coordinator.getState()).isEqualTo(BesUartTransportCoordinator.State.QUARANTINED);
         assertThat(countControlCommands("cs_syvr")).isZero();
+    }
+
+    @Test
+    public void durableRecovery_listenerBeforeSerialStillStartsRawProbes() throws Exception {
+        safety.policy = BesUartTransportCoordinator.SafetyPolicy.RECOVERY_PROBE_ONLY;
+
+        coordinator.startSafetyRecovery();
+        coordinator.onSerialReady(host.session);
+
+        awaitRawWriteCount(1);
+        assertThat(coordinator.getState())
+                .isEqualTo(BesUartTransportCoordinator.State.SAFETY_RECOVERING);
+        assertThat(coordinator.inboundRoute(host.session))
+                .isEqualTo(BesUartTransportCoordinator.InboundRoute.OTA);
     }
 
     @Test
