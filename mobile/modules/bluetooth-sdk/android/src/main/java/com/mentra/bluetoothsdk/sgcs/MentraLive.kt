@@ -807,6 +807,7 @@ class MentraLive : SGCManager() {
         if (isEqual) {
             if (state == ConnTypes.DISCONNECTED) {
                 resetWireNegotiationState()
+                resetPendingAckState()
                 // Queued writes are session-bound: transmitting them into the NEXT session
                 // (e.g. a stale handshake whose reply activates v2 before the new session
                 // negotiated) is the bug class this clear removes. Higher layers re-send
@@ -854,6 +855,7 @@ class MentraLive : SGCManager() {
             DeviceStore.apply("glasses", "signalStrength", -1)
             DeviceStore.apply("glasses", "signalStrengthUpdatedAt", 0L)
             resetWireNegotiationState()
+            resetPendingAckState()
             sendQueue.clear() // see the disconnect reset above: stale writes die with the session
 
             // Drop OTA caches when fully disconnected — avoids leaking session/step state
@@ -2565,6 +2567,19 @@ class MentraLive : SGCManager() {
         Bridge.log(
                 "LIVE: 📋 Tracking message " + messageId + " for ACK (timeout: " + timeoutMs + "ms)"
         )
+    }
+
+    /**
+     * Drops ACK retries from the BLE session that just ended. Android's send queue does not wait
+     * for this map, but its delayed timeout callbacks would otherwise retry old-session messages
+     * after the glasses reconnect. Clearing the map makes those callbacks harmless no-ops.
+     */
+    private fun resetPendingAckState() {
+        val pendingCount = pendingMessages.size
+        pendingMessages.clear()
+        if (pendingCount > 0) {
+            Bridge.log("LIVE: Cleared $pendingCount pending ACK message(s) because BLE session ended")
+        }
     }
 
     /** Check if a message has been acknowledged */
