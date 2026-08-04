@@ -66,25 +66,43 @@ export default function DevMiniappOfflineScreen() {
       // package may not be registered yet. Register from the manifest we just
       // fetched — otherwise setForeground has no app to bring up.
       const manifest = launchResult.manifest
-      if (manifest && !apps.some(app => app.packageName === packageName)) {
+      const manifestPackage = manifest?.packageName?.trim()
+      if (!manifestPackage) {
+        // Offline stash used unverified QR identity; without a live manifest
+        // package we refuse to mint a home-tile under the QR key.
+        return
+      }
+      // If the QR package disagreed with the server, move stashed routing keys
+      // onto the manifest package before registering/foregrounding.
+      if (manifestPackage !== packageName) {
+        for (const suffix of ["_dev_url", "_dev_mdns", "_dev_port", "_dev_attestation"] as const) {
+          const from = storage.load<string | number>(`${packageName}${suffix}`)
+          if (from.is_ok()) storage.save(`${manifestPackage}${suffix}`, from.value)
+          storage.remove(`${packageName}${suffix}`)
+        }
+      }
+      if (manifest && !apps.some(app => app.packageName === manifestPackage)) {
         const base = (launchResult.resolvedUrl || devUrlRes.value).replace(/\/$/, "")
         const icon = typeof manifest.icon === "string" ? manifest.icon : undefined
-        const port = storage.load<number>(`${packageName}_dev_port`)
+        const port = storage.load<number>(`${manifestPackage}_dev_port`)
+        const attestation = storage.load<string>(`${manifestPackage}_dev_attestation`)
         await registerDevApp({
-          packageName,
-          name: manifest.name || resolvedName || packageName,
+          packageName: manifestPackage,
+          name: manifest.name || resolvedName || manifestPackage,
           iconUrl:
             icon && /^https?:\/\//.test(icon) ? icon : `${base}/${(icon ?? "icon.png").replace(/^\//, "")}`,
           devUrl: launchResult.resolvedUrl || devUrlRes.value,
           devPort: port.is_ok() ? port.value : undefined,
+          devAttestation: attestation.is_ok() ? attestation.value : undefined,
           type: manifest.type as DevAppRecord["type"],
           permissions: manifest.permissions as DevAppRecord["permissions"],
           hardwareRequirements: manifest.hardwareRequirements as DevAppRecord["hardwareRequirements"],
           actions: manifest.actions as DevAppRecord["actions"],
         })
+        storage.remove(`${manifestPackage}_dev_attestation`)
         await engine.miniapps.refresh()
       }
-      await engine.miniapps.setForeground(packageName)
+      await engine.miniapps.setForeground(manifestPackage)
     }
     // else: stay put — the "Last reached" line stays accurate, user can
     // tap again or re-scan.

@@ -164,6 +164,13 @@ export default function MiniappDeveloperScannerScreen() {
         } else {
           storage.remove(`${knownPackageName}_dev_port`)
         }
+        // Keep the QR attestation so offline "Try again" can register with the
+        // same auto-auth proof the live scanner path would have used.
+        if (devAttestation) {
+          storage.save(`${knownPackageName}_dev_attestation`, devAttestation)
+        } else {
+          storage.remove(`${knownPackageName}_dev_attestation`)
+        }
       }
 
       if (launchResult.decision === "offline") {

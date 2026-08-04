@@ -132,6 +132,15 @@ describe("decideDevLaunchRoute", () => {
     )
     await decideDevLaunchRoute("com.dev.example", DEV_URL, {alternateHosts: ["Mentas-MacBook-Pro.local"]})
     expect(readMeta().iconUrl).toBe("http://mentas-macbook-pro.local:3000/icon.png")
+
+    savedKeys.length = 0
+    stored.set(
+      "com.dev.example_dev_meta",
+      JSON.stringify({devUrl: DEV_URL, iconUrl: "http://192.168.1.50:9999/other-service/icon.png"}),
+    )
+    await decideDevLaunchRoute("com.dev.example", DEV_URL, {alternateHosts: ["Mentas-MacBook-Pro.local"]})
+    // Same hostname, different port — leave the unrelated service icon alone.
+    expect(readMeta().iconUrl).toBe("http://192.168.1.50:9999/other-service/icon.png")
   })
 
   test("reads stored mDNS host as an alternate", async () => {

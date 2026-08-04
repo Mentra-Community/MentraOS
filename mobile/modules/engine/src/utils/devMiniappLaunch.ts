@@ -94,8 +94,12 @@ function rewriteIconHost(iconUrl: string, staleDevUrl: string, resolvedDevUrl: s
   try {
     const icon = new URL(iconUrl)
     if (icon.protocol !== "http:" && icon.protocol !== "https:") return null
-    if (icon.hostname !== new URL(staleDevUrl).hostname) return null
-    icon.hostname = new URL(resolvedDevUrl).hostname
+    const stale = new URL(staleDevUrl)
+    const resolved = new URL(resolvedDevUrl)
+    // Compare host (hostname+port) so an icon on the same hostname but a
+    // different service port is left alone.
+    if (icon.host !== stale.host) return null
+    icon.host = resolved.host
     return icon.toString()
   } catch {
     return null
